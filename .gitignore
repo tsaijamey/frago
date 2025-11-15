@@ -6,3 +6,9 @@ chrome_profile/*
 
 # Spec markdown files in commands directory
 .claude/commands/spec*.md
+
+.venv/
+env/
+venv3/
+venv/
+__pycache__/
