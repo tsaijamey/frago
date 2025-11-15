@@ -1,6 +1,21 @@
 # AuViMa - Automated Video Maker
 
-基于Claude Code的自动化视频制作pipeline，通过AI驱动实现从主题到成品视频的全流程自动化。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](https://www.apple.com/macos/)
+[![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
+[![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
+
+🎬 基于Claude Code的自动化视频制作pipeline，通过AI驱动实现从主题到成品视频的全流程自动化。
+
+## ✨ 特性
+
+- 🤖 **AI驱动** - 使用Claude Code自动规划和生成视频内容
+- 🎯 **四种内容类型** - 资讯分析、GitHub项目解析、产品介绍、MVP演示
+- 🔄 **全流程自动化** - 从主题到成品视频一键完成
+- 🎨 **智能分镜** - 自动生成分镜脚本和视觉效果
+- 🎤 **配音生成** - 集成TTS引擎生成专业配音
+- 📹 **高质量录制** - 基于Chrome CDP的精准屏幕录制
 
 ## 项目概述
 
@@ -313,7 +328,23 @@ brew install uv
 
 🚧 **开发中** - 基础架构已完成，核心功能实现中
 
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request！
+
+## 📄 许可证
+
+MIT License - 详见 [LICENSE](LICENSE) 文件
+
+## 🌟 Star History
+
+如果这个项目对你有帮助，请给个Star支持一下！
+
+## 📮 联系方式
+
+- 项目问题：[提交Issue](https://github.com/yourusername/AuViMa/issues)
+- 技术讨论：[Discussions](https://github.com/yourusername/AuViMa/discussions)
+
 ---
 
-Created by Claude Code with Human
-2024-11
+Created by Claude Code with Human | 2024-11
