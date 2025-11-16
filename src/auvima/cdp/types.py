@@ -51,3 +51,38 @@ class SessionInfo(TypedDict):
     url: str
     type: str
     webSocketDebuggerUrl: str
+
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ProxyConfig:
+    """代理配置数据类"""
+    
+    enabled: bool = False
+    host: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    no_proxy_hosts: List[str] = field(default_factory=list)
+    
+    def get_websocket_proxy_config(self) -> Dict[str, Any]:
+        """获取WebSocket代理配置"""
+        if not self.enabled or self.no_proxy:
+            return {}
+        
+        config = {}
+        if self.host and self.port:
+            config["http_proxy_host"] = self.host
+            config["http_proxy_port"] = self.port
+            
+        if self.username and self.password:
+            config["http_proxy_auth"] = (self.username, self.password)
+            
+        return config
+    
+    @property
+    def no_proxy(self) -> bool:
+        """是否绕过代理"""
+        return not self.enabled or len(self.no_proxy_hosts) > 0

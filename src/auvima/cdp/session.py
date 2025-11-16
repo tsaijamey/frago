@@ -47,16 +47,42 @@ class CDPSession(CDPClient):
         self._input = None
         self._runtime = None
         self._dom = None
+        self._screenshot = None
+        self._scroll = None
+        self._wait = None
+        self._zoom = None
+        self._status = None
+        self._visual_effects = None
     
     def connect(self) -> None:
         """建立WebSocket连接"""
         try:
             self.logger.info(f"Connecting to CDP at {self.config.websocket_url}")
             
+            # 准备WebSocket连接参数
+            ws_options = {
+                "timeout": self.config.connect_timeout
+            }
+            
+            # 配置代理参数
+            if self.config.proxy_host and self.config.proxy_port and not self.config.no_proxy:
+                ws_options["http_proxy_host"] = self.config.proxy_host
+                ws_options["http_proxy_port"] = self.config.proxy_port
+                
+                if self.config.proxy_username and self.config.proxy_password:
+                    ws_options["http_proxy_auth"] = (
+                        self.config.proxy_username,
+                        self.config.proxy_password
+                    )
+                
+                self.logger.debug(f"Using proxy: {self.config.proxy_host}:{self.config.proxy_port}")
+            elif self.config.no_proxy:
+                self.logger.debug("Proxy bypassed (no_proxy=True)")
+            
             # 创建WebSocket连接
             self.ws = websocket.create_connection(
                 self.config.websocket_url,
-                timeout=self.config.connect_timeout
+                **ws_options
             )
             
             self._connected = True
@@ -459,3 +485,45 @@ class CDPSession(CDPClient):
             from .commands.dom import DOMCommands
             self._dom = DOMCommands(self)
         return self._dom
+    
+    @property
+    def screenshot(self):
+        if self._screenshot is None:
+            from .commands.screenshot import ScreenshotCommands
+            self._screenshot = ScreenshotCommands(self)
+        return self._screenshot
+    
+    @property
+    def scroll(self):
+        if self._scroll is None:
+            from .commands.scroll import ScrollCommands
+            self._scroll = ScrollCommands(self)
+        return self._scroll
+    
+    @property
+    def wait(self):
+        if self._wait is None:
+            from .commands.wait import WaitCommands
+            self._wait = WaitCommands(self)
+        return self._wait
+    
+    @property
+    def zoom(self):
+        if self._zoom is None:
+            from .commands.zoom import ZoomCommands
+            self._zoom = ZoomCommands(self)
+        return self._zoom
+    
+    @property
+    def status(self):
+        if self._status is None:
+            from .commands.status import StatusCommands
+            self._status = StatusCommands(self)
+        return self._status
+    
+    @property
+    def visual_effects(self):
+        if self._visual_effects is None:
+            from .commands.visual_effects import VisualEffectsCommands
+            self._visual_effects = VisualEffectsCommands(self)
+        return self._visual_effects

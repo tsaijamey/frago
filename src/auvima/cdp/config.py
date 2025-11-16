@@ -25,6 +25,12 @@ class CDPConfig(BaseModel):
     debug: bool = Field(default=False, description="是否启用调试模式")
     timeout: int = Field(default=30, description="操作超时时间（秒）")
     
+    proxy_host: Optional[str] = Field(default=None, description="代理服务器主机地址")
+    proxy_port: Optional[int] = Field(default=None, description="代理服务器端口")
+    proxy_username: Optional[str] = Field(default=None, description="代理认证用户名")
+    proxy_password: Optional[str] = Field(default=None, description="代理认证密码")
+    no_proxy: bool = Field(default=False, description="是否绕过代理")
+    
     @property
     def websocket_url(self) -> str:
         """获取WebSocket连接URL"""

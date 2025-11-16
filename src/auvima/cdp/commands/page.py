@@ -130,3 +130,54 @@ class PageCommands:
         
         self.logger.debug(f"Wait for selector result: {result}")
         return result
+    
+    def get_title(self) -> str:
+        """
+        获取当前页面标题
+        
+        Returns:
+            str: 页面标题
+        """
+        self.logger.info("Getting page title")
+        
+        script = "document.title"
+        result = self.session.send_command(
+            "Runtime.evaluate",
+            {
+                "expression": script,
+                "returnByValue": True
+            }
+        )
+        
+        title = result.get("result", {}).get("value", "")
+        self.logger.debug(f"Page title: {title}")
+        return title
+    
+    def get_content(self, selector: Optional[str] = None) -> str:
+        """
+        获取页面或指定元素的文本内容
+        
+        Args:
+            selector: CSS选择器，如果为None则获取整个页面内容
+            
+        Returns:
+            str: 文本内容
+        """
+        if selector:
+            self.logger.info(f"Getting content of element: {selector}")
+            script = f"document.querySelector('{selector}')?.textContent || ''"
+        else:
+            self.logger.info("Getting page content")
+            script = "document.body.textContent || ''"
+        
+        result = self.session.send_command(
+            "Runtime.evaluate",
+            {
+                "expression": script,
+                "returnByValue": True
+            }
+        )
+        
+        content = result.get("result", {}).get("value", "")
+        self.logger.debug(f"Content length: {len(content)} characters")
+        return content

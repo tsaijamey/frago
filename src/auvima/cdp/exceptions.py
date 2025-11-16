@@ -38,3 +38,13 @@ class RetryExhaustedError(CDPError):
 class InvalidResponseError(CDPError):
     """无效响应异常"""
     pass
+
+
+class ProxyConnectionError(ConnectionError):
+    """代理连接异常"""
+    pass
+
+
+class ProxyConfigError(CDPError):
+    """代理配置错误异常"""
+    pass
