@@ -16,6 +16,13 @@ fi
 : ${CDP_HOST:=127.0.0.1}
 : ${DEBUG:=0}
 
+# 代理配置（优先级：命令行参数 > 环境变量 > 无代理）
+: ${CDP_PROXY_HOST:=""}
+: ${CDP_PROXY_PORT:=""}
+: ${CDP_PROXY_USERNAME:=""}
+: ${CDP_PROXY_PASSWORD:=""}
+: ${CDP_NO_PROXY:=0}
+
 # ========================================
 # 辅助函数
 # ========================================
@@ -26,6 +33,93 @@ debug_log() {
         echo "[DEBUG] $*" >&2
     fi
 }
+
+# ========================================
+# T047: 代理参数处理函数
+# ========================================
+
+# 从环境变量加载代理配置
+load_proxy_from_env() {
+    # 如果已经通过CDP_*变量配置，或者禁用了代理，直接返回
+    if [ "$CDP_NO_PROXY" = "1" ]; then
+        debug_log "代理已禁用 (CDP_NO_PROXY=1)"
+        return 0
+    fi
+
+    if [ -n "$CDP_PROXY_HOST" ] && [ -n "$CDP_PROXY_PORT" ]; then
+        debug_log "使用CDP_PROXY配置"
+        return 0
+    fi
+
+    # 尝试从HTTP_PROXY/HTTPS_PROXY解析
+    local proxy_url="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
+
+    if [ -n "$proxy_url" ]; then
+        debug_log "从环境变量解析代理: $proxy_url"
+
+        # 去除协议前缀
+        proxy_url="${proxy_url#http://}"
+        proxy_url="${proxy_url#https://}"
+
+        # 提取认证信息（如果存在）
+        if [[ "$proxy_url" == *"@"* ]]; then
+            local auth_part="${proxy_url%%@*}"
+            proxy_url="${proxy_url#*@}"
+
+            CDP_PROXY_USERNAME="${auth_part%%:*}"
+            CDP_PROXY_PASSWORD="${auth_part#*:}"
+        fi
+
+        # 提取主机和端口
+        CDP_PROXY_HOST="${proxy_url%%:*}"
+        CDP_PROXY_PORT="${proxy_url#*:}"
+
+        # 如果端口包含路径，去掉路径
+        CDP_PROXY_PORT="${CDP_PROXY_PORT%%/*}"
+
+        debug_log "解析结果 - Host: $CDP_PROXY_HOST, Port: $CDP_PROXY_PORT"
+    fi
+
+    # 检查NO_PROXY环境变量
+    local no_proxy_env="${NO_PROXY:-${no_proxy:-}}"
+    if [ -n "$no_proxy_env" ]; then
+        # 检查CDP_HOST是否在NO_PROXY列表中
+        if echo "$no_proxy_env" | grep -qE "(^|,)(${CDP_HOST}|\*)(,|$)"; then
+            CDP_NO_PROXY=1
+            debug_log "CDP主机在NO_PROXY列表中，禁用代理"
+        fi
+    fi
+}
+
+# 构建Python CLI的代理参数
+build_proxy_args() {
+    local proxy_args=""
+
+    # 如果禁用代理
+    if [ "$CDP_NO_PROXY" = "1" ]; then
+        proxy_args="--no-proxy"
+        debug_log "代理参数: $proxy_args"
+        echo "$proxy_args"
+        return 0
+    fi
+
+    # 如果配置了代理
+    if [ -n "$CDP_PROXY_HOST" ] && [ -n "$CDP_PROXY_PORT" ]; then
+        proxy_args="--proxy-host '$CDP_PROXY_HOST' --proxy-port $CDP_PROXY_PORT"
+
+        # 添加认证信息（如果存在）
+        if [ -n "$CDP_PROXY_USERNAME" ] && [ -n "$CDP_PROXY_PASSWORD" ]; then
+            proxy_args="$proxy_args --proxy-username '$CDP_PROXY_USERNAME' --proxy-password '$CDP_PROXY_PASSWORD'"
+        fi
+
+        debug_log "代理参数: $proxy_args"
+    fi
+
+    echo "$proxy_args"
+}
+
+# 初始化：自动从环境变量加载代理配置
+load_proxy_from_env
 
 # 错误输出
 error_log() {
@@ -245,6 +339,8 @@ export -f debug_log
 export -f error_log
 export -f success_log
 export -f info_log
+export -f load_proxy_from_env
+export -f build_proxy_args
 export -f check_cdp_environment
 export -f get_websocket_url
 export -f handle_error
@@ -265,6 +361,17 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     echo "  - handle_error: 标准错误处理"
     echo "  - parse_json: 解析JSON响应"
     echo "  - execute_cdp_command: 执行CDP命令"
+    echo "  - load_proxy_from_env: 从环境变量加载代理配置"
+    echo "  - build_proxy_args: 构建Python CLI的代理参数"
+    echo ""
+    echo "代理配置环境变量："
+    echo "  - CDP_PROXY_HOST: 代理主机地址"
+    echo "  - CDP_PROXY_PORT: 代理端口"
+    echo "  - CDP_PROXY_USERNAME: 代理认证用户名"
+    echo "  - CDP_PROXY_PASSWORD: 代理认证密码"
+    echo "  - CDP_NO_PROXY: 禁用代理 (1=禁用)"
+    echo "  - HTTP_PROXY/HTTPS_PROXY: 标准代理环境变量"
+    echo "  - NO_PROXY: 不使用代理的主机列表"
     echo ""
     echo "使用方法："
     echo "  source $(realpath "${BASH_SOURCE[0]}")"

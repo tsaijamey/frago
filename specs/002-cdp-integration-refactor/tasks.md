@@ -79,27 +79,27 @@
 
 ### Implementation for User Story 2
 
-- [ ] T021 [P] [US2] 扩展src/auvima/tools/function_mapping.py，添加Shell脚本参数解析功能
-- [ ] T022 [P] [US2] 在src/auvima/tools/function_mapping.py中实现Python函数签名提取
-- [ ] T023 [US2] 在src/auvima/tools/function_mapping.py中实现参数对应关系验证逻辑
-- [ ] T024 [US2] 在src/auvima/tools/function_mapping.py中实现行为一致性检查框架
-- [ ] T025 [US2] 创建功能映射报告生成器，输出JSON格式报告（包含coverage和consistency指标）
-- [ ] T026 [US2] 创建功能映射HTML报告生成器（可视化展示功能对应关系）
-- [ ] T027 [US2] 更新scripts/share/cdp_navigate.sh，确保所有参数正确传递给Python CLI
-- [ ] T028 [US2] 更新scripts/share/cdp_screenshot.sh，确保所有参数正确传递给Python CLI
-- [ ] T029 [US2] 更新scripts/share/cdp_exec_js.sh，确保所有参数正确传递给Python CLI
-- [ ] T030 [US2] 更新scripts/share/cdp_click.sh，确保所有参数正确传递给Python CLI
-- [ ] T031 [US2] 更新scripts/share/cdp_scroll.sh，确保所有参数正确传递给Python CLI
-- [ ] T032 [US2] 更新scripts/share/cdp_wait.sh，确保所有参数正确传递给Python CLI
-- [ ] T033 [US2] 更新scripts/share/cdp_zoom.sh，确保所有参数正确传递给Python CLI
-- [ ] T034 [US2] 更新scripts/share/cdp_get_title.sh，确保所有参数正确传递给Python CLI
-- [ ] T035 [US2] 更新scripts/share/cdp_get_content.sh，确保所有参数正确传递给Python CLI
-- [ ] T036 [US2] 更新scripts/share/cdp_status.sh，确保所有参数正确传递给Python CLI
-- [ ] T037 [US2] 更新scripts/generate/cdp_highlight.sh，确保所有参数正确传递给Python CLI
-- [ ] T038 [US2] 更新scripts/generate/cdp_pointer.sh，确保所有参数正确传递给Python CLI
-- [ ] T039 [US2] 更新scripts/generate/cdp_spotlight.sh，确保所有参数正确传递给Python CLI
-- [ ] T040 [US2] 更新scripts/generate/cdp_annotate.sh，确保所有参数正确传递给Python CLI
-- [ ] T041 [US2] 更新scripts/generate/cdp_clear_effects.sh，确保所有参数正确传递给Python CLI
+- [x] T021 [P] [US2] 扩展src/auvima/tools/function_mapping.py，添加Shell脚本参数解析功能
+- [x] T022 [P] [US2] 在src/auvima/tools/function_mapping.py中实现Python函数签名提取
+- [x] T023 [US2] 在src/auvima/tools/function_mapping.py中实现参数对应关系验证逻辑
+- [x] T024 [US2] 在src/auvima/tools/function_mapping.py中实现行为一致性检查框架
+- [x] T025 [US2] 创建功能映射报告生成器，输出JSON格式报告（包含coverage和consistency指标）
+- [x] T026 [US2] 创建功能映射HTML报告生成器（可视化展示功能对应关系）
+- [x] T027 [US2] 更新scripts/share/cdp_navigate.sh，确保所有参数正确传递给Python CLI
+- [x] T028 [US2] 更新scripts/share/cdp_screenshot.sh，确保所有参数正确传递给Python CLI
+- [x] T029 [US2] 更新scripts/share/cdp_exec_js.sh，确保所有参数正确传递给Python CLI
+- [x] T030 [US2] 更新scripts/share/cdp_click.sh，确保所有参数正确传递给Python CLI
+- [x] T031 [US2] 更新scripts/share/cdp_scroll.sh，确保所有参数正确传递给Python CLI
+- [x] T032 [US2] 更新scripts/share/cdp_wait.sh，确保所有参数正确传递给Python CLI
+- [x] T033 [US2] 更新scripts/share/cdp_zoom.sh，确保所有参数正确传递给Python CLI
+- [x] T034 [US2] 更新scripts/share/cdp_get_title.sh，确保所有参数正确传递给Python CLI
+- [x] T035 [US2] 更新scripts/share/cdp_get_content.sh，确保所有参数正确传递给Python CLI
+- [x] T036 [US2] 更新scripts/share/cdp_status.sh，确保所有参数正确传递给Python CLI
+- [x] T037 [US2] 更新scripts/generate/cdp_highlight.sh，确保所有参数正确传递给Python CLI
+- [x] T038 [US2] 更新scripts/generate/cdp_pointer.sh，确保所有参数正确传递给Python CLI
+- [x] T039 [US2] 更新scripts/generate/cdp_spotlight.sh，确保所有参数正确传递给Python CLI
+- [x] T040 [US2] 更新scripts/generate/cdp_annotate.sh，确保所有参数正确传递给Python CLI
+- [x] T041 [US2] 更新scripts/generate/cdp_clear_effects.sh，确保所有参数正确传递给Python CLI
 
 **Checkpoint**: 此时，用户故事1和2应该都能独立工作 - 所有Shell脚本与Python实现100%对应
 
@@ -113,14 +113,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T042 [P] [US3] 在src/auvima/cli/main.py中添加全局代理相关CLI选项（--proxy-host, --proxy-port, --proxy-username, --proxy-password, --no-proxy）
-- [ ] T043 [P] [US3] 在src/auvima/cli/commands.py中更新所有命令，支持代理配置传递
-- [ ] T044 [US3] 在src/auvima/cdp/session.py中实现WebSocket代理配置逻辑（使用websocket-client的代理参数）
-- [ ] T045 [US3] 在src/auvima/cdp/config.py中添加从环境变量读取代理配置的逻辑（HTTP_PROXY, HTTPS_PROXY, NO_PROXY）
-- [ ] T046 [US3] 在src/auvima/cdp/config.py中实现代理配置验证方法（validate_proxy_config）
-- [ ] T047 [US3] 更新scripts/share/cdp_common.sh，添加代理参数处理逻辑
-- [ ] T048 [US3] 创建代理配置测试脚本scripts/test/test_proxy_configuration.sh
-- [ ] T049 [US3] 在src/auvima/cdp/logger.py中添加代理连接相关日志记录
+- [x] T042 [P] [US3] 在src/auvima/cli/main.py中添加全局代理相关CLI选项（--proxy-host, --proxy-port, --proxy-username, --proxy-password, --no-proxy）
+- [x] T043 [P] [US3] 在src/auvima/cli/commands.py中更新所有命令，支持代理配置传递
+- [x] T044 [US3] 在src/auvima/cdp/session.py中实现WebSocket代理配置逻辑（使用websocket-client的代理参数）
+- [x] T045 [US3] 在src/auvima/cdp/config.py中添加从环境变量读取代理配置的逻辑（HTTP_PROXY, HTTPS_PROXY, NO_PROXY）
+- [x] T046 [US3] 在src/auvima/cdp/config.py中实现代理配置验证方法（validate_proxy_config）
+- [x] T047 [US3] 更新scripts/share/cdp_common.sh，添加代理参数处理逻辑
+- [x] T048 [US3] 创建代理配置测试脚本scripts/test/test_proxy_configuration.sh
+- [x] T049 [US3] 在src/auvima/cdp/logger.py中添加代理连接相关日志记录
 
 **Checkpoint**: 所有用户故事现在应该独立功能化 - 代理环境下CDP连接成功率提升至95%以上
 
