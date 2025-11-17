@@ -82,13 +82,10 @@ if [ -n "$WAIT_FOR" ]; then
     echo "等待元素: $WAIT_FOR"
 fi
 
-# 构建Python命令
-PYTHON_CMD="python -m auvima.cli navigate \"${URL}\""
+# 构建Python命令 - 全局选项必须在子命令之前
+PYTHON_CMD="auvima"
 
-if [ -n "$WAIT_FOR" ]; then
-    PYTHON_CMD="${PYTHON_CMD} --wait-for \"${WAIT_FOR}\""
-fi
-
+# 添加全局选项（在子命令之前）
 if [ -n "$DEBUG" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
 fi
@@ -103,6 +100,13 @@ fi
 
 if [ -n "$PORT" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${PORT}"
+fi
+
+# 添加子命令和参数
+PYTHON_CMD="${PYTHON_CMD} navigate \"${URL}\""
+
+if [ -n "$WAIT_FOR" ]; then
+    PYTHON_CMD="${PYTHON_CMD} --wait-for \"${WAIT_FOR}\""
 fi
 
 # 执行Python CLI

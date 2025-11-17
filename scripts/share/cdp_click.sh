@@ -77,13 +77,10 @@ if [ -n "$WAIT_TIMEOUT" ]; then
     echo "等待超时: ${WAIT_TIMEOUT#--wait-timeout } 秒"
 fi
 
-# 构建Python命令
-PYTHON_CMD="python -m auvima.cli click \"${SELECTOR}\""
+# 构建Python命令 - 全局选项必须在子命令之前
+PYTHON_CMD="auvima"
 
-if [ -n "$WAIT_TIMEOUT" ]; then
-    PYTHON_CMD="${PYTHON_CMD} ${WAIT_TIMEOUT}"
-fi
-
+# 添加全局选项（在子命令之前）
 if [ -n "$DEBUG" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
 fi
@@ -98,6 +95,13 @@ fi
 
 if [ -n "$PORT" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${PORT}"
+fi
+
+# 添加子命令和参数
+PYTHON_CMD="${PYTHON_CMD} click \"${SELECTOR}\""
+
+if [ -n "$WAIT_TIMEOUT" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${WAIT_TIMEOUT}"
 fi
 
 # 执行Python CLI

@@ -73,9 +73,10 @@ mkdir -p "${SAVE_DIR}"
 echo "=== Chrome CDP 截图 ==="
 echo "保存目录: $SAVE_DIR"
 
-# 构建Python命令
-PYTHON_CMD="python -m auvima.cli screenshot \"${SAVE_DIR}\""
+# 构建Python命令 - 全局选项必须在子命令之前
+PYTHON_CMD="auvima"
 
+# 添加全局选项（在子命令之前）
 if [ -n "$DEBUG" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
 fi
@@ -91,6 +92,9 @@ fi
 if [ -n "$PORT" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${PORT}"
 fi
+
+# 添加子命令和参数
+PYTHON_CMD="${PYTHON_CMD} screenshot \"${SAVE_DIR}\""
 
 # 执行Python CLI
 cd "$PROJECT_ROOT"

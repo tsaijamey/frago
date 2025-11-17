@@ -70,9 +70,10 @@ fi
 echo "=== Chrome CDP 执行JavaScript ==="
 echo "代码: ${JS_CODE:0:100}..."
 
-# 构建Python命令
-PYTHON_CMD="python -m auvima.cli exec-js \"${JS_CODE}\""
+# 构建Python命令 - 全局选项必须在子命令之前
+PYTHON_CMD="auvima"
 
+# 添加全局选项（在子命令之前）
 if [ -n "$DEBUG" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
 fi
@@ -88,6 +89,9 @@ fi
 if [ -n "$PORT" ]; then
     PYTHON_CMD="${PYTHON_CMD} ${PORT}"
 fi
+
+# 添加子命令和参数
+PYTHON_CMD="${PYTHON_CMD} exec-js \"${JS_CODE}\""
 
 # 执行Python CLI
 cd "$PROJECT_ROOT"
