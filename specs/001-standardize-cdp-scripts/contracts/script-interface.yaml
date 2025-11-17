@@ -1,0 +1,304 @@
+# CDP脚本接口契约
+# 定义所有CDP脚本的标准输入输出接口
+
+openapi: 3.0.0
+info:
+  title: CDP Shell脚本接口规范
+  version: 1.0.0
+  description: 标准化的CDP脚本调用接口定义
+
+components:
+  schemas:
+    # 通用响应格式
+    ScriptResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          enum: [success, error]
+        message:
+          type: string
+          description: 执行结果或错误信息
+        data:
+          type: object
+          description: 返回的数据（可选）
+          
+    # 错误响应
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          enum: [error]
+        error:
+          type: string
+          description: 错误类型
+        message:
+          type: string
+          description: 错误详情
+
+# CDP脚本接口定义
+paths:
+  /cdp_status:
+    summary: CDP状态检查
+    get:
+      operationId: checkStatus
+      parameters:
+        - name: screenshot
+          in: query
+          schema:
+            type: boolean
+          description: 是否截图
+        - name: output
+          in: query
+          schema:
+            type: string
+          description: 截图保存路径
+      responses:
+        '0':
+          description: 执行成功
+          content:
+            text/plain:
+              example: "✓ CDP is running on port 9222"
+        '1':
+          description: 执行失败
+          content:
+            text/plain:
+              example: "✗ CDP is not running"
+              
+  /cdp_navigate:
+    summary: 页面导航
+    post:
+      operationId: navigateTo
+      parameters:
+        - name: url
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: 目标URL
+      responses:
+        '0':
+          description: 导航成功
+          content:
+            text/plain:
+              example: "✓ navigated to: https://example.com"
+        '1':
+          description: 导航失败
+          
+  /cdp_click:
+    summary: 点击元素
+    post:
+      operationId: clickElement
+      parameters:
+        - name: selector
+          in: query
+          required: true
+          schema:
+            type: string
+          description: CSS选择器或XPath
+      responses:
+        '0':
+          description: 点击成功
+          content:
+            text/plain:
+              example: "✓ clicked: button.submit"
+        '1':
+          description: 点击失败
+          
+  /cdp_scroll:
+    summary: 页面滚动
+    post:
+      operationId: scrollPage
+      parameters:
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [up, down, top, bottom]
+          description: 滚动方向
+        - name: distance
+          in: query
+          schema:
+            type: integer
+          description: 滚动距离（像素）
+      responses:
+        '0':
+          description: 滚动成功
+        '1':
+          description: 滚动失败
+          
+  /cdp_wait:
+    summary: 等待元素
+    post:
+      operationId: waitForElement
+      parameters:
+        - name: selector
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 等待的元素选择器
+        - name: timeout
+          in: query
+          schema:
+            type: integer
+            default: 30
+          description: 超时时间（秒）
+      responses:
+        '0':
+          description: 元素出现
+        '1':
+          description: 超时或失败
+          
+  /cdp_screenshot:
+    summary: 页面截图
+    post:
+      operationId: takeScreenshot
+      parameters:
+        - name: output
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 截图保存路径
+        - name: fullpage
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: 是否全页截图
+      responses:
+        '0':
+          description: 截图成功
+          content:
+            text/plain:
+              example: "✓ screenshot saved to: /path/to/screenshot.png"
+        '1':
+          description: 截图失败
+          
+  /cdp_exec_js:
+    summary: 执行JavaScript
+    post:
+      operationId: executeJavaScript
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+          description: JavaScript代码
+      responses:
+        '0':
+          description: 执行成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: any
+                    description: 执行结果
+        '1':
+          description: 执行失败
+          
+  /cdp_get_title:
+    summary: 获取页面标题
+    get:
+      operationId: getPageTitle
+      responses:
+        '0':
+          description: 获取成功
+          content:
+            text/plain:
+              example: "Page Title"
+        '1':
+          description: 获取失败
+          
+  /cdp_get_content:
+    summary: 获取页面内容
+    get:
+      operationId: getPageContent
+      parameters:
+        - name: selector
+          in: query
+          schema:
+            type: string
+          description: 特定元素选择器（可选）
+      responses:
+        '0':
+          description: 获取成功
+          content:
+            text/html:
+              schema:
+                type: string
+        '1':
+          description: 获取失败
+
+# 视觉效果脚本接口
+  /cdp_highlight:
+    summary: 高亮元素
+    post:
+      operationId: highlightElement
+      parameters:
+        - name: selector
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 要高亮的元素
+        - name: color
+          in: query
+          schema:
+            type: string
+            default: "yellow"
+          description: 高亮颜色
+      responses:
+        '0':
+          description: 高亮成功
+        '1':
+          description: 高亮失败
+          
+  /cdp_clear_effects:
+    summary: 清除视觉效果
+    post:
+      operationId: clearEffects
+      responses:
+        '0':
+          description: 清除成功
+        '1':
+          description: 清除失败
+
+# 脚本调用约定
+x-script-conventions:
+  error-codes:
+    0: 成功
+    1: 一般错误
+    2: 参数错误
+    3: 环境错误（CDP未运行）
+    4: 工具缺失（websocat未安装）
+    127: 命令未找到
+    
+  environment-variables:
+    CDP_PORT: CDP服务端口（默认9222）
+    CDP_HOST: CDP服务地址（默认127.0.0.1）
+    DEBUG: 调试模式（1启用）
+    
+  standard-output:
+    success-prefix: "✓"
+    error-prefix: "✗"
+    info-prefix: "ℹ"
+    
+  dependencies:
+    required:
+      - websocat
+      - jq或awk（JSON解析）
+    optional:
+      - chrome或chromium
