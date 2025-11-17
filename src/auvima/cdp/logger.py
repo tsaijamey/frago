@@ -69,6 +69,97 @@ class CDPLogger:
         """记录异常日志"""
         self.logger.exception(message, *args, **kwargs)
 
+    # ========================================
+    # T049: 代理连接相关日志记录方法
+    # ========================================
+
+    def log_proxy_config(self, proxy_info: Optional[dict]):
+        """
+        记录代理配置信息
+
+        Args:
+            proxy_info: 代理配置信息字典，包含host、port、has_auth等
+        """
+        if proxy_info is None:
+            self.debug("代理配置: 未使用代理")
+            return
+
+        host = proxy_info.get('host', 'unknown')
+        port = proxy_info.get('port', 'unknown')
+        has_auth = proxy_info.get('has_auth', False)
+
+        auth_str = " (带认证)" if has_auth else ""
+        self.info(f"代理配置: {host}:{port}{auth_str}")
+
+    def log_proxy_connection_attempt(self, proxy_host: str, proxy_port: int):
+        """
+        记录代理连接尝试
+
+        Args:
+            proxy_host: 代理主机
+            proxy_port: 代理端口
+        """
+        self.debug(f"正在通过代理连接: {proxy_host}:{proxy_port}")
+
+    def log_proxy_connection_success(self, proxy_host: str, proxy_port: int):
+        """
+        记录代理连接成功
+
+        Args:
+            proxy_host: 代理主机
+            proxy_port: 代理端口
+        """
+        self.info(f"代理连接成功: {proxy_host}:{proxy_port}")
+
+    def log_proxy_connection_error(self, proxy_host: str, proxy_port: int, error: Exception):
+        """
+        记录代理连接错误
+
+        Args:
+            proxy_host: 代理主机
+            proxy_port: 代理端口
+            error: 错误信息
+        """
+        self.error(f"代理连接失败: {proxy_host}:{proxy_port} - {error}")
+
+    def log_proxy_bypass(self, reason: str = "no_proxy设置"):
+        """
+        记录代理绕过
+
+        Args:
+            reason: 绕过原因
+        """
+        self.debug(f"绕过代理: {reason}")
+
+    def log_proxy_auth(self, proxy_host: str, proxy_port: int, username: str):
+        """
+        记录代理认证（不记录密码）
+
+        Args:
+            proxy_host: 代理主机
+            proxy_port: 代理端口
+            username: 用户名
+        """
+        self.debug(f"使用代理认证: {proxy_host}:{proxy_port} (用户: {username})")
+
+    def log_proxy_env_loaded(self, source: str, proxy_url: str):
+        """
+        记录从环境变量加载代理配置
+
+        Args:
+            source: 环境变量名称（如HTTP_PROXY）
+            proxy_url: 代理URL（会隐藏密码）
+        """
+        # 隐藏密码部分
+        safe_url = proxy_url
+        if '@' in safe_url:
+            parts = safe_url.split('@')
+            if ':' in parts[0]:
+                user = parts[0].split(':')[0].split('//')[-1]
+                safe_url = f"//{'*' * len(user)}:****@{parts[1]}"
+
+        self.debug(f"从环境变量 {source} 加载代理配置: {safe_url}")
+
 
 # 全局日志器实例
 _logger: Optional[CDPLogger] = None

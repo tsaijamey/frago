@@ -27,18 +27,28 @@ GLOBAL_OPTIONS = {
 def create_session(ctx) -> CDPSession:
     """
     创建CDP会话
-    
+
     使用全局选项：
     - --debug: 启用调试模式
     - --timeout: 设置操作超时时间
-    - --host: CDP服务主机地址  
+    - --host: CDP服务主机地址
     - --port: CDP服务端口
+    - --proxy-host: 代理服务器主机地址
+    - --proxy-port: 代理服务器端口
+    - --proxy-username: 代理认证用户名
+    - --proxy-password: 代理认证密码
+    - --no-proxy: 绕过代理连接
     """
     config = CDPConfig(
         host=ctx.obj['HOST'],
         port=ctx.obj['PORT'],
         timeout=ctx.obj['TIMEOUT'],
-        debug=ctx.obj['DEBUG']
+        debug=ctx.obj['DEBUG'],
+        proxy_host=ctx.obj.get('PROXY_HOST'),
+        proxy_port=ctx.obj.get('PROXY_PORT'),
+        proxy_username=ctx.obj.get('PROXY_USERNAME'),
+        proxy_password=ctx.obj.get('PROXY_PASSWORD'),
+        no_proxy=ctx.obj.get('NO_PROXY', False)
     )
     return CDPSession(config)
 
@@ -144,6 +154,54 @@ def get_title(ctx):
         sys.exit(1)
 
 
+@click.command('get-content')
+@click.argument('selector', default='body')
+@click.pass_context
+def get_content(ctx, selector: str):
+    """获取页面或元素的文本内容"""
+    try:
+        with create_session(ctx) as session:
+            script = f"""
+            (function() {{
+                var el = document.querySelector('{selector}');
+                if (!el) return 'Error: Element not found';
+                return el.innerText || el.textContent || '';
+            }})()
+            """
+            result = session.evaluate(script, return_by_value=True)
+            content = result.get('result', {}).get('value', '')
+            if content == 'Error: Element not found':
+                click.echo(f"找不到元素: {selector}", err=True)
+                sys.exit(1)
+            click.echo(content)
+    except CDPError as e:
+        click.echo(f"获取内容失败: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command('status')
+@click.pass_context
+def status(ctx):
+    """检查CDP连接状态"""
+    try:
+        with create_session(ctx) as session:
+            # 执行健康检查
+            is_healthy = session.status.health_check()
+            if is_healthy:
+                # 获取Chrome状态信息
+                chrome_status = session.status.check_chrome_status()
+                click.echo(f"✓ CDP连接正常")
+                click.echo(f"Browser: {chrome_status.get('Browser', 'unknown')}")
+                click.echo(f"Protocol-Version: {chrome_status.get('Protocol-Version', 'unknown')}")
+                click.echo(f"WebKit-Version: {chrome_status.get('WebKit-Version', 'unknown')}")
+            else:
+                click.echo("✗ CDP连接失败", err=True)
+                sys.exit(1)
+    except CDPError as e:
+        click.echo(f"状态检查失败: {e}", err=True)
+        sys.exit(1)
+
+
 @click.command('scroll')
 @click.argument('distance', type=int)
 @click.pass_context
@@ -207,13 +265,19 @@ def clear_effects(ctx):
     default='yellow',
     help='高亮颜色，默认黄色'
 )
+@click.option(
+    '--width',
+    type=int,
+    default=3,
+    help='高亮边框宽度（像素），默认3'
+)
 @click.pass_context
-def highlight(ctx, selector: str, color: str):
+def highlight(ctx, selector: str, color: str, width: int):
     """高亮显示指定元素"""
     try:
         with create_session(ctx) as session:
-            session.highlight(selector, color=color)
-            click.echo(f"已高亮元素: {selector}")
+            session.highlight(selector, color=color, border_width=width)
+            click.echo(f"已高亮元素: {selector} (颜色: {color}, 宽度: {width}px)")
     except CDPError as e:
         click.echo(f"高亮失败: {e}", err=True)
         sys.exit(1)
