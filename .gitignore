@@ -1,14 +1,8 @@
 # Chrome profile data
 chrome_profile/*
 
-# Specify directory
-.specify/
-specs/
-
 # Spec markdown files in commands directory
-.claude/commands/spec*.md
 .claude/do.vibing
-.claude/*.json*
 
 # Python environments
 .venv/
