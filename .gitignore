@@ -33,6 +33,8 @@ Thumbs.db
 tests/results/
 tests/*.log
 coverage/
+.coverage
+htmlcov/
 
 # IDE
 .vscode/
@@ -41,4 +43,4 @@ coverage/
 # Environment files
 .env*
 !.env.example
-!.env.cdp
+!.env.cdpREADME.pdf
