@@ -112,7 +112,7 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
     """截取页面截图"""
     try:
         with create_session(ctx) as session:
-            session.screenshot(output_file, full_page=full_page, quality=quality)
+            session.screenshot.capture(output_file, full_page=full_page, quality=quality)
             click.echo(f"截图已保存到: {output_file}")
     except CDPError as e:
         click.echo(f"截图失败: {e}", err=True)
@@ -168,12 +168,12 @@ def get_content(ctx, selector: str):
                 return el.innerText || el.textContent || '';
             }})()
             """
-            result = session.evaluate(script, return_by_value=True)
-            content = result.get('result', {}).get('value', '')
+            # session.evaluate() 已经提取了值，直接返回结果
+            content = session.evaluate(script, return_by_value=True)
             if content == 'Error: Element not found':
                 click.echo(f"找不到元素: {selector}", err=True)
                 sys.exit(1)
-            click.echo(content)
+            click.echo(content if content else '')
     except CDPError as e:
         click.echo(f"获取内容失败: {e}", err=True)
         sys.exit(1)
@@ -223,7 +223,7 @@ def wait(ctx, seconds: float):
     """等待指定秒数"""
     try:
         with create_session(ctx) as session:
-            session.wait(seconds)
+            session.wait.wait(seconds)
             click.echo(f"等待 {seconds} 秒完成")
     except CDPError as e:
         click.echo(f"等待失败: {e}", err=True)
