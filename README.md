@@ -162,6 +162,111 @@ AuViMa/
 - **音频生成**：火山引擎声音克隆API（待集成）
 - **AI助手**：Claude Code
 
+## CDP集成使用指南
+
+### 代理配置
+
+AuViMa的CDP集成支持代理配置，适用于需要通过代理访问网络的环境。
+
+#### 环境变量配置
+
+通过环境变量设置全局代理：
+
+```bash
+export HTTP_PROXY=http://proxy.example.com:8080
+export HTTPS_PROXY=http://proxy.example.com:8080
+export NO_PROXY=localhost,127.0.0.1
+```
+
+#### CLI参数配置
+
+所有CDP命令都支持代理参数：
+
+```bash
+# 使用代理
+python -m auvima.cli navigate https://example.com \
+    --proxy-host proxy.example.com \
+    --proxy-port 8080
+
+# 绕过代理
+python -m auvima.cli navigate https://example.com --no-proxy
+```
+
+#### Shell脚本代理支持
+
+Shell脚本自动继承环境变量代理配置：
+
+```bash
+# 设置代理后直接使用
+export HTTP_PROXY=http://proxy.example.com:8080
+./scripts/share/cdp_navigate.sh https://example.com
+
+# 或使用--no-proxy绕过
+./scripts/share/cdp_navigate.sh https://example.com --no-proxy
+```
+
+### 功能映射验证工具
+
+功能映射工具用于验证Python实现与Shell脚本的功能一致性。
+
+#### 运行功能映射验证
+
+```bash
+# 生成控制台报告
+python -m auvima.tools.function_mapping
+
+# 生成详细HTML报告
+python -m auvima.tools.function_mapping --format html --output function_mapping_report.html
+
+# 生成JSON报告
+python -m auvima.tools.function_mapping --format json --output function_mapping_report.json
+```
+
+#### 查看功能覆盖率
+
+工具会扫描所有Shell脚本和Python实现，生成覆盖率报告：
+
+```
+================================
+功能映射验证报告
+================================
+总功能数: 18
+已实现: 18 (100.0%)
+行为一致: 18 (100.0%)
+================================
+```
+
+### CDP命令目录结构
+
+CDP功能按类型组织在 `src/auvima/cdp/commands/` 目录下：
+
+```
+src/auvima/cdp/commands/
+├── __init__.py         # 命令模块导出
+├── page.py             # 页面操作（导航、获取标题/内容）
+├── screenshot.py       # 截图功能
+├── runtime.py          # JavaScript执行
+├── input.py            # 输入操作（点击）
+├── scroll.py           # 滚动操作
+├── wait.py             # 等待操作
+├── zoom.py             # 缩放操作
+├── status.py           # 状态检查
+└── visual_effects.py   # 视觉效果（高亮、指针、聚光灯、标注）
+```
+
+每个模块对应一组Shell脚本，确保功能完全一致。
+
+### 重试机制
+
+CDP连接支持智能重试机制，特别针对代理环境优化：
+
+- **默认重试策略**：最多3次，指数退避延迟
+- **代理连接重试策略**：最多5次，更短延迟，适用于代理环境
+- **连接超时**：默认30秒
+- **命令超时**：默认60秒
+
+重试机制会自动识别代理连接失败并提供诊断信息。
+
 ## 已完成功能 ✅
 
 ### 基础设施
