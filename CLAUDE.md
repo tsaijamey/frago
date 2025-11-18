@@ -25,6 +25,7 @@ Bash/Shell Script (POSIX兼容): Follow standard conventions
 
 ## Recent Changes
 - 003-skill-automation: Added Python 3.9+（已有pyproject.toml要求 >=3.9）
+- 003-skill-automation: Added Python 3.9+（已有pyproject.toml要求 >=3.9）
 
 - 001-standardize-cdp-scripts: Added Bash/Shell Script (POSIX兼容) + websocat工具，Chrome DevTools Protocol
 

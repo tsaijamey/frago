@@ -1,199 +1,256 @@
-# /auvima.recipe
+---
+description: "创建可复用的浏览器操作配方脚本"
+---
 
-配方管理命令 - 创建、更新和管理可复用的浏览器操作配方
+# /auvima.recipe - 配方创建指令
 
-## 用法
+## 你的任务
 
-```
-/auvima.recipe create <操作描述>
-/auvima.recipe update <配方名>
-/auvima.recipe list
-```
+引导用户创建一个可复用的JavaScript配方脚本，通过实际执行CDP操作来探索步骤，然后将经验写成代码。
 
-## 子命令
+---
 
-### create - 创建新配方
-
-通过交互式探索创建新的操作配方。
-
-**输入格式**：
-```
-/auvima.recipe create "在<目标网站>上<执行操作>"
-```
-
-**示例**：
-```
-/auvima.recipe create "在YouTube视频页面提取完整字幕内容"
-/auvima.recipe create "在GitHub仓库页面克隆README和项目信息"
-/auvima.recipe create "在Twitter搜索页面收集最新20条推文"
-```
-
-**执行流程**：
-
-1. **理解需求**
-   - 提取平台/网站（youtube/github/twitter等）
-   - 提取操作目标（提取字幕/克隆信息/收集推文）
-   - 生成建议的配方名：`<平台>_<操作简述>.js`
-
-2. **确认配方名**
-   - 展示建议的文件名
-   - 让用户确认或修改
-   - 检查是否存在同名配方
-
-3. **交互式探索**
-   - 连接到CDP（确保Chrome已在9222端口运行）
-   - 根据用户描述导航到目标页面
-   - 执行探索性操作：
-     - 截图展示当前页面
-     - 询问用户下一步操作
-     - 定位元素（如果失败，展示候选元素让用户选择）
-     - 记录每一步操作和选择器
-   - 最多3次澄清问询，确保理解准确
-
-4. **生成配方**
-   - 将探索过程转换为JavaScript代码
-   - 包含：
-     - DOM选择器
-     - 等待逻辑（处理动态加载）
-     - 错误处理
-     - 结果提取和返回
-   - 保存到 `src/auvima/recipes/<配方名>.js`
-
-5. **生成知识文档**
-   - 创建 `src/auvima/recipes/<配方名>.md`
-   - 包含标准6章节：
-     1. 功能描述（从用户原始需求提取）
-     2. 使用方法（完整的命令行示例）
-     3. 前置条件（需要已打开的页面、登录状态等）
-     4. 预期输出（数据格式和示例）
-     5. 注意事项（已知限制、脆弱的选择器等）
-     6. 更新历史（初始为空）
-
-6. **验证配方**
-   - 在当前页面执行生成的配方
-   - 确认输出符合预期
-   - 如有问题，询问用户是否需要调整
-
-### update - 更新现有配方
-
-基于反馈改进已有配方。
-
-**输入格式**：
-```
-/auvima.recipe update <配方名> "<问题描述或改进需求>"
-```
-
-**示例**：
-```
-/auvima.recipe update youtube_extract_subtitles "YouTube改版后字幕按钮的选择器失效了"
-/auvima.recipe update github_clone_repo_info "需要增加提取star数和fork数"
-```
-
-**执行流程**：
-
-1. 加载现有配方和知识文档
-2. 理解问题或改进需求
-3. 重新探索目标页面，定位新的元素或修复失效的选择器
-4. 覆盖原配方文件（.js）
-5. 在知识文档的"更新历史"章节添加条目：
-   ```markdown
-   ## 更新历史
-
-   ### 2025-11-18
-   - **原因**: YouTube改版导致字幕按钮选择器失效
-   - **变更**: 更新按钮选择器从 `.old-selector` 改为 `.new-selector`
-   - **测试**: 在最新版YouTube页面验证通过
-   ```
-
-### list - 列出所有配方
-
-展示配方库中的所有可用配方。
-
-**输出格式**：
-```
-📦 可用配方 (3个)
-
-🔹 youtube_extract_subtitles
-   功能: 提取YouTube视频完整字幕内容
-   创建: 2025-11-15
-   最后更新: 2025-11-18
-
-🔹 github_clone_repo_info
-   功能: 克隆GitHub仓库的README和项目元信息
-   创建: 2025-11-16
-
-🔹 twitter_collect_search_tweets
-   功能: 从Twitter搜索页面收集最新推文
-   创建: 2025-11-17
-```
-
-## 前置条件
-
-- Chrome必须已通过CDP启动（端口9222）
-- 可以通过 `uv run auvima status` 检查连接状态
-- 对于需要登录的操作，用户应在探索前手动登录
-
-## 配方命名规范
-
-**格式**: `<平台>_<操作动词>_<对象>.js`
-
-**平台缩写建议**:
-- youtube - YouTube
-- github - GitHub
-- twitter - Twitter/X
-- linkedin - LinkedIn
-- reddit - Reddit
-- bilibili - 哔哩哔哩
-- zhihu - 知乎
-- general - 通用网站（无特定平台）
-
-**操作动词建议**:
-- extract - 提取内容
-- collect - 收集列表
-- clone - 克隆/复制数据
-- monitor - 监控变化
-- analyze - 分析页面
-
-## 探索失败处理
-
-当探索过程中无法定位元素时：
-
-1. **展示当前页面截图**
-2. **列出候选元素**（如果能找到相似的）
-3. **询问用户**：
-   - "这是你想要点击的元素吗？"（展示候选列表）
-   - "请描述元素的特征"（文本内容、位置、颜色等）
-4. **最多3次交互**，如果仍无法定位：
-   - 保存已探索到的部分信息
-   - 建议用户重新整理需求或提供更多细节
-   - 不生成不完整的配方
-
-## 输出文件
-
-```
-src/auvima/recipes/
-├── <平台>_<操作>_<对象>.js      # 可执行配方
-└── <平台>_<操作>_<对象>.md      # 知识文档
-```
-
-## 使用生成的配方
+## 可用的AuViMa原子操作
 
 ```bash
-# 执行配方
-uv run auvima exec-js recipes/<配方名>.js
+# 导航到URL
+uv run auvima navigate <url>
 
-# 查看配方文档
-cat src/auvima/recipes/<配方名>.md
+# 点击元素
+uv run auvima click <selector>
+
+# 执行JavaScript表达式
+uv run auvima exec-js <expression>
+
+# 截图
+uv run auvima screenshot <output_file>
 ```
 
+**选择器类型**：CSS选择器、ARIA标签（`[aria-label="..."]`）、ID（`#id`）、类名（`.class`）
+
+---
+
+## 选择器优先级规则
+
+在生成JavaScript时，按此优先级排序选择器（5最高，1最低）：
+
+| 优先级 | 类型 | 示例 | 稳定性 | 说明 |
+|--------|------|------|--------|------|
+| **5** | ARIA标签 | `[aria-label="按钮"]` | ✅ 很稳定 | 无障碍属性，极少改变 |
+| **5** | data属性 | `[data-testid="submit"]` | ✅ 很稳定 | 专门用于测试 |
+| **4** | 稳定ID | `#main-button` | ✅ 稳定 | 语义化ID名称 |
+| **3** | 语义化类名 | `.btn-primary` | ⚠️ 中等 | BEM规范类名 |
+| **3** | HTML5语义标签 | `button`, `nav` | ⚠️ 中等 | 标准语义标签 |
+| **2** | 结构选择器 | `div > button` | ⚠️ 脆弱 | 依赖DOM结构 |
+| **1** | 生成的类名 | `.css-abc123` | ❌ 很脆弱 | CSS-in-JS，随时变化 |
+
+**脆弱选择器识别**：
+- `.css-*` 或 `._*` 开头的类名
+- 纯数字ID：`#12345`
+- 过长的ID/类名（>20字符）
+
+---
+
+## 执行流程
+
+### 1. 目标澄清
+
+问清楚：
+- 在哪个网站操作？（用于命名：`<平台>_<功能>.js`）
+- 要完成什么任务？
+- 前置条件是什么？（如：已打开某页面、已登录）
+
+### 2. 逐步探索
+
+引导用户描述每个步骤，**你实际执行CDP命令**：
+
+```
+你: 第一步需要做什么？
+用户: 点击"作者声明"展开详情
+你: [执行] uv run auvima click '[aria-label="作者声明"]'
+    ✓ 成功。记录：ARIA选择器（优先级5）
+    下一步呢？
+```
+
+**记住你执行的每个命令**：
+- 使用了哪些选择器（及其优先级）
+- 执行了什么操作
+- 需要等待多久（观察执行间隔）
+
+### 3. 生成配方文件
+
+对话结束后，**使用Write工具**创建两个文件：
+
+#### 文件1: `src/auvima/recipes/<平台>_<功能>.js`
+
+JavaScript配方脚本：
+
+```javascript
+/**
+ * Recipe: <平台>_<功能>
+ * Platform: <平台名>
+ * Description: <功能描述>
+ * Created: <YYYY-MM-DD>
+ * Version: 1
+ */
+
+(async function() {
+  // 辅助函数：按优先级尝试多个选择器
+  function findElement(selectors, description) {
+    for (const sel of selectors) {
+      const elem = document.querySelector(sel.selector);
+      if (elem) return elem;
+    }
+    throw new Error(`无法找到${description}`);
+  }
+
+  // 步骤1: <用户描述>
+  const elem1 = findElement([
+    { selector: '<ARIA或data属性>', priority: 5 },  // 最稳定
+    { selector: '<稳定ID>', priority: 4 },           // 降级
+    { selector: '<语义类名>', priority: 3 }          // 再降级
+  ], '<元素描述>');
+  elem1.click();
+  await new Promise(r => setTimeout(r, 500));  // 等待DOM更新
+
+  // 步骤2: <用户描述>
+  const elem2 = findElement([
+    { selector: '<选择器1>', priority: 5 }
+  ], '<元素描述>');
+  elem2.click();
+  await new Promise(r => setTimeout(r, 500));
+
+  // 步骤3: 提取数据
+  const result = document.querySelector('.target').innerText;
+  
+  return result;
+})();
+```
+
+**编写规则**：
+- 优先使用高优先级选择器（ARIA/data > ID > class）
+- 每个元素提供2-3个降级选择器（如果探索中使用了多个）
+- 操作后等待：点击/输入后500ms，导航后2000ms
+- 清晰的错误消息
+
+#### 文件2: `src/auvima/recipes/<平台>_<功能>.md`
+
+知识文档，**必须包含6个标准章节**：
+
+```markdown
+# <平台>_<功能>
+
+## 功能描述
+<详细说明这个配方的用途、适用场景和价值>
+
+## 使用方法
+1. <前置条件步骤>
+2. 执行配方：
+   ```bash
+   uv run auvima exec-js recipes/<平台>_<功能>.js
+   ```
+3. <查看结果的方法>
+
+## 前置条件
+- <条件1：如"已打开YouTube视频页面">
+- <条件2：如"视频字幕已开启">
+- Chrome CDP已连接
+
+## 预期输出
+<说明脚本成功后返回什么数据，格式是什么>
+
 ## 注意事项
+- **选择器稳定性**：使用了<N>个ARIA选择器，<M>个class选择器
+- **脆弱选择器**（如有）：`<选择器>`（<原因>，可能随网站改版失效）
+- 如<网站名>改版导致脚本失效，使用 `/auvima.recipe update <配方名>` 更新
+- <其他注意事项>
 
-1. **配方的独立性**: 每个配方应该是自包含的，不依赖其他配方
-2. **错误处理**: 生成的配方必须包含完善的错误处理，失败时返回清晰的错误信息
-3. **等待策略**: 对于动态加载的内容，配方应包含适当的等待逻辑
-4. **选择器稳定性**: 优先使用稳定的选择器（ARIA标签、data属性），并在文档中标注脆弱的选择器
-5. **知识积累**: 将配方视为项目的知识资产，认真编写文档便于后续维护
+## 更新历史
+| 日期 | 版本 | 变更说明 |
+|------|------|----------|
+| <YYYY-MM-DD> | v1 | 初始版本 |
+```
 
-## 实现脚本
+---
 
-本命令为Claude Code交互式命令，无需外部脚本实现。
+## 更新模式
+
+如果用户执行 `/auvima.recipe update <配方名> "原因"`：
+
+1. **读取现有配方**：
+   ```bash
+   # 使用Read工具读取
+   src/auvima/recipes/<配方名>.js
+   src/auvima/recipes/<配方名>.md
+   ```
+
+2. **显示当前信息**：
+   - 当前版本号（从.md的更新历史提取）
+   - 当前选择器（从.js头部注释或代码提取）
+   - 上次更新原因
+
+3. **重新探索**：按照"逐步探索"流程，引导用户重新描述步骤
+
+4. **覆盖写入**：
+   - `.js` 文件：完全覆盖，版本号+1
+   - `.md` 文件：覆盖全文，在"更新历史"表格**追加新行**（不是替换）
+
+**更新历史示例**：
+```markdown
+| 日期 | 版本 | 变更说明 |
+|------|------|----------|
+| 2025-11-20 | v2 | YouTube改版，更新字幕按钮选择器 |
+| 2025-11-19 | v1 | 初始版本 |
+```
+
+---
+
+## 列出模式
+
+如果用户执行 `/auvima.recipe list`：
+
+1. **扫描目录**：读取 `src/auvima/recipes/*.js` 所有文件
+
+2. **提取元数据**：从每个.js文件头部注释读取：
+   ```javascript
+   /**
+    * Recipe: youtube_extract_transcript
+    * Platform: youtube
+    * Description: 提取视频字幕内容
+    * Version: 2
+    */
+   ```
+
+3. **按平台分组显示**：
+   ```
+   配方库（src/auvima/recipes/）：
+
+   【YouTube】
+   1. youtube_extract_transcript.js - 提取视频字幕内容 (v2)
+   2. youtube_download_video.js - 下载视频 (v1)
+
+   【GitHub】  
+   3. github_clone_info.js - 获取仓库克隆信息 (v1)
+
+   总计：3个配方
+   ```
+
+---
+
+## 重要提醒
+
+1. **你会写代码**：直接用Write工具写.js和.md，不要调用任何Python函数
+2. **你经历过整个过程**：你执行了CDP命令，所以你知道怎么写JavaScript
+3. **文件命名规范**：`<平台>_<功能>.js`（小写字母、下划线分隔）
+4. **6章节完整性**：知识文档必须包含全部6个章节
+5. **选择器降级**：按优先级从高到低排列，提供2-3个备选
+6. **等待时间**：根据实际执行经验设置（点击500ms，导航2000ms）
+
+---
+
+## 开始执行
+
+根据用户输入判断模式：
+- 如果是 `/auvima.recipe update <配方名> "原因"`：进入**更新模式**
+- 如果是 `/auvima.recipe list`：进入**列出模式**
+- 否则：进入**创建模式**（从目标澄清开始）

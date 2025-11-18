@@ -1,335 +1,272 @@
-# Implementation Tasks: 技能自动化生成系统
+# Tasks: 技能自动化生成系统（简化架构）
 
-**Feature**: 003-skill-automation
-**Branch**: `003-skill-automation`
-**Generated**: 2025-11-18
-**Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md)
+**Input**: Design documents from `/specs/003-skill-automation/`
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md
 
----
+**关键架构变更**: 本任务列表基于2025-11-19的架构简化，删除了RecipeExplorer、ExplorationSession等过度设计组件，采用对话历史驱动的配方生成方式。
 
-## 任务概览
+**Tests**: 已有单元测试覆盖（51个测试通过），Phase 3将添加集成测试。
 
-| 阶段 | 描述 | 任务数 | 用户故事 |
-|------|------|--------|----------|
-| Phase 1 | 项目设置 | 3 | Setup |
-| Phase 2 | 基础设施 | 6 | Foundation |
-| Phase 3 | US1 - 创建配方脚本 | 8 | P1 |
-| Phase 4 | US2 - 知识文档生成 | 4 | P2 |
-| Phase 5 | US3 - 配方迭代更新 | 5 | P3 |
-| Phase 6 | 完善与优化 | 3 | Polish |
+**Organization**: 任务按用户故事组织，确保每个故事可独立实现和测试。
 
-**总任务数**: 29
+## Format: `[ID] [P?] [Story] Description`
 
----
+- **[P]**: 可并行执行（不同文件，无依赖）
+- **[Story]**: 任务所属的用户故事（US1, US2, US3）
+- 包含确切的文件路径
 
-## 实施策略
+## Path Conventions
 
-### MVP范围（最小可行产品）
-
-**仅User Story 1（Phase 3）** - 配方脚本创建核心功能
-
-**MVP交付物**:
-- 用户可通过 `/auvima.recipe create` 命令生成配方脚本
-- 配方脚本能够在CDP环境中成功执行
-- 基本的选择器策略和错误处理
-
-**非MVP**:
-- 知识文档生成（US2）- 可手动创建文档
-- 配方更新功能（US3）- 可重新创建替代更新
-- 配方库索引和高级搜索
-
-### 增量交付
-
-1. **Phase 1-2**: 搭建基础设施（1周）
-2. **Phase 3**: 实现US1核心功能（2-3周）→ **MVP里程碑**
-3. **Phase 4**: 添加知识文档（1周）
-4. **Phase 5**: 实现迭代更新（1-2周）
-5. **Phase 6**: 性能优化和边缘案例处理（1周）
-
-**总预估**: 6-8周（根据实际测试反馈调整）
+单项目结构（扩展现有AuViMa项目）：
+- Source: `src/auvima/`
+- Tests: `tests/`
+- Recipes: `src/auvima/recipes/`
+- Commands: `.claude/commands/`
 
 ---
 
-## 依赖关系
+## ~~Phase 1-2: 基础设施~~（已删除）
 
-```
-Phase 1 (Setup)
-    ↓
-Phase 2 (Foundation: 数据模型 + 选择器策略)
-    ↓
-    ├─→ Phase 3 (US1: 探索引擎 → 配方生成器 → CLI集成)
-    │       ↓
-    ├─→ Phase 4 (US2: 知识文档生成) [依赖US1]
-    │       ↓
-    └─→ Phase 5 (US3: 配方更新) [依赖US1 + US2]
-            ↓
-        Phase 6 (Polish)
-```
+**状态**: ❌ 原Phase 1-2的Python代码和51个测试已全部删除
 
-### 并行执行机会
+**原因**: 架构简化 - Claude Code不需要Python代码来生成代码
 
-**Phase 2 (基础设施)**:
-- T004 [P] 数据模型 ‖ T005 [P] 选择器策略 ‖ T006 [P] 模板系统
+**已删除的任务**:
+- ~~T001-T009~~（创建Python模块、数据模型、选择器策略、模板系统）
 
-**Phase 3 (US1)**:
-- T010 [P] Explorer测试 ‖ T012 [P] Generator测试（前提：T007-T009完成）
-- T013 [P] Explorer实现 ‖ T014 [P] Generator实现（测试先行）
-
-**Phase 4 (US2)**:
-- T019 [P] Knowledge测试 ‖ T021 [P] 文档模板（独立模块）
+**保留的成果**:
+- ✅ `src/auvima/recipes/` 目录（空目录，等待Claude Code写入配方）
+- ✅ 选择器优先级规则（已整合到`.claude/commands/auvima_recipe.md`）
 
 ---
 
-## Phase 1: 项目设置
+## Phase 1: User Story 1 - 通过对话创建配方脚本 (Priority: P1) 🎯 MVP
 
-**目标**: 创建项目结构和配置
+**Goal**: 用户通过 `/auvima.recipe` 命令进入对话流程，逐步描述操作步骤，Claude Code执行CDP命令，最后使用Write工具直接生成可执行的JavaScript配方脚本和配套知识文档。
 
-### 任务清单
+**Independent Test**:
+1. 执行 `/auvima.recipe "提取YouTube视频字幕"`
+2. 在对话中描述步骤（点击作者声明 → 点击内容转文字 → 提取文本）
+3. Claude Code实际执行 `uv run auvima click` 等命令
+4. 验证Claude Code使用Write工具生成的 `youtube_extract_transcript.js` 和 `.md` 文件存在
+5. 执行 `uv run auvima exec-js recipes/youtube_extract_transcript.js` 验证脚本可运行
 
-- [x] T001 创建 `src/auvima/recipe/` 模块目录结构
-- [x] T002 创建 `src/auvima/recipes/` 配方库目录
-- [x] T003 创建测试目录结构 `tests/unit/recipe/` 和 `tests/integration/recipe/`
+### Implementation for User Story 1
 
----
+- [x] T001 [US1] 创建 `/auvima.recipe` prompt模板在 `.claude/commands/auvima_recipe.md`（完整版，包含选择器优先级规则表格、JavaScript模板示例、6章节文档格式）
+- [x] ~~T002-T007~~（已删除的Python代码生成任务）
 
-## Phase 2: 基础设施
-
-**目标**: 实现共享数据模型和选择器策略
-
-### 任务清单
-
-- [x] T004 [P] 在 `src/auvima/recipe/models.py` 中实现核心数据模型（Recipe, Selector, ExplorationSession, ExplorationStep, KnowledgeDocument, UpdateRecord）使用Pydantic
-- [x] T005 [P] 在 `src/auvima/recipe/selector.py` 中实现选择器优化策略（SelectorPriority枚举、稳定性评估、降级逻辑生成）
-- [x] T006 [P] 在 `src/auvima/recipe/templates.py` 中创建JavaScript和Markdown模板基础类
-- [x] T007 在 `src/auvima/recipe/__init__.py` 中导出公共接口
-- [ ] T008 在 `tests/unit/recipe/test_models.py` 中编写数据模型验证测试（验证规则、状态转换）
-- [ ] T009 在 `tests/unit/recipe/test_selector.py` 中编写选择器策略测试（优先级排序、降级生成）
+**Checkpoint**: ✅ Prompt模板已完成 - Claude Code已能通过对话创建配方
 
 ---
 
-## Phase 3: User Story 1 - 通过自然语言创建配方脚本 (P1)
+## ~~Phase 2: User Story 2~~（已合并到US1）
 
-**目标**: 实现核心配方创建功能
+**状态**: ✅ 知识文档生成已整合到prompt模板中
 
-**独立测试标准**:
-- 用户运行 `/auvima.recipe create "在YouTube视频页面提取字幕"`
-- 系统生成 `src/auvima/recipes/youtube_extract_subtitles.js`
-- 执行 `uv run auvima exec-js recipes/youtube_extract_subtitles.js` 成功返回字幕内容
+**说明**: Prompt模板明确指示Claude Code在生成配方脚本(.js)的同时，使用Write工具创建配套的知识文档(.md)，包含6个标准章节。
 
-### 任务清单
-
-#### 3.1 探索引擎（ExplorationSession → ExplorationStep）
-
-- [ ] T010 [P] [US1] 在 `tests/unit/recipe/test_explorer.py` 中编写探索引擎测试（会话创建、步骤记录、用户交互、元素定位）
-- [ ] T011 [US1] 在 `tests/integration/recipe/test_explorer_cdp.py` 中编写CDP集成测试（使用mock CDP会话测试页面导航、元素查询、截图）
-- [ ] T012 [P] [US1] 在 `src/auvima/recipe/explorer.py` 中实现 `RecipeExplorer` 类（会话管理、CDP交互、用户提问逻辑、元素定位与选择器提取）
-- [ ] T013 [US1] 在 `explorer.py` 中实现交互式引导功能（使用AskUserQuestion工具、最多3次交互限制、候选元素展示）
-
-#### 3.2 配方生成器（ExplorationSession → Recipe Script）
-
-- [ ] T014 [P] [US1] 在 `tests/unit/recipe/test_generator.py` 中编写配方生成器测试（JavaScript代码生成、模板渲染、选择器降级逻辑、错误处理代码）
-- [ ] T015 [US1] 在 `src/auvima/recipe/generator.py` 中实现 `RecipeGenerator` 类（从ExplorationSession生成JavaScript脚本、使用模板系统、注入选择器降级逻辑、添加错误处理）
-- [ ] T016 [US1] 在 `templates.py` 中实现JavaScript配方脚本模板（等待元素、点击操作、内容提取、JSON返回格式）
-
-#### 3.3 配方库管理（Recipe → Library）
-
-- [ ] T017 [P] [US1] 在 `tests/unit/recipe/test_library.py` 中编写配方库管理测试（配方保存、命名冲突检测、配方列表、配方搜索）
-- [ ] T018 [US1] 在 `src/auvima/recipe/library.py` 中实现 `RecipeLibrary` 类（配方保存、文件命名验证、配方列表、可选元数据索引）
-
-#### 3.4 CLI集成
-
-- [ ] T019 [US1] 在 `tests/integration/recipe/test_recipe_creation.py` 中编写端到端测试（完整的create流程：CLI输入 → 探索 → 生成 → 保存 → 执行验证）
-- [ ] T020 [US1] 在 `src/auvima/cli/recipe_commands.py` 中实现 `recipe create` CLI命令（解析用户描述、创建Explorer实例、调用生成器、保存配方）
-- [ ] T021 [US1] 在 `src/auvima/cli/main.py` 中注册recipe子命令组
+**无需独立任务** - Claude Code在一次对话中完成脚本和文档的生成。
 
 ---
 
-## Phase 4: User Story 2 - 生成知识文档 (P2)
+## Phase 2: User Story 3 - 配方迭代更新 (Priority: P2)
 
-**目标**: 为每个配方自动生成标准化知识文档
+**Goal**: 当配方脚本因目标网站改版失效时，用户可通过 `/auvima.recipe update <配方名> "原因"` 重新探索页面，Claude Code覆盖原文件并更新历史记录。
 
-**独立测试标准**:
-- 配方脚本生成后自动创建配套.md文档
-- 文档包含标准6章节：功能描述、使用方法、前置条件、预期输出、注意事项、更新历史
-- 文档内容完整可读，技术细节从探索会话自动提取
+**Independent Test**:
+1. 执行 `/auvima.recipe update youtube_extract_transcript "字幕按钮选择器失效"`
+2. Claude Code使用Read工具读取现有.js和.md文件
+3. 在对话中描述新的操作步骤
+4. 验证Claude Code覆盖原.js文件（文件名不变）
+5. 验证.md文档的"更新历史"章节追加了新记录
+6. 验证新脚本可成功执行
 
-### 任务清单
+### Implementation for User Story 3
 
-- [ ] T022 [P] [US2] 在 `tests/unit/recipe/test_knowledge.py` 中编写知识文档生成器测试（6章节模板渲染、从ExplorationSession提取信息、脆弱选择器标注、更新历史格式）
-- [ ] T023 [US2] 在 `src/auvima/recipe/knowledge.py` 中实现 `KnowledgeGenerator` 类（生成6章节Markdown、自动填充内容、格式化代码块）
-- [ ] T024 [P] [US2] 在 `templates.py` 中实现Markdown知识文档模板（6章节标准结构、前置条件checklist格式、输出JSON示例格式）
-- [ ] T025 [US2] 在 `generator.py` 中集成知识文档生成（配方脚本保存后自动生成.md文档）
-- [ ] T026 [US2] 在 `test_recipe_creation.py` 中添加知识文档验证测试（验证6章节存在、内容非空、格式正确）
+- [x] T002 [US3] 扩展prompt模板支持更新模式在 `.claude/commands/auvima_recipe.md`（包含Read现有文件、版本号+1、追加历史记录的指令）
 
----
-
-## Phase 5: User Story 3 - 配方迭代更新 (P3)
-
-**目标**: 支持配方脚本的版本迭代和更新
-
-**独立测试标准**:
-- 用户运行 `/auvima.recipe update youtube_extract_subtitles "字幕按钮选择器失效"`
-- 系统重新探索页面，更新选择器
-- 覆盖原.js文件，在.md的"更新历史"章节添加记录
-- 更新后的配方脚本成功执行
-
-### 任务清单
-
-- [ ] T027 [P] [US3] 在 `tests/unit/recipe/test_library.py` 中添加配方更新测试（加载现有配方、版本号递增、更新历史追加）
-- [ ] T028 [US3] 在 `library.py` 中实现 `load_recipe()` 方法（从.js和.md文件重建Recipe对象）
-- [ ] T029 [US3] 在 `knowledge.py` 中实现更新历史追加功能（在"更新历史"章节添加UpdateRecord）
-- [ ] T030 [US3] 在 `recipe_commands.py` 中实现 `recipe update` CLI命令（加载现有配方、重新探索、覆盖文件、更新文档）
-- [ ] T031 [US3] 在 `tests/integration/recipe/test_recipe_update.py` 中编写端到端更新测试（完整的update流程：CLI输入 → 加载配方 → 重新探索 → 覆盖文件 → 验证更新历史）
+**Checkpoint**: ✅ 更新模式已整合到prompt模板中 - Claude Code可更新现有配方
 
 ---
 
-## Phase 6: 完善与优化
+## Phase 3: 配方库管理功能 (Priority: P3)
 
-**目标**: 边缘案例处理、性能优化、用户体验改进
+**Goal**: 提供配方列表查看功能，方便用户管理和使用已生成的配方库。
 
-### 任务清单
+**Independent Test**:
+1. 执行 `/auvima.recipe list` 验证显示所有配方列表
+2. 验证列表按平台分组，包含配方名称、描述、版本号
+3. 验证空配方库时的友好提示
 
-- [ ] T032 [P] 在 `recipe_commands.py` 中实现 `recipe list` CLI命令（列出所有配方、显示元数据、可选过滤）
-- [ ] T033 在 `library.py` 中实现可选元数据索引功能（生成.index.json、增量更新、损坏重建）
-- [ ] T034 在 `tests/integration/recipe/test_recipe_execution.py` 中编写配方执行验证测试（测试生成的配方在真实CDP环境中执行、验证错误处理、性能测量）
-- [ ] T035 在 `explorer.py` 中添加边缘案例处理（动态加载检测、多页面流程、登录状态检查、探索超时）
-- [ ] T036 在 `generator.py` 中优化生成的JavaScript代码（添加等待逻辑、改进错误消息、代码行数控制50-200行）
-- [ ] T037 在 `spec.md` 文档中标注的Edge Cases章节中实现处理逻辑（网站结构频繁变化、动态加载内容、探索过程中断、多页面流程、权限和登录状态、脚本命名冲突、执行环境差异）
+### Implementation
 
----
+- [x] T003 [P3] 扩展prompt模板支持列出模式在 `.claude/commands/auvima_recipe.md`（包含扫描目录、解析头部注释、按平台分组显示的指令）
 
-## 验证清单
-
-### 每个用户故事的验证标准
-
-#### User Story 1 (P1) - 配方创建
-
-- [ ] 用户可通过自然语言描述创建配方
-- [ ] 生成的JavaScript脚本在CDP环境中成功执行
-- [ ] 探索过程中澄清问题不超过3个
-- [ ] 配方脚本包含选择器降级逻辑和错误处理
-- [ ] 配方文件名遵循命名规范（平台_操作_对象.js）
-- [ ] 生成时间 <30秒（从探索完成到文件写入）
-
-#### User Story 2 (P2) - 知识文档
-
-- [ ] 每个配方脚本自动生成配套.md文档
-- [ ] 文档包含标准6章节且内容完整
-- [ ] 脆弱选择器在"注意事项"章节标注
-- [ ] 文档可读性良好，代码块格式正确
-- [ ] 前置条件以checklist格式呈现
-
-#### User Story 3 (P3) - 配方更新
-
-- [ ] 用户可更新失效的配方脚本
-- [ ] 更新覆盖原文件且文件名保持不变
-- [ ] 更新历史在.md中正确追加
-- [ ] 版本号自动递增
-- [ ] 更新后的配方脚本成功执行
-
-### 跨故事验证
-
-- [ ] 所有单元测试通过（pytest tests/unit/recipe/ -v）
-- [ ] 所有集成测试通过（pytest tests/integration/recipe/ -v）
-- [ ] 测试覆盖率 >80%（pytest --cov=auvima.recipe）
-- [ ] 配方库规模达到5个示例配方（YouTube、GitHub、Twitter等）
-- [ ] 性能符合约束（探索<5秒/步、生成<30秒、脚本50-200行）
-- [ ] 符合Success Criteria SC-001至SC-008（见spec.md）
+**Checkpoint**: ✅ 列出模式已整合到prompt模板中 - Claude Code可列出所有配方
 
 ---
 
-## 并行执行示例
+## Phase 4: 验证和完善 (质量保证)
 
-### Phase 2并行任务
+**Purpose**: 端到端验证配方系统，优化prompt模板
+
+### 实施任务
+
+- [ ] T004 [P] 手动测试：创建YouTube字幕提取配方（验证完整对话流程）
+- [ ] T005 [P] 手动测试：创建GitHub仓库信息提取配方（验证不同平台适配性）
+- [ ] T006 手动测试：更新现有配方（验证版本管理和历史记录）
+- [ ] T007 手动测试：列出配方库（验证扫描和显示逻辑）
+- [ ] T008 [P] 优化prompt模板的引导语言（提高对话体验）
+- [ ] T009 [P] 完善prompt中的错误处理指令（应对CDP命令失败）
+- [ ] T010 [P] 更新CLAUDE.md项目文档，添加Recipes系统使用说明
+- [ ] T011 验证生成的配方脚本执行成功率 >90%（在相同页面条件下）
+
+**Checkpoint**: 系统经过验证，生产就绪
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Phase 1 (US1 - 创建配方)**: ✅ 已完成 - Prompt模板已创建
+- **Phase 2 (US3 - 更新配方)**: ✅ 已完成 - 更新模式已整合到prompt
+- **Phase 3 (配方库管理)**: ✅ 已完成 - 列出模式已整合到prompt
+- **Phase 4 (验证和完善)**: 进行中 - 依赖Phase 1-3完成
+
+### User Story Dependencies
+
+- **User Story 1 (P1)**: 在Foundational之后可开始 - 无其他故事依赖
+- **User Story 2 (P2)**: 在Foundational之后可开始 - 与US1集成但可并行开发（知识文档生成是US1的自然扩展）
+- **User Story 3 (P3)**: 依赖US1和US2 - 需要现有配方和文档才能更新
+
+### Within Each User Story
+
+- **US1**: Prompt模板 [P] → 对话解析器 [P] → 代码生成器 → 知识文档生成器 → CLI集成 → 验证逻辑
+- **US2**: 章节填充 [P] 和 脆弱选择器警告 [P] → 更新历史 → 测试
+- **US3**: 配方加载器 [P] 和 Prompt扩展 [P] → 版本增量 → 历史追加 → CLI命令 → 集成测试
+
+### Parallel Opportunities
+
+- **Phase 1-2**: ✅ 已完成 - T003与T004、T005-T009均可并行
+- **Phase 3 (US1)**: T010 (prompt) 和 T011 (parser) 可并行启动
+- **Phase 4 (US2)**: T017 (章节填充) 和 T018 (脆弱选择器) 可并行
+- **Phase 5 (US3)**: T021 (加载器) 和 T022 (prompt) 可并行
+- **Phase 6**: T027 (扫描) 和 T028 (格式化) 可并行
+- **Phase 7**: T031和T032集成测试可并行执行
+- **Phase 8**: T036, T037, T039, T040, T042均可并行处理
+
+---
+
+## Parallel Example: User Story 1
 
 ```bash
-# 窗口1: 实现数据模型
-# T004 [P] 数据模型
-code src/auvima/recipe/models.py
+# 并行启动US1的独立任务：
+Task: "创建 /auvima.recipe prompt模板在 .claude/commands/auvima_recipe.md"
+Task: "实现对话历史解析器在 src/auvima/recipe/conversation_parser.py"
 
-# 窗口2: 实现选择器策略
-# T005 [P] 选择器策略
-code src/auvima/recipe/selector.py
-
-# 窗口3: 实现模板系统
-# T006 [P] 模板系统
-code src/auvima/recipe/templates.py
-```
-
-### Phase 3并行任务（测试先行）
-
-```bash
-# 窗口1: 探索引擎测试
-# T010 [P] [US1] Explorer测试
-code tests/unit/recipe/test_explorer.py
-
-# 窗口2: 生成器测试
-# T014 [P] [US1] Generator测试
-code tests/unit/recipe/test_generator.py
-
-# 窗口3: 配方库测试
-# T017 [P] [US1] Library测试
-code tests/unit/recipe/test_library.py
-
-# 测试编写完成后，并行实现
-# 窗口1: T012 [P] [US1] Explorer实现
-# 窗口2: T015 [US1] Generator实现
-# 窗口3: T018 [US1] Library实现
+# 等待上述完成后，继续：
+Task: "实现配方代码生成器在 src/auvima/recipe/generator.py"
 ```
 
 ---
 
-## 注意事项
+## Implementation Strategy
 
-1. **测试驱动开发（TDD）**: 虽然spec未明确要求测试，但考虑到系统复杂性（CDP交互、文件生成、模板渲染），建议遵循TDD流程。每个模块先编写测试再实现。
+### MVP First (仅User Story 1)
 
-2. **CDP Mock策略**: 集成测试中使用mock CDP会话，避免依赖真实浏览器。可使用 `unittest.mock` 或创建 `MockCDPSession` 类。
+1. ✅ 完成 Phase 1: Setup
+2. ✅ 完成 Phase 2: Foundational (关键阻塞点)
+3. 🎯 完成 Phase 3: User Story 1（T010-T016）
+4. **STOP and VALIDATE**: 独立测试US1（通过对话创建配方并执行）
+5. 演示/部署MVP
 
-3. **任务ID连续性**: 任务ID T001-T037按执行顺序排列，实际实施时可能根据发现的新需求插入任务，保持顺序即可。
+### Incremental Delivery
 
-4. **并行标记[P]**: 仅在任务间无依赖且操作不同文件时标记。例如T004、T005、T006操作不同文件，可并行；T012和T013操作同一文件，需顺序执行。
+1. ✅ Setup + Foundational → 基础就绪（51个测试通过）
+2. 🎯 添加 User Story 1 → 独立测试 → 部署/演示（MVP！）
+3. 添加 User Story 2 → 独立测试 → 部署/演示
+4. 添加 User Story 3 → 独立测试 → 部署/演示
+5. 每个故事添加价值而不破坏已有功能
 
-5. **用户故事标签[US1/US2/US3]**: 帮助追踪每个任务属于哪个用户故事，便于验证故事完整性。设置和基础阶段无故事标签。
+### Parallel Team Strategy
 
-6. **MVP优先**: 如时间紧张，先完成Phase 1-3（US1），交付MVP。US2和US3可在后续迭代中添加。
+多开发者场景：
 
-7. **Edge Cases**: Phase 6的T037涵盖spec.md中列出的7种边缘案例，实施时应逐一验证处理逻辑。
-
----
-
-## 文件路径速查
-
-| 模块 | 文件路径 | 职责 |
-|------|---------|------|
-| 数据模型 | `src/auvima/recipe/models.py` | Pydantic模型定义 |
-| 选择器策略 | `src/auvima/recipe/selector.py` | DOM选择器优先级和降级 |
-| 模板系统 | `src/auvima/recipe/templates.py` | JavaScript和Markdown模板 |
-| 探索引擎 | `src/auvima/recipe/explorer.py` | 交互式探索和CDP交互 |
-| 配方生成器 | `src/auvima/recipe/generator.py` | JavaScript代码生成 |
-| 知识文档 | `src/auvima/recipe/knowledge.py` | Markdown文档生成 |
-| 配方库 | `src/auvima/recipe/library.py` | 配方管理和索引 |
-| CLI命令 | `src/auvima/cli/recipe_commands.py` | `/auvima.recipe` 命令实现 |
-| CLI注册 | `src/auvima/cli/main.py` | 注册recipe子命令 |
-| 单元测试 | `tests/unit/recipe/test_*.py` | 各模块单元测试 |
-| 集成测试 | `tests/integration/recipe/test_*.py` | 端到端流程测试 |
-| 配方库目录 | `src/auvima/recipes/` | 存储生成的.js和.md文件 |
+1. 团队一起完成 Setup + Foundational ✅
+2. Foundational完成后：
+   - Developer A: User Story 1 (T010-T016)
+   - Developer B: User Story 2 (T017-T020，等US1的generator.py初版完成后）
+   - Developer C: 配方库管理 (T027-T030)
+3. 故事独立完成并集成
 
 ---
 
-## 参考文档
+## 架构简化总结（重要参考）
 
-- **功能规格**: [spec.md](./spec.md) - 用户故事、验收标准、边缘案例
-- **实施计划**: [plan.md](./plan.md) - 技术栈、项目结构、性能约束
-- **数据模型**: [data-model.md](./data-model.md) - 实体定义、验证规则、关系图
-- **技术研究**: [research.md](./research.md) - JavaScript生成策略、选择器优化、交互模式
-- **快速开始**: [quickstart.md](./quickstart.md) - 使用示例、测试场景
-- **JSON Schema**: [contracts/](./contracts/) - 数据结构契约
+### ❌ 完全删除的Python代码生成组件
+
+本任务列表**不包含**以下组件的实现：
+
+- ~~RecipeExplorer类~~ → Claude Code本身就是探索引擎
+- ~~ExplorationSession/Step模型~~ → 对话历史即为状态
+- ~~Selector模型和策略（selector.py）~~ → 规则整合在prompt中
+- ~~Recipe/KnowledgeDocument模型（models.py）~~ → Claude Code不需要Python数据模型
+- ~~模板系统（templates.py）~~ → Prompt中提供JavaScript模板示例
+- ~~对话解析器（conversation_parser.py）~~ → Claude Code读自己的对话历史
+- ~~代码生成器（generator.py）~~ → Claude Code用Write工具直接写文件
+- ~~配方库管理（library.py）~~ → Claude Code用Glob/Read工具扫描目录
+- ~~所有单元测试（51个测试）~~ → 测试的代码已删除
+
+### ✅ 唯一保留的组件
+
+- **Prompt模板**（`.claude/commands/auvima_recipe.md`）→ 完整的指令集，包含：
+  - 选择器优先级规则表格
+  - JavaScript配方脚本模板示例
+  - Markdown知识文档6章节格式
+  - 创建/更新/列出三种模式的流程指令
+- **配方库目录**（`src/auvima/recipes/`）→ 存放Claude Code生成的.js和.md文件
 
 ---
 
-**生成日期**: 2025-11-18
-**总任务数**: 37
-**预估工期**: 6-8周
-**MVP范围**: Phase 1-3（User Story 1）
+## Notes
 
-**下一步**: 执行 `/speckit.implement` 开始实施，或手动按任务ID顺序逐个完成。
+- **[P]** 标记任务可在不同文件中并行执行，无相互依赖
+- **[Story]** 标签将任务映射到具体用户故事，确保可追溯性
+- 每个用户故事应独立完成和测试
+- Phase 1-2已完成（51个测试通过）
+- 当前重点：Phase 3（T010-T016）实现MVP
+- 在每个checkpoint停下来独立验证故事功能
+- 避免：模糊任务、同文件冲突、破坏故事独立性的跨故事依赖
+- 所有路径必须使用绝对路径：`/Users/chagee/Repos/AuViMa/...`
+
+---
+
+## 总结（最终简化版本）
+
+**总任务数**: 11（T001-T011）
+**已完成**: 3个（T001-T003，Prompt模板三种模式）
+**待完成**: 8个（T004-T011，验证和完善）
+
+**Phase分布**:
+- Phase 1（US1 - 创建配方）: ✅ 1个任务（T001，Prompt模板创建模式）
+- Phase 2（US3 - 更新配方）: ✅ 1个任务（T002，Prompt模板更新模式）
+- Phase 3（配方库管理）: ✅ 1个任务（T003，Prompt模板列出模式）
+- Phase 4（验证和完善）: 8个任务（T004-T011）
+
+**并行机会**:
+- Phase 4: T004 ‖ T005（手动测试可并行）
+- Phase 4: T008 ‖ T009 ‖ T010（文档优化可并行）
+
+**MVP范围**: ✅ 已完成 - Phase 1-3的Prompt模板已创建，系统可用
+
+**测试标准**:
+- US1: 通过对话创建配方脚本，Claude Code执行CDP命令，生成.js和.md文件
+- US3: 更新现有配方，Claude Code读取原文件，覆盖并追加历史记录
+- 列出: Claude Code扫描recipes/目录，解析头部注释，按平台分组显示
+
+**关键里程碑**:
+1. ✅ Phase 1-3完成 → Prompt模板已完成，核心功能可用
+2. 🎯 Phase 4进行中 → 手动验证和优化
+3. Phase 4完成 → 生产就绪
