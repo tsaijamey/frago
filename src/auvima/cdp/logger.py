@@ -38,8 +38,8 @@ class CDPLogger:
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         
-        # 创建控制台处理器
-        console_handler = logging.StreamHandler(sys.stdout)
+        # 创建控制台处理器（输出到stderr而不是stdout，避免污染命令输出）
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
         
@@ -135,28 +135,41 @@ class CDPLogger:
         """
         记录代理认证（不记录密码）
 
+        安全提示：此方法只记录用户名，不记录密码信息
+
         Args:
             proxy_host: 代理主机
             proxy_port: 代理端口
             username: 用户名
         """
-        self.debug(f"使用代理认证: {proxy_host}:{proxy_port} (用户: {username})")
+        # 安全处理：只显示用户名的前3个字符，其余用*代替
+        safe_username = username[:3] + '*' * max(0, len(username) - 3) if len(username) > 3 else username
+        self.debug(f"使用代理认证: {proxy_host}:{proxy_port} (用户: {safe_username})")
 
     def log_proxy_env_loaded(self, source: str, proxy_url: str):
         """
         记录从环境变量加载代理配置
 
+        安全提示：此方法会自动隐藏URL中的用户名和密码信息
+
         Args:
             source: 环境变量名称（如HTTP_PROXY）
             proxy_url: 代理URL（会隐藏密码）
         """
-        # 隐藏密码部分
+        # 隐藏密码和用户名部分
         safe_url = proxy_url
         if '@' in safe_url:
+            # URL格式: protocol://username:password@host:port
             parts = safe_url.split('@')
-            if ':' in parts[0]:
-                user = parts[0].split(':')[0].split('//')[-1]
-                safe_url = f"//{'*' * len(user)}:****@{parts[1]}"
+            protocol_and_auth = parts[0]
+            host_and_port = '@'.join(parts[1:])  # 处理可能的多个@符号
+
+            # 提取协议部分
+            if '//' in protocol_and_auth:
+                protocol = protocol_and_auth.split('//')[0]
+                safe_url = f"{protocol}//***:***@{host_and_port}"
+            else:
+                safe_url = f"***:***@{host_and_port}"
 
         self.debug(f"从环境变量 {source} 加载代理配置: {safe_url}")
 
