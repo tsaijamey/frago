@@ -1,82 +1,98 @@
 #!/bin/bash
 # AuViMa项目 - 自动化视觉管理系统
-# 功能: 执行JavaScript代码
+# 功能: 通过CDP接口执行JavaScript代码
 # 背景: 本脚本是AuViMa项目的一部分，用于自动化控制Chrome浏览器进行网页操作和测试
 #      在当前页面上下文中执行自定义JavaScript代码，提供灵活的页面操作和数据获取能力
-# 用法: ./cdp_exec_js.sh "<javascript_code>"
+# 用法: ./cdp_exec_js.sh "<javascript_code>" [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]
 
-JS_CODE="${1}"
-PORT="${CDP_PORT:-9222}"
+# 检查Python环境
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# 加载Python环境检查
+if [ -f "${SCRIPT_DIR}/check_python_env.sh" ]; then
+    source "${SCRIPT_DIR}/check_python_env.sh"
+    check_python_env || exit $?
+fi
+
+# 解析参数
+JS_CODE=""
+DEBUG=""
+TIMEOUT=""
+HOST=""
+PORT=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug)
+            DEBUG="--debug"
+            shift
+            ;;
+        --timeout)
+            TIMEOUT="--timeout $2"
+            shift 2
+            ;;
+        --host)
+            HOST="--host $2"
+            shift 2
+            ;;
+        --port)
+            PORT="--port $2"
+            shift 2
+            ;;
+        -*)
+            echo "错误: 未知选项 $1"
+            echo "用法: $0 \"<javascript_code>\" [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]"
+            exit 1
+            ;;
+        *)
+            if [ -z "$JS_CODE" ]; then
+                JS_CODE="$1"
+            else
+                echo "错误: 只能指定一个JavaScript代码"
+                echo "用法: $0 \"<javascript_code>\" [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 
 if [ -z "$JS_CODE" ]; then
-    echo "用法: $0 \"<javascript_code>\""
+    echo "错误: 必须提供JavaScript代码参数"
+    echo "用法: $0 \"<javascript_code>\" [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]"
     echo "例如: $0 \"document.body.style.backgroundColor='red'\""
-    exit 1
+    echo "      $0 \"document.title\""
+    echo "      $0 \"window.location.href\" --debug --timeout 10"
+    exit 2
 fi
 
-# 获取第一个页面的WebSocket URL
-WS_INFO=$(curl -s --noproxy '*' "127.0.0.1:${PORT}/json" | python3 -c "
-import sys,json
-pages = json.load(sys.stdin)
-page = next((p for p in pages if p.get('type') == 'page'), None)
-if page:
-    # 提取页面ID和WebSocket路径
-    ws_url = page.get('webSocketDebuggerUrl', '')
-    if ws_url:
-        # ws://127.0.0.1:9222/devtools/page/XXX -> /devtools/page/XXX
-        path = ws_url.split('9222')[1] if '9222' in ws_url else ''
-        print(path)
-")
+echo "=== Chrome CDP 执行JavaScript ==="
+echo "代码: ${JS_CODE:0:100}..."
 
-if [ -z "$WS_INFO" ]; then
-    echo "错误: 无法获取页面信息"
-    exit 1
+# 构建Python命令 - 全局选项必须在子命令之前
+PYTHON_CMD="auvima"
+
+# 添加全局选项（在子命令之前）
+if [ -n "$DEBUG" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
 fi
 
-# 使用纯bash和nc发送WebSocket消息
-(
-# WebSocket握手
-echo -ne "GET ${WS_INFO} HTTP/1.1\r\n"
-echo -ne "Host: 127.0.0.1:${PORT}\r\n"
-echo -ne "Upgrade: websocket\r\n"
-echo -ne "Connection: Upgrade\r\n"
-echo -ne "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-echo -ne "Sec-WebSocket-Version: 13\r\n"
-echo -ne "\r\n"
-
-# 等待握手完成
-sleep 0.2
-
-# 构建CDP命令
-CDP_CMD="{\"id\":1,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":$(echo "$JS_CODE" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))")}}"
-
-# WebSocket frame: FIN=1, opcode=1(text), mask=0
-# 简单起见，对于小消息直接发送
-LEN=${#CDP_CMD}
-if [ $LEN -lt 126 ]; then
-    # 0x81 = FIN + text frame
-    printf "\x81"
-    # length without mask
-    printf "\\x$(printf '%02x' $LEN)"
-    # payload
-    echo -n "$CDP_CMD"
+if [ -n "$TIMEOUT" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${TIMEOUT}"
 fi
 
-sleep 0.2
-) | nc 127.0.0.1 ${PORT} | tail -n1 | python3 -c "
-import sys,json
-try:
-    # 读取WebSocket帧响应
-    data = sys.stdin.buffer.read()
-    # 跳过WebSocket帧头，提取JSON
-    start = data.find(b'{')
-    if start != -1:
-        json_data = data[start:]
-        result = json.loads(json_data)
-        if 'result' in result and 'result' in result['result']:
-            value = result['result']['result'].get('value')
-            if value is not None:
-                print(value)
-except:
-    pass
-" 2>/dev/null
+if [ -n "$HOST" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${HOST}"
+fi
+
+if [ -n "$PORT" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${PORT}"
+fi
+
+# 添加子命令和参数
+PYTHON_CMD="${PYTHON_CMD} exec-js \"${JS_CODE}\""
+
+# 执行Python CLI
+cd "$PROJECT_ROOT"
+eval "$PYTHON_CMD"
