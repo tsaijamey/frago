@@ -41,4 +41,4 @@ coverage/
 # Environment files
 .env*
 !.env.example
-!.env.cdp
+!.env.cdpREADME.pdf
