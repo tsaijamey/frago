@@ -1,0 +1,728 @@
+{
+  "summary": {
+    "total_functions": 15,
+    "implemented_count": 14,
+    "consistent_count": 14,
+    "parameters_match_count": 4,
+    "coverage": 93.33,
+    "consistency": 100.0,
+    "parameter_match_rate": 28.57
+  },
+  "mappings": [
+    {
+      "shell_script": "cdp_navigate.sh",
+      "python_module": "page",
+      "python_function": "navigate",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--wait-for",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "url",
+          "has_value": true,
+          "required": true
+        },
+        {
+          "name": "wait_for",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "url",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Shell脚本独有参数: __wait_for, wait_for"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_screenshot.sh",
+      "python_module": "screenshot",
+      "python_function": "capture",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "save_dir",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "output_file",
+          "has_default": true,
+          "annotation": "typing.Optional[str]",
+          "default_value": "None"
+        },
+        {
+          "name": "full_page",
+          "has_default": true,
+          "annotation": "<class 'bool'>",
+          "default_value": "False"
+        },
+        {
+          "name": "format",
+          "has_default": true,
+          "annotation": "<class 'str'>",
+          "default_value": "png"
+        },
+        {
+          "name": "quality",
+          "has_default": true,
+          "annotation": "<class 'int'>",
+          "default_value": "80"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Shell脚本独有参数: save_dir",
+        "Python独有参数: format, full_page, output_file, quality"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "参数数量差异较大: Shell=1, Python=4"
+      ]
+    },
+    {
+      "shell_script": "cdp_exec_js.sh",
+      "python_module": "runtime",
+      "python_function": "evaluate",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "js_code",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "expression",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "return_by_value",
+          "has_default": true,
+          "annotation": "<class 'bool'>",
+          "default_value": "True"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Shell脚本独有参数: js_code",
+        "Python独有参数: expression"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_click.sh",
+      "python_module": "input",
+      "python_function": "click",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--wait-timeout",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "selector",
+          "has_value": true,
+          "required": true
+        },
+        {
+          "name": "wait_timeout",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "x",
+          "has_default": false,
+          "annotation": "<class 'int'>",
+          "default_value": ""
+        },
+        {
+          "name": "y",
+          "has_default": false,
+          "annotation": "<class 'int'>",
+          "default_value": ""
+        },
+        {
+          "name": "button",
+          "has_default": true,
+          "annotation": "<class 'str'>",
+          "default_value": "left"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Shell脚本独有参数: __wait_timeout, selector, wait_timeout",
+        "Python独有参数: button, x, y"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_scroll.sh",
+      "python_module": "scroll",
+      "python_function": "scroll",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "distance",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "distance",
+          "has_default": false,
+          "annotation": "<class 'int'>",
+          "default_value": ""
+        }
+      ],
+      "parameters_match": true,
+      "parameter_mismatches": [],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_wait.sh",
+      "python_module": "wait",
+      "python_function": "wait_for_selector",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "selector",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "timeout",
+          "has_default": true,
+          "annotation": "typing.Optional[float]",
+          "default_value": "None"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Python独有参数: selector, timeout"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_zoom.sh",
+      "python_module": "zoom",
+      "python_function": "set_zoom_factor",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "factor",
+          "has_default": false,
+          "annotation": "<class 'float'>",
+          "default_value": ""
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Python独有参数: factor"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_get_title.sh",
+      "python_module": "page",
+      "python_function": "get_title",
+      "implemented": false,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [],
+      "parameters_match": true,
+      "parameter_mismatches": [],
+      "behavior_consistent": false,
+      "behavior_notes": [
+        "Python实现缺失"
+      ]
+    },
+    {
+      "shell_script": "cdp_get_content.sh",
+      "python_module": "page",
+      "python_function": "get_content",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "selector",
+          "has_default": true,
+          "annotation": "typing.Optional[str]",
+          "default_value": "None"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Python独有参数: selector"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_status.sh",
+      "python_module": "status",
+      "python_function": "health_check",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [],
+      "parameters_match": true,
+      "parameter_mismatches": [],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_highlight.sh",
+      "python_module": "visual_effects",
+      "python_function": "highlight",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "selector",
+          "has_value": true,
+          "required": true
+        },
+        {
+          "name": "color",
+          "has_value": true,
+          "required": true
+        },
+        {
+          "name": "width",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "selector",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "color",
+          "has_default": true,
+          "annotation": "<class 'str'>",
+          "default_value": "yellow"
+        },
+        {
+          "name": "border_width",
+          "has_default": true,
+          "annotation": "<class 'int'>",
+          "default_value": "3"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Shell脚本独有参数: width",
+        "Python独有参数: border_width",
+        "参数 'color' 在Shell中是必需的，但在Python中有默认值"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_pointer.sh",
+      "python_module": "visual_effects",
+      "python_function": "pointer",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "selector",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "selector",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "duration",
+          "has_default": true,
+          "annotation": "<class 'int'>",
+          "default_value": "2000"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Python独有参数: duration"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_spotlight.sh",
+      "python_module": "visual_effects",
+      "python_function": "spotlight",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "selector",
+          "has_value": true,
+          "required": true
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "selector",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "opacity",
+          "has_default": true,
+          "annotation": "<class 'float'>",
+          "default_value": "0.7"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Python独有参数: opacity"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_annotate.sh",
+      "python_module": "visual_effects",
+      "python_function": "annotate",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--position",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [
+        {
+          "name": "selector",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "text",
+          "has_default": false,
+          "annotation": "<class 'str'>",
+          "default_value": ""
+        },
+        {
+          "name": "position",
+          "has_default": true,
+          "annotation": "<class 'str'>",
+          "default_value": "top"
+        }
+      ],
+      "parameters_match": false,
+      "parameter_mismatches": [
+        "Shell脚本独有参数: __position",
+        "Python独有参数: position, selector, text"
+      ],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    },
+    {
+      "shell_script": "cdp_clear_effects.sh",
+      "python_module": "visual_effects",
+      "python_function": "clear_effects",
+      "implemented": true,
+      "shell_parameters": [
+        {
+          "name": "--debug",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--host",
+          "has_value": true,
+          "required": false
+        },
+        {
+          "name": "--port",
+          "has_value": true,
+          "required": false
+        }
+      ],
+      "python_parameters": [],
+      "parameters_match": true,
+      "parameter_mismatches": [],
+      "behavior_consistent": true,
+      "behavior_notes": [
+        "行为检查通过"
+      ]
+    }
+  ]
+}

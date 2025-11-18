@@ -3,17 +3,73 @@
 # 功能: 通过Chrome DevTools Protocol (CDP)控制浏览器导航到指定URL
 # 背景: 本脚本是AuViMa项目的一部分，用于自动化控制Chrome浏览器进行网页操作和测试
 #      AuViMa通过CDP协议与Chrome实例通信，实现无头浏览器自动化任务
-# 用法: ./cdp_navigate.sh <url>
+# 用法: ./cdp_navigate.sh <url> [--wait-for <selector>]
 
-if [ -z "$1" ]; then
-    echo "错误: 必须提供URL参数"
-    echo "用法: $0 <url>"
-    echo "示例: $0 https://www.google.com"
-    exit 1
+# 检查Python环境
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# 加载Python环境检查
+if [ -f "${SCRIPT_DIR}/check_python_env.sh" ]; then
+    source "${SCRIPT_DIR}/check_python_env.sh"
+    check_python_env || exit $?
 fi
 
-URL="$1"
-PORT="${CDP_PORT:-9222}"
+# 解析参数
+URL=""
+WAIT_FOR=""
+DEBUG=""
+TIMEOUT=""
+HOST=""
+PORT=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --wait-for)
+            WAIT_FOR="$2"
+            shift 2
+            ;;
+        --debug)
+            DEBUG="--debug"
+            shift
+            ;;
+        --timeout)
+            TIMEOUT="--timeout $2"
+            shift 2
+            ;;
+        --host)
+            HOST="--host $2"
+            shift 2
+            ;;
+        --port)
+            PORT="--port $2"
+            shift 2
+            ;;
+        -*)
+            echo "错误: 未知选项 $1"
+            echo "用法: $0 <url> [--wait-for <selector>] [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]"
+            exit 1
+            ;;
+        *)
+            if [ -z "$URL" ]; then
+                URL="$1"
+            else
+                echo "错误: 只能指定一个URL"
+                echo "用法: $0 <url> [--wait-for <selector>] [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "$URL" ]; then
+    echo "错误: 必须提供URL参数"
+    echo "用法: $0 <url> [--wait-for <selector>] [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]"
+    echo "示例: $0 https://www.google.com"
+    echo "示例: $0 https://www.google.com --wait-for '#search' --debug"
+    exit 1
+fi
 
 # 自动补全URL协议
 if [[ ! "$URL" =~ ^https?:// ]]; then
@@ -21,77 +77,38 @@ if [[ ! "$URL" =~ ^https?:// ]]; then
 fi
 
 echo "=== Chrome CDP 导航 ==="
-echo "端口: $PORT"
 echo "目标URL: $URL"
-
-# 检查CDP是否运行
-if ! curl -s --noproxy '*' "127.0.0.1:${PORT}/json/version" > /dev/null 2>&1; then
-    echo "✗ CDP未运行"
-    echo "请先运行: python src/chrome_cdp_launcher_v2.py"
-    exit 1
+if [ -n "$WAIT_FOR" ]; then
+    echo "等待元素: $WAIT_FOR"
 fi
 
-# 检查websocat是否安装
-if ! command -v websocat &> /dev/null; then
-    echo "✗ 导航需要安装 websocat"
-    echo "请运行: brew install websocat"
-    exit 1
+# 构建Python命令 - 全局选项必须在子命令之前
+PYTHON_CMD="auvima"
+
+# 添加全局选项（在子命令之前）
+if [ -n "$DEBUG" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
 fi
 
-# 获取第一个页面的WebSocket URL
-PAGE_INFO=$(curl -s --noproxy '*' "127.0.0.1:${PORT}/json" | jq -c '.[0] | select(.type == "page")')
-
-if [ -z "$PAGE_INFO" ]; then
-    echo "创建新页面..."
-    curl -s --noproxy '*' -X PUT "127.0.0.1:${PORT}/json/new" > /dev/null 2>&1
-    sleep 1
-    PAGE_INFO=$(curl -s --noproxy '*' "127.0.0.1:${PORT}/json" | jq -c '.[0] | select(.type == "page")')
+if [ -n "$TIMEOUT" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${TIMEOUT}"
 fi
 
-WS_URL=$(echo "$PAGE_INFO" | jq -r '.webSocketDebuggerUrl // ""')
-CURRENT_URL=$(echo "$PAGE_INFO" | jq -r '.url // ""')
-
-if [ -z "$WS_URL" ]; then
-    echo "✗ 无法获取WebSocket URL"
-    exit 1
+if [ -n "$HOST" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${HOST}"
 fi
 
-echo "当前页面: $CURRENT_URL"
-echo "导航中..."
-
-# 使用CDP Page.navigate方法进行导航
-NAVIGATE_CMD="{\"id\":1,\"method\":\"Page.navigate\",\"params\":{\"url\":\"${URL}\"}}"
-RESULT=$(echo "$NAVIGATE_CMD" | websocat -t -n1 "$WS_URL" 2>/dev/null)
-
-if [ -n "$RESULT" ]; then
-    # 检查是否有错误
-    ERROR=$(echo "$RESULT" | jq -r '.error.message // ""')
-    if [ -n "$ERROR" ] && [ "$ERROR" != "" ]; then
-        echo "✗ 导航失败: $ERROR"
-        exit 1
-    fi
-    
-    # 获取frame ID
-    FRAME_ID=$(echo "$RESULT" | jq -r '.result.frameId // ""')
-    if [ -n "$FRAME_ID" ] && [ "$FRAME_ID" != "" ]; then
-        echo "✓ 导航成功"
-        echo "Frame ID: $FRAME_ID"
-        
-        # 等待页面加载
-        echo "等待页面加载..."
-        sleep 2
-        
-        # 获取更新后的页面信息
-        UPDATED_INFO=$(curl -s --noproxy '*' "127.0.0.1:${PORT}/json" | jq -c '.[0] | select(.type == "page")')
-        NEW_URL=$(echo "$UPDATED_INFO" | jq -r '.url // ""')
-        NEW_TITLE=$(echo "$UPDATED_INFO" | jq -r '.title // ""')
-        
-        echo "当前URL: $NEW_URL"
-        echo "页面标题: $NEW_TITLE"
-    else
-        echo "✓ 导航命令已发送"
-    fi
-else
-    echo "✗ WebSocket通信失败"
-    exit 1
+if [ -n "$PORT" ]; then
+    PYTHON_CMD="${PYTHON_CMD} ${PORT}"
 fi
+
+# 添加子命令和参数
+PYTHON_CMD="${PYTHON_CMD} navigate \"${URL}\""
+
+if [ -n "$WAIT_FOR" ]; then
+    PYTHON_CMD="${PYTHON_CMD} --wait-for \"${WAIT_FOR}\""
+fi
+
+# 执行Python CLI
+cd "$PROJECT_ROOT"
+eval "$PYTHON_CMD"

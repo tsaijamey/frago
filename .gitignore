@@ -1,14 +1,44 @@
 # Chrome profile data
 chrome_profile/*
 
-# Specify directory
-.specify/
-
 # Spec markdown files in commands directory
-.claude/commands/spec*.md
+.claude/do.vibing
 
+# Python environments
 .venv/
 env/
 venv3/
 venv/
 __pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Shell/Bash specific
+*.log
+*.tmp
+*.swp
+*.bak
+*~
+.DS_Store
+Thumbs.db
+
+# macOS specific
+.DS_Store
+
+# Test outputs
+tests/results/
+tests/*.log
+coverage/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment files
+.env*
+!.env.example
+!.env.cdp

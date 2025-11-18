@@ -1,43 +1,38 @@
 #!/bin/bash
 # AuViMa项目 - 自动化视觉管理系统
 # 功能: 清除所有视觉效果
-# 背景: 本脚本是AuViMa项目的一部分，用于自动化控制Chrome浏览器进行网页操作和测试
-#      清除页面上所有由AuViMa脚本添加的视觉效果元素，如高亮、标注、聚光灯等
-# 用法: ./cdp_clear_effects.sh
+# 用法: ./cdp_clear_effects.sh [--debug] [--timeout <seconds>] [--host <host>] [--port <port>]
 
-PORT="${CDP_PORT:-9222}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-JS_CODE="
-(() => {
-    // 清除所有AuViMa添加的元素
-    const elements = document.querySelectorAll([
-        '.auvima-highlight',
-        '.auvima-spotlight', 
-        '.auvima-annotation',
-        '.auvima-pointer',
-        '.auvima-overlay',
-        '.auvima-focus'
-    ].join(','));
-    
-    let count = elements.length;
-    elements.forEach(el => el.remove());
-    
-    // 清除添加的样式
-    const styles = document.querySelectorAll([
-        '#auvima-styles',
-        '#auvima-annotation-styles',
-        '#auvima-pointer-styles'
-    ].join(','));
-    
-    styles.forEach(style => style.remove());
-    
-    return 'Cleared ' + count + ' effects';
-})()
-"
+if [ -f "${SCRIPT_DIR}/../share/check_python_env.sh" ]; then
+    source "${SCRIPT_DIR}/../share/check_python_env.sh"
+    check_python_env || exit $?
+fi
 
-RESULT=$(curl -s --noproxy '*' -X POST "127.0.0.1:${PORT}/json/runtime/evaluate" \
-    -d "{\"expression\": \"${JS_CODE}\"}" \
-    -H "Content-Type: application/json" | \
-    python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',{}).get('result',{}).get('value',''))" 2>/dev/null)
+DEBUG=""
+TIMEOUT=""
+HOST=""
+PORT=""
 
-echo "✓ $RESULT"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --debug) DEBUG="--debug"; shift ;;
+        --timeout) TIMEOUT="--timeout $2"; shift 2 ;;
+        --host) HOST="--host $2"; shift 2 ;;
+        --port) PORT="--port $2"; shift 2 ;;
+        -*) echo "错误: 未知选项 $1"; exit 1 ;;
+        *) echo "错误: 此命令不接受位置参数"; exit 1 ;;
+    esac
+done
+
+PYTHON_CMD="auvima"
+[ -n "$DEBUG" ] && PYTHON_CMD="${PYTHON_CMD} ${DEBUG}"
+[ -n "$TIMEOUT" ] && PYTHON_CMD="${PYTHON_CMD} ${TIMEOUT}"
+[ -n "$HOST" ] && PYTHON_CMD="${PYTHON_CMD} ${HOST}"
+[ -n "$PORT" ] && PYTHON_CMD="${PYTHON_CMD} ${PORT}"
+PYTHON_CMD="${PYTHON_CMD} clear-effects"
+
+cd "$PROJECT_ROOT"
+eval "$PYTHON_CMD"
