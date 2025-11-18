@@ -13,24 +13,24 @@ from pydantic import BaseModel, Field, model_validator
 
 class CDPConfig(BaseModel):
     """CDP配置类"""
-    
+
     host: str = Field(default="127.0.0.1", description="CDP服务主机地址")
     port: int = Field(default=9222, description="CDP服务端口")
-    
-    connect_timeout: float = Field(default=30.0, description="连接超时时间（秒）")
-    command_timeout: float = Field(default=60.0, description="命令执行超时时间（秒）")
-    
+
+    connect_timeout: float = Field(default=5.0, description="连接超时时间（秒），本地连接优化为5秒")
+    command_timeout: float = Field(default=30.0, description="命令执行超时时间（秒）")
+
     max_retries: int = Field(default=3, description="最大重试次数")
     retry_delay: float = Field(default=1.0, description="重试延迟时间（秒）")
-    
+
     log_level: str = Field(default="INFO", description="日志级别")
     debug: bool = Field(default=False, description="是否启用调试模式")
     timeout: int = Field(default=30, description="操作超时时间（秒）")
-    
+
     proxy_host: Optional[str] = Field(default=None, description="代理服务器主机地址")
     proxy_port: Optional[int] = Field(default=None, description="代理服务器端口")
-    proxy_username: Optional[str] = Field(default=None, description="代理认证用户名")
-    proxy_password: Optional[str] = Field(default=None, description="代理认证密码")
+    proxy_username: Optional[str] = Field(default=None, description="代理认证用户名", repr=False)
+    proxy_password: Optional[str] = Field(default=None, description="代理认证密码", repr=False)
     no_proxy: bool = Field(default=False, description="是否绕过代理")
     
     @model_validator(mode='after')
@@ -134,6 +134,8 @@ class CDPConfig(BaseModel):
     def get_proxy_info(self) -> Optional[dict]:
         """获取代理配置信息（用于日志记录）
 
+        注意：此方法不返回认证信息（用户名和密码），仅返回主机、端口和认证状态
+
         Returns:
             Optional[dict]: 代理配置信息字典，如果未配置代理则返回None
         """
@@ -146,6 +148,19 @@ class CDPConfig(BaseModel):
             "has_auth": bool(self.proxy_username and self.proxy_password),
             "url": f"{self.proxy_host}:{self.proxy_port}"
         }
+
+    def safe_repr(self) -> str:
+        """返回安全的配置表示（隐藏敏感信息）
+
+        Returns:
+            str: 安全的配置字符串表示
+        """
+        config_dict = self.model_dump(exclude={'proxy_username', 'proxy_password'})
+        if self.proxy_username:
+            config_dict['proxy_username'] = '***'
+        if self.proxy_password:
+            config_dict['proxy_password'] = '***'
+        return f"CDPConfig({config_dict})"
 
 
 def load_config(config_file: Optional[str] = None) -> CDPConfig:

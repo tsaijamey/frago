@@ -53,14 +53,19 @@ class ScreenshotCommands:
         if format == "jpeg":
             params["quality"] = quality
         
-        result = self.session.send_command("Page.captureScreenshot", params)
-        
+        response = self.session.send_command("Page.captureScreenshot", params)
+
+        # CDP返回格式: {'id': ..., 'result': {'data': ...}}
+        result = response.get('result', {}) if isinstance(response, dict) else {}
+
         if output_file and "data" in result:
             image_data = base64.b64decode(result["data"])
-            os.makedirs(os.path.dirname(output_file) if os.path.dirname(output_file) else ".", exist_ok=True)
+            output_dir = os.path.dirname(output_file)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
             with open(output_file, "wb") as f:
                 f.write(image_data)
             self.logger.info(f"Screenshot saved to: {output_file}")
             result["file"] = output_file
-        
+
         return result

@@ -55,47 +55,100 @@ class CDPSession(CDPClient):
         self._visual_effects = None
     
     def connect(self) -> None:
-        """建立WebSocket连接"""
+        """建立WebSocket连接
+
+        性能优化：
+        - 连接超时默认5秒（本地连接优化）
+        - 禁用不必要的握手检查以加速连接
+        - 支持快速失败机制
+        """
         try:
-            self.logger.info(f"Connecting to CDP at {self.config.websocket_url}")
-            
-            # 准备WebSocket连接参数
+            start_time = time.time()
+
+            # 动态获取WebSocket URL
+            ws_url = self._get_websocket_url()
+            self.logger.info(f"Connecting to CDP at {ws_url}")
+
+            # 准备WebSocket连接参数（性能优化）
             ws_options = {
-                "timeout": self.config.connect_timeout
+                "timeout": 1.0,  # 接收消息超时设置为1秒，用于定期检查_running状态
+                "skip_utf8_validation": True,  # 跳过UTF-8验证以提升性能
+                "enable_multithread": True      # 启用多线程支持
             }
-            
+
             # 配置代理参数
             if self.config.proxy_host and self.config.proxy_port and not self.config.no_proxy:
                 ws_options["http_proxy_host"] = self.config.proxy_host
                 ws_options["http_proxy_port"] = self.config.proxy_port
-                
+
                 if self.config.proxy_username and self.config.proxy_password:
                     ws_options["http_proxy_auth"] = (
                         self.config.proxy_username,
                         self.config.proxy_password
                     )
-                
+
                 self.logger.debug(f"Using proxy: {self.config.proxy_host}:{self.config.proxy_port}")
             elif self.config.no_proxy:
                 self.logger.debug("Proxy bypassed (no_proxy=True)")
-            
+
             # 创建WebSocket连接
             self.ws = websocket.create_connection(
-                self.config.websocket_url,
+                ws_url,
                 **ws_options
             )
-            
+
             self._connected = True
             self._running = True
-            self.logger.info("CDP connection established")
-            
+
+            # 记录连接时间
+            elapsed = (time.time() - start_time) * 1000  # 转换为毫秒
+            self.logger.info(f"CDP connection established in {elapsed:.2f}ms")
+
             # 启动消息监听线程
             self._start_message_listener()
-            
+
         except Exception as e:
             self._connected = False
             self._running = False
+            elapsed = (time.time() - start_time) * 1000
+            self.logger.error(f"Connection failed after {elapsed:.2f}ms: {e}")
             raise ConnectionError(f"Failed to connect to CDP: {e}")
+
+    def _get_websocket_url(self) -> str:
+        """动态获取WebSocket调试URL
+
+        优先获取第一个page的WebSocket URL，如果没有page则使用browser URL
+
+        Returns:
+            str: WebSocket URL
+        """
+        import requests
+        try:
+            # 首先尝试获取pages列表
+            response = requests.get(
+                f"{self.config.http_url}/json/list",
+                timeout=self.config.connect_timeout
+            )
+            response.raise_for_status()
+            pages = response.json()
+
+            # 查找第一个可用的page
+            for page in pages:
+                if page.get('type') == 'page' and page.get('webSocketDebuggerUrl'):
+                    self.logger.debug(f"Using page: {page.get('title', 'Unknown')}")
+                    return page['webSocketDebuggerUrl']
+
+            # 如果没有page，使用browser endpoint
+            response = requests.get(
+                f"{self.config.http_url}/json/version",
+                timeout=self.config.connect_timeout
+            )
+            response.raise_for_status()
+            version_info = response.json()
+            return version_info['webSocketDebuggerUrl']
+        except Exception:
+            # 回退到静态URL
+            return self.config.websocket_url
     
     def disconnect(self) -> None:
         """断开WebSocket连接"""
@@ -243,13 +296,16 @@ class CDPSession(CDPClient):
             try:
                 # 接收消息
                 message = self.ws.recv()
-                
+
                 # 将消息放入队列
                 self._message_queue.put(message)
-                
+
             except websocket.WebSocketConnectionClosedException:
                 self.logger.warning("WebSocket connection closed")
                 break
+            except websocket.WebSocketTimeoutException:
+                # 超时是正常的，用于定期检查_running状态，不记录为错误
+                continue
             except Exception as e:
                 self.logger.error(f"Error in message listener: {e}")
                 # 短暂休眠后继续
@@ -342,13 +398,10 @@ class CDPSession(CDPClient):
         
         self.input.click(x, y)
 
-    def screenshot(self, output_file: str, full_page: bool = False, quality: int = 80) -> None:
-        """截取页面截图并保存到文件"""
-        result = self.page.screenshot(format="jpeg", quality=quality)
-        
-        if "data" not in result:
-            raise CDPError("截图失败: 未获取到图片数据")
-        
+    def take_screenshot(self, output_file: str, full_page: bool = False, quality: int = 80) -> None:
+        """截取页面截图并保存到文件（便利方法）"""
+        # 委托给screenshot commands
+        self.screenshot.capture(output_file, full_page=full_page, quality=quality)
         import base64
         image_data = base64.b64decode(result["data"])
         
@@ -357,8 +410,13 @@ class CDPSession(CDPClient):
 
     def evaluate(self, script: str, return_by_value: bool = True) -> Any:
         """执行JavaScript代码"""
-        result = self.runtime.evaluate(script, return_by_value=return_by_value)
-        return result.get("result", {}).get("value") if return_by_value else result
+        response = self.runtime.evaluate(script, return_by_value=return_by_value)
+        # CDP返回格式: {'id': ..., 'result': {'result': {'value': ...}}}
+        if return_by_value and response:
+            result = response.get("result", {})
+            if "result" in result:
+                return result["result"].get("value")
+        return response
 
     def get_title(self) -> str:
         """获取页面标题"""
@@ -388,14 +446,25 @@ class CDPSession(CDPClient):
             });
         """)
 
-    def highlight(self, selector: str, color: str = "yellow") -> None:
-        """高亮显示指定元素"""
+    def highlight(self, selector: str, color: str = "yellow", border_width: int = 3) -> None:
+        """
+        高亮显示指定元素
+
+        Args:
+            selector: CSS选择器
+            color: 高亮颜色，默认yellow
+            border_width: 边框宽度（像素），默认3
+        """
         self.evaluate(f"""
-            document.querySelectorAll('{selector}').forEach(el => {{
-                el.style.backgroundColor = '{color}';
-                el.style.border = '2px solid red';
-            }});
-        """)
+            (function() {{
+                document.querySelectorAll('{selector}').forEach(el => {{
+                    el.style.border = '{border_width}px solid {color}';
+                    el.style.outline = '{border_width}px solid {color}';
+                    el.setAttribute('data-auvima-highlight', 'true');
+                }});
+                return true;
+            }})()
+        """, return_by_value=True)
 
     def pointer(self, selector: str) -> None:
         """在元素上显示鼠标指针"""
