@@ -13,17 +13,33 @@ description: "创建可复用的浏览器操作配方脚本"
 ## 可用的AuViMa原子操作
 
 ```bash
-# 导航到URL
-uv run auvima navigate <url>
+# --- 基础导航 ---
+# 导航到URL (可选等待元素出现)
+uv run auvima navigate <url> [--wait-for <selector>]
+# 获取页面标题
+uv run auvima get-title
 
+# --- 交互操作 ---
 # 点击元素
-uv run auvima click <selector>
+uv run auvima click <selector> [--wait-timeout 10]
+# 滚动页面 (正数向下，负数向上)
+uv run auvima scroll <pixels>
+# 等待指定时间
+uv run auvima wait <seconds>
 
-# 执行JavaScript表达式
-uv run auvima exec-js <expression>
+# --- 信息提取与调试 ---
+# 执行JavaScript (加 --return-value 获取结果)
+uv run auvima exec-js <expression> [--return-value]
+# 获取文本内容 (默认body)
+uv run auvima get-content [selector]
+# 截图 (加 --full-page 截全屏)
+uv run auvima screenshot <output_file> [--full-page]
 
-# 截图
-uv run auvima screenshot <output_file>
+# --- 视觉确认 (用于验证选择器) ---
+# 高亮元素
+uv run auvima highlight <selector>
+# 显示鼠标指针
+uv run auvima pointer <selector>
 ```
 
 **选择器类型**：CSS选择器、ARIA标签（`[aria-label="..."]`）、ID（`#id`）、类名（`.class`）
@@ -56,9 +72,18 @@ uv run auvima screenshot <output_file>
 ### 1. 目标澄清
 
 问清楚：
-- 在哪个网站操作？（用于命名：`<平台>_<功能>.js`）
+- 在哪个网站操作？
 - 要完成什么任务？
 - 前置条件是什么？（如：已打开某页面、已登录）
+
+**文件命名思考**：
+根据任务目标，构思一个能自我解释的**短句文件名**。
+- 格式：`<平台>_<动词>_<对象>_<补充>.js`
+- 目的：让AI仅看文件名就能理解脚本用途
+- 示例：
+  - `youtube_extract_video_transcript.js` (好：清晰明了)
+  - `youtube_transcript.js` (差：是提取？显示？还是隐藏？)
+  - `github_star_repository_if_not_starred.js` (好：逻辑完整)
 
 ### 2. 逐步探索
 
@@ -79,15 +104,15 @@ uv run auvima screenshot <output_file>
 
 ### 3. 生成配方文件
 
-对话结束后，**使用Write工具**创建两个文件：
+对话结束后，**使用Write工具**创建两个文件。**注意：Markdown文档必须与JS脚本完全同名！**
 
-#### 文件1: `src/auvima/recipes/<平台>_<功能>.js`
+#### 文件1: `src/auvima/recipes/<自解释文件名>.js`
 
 JavaScript配方脚本：
 
 ```javascript
 /**
- * Recipe: <平台>_<功能>
+ * Recipe: <自解释文件名>
  * Platform: <平台名>
  * Description: <功能描述>
  * Created: <YYYY-MM-DD>
@@ -133,23 +158,34 @@ JavaScript配方脚本：
 - 操作后等待：点击/输入后500ms，导航后2000ms
 - 清晰的错误消息
 
-#### 文件2: `src/auvima/recipes/<平台>_<功能>.md`
+#### 文件2: `src/auvima/recipes/<自解释文件名>.md`
+
+**关键要求**：必须与JS文件同名（仅后缀不同），作为该配方的配套说明书。AI在使用配方前会检索并阅读此文件。
 
 知识文档，**必须包含6个标准章节**：
 
 ```markdown
-# <平台>_<功能>
+# <自解释文件名>
 
 ## 功能描述
 <详细说明这个配方的用途、适用场景和价值>
 
 ## 使用方法
+
+**配方执行器说明**：生成的配方本质上是JavaScript代码，通过CDP的Runtime.evaluate接口注入到浏览器中执行。因此，执行配方的标准方式是使用 `uv run auvima exec-js` 命令。
+
 1. <前置条件步骤>
 2. 执行配方：
    ```bash
-   uv run auvima exec-js recipes/<平台>_<功能>.js
+   # 将配方JS文件内容作为脚本注入浏览器执行
+   uv run auvima exec-js recipes/<自解释文件名>.js
    ```
 3. <查看结果的方法>
+
+**注意**：AI调试时请记住，你生成的 `.js` 文件不是在 Node.js 环境中运行，而是在浏览器的上下文中运行（类似 Chrome Console）。因此：
+- 不能使用 `require()` 或 `import`
+- 可以直接使用 `document`, `window` 等浏览器 API
+- `console.log` 的输出通常需要查看 `--return-value` 或浏览器控制台
 
 ## 前置条件
 - <条件1：如"已打开YouTube视频页面">
@@ -214,7 +250,7 @@ JavaScript配方脚本：
 2. **提取元数据**：从每个.js文件头部注释读取：
    ```javascript
    /**
-    * Recipe: youtube_extract_transcript
+    * Recipe: youtube_extract_video_transcript
     * Platform: youtube
     * Description: 提取视频字幕内容
     * Version: 2
@@ -226,11 +262,11 @@ JavaScript配方脚本：
    配方库（src/auvima/recipes/）：
 
    【YouTube】
-   1. youtube_extract_transcript.js - 提取视频字幕内容 (v2)
-   2. youtube_download_video.js - 下载视频 (v1)
+   1. youtube_extract_video_transcript.js - 提取视频字幕内容 (v2)
+   2. youtube_download_video_as_mp4.js - 下载视频 (v1)
 
    【GitHub】  
-   3. github_clone_info.js - 获取仓库克隆信息 (v1)
+   3. github_get_repository_clone_url.js - 获取仓库克隆信息 (v1)
 
    总计：3个配方
    ```
@@ -241,7 +277,7 @@ JavaScript配方脚本：
 
 1. **你会写代码**：直接用Write工具写.js和.md，不要调用任何Python函数
 2. **你经历过整个过程**：你执行了CDP命令，所以你知道怎么写JavaScript
-3. **文件命名规范**：`<平台>_<功能>.js`（小写字母、下划线分隔）
+3. **文件命名规范**：`<平台>_<动词>_<对象>_<补充>.js`（全小写，短句式），必须有同名`.md`文件
 4. **6章节完整性**：知识文档必须包含全部6个章节
 5. **选择器降级**：按优先级从高到低排列，提供2-3个备选
 6. **等待时间**：根据实际执行经验设置（点击500ms，导航2000ms）
