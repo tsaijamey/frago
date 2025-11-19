@@ -40,7 +40,8 @@ class RuntimeCommands:
             "Runtime.evaluate",
             {
                 "expression": expression,
-                "returnByValue": return_by_value
+                "returnByValue": return_by_value,
+                "awaitPromise": True
             }
         )
         
