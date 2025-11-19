@@ -128,8 +128,24 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
 )
 @click.pass_context
 def execute_javascript(ctx, script: str, return_value: bool):
-    """执行JavaScript代码"""
+    """
+    执行JavaScript代码
+    
+    SCRIPT 参数可以是直接的JavaScript代码，也可以是包含代码的文件路径。
+    """
     try:
+        # 检查是否为文件路径
+        if os.path.exists(script) and os.path.isfile(script):
+            try:
+                with open(script, 'r', encoding='utf-8') as f:
+                    script_content = f.read()
+                if ctx.obj['DEBUG']:
+                    click.echo(f"从文件加载脚本: {script}")
+                script = script_content
+            except Exception as e:
+                click.echo(f"无法读取脚本文件: {e}", err=True)
+                sys.exit(1)
+
         with create_session(ctx) as session:
             result = session.evaluate(script, return_by_value=return_value)
             if return_value:
