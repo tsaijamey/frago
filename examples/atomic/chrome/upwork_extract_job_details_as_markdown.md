@@ -1,3 +1,29 @@
+---
+name: upwork_extract_job_details_as_markdown
+type: atomic
+runtime: chrome-js
+version: "1.0"
+description: "从Upwork job详情页提取完整工作信息并格式化为Markdown文档"
+use_cases:
+  - "批量收集Upwork工作机会信息"
+  - "建立工作档案库进行市场分析"
+  - "跟踪和比较多个职位信息"
+output_targets:
+  - stdout
+  - file
+tags:
+  - upwork
+  - job-extraction
+  - web-scraping
+  - freelance
+inputs: {}
+outputs:
+  markdown_text:
+    type: string
+    description: "包含完整job信息的结构化Markdown文本"
+dependencies: []
+---
+
 # upwork_extract_job_details_as_markdown
 
 ## 功能描述

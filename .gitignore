@@ -47,3 +47,6 @@ htmlcov/
 
 # private working files
 workdir/
+
+# User-level recipes (project-specific)
+.auvima/

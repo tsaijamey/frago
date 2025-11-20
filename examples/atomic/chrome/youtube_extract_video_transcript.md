@@ -1,3 +1,30 @@
+---
+name: youtube_extract_video_transcript
+type: atomic
+runtime: chrome-js
+version: "1.0"
+description: "提取YouTube视频的完整转录文本（包括时间戳和对应文字）"
+use_cases:
+  - "批量提取视频字幕内容用于文本分析"
+  - "为视频创建索引或摘要"
+  - "学习材料的文字化存档"
+  - "无障碍访问支持"
+output_targets:
+  - stdout
+  - file
+tags:
+  - youtube
+  - transcript
+  - subtitle-extraction
+  - web-scraping
+inputs: {}
+outputs:
+  transcript_data:
+    type: object
+    description: "包含视频转录片段的JSON对象（时间戳+文字）"
+dependencies: []
+---
+
 # youtube_extract_video_transcript
 
 ## 功能描述

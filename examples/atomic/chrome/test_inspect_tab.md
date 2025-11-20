@@ -1,3 +1,30 @@
+---
+name: test_inspect_tab
+type: atomic
+runtime: chrome-js
+version: "1.0"
+description: "获取当前浏览器标签页的详细诊断信息（标题、URL、视口、性能指标）"
+use_cases:
+  - "诊断页面加载问题"
+  - "收集浏览器环境信息"
+  - "验证CDP连接和页面状态"
+  - "自动化测试中的环境检查"
+output_targets:
+  - stdout
+  - file
+tags:
+  - diagnostic
+  - testing
+  - browser-info
+  - debug
+inputs: {}
+outputs:
+  inspection_report:
+    type: string
+    description: "格式化的标签页诊断报告"
+dependencies: []
+---
+
 # test_inspect_tab
 
 ## 功能描述

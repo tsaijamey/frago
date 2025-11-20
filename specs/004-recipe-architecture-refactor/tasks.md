@@ -66,7 +66,7 @@
 - [X] T016 [US0] 在 `src/auvima/cli/recipe_commands.py` 中实现 `recipe run <name>` 命令，支持 `--params`, `--params-file`, `--output-file`, `--output-clipboard` 选项
 - [X] T017 [US0] 在 `src/auvima/cli/main.py` 中注册 `recipe` 命令组，关联到 `recipe_commands.py` 的命令函数
 - [X] T018 [P] [US0] 迁移现有 Recipe 到示例目录：将 `src/auvima/recipes/upwork_extract_job_details_as_markdown.js` 移动到 `examples/atomic/chrome/`
-- [ ] T019 [P] [US0] 为迁移的 Recipe 创建元数据文件：`examples/atomic/chrome/upwork_extract_job_details_as_markdown.md`，包含 AI 字段（description, use_cases, tags, output_targets）
+- [X] T019 [P] [US0] 为迁移的 Recipe 创建元数据文件：`examples/atomic/chrome/upwork_extract_job_details_as_markdown.md`，包含 AI 字段（description, use_cases, tags, output_targets）
 - [ ] T020 [US0] 创建集成测试 `tests/integration/test_ai_workflow.py`，模拟 AI 调用 `recipe list --format json` → 解析 JSON → 选择 Recipe → 调用 `recipe run` 的完整流程
 - [ ] T021 [US0] 更新 `.claude/commands/auvima-recipe.md` 文档，说明 `/auvima.recipe` 命令如何支持 AI 生成 Workflow Recipe（为后续 Workflow 生成功能预留）
 
@@ -82,11 +82,11 @@
 
 ### Implementation for User Story 1
 
-- [ ] T022 [P] [US1] 在 `src/auvima/recipes/runner.py` 中实现 `_run_chrome_js(script_path, params)` 方法，调用 `uv run auvima exec-js`，返回 JSON 结果
-- [ ] T023 [P] [US1] 在 `src/auvima/recipes/runner.py` 中实现 `_run_python(script_path, params)` 方法，调用 `python3 <script> <params_json>`，返回 JSON 结果
-- [ ] T024 [P] [US1] 在 `src/auvima/recipes/runner.py` 中实现 `_run_shell(script_path, params)` 方法，调用 `<script> <params_json>`，检查执行权限，返回 JSON 结果
-- [ ] T025 [US1] 在 `src/auvima/recipes/runner.py` 的 `run()` 方法中实现运行时选择逻辑：根据 `metadata.runtime` 调用对应的执行器（chrome-js/python/shell）
-- [ ] T026 [US1] 在 `src/auvima/recipes/runner.py` 中实现错误处理：捕获执行失败、JSON 解析错误、超时等，返回统一格式的 `RecipeExecutionError`
+- [X] T022 [P] [US1] 在 `src/auvima/recipes/runner.py` 中实现 `_run_chrome_js(script_path, params)` 方法，调用 `uv run auvima exec-js`，返回 JSON 结果
+- [X] T023 [P] [US1] 在 `src/auvima/recipes/runner.py` 中实现 `_run_python(script_path, params)` 方法，调用 `python3 <script> <params_json>`，返回 JSON 结果
+- [X] T024 [P] [US1] 在 `src/auvima/recipes/runner.py` 中实现 `_run_shell(script_path, params)` 方法，调用 `<script> <params_json>`，检查执行权限，返回 JSON 结果
+- [X] T025 [US1] 在 `src/auvima/recipes/runner.py` 的 `run()` 方法中实现运行时选择逻辑：根据 `metadata.runtime` 调用对应的执行器（chrome-js/python/shell）
+- [X] T026 [US1] 在 `src/auvima/recipes/runner.py` 中实现错误处理：捕获执行失败、JSON 解析错误、超时等，返回统一格式的 `RecipeExecutionError`
 - [ ] T027 [P] [US1] 创建示例 Python Recipe：`examples/atomic/system/clipboard_read.py` 和 `clipboard_read.md`，读取剪贴板内容并输出 JSON
 - [ ] T028 [P] [US1] 创建示例 Shell Recipe：`examples/atomic/system/file_copy.sh` 和 `file_copy.md`，复制文件并输出操作结果 JSON
 - [ ] T029 [US1] 创建集成测试 `tests/integration/test_recipe_execution.py`，测试三种运行时的 Recipe 执行、参数传递、JSON 输出、错误处理
