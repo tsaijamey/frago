@@ -20,15 +20,11 @@ class ChromeCDPLauncher:
     def __init__(self):
         self.system = platform.system()
         self.chrome_path = self._find_chrome()
-        self.project_root = Path(__file__).parent.parent
-        self.profile_dir = self.project_root / "chrome_profile"
+        self.profile_dir = self._get_system_profile_dir()
         self.debugging_port = 9222
         self.width = 1280
         self.height = 960
         self.chrome_process = None
-
-        # 初始化profile目录
-        self._init_profile_dir()
 
     def _find_chrome(self):
         """跨平台查找Chrome浏览器"""
@@ -75,63 +71,14 @@ class ChromeCDPLauncher:
                 home / ".config/chromium"
             ]
         else:
-            return None
+            raise OSError(f"不支持的操作系统: {self.system}")
 
         for dir_path in possible_dirs:
             if dir_path.exists():
+                print(f"使用系统Chrome配置: {dir_path}")
                 return dir_path
 
-        return None
-
-    def _init_profile_dir(self):
-        """初始化项目Chrome profile目录
-
-        如果chrome_profile不存在，从系统默认位置复制必要的用户数据
-        """
-        if self.profile_dir.exists():
-            print(f"使用现有profile目录: {self.profile_dir}")
-            return
-
-        print(f"初始化profile目录: {self.profile_dir}")
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
-
-        # 查找系统默认profile
-        system_profile = self._get_system_profile_dir()
-        if not system_profile:
-            print("未找到系统Chrome配置，使用空profile")
-            return
-
-        print(f"从系统profile复制数据: {system_profile}")
-
-        # 只复制必要的文件和目录，避免复制大型缓存
-        items_to_copy = [
-            "Default/Bookmarks",           # 书签
-            "Default/Preferences",         # 偏好设置
-            "Default/Extensions",          # 扩展
-            "Default/Cookies",             # Cookies
-            "Default/History",             # 历史记录
-            "Default/Favicons",            # 网站图标
-            "Local State",                 # 本地状态
-        ]
-
-        copied_count = 0
-        for item in items_to_copy:
-            src = system_profile / item
-            dst = self.profile_dir / item
-
-            try:
-                if src.exists():
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    if src.is_dir():
-                        shutil.copytree(src, dst, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(src, dst)
-                    copied_count += 1
-            except Exception as e:
-                # 非关键文件复制失败不中断
-                print(f"  跳过 {item}: {e}")
-
-        print(f"已复制 {copied_count}/{len(items_to_copy)} 项配置数据")
+        raise FileNotFoundError("未找到系统Chrome配置目录")
         
     def kill_existing_chrome(self):
         """关闭现有的Chrome CDP实例"""
@@ -211,8 +158,8 @@ class ChromeCDPLauncher:
             print("请安装Google Chrome或Chromium浏览器")
             sys.exit(1)
 
-        if not self.profile_dir.exists():
-            print(f"错误: 配置文件目录不存在: {self.profile_dir}")
+        if not self.profile_dir:
+            print("错误: 未找到系统Chrome配置目录")
             sys.exit(1)
 
         # Chrome启动参数
