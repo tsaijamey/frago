@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 class ChromeCDPLauncher:
-    def __init__(self):
+    def __init__(self, headless=False, void=False):
         self.system = platform.system()
         self.chrome_path = self._find_chrome()
         self.project_root = Path(__file__).parent.parent
@@ -25,6 +25,8 @@ class ChromeCDPLauncher:
         self.debugging_port = 9222
         self.width = 1280
         self.height = 960
+        self.headless = headless
+        self.void = void
         self.chrome_process = None
 
         # 初始化profile目录
@@ -135,15 +137,29 @@ class ChromeCDPLauncher:
         
     def kill_existing_chrome(self):
         """关闭现有的Chrome CDP实例"""
+        killed_count = 0
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 cmdline = proc.info.get('cmdline', [])
-                if cmdline and 'Google Chrome' in str(cmdline) and '--remote-debugging-port' in str(cmdline):
+                if not cmdline:
+                    continue
+
+                # 检查是否是 Chrome 进程且使用了 CDP
+                cmdline_str = ' '.join(cmdline)
+                is_chrome = 'chrome' in proc.info.get('name', '').lower()
+                has_cdp_port = f'--remote-debugging-port={self.debugging_port}' in cmdline_str
+
+                if is_chrome and has_cdp_port:
                     print(f"终止现有Chrome进程 PID: {proc.info['pid']}")
                     proc.terminate()
                     proc.wait(timeout=3)
+                    killed_count += 1
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
                 pass
+
+        if killed_count > 0:
+            print(f"已终止 {killed_count} 个Chrome进程")
+            time.sleep(1)  # 等待进程完全退出
     
     def wait_for_cdp(self, timeout=10):
         """等待CDP接口就绪"""
@@ -157,6 +173,54 @@ class ChromeCDPLauncher:
                 pass
             time.sleep(0.5)
         return False
+
+    def inject_stealth_scripts(self):
+        """注入反检测脚本到所有新页面"""
+        try:
+            # 读取 stealth.js 文件
+            stealth_js_path = self.project_root / "src" / "auvima" / "cdp" / "stealth.js"
+            if not stealth_js_path.exists():
+                print(f"警告: 反检测脚本文件不存在: {stealth_js_path}")
+                return
+
+            with open(stealth_js_path, 'r', encoding='utf-8') as f:
+                stealth_script = f.read()
+
+            # 获取第一个标签页的 WebSocket URL
+            response = requests.get(f"http://localhost:{self.debugging_port}/json", timeout=2)
+            targets = response.json()
+
+            if not targets:
+                print("警告: 未找到可注入的标签页")
+                return
+
+            # 使用第一个标签页注入脚本
+            ws_url = targets[0]['webSocketDebuggerUrl']
+
+            import websocket
+            import json
+
+            ws = websocket.create_connection(ws_url)
+
+            # 通过 CDP Page.addScriptToEvaluateOnNewDocument 注入脚本
+            # 这样所有新打开的页面都会自动执行此脚本
+            message = {
+                "id": 1,
+                "method": "Page.addScriptToEvaluateOnNewDocument",
+                "params": {
+                    "source": stealth_script
+                }
+            }
+
+            ws.send(json.dumps(message))
+            result = ws.recv()
+            ws.close()
+
+            print("✓ Stealth反检测脚本已注入（将在所有新页面加载前执行）")
+
+        except Exception as e:
+            print(f"警告: Stealth脚本注入失败: {e}")
+            print("提示: 基础反检测参数仍然生效")
     
     def set_window_size(self):
         """设置Chrome窗口大小（跨平台）"""
@@ -220,15 +284,33 @@ class ChromeCDPLauncher:
             self.chrome_path,
             f"--user-data-dir={self.profile_dir}",
             f"--remote-debugging-port={self.debugging_port}",
-            "--remote-allow-origins=*"  # 允许所有来源的WebSocket连接
+            "--remote-allow-origins=*",  # 允许所有来源的WebSocket连接
+            # Stealth 反检测参数（总是启用）
+            "--disable-blink-features=AutomationControlled",  # 移除自动化控制标志
+            "--disable-dev-shm-usage",  # 禁用共享内存
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ]
+
+        # Headless 模式
+        if self.headless:
+            cmd.extend([
+                "--headless=new",  # 新版 headless 模式
+                "--disable-gpu",  # 禁用GPU加速
+                f"--window-size={self.width},{self.height}",
+            ])
+        # 虚空模式：窗口移到屏幕外
+        elif self.void:
+            cmd.append("--window-position=-2000,-2000")
 
         print("启动Chrome浏览器...")
         print(f"操作系统: {self.system}")
         print(f"Chrome路径: {self.chrome_path}")
         print(f"用户数据目录: {self.profile_dir}")
         print(f"远程调试端口: {self.debugging_port}")
-        print(f"目标窗口尺寸: {self.width}x{self.height}")
+        print(f"Stealth反检测: 已启用")
+        print(f"Headless模式: {'是' if self.headless else '否'}")
+        if not self.headless:
+            print(f"虚空模式: {'是' if self.void else '否'}")
 
         # 启动Chrome
         self.chrome_process = subprocess.Popen(
@@ -240,12 +322,16 @@ class ChromeCDPLauncher:
         # 等待Chrome启动
         time.sleep(3)
 
-        # 设置窗口大小（跨平台）
-        self.set_window_size()
+        # 设置窗口大小（仅在正常可视模式下）
+        if not self.void and not self.headless:
+            self.set_window_size()
 
         # 等待CDP就绪
         if self.wait_for_cdp():
             print(f"Chrome CDP已就绪，监听端口: {self.debugging_port}")
+
+            # 注入 stealth.js 反检测脚本（总是执行）
+            self.inject_stealth_scripts()
         else:
             print("警告: Chrome CDP未能在预期时间内就绪")
 
@@ -294,7 +380,28 @@ class ChromeCDPLauncher:
 
 
 def main():
-    launcher = ChromeCDPLauncher()
+    import argparse
+    parser = argparse.ArgumentParser(
+        description='启动带CDP支持的Chrome浏览器（默认启用Stealth反检测）'
+    )
+    parser.add_argument(
+        '--headless',
+        action='store_true',
+        help='无头模式：无窗口运行（Stealth反检测仍然启用）'
+    )
+    parser.add_argument(
+        '--void',
+        action='store_true',
+        help='虚空模式：窗口移到屏幕外（Stealth反检测仍然启用）'
+    )
+    args = parser.parse_args()
+
+    # headless 和 void 不能同时使用
+    if args.headless and args.void:
+        print("警告: --headless 和 --void 不能同时使用，将使用 --headless 模式")
+        args.void = False
+
+    launcher = ChromeCDPLauncher(headless=args.headless, void=args.void)
     launcher.launch()
     launcher.keep_alive()
 
