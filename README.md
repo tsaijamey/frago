@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
-[![macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](https://www.apple.com/macos/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/AuViMa)
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
@@ -47,7 +47,9 @@ AuViMa是一个AI导演的屏幕录制自动化系统，专注于制作4类教�
 
 ### 环境要求
 
-- macOS（用于AVFoundation录制）
+- **操作系统**：macOS 或 Linux（录制方式需适配）
+  - macOS: 使用 AVFoundation 录制
+  - Linux: 需要适配录制方案
 - Chrome浏览器
 - Python 3.12+
 - ffmpeg 8.0+
@@ -112,11 +114,27 @@ uv run auvima recipe run youtube_extract_video_transcript \
 
 MIT License - 详见 [LICENSE](LICENSE) 文件
 
+## 👤 作者
+
+**Jamey Tsai** - [caijia@frago.ai](mailto:caijia@frago.ai)
+
+项目创始人和主要维护者
+
+## 🤝 贡献者
+
+感谢所有为本项目做出贡献的开发者！
+
+<a href="https://github.com/tsaijamey/AuViMa/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tsaijamey/AuViMa" />
+</a>
+
+欢迎提交 Issue 和 Pull Request！
+
 ## 📮 联系方式
 
-- 项目问题：[提交Issue](https://github.com/yourusername/AuViMa/issues)
-- 技术讨论：[Discussions](https://github.com/yourusername/AuViMa/discussions)
+- 项目问题：[提交Issue](https://github.com/tsaijamey/AuViMa/issues)
+- 技术讨论：[Discussions](https://github.com/tsaijamey/AuViMa/discussions)
 
 ---
 
-Created by Claude Code with Human | 2025-11
+Created with Claude Code | 2025-11

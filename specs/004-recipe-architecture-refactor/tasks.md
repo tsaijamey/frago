@@ -123,13 +123,13 @@
 
 ### Implementation for User Story 3
 
-- [ ] T037 [P] [US3] 在 `src/auvima/recipes/__init__.py` 中导出 `RecipeRunner` 类，供 Workflow Recipe 代码导入使用
-- [ ] T038 [P] [US3] 在 `src/auvima/recipes/runner.py` 中实现 `run()` 方法返回值规范化：返回 `{"success": bool, "data": dict, "error": dict | None}` 格式
-- [ ] T039 [US3] 创建示例 Workflow Recipe：`examples/workflows/upwork_batch_extract.py`，循环调用 `upwork_extract_job_details_as_markdown`，处理多个 URL
-- [ ] T040 [P] [US3] 为 Workflow 创建元数据文件：`examples/workflows/upwork_batch_extract.md`，声明 `type: workflow`, `runtime: python`, `dependencies: [upwork_extract_job_details_as_markdown]`
-- [ ] T041 [US3] 在 `src/auvima/recipes/registry.py` 的 `scan()` 方法中实现依赖检查：验证 Workflow 的 `dependencies` 中列出的 Recipe 是否存在
-- [ ] T042 [US3] 在 `src/auvima/recipes/runner.py` 中实现异常传播：Workflow 调用原子 Recipe 失败时，抛出 `RecipeExecutionError` 供 Workflow 捕获
-- [ ] T043 [US3] 创建集成测试 `tests/integration/test_workflow_execution.py`，测试 Workflow 调用多个原子 Recipe、循环处理、错误处理、结果汇总
+- [X] T037 [P] [US3] 在 `src/auvima/recipes/__init__.py` 中导出 `RecipeRunner` 类，供 Workflow Recipe 代码导入使用
+- [X] T038 [P] [US3] 在 `src/auvima/recipes/runner.py` 中实现 `run()` 方法返回值规范化：返回 `{"success": bool, "data": dict, "error": dict | None}` 格式
+- [X] T039 [US3] 创建示例 Workflow Recipe：`examples/workflows/upwork_batch_extract.py`，循环调用 `upwork_extract_job_details_as_markdown`，处理多个 URL
+- [X] T040 [P] [US3] 为 Workflow 创建元数据文件：`examples/workflows/upwork_batch_extract.md`，声明 `type: workflow`, `runtime: python`, `dependencies: [upwork_extract_job_details_as_markdown]`
+- [X] T041 [US3] 在 `src/auvima/recipes/registry.py` 的 `scan()` 方法中实现依赖检查：验证 Workflow 的 `dependencies` 中列出的 Recipe 是否存在
+- [X] T042 [US3] 在 `src/auvima/recipes/runner.py` 中实现异常传播：Workflow 调用原子 Recipe 失败时，抛出 `RecipeExecutionError` 供 Workflow 捕获
+- [X] T043 [US3] 创建集成测试 `tests/integration/recipe/test_workflow_execution.py`，测试 Workflow 调用多个原子 Recipe、循环处理、错误处理、结果汇总
 
 **Checkpoint**: Workflow Recipe 可成功调用多个原子 Recipe，支持循环、条件、错误处理
 

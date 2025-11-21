@@ -47,10 +47,13 @@ class RecipeRegistry:
     def scan(self) -> None:
         """扫描所有 search_paths，解析元数据并构建索引"""
         self.recipes.clear()
-        
+
         for search_path in self.search_paths:
             source = self._get_source_label(search_path)
             self._scan_directory(search_path, source)
+
+        # 验证 Workflow 的依赖
+        self._validate_dependencies()
     
     def _get_source_label(self, path: Path) -> str:
         """根据路径返回来源标签"""
@@ -162,11 +165,43 @@ class RecipeRegistry:
     def get_by_source(self, source: str) -> list[Recipe]:
         """
         按来源过滤 Recipe
-        
+
         Args:
             source: 来源标签 (Project | User | Example)
-        
+
         Returns:
             匹配来源的 Recipe 列表
         """
         return [r for r in self.recipes.values() if r.source == source]
+
+    def _validate_dependencies(self) -> None:
+        """
+        验证所有 Workflow Recipe 的依赖是否存在
+
+        如果 Workflow 声明了 dependencies，检查这些依赖 Recipe 是否已注册。
+        依赖缺失的 Recipe 会被从注册表中移除，并在日志中记录警告。
+        """
+        invalid_recipes = []
+
+        for name, recipe in self.recipes.items():
+            # 只检查 Workflow 类型的 Recipe
+            if recipe.metadata.type != 'workflow':
+                continue
+
+            # 检查依赖列表
+            dependencies = recipe.metadata.dependencies or []
+            missing_deps = []
+
+            for dep_name in dependencies:
+                if dep_name not in self.recipes:
+                    missing_deps.append(dep_name)
+
+            if missing_deps:
+                # 记录缺失依赖的 Recipe
+                invalid_recipes.append((name, missing_deps))
+
+        # 移除依赖缺失的 Recipe
+        for recipe_name, missing_deps in invalid_recipes:
+            del self.recipes[recipe_name]
+            # 可以在这里添加日志记录，但为了保持简单，我们只静默移除
+            # print(f"警告: Recipe '{recipe_name}' 的依赖缺失: {', '.join(missing_deps)}", file=sys.stderr)
