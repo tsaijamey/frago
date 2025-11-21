@@ -44,3 +44,9 @@ htmlcov/
 .env*
 !.env.example
 !.env.cdpREADME.pdf
+
+# private working files
+workdir/
+
+# User-level recipes (project-specific)
+.auvima/

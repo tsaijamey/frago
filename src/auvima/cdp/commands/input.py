@@ -26,17 +26,27 @@ class InputCommands:
     def click(self, x: int, y: int, button: str = "left") -> Dict[str, Any]:
         """
         在指定坐标点击
-        
+
         Args:
             x: X坐标
             y: Y坐标
             button: 鼠标按钮（"left", "right", "middle"）
-            
+
         Returns:
             Dict[str, Any]: 点击结果
         """
         self.logger.info(f"Clicking at ({x}, {y}) with {button} button")
-        
+
+        # 先发送鼠标移动事件（现代Web应用需要）
+        self.session.send_command(
+            "Input.dispatchMouseEvent",
+            {
+                "type": "mouseMoved",
+                "x": x,
+                "y": y
+            }
+        )
+
         # 发送鼠标按下事件
         self.session.send_command(
             "Input.dispatchMouseEvent",
@@ -48,7 +58,7 @@ class InputCommands:
                 "clickCount": 1
             }
         )
-        
+
         # 发送鼠标释放事件
         result = self.session.send_command(
             "Input.dispatchMouseEvent",
@@ -60,7 +70,7 @@ class InputCommands:
                 "clickCount": 1
             }
         )
-        
+
         self.logger.debug("Click completed")
         return result
     

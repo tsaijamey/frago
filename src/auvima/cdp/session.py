@@ -372,41 +372,39 @@ class CDPSession(CDPClient):
         """点击指定选择器的元素"""
         # 先等待元素出现
         self.page.wait_for_selector(selector, timeout=wait_timeout)
-        
+
         # 获取元素位置并点击
         result = self.dom.get_document()
-        node_id = result.get("root", {}).get("nodeId")
-        
+        # CDP返回格式: {"id": ..., "result": {"root": {...}}}
+        node_id = result.get("result", {}).get("root", {}).get("nodeId")
+
         if not node_id:
             raise CDPError("无法获取文档节点")
-        
+
         query_result = self.dom.query_selector(node_id, selector)
-        element_node_id = query_result.get("nodeId")
-        
+        # CDP返回格式: {"id": ..., "result": {"nodeId": ...}}
+        element_node_id = query_result.get("result", {}).get("nodeId")
+
         if not element_node_id:
             raise CDPError(f"未找到元素: {selector}")
-        
+
         box_model = self.dom.get_box_model(element_node_id)
-        content = box_model.get("content", [])
-        
+        # CDP返回格式: {"id": ..., "result": {"model": {"content": [...]}}}
+        content = box_model.get("result", {}).get("model", {}).get("content", [])
+
         if not content:
             raise CDPError(f"无法获取元素位置: {selector}")
-        
+
         # 计算元素中心点
         x = (content[0] + content[2]) / 2
         y = (content[1] + content[5]) / 2
-        
+
         self.input.click(x, y)
 
     def take_screenshot(self, output_file: str, full_page: bool = False, quality: int = 80) -> None:
         """截取页面截图并保存到文件（便利方法）"""
         # 委托给screenshot commands
         self.screenshot.capture(output_file, full_page=full_page, quality=quality)
-        import base64
-        image_data = base64.b64decode(result["data"])
-        
-        with open(output_file, "wb") as f:
-            f.write(image_data)
 
     def evaluate(self, script: str, return_by_value: bool = True) -> Any:
         """执行JavaScript代码"""

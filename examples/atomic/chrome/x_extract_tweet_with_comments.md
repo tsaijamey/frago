@@ -1,3 +1,31 @@
+---
+name: x_extract_tweet_with_comments
+type: atomic
+runtime: chrome-js
+version: "1.0"
+description: "从X.com推文页面提取完整推文信息及评论列表"
+use_cases:
+  - "收集特定推文的讨论内容进行分析"
+  - "监控品牌推文的用户反馈"
+  - "研究热门话题的评论趋势"
+  - "构建推文数据集用于NLP研究"
+output_targets:
+  - stdout
+  - file
+tags:
+  - twitter
+  - x-com
+  - social-media
+  - web-scraping
+  - comments
+inputs: {}
+outputs:
+  tweet_data:
+    type: object
+    description: "包含推文和评论的JSON对象"
+dependencies: []
+---
+
 # x_extract_tweet_with_comments
 
 ## 功能描述

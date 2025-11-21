@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuViMa Stealth 模式检测</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-item {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .pass {
+            border-left: 5px solid #4CAF50;
+        }
+        .fail {
+            border-left: 5px solid #f44336;
+        }
+        .warning {
+            border-left: 5px solid #ff9800;
+        }
+        .label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .status {
+            padding: 3px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.pass { background: #4CAF50; color: white; }
+        .status.fail { background: #f44336; color: white; }
+        .status.warning { background: #ff9800; color: white; }
+        .summary {
+            background: #2196F3;
+            color: white;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🕵️ AuViMa Stealth 模式检测</h1>
+
+    <div class="summary">
+        <h2>检测摘要</h2>
+        <p id="summary">正在运行检测...</p>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        const results = [];
+
+        function addTest(name, passed, value) {
+            results.push({ name, passed, value });
+            const div = document.createElement('div');
+            div.className = `test-item ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `
+                <span class="label">${name}:</span>
+                <span class="status ${passed ? 'pass' : 'fail'}">${passed ? '✓ PASS' : '✗ FAIL'}</span>
+                <div style="margin-top: 5px; color: #666; font-size: 14px;">${value}</div>
+            `;
+            document.getElementById('results').appendChild(div);
+        }
+
+        // 测试 1: WebDriver 检测
+        addTest(
+            'navigator.webdriver',
+            navigator.webdriver === false || navigator.webdriver === undefined,
+            `值: ${navigator.webdriver}`
+        );
+
+        // 测试 2: Plugins 检测
+        addTest(
+            'navigator.plugins',
+            navigator.plugins.length > 0,
+            `数量: ${navigator.plugins.length}`
+        );
+
+        // 测试 3: Languages 检测
+        addTest(
+            'navigator.languages',
+            navigator.languages && navigator.languages.length > 0,
+            `值: ${JSON.stringify(navigator.languages)}`
+        );
+
+        // 测试 4: Chrome runtime
+        addTest(
+            'window.chrome',
+            window.chrome !== undefined,
+            `存在: ${window.chrome !== undefined}`
+        );
+
+        // 测试 5: Permissions
+        addTest(
+            'navigator.permissions',
+            navigator.permissions !== undefined,
+            `存在: ${navigator.permissions !== undefined}`
+        );
+
+        // 测试 6: Hardware Concurrency
+        addTest(
+            'navigator.hardwareConcurrency',
+            navigator.hardwareConcurrency > 0,
+            `值: ${navigator.hardwareConcurrency}`
+        );
+
+        // 测试 7: Device Memory
+        addTest(
+            'navigator.deviceMemory',
+            navigator.deviceMemory !== undefined,
+            `值: ${navigator.deviceMemory} GB`
+        );
+
+        // 测试 8: User Agent
+        addTest(
+            'User-Agent',
+            !navigator.userAgent.includes('Headless'),
+            `${navigator.userAgent.substring(0, 80)}...`
+        );
+
+        // 测试 9: Platform
+        addTest(
+            'navigator.platform',
+            navigator.platform !== '',
+            `值: ${navigator.platform}`
+        );
+
+        // 测试 10: Vendor
+        addTest(
+            'navigator.vendor',
+            navigator.vendor !== '',
+            `值: ${navigator.vendor}`
+        );
+
+        // 测试 11: WebGL Renderer
+        try {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+            const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            addTest(
+                'WebGL Renderer',
+                !renderer.includes('SwiftShader') && !renderer.includes('llvmpipe'),
+                `${renderer}`
+            );
+        } catch (e) {
+            addTest('WebGL Renderer', false, `错误: ${e.message}`);
+        }
+
+        // 测试 12: Window size
+        addTest(
+            'Window Size',
+            window.outerWidth > 0 && window.outerHeight > 0,
+            `${window.outerWidth} x ${window.outerHeight}`
+        );
+
+        // 生成摘要
+        const passedCount = results.filter(r => r.passed).length;
+        const totalCount = results.length;
+        const passRate = ((passedCount / totalCount) * 100).toFixed(1);
+
+        let summaryText = `通过: ${passedCount}/${totalCount} (${passRate}%)\n\n`;
+
+        if (passRate >= 90) {
+            summaryText += '🎉 优秀！Stealth 模式工作良好，大部分网站应该无法检测到自动化。';
+        } else if (passRate >= 70) {
+            summaryText += '⚠️ 良好。可以绕过基础检测，但可能被高级反爬虫系统识别。';
+        } else {
+            summaryText += '❌ 较差。容易被识别为自动化浏览器，建议检查 stealth 脚本是否正确加载。';
+        }
+
+        document.getElementById('summary').innerHTML = summaryText.replace(/\n/g, '<br>');
+
+        console.log('检测结果:', results);
+    </script>
+</body>
+</html>
