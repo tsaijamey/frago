@@ -158,7 +158,7 @@ class TestOutputHandlerClipboard:
             return __import__(name, *args, **kwargs)
 
         with patch('builtins.__import__', side_effect=import_side_effect):
-            with pytest.raises(RuntimeError, match="clipboard 输出需要 pyperclip 包"):
+            with pytest.raises(RuntimeError, match="clipboard 输出需要安装可选依赖 pyperclip"):
                 OutputHandler.handle(data, "clipboard")
 
     def test_to_clipboard_copy_fails(self):
