@@ -7,7 +7,13 @@ from .exceptions import (
     RecipeNotFoundError,
     RecipeValidationError,
 )
-from .metadata import RecipeMetadata, parse_metadata_file, validate_metadata
+from .metadata import (
+    RecipeMetadata,
+    parse_metadata_file,
+    validate_metadata,
+    validate_params,
+    check_param_type,
+)
 from .output_handler import OutputHandler
 from .registry import Recipe, RecipeRegistry
 from .runner import RecipeRunner
@@ -23,6 +29,8 @@ __all__ = [
     'RecipeMetadata',
     'parse_metadata_file',
     'validate_metadata',
+    'validate_params',
+    'check_param_type',
     # Registry
     'Recipe',
     'RecipeRegistry',

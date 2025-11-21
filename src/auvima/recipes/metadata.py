@@ -134,3 +134,88 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
     
     if errors:
         raise RecipeValidationError(metadata.name, errors)
+
+
+def validate_params(metadata: RecipeMetadata, params: dict[str, Any]) -> None:
+    """
+    验证运行时提供的参数是否符合元数据定义
+
+    Args:
+        metadata: Recipe 元数据
+        params: 用户提供的参数
+
+    Raises:
+        RecipeValidationError: 参数验证失败时抛出
+    """
+    errors = []
+
+    # 检查必需参数是否提供
+    for param_name, param_def in metadata.inputs.items():
+        if param_def.get('required', False):
+            if param_name not in params:
+                param_desc = param_def.get('description', '')
+                error_msg = f"缺少必需参数: '{param_name}'"
+                if param_desc:
+                    error_msg += f" ({param_desc})"
+                errors.append(error_msg)
+
+    # 检查提供的参数类型
+    for param_name, param_value in params.items():
+        if param_name in metadata.inputs:
+            param_def = metadata.inputs[param_name]
+            expected_type = param_def.get('type')
+            if expected_type:
+                type_errors = check_param_type(param_name, param_value, expected_type)
+                errors.extend(type_errors)
+
+    if errors:
+        raise RecipeValidationError(metadata.name, errors)
+
+
+def check_param_type(param_name: str, value: Any, expected_type: str) -> list[str]:
+    """
+    检查参数值的类型是否符合预期
+
+    Args:
+        param_name: 参数名称
+        value: 参数值
+        expected_type: 期望的类型 (string, number, boolean, array, object)
+
+    Returns:
+        错误消息列表（为空表示验证通过）
+    """
+    errors = []
+
+    # 类型映射
+    type_checks = {
+        'string': lambda v: isinstance(v, str),
+        'number': lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+        'boolean': lambda v: isinstance(v, bool),
+        'array': lambda v: isinstance(v, list),
+        'object': lambda v: isinstance(v, dict),
+    }
+
+    if expected_type not in type_checks:
+        # 未知类型，跳过检查
+        return errors
+
+    check_func = type_checks[expected_type]
+    if not check_func(value):
+        # 类型不匹配
+        actual_type = type(value).__name__
+        if isinstance(value, bool):
+            actual_type = 'boolean'
+        elif isinstance(value, (int, float)):
+            actual_type = 'number'
+        elif isinstance(value, str):
+            actual_type = 'string'
+        elif isinstance(value, list):
+            actual_type = 'array'
+        elif isinstance(value, dict):
+            actual_type = 'object'
+
+        errors.append(
+            f"参数 '{param_name}' 类型错误: 期望 {expected_type}，实际 {actual_type}"
+        )
+
+    return errors

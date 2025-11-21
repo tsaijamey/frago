@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .exceptions import RecipeExecutionError, RecipeValidationError
+from .metadata import validate_params
 from .registry import RecipeRegistry
 
 
@@ -123,16 +124,8 @@ class RecipeRunner:
         Raises:
             RecipeValidationError: 参数验证失败
         """
-        errors = []
-
-        # 检查必需参数
-        for param_name, param_def in metadata.inputs.items():
-            if param_def.get('required', False):
-                if param_name not in params:
-                    errors.append(f"缺少必需参数: {param_name}")
-
-        if errors:
-            raise RecipeValidationError(metadata.name, errors)
+        # 使用统一的参数验证函数（包含必需参数和类型检查）
+        validate_params(metadata, params)
 
     def _run_chrome_js(self, script_path: Path, params: dict[str, Any]) -> dict[str, Any]:
         """

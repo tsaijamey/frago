@@ -143,13 +143,13 @@
 
 ### Implementation for User Story 4
 
-- [ ] T044 [P] [US4] 在 `src/auvima/recipes/metadata.py` 中实现参数验证逻辑：检查必需参数（`inputs.*.required: true`）是否提供
-- [ ] T045 [P] [US4] 在 `src/auvima/recipes/metadata.py` 中实现类型检查逻辑：简单验证参数类型（string, number, boolean, array, object）
-- [ ] T046 [US4] 在 `src/auvima/recipes/runner.py` 的 `run()` 方法中调用参数验证：执行前验证 `params` 符合 `metadata.inputs` 定义
-- [ ] T047 [US4] 在 `src/auvima/cli/recipe_commands.py` 的 `info` 命令中实现完整元数据展示：名称、类型、运行时、版本、输入参数、输出字段、依赖、AI 字段（description, use_cases, tags, output_targets）
-- [ ] T048 [US4] 在 `src/auvima/cli/recipe_commands.py` 中实现参数缺失时的友好错误提示：明确指出缺少哪个必需参数
-- [ ] T049 [P] [US4] 创建单元测试 `tests/unit/test_metadata_parser.py`，测试 YAML frontmatter 解析、必需字段验证、AI 字段验证、依赖检查
-- [ ] T050 [US4] 更新所有示例 Recipe 的元数据文件，确保包含完整的 `inputs`, `outputs` 定义和 AI 字段
+- [X] T044 [P] [US4] 在 `src/auvima/recipes/metadata.py` 中实现参数验证逻辑：检查必需参数（`inputs.*.required: true`）是否提供
+- [X] T045 [P] [US4] 在 `src/auvima/recipes/metadata.py` 中实现类型检查逻辑：简单验证参数类型（string, number, boolean, array, object）
+- [X] T046 [US4] 在 `src/auvima/recipes/runner.py` 的 `run()` 方法中调用参数验证：执行前验证 `params` 符合 `metadata.inputs` 定义
+- [X] T047 [US4] 在 `src/auvima/cli/recipe_commands.py` 的 `info` 命令中实现完整元数据展示：名称、类型、运行时、版本、输入参数、输出字段、依赖、AI 字段（description, use_cases, tags, output_targets）
+- [X] T048 [US4] 在 `src/auvima/cli/recipe_commands.py` 中实现参数缺失时的友好错误提示：明确指出缺少哪个必需参数
+- [X] T049 [P] [US4] 创建单元测试 `tests/unit/recipe/test_metadata_parser.py`，测试 YAML frontmatter 解析、必需字段验证、AI 字段验证、依赖检查
+- [X] T050 [US4] 更新所有示例 Recipe 的元数据文件，确保包含完整的 `inputs`, `outputs` 定义和 AI 字段
 
 **Checkpoint**: 所有 Recipe 元数据完整，执行前自动验证参数，错误提示清晰
 
