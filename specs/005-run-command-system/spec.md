@@ -79,7 +79,7 @@ run实例采用**主题型**而非事务型设计，每个主题（如"find-job-
 
 ### User Story 4 - 清理过时的视频制作命令 (Priority: P3)
 
-删除5个绑定特定场景的视频制作slash commands（/auvima.start、/auvima.storyboard、/auvima.generate、/auvima.evaluate、/auvima.merge），将AuViMa的定位从"视频制作工具"转变为"通用浏览器自动化基建"。
+删除5个绑定特定场景的视频制作slash commands（/auvima.start、/auvima.storyboard、/auvima.generate、/auvima.evaluate、/auvima.merge），将AuViMa的定位从"视频制作工具"转变为"AI驱动的多运行时自动化基建"（支持Chrome CDP、Python、Shell三种运行时）。
 
 **Why this priority**: 这是架构清理工作，优先级较低但对项目定位很重要。删除这些命令后，未来如需视频制作功能可以基于Recipe系统重新实现。
 
