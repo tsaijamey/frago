@@ -123,17 +123,138 @@ AuViMa是一个AI导演的屏幕录制自动化系统，专注于制作4类教�
   首次遇到 → AI交互式探索 → 固化为Recipe → 后续直接复用
 
   例如：YouTube字幕提取
-  1. 用户：/auvima.recipe create "提取YouTube字幕"
+  1. 用户：/auvima.recipe "提取YouTube字幕"
   2. AI：交互式定位按钮、提取文本
-  3. 固化：youtube_extract_subtitles.js
-  4. 复用：uv run auvima exec-js recipes/youtube_extract_subtitles.js
+  3. 固化：youtube_extract_video_transcript.js + 元数据文档
+  4. 复用：uv run auvima recipe run youtube_extract_video_transcript
 
   节省：每次3-5轮LLM推理 → 1次脚本执行（~100ms）
+```
+
+**使用Recipe的三种方式**：
+```bash
+# 方式1: 推荐 - 元数据驱动（参数验证、输出处理）
+uv run auvima recipe run youtube_extract_video_transcript \
+    --params '{"url": "https://youtube.com/..."}' \
+    --output-file transcript.txt
+
+# 方式2: 发现可用的Recipe
+uv run auvima recipe list --format json
+
+# 方式3: 传统方式 - 直接执行JS（绕过元数据系统）
+uv run auvima exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
 **与Browser Use的差异**：
 - Browser Use: 每次任务都需LLM推理（$$$）
 - AuViMa: AI决策（分镜设计）+ Recipe加速（重复操作）
+
+### Recipe元数据驱动架构（004迭代）
+
+**设计理念：代码与资源分离**
+- `src/auvima/recipes/` - Python引擎代码（元数据解析、注册表、执行器）
+- `examples/atomic/chrome/` - 示例Recipe脚本 + 元数据文档
+- `~/.auvima/recipes/` - 用户级Recipe（待实现）
+- `.auvima/recipes/` - 项目级Recipe（待实现）
+
+**元数据文件结构（Markdown + YAML frontmatter）**：
+```markdown
+---
+name: youtube_extract_video_transcript
+type: atomic                    # atomic | workflow
+runtime: chrome-js              # chrome-js | python | shell
+version: "1.0"
+description: "提取YouTube视频完整字幕"
+use_cases: ["视频内容分析", "字幕下载"]
+tags: ["youtube", "transcript", "web-scraping"]
+output_targets: [stdout, file]
+inputs: {}
+outputs:
+  transcript:
+    type: string
+    description: "完整字幕文本"
+---
+
+# 功能描述
+...详细说明...
+```
+
+**元数据字段说明**：
+- **必需字段**：`name`, `type`, `runtime`, `version`, `inputs`, `outputs`
+- **AI可理解字段**（用于发现和选择Recipe）：
+  - `description`：简短功能描述（<200字符），帮助AI理解用途
+  - `use_cases`：适用场景列表，帮助AI判断是否适用
+  - `tags`：语义标签，用于分类和搜索
+  - `output_targets`：支持的输出方式（stdout/file/clipboard），让AI选择正确的输出选项
+
+**三级查找路径（优先级）**：
+1. 项目级：`.auvima/recipes/`（当前工作目录）
+2. 用户级：`~/.auvima/recipes/`（用户主目录）
+3. 示例级：`examples/`（仓库根目录）
+
+**三种运行时支持**：
+- `chrome-js`：通过 `uv run auvima exec-js` 执行JavaScript
+- `python`：通过Python解释器执行
+- `shell`：通过Shell执行脚本
+
+**三种输出目标**：
+- `stdout`：打印到控制台
+- `file`：保存到文件（`--output-file`）
+- `clipboard`：复制到剪贴板（`--output-clipboard`）
+
+**可用示例Recipe（4个）**：
+
+| 名称 | 功能 | 支持输出 |
+|------|------|----------|
+| `test_inspect_tab` | 获取当前标签页诊断信息（标题、URL、DOM统计） | stdout |
+| `youtube_extract_video_transcript` | 提取YouTube视频完整字幕 | stdout, file |
+| `upwork_extract_job_details_as_markdown` | 提取Upwork职位详情为Markdown格式 | stdout, file |
+| `x_extract_tweet_with_comments` | 提取X(Twitter)推文和评论 | stdout, file, clipboard |
+
+```bash
+# 查看所有Recipe
+uv run auvima recipe list
+
+# 查看Recipe详细信息
+uv run auvima recipe info youtube_extract_video_transcript
+```
+
+### AI-First设计理念
+
+Recipe系统的核心目标是**让AI Agent能够自主发现、理解和使用Recipe**，而不仅仅是人类开发者的工具。
+
+**AI如何使用Recipe系统**：
+
+```bash
+# 1. AI发现可用的Recipe（通过JSON格式获取结构化数据）
+uv run auvima recipe list --format json
+
+# 2. AI分析元数据理解Recipe的能力
+#    - description：这个Recipe做什么？
+#    - use_cases：适合哪些场景？
+#    - tags：语义分类
+#    - output_targets：支持哪些输出方式？
+
+# 3. AI根据任务需求选择合适的Recipe和输出方式
+uv run auvima recipe run youtube_extract_video_transcript \
+    --params '{"url": "https://youtube.com/..."}' \
+    --output-file /tmp/transcript.txt  # AI判断需要文件输出
+
+# 4. AI处理Recipe的执行结果（JSON格式）
+#    成功：{"success": true, "data": {...}}
+#    失败：{"success": false, "error": {...}}
+```
+
+**设计原则**：
+- 所有元数据面向AI可理解性设计（语义描述 > 技术细节）
+- JSON格式输出，便于AI解析和处理
+- 错误信息结构化，便于AI理解失败原因并采取行动
+- 输出目标明确声明，让AI选择正确的命令选项
+
+**与人类用户的关系**：
+- 人类用户：创建和维护Recipe（通过 `/auvima.recipe` 命令）
+- AI Agent：发现和使用Recipe（通过 `recipe list/run` 命令）
+- Recipe系统是连接两者的桥梁
 
 ## 系统架构
 
@@ -305,16 +426,28 @@ AuViMa/
 │   │   │       └── visual_effects.py # 视觉效果（spotlight/highlight）
 │   │   ├── cli/                     # 命令行接口
 │   │   │   ├── main.py              # CLI入口（Click框架）
-│   │   │   └── commands.py          # 所有CLI命令实现
-│   │   ├── recipes/                 # Recipe脚本库（AI加速工具）
-│   │   │   ├── youtube_extract_subtitles.js    # YouTube字幕提取
-│   │   │   ├── youtube_extract_subtitles.md    # 知识文档
-│   │   │   └── ... (其他平台配方)
+│   │   │   ├── commands.py          # 基础CDP命令实现
+│   │   │   └── recipe_commands.py   # Recipe管理命令（list/info/run）
+│   │   ├── recipes/                 # Recipe引擎代码（元数据驱动架构）
+│   │   │   ├── __init__.py          # 模块导出
+│   │   │   ├── metadata.py          # 元数据解析和验证
+│   │   │   ├── registry.py          # Recipe注册表和发现
+│   │   │   ├── runner.py            # Recipe执行器
+│   │   │   ├── output_handler.py    # 输出处理（stdout/file/clipboard）
+│   │   │   └── exceptions.py        # Recipe异常定义
 │   │   └── tools/                   # 开发工具
 │   │       └── function_mapping.py  # CDP功能映射验证工具
 │   ├── chrome_cdp_launcher.py       # Chrome CDP启动器（跨平台）
 │   ├── pipeline_master.py           # Pipeline主控制器
 │   └── requirements.txt             # Python依赖
+│
+├── examples/                        # 示例Recipe（不打包到wheel）
+│   └── atomic/
+│       └── chrome/
+│           ├── test_inspect_tab.js/.md                  # 页面检查诊断
+│           ├── youtube_extract_video_transcript.js/.md  # YouTube字幕提取
+│           ├── upwork_extract_job_details_as_markdown.js/.md  # Upwork职位详情
+│           └── x_extract_tweet_with_comments.js/.md    # X(Twitter)推文+评论提取
 │
 ├── specs/                           # 功能规格和迭代记录
 │   ├── 001-standardize-cdp-scripts/ # CDP脚本标准化
@@ -428,6 +561,41 @@ src/auvima/cdp/commands/
 
 所有CDP功能通过统一的CLI接口（`uv run auvima <command>`）访问。
 
+### Recipe管理命令
+
+Recipe系统提供元数据驱动的自动化脚本管理：
+
+```bash
+# 列出所有可用的Recipe
+uv run auvima recipe list
+
+# 以JSON格式列出（便于AI解析）
+uv run auvima recipe list --format json
+
+# 查看Recipe详细信息
+uv run auvima recipe info youtube_extract_video_transcript
+
+# 执行Recipe（推荐方式）
+uv run auvima recipe run youtube_extract_video_transcript \
+    --params '{"url": "https://youtube.com/watch?v=..."}' \
+    --output-file transcript.txt
+
+# 输出到剪贴板
+uv run auvima recipe run upwork_extract_job_details_as_markdown \
+    --params '{"url": "..."}' \
+    --output-clipboard
+```
+
+**支持选项**：
+- `--format [table/json/names]` - 输出格式（list命令）
+- `--source [project/user/example/all]` - 过滤Recipe来源（list命令）
+- `--type [atomic/workflow/all]` - 过滤Recipe类型（list命令）
+- `--params '{...}'` - JSON参数（run命令）
+- `--params-file <path>` - 从文件读取参数（run命令）
+- `--output-file <path>` - 保存输出到文件
+- `--output-clipboard` - 复制输出到剪贴板
+- `--timeout <seconds>` - 执行超时时间
+
 ### 重试机制
 
 CDP连接支持智能重试机制，特别针对代理环境优化：
@@ -469,22 +637,33 @@ CDP连接支持智能重试机制，特别针对代理环境优化：
   - `/auvima.evaluate` - AI质量评估
   - `/auvima.merge` - AI视频合成
 
-### Recipe系统（迭代003）
+### Recipe系统（迭代003-004）
+- [x] **Recipe元数据驱动架构**（004迭代 Phase 1-3）
+  - 元数据解析器（YAML frontmatter）
+  - Recipe注册表（三级查找路径：项目>用户>示例）
+  - Recipe执行器（chrome-js/python/shell runtime）
+  - 输出处理器（stdout/file/clipboard）
+  - CLI命令组（list/info/run）
 - [x] **Recipe管理命令** (`/auvima.recipe`)
-  - `create` - AI交互式探索创建Recipe
-  - `update` - 基于反馈迭代Recipe
-  - `list` - 展示所有可用Recipe
+  - AI交互式探索创建Recipe（003设计）
+  - `recipe list` - 列出所有Recipe（支持JSON格式）
+  - `recipe info` - 查看Recipe详细信息
+  - `recipe run` - 执行Recipe（参数验证+输出处理）
 - [x] **Recipe存储结构**
-  - 扁平目录设计（`src/auvima/recipes/`）
+  - 代码与资源分离（`src/auvima/recipes/`为引擎代码）
+  - 示例Recipe位于`examples/atomic/chrome/`
   - 描述性命名（`<平台>_<操作>_<对象>.js`）
-  - 配套知识文档（6章节标准）
-  - 版本历史追踪（在.md中）
+  - 配套元数据文档（.md + YAML frontmatter）
+  - AI可理解字段（description/use_cases/tags/output_targets）
 
 ### 项目迭代记录
-- [x] **Spec系统**（3次迭代）
+- [x] **Spec系统**（4次迭代）
   - 001: CDP脚本标准化（websocat方法统一）
   - 002: CDP集成重构（Python实现 + 代理支持）
   - 003: Recipe自动化系统设计
+  - 004: Recipe架构重构（元数据驱动 + AI-First设计）
+    - Phase 1-3已完成：基础架构 + AI可用性（US0）
+    - 待完成：多语言支持（US1）+ 用户级Recipe（US2）+ Workflow编排（US3）
 
 ## 待完成功能 📝
 
@@ -495,10 +674,15 @@ CDP连接支持智能重试机制，特别针对代理环境优化：
   - [ ] `/auvima.generate` - AI录制脚本生成
   - [ ] `/auvima.evaluate` - AI质量评估
   - [ ] `/auvima.merge` - AI视频合成
-- [ ] **Recipe系统实现**
-  - [ ] `/auvima.recipe create` - 交互式探索和固化
-  - [ ] `/auvima.recipe update` - 迭代更新机制
-  - [ ] Recipe执行器（`exec-js`命令）
+- [ ] **Recipe系统完善（004迭代剩余）**
+  - [x] Phase 1-3：基础架构 + AI可用性（元数据框架、注册表、执行器、CLI）
+  - [ ] Phase 4：多语言Recipe支持（Python/Shell runtime执行）
+  - [ ] Phase 5：用户级Recipe目录（`~/.auvima/recipes/` + `init`命令）
+  - [ ] Phase 6：Workflow Recipe编排（调用多个原子Recipe）
+  - [ ] Phase 7：参数验证和类型检查
+  - [ ] Phase 8：项目级Recipe支持（`.auvima/recipes/`）
+  - [ ] `/auvima.recipe` - AI交互式创建Recipe（slash command）
+  - [ ] `/auvima.recipe update` - 迭代更新Recipe
 - [ ] **Pipeline集成**
   - [ ] Pipeline与Claude CLI的集成
   - [ ] .done文件监控和阶段切换
