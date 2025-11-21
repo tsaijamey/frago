@@ -346,3 +346,64 @@ def annotate(ctx, selector: str, text: str, position: str):
     except CDPError as e:
         click.echo(f"添加标注失败: {e}", err=True)
         sys.exit(1)
+
+
+@click.command('init')
+@click.option(
+    '--force',
+    is_flag=True,
+    help='强制重新创建已存在的目录'
+)
+def init(force: bool):
+    """
+    初始化 AuViMa 用户级目录结构
+
+    创建 ~/.auvima/recipes/ 目录及其子目录:
+    - atomic/chrome/: Chrome CDP 操作的 Recipe
+    - atomic/system/: 系统操作的 Recipe
+    - workflows/: 编排多个 Recipe 的工作流
+    """
+    from pathlib import Path
+
+    user_home = Path.home()
+    auvima_dir = user_home / '.auvima'
+    recipes_dir = auvima_dir / 'recipes'
+
+    # 需要创建的目录列表
+    directories = [
+        recipes_dir / 'atomic' / 'chrome',
+        recipes_dir / 'atomic' / 'system',
+        recipes_dir / 'workflows'
+    ]
+
+    created = []
+    skipped = []
+
+    for directory in directories:
+        if directory.exists() and not force:
+            skipped.append(str(directory))
+            continue
+
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            created.append(str(directory))
+        except Exception as e:
+            click.echo(f"创建目录失败 {directory}: {e}", err=True)
+            sys.exit(1)
+
+    # 输出结果
+    if created:
+        click.echo("已创建以下目录:")
+        for dir_path in created:
+            click.echo(f"  ✓ {dir_path}")
+
+    if skipped:
+        click.echo("\n以下目录已存在（使用 --force 强制重新创建）:")
+        for dir_path in skipped:
+            click.echo(f"  - {dir_path}")
+
+    if not created and not skipped:
+        click.echo("所有目录已存在")
+
+    click.echo(f"\n用户级 Recipe 目录: {recipes_dir}")
+    click.echo("使用 'auvima recipe copy <name>' 复制示例 Recipe 到此目录")

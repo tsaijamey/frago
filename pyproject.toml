@@ -28,6 +28,7 @@ dependencies = [
     "click>=8.1.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
     "certifi>=2025.11.12",
     "charset-normalizer>=3.4.4",
     "idna>=3.11",
@@ -37,6 +38,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 可选功能：剪贴板支持
+clipboard = [
+    "pyperclip>=1.8.0",
+]
+
+# 完整功能（包含所有可选功能）
+all = [
+    "pyperclip>=1.8.0",
+]
+
+# 开发依赖
 dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
@@ -62,6 +74,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/auvima"]
+
+[tool.setuptools]
+exclude = ["examples*"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
