@@ -7,6 +7,7 @@ Auto-generated from all feature plans. Last updated: 2025-11-15
 - 文件系统存储 (003-skill-automation)
 - Python 3.9+（pyproject.toml 已要求 >=3.9） (004-recipe-architecture-refactor)
 - 文件系统（Recipe 脚本 .js/.py/.sh + 元数据 .md，无数据库） (004-recipe-architecture-refactor)
+- Python 3.9+ (pyproject.toml 已要求 >=3.9) (005-run-command-system)
 
 - Bash/Shell Script (POSIX兼容) + websocat工具，Chrome DevTools Protocol (001-standardize-cdp-scripts)
 
@@ -26,9 +27,9 @@ tests/
 Bash/Shell Script (POSIX兼容): Follow standard conventions
 
 ## Recent Changes
+- 005-run-command-system: Added Python 3.9+ (pyproject.toml 已要求 >=3.9)
 - 004-recipe-architecture-refactor: Added Python 3.9+（pyproject.toml 已要求 >=3.9）
 - 004-recipe-architecture-refactor: Added Python 3.9+（pyproject.toml 已要求 >=3.9）
-- 003-skill-automation: Added Python 3.9+（已有pyproject.toml要求 >=3.9）
 
 
 <!-- MANUAL ADDITIONS START -->

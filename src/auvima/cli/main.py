@@ -28,6 +28,7 @@ from .commands import (
     init
 )
 from .recipe_commands import recipe_group
+from .run_commands import run_group
 
 
 @click.group()
@@ -134,6 +135,9 @@ cli.add_command(init)
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)
+
+# Run 命令系统
+cli.add_command(run_group)
 
 
 def main():
