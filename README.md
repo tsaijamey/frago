@@ -1,22 +1,22 @@
-# AuViMa - Automated Video Maker
+# AuViMa - 多运行时自动化基建
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/AuViMa)
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
-🎬 AI导演的屏幕录制工具 - Claude AI设计分镜和录制脚本，自动化录制浏览器操作生成教学视频。
+🚀 多运行时自动化基建 - 支持 Chrome CDP、Python、Shell 的自动化任务执行和管理框架，提供 Run 命令系统进行任务持久化和上下文积累。
 
 ## ✨ 核心特性
 
-- 🎬 **真实录制，非AI生成** - 录制真实浏览器操作，不是文生视频
-- 🤖 **AI创作录制脚本** - Claude AI设计分镜、编写每个clip的录制脚本
-- 🎯 **四类内容场景** - 资讯分析、GitHub项目、产品演示、MVP开发
-- 📹 **精准屏幕捕获** - 基于Chrome CDP的毫秒级操作控制
-- 🎨 **视觉引导增强** - 自动添加spotlight/highlight/annotate效果
-- 🎤 **TTS配音合成** - 集成声音克隆API生成解说音频
-- ⚡ **Recipe加速系统** - 固化高频操作，避免重复AI推理
+- 🚀 **Run命令系统** - 主题型任务管理，支持信息持续积累和上下文复用
+- 🤖 **AI主持的任务执行** - 通过 `/auvima.run` slash 命令，让 Claude AI 自动化执行复杂任务
+- 📹 **原生CDP协议** - 直接控制 Chrome 浏览器，无需 Playwright/Selenium 依赖
+- ⚡ **Recipe系统** - 元数据驱动的可复用自动化脚本，支持多运行时（Chrome JS、Python、Shell）
+- 📊 **结构化日志** - JSONL 格式的执行记录，100% 可程序解析和分析
+- 🔄 **Workflow编排** - Python Recipe 可调用多个 atomic Recipe，构建复杂自动化流程
+- 🎯 **三级优先级** - Project > User > Example 的 Recipe 管理体系
 
 ## 项目概述
 
@@ -84,20 +84,81 @@ uv sync --all-extras --dev
 
 ### 基础使用
 
-```bash
-# 启动Pipeline（完整视频制作流程）
-uv run python src/pipeline_master.py "<主题>" <项目名>
+#### Run命令系统 - 任务管理
 
-# CDP命令示例
+```bash
+# 1. 创建并初始化run实例
+uv run auvima run init "在Upwork上搜索Python职位"
+# 输出: { "run_id": "zai-upwork-shang-sou-suo-python-zhi-wei", ... }
+
+# 2. 设置为当前工作run
+uv run auvima run set-context zai-upwork-shang-sou-suo-python-zhi-wei
+
+# 3. 执行任务并记录日志
+uv run auvima navigate https://upwork.com/search
+uv run auvima run log \
+  --step "导航到Upwork搜索页" \
+  --status "success" \
+  --action-type "navigation" \
+  --execution-method "command" \
+  --data '{"command": "uv run auvima navigate https://upwork.com/search"}'
+
+# 4. 查看run详情和执行历史
+uv run auvima run info zai-upwork-shang-sou-suo-python-zhi-wei
+
+# 5. 列出所有run实例
+uv run auvima run list
+
+# 6. 归档已完成的run
+uv run auvima run archive zai-upwork-shang-sou-suo-python-zhi-wei
+```
+
+#### Chrome CDP 命令
+
+```bash
+# 页面导航
 uv run auvima navigate https://github.com
+
+# 截图
 uv run auvima screenshot output.png
 
-# Recipe管理
+# 点击元素
+uv run auvima click 'button[type="submit"]'
+
+# 执行JavaScript
+uv run auvima exec-js 'document.title'
+```
+
+#### Recipe管理
+
+```bash
+# 列出所有Recipe
 uv run auvima recipe list
+
+# 查看Recipe详情
+uv run auvima recipe info youtube_extract_video_transcript
+
+# 执行Recipe
 uv run auvima recipe run youtube_extract_video_transcript \
     --params '{"url": "..."}' \
     --output-file transcript.txt
+
+# 复制示例Recipe到用户级
+uv run auvima recipe copy upwork_extract_job_details_as_markdown
 ```
+
+#### Claude Code集成（AI主持任务）
+
+在 Claude Code 中使用 slash 命令：
+```
+/auvima.run 在Upwork上搜索Python职位并分析技能要求
+```
+
+AI 将自动：
+1. 发现或创建run实例
+2. 调用CDP命令和Recipe
+3. 记录所有操作到结构化日志
+4. 生成执行报告和输出文件
 
 ## 技术亮点
 
@@ -108,20 +169,22 @@ uv run auvima recipe run youtube_extract_video_transcript \
 
 ## 项目状态
 
-📍 **当前阶段**：核心架构完成，AI命令系统实现中
+📍 **当前阶段**：Run命令系统完成，多运行时自动化基建就绪
 
-**已完成**：
-- ✅ 原生CDP协议层（~3,763行Python）
-- ✅ Recipe元数据驱动架构
+**已完成（Feature 005）**：
+- ✅ Run命令系统 - 主题型任务管理和上下文积累
+- ✅ 结构化日志 - JSONL格式的执行记录
+- ✅ AI主持任务执行 - `/auvima.run` slash命令集成
+- ✅ Run实例自动发现 - 基于RapidFuzz的模糊匹配
+- ✅ 完整测试覆盖 - 单元测试、集成测试、契约测试
+
+**核心基建**：
+- ✅ 原生CDP协议层（直接控制Chrome）
+- ✅ Recipe元数据驱动架构（多运行时支持）
 - ✅ CLI工具和命令系统
-- ✅ Pipeline调度框架
+- ✅ 三级Recipe管理体系
 
-**正在进行**：
-- 🔄 AI Slash Commands实现
-- 🔄 Recipe系统完善
-- 🔄 Pipeline与Claude AI集成
-
-详见 [项目进展](docs/roadmap.md)
+详见 [项目进展](docs/roadmap.md) 和 [Run命令系统规格说明](specs/005-run-command-system/spec.md)
 
 ## 🤝 贡献
 
