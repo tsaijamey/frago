@@ -18,12 +18,12 @@ def temp_project(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
 
-    runs_dir = project_root / "runs"
-    runs_dir.mkdir()
+    projects_dir = project_root / "runs"
+    projects_dir.mkdir()
 
     return {
         "root": project_root,
-        "runs_dir": runs_dir,
+        "projects_dir": projects_dir,
     }
 
 
@@ -32,8 +32,8 @@ class TestMultipleRuns:
 
     def test_create_multiple_runs(self, temp_project):
         """测试创建多个run"""
-        runs_dir = temp_project["runs_dir"]
-        manager = RunManager(runs_dir)
+        projects_dir = temp_project["projects_dir"]
+        manager = RunManager(projects_dir)
 
         # 创建3个不同的run
         run1 = manager.create_run("任务1: Python开发")
@@ -42,9 +42,9 @@ class TestMultipleRuns:
 
         # 验证都被创建
         assert run1.run_id != run2.run_id != run3.run_id
-        assert (runs_dir / run1.run_id).exists()
-        assert (runs_dir / run2.run_id).exists()
-        assert (runs_dir / run3.run_id).exists()
+        assert (projects_dir / run1.run_id).exists()
+        assert (projects_dir / run2.run_id).exists()
+        assert (projects_dir / run3.run_id).exists()
 
         # 验证可以列出所有run
         all_runs = manager.list_runs()
@@ -53,42 +53,42 @@ class TestMultipleRuns:
     def test_switch_context_between_runs(self, temp_project):
         """测试在多个run之间切换上下文"""
         project_root = temp_project["root"]
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
-        manager = RunManager(runs_dir)
-        context_mgr = ContextManager(project_root, runs_dir)
+        manager = RunManager(projects_dir)
+        context_mgr = ContextManager(project_root, projects_dir)
 
         # 创建两个run
         run1 = manager.create_run("Run 1")
         run2 = manager.create_run("Run 2")
 
         # 设置为run1
-        context_mgr.set_current_run(run1.run_id, run1.theme_description)
-        assert context_mgr.get_current_run().run_id == run1.run_id
+        context_mgr.set_current_project(run1.run_id, run1.theme_description)
+        assert context_mgr.get_current_project().run_id == run1.run_id
 
         # 切换到run2
-        context_mgr.set_current_run(run2.run_id, run2.theme_description)
-        assert context_mgr.get_current_run().run_id == run2.run_id
+        context_mgr.set_current_project(run2.run_id, run2.theme_description)
+        assert context_mgr.get_current_project().run_id == run2.run_id
 
         # 再切换回run1
-        context_mgr.set_current_run(run1.run_id, run1.theme_description)
-        assert context_mgr.get_current_run().run_id == run1.run_id
+        context_mgr.set_current_project(run1.run_id, run1.theme_description)
+        assert context_mgr.get_current_project().run_id == run1.run_id
 
     def test_logs_isolated_between_runs(self, temp_project):
         """测试不同run的日志互相隔离"""
-        runs_dir = temp_project["runs_dir"]
-        manager = RunManager(runs_dir)
+        projects_dir = temp_project["projects_dir"]
+        manager = RunManager(projects_dir)
 
         # 创建两个run
         run1 = manager.create_run("Run 1")
         run2 = manager.create_run("Run 2")
 
         # 分别记录日志
-        logger1 = RunLogger(runs_dir / run1.run_id)
+        logger1 = RunLogger(projects_dir / run1.run_id)
         logger1.write_log("Run1的日志", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
         logger1.write_log("Run1的第二条", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
 
-        logger2 = RunLogger(runs_dir / run2.run_id)
+        logger2 = RunLogger(projects_dir / run2.run_id)
         logger2.write_log("Run2的日志", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
 
         # 验证日志隔离
@@ -102,19 +102,19 @@ class TestMultipleRuns:
 
     def test_statistics_independent(self, temp_project):
         """测试不同run的统计独立"""
-        runs_dir = temp_project["runs_dir"]
-        manager = RunManager(runs_dir)
+        projects_dir = temp_project["projects_dir"]
+        manager = RunManager(projects_dir)
 
         run1 = manager.create_run("Run 1")
         run2 = manager.create_run("Run 2")
 
         # Run1: 记录2条日志
-        logger1 = RunLogger(runs_dir / run1.run_id)
+        logger1 = RunLogger(projects_dir / run1.run_id)
         logger1.write_log("日志1", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
         logger1.write_log("日志2", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
 
         # Run2: 记录5条日志
-        logger2 = RunLogger(runs_dir / run2.run_id)
+        logger2 = RunLogger(projects_dir / run2.run_id)
         for i in range(5):
             logger2.write_log(f"日志{i}", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
 
@@ -127,8 +127,8 @@ class TestMultipleRuns:
 
     def test_archive_does_not_affect_others(self, temp_project):
         """测试归档一个run不影响其他run"""
-        runs_dir = temp_project["runs_dir"]
-        manager = RunManager(runs_dir)
+        projects_dir = temp_project["projects_dir"]
+        manager = RunManager(projects_dir)
 
         run1 = manager.create_run("Active Run")
         run2 = manager.create_run("To Archive")
@@ -148,11 +148,11 @@ class TestMultipleRuns:
 
     def test_concurrent_access_safe(self, temp_project):
         """测试并发访问安全性(文件系统层面)"""
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
         # 创建两个独立的manager实例(模拟并发)
-        manager1 = RunManager(runs_dir)
-        manager2 = RunManager(runs_dir)
+        manager1 = RunManager(projects_dir)
+        manager2 = RunManager(projects_dir)
 
         # 两个manager同时创建run
         run1 = manager1.create_run("Manager1的Run")
@@ -173,8 +173,8 @@ class TestRunFiltering:
 
     def test_filter_by_status(self, temp_project):
         """测试按状态过滤"""
-        runs_dir = temp_project["runs_dir"]
-        manager = RunManager(runs_dir)
+        projects_dir = temp_project["projects_dir"]
+        manager = RunManager(projects_dir)
 
         # 创建多个run并归档部分
         run1 = manager.create_run("Active 1")
@@ -201,8 +201,8 @@ class TestRunFiltering:
         """测试run按时间排序"""
         import time
 
-        runs_dir = temp_project["runs_dir"]
-        manager = RunManager(runs_dir)
+        projects_dir = temp_project["projects_dir"]
+        manager = RunManager(projects_dir)
 
         # 按顺序创建
         run1 = manager.create_run("First")

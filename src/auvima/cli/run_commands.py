@@ -24,19 +24,19 @@ from ..run.manager import RunManager
 from ..run.models import ActionType, ExecutionMethod, LogStatus, RunStatus
 
 
-# 获取项目根目录和runs目录
+# 获取项目根目录和projects目录
 PROJECT_ROOT = Path.cwd()
-RUNS_DIR = PROJECT_ROOT / "runs"
+PROJECTS_DIR = PROJECT_ROOT / "projects"
 
 
 def get_manager() -> RunManager:
     """获取RunManager实例"""
-    return RunManager(RUNS_DIR)
+    return RunManager(PROJECTS_DIR)
 
 
 def get_context_manager() -> ContextManager:
     """获取ContextManager实例"""
-    return ContextManager(PROJECT_ROOT, RUNS_DIR)
+    return ContextManager(PROJECT_ROOT, PROJECTS_DIR)
 
 
 def format_timestamp(dt: datetime) -> str:
@@ -97,7 +97,7 @@ def init(description: str, run_id: Optional[str]):
         output_json({
             "run_id": instance.run_id,
             "created_at": format_timestamp(instance.created_at),
-            "path": str(RUNS_DIR / instance.run_id),
+            "path": str(PROJECTS_DIR / instance.run_id),
         })
     except RunException as e:
         handle_error(e)
@@ -208,7 +208,7 @@ def info(run_id: str, format: str):
         instance = manager.find_run(run_id)
         stats = manager.get_run_statistics(run_id)
 
-        run_dir = RUNS_DIR / run_id
+        run_dir = PROJECTS_DIR / run_id
         logger = RunLogger(run_dir)
         recent_logs = logger.get_recent_logs(count=5)
 
@@ -349,7 +349,7 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
             sys.exit(2)
 
         # 写入日志
-        run_dir = RUNS_DIR / context.run_id
+        run_dir = PROJECTS_DIR / context.run_id
         logger = RunLogger(run_dir)
         entry = logger.write_log(
             step=step,
@@ -384,7 +384,7 @@ def screenshot(description: str):
         context_mgr = get_context_manager()
         context = context_mgr.get_current_run()
 
-        run_dir = RUNS_DIR / context.run_id
+        run_dir = PROJECTS_DIR / context.run_id
         screenshots_dir = run_dir / "screenshots"
 
         # 导入screenshot模块（稍后实现）

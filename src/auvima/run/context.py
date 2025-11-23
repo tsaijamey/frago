@@ -15,17 +15,17 @@ from .models import CurrentRunContext
 class ContextManager:
     """Run上下文管理器"""
 
-    def __init__(self, project_root: Path, runs_dir: Path):
+    def __init__(self, project_root: Path, projects_dir: Path):
         """初始化上下文管理器
 
         Args:
             project_root: 项目根目录
-            runs_dir: runs目录路径
+            projects_dir: projects目录路径
         """
         self.project_root = project_root
-        self.runs_dir = runs_dir
+        self.projects_dir = projects_dir
         self.config_dir = project_root / ".auvima"
-        self.config_file = self.config_dir / "current_run"
+        self.config_file = self.config_dir / "current_project"
 
     def get_current_run(self) -> CurrentRunContext:
         """获取当前run上下文
@@ -42,7 +42,7 @@ class ContextManager:
         # 1. 检查环境变量（最高优先级）
         env_run_id = os.getenv("AUVIMA_CURRENT_RUN")
         if env_run_id:
-            run_dir = self.runs_dir / env_run_id
+            run_dir = self.projects_dir / env_run_id
             if not run_dir.exists():
                 raise RunNotFoundError(env_run_id)
 
@@ -77,7 +77,7 @@ class ContextManager:
             raise FileSystemError("read", str(self.config_file), str(e))
 
         # 3. 验证run目录存在
-        run_dir = self.runs_dir / context.run_id
+        run_dir = self.projects_dir / context.run_id
         if not run_dir.exists():
             # 清空失效的配置
             self._clear_context()
@@ -100,7 +100,7 @@ class ContextManager:
             FileSystemError: 配置文件写入失败
         """
         # 验证run存在
-        run_dir = self.runs_dir / run_id
+        run_dir = self.projects_dir / run_id
         if not run_dir.exists():
             raise RunNotFoundError(run_id)
 
