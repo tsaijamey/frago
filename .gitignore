@@ -52,5 +52,5 @@ workdir/
 .auvima/
 
 # Run command system working directories
-runs/
-.auvima/current_run
+projects/
+.auvima/current_project
