@@ -21,23 +21,23 @@ def temp_project_root(tmp_path):
 
 
 @pytest.fixture
-def temp_runs_dir(temp_project_root):
-    """创建临时runs目录"""
-    runs_dir = temp_project_root / "runs"
-    runs_dir.mkdir()
-    return runs_dir
+def temp_projects_dir(temp_project_root):
+    """创建临时projects目录"""
+    projects_dir = temp_project_root / "projects"
+    projects_dir.mkdir()
+    return projects_dir
 
 
 @pytest.fixture
-def context_manager(temp_project_root, temp_runs_dir):
+def context_manager(temp_project_root, temp_projects_dir):
     """创建ContextManager实例"""
-    return ContextManager(temp_project_root, temp_runs_dir)
+    return ContextManager(temp_project_root, temp_projects_dir)
 
 
 @pytest.fixture
-def manager(temp_runs_dir):
+def manager(temp_projects_dir):
     """创建RunManager实例"""
-    return RunManager(temp_runs_dir)
+    return RunManager(temp_projects_dir)
 
 
 class TestSetCurrentRun:
@@ -55,7 +55,7 @@ class TestSetCurrentRun:
         assert context.theme_description == instance.theme_description
 
         # 验证配置文件
-        config_file = temp_project_root / ".auvima" / "current_run"
+        config_file = temp_project_root / ".auvima" / "current_project"
         assert config_file.exists()
 
         config_data = json.loads(config_file.read_text())
@@ -66,12 +66,12 @@ class TestSetCurrentRun:
         with pytest.raises(RunNotFoundError):
             context_manager.set_current_run("non-existent", "测试")
 
-    def test_set_current_run_updates_metadata(self, context_manager, manager, temp_runs_dir):
+    def test_set_current_run_updates_metadata(self, context_manager, manager, temp_projects_dir):
         """测试设置上下文时更新run的last_accessed"""
         instance = manager.create_run("测试")
 
         # 读取初始metadata
-        metadata_file = temp_runs_dir / instance.run_id / ".metadata.json"
+        metadata_file = temp_projects_dir / instance.run_id / ".metadata.json"
         initial_metadata = json.loads(metadata_file.read_text())
         initial_time = initial_metadata["last_accessed"]
 
@@ -132,7 +132,7 @@ class TestGetCurrentRun:
     def test_get_current_run_invalid_file(self, context_manager, temp_project_root):
         """测试配置文件损坏"""
         # 创建损坏的配置文件
-        config_file = temp_project_root / ".auvima" / "current_run"
+        config_file = temp_project_root / ".auvima" / "current_project"
         config_file.parent.mkdir(exist_ok=True)
         config_file.write_text("这不是有效的JSON")
 
@@ -142,14 +142,14 @@ class TestGetCurrentRun:
         with pytest.raises(FileSystemError):
             context_manager.get_current_run()
 
-    def test_get_current_run_deleted_run(self, context_manager, manager, temp_runs_dir):
+    def test_get_current_run_deleted_run(self, context_manager, manager, temp_projects_dir):
         """测试指向已删除run的上下文"""
         instance = manager.create_run("测试")
         context_manager.set_current_run(instance.run_id, instance.theme_description)
 
         # 删除run目录
         import shutil
-        shutil.rmtree(temp_runs_dir / instance.run_id)
+        shutil.rmtree(temp_projects_dir / instance.run_id)
 
         # 应该抛出RunNotFoundError并清空配置
         with pytest.raises(RunNotFoundError):
@@ -181,7 +181,7 @@ class TestClearContext:
         instance = manager.create_run("测试")
         context_manager.set_current_run(instance.run_id, instance.theme_description)
 
-        config_file = temp_project_root / ".auvima" / "current_run"
+        config_file = temp_project_root / ".auvima" / "current_project"
         assert config_file.exists()
 
         # 清空上下文

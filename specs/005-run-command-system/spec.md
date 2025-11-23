@@ -9,7 +9,7 @@
 
 ### 会话 2025-11-21
 
-- Q: `/auvima.run` 与Recipe系统的关系是什么？ → A: `/auvima.run` 不是因为Recipe能力不足，而是为Recipe创建提供探索和调研的上下文环境。它作为信息中心，支持：1) Recipe创建前的调研工作；2) 跨多个Recipe调用的上下文积累；3) 构建复杂Workflow时的信息组织；4) 一次性但复杂的任务执行。
+- Q: `/auvima.run` 与Recipe系统的关系是什么？ → A: `/auvima.run` 不是因为Recipe能力不足，而是为Recipe创建提供探索和调研的上下文环境。它作为信息中心，支持：1) Recipe创建前的调研工作；2) 跨多个Recipe调用的上下文积累；3) 构建复杂Workflow时的信息组织。
 
 - Q: run实例应该是事务型还是主题型？ → A: run实例应该是**主题型**而非事务型。例如"find-job-on-upwork"是一个主题，用户可能在不同时间多次执行相关任务，信息在同一主题run中持续积累和复用。避免因事务型设计导致工作目录积累大量重复的run实例。
 
@@ -26,7 +26,6 @@
 用户需要执行需要AI持续探索和积累上下文的复杂浏览器自动化任务（如"调研Upwork上Python开发职位的薪资范围和技能要求，并创建提取这些信息的Recipe"）。这些任务涉及：
 - 探索性调研工作（为创建Recipe做准备）
 - 跨多个步骤的信息积累（如先分析页面结构，再测试选择器，最后固化为Recipe）
-- 不适合固化为Recipe的一次性复杂任务
 
 用户使用 `/auvima.run "任务描述"` 命令，Claude Code会创建独立的run实例作为**信息中心**，在这个持久的上下文中通过CDP命令和Recipe调用逐步完成任务，并记录所有关键操作和发现。
 
@@ -99,24 +98,24 @@ run实例采用**主题型**而非事务型设计，每个主题（如"find-job-
 - 当AI生成的主题slug与现有run实例冲突时，系统如何处理？（这正是主题型设计的预期行为，系统应提示用户"发现相似主题，是否继续？"）
 - 当用户任务描述模糊导致无法提取明确主题时，系统如何处理？（AI使用交互式菜单请求用户确认主题名称）
 - 当执行日志文件过大时（超过100MB），系统如何处理？（自动轮转日志文件，按时间戳分段）
-- 当AI执行任务失败或中途中断时，run实例的状态如何标记？（在logs中记录失败状态和原因，不影响run实例的持久性）
+- 当AI执行调研失败或中途中断时，run实例的状态如何标记？（在logs中记录失败状态和原因，不影响run实例的持久性）
 - 当用户同时运行多个 `/auvima.run` 任务（不同主题）时，系统如何避免冲突？（每个run有独立目录和ID，且通过 `set-context` 明确当前工作空间）
-- 当`runs/`目录积累过多历史运行实例时，如何清理？（提供 `uv run auvima run archive <run_id>` 命令标记为archived状态，不在自动发现列表中显示）
-- 当用户在不同AI会话中继续同一个run时，如何恢复上下文？（AI通过读取logs/execution.jsonl和已有的screenshots/outputs重建工作上下文）
-- 当run实例中积累的信息用于创建Recipe后，原run实例如何标记？（可选在outputs/中添加recipe_created.json记录关联关系）
-- 当`.auvima/current_run`配置文件不存在或指向的run已删除时，命令如何处理？（提示用户使用 `set-context` 设置工作环境，或自动触发run选择菜单）
+- 当`projects/`目录积累过多历史运行实例时，如何清理？（提供 `uv run auvima run archive <run_id>` 命令标记为archived状态，不在自动发现列表中显示）
+- 当用户在不同AI会话中继续同一个run时，如何恢复上下文？（AI通过读取logs/execution.jsonl和已有的screenshots重建工作上下文）
+- 当run实例中积累的信息用于创建Recipe后，原run实例如何标记？（可选在日志中添加recipe_created标记记录关联关系）
+- 当`.auvima/current_project`配置文件不存在或指向的run已删除时，命令如何处理？（提示用户使用 `set-context` 设置工作环境，或自动触发run选择菜单）
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: 系统必须提供 `/auvima.run` slash命令，接受纯语义任务描述作为输入
-- **FR-002**: 系统必须在 `runs/` 目录下为每个主题创建运行实例目录，格式为 `runs/<主题slug>/`（主题型，如`runs/find-job-on-upwork/`），而非基于时间戳的事务型目录
+- **FR-002**: 系统必须在 `projects/` 目录下为每个主题创建运行实例目录，格式为 `projects/<主题slug>/`（主题型，如`projects/find-job-on-upwork/`），而非基于时间戳的事务型目录
 - **FR-003**: 运行实例目录必须包含四个子目录：`logs/`（执行日志）、`screenshots/`（截图）、`scripts/`（AI生成的执行脚本）、`outputs/`（可选，用于手动导出文件或生成的衍生文件，如CSV、Recipe草稿）
 - **FR-004**: 系统必须提供 `uv run auvima run init <description>` 命令，根据任务描述智能生成主题slug，创建新run实例并返回run_id
-- **FR-016**: `/auvima.run` 启动时必须自动扫描 `runs/` 目录发现所有现有run实例，提取其主题和描述信息
+- **FR-016**: `/auvima.run` 启动时必须自动扫描 `projects/` 目录发现所有现有run实例，提取其主题和描述信息
 - **FR-017**: 系统必须通过交互式菜单（AskUserQuestion）向用户展示现有run列表，提供"继续现有run"和"创建新run"选项
-- **FR-018**: 系统必须提供 `uv run auvima run set-context <run_id>` 命令，将run_id写入配置文件（如`.auvima/current_run`），固化当前工作环境
+- **FR-018**: 系统必须提供 `uv run auvima run set-context <run_id>` 命令，将run_id写入配置文件（如`.auvima/current_project`），固化当前工作环境
 - **FR-019**: 所有 `uv run auvima run` 子命令（log、screenshot等）必须自动从配置文件读取当前run上下文，无需每次手动指定run_id
 - **FR-005**: 系统必须提供 `uv run auvima run log --step <step> --status <status> --action-type <type> --execution-method <method> --data <json>` 命令，以JSONL格式记录结构化日志。这是**唯一**的数据记录机制，--data字段支持任意复杂JSON（包括大段文本、提取结果、分析结论等）
 - **FR-006**: 系统必须提供 `uv run auvima run screenshot <description>` 命令，自动编号并保存截图到当前run的screenshots目录
@@ -284,13 +283,13 @@ run实例采用**主题型**而非事务型设计，每个主题（如"find-job-
 ## Assumptions
 
 - 用户已经安装了auvima CLI工具并配置了Chrome CDP连接
-- `runs/` 目录默认位于项目根目录，用户对该目录有读写权限
-- run_id采用主题slug格式（如"find-job-on-upwork"），由AI根据任务描述智能生成或用户确认
+- `projects/` 目录默认位于项目根目录，用户对该目录有读写权限
+- run_id采用主题slug格式（如"upwork-python-jobs"），由AI生成简洁的英文短句（3-5个词）
 - JSONL日志文件在单个run实例中不会超过100MB（超过后需要日志轮转）
-- 用户了解 `/auvima.run` 的核心价值：作为信息中心支持探索、调研和上下文积累，而非替代Recipe系统
+- 用户了解 `/auvima.run` 的核心价值：作为信息中心支持探索、调研，为Recipe创建收集信息
 - 截图格式默认为PNG，分辨率跟随浏览器窗口设置
 - run实例是主题型的，同一主题的信息持续积累，用户在不同时间执行相同主题任务时应复用同一run实例
-- `.auvima/current_run` 配置文件用于存储当前工作环境，所有auvima CLI命令从此文件读取当前run上下文
+- `.auvima/current_project` 配置文件用于存储当前工作环境，所有auvima CLI命令从此文件读取当前run上下文
 
 ## Out of Scope
 

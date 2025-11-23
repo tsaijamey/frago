@@ -17,10 +17,10 @@ from auvima.run.utils import (
 class TestGenerateThemeSlug:
     """测试generate_theme_slug函数"""
 
-    def test_slug_chinese_to_pinyin(self):
-        """测试中文转拼音"""
-        slug = generate_theme_slug("在Upwork上搜索Python职位")
-        assert slug == "zai-upwork-shang-sou-suo-python-zhi-wei"
+    def test_slug_preserves_english(self):
+        """测试保留英文单词"""
+        slug = generate_theme_slug("upwork python jobs search")
+        assert slug == "upwork-python-jobs-search"
 
     def test_slug_english(self):
         """测试纯英文"""

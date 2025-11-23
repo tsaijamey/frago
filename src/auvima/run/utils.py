@@ -12,29 +12,28 @@ from slugify import slugify as _slugify
 
 
 def generate_theme_slug(description: str, max_length: int = 50) -> str:
-    """生成主题slug（支持中文转拼音）
+    """生成主题slug（直接slug化，保留英文和数字）
 
     Args:
-        description: 原始任务描述
+        description: 原始任务描述（应为AI生成的简洁主题短句）
         max_length: 最大长度限制
 
     Returns:
         slug化的主题名（小写字母、数字、连字符）
 
     Examples:
-        >>> generate_theme_slug("在Upwork上搜索Python职位")
-        'zai-upwork-shang-sou-suo-python-zhi-wei'
-        >>> generate_theme_slug("Test Task 123")
-        'test-task-123'
+        >>> generate_theme_slug("nano-banana-pro image api research")
+        'nano-banana-pro-image-api-research'
+        >>> generate_theme_slug("upwork python jobs search")
+        'upwork-python-jobs-search'
+
+    Note:
+        AI应该直接提供英文主题短句（3-5个词），避免中文转拼音导致的不可读性
     """
-    # 1. 中文转拼音（智能多音字处理）
-    pinyin_words = pypinyin.lazy_pinyin(description, style=pypinyin.Style.NORMAL)
-    pinyin_text = " ".join(pinyin_words)
+    # 直接slug化（保留英文、数字，移除中文和特殊字符）
+    slug = _slugify(description, max_length=max_length)
 
-    # 2. slug化（处理Unicode、标点、空格）
-    slug = _slugify(pinyin_text, max_length=max_length)
-
-    # 3. 如果为空（纯符号输入），回退到timestamp
+    # 如果为空（纯符号输入或纯中文），回退到timestamp
     if not slug:
         slug = f"task-{int(time.time())}"
 
@@ -56,25 +55,25 @@ def is_valid_run_id(run_id: str) -> bool:
     return bool(re.match(pattern, run_id))
 
 
-def scan_run_directories(runs_dir: Path) -> List[str]:
-    """扫描runs目录，返回所有run_id列表
+def scan_run_directories(projects_dir: Path) -> List[str]:
+    """扫描projects目录，返回所有run_id列表
 
     Args:
-        runs_dir: runs目录路径
+        projects_dir: projects目录路径
 
     Returns:
         run_id列表（按最后修改时间降序）
     """
-    if not runs_dir.exists() or not runs_dir.is_dir():
+    if not projects_dir.exists() or not projects_dir.is_dir():
         return []
 
     run_ids = []
-    for item in runs_dir.iterdir():
+    for item in projects_dir.iterdir():
         if item.is_dir() and is_valid_run_id(item.name):
             run_ids.append(item.name)
 
     # 按最后修改时间排序（最近的在前）
-    run_ids.sort(key=lambda rid: (runs_dir / rid).stat().st_mtime, reverse=True)
+    run_ids.sort(key=lambda rid: (projects_dir / rid).stat().st_mtime, reverse=True)
 
     return run_ids
 

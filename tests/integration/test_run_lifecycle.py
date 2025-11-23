@@ -20,12 +20,12 @@ def temp_project(tmp_path):
     project_root = tmp_path / "project"
     project_root.mkdir()
 
-    runs_dir = project_root / "runs"
-    runs_dir.mkdir()
+    projects_dir = project_root / "runs"
+    projects_dir.mkdir()
 
     return {
         "root": project_root,
-        "runs_dir": runs_dir,
+        "projects_dir": projects_dir,
     }
 
 
@@ -35,23 +35,23 @@ class TestRunLifecycle:
     def test_full_lifecycle(self, temp_project):
         """测试完整流程: 创建 -> 设置上下文 -> 记录日志 -> 归档"""
         project_root = temp_project["root"]
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
         # 1. 初始化manager和context
-        manager = RunManager(runs_dir)
-        context_mgr = ContextManager(project_root, runs_dir)
+        manager = RunManager(projects_dir)
+        context_mgr = ContextManager(project_root, projects_dir)
 
         # 2. 创建run (模拟 `uv run auvima run init`)
         instance = manager.create_run("测试任务生命周期")
         assert instance.run_id is not None
-        assert (runs_dir / instance.run_id).exists()
+        assert (projects_dir / instance.run_id).exists()
 
         # 3. 设置上下文 (模拟 `uv run auvima run set-context`)
-        context = context_mgr.set_current_run(instance.run_id, instance.theme_description)
+        context = context_mgr.set_current_project(instance.run_id, instance.theme_description)
         assert context.run_id == instance.run_id
 
         # 4. 记录日志 (模拟 `uv run auvima run log`)
-        run_dir = runs_dir / instance.run_id
+        run_dir = projects_dir / instance.run_id
         logger = RunLogger(run_dir)
 
         log1 = logger.write_log(
@@ -93,16 +93,16 @@ class TestRunLifecycle:
     def test_lifecycle_with_screenshots(self, temp_project):
         """测试包含截图的生命周期"""
         project_root = temp_project["root"]
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
-        manager = RunManager(runs_dir)
-        context_mgr = ContextManager(project_root, runs_dir)
+        manager = RunManager(projects_dir)
+        context_mgr = ContextManager(project_root, projects_dir)
 
         # 创建run
         instance = manager.create_run("截图测试")
-        context_mgr.set_current_run(instance.run_id, instance.theme_description)
+        context_mgr.set_current_project(instance.run_id, instance.theme_description)
 
-        run_dir = runs_dir / instance.run_id
+        run_dir = projects_dir / instance.run_id
         logger = RunLogger(run_dir)
 
         # 模拟截图 (不实际调用CDP)
@@ -127,12 +127,12 @@ class TestRunLifecycle:
     def test_lifecycle_with_scripts(self, temp_project):
         """测试包含脚本文件的生命周期"""
         project_root = temp_project["root"]
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
-        manager = RunManager(runs_dir)
+        manager = RunManager(projects_dir)
         instance = manager.create_run("脚本测试")
 
-        run_dir = runs_dir / instance.run_id
+        run_dir = projects_dir / instance.run_id
         logger = RunLogger(run_dir)
 
         # 创建脚本文件
@@ -162,21 +162,21 @@ class TestRunLifecycle:
     def test_lifecycle_multiple_sessions(self, temp_project):
         """测试跨会话的生命周期(模拟重启)"""
         project_root = temp_project["root"]
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
         # Session 1: 创建run并记录日志
-        manager1 = RunManager(runs_dir)
+        manager1 = RunManager(projects_dir)
         instance = manager1.create_run("多会话测试")
 
-        logger1 = RunLogger(runs_dir / instance.run_id)
+        logger1 = RunLogger(projects_dir / instance.run_id)
         logger1.write_log("会话1日志", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
 
         # Session 2: 模拟重启,重新加载manager
-        manager2 = RunManager(runs_dir)
+        manager2 = RunManager(projects_dir)
         found = manager2.find_run(instance.run_id)
         assert found.run_id == instance.run_id
 
-        logger2 = RunLogger(runs_dir / instance.run_id)
+        logger2 = RunLogger(projects_dir / instance.run_id)
         logger2.write_log("会话2日志", LogStatus.SUCCESS, ActionType.ANALYSIS, ExecutionMethod.MANUAL, {})
 
         # 验证日志累积
@@ -188,16 +188,16 @@ class TestRunLifecycle:
     def test_lifecycle_error_handling(self, temp_project):
         """测试生命周期中的错误处理"""
         project_root = temp_project["root"]
-        runs_dir = temp_project["runs_dir"]
+        projects_dir = temp_project["projects_dir"]
 
-        manager = RunManager(runs_dir)
-        context_mgr = ContextManager(project_root, runs_dir)
+        manager = RunManager(projects_dir)
+        context_mgr = ContextManager(project_root, projects_dir)
 
         # 创建run
         instance = manager.create_run("错误处理测试")
-        context_mgr.set_current_run(instance.run_id, instance.theme_description)
+        context_mgr.set_current_project(instance.run_id, instance.theme_description)
 
-        logger = RunLogger(runs_dir / instance.run_id)
+        logger = RunLogger(projects_dir / instance.run_id)
 
         # 记录成功和失败的步骤
         logger.write_log("步骤1: 成功", LogStatus.SUCCESS, ActionType.NAVIGATION, ExecutionMethod.COMMAND, {})

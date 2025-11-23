@@ -16,14 +16,14 @@ from .utils import ensure_directory_exists, generate_theme_slug, is_valid_run_id
 class RunManager:
     """Run实例管理器"""
 
-    def __init__(self, runs_dir: Path):
+    def __init__(self, projects_dir: Path):
         """初始化管理器
 
         Args:
-            runs_dir: runs目录路径
+            projects_dir: projects目录路径
         """
-        self.runs_dir = runs_dir
-        ensure_directory_exists(runs_dir)
+        self.projects_dir = projects_dir
+        ensure_directory_exists(projects_dir)
 
     def create_run(self, theme_description: str, run_id: Optional[str] = None) -> RunInstance:
         """创建新run实例
@@ -46,7 +46,7 @@ class RunManager:
             if not is_valid_run_id(run_id):
                 raise InvalidRunIDError(run_id, "格式必须为小写字母、数字、连字符，长度1-50")
 
-        run_dir = self.runs_dir / run_id
+        run_dir = self.projects_dir / run_id
         now = datetime.now()
 
         # 创建目录结构
@@ -87,7 +87,7 @@ class RunManager:
             RunNotFoundError: run不存在
             FileSystemError: 元数据读取失败
         """
-        run_dir = self.runs_dir / run_id
+        run_dir = self.projects_dir / run_id
         if not run_dir.exists() or not run_dir.is_dir():
             raise RunNotFoundError(run_id)
 
@@ -112,11 +112,11 @@ class RunManager:
         Returns:
             run信息列表（包含统计数据）
         """
-        if not self.runs_dir.exists():
+        if not self.projects_dir.exists():
             return []
 
         runs = []
-        for run_dir in self.runs_dir.iterdir():
+        for run_dir in self.projects_dir.iterdir():
             if not run_dir.is_dir():
                 continue
 
@@ -176,7 +176,7 @@ class RunManager:
         instance = self.find_run(run_id)
         instance.status = RunStatus.ARCHIVED
 
-        metadata_file = self.runs_dir / run_id / ".metadata.json"
+        metadata_file = self.projects_dir / run_id / ".metadata.json"
         try:
             metadata_file.write_text(json.dumps(instance.to_dict(), indent=2))
         except Exception as e:
@@ -194,7 +194,7 @@ class RunManager:
             统计信息字典
         """
         instance = self.find_run(run_id)
-        run_dir = self.runs_dir / run_id
+        run_dir = self.projects_dir / run_id
 
         from .logger import RunLogger
 
