@@ -1,30 +1,32 @@
-# Frago 使用场景
+[简体中文](use-cases.zh-CN.md)
 
-本文档展示 Frago 在实际场景中的应用方式，涵盖从 Recipe 创建到复杂 Workflow 编排的完整流程。
+# Frago Use Cases
+
+This document demonstrates Frago's application in real-world scenarios, covering the complete workflow from Recipe creation to complex Workflow orchestration.
 
 ---
 
-## 场景 1：Recipe 生成与沉淀
+## Scenario 1: Recipe Generation and Consolidation
 
-**目标**：将自然语言描述的任务转化为可复用的标准化 Recipe 脚本。
+**Goal**: Transform naturally described tasks into reusable standardized Recipe scripts.
 
-### Claude Code 方式
+### Claude Code Method
 
 ```
-/frago.recipe 为这个页面生成一个提取脚本：https://news.ycombinator.com/，提取前10条新闻的标题和链接
+/frago.recipe Generate an extraction script for this page: https://news.ycombinator.com/, extract titles and links of top 10 news items
 ```
 
-### AI 执行流程
+### AI Execution Flow
 
-1. **分析页面**：自动通过 CDP 获取页面结构
-2. **生成代码**：编写 `hn_extract.js` (Chrome Runtime) 和 `hn_extract.md` (元数据)
-3. **验证与保存**：在临时环境中测试运行，成功后保存至 `.frago/recipes/project/`
-4. **即时可用**：后续可通过 `/frago.run` 直接调用该 Recipe
+1. **Analyze page**: Automatically obtain page structure via CDP
+2. **Generate code**: Write `hn_extract.js` (Chrome Runtime) and `hn_extract.md` (metadata)
+3. **Verify and save**: Test run in temporary environment, save to `.frago/recipes/project/` upon success
+4. **Immediately available**: Can be directly called via `/frago.run` subsequently
 
-### CLI 等效操作
+### CLI Equivalent Operation
 
 ```bash
-# 手动创建 Recipe（需要人工编写代码）
+# Manually create Recipe (requires manual code writing)
 cat > .frago/recipes/project/hn_extract.js <<'EOF'
 (async () => {
   const items = Array.from(document.querySelectorAll('.athing')).slice(0, 10);
@@ -35,130 +37,130 @@ cat > .frago/recipes/project/hn_extract.js <<'EOF'
 })();
 EOF
 
-# 创建元数据文件
+# Create metadata file
 cat > .frago/recipes/project/hn_extract.md <<'EOF'
 ---
 name: hn_extract
 type: atomic
 runtime: chrome-js
-description: "提取 Hacker News 首页前 10 条新闻"
+description: "Extract top 10 news items from Hacker News homepage"
 ...
 EOF
 
-# 执行 Recipe
+# Execute Recipe
 uv run frago recipe run hn_extract --output-file news.json
 ```
 
 ---
 
-## 场景 2：原子化任务自动化
+## Scenario 2: Atomic Task Automation
 
-**目标**：快速执行单一明确的任务，如提取特定页面数据。
+**Goal**: Quickly execute single, clearly defined tasks, such as extracting data from specific pages.
 
-### CLI 方式
+### CLI Method
 
 ```bash
-# 直接执行 Recipe 提取 YouTube 视频字幕
+# Directly execute Recipe to extract YouTube video subtitles
 uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
   --output-file transcript.md
 ```
 
-### Claude Code 方式
+### Claude Code Method
 
 ```
-/frago.run 提取这个视频的字幕：https://www.youtube.com/watch?v=dQw4w9WgXcQ
+/frago.run Extract subtitles from this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
-AI 自动识别意图 → 匹配 `youtube_extract_video_transcript` Recipe → 执行并返回结果
+AI automatically identifies intent → Matches `youtube_extract_video_transcript` Recipe → Executes and returns result
 
-### 适用场景
+### Applicable Scenarios
 
-- 数据采集（抓取特定网站的结构化数据）
-- 内容提取（视频字幕、文章正文、评论列表）
-- 状态检查（页面加载状态、元素可见性）
+- Data collection (scrape structured data from specific websites)
+- Content extraction (video subtitles, article body, comment lists)
+- Status checking (page load status, element visibility)
 
 ---
 
-## 场景 3：交互式调试与探索
+## Scenario 3: Interactive Debugging and Exploration
 
-**目标**：在保持上下文的情况下，分步排查问题或探索未知页面。
+**Goal**: Step-by-step troubleshooting or exploration of unknown pages while maintaining context.
 
-### CLI 时序操作
+### CLI Sequential Operations
 
 ```bash
-# 1. 初始化调试会话
-uv run frago run init "排查登录页面布局偏移问题"
+# 1. Initialize debug session
+uv run frago run init "Investigate login page layout shift issue"
 
-# 2. 执行一系列操作（上下文自动关联到当前 Run）
+# 2. Execute series of operations (context automatically associated with current Run)
 uv run frago navigate https://staging.example.com/login
 uv run frago exec-js "window.innerWidth"
 uv run frago screenshot before_click.png
 uv run frago click "#login-btn"
 uv run frago screenshot after_click.png
 
-# 3. 记录人工观察结果
+# 3. Record manual observations
 uv run frago run log \
-  --step "观察到点击后布局右移 20px" \
+  --step "Observed 20px rightward shift after click" \
   --status "failure" \
   --action-type "analysis" \
   --execution-method "manual" \
-  --data '{"observation": "登录按钮点击后，整个表单右移 20px"}'
+  --data '{"observation": "After login button click, entire form shifts 20px right"}'
 
-# 4. 归档会话
-uv run frago run archive "排查登录页面布局偏移问题"
+# 4. Archive session
+uv run frago run archive "Investigate login page layout shift issue"
 ```
 
-### Claude Code 方式
+### Claude Code Method
 
 ```
-/frago.run 排查 staging.example.com/login 的布局偏移问题，先截图，点击登录按钮后再截图，对比差异
+/frago.run Investigate layout shift issue on staging.example.com/login, first take screenshot, then click login button and screenshot again, compare differences
 ```
 
-AI 将自动：
-1. 创建 Run 实例
-2. 执行导航、截图、点击操作
-3. 分析两张截图差异
-4. 生成带有诊断信息的报告
+AI will automatically:
+1. Create Run instance
+2. Execute navigation, screenshot, click operations
+3. Analyze differences between two screenshots
+4. Generate report with diagnostic information
 
-### Run 系统的价值
+### Value of Run System
 
-- **上下文持久化**：所有操作记录在 `execution.jsonl`，可随时回溯
-- **截图归档**：关键步骤的截图自动保存到 `screenshots/`
-- **脚本积累**：探索过程中生成的验证脚本保存到 `scripts/`
-- **可复用**：后续遇到类似问题，可以继续该 Run 实例
+- **Context persistence**: All operations recorded in `execution.jsonl`, can be traced anytime
+- **Screenshot archiving**: Key step screenshots automatically saved to `screenshots/`
+- **Script accumulation**: Validation scripts generated during exploration saved to `scripts/`
+- **Reusable**: Can continue this Run instance for similar issues later
 
 ---
 
-## 场景 4：复杂工作流编排
+## Scenario 4: Complex Workflow Orchestration
 
-**目标**：执行跨平台、多步骤的复杂业务流程。
+**Goal**: Execute complex business processes spanning platforms and multiple steps.
 
-### CLI 方式（Python Recipe 编排）
+### CLI Method (Python Recipe Orchestration)
 
 ```bash
-# 执行一个包含多个步骤的复杂 Recipe
+# Execute complex Recipe with multiple steps
 uv run frago recipe run competitor_price_monitor \
   --params '{"product": "iPhone 15", "sites": ["amazon", "ebay"]}' \
   --output-file price_report.json
 ```
 
-### Claude Code 方式
+### Claude Code Method
 
 ```
-/frago.run 监控 Amazon 和 eBay 上 iPhone 15 的价格，生成对比报告并保存为 markdown
+/frago.run Monitor iPhone 15 prices on Amazon and eBay, generate comparison report and save as markdown
 ```
 
-### AI 执行流程
+### AI Execution Flow
 
-1. **意图识别**：识别为多平台比价任务
-2. **任务拆解**：
-   - 子任务 A: Amazon 搜索与提取（调用 `amazon_search` Recipe）
-   - 子任务 B: eBay 搜索与提取（调用 `ebay_search` Recipe）
-   - 子任务 C: 数据聚合与报告生成（调用 Python 数据处理逻辑）
-3. **执行与反馈**：依次执行子任务，最终生成 `price_comparison.md`
+1. **Intent recognition**: Identify as multi-platform price comparison task
+2. **Task breakdown**:
+   - Subtask A: Amazon search and extraction (call `amazon_search` Recipe)
+   - Subtask B: eBay search and extraction (call `ebay_search` Recipe)
+   - Subtask C: Data aggregation and report generation (call Python data processing logic)
+3. **Execute and feedback**: Execute subtasks sequentially, finally generate `price_comparison.md`
 
-### Workflow Recipe 示例结构
+### Workflow Recipe Example Structure
 
 ```python
 # examples/workflows/competitor_price_monitor.py
@@ -166,17 +168,17 @@ from frago.recipes import RecipeRunner
 
 runner = RecipeRunner()
 
-# 步骤 1: 提取 Amazon 数据
+# Step 1: Extract Amazon data
 amazon_data = runner.run('amazon_search', params={
     'keyword': params['product']
 })
 
-# 步骤 2: 提取 eBay 数据
+# Step 2: Extract eBay data
 ebay_data = runner.run('ebay_search', params={
     'keyword': params['product']
 })
 
-# 步骤 3: 数据聚合
+# Step 3: Data aggregation
 result = {
     'product': params['product'],
     'amazon': amazon_data['data'],
@@ -189,31 +191,31 @@ print(json.dumps(result))
 
 ---
 
-## 场景 5：批量处理与数据采集
+## Scenario 5: Batch Processing and Data Collection
 
-**目标**：批量执行重复性任务，提取大量数据。
+**Goal**: Execute repetitive tasks in batches, extract large amounts of data.
 
-### 示例：批量提取 Upwork 职位
+### Example: Batch Extract Upwork Jobs
 
 ```bash
-# 使用 Workflow Recipe 批量处理
+# Use Workflow Recipe for batch processing
 uv run frago recipe run upwork_batch_extract \
   --params '{"keyword": "Python", "count": 20}' \
   --output-file jobs.json
 ```
 
-### Workflow 内部逻辑
+### Internal Workflow Logic
 
 ```python
 # examples/workflows/upwork_batch_extract.py
 runner = RecipeRunner()
 
-# 调用 atomic Recipe 提取职位列表
+# Call atomic Recipe to extract job list
 job_list = runner.run('upwork_search_jobs', params={
     'keyword': params['keyword']
 })
 
-# 循环调用 atomic Recipe 提取详情
+# Loop call atomic Recipe to extract details
 results = []
 for job_url in job_list['data']['urls'][:params['count']]:
     job_detail = runner.run('upwork_extract_job_details', params={
@@ -226,15 +228,15 @@ print(json.dumps({'jobs': results, 'total': len(results)}))
 
 ---
 
-## 总结：三种使用模式
+## Summary: Three Usage Modes
 
-| 模式 | 命令 | 目标 | 输出 |
-|-----|------|------|------|
-| **探索调研** | `/frago.run` | 收集信息以创建 Recipe | JSONL 日志 + 验证脚本 + Recipe 草稿 |
-| **沉淀 Recipe** | `/frago.recipe` | 将探索结果转化为可复用脚本 | Recipe 文件（.js/.py + .md） |
-| **任务执行** | `/frago.exec` | 完成具体业务目标 | 任务结果 + 执行日志 |
+| Mode | Command | Goal | Output |
+|------|---------|------|--------|
+| **Exploration Research** | `/frago.run` | Collect information to create Recipe | JSONL logs + validation scripts + Recipe draft |
+| **Consolidate Recipe** | `/frago.recipe` | Transform exploration results into reusable scripts | Recipe files (.js/.py + .md) |
+| **Task Execution** | `/frago.exec` | Complete specific business goals | Task results + execution logs |
 
-选择建议：
-- **未知页面/流程**：使用 `/frago.run` 探索，积累上下文
-- **重复性任务**：创建 Recipe 后使用 `/frago.exec` 或直接执行 Recipe
-- **复杂业务流程**：创建 Workflow Recipe，编排多个 atomic Recipe
+Selection Recommendations:
+- **Unknown pages/processes**: Use `/frago.run` for exploration, accumulate context
+- **Repetitive tasks**: Create Recipe then use `/frago.exec` or directly execute Recipe
+- **Complex business processes**: Create Workflow Recipe, orchestrate multiple atomic Recipes

@@ -1,188 +1,190 @@
-# Frago 开发指南
+[简体中文](development.zh-CN.md)
 
-## 项目目录结构
+# Frago Development Guide
+
+## Project Directory Structure
 
 ```
 Frago/
-├── README.md                        # 项目说明
-├── CLAUDE.md                        # 项目配置（技术栈、代码风格）
+├── README.md                        # Project description
+├── CLAUDE.md                        # Project configuration (tech stack, code style)
 ├── .claude/
 │   ├── commands/                    # Claude Code Slash Commands
-│   │   ├── frago_start.md          # AI信息收集命令
-│   │   ├── frago_storyboard.md     # AI分镜规划命令
-│   │   ├── frago_generate.md       # AI视频生成命令（创作录制脚本）
-│   │   ├── frago_evaluate.md       # AI素材评估命令
-│   │   ├── frago_merge.md          # AI视频合成命令
-│   │   └── frago_recipe.md         # Recipe管理命令（创建/更新/列表）
-│   └── settings.local.json          # 项目配置
+│   │   ├── frago_start.md          # AI information collection command
+│   │   ├── frago_storyboard.md     # AI storyboard planning command
+│   │   ├── frago_generate.md       # AI video generation command (create recording scripts)
+│   │   ├── frago_evaluate.md       # AI material evaluation command
+│   │   ├── frago_merge.md          # AI video synthesis command
+│   │   └── frago_recipe.md         # Recipe management command (create/update/list)
+│   └── settings.local.json          # Project configuration
 │
-├── src/                             # 核心Python代码
-│   ├── frago/                      # Frago核心包
-│   │   ├── cdp/                     # CDP协议实现（原生WebSocket）
-│   │   │   ├── client.py            # CDP客户端基类
-│   │   │   ├── session.py           # 会话管理（连接/重试/事件）
-│   │   │   ├── config.py            # 配置管理（代理支持）
-│   │   │   ├── logger.py            # 日志系统
-│   │   │   ├── retry.py             # 重试策略
-│   │   │   ├── exceptions.py        # 异常定义
-│   │   │   ├── types.py             # 数据类型
-│   │   │   └── commands/            # CDP命令实现
-│   │   │       ├── page.py          # 页面操作（导航/标题/内容）
-│   │   │       ├── screenshot.py    # 截图功能
-│   │   │       ├── runtime.py       # JavaScript执行
-│   │   │       ├── input.py         # 输入操作（点击）
-│   │   │       ├── scroll.py        # 滚动操作
-│   │   │       ├── wait.py          # 等待操作
-│   │   │       ├── zoom.py          # 缩放操作
-│   │   │       ├── status.py        # 状态检查
-│   │   │       └── visual_effects.py # 视觉效果（spotlight/highlight）
-│   │   ├── cli/                     # 命令行接口
-│   │   │   ├── main.py              # CLI入口（Click框架）
-│   │   │   ├── commands.py          # 基础CDP命令实现
-│   │   │   └── recipe_commands.py   # Recipe管理命令（list/info/run）
-│   │   ├── recipes/                 # Recipe引擎代码（元数据驱动架构）
-│   │   │   ├── __init__.py          # 模块导出
-│   │   │   ├── metadata.py          # 元数据解析和验证
-│   │   │   ├── registry.py          # Recipe注册表和发现
-│   │   │   ├── runner.py            # Recipe执行器
-│   │   │   ├── output_handler.py    # 输出处理（stdout/file/clipboard）
-│   │   │   └── exceptions.py        # Recipe异常定义
-│   │   └── tools/                   # 开发工具
-│   │       └── function_mapping.py  # CDP功能映射验证工具
-│   ├── chrome_cdp_launcher.py       # Chrome CDP启动器（跨平台）
-│   ├── pipeline_master.py           # Pipeline主控制器
-│   └── requirements.txt             # Python依赖
+├── src/                             # Core Python code
+│   ├── frago/                      # Frago core package
+│   │   ├── cdp/                     # CDP protocol implementation (native WebSocket)
+│   │   │   ├── client.py            # CDP client base class
+│   │   │   ├── session.py           # Session management (connection/retry/events)
+│   │   │   ├── config.py            # Configuration management (proxy support)
+│   │   │   ├── logger.py            # Logging system
+│   │   │   ├── retry.py             # Retry strategies
+│   │   │   ├── exceptions.py        # Exception definitions
+│   │   │   ├── types.py             # Data types
+│   │   │   └── commands/            # CDP command implementations
+│   │   │       ├── page.py          # Page operations (navigate/title/content)
+│   │   │       ├── screenshot.py    # Screenshot functionality
+│   │   │       ├── runtime.py       # JavaScript execution
+│   │   │       ├── input.py         # Input operations (click)
+│   │   │       ├── scroll.py        # Scroll operations
+│   │   │       ├── wait.py          # Wait operations
+│   │   │       ├── zoom.py          # Zoom operations
+│   │   │       ├── status.py        # Status checks
+│   │   │       └── visual_effects.py # Visual effects (spotlight/highlight)
+│   │   ├── cli/                     # Command-line interface
+│   │   │   ├── main.py              # CLI entry (Click framework)
+│   │   │   ├── commands.py          # Basic CDP command implementations
+│   │   │   └── recipe_commands.py   # Recipe management commands (list/info/run)
+│   │   ├── recipes/                 # Recipe engine code (metadata-driven architecture)
+│   │   │   ├── __init__.py          # Module exports
+│   │   │   ├── metadata.py          # Metadata parsing and validation
+│   │   │   ├── registry.py          # Recipe registry and discovery
+│   │   │   ├── runner.py            # Recipe executor
+│   │   │   ├── output_handler.py    # Output handling (stdout/file/clipboard)
+│   │   │   └── exceptions.py        # Recipe exception definitions
+│   │   └── tools/                   # Development tools
+│   │       └── function_mapping.py  # CDP function mapping validation tool
+│   ├── chrome_cdp_launcher.py       # Chrome CDP launcher (cross-platform)
+│   ├── pipeline_master.py           # Pipeline master controller
+│   └── requirements.txt             # Python dependencies
 │
-├── examples/                        # 示例Recipe（不打包到wheel）
+├── examples/                        # Example Recipes (not packaged in wheel)
 │   └── atomic/
 │       └── chrome/
-│           ├── test_inspect_tab.js/.md                  # 页面检查诊断
-│           ├── youtube_extract_video_transcript.js/.md  # YouTube字幕提取
-│           ├── upwork_extract_job_details_as_markdown.js/.md  # Upwork职位详情
-│           └── x_extract_tweet_with_comments.js/.md    # X(Twitter)推文+评论提取
+│           ├── test_inspect_tab.js/.md                  # Page inspection diagnostics
+│           ├── youtube_extract_video_transcript.js/.md  # YouTube subtitle extraction
+│           ├── upwork_extract_job_details_as_markdown.js/.md  # Upwork job details
+│           └── x_extract_tweet_with_comments.js/.md    # X(Twitter) tweet+comment extraction
 │
-├── specs/                           # 功能规格和迭代记录
-│   ├── 001-standardize-cdp-scripts/ # CDP脚本标准化
-│   ├── 002-cdp-integration-refactor/# CDP集成重构（Python实现）
-│   ├── 003-skill-automation/        # Recipe系统设计
-│   └── 004-recipe-architecture-refactor/ # Recipe架构重构
+├── specs/                           # Feature specs and iteration records
+│   ├── 001-standardize-cdp-scripts/ # CDP script standardization
+│   ├── 002-cdp-integration-refactor/# CDP integration refactor (Python implementation)
+│   ├── 003-skill-automation/        # Recipe system design
+│   └── 004-recipe-architecture-refactor/ # Recipe architecture refactor
 │
-├── docs/                            # 项目文档
-│   ├── architecture.md              # 技术架构
-│   ├── user-guide.md                # 使用指南
-│   ├── development.md               # 开发指南
-│   ├── roadmap.md                   # 项目进展
-│   └── examples.md                  # 示例参考
+├── docs/                            # Project documentation
+│   ├── architecture.md              # Technical architecture
+│   ├── user-guide.md                # User guide
+│   ├── development.md               # Development guide
+│   ├── roadmap.md                   # Project progress
+│   └── examples.md                  # Example reference
 │
-├── projects/                        # 视频项目工作目录
+├── projects/                        # Video project working directories
 │   └── <project_name>/
-│       ├── research/                # AI信息收集输出
+│       ├── research/                # AI information collection output
 │       │   ├── report.json
 │       │   └── screenshots/
-│       ├── shots/                   # AI分镜规划输出
+│       ├── shots/                   # AI storyboard planning output
 │       │   └── shot_xxx.json
-│       ├── clips/                   # AI生成的视频片段
-│       │   ├── shot_xxx_record.sh   # AI创作的录制脚本
+│       ├── clips/                   # AI-generated video clips
+│       │   ├── shot_xxx_record.sh   # AI-created recording scripts
 │       │   ├── shot_xxx.mp4
 │       │   └── shot_xxx_audio.mp3
-│       ├── outputs/                 # 最终视频输出
-│       └── logs/                    # 执行日志
+│       ├── outputs/                 # Final video output
+│       └── logs/                    # Execution logs
 │
-├── chrome_profile/                  # Chrome用户配置
-└── pyproject.toml                   # Python包配置（uv管理）
+├── chrome_profile/                  # Chrome user configuration
+└── pyproject.toml                   # Python package configuration (uv managed)
 ```
 
-## CDP命令目录结构
+## CDP Command Directory Structure
 
-CDP功能按类型组织在 `src/frago/cdp/commands/` 目录下：
+CDP functionality organized by type in `src/frago/cdp/commands/`:
 
 ```
 src/frago/cdp/commands/
-├── __init__.py         # 命令模块导出
-├── page.py             # 页面操作（导航、获取标题/内容）
-├── screenshot.py       # 截图功能
-├── runtime.py          # JavaScript执行
-├── input.py            # 输入操作（点击）
-├── scroll.py           # 滚动操作
-├── wait.py             # 等待操作
-├── zoom.py             # 缩放操作
-├── status.py           # 状态检查
-└── visual_effects.py   # 视觉效果（高亮、指针、聚光灯、标注）
+├── __init__.py         # Command module exports
+├── page.py             # Page operations (navigate, get title/content)
+├── screenshot.py       # Screenshot functionality
+├── runtime.py          # JavaScript execution
+├── input.py            # Input operations (click)
+├── scroll.py           # Scroll operations
+├── wait.py             # Wait operations
+├── zoom.py             # Zoom operations
+├── status.py           # Status checks
+└── visual_effects.py   # Visual effects (highlight, pointer, spotlight, annotation)
 ```
 
-所有CDP功能通过统一的CLI接口（`uv run frago <command>`）访问。
+All CDP functionality accessed through unified CLI interface (`uv run frago <command>`).
 
-## 技术栈
+## Tech Stack
 
-- **AI编排**：Claude Code（任务分析、Recipe调度、工作流设计）
-- **浏览器控制**：Chrome DevTools Protocol (CDP) - 原生WebSocket
-- **多运行时支持**：Chrome JS、Python、Shell
-- **任务管理**：Run命令系统（持久化上下文、JSONL日志）
-- **脚本编排**：Python 3.9+（Recipe系统 + CDP工具层）
+- **AI Orchestration**: Claude Code (task analysis, Recipe scheduling, workflow design)
+- **Browser Control**: Chrome DevTools Protocol (CDP) - native WebSocket
+- **Multi-Runtime Support**: Chrome JS, Python, Shell
+- **Task Management**: Run command system (context persistence, JSONL logs)
+- **Script Orchestration**: Python 3.9+ (Recipe system + CDP tool layer)
 
-## 开发规范
+## Development Standards
 
-1. **脚本位置**：
-   - 命令实现脚本放在 `scripts/`
-   - Python核心脚本放在 `src/`
+1. **Script locations**:
+   - Command implementation scripts in `scripts/`
+   - Python core scripts in `src/`
 
-2. **文件命名**：
-   - 视频片段：`shot_xxx.mp4`（基于时间戳）
-   - 音频片段：`shot_xxx_audio.mp3` 或 `shot_xxx_1.mp3`
-   - 截图文件：必须使用绝对路径保存
+2. **File naming**:
+   - Video clips: `shot_xxx.mp4` (based on timestamp)
+   - Audio clips: `shot_xxx_audio.mp3` or `shot_xxx_1.mp3`
+   - Screenshot files: Must use absolute paths
 
-3. **Chrome CDP使用**：
-   - prepare阶段：仅用于信息收集
-   - generate阶段：加入视觉引导效果
+3. **Chrome CDP usage**:
+   - prepare phase: Only for information collection
+   - generate phase: Add visual guidance effects
 
-## 功能映射验证工具
+## Function Mapping Validation Tool
 
-功能映射工具用于验证所有CDP功能的完整性和一致性。
+The function mapping tool validates completeness and consistency of all CDP functionality.
 
-### 运行功能映射验证
+### Run Function Mapping Validation
 
 ```bash
-# 生成控制台报告
+# Generate console report
 uv run python -m frago.tools.function_mapping
 
-# 生成详细HTML报告
+# Generate detailed HTML report
 uv run python -m frago.tools.function_mapping --format html --output function_mapping_report.html
 
-# 生成JSON报告
+# Generate JSON report
 uv run python -m frago.tools.function_mapping --format json --output function_mapping_report.json
 ```
 
-### 查看功能覆盖率
+### View Function Coverage
 
-工具会扫描所有CDP功能实现，生成覆盖率报告：
+The tool scans all CDP function implementations and generates coverage report:
 
 ```
 ================================
-功能映射验证报告
+Function Mapping Validation Report
 ================================
-总功能数: 18
-已实现: 18 (100.0%)
-行为一致: 18 (100.0%)
+Total functions: 18
+Implemented: 18 (100.0%)
+Behavior consistent: 18 (100.0%)
 ================================
 ```
 
-## 注意事项
+## Important Notes
 
-1. Chrome必须通过CDP启动器运行，保持9222端口可用
-2. 录制前需要授权屏幕录制权限
-3. 所有截图必须使用绝对路径
-4. 视频长度必须大于等于音频总长度
-5. 每个分镜完成后必须创建`.completed`标记文件
+1. Chrome must run through CDP launcher with port 9222 available
+2. Screen recording permission must be authorized before recording
+3. All screenshots must use absolute paths
+4. Video length must be greater than or equal to total audio length
+5. Must create `.completed` marker file after each shot completes
 
-## Recipe开发规范
+## Recipe Development Standards
 
-### Recipe文件结构
+### Recipe File Structure
 
-每个Recipe包含两个文件：
-- `<recipe_name>.js`/`.py`/`.sh` - 执行脚本
-- `<recipe_name>.md` - 元数据和文档（YAML frontmatter）
+Each Recipe contains two files:
+- `<recipe_name>.js`/`.py`/`.sh` - Execution script
+- `<recipe_name>.md` - Metadata and documentation (YAML frontmatter)
 
-### 元数据规范
+### Metadata Specification
 
 ```yaml
 ---
@@ -190,76 +192,76 @@ name: recipe_name
 type: atomic                    # atomic | workflow
 runtime: chrome-js              # chrome-js | python | shell
 version: "1.0"
-description: "简短功能描述（<200字符）"
-use_cases: ["场景1", "场景2"]
-tags: ["标签1", "标签2"]
+description: "Short function description (<200 chars)"
+use_cases: ["Scenario 1", "Scenario 2"]
+tags: ["tag1", "tag2"]
 output_targets: [stdout, file]  # stdout | file | clipboard
 inputs:
   param1:
     type: string
-    description: "参数说明"
+    description: "Parameter description"
     required: true
 outputs:
   result1:
     type: string
-    description: "输出说明"
+    description: "Output description"
 ---
 ```
 
-### Markdown文档结构
+### Markdown Documentation Structure
 
-标准的6个章节：
-1. 功能描述
-2. 使用方法
-3. 前置条件
-4. 预期输出
-5. 注意事项
-6. 更新历史
+Standard 6 sections:
+1. Function Description
+2. Usage
+3. Prerequisites
+4. Expected Output
+5. Notes
+6. Update History
 
-### Recipe命名规范
+### Recipe Naming Convention
 
-描述性命名：`<平台>_<操作>_<对象>.js`
+Descriptive naming: `<platform>_<operation>_<object>.js`
 
-例如：
+Examples:
 - `youtube_extract_video_transcript.js`
 - `upwork_extract_job_details_as_markdown.js`
 - `x_extract_tweet_with_comments.js`
 
-## Recipe存储结构
+## Recipe Storage Structure
 
-- **代码与资源分离**：
-  - `src/frago/recipes/` - Python引擎代码（不包含Recipe脚本）
-  - `examples/atomic/chrome/` - 示例Recipe脚本 + 元数据文档
-  - `~/.frago/recipes/` - 用户级Recipe（待实现）
-  - `.frago/recipes/` - 项目级Recipe（待实现）
+- **Code-resource separation**:
+  - `src/frago/recipes/` - Python engine code (no Recipe scripts)
+  - `examples/atomic/chrome/` - Example Recipe scripts + metadata documentation
+  - `~/.frago/recipes/` - User-level Recipes (to be implemented)
+  - `.frago/recipes/` - Project-level Recipes (to be implemented)
 
-- **查找优先级**：项目级 > 用户级 > 示例级
+- **Lookup priority**: Project-level > User-level > Example-level
 
-## 测试
+## Testing
 
 ```bash
-# 运行所有测试
+# Run all tests
 uv run pytest
 
-# 运行特定测试
+# Run specific tests
 uv run pytest tests/integration/recipe/
 
-# 测试Recipe执行
+# Test Recipe execution
 uv run pytest tests/integration/recipe/test_recipe_execution.py
 ```
 
-## 贡献指南
+## Contribution Guidelines
 
-1. Fork项目
-2. 创建特性分支（`git checkout -b feature/AmazingFeature`）
-3. 提交更改（`git commit -m 'Add some AmazingFeature'`）
-4. 推送到分支（`git push origin feature/AmazingFeature`）
-5. 开启Pull Request
+1. Fork the project
+2. Create feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Open Pull Request
 
-## 代码审查清单
+## Code Review Checklist
 
-- [ ] 所有CDP命令都有对应的CLI接口
-- [ ] Recipe元数据完整且符合规范
-- [ ] 新增功能有测试覆盖
-- [ ] 代码符合项目规范
-- [ ] 文档已更新
+- [ ] All CDP commands have corresponding CLI interfaces
+- [ ] Recipe metadata complete and compliant
+- [ ] New features have test coverage
+- [ ] Code complies with project standards
+- [ ] Documentation updated
