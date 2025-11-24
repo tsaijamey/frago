@@ -1,115 +1,117 @@
-# Frago 使用指南
+[简体中文](user-guide.zh-CN.md)
 
-## 核心使用场景
+# Frago User Guide
 
-Frago 适用于各类浏览器自动化和数据采集任务：
+## Core Use Cases
 
-1. **网页数据采集** - 批量提取结构化信息
-   - 示例：`"从Upwork提取职位详情并导出为Markdown"`
+Frago is suitable for various browser automation and data collection tasks:
 
-2. **社交媒体分析** - 收集和分析社交内容
-   - 示例：`"提取Twitter/X帖子及评论"`
+1. **Web Data Collection** - Batch extract structured information
+   - Example: `"Extract job details from Upwork and export as Markdown"`
 
-3. **内容转录** - 提取视频/音频的文本内容
-   - 示例：`"下载YouTube视频的字幕文本"`
+2. **Social Media Analysis** - Collect and analyze social content
+   - Example: `"Extract Twitter/X posts and comments"`
 
-4. **自定义工作流** - 组合多个Recipe完成复杂任务
-   - 示例：`"批量处理表单提交、截图归档"`
+3. **Content Transcription** - Extract text content from videos/audio
+   - Example: `"Download YouTube video subtitles as text"`
 
-**典型工作流程**：
-1. AI 分析任务需求，选择合适的 Recipe
-2. 调用 CDP 命令控制 Chrome 执行操作
-3. 记录执行日志到 JSONL 文件（100% 可解析）
-4. 输出结构化数据（JSON/Markdown/文本）
-5. 持久化任务上下文到 Run 实例
+4. **Custom Workflows** - Combine multiple Recipes to complete complex tasks
+   - Example: `"Batch process form submissions, archive screenshots"`
 
-## 环境要求
+**Typical Workflow**:
+1. AI analyzes task requirements and selects appropriate Recipe
+2. Invoke CDP commands to control Chrome execution
+3. Record execution logs to JSONL files (100% parsable)
+4. Output structured data (JSON/Markdown/text)
+5. Persist task context to Run instances
 
-- macOS（用于AVFoundation录制）
-- Chrome浏览器
+## Environment Requirements
+
+- macOS (for AVFoundation recording)
+- Chrome browser
 - Python 3.12+
 - ffmpeg 8.0+
-- uv包管理器
-- 屏幕录制权限（系统设置 > 隐私与安全性 > 屏幕录制）
+- uv package manager
+- Screen recording permission (System Settings > Privacy & Security > Screen Recording)
 
-## 依赖安装
+## Dependency Installation
 
 ```bash
-# 系统依赖（如未安装）
+# System dependencies (if not installed)
 brew install ffmpeg
 brew install uv
 
-# Python依赖（uv自动管理虚拟环境）
+# Python dependencies (uv automatically manages virtual environment)
 uv sync
 ```
 
-## Pipeline 完整执行流程
+## Complete Pipeline Execution Flow
 
-### 一键启动Pipeline
+### One-Click Pipeline Launch
 
 ```bash
-# 启动完整pipeline
-uv run python src/pipeline_master.py "<主题>" <项目名>
+# Launch complete pipeline
+uv run python src/pipeline_master.py "<topic>" <project_name>
 ```
 
-### 示例命令
+### Example Commands
 
 ```bash
-# 类型1：资讯深度分析
-uv run python src/pipeline_master.py "AI教育革命 - 观点：个性化学习将取代传统课堂" ai_education
+# Type 1: In-depth News Analysis
+uv run python src/pipeline_master.py "AI Education Revolution - Opinion: Personalized Learning Will Replace Traditional Classrooms" ai_education
 
-# 类型2：GitHub项目解析
+# Type 2: GitHub Project Analysis
 uv run python src/pipeline_master.py "https://github.com/openai/whisper" whisper_intro
 
-# 类型3：产品介绍
-uv run python src/pipeline_master.py "Notion产品功能介绍" notion_demo
+# Type 3: Product Introduction
+uv run python src/pipeline_master.py "Notion Product Features Introduction" notion_demo
 
-# 类型4：MVP开发演示
-uv run python src/pipeline_master.py "React开发待办事项应用MVP" todo_mvp
+# Type 4: MVP Development Demo
+uv run python src/pipeline_master.py "React Todo App MVP Development" todo_mvp
 ```
 
-### Pipeline执行流程
+### Pipeline Execution Flow
 
-1. **自动启动Chrome CDP**（端口9222）
-2. **信息收集**（/frago.start）→ start.done
-3. **分镜规划**（/frago.storyboard）→ storyboard.done
-4. **循环生成视频**（/frago.generate × N）→ generate.done
-5. **素材评估**（/frago.evaluate）→ evaluate.done
-6. **视频合成**（/frago.merge）→ merge.done
-7. **环境清理**，输出最终视频
+1. **Auto-start Chrome CDP** (port 9222)
+2. **Information Collection** (/frago.start) → start.done
+3. **Storyboard Planning** (/frago.storyboard) → storyboard.done
+4. **Video Generation Loop** (/frago.generate × N) → generate.done
+5. **Material Evaluation** (/frago.evaluate) → evaluate.done
+6. **Video Merging** (/frago.merge) → merge.done
+7. **Environment Cleanup**, output final video
 
-整个流程完全自动化，通过.done文件进行阶段同步。
+The entire process is fully automated, synchronized through .done files.
 
-## CDP命令使用指南
+## CDP Command Usage Guide
 
-### 基础CDP命令
+### Basic CDP Commands
 
-所有CDP功能通过统一的CLI接口（`uv run frago <command>`）访问。
+All CDP functionality is accessed through a unified CLI interface (`uv run frago <command>`).
 
 ```bash
-# 导航网页
+# Navigate to webpage
 uv run frago navigate <url>
 
-# 点击元素
+# Click element
 uv run frago click <selector>
 
-# 执行JavaScript
+# Execute JavaScript
 uv run frago exec-js <expression>
 
-# 截图
+# Take screenshot
 uv run frago screenshot <output_file>
 
-# 其他命令
+# Other commands
 uv run frago --help
 ```
 
-### 代理配置
+### Proxy Configuration
 
-Frago的CDP集成支持代理配置，适用于需要通过代理访问网络的环境。
+Frago's CDP integration supports proxy configuration for environments requiring network access through a proxy.
 
-#### 环境变量配置
+#### Environment Variable Configuration
 
-通过环境变量设置全局代理：
+Set global proxy through environment variables:
 
 ```bash
 export HTTP_PROXY=http://proxy.example.com:8080
@@ -117,139 +119,139 @@ export HTTPS_PROXY=http://proxy.example.com:8080
 export NO_PROXY=localhost,127.0.0.1
 ```
 
-#### CLI参数配置
+#### CLI Parameter Configuration
 
-所有CDP命令都支持代理参数：
+All CDP commands support proxy parameters:
 
 ```bash
-# 使用代理
+# Use proxy
 uv run frago navigate https://example.com \
     --proxy-host proxy.example.com \
     --proxy-port 8080
 
-# 绕过代理
+# Bypass proxy
 uv run frago navigate https://example.com --no-proxy
 ```
 
-### 重试机制
+### Retry Mechanism
 
-CDP连接支持智能重试机制，特别针对代理环境优化：
+CDP connections support intelligent retry mechanisms, specifically optimized for proxy environments:
 
-- **默认重试策略**：最多3次，指数退避延迟
-- **代理连接重试策略**：最多5次，更短延迟，适用于代理环境
-- **连接超时**：默认30秒
-- **命令超时**：默认60秒
+- **Default retry strategy**: Up to 3 attempts, exponential backoff delay
+- **Proxy connection retry strategy**: Up to 5 attempts, shorter delays, suitable for proxy environments
+- **Connection timeout**: Default 30 seconds
+- **Command timeout**: Default 60 seconds
 
-重试机制会自动识别代理连接失败并提供诊断信息。
+The retry mechanism automatically identifies proxy connection failures and provides diagnostic information.
 
-## Recipe管理和使用
+## Recipe Management and Usage
 
-Recipe系统提供元数据驱动的自动化脚本管理。
+The Recipe system provides metadata-driven automation script management.
 
-### Recipe管理命令
+### Recipe Management Commands
 
 ```bash
-# 列出所有可用的Recipe
+# List all available Recipes
 uv run frago recipe list
 
-# 以JSON格式列出（便于AI解析）
+# List in JSON format (for AI parsing)
 uv run frago recipe list --format json
 
-# 查看Recipe详细信息
+# View Recipe detailed information
 uv run frago recipe info youtube_extract_video_transcript
 
-# 执行Recipe（推荐方式）
+# Execute Recipe (recommended method)
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 
-# 输出到剪贴板
+# Output to clipboard
 uv run frago recipe run upwork_extract_job_details_as_markdown \
     --params '{"url": "..."}' \
     --output-clipboard
 ```
 
-**支持选项**：
-- `--format [table/json/names]` - 输出格式（list命令）
-- `--source [project/user/example/all]` - 过滤Recipe来源（list命令）
-- `--type [atomic/workflow/all]` - 过滤Recipe类型（list命令）
-- `--params '{...}'` - JSON参数（run命令）
-- `--params-file <path>` - 从文件读取参数（run命令）
-- `--output-file <path>` - 保存输出到文件
-- `--output-clipboard` - 复制输出到剪贴板
-- `--timeout <seconds>` - 执行超时时间
+**Supported Options**:
+- `--format [table/json/names]` - Output format (list command)
+- `--source [project/user/example/all]` - Filter Recipe source (list command)
+- `--type [atomic/workflow/all]` - Filter Recipe type (list command)
+- `--params '{...}'` - JSON parameters (run command)
+- `--params-file <path>` - Read parameters from file (run command)
+- `--output-file <path>` - Save output to file
+- `--output-clipboard` - Copy output to clipboard
+- `--timeout <seconds>` - Execution timeout
 
-### 使用Recipe的三种方式
+### Three Ways to Use Recipes
 
 ```bash
-# 方式1: 推荐 - 元数据驱动（参数验证、输出处理）
+# Method 1: Recommended - Metadata-driven (parameter validation, output handling)
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/..."}' \
     --output-file transcript.txt
 
-# 方式2: 发现可用的Recipe
+# Method 2: Discover available Recipes
 uv run frago recipe list --format json
 
-# 方式3: 传统方式 - 直接执行JS（绕过元数据系统）
+# Method 3: Traditional method - Direct JS execution (bypass metadata system)
 uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
-### 可用的示例Recipe
+### Available Example Recipes
 
-当前提供4个示例Recipe：
+Currently provides 4 example Recipes:
 
-| 名称 | 功能 | 支持输出 |
-|------|------|----------|
-| `test_inspect_tab` | 获取当前标签页诊断信息（标题、URL、DOM统计） | stdout |
-| `youtube_extract_video_transcript` | 提取YouTube视频完整字幕 | stdout, file |
-| `upwork_extract_job_details_as_markdown` | 提取Upwork职位详情为Markdown格式 | stdout, file |
-| `x_extract_tweet_with_comments` | 提取X(Twitter)推文和评论 | stdout, file, clipboard |
+| Name | Function | Supported Output |
+|------|----------|------------------|
+| `test_inspect_tab` | Get current tab diagnostic information (title, URL, DOM stats) | stdout |
+| `youtube_extract_video_transcript` | Extract complete YouTube video subtitles | stdout, file |
+| `upwork_extract_job_details_as_markdown` | Extract Upwork job details as Markdown | stdout, file |
+| `x_extract_tweet_with_comments` | Extract X(Twitter) tweets and comments | stdout, file, clipboard |
 
-### 创建和更新Recipe
+### Creating and Updating Recipes
 
-通过 `/frago.recipe` 命令（Claude Code Slash Command）管理Recipe：
+Manage Recipes through `/frago.recipe` command (Claude Code Slash Command):
 
 ```
-# 创建新Recipe（AI交互式引导）
-/frago.recipe create "在YouTube视频页面提取完整字幕内容"
+# Create new Recipe (AI interactive guidance)
+/frago.recipe create "Extract complete subtitle content from YouTube video page"
 
-# 更新现有Recipe
-/frago.recipe update youtube_extract_subtitles "YouTube改版后字幕按钮失效了"
+# Update existing Recipe
+/frago.recipe update youtube_extract_subtitles "YouTube redesign broke subtitle button"
 
-# 列出所有Recipe
+# List all Recipes
 /frago.recipe list
 ```
 
-### Recipe存储结构
+### Recipe Storage Structure
 
-- **位置**: `src/frago/recipes/`（引擎代码），`examples/atomic/chrome/`（示例Recipe）
-- **命名约定**: `<平台>_<功能描述>.js`（例如 `youtube_extract_subtitles.js`）
-- **配套文档**: 每个Recipe脚本(.js)都有对应的Markdown文档(.md)
-- **执行方式**: `uv run frago recipe run <recipe_name>`
+- **Location**: `src/frago/recipes/` (engine code), `examples/atomic/chrome/` (example Recipes)
+- **Naming convention**: `<platform>_<function_description>.js` (e.g., `youtube_extract_subtitles.js`)
+- **Supporting documentation**: Each Recipe script (.js) has a corresponding Markdown document (.md)
+- **Execution method**: `uv run frago recipe run <recipe_name>`
 
-## 项目目录结构
+## Project Directory Structure
 
-每个视频项目会在 `projects/<project_name>/` 目录下创建以下结构：
+Each video project creates the following structure in `projects/<project_name>/`:
 
 ```
 projects/<project_name>/
-├── research/                # AI信息收集输出
+├── research/                # AI information collection output
 │   ├── report.json
 │   └── screenshots/
-├── shots/                   # AI分镜规划输出
+├── shots/                   # AI storyboard planning output
 │   └── shot_xxx.json
-├── clips/                   # AI生成的视频片段
-│   ├── shot_xxx_record.sh   # AI创作的录制脚本
+├── clips/                   # AI-generated video clips
+│   ├── shot_xxx_record.sh   # AI-created recording script
 │   ├── shot_xxx.mp4
 │   └── shot_xxx_audio.mp3
-├── outputs/                 # 最终视频输出
-└── logs/                    # 执行日志
+├── outputs/                 # Final video output
+└── logs/                    # Execution logs
 ```
 
-## 注意事项
+## Important Notes
 
-1. Chrome必须通过CDP启动器运行，保持9222端口可用
-2. 录制前需要授权屏幕录制权限
-3. 所有截图必须使用绝对路径
-4. 视频长度必须大于等于音频总长度
-5. 每个分镜完成后必须创建`.completed`标记文件
+1. Chrome must run through CDP launcher with port 9222 available
+2. Screen recording permission must be authorized before recording
+3. All screenshots must use absolute paths
+4. Video length must be greater than or equal to total audio length
+5. A `.completed` marker file must be created after each shot is completed

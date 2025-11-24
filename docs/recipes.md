@@ -1,44 +1,46 @@
-# Recipe 系统指南（AI-First）
+[简体中文](recipes.zh-CN.md)
 
-## 概述
+# Recipe System Guide (AI-First)
 
-本指南展示 **Claude Code AI Agent** 如何使用新的 Recipe 系统。设计理念：AI 是主要使用者，人类可以手动执行（次要场景）。
+## Overview
 
-**AI 核心能力**:
-1. 通过元数据发现和选择合适的 Recipe
-2. 根据任务需求选择输出去向（stdout/file/clipboard）
-3. 自动生成编排 Workflow Recipe
-4. 理解结构化错误并采取应对策略
+This guide demonstrates how **Claude Code AI Agent** uses the new Recipe system. Design philosophy: AI is the primary user, humans can execute manually (secondary scenario).
+
+**AI Core Capabilities**:
+1. Discover and select appropriate Recipes through metadata
+2. Choose output destinations based on task requirements (stdout/file/clipboard)
+3. Automatically generate orchestrated Workflow Recipes
+4. Understand structured errors and adopt response strategies
 
 ---
 
-## AI 使用场景快速开始
+## AI Usage Scenarios Quick Start
 
-### 场景 1: AI 发现并执行 Recipe
+### Scenario 1: AI Discovers and Executes Recipe
 
-**用户意图**: "帮我提取这个 YouTube 视频的字幕并保存为文件"
+**User Intent**: "Help me extract subtitles from this YouTube video and save as a file"
 
-**AI 执行流程**:
+**AI Execution Flow**:
 
-#### Step 1: 查询可用 Recipe（JSON 格式）
+#### Step 1: Query Available Recipes (JSON Format)
 
 ```bash
-# AI 调用 Bash 工具
+# AI invokes Bash tool
 uv run frago recipe list --format json
 ```
 
-**AI 接收到的 JSON 响应**:
+**JSON Response Received by AI**:
 ```json
 [
   {
     "name": "youtube_extract_video_transcript",
     "type": "atomic",
     "runtime": "chrome-js",
-    "description": "从 YouTube 视频页面提取完整字幕内容",
+    "description": "Extract complete subtitle content from YouTube video page",
     "use_cases": [
-      "获取字幕用于翻译",
-      "制作字幕文件",
-      "分析视频内容"
+      "Get subtitles for translation",
+      "Create subtitle files",
+      "Analyze video content"
     ],
     "tags": ["web-scraping", "youtube", "transcript"],
     "output_targets": ["stdout", "file"],
@@ -49,10 +51,10 @@ uv run frago recipe list --format json
     "name": "upwork_extract_job_details_as_markdown",
     "type": "atomic",
     "runtime": "chrome-js",
-    "description": "从 Upwork 职位详情页提取完整信息并格式化为 Markdown",
+    "description": "Extract complete information from Upwork job details page and format as Markdown",
     "use_cases": [
-      "分析市场上的职位需求",
-      "批量收集职位信息"
+      "Analyze job market demands",
+      "Batch collect job information"
     ],
     "tags": ["web-scraping", "upwork"],
     "output_targets": ["stdout", "file"],
@@ -62,24 +64,24 @@ uv run frago recipe list --format json
 ]
 ```
 
-#### Step 2: AI 分析并选择 Recipe
+#### Step 2: AI Analyzes and Selects Recipe
 
-AI 思考过程:
-1. 用户需要提取 YouTube 字幕 → 匹配 `youtube_extract_video_transcript`
-2. 检查 `use_cases`: 包含 "获取字幕用于翻译" ✓
-3. 检查 `output_targets`: 支持 `file` ✓
-4. 决策：使用该 Recipe，输出到文件
+AI thinking process:
+1. User needs to extract YouTube subtitles → Matches `youtube_extract_video_transcript`
+2. Check `use_cases`: Contains "Get subtitles for translation" ✓
+3. Check `output_targets`: Supports `file` ✓
+4. Decision: Use this Recipe, output to file
 
-#### Step 3: AI 执行 Recipe
+#### Step 3: AI Executes Recipe
 
 ```bash
-# AI 调用 Bash 工具
+# AI invokes Bash tool
 uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
   --output-file transcript.json
 ```
 
-**执行成功响应**:
+**Successful Execution Response**:
 ```json
 {
   "success": true,
@@ -95,19 +97,19 @@ uv run frago recipe run youtube_extract_video_transcript \
 }
 ```
 
-**同时文件已保存**: `transcript.json`
+**File Also Saved**: `transcript.json`
 
 ---
 
-### 场景 2: AI 处理错误并重试
+### Scenario 2: AI Handles Errors and Retries
 
-**执行失败响应**:
+**Failed Execution Response**:
 ```json
 {
   "success": false,
   "error": {
     "type": "RecipeExecutionError",
-    "message": "Recipe 'youtube_extract_video_transcript' 执行失败",
+    "message": "Recipe 'youtube_extract_video_transcript' execution failed",
     "recipe_name": "youtube_extract_video_transcript",
     "runtime": "chrome-js",
     "exit_code": 1,
@@ -120,35 +122,35 @@ uv run frago recipe run youtube_extract_video_transcript \
 }
 ```
 
-**AI 分析错误**:
-1. `error.type`: RecipeExecutionError → 执行失败
-2. `error.stderr`: "Element not found: .transcript-button" → 页面结构变化或无字幕
-3. **AI 策略**: 向用户报告 "该视频可能没有字幕或 YouTube 页面结构已更新"
+**AI Analyzes Error**:
+1. `error.type`: RecipeExecutionError → Execution failed
+2. `error.stderr`: "Element not found: .transcript-button" → Page structure changed or no subtitles
+3. **AI Strategy**: Report to user "This video may not have subtitles or YouTube page structure has been updated"
 
 ---
 
-### 场景 3: AI 自动生成 Workflow Recipe
+### Scenario 3: AI Automatically Generates Workflow Recipe
 
-**用户意图**: "批量提取 10 个 Upwork 职位并保存为 JSON 文件"
+**User Intent**: "Batch extract 10 Upwork jobs and save as JSON file"
 
-**AI 执行流程**:
+**AI Execution Flow**:
 
-#### Step 1: AI 调用 `/frago.recipe` 命令
+#### Step 1: AI Invokes `/frago.recipe` Command
 
 ```
-/frago.recipe create workflow "批量提取 10 个 Upwork 职位并保存为 JSON"
+/frago.recipe create workflow "Batch extract 10 Upwork jobs and save as JSON"
 ```
 
-#### Step 2: AI 自动生成 Workflow 脚本
+#### Step 2: AI Automatically Generates Workflow Script
 
-AI 生成的文件: `~/.frago/recipes/workflows/upwork_batch_extract.py`
+AI-generated file: `~/.frago/recipes/workflows/upwork_batch_extract.py`
 
 ```python
 #!/usr/bin/env python3
 """
-Workflow: 批量提取 Upwork 职位
-生成时间: 2025-11-20
-由 Claude Code 自动生成
+Workflow: Batch Extract Upwork Jobs
+Generated: 2025-11-20
+Auto-generated by Claude Code
 """
 import sys, json
 from frago.recipes import RecipeRunner
@@ -166,7 +168,7 @@ def main():
 
     for i, url in enumerate(urls[:10], 1):
         try:
-            print(f"处理第 {i}/10 个职位...", file=sys.stderr)
+            print(f"Processing job {i}/10...", file=sys.stderr)
             result = runner.run('upwork_extract_job_details_as_markdown', {'url': url})
             results.append(result['data'])
         except Exception as e:
@@ -178,7 +180,7 @@ if __name__ == '__main__':
     main()
 ```
 
-#### Step 3: AI 生成元数据文件
+#### Step 3: AI Generates Metadata File
 
 `~/.frago/recipes/workflows/upwork_batch_extract.md`:
 
@@ -187,10 +189,10 @@ if __name__ == '__main__':
 name: upwork_batch_extract
 type: workflow
 runtime: python
-description: "批量提取多个 Upwork 职位并保存为 JSON"
+description: "Batch extract multiple Upwork jobs and save as JSON"
 use_cases:
-  - "批量收集职位数据"
-  - "市场分析"
+  - "Batch collect job data"
+  - "Market analysis"
 tags:
   - upwork
   - batch-processing
@@ -203,7 +205,7 @@ version: 1.0.0
 ---
 ```
 
-#### Step 4: AI 执行 Workflow
+#### Step 4: AI Executes Workflow
 
 ```bash
 uv run frago recipe run upwork_batch_extract \
@@ -213,28 +215,28 @@ uv run frago recipe run upwork_batch_extract \
 
 ---
 
-## 人类手动使用（次要场景）
+## Manual Human Usage (Secondary Scenario)
 
-### 场景：创建一个简单的剪贴板读取 Recipe
+### Scenario: Create a Simple Clipboard Read Recipe
 
-#### 1. 创建脚本文件
+#### 1. Create Script File
 
 ```bash
-# 创建 Python 脚本
+# Create Python script
 cat > ~/.frago/recipes/atomic/system/clipboard_read.py <<'EOF'
 #!/usr/bin/env python3
 import sys
 import json
 import subprocess
 
-# 从命令行参数读取输入
+# Read input from command line arguments
 params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
 
-# 读取剪贴板内容（使用 xclip）
+# Read clipboard content (using xclip)
 result = subprocess.run(['xclip', '-selection', 'clipboard', '-o'],
                         capture_output=True, text=True, check=True)
 
-# 输出 JSON 结果到 stdout
+# Output JSON result to stdout
 output = {
     "content": result.stdout,
     "length": len(result.stdout)
@@ -242,11 +244,11 @@ output = {
 print(json.dumps(output, ensure_ascii=False))
 EOF
 
-# 添加执行权限（Python 脚本不强制，但推荐）
+# Add execution permission (not mandatory for Python scripts, but recommended)
 chmod +x ~/.frago/recipes/atomic/system/clipboard_read.py
 ```
 
-#### 2. 创建元数据文件
+#### 2. Create Metadata File
 
 ```bash
 cat > ~/.frago/recipes/atomic/system/clipboard_read.md <<'EOF'
@@ -260,62 +262,62 @@ outputs:
   length: number
 version: 1.0.0
 dependencies: []
-description: "读取系统剪贴板内容"
+description: "Read system clipboard content"
 ---
 
-# 剪贴板读取 Recipe
+# Clipboard Read Recipe
 
-## 功能描述
+## Function Description
 
-读取 Linux 系统剪贴板的当前内容（使用 xclip 工具）。
+Read current content from Linux system clipboard (using xclip tool).
 
-## 前置条件
+## Prerequisites
 
-- 安装 xclip: `sudo apt install xclip`
-- 运行在 X11 环境（Wayland 需调整）
+- Install xclip: `sudo apt install xclip`
+- Running in X11 environment (Wayland needs adjustment)
 
-## 使用方法
+## Usage
 
 ```bash
 uv run frago recipe run clipboard_read
 ```
 
-## 预期输出
+## Expected Output
 
 ```json
 {
   "success": true,
   "data": {
-    "content": "复制的文本内容",
+    "content": "Copied text content",
     "length": 10
   }
 }
 ```
 
-## 注意事项
+## Notes
 
-- 如剪贴板为空，`content` 为空字符串
-- 仅支持文本内容，不支持图片等二进制数据
+- If clipboard is empty, `content` will be an empty string
+- Only supports text content, not binary data like images
 EOF
 ```
 
-#### 3. 验证并执行
+#### 3. Verify and Execute
 
 ```bash
-# 查看 Recipe 信息
+# View Recipe information
 uv run frago recipe info clipboard_read
 
-# 执行 Recipe
+# Execute Recipe
 uv run frago recipe run clipboard_read
 ```
 
 ---
 
-## 创建编排 Recipe (Workflow)
+## Creating Orchestrated Recipes (Workflow)
 
-### 场景：批量提取多个 YouTube 视频字幕
+### Scenario: Batch Extract Multiple YouTube Video Subtitles
 
-#### 1. 创建 Workflow 脚本
+#### 1. Create Workflow Script
 
 ```bash
 cat > ~/.frago/recipes/workflows/youtube_batch_extract.py <<'EOF'
@@ -324,11 +326,11 @@ import sys
 import json
 from pathlib import Path
 
-# 导入 RecipeRunner（假设已实现）
+# Import RecipeRunner (assuming implemented)
 # from frago.recipes import RecipeRunner
 
 def main():
-    # 从命令行参数读取输入
+    # Read input from command line arguments
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
     video_urls = params.get('urls', [])
 
@@ -336,17 +338,17 @@ def main():
         print(json.dumps({"error": "Missing 'urls' parameter"}), file=sys.stderr)
         sys.exit(1)
 
-    # 初始化 RecipeRunner
+    # Initialize RecipeRunner
     # runner = RecipeRunner()
 
     results = []
     for url in video_urls:
         try:
-            # 调用原子 Recipe
+            # Call atomic Recipe
             # result = runner.run('youtube_extract_video_transcript', {'url': url})
             # results.append(result)
 
-            # 临时模拟（实际实现后删除）
+            # Temporary simulation (remove after actual implementation)
             results.append({
                 "url": url,
                 "title": f"Video from {url}",
@@ -358,7 +360,7 @@ def main():
                 "error": str(e)
             })
 
-    # 输出 JSON 结果
+    # Output JSON result
     output = {
         "success": True,
         "videos": results,
@@ -374,7 +376,7 @@ EOF
 chmod +x ~/.frago/recipes/workflows/youtube_batch_extract.py
 ```
 
-#### 2. 创建元数据文件
+#### 2. Create Metadata File
 
 ```bash
 cat > ~/.frago/recipes/workflows/youtube_batch_extract.md <<'EOF'
@@ -386,7 +388,7 @@ inputs:
   urls:
     type: array
     required: true
-    description: "YouTube 视频 URL 列表"
+    description: "List of YouTube video URLs"
 outputs:
   videos: array
   total: number
@@ -394,23 +396,23 @@ outputs:
 version: 1.0.0
 dependencies:
   - youtube_extract_video_transcript
-description: "批量提取多个 YouTube 视频字幕"
+description: "Batch extract subtitles from multiple YouTube videos"
 ---
 
-# YouTube 批量提取 Workflow
+# YouTube Batch Extract Workflow
 
-## 功能描述
+## Function Description
 
-批量调用 `youtube_extract_video_transcript` Recipe，提取多个 YouTube 视频的字幕。
+Batch call `youtube_extract_video_transcript` Recipe to extract subtitles from multiple YouTube videos.
 
-## 使用方法
+## Usage
 
 ```bash
 uv run frago recipe run youtube_batch_extract \
   --params '{"urls": ["https://youtube.com/watch?v=...", "..."]}'
 ```
 
-## 预期输出
+## Expected Output
 
 ```json
 {
@@ -426,7 +428,7 @@ uv run frago recipe run youtube_batch_extract \
 EOF
 ```
 
-#### 3. 执行 Workflow
+#### 3. Execute Workflow
 
 ```bash
 uv run frago recipe run youtube_batch_extract \
@@ -440,27 +442,27 @@ uv run frago recipe run youtube_batch_extract \
 
 ---
 
-## 项目级 Recipe（可选）
+## Project-Level Recipes (Optional)
 
-### 场景：在特定项目中使用项目专属 Recipe
+### Scenario: Use Project-Specific Recipes in a Specific Project
 
-#### 1. 在项目根目录创建 Recipe 目录
+#### 1. Create Recipe Directory in Project Root
 
 ```bash
-# 进入项目目录
+# Navigate to project directory
 cd /path/to/your/project
 
-# 创建项目级 Recipe 目录
+# Create project-level Recipe directory
 mkdir -p .frago/recipes/workflows
 
-# 创建项目专属 Workflow
+# Create project-specific Workflow
 cat > .frago/recipes/workflows/project_specific_task.py <<'EOF'
 #!/usr/bin/env python3
 import sys, json
 
 params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
 
-# 项目专属逻辑
+# Project-specific logic
 output = {"message": "This is a project-specific workflow"}
 print(json.dumps(output))
 EOF
@@ -468,7 +470,7 @@ EOF
 chmod +x .frago/recipes/workflows/project_specific_task.py
 ```
 
-#### 2. 创建元数据文件
+#### 2. Create Metadata File
 
 ```bash
 cat > .frago/recipes/workflows/project_specific_task.md <<'EOF'
@@ -477,26 +479,26 @@ name: project_specific_task
 type: workflow
 runtime: python
 version: 1.0.0
-description: "项目专属自动化任务"
+description: "Project-specific automation task"
 ---
 
-# 项目专属任务
+# Project-Specific Task
 
-仅在当前项目中使用的 Workflow。
+Workflow only used in current project.
 EOF
 ```
 
-#### 3. 执行（自动优先使用项目级）
+#### 3. Execute (Automatically Prioritizes Project-Level)
 
 ```bash
-# 在项目目录执行
+# Execute in project directory
 uv run frago recipe run project_specific_task
 
-# 列出所有 Recipe（项目级会标注 [Project]）
+# List all Recipes (project-level will be marked [Project])
 uv run frago recipe list
 ```
 
-**输出**:
+**Output**:
 ```text
 SOURCE   TYPE      NAME                       RUNTIME  VERSION
 ────────────────────────────────────────────────────────────────
@@ -507,30 +509,30 @@ Example  atomic    youtube_extract_video...   chrome-js 1.2.0
 
 ---
 
-## 常见任务
+## Common Tasks
 
-### 查看 Recipe 详细信息
+### View Recipe Detailed Information
 
 ```bash
 uv run frago recipe info <recipe_name>
 ```
 
-### 使用参数文件
+### Use Parameter File
 
 ```bash
-# 创建参数文件
+# Create parameter file
 cat > params.json <<EOF
 {
   "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 }
 EOF
 
-# 使用参数文件
+# Use parameter file
 uv run frago recipe run youtube_extract_video_transcript \
   --params-file params.json
 ```
 
-### 将结果保存到文件
+### Save Result to File
 
 ```bash
 uv run frago recipe run youtube_extract_video_transcript \
@@ -538,20 +540,20 @@ uv run frago recipe run youtube_extract_video_transcript \
   --output-file result.json
 ```
 
-### 调试 Recipe 执行
+### Debug Recipe Execution
 
 ```bash
-# 启用调试模式
+# Enable debug mode
 uv run frago --debug recipe run <recipe_name> --params '{...}'
 ```
 
-**输出**:
+**Output**:
 ```text
-[DEBUG] RecipeRegistry: 扫描路径 /home/user/.frago/recipes
-[DEBUG] RecipeRegistry: 找到 5 个 Recipe
-[DEBUG] RecipeRunner: 选择执行器 ChromeJSExecutor
-[DEBUG] ChromeJSExecutor: 执行命令: uv run frago exec-js ...
-[DEBUG] ChromeJSExecutor: 退出码: 0
+[DEBUG] RecipeRegistry: Scanning path /home/user/.frago/recipes
+[DEBUG] RecipeRegistry: Found 5 Recipes
+[DEBUG] RecipeRunner: Selected executor ChromeJSExecutor
+[DEBUG] ChromeJSExecutor: Executing command: uv run frago exec-js ...
+[DEBUG] ChromeJSExecutor: Exit code: 0
 {
   "success": true,
   "data": { ... }
@@ -560,37 +562,37 @@ uv run frago --debug recipe run <recipe_name> --params '{...}'
 
 ---
 
-## 最佳实践
+## Best Practices
 
-### 1. Recipe 命名规范
+### 1. Recipe Naming Conventions
 
-- 使用小写字母、数字、下划线、连字符
-- 原子 Recipe: `<platform>_<action>`（如 `youtube_extract_transcript`）
-- Workflow Recipe: `<platform>_batch_<action>` 或 `<workflow_name>`
+- Use lowercase letters, numbers, underscores, hyphens
+- Atomic Recipe: `<platform>_<action>` (e.g., `youtube_extract_transcript`)
+- Workflow Recipe: `<platform>_batch_<action>` or `<workflow_name>`
 
-### 2. 参数验证
+### 2. Parameter Validation
 
-在 Recipe 脚本中验证必需参数：
+Validate required parameters in Recipe scripts:
 
 ```python
 import sys, json
 
 params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
 
-# 验证必需参数
+# Validate required parameters
 if 'url' not in params:
     error = {"error": "Missing required parameter: url"}
     print(json.dumps(error), file=sys.stderr)
     sys.exit(1)
 ```
 
-### 3. 错误处理
+### 3. Error Handling
 
-统一错误输出格式：
+Unified error output format:
 
 ```python
 try:
-    # Recipe 逻辑
+    # Recipe logic
     result = do_something()
     print(json.dumps({"success": True, "data": result}))
 except Exception as e:
@@ -605,21 +607,21 @@ except Exception as e:
     sys.exit(1)
 ```
 
-### 4. 版本管理
+### 4. Version Management
 
-在元数据中使用语义化版本号：
+Use semantic versioning in metadata:
 
 ```yaml
-version: "1.0.0"  # 主版本.次版本.修订号
+version: "1.0.0"  # major.minor.patch
 ```
 
-- 主版本：不兼容的 API 变更
-- 次版本：新增功能（向后兼容）
-- 修订号：Bug 修复
+- Major version: Incompatible API changes
+- Minor version: New features (backward compatible)
+- Patch: Bug fixes
 
-### 5. 依赖声明
+### 5. Dependency Declaration
 
-在 Workflow 元数据中声明依赖：
+Declare dependencies in Workflow metadata:
 
 ```yaml
 dependencies:
@@ -627,146 +629,146 @@ dependencies:
   - clipboard_read
 ```
 
-系统会在执行前检查依赖是否存在。
+System will check dependency existence before execution.
 
 ---
 
-## 迁移现有 Recipe
+## Migrating Existing Recipes
 
-### 从旧方式迁移到新系统
+### Migrating from Old Method to New System
 
-#### 旧方式（直接调用 `exec-js`）
+#### Old Method (Direct `exec-js` Call)
 
 ```bash
 uv run frago exec-js src/frago/recipes/upwork_extract_job.js
 ```
 
-#### 新方式
+#### New Method
 
-1. **迁移脚本到新位置**:
+1. **Migrate script to new location**:
    ```bash
-   # 脚本已自动迁移到 examples/atomic/chrome/
+   # Script automatically migrated to examples/atomic/chrome/
    uv run frago recipe copy upwork_extract_job_details_as_markdown
    ```
 
-2. **使用新命令**:
+2. **Use new command**:
    ```bash
    uv run frago recipe run upwork_extract_job_details_as_markdown \
      --params '{"url": "..."}'
    ```
 
-### 新旧方式对比
+### Old vs New Method Comparison
 
-| 特性 | 旧方式 (`exec-js`) | 新方式 (`recipe run`) |
-|------|-------------------|---------------------|
-| 参数传递 | 命令行参数 | JSON 格式（统一） |
-| 元数据 | 无 | YAML frontmatter |
-| 查找路径 | 固定路径 | 三级查找（项目/用户/示例） |
-| 错误处理 | 原始输出 | 结构化 JSON 错误 |
-| 依赖管理 | 无 | 自动检查依赖 |
-| 编排能力 | 无 | 支持 Workflow |
+| Feature | Old Method (`exec-js`) | New Method (`recipe run`) |
+|---------|----------------------|------------------------|
+| Parameter Passing | Command line arguments | JSON format (unified) |
+| Metadata | None | YAML frontmatter |
+| Search Path | Fixed path | Three-level lookup (project/user/example) |
+| Error Handling | Raw output | Structured JSON errors |
+| Dependency Management | None | Automatic dependency checking |
+| Orchestration Capability | None | Workflow support |
 
 ---
 
-## 故障排查
+## Troubleshooting
 
-### Recipe 未找到
+### Recipe Not Found
 
-**问题**: `错误: Recipe 'xxx' 未找到`
+**Problem**: `Error: Recipe 'xxx' not found`
 
-**解决**:
-1. 检查 Recipe 名称拼写
-2. 运行 `uv run frago recipe list` 查看可用 Recipe
-3. 确认元数据文件 `.md` 存在
+**Solution**:
+1. Check Recipe name spelling
+2. Run `uv run frago recipe list` to view available Recipes
+3. Confirm metadata file `.md` exists
 
-### 参数格式错误
+### Parameter Format Error
 
-**问题**: `错误: 参数格式无效`
+**Problem**: `Error: Invalid parameter format`
 
-**解决**:
-- 使用双引号（JSON 规范）: `{"url": "..."}` 而非 `{'url': '...'}`
-- 转义特殊字符: `"{\"key\": \"value\"}"`
-- 或使用参数文件: `--params-file params.json`
+**Solution**:
+- Use double quotes (JSON standard): `{"url": "..."}` not `{'url': '...'}`
+- Escape special characters: `"{\"key\": \"value\"}"`
+- Or use parameter file: `--params-file params.json`
 
-### 依赖 Recipe 未找到
+### Dependency Recipe Not Found
 
-**问题**: Workflow 执行失败，提示依赖缺失
+**Problem**: Workflow execution failed, prompts missing dependency
 
-**解决**:
+**Solution**:
 ```bash
-# 复制依赖的示例 Recipe
+# Copy dependent example Recipe
 uv run frago recipe copy <dependency_name>
 
-# 或创建自定义的依赖 Recipe
+# Or create custom dependent Recipe
 ```
 
-### Recipe 执行超时
+### Recipe Execution Timeout
 
-**问题**: `错误: Recipe 执行超时`
+**Problem**: `Error: Recipe execution timeout`
 
-**解决**:
-- 增加超时时间: `--timeout 600`
-- 检查 Recipe 脚本是否有无限循环
-- 检查网络连接（Chrome CDP 操作）
-
----
+**Solution**:
+- Increase timeout: `--timeout 600`
+- Check for infinite loops in Recipe script
+- Check network connection (Chrome CDP operations)
 
 ---
 
-## AI-First 设计总结
+---
 
-### AI 使用 Recipe 系统的核心流程
+## AI-First Design Summary
+
+### Core Flow for AI Using Recipe System
 
 ```text
-1. 用户提出任务
+1. User proposes task
    ↓
-2. AI 调用: uv run frago recipe list --format json
+2. AI invokes: uv run frago recipe list --format json
    ↓
-3. AI 分析元数据:
-   - description: 快速理解功能
-   - use_cases: 判断是否适用当前任务
-   - output_targets: 选择输出方式（stdout/file/clipboard）
+3. AI analyzes metadata:
+   - description: Quick understand functionality
+   - use_cases: Determine if applicable to current task
+   - output_targets: Choose output method (stdout/file/clipboard)
    ↓
-4. AI 决策:
-   - 使用现有 Recipe → 执行
-   - 无合适 Recipe → 调用 /frago.recipe 生成新 Recipe
+4. AI decision:
+   - Use existing Recipe → Execute
+   - No suitable Recipe → Invoke /frago.recipe to generate new Recipe
    ↓
-5. AI 执行: uv run frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
+5. AI executes: uv run frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
    ↓
-6. AI 处理结果:
-   - success: true → 向用户报告
-   - success: false → 分析 error.stderr，采取策略（重试/报告）
+6. AI processes result:
+   - success: true → Report to user
+   - success: false → Analyze error.stderr, adopt strategy (retry/report)
 ```
 
-### 关键设计原则
+### Key Design Principles
 
-1. **元数据驱动**: AI 通过语义字段理解 Recipe 能力，无需读取脚本代码
-2. **结构化输出**: 所有 CLI 命令支持 `--format json`，便于 AI 解析
-3. **输出形态声明**: Recipe 明确声明支持的输出去向，AI 可根据任务规划
-4. **AI 生成 Workflow**: `/frago.recipe` 命令让 AI 自动创建编排 Recipe
-5. **错误可理解**: 结构化错误让 AI 能分析失败原因并自动应对
+1. **Metadata-Driven**: AI understands Recipe capabilities through semantic fields without reading script code
+2. **Structured Output**: All CLI commands support `--format json` for AI parsing
+3. **Output Format Declaration**: Recipe explicitly declares supported output destinations, AI can plan based on task
+4. **AI Generates Workflow**: `/frago.recipe` command enables AI to automatically create orchestrated Recipes
+5. **Understandable Errors**: Structured errors allow AI to analyze failure reasons and automatically respond
 
-### AI vs 人类使用对比
+### AI vs Human Usage Comparison
 
-| 特性 | AI 使用方式 | 人类使用方式 |
-|------|------------|-------------|
-| **发现 Recipe** | `recipe list --format json` + 语义分析 | `recipe list`（表格）或 `recipe info` |
-| **创建 Recipe** | `/frago.recipe create` 自动生成 | 手动编写脚本和元数据 |
-| **执行 Recipe** | Bash 工具调用，自动选择输出方式 | 手动敲命令，手动指定 --output-file |
-| **错误处理** | 解析 JSON 错误，自动应对策略 | 读取错误信息，手动排查 |
-| **编排任务** | 自动生成 Workflow Python 脚本 | 手动组合多个 Recipe |
-
----
-
-## 下一步
-
-- **阅读完整文档**: [spec.md](./spec.md)
-- **查看数据模型**: [data-model.md](./data-model.md)
-- **CLI 命令参考**: [contracts/cli-commands.md](./contracts/cli-commands.md)
-- **技术研究**: [research.md](./research.md)
+| Feature | AI Usage | Human Usage |
+|---------|----------|-------------|
+| **Discover Recipe** | `recipe list --format json` + semantic analysis | `recipe list` (table) or `recipe info` |
+| **Create Recipe** | `/frago.recipe create` auto-generate | Manually write script and metadata |
+| **Execute Recipe** | Bash tool invocation, auto-select output method | Manually type command, manually specify --output-file |
+| **Error Handling** | Parse JSON error, automatic response strategy | Read error message, manually troubleshoot |
+| **Task Orchestration** | Auto-generate Workflow Python script | Manually combine multiple Recipes |
 
 ---
 
-## 反馈
+## Next Steps
 
-遇到问题或有改进建议？请在项目仓库提交 Issue。
+- **Read complete documentation**: [spec.md](./spec.md)
+- **View data models**: [data-model.md](./data-model.md)
+- **CLI command reference**: [contracts/cli-commands.md](./contracts/cli-commands.md)
+- **Technical research**: [research.md](./research.md)
+
+---
+
+## Feedback
+
+Encountered problems or have improvement suggestions? Please submit an Issue in the project repository.

@@ -1,15 +1,17 @@
-# Frago 示例参考
+[简体中文](examples.zh-CN.md)
 
-## 分镜JSON示例
+# Frago Example Reference
 
-### 基础分镜结构
+## Storyboard JSON Examples
+
+### Basic Storyboard Structure
 
 ```json
 {
   "shot_id": "shot_001",
   "duration": 10,
   "type": "browser_recording",
-  "description": "展示GitHub首页",
+  "description": "Show GitHub homepage",
   "actions": [
     {
       "action": "navigate",
@@ -23,7 +25,7 @@
       "wait": 2
     }
   ],
-  "narration": "GitHub是全球最大的代码托管平台...",
+  "narration": "GitHub is the world's largest code hosting platform...",
   "audio_config": {
     "voice": "default",
     "speed": 1.0
@@ -32,14 +34,14 @@
 }
 ```
 
-### 完整分镜示例（带视觉效果）
+### Complete Storyboard Example (with Visual Effects)
 
 ```json
 {
   "shot_id": "shot_002",
   "duration": 15,
   "type": "browser_recording",
-  "description": "演示Notion核心功能",
+  "description": "Demonstrate Notion core features",
   "actions": [
     {
       "action": "navigate",
@@ -69,12 +71,12 @@
     {
       "action": "annotate",
       "selector": ".pricing-section",
-      "text": "灵活的定价方案",
+      "text": "Flexible pricing plans",
       "position": "top",
       "wait": 2
     }
   ],
-  "narration": "Notion提供了强大的页面编辑能力，支持多种内容类型，并且拥有灵活的定价方案...",
+  "narration": "Notion offers powerful page editing capabilities, supports various content types, and has flexible pricing plans...",
   "audio_config": {
     "voice": "zh-CN-XiaoxiaoNeural",
     "speed": 1.0,
@@ -84,23 +86,23 @@
 }
 ```
 
-## Recipe脚本示例
+## Recipe Script Examples
 
-### 示例1: YouTube字幕提取
+### Example 1: YouTube Subtitle Extraction
 
-**脚本文件**: `youtube_extract_video_transcript.js`
+**Script File**: `youtube_extract_video_transcript.js`
 
 ```javascript
-// 提取YouTube视频完整字幕
+// Extract complete YouTube video subtitles
 (async () => {
-  // 点击"显示完整字幕"按钮
+  // Click "Show full transcript" button
   const transcriptButton = document.querySelector('button[aria-label*="transcript"]');
   if (transcriptButton) {
     transcriptButton.click();
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
-  // 提取字幕文本
+  // Extract subtitle text
   const transcriptSegments = document.querySelectorAll('.ytd-transcript-segment-renderer');
   const transcript = Array.from(transcriptSegments)
     .map(segment => segment.textContent.trim())
@@ -113,7 +115,7 @@
 })();
 ```
 
-**元数据文件**: `youtube_extract_video_transcript.md`
+**Metadata File**: `youtube_extract_video_transcript.md`
 
 ```yaml
 ---
@@ -121,29 +123,29 @@ name: youtube_extract_video_transcript
 type: atomic
 runtime: chrome-js
 version: "1.0"
-description: "提取YouTube视频完整字幕"
-use_cases: ["视频内容分析", "字幕下载", "文本摘要"]
+description: "Extract complete YouTube video subtitles"
+use_cases: ["Video content analysis", "Subtitle download", "Text summary"]
 tags: ["youtube", "transcript", "web-scraping"]
 output_targets: [stdout, file]
 inputs:
   url:
     type: string
-    description: "YouTube视频URL"
+    description: "YouTube video URL"
     required: true
 outputs:
   transcript:
     type: string
-    description: "完整字幕文本"
+    description: "Complete subtitle text"
   segmentCount:
     type: integer
-    description: "字幕段落数量"
+    description: "Number of subtitle segments"
 ---
 
-# 功能描述
+# Function Description
 
-从YouTube视频页面提取完整字幕文本。
+Extract complete subtitle text from YouTube video page.
 
-## 使用方法
+## Usage
 
 ```bash
 uv run frago recipe run youtube_extract_video_transcript \
@@ -151,39 +153,39 @@ uv run frago recipe run youtube_extract_video_transcript \
     --output-file transcript.txt
 ```
 
-## 前置条件
+## Prerequisites
 
-- Chrome已通过CDP启动（9222端口）
-- 已导航到YouTube视频页面
-- 视频必须有字幕可用
+- Chrome launched via CDP (port 9222)
+- Navigated to YouTube video page
+- Video must have subtitles available
 
-## 预期输出
+## Expected Output
 
-返回JSON格式：
+Returns JSON format:
 ```json
 {
-  "transcript": "字幕完整文本...",
+  "transcript": "Complete subtitle text...",
   "segmentCount": 150
 }
 ```
 
-## 注意事项
+## Notes
 
-- 需要先点击"显示字幕"按钮
-- 某些视频可能没有字幕
-- 建议等待页面完全加载后执行
+- Must click "Show subtitles" button first
+- Some videos may not have subtitles
+- Recommended to wait for page to fully load before executing
 
-## 更新历史
+## Update History
 
-- v1.0 (2025-01-15): 初始版本
+- v1.0 (2025-01-15): Initial version
 ```
 
-### 示例2: 页面诊断工具
+### Example 2: Page Diagnostic Tool
 
-**脚本文件**: `test_inspect_tab.js`
+**Script File**: `test_inspect_tab.js`
 
 ```javascript
-// 获取当前标签页诊断信息
+// Get current tab diagnostic information
 (() => {
   const pageInfo = {
     title: document.title,
@@ -210,7 +212,7 @@ uv run frago recipe run youtube_extract_video_transcript \
 })();
 ```
 
-**元数据文件**: `test_inspect_tab.md`
+**Metadata File**: `test_inspect_tab.md`
 
 ```yaml
 ---
@@ -218,37 +220,37 @@ name: test_inspect_tab
 type: atomic
 runtime: chrome-js
 version: "1.0"
-description: "获取当前标签页诊断信息（标题、URL、DOM统计）"
-use_cases: ["页面调试", "性能分析", "DOM结构检查"]
+description: "Get current tab diagnostic information (title, URL, DOM stats)"
+use_cases: ["Page debugging", "Performance analysis", "DOM structure checking"]
 tags: ["debug", "diagnostic", "page-info"]
 output_targets: [stdout]
 inputs: {}
 outputs:
   pageInfo:
     type: object
-    description: "页面诊断信息"
+    description: "Page diagnostic information"
 ---
 
-# 功能描述
+# Function Description
 
-获取当前标签页的诊断信息，包括标题、URL、DOM统计和性能数据。
+Get diagnostic information for current tab, including title, URL, DOM statistics, and performance data.
 
-## 使用方法
+## Usage
 
 ```bash
 uv run frago recipe run test_inspect_tab
 ```
 
-## 前置条件
+## Prerequisites
 
-- Chrome已通过CDP启动（9222端口）
-- 已导航到目标页面
+- Chrome launched via CDP (port 9222)
+- Navigated to target page
 
-## 预期输出
+## Expected Output
 
 ```json
 {
-  "title": "页面标题",
+  "title": "Page title",
   "url": "https://example.com",
   "readyState": "complete",
   "stats": {
@@ -269,105 +271,105 @@ uv run frago recipe run test_inspect_tab
 }
 ```
 
-## 注意事项
+## Notes
 
-- 建议在页面完全加载后执行
-- 性能数据可能为0（如果页面还在加载）
+- Recommended to execute after page fully loads
+- Performance data may be 0 (if page still loading)
 
-## 更新历史
+## Update History
 
-- v1.0 (2025-01-15): 初始版本
+- v1.0 (2025-01-15): Initial version
 ```
 
-## 录制脚本示例
+## Recording Script Examples
 
-### 示例1: 简单页面录制
+### Example 1: Simple Page Recording
 
 ```bash
 #!/bin/bash
-# shot_001_record.sh - 录制GitHub首页
+# shot_001_record.sh - Record GitHub homepage
 
 set -e
 
-# 导航到GitHub
+# Navigate to GitHub
 uv run frago navigate https://github.com
 sleep 3
 
-# 开始录制
+# Start recording
 ffmpeg -f avfoundation -i "1:0" -t 10 shot_001.mp4 &
 RECORD_PID=$!
 
-# 执行页面操作
+# Execute page operations
 sleep 2
 uv run frago scroll down 500
 sleep 3
 
-# 停止录制
+# Stop recording
 wait $RECORD_PID
 
-echo "录制完成: shot_001.mp4"
+echo "Recording completed: shot_001.mp4"
 ```
 
-### 示例2: 带视觉效果的录制
+### Example 2: Recording with Visual Effects
 
 ```bash
 #!/bin/bash
-# shot_002_record.sh - 录制Notion产品页面（带视觉效果）
+# shot_002_record.sh - Record Notion product page (with visual effects)
 
 set -e
 
-# 导航到Notion产品页
+# Navigate to Notion product page
 uv run frago navigate https://www.notion.so/product
 sleep 3
 
-# 开始录制
+# Start recording
 ffmpeg -f avfoundation -i "1:0" -t 15 shot_002.mp4 &
 RECORD_PID=$!
 
-# 添加视觉效果并执行操作
+# Add visual effects and execute operations
 sleep 2
 
-# 聚光灯效果
+# Spotlight effect
 uv run frago spotlight ".hero-section" 3
 sleep 3
 
-# 高亮特性卡片
+# Highlight feature card
 uv run frago highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
 sleep 2
 
-# 滚动页面
+# Scroll page
 uv run frago scroll down 800 --smooth
 sleep 2
 
-# 添加标注
-uv run frago annotate ".pricing-section" "灵活的定价方案" --position top
+# Add annotation
+uv run frago annotate ".pricing-section" "Flexible pricing plans" --position top
 sleep 2
 
-# 停止录制
+# Stop recording
 wait $RECORD_PID
 
-echo "录制完成: shot_002.mp4"
+echo "Recording completed: shot_002.mp4"
 ```
 
-## 典型使用场景
+## Typical Use Scenarios
 
-### 场景1: 资讯深度分析
+### Scenario 1: In-Depth News Analysis
 
-**主题**: "AI将如何改变教育行业 - 观点：个性化学习是核心"
+**Topic**: "How AI Will Change Education Industry - Opinion: Personalized Learning is Key"
 
-**工作流程**:
-1. AI收集相关网页和研究报告
-2. AI设计论证结构（观点→论据→案例→结论）
-3. 为每个论点创建分镜
-4. 录制屏幕操作和数据展示
-5. 合成最终视频
+**Workflow**:
+1. AI collects relevant webpages and research reports
+2. AI designs argument structure (viewpoint→evidence→cases→conclusion)
+3. Create storyboard for each argument
+4. Record screen operations and data displays
+5. Synthesize final video
 
-**分镜示例**:
+**Storyboard Example**:
 ```json
 {
   "shot_id": "shot_001",
   "type": "browser_recording",
-  "description": "展示传统教育的局限性",
+  "description": "Show limitations of traditional education",
   "actions": [
     {"action": "navigate", "url": "..."},
     {"action": "highlight", "selector": ".statistics"}
@@ -375,23 +377,23 @@ echo "录制完成: shot_002.mp4"
 }
 ```
 
-### 场景2: GitHub项目解析
+### Scenario 2: GitHub Project Analysis
 
-**主题**: "分析 https://github.com/langchain-ai/langchain"
+**Topic**: "Analyze https://github.com/langchain-ai/langchain"
 
-**工作流程**:
-1. AI克隆仓库，分析代码结构
-2. AI提取核心功能和架构亮点
-3. 设计代码展示和功能演示分镜
-4. 录制代码浏览和功能演示
-5. 合成最终视频
+**Workflow**:
+1. AI clones repository, analyzes code structure
+2. AI extracts core features and architectural highlights
+3. Design code display and feature demo storyboard
+4. Record code browsing and feature demos
+5. Synthesize final video
 
-**分镜示例**:
+**Storyboard Example**:
 ```json
 {
   "shot_id": "shot_001",
   "type": "browser_recording",
-  "description": "展示LangChain的核心架构",
+  "description": "Show LangChain core architecture",
   "actions": [
     {"action": "navigate", "url": "https://github.com/langchain-ai/langchain"},
     {"action": "spotlight", "selector": ".repository-content"}
@@ -399,23 +401,23 @@ echo "录制完成: shot_002.mp4"
 }
 ```
 
-### 场景3: 产品介绍
+### Scenario 3: Product Introduction
 
-**主题**: "介绍 Notion 的核心功能"
+**Topic**: "Introduce Notion's Core Features"
 
-**工作流程**:
-1. AI浏览Notion官网和文档
-2. AI规划功能演示顺序
-3. 为每个核心功能创建演示分镜
-4. 录制产品界面和功能操作
-5. 合成最终视频
+**Workflow**:
+1. AI browses Notion official site and documentation
+2. AI plans feature demo sequence
+3. Create demo storyboard for each core feature
+4. Record product interface and feature operations
+5. Synthesize final video
 
-**分镜示例**:
+**Storyboard Example**:
 ```json
 {
   "shot_id": "shot_001",
   "type": "browser_recording",
-  "description": "演示Notion的页面编辑功能",
+  "description": "Demo Notion's page editing features",
   "actions": [
     {"action": "navigate", "url": "https://www.notion.so/product"},
     {"action": "highlight", "selector": ".feature-editor"}
@@ -423,23 +425,23 @@ echo "录制完成: shot_002.mp4"
 }
 ```
 
-### 场景4: MVP开发演示
+### Scenario 4: MVP Development Demo
 
-**主题**: "用React开发一个番茄钟应用"
+**Topic**: "Develop a Pomodoro Timer App with React"
 
-**工作流程**:
-1. AI规划MVP功能和技术栈
-2. AI设计开发步骤
-3. 为每个开发步骤创建录制分镜
-4. 录制代码编写和功能实现
-5. 合成最终视频
+**Workflow**:
+1. AI plans MVP features and tech stack
+2. AI designs development steps
+3. Create recording storyboard for each development step
+4. Record code writing and feature implementation
+5. Synthesize final video
 
-**分镜示例**:
+**Storyboard Example**:
 ```json
 {
   "shot_id": "shot_001",
   "type": "code_recording",
-  "description": "创建React项目并安装依赖",
+  "description": "Create React project and install dependencies",
   "actions": [
     {"action": "terminal", "command": "npx create-react-app pomodoro"},
     {"action": "highlight", "file": "package.json"}
@@ -447,21 +449,21 @@ echo "录制完成: shot_002.mp4"
 }
 ```
 
-## Recipe使用模式
+## Recipe Usage Patterns
 
-### 模式1: 单次信息提取
+### Pattern 1: Single Information Extraction
 
 ```bash
-# 提取YouTube字幕
+# Extract YouTube subtitles
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 ```
 
-### 模式2: 批量数据收集
+### Pattern 2: Batch Data Collection
 
 ```bash
-# 循环提取多个视频的字幕
+# Loop extract subtitles from multiple videos
 for url in $(cat video_urls.txt); do
   uv run frago recipe run youtube_extract_video_transcript \
       --params "{\"url\": \"$url\"}" \
@@ -469,44 +471,44 @@ for url in $(cat video_urls.txt); do
 done
 ```
 
-### 模式3: Pipeline集成
+### Pattern 3: Pipeline Integration
 
 ```bash
-# 在Pipeline的prepare阶段使用Recipe
+# Use Recipe in Pipeline's prepare phase
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "..."}' \
     --output-file research/video_transcript.txt
 
-# 后续阶段可以读取这个文件
+# Subsequent phases can read this file
 ```
 
-## 常见问题排查
+## Common Problem Troubleshooting
 
-### 问题1: Recipe执行失败
+### Problem 1: Recipe Execution Failed
 
-**症状**: Recipe运行时抛出异常
+**Symptom**: Recipe throws exception during execution
 
-**排查步骤**:
-1. 检查Chrome CDP是否正在运行（端口9222）
-2. 验证Recipe元数据是否完整
-3. 检查输入参数是否正确
-4. 查看Recipe日志输出
+**Troubleshooting Steps**:
+1. Check if Chrome CDP is running (port 9222)
+2. Verify Recipe metadata is complete
+3. Check input parameters are correct
+4. Review Recipe log output
 
-### 问题2: 截图路径错误
+### Problem 2: Screenshot Path Error
 
-**症状**: 截图保存失败或路径不正确
+**Symptom**: Screenshot save fails or path incorrect
 
-**解决方案**:
-- 必须使用绝对路径
-- 确保目标目录存在
-- 检查文件写入权限
+**Solution**:
+- Must use absolute path
+- Ensure target directory exists
+- Check file write permissions
 
-### 问题3: CDP连接超时
+### Problem 3: CDP Connection Timeout
 
-**症状**: CDP命令执行超时
+**Symptom**: CDP command execution timeout
 
-**解决方案**:
-- 检查Chrome是否以CDP模式启动
-- 验证9222端口是否可访问
-- 检查代理配置（如果使用代理）
-- 增加超时时间（`--timeout`参数）
+**Solution**:
+- Check if Chrome launched in CDP mode
+- Verify port 9222 is accessible
+- Check proxy configuration (if using proxy)
+- Increase timeout (`--timeout` parameter)

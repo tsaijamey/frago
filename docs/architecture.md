@@ -1,31 +1,33 @@
-# Frago 技术架构
+[简体中文](architecture.zh-CN.md)
 
-## 🏗️ 系统架构
+# Frago Technical Architecture
+
+## System Architecture
 
 ```
-Frago 使用流程架构图
-===================
+Frago Usage Flow Architecture
+==============================
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        用户入口（Claude Code）                        │
+│                        User Entry (Claude Code)                      │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
                 ┌─────────────────┼─────────────────┐
                 │                 │                 │
                 ▼                 ▼                 ▼
          ┌─────────┐       ┌─────────┐      ┌─────────┐
-         │/frago  │       │/frago  │      │  直接   │
-         │  .run   │       │ .recipe │      │CLI命令  │
+         │/frago  │       │/frago  │      │  Direct │
+         │  .run   │       │ .recipe │      │CLI Cmds │
          └─────────┘       └─────────┘      └─────────┘
                 │                 │                 │
                 │                 │                 │
                 ▼                 ▼                 ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                       AI 任务分析层                                     │
-│  - 理解用户意图                                                         │
-│  - 发现/创建 Run 实例                                                   │
-│  - 选择合适的 Recipe                                                    │
-│  - 编排执行计划                                                         │
+│                       AI Task Analysis Layer                           │
+│  - Understand user intent                                              │
+│  - Discover/create Run instances                                       │
+│  - Select appropriate Recipes                                          │
+│  - Orchestrate execution plans                                         │
 └───────────────────────────────────────────────────────────────────────┘
                                   │
                 ┌─────────────────┼─────────────────┐
@@ -33,8 +35,8 @@ Frago 使用流程架构图
                 ▼                 ▼                 ▼
          ┌──────────┐      ┌──────────┐     ┌──────────┐
          │ Recipe   │      │   CDP    │     │ Python/  │
-         │ 调度     │      │  命令    │     │  Shell   │
-         │(chrome-js│      │(navigate,│     │  脚本    │
+         │Dispatch  │      │Commands  │     │  Shell   │
+         │(chrome-js│      │(navigate,│     │  Scripts │
          │/python/  │      │ click,   │     │          │
          │ shell)   │      │screenshot│     │          │
          └──────────┘      └──────────┘     └──────────┘
@@ -43,7 +45,7 @@ Frago 使用流程架构图
                                   │
                                   ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                      执行引擎（多运行时）                                │
+│                     Execution Engine (Multi-Runtime)                   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │
 │  │ Chrome CDP  │  │   Python    │  │    Shell    │                   │
 │  │  WebSocket  │  │   Runtime   │  │   Runtime   │                   │
@@ -54,9 +56,9 @@ Frago 使用流程架构图
                 │                 │                 │
                 ▼                 ▼                 ▼
          ┌──────────┐      ┌──────────┐     ┌──────────┐
-         │  JSONL   │      │  输出    │     │   Run    │
-         │ 结构化   │      │  文件    │     │  上下文  │
-         │  日志    │      │(JSON/MD/ │     │  持久化  │
+         │  JSONL   │      │  Output  │     │   Run    │
+         │Structured│      │  Files   │     │ Context  │
+         │   Logs   │      │(JSON/MD/ │     │Persistence│
          │          │      │  TXT)    │     │          │
          └──────────┘      └──────────┘     └──────────┘
                 │                 │                 │
@@ -64,406 +66,407 @@ Frago 使用流程架构图
                                   │
                                   ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                           最终输出                                      │
-│  - 任务执行报告                                                         │
-│  - 结构化数据文件                                                       │
-│  - 可审计的完整日志                                                     │
-│  - 可复用的 Run 实例                                                    │
+│                           Final Output                                 │
+│  - Task execution report                                               │
+│  - Structured data files                                               │
+│  - Auditable complete logs                                             │
+│  - Reusable Run instances                                              │
 └───────────────────────────────────────────────────────────────────────┘
 
 
-Recipe 三级优先级系统：
-======================
+Recipe Three-Level Priority System:
+====================================
 
 ┌─────────────────────────────────────┐
-│  Project (.frago/recipes/)         │  ← 优先级最高
-│  - 项目特定的Recipe                 │
-│  - 团队共享                         │
+│  Project (.frago/recipes/)         │  ← Highest priority
+│  - Project-specific Recipes         │
+│  - Team shared                      │
 └─────────────────────────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────────┐
-│  User (~/.frago/recipes/)          │  ← 优先级中
-│  - 用户个人Recipe                   │
-│  - 可在多项目复用                   │
+│  User (~/.frago/recipes/)          │  ← Medium priority
+│  - User personal Recipes            │
+│  - Reusable across projects         │
 └─────────────────────────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────────┐
-│  Example (examples/)                │  ← 优先级最低
-│  - 官方示例                         │
-│  - 可复制到User或Project级          │
+│  Example (examples/)                │  ← Lowest priority
+│  - Official examples                │
+│  - Can copy to User or Project      │
 └─────────────────────────────────────┘
 
 
-数据流示例：
-============
+Data Flow Examples:
+===================
 
-场景1：/frago.run "从Upwork提取Python职位"
-─────────────────────────────────────────
-用户 → /frago.run → AI分析 → 发现Recipe: upwork_extract_job_details
-     → 创建Run: cong-upwork-ti-qu-python-zhi-wei
-     → 调用Recipe(chrome-js) → CDP执行 → 输出markdown文件
-     → 记录JSONL日志 → 持久化Run上下文
-
-
-场景2：/frago.recipe "提取YouTube字幕"
-────────────────────────────────────
-用户 → /frago.recipe → AI生成Recipe → 保存到.frago/recipes/
-     → 测试Recipe → CDP执行 → 验证输出
-     → 添加到Recipe注册表
+Scenario 1: /frago.run "Extract Python jobs from Upwork"
+─────────────────────────────────────────────────────────
+User → /frago.run → AI analysis → Discover Recipe: upwork_extract_job_details
+     → Create Run: cong-upwork-ti-qu-python-zhi-wei
+     → Call Recipe(chrome-js) → CDP execution → Output markdown file
+     → Record JSONL logs → Persist Run context
 
 
-场景3：直接CLI命令
-──────────────
-开发者 → uv run frago navigate https://...
-       → CDP客户端 → WebSocket → Chrome
-       → 返回执行结果
+Scenario 2: /frago.recipe "Extract YouTube subtitles"
+──────────────────────────────────────────────────────
+User → /frago.recipe → AI generates Recipe → Save to .frago/recipes/
+     → Test Recipe → CDP execution → Verify output
+     → Add to Recipe registry
+
+
+Scenario 3: Direct CLI commands
+────────────────────────────────
+Developer → uv run frago navigate https://...
+          → CDP client → WebSocket → Chrome
+          → Return execution result
 ```
 
-## 🎯 核心差异对比
+## Core Differences Comparison
 
 ### Frago vs Playwright / Selenium
 
-| 维度 | **Playwright / Selenium** | **Frago** |
-|------|--------------------------|-----------|
-| **核心定位** | 测试自动化框架 | AI驱动的多运行时自动化框架 |
-| **设计目标** | 验证软件质量 | 可复用的自动化脚本和任务编排 |
-| **主要场景** | E2E测试、UI自动化测试 | 浏览器自动化、数据采集、工作流编排 |
-| **浏览器管理** | 完整生命周期（启动→测试→关闭） | 连接现有CDP实例（持久会话） |
-| **输出产物** | 测试报告（✅❌统计） | 结构化数据（JSONL日志） |
-| **核心能力** | 断言验证、并发测试 | Recipe系统、Run上下文管理、多运行时支持 |
-| **依赖体积** | ~400MB + Node.js运行时 | ~2MB (纯Python WebSocket) |
-| **架构特点** | 双RPC（Python→Node.js→Browser） | 直连CDP（Python→Browser） |
-| **适用场景** | 质量保障、回归测试 | 数据采集、自动化脚本、AI辅助任务 |
+| Dimension | **Playwright / Selenium** | **Frago** |
+|-----------|---------------------------|-----------|
+| **Core Positioning** | Test automation framework | AI-driven multi-runtime automation framework |
+| **Design Goal** | Verify software quality | Reusable automation scripts and task orchestration |
+| **Main Scenarios** | E2E testing, UI automation testing | Browser automation, data collection, workflow orchestration |
+| **Browser Management** | Complete lifecycle (launch→test→close) | Connect to existing CDP instance (persistent session) |
+| **Output Products** | Test reports (✅❌ statistics) | Structured data (JSONL logs) |
+| **Core Capabilities** | Assertion validation, concurrent testing | Recipe system, Run context management, multi-runtime support |
+| **Dependency Size** | ~400MB + Node.js runtime | ~2MB (pure Python WebSocket) |
+| **Architecture** | Dual RPC (Python→Node.js→Browser) | Direct CDP (Python→Browser) |
+| **Use Cases** | Quality assurance, regression testing | Data collection, automation scripts, AI-assisted tasks |
 
-**关键差异**：
-- ✅ **持久化浏览器会话** - Playwright每次测试启动新浏览器，Frago连接已运行的Chrome实例
-- ✅ **Recipe元数据驱动** - 可复用的自动化脚本，支持三级优先级管理
-- ✅ **零中继层** - 直接WebSocket连接CDP，无Node.js中继，延迟更低
-- ✅ **轻量级部署** - 无需Node.js环境，纯Python实现
+**Key Differences**:
+- ✅ **Persistent browser sessions** - Playwright launches new browser per test, Frago connects to running Chrome instance
+- ✅ **Recipe metadata-driven** - Reusable automation scripts with three-level priority management
+- ✅ **Zero relay layer** - Direct WebSocket to CDP, no Node.js relay, lower latency
+- ✅ **Lightweight deployment** - No Node.js environment needed, pure Python implementation
 
 ### Frago vs Browser Use
 
-| 维度 | **Browser Use** | **Frago** |
-|------|----------------|-----------|
-| **核心定位** | 通用AI自动化平台 | AI辅助的可复用自动化框架 |
-| **AI角色** | 任务执行者（用户说"做什么"） | 任务编排者（AI调度Recipe和命令） |
-| **执行模式** | 单一自然语言任务 → AI自主完成 | Recipe manifest → AI调度 → 多运行时执行 |
-| **决策范围** | 如何完成单个任务（如填表、抓数据） | 如何编排复杂工作流（调用哪些Recipe、如何组合） |
-| **复杂度处理** | AI动态适应DOM变化 | 精确控制+Recipe固化高频操作 |
-| **Token消耗** | 全程AI推理，大量token消耗 | AI仅编排，Recipe执行无token消耗 |
-| **结果可控性** | 中（AI可能走偏） | 高（元数据清单定义明确） |
-| **执行速度** | 慢（需LLM推理+试错） | 快（直接命令执行/Recipe复用） |
-| **成本模式** | 云服务$500/月 + LLM API调用 | 自托管免费（可选Claude API） |
-| **典型用例** | 自动填写表单、数据抓取 | 可复用数据采集、批量任务处理、工作流自动化 |
+| Dimension | **Browser Use** | **Frago** |
+|-----------|----------------|-----------|
+| **Core Positioning** | General AI automation platform | AI-assisted reusable automation framework |
+| **AI Role** | Task executor (user says "do what") | Task orchestrator (AI schedules Recipes and commands) |
+| **Execution Mode** | Single natural language task → AI autonomously completes | Recipe manifest → AI scheduling → Multi-runtime execution |
+| **Decision Scope** | How to complete single task (like form filling, data scraping) | How to orchestrate complex workflows (which Recipes to call, how to combine) |
+| **Complexity Handling** | AI dynamically adapts to DOM changes | Precise control + Recipe solidifies high-frequency operations |
+| **Token Consumption** | Full AI reasoning, massive token consumption | AI only for orchestration, Recipe execution without token consumption |
+| **Result Controllability** | Medium (AI may deviate) | High (metadata manifest defines clearly) |
+| **Execution Speed** | Slow (needs LLM reasoning + trial and error) | Fast (direct command execution/Recipe reuse) |
+| **Cost Model** | Cloud service $500/month + LLM API calls | Self-hosted free (optional Claude API) |
+| **Typical Use Cases** | Auto-fill forms, data scraping | Reusable data collection, batch task processing, workflow automation |
 
-**核心差异**：
-- 💡 **Token效率理论支撑** - 遵循 [Anthropic 的 Code Execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) 设计理念：让AI生成代码调用工具，而非全程推理每个操作。案例显示可将token消耗从150k降至2k（**98.7%减少**）
-- 📦 **Recipe系统** - 固化高频操作为可执行代码（Chrome JS/Python/Shell），AI仅负责编排调度，避免重复推理DOM操作
-- 🔄 **多运行时支持** - Chrome JS、Python、Shell三种运行时可组合使用，数据处理在代码中完成而非反复经过AI上下文
-- 📊 **结构化日志** - JSONL格式100%可解析，便于审计和分析
-- ⚡ **混合策略** - AI编排（工作流设计）+ 精确控制（Recipe执行）+ 上下文积累（Run管理）
+**Core Differences**:
+- 💡 **Token Efficiency Theory Support** - Follows [Anthropic's Code Execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) design philosophy: Let AI generate code to call tools rather than full reasoning for every operation. Cases show token consumption can be reduced from 150k to 2k (**98.7% reduction**)
+- 📦 **Recipe System** - Solidifies high-frequency operations as executable code (Chrome JS/Python/Shell), AI only responsible for orchestration scheduling, avoiding repeated DOM operation reasoning
+- 🔄 **Multi-Runtime Support** - Chrome JS, Python, Shell three runtimes can be combined, data processing completed in code rather than repeatedly through AI context
+- 📊 **Structured Logs** - JSONL format 100% parsable, facilitates auditing and analysis
+- ⚡ **Hybrid Strategy** - AI orchestration (workflow design) + Precise control (Recipe execution) + Context accumulation (Run management)
 
-## 🏗️ 技术架构选型
+## Technical Architecture Selection
 
-### 为什么选择原生CDP而非Playwright？
+### Why Choose Native CDP Over Playwright?
 
-**Browser Use的经验教训**（他们从Playwright迁移到原生CDP）：
+**Lessons from Browser Use** (they migrated from Playwright to native CDP):
 
-1. **性能瓶颈消除**
+1. **Performance Bottleneck Elimination**
    ```
-   Playwright: Python → Node.js中继 → CDP → Chrome
+   Playwright: Python → Node.js relay → CDP → Chrome
    Frago:     Python → CDP → Chrome
    ```
-   - 双RPC架构在大量CDP调用时产生明显延迟
-   - 迁移后："Massively increased speed for element extraction and screenshots"
+   - Dual RPC architecture produces noticeable latency with many CDP calls
+   - After migration: "Massively increased speed for element extraction and screenshots"
 
-2. **已知的Playwright限制**
-   - ❌ `fullPage=True` 截图在 >16,000px 页面时崩溃
-   - ❌ Tab崩溃时Node.js进程无限挂起
-   - ❌ 跨域iframe（OOPIF）支持缺口
-   - ✅ 原生CDP可直接访问完整协议，无抽象层限制
+2. **Known Playwright Limitations**
+   - ❌ `fullPage=True` screenshots crash on pages >16,000px
+   - ❌ Node.js process hangs indefinitely when tab crashes
+   - ❌ Cross-domain iframe (OOPIF) support gaps
+   - ✅ Native CDP directly accesses full protocol, no abstraction layer limitations
 
-3. **依赖轻量化**
-   - Playwright: ~400MB + Node.js运行时
+3. **Dependency Lightweighting**
+   - Playwright: ~400MB + Node.js runtime
    - Frago: ~2MB (websocket-client)
 
-**结论**：对于需要**频繁CDP调用、大量截图、持久会话**的自动化场景，原生CDP是更优选择。
+**Conclusion**: For automation scenarios requiring **frequent CDP calls, extensive screenshots, persistent sessions**, native CDP is the better choice.
 
-### Recipe系统：AI的加速器
+### Recipe System: AI's Accelerator
 
-**设计理念**：
-- ❌ **不是**替代AI自主决策
-- ✅ **是**避免AI重复推理相同的DOM操作
+**Design Philosophy**:
+- ❌ **Not** replacing AI autonomous decision-making
+- ✅ **Is** avoiding AI repeatedly reasoning same DOM operations
 
-**工作机制**：
+**Working Mechanism**:
 ```
-高频操作路径：
-  首次遇到 → AI交互式探索 → 固化为Recipe → 后续直接复用
+High-frequency operation path:
+  First encounter → AI interactive exploration → Solidify as Recipe → Subsequent direct reuse
 
-  例如：YouTube字幕提取
-  1. 用户：/frago.recipe "提取YouTube字幕"
-  2. AI：交互式定位按钮、提取文本
-  3. 固化：youtube_extract_video_transcript.js + 元数据文档
-  4. 复用：uv run frago recipe run youtube_extract_video_transcript
+  Example: YouTube subtitle extraction
+  1. User: /frago.recipe "Extract YouTube subtitles"
+  2. AI: Interactively locate button, extract text
+  3. Solidify: youtube_extract_video_transcript.js + metadata documentation
+  4. Reuse: uv run frago recipe run youtube_extract_video_transcript
 
-  节省：每次3-5轮LLM推理 → 1次脚本执行（~100ms）
+  Savings: 3-5 rounds of LLM reasoning each time → 1 script execution (~100ms)
 ```
 
-**使用Recipe的三种方式**：
+**Three Ways to Use Recipes**:
 ```bash
-# 方式1: 推荐 - 元数据驱动（参数验证、输出处理）
+# Method 1: Recommended - Metadata-driven (parameter validation, output handling)
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/..."}' \
     --output-file transcript.txt
 
-# 方式2: 发现可用的Recipe
+# Method 2: Discover available Recipes
 uv run frago recipe list --format json
 
-# 方式3: 传统方式 - 直接执行JS（绕过元数据系统）
+# Method 3: Traditional method - Direct JS execution (bypass metadata system)
 uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
-**与Browser Use的差异**：
-- Browser Use: 每次任务都需LLM推理（$$$）
-- Frago: AI决策（分镜设计）+ Recipe加速（重复操作）
+**Difference from Browser Use**:
+- Browser Use: Every task needs LLM reasoning ($$$)
+- Frago: AI decision-making (storyboard design) + Recipe acceleration (repeated operations)
 
-### Recipe元数据驱动架构（004迭代）
+### Recipe Metadata-Driven Architecture (Iteration 004)
 
-**设计理念：代码与资源分离**
-- `src/frago/recipes/` - Python引擎代码（元数据解析、注册表、执行器）
-- `examples/atomic/chrome/` - 示例Recipe脚本 + 元数据文档
-- `~/.frago/recipes/` - 用户级Recipe（待实现）
-- `.frago/recipes/` - 项目级Recipe（待实现）
+**Design Philosophy: Code-Resource Separation**
+- `src/frago/recipes/` - Python engine code (metadata parsing, registry, executor)
+- `examples/atomic/chrome/` - Example Recipe scripts + metadata documentation
+- `~/.frago/recipes/` - User-level Recipes (to be implemented)
+- `.frago/recipes/` - Project-level Recipes (to be implemented)
 
-**元数据文件结构（Markdown + YAML frontmatter）**：
+**Metadata File Structure (Markdown + YAML frontmatter)**:
 ```markdown
 ---
 name: youtube_extract_video_transcript
 type: atomic                    # atomic | workflow
 runtime: chrome-js              # chrome-js | python | shell
 version: "1.0"
-description: "提取YouTube视频完整字幕"
-use_cases: ["视频内容分析", "字幕下载"]
+description: "Extract complete YouTube video subtitles"
+use_cases: ["Video content analysis", "Subtitle download"]
 tags: ["youtube", "transcript", "web-scraping"]
 output_targets: [stdout, file]
 inputs: {}
 outputs:
   transcript:
     type: string
-    description: "完整字幕文本"
+    description: "Complete subtitle text"
 ---
 
-# 功能描述
-...详细说明...
+# Function Description
+...Detailed explanation...
 ```
 
-**元数据字段说明**：
-- **必需字段**：`name`, `type`, `runtime`, `version`, `inputs`, `outputs`
-- **AI可理解字段**（用于发现和选择Recipe）：
-  - `description`：简短功能描述（<200字符），帮助AI理解用途
-  - `use_cases`：适用场景列表，帮助AI判断是否适用
-  - `tags`：语义标签，用于分类和搜索
-  - `output_targets`：支持的输出方式（stdout/file/clipboard），让AI选择正确的输出选项
+**Metadata Field Explanation**:
+- **Required fields**: `name`, `type`, `runtime`, `version`, `inputs`, `outputs`
+- **AI-understandable fields** (for discovering and selecting Recipes):
+  - `description`: Short function description (<200 chars), helps AI understand purpose
+  - `use_cases`: Applicable scenarios list, helps AI judge applicability
+  - `tags`: Semantic tags for classification and search
+  - `output_targets`: Supported output methods (stdout/file/clipboard), lets AI choose correct output option
 
-**三级查找路径（优先级）**：
-1. 项目级：`.frago/recipes/`（当前工作目录）
-2. 用户级：`~/.frago/recipes/`（用户主目录）
-3. 示例级：`examples/`（仓库根目录）
+**Three-Level Lookup Path (Priority)**:
+1. Project-level: `.frago/recipes/` (current working directory)
+2. User-level: `~/.frago/recipes/` (user home directory)
+3. Example-level: `examples/` (repository root)
 
-**三种运行时支持**：
-- `chrome-js`：通过 `uv run frago exec-js` 执行JavaScript
-- `python`：通过Python解释器执行
-- `shell`：通过Shell执行脚本
+**Three Runtime Support**:
+- `chrome-js`: Execute JavaScript via `uv run frago exec-js`
+- `python`: Execute via Python interpreter
+- `shell`: Execute script via Shell
 
-**三种输出目标**：
-- `stdout`：打印到控制台
-- `file`：保存到文件（`--output-file`）
-- `clipboard`：复制到剪贴板（`--output-clipboard`）
+**Three Output Targets**:
+- `stdout`: Print to console
+- `file`: Save to file (`--output-file`)
+- `clipboard`: Copy to clipboard (`--output-clipboard`)
 
-**可用示例Recipe（4个）**：
+**Available Example Recipes (4)**:
 
-| 名称 | 功能 | 支持输出 |
-|------|------|----------|
-| `test_inspect_tab` | 获取当前标签页诊断信息（标题、URL、DOM统计） | stdout |
-| `youtube_extract_video_transcript` | 提取YouTube视频完整字幕 | stdout, file |
-| `upwork_extract_job_details_as_markdown` | 提取Upwork职位详情为Markdown格式 | stdout, file |
-| `x_extract_tweet_with_comments` | 提取X(Twitter)推文和评论 | stdout, file, clipboard |
+| Name | Function | Supported Output |
+|------|----------|------------------|
+| `test_inspect_tab` | Get current tab diagnostic info (title, URL, DOM stats) | stdout |
+| `youtube_extract_video_transcript` | Extract complete YouTube video subtitles | stdout, file |
+| `upwork_extract_job_details_as_markdown` | Extract Upwork job details as Markdown | stdout, file |
+| `x_extract_tweet_with_comments` | Extract X(Twitter) tweets and comments | stdout, file, clipboard |
 
 ```bash
-# 查看所有Recipe
+# View all Recipes
 uv run frago recipe list
 
-# 查看Recipe详细信息
+# View Recipe detailed information
 uv run frago recipe info youtube_extract_video_transcript
 ```
 
-### AI-First设计理念
+### AI-First Design Philosophy
 
-Recipe系统的核心目标是**让AI Agent能够自主发现、理解和使用Recipe**，而不仅仅是人类开发者的工具。
+The core goal of the Recipe system is to **enable AI Agents to autonomously discover, understand, and use Recipes**, not just a tool for human developers.
 
-**AI如何使用Recipe系统**：
+**How AI Uses the Recipe System**:
 
 ```bash
-# 1. AI发现可用的Recipe（通过JSON格式获取结构化数据）
+# 1. AI discovers available Recipes (get structured data via JSON format)
 uv run frago recipe list --format json
 
-# 2. AI分析元数据理解Recipe的能力
-#    - description：这个Recipe做什么？
-#    - use_cases：适合哪些场景？
-#    - tags：语义分类
-#    - output_targets：支持哪些输出方式？
+# 2. AI analyzes metadata to understand Recipe capabilities
+#    - description: What does this Recipe do?
+#    - use_cases: What scenarios is it suitable for?
+#    - tags: Semantic classification
+#    - output_targets: What output methods are supported?
 
-# 3. AI根据任务需求选择合适的Recipe和输出方式
+# 3. AI selects appropriate Recipe and output method based on task requirements
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/..."}' \
-    --output-file /tmp/transcript.txt  # AI判断需要文件输出
+    --output-file /tmp/transcript.txt  # AI determines file output needed
 
-# 4. AI处理Recipe的执行结果（JSON格式）
-#    成功：{"success": true, "data": {...}}
-#    失败：{"success": false, "error": {...}}
+# 4. AI processes Recipe execution results (JSON format)
+#    Success: {"success": true, "data": {...}}
+#    Failure: {"success": false, "error": {...}}
 ```
 
-**设计原则**：
-- 所有元数据面向AI可理解性设计（语义描述 > 技术细节）
-- JSON格式输出，便于AI解析和处理
-- 错误信息结构化，便于AI理解失败原因并采取行动
-- 输出目标明确声明，让AI选择正确的命令选项
+**Design Principles**:
+- All metadata designed for AI comprehensibility (semantic descriptions > technical details)
+- JSON format output for easy AI parsing and processing
+- Error messages structured for AI to understand failure reasons and take action
+- Output targets explicitly declared so AI chooses correct command options
 
-**与人类用户的关系**：
-- 人类用户：创建和维护Recipe（通过 `/frago.recipe` 命令）
-- AI Agent：发现和使用Recipe（通过 `recipe list/run` 命令）
-- Recipe系统是连接两者的桥梁
+**Relationship with Human Users**:
+- Human users: Create and maintain Recipes (via `/frago.recipe` command)
+- AI Agent: Discover and use Recipes (via `recipe list/run` commands)
+- Recipe system is the bridge connecting both
 
-## 系统架构
+## System Architecture
 
-### 三层架构设计
+### Three-Layer Architecture Design
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Pipeline Master (Python调度器)                          │
-│  - 启动Chrome CDP                                        │
-│  - 调度5个阶段                                            │
-│  - 通过.done文件同步                                     │
+│  Pipeline Master (Python scheduler)                      │
+│  - Launch Chrome CDP                                     │
+│  - Schedule 5 stages                                     │
+│  - Sync via .done files                                  │
 └──────────────────┬──────────────────────────────────────┘
-                   │ 调用slash commands
+                   │ Call slash commands
                    ↓
 ┌─────────────────────────────────────────────────────────┐
-│  Claude AI (创作执行者)                                   │
-│  - /frago.start:      AI自主决策信息收集策略            │
-│  - /frago.storyboard: AI自主设计分镜和时间轴            │
-│  - /frago.generate:   AI为每个clip创作录制脚本          │
-│  - /frago.evaluate:   AI自主评估质量问题                │
-│  - /frago.merge:      AI自主合成视频                    │
+│  Claude AI (Creative executor)                           │
+│  - /frago.start:      AI autonomous info collection      │
+│  - /frago.storyboard: AI autonomous storyboard design    │
+│  - /frago.generate:   AI creates recording script for    │
+│                       each clip                          │
+│  - /frago.evaluate:   AI autonomous quality evaluation   │
+│  - /frago.merge:      AI autonomous video synthesis      │
 └──────────────────┬──────────────────────────────────────┘
-                   │ 使用工具层
+                   │ Use tool layer
                    ↓
 ┌─────────────────────────────────────────────────────────┐
-│  CDP工具层 (直连Chrome)                                   │
+│  CDP Tool Layer (Direct Chrome connection)               │
 │  - uv run frago <command>                               │
-│  - Recipe系统（可选加速）                                 │
-│  - 原生WebSocket连接（无Node.js中继）                    │
+│  - Recipe system (optional acceleration)                 │
+│  - Native WebSocket connection (no Node.js relay)        │
 └──────────────────┬──────────────────────────────────────┘
                    ↓
-             Chrome浏览器
+             Chrome browser
 ```
 
-### AI自主决策的体现
+### Embodiment of AI Autonomous Decision-Making
 
-**每个阶段都是AI创作过程**，不是简单的脚本执行：
+**Each stage is an AI creative process**, not simple script execution:
 
-#### 阶段0: 环境准备
-- **执行者**：Pipeline Master
-- **任务**：启动Chrome CDP (端口9222)
-- **输出**：Chrome进程持久运行
+#### Stage 0: Environment Preparation
+- **Executor**: Pipeline Master
+- **Task**: Launch Chrome CDP (port 9222)
+- **Output**: Chrome process runs persistently
 
-#### 阶段1: 信息收集 (`/frago.start`)
-- **执行者**：**Claude AI**
-- **输入**：视频主题
-- **AI决策内容**：
-  - 识别主题类型（资讯/GitHub/产品/MVP）
-  - 规划信息源和收集策略
-  - 判断哪些截图和内容是核心
-  - 决定使用哪些工具（CDP/Git/Recipe）
-- **输出**：
-  - `research/report.json` - 信息报告
-  - `research/screenshots/` - 截图素材
-  - `start.done` - 完成标记
+#### Stage 1: Information Collection (`/frago.start`)
+- **Executor**: **Claude AI**
+- **Input**: Video topic
+- **AI Decision Content**:
+  - Identify topic type (news/GitHub/product/MVP)
+  - Plan information sources and collection strategy
+  - Determine which screenshots and content are core
+  - Decide which tools to use (CDP/Git/Recipe)
+- **Output**:
+  - `research/report.json` - Information report
+  - `research/screenshots/` - Screenshot materials
+  - `start.done` - Completion marker
 
-#### 阶段2: 分镜规划 (`/frago.storyboard`)
-- **执行者**：**Claude AI**
-- **输入**：`research/report.json`
-- **AI决策内容**：
-  - 设计叙事结构和逻辑流程
-  - 规划每个镜头的重点和时长
-  - 设计精确到秒的动作时间轴
-  - 选择合适的视觉效果（spotlight/highlight）
-- **输出**：
-  - `shots/shot_xxx.json` - 分镜序列（含详细action_timeline）
-  - `storyboard.done` - 完成标记
+#### Stage 2: Storyboard Planning (`/frago.storyboard`)
+- **Executor**: **Claude AI**
+- **Input**: `research/report.json`
+- **AI Decision Content**:
+  - Design narrative structure and logic flow
+  - Plan focus and duration for each shot
+  - Design precise action timeline down to the second
+  - Select appropriate visual effects (spotlight/highlight)
+- **Output**:
+  - `shots/shot_xxx.json` - Shot sequence (with detailed action_timeline)
+  - `storyboard.done` - Completion marker
 
-#### 阶段3: 视频生成循环 (`/frago.generate`)
-**Pipeline控制循环，AI创作每个clip**：
+#### Stage 3: Video Generation Loop (`/frago.generate`)
+**Pipeline controls loop, AI creates each clip**:
 
 ```
 for each shot_xxx.json:
-    ├── AI分析分镜需求
-    ├── AI编写专属录制脚本 (clips/shot_xxx_record.sh)
-    │   - 精确控制每个动作的时间点
-    │   - 设计视觉效果的出现和消失
-    │   - 协调录制和操作的同步
-    ├── 执行脚本录制 shot_xxx.mp4
-    ├── 生成音频 shot_xxx_audio.mp3
-    ├── AI验证质量（时长、内容、同步）
-    └── 创建标记 shot_xxx.done
+    ├── AI analyzes shot requirements
+    ├── AI writes dedicated recording script (clips/shot_xxx_record.sh)
+    │   - Precisely control timing of each action
+    │   - Design appearance and disappearance of visual effects
+    │   - Coordinate recording and operation synchronization
+    ├── Execute script to record shot_xxx.mp4
+    ├── Generate audio shot_xxx_audio.mp3
+    ├── AI verifies quality (duration, content, sync)
+    └── Create marker shot_xxx.done
 ```
 
-- **执行者**：**Claude AI** (每次都是独立创作)
-- **核心理念**：不是批量处理，而是为每个clip定制脚本
-- **Recipe角色**：加速高频DOM操作（如YouTube字幕提取），避免重复LLM推理
-- **完成标记**：`generate.done`
+- **Executor**: **Claude AI** (each time is independent creation)
+- **Core Philosophy**: Not batch processing, but custom script for each clip
+- **Recipe Role**: Accelerate high-frequency DOM operations (like YouTube subtitle extraction), avoid repeated LLM reasoning
+- **Completion Marker**: `generate.done`
 
-#### 阶段4: 素材评估 (`/frago.evaluate`)
-- **执行者**：**Claude AI**
-- **AI决策内容**：
-  - 分析所有clips的完整性
-  - 识别质量问题（模糊、截断、时长不匹配）
-  - 提出修复建议或自动修复
-  - 验证音视频同步
-- **输出**：
-  - `evaluation_report.json` - 评估报告
-  - `evaluate.done` - 完成标记
+#### Stage 4: Material Evaluation (`/frago.evaluate`)
+- **Executor**: **Claude AI**
+- **AI Decision Content**:
+  - Analyze completeness of all clips
+  - Identify quality issues (blur, truncation, duration mismatch)
+  - Propose fixes or auto-repair
+  - Verify audio-video sync
+- **Output**:
+  - `evaluation_report.json` - Evaluation report
+  - `evaluate.done` - Completion marker
 
-#### 阶段5: 视频合成 (`/frago.merge`)
-- **执行者**：**Claude AI**
-- **AI决策内容**：
-  - 确定合并顺序和过渡效果
-  - 处理音频同步和平滑
-  - 添加片头片尾（如需要）
-  - 选择输出格式和质量参数
-- **输出**：
-  - `outputs/final_output.mp4` - 最终视频
-  - `merge.done` - 完成标记
+#### Stage 5: Video Synthesis (`/frago.merge`)
+- **Executor**: **Claude AI**
+- **AI Decision Content**:
+  - Determine merge order and transition effects
+  - Handle audio sync and smoothing
+  - Add intro/outro (if needed)
+  - Select output format and quality parameters
+- **Output**:
+  - `outputs/final_output.mp4` - Final video
+  - `merge.done` - Completion marker
 
-#### 阶段6: 清理环境
-- **执行者**：Pipeline Master
-- **任务**：关闭Chrome，清理临时文件
+#### Stage 6: Environment Cleanup
+- **Executor**: Pipeline Master
+- **Task**: Close Chrome, clean temporary files
 
-### 核心设计理念
+### Core Design Philosophy
 
-1. **AI是创作者，不是执行器**
-   - 每个阶段AI都在做创作决策
-   - Pipeline只负责调度和同步
-   - Recipe是给AI用的加速工具
+1. **AI is Creator, Not Executor**
+   - AI makes creative decisions at each stage
+   - Pipeline only responsible for scheduling and synchronization
+   - Recipe is acceleration tool for AI to use
 
-2. **混合策略的优势**
+2. **Hybrid Strategy Advantage**
    ```
-   新场景：AI探索 → 理解 → 执行
-   熟悉场景：Recipe直接复用（省时省token）
-   复杂场景：AI创作 + Recipe加速高频部分
+   New scenario: AI explores → Understands → Executes
+   Familiar scenario: Recipe direct reuse (save time and tokens)
+   Complex scenario: AI creation + Recipe accelerates high-frequency parts
    ```
 
-3. **与Browser Use的本质不同**
-   - Browser Use: 通用任务自动化（适应性强）
-   - Frago: 视频创作流程化（控制力强）
+3. **Essential Difference from Browser Use**
+   - Browser Use: General task automation (strong adaptability)
+   - Frago: Video creation workflow (strong control)
