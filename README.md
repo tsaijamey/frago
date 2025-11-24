@@ -44,6 +44,8 @@ Unable to autonomously complete complex multi-step tasks:
 
 ## Solutions
 
+![Frago Architecture](docs/images/architecture.jpg)
+
 Frago provides three core systems to solve the above problems:
 
 ### 🧠 Run System - AI's Working Memory
