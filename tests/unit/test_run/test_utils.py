@@ -6,7 +6,7 @@
 import pytest
 from pathlib import Path
 
-from auvima.run.utils import (
+from frago.run.utils import (
     generate_theme_slug,
     is_valid_run_id,
     scan_run_directories,
@@ -208,7 +208,7 @@ class TestEnsureDirectoryExists:
 
     def test_permission_error(self, tmp_path):
         """测试权限错误(需要mock)"""
-        from auvima.run.exceptions import FileSystemError
+        from frago.run.exceptions import FileSystemError
 
         # 创建只读目录
         readonly_dir = tmp_path / "readonly"

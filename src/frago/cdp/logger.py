@@ -12,7 +12,7 @@ from typing import Optional
 class CDPLogger:
     """CDP日志管理器"""
     
-    def __init__(self, name: str = "auvima.cdp", level: str = "INFO"):
+    def __init__(self, name: str = "frago.cdp", level: str = "INFO"):
         """
         初始化日志管理器
         
@@ -178,7 +178,7 @@ class CDPLogger:
 _logger: Optional[CDPLogger] = None
 
 
-def get_logger(name: str = "auvima.cdp", level: str = "INFO") -> CDPLogger:
+def get_logger(name: str = "frago.cdp", level: str = "INFO") -> CDPLogger:
     """
     获取CDP日志器
     

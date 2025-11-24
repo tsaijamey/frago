@@ -6,10 +6,10 @@
 import pytest
 from pathlib import Path
 
-from auvima.run.manager import RunManager
-from auvima.run.context import ContextManager
-from auvima.run.logger import RunLogger
-from auvima.run.models import ActionType, ExecutionMethod, LogStatus
+from frago.run.manager import RunManager
+from frago.run.context import ContextManager
+from frago.run.logger import RunLogger
+from frago.run.models import ActionType, ExecutionMethod, LogStatus
 
 
 @pytest.fixture
@@ -186,7 +186,7 @@ class TestRunFiltering:
         manager.archive_run(run4.run_id)
 
         # 过滤活跃的
-        from auvima.run.models import RunStatus
+        from frago.run.models import RunStatus
 
         active_runs = manager.list_runs(status=RunStatus.ACTIVE)
         assert len(active_runs) == 2

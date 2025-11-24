@@ -49,8 +49,8 @@ htmlcov/
 workdir/
 
 # User-level recipes (project-specific)
-.auvima/
+.frago/
 
 # Run command system working directories
 projects/
-.auvima/current_project
+.frago/current_project

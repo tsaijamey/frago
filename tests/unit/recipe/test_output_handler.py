@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from auvima.recipes.output_handler import OutputHandler
+from frago.recipes.output_handler import OutputHandler
 
 
 class TestOutputHandlerStdout:

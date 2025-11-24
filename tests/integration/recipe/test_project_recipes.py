@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from auvima.recipes.runner import RecipeRunner
-from auvima.recipes.registry import RecipeRegistry
+from frago.recipes.runner import RecipeRunner
+from frago.recipes.registry import RecipeRegistry
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ class TestProjectLevelRecipeDetection:
     def test_project_path_detection(self, temp_project_dir):
         """测试项目级路径检测"""
         # 创建项目级 Recipe 目录
-        recipe_dir = temp_project_dir / '.auvima' / 'recipes' / 'workflows'
+        recipe_dir = temp_project_dir / '.frago' / 'recipes' / 'workflows'
         recipe_dir.mkdir(parents=True)
 
         # 切换到项目目录
@@ -42,7 +42,7 @@ class TestProjectLevelRecipeDetection:
             registry = RecipeRegistry()
 
             # 验证项目级路径被检测到
-            project_path = temp_project_dir / '.auvima' / 'recipes'
+            project_path = temp_project_dir / '.frago' / 'recipes'
             assert project_path in registry.search_paths
 
         finally:
@@ -75,7 +75,7 @@ class TestProjectRecipePriority:
     def test_project_recipe_overrides_user(self, temp_project_dir):
         """测试项目级 Recipe 覆盖用户级 Recipe"""
         # 创建项目级 Recipe
-        project_recipe_dir = temp_project_dir / '.auvima' / 'recipes' / 'workflows'
+        project_recipe_dir = temp_project_dir / '.frago' / 'recipes' / 'workflows'
         project_recipe_dir.mkdir(parents=True)
 
         # 创建项目级元数据
@@ -131,7 +131,7 @@ print(json.dumps({"source": "project", "version": "2.0"}))
     def test_find_all_sources(self, temp_project_dir):
         """测试查找所有来源的同名 Recipe"""
         # 创建项目级 Recipe
-        project_recipe_dir = temp_project_dir / '.auvima' / 'recipes' / 'workflows'
+        project_recipe_dir = temp_project_dir / '.frago' / 'recipes' / 'workflows'
         project_recipe_dir.mkdir(parents=True)
 
         project_md = project_recipe_dir / 'multi_source.md'
@@ -219,7 +219,7 @@ class TestDirectorySwitching:
         project2.mkdir()
 
         # 在 project1 创建 Recipe
-        recipe1_dir = project1 / '.auvima' / 'recipes' / 'workflows'
+        recipe1_dir = project1 / '.frago' / 'recipes' / 'workflows'
         recipe1_dir.mkdir(parents=True)
         (recipe1_dir / 'p1_recipe.md').write_text("""---
 name: p1_recipe
@@ -243,7 +243,7 @@ print(json.dumps({"project": "1"}))
 """)
 
         # 在 project2 创建不同的 Recipe
-        recipe2_dir = project2 / '.auvima' / 'recipes' / 'workflows'
+        recipe2_dir = project2 / '.frago' / 'recipes' / 'workflows'
         recipe2_dir.mkdir(parents=True)
         (recipe2_dir / 'p2_recipe.md').write_text("""---
 name: p2_recipe

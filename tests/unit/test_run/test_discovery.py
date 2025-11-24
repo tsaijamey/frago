@@ -6,8 +6,8 @@
 import pytest
 from pathlib import Path
 
-from auvima.run.discovery import RunDiscovery
-from auvima.run.manager import RunManager
+from frago.run.discovery import RunDiscovery
+from frago.run.manager import RunManager
 
 
 @pytest.fixture

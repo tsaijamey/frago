@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AuViMa CLI - Chrome DevTools Protocol 命令行接口
+Frago CLI - Chrome DevTools Protocol 命令行接口
 
 提供向后兼容的CLI接口，支持所有原Shell脚本功能。
 """
@@ -86,7 +86,7 @@ def cli(ctx, debug: bool, timeout: int, host: str, port: int,
         proxy_username: Optional[str], proxy_password: Optional[str],
         no_proxy: bool):
     """
-    AuViMa - Chrome DevTools Protocol 命令行工具
+    Frago - Chrome DevTools Protocol 命令行工具
 
     提供与Chrome浏览器交互的命令行接口，支持页面导航、
     元素操作、截图、JavaScript执行等功能。

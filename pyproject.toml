@@ -1,12 +1,12 @@
 [project]
-name = "auvima"
+name = "frago"
 version = "0.1.0"
-description = "AuViMa - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
+description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "AuViMa Team", email = "team@auvima.io"}
+    {name = "Frago Team", email = "caijia@frago.ai"}
 ]
 keywords = ["cdp", "chrome", "devtools", "automation", "browser"]
 classifiers = [
@@ -63,20 +63,20 @@ dev = [
 ]
 
 [project.scripts]
-auvima = "auvima.cli.main:cli"
+frago = "frago.cli.main:cli"
 
 [project.urls]
-Homepage = "https://github.com/auvima/auvima"
-Documentation = "https://docs.auvima.io"
-Repository = "https://github.com/auvima/auvima.git"
-Issues = "https://github.com/auvima/auvima/issues"
+Homepage = "https://frago.ai"
+Documentation = "https://docs.frago.ai"
+Repository = "https://github.com/tsaijamey/frago.git"
+Issues = "https://github.com/tsaijamey/frago/issues"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/auvima"]
+packages = ["src/frago"]
 
 [tool.setuptools]
 exclude = ["examples*"]
@@ -91,7 +91,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=auvima",
+    "--cov=frago",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
@@ -117,7 +117,7 @@ ignore = [
 ]
 
 [tool.ruff.isort]
-known-first-party = ["auvima"]
+known-first-party = ["frago"]
 
 [tool.mypy]
 python_version = "3.8"

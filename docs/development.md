@@ -1,23 +1,23 @@
-# AuViMa 开发指南
+# Frago 开发指南
 
 ## 项目目录结构
 
 ```
-AuViMa/
+Frago/
 ├── README.md                        # 项目说明
 ├── CLAUDE.md                        # 项目配置（技术栈、代码风格）
 ├── .claude/
 │   ├── commands/                    # Claude Code Slash Commands
-│   │   ├── auvima_start.md          # AI信息收集命令
-│   │   ├── auvima_storyboard.md     # AI分镜规划命令
-│   │   ├── auvima_generate.md       # AI视频生成命令（创作录制脚本）
-│   │   ├── auvima_evaluate.md       # AI素材评估命令
-│   │   ├── auvima_merge.md          # AI视频合成命令
-│   │   └── auvima_recipe.md         # Recipe管理命令（创建/更新/列表）
+│   │   ├── frago_start.md          # AI信息收集命令
+│   │   ├── frago_storyboard.md     # AI分镜规划命令
+│   │   ├── frago_generate.md       # AI视频生成命令（创作录制脚本）
+│   │   ├── frago_evaluate.md       # AI素材评估命令
+│   │   ├── frago_merge.md          # AI视频合成命令
+│   │   └── frago_recipe.md         # Recipe管理命令（创建/更新/列表）
 │   └── settings.local.json          # 项目配置
 │
 ├── src/                             # 核心Python代码
-│   ├── auvima/                      # AuViMa核心包
+│   ├── frago/                      # Frago核心包
 │   │   ├── cdp/                     # CDP协议实现（原生WebSocket）
 │   │   │   ├── client.py            # CDP客户端基类
 │   │   │   ├── session.py           # 会话管理（连接/重试/事件）
@@ -94,10 +94,10 @@ AuViMa/
 
 ## CDP命令目录结构
 
-CDP功能按类型组织在 `src/auvima/cdp/commands/` 目录下：
+CDP功能按类型组织在 `src/frago/cdp/commands/` 目录下：
 
 ```
-src/auvima/cdp/commands/
+src/frago/cdp/commands/
 ├── __init__.py         # 命令模块导出
 ├── page.py             # 页面操作（导航、获取标题/内容）
 ├── screenshot.py       # 截图功能
@@ -110,7 +110,7 @@ src/auvima/cdp/commands/
 └── visual_effects.py   # 视觉效果（高亮、指针、聚光灯、标注）
 ```
 
-所有CDP功能通过统一的CLI接口（`uv run auvima <command>`）访问。
+所有CDP功能通过统一的CLI接口（`uv run frago <command>`）访问。
 
 ## 技术栈
 
@@ -143,13 +143,13 @@ src/auvima/cdp/commands/
 
 ```bash
 # 生成控制台报告
-uv run python -m auvima.tools.function_mapping
+uv run python -m frago.tools.function_mapping
 
 # 生成详细HTML报告
-uv run python -m auvima.tools.function_mapping --format html --output function_mapping_report.html
+uv run python -m frago.tools.function_mapping --format html --output function_mapping_report.html
 
 # 生成JSON报告
-uv run python -m auvima.tools.function_mapping --format json --output function_mapping_report.json
+uv run python -m frago.tools.function_mapping --format json --output function_mapping_report.json
 ```
 
 ### 查看功能覆盖率
@@ -228,10 +228,10 @@ outputs:
 ## Recipe存储结构
 
 - **代码与资源分离**：
-  - `src/auvima/recipes/` - Python引擎代码（不包含Recipe脚本）
+  - `src/frago/recipes/` - Python引擎代码（不包含Recipe脚本）
   - `examples/atomic/chrome/` - 示例Recipe脚本 + 元数据文档
-  - `~/.auvima/recipes/` - 用户级Recipe（待实现）
-  - `.auvima/recipes/` - 项目级Recipe（待实现）
+  - `~/.frago/recipes/` - 用户级Recipe（待实现）
+  - `.frago/recipes/` - 项目级Recipe（待实现）
 
 - **查找优先级**：项目级 > 用户级 > 示例级
 

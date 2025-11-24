@@ -181,15 +181,15 @@ test_python_config_validation() {
         return 0
     fi
 
-    # 检查auvima包是否可用
-    if ! python3 -c "import auvima" 2>/dev/null; then
-        echo "⊘ 跳过: auvima包未安装"
+    # 检查frago包是否可用
+    if ! python3 -c "import frago" 2>/dev/null; then
+        echo "⊘ 跳过: frago包未安装"
         return 0
     fi
 
     # 测试用例1: 验证代理配置类
     local test_script="
-from auvima.cdp.config import CDPConfig
+from frago.cdp.config import CDPConfig
 
 # 测试简单代理配置
 config = CDPConfig(

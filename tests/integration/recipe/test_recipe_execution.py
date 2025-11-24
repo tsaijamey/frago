@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from auvima.recipes.runner import RecipeRunner
-from auvima.recipes.registry import RecipeRegistry
-from auvima.recipes.exceptions import RecipeExecutionError, RecipeNotFoundError
+from frago.recipes.runner import RecipeRunner
+from frago.recipes.registry import RecipeRegistry
+from frago.recipes.exceptions import RecipeExecutionError, RecipeNotFoundError
 
 
 @pytest.fixture
@@ -110,7 +110,7 @@ class TestShellRecipeExecution:
 
     def test_file_copy_missing_params(self, recipe_runner):
         """测试缺少必需参数时的错误处理"""
-        from auvima.recipes.exceptions import RecipeValidationError
+        from frago.recipes.exceptions import RecipeValidationError
 
         # 应该抛出 RecipeValidationError
         with pytest.raises(RecipeValidationError) as exc_info:

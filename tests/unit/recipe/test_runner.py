@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from auvima.recipes.exceptions import RecipeExecutionError, RecipeValidationError
-from auvima.recipes.metadata import RecipeMetadata
-from auvima.recipes.registry import Recipe
-from auvima.recipes.runner import RecipeRunner
+from frago.recipes.exceptions import RecipeExecutionError, RecipeValidationError
+from frago.recipes.metadata import RecipeMetadata
+from frago.recipes.registry import Recipe
+from frago.recipes.runner import RecipeRunner
 
 
 @pytest.fixture

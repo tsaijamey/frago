@@ -26,7 +26,7 @@ class TestInitCommandOutput:
     def test_init_output_structure(self, temp_project_dir):
         """契约: init命令输出包含必需字段"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试任务"],
+            ["uv", "run", "frago", "run", "init", "测试任务"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -54,7 +54,7 @@ class TestInitCommandOutput:
     def test_init_with_custom_id_output(self, temp_project_dir):
         """契约: 带自定义ID的init输出包含指定的run_id"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试", "--run-id", "custom-id"],
+            ["uv", "run", "frago", "run", "init", "测试", "--run-id", "custom-id"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -72,7 +72,7 @@ class TestListCommandOutput:
     def test_list_empty_output_structure(self, temp_project_dir):
         """契约: list空列表输出正确的JSON结构"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "list", "--format", "json"],
+            ["uv", "run", "frago", "run", "list", "--format", "json"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -90,18 +90,18 @@ class TestListCommandOutput:
         """契约: list命令输出包含run列表和所有必需字段"""
         # 创建多个run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试1"],
+            ["uv", "run", "frago", "run", "init", "测试1"],
             cwd=temp_project_dir,
             capture_output=True,
         )
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试2"],
+            ["uv", "run", "frago", "run", "init", "测试2"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "list", "--format", "json"],
+            ["uv", "run", "frago", "run", "list", "--format", "json"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -146,26 +146,26 @@ class TestListCommandOutput:
         """契约: list --status过滤输出正确的JSON"""
         # 创建并归档一个run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试1"],
+            ["uv", "run", "frago", "run", "init", "测试1"],
             cwd=temp_project_dir,
             capture_output=True,
         )
         subprocess.run(
-            ["uv", "run", "auvima", "run", "archive", "ce-shi-1"],
+            ["uv", "run", "frago", "run", "archive", "ce-shi-1"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         # 创建一个active run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试2"],
+            ["uv", "run", "frago", "run", "init", "测试2"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         # 测试active过滤
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "list", "--format", "json", "--status", "active"],
+            ["uv", "run", "frago", "run", "list", "--format", "json", "--status", "active"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -183,7 +183,7 @@ class TestListCommandOutput:
             [
                 "uv",
                 "run",
-                "auvima",
+                "frago",
                 "run",
                 "list",
                 "--format",
@@ -211,14 +211,14 @@ class TestInfoCommandOutput:
         """契约: info命令输出包含所有必需字段"""
         # 创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试任务"],
+            ["uv", "run", "frago", "run", "init", "测试任务"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         # 设置上下文并记录日志
         subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "ce-shi-ren-wu"],
+            ["uv", "run", "frago", "run", "set-context", "ce-shi-ren-wu"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -226,7 +226,7 @@ class TestInfoCommandOutput:
             [
                 "uv",
                 "run",
-                "auvima",
+                "frago",
                 "run",
                 "log",
                 "--step",
@@ -245,7 +245,7 @@ class TestInfoCommandOutput:
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "info", "ce-shi-ren-wu", "--format", "json"],
+            ["uv", "run", "frago", "run", "info", "ce-shi-ren-wu", "--format", "json"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -306,13 +306,13 @@ class TestSetContextCommandOutput:
         """契约: set-context命令输出包含必需字段"""
         # 创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "ce-shi"],
+            ["uv", "run", "frago", "run", "set-context", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,
@@ -342,13 +342,13 @@ class TestArchiveCommandOutput:
         """契约: archive命令输出包含必需字段"""
         # 创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "archive", "ce-shi"],
+            ["uv", "run", "frago", "run", "archive", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
             text=True,

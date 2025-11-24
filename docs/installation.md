@@ -6,10 +6,10 @@
 
 ```bash
 # 使用 pip
-pip install auvima
+pip install frago
 
 # 使用 uv（推荐）
-uv add auvima
+uv add frago
 ```
 
 **核心功能包含**：
@@ -29,10 +29,10 @@ uv add auvima
 
 ```bash
 # 使用 pip
-pip install auvima[clipboard]
+pip install frago[clipboard]
 
 # 使用 uv
-uv add "auvima[clipboard]"
+uv add "frago[clipboard]"
 ```
 
 **提供的额外功能**：
@@ -47,10 +47,10 @@ uv add "auvima[clipboard]"
 
 ```bash
 # 使用 pip
-pip install auvima[all]
+pip install frago[all]
 
 # 使用 uv
-uv add "auvima[all]"
+uv add "frago[all]"
 ```
 
 ---
@@ -61,8 +61,8 @@ uv add "auvima[all]"
 
 ```bash
 # 克隆仓库
-git clone https://github.com/auvima/auvima.git
-cd auvima
+git clone https://github.com/frago/frago.git
+cd frago
 
 # 使用 uv 安装开发依赖（推荐）
 uv sync --all-extras --dev
@@ -119,13 +119,13 @@ dev = ["pytest>=7.4.0", ...]       # 开发工具
 
 ```bash
 # 检查版本
-auvima --version
+frago --version
 
 # 列出可用 Recipe
-auvima recipe list
+frago recipe list
 
 # 查看帮助
-auvima --help
+frago --help
 ```
 
 ---
@@ -134,10 +134,10 @@ auvima --help
 
 ```bash
 # 使用 pip
-pip install --upgrade auvima
+pip install --upgrade frago
 
 # 使用 uv
-uv add --upgrade auvima
+uv add --upgrade frago
 ```
 
 ---
@@ -146,8 +146,8 @@ uv add --upgrade auvima
 
 ```bash
 # 使用 pip
-pip uninstall auvima
+pip uninstall frago
 
 # 使用 uv
-uv remove auvima
+uv remove frago
 ```

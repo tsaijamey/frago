@@ -8,10 +8,10 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from auvima.run.manager import RunManager
-from auvima.run.context import ContextManager
-from auvima.run.logger import RunLogger
-from auvima.run.models import ActionType, ExecutionMethod, LogStatus
+from frago.run.manager import RunManager
+from frago.run.context import ContextManager
+from frago.run.logger import RunLogger
+from frago.run.models import ActionType, ExecutionMethod, LogStatus
 
 
 @pytest.fixture
@@ -41,16 +41,16 @@ class TestRunLifecycle:
         manager = RunManager(projects_dir)
         context_mgr = ContextManager(project_root, projects_dir)
 
-        # 2. 创建run (模拟 `uv run auvima run init`)
+        # 2. 创建run (模拟 `uv run frago run init`)
         instance = manager.create_run("测试任务生命周期")
         assert instance.run_id is not None
         assert (projects_dir / instance.run_id).exists()
 
-        # 3. 设置上下文 (模拟 `uv run auvima run set-context`)
+        # 3. 设置上下文 (模拟 `uv run frago run set-context`)
         context = context_mgr.set_current_project(instance.run_id, instance.theme_description)
         assert context.run_id == instance.run_id
 
-        # 4. 记录日志 (模拟 `uv run auvima run log`)
+        # 4. 记录日志 (模拟 `uv run frago run log`)
         run_dir = projects_dir / instance.run_id
         logger = RunLogger(run_dir)
 
@@ -78,11 +78,11 @@ class TestRunLifecycle:
         assert logs[0].step == "导航到测试页面"
         assert logs[1].step == "提取数据"
 
-        # 6. 查看run详情 (模拟 `uv run auvima run info`)
+        # 6. 查看run详情 (模拟 `uv run frago run info`)
         stats = manager.get_run_statistics(instance.run_id)
         assert stats["log_entries"] == 2
 
-        # 7. 归档run (模拟 `uv run auvima run archive`)
+        # 7. 归档run (模拟 `uv run frago run archive`)
         archived = manager.archive_run(instance.run_id)
         assert archived.status.value == "archived"
 

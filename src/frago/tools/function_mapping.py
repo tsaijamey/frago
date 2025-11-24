@@ -174,7 +174,7 @@ class PythonFunctionAnalyzer:
 
         try:
             # 动态导入模块
-            from auvima.cdp import commands
+            from frago.cdp import commands
 
             # 模块映射
             module_map = {
@@ -406,7 +406,7 @@ class FunctionMappingReport:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AuViMa CDP 功能映射验证报告</title>
+    <title>Frago CDP 功能映射验证报告</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
@@ -545,7 +545,7 @@ class FunctionMappingReport:
 <body>
     <div class="container">
         <header>
-            <h1>🔍 AuViMa CDP 功能映射验证报告</h1>
+            <h1>🔍 Frago CDP 功能映射验证报告</h1>
             <p class="subtitle">Shell 脚本与 Python 实现对应关系分析</p>
         </header>
 
@@ -651,7 +651,7 @@ class FunctionMappingReport:
         </div>
 
         <footer>
-            <p>由 AuViMa 功能映射验证工具自动生成</p>
+            <p>由 Frago 功能映射验证工具自动生成</p>
         </footer>
     </div>
 </body>

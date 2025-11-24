@@ -8,9 +8,9 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 
-from auvima.run.logger import RunLogger
-from auvima.run.models import ActionType, ExecutionMethod, LogStatus
-from auvima.run.exceptions import FileSystemError
+from frago.run.logger import RunLogger
+from frago.run.models import ActionType, ExecutionMethod, LogStatus
+from frago.run.exceptions import FileSystemError
 
 
 @pytest.fixture

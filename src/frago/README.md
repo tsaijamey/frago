@@ -1,6 +1,6 @@
-# AuViMa - Chrome DevTools Protocol CLI
+# Frago - Chrome DevTools Protocol CLI
 
-AuViMa 是一个强大的命令行工具，通过 Chrome DevTools Protocol (CDP) 与浏览器进行交互，支持页面导航、元素操作、截图、JavaScript执行等功能。
+Frago 是一个强大的命令行工具，通过 Chrome DevTools Protocol (CDP) 与浏览器进行交互，支持页面导航、元素操作、截图、JavaScript执行等功能。
 
 ## 快速开始
 
@@ -18,10 +18,10 @@ uv run python src/chrome_cdp_launcher.py &
 
 ```bash
 # 查看帮助
-uv run auvima --help
+uv run frago --help
 
 # 查看特定命令的帮助
-uv run auvima <命令> --help
+uv run frago <命令> --help
 ```
 
 ---
@@ -46,13 +46,13 @@ uv run auvima <命令> --help
 
 ```bash
 # 使用调试模式
-uv run auvima --debug navigate https://youtube.com
+uv run frago --debug navigate https://youtube.com
 
 # 设置60秒超时
-uv run auvima --timeout 60 navigate https://youtube.com
+uv run frago --timeout 60 navigate https://youtube.com
 
 # 使用代理
-uv run auvima --proxy-host 127.0.0.1 --proxy-port 7890 navigate https://youtube.com
+uv run frago --proxy-host 127.0.0.1 --proxy-port 7890 navigate https://youtube.com
 ```
 
 ---
@@ -65,7 +65,7 @@ uv run auvima --proxy-host 127.0.0.1 --proxy-port 7890 navigate https://youtube.
 
 **语法：**
 ```bash
-uv run auvima navigate <URL> [--wait-for SELECTOR]
+uv run frago navigate <URL> [--wait-for SELECTOR]
 ```
 
 **参数：**
@@ -76,14 +76,14 @@ uv run auvima navigate <URL> [--wait-for SELECTOR]
 
 ```bash
 # 基本导航
-uv run auvima navigate https://youtube.com
+uv run frago navigate https://youtube.com
 
 # 导航并等待搜索框出现
-uv run auvima navigate https://youtube.com --wait-for "input[name='search_query']"
+uv run frago navigate https://youtube.com --wait-for "input[name='search_query']"
 
 # 导航到其他网站
-uv run auvima navigate https://github.com
-uv run auvima navigate https://google.com
+uv run frago navigate https://github.com
+uv run frago navigate https://google.com
 ```
 
 ---
@@ -94,18 +94,18 @@ uv run auvima navigate https://google.com
 
 **语法：**
 ```bash
-uv run auvima get-title
+uv run frago get-title
 ```
 
 **示例：**
 
 ```bash
 # 获取YouTube页面标题
-uv run auvima get-title
+uv run frago get-title
 # 输出: (15) YouTube
 
 # 配合导航使用
-uv run auvima navigate https://youtube.com && uv run auvima get-title
+uv run frago navigate https://youtube.com && uv run frago get-title
 ```
 
 ---
@@ -116,7 +116,7 @@ uv run auvima navigate https://youtube.com && uv run auvima get-title
 
 **语法：**
 ```bash
-uv run auvima get-content [SELECTOR]
+uv run frago get-content [SELECTOR]
 ```
 
 **参数：**
@@ -126,15 +126,15 @@ uv run auvima get-content [SELECTOR]
 
 ```bash
 # 获取整个页面的文本内容
-uv run auvima get-content
+uv run frago get-content
 
 # 获取特定元素的内容
-uv run auvima get-content "h1#video-title"
-uv run auvima get-content ".channel-name"
-uv run auvima get-content "#description"
+uv run frago get-content "h1#video-title"
+uv run frago get-content ".channel-name"
+uv run frago get-content "#description"
 
 # 获取搜索框的placeholder
-uv run auvima get-content "input[name='search_query']"
+uv run frago get-content "input[name='search_query']"
 ```
 
 ---
@@ -145,7 +145,7 @@ uv run auvima get-content "input[name='search_query']"
 
 **语法：**
 ```bash
-uv run auvima click <SELECTOR> [--wait-timeout SECONDS]
+uv run frago click <SELECTOR> [--wait-timeout SECONDS]
 ```
 
 **参数：**
@@ -156,16 +156,16 @@ uv run auvima click <SELECTOR> [--wait-timeout SECONDS]
 
 ```bash
 # 点击YouTube搜索框
-uv run auvima click "input[name='search_query']"
+uv run frago click "input[name='search_query']"
 
 # 点击搜索按钮
-uv run auvima click "button#search-icon-legacy"
+uv run frago click "button#search-icon-legacy"
 
 # 点击第一个视频
-uv run auvima click "ytd-video-renderer:first-child"
+uv run frago click "ytd-video-renderer:first-child"
 
 # 等待30秒后点击
-uv run auvima click ".subscribe-button" --wait-timeout 30
+uv run frago click ".subscribe-button" --wait-timeout 30
 ```
 
 ---
@@ -176,7 +176,7 @@ uv run auvima click ".subscribe-button" --wait-timeout 30
 
 **语法：**
 ```bash
-uv run auvima screenshot <OUTPUT_FILE> [--full-page] [--quality QUALITY]
+uv run frago screenshot <OUTPUT_FILE> [--full-page] [--quality QUALITY]
 ```
 
 **参数：**
@@ -188,18 +188,18 @@ uv run auvima screenshot <OUTPUT_FILE> [--full-page] [--quality QUALITY]
 
 ```bash
 # 截取可见区域
-uv run auvima screenshot youtube_viewport.png
+uv run frago screenshot youtube_viewport.png
 
 # 截取完整页面，高质量
-uv run auvima screenshot youtube_full.png --full-page --quality 95
+uv run frago screenshot youtube_full.png --full-page --quality 95
 
 # 截取中等质量
-uv run auvima screenshot youtube_medium.png --quality 50
+uv run frago screenshot youtube_medium.png --quality 50
 
 # 截取特定时刻的页面
-uv run auvima navigate https://youtube.com && \
-uv run auvima wait 2 && \
-uv run auvima screenshot youtube_loaded.png
+uv run frago navigate https://youtube.com && \
+uv run frago wait 2 && \
+uv run frago screenshot youtube_loaded.png
 ```
 
 ---
@@ -210,7 +210,7 @@ uv run auvima screenshot youtube_loaded.png
 
 **语法：**
 ```bash
-uv run auvima exec-js <SCRIPT> [--return-value]
+uv run frago exec-js <SCRIPT> [--return-value]
 ```
 
 **参数：**
@@ -221,25 +221,25 @@ uv run auvima exec-js <SCRIPT> [--return-value]
 
 ```bash
 # 执行简单脚本
-uv run auvima exec-js "console.log('Hello YouTube')"
+uv run frago exec-js "console.log('Hello YouTube')"
 
 # 获取页面标题
-uv run auvima exec-js "document.title" --return-value
+uv run frago exec-js "document.title" --return-value
 
 # 修改搜索框的值
-uv run auvima exec-js "document.querySelector(\"input[name='search_query']\").value='Claude AI'"
+uv run frago exec-js "document.querySelector(\"input[name='search_query']\").value='Claude AI'"
 
 # 获取视频数量
-uv run auvima exec-js "document.querySelectorAll('ytd-video-renderer').length" --return-value
+uv run frago exec-js "document.querySelectorAll('ytd-video-renderer').length" --return-value
 
 # 滚动到页面底部
-uv run auvima exec-js "window.scrollTo(0, document.body.scrollHeight)"
+uv run frago exec-js "window.scrollTo(0, document.body.scrollHeight)"
 
 # 检查元素是否存在
-uv run auvima exec-js "document.querySelector(\"input[name='search_query']\") ? 'exists' : 'not found'" --return-value
+uv run frago exec-js "document.querySelector(\"input[name='search_query']\") ? 'exists' : 'not found'" --return-value
 
 # 获取页面URL
-uv run auvima exec-js "window.location.href" --return-value
+uv run frago exec-js "window.location.href" --return-value
 ```
 
 ---
@@ -250,7 +250,7 @@ uv run auvima exec-js "window.location.href" --return-value
 
 **语法：**
 ```bash
-uv run auvima scroll <DISTANCE>
+uv run frago scroll <DISTANCE>
 ```
 
 **参数：**
@@ -260,19 +260,19 @@ uv run auvima scroll <DISTANCE>
 
 ```bash
 # 向下滚动500像素
-uv run auvima scroll 500
+uv run frago scroll 500
 
 # 向上滚动300像素
-uv run auvima scroll -300
+uv run frago scroll -300
 
 # 滚动到底部（多次滚动）
-uv run auvima scroll 1000 && \
-uv run auvima scroll 1000 && \
-uv run auvima scroll 1000
+uv run frago scroll 1000 && \
+uv run frago scroll 1000 && \
+uv run frago scroll 1000
 
 # 滚动后截图
-uv run auvima scroll 500 && \
-uv run auvima screenshot youtube_scrolled.png
+uv run frago scroll 500 && \
+uv run frago screenshot youtube_scrolled.png
 ```
 
 ---
@@ -283,7 +283,7 @@ uv run auvima screenshot youtube_scrolled.png
 
 **语法：**
 ```bash
-uv run auvima wait <SECONDS>
+uv run frago wait <SECONDS>
 ```
 
 **参数：**
@@ -293,15 +293,15 @@ uv run auvima wait <SECONDS>
 
 ```bash
 # 等待2秒
-uv run auvima wait 2
+uv run frago wait 2
 
 # 等待0.5秒
-uv run auvima wait 0.5
+uv run frago wait 0.5
 
 # 等待5秒让页面加载
-uv run auvima navigate https://youtube.com && \
-uv run auvima wait 5 && \
-uv run auvima screenshot youtube_loaded.png
+uv run frago navigate https://youtube.com && \
+uv run frago wait 5 && \
+uv run frago screenshot youtube_loaded.png
 ```
 
 ---
@@ -312,7 +312,7 @@ uv run auvima screenshot youtube_loaded.png
 
 **语法：**
 ```bash
-uv run auvima zoom <FACTOR>
+uv run frago zoom <FACTOR>
 ```
 
 **参数：**
@@ -322,17 +322,17 @@ uv run auvima zoom <FACTOR>
 
 ```bash
 # 放大到150%
-uv run auvima zoom 1.5
+uv run frago zoom 1.5
 
 # 缩小到75%
-uv run auvima zoom 0.75
+uv run frago zoom 0.75
 
 # 恢复100%
-uv run auvima zoom 1.0
+uv run frago zoom 1.0
 
 # 放大后截图
-uv run auvima zoom 1.5 && \
-uv run auvima screenshot youtube_zoomed.png
+uv run frago zoom 1.5 && \
+uv run frago screenshot youtube_zoomed.png
 ```
 
 ---
@@ -343,14 +343,14 @@ uv run auvima screenshot youtube_zoomed.png
 
 **语法：**
 ```bash
-uv run auvima status
+uv run frago status
 ```
 
 **示例：**
 
 ```bash
 # 检查连接状态
-uv run auvima status
+uv run frago status
 
 # 输出示例:
 # ✓ CDP连接正常
@@ -367,7 +367,7 @@ uv run auvima status
 
 **语法：**
 ```bash
-uv run auvima highlight <SELECTOR> [--color COLOR] [--width WIDTH]
+uv run frago highlight <SELECTOR> [--color COLOR] [--width WIDTH]
 ```
 
 **参数：**
@@ -379,20 +379,20 @@ uv run auvima highlight <SELECTOR> [--color COLOR] [--width WIDTH]
 
 ```bash
 # 默认高亮（黄色，3像素）
-uv run auvima highlight "input[name='search_query']"
+uv run frago highlight "input[name='search_query']"
 
 # 红色高亮，5像素边框
-uv run auvima highlight "input[name='search_query']" --color red --width 5
+uv run frago highlight "input[name='search_query']" --color red --width 5
 
 # 蓝色高亮搜索按钮
-uv run auvima highlight "button#search-icon-legacy" --color blue --width 3
+uv run frago highlight "button#search-icon-legacy" --color blue --width 3
 
 # 高亮所有视频标题
-uv run auvima highlight "ytd-video-renderer h3" --color green --width 2
+uv run frago highlight "ytd-video-renderer h3" --color green --width 2
 
 # 高亮后截图
-uv run auvima highlight "input[name='search_query']" --color red --width 5 && \
-uv run auvima screenshot youtube_highlighted.png
+uv run frago highlight "input[name='search_query']" --color red --width 5 && \
+uv run frago screenshot youtube_highlighted.png
 ```
 
 ---
@@ -403,7 +403,7 @@ uv run auvima screenshot youtube_highlighted.png
 
 **语法：**
 ```bash
-uv run auvima pointer <SELECTOR>
+uv run frago pointer <SELECTOR>
 ```
 
 **参数：**
@@ -413,15 +413,15 @@ uv run auvima pointer <SELECTOR>
 
 ```bash
 # 在搜索框上显示指针
-uv run auvima pointer "input[name='search_query']"
+uv run frago pointer "input[name='search_query']"
 
 # 在订阅按钮上显示指针
-uv run auvima pointer ".subscribe-button"
+uv run frago pointer ".subscribe-button"
 
 # 显示指针后截图
-uv run auvima pointer "button#search-icon-legacy" && \
-uv run auvima wait 1 && \
-uv run auvima screenshot youtube_pointer.png
+uv run frago pointer "button#search-icon-legacy" && \
+uv run frago wait 1 && \
+uv run frago screenshot youtube_pointer.png
 ```
 
 ---
@@ -432,7 +432,7 @@ uv run auvima screenshot youtube_pointer.png
 
 **语法：**
 ```bash
-uv run auvima spotlight <SELECTOR>
+uv run frago spotlight <SELECTOR>
 ```
 
 **参数：**
@@ -442,14 +442,14 @@ uv run auvima spotlight <SELECTOR>
 
 ```bash
 # 聚光灯显示搜索框
-uv run auvima spotlight "input[name='search_query']"
+uv run frago spotlight "input[name='search_query']"
 
 # 聚光灯显示第一个视频
-uv run auvima spotlight "ytd-video-renderer:first-child"
+uv run frago spotlight "ytd-video-renderer:first-child"
 
 # 聚光灯后截图
-uv run auvima spotlight "input[name='search_query']" && \
-uv run auvima screenshot youtube_spotlight.png
+uv run frago spotlight "input[name='search_query']" && \
+uv run frago screenshot youtube_spotlight.png
 ```
 
 ---
@@ -460,7 +460,7 @@ uv run auvima screenshot youtube_spotlight.png
 
 **语法：**
 ```bash
-uv run auvima annotate <SELECTOR> <TEXT> [--position POSITION]
+uv run frago annotate <SELECTOR> <TEXT> [--position POSITION]
 ```
 
 **参数：**
@@ -472,44 +472,44 @@ uv run auvima annotate <SELECTOR> <TEXT> [--position POSITION]
 
 ```bash
 # 顶部标注
-uv run auvima annotate "input[name='search_query']" "这是搜索框"
+uv run frago annotate "input[name='search_query']" "这是搜索框"
 
 # 右侧标注
-uv run auvima annotate "button#search-icon-legacy" "点击搜索" --position right
+uv run frago annotate "button#search-icon-legacy" "点击搜索" --position right
 
 # 底部标注
-uv run auvima annotate ".subscribe-button" "订阅频道" --position bottom
+uv run frago annotate ".subscribe-button" "订阅频道" --position bottom
 
 # 左侧标注
-uv run auvima annotate "#logo" "YouTube Logo" --position left
+uv run frago annotate "#logo" "YouTube Logo" --position left
 
 # 标注后截图
-uv run auvima annotate "input[name='search_query']" "搜索框" --position top && \
-uv run auvima screenshot youtube_annotated.png
+uv run frago annotate "input[name='search_query']" "搜索框" --position top && \
+uv run frago screenshot youtube_annotated.png
 ```
 
 ---
 
 ### 15. `clear-effects` - 清除视觉效果
 
-清除所有由AuViMa添加的视觉效果（高亮、指针、聚光灯、标注）。
+清除所有由Frago添加的视觉效果（高亮、指针、聚光灯、标注）。
 
 **语法：**
 ```bash
-uv run auvima clear-effects
+uv run frago clear-effects
 ```
 
 **示例：**
 
 ```bash
 # 清除所有视觉效果
-uv run auvima clear-effects
+uv run frago clear-effects
 
 # 添加多个效果后清除
-uv run auvima highlight "input[name='search_query']" --color red --width 5 && \
-uv run auvima annotate "input[name='search_query']" "搜索框" && \
-uv run auvima wait 2 && \
-uv run auvima clear-effects
+uv run frago highlight "input[name='search_query']" --color red --width 5 && \
+uv run frago annotate "input[name='search_query']" "搜索框" && \
+uv run frago wait 2 && \
+uv run frago clear-effects
 ```
 
 ---
@@ -520,52 +520,52 @@ uv run auvima clear-effects
 
 ```bash
 # 1. 导航到YouTube首页
-uv run auvima navigate https://youtube.com
+uv run frago navigate https://youtube.com
 
 # 2. 等待页面加载
-uv run auvima wait 2
+uv run frago wait 2
 
 # 3. 检查页面标题
-uv run auvima get-title
+uv run frago get-title
 
 # 4. 高亮搜索框
-uv run auvima highlight "input[name='search_query']" --color blue --width 3
+uv run frago highlight "input[name='search_query']" --color blue --width 3
 
 # 5. 添加标注
-uv run auvima annotate "input[name='search_query']" "在这里输入搜索关键词" --position top
+uv run frago annotate "input[name='search_query']" "在这里输入搜索关键词" --position top
 
 # 6. 截图（带高亮和标注）
-uv run auvima screenshot youtube_step1.png
+uv run frago screenshot youtube_step1.png
 
 # 7. 清除视觉效果
-uv run auvima clear-effects
+uv run frago clear-effects
 
 # 8. 点击搜索框
-uv run auvima click "input[name='search_query']"
+uv run frago click "input[name='search_query']"
 
 # 9. 输入搜索关键词
-uv run auvima exec-js "document.querySelector(\"input[name='search_query']\").value='Claude AI'"
+uv run frago exec-js "document.querySelector(\"input[name='search_query']\").value='Claude AI'"
 
 # 10. 等待输入完成
-uv run auvima wait 0.5
+uv run frago wait 0.5
 
 # 11. 点击搜索按钮
-uv run auvima click "button#search-icon-legacy"
+uv run frago click "button#search-icon-legacy"
 
 # 12. 等待搜索结果加载
-uv run auvima wait 3
+uv run frago wait 3
 
 # 13. 获取页面标题（验证搜索成功）
-uv run auvima get-title
+uv run frago get-title
 
 # 14. 截取搜索结果页面
-uv run auvima screenshot youtube_search_results.png --full-page
+uv run frago screenshot youtube_search_results.png --full-page
 
 # 15. 滚动查看更多结果
-uv run auvima scroll 1000
+uv run frago scroll 1000
 
 # 16. 截图
-uv run auvima screenshot youtube_scrolled.png
+uv run frago screenshot youtube_scrolled.png
 ```
 
 ---
@@ -586,17 +586,17 @@ if [ -z "$SEARCH_QUERY" ]; then
 fi
 
 # 导航到YouTube
-uv run auvima navigate https://youtube.com
-uv run auvima wait 2
+uv run frago navigate https://youtube.com
+uv run frago wait 2
 
 # 搜索
-uv run auvima click "input[name='search_query']"
-uv run auvima exec-js "document.querySelector(\"input[name='search_query']\").value='$SEARCH_QUERY'"
-uv run auvima click "button#search-icon-legacy"
-uv run auvima wait 3
+uv run frago click "input[name='search_query']"
+uv run frago exec-js "document.querySelector(\"input[name='search_query']\").value='$SEARCH_QUERY'"
+uv run frago click "button#search-icon-legacy"
+uv run frago wait 3
 
 # 截图
-uv run auvima screenshot "youtube_search_${SEARCH_QUERY// /_}.png"
+uv run frago screenshot "youtube_search_${SEARCH_QUERY// /_}.png"
 
 echo "搜索完成: $SEARCH_QUERY"
 ```
@@ -611,18 +611,18 @@ chmod +x youtube_search.sh
 
 ```bash
 # 一行完成多个操作
-uv run auvima navigate https://youtube.com && \
-uv run auvima wait 2 && \
-uv run auvima highlight "input[name='search_query']" --color red --width 5 && \
-uv run auvima screenshot youtube.png
+uv run frago navigate https://youtube.com && \
+uv run frago wait 2 && \
+uv run frago highlight "input[name='search_query']" --color red --width 5 && \
+uv run frago screenshot youtube.png
 ```
 
 ### 3. 调试模式
 
 ```bash
 # 使用调试模式查看详细信息
-uv run auvima --debug navigate https://youtube.com
-uv run auvima --debug exec-js "document.title" --return-value
+uv run frago --debug navigate https://youtube.com
+uv run frago --debug exec-js "document.title" --return-value
 ```
 
 ---
@@ -651,7 +651,7 @@ uv run auvima --debug exec-js "document.title" --return-value
 **解决方案：**
 ```bash
 # 增加超时时间
-uv run auvima --timeout 60 navigate https://youtube.com
+uv run frago --timeout 60 navigate https://youtube.com
 ```
 
 ### 问题：找不到元素
@@ -659,13 +659,13 @@ uv run auvima --timeout 60 navigate https://youtube.com
 **解决方案：**
 ```bash
 # 1. 先检查元素是否存在
-uv run auvima exec-js "document.querySelector('YOUR_SELECTOR') ? 'found' : 'not found'" --return-value
+uv run frago exec-js "document.querySelector('YOUR_SELECTOR') ? 'found' : 'not found'" --return-value
 
 # 2. 获取页面HTML查看结构
-uv run auvima exec-js "document.body.innerHTML.substring(0, 2000)" --return-value
+uv run frago exec-js "document.body.innerHTML.substring(0, 2000)" --return-value
 
 # 3. 等待元素加载
-uv run auvima wait 5
+uv run frago wait 5
 ```
 
 ### 问题：CDP连接失败
@@ -673,7 +673,7 @@ uv run auvima wait 5
 **解决方案：**
 ```bash
 # 1. 检查CDP服务是否运行
-uv run auvima status
+uv run frago status
 
 # 2. 重启CDP服务
 killall chrome
@@ -687,12 +687,12 @@ lsof -i :9222
 
 ## 代理配置
 
-AuViMa支持通过代理访问网页。
+Frago支持通过代理访问网页。
 
 ### 使用命令行参数
 
 ```bash
-uv run auvima \
+uv run frago \
   --proxy-host 127.0.0.1 \
   --proxy-port 7890 \
   navigate https://youtube.com
@@ -703,13 +703,13 @@ uv run auvima \
 ```bash
 export HTTP_PROXY=http://127.0.0.1:7890
 export HTTPS_PROXY=http://127.0.0.1:7890
-uv run auvima navigate https://youtube.com
+uv run frago navigate https://youtube.com
 ```
 
 ### 带认证的代理
 
 ```bash
-uv run auvima \
+uv run frago \
   --proxy-host proxy.example.com \
   --proxy-port 8080 \
   --proxy-username user \
@@ -721,7 +721,7 @@ uv run auvima \
 
 ```bash
 # 忽略环境变量和代理配置
-uv run auvima --no-proxy navigate https://youtube.com
+uv run frago --no-proxy navigate https://youtube.com
 ```
 
 ---
@@ -748,8 +748,8 @@ uv run auvima --no-proxy navigate https://youtube.com
 ## 相关链接
 
 - [Chrome DevTools Protocol 文档](https://chromedevtools.github.io/devtools-protocol/)
-- [项目仓库](https://github.com/yourusername/AuViMa)
-- [问题反馈](https://github.com/yourusername/AuViMa/issues)
+- [项目仓库](https://github.com/yourusername/Frago)
+- [问题反馈](https://github.com/yourusername/Frago/issues)
 
 ---
 

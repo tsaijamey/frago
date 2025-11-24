@@ -186,7 +186,7 @@ class ChromeCDPLauncher:
         """注入反检测脚本到所有新页面"""
         try:
             # 读取 stealth.js 文件
-            stealth_js_path = self.project_root / "src" / "auvima" / "cdp" / "stealth.js"
+            stealth_js_path = self.project_root / "src" / "frago" / "cdp" / "stealth.js"
             if not stealth_js_path.exists():
                 print(f"警告: 反检测脚本文件不存在: {stealth_js_path}")
                 return
