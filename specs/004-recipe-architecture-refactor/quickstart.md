@@ -27,7 +27,7 @@
 
 ```bash
 # AI 调用 Bash 工具
-uv run auvima recipe list --format json
+uv run frago recipe list --format json
 ```
 
 **AI 接收到的 JSON 响应**:
@@ -77,7 +77,7 @@ AI 思考过程:
 
 ```bash
 # AI 调用 Bash 工具
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
   --output-file transcript.json
 ```
@@ -136,15 +136,15 @@ uv run auvima recipe run youtube_extract_video_transcript \
 
 **AI 执行流程**:
 
-#### Step 1: AI 调用 `/auvima.recipe` 命令
+#### Step 1: AI 调用 `/frago.recipe` 命令
 
 ```
-/auvima.recipe create workflow "批量提取 10 个 Upwork 职位并保存为 JSON"
+/frago.recipe create workflow "批量提取 10 个 Upwork 职位并保存为 JSON"
 ```
 
 #### Step 2: AI 自动生成 Workflow 脚本
 
-AI 生成的文件: `~/.auvima/recipes/workflows/upwork_batch_extract.py`
+AI 生成的文件: `~/.frago/recipes/workflows/upwork_batch_extract.py`
 
 ```python
 #!/usr/bin/env python3
@@ -154,7 +154,7 @@ Workflow: 批量提取 Upwork 职位
 由 Claude Code 自动生成
 """
 import sys, json
-from auvima.recipes import RecipeRunner
+from frago.recipes import RecipeRunner
 
 def main():
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
@@ -183,7 +183,7 @@ if __name__ == '__main__':
 
 #### Step 3: AI 生成元数据文件
 
-`~/.auvima/recipes/workflows/upwork_batch_extract.md`:
+`~/.frago/recipes/workflows/upwork_batch_extract.md`:
 
 ```yaml
 ---
@@ -209,7 +209,7 @@ version: 1.0.0
 #### Step 4: AI 执行 Workflow
 
 ```bash
-uv run auvima recipe run upwork_batch_extract \
+uv run frago recipe run upwork_batch_extract \
   --params '{"urls": ["https://...", "https://...", ...]}' \
   --output-file jobs.json
 ```
@@ -224,7 +224,7 @@ uv run auvima recipe run upwork_batch_extract \
 
 ```bash
 # 创建 Python 脚本
-cat > ~/.auvima/recipes/atomic/system/clipboard_read.py <<'EOF'
+cat > ~/.frago/recipes/atomic/system/clipboard_read.py <<'EOF'
 #!/usr/bin/env python3
 import sys
 import json
@@ -246,13 +246,13 @@ print(json.dumps(output, ensure_ascii=False))
 EOF
 
 # 添加执行权限（Python 脚本不强制，但推荐）
-chmod +x ~/.auvima/recipes/atomic/system/clipboard_read.py
+chmod +x ~/.frago/recipes/atomic/system/clipboard_read.py
 ```
 
 #### 2. 创建元数据文件
 
 ```bash
-cat > ~/.auvima/recipes/atomic/system/clipboard_read.md <<'EOF'
+cat > ~/.frago/recipes/atomic/system/clipboard_read.md <<'EOF'
 ---
 name: clipboard_read
 type: atomic
@@ -280,7 +280,7 @@ description: "读取系统剪贴板内容"
 ## 使用方法
 
 ```bash
-uv run auvima recipe run clipboard_read
+uv run frago recipe run clipboard_read
 ```
 
 ## 预期输出
@@ -306,10 +306,10 @@ EOF
 
 ```bash
 # 查看 Recipe 信息
-uv run auvima recipe info clipboard_read
+uv run frago recipe info clipboard_read
 
 # 执行 Recipe
-uv run auvima recipe run clipboard_read
+uv run frago recipe run clipboard_read
 ```
 
 ---
@@ -321,14 +321,14 @@ uv run auvima recipe run clipboard_read
 #### 1. 创建 Workflow 脚本
 
 ```bash
-cat > ~/.auvima/recipes/workflows/youtube_batch_extract.py <<'EOF'
+cat > ~/.frago/recipes/workflows/youtube_batch_extract.py <<'EOF'
 #!/usr/bin/env python3
 import sys
 import json
 from pathlib import Path
 
 # 导入 RecipeRunner（假设已实现）
-# from auvima.recipes import RecipeRunner
+# from frago.recipes import RecipeRunner
 
 def main():
     # 从命令行参数读取输入
@@ -374,13 +374,13 @@ if __name__ == '__main__':
     main()
 EOF
 
-chmod +x ~/.auvima/recipes/workflows/youtube_batch_extract.py
+chmod +x ~/.frago/recipes/workflows/youtube_batch_extract.py
 ```
 
 #### 2. 创建元数据文件
 
 ```bash
-cat > ~/.auvima/recipes/workflows/youtube_batch_extract.md <<'EOF'
+cat > ~/.frago/recipes/workflows/youtube_batch_extract.md <<'EOF'
 ---
 name: youtube_batch_extract
 type: workflow
@@ -409,7 +409,7 @@ description: "批量提取多个 YouTube 视频字幕"
 ## 使用方法
 
 ```bash
-uv run auvima recipe run youtube_batch_extract \
+uv run frago recipe run youtube_batch_extract \
   --params '{"urls": ["https://youtube.com/watch?v=...", "..."]}'
 ```
 
@@ -432,7 +432,7 @@ EOF
 #### 3. 执行 Workflow
 
 ```bash
-uv run auvima recipe run youtube_batch_extract \
+uv run frago recipe run youtube_batch_extract \
   --params '{
     "urls": [
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -454,10 +454,10 @@ uv run auvima recipe run youtube_batch_extract \
 cd /path/to/your/project
 
 # 创建项目级 Recipe 目录
-mkdir -p .auvima/recipes/workflows
+mkdir -p .frago/recipes/workflows
 
 # 创建项目专属 Workflow
-cat > .auvima/recipes/workflows/project_specific_task.py <<'EOF'
+cat > .frago/recipes/workflows/project_specific_task.py <<'EOF'
 #!/usr/bin/env python3
 import sys, json
 
@@ -468,13 +468,13 @@ output = {"message": "This is a project-specific workflow"}
 print(json.dumps(output))
 EOF
 
-chmod +x .auvima/recipes/workflows/project_specific_task.py
+chmod +x .frago/recipes/workflows/project_specific_task.py
 ```
 
 #### 2. 创建元数据文件
 
 ```bash
-cat > .auvima/recipes/workflows/project_specific_task.md <<'EOF'
+cat > .frago/recipes/workflows/project_specific_task.md <<'EOF'
 ---
 name: project_specific_task
 type: workflow
@@ -493,10 +493,10 @@ EOF
 
 ```bash
 # 在项目目录执行
-uv run auvima recipe run project_specific_task
+uv run frago recipe run project_specific_task
 
 # 列出所有 Recipe（项目级会标注 [Project]）
-uv run auvima recipe list
+uv run frago recipe list
 ```
 
 **输出**:
@@ -515,7 +515,7 @@ Example  atomic    youtube_extract_video...   chrome-js 1.2.0
 ### 查看 Recipe 详细信息
 
 ```bash
-uv run auvima recipe info <recipe_name>
+uv run frago recipe info <recipe_name>
 ```
 
 ### 使用参数文件
@@ -529,14 +529,14 @@ cat > params.json <<EOF
 EOF
 
 # 使用参数文件
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
   --params-file params.json
 ```
 
 ### 将结果保存到文件
 
 ```bash
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output result.json
 ```
@@ -545,15 +545,15 @@ uv run auvima recipe run youtube_extract_video_transcript \
 
 ```bash
 # 启用调试模式
-uv run auvima --debug recipe run <recipe_name> --params '{...}'
+uv run frago --debug recipe run <recipe_name> --params '{...}'
 ```
 
 **输出**:
 ```text
-[DEBUG] RecipeRegistry: 扫描路径 /home/user/.auvima/recipes
+[DEBUG] RecipeRegistry: 扫描路径 /home/user/.frago/recipes
 [DEBUG] RecipeRegistry: 找到 5 个 Recipe
 [DEBUG] RecipeRunner: 选择执行器 ChromeJSExecutor
-[DEBUG] ChromeJSExecutor: 执行命令: uv run auvima exec-js ...
+[DEBUG] ChromeJSExecutor: 执行命令: uv run frago exec-js ...
 [DEBUG] ChromeJSExecutor: 退出码: 0
 {
   "success": true,
@@ -641,7 +641,7 @@ dependencies:
 #### 旧方式（直接调用 `exec-js`）
 
 ```bash
-uv run auvima exec-js src/auvima/recipes/upwork_extract_job.js
+uv run frago exec-js src/frago/recipes/upwork_extract_job.js
 ```
 
 #### 新方式
@@ -649,12 +649,12 @@ uv run auvima exec-js src/auvima/recipes/upwork_extract_job.js
 1. **迁移脚本到新位置**:
    ```bash
    # 脚本已自动迁移到 examples/atomic/chrome/
-   uv run auvima recipe copy upwork_extract_job_details_as_markdown
+   uv run frago recipe copy upwork_extract_job_details_as_markdown
    ```
 
 2. **使用新命令**:
    ```bash
-   uv run auvima recipe run upwork_extract_job_details_as_markdown \
+   uv run frago recipe run upwork_extract_job_details_as_markdown \
      --params '{"url": "..."}'
    ```
 
@@ -679,7 +679,7 @@ uv run auvima exec-js src/auvima/recipes/upwork_extract_job.js
 
 **解决**:
 1. 检查 Recipe 名称拼写
-2. 运行 `uv run auvima recipe list` 查看可用 Recipe
+2. 运行 `uv run frago recipe list` 查看可用 Recipe
 3. 确认元数据文件 `.md` 存在
 
 ### 参数格式错误
@@ -698,7 +698,7 @@ uv run auvima exec-js src/auvima/recipes/upwork_extract_job.js
 **解决**:
 ```bash
 # 复制依赖的示例 Recipe
-uv run auvima recipe copy <dependency_name>
+uv run frago recipe copy <dependency_name>
 
 # 或创建自定义的依赖 Recipe
 ```
@@ -723,7 +723,7 @@ uv run auvima recipe copy <dependency_name>
 ```text
 1. 用户提出任务
    ↓
-2. AI 调用: uv run auvima recipe list --format json
+2. AI 调用: uv run frago recipe list --format json
    ↓
 3. AI 分析元数据:
    - description: 快速理解功能
@@ -732,9 +732,9 @@ uv run auvima recipe copy <dependency_name>
    ↓
 4. AI 决策:
    - 使用现有 Recipe → 执行
-   - 无合适 Recipe → 调用 /auvima.recipe 生成新 Recipe
+   - 无合适 Recipe → 调用 /frago.recipe 生成新 Recipe
    ↓
-5. AI 执行: uv run auvima recipe run <name> --params '{...}' [--output-file/--output-clipboard]
+5. AI 执行: uv run frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
    ↓
 6. AI 处理结果:
    - success: true → 向用户报告
@@ -746,7 +746,7 @@ uv run auvima recipe copy <dependency_name>
 1. **元数据驱动**: AI 通过语义字段理解 Recipe 能力，无需读取脚本代码
 2. **结构化输出**: 所有 CLI 命令支持 `--format json`，便于 AI 解析
 3. **输出形态声明**: Recipe 明确声明支持的输出去向，AI 可根据任务规划
-4. **AI 生成 Workflow**: `/auvima.recipe` 命令让 AI 自动创建编排 Recipe
+4. **AI 生成 Workflow**: `/frago.recipe` 命令让 AI 自动创建编排 Recipe
 5. **错误可理解**: 结构化错误让 AI 能分析失败原因并自动应对
 
 ### AI vs 人类使用对比
@@ -754,7 +754,7 @@ uv run auvima recipe copy <dependency_name>
 | 特性 | AI 使用方式 | 人类使用方式 |
 |------|------------|-------------|
 | **发现 Recipe** | `recipe list --format json` + 语义分析 | `recipe list`（表格）或 `recipe info` |
-| **创建 Recipe** | `/auvima.recipe create` 自动生成 | 手动编写脚本和元数据 |
+| **创建 Recipe** | `/frago.recipe create` 自动生成 | 手动编写脚本和元数据 |
 | **执行 Recipe** | Bash 工具调用，自动选择输出方式 | 手动敲命令，手动指定 --output-file |
 | **错误处理** | 解析 JSON 错误，自动应对策略 | 读取错误信息，手动排查 |
 | **编排任务** | 自动生成 Workflow Python 脚本 | 手动组合多个 Recipe |

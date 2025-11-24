@@ -73,7 +73,7 @@ version: 1.0.0
 ### 命令示例
 ```bash
 # AI 调用方式
-$ uv run auvima recipe list --format json
+$ uv run frago recipe list --format json
 [
   {
     "name": "upwork_extract_job_details",
@@ -126,13 +126,13 @@ class OutputHandler:
 ### CLI 集成
 ```bash
 # stdout（默认）
-$ uv run auvima recipe run youtube_extract_transcript --params '{...}'
+$ uv run frago recipe run youtube_extract_transcript --params '{...}'
 
 # 文件
-$ uv run auvima recipe run youtube_extract_transcript --params '{...}' --output-file transcript.json
+$ uv run frago recipe run youtube_extract_transcript --params '{...}' --output-file transcript.json
 
 # 剪贴板
-$ uv run auvima recipe run youtube_extract_transcript --params '{...}' --output-clipboard
+$ uv run frago recipe run youtube_extract_transcript --params '{...}' --output-clipboard
 ```
 
 ---
@@ -140,7 +140,7 @@ $ uv run auvima recipe run youtube_extract_transcript --params '{...}' --output-
 ## 4. AI 生成 Workflow 的实现
 
 ### 决策
-扩展 `/auvima.recipe` 命令，支持 `create workflow` 子命令，AI 根据自然语言生成 Python Workflow 脚本。
+扩展 `/frago.recipe` 命令，支持 `create workflow` 子命令，AI 根据自然语言生成 Python Workflow 脚本。
 
 ### 理由
 1. **一致性**: Recipe 创建流程统一由 AI 驱动（无论原子还是编排）
@@ -149,8 +149,8 @@ $ uv run auvima recipe run youtube_extract_transcript --params '{...}' --output-
 
 ### 命令示例
 ```bash
-# AI 调用 /auvima.recipe
-/auvima.recipe create workflow "批量提取 10 个 Upwork 职位并保存为 CSV"
+# AI 调用 /frago.recipe
+/frago.recipe create workflow "批量提取 10 个 Upwork 职位并保存为 CSV"
 ```
 
 ### AI 生成的 Workflow 示例
@@ -163,7 +163,7 @@ Workflow: 批量提取 Upwork 职位
 """
 import sys
 import json
-from auvima.recipes import RecipeRunner
+from frago.recipes import RecipeRunner
 
 def main():
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
@@ -209,13 +209,13 @@ AI 通过以下流程发现和选择 Recipe：
 用户: "帮我提取这个 YouTube 视频的字幕并保存为文件"
 ↓
 AI 思考过程:
-1. 调用: uv run auvima recipe list --format json
+1. 调用: uv run frago recipe list --format json
 2. 分析元数据, 发现 youtube_extract_video_transcript
    - description: "提取 YouTube 视频字幕"
    - use_cases: ["获取字幕用于翻译", "制作字幕文件"]
    - output_targets: ["stdout", "file"]  ← 支持文件输出
 3. 决策: 使用该 Recipe, 输出到文件
-4. 执行: uv run auvima recipe run youtube_extract_video_transcript \
+4. 执行: uv run frago recipe run youtube_extract_video_transcript \
            --params '{"url": "..."}' \
            --output-file transcript.txt
 ```
@@ -251,7 +251,7 @@ Recipe 执行失败时，返回统一的 JSON 错误格式：
 ## 7. 向后兼容策略
 
 ### 决策
-保留现有 `uv run auvima exec-js` 命令，新系统作为独立功能。
+保留现有 `uv run frago exec-js` 命令，新系统作为独立功能。
 
 ### 理由
 1. **零破坏**: 现有 Recipe 和工作流无需修改
@@ -261,10 +261,10 @@ Recipe 执行失败时，返回统一的 JSON 错误格式：
 ### 迁移路径
 ```bash
 # 旧方式（继续支持）
-uv run auvima exec-js recipes/upwork_extract_job.js
+uv run frago exec-js recipes/upwork_extract_job.js
 
 # 新方式（推荐，AI 使用）
-uv run auvima recipe run upwork_extract_job --params '{...}'
+uv run frago recipe run upwork_extract_job --params '{...}'
 ```
 
 ---
@@ -280,7 +280,7 @@ def test_ai_discovers_and_runs_recipe():
     """模拟 AI 发现并执行 Recipe 的完整流程"""
     # 1. AI 查询可用 Recipe
     result = subprocess.run(
-        ['uv', 'run', 'auvima', 'recipe', 'list', '--format', 'json'],
+        ['uv', 'run', 'frago', 'recipe', 'list', '--format', 'json'],
         capture_output=True, text=True
     )
     recipes = json.loads(result.stdout)
@@ -293,7 +293,7 @@ def test_ai_discovers_and_runs_recipe():
 
     # 3. AI 执行 Recipe
     result = subprocess.run(
-        ['uv', 'run', 'auvima', 'recipe', 'run', target_recipe['name'],
+        ['uv', 'run', 'frago', 'recipe', 'run', target_recipe['name'],
          '--params', '{"url": "..."}'],
         capture_output=True, text=True
     )

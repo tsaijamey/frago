@@ -9,19 +9,19 @@ from pathlib import Path
 
 import pytest
 
-from auvima.recipes.registry import RecipeRegistry, Recipe
-from auvima.recipes.exceptions import RecipeNotFoundError
+from frago.recipes.registry import RecipeRegistry, Recipe
+from frago.recipes.exceptions import RecipeNotFoundError
 
 
 @pytest.fixture
 def temp_recipe_dirs(tmp_path):
     """创建临时的三级 Recipe 目录结构"""
     # 项目级目录（模拟在当前工作目录）
-    project_dir = tmp_path / 'project' / '.auvima' / 'recipes' / 'atomic' / 'chrome'
+    project_dir = tmp_path / 'project' / '.frago' / 'recipes' / 'atomic' / 'chrome'
     project_dir.mkdir(parents=True)
 
     # 用户级目录（模拟在用户家目录）
-    user_dir = tmp_path / 'user' / '.auvima' / 'recipes' / 'atomic' / 'chrome'
+    user_dir = tmp_path / 'user' / '.frago' / 'recipes' / 'atomic' / 'chrome'
     user_dir.mkdir(parents=True)
 
     # 示例级目录
@@ -127,7 +127,7 @@ class TestRecipeRegistryPaths:
         monkeypatch.setattr(Path, 'home', lambda: temp_recipe_dirs['user'])
 
         # 修改 registry 初始化逻辑
-        from auvima.recipes.registry import RecipeRegistry
+        from frago.recipes.registry import RecipeRegistry
 
         registry = RecipeRegistry()
 
@@ -142,7 +142,7 @@ class TestRecipeRegistryPaths:
         registry = RecipeRegistry()
 
         # 应该至少有项目级路径
-        project_path = temp_recipe_dirs['project'] / '.auvima' / 'recipes'
+        project_path = temp_recipe_dirs['project'] / '.frago' / 'recipes'
         # 注意：_setup_search_paths 可能不会添加不存在的路径
         # 所以我们只验证不会崩溃
 
@@ -152,7 +152,7 @@ class TestRecipeRegistryPaths:
 
         registry = RecipeRegistry()
 
-        user_path = temp_recipe_dirs['user'] / '.auvima' / 'recipes'
+        user_path = temp_recipe_dirs['user'] / '.frago' / 'recipes'
         # 验证不会崩溃
 
 

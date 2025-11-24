@@ -27,7 +27,7 @@ class TestInitCommand:
     def test_init_success_exit_code(self, temp_project_dir):
         """契约: init成功返回退出码0"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试任务"],
+            ["uv", "run", "frago", "run", "init", "测试任务"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -36,7 +36,7 @@ class TestInitCommand:
     def test_init_with_custom_id_success(self, temp_project_dir):
         """契约: 带自定义ID的init成功返回退出码0"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试任务", "--run-id", "custom-id"],
+            ["uv", "run", "frago", "run", "init", "测试任务", "--run-id", "custom-id"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -48,7 +48,7 @@ class TestInitCommand:
             [
                 "uv",
                 "run",
-                "auvima",
+                "frago",
                 "run",
                 "init",
                 "测试",
@@ -68,14 +68,14 @@ class TestSetContextCommand:
         """契约: set-context成功返回退出码0"""
         # 先创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         # 设置上下文
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "ce-shi"],
+            ["uv", "run", "frago", "run", "set-context", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -84,7 +84,7 @@ class TestSetContextCommand:
     def test_set_context_nonexistent_run_failure(self, temp_project_dir):
         """契约: 不存在的run_id返回非零退出码"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "nonexistent-run"],
+            ["uv", "run", "frago", "run", "set-context", "nonexistent-run"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -97,7 +97,7 @@ class TestListCommand:
     def test_list_empty_success_exit_code(self, temp_project_dir):
         """契约: list空列表返回退出码0"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "list"],
+            ["uv", "run", "frago", "run", "list"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -107,18 +107,18 @@ class TestListCommand:
         """契约: list有run的情况返回退出码0"""
         # 创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试1"],
+            ["uv", "run", "frago", "run", "init", "测试1"],
             cwd=temp_project_dir,
             capture_output=True,
         )
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试2"],
+            ["uv", "run", "frago", "run", "init", "测试2"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "list"],
+            ["uv", "run", "frago", "run", "list"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -127,7 +127,7 @@ class TestListCommand:
     def test_list_json_format_success(self, temp_project_dir):
         """契约: list --format json返回退出码0"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "list", "--format", "json"],
+            ["uv", "run", "frago", "run", "list", "--format", "json"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -141,13 +141,13 @@ class TestInfoCommand:
         """契约: info存在的run返回退出码0"""
         # 创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "info", "ce-shi"],
+            ["uv", "run", "frago", "run", "info", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -156,7 +156,7 @@ class TestInfoCommand:
     def test_info_nonexistent_run_failure(self, temp_project_dir):
         """契约: info不存在的run返回非零退出码"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "info", "nonexistent-run"],
+            ["uv", "run", "frago", "run", "info", "nonexistent-run"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -170,13 +170,13 @@ class TestArchiveCommand:
         """契约: archive存在的run返回退出码0"""
         # 创建run
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "archive", "ce-shi"],
+            ["uv", "run", "frago", "run", "archive", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -185,7 +185,7 @@ class TestArchiveCommand:
     def test_archive_nonexistent_run_failure(self, temp_project_dir):
         """契约: archive不存在的run返回非零退出码"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "archive", "nonexistent-run"],
+            ["uv", "run", "frago", "run", "archive", "nonexistent-run"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -199,12 +199,12 @@ class TestLogCommand:
         """契约: log命令在有上下文时返回退出码0"""
         # 创建run并设置上下文
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
         subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "ce-shi"],
+            ["uv", "run", "frago", "run", "set-context", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -213,7 +213,7 @@ class TestLogCommand:
             [
                 "uv",
                 "run",
-                "auvima",
+                "frago",
                 "run",
                 "log",
                 "--step",
@@ -238,7 +238,7 @@ class TestLogCommand:
             [
                 "uv",
                 "run",
-                "auvima",
+                "frago",
                 "run",
                 "log",
                 "--step",
@@ -261,12 +261,12 @@ class TestLogCommand:
         """契约: log命令使用无效枚举值返回非零退出码"""
         # 创建run并设置上下文
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
         subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "ce-shi"],
+            ["uv", "run", "frago", "run", "set-context", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -275,7 +275,7 @@ class TestLogCommand:
             [
                 "uv",
                 "run",
-                "auvima",
+                "frago",
                 "run",
                 "log",
                 "--step",
@@ -303,18 +303,18 @@ class TestScreenshotCommand:
         """契约: screenshot命令在有上下文时返回退出码0"""
         # 创建run并设置上下文
         subprocess.run(
-            ["uv", "run", "auvima", "run", "init", "测试"],
+            ["uv", "run", "frago", "run", "init", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )
         subprocess.run(
-            ["uv", "run", "auvima", "run", "set-context", "ce-shi"],
+            ["uv", "run", "frago", "run", "set-context", "ce-shi"],
             cwd=temp_project_dir,
             capture_output=True,
         )
 
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "screenshot", "测试截图"],
+            ["uv", "run", "frago", "run", "screenshot", "测试截图"],
             cwd=temp_project_dir,
             capture_output=True,
         )
@@ -323,7 +323,7 @@ class TestScreenshotCommand:
     def test_screenshot_without_context_failure(self, temp_project_dir):
         """契约: screenshot命令在无上下文时返回非零退出码"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "run", "screenshot", "测试"],
+            ["uv", "run", "frago", "run", "screenshot", "测试"],
             cwd=temp_project_dir,
             capture_output=True,
         )

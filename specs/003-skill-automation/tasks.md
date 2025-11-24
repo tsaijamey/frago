@@ -17,10 +17,10 @@
 
 ## Path Conventions
 
-单项目结构（扩展现有AuViMa项目）：
-- Source: `src/auvima/`
+单项目结构（扩展现有Frago项目）：
+- Source: `src/frago/`
 - Tests: `tests/`
-- Recipes: `src/auvima/recipes/`
+- Recipes: `src/frago/recipes/`
 - Commands: `.claude/commands/`
 
 ---
@@ -35,25 +35,25 @@
 - ~~T001-T009~~（创建Python模块、数据模型、选择器策略、模板系统）
 
 **保留的成果**:
-- ✅ `src/auvima/recipes/` 目录（空目录，等待Claude Code写入配方）
-- ✅ 选择器优先级规则（已整合到`.claude/commands/auvima_recipe.md`）
+- ✅ `src/frago/recipes/` 目录（空目录，等待Claude Code写入配方）
+- ✅ 选择器优先级规则（已整合到`.claude/commands/frago_recipe.md`）
 
 ---
 
 ## Phase 1: User Story 1 - 通过对话创建配方脚本 (Priority: P1) 🎯 MVP
 
-**Goal**: 用户通过 `/auvima.recipe` 命令进入对话流程，逐步描述操作步骤，Claude Code执行CDP命令，最后使用Write工具直接生成可执行的JavaScript配方脚本和配套知识文档。
+**Goal**: 用户通过 `/frago.recipe` 命令进入对话流程，逐步描述操作步骤，Claude Code执行CDP命令，最后使用Write工具直接生成可执行的JavaScript配方脚本和配套知识文档。
 
 **Independent Test**:
-1. 执行 `/auvima.recipe "提取YouTube视频字幕"`
+1. 执行 `/frago.recipe "提取YouTube视频字幕"`
 2. 在对话中描述步骤（点击作者声明 → 点击内容转文字 → 提取文本）
-3. Claude Code实际执行 `uv run auvima click` 等命令
+3. Claude Code实际执行 `uv run frago click` 等命令
 4. 验证Claude Code使用Write工具生成的 `youtube_extract_transcript.js` 和 `.md` 文件存在
-5. 执行 `uv run auvima exec-js recipes/youtube_extract_transcript.js` 验证脚本可运行
+5. 执行 `uv run frago exec-js recipes/youtube_extract_transcript.js` 验证脚本可运行
 
 ### Implementation for User Story 1
 
-- [x] T001 [US1] 创建 `/auvima.recipe` prompt模板在 `.claude/commands/auvima_recipe.md`（完整版，包含选择器优先级规则表格、JavaScript模板示例、6章节文档格式）
+- [x] T001 [US1] 创建 `/frago.recipe` prompt模板在 `.claude/commands/frago_recipe.md`（完整版，包含选择器优先级规则表格、JavaScript模板示例、6章节文档格式）
 - [x] ~~T002-T007~~（已删除的Python代码生成任务）
 
 **Checkpoint**: ✅ Prompt模板已完成 - Claude Code已能通过对话创建配方
@@ -72,10 +72,10 @@
 
 ## Phase 2: User Story 3 - 配方迭代更新 (Priority: P2)
 
-**Goal**: 当配方脚本因目标网站改版失效时，用户可通过 `/auvima.recipe update <配方名> "原因"` 重新探索页面，Claude Code覆盖原文件并更新历史记录。
+**Goal**: 当配方脚本因目标网站改版失效时，用户可通过 `/frago.recipe update <配方名> "原因"` 重新探索页面，Claude Code覆盖原文件并更新历史记录。
 
 **Independent Test**:
-1. 执行 `/auvima.recipe update youtube_extract_transcript "字幕按钮选择器失效"`
+1. 执行 `/frago.recipe update youtube_extract_transcript "字幕按钮选择器失效"`
 2. Claude Code使用Read工具读取现有.js和.md文件
 3. 在对话中描述新的操作步骤
 4. 验证Claude Code覆盖原.js文件（文件名不变）
@@ -84,7 +84,7 @@
 
 ### Implementation for User Story 3
 
-- [x] T002 [US3] 扩展prompt模板支持更新模式在 `.claude/commands/auvima_recipe.md`（包含Read现有文件、版本号+1、追加历史记录的指令）
+- [x] T002 [US3] 扩展prompt模板支持更新模式在 `.claude/commands/frago_recipe.md`（包含Read现有文件、版本号+1、追加历史记录的指令）
 
 **Checkpoint**: ✅ 更新模式已整合到prompt模板中 - Claude Code可更新现有配方
 
@@ -95,13 +95,13 @@
 **Goal**: 提供配方列表查看功能，方便用户管理和使用已生成的配方库。
 
 **Independent Test**:
-1. 执行 `/auvima.recipe list` 验证显示所有配方列表
+1. 执行 `/frago.recipe list` 验证显示所有配方列表
 2. 验证列表按平台分组，包含配方名称、描述、版本号
 3. 验证空配方库时的友好提示
 
 ### Implementation
 
-- [x] T003 [P3] 扩展prompt模板支持列出模式在 `.claude/commands/auvima_recipe.md`（包含扫描目录、解析头部注释、按平台分组显示的指令）
+- [x] T003 [P3] 扩展prompt模板支持列出模式在 `.claude/commands/frago_recipe.md`（包含扫描目录、解析头部注释、按平台分组显示的指令）
 
 **Checkpoint**: ✅ 列出模式已整合到prompt模板中 - Claude Code可列出所有配方
 
@@ -163,11 +163,11 @@
 
 ```bash
 # 并行启动US1的独立任务：
-Task: "创建 /auvima.recipe prompt模板在 .claude/commands/auvima_recipe.md"
-Task: "实现对话历史解析器在 src/auvima/recipe/conversation_parser.py"
+Task: "创建 /frago.recipe prompt模板在 .claude/commands/frago_recipe.md"
+Task: "实现对话历史解析器在 src/frago/recipe/conversation_parser.py"
 
 # 等待上述完成后，继续：
-Task: "实现配方代码生成器在 src/auvima/recipe/generator.py"
+Task: "实现配方代码生成器在 src/frago/recipe/generator.py"
 ```
 
 ---
@@ -221,12 +221,12 @@ Task: "实现配方代码生成器在 src/auvima/recipe/generator.py"
 
 ### ✅ 唯一保留的组件
 
-- **Prompt模板**（`.claude/commands/auvima_recipe.md`）→ 完整的指令集，包含：
+- **Prompt模板**（`.claude/commands/frago_recipe.md`）→ 完整的指令集，包含：
   - 选择器优先级规则表格
   - JavaScript配方脚本模板示例
   - Markdown知识文档6章节格式
   - 创建/更新/列出三种模式的流程指令
-- **配方库目录**（`src/auvima/recipes/`）→ 存放Claude Code生成的.js和.md文件
+- **配方库目录**（`src/frago/recipes/`）→ 存放Claude Code生成的.js和.md文件
 
 ---
 
@@ -239,7 +239,7 @@ Task: "实现配方代码生成器在 src/auvima/recipe/generator.py"
 - 当前重点：Phase 3（T010-T016）实现MVP
 - 在每个checkpoint停下来独立验证故事功能
 - 避免：模糊任务、同文件冲突、破坏故事独立性的跨故事依赖
-- 所有路径必须使用绝对路径：`/Users/chagee/Repos/AuViMa/...`
+- 所有路径必须使用绝对路径：`/Users/chagee/Repos/Frago/...`
 
 ---
 

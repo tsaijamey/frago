@@ -1,7 +1,7 @@
 #!/bin/bash
-# AuViMa项目 - 自动化视觉管理系统
+# frago目 - 自动化视觉管理系统
 # 功能: 验证Python环境和项目依赖
-# 背景: 本脚本是AuViMa项目的一部分，用于确保Python环境正确配置
+# 背景: 本脚本是Frago项目的一部分，用于确保Python环境正确配置
 #      检查Python版本、虚拟环境、项目依赖等，确保CLI命令能正常运行
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,18 +51,18 @@ check_python_env() {
     
     echo "✓ 项目配置存在"
     
-    # 检查auvima包是否可导入
+    # 检查frago包是否可导入
     cd "$PROJECT_ROOT"
-    if ! python -c "import sys; sys.path.insert(0, 'src'); import auvima" 2>/dev/null; then
-        echo "✗ 无法导入auvima包"
+    if ! python -c "import sys; sys.path.insert(0, 'src'); import frago" 2>/dev/null; then
+        echo "✗ 无法导入frago包"
         echo "请确保项目依赖已安装: uv sync"
         return 1
     fi
     
-    echo "✓ auvima包可导入"
+    echo "✓ frago包可导入"
     
     # 检查CLI模块
-    if ! python -c "import sys; sys.path.insert(0, 'src'); import auvima.cli" 2>/dev/null; then
+    if ! python -c "import sys; sys.path.insert(0, 'src'); import frago.cli" 2>/dev/null; then
         echo "✗ 无法导入CLI模块"
         return 1
     fi

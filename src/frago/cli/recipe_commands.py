@@ -6,8 +6,8 @@ from typing import Optional
 
 import click
 
-from auvima.recipes import RecipeRegistry, RecipeRunner, OutputHandler
-from auvima.recipes.exceptions import RecipeError
+from frago.recipes import RecipeRegistry, RecipeRunner, OutputHandler
+from frago.recipes.exceptions import RecipeError
 
 
 @click.group(name='recipe')
@@ -306,7 +306,7 @@ def copy_recipe(name: str, force: bool):
     """
     将示例 Recipe 复制到用户级目录
 
-    将指定的示例 Recipe（脚本 + 元数据文件）复制到 ~/.auvima/recipes/，
+    将指定的示例 Recipe（脚本 + 元数据文件）复制到 ~/.frago/recipes/，
     保持原有的目录结构（atomic/chrome, atomic/system, workflows）。
     """
     import shutil
@@ -327,12 +327,12 @@ def copy_recipe(name: str, force: bool):
 
         # 确定目标目录
         user_home = Path.home()
-        user_recipes_dir = user_home / '.auvima' / 'recipes'
+        user_recipes_dir = user_home / '.frago' / 'recipes'
 
         # 检查用户目录是否存在
         if not user_recipes_dir.exists():
             click.echo(f"错误: 用户级 Recipe 目录不存在: {user_recipes_dir}", err=True)
-            click.echo("请先运行 'auvima init' 初始化目录结构", err=True)
+            click.echo("请先运行 'frago init' 初始化目录结构", err=True)
             sys.exit(1)
 
         # 计算相对路径（相对于 examples/ 目录）

@@ -1,8 +1,8 @@
-# AuViMa 使用指南
+# Frago 使用指南
 
 ## 核心使用场景
 
-AuViMa 适用于各类浏览器自动化和数据采集任务：
+Frago 适用于各类浏览器自动化和数据采集任务：
 
 1. **网页数据采集** - 批量提取结构化信息
    - 示例：`"从Upwork提取职位详情并导出为Markdown"`
@@ -71,11 +71,11 @@ uv run python src/pipeline_master.py "React开发待办事项应用MVP" todo_mvp
 ### Pipeline执行流程
 
 1. **自动启动Chrome CDP**（端口9222）
-2. **信息收集**（/auvima.start）→ start.done
-3. **分镜规划**（/auvima.storyboard）→ storyboard.done
-4. **循环生成视频**（/auvima.generate × N）→ generate.done
-5. **素材评估**（/auvima.evaluate）→ evaluate.done
-6. **视频合成**（/auvima.merge）→ merge.done
+2. **信息收集**（/frago.start）→ start.done
+3. **分镜规划**（/frago.storyboard）→ storyboard.done
+4. **循环生成视频**（/frago.generate × N）→ generate.done
+5. **素材评估**（/frago.evaluate）→ evaluate.done
+6. **视频合成**（/frago.merge）→ merge.done
 7. **环境清理**，输出最终视频
 
 整个流程完全自动化，通过.done文件进行阶段同步。
@@ -84,28 +84,28 @@ uv run python src/pipeline_master.py "React开发待办事项应用MVP" todo_mvp
 
 ### 基础CDP命令
 
-所有CDP功能通过统一的CLI接口（`uv run auvima <command>`）访问。
+所有CDP功能通过统一的CLI接口（`uv run frago <command>`）访问。
 
 ```bash
 # 导航网页
-uv run auvima navigate <url>
+uv run frago navigate <url>
 
 # 点击元素
-uv run auvima click <selector>
+uv run frago click <selector>
 
 # 执行JavaScript
-uv run auvima exec-js <expression>
+uv run frago exec-js <expression>
 
 # 截图
-uv run auvima screenshot <output_file>
+uv run frago screenshot <output_file>
 
 # 其他命令
-uv run auvima --help
+uv run frago --help
 ```
 
 ### 代理配置
 
-AuViMa的CDP集成支持代理配置，适用于需要通过代理访问网络的环境。
+Frago的CDP集成支持代理配置，适用于需要通过代理访问网络的环境。
 
 #### 环境变量配置
 
@@ -123,12 +123,12 @@ export NO_PROXY=localhost,127.0.0.1
 
 ```bash
 # 使用代理
-uv run auvima navigate https://example.com \
+uv run frago navigate https://example.com \
     --proxy-host proxy.example.com \
     --proxy-port 8080
 
 # 绕过代理
-uv run auvima navigate https://example.com --no-proxy
+uv run frago navigate https://example.com --no-proxy
 ```
 
 ### 重试机制
@@ -150,21 +150,21 @@ Recipe系统提供元数据驱动的自动化脚本管理。
 
 ```bash
 # 列出所有可用的Recipe
-uv run auvima recipe list
+uv run frago recipe list
 
 # 以JSON格式列出（便于AI解析）
-uv run auvima recipe list --format json
+uv run frago recipe list --format json
 
 # 查看Recipe详细信息
-uv run auvima recipe info youtube_extract_video_transcript
+uv run frago recipe info youtube_extract_video_transcript
 
 # 执行Recipe（推荐方式）
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 
 # 输出到剪贴板
-uv run auvima recipe run upwork_extract_job_details_as_markdown \
+uv run frago recipe run upwork_extract_job_details_as_markdown \
     --params '{"url": "..."}' \
     --output-clipboard
 ```
@@ -183,15 +183,15 @@ uv run auvima recipe run upwork_extract_job_details_as_markdown \
 
 ```bash
 # 方式1: 推荐 - 元数据驱动（参数验证、输出处理）
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/..."}' \
     --output-file transcript.txt
 
 # 方式2: 发现可用的Recipe
-uv run auvima recipe list --format json
+uv run frago recipe list --format json
 
 # 方式3: 传统方式 - 直接执行JS（绕过元数据系统）
-uv run auvima exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
+uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
 ### 可用的示例Recipe
@@ -207,25 +207,25 @@ uv run auvima exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 
 ### 创建和更新Recipe
 
-通过 `/auvima.recipe` 命令（Claude Code Slash Command）管理Recipe：
+通过 `/frago.recipe` 命令（Claude Code Slash Command）管理Recipe：
 
 ```
 # 创建新Recipe（AI交互式引导）
-/auvima.recipe create "在YouTube视频页面提取完整字幕内容"
+/frago.recipe create "在YouTube视频页面提取完整字幕内容"
 
 # 更新现有Recipe
-/auvima.recipe update youtube_extract_subtitles "YouTube改版后字幕按钮失效了"
+/frago.recipe update youtube_extract_subtitles "YouTube改版后字幕按钮失效了"
 
 # 列出所有Recipe
-/auvima.recipe list
+/frago.recipe list
 ```
 
 ### Recipe存储结构
 
-- **位置**: `src/auvima/recipes/`（引擎代码），`examples/atomic/chrome/`（示例Recipe）
+- **位置**: `src/frago/recipes/`（引擎代码），`examples/atomic/chrome/`（示例Recipe）
 - **命名约定**: `<平台>_<功能描述>.js`（例如 `youtube_extract_subtitles.js`）
 - **配套文档**: 每个Recipe脚本(.js)都有对应的Markdown文档(.md)
-- **执行方式**: `uv run auvima recipe run <recipe_name>`
+- **执行方式**: `uv run frago recipe run <recipe_name>`
 
 ## 项目目录结构
 

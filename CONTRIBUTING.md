@@ -1,6 +1,6 @@
-# Contributing to AuViMa
+# Contributing to Frago
 
-感谢您对 AuViMa 项目的关注！我们欢迎各种形式的贡献。
+感谢您对 Frago 项目的关注！我们欢迎各种形式的贡献。
 
 ## 如何贡献
 
@@ -31,8 +31,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/tsaijamey/AuViMa.git
-cd AuViMa
+git clone https://github.com/tsaijamey/Frago.git
+cd Frago
 
 # 设置Python环境
 cd src

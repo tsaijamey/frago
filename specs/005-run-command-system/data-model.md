@@ -111,7 +111,7 @@ runs/<run_id>/
   "execution_method": "command",
   "schema_version": "1.0",
   "data": {
-    "command": "uv run auvima navigate https://upwork.com/search",
+    "command": "uv run frago navigate https://upwork.com/search",
     "exit_code": 0,
     "output": "导航成功"
   }
@@ -200,7 +200,7 @@ def generate_screenshot_path(description: str, screenshots_dir: Path) -> str:
 
 **描述**：全局配置文件，存储当前工作的 run 实例信息。
 
-**存储位置**：`.auvima/current_run`（JSON文件）
+**存储位置**：`.frago/current_run`（JSON文件）
 
 **属性**：
 
@@ -220,8 +220,8 @@ def generate_screenshot_path(description: str, screenshots_dir: Path) -> str:
 ```
 
 **优先级**：
-1. 环境变量 `AUVIMA_CURRENT_RUN`（最高优先级）
-2. 配置文件 `.auvima/current_run`
+1. 环境变量 `FRAGO_CURRENT_RUN`（最高优先级）
+2. 配置文件 `.frago/current_run`
 3. 无默认值，未设置时报错提示用户运行 `set-context`
 
 **验证规则**：
@@ -292,7 +292,7 @@ RunInstance (runs/<id>/)
 │ └─ scripts/ (1:N)
 │    └─ Script (AI生成的代码文件)
 │
-CurrentRunContext (.auvima/current_run)
+CurrentRunContext (.frago/current_run)
 └─ run_id (指向某个RunInstance)
 ```
 

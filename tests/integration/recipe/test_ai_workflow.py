@@ -35,7 +35,7 @@ class TestAIRecipeDiscovery:
     def test_list_recipes_json_format(self):
         """测试 AI 通过 JSON 格式列出所有 Recipe"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "list", "--format", "json"],
+            ["uv", "run", "frago", "recipe", "list", "--format", "json"],
             capture_output=True,
             text=True
         )
@@ -62,7 +62,7 @@ class TestAIRecipeDiscovery:
     def test_ai_filter_recipes_by_tags(self):
         """测试 AI 通过标签筛选 Recipe"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "list", "--format", "json"],
+            ["uv", "run", "frago", "recipe", "list", "--format", "json"],
             capture_output=True,
             text=True
         )
@@ -78,7 +78,7 @@ class TestAIRecipeDiscovery:
     def test_ai_analyze_output_targets(self):
         """测试 AI 分析 Recipe 支持的输出目标"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "list", "--format", "json"],
+            ["uv", "run", "frago", "recipe", "list", "--format", "json"],
             capture_output=True,
             text=True
         )
@@ -104,7 +104,7 @@ class TestAIRecipeExecution:
         """测试 AI 运行 Recipe 并输出到文件（模拟完整流程）"""
         # 步骤 1: AI 发现可用 Recipe
         list_result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "list", "--format", "json"],
+            ["uv", "run", "frago", "recipe", "list", "--format", "json"],
             capture_output=True,
             text=True
         )
@@ -128,7 +128,7 @@ class TestAIRecipeExecution:
         # 步骤 4: AI 执行 Recipe 并指定输出文件
         run_result = subprocess.run(
             [
-                "uv", "run", "auvima", "recipe", "run", "clipboard_read",
+                "uv", "run", "frago", "recipe", "run", "clipboard_read",
                 "--output-file", str(temp_output_file)
             ],
             capture_output=True,
@@ -163,7 +163,7 @@ class TestAIRecipeExecution:
         try:
             # 步骤 1: AI 发现 file_copy Recipe
             list_result = subprocess.run(
-                ["uv", "run", "auvima", "recipe", "list", "--format", "json"],
+                ["uv", "run", "frago", "recipe", "list", "--format", "json"],
                 capture_output=True,
                 text=True
             )
@@ -179,7 +179,7 @@ class TestAIRecipeExecution:
 
             # 步骤 2: AI 查看 Recipe 详细信息（了解参数）
             info_result = subprocess.run(
-                ["uv", "run", "auvima", "recipe", "info", "file_copy"],
+                ["uv", "run", "frago", "recipe", "info", "file_copy"],
                 capture_output=True,
                 text=True
             )
@@ -195,7 +195,7 @@ class TestAIRecipeExecution:
 
             run_result = subprocess.run(
                 [
-                    "uv", "run", "auvima", "recipe", "run", "file_copy",
+                    "uv", "run", "frago", "recipe", "run", "file_copy",
                     "--params", params
                 ],
                 capture_output=True,
@@ -223,7 +223,7 @@ class TestAIErrorHandling:
     def test_ai_handle_missing_recipe(self):
         """测试 AI 处理不存在的 Recipe"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "run", "nonexistent_recipe_xyz"],
+            ["uv", "run", "frago", "recipe", "run", "nonexistent_recipe_xyz"],
             capture_output=True,
             text=True
         )
@@ -238,7 +238,7 @@ class TestAIErrorHandling:
     def test_ai_handle_missing_params(self):
         """测试 AI 处理缺少必需参数的情况"""
         result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "run", "file_copy"],
+            ["uv", "run", "frago", "recipe", "run", "file_copy"],
             capture_output=True,
             text=True
         )
@@ -260,7 +260,7 @@ class TestAIWorkflowComplete:
 
         # 步骤 2: AI 搜索可用 Recipe
         list_result = subprocess.run(
-            ["uv", "run", "auvima", "recipe", "list", "--format", "json"],
+            ["uv", "run", "frago", "recipe", "list", "--format", "json"],
             capture_output=True,
             text=True
         )
@@ -286,7 +286,7 @@ class TestAIWorkflowComplete:
         # 步骤 5: AI 执行命令
         run_result = subprocess.run(
             [
-                "uv", "run", "auvima", "recipe", "run", target_recipe["name"],
+                "uv", "run", "frago", "recipe", "run", target_recipe["name"],
                 "--output-file", str(temp_output_file)
             ],
             capture_output=True,

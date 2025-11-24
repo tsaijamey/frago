@@ -9,9 +9,9 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 
-from auvima.run.context import ContextManager
-from auvima.run.manager import RunManager
-from auvima.run.exceptions import ContextNotSetError, RunNotFoundError
+from frago.run.context import ContextManager
+from frago.run.manager import RunManager
+from frago.run.exceptions import ContextNotSetError, RunNotFoundError
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ class TestSetCurrentRun:
         assert context.theme_description == instance.theme_description
 
         # 验证配置文件
-        config_file = temp_project_root / ".auvima" / "current_project"
+        config_file = temp_project_root / ".frago" / "current_project"
         assert config_file.exists()
 
         config_data = json.loads(config_file.read_text())
@@ -108,7 +108,7 @@ class TestGetCurrentRun:
         instance = manager.create_run("测试")
 
         # 设置环境变量
-        monkeypatch.setenv("AUVIMA_CURRENT_RUN", instance.run_id)
+        monkeypatch.setenv("FRAGO_CURRENT_RUN", instance.run_id)
 
         # 读取上下文(不需要先set_current_run)
         context = context_manager.get_current_run()
@@ -123,7 +123,7 @@ class TestGetCurrentRun:
         context_manager.set_current_run(run1.run_id, run1.theme_description)
 
         # 设置环境变量(不同的run)
-        monkeypatch.setenv("AUVIMA_CURRENT_RUN", run2.run_id)
+        monkeypatch.setenv("FRAGO_CURRENT_RUN", run2.run_id)
 
         # 环境变量优先
         context = context_manager.get_current_run()
@@ -132,12 +132,12 @@ class TestGetCurrentRun:
     def test_get_current_run_invalid_file(self, context_manager, temp_project_root):
         """测试配置文件损坏"""
         # 创建损坏的配置文件
-        config_file = temp_project_root / ".auvima" / "current_project"
+        config_file = temp_project_root / ".frago" / "current_project"
         config_file.parent.mkdir(exist_ok=True)
         config_file.write_text("这不是有效的JSON")
 
         # 应该抛出FileSystemError
-        from auvima.run.exceptions import FileSystemError
+        from frago.run.exceptions import FileSystemError
 
         with pytest.raises(FileSystemError):
             context_manager.get_current_run()
@@ -181,7 +181,7 @@ class TestClearContext:
         instance = manager.create_run("测试")
         context_manager.set_current_run(instance.run_id, instance.theme_description)
 
-        config_file = temp_project_root / ".auvima" / "current_project"
+        config_file = temp_project_root / ".frago" / "current_project"
         assert config_file.exists()
 
         # 清空上下文

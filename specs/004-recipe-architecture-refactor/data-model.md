@@ -120,8 +120,8 @@ dependencies: []
 - `get_by_source(source: str) -> list[Recipe]`: 按来源过滤 Recipe
 
 **查找路径优先级**:
-1. 项目级: `.auvima/recipes/` （当前工作目录）
-2. 用户级: `~/.auvima/recipes/` （用户家目录）
+1. 项目级: `.frago/recipes/` （当前工作目录）
+2. 用户级: `~/.frago/recipes/` （用户家目录）
 3. 示例级: `examples/` （仓库根目录或安装位置）
 
 **子目录结构**:
@@ -145,7 +145,7 @@ dependencies: []
 **实现子类**:
 
 #### ChromeJSExecutor
-- 调用命令: `uv run auvima exec-js <script> <params_json>`
+- 调用命令: `uv run frago exec-js <script> <params_json>`
 - 超时: 继承自 `exec-js` 命令的超时设置
 - 错误处理: 捕获 CDP 连接失败、JavaScript 运行时错误
 
@@ -198,13 +198,13 @@ dependencies: []
 **CLI 集成**:
 ```bash
 # stdout（默认）
-uv run auvima recipe run <name> --params '{...}'
+uv run frago recipe run <name> --params '{...}'
 
 # file
-uv run auvima recipe run <name> --params '{...}' --output-file result.json
+uv run frago recipe run <name> --params '{...}' --output-file result.json
 
 # clipboard
-uv run auvima recipe run <name> --params '{...}' --output-clipboard
+uv run frago recipe run <name> --params '{...}' --output-clipboard
 ```
 
 **AI 使用场景**:
@@ -285,8 +285,8 @@ RecipeRegistry
         │   │   ├── type: "workflow"
         │   │   ├── runtime: "python"
         │   │   └── dependencies: ["upwork_extract_job"]
-        │   ├── script_path: /path/to/.auvima/recipes/workflows/custom_workflow.py
-        │   ├── metadata_path: /path/to/.auvima/recipes/workflows/custom_workflow.md
+        │   ├── script_path: /path/to/.frago/recipes/workflows/custom_workflow.py
+        │   ├── metadata_path: /path/to/.frago/recipes/workflows/custom_workflow.md
         │   └── source: "Project"
         │
         ├─> Recipe (来源: User)
@@ -294,7 +294,7 @@ RecipeRegistry
         │   │   ├── name: "upwork_extract_job"
         │   │   ├── type: "atomic"
         │   │   └── runtime: "chrome-js"
-        │   ├── script_path: ~/.auvima/recipes/atomic/chrome/upwork_extract_job.js
+        │   ├── script_path: ~/.frago/recipes/atomic/chrome/upwork_extract_job.js
         │   └── source: "User"
         │
         └─> Recipe (来源: Example)
@@ -313,11 +313,11 @@ OutputHandler（静态类）
 └── handle(data, target, options) → 输出到 stdout/file/clipboard
 
 执行流程（AI-first 视角）:
-AI Agent → Bash tool: uv run auvima recipe list --format json
+AI Agent → Bash tool: uv run frago recipe list --format json
          → RecipeRegistry.list_all() → JSON 元数据数组
          → AI 分析 description, use_cases, output_targets
 
-AI Agent → Bash tool: uv run auvima recipe run <name> --params '{...}' [--output-file/--output-clipboard]
+AI Agent → Bash tool: uv run frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
          → RecipeRunner.run(name, params, output_target)
          → RecipeRegistry.find(name) → Recipe
          → RecipeExecutor.execute(script, params) → RecipeExecutionResult
@@ -338,7 +338,7 @@ AI Agent → Bash tool: uv run auvima recipe run <name> --params '{...}' [--outp
 
 **示例**:
 ```text
-~/.auvima/recipes/atomic/chrome/
+~/.frago/recipes/atomic/chrome/
 ├── upwork_extract_job_details_as_markdown.js
 ├── upwork_extract_job_details_as_markdown.md
 ├── youtube_extract_video_transcript.js

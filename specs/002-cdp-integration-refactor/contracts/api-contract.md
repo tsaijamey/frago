@@ -251,7 +251,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 调用Python CLI
-PYTHON_CMD="python -m auvima.cli command-name ${SPECIFIC_ARGS} ${DEBUG} ${TIMEOUT} ${HOST} ${PORT} ${PROXY_HOST} ${PROXY_PORT} ${NO_PROXY}"
+PYTHON_CMD="python -m frago.cli command-name ${SPECIFIC_ARGS} ${DEBUG} ${TIMEOUT} ${HOST} ${PORT} ${PROXY_HOST} ${PROXY_PORT} ${NO_PROXY}"
 eval "$PYTHON_CMD"
 ```
 
@@ -301,9 +301,9 @@ exit 错误代码
 
 | 环境变量 | 用途 | 默认值 |
 |----------|------|--------|
-| `AUVIMA_LOG_LEVEL` | 日志级别 | `INFO` |
-| `AUVIMA_CDP_HOST` | CDP主机 | `127.0.0.1` |
-| `AUVIMA_CDP_PORT` | CDP端口 | `9222` |
+| `FRAGO_LOG_LEVEL` | 日志级别 | `INFO` |
+| `FRAGO_CDP_HOST` | CDP主机 | `127.0.0.1` |
+| `FRAGO_CDP_PORT` | CDP端口 | `9222` |
 | `HTTP_PROXY` | HTTP代理 | 无 |
 | `HTTPS_PROXY` | HTTPS代理 | 无 |
 | `NO_PROXY` | 绕过代理的主机 | 无 |
@@ -313,9 +313,9 @@ exit 错误代码
 支持 `.env` 文件配置：
 
 ```env
-AUVIMA_LOG_LEVEL=DEBUG
-AUVIMA_CDP_HOST=localhost
-AUVIMA_CDP_PORT=9222
+FRAGO_LOG_LEVEL=DEBUG
+FRAGO_CDP_HOST=localhost
+FRAGO_CDP_PORT=9222
 HTTP_PROXY=http://proxy.example.com:8080
 NO_PROXY=localhost,127.0.0.1
 ```

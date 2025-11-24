@@ -1,5 +1,5 @@
 /**
- * AuViMa Stealth Mode - 反检测脚本
+ * Frago Stealth Mode - 反检测脚本
  *
  * 用于绕过常见的 headless/自动化检测机制
  * 使用方法：通过 CDP Page.addScriptToEvaluateOnNewDocument 在页面加载前注入
@@ -145,4 +145,4 @@ try {
     // 忽略错误
 }
 
-console.log('[AuViMa Stealth] 反检测脚本已加载');
+console.log('[Frago Stealth] 反检测脚本已加载');

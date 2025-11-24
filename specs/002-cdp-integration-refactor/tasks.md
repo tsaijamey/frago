@@ -24,7 +24,7 @@
 
 **目的**: 项目初始化和基础结构
 
-- [x] T001 检查现有项目结构，确保src/auvima/cdp/目录结构完整
+- [x] T001 检查现有项目结构，确保src/frago/cdp/目录结构完整
 - [x] T002 验证依赖项已安装：websocket-client, click, pydantic, python-dotenv
 - [x] T003 [P] 验证测试框架配置：pytest, pytest-cov, pytest-asyncio
 
@@ -36,11 +36,11 @@
 
 **⚠️ 关键**: 在此阶段完成之前，不能开始任何用户故事工作
 
-- [x] T004 在src/auvima/cdp/config.py中扩展CDPConfig，添加代理配置字段（proxy_host, proxy_port, proxy_username, proxy_password, no_proxy）
-- [x] T005 在src/auvima/cdp/session.py中修改WebSocket连接逻辑，支持代理配置参数
-- [x] T006 [P] 创建工具目录src/auvima/tools/，用于功能映射验证工具
-- [x] T007 [P] 在src/auvima/cdp/types.py中创建ProxyConfig数据类
-- [x] T008 更新src/auvima/cdp/exceptions.py，添加代理相关异常类（ProxyConnectionError, ProxyConfigError）
+- [x] T004 在src/frago/cdp/config.py中扩展CDPConfig，添加代理配置字段（proxy_host, proxy_port, proxy_username, proxy_password, no_proxy）
+- [x] T005 在src/frago/cdp/session.py中修改WebSocket连接逻辑，支持代理配置参数
+- [x] T006 [P] 创建工具目录src/frago/tools/，用于功能映射验证工具
+- [x] T007 [P] 在src/frago/cdp/types.py中创建ProxyConfig数据类
+- [x] T008 更新src/frago/cdp/exceptions.py，添加代理相关异常类（ProxyConnectionError, ProxyConfigError）
 
 **Checkpoint**: 基础完成 - 现在可以并行开始用户故事实现
 
@@ -48,24 +48,24 @@
 
 ## Phase 3: User Story 1 - 统一的CDP方法目录结构 (Priority: P1) 🎯 MVP
 
-**目标**: 在src/auvima/cdp目录下建立清晰的方法目录结构，覆盖所有现有CDP功能
+**目标**: 在src/frago/cdp目录下建立清晰的方法目录结构，覆盖所有现有CDP功能
 
 **独立测试**: 验证新的目录结构完整覆盖18个Shell脚本功能，每个方法都有对应Python实现
 
 ### Implementation for User Story 1
 
-- [x] T009 [P] [US1] 在src/auvima/cdp/commands/page.py中验证并完善导航方法（navigate, get_title, get_content）
-- [x] T010 [P] [US1] 在src/auvima/cdp/commands/screenshot.py中验证并完善截图方法（screenshot with full_page, quality options）
-- [x] T011 [P] [US1] 在src/auvima/cdp/commands/runtime.py中验证并完善JavaScript执行方法（execute_script）
-- [x] T012 [P] [US1] 在src/auvima/cdp/commands/input.py中验证并完善点击方法（click with wait_timeout）
-- [x] T013 [P] [US1] 在src/auvima/cdp/commands/scroll.py中创建滚动方法模块（scroll up/down, scroll_to_top, scroll_to_bottom）
-- [x] T014 [P] [US1] 在src/auvima/cdp/commands/wait.py中创建等待方法模块（wait_for_selector with timeout）
-- [x] T015 [P] [US1] 在src/auvima/cdp/commands/zoom.py中创建缩放方法模块（set_zoom_factor with 0.5-3.0 range）
-- [x] T016 [P] [US1] 在src/auvima/cdp/commands/status.py中创建状态检查模块（health_check, get_pages, check_chrome_status）
-- [x] T017 [P] [US1] 在src/auvima/cdp/commands/visual_effects.py中创建视觉效果模块（highlight, pointer, spotlight, annotate, clear_effects）
-- [x] T018 [US1] 在src/auvima/cdp/session.py中添加所有新命令模块的便利方法属性（@property for scroll, wait, zoom, status, visual_effects）
-- [x] T019 [US1] 更新src/auvima/cdp/commands/__init__.py，导出所有命令模块
-- [x] T020 [US1] 创建功能映射验证脚本src/auvima/tools/function_mapping.py，扫描并对比Shell脚本与Python实现
+- [x] T009 [P] [US1] 在src/frago/cdp/commands/page.py中验证并完善导航方法（navigate, get_title, get_content）
+- [x] T010 [P] [US1] 在src/frago/cdp/commands/screenshot.py中验证并完善截图方法（screenshot with full_page, quality options）
+- [x] T011 [P] [US1] 在src/frago/cdp/commands/runtime.py中验证并完善JavaScript执行方法（execute_script）
+- [x] T012 [P] [US1] 在src/frago/cdp/commands/input.py中验证并完善点击方法（click with wait_timeout）
+- [x] T013 [P] [US1] 在src/frago/cdp/commands/scroll.py中创建滚动方法模块（scroll up/down, scroll_to_top, scroll_to_bottom）
+- [x] T014 [P] [US1] 在src/frago/cdp/commands/wait.py中创建等待方法模块（wait_for_selector with timeout）
+- [x] T015 [P] [US1] 在src/frago/cdp/commands/zoom.py中创建缩放方法模块（set_zoom_factor with 0.5-3.0 range）
+- [x] T016 [P] [US1] 在src/frago/cdp/commands/status.py中创建状态检查模块（health_check, get_pages, check_chrome_status）
+- [x] T017 [P] [US1] 在src/frago/cdp/commands/visual_effects.py中创建视觉效果模块（highlight, pointer, spotlight, annotate, clear_effects）
+- [x] T018 [US1] 在src/frago/cdp/session.py中添加所有新命令模块的便利方法属性（@property for scroll, wait, zoom, status, visual_effects）
+- [x] T019 [US1] 更新src/frago/cdp/commands/__init__.py，导出所有命令模块
+- [x] T020 [US1] 创建功能映射验证脚本src/frago/tools/function_mapping.py，扫描并对比Shell脚本与Python实现
 
 **Checkpoint**: 此时，用户故事1应该完全功能化并可独立测试 - 所有18个CDP功能在Python中都有对应实现
 
@@ -79,10 +79,10 @@
 
 ### Implementation for User Story 2
 
-- [x] T021 [P] [US2] 扩展src/auvima/tools/function_mapping.py，添加Shell脚本参数解析功能
-- [x] T022 [P] [US2] 在src/auvima/tools/function_mapping.py中实现Python函数签名提取
-- [x] T023 [US2] 在src/auvima/tools/function_mapping.py中实现参数对应关系验证逻辑
-- [x] T024 [US2] 在src/auvima/tools/function_mapping.py中实现行为一致性检查框架
+- [x] T021 [P] [US2] 扩展src/frago/tools/function_mapping.py，添加Shell脚本参数解析功能
+- [x] T022 [P] [US2] 在src/frago/tools/function_mapping.py中实现Python函数签名提取
+- [x] T023 [US2] 在src/frago/tools/function_mapping.py中实现参数对应关系验证逻辑
+- [x] T024 [US2] 在src/frago/tools/function_mapping.py中实现行为一致性检查框架
 - [x] T025 [US2] 创建功能映射报告生成器，输出JSON格式报告（包含coverage和consistency指标）
 - [x] T026 [US2] 创建功能映射HTML报告生成器（可视化展示功能对应关系）
 - [x] T027 [US2] 更新scripts/share/cdp_navigate.sh，确保所有参数正确传递给Python CLI
@@ -113,14 +113,14 @@
 
 ### Implementation for User Story 3
 
-- [x] T042 [P] [US3] 在src/auvima/cli/main.py中添加全局代理相关CLI选项（--proxy-host, --proxy-port, --proxy-username, --proxy-password, --no-proxy）
-- [x] T043 [P] [US3] 在src/auvima/cli/commands.py中更新所有命令，支持代理配置传递
-- [x] T044 [US3] 在src/auvima/cdp/session.py中实现WebSocket代理配置逻辑（使用websocket-client的代理参数）
-- [x] T045 [US3] 在src/auvima/cdp/config.py中添加从环境变量读取代理配置的逻辑（HTTP_PROXY, HTTPS_PROXY, NO_PROXY）
-- [x] T046 [US3] 在src/auvima/cdp/config.py中实现代理配置验证方法（validate_proxy_config）
+- [x] T042 [P] [US3] 在src/frago/cli/main.py中添加全局代理相关CLI选项（--proxy-host, --proxy-port, --proxy-username, --proxy-password, --no-proxy）
+- [x] T043 [P] [US3] 在src/frago/cli/commands.py中更新所有命令，支持代理配置传递
+- [x] T044 [US3] 在src/frago/cdp/session.py中实现WebSocket代理配置逻辑（使用websocket-client的代理参数）
+- [x] T045 [US3] 在src/frago/cdp/config.py中添加从环境变量读取代理配置的逻辑（HTTP_PROXY, HTTPS_PROXY, NO_PROXY）
+- [x] T046 [US3] 在src/frago/cdp/config.py中实现代理配置验证方法（validate_proxy_config）
 - [x] T047 [US3] 更新scripts/share/cdp_common.sh，添加代理参数处理逻辑
 - [x] T048 [US3] 创建代理配置测试脚本scripts/test/test_proxy_configuration.sh
-- [x] T049 [US3] 在src/auvima/cdp/logger.py中添加代理连接相关日志记录
+- [x] T049 [US3] 在src/frago/cdp/logger.py中添加代理连接相关日志记录
 
 **Checkpoint**: 所有用户故事现在应该独立功能化 - 代理环境下CDP连接成功率提升至95%以上
 
@@ -130,7 +130,7 @@
 
 **目的**: 影响多个用户故事的改进
 
-- [x] T050 [P] 在src/auvima/cdp/retry.py中完善重试机制，支持代理连接失败重试
+- [x] T050 [P] 在src/frago/cdp/retry.py中完善重试机制，支持代理连接失败重试
 - [x] T051 [P] 更新README.md文档，记录代理配置和功能映射工具使用方法
 - [x] T052 代码清理：确保所有模块遵循Python最佳实践和项目代码风格
 - [x] T053 性能优化：优化CDP连接建立速度，确保延迟<500ms
@@ -177,15 +177,15 @@
 
 ```bash
 # 并行启动所有命令模块创建任务:
-Task: "在src/auvima/cdp/commands/page.py中验证并完善导航方法"
-Task: "在src/auvima/cdp/commands/screenshot.py中验证并完善截图方法"
-Task: "在src/auvima/cdp/commands/runtime.py中验证并完善JavaScript执行方法"
-Task: "在src/auvima/cdp/commands/input.py中验证并完善点击方法"
-Task: "在src/auvima/cdp/commands/scroll.py中创建滚动方法模块"
-Task: "在src/auvima/cdp/commands/wait.py中创建等待方法模块"
-Task: "在src/auvima/cdp/commands/zoom.py中创建缩放方法模块"
-Task: "在src/auvima/cdp/commands/status.py中创建状态检查模块"
-Task: "在src/auvima/cdp/commands/visual_effects.py中创建视觉效果模块"
+Task: "在src/frago/cdp/commands/page.py中验证并完善导航方法"
+Task: "在src/frago/cdp/commands/screenshot.py中验证并完善截图方法"
+Task: "在src/frago/cdp/commands/runtime.py中验证并完善JavaScript执行方法"
+Task: "在src/frago/cdp/commands/input.py中验证并完善点击方法"
+Task: "在src/frago/cdp/commands/scroll.py中创建滚动方法模块"
+Task: "在src/frago/cdp/commands/wait.py中创建等待方法模块"
+Task: "在src/frago/cdp/commands/zoom.py中创建缩放方法模块"
+Task: "在src/frago/cdp/commands/status.py中创建状态检查模块"
+Task: "在src/frago/cdp/commands/visual_effects.py中创建视觉效果模块"
 ```
 
 ## Parallel Example: User Story 2

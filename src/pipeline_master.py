@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AuViMa Pipeline Master Controller
+Frago Pipeline Master Controller
 主控制器 - 管理整个视频生成流程
 """
 
@@ -19,7 +19,7 @@ class PipelineMaster:
     def __init__(self, topic: str, project_name: str):
         self.topic = topic
         self.project_name = project_name
-        self.base_dir = Path("/Users/chagee/Repos/AuViMa")
+        self.base_dir = Path("/Users/chagee/Repos/Frago")
         self.project_dir = self.base_dir / "projects" / project_name
         self.chrome_process = None
         
@@ -148,7 +148,7 @@ class PipelineMaster:
         self.log("\n=== 阶段1: 信息收集 ===")
         
         # 执行信息收集命令
-        command = f'/auvima.start "{self.topic}" {self.project_name}'
+        command = f'/frago.start "{self.topic}" {self.project_name}'
         if not self.execute_claude_command(command):
             return False
         
@@ -160,7 +160,7 @@ class PipelineMaster:
         self.log("\n=== 阶段2: 分镜规划 ===")
         
         # 执行分镜规划命令
-        command = f'/auvima.storyboard {self.project_name}'
+        command = f'/frago.storyboard {self.project_name}'
         if not self.execute_claude_command(command):
             return False
         
@@ -186,7 +186,7 @@ class PipelineMaster:
             self.log(f"\n[{i}/{len(shot_files)}] 处理 {shot_file.name}")
             
             # 执行生成命令
-            command = f'/auvima.generate {shot_file}'
+            command = f'/frago.generate {shot_file}'
             if not self.execute_claude_command(command):
                 return False
             
@@ -212,7 +212,7 @@ class PipelineMaster:
         self.log("\n=== 阶段4: 素材评估 ===")
         
         # 执行评估命令
-        command = f'/auvima.evaluate {self.project_name}'
+        command = f'/frago.evaluate {self.project_name}'
         if not self.execute_claude_command(command):
             return False
         
@@ -224,7 +224,7 @@ class PipelineMaster:
         self.log("\n=== 阶段5: 视频合成 ===")
         
         # 执行合成命令
-        command = f'/auvima.merge {self.project_name}'
+        command = f'/frago.merge {self.project_name}'
         if not self.execute_claude_command(command):
             return False
         
@@ -251,7 +251,7 @@ class PipelineMaster:
     def run(self) -> bool:
         """运行完整pipeline"""
         self.log(f"{'='*50}")
-        self.log(f"AuViMa Pipeline 开始")
+        self.log(f"Frago Pipeline 开始")
         self.log(f"主题: {self.topic}")
         self.log(f"项目: {self.project_name}")
         self.log(f"{'='*50}")

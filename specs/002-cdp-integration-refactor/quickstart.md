@@ -12,7 +12,7 @@
 
 ```bash
 # 检查Python环境
-cd /Users/chagee/Repos/AuViMa
+cd /Users/chagee/Repos/Frago
 source .venv/bin/activate
 
 # 检查依赖
@@ -29,7 +29,7 @@ python -c "import websocket; import click; print('依赖检查通过')"
 ./scripts/share/cdp_navigate.sh https://www.google.com
 
 # 测试Python CLI对应功能
-python -m auvima.cli navigate https://www.google.com
+python -m frago.cli navigate https://www.google.com
 ```
 
 ## 功能映射验证
@@ -38,7 +38,7 @@ python -m auvima.cli navigate https://www.google.com
 
 ```bash
 # 生成功能映射报告
-python -m auvima.tools.function_mapping
+python -m frago.tools.function_mapping
 
 # 输出示例:
 # ================================
@@ -54,7 +54,7 @@ python -m auvima.tools.function_mapping
 
 ```bash
 # 生成详细HTML报告
-python -m auvima.tools.function_mapping --format html --output function_mapping_report.html
+python -m frago.tools.function_mapping --format html --output function_mapping_report.html
 
 # 在浏览器中查看报告
 open function_mapping_report.html
@@ -80,10 +80,10 @@ export HTTPS_PROXY=http://proxy.example.com:8080
 
 ```bash
 # 测试Python CLI代理支持
-python -m auvima.cli navigate https://www.google.com --proxy-host proxy.example.com --proxy-port 8080
+python -m frago.cli navigate https://www.google.com --proxy-host proxy.example.com --proxy-port 8080
 
 # 测试绕过代理
-python -m auvima.cli navigate https://www.google.com --no-proxy
+python -m frago.cli navigate https://www.google.com --no-proxy
 ```
 
 ## 开发工作流
@@ -91,8 +91,8 @@ python -m auvima.cli navigate https://www.google.com --no-proxy
 ### 1. 添加新功能
 
 ```python
-# 1. 在 src/auvima/cdp/commands/ 下创建新模块
-# 例如: src/auvima/cdp/commands/new_feature.py
+# 1. 在 src/frago/cdp/commands/ 下创建新模块
+# 例如: src/frago/cdp/commands/new_feature.py
 
 # 2. 实现功能类
 class NewFeatureCommands:
@@ -156,13 +156,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 调用Python CLI
-python -m auvima.cli new-feature --param1 "${PARAM1}" --param2 "${PARAM2}"
+python -m frago.cli new-feature --param1 "${PARAM1}" --param2 "${PARAM2}"
 ```
 
 ### 3. 注册CLI命令
 
 ```python
-# 在 src/auvima/cli/commands.py 中添加
+# 在 src/frago/cli/commands.py 中添加
 @click.command()
 @click.option('--param1', required=True, help='参数1说明')
 @click.option('--param2', type=int, default=0, help='参数2说明')
@@ -178,7 +178,7 @@ def new_feature(ctx, param1: str, param2: int):
     with CDPSession(config) as session:
         session.new_function(param1, param2)
 
-# 在 src/auvima/cli/main.py 中注册
+# 在 src/frago/cli/main.py 中注册
 cli.add_command(new_feature)
 ```
 
@@ -246,10 +246,10 @@ curl -x http://proxy.example.com:8080 https://www.google.com
 **问题**: 功能不一致
 ```bash
 # 重新生成功能映射报告
-python -m auvima.tools.function_mapping --verbose
+python -m frago.tools.function_mapping --verbose
 
 # 检查具体功能差异
-python -m auvima.tools.function_mapping --function cdp_navigate
+python -m frago.tools.function_mapping --function cdp_navigate
 ```
 
 ### 2. 调试模式
@@ -259,10 +259,10 @@ python -m auvima.tools.function_mapping --function cdp_navigate
 ./scripts/share/cdp_navigate.sh https://www.google.com --debug
 
 # Python CLI调试模式
-python -m auvima.cli navigate https://www.google.com --debug
+python -m frago.cli navigate https://www.google.com --debug
 
 # 设置日志级别
-export AUVIMA_LOG_LEVEL=DEBUG
+export FRAGO_LOG_LEVEL=DEBUG
 ```
 
 ## 下一步

@@ -63,10 +63,10 @@ parallel -j 4 ::: \
 - [x] T003 添加核心依赖：uv add websocket-client click pydantic
 - [x] T004 [P] 添加开发依赖：uv add --dev pytest pytest-cov ruff mypy
 - [x] T005 [P] 创建.env.cdp配置文件，设置CDP_HOST=127.0.0.1和CDP_PORT=9222
-- [x] T006 创建src/auvima目录结构
-- [x] T007 创建src/auvima/__init__.py初始化包
-- [x] T008 创建src/auvima/cdp/__init__.py初始化CDP模块
-- [x] T009 [P] 创建src/auvima/cli/__init__.py初始化CLI模块
+- [x] T006 创建src/frago目录结构
+- [x] T007 创建src/frago/__init__.py初始化包
+- [x] T008 创建src/frago/cdp/__init__.py初始化CDP模块
+- [x] T009 [P] 创建src/frago/cli/__init__.py初始化CLI模块
 - [x] T010 [P] 配置.gitignore添加Python相关忽略项
 
 ---
@@ -75,10 +75,10 @@ parallel -j 4 ::: \
 
 **目标**: 创建所有用户故事共享的基础组件
 
-- [x] T011 在src/auvima/cdp/config.py中创建配置管理类
-- [x] T012 在src/auvima/cdp/exceptions.py中定义自定义异常类
-- [x] T013 在src/auvima/cdp/logger.py中配置结构化日志
-- [x] T014 [P] 在src/auvima/cdp/types.py中定义类型提示
+- [x] T011 在src/frago/cdp/config.py中创建配置管理类
+- [x] T012 在src/frago/cdp/exceptions.py中定义自定义异常类
+- [x] T013 在src/frago/cdp/logger.py中配置结构化日志
+- [x] T014 [P] 在src/frago/cdp/types.py中定义类型提示
 - [x] T015 [P] 创建tests/目录结构和__init__.py
 
 ---
@@ -91,30 +91,30 @@ parallel -j 4 ::: \
 
 ### 核心Session实现
 
-- [x] T016 [US1] 在src/auvima/cdp/client.py中创建CDPClient基类
-- [x] T017 [US1] 在src/auvima/cdp/session.py中实现CDPSession类的__init__方法
-- [x] T018 [US1] 在src/auvima/cdp/session.py中实现connect()方法建立WebSocket连接
-- [x] T019 [US1] 在src/auvima/cdp/session.py中实现send_command()方法发送CDP命令
-- [x] T020 [US1] 在src/auvima/cdp/session.py中实现请求ID管理和响应关联
-- [x] T021 [US1] 在src/auvima/cdp/session.py中实现close()方法关闭连接
-- [x] T022 [US1] 在src/auvima/cdp/session.py中实现连接健康检查
+- [x] T016 [US1] 在src/frago/cdp/client.py中创建CDPClient基类
+- [x] T017 [US1] 在src/frago/cdp/session.py中实现CDPSession类的__init__方法
+- [x] T018 [US1] 在src/frago/cdp/session.py中实现connect()方法建立WebSocket连接
+- [x] T019 [US1] 在src/frago/cdp/session.py中实现send_command()方法发送CDP命令
+- [x] T020 [US1] 在src/frago/cdp/session.py中实现请求ID管理和响应关联
+- [x] T021 [US1] 在src/frago/cdp/session.py中实现close()方法关闭连接
+- [x] T022 [US1] 在src/frago/cdp/session.py中实现连接健康检查
 
 ### 重试机制实现
 
-- [x] T023 [US1] 在src/auvima/cdp/retry.py中创建RetryPolicy类
-- [x] T024 [US1] 在src/auvima/cdp/retry.py中实现指数退避算法
-- [x] T025 [US1] 在src/auvima/cdp/retry.py中集成可配置的重试次数和超时
+- [x] T023 [US1] 在src/frago/cdp/retry.py中创建RetryPolicy类
+- [x] T024 [US1] 在src/frago/cdp/retry.py中实现指数退避算法
+- [x] T025 [US1] 在src/frago/cdp/retry.py中集成可配置的重试次数和超时
 
 ### CDP命令封装
 
-- [x] T026 [P] [US1] 在src/auvima/cdp/commands/page.py中实现navigate()方法
-- [x] T027 [P] [US1] 在src/auvima/cdp/commands/page.py中实现screenshot()方法
-- [x] T028 [P] [US1] 在src/auvima/cdp/commands/page.py中实现waitForSelector()方法
-- [x] T029 [P] [US1] 在src/auvima/cdp/commands/input.py中实现click()方法
-- [x] T030 [P] [US1] 在src/auvima/cdp/commands/input.py中实现type()方法
-- [x] T031 [P] [US1] 在src/auvima/cdp/commands/input.py中实现scroll()方法
-- [x] T032 [P] [US1] 在src/auvima/cdp/commands/runtime.py中实现evaluate()方法
-- [x] T033 [P] [US1] 在src/auvima/cdp/commands/dom.py中实现getDocument()方法
+- [x] T026 [P] [US1] 在src/frago/cdp/commands/page.py中实现navigate()方法
+- [x] T027 [P] [US1] 在src/frago/cdp/commands/page.py中实现screenshot()方法
+- [x] T028 [P] [US1] 在src/frago/cdp/commands/page.py中实现waitForSelector()方法
+- [x] T029 [P] [US1] 在src/frago/cdp/commands/input.py中实现click()方法
+- [x] T030 [P] [US1] 在src/frago/cdp/commands/input.py中实现type()方法
+- [x] T031 [P] [US1] 在src/frago/cdp/commands/input.py中实现scroll()方法
+- [x] T032 [P] [US1] 在src/frago/cdp/commands/runtime.py中实现evaluate()方法
+- [x] T033 [P] [US1] 在src/frago/cdp/commands/dom.py中实现getDocument()方法
 
 ---
 
@@ -126,19 +126,19 @@ parallel -j 4 ::: \
 
 ### CLI接口实现
 
-- [x] T034 [US2] 在src/auvima/cli/main.py中使用click创建主CLI框架
-- [x] T035 [US2] 在src/auvima/cli/commands.py中实现navigate子命令
-- [x] T036 [US2] 在src/auvima/cli/commands.py中实现click子命令
-- [x] T037 [US2] 在src/auvima/cli/commands.py中实现screenshot子命令
-- [x] T038 [US2] 在src/auvima/cli/commands.py中实现exec-js子命令
-- [x] T039 [US2] 在src/auvima/cli/commands.py中添加全局选项--debug和--timeout
+- [x] T034 [US2] 在src/frago/cli/main.py中使用click创建主CLI框架
+- [x] T035 [US2] 在src/frago/cli/commands.py中实现navigate子命令
+- [x] T036 [US2] 在src/frago/cli/commands.py中实现click子命令
+- [x] T037 [US2] 在src/frago/cli/commands.py中实现screenshot子命令
+- [x] T038 [US2] 在src/frago/cli/commands.py中实现exec-js子命令
+- [x] T039 [US2] 在src/frago/cli/commands.py中添加全局选项--debug和--timeout
 
 ### Shell包装器更新
 
-- [x] T040 [P] [US2] 更新scripts/cdp_navigate.sh调用python -m auvima.cli navigate
-- [x] T041 [P] [US2] 更新scripts/cdp_click.sh调用python -m auvima.cli click
-- [x] T042 [P] [US2] 更新scripts/cdp_screenshot.sh调用python -m auvima.cli screenshot
-- [x] T043 [P] [US2] 更新scripts/cdp_exec_js.sh调用python -m auvima.cli exec-js
+- [x] T040 [P] [US2] 更新scripts/cdp_navigate.sh调用python -m frago.cli navigate
+- [x] T041 [P] [US2] 更新scripts/cdp_click.sh调用python -m frago.cli click
+- [x] T042 [P] [US2] 更新scripts/cdp_screenshot.sh调用python -m frago.cli screenshot
+- [x] T043 [P] [US2] 更新scripts/cdp_exec_js.sh调用python -m frago.cli exec-js
 - [x] T044 [US2] 创建scripts/check_python_env.sh验证Python环境
 
 ---

@@ -1,13 +1,13 @@
 # Implementation Plan: 技能自动化生成系统（简化架构）
 
 **Branch**: `003-skill-automation` | **Date**: 2025-11-19 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `/Users/chagee/Repos/AuViMa/specs/003-skill-automation/spec.md`
+**Input**: Feature specification from `/Users/chagee/Repos/Frago/specs/003-skill-automation/spec.md`
 
 **Note**: 本计划基于2025-11-19的架构简化调整，删除了过度设计的探索引擎，采用Claude Code原生对话能力。
 
 ## Summary
 
-通过 `/auvima.recipe` 命令进入对话流程，用户逐步描述操作步骤，Claude Code（被prompt模板引导）使用auvima的CDP原子命令实际执行每一步，记录操作历史和关键选择器，最后从对话历史中提取信息生成可复用的JavaScript配方脚本和配套知识文档。核心创新在于利用Claude Code本身作为智能探索引擎，无需构建复杂的状态管理系统。
+通过 `/frago.recipe` 命令进入对话流程，用户逐步描述操作步骤，Claude Code（被prompt模板引导）使用frago的CDP原子命令实际执行每一步，记录操作历史和关键选择器，最后从对话历史中提取信息生成可复用的JavaScript配方脚本和配套知识文档。核心创新在于利用Claude Code本身作为智能探索引擎，无需构建复杂的状态管理系统。
 
 ## Technical Context
 
@@ -16,11 +16,11 @@
 - websocket-client（CDP通信，已有）
 - click（CLI框架，已有）
 - pydantic（数据验证，已有）
-- 现有CDP命令模块（src/auvima/cdp/commands/）
+- 现有CDP命令模块（src/frago/cdp/commands/）
 
 **Storage**: 文件系统存储
-- 配方脚本：`src/auvima/recipes/*.js`
-- 知识文档：`src/auvima/recipes/*.md`
+- 配方脚本：`src/frago/recipes/*.js`
+- 知识文档：`src/frago/recipes/*.md`
 - 无需数据库或复杂状态存储
 
 **Testing**: pytest（已配置）
@@ -29,7 +29,7 @@
 - **无需Mock复杂的探索会话**：测试重点在代码生成质量
 
 **Target Platform**: macOS开发环境 + Linux服务器（次要）
-**Project Type**: 单项目（扩展现有AuViMa）
+**Project Type**: 单项目（扩展现有Frago）
 
 **Performance Goals**:
 - 配方生成时间 <30秒（从对话完成到文件写入）
@@ -97,7 +97,7 @@ specs/003-skill-automation/
 ### Source Code (repository root)
 
 ```text
-src/auvima/
+src/frago/
 ├── recipes/                    # 【已创建】配方库（扁平目录）
 │   ├── *.js                   # 可执行配方脚本
 │   └── *.md                   # 配方知识文档
@@ -130,15 +130,15 @@ tests/
         └── test_recipe_creation.py  # 完整创建流程
 
 .claude/commands/              # Claude Code命令配置
-└── auvima_recipe.md          # 【需创建】/auvima.recipe prompt模板
+└── frago_recipe.md          # 【需创建】/frago.recipe prompt模板
 ```
 
 **Structure Decision**:
-- 采用**单项目结构**（Option 1），扩展现有AuViMa项目
-- **完全删除 `src/auvima/recipe/` Python模块**：不需要Python代码来生成代码
-- 保留 `src/auvima/recipes/` 扁平目录存储Claude Code生成的配方和文档
+- 采用**单项目结构**（Option 1），扩展现有Frago项目
+- **完全删除 `src/frago/recipe/` Python模块**：不需要Python代码来生成代码
+- 保留 `src/frago/recipes/` 扁平目录存储Claude Code生成的配方和文档
 - 复用现有CDP模块，无需重复实现
-- **核心组件**：`.claude/commands/auvima_recipe.md` prompt模板教会Claude Code如何创建配方
+- **核心组件**：`.claude/commands/frago_recipe.md` prompt模板教会Claude Code如何创建配方
 
 ## Complexity Tracking
 

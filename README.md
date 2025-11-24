@@ -1,8 +1,8 @@
-# AuViMa - Multi-Runtime Automation Infrastructure
+# Frago - Multi-Runtime Automation Infrastructure
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/AuViMa)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
@@ -10,7 +10,7 @@
 
 ---
 
-## AuViMa 解决什么问题
+## Frago 解决什么问题
 
 AI agent 在执行自动化任务时，面临三个核心痛点：
 
@@ -42,7 +42,7 @@ AI agent 在执行自动化任务时，面临三个核心痛点：
 
 ## 解决方案
 
-AuViMa 提供三个核心系统来解决上述问题：
+Frago 提供三个核心系统来解决上述问题：
 
 ### 🧠 Run 系统 - AI 的工作记忆
 
@@ -50,12 +50,12 @@ AuViMa 提供三个核心系统来解决上述问题：
 
 ```bash
 # 创建任务实例
-uv run auvima run init "调研 YouTube 字幕提取方法"
+uv run frago run init "调研 YouTube 字幕提取方法"
 
 # 所有后续操作自动关联到该实例
-uv run auvima navigate https://youtube.com/watch?v=...
-uv run auvima screenshot step1.png
-uv run auvima run log --step "定位字幕按钮" --data '{"selector": "..."}'
+uv run frago navigate https://youtube.com/watch?v=...
+uv run frago screenshot step1.png
+uv run frago run log --step "定位字幕按钮" --data '{"selector": "..."}'
 
 # 持久化存储
 projects/youtube-transcript-research/
@@ -87,10 +87,10 @@ output_targets: [stdout, file]
 
 ```bash
 # AI 发现可用 Recipe
-uv run auvima recipe list --format json
+uv run frago recipe list --format json
 
 # 执行 Recipe
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output-file transcript.txt
 ```
@@ -103,23 +103,23 @@ uv run auvima recipe run youtube_extract_video_transcript \
 
 ```bash
 # 导航
-uv run auvima navigate https://github.com
+uv run frago navigate https://github.com
 
 # 点击元素
-uv run auvima click 'button[type="submit"]'
+uv run frago click 'button[type="submit"]'
 
 # 执行 JavaScript
-uv run auvima exec-js 'document.title' --return-value
+uv run frago exec-js 'document.title' --return-value
 
 # 截图
-uv run auvima screenshot output.png
+uv run frago screenshot output.png
 ```
 
 **架构对比**：
 
 ```
 Playwright:  Python → Node.js 中继 → CDP → Chrome  (~100MB)
-AuViMa:      Python → CDP → Chrome                  (~2MB)
+Frago:      Python → CDP → Chrome                  (~2MB)
 ```
 
 **价值**：轻量级部署，持久浏览器会话，直连无中继延迟。
@@ -135,7 +135,7 @@ AuViMa:      Python → CDP → Chrome                  (~2MB)
 | ⚡**原生 CDP**          | ~2MB 轻量级，直连 Chrome，无 Node.js 依赖     |
 | 🔄**多运行时**          | Chrome JS、Python、Shell 三种运行时支持       |
 | 📊**结构化日志**        | JSONL 格式，100% 可程序解析和审计             |
-| 🤖**AI 主持任务**       | Claude Code slash 命令集成（`/auvima.run`） |
+| 🤖**AI 主持任务**       | Claude Code slash 命令集成（`/frago.run`） |
 
 ---
 
@@ -145,13 +145,13 @@ AuViMa:      Python → CDP → Chrome                  (~2MB)
 
 ```bash
 # 基础安装（核心功能）
-pip install auvima
+pip install frago
 # 或使用 uv（推荐）
-uv add auvima
+uv add frago
 
 # 开发环境
-git clone https://github.com/tsaijamey/AuViMa.git
-cd AuViMa
+git clone https://github.com/tsaijamey/Frago.git
+cd Frago
 uv sync --all-extras --dev
 ```
 
@@ -163,34 +163,34 @@ uv sync --all-extras --dev
 
 ```bash
 # 创建任务实例
-uv run auvima run init "在 Upwork 上搜索 Python 职位"
+uv run frago run init "在 Upwork 上搜索 Python 职位"
 
 # 设置当前工作上下文
-uv run auvima run set-context <run_id>
+uv run frago run set-context <run_id>
 
 # 执行操作并记录日志
-uv run auvima navigate https://upwork.com/search
-uv run auvima run log \
+uv run frago navigate https://upwork.com/search
+uv run frago run log \
   --step "导航到搜索页" \
   --status "success" \
   --action-type "navigation" \
   --execution-method "command"
 
 # 查看实例详情
-uv run auvima run info <run_id>
+uv run frago run info <run_id>
 ```
 
 #### 2. 使用 Recipe
 
 ```bash
 # 列出可用 Recipe
-uv run auvima recipe list
+uv run frago recipe list
 
 # 查看 Recipe 详情
-uv run auvima recipe info youtube_extract_video_transcript
+uv run frago recipe info youtube_extract_video_transcript
 
 # 执行 Recipe
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://youtube.com/watch?v=..."}' \
   --output-file transcript.txt
 ```
@@ -200,7 +200,7 @@ uv run auvima recipe run youtube_extract_video_transcript \
 在 Claude Code 中使用 slash 命令：
 
 ```
-/auvima.run 在 Upwork 上搜索 Python 职位并分析技能要求
+/frago.run 在 Upwork 上搜索 Python 职位并分析技能要求
 ```
 
 AI 将自动：
@@ -214,9 +214,9 @@ AI 将自动：
 
 ## 与其他工具的对比
 
-### AuViMa vs Playwright/Selenium
+### Frago vs Playwright/Selenium
 
-| 维度                 | Playwright/Selenium                | AuViMa                            |
+| 维度                 | Playwright/Selenium                | Frago                            |
 | -------------------- | ---------------------------------- | --------------------------------- |
 | **设计目标**   | 测试自动化框架                     | AI 驱动的多运行时自动化基建       |
 | **核心场景**   | E2E 测试、UI 测试                  | 数据采集、工作流编排、AI 辅助任务 |
@@ -228,7 +228,7 @@ AI 将自动：
 **适用场景选择**：
 
 - 需要质量保障、回归测试 → Playwright/Selenium
-- 需要数据采集、AI 辅助自动化、知识积累 → AuViMa
+- 需要数据采集、AI 辅助自动化、知识积累 → Frago
 
 详见 [技术架构对比](docs/architecture.md#核心差异对比)
 
@@ -254,7 +254,7 @@ AI 将自动：
 
 - ✅ Run 命令系统 - 主题型任务管理和上下文积累
 - ✅ 结构化日志 - JSONL 格式的执行记录
-- ✅ AI 主持任务执行 - `/auvima.run` slash 命令集成
+- ✅ AI 主持任务执行 - `/frago.run` slash 命令集成
 - ✅ Run 实例自动发现 - 基于 RapidFuzz 的模糊匹配
 - ✅ 完整测试覆盖 - 单元测试、集成测试、契约测试
 
@@ -283,8 +283,8 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 欢迎提交 Issue 和 Pull Request！
 
-- 项目问题：[提交 Issue](https://github.com/tsaijamey/AuViMa/issues)
-- 技术讨论：[Discussions](https://github.com/tsaijamey/AuViMa/discussions)
+- 项目问题：[提交 Issue](https://github.com/tsaijamey/Frago/issues)
+- 技术讨论：[Discussions](https://github.com/tsaijamey/Frago/discussions)
 
 ---
 

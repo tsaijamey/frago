@@ -98,7 +98,7 @@ def generate_theme_slug(description: str, max_length: int = 50) -> str:
 
 | execution_method | 使用场景 | 示例 |
 |------------------|---------|------|
-| command | CLI命令 | uv run auvima navigate |
+| command | CLI命令 | uv run frago navigate |
 | recipe | Recipe调用 | runner.run('recipe_name') |
 | file | 执行脚本文件 | uv run python scripts/filter.py |
 | manual | 人工操作 | 等待用户登录 |
@@ -116,7 +116,7 @@ def generate_theme_slug(description: str, max_length: int = 50) -> str:
   "action_type": "navigation",
   "execution_method": "command",
   "data": {
-    "command": "uv run auvima navigate https://example.com",
+    "command": "uv run frago navigate https://example.com",
     "exit_code": 0,
     "duration_ms": 1200
   }
@@ -147,16 +147,16 @@ def generate_theme_slug(description: str, max_length: int = 50) -> str:
 ### 决策
 
 采用 **轻量级JSON文件** 方案：
-- 文件路径：`.auvima/current_run` （无扩展名，Git忽略）
+- 文件路径：`.frago/current_run` （无扩展名，Git忽略）
 - 格式：JSON，包含 `run_id`、`last_accessed`、`theme_description`
-- 读取优先级：环境变量 `AUVIMA_CURRENT_RUN` > `.auvima/current_run` 文件
+- 读取优先级：环境变量 `FRAGO_CURRENT_RUN` > `.frago/current_run` 文件
 - 失效处理：文件不存在或指向的run目录被删除时，提示用户使用 `set-context` 命令
 
 ### 理由
 
 1. **JSON可扩展**：未来可添加 `auto_screenshot: true` 等全局配置
 2. **Git忽略**：避免不同开发者的工作上下文冲突
-3. **环境变量覆盖**：支持CI/CD或脚本化场景（`AUVIMA_CURRENT_RUN=test-run pytest`）
+3. **环境变量覆盖**：支持CI/CD或脚本化场景（`FRAGO_CURRENT_RUN=test-run pytest`）
 4. **主题型设计不需要并发**：用户通常一次只聚焦一个主题，如需切换使用 `set-context`
 
 ### 文件格式示例
@@ -185,11 +185,11 @@ def generate_theme_slug(description: str, max_length: int = 50) -> str:
 ```python
 def get_current_run_context() -> Optional[dict]:
     # 1. 检查环境变量
-    if env_run_id := os.getenv('AUVIMA_CURRENT_RUN'):
+    if env_run_id := os.getenv('FRAGO_CURRENT_RUN'):
         return {"run_id": env_run_id}
 
     # 2. 读取配置文件
-    config_path = Path('.auvima/current_run')
+    config_path = Path('.frago/current_run')
     if not config_path.exists():
         return None
 
@@ -288,32 +288,32 @@ def save_screenshot(run_id: str, description: str, image_data: bytes):
 
 ---
 
-## 5. /auvima.run slash命令的实现方式
+## 5. /frago.run slash命令的实现方式
 
 ### 决策
 
 采用 **轻量级Markdown + Bash命令调用** 方案（符合现有项目模式）：
-- Markdown文件：`.claude/commands/auvima.run.md`
+- Markdown文件：`.claude/commands/frago.run.md`
 - YAML frontmatter：`description: "执行AI主持的复杂浏览器自动化任务"`
-- 命令调用：使用 `Bash` 工具执行 `uv run auvima run <subcommand>`
+- 命令调用：使用 `Bash` 工具执行 `uv run frago run <subcommand>`
 - 长时间任务：在文档中明确指示AI每5步输出一次进度摘要
 - 结果展示：读取 `execution.jsonl` 最后10行并格式化输出
 
 ### 理由
 
-1. **一致性**：项目现有的 `/auvima.recipe`、`/auvima.test` 都使用Markdown格式
+1. **一致性**：项目现有的 `/frago.recipe`、`/frago.test` 都使用Markdown格式
 2. **灵活性**：Markdown可包含详细的执行流程指引、示例代码
 3. **工具链成熟**：Claude Code的Bash工具支持超时、后台运行
 4. **无需新框架**：不引入questionary等第三方交互库，保持依赖简洁
 
-### 命令文档结构（参考/auvima.recipe.md）
+### 命令文档结构（参考/frago.recipe.md）
 
 ```markdown
 ---
 description: "执行AI主持的复杂浏览器自动化任务并管理run实例"
 ---
 
-# /auvima.run - Run命令系统
+# /frago.run - Run命令系统
 
 ## 你的任务
 
@@ -323,7 +323,7 @@ description: "执行AI主持的复杂浏览器自动化任务并管理run实例"
 
 ### 1. 发现现有run实例
 ```bash
-uv run auvima run list --format json
+uv run frago run list --format json
 ```
 
 ### 2. 交互式选择
@@ -331,13 +331,13 @@ uv run auvima run list --format json
 
 ### 3. 固化工作环境
 ```bash
-uv run auvima run set-context <run_id>
+uv run frago run set-context <run_id>
 ```
 
 ### 4. 执行任务并记录日志
 每个关键步骤后：
 ```bash
-uv run auvima run log --step "..." --status "success" --action-type "..." --execution-method "..." --data '{...}'
+uv run frago run log --step "..." --status "success" --action-type "..." --execution-method "..." --data '{...}'
 ```
 
 ### 5. 进度展示
@@ -365,8 +365,8 @@ uv run auvima run log --step "..." --status "success" --action-type "..." --exec
 
 ### 参考
 
-- 现有命令：`.claude/commands/auvima.recipe.md`（611行，提供详细执行流程）
-- 现有命令：`.claude/commands/auvima.test.md`（134行，清晰的步骤划分）
+- 现有命令：`.claude/commands/frago.recipe.md`（611行，提供详细执行流程）
+- 现有命令：`.claude/commands/frago.test.md`（134行，清晰的步骤划分）
 - [Click CLI Best Practices](https://realpython.com/python-click/)
 
 ---
@@ -376,7 +376,7 @@ uv run auvima run log --step "..." --status "success" --action-type "..." --exec
 ### 决策
 
 采用 **文件系统扫描 + AskUserQuestion工具 + RapidFuzz相似度匹配** 方案：
-- 扫描 `runs/` 目录，读取每个run的 `.auvima/current_run` 或 `logs/execution.jsonl` 首行提取主题
+- 扫描 `runs/` 目录，读取每个run的 `.frago/current_run` 或 `logs/execution.jsonl` 首行提取主题
 - 使用 RapidFuzz 计算用户任务描述与现有run主题的相似度（Levenshtein距离）
 - 相似度 > 60% 的run高亮显示为"可能相关"
 - 使用 AskUserQuestion 创建交互式菜单（与项目现有模式一致）
@@ -513,17 +513,17 @@ dependencies = [
 基于决策的相互依赖关系，建议按以下顺序实现：
 
 1. **Phase 1: 核心命令**（无依赖）
-   - `uv run auvima run init <description>` - 使用pypinyin+slugify
-   - `uv run auvima run set-context <run_id>` - 读写.auvima/current_run
-   - `uv run auvima run log ...` - JSONL追加写入
+   - `uv run frago run init <description>` - 使用pypinyin+slugify
+   - `uv run frago run set-context <run_id>` - 读写.frago/current_run
+   - `uv run frago run log ...` - JSONL追加写入
 
 2. **Phase 2: 截图和状态管理**（依赖Phase 1）
-   - `uv run auvima run screenshot <description>` - 基于文件扫描编号
-   - `uv run auvima run list` - 扫描runs/目录
+   - `uv run frago run screenshot <description>` - 基于文件扫描编号
+   - `uv run frago run list` - 扫描runs/目录
 
 3. **Phase 3: 智能发现**（依赖Phase 1+2）
    - 自动发现机制 - 使用RapidFuzz匹配相似run
-   - `/auvima.run` slash命令 - 集成所有子命令
+   - `/frago.run` slash命令 - 集成所有子命令
 
 4. **Phase 4: 清理和文档**
    - 删除旧的视频制作命令
@@ -539,7 +539,7 @@ dependencies = [
 | JSONL文件过大（>100MB） | 性能下降 | 实现日志轮转（execution.001.jsonl） |
 | 截图并发冲突 | 文件覆盖 | 临时文件+原子重命名；如需严格安全加文件锁 |
 | RapidFuzz误匹配 | 推荐无关run | 允许用户忽略推荐，创建新run |
-| `.auvima/current_run` 损坏 | 命令失败 | 提示用户重新set-context；考虑备份机制 |
+| `.frago/current_run` 损坏 | 命令失败 | 提示用户重新set-context；考虑备份机制 |
 
 ---
 

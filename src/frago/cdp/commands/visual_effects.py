@@ -39,7 +39,7 @@ class VisualEffectsCommands:
             if (element) {{
                 element.style.border = '{border_width}px solid {color}';
                 element.style.outline = '{border_width}px solid {color}';
-                element.setAttribute('data-auvima-highlight', 'true');
+                element.setAttribute('data-frago-highlight', 'true');
             }}
         }})();
         """
@@ -62,7 +62,7 @@ class VisualEffectsCommands:
             if (element) {{
                 const rect = element.getBoundingClientRect();
                 const pointer = document.createElement('div');
-                pointer.id = 'auvima-pointer';
+                pointer.id = 'frago-pointer';
                 pointer.style.position = 'fixed';
                 pointer.style.left = rect.left + rect.width / 2 + 'px';
                 pointer.style.top = rect.top + rect.height / 2 + 'px';
@@ -96,7 +96,7 @@ class VisualEffectsCommands:
             const element = document.querySelector('{selector}');
             if (element) {{
                 const overlay = document.createElement('div');
-                overlay.id = 'auvima-spotlight';
+                overlay.id = 'frago-spotlight';
                 overlay.style.position = 'fixed';
                 overlay.style.top = '0';
                 overlay.style.left = '0';
@@ -141,7 +141,7 @@ class VisualEffectsCommands:
             const element = document.querySelector('{selector}');
             if (element) {{
                 const annotation = document.createElement('div');
-                annotation.className = 'auvima-annotation';
+                annotation.className = 'frago-annotation';
                 annotation.textContent = '{text}';
                 annotation.style.position = 'absolute';
                 annotation.style.cssText += '{position_style}';
@@ -163,23 +163,23 @@ class VisualEffectsCommands:
         self.session.send_command("Runtime.evaluate", {"expression": script})
     
     def clear_effects(self) -> None:
-        """清除所有由AuViMa添加的视觉效果"""
+        """清除所有由Frago添加的视觉效果"""
         self.logger.info("Clearing all visual effects")
         
         script = """
         (function() {
-            document.querySelectorAll('[data-auvima-highlight]').forEach(el => {
+            document.querySelectorAll('[data-frago-highlight]').forEach(el => {
                 el.style.border = '';
                 el.style.outline = '';
-                el.removeAttribute('data-auvima-highlight');
+                el.removeAttribute('data-frago-highlight');
             });
             
-            ['auvima-pointer', 'auvima-spotlight'].forEach(id => {
+            ['frago-pointer', 'frago-spotlight'].forEach(id => {
                 const element = document.getElementById(id);
                 if (element) element.remove();
             });
             
-            document.querySelectorAll('.auvima-annotation').forEach(el => el.remove());
+            document.querySelectorAll('.frago-annotation').forEach(el => el.remove());
         })();
         """
         

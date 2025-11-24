@@ -7,7 +7,7 @@
 ### 1. 当前Python实现状态
 
 **发现**:
-- Python CDP实现已存在，位于 `src/auvima/cdp/`
+- Python CDP实现已存在，位于 `src/frago/cdp/`
 - 包含基础客户端、会话管理、命令封装
 - 已有导航、截图、JS执行等核心功能
 - 使用 `websocket-client` 库进行WebSocket通信
@@ -55,7 +55,7 @@
 
 **当前结构**:
 ```
-src/auvima/cdp/
+src/frago/cdp/
 ├── commands/
 │   ├── page.py
 │   ├── input.py  

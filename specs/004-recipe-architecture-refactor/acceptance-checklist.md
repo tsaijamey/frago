@@ -20,7 +20,7 @@ uv run pytest tests/unit/recipe/ tests/integration/recipe/ -v
 
 **验证 JSON 格式输出**（AI 使用）:
 ```bash
-uv run auvima recipe list --format json | jq '.[0]'
+uv run frago recipe list --format json | jq '.[0]'
 ```
 
 **预期输出示例**:
@@ -43,7 +43,7 @@ uv run auvima recipe list --format json | jq '.[0]'
 
 **验证表格格式输出**（人类使用）:
 ```bash
-uv run auvima recipe list
+uv run frago recipe list
 ```
 
 **预期**: 显示清晰的表格，包含 SOURCE、TYPE、NAME、RUNTIME、VERSION 列
@@ -53,7 +53,7 @@ uv run auvima recipe list
 ### ✅ Checkpoint 3: Recipe 详细信息
 
 ```bash
-uv run auvima recipe info upwork_extract_job_details_as_markdown
+uv run frago recipe info upwork_extract_job_details_as_markdown
 ```
 
 **预期**: 显示完整元数据，包括：
@@ -69,7 +69,7 @@ uv run auvima recipe info upwork_extract_job_details_as_markdown
 
 **测试 Python Recipe**:
 ```bash
-uv run auvima recipe run project_specific_task \
+uv run frago recipe run project_specific_task \
   --params '{"project_name": "TestProject"}'
 ```
 
@@ -81,7 +81,7 @@ uv run auvima recipe run project_specific_task \
     "message": "项目任务执行成功: TestProject",
     "project_info": {
       "name": "TestProject",
-      "cwd": "/home/yammi/repos/AuViMa",
+      "cwd": "/home/yammi/repos/Frago",
       ...
     }
   },
@@ -100,7 +100,7 @@ uv run auvima recipe run project_specific_task \
 # 创建临时测试文件
 echo "test content" > /tmp/test_source.txt
 
-uv run auvima recipe run file_copy \
+uv run frago recipe run file_copy \
   --params '{"source": "/tmp/test_source.txt", "destination": "/tmp/test_dest.txt"}'
 
 # 验证文件已复制
@@ -117,7 +117,7 @@ cat /tmp/test_dest.txt
 
 **测试 Workflow**:
 ```bash
-uv run auvima recipe info upwork_batch_extract
+uv run frago recipe info upwork_batch_extract
 ```
 
 **预期**:
@@ -131,7 +131,7 @@ uv run auvima recipe info upwork_batch_extract
 
 **测试缺少必需参数**:
 ```bash
-uv run auvima recipe run upwork_batch_extract --params '{}'
+uv run frago recipe run upwork_batch_extract --params '{}'
 ```
 
 **预期输出**:
@@ -142,7 +142,7 @@ uv run auvima recipe run upwork_batch_extract --params '{}'
 
 **测试类型错误**:
 ```bash
-uv run auvima recipe run upwork_batch_extract \
+uv run frago recipe run upwork_batch_extract \
   --params '{"urls": "not-an-array"}'
 ```
 
@@ -155,9 +155,9 @@ uv run auvima recipe run upwork_batch_extract \
 **测试项目级优先级**:
 ```bash
 # 1. 在当前目录创建项目级 Recipe
-mkdir -p .auvima/recipes/workflows
+mkdir -p .frago/recipes/workflows
 
-cat > .auvima/recipes/workflows/test_priority.md <<'EOF'
+cat > .frago/recipes/workflows/test_priority.md <<'EOF'
 ---
 name: test_priority
 type: workflow
@@ -171,14 +171,14 @@ outputs: {}
 ---
 EOF
 
-cat > .auvima/recipes/workflows/test_priority.py <<'EOF'
+cat > .frago/recipes/workflows/test_priority.py <<'EOF'
 #!/usr/bin/env python3
 import json
 print(json.dumps({"source": "project", "version": "2.0"}))
 EOF
 
 # 2. 查看优先级
-uv run auvima recipe info test_priority
+uv run frago recipe info test_priority
 ```
 
 **预期**:
@@ -188,7 +188,7 @@ uv run auvima recipe info test_priority
 
 **清理**:
 ```bash
-rm -rf .auvima/
+rm -rf .frago/
 ```
 
 ---
@@ -197,7 +197,7 @@ rm -rf .auvima/
 
 **测试文件输出**:
 ```bash
-uv run auvima recipe run project_specific_task \
+uv run frago recipe run project_specific_task \
   --params '{"project_name": "FileTest"}' \
   --output-file /tmp/recipe_output.json
 
@@ -215,14 +215,14 @@ cat /tmp/recipe_output.json | jq '.success'
 
 **测试 Recipe 不存在**:
 ```bash
-uv run auvima recipe run nonexistent_recipe
+uv run frago recipe run nonexistent_recipe
 ```
 
 **预期**: 友好的错误提示，列出可用 Recipe
 
 **测试无效 JSON 参数**:
 ```bash
-uv run auvima recipe run project_specific_task --params 'invalid-json'
+uv run frago recipe run project_specific_task --params 'invalid-json'
 ```
 
 **预期**: JSON 解析错误提示
@@ -233,15 +233,15 @@ uv run auvima recipe run project_specific_task --params 'invalid-json'
 
 ```bash
 # 复制示例到用户级
-uv run auvima recipe copy upwork_extract_job_details_as_markdown
+uv run frago recipe copy upwork_extract_job_details_as_markdown
 
 # 验证已复制
-ls ~/.auvima/recipes/atomic/chrome/ | grep upwork
+ls ~/.frago/recipes/atomic/chrome/ | grep upwork
 ```
 
 **预期**:
 - 显示成功复制的消息
-- 文件存在于 `~/.auvima/recipes/atomic/chrome/`
+- 文件存在于 `~/.frago/recipes/atomic/chrome/`
 - 包含 `.md` 和 `.js` 两个文件
 
 ---
@@ -253,7 +253,7 @@ ls ~/.auvima/recipes/atomic/chrome/ | grep upwork
 **模拟 AI 调用**:
 ```bash
 # AI 获取 Recipe 列表
-RECIPES=$(uv run auvima recipe list --format json)
+RECIPES=$(uv run frago recipe list --format json)
 
 # AI 筛选包含 "youtube" 标签的 Recipe
 echo $RECIPES | jq '[.[] | select(.tags[]? | contains("youtube"))]'
@@ -270,7 +270,7 @@ echo $RECIPES | jq '[.[] | select(.tags[]? | contains("youtube"))]'
 # 用户任务: "我想批量收集 Upwork 职位信息"
 # AI 查询匹配的 Recipe
 
-uv run auvima recipe list --format json | \
+uv run frago recipe list --format json | \
   jq '[.[] | select(.use_cases[]? | contains("批量收集职位信息"))]'
 ```
 
@@ -285,7 +285,7 @@ uv run auvima recipe list --format json | \
 # 用户要求: "提取职位信息并保存到文件"
 # AI 检查 output_targets 是否支持 file
 
-uv run auvima recipe info upwork_extract_job_details_as_markdown \
+uv run frago recipe info upwork_extract_job_details_as_markdown \
   --format json | jq '.output_targets | contains(["file"])'
 ```
 
@@ -298,11 +298,11 @@ uv run auvima recipe info upwork_extract_job_details_as_markdown \
 ### ✅ Checkpoint 15: CLI 帮助文档
 
 ```bash
-uv run auvima recipe --help
-uv run auvima recipe list --help
-uv run auvima recipe run --help
-uv run auvima recipe info --help
-uv run auvima recipe copy --help
+uv run frago recipe --help
+uv run frago recipe list --help
+uv run frago recipe run --help
+uv run frago recipe info --help
+uv run frago recipe copy --help
 ```
 
 **预期**: 每个命令都有清晰的描述和参数说明
@@ -326,7 +326,7 @@ uv run auvima recipe copy --help
 
 ```bash
 uv run pytest tests/unit/recipe/ tests/integration/recipe/ \
-  --cov=src/auvima/recipes --cov-report=term-missing
+  --cov=src/frago/recipes --cov-report=term-missing
 ```
 
 **预期覆盖率**:
@@ -387,11 +387,11 @@ uv run pytest tests/unit/recipe/ tests/integration/recipe/ -v
 # 期望: 82 passed, 5 skipped
 
 # 2. Recipe 列表正常
-uv run auvima recipe list --format json | jq 'length'
+uv run frago recipe list --format json | jq 'length'
 # 期望: 返回数字 (示例 Recipe 数量)
 
 # 3. Recipe 执行正常
-uv run auvima recipe run project_specific_task \
+uv run frago recipe run project_specific_task \
   --params '{"project_name": "AcceptanceTest"}'
 # 期望: success: true
 ```

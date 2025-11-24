@@ -52,7 +52,7 @@ specs/002-cdp-integration-refactor/
 
 ```text
 src/
-└── auvima/
+└── frago/
     ├── __init__.py
     ├── cdp/
     │   ├── __init__.py

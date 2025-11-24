@@ -9,8 +9,8 @@
 
 添加 run 命令系统，包含两个核心组件：
 
-1. **CLI `uv run auvima run` 子命令组**：管理运行实例的生命周期（init、set-context、log、screenshot）
-2. **/auvima.run slash 命令**：在 Claude Code 中执行 AI 主持的浏览器自动化任务
+1. **CLI `uv run frago run` 子命令组**：管理运行实例的生命周期（init、set-context、log、screenshot）
+2. **/frago.run slash 命令**：在 Claude Code 中执行 AI 主持的浏览器自动化任务
 
 Run 实例采用**主题型**设计（如 "find-job-on-upwork"），作为持久化的**信息中心**，支持：
 - Recipe 创建前的探索和调研
@@ -24,15 +24,15 @@ Run 实例采用**主题型**设计（如 "find-job-on-upwork"），作为持久
 
 **Language/Version**: Python 3.9+ (pyproject.toml 已要求 >=3.9)
 **Primary Dependencies**:
-- click (CLI 框架，已用于现有 auvima CLI)
-- 现有 AuViMa CDP 客户端模块
+- click (CLI 框架，已用于现有 frago CLI)
+- 现有 Frago CDP 客户端模块
 - 现有 Recipe 系统模块
 - pathlib, json, datetime (标准库)
 
 **Storage**: 文件系统
 - Run 实例目录：`runs/<topic-slug>/`
 - 日志：JSONL 格式（`logs/execution.jsonl`）
-- 配置：`.auvima/current_run`（存储当前 run 上下文）
+- 配置：`.frago/current_run`（存储当前 run 上下文）
 - 脚本文件：`scripts/*.{py,js,sh}`
 - 截图：PNG 格式
 
@@ -43,7 +43,7 @@ Run 实例采用**主题型**设计（如 "find-job-on-upwork"），作为持久
 
 **Target Platform**: Linux/macOS（CLI 工具，跨平台）
 
-**Project Type**: Single project（扩展现有 AuViMa CLI）
+**Project Type**: Single project（扩展现有 Frago CLI）
 
 **Performance Goals**:
 - log 命令执行 <50ms
@@ -51,7 +51,7 @@ Run 实例采用**主题型**设计（如 "find-job-on-upwork"），作为持久
 - 支持单个 run 实例积累 10k+ 日志条目
 
 **Constraints**:
-- 必须与现有 `uv run auvima` CLI 集成
+- 必须与现有 `uv run frago` CLI 集成
 - 兼容现有 Recipe 系统和 CDP 命令
 - 日志文件必须是标准 JSONL 格式（便于 jq/grep 处理）
 - 截图文件名必须可排序（用序号前缀）
@@ -59,7 +59,7 @@ Run 实例采用**主题型**设计（如 "find-job-on-upwork"），作为持久
 **Scale/Scope**:
 - 预期同时管理 10-50 个 run 实例
 - 单个 run 实例：数百个日志条目、数十个截图
-- /auvima.run slash 命令需集成到 Claude Code
+- /frago.run slash 命令需集成到 Claude Code
 
 ## Constitution Check
 
@@ -95,7 +95,7 @@ specs/[###-feature]/
 ### Source Code (repository root)
 
 ```text
-src/auvima/
+src/frago/
 ├── cli/
 │   ├── commands.py           # 现有 CDP 命令（navigate, click, etc.）
 │   ├── recipe_commands.py    # 现有 Recipe 命令（list, run, etc.）
@@ -104,7 +104,7 @@ src/auvima/
 │   ├── __init__.py
 │   ├── manager.py           # Run 实例管理（创建、查找、列表）
 │   ├── logger.py            # 日志记录（JSONL 格式化、验证）
-│   ├── context.py           # 上下文管理（读写 .auvima/current_run）
+│   ├── context.py           # 上下文管理（读写 .frago/current_run）
 │   ├── discovery.py         # Run 实例自动发现
 │   └── models.py            # 数据模型（RunInstance, LogEntry）
 ├── cdp/                      # 现有 CDP 模块
@@ -113,9 +113,9 @@ src/auvima/
 
 .claude/
 └── commands/
-    ├── auvima.recipe.md      # 现有
-    ├── auvima.test.md        # 现有
-    └── auvima.run.md         # 🆕 AI 主持的任务执行 slash 命令
+    ├── frago.recipe.md      # 现有
+    ├── frago.test.md        # 现有
+    └── frago.run.md         # 🆕 AI 主持的任务执行 slash 命令
 
 runs/                         # 🆕 Run 实例工作目录（git ignore）
 └── <topic-slug>/
@@ -125,7 +125,7 @@ runs/                         # 🆕 Run 实例工作目录（git ignore）
     ├── scripts/
     └── outputs/
 
-.auvima/                      # 🆕 AuViMa 配置目录
+.frago/                      # 🆕 Frago 配置目录
 └── current_run              # 当前 run 上下文
 
 tests/
@@ -140,7 +140,7 @@ tests/
     └── test_log_format.py    # 🆕 JSONL 格式验证
 ```
 
-**Structure Decision**: Single project 结构，扩展现有 `src/auvima/` 模块。新增 `run/` 子模块处理核心逻辑，CLI 命令集成到 `cli/run_commands.py`。Run 实例数据存储在项目根目录的 `runs/` 目录（与现有 `projects/`、`examples/` 目录并列）。
+**Structure Decision**: Single project 结构，扩展现有 `src/frago/` 模块。新增 `run/` 子模块处理核心逻辑，CLI 命令集成到 `cli/run_commands.py`。Run 实例数据存储在项目根目录的 `runs/` 目录（与现有 `projects/`、`examples/` 目录并列）。
 
 ## Complexity Tracking
 

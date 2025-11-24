@@ -8,9 +8,9 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 
-from auvima.run.manager import RunManager
-from auvima.run.models import RunStatus
-from auvima.run.exceptions import RunNotFoundError, InvalidRunIDError
+from frago.run.manager import RunManager
+from frago.run.models import RunStatus
+from frago.run.exceptions import RunNotFoundError, InvalidRunIDError
 
 
 @pytest.fixture

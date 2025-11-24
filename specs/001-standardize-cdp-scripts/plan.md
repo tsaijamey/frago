@@ -55,11 +55,11 @@ specs/001-standardize-cdp-scripts/
 
 ```text
 # Python CDP库项目结构
-auvima/
+frago/
 ├── pyproject.toml        # 项目配置和依赖
 ├── uv.lock              # 锁定依赖版本
 ├── src/
-│   └── auvima/
+│   └── frago/
 │       ├── __init__.py
 │       ├── cdp/
 │       │   ├── __init__.py
@@ -79,9 +79,9 @@ auvima/
 │           └── main.py        # CLI入口
 
 scripts/                  # Shell包装器（向后兼容）
-├── cdp_navigate.sh      → 调用 python -m auvima.cli navigate
-├── cdp_click.sh         → 调用 python -m auvima.cli click
-├── cdp_screenshot.sh    → 调用 python -m auvima.cli screenshot
+├── cdp_navigate.sh      → 调用 python -m frago.cli navigate
+├── cdp_click.sh         → 调用 python -m frago.cli click
+├── cdp_screenshot.sh    → 调用 python -m frago.cli screenshot
 └── ...
 
 tests/

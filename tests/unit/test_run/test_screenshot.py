@@ -7,7 +7,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from auvima.run.screenshot import get_next_screenshot_number, capture_screenshot
+from frago.run.screenshot import get_next_screenshot_number, capture_screenshot
 
 
 class TestGetNextScreenshotNumber:
@@ -73,8 +73,8 @@ class TestGetNextScreenshotNumber:
 class TestCaptureScreenshot:
     """测试capture_screenshot函数"""
 
-    @patch("auvima.run.screenshot.CDPSession")
-    @patch("auvima.run.screenshot.CDPClient")
+    @patch("frago.run.screenshot.CDPSession")
+    @patch("frago.run.screenshot.CDPClient")
     def test_capture_screenshot_success(self, mock_client_class, mock_session_class, tmp_path):
         """测试成功捕获截图"""
         screenshots_dir = tmp_path / "screenshots"
@@ -95,8 +95,8 @@ class TestCaptureScreenshot:
         assert file_path.exists()
         assert file_path.read_bytes() == b"fake image data"
 
-    @patch("auvima.run.screenshot.CDPSession")
-    @patch("auvima.run.screenshot.CDPClient")
+    @patch("frago.run.screenshot.CDPSession")
+    @patch("frago.run.screenshot.CDPClient")
     def test_capture_screenshot_slug_description(
         self, mock_client_class, mock_session_class, tmp_path
     ):
@@ -116,8 +116,8 @@ class TestCaptureScreenshot:
         assert "#" not in file_path.name
         assert "sou-suo-ye-mian" in file_path.name or "search-page" in file_path.name.lower()
 
-    @patch("auvima.run.screenshot.CDPSession")
-    @patch("auvima.run.screenshot.CDPClient")
+    @patch("frago.run.screenshot.CDPSession")
+    @patch("frago.run.screenshot.CDPClient")
     def test_capture_screenshot_sequential(
         self, mock_client_class, mock_session_class, tmp_path
     ):
@@ -141,8 +141,8 @@ class TestCaptureScreenshot:
         _, seq3 = capture_screenshot("页面3", screenshots_dir)
         assert seq3 == 3
 
-    @patch("auvima.run.screenshot.CDPSession")
-    @patch("auvima.run.screenshot.CDPClient")
+    @patch("frago.run.screenshot.CDPSession")
+    @patch("frago.run.screenshot.CDPClient")
     def test_capture_screenshot_atomic_write(
         self, mock_client_class, mock_session_class, tmp_path
     ):
@@ -163,8 +163,8 @@ class TestCaptureScreenshot:
         temp_files = list(screenshots_dir.glob(".tmp_*"))
         assert len(temp_files) == 0
 
-    @patch("auvima.run.screenshot.CDPSession")
-    @patch("auvima.run.screenshot.CDPClient")
+    @patch("frago.run.screenshot.CDPSession")
+    @patch("frago.run.screenshot.CDPClient")
     def test_capture_screenshot_error_cleanup(
         self, mock_client_class, mock_session_class, tmp_path
     ):
@@ -178,7 +178,7 @@ class TestCaptureScreenshot:
         mock_session_class.return_value = mock_session
 
         # 捕获应该失败
-        from auvima.run.exceptions import FileSystemError
+        from frago.run.exceptions import FileSystemError
 
         with pytest.raises(FileSystemError):
             capture_screenshot("test", screenshots_dir)
@@ -187,8 +187,8 @@ class TestCaptureScreenshot:
         temp_files = list(screenshots_dir.glob(".tmp_*"))
         assert len(temp_files) == 0
 
-    @patch("auvima.run.screenshot.CDPSession")
-    @patch("auvima.run.screenshot.CDPClient")
+    @patch("frago.run.screenshot.CDPSession")
+    @patch("frago.run.screenshot.CDPClient")
     def test_capture_screenshot_long_description(
         self, mock_client_class, mock_session_class, tmp_path
     ):

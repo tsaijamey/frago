@@ -7,9 +7,9 @@ import json
 import pytest
 from pathlib import Path
 
-from auvima.run.manager import RunManager
-from auvima.run.logger import RunLogger
-from auvima.run.models import ActionType, ExecutionMethod, LogStatus
+from frago.run.manager import RunManager
+from frago.run.logger import RunLogger
+from frago.run.models import ActionType, ExecutionMethod, LogStatus
 
 
 @pytest.fixture

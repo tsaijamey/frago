@@ -13,13 +13,13 @@
 1. **Chrome浏览器已连接CDP**
    ```bash
    # 检查CDP连接状态
-   uv run auvima exec-js "console.log('CDP connected')"
+   uv run frago exec-js "console.log('CDP connected')"
    ```
 
 2. **Python环境已配置**
    ```bash
-   # 验证AuViMa安装
-   uv run auvima --help
+   # 验证Frago安装
+   uv run frago --help
    ```
 
 ---
@@ -31,7 +31,7 @@
 **第1步：进入配方创建对话流程**
 
 ```bash
-/auvima.recipe "提取YouTube视频字幕内容"
+/frago.recipe "提取YouTube视频字幕内容"
 ```
 
 Claude Code会通过prompt模板引导你完成以下流程：
@@ -47,7 +47,7 @@ Claude Code会通过prompt模板引导你完成以下流程：
 
 Claude Code会执行CDP命令：
 ```bash
-uv run auvima click '[aria-label="作者声明"]'
+uv run frago click '[aria-label="作者声明"]'
 ```
 
 **第3步：继续描述后续步骤**
@@ -61,7 +61,7 @@ uv run auvima click '[aria-label="作者声明"]'
 
 Claude Code执行：
 ```bash
-uv run auvima click '[aria-label="内容转文字"]'
+uv run frago click '[aria-label="内容转文字"]'
 ```
 
 **第4步：提取数据**
@@ -75,7 +75,7 @@ uv run auvima click '[aria-label="内容转文字"]'
 
 Claude Code执行：
 ```bash
-uv run auvima exec-js "document.querySelector('.subtitle-text').innerText"
+uv run frago exec-js "document.querySelector('.subtitle-text').innerText"
 ```
 
 **第5步：生成配方**
@@ -86,8 +86,8 @@ Claude Code从对话历史中提取：
 - 等待逻辑（根据CDP执行延迟自动推断）
 
 自动生成：
-- `src/auvima/recipes/youtube_extract_transcript.js`（可执行脚本）
-- `src/auvima/recipes/youtube_extract_transcript.md`（知识文档）
+- `src/frago/recipes/youtube_extract_transcript.js`（可执行脚本）
+- `src/frago/recipes/youtube_extract_transcript.md`（知识文档）
 
 ---
 
@@ -149,7 +149,7 @@ Claude Code从对话历史中提取：
 1. 打开YouTube视频页面
 2. 执行配方脚本：
    ```bash
-   uv run auvima exec-js recipes/youtube_extract_transcript.js
+   uv run frago exec-js recipes/youtube_extract_transcript.js
    ```
 
 ## 前置条件
@@ -178,7 +178,7 @@ Claude Code从对话历史中提取：
 ### 场景：YouTube改版导致选择器失效
 
 ```bash
-/auvima.recipe update youtube_extract_transcript "字幕按钮选择器失效了"
+/frago.recipe update youtube_extract_transcript "字幕按钮选择器失效了"
 ```
 
 Claude Code会：
@@ -199,12 +199,12 @@ Claude Code会：
 ## 列出所有配方
 
 ```bash
-/auvima.recipe list
+/frago.recipe list
 ```
 
 输出示例：
 ```
-配方库（src/auvima/recipes/）：
+配方库（src/frago/recipes/）：
 1. youtube_extract_transcript.js - 提取YouTube视频字幕内容
 2. github_clone_repo_info.js - 获取GitHub仓库克隆信息
 3. twitter_export_thread.js - 导出Twitter完整线程
@@ -254,7 +254,7 @@ const elem = document.querySelector('[aria-label="按钮"]')  // 优先级5
 
 ### 4. 扁平文件系统存储
 
-**无数据库**：所有配方和文档存储在 `src/auvima/recipes/` 扁平目录
+**无数据库**：所有配方和文档存储在 `src/frago/recipes/` 扁平目录
 
 **命名约定**：`<平台>_<功能描述>.js`（例如 `youtube_extract_transcript.js`）
 
@@ -278,9 +278,9 @@ const elem = document.querySelector('[aria-label="按钮"]')  // 优先级5
 
 ### 唯一保留的组件
 
-✅ **Prompt模板**（`.claude/commands/auvima_recipe.md`）：完整的指令集
-✅ **配方库目录**（`src/auvima/recipes/`）：存放生成的.js和.md文件
-✅ **配方执行器**：通过 `uv run auvima exec-js` 执行配方
+✅ **Prompt模板**（`.claude/commands/frago_recipe.md`）：完整的指令集
+✅ **配方库目录**（`src/frago/recipes/`）：存放生成的.js和.md文件
+✅ **配方执行器**：通过 `uv run frago exec-js` 执行配方
 
 ---
 
@@ -310,7 +310,7 @@ const elem = document.querySelector('[aria-label="按钮"]')  // 优先级5
 
 ### Q2: 配方脚本执行失败怎么办？
 
-**A**: 使用 `/auvima.recipe update <配方名>` 重新探索页面，系统会覆盖原文件生成更新版本，并在文档中记录更新原因。
+**A**: 使用 `/frago.recipe update <配方名>` 重新探索页面，系统会覆盖原文件生成更新版本，并在文档中记录更新原因。
 
 ### Q3: 如何避免命名冲突？
 
@@ -336,4 +336,4 @@ const elem = document.querySelector('[aria-label="按钮"]')  // 优先级5
 
 ---
 
-**下一步**：阅读 [tasks.md](./tasks.md) 了解具体实施任务，或直接运行 `/auvima.recipe` 体验配方创建流程（Phase 3完成后）。
+**下一步**：阅读 [tasks.md](./tasks.md) 了解具体实施任务，或直接运行 `/frago.recipe` 体验配方创建流程（Phase 3完成后）。

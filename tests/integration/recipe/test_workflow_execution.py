@@ -15,9 +15,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from auvima.recipes.runner import RecipeRunner
-from auvima.recipes.registry import RecipeRegistry
-from auvima.recipes.exceptions import RecipeExecutionError
+from frago.recipes.runner import RecipeRunner
+from frago.recipes.registry import RecipeRegistry
+from frago.recipes.exceptions import RecipeExecutionError
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class TestWorkflowExecution:
 
         # 验证脚本包含必要的导入
         content = workflow_path.read_text()
-        assert "from auvima.recipes import RecipeRunner" in content
+        assert "from frago.recipes import RecipeRunner" in content
         assert "RecipeExecutionError" in content
 
     def test_workflow_metadata_structure(self, recipe_runner):
@@ -116,7 +116,7 @@ class TestWorkflowErrorHandling:
 
     def test_workflow_missing_required_params(self, recipe_runner):
         """测试 Workflow 缺少必需参数时抛出验证错误"""
-        from auvima.recipes.exceptions import RecipeValidationError
+        from frago.recipes.exceptions import RecipeValidationError
 
         with pytest.raises(RecipeValidationError) as exc_info:
             recipe_runner.run("upwork_batch_extract", params={})
@@ -126,7 +126,7 @@ class TestWorkflowErrorHandling:
 
     def test_workflow_with_invalid_params_type(self, recipe_runner):
         """测试 Workflow 参数类型错误"""
-        from auvima.recipes.exceptions import RecipeValidationError
+        from frago.recipes.exceptions import RecipeValidationError
 
         # urls 应该是数组，不是字符串
         with pytest.raises((RecipeValidationError, RecipeExecutionError)):
@@ -142,12 +142,12 @@ class TestWorkflowRecipeIntegration:
     def test_workflow_can_import_recipe_runner(self):
         """测试 Workflow 脚本可以导入 RecipeRunner"""
         # 验证 RecipeRunner 已导出
-        from auvima.recipes import RecipeRunner
+        from frago.recipes import RecipeRunner
         assert RecipeRunner is not None
 
     def test_workflow_can_catch_recipe_execution_error(self):
         """测试 Workflow 可以捕获原子 Recipe 的执行异常"""
-        from auvima.recipes import RecipeRunner, RecipeExecutionError
+        from frago.recipes import RecipeRunner, RecipeExecutionError
 
         runner = RecipeRunner()
 

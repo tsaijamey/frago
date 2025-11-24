@@ -1,4 +1,4 @@
-# AuViMa 示例参考
+# Frago 示例参考
 
 ## 分镜JSON示例
 
@@ -146,7 +146,7 @@ outputs:
 ## 使用方法
 
 ```bash
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 ```
@@ -236,7 +236,7 @@ outputs:
 ## 使用方法
 
 ```bash
-uv run auvima recipe run test_inspect_tab
+uv run frago recipe run test_inspect_tab
 ```
 
 ## 前置条件
@@ -290,7 +290,7 @@ uv run auvima recipe run test_inspect_tab
 set -e
 
 # 导航到GitHub
-uv run auvima navigate https://github.com
+uv run frago navigate https://github.com
 sleep 3
 
 # 开始录制
@@ -299,7 +299,7 @@ RECORD_PID=$!
 
 # 执行页面操作
 sleep 2
-uv run auvima scroll down 500
+uv run frago scroll down 500
 sleep 3
 
 # 停止录制
@@ -317,7 +317,7 @@ echo "录制完成: shot_001.mp4"
 set -e
 
 # 导航到Notion产品页
-uv run auvima navigate https://www.notion.so/product
+uv run frago navigate https://www.notion.so/product
 sleep 3
 
 # 开始录制
@@ -328,19 +328,19 @@ RECORD_PID=$!
 sleep 2
 
 # 聚光灯效果
-uv run auvima spotlight ".hero-section" 3
+uv run frago spotlight ".hero-section" 3
 sleep 3
 
 # 高亮特性卡片
-uv run auvima highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
+uv run frago highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
 sleep 2
 
 # 滚动页面
-uv run auvima scroll down 800 --smooth
+uv run frago scroll down 800 --smooth
 sleep 2
 
 # 添加标注
-uv run auvima annotate ".pricing-section" "灵活的定价方案" --position top
+uv run frago annotate ".pricing-section" "灵活的定价方案" --position top
 sleep 2
 
 # 停止录制
@@ -453,7 +453,7 @@ echo "录制完成: shot_002.mp4"
 
 ```bash
 # 提取YouTube字幕
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 ```
@@ -463,7 +463,7 @@ uv run auvima recipe run youtube_extract_video_transcript \
 ```bash
 # 循环提取多个视频的字幕
 for url in $(cat video_urls.txt); do
-  uv run auvima recipe run youtube_extract_video_transcript \
+  uv run frago recipe run youtube_extract_video_transcript \
       --params "{\"url\": \"$url\"}" \
       --output-file "transcripts/$(basename $url).txt"
 done
@@ -473,7 +473,7 @@ done
 
 ```bash
 # 在Pipeline的prepare阶段使用Recipe
-uv run auvima recipe run youtube_extract_video_transcript \
+uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "..."}' \
     --output-file research/video_transcript.txt
 

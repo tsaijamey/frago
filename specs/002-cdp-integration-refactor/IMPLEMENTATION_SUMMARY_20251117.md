@@ -37,7 +37,7 @@
 
 运行功能映射验证工具：
 ```bash
-python -m auvima.tools.function_mapping
+python -m frago.tools.function_mapping
 ```
 
 **结果**:
@@ -50,28 +50,28 @@ python -m auvima.tools.function_mapping
 ## 📁 新增文件
 
 ### 命令模块
-- `src/auvima/cdp/commands/screenshot.py` - 截图功能
-- `src/auvima/cdp/commands/scroll.py` - 页面滚动
-- `src/auvima/cdp/commands/wait.py` - 等待元素
-- `src/auvima/cdp/commands/zoom.py` - 页面缩放
-- `src/auvima/cdp/commands/status.py` - 状态检查
-- `src/auvima/cdp/commands/visual_effects.py` - 视觉效果
+- `src/frago/cdp/commands/screenshot.py` - 截图功能
+- `src/frago/cdp/commands/scroll.py` - 页面滚动
+- `src/frago/cdp/commands/wait.py` - 等待元素
+- `src/frago/cdp/commands/zoom.py` - 页面缩放
+- `src/frago/cdp/commands/status.py` - 状态检查
+- `src/frago/cdp/commands/visual_effects.py` - 视觉效果
 
 ### 工具
-- `src/auvima/tools/__init__.py` - 工具包初始化
-- `src/auvima/tools/function_mapping.py` - 功能映射验证工具
+- `src/frago/tools/__init__.py` - 工具包初始化
+- `src/frago/tools/function_mapping.py` - 功能映射验证工具
 
 ## 🔧 修改文件
 
 ### 配置和类型
-- `src/auvima/cdp/config.py` - 添加代理配置字段
-- `src/auvima/cdp/types.py` - 添加ProxyConfig数据类
-- `src/auvima/cdp/exceptions.py` - 添加代理异常类
+- `src/frago/cdp/config.py` - 添加代理配置字段
+- `src/frago/cdp/types.py` - 添加ProxyConfig数据类
+- `src/frago/cdp/exceptions.py` - 添加代理异常类
 
 ### 核心模块
-- `src/auvima/cdp/session.py` - 支持代理配置 + 新命令属性
-- `src/auvima/cdp/commands/__init__.py` - 导出所有命令模块
-- `src/auvima/cdp/commands/page.py` - 添加get_title和get_content方法
+- `src/frago/cdp/session.py` - 支持代理配置 + 新命令属性
+- `src/frago/cdp/commands/__init__.py` - 导出所有命令模块
+- `src/frago/cdp/commands/page.py` - 添加get_title和get_content方法
 
 ### 项目配置
 - `.gitignore` - 添加Python构建产物忽略规则

@@ -7,12 +7,12 @@
 
 ## Summary
 
-重构 AuViMa 的 Recipe 系统架构，核心目标是**让 AI Agent（Claude Code）能够自主创建、发现、选择和执行 Recipe**。实现代码与资源分离、支持多语言 Recipe（JavaScript、Python、Shell）、通过元数据驱动的方式让 AI 理解每个 Recipe 的能力和输出形态。Recipe 系统设计为"AI 可调度的工具集"，而非传统的"人类操作的 CLI 工具"。
+重构 Frago 的 Recipe 系统架构，核心目标是**让 AI Agent（Claude Code）能够自主创建、发现、选择和执行 Recipe**。实现代码与资源分离、支持多语言 Recipe（JavaScript、Python、Shell）、通过元数据驱动的方式让 AI 理解每个 Recipe 的能力和输出形态。Recipe 系统设计为"AI 可调度的工具集"，而非传统的"人类操作的 CLI 工具"。
 
 技术方法：
 1. **元数据增强**：Recipe 元数据包含 `description`, `use_cases`, `tags`, `output_targets` 等 AI 可理解的字段
 2. **混合接口**：AI 通过 Bash 工具调用 CLI 命令，人类也可手动执行（次要场景）
-3. **AI 生成 Workflow**：扩展 `/auvima.recipe` 命令，支持 AI 根据自然语言描述自动生成编排 Recipe
+3. **AI 生成 Workflow**：扩展 `/frago.recipe` 命令，支持 AI 根据自然语言描述自动生成编排 Recipe
 4. **输出形态声明**：Recipe 明确声明支持的输出去向（stdout/file/clipboard），AI 可根据任务需求选择
 
 ## Technical Context
@@ -39,7 +39,7 @@
   - `recipe list --format json` 响应时间 < 500ms（AI 查询场景）
 
 **Constraints**:
-  - 必须向后兼容现有 `uv run auvima exec-js` 命令
+  - 必须向后兼容现有 `uv run frago exec-js` 命令
   - Recipe 输出 JSON 大小限制 10MB（避免内存问题）
   - 元数据文件必须是合法的 Markdown + YAML frontmatter（便于人类阅读和 AI 解析）
   - **AI-first 约束**：所有 CLI 输出必须是结构化的 JSON（`--format json`）或清晰的表格，便于 AI 解析
@@ -58,7 +58,7 @@
 
 **基于 CLAUDE.md 和 AI-first 原则的隐式检查**:
 
-- ✅ **CLI 优先**: 所有功能通过 `uv run auvima` CLI 暴露（AI 通过 Bash 工具调用）
+- ✅ **CLI 优先**: 所有功能通过 `uv run frago` CLI 暴露（AI 通过 Bash 工具调用）
 - ✅ **语言统一**: Python 作为主实现语言
 - ✅ **文件系统存储**: Recipe 作为文件管理，符合现有模式
 - ✅ **AI 可理解性**: 元数据驱动，结构化输出（JSON），语义描述字段
@@ -85,7 +85,7 @@ specs/004-recipe-architecture-refactor/
 
 ```text
 # Python 包代码（打包到 wheel）
-src/auvima/
+src/frago/
 ├── cdp/                      # 现有 CDP 核心模块（不变）
 │   └── commands/
 ├── cli/                      # 现有 CLI 接口（扩展）
@@ -141,11 +141,11 @@ tests/
 
 # Claude Code 命令配置（AI 集成关键）
 .claude/commands/
-├── auvima-recipe.md         # 🔄 更新 /auvima.recipe 命令（支持生成 Workflow）
+├── frago-recipe.md         # 🔄 更新 /frago.recipe 命令（支持生成 Workflow）
 └── ...                      # 其他命令
 
 # 用户级 Recipe 目录（运行时创建，不在仓库）
-~/.auvima/
+~/.frago/
 └── recipes/
     ├── atomic/
     │   ├── chrome/
@@ -153,13 +153,13 @@ tests/
     └── workflows/
 
 # 项目级 Recipe 目录（可选，不在仓库，用户项目中创建）
-.auvima/
+.frago/
 └── recipes/
     └── workflows/
 ```
 
 **Structure Decision**: 采用单一 Python 包项目结构。核心变更：
-1. `src/auvima/recipes/` 从存放 Recipe 脚本改为存放引擎代码
+1. `src/frago/recipes/` 从存放 Recipe 脚本改为存放引擎代码
 2. 新增 `output_handler.py` 模块处理多种输出去向
 3. `metadata.py` 扩展支持 AI 可理解字段（`description`, `use_cases`, `tags`, `output_targets`）
 4. 测试新增 `test_ai_workflow.py` 模拟 AI Agent 使用场景

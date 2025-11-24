@@ -1,4 +1,4 @@
-# AuViMa 项目进展
+# Frago 项目进展
 
 ## 项目状态
 
@@ -32,7 +32,7 @@
   - 类型安全配置系统
 
 - [x] **CLI工具**（Click框架）
-  - `uv run auvima <command>` - 所有CDP功能统一接口
+  - `uv run frago <command>` - 所有CDP功能统一接口
   - 代理配置支持（环境变量 + CLI参数）
   - 功能映射验证工具（100%覆盖率）
 
@@ -50,11 +50,11 @@
   - 完整日志系统
 
 - [x] **Slash Commands配置**（5个AI阶段命令）
-  - `/auvima.start` - AI自主信息收集
-  - `/auvima.storyboard` - AI自主分镜设计
-  - `/auvima.generate` - AI创作录制脚本
-  - `/auvima.evaluate` - AI质量评估
-  - `/auvima.merge` - AI视频合成
+  - `/frago.start` - AI自主信息收集
+  - `/frago.storyboard` - AI自主分镜设计
+  - `/frago.generate` - AI创作录制脚本
+  - `/frago.evaluate` - AI质量评估
+  - `/frago.merge` - AI视频合成
 
 ### Recipe系统（迭代003-004）
 
@@ -65,14 +65,14 @@
   - 输出处理器（stdout/file/clipboard）
   - CLI命令组（list/info/run）
 
-- [x] **Recipe管理命令** (`/auvima.recipe`)
+- [x] **Recipe管理命令** (`/frago.recipe`)
   - AI交互式探索创建Recipe（003设计）
   - `recipe list` - 列出所有Recipe（支持JSON格式）
   - `recipe info` - 查看Recipe详细信息
   - `recipe run` - 执行Recipe（参数验证+输出处理）
 
 - [x] **Recipe存储结构**
-  - 代码与资源分离（`src/auvima/recipes/`为引擎代码）
+  - 代码与资源分离（`src/frago/recipes/`为引擎代码）
   - 示例Recipe位于`examples/atomic/chrome/`
   - 描述性命名（`<平台>_<操作>_<对象>.js`）
   - 配套元数据文档（.md + YAML frontmatter）
@@ -93,21 +93,21 @@
 ### 高优先级
 
 - [ ] **AI Slash Commands实现**
-  - [ ] `/auvima.start` - AI信息收集逻辑
-  - [ ] `/auvima.storyboard` - AI分镜设计逻辑
-  - [ ] `/auvima.generate` - AI录制脚本生成
-  - [ ] `/auvima.evaluate` - AI质量评估
-  - [ ] `/auvima.merge` - AI视频合成
+  - [ ] `/frago.start` - AI信息收集逻辑
+  - [ ] `/frago.storyboard` - AI分镜设计逻辑
+  - [ ] `/frago.generate` - AI录制脚本生成
+  - [ ] `/frago.evaluate` - AI质量评估
+  - [ ] `/frago.merge` - AI视频合成
 
 - [ ] **Recipe系统完善（004迭代剩余）**
   - [x] Phase 1-3：基础架构 + AI可用性（元数据框架、注册表、执行器、CLI）
   - [ ] Phase 4：多语言Recipe支持（Python/Shell runtime执行）
-  - [ ] Phase 5：用户级Recipe目录（`~/.auvima/recipes/` + `init`命令）
+  - [ ] Phase 5：用户级Recipe目录（`~/.frago/recipes/` + `init`命令）
   - [ ] Phase 6：Workflow Recipe编排（调用多个原子Recipe）
   - [ ] Phase 7：参数验证和类型检查
-  - [ ] Phase 8：项目级Recipe支持（`.auvima/recipes/`）
-  - [ ] `/auvima.recipe` - AI交互式创建Recipe（slash command）
-  - [ ] `/auvima.recipe update` - 迭代更新Recipe
+  - [ ] Phase 8：项目级Recipe支持（`.frago/recipes/`）
+  - [ ] `/frago.recipe` - AI交互式创建Recipe（slash command）
+  - [ ] `/frago.recipe update` - 迭代更新Recipe
 
 - [ ] **Pipeline集成**
   - [ ] Pipeline与Claude CLI的集成
@@ -164,7 +164,7 @@
 
 **成果**：
 - Recipe系统架构设计
-- `/auvima.recipe` 命令设计
+- `/frago.recipe` 命令设计
 - Recipe创建和更新流程
 - Recipe存储和命名规范
 

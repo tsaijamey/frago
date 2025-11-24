@@ -65,8 +65,8 @@ class OutputHandler:
             raise RuntimeError(
                 "clipboard 输出需要安装可选依赖 pyperclip。\n"
                 "安装方法:\n"
-                "  pip install auvima[clipboard]  # 仅剪贴板功能\n"
-                "  pip install auvima[all]         # 所有可选功能\n"
+                "  pip install frago[clipboard]  # 仅剪贴板功能\n"
+                "  pip install frago[all]         # 所有可选功能\n"
                 "  uv add --optional clipboard pyperclip  # uv 用户"
             )
         

@@ -17,39 +17,39 @@
 
 ### 会话 2025-11-19（架构根本性简化）
 
-- Q: 探索引擎的实现方式是什么？ → A: Claude Code本身就是智能探索引擎，通过prompt模板引导使用auvima原子操作，无需独立的RecipeExplorer类
-- Q: `/auvima.recipe` 命令是否需要 `create` 子命令？ → A: 不需要，直接 `/auvima.recipe "描述"` 即可进入对话流程，create是多余的
-- Q: 探索过程如何进行？ → A: 用户通过自然对话描述步骤（如"先点击作者声明展开"），Claude Code执行CDP原子命令（如 `uv run auvima click`），记录操作历史后生成JavaScript脚本
+- Q: 探索引擎的实现方式是什么？ → A: Claude Code本身就是智能探索引擎，通过prompt模板引导使用frago原子操作，无需独立的RecipeExplorer类
+- Q: `/frago.recipe` 命令是否需要 `create` 子命令？ → A: 不需要，直接 `/frago.recipe "描述"` 即可进入对话流程，create是多余的
+- Q: 探索过程如何进行？ → A: 用户通过自然对话描述步骤（如"先点击作者声明展开"），Claude Code执行CDP原子命令（如 `uv run frago click`），记录操作历史后生成JavaScript脚本
 - Q: ExplorationSession等复杂状态管理是否必要？ → A: 不必要，Claude Code的对话历史即为探索记录，只需从对话中提取关键选择器和操作序列即可生成脚本
 - Q: 数据模型需要保留哪些？ → A: 不需要任何Python数据模型。Claude Code会直接写JavaScript和Markdown文件
-- Q: 如何生成配方JavaScript脚本？ → A: Claude Code在对话结束后，使用Write工具直接写.js和.md文件到src/auvima/recipes/，不需要Python代码来"生成代码"
+- Q: 如何生成配方JavaScript脚本？ → A: Claude Code在对话结束后，使用Write工具直接写.js和.md文件到src/frago/recipes/，不需要Python代码来"生成代码"
 - Q: 是否需要conversation_parser.py、generator.py等Python模块？ → A: 完全不需要。提示词教会Claude Code如何做，Claude Code本身会写代码
-- Q: 选择器优先级规则如何提供给Claude Code？ → A: 整合在.claude/commands/auvima_recipe.md提示词中，作为规则表格供Claude Code参考
-- Q: 需要哪些代码仓库文件？ → A: 只需要两个：1) .claude/commands/auvima_recipe.md（提示词） 2) src/auvima/recipes/（空目录，存放生成的配方）
+- Q: 选择器优先级规则如何提供给Claude Code？ → A: 整合在.claude/commands/frago_recipe.md提示词中，作为规则表格供Claude Code参考
+- Q: 需要哪些代码仓库文件？ → A: 只需要两个：1) .claude/commands/frago_recipe.md（提示词） 2) src/frago/recipes/（空目录，存放生成的配方）
 - Q: specs/003-skill-automation/目录的作用是什么？ → A: 纯开发文档目录（通过/speckit.specify创建），不是代码目录，不包含任何源代码
 
 ### 补充说明
 
-**用户交互接口**: 通过 `/auvima.recipe` 命令提供场景化的配方管理入口：
-- `/auvima.recipe "操作描述"` 或 `/auvima.recipe` - 进入配方创建对话流程
-- `/auvima.recipe update <配方名>` - 更新现有配方
-- `/auvima.recipe list` - 列出所有配方
+**用户交互接口**: 通过 `/frago.recipe` 命令提供场景化的配方管理入口：
+- `/frago.recipe "操作描述"` 或 `/frago.recipe` - 进入配方创建对话流程
+- `/frago.recipe update <配方名>` - 更新现有配方
+- `/frago.recipe list` - 列出所有配方
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - 通过自然语言指令创建快捷操作脚本 (Priority: P1)
 
-用户通过 `/auvima.recipe` 命令进入对话流程，逐步描述操作步骤。Claude Code（被prompt模板引导）使用auvima的CDP原子操作（如click、exec-js、screenshot）实际执行每一步，记录操作历史和关键选择器，最后生成包含完整逻辑的JavaScript配方脚本。
+用户通过 `/frago.recipe` 命令进入对话流程，逐步描述操作步骤。Claude Code（被prompt模板引导）使用frago的CDP原子操作（如click、exec-js、screenshot）实际执行每一步，记录操作历史和关键选择器，最后生成包含完整逻辑的JavaScript配方脚本。
 
 **Why this priority**: 这是核心功能，是整个系统的基础价值所在——将复杂的多步骤操作转化为可复用的自动化脚本，节省用户重复劳动的时间。
 
-**Independent Test**: 用户执行 `/auvima.recipe "提取YouTube视频字幕"`，在对话中描述步骤（如"点击视频下方的作者声明展开" → "点击内容转文字按钮" → "提取字幕文本"），Claude Code执行CDP命令并生成 `youtube_extract_transcript.js` 脚本，执行脚本后能够成功提取字幕。
+**Independent Test**: 用户执行 `/frago.recipe "提取YouTube视频字幕"`，在对话中描述步骤（如"点击视频下方的作者声明展开" → "点击内容转文字按钮" → "提取字幕文本"），Claude Code执行CDP命令并生成 `youtube_extract_transcript.js` 脚本，执行脚本后能够成功提取字幕。
 
 **Acceptance Scenarios**:
 
-1. **Given** 用户执行 `/auvima.recipe` 并描述操作步骤，**When** Claude Code使用 `uv run auvima click/exec-js` 等命令逐步执行，**Then** 成功完成所有操作并记录关键DOM选择器
-2. **Given** 探索完成，**When** Claude Code根据对话历史生成JavaScript脚本，**Then** 脚本包含正确的选择器、操作顺序、等待逻辑和错误处理，并保存到 `src/auvima/recipes/` 目录
-3. **Given** 已生成的配方脚本存在，**When** 用户在目标页面执行 `uv run auvima exec-js recipes/<配方名>.js`，**Then** 脚本成功复现探索过程中的所有操作并返回预期结果
+1. **Given** 用户执行 `/frago.recipe` 并描述操作步骤，**When** Claude Code使用 `uv run frago click/exec-js` 等命令逐步执行，**Then** 成功完成所有操作并记录关键DOM选择器
+2. **Given** 探索完成，**When** Claude Code根据对话历史生成JavaScript脚本，**Then** 脚本包含正确的选择器、操作顺序、等待逻辑和错误处理，并保存到 `src/frago/recipes/` 目录
+3. **Given** 已生成的配方脚本存在，**When** 用户在目标页面执行 `uv run frago exec-js recipes/<配方名>.js`，**Then** 脚本成功复现探索过程中的所有操作并返回预期结果
 4. **Given** 探索过程中某个CDP命令失败（如元素未找到），**When** Claude Code检测到错误，**Then** 询问用户下一步操作或提供候选方案，继续探索直到成功
 
 ---
@@ -100,25 +100,25 @@
 
 ### Functional Requirements
 
-- **FR-001**: `/auvima.recipe` slash command必须通过prompt模板（.claude/commands/auvima_recipe.md）引导Claude Code进入配方创建对话流程，接收用户的自然语言操作描述
-- **FR-002**: Claude Code必须能够使用auvima的CDP原子命令（`uv run auvima click/exec-js/screenshot/navigate`）与Chrome浏览器交互
+- **FR-001**: `/frago.recipe` slash command必须通过prompt模板（.claude/commands/frago_recipe.md）引导Claude Code进入配方创建对话流程，接收用户的自然语言操作描述
+- **FR-002**: Claude Code必须能够使用frago的CDP原子命令（`uv run frago click/exec-js/screenshot/navigate`）与Chrome浏览器交互
 - **FR-003**: 在对话过程中，Claude Code必须逐步执行用户描述的每个操作，实际体验整个流程
 - **FR-004**: Claude Code必须使用Write工具直接生成JavaScript配方脚本，包含完整的选择器降级逻辑、操作序列和等待时间
-- **FR-005**: Claude Code必须将生成的JavaScript脚本保存到 `src/auvima/recipes/` 目录，文件名遵循"平台_功能"格式（例如 `youtube_extract_transcript.js`），使用小写字母和下划线分隔
+- **FR-005**: Claude Code必须将生成的JavaScript脚本保存到 `src/frago/recipes/` 目录，文件名遵循"平台_功能"格式（例如 `youtube_extract_transcript.js`），使用小写字母和下划线分隔
 - **FR-006**: Claude Code必须为每个配方脚本创建配套的Markdown知识文档，包含6个标准章节：功能描述、使用方法、前置条件、预期输出、注意事项、更新历史
-- **FR-007**: 生成的配方脚本必须能够通过 `uv run auvima exec-js recipes/<脚本名>.js` 独立执行
+- **FR-007**: 生成的配方脚本必须能够通过 `uv run frago exec-js recipes/<脚本名>.js` 独立执行
 - **FR-008**: 当CDP命令执行失败时，Claude Code必须询问用户下一步操作或提供候选方案，而不是终止流程
-- **FR-009**: `/auvima.recipe update <配方名>` 必须读取现有脚本，重新探索，然后覆盖原文件生成改进版本
+- **FR-009**: `/frago.recipe update <配方名>` 必须读取现有脚本，重新探索，然后覆盖原文件生成改进版本
 - **FR-010**: 更新配方时，Claude Code必须在知识文档的"更新历史"章节追加新记录（不是替换）
 - **FR-011**: 生成的配方脚本必须包含选择器降级逻辑（按优先级5→1：ARIA/data→ID→class），提供2-3个备选选择器
 - **FR-012**: 生成脚本前，Claude Code必须使用Read工具检查是否存在同名文件，如存在则通过对话确认覆盖
 
 ### Key Entities
 
-- **配方脚本（Recipe Script）**：存储在 `src/auvima/recipes/` 目录中的JavaScript文件，由Claude Code在对话结束后使用Write工具创建。文件头部包含Recipe元数据注释（名称、平台、描述、版本），脚本主体包含选择器降级逻辑和操作步骤
+- **配方脚本（Recipe Script）**：存储在 `src/frago/recipes/` 目录中的JavaScript文件，由Claude Code在对话结束后使用Write工具创建。文件头部包含Recipe元数据注释（名称、平台、描述、版本），脚本主体包含选择器降级逻辑和操作步骤
 - **知识文档（Knowledge Document）**：与配方脚本配套的Markdown文件（同名.md），由Claude Code使用Write工具创建。固定包含6个章节：功能描述、使用方法、前置条件、预期输出、注意事项、更新历史
-- **Prompt模板（Prompt Template）**：`.claude/commands/auvima_recipe.md`文件，教会Claude Code如何引导对话、执行CDP命令、生成配方的完整指令。包含选择器优先级规则表格、JavaScript模板示例、知识文档章节格式
-- **配方库（Recipe Library）**：`src/auvima/recipes/`目录，扁平结构，通过描述性文件名（平台_功能.js）组织所有配方
+- **Prompt模板（Prompt Template）**：`.claude/commands/frago_recipe.md`文件，教会Claude Code如何引导对话、执行CDP命令、生成配方的完整指令。包含选择器优先级规则表格、JavaScript模板示例、知识文档章节格式
+- **配方库（Recipe Library）**：`src/frago/recipes/`目录，扁平结构，通过描述性文件名（平台_功能.js）组织所有配方
 - **选择器优先级规则（Selector Priority Rules）**：整合在prompt模板中的规则表格，定义5个优先级（ARIA/data=5, ID=4, class=3, structure=2, generated=1）
 
 ## Success Criteria *(mandatory)*

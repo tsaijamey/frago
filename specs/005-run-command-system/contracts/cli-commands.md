@@ -4,14 +4,14 @@
 **Created**: 2025-11-21
 **Version**: 1.0
 
-本文档定义 `uv run auvima run` 子命令组的 CLI 接口契约。
+本文档定义 `uv run frago run` 子命令组的 CLI 接口契约。
 
 ---
 
 ## 命令组概览
 
 ```bash
-uv run auvima run <subcommand> [options]
+uv run frago run <subcommand> [options]
 ```
 
 **子命令列表**：
@@ -30,7 +30,7 @@ uv run auvima run <subcommand> [options]
 ### 用法
 
 ```bash
-uv run auvima run init <description>
+uv run frago run init <description>
 ```
 
 ### 参数
@@ -80,7 +80,7 @@ uv run auvima run init <description>
 ### 示例
 
 ```bash
-$ uv run auvima run init "在Upwork上搜索Python职位"
+$ uv run frago run init "在Upwork上搜索Python职位"
 {
   "run_id": "zai-upwork-shang-sou-suo-python-zhi-wei",
   "created_at": "2025-11-21T10:30:00Z",
@@ -95,7 +95,7 @@ $ uv run auvima run init "在Upwork上搜索Python职位"
 ### 用法
 
 ```bash
-uv run auvima run set-context <run_id>
+uv run frago run set-context <run_id>
 ```
 
 ### 参数
@@ -127,7 +127,7 @@ Error: Run 'invalid-id' not found
 
 ### 副作用
 
-1. 创建/更新 `.auvima/current_run`：
+1. 创建/更新 `.frago/current_run`：
    ```json
    {
      "run_id": "find-job-on-upwork",
@@ -141,7 +141,7 @@ Error: Run 'invalid-id' not found
 ### 示例
 
 ```bash
-$ uv run auvima run set-context find-job-on-upwork
+$ uv run frago run set-context find-job-on-upwork
 {
   "run_id": "find-job-on-upwork",
   "theme_description": "在Upwork上搜索Python职位",
@@ -156,7 +156,7 @@ $ uv run auvima run set-context find-job-on-upwork
 ### 用法
 
 ```bash
-uv run auvima run log \
+uv run frago run log \
   --step <step> \
   --status <status> \
   --action-type <type> \
@@ -187,7 +187,7 @@ uv run auvima run log \
 
 **失败（stderr）**：
 ```
-Error: Current run context not set. Run 'uv run auvima run set-context <run_id>' first.
+Error: Current run context not set. Run 'uv run frago run set-context <run_id>' first.
 ```
 
 **退出码**：
@@ -200,18 +200,18 @@ Error: Current run context not set. Run 'uv run auvima run set-context <run_id>'
 
 1. 追加到 `runs/<run_id>/logs/execution.jsonl`：
    ```json
-   {"timestamp":"2025-11-21T10:35:00Z","step":"提取到5个职位","status":"success","action_type":"extraction","execution_method":"command","schema_version":"1.0","data":{"command":"uv run auvima recipe run ...","jobs":[...],"total":5}}
+   {"timestamp":"2025-11-21T10:35:00Z","step":"提取到5个职位","status":"success","action_type":"extraction","execution_method":"command","schema_version":"1.0","data":{"command":"uv run frago recipe run ...","jobs":[...],"total":5}}
    ```
 
 ### 示例
 
 ```bash
-$ uv run auvima run log \
+$ uv run frago run log \
   --step "提取到5个职位" \
   --status "success" \
   --action-type "extraction" \
   --execution-method "command" \
-  --data '{"command": "uv run auvima recipe run ...", "jobs": [...], "total": 5}'
+  --data '{"command": "uv run frago recipe run ...", "jobs": [...], "total": 5}'
 
 {
   "logged_at": "2025-11-21T10:35:00Z",
@@ -227,7 +227,7 @@ $ uv run auvima run log \
 ### 用法
 
 ```bash
-uv run auvima run screenshot <description>
+uv run frago run screenshot <description>
 ```
 
 ### 参数
@@ -260,7 +260,7 @@ uv run auvima run screenshot <description>
 ### 示例
 
 ```bash
-$ uv run auvima run screenshot "搜索结果页面"
+$ uv run frago run screenshot "搜索结果页面"
 {
   "file_path": "runs/find-job-on-upwork/screenshots/001_search-page.png",
   "sequence_number": 1,
@@ -275,7 +275,7 @@ $ uv run auvima run screenshot "搜索结果页面"
 ### 用法
 
 ```bash
-uv run auvima run list [--format <format>] [--status <status>]
+uv run frago run list [--format <format>] [--status <status>]
 ```
 
 ### 参数
@@ -336,7 +336,7 @@ analyze-github-langchain    active   2025-11-19 15:00     2025-11-20 09:00     �
 ### 示例
 
 ```bash
-$ uv run auvima run list --format json --status active
+$ uv run frago run list --format json --status active
 {
   "runs": [...],
   "total": 2
@@ -350,7 +350,7 @@ $ uv run auvima run list --format json --status active
 ### 用法
 
 ```bash
-uv run auvima run info <run_id> [--format <format>]
+uv run frago run info <run_id> [--format <format>]
 ```
 
 ### 参数
@@ -423,7 +423,7 @@ Recent Logs (last 5):
 ### 用法
 
 ```bash
-uv run auvima run archive <run_id>
+uv run frago run archive <run_id>
 ```
 
 ### 参数
@@ -450,7 +450,7 @@ uv run auvima run archive <run_id>
 ### 副作用
 
 1. 更新 `.metadata.json` 中的 `status` 为 `"archived"`
-2. 如果是当前上下文的 run，清空 `.auvima/current_run`
+2. 如果是当前上下文的 run，清空 `.frago/current_run`
 
 ---
 

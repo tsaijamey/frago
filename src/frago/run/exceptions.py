@@ -36,7 +36,7 @@ class ContextNotSetError(RunException):
     def __init__(self):
         super().__init__(
             "Current run context not set. "
-            "Run 'uv run auvima run set-context <run_id>' first."
+            "Run 'uv run frago run set-context <run_id>' first."
         )
 
 

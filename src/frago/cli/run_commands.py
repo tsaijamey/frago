@@ -67,11 +67,11 @@ def run_group():
 
     \b
     典型工作流:
-    1. 创建run: uv run auvima run init "任务描述"
-    2. 设置上下文: uv run auvima run set-context <run_id>
-    3. 记录日志: uv run auvima run log --step "..." --status "success" ...
-    4. 查看进度: uv run auvima run info <run_id>
-    5. 归档: uv run auvima run archive <run_id>
+    1. 创建run: uv run frago run init "任务描述"
+    2. 设置上下文: uv run frago run set-context <run_id>
+    3. 记录日志: uv run frago run log --step "..." --status "success" ...
+    4. 查看进度: uv run frago run info <run_id>
+    5. 归档: uv run frago run archive <run_id>
     """
     pass
 
@@ -87,8 +87,8 @@ def init(description: str, run_id: Optional[str]):
 
     \b
     示例:
-        uv run auvima run init "在Upwork上搜索Python职位"
-        uv run auvima run init "测试任务" --run-id custom-id
+        uv run frago run init "在Upwork上搜索Python职位"
+        uv run frago run init "测试任务" --run-id custom-id
     """
     try:
         manager = get_manager()
@@ -110,7 +110,7 @@ def set_context(run_id: str):
 
     \b
     示例:
-        uv run auvima run set-context find-job-on-upwork
+        uv run frago run set-context find-job-on-upwork
     """
     try:
         manager = get_manager()
@@ -146,8 +146,8 @@ def list(format: str, status: str):
 
     \b
     示例:
-        uv run auvima run list
-        uv run auvima run list --format json --status active
+        uv run frago run list
+        uv run frago run list --format json --status active
     """
     try:
         manager = get_manager()
@@ -200,8 +200,8 @@ def info(run_id: str, format: str):
 
     \b
     示例:
-        uv run auvima run info find-job-on-upwork
-        uv run auvima run info find-job-on-upwork --format json
+        uv run frago run info find-job-on-upwork
+        uv run frago run info find-job-on-upwork --format json
     """
     try:
         manager = get_manager()
@@ -270,7 +270,7 @@ def archive(run_id: str):
 
     \b
     示例:
-        uv run auvima run archive find-job-on-upwork
+        uv run frago run archive find-job-on-upwork
     """
     try:
         manager = get_manager()
@@ -329,12 +329,12 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
 
     \b
     示例:
-        uv run auvima run log \\
+        uv run frago run log \\
           --step "导航到搜索页" \\
           --status "success" \\
           --action-type "navigation" \\
           --execution-method "command" \\
-          --data '{"command": "uv run auvima navigate https://upwork.com"}'
+          --data '{"command": "uv run frago navigate https://upwork.com"}'
     """
     try:
         # 获取当前上下文
@@ -377,7 +377,7 @@ def screenshot(description: str):
 
     \b
     示例:
-        uv run auvima run screenshot "搜索结果页面"
+        uv run frago run screenshot "搜索结果页面"
     """
     try:
         # 获取当前上下文

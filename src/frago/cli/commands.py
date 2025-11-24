@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AuViMa CLI 命令实现
+Frago CLI 命令实现
 
 实现所有CDP功能的CLI子命令，保持与原有Shell脚本的兼容性。
 """
@@ -356,9 +356,9 @@ def annotate(ctx, selector: str, text: str, position: str):
 )
 def init(force: bool):
     """
-    初始化 AuViMa 用户级目录结构
+    初始化 Frago 用户级目录结构
 
-    创建 ~/.auvima/recipes/ 目录及其子目录:
+    创建 ~/.frago/recipes/ 目录及其子目录:
     - atomic/chrome/: Chrome CDP 操作的 Recipe
     - atomic/system/: 系统操作的 Recipe
     - workflows/: 编排多个 Recipe 的工作流
@@ -366,8 +366,8 @@ def init(force: bool):
     from pathlib import Path
 
     user_home = Path.home()
-    auvima_dir = user_home / '.auvima'
-    recipes_dir = auvima_dir / 'recipes'
+    frago_dir = user_home / '.frago'
+    recipes_dir = frago_dir / 'recipes'
 
     # 需要创建的目录列表
     directories = [
@@ -406,4 +406,4 @@ def init(force: bool):
         click.echo("所有目录已存在")
 
     click.echo(f"\n用户级 Recipe 目录: {recipes_dir}")
-    click.echo("使用 'auvima recipe copy <name>' 复制示例 Recipe 到此目录")
+    click.echo("使用 'frago recipe copy <name>' 复制示例 Recipe 到此目录")

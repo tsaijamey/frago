@@ -28,7 +28,7 @@
 - **cdp_pointer.sh** - 创建动态鼠标指针动画，模拟从屏幕角落移动到目标元素
 - **cdp_spotlight.sh** - 聚光灯效果，突出显示元素并将周围区域变暗
 - **cdp_annotate.sh** - 给元素添加边框标注，用于界面说明和用户指导
-- **cdp_clear_effects.sh** - 清除所有由AuViMa脚本添加的视觉效果元素
+- **cdp_clear_effects.sh** - 清除所有由Frago脚本添加的视觉效果元素
 
 ### 环境检查脚本
 
@@ -51,7 +51,7 @@
 
 ### User Story 1 - 统一的CDP方法目录结构 (Priority: P1)
 
-作为开发者，我希望在src/auvima/cdp目录下有清晰的方法目录结构，这样我就能轻松找到和使用所有CDP相关功能，而不需要在Python代码和Shell脚本之间来回切换。
+作为开发者，我希望在src/frago/cdp目录下有清晰的方法目录结构，这样我就能轻松找到和使用所有CDP相关功能，而不需要在Python代码和Shell脚本之间来回切换。
 
 **Why this priority**: 这是重构的核心目标，直接影响开发效率和代码维护性。统一的目录结构是其他改进的基础。
 
@@ -59,9 +59,9 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** 开发者需要导航到网页，**When** 他们查看src/auvima/cdp目录，**Then** 应该找到清晰的导航方法实现
-2. **Given** 开发者需要截图功能，**When** 他们查看src/auvima/cdp目录，**Then** 应该找到截图方法实现
-3. **Given** 开发者需要执行JavaScript，**When** 他们查看src/auvima/cdp目录，**Then** 应该找到JS执行方法实现
+1. **Given** 开发者需要导航到网页，**When** 他们查看src/frago/cdp目录，**Then** 应该找到清晰的导航方法实现
+2. **Given** 开发者需要截图功能，**When** 他们查看src/frago/cdp目录，**Then** 应该找到截图方法实现
+3. **Given** 开发者需要执行JavaScript，**When** 他们查看src/frago/cdp目录，**Then** 应该找到JS执行方法实现
 
 ---
 
@@ -110,7 +110,7 @@
 
 ### Functional Requirements
 
-- **FR-001**: 系统必须在src/auvima/cdp目录下创建清晰的方法目录结构
+- **FR-001**: 系统必须在src/frago/cdp目录下创建清晰的方法目录结构
 - **FR-002**: 系统必须确保每个Shell脚本功能在Python代码中都有对应实现  
 - **FR-003**: 系统必须检查并确保所有websocket连接正确使用代理参数
 - **FR-004**: 系统必须提供功能一致性验证机制

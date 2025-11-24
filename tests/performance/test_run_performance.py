@@ -10,15 +10,15 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-from auvima.run.manager import RunManager
-from auvima.run.logger import RunLogger
-from auvima.run.context import ContextManager
-from auvima.run.models import ActionType, ExecutionMethod, LogStatus
+from frago.run.manager import RunManager
+from frago.run.logger import RunLogger
+from frago.run.context import ContextManager
+from frago.run.models import ActionType, ExecutionMethod, LogStatus
 
 
 def test_init_performance():
     """测试 init 命令性能（<100ms）"""
-    runs_dir = Path("/tmp/auvima_perf_test/runs")
+    runs_dir = Path("/tmp/frago_perf_test/runs")
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     manager = RunManager(runs_dir)
@@ -37,7 +37,7 @@ def test_init_performance():
 
 def test_log_performance():
     """测试 log 命令性能（<50ms）"""
-    runs_dir = Path("/tmp/auvima_perf_test/runs")
+    runs_dir = Path("/tmp/frago_perf_test/runs")
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     # 先创建一个run实例
@@ -68,7 +68,7 @@ def test_log_performance():
 
 def test_large_log_handling():
     """测试处理 10k+ 日志条目"""
-    runs_dir = Path("/tmp/auvima_perf_test/runs")
+    runs_dir = Path("/tmp/frago_perf_test/runs")
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     # 创建run实例

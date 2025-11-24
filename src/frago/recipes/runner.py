@@ -141,9 +141,9 @@ class RecipeRunner:
         Raises:
             RecipeExecutionError: 执行失败
         """
-        # 构建命令：uv run auvima exec-js <script_path> --return-value
+        # 构建命令：uv run frago exec-js <script_path> --return-value
         cmd = [
-            'uv', 'run', 'auvima', 'exec-js',
+            'uv', 'run', 'frago', 'exec-js',
             str(script_path),
             '--return-value'
         ]

@@ -26,18 +26,18 @@ class RecipeRegistry:
     
     def _setup_search_paths(self) -> None:
         """设置三级查找路径（按优先级排序）"""
-        # 1. 项目级: .auvima/recipes/ (当前工作目录)
-        project_path = Path.cwd() / '.auvima' / 'recipes'
+        # 1. 项目级: .frago/recipes/ (当前工作目录)
+        project_path = Path.cwd() / '.frago' / 'recipes'
         if project_path.exists():
             self.search_paths.append(project_path)
         
-        # 2. 用户级: ~/.auvima/recipes/ (用户家目录)
-        user_path = Path.home() / '.auvima' / 'recipes'
+        # 2. 用户级: ~/.frago/recipes/ (用户家目录)
+        user_path = Path.home() / '.frago' / 'recipes'
         if user_path.exists():
             self.search_paths.append(user_path)
         
         # 3. 示例级: examples/ (仓库根目录或安装位置)
-        # 查找 src/auvima/recipes/registry.py 的位置，推导出仓库根目录
+        # 查找 src/frago/recipes/registry.py 的位置，推导出仓库根目录
         current_file = Path(__file__).resolve()
         repo_root = current_file.parent.parent.parent.parent
         example_path = repo_root / 'examples'
@@ -57,13 +57,13 @@ class RecipeRegistry:
     
     def _get_source_label(self, path: Path) -> str:
         """根据路径返回来源标签"""
-        # 项目级：当前工作目录下的 .auvima/recipes/
-        project_path = Path.cwd() / '.auvima' / 'recipes'
+        # 项目级：当前工作目录下的 .frago/recipes/
+        project_path = Path.cwd() / '.frago' / 'recipes'
         if path == project_path or project_path in path.parents:
             return 'Project'
 
-        # 用户级：用户家目录下的 .auvima/recipes/
-        user_path = Path.home() / '.auvima' / 'recipes'
+        # 用户级：用户家目录下的 .frago/recipes/
+        user_path = Path.home() / '.frago' / 'recipes'
         if path == user_path or user_path in path.parents:
             return 'User'
 

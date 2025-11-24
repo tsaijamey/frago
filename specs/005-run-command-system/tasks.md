@@ -21,9 +21,9 @@
 
 **Purpose**: Project initialization and basic structure
 
-- [X] T001 按实施计划创建 Run 系统目录结构（`src/auvima/run/`, `tests/unit/test_run/`, `.auvima/`, `runs/`）
+- [X] T001 按实施计划创建 Run 系统目录结构（`src/frago/run/`, `tests/unit/test_run/`, `.frago/`, `runs/`）
 - [X] T002 添加依赖到 pyproject.toml（pypinyin>=0.51.0, python-slugify>=8.0.0, rapidfuzz>=3.0.0）
-- [X] T003 [P] 在 .gitignore 中添加 `runs/` 和 `.auvima/current_run`
+- [X] T003 [P] 在 .gitignore 中添加 `runs/` 和 `.frago/current_run`
 
 ---
 
@@ -33,12 +33,12 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [X] T004 创建数据模型在 src/auvima/run/models.py（RunInstance, LogEntry, Screenshot, CurrentRunContext）
-- [X] T005 [P] 创建自定义异常在 src/auvima/run/exceptions.py（RunNotFoundError, InvalidRunIDError, ContextNotSetError, CorruptedLogError）
-- [X] T006 [P] 实现主题slug生成逻辑在 src/auvima/run/utils.py（使用 pypinyin + python-slugify）
-- [X] T007 [P] 实现上下文管理器在 src/auvima/run/context.py（读写 .auvima/current_run，支持环境变量优先级）
-- [X] T008 实现日志记录器在 src/auvima/run/logger.py（JSONL格式化、schema验证、追加写入）
-- [X] T009 实现 Run 实例管理器在 src/auvima/run/manager.py（创建、查找、列表、归档）
+- [X] T004 创建数据模型在 src/frago/run/models.py（RunInstance, LogEntry, Screenshot, CurrentRunContext）
+- [X] T005 [P] 创建自定义异常在 src/frago/run/exceptions.py（RunNotFoundError, InvalidRunIDError, ContextNotSetError, CorruptedLogError）
+- [X] T006 [P] 实现主题slug生成逻辑在 src/frago/run/utils.py（使用 pypinyin + python-slugify）
+- [X] T007 [P] 实现上下文管理器在 src/frago/run/context.py（读写 .frago/current_run，支持环境变量优先级）
+- [X] T008 实现日志记录器在 src/frago/run/logger.py（JSONL格式化、schema验证、追加写入）
+- [X] T009 实现 Run 实例管理器在 src/frago/run/manager.py（创建、查找、列表、归档）
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -48,17 +48,17 @@
 
 **Goal**: 实现主题型run实例的创建、发现和上下文管理，支持信息持续积累
 
-**Independent Test**: 运行 `uv run auvima run init "测试任务"` 两次，第二次应自动发现第一次创建的run
+**Independent Test**: 运行 `uv run frago run init "测试任务"` 两次，第二次应自动发现第一次创建的run
 
 ### Implementation for User Story 2
 
-- [X] T010 [P] [US2] 实现 init 子命令在 src/auvima/cli/run_commands.py（调用 manager.create_run）
-- [X] T011 [P] [US2] 实现 set-context 子命令在 src/auvima/cli/run_commands.py（调用 context.set_current_run）
-- [X] T012 [P] [US2] 实现 list 子命令在 src/auvima/cli/run_commands.py（支持 --format table/json, --status active/archived/all）
-- [X] T013 [P] [US2] 实现 info 子命令在 src/auvima/cli/run_commands.py（显示run详情、统计信息、最近日志）
-- [X] T014 [P] [US2] 实现 archive 子命令在 src/auvima/cli/run_commands.py（更新状态为archived，清空当前上下文）
-- [X] T015 [US2] 实现 run 实例发现逻辑在 src/auvima/run/discovery.py（扫描 runs/ 目录，使用 RapidFuzz 计算相似度）
-- [X] T016 [US2] 在 src/auvima/cli/commands.py 中注册 run 命令组（集成到主 CLI）
+- [X] T010 [P] [US2] 实现 init 子命令在 src/frago/cli/run_commands.py（调用 manager.create_run）
+- [X] T011 [P] [US2] 实现 set-context 子命令在 src/frago/cli/run_commands.py（调用 context.set_current_run）
+- [X] T012 [P] [US2] 实现 list 子命令在 src/frago/cli/run_commands.py（支持 --format table/json, --status active/archived/all）
+- [X] T013 [P] [US2] 实现 info 子命令在 src/frago/cli/run_commands.py（显示run详情、统计信息、最近日志）
+- [X] T014 [P] [US2] 实现 archive 子命令在 src/frago/cli/run_commands.py（更新状态为archived，清空当前上下文）
+- [X] T015 [US2] 实现 run 实例发现逻辑在 src/frago/run/discovery.py（扫描 runs/ 目录，使用 RapidFuzz 计算相似度）
+- [X] T016 [US2] 在 src/frago/cli/commands.py 中注册 run 命令组（集成到主 CLI）
 
 **Checkpoint**: 可以创建、列出、设置上下文、查看详情、归档 run 实例
 
@@ -68,13 +68,13 @@
 
 **Goal**: 提供标准化的工具接口，确保日志和数据格式一致性
 
-**Independent Test**: 执行 `uv run auvima run log --step "测试" --status "success" --action-type "analysis" --execution-method "manual" --data '{}'`，验证日志正确写入
+**Independent Test**: 执行 `uv run frago run log --step "测试" --status "success" --action-type "analysis" --execution-method "manual" --data '{}'`，验证日志正确写入
 
 ### Implementation for User Story 3
 
-- [X] T017 [P] [US3] 实现 log 子命令在 src/auvima/cli/run_commands.py（验证枚举值、调用 logger.write_log）
-- [X] T018 [P] [US3] 实现截图自动编号机制在 src/auvima/run/screenshot.py（扫描现有文件、原子性写入）
-- [X] T019 [US3] 实现 screenshot 子命令在 src/auvima/cli/run_commands.py（调用 CDP 截图、自动编号、记录日志）
+- [X] T017 [P] [US3] 实现 log 子命令在 src/frago/cli/run_commands.py（验证枚举值、调用 logger.write_log）
+- [X] T018 [P] [US3] 实现截图自动编号机制在 src/frago/run/screenshot.py（扫描现有文件、原子性写入）
+- [X] T019 [US3] 实现 screenshot 子命令在 src/frago/cli/run_commands.py（调用 CDP 截图、自动编号、记录日志）
 - [X] T020 [US3] 添加 log 命令的参数验证（action_type 9种枚举、execution_method 6种枚举、status 3种枚举）
 - [X] T021 [US3] 在 logger.py 中添加 schema_version 字段验证和数据迁移预留接口
 
@@ -84,36 +84,36 @@
 
 ## Phase 5: User Story 1 - AI主持的复杂任务执行与上下文积累 (Priority: P1)
 
-**Goal**: 通过 /auvima.run slash 命令支持 AI 主持的任务执行，作为信息中心
+**Goal**: 通过 /frago.run slash 命令支持 AI 主持的任务执行，作为信息中心
 
-**Independent Test**: 在 Claude Code 中运行 `/auvima.run "访问example.com并提取页面标题"`，验证任务执行和日志记录
+**Independent Test**: 在 Claude Code 中运行 `/frago.run "访问example.com并提取页面标题"`，验证任务执行和日志记录
 
 ### Implementation for User Story 1
 
-- [X] T022 [US1] 创建 /auvima.run slash 命令文档在 .claude/commands/auvima.run.md（包含执行流程、工具使用指引、数据记录规范）
-- [X] T023 [US1] 在 auvima.run.md 中添加 run 实例发现流程（调用 list --format json，展示交互式菜单）
-- [X] T024 [US1] 在 auvima.run.md 中添加 Recipe 集成指引（如何发现和调用现有 Recipe）
-- [X] T025 [US1] 在 auvima.run.md 中添加代码文件处理约束（必须保存为 scripts/ 文件，禁止直接存储代码到日志）
-- [X] T026 [US1] 在 auvima.run.md 中添加进度展示要求（每5步输出摘要）和用户交互指引（使用 AskUserQuestion）
-- [X] T027 [US1] 在 auvima.run.md 中添加日志示例（6种 execution_method 的完整示例）
+- [X] T022 [US1] 创建 /frago.run slash 命令文档在 .claude/commands/frago.run.md（包含执行流程、工具使用指引、数据记录规范）
+- [X] T023 [US1] 在 frago.run.md 中添加 run 实例发现流程（调用 list --format json，展示交互式菜单）
+- [X] T024 [US1] 在 frago.run.md 中添加 Recipe 集成指引（如何发现和调用现有 Recipe）
+- [X] T025 [US1] 在 frago.run.md 中添加代码文件处理约束（必须保存为 scripts/ 文件，禁止直接存储代码到日志）
+- [X] T026 [US1] 在 frago.run.md 中添加进度展示要求（每5步输出摘要）和用户交互指引（使用 AskUserQuestion）
+- [X] T027 [US1] 在 frago.run.md 中添加日志示例（6种 execution_method 的完整示例）
 
-**Checkpoint**: /auvima.run slash 命令可用，AI 可以执行复杂任务并正确记录日志
+**Checkpoint**: /frago.run slash 命令可用，AI 可以执行复杂任务并正确记录日志
 
 ---
 
 ## Phase 6: User Story 4 - 清理过时的视频制作命令 (Priority: P3)
 
-**Goal**: 删除旧的视频制作命令，将 AuViMa 定位转变为多运行时自动化基建
+**Goal**: 删除旧的视频制作命令，将 Frago 定位转变为多运行时自动化基建
 
-**Independent Test**: 尝试执行 `/auvima.start`，确认命令不存在
+**Independent Test**: 尝试执行 `/frago.start`，确认命令不存在
 
 ### Implementation for User Story 4
 
-- [X] T028 [P] [US4] 删除 .claude/commands/auvima.start.md
-- [X] T029 [P] [US4] 删除 .claude/commands/auvima.storyboard.md
-- [X] T030 [P] [US4] 删除 .claude/commands/auvima.generate.md
-- [X] T031 [P] [US4] 删除 .claude/commands/auvima.evaluate.md
-- [X] T032 [P] [US4] 删除 .claude/commands/auvima.merge.md
+- [X] T028 [P] [US4] 删除 .claude/commands/frago.start.md
+- [X] T029 [P] [US4] 删除 .claude/commands/frago.storyboard.md
+- [X] T030 [P] [US4] 删除 .claude/commands/frago.generate.md
+- [X] T031 [P] [US4] 删除 .claude/commands/frago.evaluate.md
+- [X] T032 [P] [US4] 删除 .claude/commands/frago.merge.md
 - [X] T033 [US4] 更新 CLAUDE.md 移除视频制作 pipeline 描述（如果存在）
 
 **Checkpoint**: 所有视频制作命令已删除，项目定位更新
@@ -153,7 +153,7 @@
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [X] T046 [P] 添加类型注解到所有 run 模块（src/auvima/run/*.py）
+- [X] T046 [P] 添加类型注解到所有 run 模块（src/frago/run/*.py）
 - [X] T047 [P] 添加 docstrings 到所有公共函数和类
 - [X] T048 代码审查和重构（移除重复代码、优化性能）
 - [X] T049 [P] 验证 quickstart.md 中的所有示例可执行
@@ -180,7 +180,7 @@
 
 - **User Story 2 (P1)**: Can start after Foundational (Phase 2) - 基础run管理，无依赖
 - **User Story 3 (P2)**: Can start after Foundational (Phase 2) - 日志和截图命令，无依赖
-- **User Story 1 (P1)**: Depends on US2 + US3 - /auvima.run 需要调用所有 CLI 命令
+- **User Story 1 (P1)**: Depends on US2 + US3 - /frago.run 需要调用所有 CLI 命令
 - **User Story 4 (P3)**: Independent - 删除旧命令，可随时执行
 
 ### Within Each User Story
@@ -205,13 +205,13 @@
 
 ```bash
 # 并行创建基础模块（不同文件）:
-Task: "创建自定义异常在 src/auvima/run/exceptions.py"
-Task: "实现主题slug生成逻辑在 src/auvima/run/utils.py"
-Task: "实现上下文管理器在 src/auvima/run/context.py"
+Task: "创建自定义异常在 src/frago/run/exceptions.py"
+Task: "实现主题slug生成逻辑在 src/frago/run/utils.py"
+Task: "实现上下文管理器在 src/frago/run/context.py"
 
 # 等待数据模型完成后，并行创建依赖模块:
-Task: "实现日志记录器在 src/auvima/run/logger.py"
-Task: "实现 Run 实例管理器在 src/auvima/run/manager.py"
+Task: "实现日志记录器在 src/frago/run/logger.py"
+Task: "实现 Run 实例管理器在 src/frago/run/manager.py"
 ```
 
 ---
@@ -220,11 +220,11 @@ Task: "实现 Run 实例管理器在 src/auvima/run/manager.py"
 
 ```bash
 # 并行实现所有子命令（不同功能，同一文件不同函数）:
-Task: "[US2] 实现 init 子命令在 src/auvima/cli/run_commands.py"
-Task: "[US2] 实现 set-context 子命令在 src/auvima/cli/run_commands.py"
-Task: "[US2] 实现 list 子命令在 src/auvima/cli/run_commands.py"
-Task: "[US2] 实现 info 子命令在 src/auvima/cli/run_commands.py"
-Task: "[US2] 实现 archive 子命令在 src/auvima/cli/run_commands.py"
+Task: "[US2] 实现 init 子命令在 src/frago/cli/run_commands.py"
+Task: "[US2] 实现 set-context 子命令在 src/frago/cli/run_commands.py"
+Task: "[US2] 实现 list 子命令在 src/frago/cli/run_commands.py"
+Task: "[US2] 实现 info 子命令在 src/frago/cli/run_commands.py"
+Task: "[US2] 实现 archive 子命令在 src/frago/cli/run_commands.py"
 ```
 
 ---
@@ -243,8 +243,8 @@ Task: "[US2] 实现 archive 子命令在 src/auvima/cli/run_commands.py"
 ### Full Feature (Add AI Integration)
 
 1. Complete MVP (Phase 1-4)
-2. Complete Phase 5: User Story 1（/auvima.run slash命令）
-3. **STOP and VALIDATE**: 在 Claude Code 中测试 /auvima.run
+2. Complete Phase 5: User Story 1（/frago.run slash命令）
+3. **STOP and VALIDATE**: 在 Claude Code 中测试 /frago.run
 4. Complete Phase 6: User Story 4（清理旧命令）
 5. Complete Phase 7: Testing（确保质量）
 6. Complete Phase 8: Polish（优化体验）
@@ -259,7 +259,7 @@ With multiple developers:
    - Developer B: User Story 3（log, screenshot）
    - Developer C: User Story 4（删除旧命令）
 3. After US2 + US3 complete:
-   - Developer A: User Story 1（/auvima.run slash命令）
+   - Developer A: User Story 1（/frago.run slash命令）
    - Developer B + C: Phase 7 Testing
 
 ---
@@ -284,7 +284,7 @@ With multiple developers:
 - ✅ 用户可通过 CLI 创建、管理、查询 run 实例（SC-002）
 - ✅ 所有日志为 JSONL 格式，100% 可程序解析（SC-003）
 - ✅ 截图文件命名遵循规范（`<序号>_<描述slug>.png`）（SC-004）
-- ✅ AI 在 /auvima.run 中能识别并调用现有 Recipe（SC-007）
+- ✅ AI 在 /frago.run 中能识别并调用现有 Recipe（SC-007）
 - ✅ 用户第二次执行相同主题任务时，系统自动发现现有run并提示复用（SC-009）
 - ✅ 通过 set-context 机制，AI 执行的所有命令 100% 记录到同一个run实例（SC-010）
 - ✅ log 命令执行 <50ms，init 命令 <100ms（性能目标）

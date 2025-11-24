@@ -10,14 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from auvima.recipes.metadata import (
+from frago.recipes.metadata import (
     RecipeMetadata,
     parse_metadata_file,
     validate_metadata,
     validate_params,
     check_param_type,
 )
-from auvima.recipes.exceptions import MetadataParseError, RecipeValidationError
+from frago.recipes.exceptions import MetadataParseError, RecipeValidationError
 
 
 class TestYAMLFrontmatterParsing:

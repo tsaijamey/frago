@@ -7,7 +7,7 @@
 
 ## 概述
 
-本文档研究基于简化架构的技能自动化生成系统的三个核心技术问题。核心思路是利用Claude Code本身作为智能探索引擎，通过prompt模板引导使用auvima的CDP原子命令，从对话历史中提取关键信息生成JavaScript配方脚本，**无需构建独立的探索引擎类（RecipeExplorer）或复杂的状态管理（ExplorationSession）**。
+本文档研究基于简化架构的技能自动化生成系统的三个核心技术问题。核心思路是利用Claude Code本身作为智能探索引擎，通过prompt模板引导使用frago的CDP原子命令，从对话历史中提取关键信息生成JavaScript配方脚本，**无需构建独立的探索引擎类（RecipeExplorer）或复杂的状态管理（ExplorationSession）**。
 
 基于2025-11-19的澄清：
 - ✅ Claude Code本身就是智能探索引擎
@@ -21,7 +21,7 @@
 
 ### 问题陈述
 
-如何设计 `.claude/commands/auvima_recipe.md` 来引导Claude Code：
+如何设计 `.claude/commands/frago_recipe.md` 来引导Claude Code：
 1. 理解用户的操作需求并提取关键信息（平台、操作、目标）
 2. 逐步执行CDP命令与浏览器交互
 3. 记录操作历史和关键选择器
@@ -39,32 +39,32 @@
 - 提取平台/网站（youtube/github/twitter等）
 - 提取操作目标（提取字幕/克隆信息/收集推文）
 - 生成建议的配方名：`<平台>_<操作简述>.js`
-- 检查是否存在同名配方（使用Glob工具查看src/auvima/recipes/目录）
+- 检查是否存在同名配方（使用Glob工具查看src/frago/recipes/目录）
 
 ## 阶段2: 交互式探索
 - 确认Chrome已连接CDP（端口9222）
 - 根据用户描述导航到目标页面
 - 逐步执行用户描述的操作：
-  - 使用 `uv run auvima screenshot` 展示当前页面
-  - 使用 `uv run auvima click <selector>` 点击元素
-  - 使用 `uv run auvima exec-js <expression>` 提取内容
+  - 使用 `uv run frago screenshot` 展示当前页面
+  - 使用 `uv run frago click <selector>` 点击元素
+  - 使用 `uv run frago exec-js <expression>` 提取内容
 - **重要**：在对话中明确记录每一步使用的选择器和操作结果
 - 探索失败时：截图 + 询问用户 + 提供候选元素（最多3次交互）
 
 ## 阶段3: 生成配方脚本
 - 从对话历史提取操作序列（回顾阶段2的对话记录）
-- 使用src/auvima/recipe/templates.py的JavaScriptTemplate生成代码
-- 包含降级逻辑（基于src/auvima/recipe/selector.py的策略）
-- 保存到 `src/auvima/recipes/<配方名>.js`
+- 使用src/frago/recipe/templates.py的JavaScriptTemplate生成代码
+- 包含降级逻辑（基于src/frago/recipe/selector.py的策略）
+- 保存到 `src/frago/recipes/<配方名>.js`
 
 ## 阶段4: 生成知识文档
-- 使用src/auvima/recipe/templates.py的MarkdownTemplate生成6章节文档
+- 使用src/frago/recipe/templates.py的MarkdownTemplate生成6章节文档
 - 从对话历史提取前置条件和操作步骤
 - 标注脆弱的选择器（is_fragile=True）
-- 保存到 `src/auvima/recipes/<配方名>.md`
+- 保存到 `src/frago/recipes/<配方名>.md`
 
 ## 阶段5: 验证配方
-- 在当前页面执行生成的配方：`uv run auvima exec-js recipes/<配方名>.js`
+- 在当前页面执行生成的配方：`uv run frago exec-js recipes/<配方名>.js`
 - 检查输出是否符合预期
 - 如有问题，询问用户是否需要调整
 ```
@@ -73,8 +73,8 @@
 
 1. **明确的工具调用指令**：直接告诉Claude Code使用哪个CDP命令
    ```
-   使用Bash工具执行：uv run auvima screenshot /tmp/page.png
-   使用Bash工具执行：uv run auvima click '[aria-label="字幕"]'
+   使用Bash工具执行：uv run frago screenshot /tmp/page.png
+   使用Bash工具执行：uv run frago click '[aria-label="字幕"]'
    ```
 
 2. **记录意识的强化**：在每个阶段强调记录的重要性
@@ -90,7 +90,7 @@
 3. **失败处理模板**：提供标准化的失败处理流程
    ```
    如果元素定位失败：
-   1. 使用Bash执行：uv run auvima screenshot /tmp/failed_step.png
+   1. 使用Bash执行：uv run frago screenshot /tmp/failed_step.png
    2. 使用AskUserQuestion询问："我无法定位<元素描述>，你能描述它的特征吗？"
       - 选项1：在页面的<位置>区域
       - 选项2：包含<文本内容>
@@ -105,10 +105,10 @@
    ```
    当所有操作成功完成后，使用以下步骤生成配方脚本：
 
-   1. 回顾对话历史，提取所有CDP命令（grep对话中的 "uv run auvima" 命令）
+   1. 回顾对话历史，提取所有CDP命令（grep对话中的 "uv run frago" 命令）
    2. 提取选择器和上下文（查找 "使用的选择器：" 标记）
-   3. 读取 src/auvima/recipe/templates.py 了解代码生成模板
-   4. 读取 src/auvima/recipe/selector.py 了解选择器优先级逻辑
+   3. 读取 src/frago/recipe/templates.py 了解代码生成模板
+   4. 读取 src/frago/recipe/selector.py 了解选择器优先级逻辑
    5. 生成JavaScript脚本并保存
    6. 生成Markdown文档并保存
    ```
@@ -163,16 +163,16 @@ class ConversationHistoryParser:
         提取执行的CDP命令
 
         识别模式：
-        - "uv run auvima click <selector>"
-        - "uv run auvima exec-js <expression>"
-        - "uv run auvima screenshot <path>"
-        - "uv run auvima navigate <url>"
+        - "uv run frago click <selector>"
+        - "uv run frago exec-js <expression>"
+        - "uv run frago screenshot <path>"
+        - "uv run frago navigate <url>"
         """
         patterns = {
-            'click': r'uv run auvima click\s+[\'"]?(.+?)[\'"]?(?:\s|$)',
-            'exec-js': r'uv run auvima exec-js\s+[\'"]?(.+?)[\'"]?(?:\s|$)',
-            'screenshot': r'uv run auvima screenshot\s+(.+?)(?:\s|$)',
-            'navigate': r'uv run auvima navigate\s+(.+?)(?:\s|$)',
+            'click': r'uv run frago click\s+[\'"]?(.+?)[\'"]?(?:\s|$)',
+            'exec-js': r'uv run frago exec-js\s+[\'"]?(.+?)[\'"]?(?:\s|$)',
+            'screenshot': r'uv run frago screenshot\s+(.+?)(?:\s|$)',
+            'navigate': r'uv run frago navigate\s+(.+?)(?:\s|$)',
         }
 
         commands = []
@@ -191,7 +191,7 @@ class ConversationHistoryParser:
         识别模式：
         - "使用的选择器：<selector>"（prompt模板要求的标记格式）
         - "元素描述：<description>"
-        - "点击<描述>: uv run auvima click <selector>"
+        - "点击<描述>: uv run frago click <selector>"
         - document.querySelector(<selector>) 调用
         """
         selector_contexts = []
@@ -202,7 +202,7 @@ class ConversationHistoryParser:
         selector_contexts.extend([(desc, sel) for sel, desc in matches1])
 
         # 模式2: 命令前的描述
-        pattern2 = r'(?:点击|提取|定位)(.+?)[:：]\s*uv run auvima \w+\s+[\'"]?(.+?)[\'"]?'
+        pattern2 = r'(?:点击|提取|定位)(.+?)[:：]\s*uv run frago \w+\s+[\'"]?(.+?)[\'"]?'
         matches2 = re.findall(pattern2, conversation_text, re.MULTILINE)
         selector_contexts.extend(matches2)
 
@@ -271,9 +271,9 @@ class ConversationHistoryParser:
         """
         提取用户原始需求描述
 
-        识别第一条包含 "/auvima.recipe" 的消息
+        识别第一条包含 "/frago.recipe" 的消息
         """
-        pattern = r'/auvima\.recipe\s+(?:create\s+)?[\'"]?(.+?)[\'"]?(?:\s|$)'
+        pattern = r'/frago\.recipe\s+(?:create\s+)?[\'"]?(.+?)[\'"]?(?:\s|$)'
         match = re.search(pattern, conversation_text)
         if match:
             return match.group(1)
@@ -306,7 +306,7 @@ class ConversationHistoryParser:
 
 3. **选择器优先级**：使用selector.py的已有逻辑自动评估优先级
    ```python
-   from auvima.recipe.selector import create_selector_from_string
+   from frago.recipe.selector import create_selector_from_string
 
    selector_obj = create_selector_from_string(selector_str, element_description)
    # selector_obj.priority 已自动评估
@@ -380,7 +380,7 @@ class RecipeGenerator:
         prerequisites = self.parser.extract_prerequisites(conversation_text)
 
         # 2. 构建Selector对象（使用selector.py的工具函数）
-        from auvima.recipe.selector import create_selector_from_string, sort_selectors_by_priority
+        from frago.recipe.selector import create_selector_from_string, sort_selectors_by_priority
 
         selectors = []
         for context, selector_str in selectors_with_context:
@@ -391,8 +391,8 @@ class RecipeGenerator:
         selectors = sort_selectors_by_priority(selectors)
 
         # 3. 生成操作步骤代码
-        from auvima.recipe.selector import generate_fallback_logic
-        from auvima.recipe.templates import JavaScriptTemplate
+        from frago.recipe.selector import generate_fallback_logic
+        from frago.recipe.templates import JavaScriptTemplate
 
         steps_code = []
         for cmd in commands:
@@ -438,7 +438,7 @@ class RecipeGenerator:
         )
 
         # 6. 生成知识文档
-        from auvima.recipe.templates import MarkdownTemplate
+        from frago.recipe.templates import MarkdownTemplate
 
         fragile_selectors = [s for s in selectors if s.is_fragile]
         user_description = self.parser.extract_user_description(conversation_text)

@@ -5,11 +5,11 @@
 
 ## 概述
 
-本文档定义 AuViMa Recipe 系统的所有 CLI 命令契约，包括命令格式、参数、输出格式和错误处理。
+本文档定义 Frago Recipe 系统的所有 CLI 命令契约，包括命令格式、参数、输出格式和错误处理。
 
 ---
 
-## 命令组: `auvima recipe`
+## 命令组: `frago recipe`
 
 所有 Recipe 管理命令的父命令组。
 
@@ -25,13 +25,13 @@
 
 ---
 
-## 命令 1: `auvima init`
+## 命令 1: `frago init`
 
 **描述**: 初始化用户级 Recipe 目录结构。
 
 ### 用法
 ```bash
-uv run auvima init [OPTIONS]
+uv run frago init [OPTIONS]
 ```
 
 ### 选项
@@ -42,10 +42,10 @@ uv run auvima init [OPTIONS]
 
 ### 行为
 
-1. 检查 `~/.auvima/recipes/` 是否存在
+1. 检查 `~/.frago/recipes/` 是否存在
 2. 如未存在或 `--force`，创建以下目录：
    ```
-   ~/.auvima/
+   ~/.frago/
    └── recipes/
        ├── atomic/
        │   ├── chrome/
@@ -58,7 +58,7 @@ uv run auvima init [OPTIONS]
 
 **成功**:
 ```text
-✓ Recipe 目录已初始化: /home/user/.auvima/recipes
+✓ Recipe 目录已初始化: /home/user/.frago/recipes
   - atomic/chrome/
   - atomic/system/
   - workflows/
@@ -66,7 +66,7 @@ uv run auvima init [OPTIONS]
 
 **已存在（非 force）**:
 ```text
-ℹ Recipe 目录已存在: /home/user/.auvima/recipes
+ℹ Recipe 目录已存在: /home/user/.frago/recipes
   使用 --force 选项强制重新创建
 ```
 
@@ -79,13 +79,13 @@ uv run auvima init [OPTIONS]
 
 ---
 
-## 命令 2: `auvima recipe list`
+## 命令 2: `frago recipe list`
 
 **描述**: 列出所有可用的 Recipe，标注来源。
 
 ### 用法
 ```bash
-uv run auvima recipe list [OPTIONS]
+uv run frago recipe list [OPTIONS]
 ```
 
 ### 选项
@@ -118,7 +118,7 @@ Example  atomic    test_inspect_tab                         chrome-js  1.0.0
     "name": "custom_upwork_workflow",
     "runtime": "python",
     "version": "1.0.0",
-    "path": "/path/to/.auvima/recipes/workflows/custom_upwork_workflow.py"
+    "path": "/path/to/.frago/recipes/workflows/custom_upwork_workflow.py"
   },
   {
     "source": "User",
@@ -126,7 +126,7 @@ Example  atomic    test_inspect_tab                         chrome-js  1.0.0
     "name": "upwork_extract_job_details_as_markdown",
     "runtime": "chrome-js",
     "version": "1.0.0",
-    "path": "/home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js"
+    "path": "/home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js"
   }
 ]
 ```
@@ -149,13 +149,13 @@ test_inspect_tab
 
 ---
 
-## 命令 3: `auvima recipe info`
+## 命令 3: `frago recipe info`
 
 **描述**: 显示指定 Recipe 的详细信息。
 
 ### 用法
 ```bash
-uv run auvima recipe info <NAME> [OPTIONS]
+uv run frago recipe info <NAME> [OPTIONS]
 ```
 
 ### 参数
@@ -184,7 +184,7 @@ Recipe: upwork_extract_job_details_as_markdown
 运行时:   chrome-js
 版本:     1.0.0
 来源:     User
-路径:     /home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js
+路径:     /home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js
 
 输入参数
 ────────
@@ -213,8 +213,8 @@ Recipe: upwork_extract_job_details_as_markdown
   "runtime": "chrome-js",
   "version": "1.0.0",
   "source": "User",
-  "script_path": "/home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js",
-  "metadata_path": "/home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.md",
+  "script_path": "/home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js",
+  "metadata_path": "/home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.md",
   "inputs": {
     "url": {
       "type": "string",
@@ -239,11 +239,11 @@ Recipe: upwork_extract_job_details_as_markdown
 错误: Recipe 'unknown_recipe' 未找到
 
 已搜索路径:
-  - /path/to/project/.auvima/recipes
-  - /home/user/.auvima/recipes
-  - /path/to/auvima/examples
+  - /path/to/project/.frago/recipes
+  - /home/user/.frago/recipes
+  - /path/to/frago/examples
 
-提示: 使用 'uv run auvima recipe list' 查看所有可用 Recipe
+提示: 使用 'uv run frago recipe list' 查看所有可用 Recipe
 ```
 
 ### 退出码
@@ -256,13 +256,13 @@ Recipe: upwork_extract_job_details_as_markdown
 
 ---
 
-## 命令 4: `auvima recipe run`
+## 命令 4: `frago recipe run`
 
 **描述**: 执行指定的 Recipe。
 
 ### 用法
 ```bash
-uv run auvima recipe run <NAME> [OPTIONS]
+uv run frago recipe run <NAME> [OPTIONS]
 ```
 
 ### 参数
@@ -326,7 +326,7 @@ Recipe 'upwork_extract_job_details_as_markdown' 需要以下参数:
   • url (string, 必需): Upwork 职位详情页 URL
 
 示例:
-  uv run auvima recipe run upwork_extract_job_details_as_markdown \
+  uv run frago recipe run upwork_extract_job_details_as_markdown \
     --params '{"url": "https://www.upwork.com/jobs/..."}'
 ```
 
@@ -371,13 +371,13 @@ Recipe 'upwork_extract_job_details_as_markdown' 执行超过 300 秒
 
 ---
 
-## 命令 5: `auvima recipe copy`
+## 命令 5: `frago recipe copy`
 
 **描述**: 将示例 Recipe 复制到用户目录供修改。
 
 ### 用法
 ```bash
-uv run auvima recipe copy <NAME> [OPTIONS]
+uv run frago recipe copy <NAME> [OPTIONS]
 ```
 
 ### 参数
@@ -397,8 +397,8 @@ uv run auvima recipe copy <NAME> [OPTIONS]
 
 1. 在示例目录查找指定 Recipe
 2. 确定目标位置：
-   - 如在项目目录（存在 `.auvima/`），默认复制到项目级
-   - 否则复制到用户级 `~/.auvima/recipes/`
+   - 如在项目目录（存在 `.frago/`），默认复制到项目级
+   - 否则复制到用户级 `~/.frago/recipes/`
 3. 复制脚本文件和元数据文件到对应子目录（`atomic/chrome/` 或 `workflows/`）
 4. 输出成功消息
 
@@ -409,8 +409,8 @@ uv run auvima recipe copy <NAME> [OPTIONS]
 ✓ Recipe 'upwork_extract_job_details_as_markdown' 已复制到用户目录
 
 文件位置:
-  脚本:   /home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js
-  元数据: /home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.md
+  脚本:   /home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js
+  元数据: /home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.md
 
 现在可以修改这些文件以自定义 Recipe
 ```
@@ -420,8 +420,8 @@ uv run auvima recipe copy <NAME> [OPTIONS]
 错误: Recipe 已存在于目标位置
 
 文件:
-  /home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js
-  /home/user/.auvima/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.md
+  /home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.js
+  /home/user/.frago/recipes/atomic/chrome/upwork_extract_job_details_as_markdown.md
 
 使用 --force 选项覆盖现有文件
 ```
@@ -438,7 +438,7 @@ uv run auvima recipe copy <NAME> [OPTIONS]
   - x_extract_tweet_with_comments
   - test_inspect_tab
 
-提示: 使用 'uv run auvima recipe list --source example' 查看所有示例
+提示: 使用 'uv run frago recipe list --source example' 查看所有示例
 ```
 
 ### 退出码
@@ -452,13 +452,13 @@ uv run auvima recipe copy <NAME> [OPTIONS]
 
 ---
 
-## 命令 6: `auvima recipe validate`（可选，未来增强）
+## 命令 6: `frago recipe validate`（可选，未来增强）
 
 **描述**: 验证 Recipe 元数据和脚本的有效性。
 
 ### 用法
 ```bash
-uv run auvima recipe validate <NAME_OR_PATH> [OPTIONS]
+uv run frago recipe validate <NAME_OR_PATH> [OPTIONS]
 ```
 
 ### 参数
@@ -529,10 +529,10 @@ uv run auvima recipe validate <NAME_OR_PATH> [OPTIONS]
 启用 `--debug` 时，输出额外信息：
 
 ```text
-[DEBUG] RecipeRegistry: 扫描路径 /home/user/.auvima/recipes
+[DEBUG] RecipeRegistry: 扫描路径 /home/user/.frago/recipes
 [DEBUG] RecipeRegistry: 找到 3 个 Recipe
 [DEBUG] RecipeRunner: 选择执行器 ChromeJSExecutor
-[DEBUG] ChromeJSExecutor: 执行命令: uv run auvima exec-js ...
+[DEBUG] ChromeJSExecutor: 执行命令: uv run frago exec-js ...
 [DEBUG] ChromeJSExecutor: 退出码: 0
 [DEBUG] RecipeRunner: 解析输出 JSON (2341 bytes)
 ```

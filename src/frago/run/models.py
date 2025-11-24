@@ -157,7 +157,7 @@ class Screenshot(BaseModel):
 
 
 class CurrentRunContext(BaseModel):
-    """当前Run上下文模型（存储在 .auvima/current_run）"""
+    """当前Run上下文模型（存储在 .frago/current_run）"""
 
     run_id: str = Field(..., min_length=1, max_length=50)
     last_accessed: datetime

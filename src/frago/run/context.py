@@ -1,6 +1,6 @@
 """Run上下文管理器
 
-负责读写 .auvima/current_run 配置文件，支持环境变量优先级
+负责读写 .frago/current_run 配置文件，支持环境变量优先级
 """
 
 import json
@@ -24,13 +24,13 @@ class ContextManager:
         """
         self.project_root = project_root
         self.projects_dir = projects_dir
-        self.config_dir = project_root / ".auvima"
+        self.config_dir = project_root / ".frago"
         self.config_file = self.config_dir / "current_project"
 
     def get_current_run(self) -> CurrentRunContext:
         """获取当前run上下文
 
-        优先级: 环境变量 AUVIMA_CURRENT_RUN > 配置文件
+        优先级: 环境变量 FRAGO_CURRENT_RUN > 配置文件
 
         Returns:
             CurrentRunContext实例
@@ -40,7 +40,7 @@ class ContextManager:
             RunNotFoundError: 指向的run不存在
         """
         # 1. 检查环境变量（最高优先级）
-        env_run_id = os.getenv("AUVIMA_CURRENT_RUN")
+        env_run_id = os.getenv("FRAGO_CURRENT_RUN")
         if env_run_id:
             run_dir = self.projects_dir / env_run_id
             if not run_dir.exists():

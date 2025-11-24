@@ -458,7 +458,7 @@ class CDPSession(CDPClient):
                 document.querySelectorAll('{selector}').forEach(el => {{
                     el.style.border = '{border_width}px solid {color}';
                     el.style.outline = '{border_width}px solid {color}';
-                    el.setAttribute('data-auvima-highlight', 'true');
+                    el.setAttribute('data-frago-highlight', 'true');
                 }});
                 return true;
             }})()
