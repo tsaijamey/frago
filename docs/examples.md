@@ -2,129 +2,132 @@
 
 # Frago Example Reference
 
-## Storyboard JSON Examples
+This document provides practical examples of using Frago's three core systems (Run + Recipe + CDP) for various automation tasks.
 
-### Basic Storyboard Structure
+---
 
-```json
-{
-  "shot_id": "shot_001",
-  "duration": 10,
-  "type": "browser_recording",
-  "description": "Show GitHub homepage",
-  "actions": [
-    {
-      "action": "navigate",
-      "url": "https://github.com",
-      "wait": 3
-    },
-    {
-      "action": "scroll",
-      "direction": "down",
-      "pixels": 500,
-      "wait": 2
-    }
-  ],
-  "narration": "GitHub is the world's largest code hosting platform...",
-  "audio_config": {
-    "voice": "default",
-    "speed": 1.0
-  },
-  "source_reference": "https://github.com/about"
-}
+## Example 1: Interactive Exploration with Run System
+
+**Goal**: Explore YouTube subtitle extraction step-by-step while maintaining full context.
+
+### Step 1: Create Run Instance
+
+```bash
+uv run frago run init "Research YouTube subtitle extraction methods"
+# Output: Created Run instance: youtube-subtitle-research-abc123
 ```
 
-### Complete Storyboard Example (with Visual Effects)
+### Step 2: Navigate and Explore
 
-```json
-{
-  "shot_id": "shot_002",
-  "duration": 15,
-  "type": "browser_recording",
-  "description": "Demonstrate Notion core features",
-  "actions": [
-    {
-      "action": "navigate",
-      "url": "https://www.notion.so/product",
-      "wait": 2
-    },
-    {
-      "action": "spotlight",
-      "selector": ".hero-section",
-      "duration": 3,
-      "wait": 1
-    },
-    {
-      "action": "highlight",
-      "selector": ".feature-card:nth-child(1)",
-      "color": "#FF6B6B",
-      "duration": 2,
-      "wait": 1
-    },
-    {
-      "action": "scroll",
-      "direction": "down",
-      "pixels": 800,
-      "smooth": true,
-      "wait": 2
-    },
-    {
-      "action": "annotate",
-      "selector": ".pricing-section",
-      "text": "Flexible pricing plans",
-      "position": "top",
-      "wait": 2
-    }
-  ],
-  "narration": "Notion offers powerful page editing capabilities, supports various content types, and has flexible pricing plans...",
-  "audio_config": {
-    "voice": "zh-CN-XiaoxiaoNeural",
-    "speed": 1.0,
-    "pitch": 1.0
-  },
-  "source_reference": "https://www.notion.so/product"
-}
+```bash
+# Navigate to YouTube video
+uv run frago navigate https://www.youtube.com/watch?v=dQw4w9WgXcQ
+
+# Take initial screenshot
+uv run frago screenshot initial_page.png
+# Saved to: projects/youtube-subtitle-research-abc123/screenshots/
+
+# Inspect page structure
+uv run frago exec-js 'document.querySelector("button[aria-label*=\"transcript\"]")' --return-value
 ```
 
-## Recipe Script Examples
+### Step 3: Record Findings
 
-### Example 1: YouTube Subtitle Extraction
+```bash
+# Log successful selector discovery
+uv run frago run log \
+  --step "Located transcript button selector" \
+  --status "success" \
+  --action-type "dom_inspection" \
+  --data '{"selector": "button[aria-label*=\"transcript\"]", "reliable": true}'
 
-**Script File**: `youtube_extract_video_transcript.js`
+# Click button and verify
+uv run frago click 'button[aria-label*="transcript"]'
+uv run frago screenshot transcript_opened.png
+```
 
-```javascript
-// Extract complete YouTube video subtitles
+### Step 4: Save Validated Script
+
+```bash
+cat > projects/youtube-subtitle-research-abc123/scripts/extract_transcript.js <<'EOF'
 (async () => {
-  // Click "Show full transcript" button
-  const transcriptButton = document.querySelector('button[aria-label*="transcript"]');
-  if (transcriptButton) {
-    transcriptButton.click();
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  const button = document.querySelector('button[aria-label*="transcript"]');
+  if (button) button.click();
+  await new Promise(r => setTimeout(r, 1000));
+
+  const segments = document.querySelectorAll('.ytd-transcript-segment-renderer');
+  return Array.from(segments).map(s => s.textContent.trim()).join('\n');
+})();
+EOF
+```
+
+### Step 5: Review Complete History
+
+```bash
+uv run frago run info youtube-subtitle-research-abc123
+```
+
+**Output**:
+```
+Run Instance: youtube-subtitle-research-abc123
+Topic: Research YouTube subtitle extraction methods
+Created: 2025-01-24 14:30:22
+Status: Active
+
+Files:
+  - logs/execution.jsonl (15 operations)
+  - screenshots/initial_page.png
+  - screenshots/transcript_opened.png
+  - scripts/extract_transcript.js
+
+Recent Operations:
+  [14:30:22] navigate → https://youtube.com/... (success)
+  [14:30:25] screenshot → initial_page.png (success)
+  [14:30:28] exec-js → Found button element (success)
+  [14:30:30] log → Located transcript button selector (success)
+  [14:30:33] click → button[aria-label*="transcript"] (success)
+```
+
+---
+
+## Example 2: Creating Recipe from Exploration
+
+**Goal**: Transform exploration results into reusable Recipe.
+
+### Using CLI
+
+```bash
+# After completing exploration in Run instance
+# Extract validated logic and create Recipe files
+
+# 1. Create Recipe script
+cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.js <<'EOF'
+(async () => {
+  const button = document.querySelector('button[aria-label*="transcript"]');
+  if (button) {
+    button.click();
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  // Extract subtitle text
-  const transcriptSegments = document.querySelectorAll('.ytd-transcript-segment-renderer');
-  const transcript = Array.from(transcriptSegments)
-    .map(segment => segment.textContent.trim())
-    .join('\n');
+  const segments = document.querySelectorAll('.ytd-transcript-segment-renderer');
+  const transcript = Array.from(segments).map(s => s.textContent.trim()).join('\n');
 
-  return {
-    transcript: transcript,
-    segmentCount: transcriptSegments.length
-  };
+  return { transcript, segmentCount: segments.length };
 })();
-```
+EOF
 
-**Metadata File**: `youtube_extract_video_transcript.md`
-
-```yaml
+# 2. Create Recipe metadata
+cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.md <<'EOF'
 ---
 name: youtube_extract_video_transcript
 type: atomic
 runtime: chrome-js
-version: "1.0"
-description: "Extract complete YouTube video subtitles"
-use_cases: ["Video content analysis", "Subtitle download", "Text summary"]
+version: "1.0.0"
+description: "Extract complete subtitle content from YouTube video page"
+use_cases:
+  - "Get subtitles for translation"
+  - "Create subtitle files"
+  - "Analyze video content"
 tags: ["youtube", "transcript", "web-scraping"]
 output_targets: [stdout, file]
 inputs:
@@ -142,373 +145,452 @@ outputs:
 ---
 
 # Function Description
-
 Extract complete subtitle text from YouTube video page.
 
 ## Usage
-
-```bash
-uv run frago recipe run youtube_extract_video_transcript \
-    --params '{"url": "https://youtube.com/watch?v=..."}' \
-    --output-file transcript.txt
-```
+\`\`\`bash
+uv run frago recipe run youtube_extract_video_transcript \\
+  --params '{"url": "https://youtube.com/watch?v=..."}' \\
+  --output-file transcript.txt
+\`\`\`
 
 ## Prerequisites
-
 - Chrome launched via CDP (port 9222)
 - Navigated to YouTube video page
 - Video must have subtitles available
-
-## Expected Output
-
-Returns JSON format:
-```json
-{
-  "transcript": "Complete subtitle text...",
-  "segmentCount": 150
-}
+EOF
 ```
 
-## Notes
+### Using Claude Code
 
-- Must click "Show subtitles" button first
-- Some videos may not have subtitles
-- Recommended to wait for page to fully load before executing
-
-## Update History
-
-- v1.0 (2025-01-15): Initial version
+```
+/frago.recipe create "Extract YouTube video subtitles" from run youtube-subtitle-research-abc123
 ```
 
-### Example 2: Page Diagnostic Tool
+AI will:
+1. Review Run instance logs and scripts
+2. Extract validated selectors
+3. Generate Recipe files (.js + .md)
+4. Test Recipe execution
 
-**Script File**: `test_inspect_tab.js`
+---
 
-```javascript
-// Get current tab diagnostic information
-(() => {
-  const pageInfo = {
-    title: document.title,
-    url: window.location.href,
-    readyState: document.readyState,
-    stats: {
-      totalElements: document.querySelectorAll('*').length,
-      images: document.images.length,
-      links: document.links.length,
-      forms: document.forms.length,
-      scripts: document.scripts.length
-    },
-    viewport: {
-      width: window.innerWidth,
-      height: window.innerHeight
-    },
-    performance: {
-      loadTime: performance.timing.loadEventEnd - performance.timing.navigationStart,
-      domContentLoaded: performance.timing.domContentLoadedEventEnd - performance.timing.navigationStart
+## Example 3: Executing Recipe
+
+**Goal**: Use existing Recipe to extract subtitles quickly.
+
+### CLI Method
+
+```bash
+# Discover available Recipes
+uv run frago recipe list
+
+# View Recipe details
+uv run frago recipe info youtube_extract_video_transcript
+
+# Execute Recipe
+uv run frago recipe run youtube_extract_video_transcript \
+  --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
+  --output-file transcript.txt
+
+# Output to clipboard
+uv run frago recipe run youtube_extract_video_transcript \
+  --params '{"url": "..."}' \
+  --output-clipboard
+```
+
+### Claude Code Method
+
+```
+/frago.run Extract subtitles from https://www.youtube.com/watch?v=dQw4w9WgXcQ
+```
+
+AI automatically:
+1. Discovers `youtube_extract_video_transcript` Recipe
+2. Executes Recipe with URL parameter
+3. Saves output to file
+
+---
+
+## Example 4: Batch Processing with Workflow Recipe
+
+**Goal**: Extract job details from multiple Upwork listings.
+
+### Create Workflow Recipe
+
+```python
+# ~/.frago/recipes/workflows/upwork_batch_extract.py
+import sys, json
+from frago.recipes import RecipeRunner
+
+def main():
+    params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
+    job_urls = params.get('urls', [])
+
+    runner = RecipeRunner()
+    results = []
+
+    for i, url in enumerate(job_urls, 1):
+        print(f"Processing {i}/{len(job_urls)}...", file=sys.stderr)
+        try:
+            result = runner.run('upwork_extract_job_details_as_markdown', {'url': url})
+            results.append({
+                'url': url,
+                'data': result['data'],
+                'status': 'success'
+            })
+        except Exception as e:
+            results.append({
+                'url': url,
+                'error': str(e),
+                'status': 'failed'
+            })
+
+    output = {
+        'total': len(job_urls),
+        'success': sum(1 for r in results if r['status'] == 'success'),
+        'failed': sum(1 for r in results if r['status'] == 'failed'),
+        'results': results
     }
-  };
+    print(json.dumps(output))
 
-  return pageInfo;
-})();
+if __name__ == '__main__':
+    main()
 ```
 
-**Metadata File**: `test_inspect_tab.md`
+### Create Workflow Metadata
 
 ```yaml
 ---
-name: test_inspect_tab
-type: atomic
-runtime: chrome-js
-version: "1.0"
-description: "Get current tab diagnostic information (title, URL, DOM stats)"
-use_cases: ["Page debugging", "Performance analysis", "DOM structure checking"]
-tags: ["debug", "diagnostic", "page-info"]
-output_targets: [stdout]
-inputs: {}
+# ~/.frago/recipes/workflows/upwork_batch_extract.md
+name: upwork_batch_extract
+type: workflow
+runtime: python
+version: "1.0.0"
+description: "Batch extract job details from multiple Upwork listings"
+use_cases:
+  - "Analyze job market trends"
+  - "Build job database"
+tags: ["upwork", "batch", "workflow"]
+output_targets: [stdout, file]
+inputs:
+  urls:
+    type: array
+    description: "List of Upwork job URLs"
+    required: true
 outputs:
-  pageInfo:
-    type: object
-    description: "Page diagnostic information"
+  results:
+    type: array
+    description: "Array of job details"
+dependencies:
+  - upwork_extract_job_details_as_markdown
+---
+```
+
+### Execute Workflow
+
+```bash
+# Create URL list
+cat > job_urls.json <<'EOF'
+{
+  "urls": [
+    "https://www.upwork.com/freelance-jobs/apply/...",
+    "https://www.upwork.com/freelance-jobs/apply/...",
+    "https://www.upwork.com/freelance-jobs/apply/..."
+  ]
+}
+EOF
+
+# Execute workflow within Run context
+uv run frago run init "Batch extract Python jobs from Upwork"
+uv run frago recipe run upwork_batch_extract \
+  --params-file job_urls.json \
+  --output-file jobs.json
+```
+
+**Output** (`jobs.json`):
+```json
+{
+  "total": 3,
+  "success": 3,
+  "failed": 0,
+  "results": [
+    {
+      "url": "https://www.upwork.com/...",
+      "data": {
+        "title": "Python Developer Needed",
+        "budget": "$1000-$2000",
+        "description": "..."
+      },
+      "status": "success"
+    }
+  ]
+}
+```
+
 ---
 
-# Function Description
+## Example 5: Complex Multi-Platform Task
 
-Get diagnostic information for current tab, including title, URL, DOM statistics, and performance data.
+**Goal**: Monitor iPhone 15 prices on Amazon and eBay, generate comparison report.
 
-## Usage
+### Using Claude Code
+
+```
+/frago.run Monitor iPhone 15 prices on Amazon and eBay, generate comparison report and save as Markdown
+```
+
+AI will:
+1. Create Run instance: `iphone-15-price-monitoring-abc123`
+2. Discover or create Recipes:
+   - `amazon_search_product`
+   - `ebay_search_product`
+3. Execute Workflow:
+   ```
+   ├─ Navigate to Amazon → Search "iPhone 15"
+   ├─ Extract price data → $799
+   ├─ Navigate to eBay → Search "iPhone 15"
+   ├─ Extract price data → $749
+   └─ Generate comparison report
+   ```
+4. Log all operations to JSONL
+5. Generate Markdown report
+
+**Generated Report** (`outputs/price_comparison.md`):
+```markdown
+# iPhone 15 Price Comparison
+
+**Date**: 2025-01-24
+
+## Amazon
+- **Price**: $799
+- **Availability**: In Stock
+- **Shipping**: Free Prime Shipping
+
+## eBay
+- **Price**: $749
+- **Availability**: Used - Like New
+- **Shipping**: $15
+
+## Recommendation
+eBay offers $50 savings, but consider condition and shipping costs.
+Total eBay cost: $764 (still $35 cheaper)
+
+---
+Generated with Frago | Run ID: iphone-15-price-monitoring-abc123
+```
+
+---
+
+## Example 6: CDP Command Usage Patterns
+
+### Basic Navigation and Interaction
 
 ```bash
-uv run frago recipe run test_inspect_tab
+# Launch Chrome with CDP
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir=./chrome_profile
+
+# Navigate to page
+uv run frago navigate https://news.ycombinator.com/
+
+# Wait for page load
+uv run frago wait 2
+
+# Click element
+uv run frago click 'a.titlelink:first-child'
+
+# Get page title
+uv run frago exec-js 'document.title' --return-value
 ```
 
-## Prerequisites
-
-- Chrome launched via CDP (port 9222)
-- Navigated to target page
-
-## Expected Output
-
-```json
-{
-  "title": "Page title",
-  "url": "https://example.com",
-  "readyState": "complete",
-  "stats": {
-    "totalElements": 1234,
-    "images": 56,
-    "links": 78,
-    "forms": 2,
-    "scripts": 12
-  },
-  "viewport": {
-    "width": 1280,
-    "height": 720
-  },
-  "performance": {
-    "loadTime": 1234,
-    "domContentLoaded": 567
-  }
-}
-```
-
-## Notes
-
-- Recommended to execute after page fully loads
-- Performance data may be 0 (if page still loading)
-
-## Update History
-
-- v1.0 (2025-01-15): Initial version
-```
-
-## Recording Script Examples
-
-### Example 1: Simple Page Recording
+### Screenshots and Visual Effects
 
 ```bash
-#!/bin/bash
-# shot_001_record.sh - Record GitHub homepage
+# Take full page screenshot
+uv run frago screenshot hackernews_page.png
 
-set -e
+# Highlight specific element
+uv run frago highlight '.storylink' --color "#FF6B6B" --duration 3
 
-# Navigate to GitHub
-uv run frago navigate https://github.com
-sleep 3
-
-# Start recording
-ffmpeg -f avfoundation -i "1:0" -t 10 shot_001.mp4 &
-RECORD_PID=$!
-
-# Execute page operations
-sleep 2
-uv run frago scroll down 500
-sleep 3
-
-# Stop recording
-wait $RECORD_PID
-
-echo "Recording completed: shot_001.mp4"
-```
-
-### Example 2: Recording with Visual Effects
-
-```bash
-#!/bin/bash
-# shot_002_record.sh - Record Notion product page (with visual effects)
-
-set -e
-
-# Navigate to Notion product page
-uv run frago navigate https://www.notion.so/product
-sleep 3
-
-# Start recording
-ffmpeg -f avfoundation -i "1:0" -t 15 shot_002.mp4 &
-RECORD_PID=$!
-
-# Add visual effects and execute operations
-sleep 2
-
-# Spotlight effect
-uv run frago spotlight ".hero-section" 3
-sleep 3
-
-# Highlight feature card
-uv run frago highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
-sleep 2
-
-# Scroll page
-uv run frago scroll down 800 --smooth
-sleep 2
+# Spotlight effect (dim surroundings)
+uv run frago spotlight '.athing:first-child' --duration 5
 
 # Add annotation
-uv run frago annotate ".pricing-section" "Flexible pricing plans" --position top
-sleep 2
-
-# Stop recording
-wait $RECORD_PID
-
-echo "Recording completed: shot_002.mp4"
+uv run frago annotate '.score' "Top story" --position top
 ```
 
-## Typical Use Scenarios
-
-### Scenario 1: In-Depth News Analysis
-
-**Topic**: "How AI Will Change Education Industry - Opinion: Personalized Learning is Key"
-
-**Workflow**:
-1. AI collects relevant webpages and research reports
-2. AI designs argument structure (viewpoint→evidence→cases→conclusion)
-3. Create storyboard for each argument
-4. Record screen operations and data displays
-5. Synthesize final video
-
-**Storyboard Example**:
-```json
-{
-  "shot_id": "shot_001",
-  "type": "browser_recording",
-  "description": "Show limitations of traditional education",
-  "actions": [
-    {"action": "navigate", "url": "..."},
-    {"action": "highlight", "selector": ".statistics"}
-  ]
-}
-```
-
-### Scenario 2: GitHub Project Analysis
-
-**Topic**: "Analyze https://github.com/langchain-ai/langchain"
-
-**Workflow**:
-1. AI clones repository, analyzes code structure
-2. AI extracts core features and architectural highlights
-3. Design code display and feature demo storyboard
-4. Record code browsing and feature demos
-5. Synthesize final video
-
-**Storyboard Example**:
-```json
-{
-  "shot_id": "shot_001",
-  "type": "browser_recording",
-  "description": "Show LangChain core architecture",
-  "actions": [
-    {"action": "navigate", "url": "https://github.com/langchain-ai/langchain"},
-    {"action": "spotlight", "selector": ".repository-content"}
-  ]
-}
-```
-
-### Scenario 3: Product Introduction
-
-**Topic**: "Introduce Notion's Core Features"
-
-**Workflow**:
-1. AI browses Notion official site and documentation
-2. AI plans feature demo sequence
-3. Create demo storyboard for each core feature
-4. Record product interface and feature operations
-5. Synthesize final video
-
-**Storyboard Example**:
-```json
-{
-  "shot_id": "shot_001",
-  "type": "browser_recording",
-  "description": "Demo Notion's page editing features",
-  "actions": [
-    {"action": "navigate", "url": "https://www.notion.so/product"},
-    {"action": "highlight", "selector": ".feature-editor"}
-  ]
-}
-```
-
-### Scenario 4: MVP Development Demo
-
-**Topic**: "Develop a Pomodoro Timer App with React"
-
-**Workflow**:
-1. AI plans MVP features and tech stack
-2. AI designs development steps
-3. Create recording storyboard for each development step
-4. Record code writing and feature implementation
-5. Synthesize final video
-
-**Storyboard Example**:
-```json
-{
-  "shot_id": "shot_001",
-  "type": "code_recording",
-  "description": "Create React project and install dependencies",
-  "actions": [
-    {"action": "terminal", "command": "npx create-react-app pomodoro"},
-    {"action": "highlight", "file": "package.json"}
-  ]
-}
-```
-
-## Recipe Usage Patterns
-
-### Pattern 1: Single Information Extraction
+### JavaScript Execution
 
 ```bash
-# Extract YouTube subtitles
-uv run frago recipe run youtube_extract_video_transcript \
-    --params '{"url": "https://youtube.com/watch?v=..."}' \
-    --output-file transcript.txt
+# Extract all links
+uv run frago exec-js 'Array.from(document.querySelectorAll("a")).map(a => a.href)' \
+  --return-value
+
+# Scroll to bottom
+uv run frago exec-js 'window.scrollTo(0, document.body.scrollHeight)'
+
+# Check element existence
+uv run frago exec-js 'document.querySelector(".pagetop") !== null' \
+  --return-value
 ```
 
-### Pattern 2: Batch Data Collection
+---
+
+## Example 7: Run System Advanced Usage
+
+### Resume Previous Exploration
 
 ```bash
-# Loop extract subtitles from multiple videos
-for url in $(cat video_urls.txt); do
-  uv run frago recipe run youtube_extract_video_transcript \
-      --params "{\"url\": \"$url\"}" \
-      --output-file "transcripts/$(basename $url).txt"
-done
+# List all Run instances
+uv run frago run list
+
+# AI auto-discovery (fuzzy matching)
+# User says: "Continue YouTube subtitle research"
+# AI executes:
+uv run frago run list --format json
+# AI finds: youtube-subtitle-research-abc123 (95% match)
+# AI resumes:
+uv run frago run set-context youtube-subtitle-research-abc123
 ```
 
-### Pattern 3: Pipeline Integration
+### Export Run Logs
 
 ```bash
-# Use Recipe in Pipeline's prepare phase
-uv run frago recipe run youtube_extract_video_transcript \
-    --params '{"url": "..."}' \
-    --output-file research/video_transcript.txt
+# View execution log
+cat projects/youtube-subtitle-research-abc123/logs/execution.jsonl
 
-# Subsequent phases can read this file
+# Parse log programmatically
+uv run python <<'EOF'
+import json
+
+with open('projects/youtube-subtitle-research-abc123/logs/execution.jsonl') as f:
+    for line in f:
+        log = json.loads(line)
+        if log['status'] == 'failure':
+            print(f"Error at {log['timestamp']}: {log.get('error', {}).get('message')}")
+EOF
 ```
 
-## Common Problem Troubleshooting
+### Archive Completed Runs
 
-### Problem 1: Recipe Execution Failed
+```bash
+# Archive Run instance
+uv run frago run archive youtube-subtitle-research-abc123
 
-**Symptom**: Recipe throws exception during execution
+# Archived Runs move to projects/.archive/
+```
 
-**Troubleshooting Steps**:
-1. Check if Chrome CDP is running (port 9222)
-2. Verify Recipe metadata is complete
-3. Check input parameters are correct
-4. Review Recipe log output
+---
 
-### Problem 2: Screenshot Path Error
+## Common Patterns and Best Practices
 
-**Symptom**: Screenshot save fails or path incorrect
+### Pattern 1: Exploration → Recipe → Automation
 
-**Solution**:
-- Must use absolute path
-- Ensure target directory exists
-- Check file write permissions
+```
+1. Create Run instance
+2. Explore page interactively (CDP commands)
+3. Log successful approaches
+4. Create Recipe from validated scripts
+5. Reuse Recipe for similar tasks
+```
 
-### Problem 3: CDP Connection Timeout
+### Pattern 2: Workflow Recipe Composition
 
-**Symptom**: CDP command execution timeout
+```python
+# Workflow Recipe structure
+def main():
+    runner = RecipeRunner()
 
-**Solution**:
-- Check if Chrome launched in CDP mode
-- Verify port 9222 is accessible
-- Check proxy configuration (if using proxy)
-- Increase timeout (`--timeout` parameter)
+    # Step 1: Atomic Recipe
+    data1 = runner.run('atomic_recipe_1', params1)
+
+    # Step 2: Process results
+    processed = process_data(data1)
+
+    # Step 3: Another Atomic Recipe
+    data2 = runner.run('atomic_recipe_2', processed)
+
+    # Step 4: Combine results
+    final = combine(data1, data2)
+    print(json.dumps(final))
+```
+
+### Pattern 3: Error Handling in Workflows
+
+```python
+def main():
+    runner = RecipeRunner()
+    results = []
+
+    for item in items:
+        try:
+            result = runner.run('recipe_name', {'item': item})
+            results.append({'item': item, 'status': 'success', 'data': result})
+        except Exception as e:
+            results.append({'item': item, 'status': 'failed', 'error': str(e)})
+            # Log error but continue processing
+            print(f"Warning: Failed to process {item}: {e}", file=sys.stderr)
+
+    return {'total': len(items), 'results': results}
+```
+
+---
+
+## Troubleshooting Examples
+
+### Example: CDP Connection Issues
+
+```bash
+# Check if Chrome CDP is running
+lsof -i :9222
+
+# Launch Chrome if not running
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --remote-debugging-port=9222 \
+  --user-data-dir=./chrome_profile &
+
+# Test connection
+uv run frago status
+```
+
+### Example: Recipe Not Found
+
+```bash
+# List all available Recipes
+uv run frago recipe list
+
+# Check Recipe name (case-sensitive)
+uv run frago recipe info youtube_extract_video_transcript
+
+# If Recipe exists in examples/, copy to user-level
+uv run frago recipe copy youtube_extract_video_transcript
+```
+
+### Example: Screenshot Path Issues
+
+```bash
+# ❌ Wrong: Relative path
+uv run frago screenshot screenshot.png
+
+# ✅ Correct: Absolute path
+uv run frago screenshot $(pwd)/screenshot.png
+
+# ✅ Correct: Within Run context
+uv run frago run init "My task"
+uv run frago screenshot screenshot.png  # Auto-saved to Run's screenshots/
+```
+
+---
+
+## Next Steps
+
+- **Learn core concepts**: Read [Use Cases](use-cases.md)
+- **Understand architecture**: Check [Architecture](architecture.md)
+- **Start developing**: Follow [Development Guide](development.md)
+- **Create your own Recipes**: See [Recipe System Guide](recipes.md)
+
+---
+
+Created with Claude Code | 2025-11
