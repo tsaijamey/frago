@@ -10,12 +10,9 @@ Frago/
 ├── CLAUDE.md                        # Project configuration (tech stack, code style)
 ├── .claude/
 │   ├── commands/                    # Claude Code Slash Commands
-│   │   ├── frago_start.md          # AI information collection command
-│   │   ├── frago_storyboard.md     # AI storyboard planning command
-│   │   ├── frago_generate.md       # AI video generation command (create recording scripts)
-│   │   ├── frago_evaluate.md       # AI material evaluation command
-│   │   ├── frago_merge.md          # AI video synthesis command
-│   │   └── frago_recipe.md         # Recipe management command (create/update/list)
+│   │   ├── frago_run.md            # AI-driven complex task execution
+│   │   ├── frago_recipe.md         # Recipe management command (create/test)
+│   │   └── frago_exec.md           # One-time task execution
 │   └── settings.local.json          # Project configuration
 │
 ├── src/                             # Core Python code
@@ -49,11 +46,14 @@ Frago/
 │   │   │   ├── runner.py            # Recipe executor
 │   │   │   ├── output_handler.py    # Output handling (stdout/file/clipboard)
 │   │   │   └── exceptions.py        # Recipe exception definitions
-│   │   └── tools/                   # Development tools
-│   │       └── function_mapping.py  # CDP function mapping validation tool
-│   ├── chrome_cdp_launcher.py       # Chrome CDP launcher (cross-platform)
-│   ├── pipeline_master.py           # Pipeline master controller
-│   └── requirements.txt             # Python dependencies
+│   │   ├── run/                      # Run command system (Feature 005)
+│   │   │   ├── manager.py            # Run instance management
+│   │   │   ├── logger.py             # JSONL structured logging
+│   │   │   └── discovery.py          # RapidFuzz-based auto-discovery
+│   │   └── tools/                    # Development tools
+│   │       └── function_mapping.py   # CDP function mapping validation tool
+│   ├── chrome_cdp_launcher.py        # Chrome CDP launcher (cross-platform)
+│   └── requirements.txt              # Python dependencies
 │
 ├── examples/                        # Example Recipes (not packaged in wheel)
 │   └── atomic/
@@ -67,7 +67,8 @@ Frago/
 │   ├── 001-standardize-cdp-scripts/ # CDP script standardization
 │   ├── 002-cdp-integration-refactor/# CDP integration refactor (Python implementation)
 │   ├── 003-skill-automation/        # Recipe system design
-│   └── 004-recipe-architecture-refactor/ # Recipe architecture refactor
+│   ├── 004-recipe-architecture-refactor/ # Recipe architecture refactor
+│   └── 005-run-command-system/      # Run system implementation (completed)
 │
 ├── docs/                            # Project documentation
 │   ├── architecture.md              # Technical architecture
@@ -76,19 +77,17 @@ Frago/
 │   ├── roadmap.md                   # Project progress
 │   └── examples.md                  # Example reference
 │
-├── projects/                        # Video project working directories
-│   └── <project_name>/
-│       ├── research/                # AI information collection output
-│       │   ├── report.json
-│       │   └── screenshots/
-│       ├── shots/                   # AI storyboard planning output
-│       │   └── shot_xxx.json
-│       ├── clips/                   # AI-generated video clips
-│       │   ├── shot_xxx_record.sh   # AI-created recording scripts
-│       │   ├── shot_xxx.mp4
-│       │   └── shot_xxx_audio.mp3
-│       ├── outputs/                 # Final video output
-│       └── logs/                    # Execution logs
+├── projects/                        # Run instance working directories
+│   └── <run_id>/                   # Topic-based task context
+│       ├── logs/
+│       │   └── execution.jsonl      # Structured JSONL logs
+│       ├── screenshots/             # Timestamped screenshots
+│       │   └── 20250124_143022.png
+│       ├── scripts/                 # Validated working scripts
+│       │   └── extract_transcript.js
+│       └── outputs/                 # Result files
+│           ├── result.json
+│           └── report.md
 │
 ├── chrome_profile/                  # Chrome user configuration
 └── pyproject.toml                   # Python package configuration (uv managed)
@@ -125,17 +124,22 @@ All CDP functionality accessed through unified CLI interface (`uv run frago <com
 ## Development Standards
 
 1. **Script locations**:
-   - Command implementation scripts in `scripts/`
-   - Python core scripts in `src/`
+   - CDP command implementations in `src/frago/cdp/commands/`
+   - Recipe engine code in `src/frago/recipes/`
+   - Run system code in `src/frago/run/`
+   - Example Recipes in `examples/atomic/chrome/`
 
 2. **File naming**:
-   - Video clips: `shot_xxx.mp4` (based on timestamp)
-   - Audio clips: `shot_xxx_audio.mp3` or `shot_xxx_1.mp3`
    - Screenshot files: Must use absolute paths
+   - JSONL logs: `execution.jsonl` (one log per Run instance)
+   - Recipe scripts: `<platform>_<operation>_<object>.js/.py/.sh`
+   - Recipe metadata: `<recipe_name>.md` (with YAML frontmatter)
 
-3. **Chrome CDP usage**:
-   - prepare phase: Only for information collection
-   - generate phase: Add visual guidance effects
+3. **Run System Usage**:
+   - Create Run instance for exploration tasks
+   - All CDP operations auto-logged to current Run
+   - Manual logs for observations and analysis
+   - Archive completed Runs for future reference
 
 ## Function Mapping Validation Tool
 
@@ -170,11 +174,24 @@ Behavior consistent: 18 (100.0%)
 
 ## Important Notes
 
-1. Chrome must run through CDP launcher with port 9222 available
-2. Screen recording permission must be authorized before recording
-3. All screenshots must use absolute paths
-4. Video length must be greater than or equal to total audio length
-5. Must create `.completed` marker file after each shot completes
+1. **Chrome CDP Connection**:
+   - Chrome must run with `--remote-debugging-port=9222`
+   - Use `chrome_cdp_launcher.py` for cross-platform compatibility
+   - Verify port 9222 is accessible before operations
+
+2. **File Paths**:
+   - Always use absolute paths for screenshots and output files
+   - Relative paths may cause issues in different execution contexts
+
+3. **Run System**:
+   - Create Run instance before exploration tasks
+   - All operations automatically logged to JSONL
+   - Archive Runs to maintain clean working directory
+
+4. **Recipe Development**:
+   - Always include YAML frontmatter in metadata file
+   - Test Recipe execution before committing
+   - Follow naming conventions for discoverability
 
 ## Recipe Development Standards
 

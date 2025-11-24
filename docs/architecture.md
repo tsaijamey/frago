@@ -338,135 +338,204 @@ uv run frago recipe run youtube_extract_video_transcript \
 - AI Agent: Discover and use Recipes (via `recipe list/run` commands)
 - Recipe system is the bridge connecting both
 
-## System Architecture
+## Run System Architecture
 
-### Three-Layer Architecture Design
+The Run system provides persistent context management and structured execution logging, serving as AI agents' working memory.
+
+### Core Components
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Pipeline Master (Python scheduler)                      │
-│  - Launch Chrome CDP                                     │
-│  - Schedule 5 stages                                     │
-│  - Sync via .done files                                  │
+│              Run Instance Management                     │
+│  - Topic-based task organization                        │
+│  - RapidFuzz fuzzy matching for discovery               │
+│  - Lifecycle: init → execute → log → archive            │
 └──────────────────┬──────────────────────────────────────┘
-                   │ Call slash commands
-                   ↓
+                   │
+                   ▼
 ┌─────────────────────────────────────────────────────────┐
-│  Claude AI (Creative executor)                           │
-│  - /frago.start:      AI autonomous info collection      │
-│  - /frago.storyboard: AI autonomous storyboard design    │
-│  - /frago.generate:   AI creates recording script for    │
-│                       each clip                          │
-│  - /frago.evaluate:   AI autonomous quality evaluation   │
-│  - /frago.merge:      AI autonomous video synthesis      │
+│           Persistent Context Storage                     │
+│  projects/<run_id>/                                      │
+│  ├── logs/execution.jsonl    (structured logs)          │
+│  ├── screenshots/            (timestamped images)       │
+│  ├── scripts/                (validated scripts)        │
+│  └── outputs/                (result files)             │
 └──────────────────┬──────────────────────────────────────┘
-                   │ Use tool layer
-                   ↓
+                   │
+                   ▼
 ┌─────────────────────────────────────────────────────────┐
-│  CDP Tool Layer (Direct Chrome connection)               │
-│  - uv run frago <command>                               │
-│  - Recipe system (optional acceleration)                 │
-│  - Native WebSocket connection (no Node.js relay)        │
-└──────────────────┬──────────────────────────────────────┘
-                   ↓
-             Chrome browser
+│              JSONL Log Structure                         │
+│  - 100% programmatically parseable                      │
+│  - Each line is valid JSON                              │
+│  - Supports auditing and analysis                       │
+│  - Enables AI context recovery                          │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Embodiment of AI Autonomous Decision-Making
+### Run Instance Lifecycle
 
-**Each stage is an AI creative process**, not simple script execution:
-
-#### Stage 0: Environment Preparation
-- **Executor**: Pipeline Master
-- **Task**: Launch Chrome CDP (port 9222)
-- **Output**: Chrome process runs persistently
-
-#### Stage 1: Information Collection (`/frago.start`)
-- **Executor**: **Claude AI**
-- **Input**: Video topic
-- **AI Decision Content**:
-  - Identify topic type (news/GitHub/product/MVP)
-  - Plan information sources and collection strategy
-  - Determine which screenshots and content are core
-  - Decide which tools to use (CDP/Git/Recipe)
-- **Output**:
-  - `research/report.json` - Information report
-  - `research/screenshots/` - Screenshot materials
-  - `start.done` - Completion marker
-
-#### Stage 2: Storyboard Planning (`/frago.storyboard`)
-- **Executor**: **Claude AI**
-- **Input**: `research/report.json`
-- **AI Decision Content**:
-  - Design narrative structure and logic flow
-  - Plan focus and duration for each shot
-  - Design precise action timeline down to the second
-  - Select appropriate visual effects (spotlight/highlight)
-- **Output**:
-  - `shots/shot_xxx.json` - Shot sequence (with detailed action_timeline)
-  - `storyboard.done` - Completion marker
-
-#### Stage 3: Video Generation Loop (`/frago.generate`)
-**Pipeline controls loop, AI creates each clip**:
-
-```
-for each shot_xxx.json:
-    ├── AI analyzes shot requirements
-    ├── AI writes dedicated recording script (clips/shot_xxx_record.sh)
-    │   - Precisely control timing of each action
-    │   - Design appearance and disappearance of visual effects
-    │   - Coordinate recording and operation synchronization
-    ├── Execute script to record shot_xxx.mp4
-    ├── Generate audio shot_xxx_audio.mp3
-    ├── AI verifies quality (duration, content, sync)
-    └── Create marker shot_xxx.done
+**1. Initialization**
+```bash
+uv run frago run init "Research YouTube subtitle extraction"
+# Creates: projects/youtube-subtitle-research-abc123/
 ```
 
-- **Executor**: **Claude AI** (each time is independent creation)
-- **Core Philosophy**: Not batch processing, but custom script for each clip
-- **Recipe Role**: Accelerate high-frequency DOM operations (like YouTube subtitle extraction), avoid repeated LLM reasoning
-- **Completion Marker**: `generate.done`
+**2. Execution Phase**
+- All CDP commands automatically link to active Run
+- Screenshots saved to Run's screenshots/ directory
+- Operations logged to execution.jsonl in real-time
 
-#### Stage 4: Material Evaluation (`/frago.evaluate`)
-- **Executor**: **Claude AI**
-- **AI Decision Content**:
-  - Analyze completeness of all clips
-  - Identify quality issues (blur, truncation, duration mismatch)
-  - Propose fixes or auto-repair
-  - Verify audio-video sync
-- **Output**:
-  - `evaluation_report.json` - Evaluation report
-  - `evaluate.done` - Completion marker
+**3. Manual Logging**
+```bash
+uv run frago run log \
+  --step "Located transcript button" \
+  --status "success" \
+  --data '{"selector": "button[aria-label=\"Show transcript\"]"}'
+```
 
-#### Stage 5: Video Synthesis (`/frago.merge`)
-- **Executor**: **Claude AI**
-- **AI Decision Content**:
-  - Determine merge order and transition effects
-  - Handle audio sync and smoothing
-  - Add intro/outro (if needed)
-  - Select output format and quality parameters
-- **Output**:
-  - `outputs/final_output.mp4` - Final video
-  - `merge.done` - Completion marker
+**4. Context Persistence**
+- Run directory persists across sessions
+- AI can resume exploration days later
+- Complete audit trail for compliance
 
-#### Stage 6: Environment Cleanup
-- **Executor**: Pipeline Master
-- **Task**: Close Chrome, clean temporary files
+**5. Auto-Discovery**
+```python
+# AI fuzzy matching algorithm
+from rapidfuzz import fuzz
 
-### Core Design Philosophy
+user_query = "Continue YouTube subtitle research"
+existing_runs = get_all_runs()
 
-1. **AI is Creator, Not Executor**
-   - AI makes creative decisions at each stage
-   - Pipeline only responsible for scheduling and synchronization
-   - Recipe is acceleration tool for AI to use
+matches = [
+    (run, fuzz.ratio(user_query, run.topic))
+    for run in existing_runs
+]
 
-2. **Hybrid Strategy Advantage**
-   ```
-   New scenario: AI explores → Understands → Executes
-   Familiar scenario: Recipe direct reuse (save time and tokens)
-   Complex scenario: AI creation + Recipe accelerates high-frequency parts
-   ```
+best_match = max(matches, key=lambda x: x[1])
+if best_match[1] > 80:  # 80% similarity threshold
+    resume_run(best_match[0])
+```
 
-3. **Essential Difference from Browser Use**
-   - Browser Use: General task automation (strong adaptability)
-   - Frago: Video creation workflow (strong control)
+### JSONL Log Schema
+
+Each operation produces a structured JSON line:
+
+```typescript
+interface LogEntry {
+  timestamp: string;           // ISO 8601 format
+  run_id: string;              // Run instance identifier
+  action: string;              // Operation type (navigate, click, log, etc.)
+  status: "success" | "failure" | "pending";
+  action_type?: string;        // dom_inspection, navigation, etc.
+  execution_method?: string;   // command, manual, ai_generated
+  data?: Record<string, any>;  // Operation-specific data
+  error?: {
+    type: string;
+    message: string;
+    stack?: string;
+  };
+}
+```
+
+**Example JSONL logs**:
+```jsonl
+{"timestamp":"2025-01-24T14:30:22Z","run_id":"youtube-research-abc123","action":"navigate","url":"https://youtube.com/...","status":"success"}
+{"timestamp":"2025-01-24T14:30:25Z","run_id":"youtube-research-abc123","action":"screenshot","file":"screenshots/20250124_143025.png","status":"success"}
+{"timestamp":"2025-01-24T14:30:28Z","run_id":"youtube-research-abc123","action":"click","selector":"button[aria-label=\"Show transcript\"]","status":"success"}
+{"timestamp":"2025-01-24T14:30:30Z","run_id":"youtube-research-abc123","action":"log","step":"Located transcript button","action_type":"dom_inspection","execution_method":"manual","data":{"selector":"button[aria-label=\"Show transcript\"]","reliable":true},"status":"success"}
+```
+
+### Integration with Recipe System
+
+Run instances and Recipes work together:
+
+**Scenario 1: Exploration → Recipe Creation**
+```
+1. Create Run: "Research Upwork job extraction"
+2. Execute exploration (CDP commands logged to Run)
+3. Identify working selectors and logic
+4. AI generates Recipe from Run logs
+5. Recipe becomes reusable for similar tasks
+```
+
+**Scenario 2: Recipe Execution within Run Context**
+```
+1. Create Run: "Batch extract 20 Python jobs"
+2. Execute Workflow Recipe: upwork_batch_extract
+3. Each Recipe call logged to Run's execution.jsonl
+4. Complete audit trail of 20 extractions
+5. Error recovery: Resume from last successful extraction
+```
+
+### Benefits of Run System
+
+**1. Knowledge Accumulation**
+- Validated scripts persist in `scripts/` directory
+- AI learns from past explorations
+- Reduces repeated trial-and-error
+
+**2. Auditability**
+- 100% parseable JSONL logs
+- Complete operation history
+- Compliance and debugging friendly
+
+**3. Resumability**
+- Continue exploration across sessions
+- AI auto-discovers relevant Runs
+- No context loss
+
+**4. Error Recovery**
+- Structured error logging
+- Pinpoint exact failure location
+- Incremental retry from checkpoints
+
+---
+
+## Three Systems Integration
+
+How Run System, Recipe System, and Native CDP work together:
+
+```
+User Task: "Find Python jobs on Upwork and analyze requirements"
+│
+├─ Run System (Working Memory)
+│  ├─ Creates: upwork-python-jobs-abc123
+│  ├─ Logs: All operations to JSONL
+│  └─ Persists: Screenshots, scripts, outputs
+│
+├─ Recipe System (Muscle Memory)
+│  ├─ Discovers: upwork_search_jobs (atomic)
+│  ├─ Discovers: upwork_extract_job_details (atomic)
+│  └─ Executes: Recipes with validated selectors
+│
+└─ Native CDP (Execution Engine)
+   ├─ Commands: navigate, click, exec-js, screenshot
+   ├─ Direct WebSocket: Python → Chrome
+   └─ Fast: No Node.js relay overhead
+
+Result:
+├─ jobs.json (structured data)
+├─ execution.jsonl (complete audit trail)
+└─ screenshots/ (visual evidence)
+```
+
+### Token Efficiency through Three Systems
+
+| System | First Encounter | Subsequent Use | Token Savings |
+|--------|----------------|----------------|---------------|
+| **No Run/Recipe** | AI explores (150k tokens) | AI explores again (150k tokens) | 0% |
+| **With Run Only** | AI explores + logs (155k tokens) | Review Run logs (10k tokens) | 93.5% |
+| **With Run + Recipe** | AI explores + creates Recipe (160k tokens) | Execute Recipe (2k tokens) | **98.7%** |
+
+---
+
+## Next Steps
+
+- **Understanding core concepts?** Start with [Use Cases](use-cases.md)
+- **Want to create Recipes?** Read [Recipe System Guide](recipes.md)
+- **Ready to develop?** Check [Development Guide](development.md)
+- **Curious about progress?** See [Roadmap](roadmap.md)
+
+---
+
+Created with Claude Code | 2025-11
