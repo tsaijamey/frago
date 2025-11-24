@@ -2,91 +2,173 @@
 
 # Frago User Guide
 
+## Overview
+
+Frago is a multi-runtime automation infrastructure designed for AI agents, providing three core systems that work together to solve automation challenges:
+
+- **🧠 Run System**: AI's working memory - persistent context and structured logs
+- **📚 Recipe System**: AI's "muscle memory" - reusable automation scripts
+- **⚡ Native CDP**: Lightweight execution engine - direct Chrome control
+
+---
+
 ## Core Use Cases
 
 Frago is suitable for various browser automation and data collection tasks:
 
-1. **Web Data Collection** - Batch extract structured information
+1. **Interactive Exploration & Debugging**
+   - Explore unknown pages while maintaining full context
+   - Example: `"Research YouTube subtitle extraction methods"`
+
+2. **Web Data Collection**
+   - Batch extract structured information
    - Example: `"Extract job details from Upwork and export as Markdown"`
 
-2. **Social Media Analysis** - Collect and analyze social content
+3. **Social Media Analysis**
+   - Collect and analyze social content
    - Example: `"Extract Twitter/X posts and comments"`
 
-3. **Content Transcription** - Extract text content from videos/audio
+4. **Content Transcription**
+   - Extract text content from videos/audio
    - Example: `"Download YouTube video subtitles as text"`
 
-4. **Custom Workflows** - Combine multiple Recipes to complete complex tasks
-   - Example: `"Batch process form submissions, archive screenshots"`
+5. **Custom Workflows**
+   - Combine multiple Recipes to complete complex tasks
+   - Example: `"Monitor competitor prices across multiple platforms"`
 
 **Typical Workflow**:
-1. AI analyzes task requirements and selects appropriate Recipe
+1. AI analyzes task requirements and selects appropriate approach (Run exploration vs Recipe execution)
 2. Invoke CDP commands to control Chrome execution
-3. Record execution logs to JSONL files (100% parsable)
+3. Record execution logs to JSONL files (100% parsable and auditable)
 4. Output structured data (JSON/Markdown/text)
-5. Persist task context to Run instances
+5. Persist task context to Run instances for future reference
+
+---
 
 ## Environment Requirements
 
-- macOS (for AVFoundation recording)
-- Chrome browser
-- Python 3.12+
-- ffmpeg 8.0+
-- uv package manager
-- Screen recording permission (System Settings > Privacy & Security > Screen Recording)
+- **Python**: 3.9+ (required for core functionality)
+- **Chrome Browser**: For chrome-js Recipe execution
+- **Operating System**: macOS, Linux, Windows
+- **Package Manager**: `uv` (recommended) or `pip`
 
-## Dependency Installation
+---
 
+## Installation
+
+See [Installation Guide](installation.md) for detailed instructions.
+
+**Quick Start**:
 ```bash
-# System dependencies (if not installed)
-brew install ffmpeg
-brew install uv
+# Using uv (recommended)
+uv add frago
 
-# Python dependencies (uv automatically manages virtual environment)
-uv sync
+# Using pip
+pip install frago
+
+# Verify installation
+frago --version
 ```
 
-## Complete Pipeline Execution Flow
+---
 
-### One-Click Pipeline Launch
+## Run Command System
+
+The Run system provides persistent context management for AI agents, recording complete exploration and execution history.
+
+### Core Concepts
+
+**Run Instance**: A topic-based task context that persists across multiple operations.
+
+**Key Features**:
+- ✅ **JSONL Logs**: 100% programmatically parseable execution records
+- ✅ **Screenshot Archive**: Timestamped visual evidence
+- ✅ **Script Accumulation**: Validated scripts persist for reuse
+- ✅ **Auto-Discovery**: RapidFuzz-based fuzzy matching for finding relevant Runs
+
+### Run Instance Lifecycle
 
 ```bash
-# Launch complete pipeline
-uv run python src/pipeline_master.py "<topic>" <project_name>
+# 1. Create new Run instance
+uv run frago run init "Research YouTube subtitle extraction methods"
+# Output: Created Run instance: youtube-subtitle-research-abc123
+
+# 2. Set as current working context (optional)
+uv run frago run set-context youtube-subtitle-research-abc123
+
+# 3. Execute operations (automatically logged to current Run)
+uv run frago navigate https://youtube.com/watch?v=...
+uv run frago screenshot initial_page.png
+uv run frago click 'button[aria-label="Show transcript"]'
+
+# 4. Manually log observations or analysis
+uv run frago run log \
+  --step "Located transcript button selector" \
+  --status "success" \
+  --action-type "dom_inspection" \
+  --execution-method "manual" \
+  --data '{"selector": "button[aria-label=\"Show transcript\"]", "reliable": true}'
+
+# 5. View Run details and history
+uv run frago run info youtube-subtitle-research-abc123
+
+# 6. List all Run instances
+uv run frago run list
+
+# 7. Archive completed Run
+uv run frago run archive youtube-subtitle-research-abc123
 ```
 
-### Example Commands
+### Run Instance Directory Structure
+
+Each Run instance creates a persistent directory:
+
+```
+projects/<run_id>/
+├── logs/
+│   └── execution.jsonl           # Structured execution logs
+├── screenshots/
+│   ├── 20250124_143022.png       # Timestamped screenshots
+│   └── 20250124_143045.png
+├── scripts/
+│   └── extract_transcript.js     # Validated working scripts
+└── outputs/
+    ├── result.json               # Output files
+    └── report.md                 # AI-generated reports
+```
+
+### JSONL Log Format
+
+Each operation is recorded as a JSON line:
+
+```jsonl
+{"timestamp": "2025-01-24T14:30:22Z", "action": "navigate", "url": "https://youtube.com/...", "status": "success"}
+{"timestamp": "2025-01-24T14:30:25Z", "action": "screenshot", "file": "screenshots/20250124_143025.png", "status": "success"}
+{"timestamp": "2025-01-24T14:30:28Z", "action": "click", "selector": "button[aria-label=\"Show transcript\"]", "status": "success"}
+{"timestamp": "2025-01-24T14:30:30Z", "action": "log", "step": "Located transcript button", "data": {"selector": "...", "reliable": true}}
+```
+
+### Auto-Discovery
+
+AI agents can automatically find relevant Run instances using fuzzy matching:
 
 ```bash
-# Type 1: In-depth News Analysis
-uv run python src/pipeline_master.py "AI Education Revolution - Opinion: Personalized Learning Will Replace Traditional Classrooms" ai_education
+# User says: "Continue researching YouTube subtitle extraction"
+# AI executes:
+uv run frago run list --format json
 
-# Type 2: GitHub Project Analysis
-uv run python src/pipeline_master.py "https://github.com/openai/whisper" whisper_intro
-
-# Type 3: Product Introduction
-uv run python src/pipeline_master.py "Notion Product Features Introduction" notion_demo
-
-# Type 4: MVP Development Demo
-uv run python src/pipeline_master.py "React Todo App MVP Development" todo_mvp
+# AI uses RapidFuzz to match "YouTube subtitle extraction" against existing Run topics
+# Finds: youtube-subtitle-research-abc123 (95% match)
+# AI resumes this Run instance automatically
 ```
 
-### Pipeline Execution Flow
-
-1. **Auto-start Chrome CDP** (port 9222)
-2. **Information Collection** (/frago.start) → start.done
-3. **Storyboard Planning** (/frago.storyboard) → storyboard.done
-4. **Video Generation Loop** (/frago.generate × N) → generate.done
-5. **Material Evaluation** (/frago.evaluate) → evaluate.done
-6. **Video Merging** (/frago.merge) → merge.done
-7. **Environment Cleanup**, output final video
-
-The entire process is fully automated, synchronized through .done files.
+---
 
 ## CDP Command Usage Guide
 
-### Basic CDP Commands
-
 All CDP functionality is accessed through a unified CLI interface (`uv run frago <command>`).
+
+### Basic CDP Commands
 
 ```bash
 # Navigate to webpage
@@ -95,14 +177,41 @@ uv run frago navigate <url>
 # Click element
 uv run frago click <selector>
 
-# Execute JavaScript
-uv run frago exec-js <expression>
+# Execute JavaScript and return result
+uv run frago exec-js <expression> --return-value
 
 # Take screenshot
 uv run frago screenshot <output_file>
 
-# Other commands
+# Scroll page
+uv run frago scroll <direction> <pixels>
+
+# Wait for condition
+uv run frago wait <seconds>
+
+# Get page status
+uv run frago status
+
+# View all commands
 uv run frago --help
+```
+
+### Visual Effects (Optional)
+
+Add visual guidance to browser operations:
+
+```bash
+# Spotlight effect (dim surrounding area)
+uv run frago spotlight <selector> --duration 3
+
+# Highlight element
+uv run frago highlight <selector> --color "#FF6B6B" --duration 2
+
+# Add annotation
+uv run frago annotate <selector> "Annotation text" --position top
+
+# Pointer indicator
+uv run frago pointer <selector> --duration 2
 ```
 
 ### Proxy Configuration
@@ -111,8 +220,6 @@ Frago's CDP integration supports proxy configuration for environments requiring 
 
 #### Environment Variable Configuration
 
-Set global proxy through environment variables:
-
 ```bash
 export HTTP_PROXY=http://proxy.example.com:8080
 export HTTPS_PROXY=http://proxy.example.com:8080
@@ -120,8 +227,6 @@ export NO_PROXY=localhost,127.0.0.1
 ```
 
 #### CLI Parameter Configuration
-
-All CDP commands support proxy parameters:
 
 ```bash
 # Use proxy
@@ -135,32 +240,72 @@ uv run frago navigate https://example.com --no-proxy
 
 ### Retry Mechanism
 
-CDP connections support intelligent retry mechanisms, specifically optimized for proxy environments:
+CDP connections support intelligent retry mechanisms:
 
 - **Default retry strategy**: Up to 3 attempts, exponential backoff delay
-- **Proxy connection retry strategy**: Up to 5 attempts, shorter delays, suitable for proxy environments
+- **Proxy connection retry**: Up to 5 attempts, optimized for proxy environments
 - **Connection timeout**: Default 30 seconds
 - **Command timeout**: Default 60 seconds
 
-The retry mechanism automatically identifies proxy connection failures and provides diagnostic information.
+---
 
 ## Recipe Management and Usage
 
-The Recipe system provides metadata-driven automation script management.
+The Recipe system provides metadata-driven automation script management, designed for AI-first discoverability.
 
-### Recipe Management Commands
+### Recipe Discovery
 
 ```bash
-# List all available Recipes
+# List all available Recipes (table format)
 uv run frago recipe list
 
 # List in JSON format (for AI parsing)
 uv run frago recipe list --format json
 
+# Filter by source
+uv run frago recipe list --source project   # Project-level only
+uv run frago recipe list --source user      # User-level only
+uv run frago recipe list --source example   # Example-level only
+
+# Filter by type
+uv run frago recipe list --type atomic      # Atomic Recipes only
+uv run frago recipe list --type workflow    # Workflow Recipes only
+```
+
+### Recipe Information
+
+```bash
 # View Recipe detailed information
 uv run frago recipe info youtube_extract_video_transcript
 
-# Execute Recipe (recommended method)
+# View in JSON format (for AI parsing)
+uv run frago recipe info youtube_extract_video_transcript --format json
+```
+
+**Example Output**:
+```json
+{
+  "name": "youtube_extract_video_transcript",
+  "type": "atomic",
+  "runtime": "chrome-js",
+  "version": "1.2.0",
+  "description": "Extract complete subtitle content from YouTube video page",
+  "use_cases": [
+    "Get subtitles for translation",
+    "Create subtitle files",
+    "Analyze video content"
+  ],
+  "tags": ["youtube", "transcript", "web-scraping"],
+  "output_targets": ["stdout", "file"],
+  "source": "Example",
+  "path": "examples/atomic/chrome/youtube_extract_video_transcript.js"
+}
+```
+
+### Recipe Execution
+
+```bash
+# Execute Recipe with parameters
 uv run frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
@@ -169,89 +314,234 @@ uv run frago recipe run youtube_extract_video_transcript \
 uv run frago recipe run upwork_extract_job_details_as_markdown \
     --params '{"url": "..."}' \
     --output-clipboard
+
+# Use parameter file
+cat > params.json <<EOF
+{
+  "url": "https://youtube.com/watch?v=...",
+  "format": "srt"
+}
+EOF
+
+uv run frago recipe run youtube_extract_video_transcript \
+    --params-file params.json
+
+# Set execution timeout
+uv run frago recipe run youtube_extract_video_transcript \
+    --params '{"url": "..."}' \
+    --timeout 300
 ```
 
 **Supported Options**:
-- `--format [table/json/names]` - Output format (list command)
-- `--source [project/user/example/all]` - Filter Recipe source (list command)
-- `--type [atomic/workflow/all]` - Filter Recipe type (list command)
-- `--params '{...}'` - JSON parameters (run command)
-- `--params-file <path>` - Read parameters from file (run command)
+- `--params '{...}'` - JSON parameters (inline)
+- `--params-file <path>` - JSON parameters (from file)
 - `--output-file <path>` - Save output to file
 - `--output-clipboard` - Copy output to clipboard
-- `--timeout <seconds>` - Execution timeout
+- `--timeout <seconds>` - Execution timeout (default: 120)
 
-### Three Ways to Use Recipes
+### Three-Level Recipe Priority System
+
+Recipes are discovered in priority order:
+
+```
+1. Project (.frago/recipes/)     ← Highest priority (project-specific)
+2. User (~/.frago/recipes/)      ← Medium priority (personal recipes)
+3. Example (examples/)            ← Lowest priority (official examples)
+```
+
+**Why Three Levels?**
+- **Project-level**: Team-shared Recipes for specific project
+- **User-level**: Personal Recipes reusable across projects
+- **Example-level**: Official Recipes that can be copied and customized
+
+### Creating Custom Recipes
+
+#### Method 1: Copy Example Recipe
 
 ```bash
-# Method 1: Recommended - Metadata-driven (parameter validation, output handling)
-uv run frago recipe run youtube_extract_video_transcript \
-    --params '{"url": "https://youtube.com/..."}' \
-    --output-file transcript.txt
+# Copy example Recipe to user-level
+uv run frago recipe copy youtube_extract_video_transcript
 
-# Method 2: Discover available Recipes
-uv run frago recipe list --format json
-
-# Method 3: Traditional method - Direct JS execution (bypass metadata system)
-uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
+# Recipe is now at: ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.js
+# Customize as needed
 ```
+
+#### Method 2: Use Claude Code Integration
+
+```
+/frago.recipe create "Extract complete job information from Upwork and format as Markdown"
+```
+
+AI will:
+1. Analyze requirements
+2. Generate Recipe script (.js/.py/.sh)
+3. Generate metadata documentation (.md with YAML frontmatter)
+4. Save to appropriate location
+5. Test Recipe execution
 
 ### Available Example Recipes
 
 Currently provides 4 example Recipes:
 
-| Name | Function | Supported Output |
-|------|----------|------------------|
-| `test_inspect_tab` | Get current tab diagnostic information (title, URL, DOM stats) | stdout |
-| `youtube_extract_video_transcript` | Extract complete YouTube video subtitles | stdout, file |
-| `upwork_extract_job_details_as_markdown` | Extract Upwork job details as Markdown | stdout, file |
-| `x_extract_tweet_with_comments` | Extract X(Twitter) tweets and comments | stdout, file, clipboard |
+| Name | Function | Runtime | Outputs |
+|------|----------|---------|---------|
+| `test_inspect_tab` | Get current tab diagnostic info (title, URL, DOM stats) | chrome-js | stdout |
+| `youtube_extract_video_transcript` | Extract complete YouTube video subtitles | chrome-js | stdout, file |
+| `upwork_extract_job_details_as_markdown` | Extract Upwork job details as Markdown | chrome-js | stdout, file |
+| `x_extract_tweet_with_comments` | Extract X(Twitter) tweets and comments | chrome-js | stdout, file, clipboard |
 
-### Creating and Updating Recipes
+---
 
-Manage Recipes through `/frago.recipe` command (Claude Code Slash Command):
+## Integration with Claude Code
 
-```
-# Create new Recipe (AI interactive guidance)
-/frago.recipe create "Extract complete subtitle content from YouTube video page"
+Frago provides slash commands for Claude Code integration, enabling AI-driven task execution.
 
-# Update existing Recipe
-/frago.recipe update youtube_extract_subtitles "YouTube redesign broke subtitle button"
-
-# List all Recipes
-/frago.recipe list
-```
-
-### Recipe Storage Structure
-
-- **Location**: `src/frago/recipes/` (engine code), `examples/atomic/chrome/` (example Recipes)
-- **Naming convention**: `<platform>_<function_description>.js` (e.g., `youtube_extract_subtitles.js`)
-- **Supporting documentation**: Each Recipe script (.js) has a corresponding Markdown document (.md)
-- **Execution method**: `uv run frago recipe run <recipe_name>`
-
-## Project Directory Structure
-
-Each video project creates the following structure in `projects/<project_name>/`:
+### Available Slash Commands
 
 ```
-projects/<project_name>/
-├── research/                # AI information collection output
-│   ├── report.json
-│   └── screenshots/
-├── shots/                   # AI storyboard planning output
-│   └── shot_xxx.json
-├── clips/                   # AI-generated video clips
-│   ├── shot_xxx_record.sh   # AI-created recording script
-│   ├── shot_xxx.mp4
-│   └── shot_xxx_audio.mp3
-├── outputs/                 # Final video output
-└── logs/                    # Execution logs
+/frago.run <task_description>
+```
+Execute complex tasks with AI orchestration. AI will:
+- Create or discover relevant Run instance
+- Select appropriate Recipes or CDP commands
+- Record all operations to structured logs
+- Generate execution reports
+
+**Examples**:
+```
+/frago.run Research YouTube subtitle extraction methods: locate button, test extraction, save script
+
+/frago.run Extract 20 Python jobs from Upwork and save as JSON
+
+/frago.run Monitor iPhone 15 prices on Amazon and eBay, generate comparison report
 ```
 
-## Important Notes
+---
 
-1. Chrome must run through CDP launcher with port 9222 available
-2. Screen recording permission must be authorized before recording
-3. All screenshots must use absolute paths
-4. Video length must be greater than or equal to total audio length
-5. A `.completed` marker file must be created after each shot is completed
+```
+/frago.recipe create <recipe_description>
+```
+Create new Recipe with AI assistance. AI will:
+- Analyze recipe requirements
+- Generate script and metadata
+- Test execution
+- Save to appropriate location
+
+**Examples**:
+```
+/frago.recipe create "Extract GitHub repository README and save as Markdown"
+
+/frago.recipe create workflow "Batch extract subtitles from 10 YouTube videos"
+```
+
+---
+
+```
+/frago.exec <one_time_task>
+```
+Execute one-time tasks without creating Run instance.
+
+**Examples**:
+```
+/frago.exec Take screenshot of current page and annotate the login button
+
+/frago.exec Extract all links from https://news.ycombinator.com/
+```
+
+---
+
+## Best Practices
+
+### When to Use Run System
+
+✅ **Use Run System when**:
+- Exploring unknown pages or workflows
+- Debugging complex issues
+- Need to maintain context across sessions
+- Want auditable execution history
+- Planning to create Recipe from exploration results
+
+❌ **Don't use Run System when**:
+- Executing well-defined one-time tasks
+- Using existing Recipes that don't need context
+- Simple operations that don't benefit from logging
+
+### When to Create Recipe
+
+✅ **Create Recipe when**:
+- Task will be repeated frequently (saves AI tokens)
+- High-frequency operations consume too many AI tokens
+- Need standardized, reproducible automation
+- Want to share automation scripts with team
+
+❌ **Don't create Recipe when**:
+- Task is truly one-time
+- Workflow is still evolving and unclear
+- Page structure changes frequently
+
+### Recipe Naming Conventions
+
+- Use lowercase letters, numbers, underscores, hyphens
+- **Atomic Recipe**: `<platform>_<action>_<object>`
+  - Examples: `youtube_extract_video_transcript`, `github_read_readme`
+- **Workflow Recipe**: `<platform>_batch_<action>` or `<workflow_name>`
+  - Examples: `upwork_batch_extract_jobs`, `competitor_price_monitor`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Problem**: CDP connection timeout
+```
+Error: Failed to connect to Chrome CDP at ws://localhost:9222
+```
+
+**Solutions**:
+1. Check if Chrome is running in CDP mode:
+   ```bash
+   # Launch Chrome with CDP enabled
+   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+       --remote-debugging-port=9222 \
+       --user-data-dir=./chrome_profile
+   ```
+2. Verify port 9222 is accessible: `lsof -i :9222`
+3. Check proxy configuration (if using proxy)
+
+---
+
+**Problem**: Recipe not found
+```
+Error: Recipe 'youtube_extract_subtitles' not found
+```
+
+**Solutions**:
+1. List available Recipes: `uv run frago recipe list`
+2. Check Recipe name spelling (exact match required)
+3. Verify metadata file (.md) exists alongside script file
+
+---
+
+**Problem**: Screenshot save failed
+```
+Error: Failed to save screenshot to /path/to/screenshot.png
+```
+
+**Solutions**:
+1. Use absolute paths for screenshot files
+2. Ensure target directory exists: `mkdir -p screenshots/`
+3. Check file write permissions
+
+---
+
+## Next Steps
+
+- **New to Frago?** Start with [Use Cases](use-cases.md) for real-world examples
+- **Want technical details?** Read [Architecture](architecture.md)
+- **Creating Recipes?** See [Recipe System Guide](recipes.md)
+- **Contributing?** Check [Development Guide](development.md)
+
+---
+
+Created with Claude Code | 2025-11
