@@ -1,7 +1,7 @@
 [project]
 name = "auvima"
 version = "0.1.0"
-description = "AuViMa - 自动化视觉管理系统CDP控制库"
+description = "AuViMa - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
