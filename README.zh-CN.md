@@ -42,6 +42,8 @@ AI agent 在执行自动化任务时，面临三个核心痛点：
 
 ## 解决方案
 
+![Frago 架构图](docs/images/architecture.jpg)
+
 Frago 提供三个核心系统来解决上述问题：
 
 ### 🧠 Run 系统 - AI 的工作记忆
