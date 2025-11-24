@@ -6,7 +6,7 @@
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
-🚀 多运行时自动化基建 - 支持 Chrome CDP、Python、Shell 的自动化任务执行和管理框架，提供 Run 命令系统进行任务持久化和上下文积累。
+🚀 **AI-driven multi-runtime automation framework** - Supports Chrome CDP, Python, and Shell for automated task execution with persistent run management and context accumulation.
 
 ## ✨ 核心特性
 
@@ -15,25 +15,129 @@
 - 📹 **原生CDP协议** - 直接控制 Chrome 浏览器，无需 Playwright/Selenium 依赖
 - ⚡ **Recipe系统** - 元数据驱动的可复用自动化脚本，支持多运行时（Chrome JS、Python、Shell）
 - 📊 **结构化日志** - JSONL 格式的执行记录，100% 可程序解析和分析
-- 🔄 **Workflow编排** - Python Recipe 可调用多个 atomic Recipe，构建复杂自动化流程
+- 🔄 **智能化Workflow编排** - Python Recipe 可调用多个 atomic Recipe，构建复杂自动化流程
 - 🎯 **三级优先级** - Project > User > Example 的 Recipe 管理体系
 
 ## 项目概述
 
-AuViMa是一个AI导演的屏幕录制自动化系统，专注于制作4类教学/演示视频：
+AuViMa is an AI-driven automation framework that combines Chrome CDP control, Recipe-based workflow orchestration, and persistent run management. It enables developers to build reusable automation scripts with metadata-driven manifests, supporting multiple runtimes (Chrome JavaScript, Python, Shell) and AI-assisted task execution.
 
-**支持的内容类型**：
-- **资讯深度分析** - 基于核心观点的论证型内容
-- **GitHub项目解析** - 开源项目的深度介绍
-- **产品介绍** - 软件产品的功能演示
-- **MVP开发演示** - 从想法到产品的开发过程
+## 🏗️ 架构概览
 
-**工作流程**（录制真实操作，非AI生成画面）：
-1. AI分析主题，收集网页/代码信息
-2. AI设计分镜脚本（精确到秒的时间轴）
-3. AI创作录制脚本，控制Chrome执行操作并录屏
-4. TTS生成配音音频
-5. 合成视频+音频为最终成品
+```
+AuViMa 使用流程架构图
+===================
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        用户入口（Claude Code）                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                ┌─────────────────┼─────────────────┐
+                │                 │                 │
+                ▼                 ▼                 ▼
+         ┌─────────┐       ┌─────────┐      ┌─────────┐
+         │/auvima  │       │/auvima  │      │  直接   │
+         │  .run   │       │ .recipe │      │CLI命令  │
+         └─────────┘       └─────────┘      └─────────┘
+                │                 │                 │
+                │                 │                 │
+                ▼                 ▼                 ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                       AI 任务分析层                                     │
+│  - 理解用户意图                                                         │
+│  - 发现/创建 Run 实例                                                   │
+│  - 选择合适的 Recipe                                                    │
+│  - 编排执行计划                                                         │
+└───────────────────────────────────────────────────────────────────────┘
+                                  │
+                ┌─────────────────┼─────────────────┐
+                │                 │                 │
+                ▼                 ▼                 ▼
+         ┌──────────┐      ┌──────────┐     ┌──────────┐
+         │ Recipe   │      │   CDP    │     │ Python/  │
+         │ 调度     │      │  命令    │     │  Shell   │
+         │(chrome-js│      │(navigate,│     │  脚本    │
+         │/python/  │      │ click,   │     │          │
+         │ shell)   │      │screenshot│     │          │
+         └──────────┘      └──────────┘     └──────────┘
+                │                 │                 │
+                └─────────────────┼─────────────────┘
+                                  │
+                                  ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                      执行引擎（多运行时）                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │
+│  │ Chrome CDP  │  │   Python    │  │    Shell    │                   │
+│  │  WebSocket  │  │   Runtime   │  │   Runtime   │                   │
+│  └─────────────┘  └─────────────┘  └─────────────┘                   │
+└───────────────────────────────────────────────────────────────────────┘
+                                  │
+                ┌─────────────────┼─────────────────┐
+                │                 │                 │
+                ▼                 ▼                 ▼
+         ┌──────────┐      ┌──────────┐     ┌──────────┐
+         │  JSONL   │      │  输出    │     │   Run    │
+         │ 结构化   │      │  文件    │     │  上下文  │
+         │  日志    │      │(JSON/MD/ │     │  持久化  │
+         │          │      │  TXT)    │     │          │
+         └──────────┘      └──────────┘     └──────────┘
+                │                 │                 │
+                └─────────────────┼─────────────────┘
+                                  │
+                                  ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                           最终输出                                      │
+│  - 任务执行报告                                                         │
+│  - 结构化数据文件                                                       │
+│  - 可审计的完整日志                                                     │
+│  - 可复用的 Run 实例                                                    │
+└───────────────────────────────────────────────────────────────────────┘
+
+
+Recipe 三级优先级系统：
+======================
+
+┌─────────────────────────────────────┐
+│  Project (.auvima/recipes/)         │  ← 优先级最高
+│  - 项目特定的Recipe                 │
+│  - 团队共享                         │
+└─────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────┐
+│  User (~/.auvima/recipes/)          │  ← 优先级中
+│  - 用户个人Recipe                   │
+│  - 可在多项目复用                   │
+└─────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────┐
+│  Example (examples/)                │  ← 优先级最低
+│  - 官方示例                         │
+│  - 可复制到User或Project级          │
+└─────────────────────────────────────┘
+```
+
+**典型使用场景**：
+
+**场景1**：`/auvima.run "从Upwork提取Python职位"`
+```
+用户 → AI分析 → 发现Recipe: upwork_extract_job_details
+     → 创建Run实例 → 调用Recipe(chrome-js) → CDP执行
+     → 输出markdown → 记录JSONL日志 → 持久化Run上下文
+```
+
+**场景2**：`/auvima.recipe "提取YouTube字幕"`
+```
+用户 → AI生成Recipe → 保存到.auvima/recipes/
+     → 测试Recipe → CDP执行 → 验证输出 → 添加到注册表
+```
+
+**场景3**：直接CLI命令
+```
+uv run auvima navigate https://...
+     → CDP客户端 → WebSocket → Chrome → 返回结果
+```
 
 ## 📚 文档导航
 
@@ -163,9 +267,9 @@ AI 将自动：
 ## 技术亮点
 
 - 🏆 **原生CDP** - 无Playwright/Selenium依赖，~2MB轻量级部署
-- 🏆 **AI导演录制** - 设计分镜+编写脚本，非生成画面
-- 🏆 **Recipe加速系统** - 固化高频操作，避免重复AI推理
-- 🏆 **持久化会话** - 直连Chrome实例，WebSocket零中继
+- 🏆 **AI-First设计** - Claude AI主持任务执行，自动化调用Recipe
+- 🏆 **Recipe系统** - 元数据驱动的可复用脚本，避免重复AI推理
+- 🏆 **持久化会话** - 直连Chrome实例，WebSocket零中继，支持Run上下文积累
 
 ## 项目状态
 

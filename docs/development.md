@@ -114,11 +114,11 @@ src/auvima/cdp/commands/
 
 ## 技术栈
 
-- **AI导演**：Claude Code（设计分镜、创作录制脚本）
+- **AI编排**：Claude Code（任务分析、Recipe调度、工作流设计）
 - **浏览器控制**：Chrome DevTools Protocol (CDP) - 原生WebSocket
-- **屏幕录制**：ffmpeg + AVFoundation (macOS)
-- **脚本编排**：Python 3.12（Pipeline调度 + CDP工具层）
-- **配音合成**：火山引擎声音克隆API（待集成）
+- **多运行时支持**：Chrome JS、Python、Shell
+- **任务管理**：Run命令系统（持久化上下文、JSONL日志）
+- **脚本编排**：Python 3.9+（Recipe系统 + CDP工具层）
 
 ## 开发规范
 

@@ -178,7 +178,7 @@ examples/                 # 示例级 Recipe
 ├── commands/             # 自定义slash命令
 └── skills/               # 项目级skills
 
-projects/                 # 视频项目工作目录
+projects/                 # Run实例工作目录（持久化任务上下文）
 ```
 
 <!-- MANUAL ADDITIONS END -->
