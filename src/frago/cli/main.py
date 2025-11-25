@@ -25,8 +25,9 @@ from .commands import (
     pointer,
     spotlight,
     annotate,
-    init
+    init as init_dirs,  # 旧的目录初始化命令，保留为 init-dirs
 )
+from .init_command import init  # 新的环境初始化命令
 from .recipe_commands import recipe_group
 from .run_commands import run_group
 
@@ -131,7 +132,8 @@ cli.add_command(highlight)
 cli.add_command(pointer)
 cli.add_command(spotlight)
 cli.add_command(annotate)
-cli.add_command(init)
+cli.add_command(init)  # 新的环境初始化命令
+cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)
