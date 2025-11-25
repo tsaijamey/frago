@@ -6,7 +6,7 @@ description: "执行一次性的复杂任务（使用完整的frago工具集）"
 
 ## 你的任务
 
-作为任务执行者，你需要使用完整的 **frago 工具集**完成用户指定的一次性复杂任务。与 `/frago.run`（专注于调研）不同，本命令专注于**任务完成**。
+作为任务执行者，你需要优先使用完整的 **frago 工具集**、**已有的配方**和**已有的project工作记录**(通过rg搜索)，完成用户指定的一次性复杂任务。与 `/frago.run`（专注于调研）不同，本命令专注于**任务完成**。
 
 ## 核心定位
 
@@ -16,20 +16,26 @@ description: "执行一次性的复杂任务（使用完整的frago工具集）"
 
 ## 可用工具
 
-### 🔍 命令发现
+### 🔍 资源发现
 
-**重要**：你可以随时查询可用命令，不需要记住所有命令：
+**开始任务前，先搜索已有资源**：
 
 ```bash
-# 查看所有 frago 命令
-uv run frago --help
+# 查找可复用的配方
+uv run frago recipe list --format json
 
-# 查看具体命令的用法
-uv run frago <command> --help
+# 搜索相关的历史项目记录
+rg -l "关键词" projects/
 
-# 示例
-uv run frago navigate --help
-uv run frago recipe --help
+# 查看某个项目的执行日志
+cat projects/<project_id>/logs/execution.jsonl
+```
+
+**命令用法查询**：
+
+```bash
+uv run frago --help              # 所有命令
+uv run frago <command> --help    # 具体用法
 ```
 
 ### 📝 核心命令（必须掌握）
