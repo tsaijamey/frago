@@ -13,6 +13,68 @@ from typing import Dict, Optional
 
 import click
 
+# ASCII Art Banner - 使用块字符创建填充效果
+FRAGO_BANNER = """\
+███████╗██████╗  █████╗  ██████╗  ██████╗
+██╔════╝██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗
+█████╗  ██████╔╝███████║██║  ███╗██║   ██║
+██╔══╝  ██╔══██╗██╔══██║██║   ██║██║   ██║
+██║     ██║  ██║██║  ██║╚██████╔╝╚██████╔╝
+╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝
+"""
+
+# 渐变色配置：从青色过渡到蓝色再到紫色
+GRADIENT_COLORS = [
+    (0, 255, 255),    # cyan
+    (0, 191, 255),    # deep sky blue
+    (65, 105, 225),   # royal blue
+    (138, 43, 226),   # blue violet
+    (148, 0, 211),    # dark violet
+    (186, 85, 211),   # medium orchid
+]
+
+
+def _rgb_to_ansi(r: int, g: int, b: int) -> str:
+    """将 RGB 转换为 ANSI 256 色转义序列"""
+    return f"\033[38;2;{r};{g};{b}m"
+
+
+def _interpolate_color(color1: tuple, color2: tuple, t: float) -> tuple:
+    """在两个颜色之间线性插值"""
+    return tuple(int(c1 + (c2 - c1) * t) for c1, c2 in zip(color1, color2))
+
+
+def _get_gradient_color(position: float) -> tuple:
+    """根据位置 (0-1) 获取渐变色"""
+    if position >= 1.0:
+        return GRADIENT_COLORS[-1]
+
+    n = len(GRADIENT_COLORS) - 1
+    idx = position * n
+    lower_idx = int(idx)
+    t = idx - lower_idx
+
+    return _interpolate_color(GRADIENT_COLORS[lower_idx], GRADIENT_COLORS[lower_idx + 1], t)
+
+
+def print_banner() -> None:
+    """打印渐变色 ASCII art banner"""
+    lines = FRAGO_BANNER.rstrip().split("\n")
+    total_lines = len(lines)
+    use_color = sys.stdout.isatty()
+
+    click.echo()
+    for i, line in enumerate(lines):
+        if use_color:
+            position = i / max(total_lines - 1, 1)
+            r, g, b = _get_gradient_color(position)
+            color_code = _rgb_to_ansi(r, g, b)
+            reset_code = "\033[0m"
+            click.echo(f"{color_code}{line}{reset_code}")
+        else:
+            click.echo(line)
+    click.echo()
+
 from frago.init.checker import (
     parallel_dependency_check,
     get_missing_dependencies,
@@ -78,7 +140,9 @@ def init(
     if reset:
         _handle_reset()
 
-    click.echo("\n🚀 Frago 环境初始化\n")
+    # 打印彩色 banner
+    print_banner()
+    click.echo("🚀 Frago 环境初始化\n")
 
     # 加载现有配置
     existing_config = load_config() if config_exists() else None
