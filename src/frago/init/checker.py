@@ -140,14 +140,10 @@ def check_claude_code(
         )
 
         if version_output.returncode == 0:
-            # Claude Code 版本输出可能是 "claude-code version 1.0.0" 或 "1.0.0"
+            # Claude Code 版本输出格式: "2.0.53 (Claude Code)" 或 "1.0.0"
             output = version_output.stdout.strip()
-            # 提取版本号
-            if "version" in output.lower():
-                parts = output.split()
-                version = parts[-1].lstrip("v")
-            else:
-                version = output.lstrip("v")
+            # 提取版本号（取第一个空格前的部分，去除 v 前缀）
+            version = output.split()[0].lstrip("v") if output else ""
 
             result.installed = True
             result.version = version
