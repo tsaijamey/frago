@@ -24,10 +24,10 @@
 
 **Purpose**: 项目初始化和基础结构搭建
 
-- [ ] T001 在 `src/frago/init/` 创建模块目录结构
-- [ ] T002 [P] 创建 `src/frago/init/__init__.py` 导出模块
-- [ ] T003 [P] 创建 `tests/unit/init/` 单元测试目录
-- [ ] T004 [P] 创建 `tests/integration/` 集成测试目录（如不存在）
+- [x] T001 在 `src/frago/init/` 创建模块目录结构
+- [x] T002 [P] 创建 `src/frago/init/__init__.py` 导出模块
+- [x] T003 [P] 创建 `tests/unit/init/` 单元测试目录
+- [x] T004 [P] 创建 `tests/integration/` 集成测试目录（如不存在）
 
 ---
 
@@ -37,14 +37,14 @@
 
 **⚠️ CRITICAL**: 在此阶段完成前，不能开始任何用户故事工作
 
-- [ ] T005 [P] 在 `src/frago/init/models.py` 实现 Config 数据模型（Pydantic）
-- [ ] T006 [P] 在 `src/frago/init/models.py` 实现 APIEndpoint 嵌套模型
-- [ ] T007 [P] 在 `src/frago/init/models.py` 实现 TemporaryState 数据模型
-- [ ] T008 [P] 在 `src/frago/init/models.py` 实现 InstallationStep 状态机
-- [ ] T009 [P] 在 `src/frago/init/models.py` 实现 DependencyCheckResult 模型
-- [ ] T010 [P] 在 `src/frago/init/exceptions.py` 创建自定义异常类（CommandError, InitErrorCode）
-- [ ] T011 [P] 在 `tests/unit/init/test_models.py` 编写所有模型的单元测试
-- [ ] T012 [P] 在 `tests/unit/init/test_exceptions.py` 编写异常类的单元测试
+- [x] T005 [P] 在 `src/frago/init/models.py` 实现 Config 数据模型（Pydantic）
+- [x] T006 [P] 在 `src/frago/init/models.py` 实现 APIEndpoint 嵌套模型
+- [x] T007 [P] 在 `src/frago/init/models.py` 实现 TemporaryState 数据模型
+- [x] T008 [P] 在 `src/frago/init/models.py` 实现 InstallationStep 状态机
+- [x] T009 [P] 在 `src/frago/init/models.py` 实现 DependencyCheckResult 模型
+- [x] T010 [P] 在 `src/frago/init/exceptions.py` 创建自定义异常类（CommandError, InitErrorCode）
+- [x] T011 [P] 在 `tests/unit/init/test_models.py` 编写所有模型的单元测试
+- [x] T012 [P] 在 `tests/unit/init/test_exceptions.py` 编写异常类的单元测试
 
 **Checkpoint**: 基础架构就绪 - 用户故事实现可以并行开始
 
@@ -65,26 +65,26 @@
 
 > **NOTE: 编写这些测试，确保它们在实现前失败（TDD）**
 
-- [ ] T013 [P] [US1] 在 `tests/unit/init/test_checker.py` 编写 check_node_installed 测试
-- [ ] T014 [P] [US1] 在 `tests/unit/init/test_checker.py` 编写 check_claude_code_installed 测试
-- [ ] T015 [P] [US1] 在 `tests/unit/init/test_checker.py` 编写 parallel_dependency_check 测试
-- [ ] T016 [P] [US1] 在 `tests/unit/init/test_installer.py` 编写 install_node 测试（模拟 subprocess）
-- [ ] T017 [P] [US1] 在 `tests/unit/init/test_installer.py` 编写 install_claude_code 测试
-- [ ] T018 [P] [US1] 在 `tests/integration/test_init_command.py` 编写全新安装集成测试
+- [x] T013 [P] [US1] 在 `tests/unit/init/test_checker.py` 编写 check_node_installed 测试
+- [x] T014 [P] [US1] 在 `tests/unit/init/test_checker.py` 编写 check_claude_code_installed 测试
+- [x] T015 [P] [US1] 在 `tests/unit/init/test_checker.py` 编写 parallel_dependency_check 测试
+- [x] T016 [P] [US1] 在 `tests/unit/init/test_installer.py` 编写 install_node 测试（模拟 subprocess）
+- [x] T017 [P] [US1] 在 `tests/unit/init/test_installer.py` 编写 install_claude_code 测试
+- [x] T018 [P] [US1] 在 `tests/integration/test_init_command.py` 编写全新安装集成测试
 
 ### Implementation for User Story 1
 
-- [ ] T019 [P] [US1] 在 `src/frago/init/checker.py` 实现 check_node() 函数（检测 Node.js 版本）
-- [ ] T020 [P] [US1] 在 `src/frago/init/checker.py` 实现 check_claude_code() 函数
-- [ ] T021 [US1] 在 `src/frago/init/checker.py` 实现 parallel_dependency_check() 使用 ThreadPoolExecutor
-- [ ] T022 [P] [US1] 在 `src/frago/init/installer.py` 实现 run_external_command() 包装器（错误处理）
-- [ ] T023 [P] [US1] 在 `src/frago/init/installer.py` 实现 install_node() 函数（通过 nvm）
-- [ ] T024 [P] [US1] 在 `src/frago/init/installer.py` 实现 install_claude_code() 函数（npm install）
-- [ ] T025 [US1] 在 `src/frago/cli/init_command.py` 创建 Click 命令框架（@click.command）
-- [ ] T026 [US1] 在 `src/frago/cli/init_command.py` 实现依赖检查流程（调用 checker）
-- [ ] T027 [US1] 在 `src/frago/cli/init_command.py` 实现安装流程（调用 installer）
-- [ ] T028 [US1] 在 `src/frago/cli/init_command.py` 添加安装失败时的错误处理（立即终止）
-- [ ] T029 [US1] 在 `src/frago/cli/main.py` 注册 init 命令到 CLI 组
+- [x] T019 [P] [US1] 在 `src/frago/init/checker.py` 实现 check_node() 函数（检测 Node.js 版本）
+- [x] T020 [P] [US1] 在 `src/frago/init/checker.py` 实现 check_claude_code() 函数
+- [x] T021 [US1] 在 `src/frago/init/checker.py` 实现 parallel_dependency_check() 使用 ThreadPoolExecutor
+- [x] T022 [P] [US1] 在 `src/frago/init/installer.py` 实现 run_external_command() 包装器（错误处理）
+- [x] T023 [P] [US1] 在 `src/frago/init/installer.py` 实现 install_node() 函数（通过 nvm）
+- [x] T024 [P] [US1] 在 `src/frago/init/installer.py` 实现 install_claude_code() 函数（npm install）
+- [x] T025 [US1] 在 `src/frago/cli/init_command.py` 创建 Click 命令框架（@click.command）
+- [x] T026 [US1] 在 `src/frago/cli/init_command.py` 实现依赖检查流程（调用 checker）
+- [x] T027 [US1] 在 `src/frago/cli/init_command.py` 实现安装流程（调用 installer）
+- [x] T028 [US1] 在 `src/frago/cli/init_command.py` 添加安装失败时的错误处理（立即终止）
+- [x] T029 [US1] 在 `src/frago/cli/main.py` 注册 init 命令到 CLI 组
 
 **Checkpoint**: User Story 1 完成 - 可以独立测试并部署为 MVP
 
@@ -102,21 +102,21 @@
 
 ### Tests for User Story 2
 
-- [ ] T030 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写 prompt_auth_method 测试
-- [ ] T031 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写 configure_official_auth 测试
-- [ ] T032 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写 configure_custom_endpoint 测试
-- [ ] T033 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写认证互斥性验证测试
-- [ ] T034 [P] [US2] 在 `tests/integration/test_init_command.py` 编写官方登录流程集成测试
-- [ ] T035 [P] [US2] 在 `tests/integration/test_init_command.py` 编写自定义端点流程集成测试
+- [x] T030 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写 prompt_auth_method 测试
+- [x] T031 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写 configure_official_auth 测试
+- [x] T032 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写 configure_custom_endpoint 测试
+- [x] T033 [P] [US2] 在 `tests/unit/init/test_configurator.py` 编写认证互斥性验证测试
+- [x] T034 [P] [US2] 在 `tests/integration/test_init_command.py` 编写官方登录流程集成测试
+- [x] T035 [P] [US2] 在 `tests/integration/test_init_command.py` 编写自定义端点流程集成测试
 
 ### Implementation for User Story 2
 
-- [ ] T036 [P] [US2] 在 `src/frago/init/configurator.py` 实现 prompt_auth_method() 使用 Click.choice
-- [ ] T037 [P] [US2] 在 `src/frago/init/configurator.py` 实现 configure_official_auth() 函数
-- [ ] T038 [P] [US2] 在 `src/frago/init/configurator.py` 实现 configure_custom_endpoint() 函数
-- [ ] T039 [P] [US2] 在 `src/frago/init/configurator.py` 实现 load_config() 和 save_config() 函数
-- [ ] T040 [US2] 在 `src/frago/cli/init_command.py` 集成认证配置流程（调用 configurator）
-- [ ] T041 [US2] 在 `src/frago/cli/init_command.py` 实现认证方式切换时的警告提示
+- [x] T036 [P] [US2] 在 `src/frago/init/configurator.py` 实现 prompt_auth_method() 使用 Click.choice
+- [x] T037 [P] [US2] 在 `src/frago/init/configurator.py` 实现 configure_official_auth() 函数
+- [x] T038 [P] [US2] 在 `src/frago/init/configurator.py` 实现 configure_custom_endpoint() 函数
+- [x] T039 [P] [US2] 在 `src/frago/init/configurator.py` 实现 load_config() 和 save_config() 函数
+- [x] T040 [US2] 在 `src/frago/cli/init_command.py` 集成认证配置流程（调用 configurator）
+- [x] T041 [US2] 在 `src/frago/cli/init_command.py` 实现认证方式切换时的警告提示
 
 **Checkpoint**: User Stories 1 AND 2 都可以独立工作
 
@@ -134,18 +134,18 @@
 
 ### Tests for User Story 3
 
-- [ ] T042 [P] [US3] 在 `tests/unit/init/test_configurator.py` 编写 display_config_summary 测试
-- [ ] T043 [P] [US3] 在 `tests/unit/init/test_configurator.py` 编写 prompt_config_update 测试
-- [ ] T044 [P] [US3] 在 `tests/integration/test_init_command.py` 编写配置更新流程集成测试
-- [ ] T045 [P] [US3] 在 `tests/integration/test_init_command.py` 编写无需更新退出测试
+- [x] T042 [P] [US3] 在 `tests/unit/init/test_configurator.py` 编写 display_config_summary 测试
+- [x] T043 [P] [US3] 在 `tests/unit/init/test_configurator.py` 编写 prompt_config_update 测试
+- [x] T044 [P] [US3] 在 `tests/integration/test_init_command.py` 编写配置更新流程集成测试
+- [x] T045 [P] [US3] 在 `tests/integration/test_init_command.py` 编写无需更新退出测试
 
 ### Implementation for User Story 3
 
-- [ ] T046 [P] [US3] 在 `src/frago/init/configurator.py` 实现 display_config_summary() 函数
-- [ ] T047 [P] [US3] 在 `src/frago/init/configurator.py` 实现 prompt_config_update() 函数
-- [ ] T048 [P] [US3] 在 `src/frago/init/configurator.py` 实现 select_config_items_to_update() 函数
-- [ ] T049 [US3] 在 `src/frago/cli/init_command.py` 实现配置检测逻辑（所有依赖已满足且配置存在）
-- [ ] T050 [US3] 在 `src/frago/cli/init_command.py` 实现配置更新分支逻辑
+- [x] T046 [P] [US3] 在 `src/frago/init/configurator.py` 实现 display_config_summary() 函数
+- [x] T047 [P] [US3] 在 `src/frago/init/configurator.py` 实现 prompt_config_update() 函数
+- [x] T048 [P] [US3] 在 `src/frago/init/configurator.py` 实现 select_config_items_to_update() 函数
+- [x] T049 [US3] 在 `src/frago/cli/init_command.py` 实现配置检测逻辑（所有依赖已满足且配置存在）
+- [x] T050 [US3] 在 `src/frago/cli/init_command.py` 实现配置更新分支逻辑
 
 **Checkpoint**: User Stories 1, 2 AND 3 都可以独立工作
 
@@ -163,20 +163,20 @@
 
 ### Tests for User Story 4
 
-- [ ] T051 [P] [US4] 在 `tests/unit/init/test_configurator.py` 编写 prompt_endpoint_type 测试
-- [ ] T052 [P] [US4] 在 `tests/unit/init/test_configurator.py` 编写 prompt_api_key 测试（隐藏输入）
-- [ ] T053 [P] [US4] 在 `tests/unit/init/test_configurator.py` 编写 validate_endpoint_url 测试
-- [ ] T054 [P] [US4] 在 `tests/integration/test_init_command.py` 编写 Deepseek 端点配置测试
-- [ ] T055 [P] [US4] 在 `tests/integration/test_init_command.py` 编写自定义 URL 端点配置测试
+- [x] T051 [P] [US4] 在 `tests/unit/init/test_configurator.py` 编写 prompt_endpoint_type 测试
+- [x] T052 [P] [US4] 在 `tests/unit/init/test_configurator.py` 编写 prompt_api_key 测试（隐藏输入）
+- [x] T053 [P] [US4] 在 `tests/unit/init/test_configurator.py` 编写 validate_endpoint_url 测试
+- [x] T054 [P] [US4] 在 `tests/integration/test_init_command.py` 编写 Deepseek 端点配置测试
+- [x] T055 [P] [US4] 在 `tests/integration/test_init_command.py` 编写自定义 URL 端点配置测试
 
 ### Implementation for User Story 4
 
-- [ ] T056 [P] [US4] 在 `src/frago/init/configurator.py` 实现 prompt_endpoint_type() 函数
-- [ ] T057 [P] [US4] 在 `src/frago/init/configurator.py` 实现 prompt_api_key() 函数（使用 hide_input=True）
-- [ ] T058 [P] [US4] 在 `src/frago/init/configurator.py` 实现 prompt_custom_endpoint_url() 函数
-- [ ] T059 [P] [US4] 在 `src/frago/init/configurator.py` 实现 validate_endpoint_url() 函数
-- [ ] T060 [P] [US4] 在 `src/frago/init/configurator.py` 实现预设端点 URL 映射（Deepseek/Aliyun/M2）
-- [ ] T061 [US4] 在 `src/frago/cli/init_command.py` 集成自定义端点配置逻辑到认证流程
+- [x] T056 [P] [US4] 在 `src/frago/init/configurator.py` 实现 prompt_endpoint_type() 函数
+- [x] T057 [P] [US4] 在 `src/frago/init/configurator.py` 实现 prompt_api_key() 函数（使用 hide_input=True）
+- [x] T058 [P] [US4] 在 `src/frago/init/configurator.py` 实现 prompt_custom_endpoint_url() 函数
+- [x] T059 [P] [US4] 在 `src/frago/init/configurator.py` 实现 validate_endpoint_url() 函数
+- [x] T060 [P] [US4] 在 `src/frago/init/configurator.py` 实现预设端点 URL 映射（Deepseek/Aliyun/M2）
+- [x] T061 [US4] 在 `src/frago/cli/init_command.py` 集成自定义端点配置逻辑到认证流程
 
 **Checkpoint**: User Stories 1-4 都可以独立工作
 
@@ -223,16 +223,16 @@
 
 ### Tests for User Story 6
 
-- [ ] T071 [P] [US6] 在 `tests/unit/init/test_configurator.py` 编写 save_config 持久化测试
-- [ ] T072 [P] [US6] 在 `tests/unit/init/test_configurator.py` 编写 format_final_summary 测试
-- [ ] T073 [P] [US6] 在 `tests/integration/test_init_command.py` 编写完整流程配置保存测试
+- [x] T071 [P] [US6] 在 `tests/unit/init/test_configurator.py` 编写 save_config 持久化测试
+- [x] T072 [P] [US6] 在 `tests/unit/init/test_configurator.py` 编写 format_final_summary 测试
+- [x] T073 [P] [US6] 在 `tests/integration/test_init_command.py` 编写完整流程配置保存测试
 
 ### Implementation for User Story 6
 
-- [ ] T074 [P] [US6] 在 `src/frago/init/configurator.py` 完善 save_config() 函数（原子写入）
-- [ ] T075 [P] [US6] 在 `src/frago/init/configurator.py` 实现 format_final_summary() 函数
-- [ ] T076 [P] [US6] 在 `src/frago/init/configurator.py` 实现 suggest_next_steps() 函数
-- [ ] T077 [US6] 在 `src/frago/cli/init_command.py` 在流程结束时调用配置保存和摘要显示
+- [x] T074 [P] [US6] 在 `src/frago/init/configurator.py` 完善 save_config() 函数（原子写入）
+- [x] T075 [P] [US6] 在 `src/frago/init/configurator.py` 实现 format_final_summary() 函数
+- [x] T076 [P] [US6] 在 `src/frago/init/configurator.py` 实现 suggest_next_steps() 函数
+- [x] T077 [US6] 在 `src/frago/cli/init_command.py` 在流程结束时调用配置保存和摘要显示
 
 **Checkpoint**: 所有用户故事完成并可独立测试
 
@@ -242,17 +242,17 @@
 
 **Purpose**: 实现 Ctrl+C 优雅中断、状态恢复和错误处理
 
-- [ ] T078 [P] 在 `src/frago/init/recovery.py` 实现 GracefulInterruptHandler 类
-- [ ] T079 [P] 在 `src/frago/init/recovery.py` 实现 load_temp_state() 函数
-- [ ] T080 [P] 在 `src/frago/init/recovery.py` 实现 save_temp_state() 函数
-- [ ] T081 [P] 在 `src/frago/init/recovery.py` 实现 delete_temp_state() 函数
-- [ ] T082 [P] 在 `src/frago/init/recovery.py` 实现 prompt_resume() 函数
-- [ ] T083 [P] 在 `tests/unit/init/test_recovery.py` 编写恢复逻辑测试
-- [ ] T084 [P] 在 `tests/unit/init/test_recovery.py` 编写状态过期测试
-- [ ] T085 [P] 在 `tests/integration/test_init_command.py` 编写 Ctrl+C 中断恢复集成测试
-- [ ] T086 在 `src/frago/cli/init_command.py` 集成 GracefulInterruptHandler（信号处理）
-- [ ] T087 在 `src/frago/cli/init_command.py` 实现启动时的状态恢复检测
-- [ ] T088 在 `src/frago/cli/init_command.py` 在每个步骤完成后更新临时状态
+- [x] T078 [P] 在 `src/frago/init/recovery.py` 实现 GracefulInterruptHandler 类
+- [x] T079 [P] 在 `src/frago/init/recovery.py` 实现 load_temp_state() 函数
+- [x] T080 [P] 在 `src/frago/init/recovery.py` 实现 save_temp_state() 函数
+- [x] T081 [P] 在 `src/frago/init/recovery.py` 实现 delete_temp_state() 函数
+- [x] T082 [P] 在 `src/frago/init/recovery.py` 实现 prompt_resume() 函数
+- [x] T083 [P] 在 `tests/unit/init/test_recovery.py` 编写恢复逻辑测试
+- [x] T084 [P] 在 `tests/unit/init/test_recovery.py` 编写状态过期测试
+- [x] T085 [P] 在 `tests/integration/test_init_command.py` 编写 Ctrl+C 中断恢复集成测试
+- [x] T086 在 `src/frago/cli/init_command.py` 集成 GracefulInterruptHandler（信号处理）
+- [x] T087 在 `src/frago/cli/init_command.py` 实现启动时的状态恢复检测
+- [x] T088 在 `src/frago/cli/init_command.py` 在每个步骤完成后更新临时状态
 
 ---
 
@@ -260,14 +260,14 @@
 
 **Purpose**: 实现 --reset, --show-config, --skip-deps, --non-interactive 选项
 
-- [ ] T089 [P] 在 `src/frago/cli/init_command.py` 添加 --reset 选项（Click.option）
-- [ ] T090 [P] 在 `src/frago/cli/init_command.py` 添加 --show-config 选项
-- [ ] T091 [P] 在 `src/frago/cli/init_command.py` 添加 --skip-deps 选项
-- [ ] T092 [P] 在 `src/frago/cli/init_command.py` 添加 --non-interactive 选项
-- [ ] T093 [P] 在 `src/frago/init/configurator.py` 实现 --show-config 显示逻辑
-- [ ] T094 [P] 在 `tests/unit/init/test_init_command.py` 编写所有选项的测试
-- [ ] T095 [P] 在 `tests/integration/test_init_command.py` 编写 --reset 集成测试
-- [ ] T096 [P] 在 `tests/integration/test_init_command.py` 编写 --non-interactive 集成测试
+- [x] T089 [P] 在 `src/frago/cli/init_command.py` 添加 --reset 选项（Click.option）
+- [x] T090 [P] 在 `src/frago/cli/init_command.py` 添加 --show-config 选项
+- [x] T091 [P] 在 `src/frago/cli/init_command.py` 添加 --skip-deps 选项
+- [x] T092 [P] 在 `src/frago/cli/init_command.py` 添加 --non-interactive 选项
+- [x] T093 [P] 在 `src/frago/init/configurator.py` 实现 --show-config 显示逻辑
+- [x] T094 [P] 在 `tests/unit/init/test_init_command.py` 编写所有选项的测试
+- [x] T095 [P] 在 `tests/integration/test_init_command.py` 编写 --reset 集成测试
+- [x] T096 [P] 在 `tests/integration/test_init_command.py` 编写 --non-interactive 集成测试
 
 ---
 
@@ -275,12 +275,12 @@
 
 **Purpose**: 实现标准化错误消息、彩色输出和进度提示
 
-- [ ] T097 [P] 在 `src/frago/init/formatter.py` 创建错误消息格式化模块
-- [ ] T098 [P] 在 `src/frago/init/formatter.py` 实现 format_error_message() 函数
-- [ ] T099 [P] 在 `src/frago/init/formatter.py` 实现 format_success_message() 函数
-- [ ] T100 [P] 在 `src/frago/init/formatter.py` 实现 format_dependency_status() 函数
-- [ ] T101 [P] 在 `src/frago/cli/init_command.py` 集成格式化的错误和成功消息
-- [ ] T102 [P] 在 `tests/unit/init/test_formatter.py` 编写格式化函数测试
+- [x] T097 [P] 在 `src/frago/init/formatter.py` 创建错误消息格式化模块
+- [x] T098 [P] 在 `src/frago/init/formatter.py` 实现 format_error_message() 函数
+- [x] T099 [P] 在 `src/frago/init/formatter.py` 实现 format_success_message() 函数
+- [x] T100 [P] 在 `src/frago/init/formatter.py` 实现 format_dependency_status() 函数
+- [x] T101 [P] 在 `src/frago/cli/init_command.py` 集成格式化的错误和成功消息
+- [x] T102 [P] 在 `tests/unit/init/test_formatter.py` 编写格式化函数测试
 
 ---
 
@@ -288,14 +288,14 @@
 
 **Purpose**: 完善和横切关注点
 
-- [ ] T103 [P] 在 `src/frago/init/__init__.py` 添加完整的模块文档字符串
-- [ ] T104 [P] 在所有 `src/frago/init/*.py` 文件添加类型注解（mypy 检查）
-- [ ] T105 [P] 运行 `black` 和 `ruff` 格式化所有新增代码
-- [ ] T106 [P] 在 `tests/integration/test_init_command.py` 添加边缘情况测试（网络错误、权限错误等）
-- [ ] T107 [P] 更新 `CLAUDE.md` 添加 init 命令使用说明
-- [ ] T108 验证 `specs/006-init-command/quickstart.md` 中的所有示例可运行
-- [ ] T109 运行完整测试套件确保 >= 80% 覆盖率：`uv run pytest --cov=frago.init --cov-report=term`
-- [ ] T110 在真实环境测试所有用户故事场景（全新系统、部分已装、已有配置）
+- [x] T103 [P] 在 `src/frago/init/__init__.py` 添加完整的模块文档字符串
+- [x] T104 [P] 在所有 `src/frago/init/*.py` 文件添加类型注解（mypy 检查）
+- [x] T105 [P] 运行 `black` 和 `ruff` 格式化所有新增代码
+- [x] T106 [P] 在 `tests/integration/test_init_command.py` 添加边缘情况测试（网络错误、权限错误等）
+- [x] T107 [P] 更新 `CLAUDE.md` 添加 init 命令使用说明
+- [x] T108 验证 `specs/006-init-command/quickstart.md` 中的所有示例可运行
+- [x] T109 运行完整测试套件确保 >= 80% 覆盖率：`uv run pytest --cov=frago.init --cov-report=term`
+- [x] T110 在真实环境测试所有用户故事场景（全新系统、部分已装、已有配置）
 
 ---
 

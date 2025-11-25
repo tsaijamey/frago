@@ -1,0 +1,511 @@
+"""
+配置管理模块
+
+提供 Frago 配置的加载、保存和交互式配置功能：
+- 认证方式选择（官方 vs 自定义端点）
+- 配置持久化到 ~/.frago/config.json
+- 配置摘要显示
+- 配置更新流程
+"""
+
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+
+import click
+
+from frago.init.models import Config, APIEndpoint
+
+
+# 预设端点 URL 映射
+PRESET_ENDPOINTS = {
+    "deepseek": "https://api.deepseek.com/v1",
+    "aliyun": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "m2": "https://api.m2.ai/v1",
+}
+
+
+# =============================================================================
+# Phase 6: User Story 4 - 自定义 API 端点配置函数
+# =============================================================================
+
+
+def validate_endpoint_url(url: str) -> bool:
+    """
+    验证 API 端点 URL 格式
+
+    Args:
+        url: 待验证的 URL
+
+    Returns:
+        True 如果 URL 有效
+    """
+    if not url or not isinstance(url, str):
+        return False
+
+    url = url.strip()
+    if not url:
+        return False
+
+    # 必须以 http:// 或 https:// 开头
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return False
+
+    # 简单检查格式：协议后面需要有内容
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        return bool(parsed.scheme and parsed.netloc)
+    except Exception:
+        return False
+
+
+def prompt_endpoint_type() -> str:
+    """
+    提示用户选择端点类型
+
+    Returns:
+        端点类型：deepseek, aliyun, m2, custom
+    """
+    click.echo("\n支持的端点类型:")
+    click.echo("  - deepseek: Deepseek API")
+    click.echo("  - aliyun:   阿里云 DashScope")
+    click.echo("  - m2:       M2 API")
+    click.echo("  - custom:   自定义 URL\n")
+
+    endpoint_type = click.prompt(
+        "端点类型",
+        type=click.Choice(["deepseek", "aliyun", "m2", "custom"], case_sensitive=False),
+        default="deepseek",
+    )
+
+    return endpoint_type.lower()
+
+
+def prompt_api_key(endpoint_name: Optional[str] = None) -> str:
+    """
+    提示用户输入 API Key（隐藏输入）
+
+    Args:
+        endpoint_name: 可选的端点名称，用于提示
+
+    Returns:
+        用户输入的 API Key
+    """
+    prompt_text = "API Key"
+    if endpoint_name:
+        prompt_text = f"{endpoint_name} API Key"
+
+    return click.prompt(prompt_text, hide_input=True, type=str)
+
+
+def prompt_custom_endpoint_url() -> str:
+    """
+    提示用户输入自定义端点 URL（带验证）
+
+    Returns:
+        验证通过的 URL
+    """
+    while True:
+        url = click.prompt("API 端点 URL", type=str)
+
+        if validate_endpoint_url(url):
+            return url
+
+        click.echo("❌ 无效的 URL 格式，请输入完整的 HTTP/HTTPS URL")
+
+
+def get_config_path() -> Path:
+    """
+    获取配置文件路径
+
+    Returns:
+        配置文件路径 (~/.frago/config.json)
+    """
+    home = Path(os.environ.get("HOME", Path.home()))
+    return home / ".frago" / "config.json"
+
+
+def config_exists() -> bool:
+    """
+    检查配置文件是否存在
+
+    Returns:
+        True 如果配置文件存在
+    """
+    return get_config_path().exists()
+
+
+def load_config(config_file: Optional[Path] = None) -> Config:
+    """
+    加载配置文件
+
+    Args:
+        config_file: 配置文件路径，默认使用 get_config_path()
+
+    Returns:
+        Config 对象，如果文件不存在或损坏则返回默认配置
+    """
+    if config_file is None:
+        config_file = get_config_path()
+
+    if not config_file.exists():
+        return Config()
+
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # 处理 datetime 字段
+        for field in ["created_at", "updated_at"]:
+            if field in data and isinstance(data[field], str):
+                try:
+                    data[field] = datetime.fromisoformat(data[field])
+                except ValueError:
+                    del data[field]
+
+        # 处理嵌套的 api_endpoint
+        if "api_endpoint" in data and data["api_endpoint"]:
+            data["api_endpoint"] = APIEndpoint(**data["api_endpoint"])
+
+        return Config(**data)
+
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        # 配置文件损坏，备份后返回默认配置
+        backup_file = config_file.with_suffix(".json.bak")
+        if config_file.exists():
+            config_file.rename(backup_file)
+            click.echo(f"配置文件损坏，已备份到: {backup_file}")
+        return Config()
+
+
+def save_config(config: Config, config_file: Optional[Path] = None) -> None:
+    """
+    保存配置文件
+
+    Args:
+        config: Config 对象
+        config_file: 配置文件路径，默认使用 get_config_path()
+    """
+    if config_file is None:
+        config_file = get_config_path()
+
+    # 确保目录存在
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # 更新时间戳
+    config.updated_at = datetime.now()
+
+    # 序列化为字典
+    data = config.model_dump()
+
+    # 处理 datetime 序列化
+    for key, value in data.items():
+        if isinstance(value, datetime):
+            data[key] = value.isoformat()
+
+    # 处理 api_endpoint 嵌套对象
+    if data.get("api_endpoint"):
+        data["api_endpoint"] = dict(data["api_endpoint"])
+
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def prompt_auth_method() -> str:
+    """
+    提示用户选择认证方式
+
+    Returns:
+        "official" 或 "custom"
+    """
+    click.echo("\n🔐 请选择认证方式:\n")
+    click.echo("  1. official - 使用官方 Claude Code 登录")
+    click.echo("  2. custom   - 使用自定义 API 端点\n")
+
+    choice = click.prompt(
+        "认证方式",
+        type=click.Choice(["official", "custom"], case_sensitive=False),
+        default="official",
+        show_choices=True,
+        show_default=True,
+    )
+
+    return choice.lower()
+
+
+def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
+    """
+    配置官方认证
+
+    Args:
+        existing_config: 现有配置（用于保留其他字段）
+
+    Returns:
+        更新后的 Config 对象
+    """
+    if existing_config:
+        # 保留其他配置，只更新认证相关字段
+        data = existing_config.model_dump()
+        data["auth_method"] = "official"
+        data["api_endpoint"] = None
+        # 重新创建以触发验证
+        return Config(**data)
+    else:
+        return Config(auth_method="official")
+
+
+def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Config:
+    """
+    配置自定义 API 端点
+
+    Args:
+        existing_config: 现有配置（用于保留其他字段）
+
+    Returns:
+        更新后的 Config 对象
+    """
+    click.echo("\n📡 自定义 API 端点配置")
+
+    # 使用独立函数获取端点类型
+    endpoint_type = prompt_endpoint_type()
+
+    # 获取 URL
+    if endpoint_type == "custom":
+        url = prompt_custom_endpoint_url()
+    else:
+        url = PRESET_ENDPOINTS.get(endpoint_type)
+
+    # 获取 API Key（使用独立函数）
+    api_key = prompt_api_key()
+
+    # 创建端点配置
+    endpoint = APIEndpoint(type=endpoint_type, url=url, api_key=api_key)
+
+    if existing_config:
+        data = existing_config.model_dump()
+        data["auth_method"] = "custom"
+        data["api_endpoint"] = endpoint
+        return Config(**data)
+    else:
+        return Config(auth_method="custom", api_endpoint=endpoint)
+
+
+def display_config_summary(config: Config) -> str:
+    """
+    生成配置摘要字符串
+
+    Args:
+        config: Config 对象
+
+    Returns:
+        格式化的配置摘要字符串
+    """
+    lines = ["当前配置:", ""]
+
+    # 依赖信息
+    if config.node_version:
+        lines.append(f"  Node.js:      {config.node_version}")
+    if config.claude_code_version:
+        lines.append(f"  Claude Code:  {config.claude_code_version}")
+
+    lines.append("")
+
+    # 认证信息
+    if config.auth_method == "official":
+        lines.append("  认证方式:     官方 Claude Code 登录")
+    else:
+        lines.append("  认证方式:     自定义 API 端点")
+        if config.api_endpoint:
+            lines.append(f"  端点类型:     {config.api_endpoint.type}")
+            if config.api_endpoint.url:
+                lines.append(f"  端点 URL:     {config.api_endpoint.url}")
+            # 隐藏 API Key
+            lines.append("  API Key:      ****已配置****")
+
+    lines.append("")
+
+    # CCR 状态
+    if config.ccr_enabled:
+        lines.append("  CCR:          已启用")
+    else:
+        lines.append("  CCR:          未启用")
+
+    # 初始化状态
+    lines.append("")
+    if config.init_completed:
+        lines.append("  状态:         ✅ 初始化完成")
+    else:
+        lines.append("  状态:         ⚠️ 初始化未完成")
+
+    return "\n".join(lines)
+
+
+def prompt_config_update() -> bool:
+    """
+    询问用户是否更新配置
+
+    Returns:
+        True 如果用户选择更新
+    """
+    return click.confirm("\n是否需要更新配置?", default=False)
+
+
+def select_config_items_to_update() -> List[str]:
+    """
+    让用户选择要更新的配置项
+
+    Returns:
+        要更新的配置项列表
+    """
+    click.echo("\n可更新的配置项:")
+    click.echo("  auth     - 认证方式")
+    click.echo("  endpoint - API 端点配置")
+    click.echo("  ccr      - Claude Code Router")
+    click.echo("")
+
+    choice = click.prompt(
+        "选择要更新的项目（多个用逗号分隔）",
+        type=str,
+        default="auth",
+    )
+
+    return [item.strip().lower() for item in choice.split(",")]
+
+
+def run_auth_configuration(existing_config: Optional[Config] = None) -> Config:
+    """
+    运行认证配置流程
+
+    Args:
+        existing_config: 现有配置
+
+    Returns:
+        配置后的 Config 对象
+    """
+    auth_method = prompt_auth_method()
+
+    if auth_method == "official":
+        return configure_official_auth(existing_config)
+    else:
+        return configure_custom_endpoint(existing_config)
+
+
+def warn_auth_switch(current_method: str, new_method: str) -> bool:
+    """
+    认证方式切换警告
+
+    Args:
+        current_method: 当前认证方式
+        new_method: 新认证方式
+
+    Returns:
+        True 如果用户确认切换
+    """
+    if current_method == new_method:
+        return True
+
+    if current_method == "custom" and new_method == "official":
+        click.echo("\n⚠️  警告: 切换到官方认证将清除现有的 API 端点配置")
+    elif current_method == "official" and new_method == "custom":
+        click.echo("\n⚠️  警告: 切换到自定义端点需要提供 API Key")
+
+    return click.confirm("确认切换?", default=True)
+
+
+# =============================================================================
+# Phase 8: User Story 6 - 配置持久化和摘要报告
+# =============================================================================
+
+
+def format_final_summary(config: Config) -> str:
+    """
+    生成最终配置摘要（用于初始化完成时显示）
+
+    Args:
+        config: Config 对象
+
+    Returns:
+        格式化的最终摘要字符串
+    """
+    lines = ["", "🎉 Frago 初始化完成!", ""]
+    lines.append("=" * 40)
+    lines.append("")
+
+    # 依赖信息
+    lines.append("📦 已安装组件:")
+    if config.node_version:
+        lines.append(f"   • Node.js: {config.node_version}")
+    if config.claude_code_version:
+        lines.append(f"   • Claude Code: {config.claude_code_version}")
+
+    lines.append("")
+
+    # 认证信息
+    lines.append("🔐 认证配置:")
+    if config.auth_method == "official":
+        lines.append("   • 方式: 官方 Claude Code 登录")
+    else:
+        lines.append("   • 方式: 自定义 API 端点")
+        if config.api_endpoint:
+            lines.append(f"   • 端点: {config.api_endpoint.type}")
+            if config.api_endpoint.url:
+                lines.append(f"   • URL: {config.api_endpoint.url}")
+            lines.append("   • API Key: ****已配置****")
+
+    # CCR 状态
+    if config.ccr_enabled:
+        lines.append("")
+        lines.append("🔄 Claude Code Router: 已启用")
+
+    lines.append("")
+    lines.append("=" * 40)
+
+    return "\n".join(lines)
+
+
+def suggest_next_steps(config: Config) -> list[str]:
+    """
+    根据配置生成下一步操作建议
+
+    Args:
+        config: Config 对象
+
+    Returns:
+        建议列表
+    """
+    steps = []
+
+    if config.auth_method == "official":
+        steps.append("运行 `claude` 命令登录官方账号")
+        steps.append("使用 `frago recipe list` 查看可用的自动化配方")
+    else:
+        steps.append("使用 `frago recipe list` 查看可用的自动化配方")
+        steps.append("运行 `frago recipe run <name>` 执行配方")
+
+    steps.append("查看文档: https://github.com/anthropics/frago")
+
+    return steps
+
+
+def display_next_steps(config: Config) -> str:
+    """
+    显示下一步操作建议
+
+    Args:
+        config: Config 对象
+
+    Returns:
+        格式化的建议字符串
+    """
+    steps = suggest_next_steps(config)
+
+    lines = ["", "📋 下一步:"]
+    for i, step in enumerate(steps, 1):
+        lines.append(f"   {i}. {step}")
+    lines.append("")
+
+    return "\n".join(lines)
