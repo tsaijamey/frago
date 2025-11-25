@@ -8,6 +8,7 @@ Frago CLI - Chrome DevTools Protocol 命令行接口
 import sys
 import click
 from typing import Optional
+from collections import OrderedDict
 
 from .commands import (
     navigate,
@@ -32,7 +33,71 @@ from .recipe_commands import recipe_group
 from .run_commands import run_group
 
 
-@click.group()
+# 命令分组定义
+COMMAND_GROUPS = OrderedDict([
+    ("环境配置", ["init", "init-dirs", "status"]),
+    ("页面操作", ["navigate", "scroll", "zoom", "wait"]),
+    ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
+    ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "clear-effects"]),
+    ("自动化", ["recipe", "run"]),
+])
+
+
+class GroupedGroup(click.Group):
+    """支持命令分组显示的 Click Group"""
+
+    def format_commands(self, ctx, formatter):
+        """按分组格式化命令列表"""
+        commands = []
+        for subcommand in self.list_commands(ctx):
+            cmd = self.get_command(ctx, subcommand)
+            if cmd is None or cmd.hidden:
+                continue
+            commands.append((subcommand, cmd))
+
+        if not commands:
+            return
+
+        # 按分组组织命令
+        grouped = OrderedDict()
+        ungrouped = []
+
+        for name, cmd in commands:
+            found = False
+            for group_name, group_cmds in COMMAND_GROUPS.items():
+                if name in group_cmds:
+                    if group_name not in grouped:
+                        grouped[group_name] = []
+                    grouped[group_name].append((name, cmd))
+                    found = True
+                    break
+            if not found:
+                ungrouped.append((name, cmd))
+
+        # 计算最大命令名长度
+        max_len = max(len(name) for name, _ in commands)
+
+        # 按 COMMAND_GROUPS 定义的顺序输出分组命令
+        for group_name in COMMAND_GROUPS.keys():
+            if group_name not in grouped:
+                continue
+            group_cmds = grouped[group_name]
+            with formatter.section(group_name):
+                formatter.write_dl([
+                    (name, cmd.get_short_help_str(limit=formatter.width))
+                    for name, cmd in sorted(group_cmds, key=lambda x: COMMAND_GROUPS[group_name].index(x[0]))
+                ])
+
+        # 输出未分组命令
+        if ungrouped:
+            with formatter.section("其他"):
+                formatter.write_dl([
+                    (name, cmd.get_short_help_str(limit=formatter.width))
+                    for name, cmd in ungrouped
+                ])
+
+
+@click.group(cls=GroupedGroup)
 @click.option(
     '--debug',
     is_flag=True,
@@ -87,15 +152,13 @@ def cli(ctx, debug: bool, timeout: int, host: str, port: int,
         proxy_username: Optional[str], proxy_password: Optional[str],
         no_proxy: bool):
     """
-    Frago - Chrome DevTools Protocol 命令行工具
+    Frago - AI Agent 多运行时自动化基础设施
 
-    提供与Chrome浏览器交互的命令行接口，支持页面导航、
-    元素操作、截图、JavaScript执行等功能。
-
-    代理配置优先级:
-    1. 命令行参数 (--proxy-host, --proxy-port等)
-    2. 环境变量 (HTTP_PROXY, HTTPS_PROXY, NO_PROXY)
-    3. 无代理
+    \b
+    三大核心系统:
+      • Run System   持久化任务上下文，记录完整探索过程
+      • Recipe System 元数据驱动的可复用自动化脚本
+      • Chrome CDP    浏览器自动化底层能力
     """
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
