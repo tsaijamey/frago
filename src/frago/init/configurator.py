@@ -19,12 +19,26 @@ import click
 from frago.init.models import Config, APIEndpoint
 
 
-# 预设端点 URL 映射
+# 预设端点配置（用于 Claude Code settings.json 的 env 字段）
 PRESET_ENDPOINTS = {
-    "deepseek": "https://api.deepseek.com/v1",
-    "aliyun": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "m2": "https://api.m2.ai/v1",
+    "deepseek": {
+        "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+        "ANTHROPIC_MODEL": "deepseek-chat",
+        "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-chat",
+        "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
+    "aliyun": {
+        "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "ANTHROPIC_MODEL": "qwen-max",
+        "ANTHROPIC_SMALL_FAST_MODEL": "qwen-turbo",
+        "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
 }
+
+# Claude Code 配置文件路径
+CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
 
 # =============================================================================
@@ -68,17 +82,16 @@ def prompt_endpoint_type() -> str:
     提示用户选择端点类型
 
     Returns:
-        端点类型：deepseek, aliyun, m2, custom
+        端点类型：deepseek, aliyun, custom
     """
     click.echo("\n支持的端点类型:")
-    click.echo("  - deepseek: Deepseek API")
-    click.echo("  - aliyun:   阿里云 DashScope")
-    click.echo("  - m2:       M2 API")
-    click.echo("  - custom:   自定义 URL\n")
+    click.echo("  - deepseek: Deepseek API (deepseek-chat)")
+    click.echo("  - aliyun:   阿里云 DashScope (qwen-max)")
+    click.echo("  - custom:   自定义端点\n")
 
     endpoint_type = click.prompt(
         "端点类型",
-        type=click.Choice(["deepseek", "aliyun", "m2", "custom"], case_sensitive=False),
+        type=click.Choice(["deepseek", "aliyun", "custom"], case_sensitive=False),
         default="deepseek",
     )
 
@@ -116,6 +129,90 @@ def prompt_custom_endpoint_url() -> str:
             return url
 
         click.echo("❌ 无效的 URL 格式，请输入完整的 HTTP/HTTPS URL")
+
+
+def prompt_custom_model() -> str:
+    """
+    提示用户输入自定义模型名称
+
+    Returns:
+        模型名称
+    """
+    return click.prompt("模型名称", type=str, default="gpt-4")
+
+
+def load_claude_settings() -> dict:
+    """
+    加载 Claude Code settings.json
+
+    Returns:
+        配置字典，如果文件不存在则返回空字典
+    """
+    if not CLAUDE_SETTINGS_PATH.exists():
+        return {}
+
+    try:
+        with open(CLAUDE_SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def save_claude_settings(settings: dict) -> None:
+    """
+    保存 Claude Code settings.json（合并写入，不覆盖原有字段）
+
+    Args:
+        settings: 要合并的配置字典
+    """
+    # 确保目录存在
+    CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # 加载现有配置
+    existing = load_claude_settings()
+
+    # 合并 env 字段（深度合并）
+    if "env" in settings:
+        if "env" not in existing:
+            existing["env"] = {}
+        existing["env"].update(settings["env"])
+        del settings["env"]
+
+    # 合并其他顶级字段
+    existing.update(settings)
+
+    # 写入文件
+    with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing, f, indent=2, ensure_ascii=False)
+
+
+def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = None, custom_model: str = None) -> dict:
+    """
+    构建 Claude Code settings.json 的 env 配置
+
+    Args:
+        endpoint_type: 端点类型 (deepseek, aliyun, custom)
+        api_key: API Key
+        custom_url: 自定义 URL（仅 custom 类型需要）
+        custom_model: 自定义模型名称（仅 custom 类型需要）
+
+    Returns:
+        env 配置字典
+    """
+    if endpoint_type in PRESET_ENDPOINTS:
+        env = PRESET_ENDPOINTS[endpoint_type].copy()
+    else:
+        # custom 类型
+        env = {
+            "ANTHROPIC_BASE_URL": custom_url,
+            "ANTHROPIC_MODEL": custom_model,
+            "ANTHROPIC_SMALL_FAST_MODEL": custom_model,
+            "API_TIMEOUT_MS": 600000,
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+        }
+
+    env["ANTHROPIC_API_KEY"] = api_key
+    return env
 
 
 def get_config_path() -> Path:
@@ -265,6 +362,8 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
     """
     配置自定义 API 端点
 
+    将配置写入 Claude Code 的 ~/.claude/settings.json 的 env 字段
+
     Args:
         existing_config: 现有配置（用于保留其他字段）
 
@@ -272,21 +371,45 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         更新后的 Config 对象
     """
     click.echo("\n📡 自定义 API 端点配置")
+    click.echo("   配置将写入 ~/.claude/settings.json\n")
 
-    # 使用独立函数获取端点类型
+    # 获取端点类型
     endpoint_type = prompt_endpoint_type()
 
-    # 获取 URL
+    # 获取自定义 URL 和模型（仅 custom 类型需要）
+    custom_url = None
+    custom_model = None
     if endpoint_type == "custom":
-        url = prompt_custom_endpoint_url()
-    else:
-        url = PRESET_ENDPOINTS.get(endpoint_type)
+        custom_url = prompt_custom_endpoint_url()
+        custom_model = prompt_custom_model()
 
-    # 获取 API Key（使用独立函数）
+    # 获取 API Key
     api_key = prompt_api_key()
 
-    # 创建端点配置
-    endpoint = APIEndpoint(type=endpoint_type, url=url, api_key=api_key)
+    # 构建 env 配置
+    env_config = build_claude_env_config(endpoint_type, api_key, custom_url, custom_model)
+
+    # 写入 Claude Code settings.json
+    try:
+        save_claude_settings({"env": env_config})
+        click.echo(f"\n✅ 已写入 {CLAUDE_SETTINGS_PATH}")
+
+        # 显示配置摘要（隐藏 API Key）
+        click.echo("\n   配置内容:")
+        click.echo(f"   ANTHROPIC_BASE_URL: {env_config.get('ANTHROPIC_BASE_URL')}")
+        click.echo(f"   ANTHROPIC_MODEL: {env_config.get('ANTHROPIC_MODEL')}")
+        click.echo(f"   ANTHROPIC_API_KEY: ****已配置****")
+
+    except Exception as e:
+        click.echo(f"\n❌ 写入配置失败: {e}")
+        click.echo("   请检查 ~/.claude/ 目录权限")
+
+    # 创建 frago 配置（记录使用了自定义端点，但不存储敏感信息）
+    endpoint = APIEndpoint(
+        type=endpoint_type,
+        url=env_config.get("ANTHROPIC_BASE_URL"),
+        api_key="****"  # 不在 frago 配置中存储真实 API Key
+    )
 
     if existing_config:
         data = existing_config.model_dump()
