@@ -11,6 +11,7 @@ import click
 
 PACKAGE_NAME = "frago-cli"  # PyPI 包名
 TOOL_NAME = "frago"  # CLI 命令名 / entry point
+REPO_URL = "git+https://github.com/tsaijamey/frago.git"
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 
 
@@ -60,16 +61,23 @@ def get_latest_version() -> Optional[str]:
     is_flag=True,
     help="强制重新安装",
 )
-def update(check_only: bool, reinstall: bool):
+@click.option(
+    "--repo",
+    "from_repo",
+    is_flag=True,
+    help="从 GitHub 仓库安装最新版本（而非 PyPI）",
+)
+def update(check_only: bool, reinstall: bool, from_repo: bool):
     """
     更新 frago 到最新版本
 
-    通过 uv tool upgrade 执行更新。需要 frago 已通过 uv tool install 安装。
+    默认从 PyPI 更新，使用 --repo 从 GitHub 仓库安装最新代码。
 
     \b
     示例:
-      frago update              # 更新到最新版本
-      frago update --check      # 检查是否有更新
+      frago update              # 从 PyPI 更新
+      frago update --repo       # 从 GitHub 仓库更新
+      frago update --check      # 检查 PyPI 是否有更新
       frago update --reinstall  # 强制重新安装
     """
     current_version = get_current_version()
@@ -100,13 +108,21 @@ def update(check_only: bool, reinstall: bool):
         return
 
     # 执行更新
-    click.echo("更新中...")
+    if from_repo:
+        click.echo(f"从仓库更新: {REPO_URL}")
+    else:
+        click.echo("从 PyPI 更新...")
     click.echo()
 
     try:
-        cmd = ["uv", "tool", "upgrade", PACKAGE_NAME]
-        if reinstall:
-            cmd.append("--reinstall")
+        if from_repo:
+            # 从 GitHub 仓库安装，需要 --reinstall 来覆盖现有安装
+            cmd = ["uv", "tool", "install", "--reinstall", REPO_URL]
+        else:
+            # 从 PyPI 更新
+            cmd = ["uv", "tool", "upgrade", PACKAGE_NAME]
+            if reinstall:
+                cmd.append("--reinstall")
 
         # 直接执行，让输出显示给用户
         result = subprocess.run(cmd)
