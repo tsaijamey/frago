@@ -222,19 +222,22 @@ def prompt_auth_method() -> str:
     Returns:
         "official" 或 "custom"
     """
-    click.echo("\n🔐 请选择认证方式:\n")
-    click.echo("  1. official - 使用官方 Claude Code 登录")
-    click.echo("  2. custom   - 使用自定义 API 端点\n")
+    click.echo("\n🔐 Claude Code 认证配置:\n")
+    click.echo("  1. default - 保持当前配置（用户自行登录或已有配置）")
+    click.echo("  2. custom  - 通过 Frago 配置新的 API 端点\n")
+    click.echo("  💡 提示: 如果你已安装 Claude Code 并完成登录，选择 default 即可")
+    click.echo("          如果需要使用第三方 API（如 Deepseek），选择 custom\n")
 
     choice = click.prompt(
-        "认证方式",
-        type=click.Choice(["official", "custom"], case_sensitive=False),
-        default="official",
+        "选择",
+        type=click.Choice(["default", "custom"], case_sensitive=False),
+        default="default",
         show_choices=True,
         show_default=True,
     )
 
-    return choice.lower()
+    # 映射 default -> official（内部仍使用 official 表示不干预）
+    return "official" if choice.lower() == "default" else "custom"
 
 
 def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
@@ -316,9 +319,9 @@ def display_config_summary(config: Config) -> str:
 
     # 认证信息
     if config.auth_method == "official":
-        lines.append("  认证方式:     官方 Claude Code 登录")
+        lines.append("  认证方式:     用户自行配置")
     else:
-        lines.append("  认证方式:     自定义 API 端点")
+        lines.append("  认证方式:     Frago 配置的 API 端点")
         if config.api_endpoint:
             lines.append(f"  端点类型:     {config.api_endpoint.type}")
             if config.api_endpoint.url:
@@ -447,9 +450,9 @@ def format_final_summary(config: Config) -> str:
     # 认证信息
     lines.append("🔐 认证配置:")
     if config.auth_method == "official":
-        lines.append("   • 方式: 官方 Claude Code 登录")
+        lines.append("   • 方式: 用户自行配置")
     else:
-        lines.append("   • 方式: 自定义 API 端点")
+        lines.append("   • 方式: Frago 配置的 API 端点")
         if config.api_endpoint:
             lines.append(f"   • 端点: {config.api_endpoint.type}")
             if config.api_endpoint.url:
@@ -480,13 +483,13 @@ def suggest_next_steps(config: Config) -> list[str]:
     steps = []
 
     if config.auth_method == "official":
-        steps.append("运行 `claude` 命令登录官方账号")
+        steps.append("如未登录，运行 `claude` 命令完成 Claude Code 登录")
         steps.append("使用 `frago recipe list` 查看可用的自动化配方")
     else:
         steps.append("使用 `frago recipe list` 查看可用的自动化配方")
         steps.append("运行 `frago recipe run <name>` 执行配方")
 
-    steps.append("查看文档: https://github.com/anthropics/frago")
+    steps.append("查看文档: https://github.com/tsaijamey/frago")
 
     return steps
 
