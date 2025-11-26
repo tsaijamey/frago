@@ -31,10 +31,10 @@ PRESET_ENDPOINTS = {
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
     "aliyun": {
-        "display_name": "阿里云百炼 (qwen-plus)",
+        "display_name": "阿里云百炼 (qwen3-coder-plus)",
         "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
-        "ANTHROPIC_MODEL": "qwen-plus",
-        "ANTHROPIC_SMALL_FAST_MODEL": "qwen-turbo",
+        "ANTHROPIC_MODEL": "qwen3-coder-plus",
+        "ANTHROPIC_SMALL_FAST_MODEL": "qwen3-coder-plus",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
