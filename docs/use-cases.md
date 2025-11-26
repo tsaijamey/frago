@@ -6,6 +6,24 @@ This document demonstrates Frago's application in real-world scenarios, showcasi
 
 ---
 
+## Why Frago for AI-Driven Automation
+
+AI agents executing browser automation face a fundamental problem: each conversation starts fresh with no memory of past work. Frago addresses this through three mechanisms:
+
+**Standardized Context Accumulation**
+
+Every AI operation follows a unified specification and gets recorded to structured JSONL logs. This means context persists across sessions - the AI can pick up where it left off, understand what was tried before, and build on previous discoveries rather than starting from zero each time.
+
+**Rapid Log Retrieval**
+
+The Run system provides AI with efficient methods to search and query execution history. Instead of re-exploring a page the AI has visited before, it can retrieve the validated selectors, working scripts, and observed behaviors from previous runs.
+
+**Deterministic Execution via Recipes**
+
+When an exploration succeeds, the working approach gets solidified into a Recipe - a versioned, tested automation script. On subsequent encounters with similar tasks, the AI executes the Recipe directly instead of reasoning through the problem again. This eliminates token waste on repeated exploration and removes the randomness that causes intermittent failures when AI "figures it out" differently each time.
+
+---
+
 ## Three Core Systems Overview
 
 | System | Core Value | Typical Scenarios |
