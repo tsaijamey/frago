@@ -21,7 +21,7 @@ from enum import Enum
 class APIEndpoint(BaseModel):
     """API 端点配置（嵌套在 Config 中）"""
 
-    type: Literal["deepseek", "aliyun", "custom"]
+    type: Literal["deepseek", "aliyun", "kimi", "minimax", "custom"]
     url: Optional[str] = None
     api_key: str
 
