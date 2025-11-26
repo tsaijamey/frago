@@ -96,7 +96,9 @@ class RecipeRunner:
             if recipe.metadata.runtime == 'chrome-js':
                 result_data = self._run_chrome_js(recipe.script_path, params, resolved_env)
             elif recipe.metadata.runtime == 'python':
-                result_data = self._run_python(recipe.script_path, params, resolved_env)
+                # 检查是否需要系统 Python（用于依赖 dbus 等系统包的脚本）
+                use_system_python = getattr(recipe.metadata, 'system_packages', False)
+                result_data = self._run_python(recipe.script_path, params, resolved_env, use_system_python)
             elif recipe.metadata.runtime == 'shell':
                 result_data = self._run_shell(recipe.script_path, params, resolved_env)
             else:
@@ -226,18 +228,20 @@ class RecipeRunner:
         self,
         script_path: Path,
         params: dict[str, Any],
-        env: dict[str, str]
+        env: dict[str, str],
+        use_system_python: bool = False
     ) -> dict[str, Any]:
         """
         执行 Python Recipe
 
-        使用 `uv run` 执行脚本，支持 PEP 723 内联依赖声明。
-        uv 会自动解析脚本头部的依赖并在隔离环境中执行。
+        默认使用 `uv run` 执行脚本，支持 PEP 723 内联依赖声明。
+        如果 use_system_python=True，则使用系统 Python（用于依赖系统包如 dbus 的脚本）
 
         Args:
             script_path: Python 脚本路径
             params: 输入参数
             env: 解析后的环境变量
+            use_system_python: 是否使用系统 Python
 
         Returns:
             执行结果 JSON
@@ -245,10 +249,20 @@ class RecipeRunner:
         Raises:
             RecipeExecutionError: 执行失败
         """
-        # 构建命令：uv run <script_path> <params_json>
-        # uv 会自动处理 PEP 723 内联依赖（# /// script ... # ///）
         params_json = json.dumps(params)
-        cmd = ['uv', 'run', str(script_path), params_json]
+        import os
+
+        if use_system_python:
+            # 使用系统 Python（用于依赖 dbus 等系统包的脚本）
+            # 必须清除 VIRTUAL_ENV 避免继承 uv 的虚拟环境
+            cmd = ['/usr/bin/python3', str(script_path), params_json]
+            # 创建不含虚拟环境变量的环境
+            clean_env = {k: v for k, v in env.items() if k not in ('VIRTUAL_ENV', 'PYTHONHOME')}
+            env = clean_env
+        else:
+            # 构建命令：uv run <script_path> <params_json>
+            # uv 会自动处理 PEP 723 内联依赖（# /// script ... # ///）
+            cmd = ['uv', 'run', str(script_path), params_json]
 
         try:
             result = subprocess.run(

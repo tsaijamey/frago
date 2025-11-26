@@ -24,6 +24,7 @@ class RecipeMetadata:
     dependencies: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)  # AI 可理解字段
     env: dict[str, dict[str, Any]] = field(default_factory=dict)  # 环境变量定义
+    system_packages: bool = False  # 使用系统 Python（用于依赖 dbus 等系统包）
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
@@ -78,6 +79,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             dependencies=data.get('dependencies', []),
             tags=data.get('tags', []),
             env=data.get('env', {}),
+            system_packages=data.get('system_packages', False),
         )
     except KeyError as e:
         raise MetadataParseError(str(path), f"缺少必需字段: {e}")
