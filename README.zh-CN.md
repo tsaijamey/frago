@@ -151,13 +151,28 @@ pip install frago
 # 或使用 uv（推荐）
 uv add frago
 
-# 开发环境
-git clone https://github.com/tsaijamey/Frago.git
-cd Frago
-uv sync --all-extras --dev
+# 初始化环境（检查依赖、配置认证、安装资源）
+frago init
 ```
 
-详见 [安装指南](docs/installation.md)
+### `frago init` 做了什么
+
+init 命令一步完成环境配置：
+
+- **检查依赖**：Node.js ≥18.0.0、Claude Code CLI
+- **自动安装缺失依赖**：Node.js 通过 nvm、Claude Code 通过 npm
+- **配置认证**：默认（Claude Code 内置）或自定义 API 端点（DeepSeek、阿里云、Kimi、MiniMax）
+- **安装资源**：Slash 命令到 `~/.claude/commands/`、示例 Recipe 到 `~/.frago/recipes/`
+
+```bash
+# 查看当前配置和资源
+frago init --show-config
+
+# 重置并重新初始化
+frago init --reset
+```
+
+详见 [安装指南](docs/installation.zh-CN.md)
 
 ### 基础使用
 

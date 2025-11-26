@@ -23,6 +23,73 @@ uv add frago
 
 ---
 
+## Environment Initialization
+
+After installing the package, run the init command to set up your environment:
+
+```bash
+frago init
+```
+
+### What `frago init` Does
+
+The init command performs the following steps:
+
+1. **Dependency Check**
+   - Detects Node.js (required version ≥18.0.0) and its path
+   - Detects Claude Code CLI and its version
+   - Displays status with ✅/❌ indicators
+
+2. **Automatic Installation** (if dependencies are missing)
+   - Node.js: Installs via nvm (Node Version Manager)
+   - Claude Code: Installs via `npm install -g @anthropic-ai/claude-code`
+
+3. **Authentication Configuration**
+   - **Default**: Uses Claude Code's built-in authentication (Anthropic account or existing settings)
+   - **Custom Endpoint**: Configures third-party API providers that support Anthropic API compatibility:
+     - DeepSeek (deepseek-chat)
+     - Aliyun Bailian (qwen3-coder-plus)
+     - Kimi K2 (kimi-k2-turbo-preview)
+     - MiniMax M2
+     - Custom URL/Key/Model
+
+4. **Resource Installation**
+   - Installs Claude Code slash commands to `~/.claude/commands/`
+   - Installs example recipes to `~/.frago/recipes/`
+
+### Init Command Options
+
+```bash
+# Show current configuration and installed resources
+frago init --show-config
+
+# Skip dependency checks (only update config)
+frago init --skip-deps
+
+# Reset configuration and re-initialize
+frago init --reset
+
+# Non-interactive mode (uses defaults, for CI/CD)
+frago init --non-interactive
+
+# Skip resource installation
+frago init --skip-resources
+
+# Force update all resources (overwrite existing recipes)
+frago init --update-resources
+```
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `~/.frago/config.json` | Frago configuration (auth method, resource status) |
+| `~/.claude/settings.json` | Claude Code settings (custom API endpoint config) |
+| `~/.claude/commands/frago.*.md` | Installed slash commands |
+| `~/.frago/recipes/` | User-level recipes |
+
+---
+
 ## Optional Features
 
 ### Clipboard Support

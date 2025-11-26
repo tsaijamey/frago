@@ -21,6 +21,73 @@ uv add frago
 
 ---
 
+## 环境初始化
+
+安装包后，运行 init 命令配置环境：
+
+```bash
+frago init
+```
+
+### `frago init` 做了什么
+
+init 命令执行以下步骤：
+
+1. **依赖检查**
+   - 检测 Node.js（要求版本 ≥18.0.0）及其路径
+   - 检测 Claude Code CLI 及其版本
+   - 用 ✅/❌ 显示检查状态
+
+2. **自动安装**（如果缺少依赖）
+   - Node.js：通过 nvm（Node Version Manager）安装
+   - Claude Code：通过 `npm install -g @anthropic-ai/claude-code` 安装
+
+3. **认证配置**
+   - **默认**：使用 Claude Code 内置认证（Anthropic 账号或已有配置）
+   - **自定义端点**：配置支持 Anthropic API 兼容的第三方服务商：
+     - DeepSeek（deepseek-chat）
+     - 阿里云百炼（qwen3-coder-plus）
+     - Kimi K2（kimi-k2-turbo-preview）
+     - MiniMax M2
+     - 自定义 URL/Key/Model
+
+4. **资源安装**
+   - 安装 Claude Code slash 命令到 `~/.claude/commands/`
+   - 安装示例 Recipe 到 `~/.frago/recipes/`
+
+### init 命令选项
+
+```bash
+# 显示当前配置和已安装资源
+frago init --show-config
+
+# 跳过依赖检查（仅更新配置）
+frago init --skip-deps
+
+# 重置配置并重新初始化
+frago init --reset
+
+# 非交互模式（使用默认值，适合 CI/CD）
+frago init --non-interactive
+
+# 跳过资源安装
+frago init --skip-resources
+
+# 强制更新所有资源（覆盖已存在的 recipe）
+frago init --update-resources
+```
+
+### 配置文件说明
+
+| 文件 | 用途 |
+|------|------|
+| `~/.frago/config.json` | Frago 配置（认证方式、资源状态） |
+| `~/.claude/settings.json` | Claude Code 设置（自定义 API 端点配置） |
+| `~/.claude/commands/frago.*.md` | 已安装的 slash 命令 |
+| `~/.frago/recipes/` | 用户级 Recipe |
+
+---
+
 ## 可选功能
 
 ### 剪贴板支持

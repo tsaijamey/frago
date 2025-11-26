@@ -153,10 +153,25 @@ pip install frago
 # Or use uv (recommended)
 uv add frago
 
-# Development environment
-git clone https://github.com/tsaijamey/Frago.git
-cd Frago
-uv sync --all-extras --dev
+# Initialize environment (check dependencies, configure auth, install resources)
+frago init
+```
+
+### What `frago init` Does
+
+The init command sets up your environment in one step:
+
+- **Checks dependencies**: Node.js ≥18.0.0, Claude Code CLI
+- **Auto-installs missing deps**: Node.js via nvm, Claude Code via npm
+- **Configures authentication**: Default (Claude Code built-in) or custom API endpoint (DeepSeek, Aliyun, Kimi, MiniMax)
+- **Installs resources**: Slash commands to `~/.claude/commands/`, example recipes to `~/.frago/recipes/`
+
+```bash
+# View current config and resources
+frago init --show-config
+
+# Reset and re-initialize
+frago init --reset
 ```
 
 See [Installation Guide](docs/installation.md) for details
