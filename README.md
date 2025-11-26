@@ -6,11 +6,11 @@
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
-[简体中文](README.zh-CN.md)
+[简体中文](https://github.com/tsaijamey/frago/blob/main/README.zh-CN.md)
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
-**Docs**: [Installation](docs/installation.md) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Architecture](docs/architecture.md) · [Use Cases](docs/use-cases.md) · [Development](docs/development.md)
+**Docs**: [Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/frago/blob/main/docs/development.md)
 
 ---
 
@@ -46,7 +46,7 @@ Unable to autonomously complete complex multi-step tasks:
 
 ## Solutions
 
-![Frago Architecture](docs/images/architecture.jpg)
+![Frago Architecture](https://raw.githubusercontent.com/tsaijamey/frago/main/docs/images/architecture.jpg)
 
 Frago provides three core systems to solve the above problems:
 
@@ -157,9 +157,9 @@ Frago:       Python → CDP → Chrome                  (~2MB)
 
 ```bash
 # Basic installation (core features)
-pip install frago
+pip install frago-cli
 # Or use uv (recommended)
-uv add frago
+uv tool install frago-cli
 
 # Initialize environment (check dependencies, configure auth, install resources)
 frago init
@@ -182,7 +182,7 @@ frago init --show-config
 frago init --reset
 ```
 
-See [Installation Guide](docs/installation.md) for details
+See [Installation Guide](https://github.com/tsaijamey/frago/blob/main/docs/installation.md) for details
 
 ### Basic Usage
 
@@ -257,19 +257,19 @@ AI will automatically:
 - Need quality assurance, regression testing → Playwright/Selenium
 - Need data collection, AI automation, knowledge accumulation → Frago
 
-See [Architecture Comparison](docs/architecture.md#core-differences) for details
+See [Architecture Comparison](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md#core-differences) for details
 
 ---
 
 ## Documentation Navigation
 
-- **[Use Cases](docs/use-cases.md)** - Complete workflow from Recipe creation to Workflow orchestration
-- **[Architecture](docs/architecture.md)** - Core differences, technology choices, system design
-- **[Installation](docs/installation.md)** - Installation methods, dependencies, optional features
-- **[User Guide](docs/user-guide.md)** - CDP commands, Recipe management, Run system
-- **[Recipe System](docs/recipes.md)** - AI-First design, metadata-driven, Workflow orchestration
-- **[Development](docs/development.md)** - Project structure, development standards, testing methods
-- **[Roadmap](docs/roadmap.md)** - Completed features, todos, version planning
+- **[Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md)** - Complete workflow from Recipe creation to Workflow orchestration
+- **[Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md)** - Core differences, technology choices, system design
+- **[Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md)** - Installation methods, dependencies, optional features
+- **[User Guide](https://github.com/tsaijamey/frago/blob/main/docs/user-guide.md)** - CDP commands, Recipe management, Run system
+- **[Recipe System](https://github.com/tsaijamey/frago/blob/main/docs/recipes.md)** - AI-First design, metadata-driven, Workflow orchestration
+- **[Development](https://github.com/tsaijamey/frago/blob/main/docs/development.md)** - Project structure, development standards, testing methods
+- **[Roadmap](https://github.com/tsaijamey/frago/blob/main/docs/roadmap.md)** - Completed features, todos, version planning
 
 ---
 
@@ -292,13 +292,13 @@ See [Architecture Comparison](docs/architecture.md#core-differences) for details
 - ✅ CLI tools and command system
 - ✅ Three-tier Recipe management system
 
-See [Roadmap](docs/roadmap.md) and [Run Command System Spec](specs/005-run-command-system/spec.md) for details
+See [Roadmap](https://github.com/tsaijamey/frago/blob/main/docs/roadmap.md) and [Run Command System Spec](https://github.com/tsaijamey/frago/blob/main/specs/005-run-command-system/spec.md) for details
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file
+MIT License - see [LICENSE](https://github.com/tsaijamey/frago/blob/main/LICENSE) file
 
 ## Author
 
