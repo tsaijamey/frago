@@ -24,6 +24,36 @@ When an exploration succeeds, the working approach gets solidified into a Recipe
 
 ---
 
+## Three Usage Modes
+
+| Mode | Command | Goal | Output |
+|------|---------|------|--------|
+| **🧠 Exploration** | `uv run frago run init` + CDP commands | Explore unknown workflows, accumulate context | JSONL logs + validated scripts + screenshots |
+| **📚 Solidification** | `/frago.recipe create` | Transform exploration into reusable Recipe | Recipe files (.js/.py + .md metadata) |
+| **⚡ Execution** | `uv run frago recipe run` or `/frago.run` | Complete specific tasks efficiently | Task results + execution logs |
+
+### Selection Recommendations
+
+**When to use Run System**:
+- ✅ Exploring unknown pages/workflows
+- ✅ Debugging complex issues
+- ✅ Need to maintain context across multiple sessions
+- ✅ Want to accumulate auditable execution history
+
+**When to create Recipe**:
+- ✅ Task will be repeated frequently
+- ✅ High-frequency operations consume too many AI tokens
+- ✅ Need standardized, reproducible automation
+- ✅ Want to share automation scripts with team
+
+**When to use Workflow Recipe**:
+- ✅ Task involves multiple platforms or data sources
+- ✅ Need to orchestrate multiple atomic operations
+- ✅ Require error handling and retry logic
+- ✅ Complex business processes with clear steps
+
+---
+
 ## Three Core Systems Overview
 
 | System | Core Value | Typical Scenarios |
@@ -430,36 +460,6 @@ projects/upwork-python-jobs-abc123/
 └── outputs/
     └── jobs.json                 # Final aggregated result
 ```
-
----
-
-## Summary: Three Usage Modes
-
-| Mode | Command | Goal | Output |
-|------|---------|------|--------|
-| **🧠 Exploration** | `uv run frago run init` + CDP commands | Explore unknown workflows, accumulate context | JSONL logs + validated scripts + screenshots |
-| **📚 Solidification** | `/frago.recipe create` | Transform exploration into reusable Recipe | Recipe files (.js/.py + .md metadata) |
-| **⚡ Execution** | `uv run frago recipe run` or `/frago.run` | Complete specific tasks efficiently | Task results + execution logs |
-
-### Selection Recommendations
-
-**When to use Run System**:
-- ✅ Exploring unknown pages/workflows
-- ✅ Debugging complex issues
-- ✅ Need to maintain context across multiple sessions
-- ✅ Want to accumulate auditable execution history
-
-**When to create Recipe**:
-- ✅ Task will be repeated frequently
-- ✅ High-frequency operations consume too many AI tokens
-- ✅ Need standardized, reproducible automation
-- ✅ Want to share automation scripts with team
-
-**When to use Workflow Recipe**:
-- ✅ Task involves multiple platforms or data sources
-- ✅ Need to orchestrate multiple atomic operations
-- ✅ Require error handling and retry logic
-- ✅ Complex business processes with clear steps
 
 ---
 

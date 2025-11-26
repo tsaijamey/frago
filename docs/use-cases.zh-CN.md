@@ -24,6 +24,21 @@ Run 系统为 AI 提供高效的方法来搜索和查询执行历史。AI 不需
 
 ---
 
+## 三种使用模式
+
+| 模式 | 命令 | 目标 | 输出 |
+|-----|------|------|------|
+| **探索调研** | `/frago.run` | 收集信息以创建 Recipe | JSONL 日志 + 验证脚本 + Recipe 草稿 |
+| **沉淀 Recipe** | `/frago.recipe` | 将探索结果转化为可复用脚本 | Recipe 文件（.js/.py + .md） |
+| **任务执行** | `/frago.exec` | 完成具体业务目标 | 任务结果 + 执行日志 |
+
+选择建议：
+- **未知页面/流程**：使用 `/frago.run` 探索，积累上下文
+- **重复性任务**：创建 Recipe 后使用 `/frago.exec` 或直接执行 Recipe
+- **复杂业务流程**：创建 Workflow Recipe，编排多个 atomic Recipe
+
+---
+
 ## 场景 1：Recipe 生成与沉淀
 
 **目标**：将自然语言描述的任务转化为可复用的标准化 Recipe 脚本。
@@ -243,18 +258,3 @@ for job_url in job_list['data']['urls'][:params['count']]:
 
 print(json.dumps({'jobs': results, 'total': len(results)}))
 ```
-
----
-
-## 总结：三种使用模式
-
-| 模式 | 命令 | 目标 | 输出 |
-|-----|------|------|------|
-| **探索调研** | `/frago.run` | 收集信息以创建 Recipe | JSONL 日志 + 验证脚本 + Recipe 草稿 |
-| **沉淀 Recipe** | `/frago.recipe` | 将探索结果转化为可复用脚本 | Recipe 文件（.js/.py + .md） |
-| **任务执行** | `/frago.exec` | 完成具体业务目标 | 任务结果 + 执行日志 |
-
-选择建议：
-- **未知页面/流程**：使用 `/frago.run` 探索，积累上下文
-- **重复性任务**：创建 Recipe 后使用 `/frago.exec` 或直接执行 Recipe
-- **复杂业务流程**：创建 Workflow Recipe，编排多个 atomic Recipe
