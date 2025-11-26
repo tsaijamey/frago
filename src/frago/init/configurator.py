@@ -20,8 +20,10 @@ from frago.init.models import Config, APIEndpoint
 
 
 # 预设端点配置（用于 Claude Code settings.json 的 env 字段）
+# 各厂商均提供 Anthropic API 兼容接口
 PRESET_ENDPOINTS = {
     "deepseek": {
+        "display_name": "DeepSeek (deepseek-chat)",
         "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
         "ANTHROPIC_MODEL": "deepseek-chat",
         "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-chat",
@@ -29,10 +31,27 @@ PRESET_ENDPOINTS = {
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
     "aliyun": {
-        "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "ANTHROPIC_MODEL": "qwen-max",
+        "display_name": "阿里云百炼 (qwen-plus)",
+        "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
+        "ANTHROPIC_MODEL": "qwen-plus",
         "ANTHROPIC_SMALL_FAST_MODEL": "qwen-turbo",
         "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
+    "kimi": {
+        "display_name": "Kimi K2 (kimi-k2-turbo-preview)",
+        "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
+        "ANTHROPIC_MODEL": "kimi-k2-turbo-preview",
+        "ANTHROPIC_SMALL_FAST_MODEL": "kimi-k2-turbo-preview",
+        "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
+    "minimax": {
+        "display_name": "MiniMax M2",
+        "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
+        "ANTHROPIC_MODEL": "MiniMax-M2",
+        "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2",
+        "API_TIMEOUT_MS": 3000000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
 }
@@ -82,16 +101,17 @@ def prompt_endpoint_type() -> str:
     提示用户选择端点类型
 
     Returns:
-        端点类型：deepseek, aliyun, custom
+        端点类型：deepseek, aliyun, kimi, minimax, custom
     """
-    click.echo("\n支持的端点类型:")
-    click.echo("  - deepseek: Deepseek API (deepseek-chat)")
-    click.echo("  - aliyun:   阿里云 DashScope (qwen-max)")
-    click.echo("  - custom:   自定义端点\n")
+    click.echo("\n支持的 API 端点:")
+    for key, config in PRESET_ENDPOINTS.items():
+        click.echo(f"  - {key:8} : {config['display_name']}")
+    click.echo("  - custom   : 自定义端点\n")
 
+    choices = list(PRESET_ENDPOINTS.keys()) + ["custom"]
     endpoint_type = click.prompt(
         "端点类型",
-        type=click.Choice(["deepseek", "aliyun", "custom"], case_sensitive=False),
+        type=click.Choice(choices, case_sensitive=False),
         default="deepseek",
     )
 
@@ -191,7 +211,7 @@ def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = 
     构建 Claude Code settings.json 的 env 配置
 
     Args:
-        endpoint_type: 端点类型 (deepseek, aliyun, custom)
+        endpoint_type: 端点类型 (deepseek, aliyun, kimi, minimax, custom)
         api_key: API Key
         custom_url: 自定义 URL（仅 custom 类型需要）
         custom_model: 自定义模型名称（仅 custom 类型需要）
@@ -201,6 +221,8 @@ def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = 
     """
     if endpoint_type in PRESET_ENDPOINTS:
         env = PRESET_ENDPOINTS[endpoint_type].copy()
+        # 移除 display_name（仅用于显示，不写入配置）
+        env.pop("display_name", None)
     else:
         # custom 类型
         env = {
