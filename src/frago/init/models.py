@@ -7,6 +7,9 @@
 - TemporaryState: Ctrl+C 恢复状态
 - InstallationStep: 安装步骤状态机
 - DependencyCheckResult: 依赖检查结果
+- ResourceType: 资源类型枚举
+- InstallResult: 资源安装结果
+- ResourceStatus: 资源安装状态
 """
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -49,6 +52,11 @@ class Config(BaseModel):
     # 可选功能
     ccr_enabled: bool = False
     ccr_config_path: Optional[str] = None
+
+    # 资源安装状态
+    resources_installed: bool = False
+    resources_version: Optional[str] = None
+    last_resource_update: Optional[datetime] = None
 
     # 元数据
     created_at: datetime = Field(default_factory=datetime.now)
@@ -162,3 +170,47 @@ class DependencyCheckResult(BaseModel):
             return f"⚠️  {self.name}: 版本不足 (当前 {self.version}, 要求 {self.required_version})"
         else:
             return f"✅ {self.name}: {self.version}"
+
+
+class ResourceType(str, Enum):
+    """资源类型枚举"""
+
+    COMMAND = "command"  # Claude Code slash 命令
+    SKILL = "skill"      # Claude Code skill
+    RECIPE = "recipe"    # 示例 recipe
+
+
+class InstallResult(BaseModel):
+    """资源安装操作结果"""
+
+    resource_type: ResourceType
+    installed: List[str] = Field(default_factory=list)  # 已安装的文件路径列表
+    skipped: List[str] = Field(default_factory=list)    # 跳过的文件路径列表（已存在）
+    backed_up: List[str] = Field(default_factory=list)  # 已备份的文件路径列表
+    errors: List[str] = Field(default_factory=list)     # 错误信息列表
+
+    @property
+    def success(self) -> bool:
+        """是否全部成功（无错误）"""
+        return len(self.errors) == 0
+
+    @property
+    def total_count(self) -> int:
+        """总处理文件数"""
+        return len(self.installed) + len(self.skipped)
+
+
+class ResourceStatus(BaseModel):
+    """资源安装状态（用于 --status 显示）"""
+
+    commands: Optional[InstallResult] = None
+    skills: Optional[InstallResult] = None
+    recipes: Optional[InstallResult] = None
+    frago_version: str = ""
+    install_time: Optional[datetime] = None
+
+    @property
+    def all_success(self) -> bool:
+        """所有资源是否安装成功"""
+        results = [self.commands, self.skills, self.recipes]
+        return all(r is None or r.success for r in results)
