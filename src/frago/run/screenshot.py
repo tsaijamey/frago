@@ -3,13 +3,13 @@
 提供截图文件命名、编号、原子性写入功能
 """
 
+import base64
 import re
 from pathlib import Path
 from typing import Tuple
 
 from slugify import slugify
 
-from ..cdp.client import CDPClient
 from ..cdp.session import CDPSession
 from .exceptions import FileSystemError
 from .utils import ensure_directory_exists
@@ -61,11 +61,10 @@ def capture_screenshot(description: str, screenshots_dir: Path) -> Tuple[Path, i
     temp_path = screenshots_dir / f".tmp_{filename}"
 
     try:
-        # 调用CDP客户端截图
-        client = CDPClient()
-        session = CDPSession(client)
-
-        screenshot_data = session.capture_screenshot()
+        # 使用CDP会话截图
+        with CDPSession() as session:
+            result = session.screenshot.capture()
+            screenshot_data = base64.b64decode(result.get("data", ""))
 
         # 原子性写入（先写临时文件，再重命名）
         ensure_directory_exists(screenshots_dir)

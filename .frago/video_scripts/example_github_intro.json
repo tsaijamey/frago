@@ -1,0 +1,70 @@
+{
+  "script_id": "github_intro",
+  "title": "GitHub 平台介绍",
+  "description": "一个简短的 GitHub 平台介绍视频，展示首页和热门项目",
+  "version": "1.0.0",
+  "global_config": {
+    "default_voice": "zh-CN-YunxiNeural",
+    "default_resolution": "1280x960",
+    "default_framerate": 30
+  },
+  "segments": [
+    {
+      "segment_id": "seg_001_intro",
+      "segment_type": "browser_recording",
+      "duration": 12,
+      "description": "展示 GitHub 首页，介绍平台定位",
+      "actions": [
+        {"action": "navigate", "url": "https://github.com", "wait": 3},
+        {"action": "highlight", "selector": ".application-main h1", "wait": 2},
+        {"action": "scroll", "direction": "down", "pixels": 400, "wait": 2}
+      ],
+      "narration": "GitHub 是全球最大的代码托管平台，拥有超过一亿开发者。无论是个人项目还是企业级应用，都可以在这里找到灵感和协作伙伴。",
+      "audio_config": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0
+      },
+      "record_config": {
+        "framerate": 30,
+        "capture_cursor": true
+      }
+    },
+    {
+      "segment_id": "seg_002_trending",
+      "segment_type": "browser_recording",
+      "duration": 10,
+      "description": "展示热门项目列表",
+      "actions": [
+        {"action": "navigate", "url": "https://github.com/trending", "wait": 3},
+        {"action": "highlight", "selector": "article.Box-row:first-child", "wait": 3},
+        {"action": "scroll", "direction": "down", "pixels": 300, "wait": 2}
+      ],
+      "narration": "这里展示的是当前最热门的开源项目，你可以发现最新的技术趋势，学习优秀的代码实践。",
+      "audio_config": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0
+      }
+    },
+    {
+      "segment_id": "seg_003_ending",
+      "segment_type": "browser_recording",
+      "duration": 8,
+      "description": "展示结尾，引导注册",
+      "actions": [
+        {"action": "navigate", "url": "https://github.com/signup", "wait": 3},
+        {"action": "highlight", "selector": "form", "wait": 2}
+      ],
+      "narration": "立即注册 GitHub 账号，开始你的开源之旅！",
+      "audio_config": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0
+      }
+    }
+  ],
+  "output_config": {
+    "output_dir": "outputs/github_intro",
+    "final_filename": "github_intro_final.mp4",
+    "codec": "libx264",
+    "audio_codec": "aac"
+  }
+}
