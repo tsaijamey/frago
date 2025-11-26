@@ -55,3 +55,6 @@ projects/
 # .frago runtime files (keep video_scripts tracked)
 .frago/test_output/
 .frago/current_project
+
+
+*.backup
