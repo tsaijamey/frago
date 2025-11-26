@@ -140,6 +140,7 @@ def recipe_info(name: str, output_format: str):
                 "inputs": recipe.metadata.inputs,
                 "outputs": recipe.metadata.outputs,
                 "dependencies": recipe.metadata.dependencies,
+                "env": recipe.metadata.env,
             }
             click.echo(json.dumps(output, ensure_ascii=False, indent=2))
         else:  # text
@@ -192,6 +193,18 @@ def recipe_info(name: str, output_format: str):
                     desc = param_def.get('description', '')
                     click.echo(f"• {param_name} ({param_type}, {required}): {desc}")
                 click.echo()
+            if m.env:
+                click.echo("环境变量")
+                click.echo("─" * 50)
+                for env_name, env_def in m.env.items():
+                    required = "必需" if env_def.get('required', False) else "可选"
+                    default = env_def.get('default', '')
+                    desc = env_def.get('description', '')
+                    if default:
+                        click.echo(f"• {env_name} ({required}, 默认: {default}): {desc}")
+                    else:
+                        click.echo(f"• {env_name} ({required}): {desc}")
+                click.echo()
             if m.dependencies:
                 click.echo("依赖")
                 click.echo("─" * 50)
@@ -220,6 +233,12 @@ def recipe_info(name: str, output_format: str):
     help='从文件读取参数（JSON 格式）'
 )
 @click.option(
+    '--env', '-e',
+    'env_vars',
+    multiple=True,
+    help='环境变量覆盖，格式: KEY=VALUE（可多次使用）'
+)
+@click.option(
     '--output-file',
     type=click.Path(),
     help='将结果写入文件'
@@ -239,6 +258,7 @@ def run_recipe(
     name: str,
     params: str,
     params_file: Optional[str],
+    env_vars: tuple,
     output_file: Optional[str],
     output_clipboard: bool,
     timeout: int
@@ -255,7 +275,16 @@ def run_recipe(
             except json.JSONDecodeError as e:
                 click.echo(f"错误: 参数格式无效\n{e}", err=True)
                 sys.exit(2)
-        
+
+        # 解析环境变量覆盖
+        env_overrides: dict[str, str] = {}
+        for env_var in env_vars:
+            if '=' not in env_var:
+                click.echo(f"错误: 环境变量格式无效: '{env_var}'（应为 KEY=VALUE）", err=True)
+                sys.exit(2)
+            key, value = env_var.split('=', 1)
+            env_overrides[key] = value
+
         # 确定输出目标
         if output_clipboard:
             output_target = 'clipboard'
@@ -266,10 +295,16 @@ def run_recipe(
         else:
             output_target = 'stdout'
             output_options = {}
-        
+
         # 执行 Recipe
         runner = RecipeRunner()
-        result = runner.run(name, params_dict, output_target, output_options)
+        result = runner.run(
+            name,
+            params_dict,
+            output_target,
+            output_options,
+            env_overrides=env_overrides if env_overrides else None
+        )
         
         # 处理输出
         if output_target == 'stdout':

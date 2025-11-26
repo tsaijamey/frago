@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import RecipeExecutionError, RecipeValidationError
 from .metadata import validate_params
 from .registry import RecipeRegistry
@@ -14,25 +15,33 @@ from .registry import RecipeRegistry
 class RecipeRunner:
     """Recipe 运行器，负责执行 Recipe"""
 
-    def __init__(self, registry: Optional[RecipeRegistry] = None):
+    def __init__(
+        self,
+        registry: Optional[RecipeRegistry] = None,
+        project_root: Optional[Path] = None
+    ):
         """
         初始化 RecipeRunner
 
         Args:
             registry: Recipe 注册表（不提供则自动创建并扫描）
+            project_root: 项目根目录（用于加载项目级 .env）
         """
         if registry is None:
             registry = RecipeRegistry()
             registry.scan()
 
         self.registry = registry
+        self.env_loader = EnvLoader(project_root=project_root)
 
     def run(
         self,
         name: str,
         params: dict[str, Any] | None = None,
         output_target: str = 'stdout',
-        output_options: dict[str, Any] | None = None
+        output_options: dict[str, Any] | None = None,
+        env_overrides: dict[str, str] | None = None,
+        workflow_context: WorkflowContext | None = None
     ) -> dict[str, Any]:
         """
         执行指定的 Recipe
@@ -42,6 +51,8 @@ class RecipeRunner:
             params: 输入参数（JSON 字典）
             output_target: 输出目标 ('stdout' | 'file' | 'clipboard')
             output_options: 输出选项（如 file 需要 'path'）
+            env_overrides: CLI --env 参数提供的环境变量覆盖
+            workflow_context: Workflow 执行上下文（用于跨 Recipe 共享环境变量）
 
         Returns:
             执行结果字典，格式:
@@ -68,17 +79,27 @@ class RecipeRunner:
         # 验证参数
         self._validate_params(recipe.metadata, params)
 
+        # 解析环境变量
+        try:
+            resolved_env = self.env_loader.resolve_for_recipe(
+                env_definitions=recipe.metadata.env,
+                cli_overrides=env_overrides,
+                workflow_context=workflow_context
+            )
+        except ValueError as e:
+            raise RecipeValidationError(name, [str(e)])
+
         # 记录开始时间
         start_time = time.time()
 
         try:
             # 根据运行时类型执行 Recipe
             if recipe.metadata.runtime == 'chrome-js':
-                result_data = self._run_chrome_js(recipe.script_path, params)
+                result_data = self._run_chrome_js(recipe.script_path, params, resolved_env)
             elif recipe.metadata.runtime == 'python':
-                result_data = self._run_python(recipe.script_path, params)
+                result_data = self._run_python(recipe.script_path, params, resolved_env)
             elif recipe.metadata.runtime == 'shell':
-                result_data = self._run_shell(recipe.script_path, params)
+                result_data = self._run_shell(recipe.script_path, params, resolved_env)
             else:
                 raise RecipeExecutionError(
                     recipe_name=name,
@@ -127,13 +148,19 @@ class RecipeRunner:
         # 使用统一的参数验证函数（包含必需参数和类型检查）
         validate_params(metadata, params)
 
-    def _run_chrome_js(self, script_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    def _run_chrome_js(
+        self,
+        script_path: Path,
+        params: dict[str, Any],
+        env: dict[str, str]
+    ) -> dict[str, Any]:
         """
         执行 Chrome JavaScript Recipe
 
         Args:
             script_path: JS 脚本路径
             params: 输入参数
+            env: 解析后的环境变量
 
         Returns:
             执行结果 JSON
@@ -157,7 +184,8 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5分钟超时
-                check=False
+                check=False,
+                env=env
             )
 
             if result.returncode != 0:
@@ -195,13 +223,19 @@ class RecipeRunner:
                 stderr="执行超时（5分钟）"
             )
 
-    def _run_python(self, script_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    def _run_python(
+        self,
+        script_path: Path,
+        params: dict[str, Any],
+        env: dict[str, str]
+    ) -> dict[str, Any]:
         """
         执行 Python Recipe
 
         Args:
             script_path: Python 脚本路径
             params: 输入参数
+            env: 解析后的环境变量
 
         Returns:
             执行结果 JSON
@@ -219,7 +253,8 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5分钟超时
-                check=False
+                check=False,
+                env=env
             )
 
             if result.returncode != 0:
@@ -259,13 +294,19 @@ class RecipeRunner:
                 stderr="执行超时（5分钟）"
             )
 
-    def _run_shell(self, script_path: Path, params: dict[str, Any]) -> dict[str, Any]:
+    def _run_shell(
+        self,
+        script_path: Path,
+        params: dict[str, Any],
+        env: dict[str, str]
+    ) -> dict[str, Any]:
         """
         执行 Shell Recipe
 
         Args:
             script_path: Shell 脚本路径
             params: 输入参数
+            env: 解析后的环境变量
 
         Returns:
             执行结果 JSON
@@ -292,7 +333,8 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5分钟超时
-                check=False
+                check=False,
+                env=env
             )
 
             if result.returncode != 0:

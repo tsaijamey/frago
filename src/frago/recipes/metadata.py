@@ -23,6 +23,7 @@ class RecipeMetadata:
     outputs: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)  # AI 可理解字段
+    env: dict[str, dict[str, Any]] = field(default_factory=dict)  # 环境变量定义
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
@@ -76,6 +77,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             outputs=data.get('outputs', {}),
             dependencies=data.get('dependencies', []),
             tags=data.get('tags', []),
+            env=data.get('env', {}),
         )
     except KeyError as e:
         raise MetadataParseError(str(path), f"缺少必需字段: {e}")
@@ -131,7 +133,23 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
     for param_name, param_def in metadata.inputs.items():
         if 'type' not in param_def or 'required' not in param_def:
             errors.append(f"输入参数 '{param_name}' 缺少 'type' 或 'required' 字段")
-    
+
+    # 验证 env
+    for env_name, env_def in metadata.env.items():
+        # 环境变量名必须符合规范
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', env_name):
+            errors.append(f"环境变量 '{env_name}' 名称无效，必须以字母或下划线开头")
+        # env_def 应该是字典
+        if not isinstance(env_def, dict):
+            errors.append(f"环境变量 '{env_name}' 定义必须是字典格式")
+        else:
+            # required 字段如果存在必须是布尔值
+            if 'required' in env_def and not isinstance(env_def['required'], bool):
+                errors.append(f"环境变量 '{env_name}' 的 'required' 字段必须是布尔值")
+            # default 字段如果存在必须是字符串
+            if 'default' in env_def and not isinstance(env_def['default'], str):
+                errors.append(f"环境变量 '{env_name}' 的 'default' 字段必须是字符串")
+
     if errors:
         raise RecipeValidationError(metadata.name, errors)
 

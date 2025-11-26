@@ -1,5 +1,6 @@
 """Recipe 系统核心模块"""
 
+from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import (
     MetadataParseError,
     RecipeError,
@@ -19,6 +20,9 @@ from .registry import Recipe, RecipeRegistry
 from .runner import RecipeRunner
 
 __all__ = [
+    # Env Loader
+    'EnvLoader',
+    'WorkflowContext',
     # Exceptions
     'RecipeError',
     'RecipeNotFoundError',

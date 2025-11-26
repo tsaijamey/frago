@@ -99,9 +99,14 @@ uv run frago recipe list --format json
 uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output-file transcript.txt
+
+# 使用环境变量
+uv run frago recipe run openai_chat \
+  --params '{"prompt": "Hello"}' \
+  -e OPENAI_API_KEY=sk-xxx
 ```
 
-**价值**：固化高频操作，避免重复 AI 推理，支持三级优先级管理（Project > User > Example）。
+**价值**：固化高频操作，避免重复 AI 推理，支持三级优先级管理（Project > User > Example）和环境变量配置。
 
 ### ⚡ 原生 CDP - 轻量级执行引擎
 
@@ -138,6 +143,7 @@ Frago:      Python → CDP → Chrome                  (~2MB)
 | ----------------------------- | --------------------------------------------- |
 | 🧠**Run 命令系统**      | 主题型任务管理，持久化上下文和 JSONL 日志     |
 | 📚**Recipe 元数据驱动** | 可复用脚本，AI 可发现和使用，支持三级优先级   |
+| 🔐**环境变量支持**      | 三级配置优先级，Workflow 上下文共享           |
 | ⚡**原生 CDP**          | ~2MB 轻量级，直连 Chrome，无 Node.js 依赖     |
 | 🔄**多运行时**          | Chrome JS、Python、Shell 三种运行时支持       |
 | 📊**结构化日志**        | JSONL 格式，100% 可程序解析和审计             |

@@ -99,9 +99,14 @@ uv run frago recipe list --format json
 uv run frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output-file transcript.txt
+
+# Use environment variables
+uv run frago recipe run openai_chat \
+  --params '{"prompt": "Hello"}' \
+  -e OPENAI_API_KEY=sk-xxx
 ```
 
-**Value**: Solidify high-frequency operations, avoid repeated AI reasoning, support three-tier priority management (Project > User > Example).
+**Value**: Solidify high-frequency operations, avoid repeated AI reasoning, support three-tier priority management (Project > User > Example) and environment variable configuration.
 
 ### ⚡ Native CDP - Lightweight Execution Engine
 
@@ -138,6 +143,7 @@ Frago:       Python → CDP → Chrome                  (~2MB)
 | -------------------------- | --------------------------------------------------------------- |
 | 🧠 **Run Command System**  | Topic-based task management, persistent context and JSONL logs |
 | 📚 **Recipe Metadata**     | Reusable scripts, AI-discoverable, three-tier priority support |
+| 🔐 **Environment Variables** | Three-level config priority, Workflow context sharing        |
 | ⚡ **Native CDP**          | ~2MB lightweight, direct Chrome connection, no Node.js deps    |
 | 🔄 **Multi-Runtime**       | Chrome JS, Python, Shell three runtime support                 |
 | 📊 **Structured Logs**     | JSONL format, 100% programmatically parseable and auditable    |

@@ -633,6 +633,276 @@ System will check dependency existence before execution.
 
 ---
 
+## Environment Variables Support
+
+The Recipe system supports environment variables for managing API keys, runtime configurations, and other sensitive or mutable information.
+
+### Design Principles
+
+- **Full System Environment Inheritance**: Recipes inherit all system environment variables (PATH, HOME, etc.) during execution
+- **Three-Level Configuration Priority**: Project > User > System Environment
+- **Declarative Definition**: Declare required environment variables in Recipe metadata
+- **Workflow Context Sharing**: Share environment variables across multiple Recipes
+
+### Declaring Environment Variables in Recipe
+
+Declare required environment variables in the metadata `env` field:
+
+```yaml
+---
+name: openai_chat
+type: atomic
+runtime: python
+description: "Call OpenAI API for conversation"
+use_cases:
+  - "AI conversation generation"
+  - "Text processing"
+output_targets:
+  - stdout
+env:
+  OPENAI_API_KEY:
+    required: true
+    description: "OpenAI API key"
+  MODEL_NAME:
+    required: false
+    default: "gpt-4o"
+    description: "Model name to use"
+  MAX_TOKENS:
+    required: false
+    default: "1000"
+    description: "Maximum token count"
+version: "1.0.0"
+---
+```
+
+**Field Description**:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `required` | boolean | Whether required (error if missing) |
+| `default` | string | Default value (used when not provided) |
+| `description` | string | Environment variable description |
+
+### Configuring Environment Variables
+
+#### Method 1: Configuration Files (Recommended)
+
+Create `.env` files to store environment variables:
+
+**User-level configuration** (applies to all projects):
+```bash
+# ~/.frago/.env
+OPENAI_API_KEY=sk-your-api-key
+DEEPSEEK_API_KEY=sk-your-deepseek-key
+DEFAULT_MODEL=gpt-4o
+```
+
+**Project-level configuration** (current project only):
+```bash
+# .frago/.env
+MODEL_NAME=gpt-4o-mini
+MAX_TOKENS=2000
+DEBUG=true
+```
+
+#### Method 2: CLI Parameter Override
+
+Use `--env` or `-e` parameter to override at execution time:
+
+```bash
+# Single environment variable
+uv run frago recipe run openai_chat \
+  --params '{"prompt": "Hello"}' \
+  -e OPENAI_API_KEY=sk-xxx
+
+# Multiple environment variables
+uv run frago recipe run openai_chat \
+  --params '{"prompt": "Hello"}' \
+  -e OPENAI_API_KEY=sk-xxx \
+  -e MODEL_NAME=gpt-4 \
+  -e MAX_TOKENS=500
+```
+
+#### Method 3: System Environment Variables
+
+Export directly in shell:
+
+```bash
+export OPENAI_API_KEY=sk-your-api-key
+uv run frago recipe run openai_chat --params '{"prompt": "Hello"}'
+```
+
+### Priority Rules
+
+Environment variables are resolved in the following priority (high to low):
+
+```
+┌─────────────────────────────────────────┐
+│ 1. CLI --env parameter (highest)        │
+├─────────────────────────────────────────┤
+│ 2. Workflow context (cross-Recipe)      │
+├─────────────────────────────────────────┤
+│ 3. Project .frago/.env (current project)│
+├─────────────────────────────────────────┤
+│ 4. User ~/.frago/.env (all projects)    │
+├─────────────────────────────────────────┤
+│ 5. System environment (os.environ)      │
+├─────────────────────────────────────────┤
+│ 6. Recipe defaults (metadata.env)       │
+└─────────────────────────────────────────┘
+```
+
+### Using Environment Variables in Scripts
+
+**Python Recipe**:
+```python
+#!/usr/bin/env python3
+import os
+import sys
+import json
+
+# Environment variables are auto-injected, use os.environ directly
+api_key = os.environ.get('OPENAI_API_KEY')
+model = os.environ.get('MODEL_NAME', 'gpt-4o')
+
+if not api_key:
+    print(json.dumps({"error": "OPENAI_API_KEY not set"}), file=sys.stderr)
+    sys.exit(1)
+
+# Use environment variables...
+result = {"model": model, "status": "ready"}
+print(json.dumps(result))
+```
+
+**Shell Recipe**:
+```bash
+#!/bin/bash
+# Environment variables are auto-injected, use directly
+echo "Using model: $MODEL_NAME"
+echo "API Key present: $([ -n \"$OPENAI_API_KEY\" ] && echo 'yes' || echo 'no')"
+
+# Output JSON
+cat <<EOF
+{
+  "model": "$MODEL_NAME",
+  "configured": true
+}
+EOF
+```
+
+### Workflow Context Sharing
+
+In Workflows, multiple Recipes can share environment variables:
+
+```python
+#!/usr/bin/env python3
+"""Workflow: Batch Processing Task"""
+import sys
+import json
+from frago.recipes import RecipeRunner, WorkflowContext
+
+def main():
+    params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
+
+    # Create shared context
+    context = WorkflowContext()
+
+    # Set shared environment variables
+    context.set("BATCH_ID", "batch_001")
+    context.set("TOTAL_ITEMS", str(len(params.get('items', []))))
+
+    runner = RecipeRunner()
+    results = []
+
+    for i, item in enumerate(params.get('items', [])):
+        # Update current progress
+        context.set("CURRENT_INDEX", str(i + 1))
+
+        # Execute Recipe with shared context
+        result = runner.run(
+            'process_item',
+            params={'item': item},
+            workflow_context=context
+        )
+        results.append(result['data'])
+
+    print(json.dumps({"success": True, "results": results}))
+
+if __name__ == '__main__':
+    main()
+```
+
+Called Recipes can access shared variables via `os.environ`:
+
+```python
+#!/usr/bin/env python3
+"""Atomic Recipe: Process Single Item"""
+import os
+import sys
+import json
+
+# Get Workflow shared context
+batch_id = os.environ.get('BATCH_ID', 'unknown')
+current = os.environ.get('CURRENT_INDEX', '0')
+total = os.environ.get('TOTAL_ITEMS', '0')
+
+params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
+item = params.get('item')
+
+print(f"Processing {current}/{total} in batch {batch_id}", file=sys.stderr)
+
+result = {"item": item, "batch_id": batch_id, "processed": True}
+print(json.dumps(result))
+```
+
+### Viewing Recipe Environment Variable Definitions
+
+```bash
+# View Recipe details including env definitions
+uv run frago recipe info openai_chat
+
+# JSON format output (includes env field)
+uv run frago recipe info openai_chat --format json
+```
+
+**Output Example**:
+```
+Recipe: openai_chat
+==================================================
+
+Basic Info
+──────────────────────────────────────────────────
+Name:     openai_chat
+Type:     atomic
+Runtime:  python
+Version:  1.0.0
+Source:   User
+
+Environment Variables
+──────────────────────────────────────────────────
+• OPENAI_API_KEY (required): OpenAI API key
+• MODEL_NAME (optional, default: gpt-4o): Model name to use
+• MAX_TOKENS (optional, default: 1000): Maximum token count
+
+Dependencies
+──────────────────────────────────────────────────
+None
+```
+
+### Security Best Practices
+
+1. **Don't hardcode sensitive information**: Store API keys in `.env` files
+2. **Add `.env` to `.gitignore`**: Avoid committing sensitive info to version control
+3. **Use `required: true`**: Ensure critical environment variables exist
+4. **Provide reasonable defaults**: Use `default` field for non-sensitive configs
+
+```bash
+# .gitignore
+.frago/.env
+```
+
+---
+
 ## Migrating Existing Recipes
 
 ### Migrating from Old Method to New System

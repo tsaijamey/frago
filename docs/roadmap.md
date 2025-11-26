@@ -4,29 +4,28 @@
 
 ## Project Status
 
-📍 **Current Phase**: Three-system architecture complete (Run + Recipe + CDP)
+📍 **Current Phase**: Three-system architecture complete (Run + Recipe + CDP), entering ecosystem building phase
 
 **Completed**:
 - ✅ Native CDP protocol layer (~3,763 lines of Python)
 - ✅ CLI tools and command system
-- ✅ Recipe metadata-driven architecture
-- ✅ Run command system (Feature 005)
-
-**In Progress**:
-- 🔄 Recipe system refinement (multi-language support, user-level Recipes)
-- 🔄 Workflow Recipe orchestration
-- 🔄 Claude Code slash command integration
+- ✅ Recipe metadata-driven architecture (multi-runtime support)
+- ✅ Run command system (topic-based task management)
+- ✅ Init command (dependency check, resource installation)
+- ✅ Environment variable support (three-level config priority)
 
 **Technical Highlights**:
-- 🏆 Native CDP (no Playwright/Selenium dependencies)
+- 🏆 Native CDP (no Playwright/Selenium dependencies, ~2MB)
 - 🏆 AI-First design (Claude AI hosts task execution and workflow orchestration)
 - 🏆 Recipe acceleration system (solidify high-frequency operations, avoid repeated AI reasoning)
 - 🏆 Run System (AI's working memory with persistent context)
-- 🏆 Lightweight deployment (~2MB dependencies)
+- 🏆 Environment variable system (sensitive info management + Workflow context sharing)
+
+---
 
 ## Completed Features ✅
 
-### Core CDP Implementation (Iterations 001-002)
+### Feature 001-002: Core CDP Implementation
 
 - [x] **Native CDP Protocol Layer** (~3,763 lines of Python code)
   - WebSocket direct to Chrome (no Node.js relay)
@@ -37,25 +36,45 @@
 - [x] **CLI Tools** (Click framework)
   - `uv run frago <command>` - Unified interface for all CDP functionality
   - Proxy configuration support (environment variables + CLI parameters)
-  - Function mapping validation tool (100% coverage)
+  - Function mapping validation tool
 
 - [x] **Cross-Platform Chrome Launcher**
   - macOS/Linux support
   - Auto profile initialization
-  - Window size control (1280x960, position 20,20)
+  - Window size control
 
-### Run Command System (Iteration 005)
+### Feature 003-004: Recipe System
+
+- [x] **Recipe Metadata-Driven Architecture**
+  - Metadata parser (YAML frontmatter)
+  - Recipe registry (three-level lookup path: project > user > example)
+  - Recipe executor (chrome-js/python/shell runtime)
+  - Output handler (stdout/file/clipboard)
+  - CLI command group (list/info/run/copy)
+
+- [x] **AI-Understandable Field Design**
+  - `description`: Functionality description
+  - `use_cases`: Usage scenarios
+  - `tags`: Category tags
+  - `output_targets`: Output targets
+
+- [x] **Recipe Storage Structure**
+  - Code-resource separation
+  - Example Recipes in `examples/`
+  - Descriptive naming convention
+  - Supporting metadata documentation
+
+### Feature 005: Run Command System
 
 - [x] **Topic-Based Task Management**
   - Run instance creation and discovery
-  - RapidFuzz-based fuzzy matching (80% threshold)
+  - RapidFuzz fuzzy matching (80% threshold)
   - Context persistence across sessions
   - Lifecycle: init → execute → log → archive
 
 - [x] **Structured JSONL Logs**
-  - 100% programmatically parseable format
-  - Each line is valid JSON
-  - Operation tracking (navigate, click, screenshot, etc.)
+  - 100% programmatically parseable
+  - Complete operation history tracking
   - Error logging with stack traces
   - Auditable execution history
 
@@ -64,103 +83,113 @@
   - `logs/execution.jsonl` - Complete operation history
   - `screenshots/` - Timestamped images
   - `scripts/` - Validated working scripts
-  - `outputs/` - Result files and reports
+  - `outputs/` - Result files
 
 - [x] **AI-Driven Task Execution**
   - `/frago.run` slash command integration
   - Automatic Run instance discovery
   - Recipe selection and orchestration
-  - Complete test coverage
 
-### Recipe System (Iterations 003-004)
+### Feature 006-007: Init Command System
 
-- [x] **Recipe Metadata-Driven Architecture** (Iteration 004 Phase 1-3)
-  - Metadata parser (YAML frontmatter)
-  - Recipe registry (three-level lookup path: project>user>example)
-  - Recipe executor (chrome-js/python/shell runtime)
-  - Output handler (stdout/file/clipboard)
-  - CLI command group (list/info/run)
+- [x] **Dependency Check and Installation**
+  - Parallel detection of Node.js and Claude Code
+  - Smart installation of missing components
+  - Installation verification
 
-- [x] **Recipe Management Commands** (`/frago.recipe`)
-  - AI interactive exploration to create Recipes (003 design)
-  - `recipe list` - List all Recipes (supports JSON format)
-  - `recipe info` - View Recipe detailed information
-  - `recipe run` - Execute Recipe (parameter validation + output handling)
+- [x] **Authentication Configuration**
+  - Official Claude Code login
+  - Custom API endpoints (DeepSeek, Aliyun, Kimi, MiniMax)
+  - Mutually exclusive selection design
 
-- [x] **Recipe Storage Structure**
-  - Code-resource separation (`src/frago/recipes/` for engine code)
-  - Example Recipes in `examples/atomic/chrome/`
-  - Descriptive naming (`<platform>_<operation>_<object>.js`)
-  - Supporting metadata documentation (.md + YAML frontmatter)
-  - AI-understandable fields (description/use_cases/tags/output_targets)
+- [x] **Resource Installation**
+  - Slash commands installed to `~/.claude/commands/`
+  - User-level Recipe directory creation `~/.frago/recipes/`
+  - Example Recipe copying
 
-### Project Iteration Records
+- [x] **Config Persistence**
+  - `~/.frago/config.json` configuration file
+  - Config status view `--show-config`
+  - Reset functionality `--reset`
 
-- [x] **Spec System** (5 iterations)
-  - 001: CDP script standardization (unified websocat method)
-  - 002: CDP integration refactor (Python implementation + proxy support)
-  - 003: Recipe automation system design
-  - 004: Recipe architecture refactor (metadata-driven + AI-First design)
-    - Phase 1-3 completed: Basic architecture + AI availability (US0)
-    - Pending: Multi-language support (US1) + User-level Recipes (US2) + Workflow orchestration (US3)
-  - 005: Run command system (completed)
-    - Topic-based task management
-    - JSONL structured logging
-    - AI auto-discovery mechanism
+### Environment Variable Support (2025-11-26)
+
+- [x] **Three-Level Config Priority**
+  - CLI `--env` parameter (highest)
+  - Project-level `.frago/.env`
+  - User-level `~/.frago/.env`
+  - System environment variables
+  - Recipe defaults (lowest)
+
+- [x] **Recipe Metadata Extension**
+  - `env` field to declare required environment variables
+  - `required`/`default`/`description` attributes
+  - Validation and default value application at execution time
+
+- [x] **Workflow Context Sharing**
+  - `WorkflowContext` class for cross-Recipe sharing
+  - Complete system environment inheritance
+  - CLI `-e KEY=VALUE` override
+
+---
 
 ## Pending Features 📝
 
 ### High Priority
 
-- [ ] **Recipe System Refinement (Iteration 004 Remaining)**
-  - [x] Phase 1-3: Basic architecture + AI availability (metadata framework, registry, executor, CLI)
-  - [ ] Phase 4: Multi-language Recipe support (Python/Shell runtime execution)
-  - [ ] Phase 5: User-level Recipe directory (`~/.frago/recipes/` + `init` command)
-  - [ ] Phase 6: Workflow Recipe orchestration (call multiple atomic Recipes)
-  - [ ] Phase 7: Parameter validation and type checking
-  - [ ] Phase 8: Project-level Recipe support (`.frago/recipes/`)
+- [ ] **Chrome-JS Parameter Injection**
+  - Currently chrome-js runtime doesn't support parameter passing
+  - Need to inject parameters via global variables or script wrapping
+  - Support passing Recipe-declared `inputs` to JS scripts
 
-- [ ] **Claude Code Integration**
-  - [x] `/frago.run` - AI-driven task execution
-  - [x] `/frago.recipe` - Recipe management
-  - [x] `/frago.exec` - One-time task execution
-  - [ ] Enhanced AI orchestration logic
-  - [ ] Better Recipe selection algorithm
+- [ ] **Workflow Orchestration Enhancement**
+  - Combine atomic Recipes into complex workflows
+  - Conditional branching and loop support
+  - Error handling and rollback mechanisms
+  - Parallel execution support
 
-- [ ] **Run System Enhancement**
-  - [ ] Run templates for common workflows
-  - [ ] Run metrics and analytics
-  - [ ] Export Run logs to different formats
-  - [ ] Run comparison and diff tools
+- [ ] **Recipe Ecosystem Building**
+  - Common platform Recipe library (YouTube, GitHub, X, Upwork, LinkedIn)
+  - Recipe sharing and import mechanism
+  - Community Recipe contribution process
+  - Recipe performance benchmarking
 
 ### Medium Priority
 
-- [ ] **Recipe Ecosystem**
-  - [ ] Common platform recipe library (YouTube/GitHub/X/Upwork)
-  - [ ] Recipe sharing and import mechanism
-  - [ ] Recipe performance optimization
-  - [ ] Community Recipe contributions
-
-- [ ] **Documentation and Examples**
-  - [ ] Video tutorials for key workflows
-  - [ ] Interactive documentation
-  - [ ] More real-world Recipe examples
-  - [ ] Best practices guide
+- [ ] **Run System Enhancement**
+  - Run templates for common workflows
+  - Run metrics and analytics reports
+  - Multi-format log export (CSV, Excel)
+  - Run comparison and diff tools
 
 - [ ] **Developer Experience**
-  - [ ] Recipe testing framework
-  - [ ] Recipe debugging tools
-  - [ ] Better error messages
-  - [ ] IDE integrations (VS Code extension)
+  - Recipe testing framework
+  - Recipe debugging tools
+  - Better error messages
+  - VS Code extension (syntax highlighting, intellisense)
+
+- [ ] **Documentation and Examples**
+  - Video tutorials for key workflows
+  - Interactive documentation
+  - More real-world Recipe examples
+  - Best practices guide
 
 ### Low Priority
 
 - [ ] **Advanced Features**
-  - [ ] Recipe version management system
-  - [ ] Multi-browser support (Firefox, Safari)
-  - [ ] Distributed Recipe execution
-  - [ ] Recipe marketplace
-  - [ ] AI-powered Recipe optimization suggestions
+  - Recipe version management system
+  - Multi-browser support (Firefox, Safari)
+  - Distributed Recipe execution
+  - Recipe marketplace
+  - AI-powered Recipe optimization suggestions
+
+- [ ] **Enterprise Features**
+  - Team Recipe sharing
+  - Execution audit logs
+  - Access control
+  - API call statistics
+
+---
 
 ## Iteration Details
 
@@ -182,7 +211,7 @@
 - Intelligent retry mechanism
 - CLI tools (Click framework)
 
-### 003: Recipe Automation System
+### 003: Recipe Automation System Design
 **Goal**: Design Recipe system, solidify high-frequency operations, accelerate AI reasoning
 
 **Achievements**:
@@ -192,72 +221,77 @@
 - Recipe storage and naming conventions
 
 ### 004: Recipe Architecture Refactor
-**Goal**: Metadata-driven + AI-First design, enabling AI to autonomously discover and use Recipes
+**Goal**: Metadata-driven + AI-First design
 
-**Achievements (Phase 1-3 completed)**:
+**Achievements**:
 - Metadata parser (YAML frontmatter)
 - Recipe registry (three-level lookup path)
-- Recipe executor (multi-runtime support)
+- Recipe executor (multi-runtime)
 - CLI command group (list/info/run)
 - AI-understandable field design
 
-**Pending (Phase 4-8)**:
-- Python/Shell runtime execution
-- User-level Recipe directory
-- Workflow Recipe orchestration
-- Parameter validation and type checking
-- Project-level Recipe support
-
 ### 005: Run Command System
-**Goal**: Provide persistent context management for AI agents, serving as working memory
+**Goal**: Provide persistent context management for AI agents
 
-**Achievements (Completed)**:
+**Achievements**:
 - Topic-based Run instance creation and management
-- RapidFuzz-based fuzzy matching for auto-discovery
+- RapidFuzz-based fuzzy matching auto-discovery
 - JSONL structured logging (100% parseable)
-- Persistent context storage (`projects/<run_id>/`)
-- Integration with CDP commands and Recipe system
-- `/frago.run` slash command for Claude Code
+- Persistent context storage
+- `/frago.run` slash command integration
 - Complete test coverage
 
 **Key Features**:
 - **Knowledge Accumulation**: Validated scripts persist across sessions
 - **Auditability**: Complete operation history in JSONL format
 - **Resumability**: AI can resume exploration days later
-- **Error Recovery**: Structured error logging for debugging
 - **Token Efficiency**: 93.5% token savings vs. repeated exploration
+
+### 006: Init Command
+**Goal**: One-click environment initialization after user installation
+
+**Achievements**:
+- Parallel dependency check (Node.js, Claude Code)
+- Smart installation of missing components
+- Authentication configuration (official/custom endpoints)
+- Config persistence
+
+### 007: Init Resource Installation
+**Goal**: Auto-install slash commands and example Recipes
+
+**Achievements**:
+- Slash commands installed to `~/.claude/commands/`
+- User-level Recipe directory creation
+- Example Recipe copying
+- Resource status view
+
+---
 
 ## Version History
 
 ### v0.1.0 (Current)
 - Core CDP implementation (~3,763 lines)
 - Recipe metadata-driven architecture
-- Run command system (Feature 005)
-- 4 example Recipes
+- Run command system
+- Init command and resource installation
+- Environment variable support
 - Claude Code slash commands (/frago.run, /frago.recipe, /frago.exec)
 
-### v0.2.0 (Planned - Q1 2025)
-- Recipe system refinement (Phase 4-8)
-  - Python/Shell runtime support
-  - User-level Recipe directory
-  - Workflow Recipe orchestration
-- Run System enhancements
-  - Run templates
-  - Export tools
-- Enhanced Claude Code integration
+### v0.2.0 (Planned)
+- Chrome-JS parameter injection
+- Workflow orchestration enhancement
+- Run system enhancement (templates, export)
+- More platform Recipes
 
-### v0.3.0 (Planned - Q2 2025)
+### v0.3.0 (Planned)
 - Recipe ecosystem building
-  - Common platform recipe library
-  - Recipe sharing mechanism
-- Developer experience improvements
-  - Recipe testing framework
-  - Better debugging tools
+- Developer tools (testing framework, debugger)
+- VS Code extension
 - Performance optimization
 
-### v1.0.0 (Long-term Goal - Q4 2025)
+### v1.0.0 (Long-term Goal)
 - Stable public API
 - Comprehensive documentation and tutorials
 - Community Recipe marketplace
 - Multi-browser support
-- Enterprise features (distributed execution, analytics)
+- Enterprise features

@@ -631,6 +631,276 @@ dependencies:
 
 ---
 
+## 环境变量支持
+
+Recipe 系统支持环境变量，用于管理 API 密钥、运行时配置等敏感或可变信息。
+
+### 设计原则
+
+- **完整继承系统环境**：Recipe 执行时继承所有系统环境变量（PATH、HOME 等）
+- **三级配置优先级**：项目级 > 用户级 > 系统环境
+- **声明式定义**：在 Recipe 元数据中声明所需环境变量
+- **Workflow 上下文共享**：多个 Recipe 间可共享环境变量
+
+### 在 Recipe 中声明环境变量
+
+在元数据的 `env` 字段中声明所需的环境变量：
+
+```yaml
+---
+name: openai_chat
+type: atomic
+runtime: python
+description: "调用 OpenAI API 进行对话"
+use_cases:
+  - "AI 对话生成"
+  - "文本处理"
+output_targets:
+  - stdout
+env:
+  OPENAI_API_KEY:
+    required: true
+    description: "OpenAI API 密钥"
+  MODEL_NAME:
+    required: false
+    default: "gpt-4o"
+    description: "使用的模型名称"
+  MAX_TOKENS:
+    required: false
+    default: "1000"
+    description: "最大 token 数"
+version: "1.0.0"
+---
+```
+
+**字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `required` | boolean | 是否必需（缺失时报错） |
+| `default` | string | 默认值（未提供时使用） |
+| `description` | string | 环境变量描述 |
+
+### 配置环境变量
+
+#### 方式一：配置文件（推荐）
+
+创建 `.env` 文件存储环境变量：
+
+**用户级配置**（适用于所有项目）：
+```bash
+# ~/.frago/.env
+OPENAI_API_KEY=sk-your-api-key
+DEEPSEEK_API_KEY=sk-your-deepseek-key
+DEFAULT_MODEL=gpt-4o
+```
+
+**项目级配置**（仅当前项目）：
+```bash
+# .frago/.env
+MODEL_NAME=gpt-4o-mini
+MAX_TOKENS=2000
+DEBUG=true
+```
+
+#### 方式二：CLI 参数覆盖
+
+使用 `--env` 或 `-e` 参数在执行时覆盖：
+
+```bash
+# 单个环境变量
+uv run frago recipe run openai_chat \
+  --params '{"prompt": "Hello"}' \
+  -e OPENAI_API_KEY=sk-xxx
+
+# 多个环境变量
+uv run frago recipe run openai_chat \
+  --params '{"prompt": "Hello"}' \
+  -e OPENAI_API_KEY=sk-xxx \
+  -e MODEL_NAME=gpt-4 \
+  -e MAX_TOKENS=500
+```
+
+#### 方式三：系统环境变量
+
+直接在 shell 中导出：
+
+```bash
+export OPENAI_API_KEY=sk-your-api-key
+uv run frago recipe run openai_chat --params '{"prompt": "Hello"}'
+```
+
+### 优先级规则
+
+环境变量按以下优先级解析（高到低）：
+
+```
+┌─────────────────────────────────────────┐
+│ 1. CLI --env 参数     (最高优先级)      │
+├─────────────────────────────────────────┤
+│ 2. Workflow 上下文    (跨 Recipe 共享)  │
+├─────────────────────────────────────────┤
+│ 3. 项目级 .frago/.env (当前项目)        │
+├─────────────────────────────────────────┤
+│ 4. 用户级 ~/.frago/.env (所有项目)      │
+├─────────────────────────────────────────┤
+│ 5. 系统环境变量       (os.environ)      │
+├─────────────────────────────────────────┤
+│ 6. Recipe 默认值      (metadata.env)    │
+└─────────────────────────────────────────┘
+```
+
+### 在脚本中使用环境变量
+
+**Python Recipe**：
+```python
+#!/usr/bin/env python3
+import os
+import sys
+import json
+
+# 环境变量已自动注入，直接使用 os.environ
+api_key = os.environ.get('OPENAI_API_KEY')
+model = os.environ.get('MODEL_NAME', 'gpt-4o')
+
+if not api_key:
+    print(json.dumps({"error": "OPENAI_API_KEY not set"}), file=sys.stderr)
+    sys.exit(1)
+
+# 使用环境变量...
+result = {"model": model, "status": "ready"}
+print(json.dumps(result))
+```
+
+**Shell Recipe**：
+```bash
+#!/bin/bash
+# 环境变量已自动注入，直接使用
+echo "Using model: $MODEL_NAME"
+echo "API Key present: $([ -n \"$OPENAI_API_KEY\" ] && echo 'yes' || echo 'no')"
+
+# 输出 JSON
+cat <<EOF
+{
+  "model": "$MODEL_NAME",
+  "configured": true
+}
+EOF
+```
+
+### Workflow 上下文共享
+
+在 Workflow 中，多个 Recipe 可共享环境变量：
+
+```python
+#!/usr/bin/env python3
+"""Workflow: 批量处理任务"""
+import sys
+import json
+from frago.recipes import RecipeRunner, WorkflowContext
+
+def main():
+    params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
+
+    # 创建共享上下文
+    context = WorkflowContext()
+
+    # 设置共享的环境变量
+    context.set("BATCH_ID", "batch_001")
+    context.set("TOTAL_ITEMS", str(len(params.get('items', []))))
+
+    runner = RecipeRunner()
+    results = []
+
+    for i, item in enumerate(params.get('items', [])):
+        # 更新当前进度
+        context.set("CURRENT_INDEX", str(i + 1))
+
+        # 执行 Recipe，传递共享上下文
+        result = runner.run(
+            'process_item',
+            params={'item': item},
+            workflow_context=context
+        )
+        results.append(result['data'])
+
+    print(json.dumps({"success": True, "results": results}))
+
+if __name__ == '__main__':
+    main()
+```
+
+被调用的 Recipe 可以通过 `os.environ` 访问这些共享变量：
+
+```python
+#!/usr/bin/env python3
+"""Atomic Recipe: 处理单个项目"""
+import os
+import sys
+import json
+
+# 获取 Workflow 共享的上下文
+batch_id = os.environ.get('BATCH_ID', 'unknown')
+current = os.environ.get('CURRENT_INDEX', '0')
+total = os.environ.get('TOTAL_ITEMS', '0')
+
+params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
+item = params.get('item')
+
+print(f"Processing {current}/{total} in batch {batch_id}", file=sys.stderr)
+
+result = {"item": item, "batch_id": batch_id, "processed": True}
+print(json.dumps(result))
+```
+
+### 查看 Recipe 环境变量定义
+
+```bash
+# 查看 Recipe 详情，包含环境变量定义
+uv run frago recipe info openai_chat
+
+# JSON 格式输出（包含 env 字段）
+uv run frago recipe info openai_chat --format json
+```
+
+**输出示例**：
+```
+Recipe: openai_chat
+==================================================
+
+基本信息
+──────────────────────────────────────────────────
+名称:     openai_chat
+类型:     atomic
+运行时:   python
+版本:     1.0.0
+来源:     User
+
+环境变量
+──────────────────────────────────────────────────
+• OPENAI_API_KEY (必需): OpenAI API 密钥
+• MODEL_NAME (可选, 默认: gpt-4o): 使用的模型名称
+• MAX_TOKENS (可选, 默认: 1000): 最大 token 数
+
+依赖
+──────────────────────────────────────────────────
+无
+```
+
+### 安全最佳实践
+
+1. **不要硬编码敏感信息**：将 API 密钥等存储在 `.env` 文件中
+2. **将 `.env` 加入 `.gitignore`**：避免提交敏感信息到版本控制
+3. **使用 `required: true`**：确保关键环境变量存在
+4. **提供合理默认值**：对非敏感配置使用 `default` 字段
+
+```bash
+# .gitignore
+.frago/.env
+```
+
+---
+
 ## 迁移现有 Recipe
 
 ### 从旧方式迁移到新系统
