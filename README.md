@@ -10,6 +10,8 @@
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
+**Docs**: [Installation](docs/installation.md) · [User Guide](docs/user-guide.md) · [Recipes](docs/recipes.md) · [Architecture](docs/architecture.md) · [Use Cases](docs/use-cases.md) · [Development](docs/development.md)
+
 ---
 
 ## What Problems Does Frago Solve
