@@ -94,13 +94,13 @@ class RecipeRunner:
         try:
             # 根据运行时类型执行 Recipe
             if recipe.metadata.runtime == 'chrome-js':
-                result_data = self._run_chrome_js(recipe.script_path, params, resolved_env)
+                result_data = self._run_chrome_js(name, recipe.script_path, params, resolved_env)
             elif recipe.metadata.runtime == 'python':
                 # 检查是否需要系统 Python（用于依赖 dbus 等系统包的脚本）
                 use_system_python = getattr(recipe.metadata, 'system_packages', False)
-                result_data = self._run_python(recipe.script_path, params, resolved_env, use_system_python)
+                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python)
             elif recipe.metadata.runtime == 'shell':
-                result_data = self._run_shell(recipe.script_path, params, resolved_env)
+                result_data = self._run_shell(name, recipe.script_path, params, resolved_env)
             else:
                 raise RecipeExecutionError(
                     recipe_name=name,
@@ -151,6 +151,7 @@ class RecipeRunner:
 
     def _run_chrome_js(
         self,
+        recipe_name: str,
         script_path: Path,
         params: dict[str, Any],
         env: dict[str, str]
@@ -159,6 +160,7 @@ class RecipeRunner:
         执行 Chrome JavaScript Recipe
 
         Args:
+            recipe_name: Recipe 名称
             script_path: JS 脚本路径
             params: 输入参数
             env: 解析后的环境变量
@@ -191,7 +193,7 @@ class RecipeRunner:
 
             if result.returncode != 0:
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='chrome-js',
                     exit_code=result.returncode,
                     stdout=result.stdout,
@@ -201,7 +203,7 @@ class RecipeRunner:
             # 检查输出大小（10MB 限制）
             if len(result.stdout) > 10 * 1024 * 1024:  # 10MB
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='chrome-js',
                     exit_code=-1,
                     stderr=f"Recipe 输出过大: {len(result.stdout) / 1024 / 1024:.2f}MB (限制: 10MB)"
@@ -218,7 +220,7 @@ class RecipeRunner:
 
         except subprocess.TimeoutExpired:
             raise RecipeExecutionError(
-                recipe_name=script_path.stem,
+                recipe_name=recipe_name,
                 runtime='chrome-js',
                 exit_code=-1,
                 stderr="执行超时（5分钟）"
@@ -226,6 +228,7 @@ class RecipeRunner:
 
     def _run_python(
         self,
+        recipe_name: str,
         script_path: Path,
         params: dict[str, Any],
         env: dict[str, str],
@@ -238,6 +241,7 @@ class RecipeRunner:
         如果 use_system_python=True，则使用系统 Python（用于依赖系统包如 dbus 的脚本）
 
         Args:
+            recipe_name: Recipe 名称
             script_path: Python 脚本路径
             params: 输入参数
             env: 解析后的环境变量
@@ -276,7 +280,7 @@ class RecipeRunner:
 
             if result.returncode != 0:
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='python',
                     exit_code=result.returncode,
                     stdout=result.stdout,
@@ -286,7 +290,7 @@ class RecipeRunner:
             # 检查输出大小（10MB 限制）
             if len(result.stdout) > 10 * 1024 * 1024:  # 10MB
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='python',
                     exit_code=-1,
                     stderr=f"Recipe 输出过大: {len(result.stdout) / 1024 / 1024:.2f}MB (限制: 10MB)"
@@ -297,7 +301,7 @@ class RecipeRunner:
                 return json.loads(result.stdout)
             except json.JSONDecodeError as e:
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='python',
                     exit_code=-1,
                     stderr=f"JSON 解析失败: {e}\n输出: {result.stdout[:200]}"
@@ -305,7 +309,7 @@ class RecipeRunner:
 
         except subprocess.TimeoutExpired:
             raise RecipeExecutionError(
-                recipe_name=script_path.stem,
+                recipe_name=recipe_name,
                 runtime='python',
                 exit_code=-1,
                 stderr="执行超时（5分钟）"
@@ -313,6 +317,7 @@ class RecipeRunner:
 
     def _run_shell(
         self,
+        recipe_name: str,
         script_path: Path,
         params: dict[str, Any],
         env: dict[str, str]
@@ -321,6 +326,7 @@ class RecipeRunner:
         执行 Shell Recipe
 
         Args:
+            recipe_name: Recipe 名称
             script_path: Shell 脚本路径
             params: 输入参数
             env: 解析后的环境变量
@@ -334,7 +340,7 @@ class RecipeRunner:
         # 检查执行权限
         if not script_path.stat().st_mode & 0o100:
             raise RecipeExecutionError(
-                recipe_name=script_path.stem,
+                recipe_name=recipe_name,
                 runtime='shell',
                 exit_code=-1,
                 stderr=f"脚本没有执行权限: {script_path}"
@@ -356,7 +362,7 @@ class RecipeRunner:
 
             if result.returncode != 0:
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=result.returncode,
                     stdout=result.stdout,
@@ -366,7 +372,7 @@ class RecipeRunner:
             # 检查输出大小（10MB 限制）
             if len(result.stdout) > 10 * 1024 * 1024:  # 10MB
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=-1,
                     stderr=f"Recipe 输出过大: {len(result.stdout) / 1024 / 1024:.2f}MB (限制: 10MB)"
@@ -377,7 +383,7 @@ class RecipeRunner:
                 return json.loads(result.stdout)
             except json.JSONDecodeError as e:
                 raise RecipeExecutionError(
-                    recipe_name=script_path.stem,
+                    recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=-1,
                     stderr=f"JSON 解析失败: {e}\n输出: {result.stdout[:200]}"
@@ -385,7 +391,7 @@ class RecipeRunner:
 
         except subprocess.TimeoutExpired:
             raise RecipeExecutionError(
-                recipe_name=script_path.stem,
+                recipe_name=recipe_name,
                 runtime='shell',
                 exit_code=-1,
                 stderr="执行超时（5分钟）"
