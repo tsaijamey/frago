@@ -8,7 +8,12 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .exceptions import ContextNotSetError, FileSystemError, RunNotFoundError
+from .exceptions import (
+    ContextAlreadySetError,
+    ContextNotSetError,
+    FileSystemError,
+    RunNotFoundError,
+)
 from .models import CurrentRunContext
 
 
@@ -97,8 +102,19 @@ class ContextManager:
 
         Raises:
             RunNotFoundError: run_id不存在
+            ContextAlreadySetError: 已有其他run在运行
             FileSystemError: 配置文件写入失败
         """
+        # 互斥检查：如果已有上下文且不是同一个run，则拒绝
+        if self.config_file.exists():
+            try:
+                data = json.loads(self.config_file.read_text())
+                existing_run_id = data.get("run_id")
+                if existing_run_id and existing_run_id != run_id:
+                    raise ContextAlreadySetError(existing_run_id)
+            except json.JSONDecodeError:
+                pass  # 配置文件损坏，允许覆盖
+
         # 验证run存在
         run_dir = self.projects_dir / run_id
         if not run_dir.exists():
@@ -141,6 +157,22 @@ class ContextManager:
                 self.config_file.unlink()
             except Exception:
                 pass  # 忽略清空失败
+
+    def release_context(self) -> Optional[str]:
+        """释放当前上下文（公开方法）
+
+        Returns:
+            被释放的run_id，如果没有上下文则返回None
+        """
+        released_run_id = None
+        if self.config_file.exists():
+            try:
+                data = json.loads(self.config_file.read_text())
+                released_run_id = data.get("run_id")
+            except json.JSONDecodeError:
+                pass
+            self._clear_context()
+        return released_run_id
 
     def get_current_run_id(self) -> Optional[str]:
         """获取当前run_id（不抛出异常）

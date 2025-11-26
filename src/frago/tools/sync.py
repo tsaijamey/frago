@@ -36,46 +36,46 @@ class RecipeSync:
             project_root / "src" / "frago" / "resources" / "recipes"
         )
 
-    def find_recipes(self, pattern: Optional[str] = None) -> list[tuple[Path, Path]]:
+    def find_recipes(self, pattern: Optional[str] = None) -> list[Path]:
         """
-        查找所有 Recipe 文件对（脚本 + 元数据）
+        查找所有 Recipe 目录
 
         Args:
             pattern: 可选的通配符模式，用于过滤 Recipe 名称
 
         Returns:
-            列表，每个元素是 (脚本路径, 元数据路径) 元组
+            配方目录路径列表
         """
         recipes = []
 
-        # 支持的脚本扩展名
-        script_extensions = {".py", ".js", ".sh"}
-
-        # 遍历 examples/ 目录
-        for script_path in self.source_dir.rglob("*"):
-            # 跳过目录和非脚本文件
-            if script_path.is_dir():
-                continue
-            if script_path.suffix not in script_extensions:
-                continue
-            # 跳过 __pycache__ 目录
-            if "__pycache__" in str(script_path):
+        # 遍历 examples/ 下的子目录 (atomic/chrome, atomic/system, workflows)
+        for subdir in ["atomic/chrome", "atomic/system", "workflows"]:
+            category_path = self.source_dir / subdir
+            if not category_path.exists():
                 continue
 
-            # 查找对应的元数据文件
-            metadata_path = script_path.with_suffix(".md")
-            if not metadata_path.exists():
-                continue
-
-            # 获取 Recipe 名称（不含扩展名）
-            recipe_name = script_path.stem
-
-            # 如果指定了 pattern，进行匹配
-            if pattern:
-                if not fnmatch.fnmatch(recipe_name, pattern):
+            # 查找所有配方目录（包含 recipe.md 的目录）
+            for recipe_dir in category_path.iterdir():
+                if not recipe_dir.is_dir():
+                    continue
+                # 跳过 __pycache__ 目录
+                if recipe_dir.name == "__pycache__":
                     continue
 
-            recipes.append((script_path, metadata_path))
+                # 检查是否包含 recipe.md
+                metadata_path = recipe_dir / "recipe.md"
+                if not metadata_path.exists():
+                    continue
+
+                # 获取 Recipe 名称（目录名）
+                recipe_name = recipe_dir.name
+
+                # 如果指定了 pattern，进行匹配
+                if pattern:
+                    if not fnmatch.fnmatch(recipe_name, pattern):
+                        continue
+
+                recipes.append(recipe_dir)
 
         return recipes
 
@@ -86,7 +86,7 @@ class RecipeSync:
         verbose: bool = False,
     ) -> list[dict]:
         """
-        执行同步操作
+        执行同步操作（目录形式配方）
 
         Args:
             pattern: 可选的通配符模式，用于过滤 Recipe 名称
@@ -94,43 +94,44 @@ class RecipeSync:
             verbose: 显示详细信息
 
         Returns:
-            同步结果列表，每个元素包含 recipe_name, source, target, action
+            同步结果列表，每个元素包含 recipe_name, source_dir, target_dir, action
         """
         results = []
-        recipes = self.find_recipes(pattern)
+        recipe_dirs = self.find_recipes(pattern)
 
-        if not recipes:
+        if not recipe_dirs:
             return results
 
-        for script_path, metadata_path in recipes:
+        for recipe_dir in recipe_dirs:
             # 计算相对路径
-            rel_path = script_path.relative_to(self.source_dir)
+            rel_path = recipe_dir.relative_to(self.source_dir)
+            recipe_name = recipe_dir.name
 
             # 目标路径
-            target_script = self.target_dir / rel_path
-            target_metadata = target_script.with_suffix(".md")
+            target_dir = self.target_dir / rel_path
 
             # 确定操作类型
-            script_exists = target_script.exists()
-            metadata_exists = target_metadata.exists()
-
-            if script_exists and metadata_exists:
-                # 检查是否需要更新
-                script_modified = script_path.stat().st_mtime > target_script.stat().st_mtime
-                metadata_modified = metadata_path.stat().st_mtime > target_metadata.stat().st_mtime
-                if script_modified or metadata_modified:
-                    action = "update"
-                else:
-                    action = "skip"
+            if target_dir.exists():
+                # 检查是否需要更新（比较目录内所有文件的修改时间）
+                needs_update = False
+                for src_file in recipe_dir.rglob("*"):
+                    if src_file.is_file() and "__pycache__" not in str(src_file):
+                        rel_file = src_file.relative_to(recipe_dir)
+                        tgt_file = target_dir / rel_file
+                        if not tgt_file.exists():
+                            needs_update = True
+                            break
+                        if src_file.stat().st_mtime > tgt_file.stat().st_mtime:
+                            needs_update = True
+                            break
+                action = "update" if needs_update else "skip"
             else:
                 action = "create"
 
             result = {
-                "recipe_name": script_path.stem,
-                "source_script": script_path,
-                "source_metadata": metadata_path,
-                "target_script": target_script,
-                "target_metadata": target_metadata,
+                "recipe_name": recipe_name,
+                "source_dir": recipe_dir,
+                "target_dir": target_dir,
                 "action": action,
             }
 
@@ -139,25 +140,34 @@ class RecipeSync:
                 continue
 
             if not dry_run:
-                # 创建目标目录
-                target_script.parent.mkdir(parents=True, exist_ok=True)
+                # 删除旧目录（如果存在）
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
 
-                # 复制文件
-                shutil.copy2(script_path, target_script)
-                shutil.copy2(metadata_path, target_metadata)
+                # 复制整个目录（排除 __pycache__）
+                shutil.copytree(
+                    recipe_dir,
+                    target_dir,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
 
             results.append(result)
 
         return results
 
     def list_synced(self) -> list[Path]:
-        """列出已同步到 resources 的 Recipe 脚本"""
+        """列出已同步到 resources 的 Recipe 目录"""
         synced = []
-        script_extensions = {".py", ".js", ".sh"}
 
-        for path in self.target_dir.rglob("*"):
-            if path.is_file() and path.suffix in script_extensions:
-                synced.append(path)
+        # 遍历 target_dir 下的子目录
+        for subdir in ["atomic/chrome", "atomic/system", "workflows"]:
+            category_path = self.target_dir / subdir
+            if not category_path.exists():
+                continue
+
+            for recipe_dir in category_path.iterdir():
+                if recipe_dir.is_dir() and (recipe_dir / "recipe.md").exists():
+                    synced.append(recipe_dir)
 
         return synced
 
@@ -169,32 +179,21 @@ class RecipeSync:
         清理目标目录中不存在于源目录的 Recipe
 
         Args:
-            dry_run: 如果为 True，仅显示将要删除的文件，不实际执行
+            dry_run: 如果为 True，仅显示将要删除的目录，不实际执行
 
         Returns:
-            被删除（或将要删除）的文件列表
+            被删除（或将要删除）的目录列表
         """
         removed = []
 
-        for target_script in self.list_synced():
+        for target_dir in self.list_synced():
             # 计算对应的源路径
-            rel_path = target_script.relative_to(self.target_dir)
-            source_script = self.source_dir / rel_path
+            rel_path = target_dir.relative_to(self.target_dir)
+            source_dir = self.source_dir / rel_path
 
-            if not source_script.exists():
-                target_metadata = target_script.with_suffix(".md")
-
+            if not source_dir.exists():
                 if not dry_run:
-                    if target_script.exists():
-                        target_script.unlink()
-                        removed.append(target_script)
-                    if target_metadata.exists():
-                        target_metadata.unlink()
-                        removed.append(target_metadata)
-                else:
-                    if target_script.exists():
-                        removed.append(target_script)
-                    if target_metadata.exists():
-                        removed.append(target_metadata)
+                    shutil.rmtree(target_dir)
+                removed.append(target_dir)
 
         return removed

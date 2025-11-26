@@ -279,7 +279,43 @@
 - 环境变量支持（三级配置优先级）
 - Claude Code slash 命令（/frago.run, /frago.recipe, /frago.exec）
 
-### v0.2.0（规划中）
+### v0.2.0（已发布 - 2025-11-26）
+
+**里程碑**：架构增强与工作空间隔离
+
+**重大变更**：
+
+1. **Recipe 目录化结构**
+   - Recipe 从文件形式改为目录形式
+   - 每个配方现在是一个目录：`配方名/recipe.md + recipe.py + examples/`
+   - Schema 和示例数据随配方传播，便于分享
+   - 明确两种配方类型：Type A（外部结构如 DOM）vs Type B（自定义结构如 VideoScript）
+
+2. **单一运行互斥机制**
+   - 系统仅允许一个活跃的 Run 上下文
+   - 新增 `uv run frago run release` 命令释放上下文
+   - `set-context` 在已有其他活跃 run 时拒绝执行（同一 run 除外）
+   - 设计约束确保工作聚焦
+
+3. **工作空间隔离原则**
+   - 所有产出物必须放在 `projects/<run_id>/` 目录
+   - 配方执行必须明确指定 `output_dir` 参数
+   - 已在 `/frago.run` 和 `/frago.exec` 命令文档中说明
+
+4. **工具优先级原则**
+   - 优先级：Recipe > frago 命令 > Claude Code 工具
+   - frago CDP 命令跨 agent 通用
+   - 文档化搜索/浏览操作指南
+
+5. **依赖变更**
+   - `pyperclip` 从可选依赖移至基础依赖
+   - 剪贴板支持现默认包含
+
+6. **版本管理**
+   - `__version__` 现通过 `importlib.metadata` 从 `pyproject.toml` 读取
+   - 版本号单一来源
+
+### v0.3.0（规划中）
 
 **里程碑**：Recipe 系统增强
 
@@ -292,7 +328,7 @@
 - Run 系统模板支持
 - 日志导出（CSV/Excel）
 
-### v0.3.0（规划中）
+### v0.4.0（规划中）
 
 **里程碑**：开发者体验
 

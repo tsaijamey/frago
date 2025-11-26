@@ -14,6 +14,7 @@ import click
 from ..run.context import ContextManager
 from ..run.discovery import RunDiscovery
 from ..run.exceptions import (
+    ContextAlreadySetError,
     ContextNotSetError,
     FileSystemError,
     RunException,
@@ -109,6 +110,9 @@ def set_context(run_id: str):
     """设置当前工作run
 
     \b
+    注意: 系统仅允许一个活跃的run上下文。如需切换，先用 release 释放。
+
+    \b
     示例:
         uv run frago run set-context find-job-on-upwork
     """
@@ -124,7 +128,35 @@ def set_context(run_id: str):
             "theme_description": context.theme_description,
             "set_at": format_timestamp(context.last_accessed),
         })
+    except ContextAlreadySetError as e:
+        handle_error(e, exit_code=2)
     except RunException as e:
+        handle_error(e)
+
+
+@run_group.command()
+def release():
+    """释放当前run上下文（互斥锁）
+
+    \b
+    用于在任务完成后或切换任务前释放当前活跃的上下文。
+
+    \b
+    示例:
+        uv run frago run release
+    """
+    try:
+        context_mgr = get_context_manager()
+        released_run_id = context_mgr.release_context()
+
+        if released_run_id:
+            output_json({
+                "released_run_id": released_run_id,
+                "released_at": format_timestamp(datetime.now()),
+            })
+        else:
+            click.echo("No active context to release.")
+    except Exception as e:
         handle_error(e)
 
 

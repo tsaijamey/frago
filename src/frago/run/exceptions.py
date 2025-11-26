@@ -40,6 +40,18 @@ class ContextNotSetError(RunException):
         )
 
 
+class ContextAlreadySetError(RunException):
+    """已有Run上下文正在运行（互斥锁）"""
+
+    def __init__(self, existing_run_id: str):
+        self.existing_run_id = existing_run_id
+        super().__init__(
+            f"Another run '{existing_run_id}' is currently active. "
+            f"Run 'uv run frago run release' to release it first, "
+            f"or 'uv run frago run set-context {existing_run_id}' to continue it."
+        )
+
+
 class CorruptedLogError(RunException):
     """JSONL日志文件损坏"""
 

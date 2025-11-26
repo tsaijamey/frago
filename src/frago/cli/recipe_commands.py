@@ -125,12 +125,16 @@ def recipe_info(name: str, output_format: str):
         recipe = registry.find(name)
         
         if output_format == 'json':
+            # 获取示例文件列表
+            examples = [str(e.name) for e in recipe.list_examples()]
+
             output = {
                 "name": recipe.metadata.name,
                 "type": recipe.metadata.type,
                 "runtime": recipe.metadata.runtime,
                 "version": recipe.metadata.version,
                 "source": recipe.source,
+                "base_dir": str(recipe.base_dir) if recipe.base_dir else None,
                 "script_path": str(recipe.script_path),
                 "metadata_path": str(recipe.metadata_path),
                 "description": recipe.metadata.description,
@@ -141,6 +145,7 @@ def recipe_info(name: str, output_format: str):
                 "outputs": recipe.metadata.outputs,
                 "dependencies": recipe.metadata.dependencies,
                 "env": recipe.metadata.env,
+                "examples": examples,
             }
             click.echo(json.dumps(output, ensure_ascii=False, indent=2))
         else:  # text
@@ -209,9 +214,21 @@ def recipe_info(name: str, output_format: str):
                 click.echo("依赖")
                 click.echo("─" * 50)
                 click.echo(", ".join(m.dependencies))
+                click.echo()
             else:
                 click.echo("依赖")
                 click.echo("─" * 50)
+                click.echo("无")
+                click.echo()
+
+            # 显示示例文件
+            examples = recipe.list_examples()
+            click.echo("示例文件")
+            click.echo("─" * 50)
+            if examples:
+                for example in examples:
+                    click.echo(f"• {example.name}")
+            else:
                 click.echo("无")
     
     except RecipeError as e:
@@ -341,7 +358,7 @@ def copy_recipe(name: str, force: bool):
     """
     将示例 Recipe 复制到用户级目录
 
-    将指定的示例 Recipe（脚本 + 元数据文件）复制到 ~/.frago/recipes/，
+    将指定的示例 Recipe（整个目录）复制到 ~/.frago/recipes/，
     保持原有的目录结构（atomic/chrome, atomic/system, workflows）。
     """
     import shutil
@@ -370,13 +387,15 @@ def copy_recipe(name: str, force: bool):
             click.echo("请先运行 'frago init' 初始化目录结构", err=True)
             sys.exit(1)
 
-        # 计算相对路径（相对于 examples/ 目录）
-        script_path = recipe.script_path
-        metadata_path = recipe.metadata_path
+        # 获取配方目录
+        recipe_dir = recipe.base_dir
+        if not recipe_dir:
+            click.echo(f"错误: 无法确定配方目录", err=True)
+            sys.exit(1)
 
         # 找到 examples/ 目录
         examples_dir = None
-        for parent in script_path.parents:
+        for parent in recipe_dir.parents:
             if parent.name == 'examples':
                 examples_dir = parent
                 break
@@ -385,35 +404,35 @@ def copy_recipe(name: str, force: bool):
             click.echo(f"错误: 无法确定示例 Recipe 的目录结构", err=True)
             sys.exit(1)
 
-        # 计算相对路径
-        rel_script_path = script_path.relative_to(examples_dir)
-        rel_metadata_path = metadata_path.relative_to(examples_dir)
+        # 计算相对路径（保持目录结构）
+        rel_recipe_dir = recipe_dir.relative_to(examples_dir)
 
         # 目标路径
-        dest_script_path = user_recipes_dir / rel_script_path
-        dest_metadata_path = user_recipes_dir / rel_metadata_path
+        dest_recipe_dir = user_recipes_dir / rel_recipe_dir
 
         # 检查是否已存在
-        if dest_script_path.exists() or dest_metadata_path.exists():
+        if dest_recipe_dir.exists():
             if not force:
                 click.echo(f"错误: Recipe '{name}' 已存在于用户目录", err=True)
-                click.echo(f"  脚本: {dest_script_path}", err=True)
-                click.echo(f"  元数据: {dest_metadata_path}", err=True)
-                click.echo("使用 --force 覆盖现有文件", err=True)
+                click.echo(f"  目录: {dest_recipe_dir}", err=True)
+                click.echo("使用 --force 覆盖现有目录", err=True)
                 sys.exit(1)
+            # 强制覆盖：删除现有目录
+            shutil.rmtree(dest_recipe_dir)
 
-        # 创建目标目录
-        dest_script_path.parent.mkdir(parents=True, exist_ok=True)
-        dest_metadata_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # 复制文件
-        shutil.copy2(script_path, dest_script_path)
-        shutil.copy2(metadata_path, dest_metadata_path)
+        # 复制整个目录
+        shutil.copytree(recipe_dir, dest_recipe_dir)
 
         # 输出结果
         click.echo(f"✓ Recipe '{name}' 已复制到用户目录:")
-        click.echo(f"  脚本: {dest_script_path}")
-        click.echo(f"  元数据: {dest_metadata_path}")
+        click.echo(f"  目录: {dest_recipe_dir}")
+
+        # 列出复制的文件
+        for item in dest_recipe_dir.rglob('*'):
+            if item.is_file():
+                rel_path = item.relative_to(dest_recipe_dir)
+                click.echo(f"    • {rel_path}")
+
         click.echo(f"\n现在可以编辑这些文件以自定义 Recipe")
 
     except RecipeNotFoundError as e:

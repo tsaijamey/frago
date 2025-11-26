@@ -97,14 +97,14 @@ def sync(
             for r in created:
                 click.echo(f"  + {r['recipe_name']}")
                 if verbose:
-                    click.echo(f"    → {r['target_script']}")
+                    click.echo(f"    → {r['target_dir']}")
 
         if updated:
             click.echo(f"✓ {action_word}更新 {len(updated)} 个 Recipe:")
             for r in updated:
                 click.echo(f"  ~ {r['recipe_name']}")
                 if verbose:
-                    click.echo(f"    → {r['target_script']}")
+                    click.echo(f"    → {r['target_dir']}")
 
         if skipped and verbose:
             click.echo(f"- 跳过 {len(skipped)} 个未变化的 Recipe:")
