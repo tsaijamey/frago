@@ -96,6 +96,11 @@ from frago.init.configurator import (
 )
 from frago.init.models import Config, DependencyCheckResult
 from frago.init.exceptions import CommandError, InitErrorCode
+from frago.init.resources import (
+    install_all_resources,
+    format_install_summary,
+    format_resources_status,
+)
 
 
 @click.command("init")
@@ -119,11 +124,23 @@ from frago.init.exceptions import CommandError, InitErrorCode
     is_flag=True,
     help="非交互模式（使用默认值，适合 CI/CD）",
 )
+@click.option(
+    "--skip-resources",
+    is_flag=True,
+    help="跳过资源安装（Claude Code 命令和示例 recipe）",
+)
+@click.option(
+    "--update-resources",
+    is_flag=True,
+    help="强制更新所有资源（包括覆盖已存在的 recipe）",
+)
 def init(
     skip_deps: bool = False,
     show_config: bool = False,
     reset: bool = False,
     non_interactive: bool = False,
+    skip_resources: bool = False,
+    update_resources: bool = False,
 ) -> None:
     """
     初始化 Frago 开发环境
@@ -154,15 +171,28 @@ def init(
     else:
         click.echo("⏭️  跳过依赖检查\n")
 
-    # 2. 配置流程
+    # 2. 安装资源文件（Claude Code 命令和示例 recipe）
+    resources_success = False
+    if deps_satisfied and not skip_resources:
+        resources_success = _install_resources(force_update=update_resources)
+    elif skip_resources:
+        click.echo("⏭️  跳过资源安装\n")
+
+    # 3. 配置流程
     if deps_satisfied:
         config = _handle_configuration(existing_config, non_interactive)
 
-        # 3. 保存配置
+        # 4. 更新资源安装状态并保存配置
         config.init_completed = True
+        if resources_success:
+            from datetime import datetime
+            from frago import __version__
+            config.resources_installed = True
+            config.resources_version = __version__
+            config.last_resource_update = datetime.now()
         save_config(config)
 
-        # 4. 显示完成摘要
+        # 5. 显示完成摘要
         click.echo("\n" + display_config_summary(config))
         click.echo("\n✅ 初始化完成\n")
 
@@ -170,13 +200,17 @@ def init(
 
 
 def _show_current_config() -> None:
-    """显示当前配置"""
+    """显示当前配置和资源状态"""
     if not config_exists():
         click.echo("\n⚠️  尚未初始化，运行 'frago init' 开始配置\n")
+        # 即使未初始化，也显示资源状态
+        click.echo(format_resources_status() + "\n")
         return
 
     config = load_config()
-    click.echo("\n" + display_config_summary(config) + "\n")
+    click.echo("\n" + display_config_summary(config))
+    click.echo()
+    click.echo(format_resources_status() + "\n")
 
 
 def _handle_reset() -> None:
@@ -332,3 +366,40 @@ def _install_with_progress(name: str) -> None:
         click.echo(f"\n❌ {display_name} 安装失败")
         click.echo(str(e))
         sys.exit(e.code)
+
+
+def _install_resources(force_update: bool = False) -> bool:
+    """
+    安装资源文件（Claude Code 命令和示例 recipe）
+
+    Args:
+        force_update: 强制更新所有资源（覆盖已存在的 recipe）
+
+    Returns:
+        True 如果资源安装成功（无错误）
+
+    在依赖检查后、配置前调用
+    """
+    click.echo("📦 安装 Frago 资源文件...\n")
+
+    try:
+        status = install_all_resources(force_update=force_update)
+
+        # 显示安装摘要
+        summary = format_install_summary(status)
+        if summary:
+            click.echo(summary)
+            click.echo()
+
+        # 检查是否有错误
+        if not status.all_success:
+            click.echo("⚠️  部分资源安装失败，请检查错误信息\n")
+            return False
+
+        return True
+
+    except Exception as e:
+        click.echo(f"❌ 资源安装失败: {e}")
+        click.echo("💡 提示: 请确保您有 ~/.claude/ 和 ~/.frago/ 目录的写入权限")
+        click.echo("   可尝试: mkdir -p ~/.claude/commands ~/.frago/recipes\n")
+        return False

@@ -9,6 +9,8 @@ Auto-generated from all feature plans. Last updated: 2025-11-15
 - 文件系统（Recipe 脚本 .js/.py/.sh + 元数据 .md，无数据库） (004-recipe-architecture-refactor)
 - Python 3.9+ (pyproject.toml 已要求 >=3.9) (005-run-command-system)
 - Python 3.9+（符合 pyproject.toml 要求） (006-init-command)
+- Python 3.9+（符合 pyproject.toml 要求） + Click 8.1+, PyYAML 6.0+, pathlib (标准库) (007-init-commands-setup)
+- 文件系统（用户目录 ~/.claude/ 和 ~/.frago/） (007-init-commands-setup)
 
 - Bash/Shell Script (POSIX兼容) + websocat工具，Chrome DevTools Protocol (001-standardize-cdp-scripts)
 
@@ -28,9 +30,9 @@ tests/
 Bash/Shell Script (POSIX兼容): Follow standard conventions
 
 ## Recent Changes
+- 007-init-commands-setup: Added Python 3.9+（符合 pyproject.toml 要求） + Click 8.1+, PyYAML 6.0+, pathlib (标准库)
 - 006-init-command: Added Python 3.9+（符合 pyproject.toml 要求）
 - 005-run-command-system: Added Python 3.9+ (pyproject.toml 已要求 >=3.9)
-- 004-recipe-architecture-refactor: Added Python 3.9+（pyproject.toml 已要求 >=3.9）
 
 
 <!-- MANUAL ADDITIONS START -->
