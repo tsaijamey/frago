@@ -281,7 +281,43 @@ First official release, core infrastructure complete.
 - Environment variable support (three-level config priority)
 - Claude Code slash commands (/frago.run, /frago.recipe, /frago.exec)
 
-### v0.2.0 (Planned)
+### v0.2.0 (Released - 2025-11-26)
+
+**Milestone**: Architecture Enhancement & Workspace Isolation
+
+**Major Changes**:
+
+1. **Recipe Directory-Based Structure**
+   - Recipes changed from file-based to directory-based format
+   - Each recipe is now a directory: `recipe_name/recipe.md + recipe.py + examples/`
+   - Schemas and example data travel with recipes for shareability
+   - Two recipe types clarified: Type A (external structures like DOM) vs Type B (self-defined structures like VideoScript)
+
+2. **Single Run Mutex Mechanism**
+   - System only allows one active Run context at a time
+   - Added `uv run frago run release` command to release context
+   - `set-context` rejects if another run is active (except for same run)
+   - Design constraint to ensure focused work
+
+3. **Workspace Isolation Principle**
+   - All outputs must be in `projects/<run_id>/` directory
+   - Recipes must specify `output_dir` parameter explicitly
+   - Documented in `/frago.run` and `/frago.exec` commands
+
+4. **Tool Priority Principle**
+   - Priority: Recipe > frago commands > Claude Code tools
+   - frago CDP commands are cross-agent compatible
+   - Documented guidelines for search/browse operations
+
+5. **Dependency Changes**
+   - `pyperclip` moved from optional to base dependencies
+   - Clipboard support now included by default
+
+6. **Version Management**
+   - `__version__` now reads from `pyproject.toml` via `importlib.metadata`
+   - Single source of truth for version number
+
+### v0.3.0 (Planned)
 
 **Milestone**: Recipe System Enhancement
 
@@ -294,7 +330,7 @@ First official release, core infrastructure complete.
 - Run system template support
 - Log export (CSV/Excel)
 
-### v0.3.0 (Planned)
+### v0.4.0 (Planned)
 
 **Milestone**: Developer Experience
 

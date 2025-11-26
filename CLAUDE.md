@@ -101,20 +101,36 @@ uv run frago recipe run <recipe_name> \
 uv run frago recipe copy upwork_extract_job_details_as_markdown
 ```
 
-#### Recipe 结构
+#### Recipe 结构（目录形式）
 
-**目录组织**:
+**所有配方统一为目录形式**：
 ```
-.frago/recipes/          # 项目级（优先级最高）
-~/.frago/recipes/        # 用户级
-examples/                 # 示例级
-  ├── atomic/
-  │   ├── chrome/         # Chrome CDP 操作
-  │   └── system/         # 系统操作
-  └── workflows/          # 编排多个 Recipe
+examples/
+├── atomic/
+│   ├── chrome/
+│   │   └── youtube_extract_video_transcript/   # 配方目录
+│   │       ├── recipe.md                        # 元数据
+│   │       └── recipe.js                        # 执行脚本
+│   └── system/
+│       └── tts_generate_voice/
+│           ├── recipe.md
+│           └── recipe.py
+└── workflows/
+    └── video_produce_from_script/
+        ├── recipe.md                            # 元数据 + Schema 定义
+        ├── recipe.py                            # 执行脚本
+        └── examples/                            # 示例数据（随配方传播）
+            └── github_intro.json
 ```
 
-**元数据格式** (YAML frontmatter):
+**配方名称** = 目录名（如 `youtube_extract_video_transcript`）
+
+**三级优先级**:
+- `.frago/recipes/` - 项目级（优先级最高）
+- `~/.frago/recipes/` - 用户级
+- `examples/` - 示例级
+
+**元数据格式** (`recipe.md` 的 YAML frontmatter):
 ```yaml
 ---
 name: recipe_name

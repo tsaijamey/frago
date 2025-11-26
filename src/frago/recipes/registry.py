@@ -14,6 +14,22 @@ class Recipe:
     script_path: Path
     metadata_path: Path
     source: str  # Project | User | Example
+    base_dir: Optional[Path] = None  # 配方根目录（目录形式配方）
+
+    @property
+    def examples_dir(self) -> Optional[Path]:
+        """返回示例目录路径（如果存在）"""
+        if self.base_dir:
+            examples = self.base_dir / 'examples'
+            if examples.exists():
+                return examples
+        return None
+
+    def list_examples(self) -> list[Path]:
+        """列出所有示例文件"""
+        if self.examples_dir:
+            return list(self.examples_dir.glob('*'))
+        return []
 
 
 class RecipeRegistry:
@@ -71,67 +87,68 @@ class RecipeRegistry:
         return 'Example'
     
     def _scan_directory(self, base_path: Path, source: str) -> None:
-        """递归扫描目录，查找 Recipe 元数据文件"""
+        """递归扫描目录，查找 Recipe（目录形式）"""
         # 扫描子目录: atomic/chrome/, atomic/system/, workflows/
         for subdir in ['atomic/chrome', 'atomic/system', 'workflows']:
             dir_path = base_path / subdir
             if not dir_path.exists():
                 continue
-            
-            # 查找所有 .md 文件
-            for metadata_path in dir_path.glob('*.md'):
-                self._register_recipe(metadata_path, source)
+
+            # 查找所有配方目录（包含 recipe.md 的目录）
+            for recipe_dir in dir_path.iterdir():
+                if recipe_dir.is_dir():
+                    metadata_path = recipe_dir / 'recipe.md'
+                    if metadata_path.exists():
+                        self._register_recipe(metadata_path, source, recipe_dir)
     
-    def _register_recipe(self, metadata_path: Path, source: str) -> None:
-        """注册单个 Recipe"""
+    def _register_recipe(self, metadata_path: Path, source: str, base_dir: Path) -> None:
+        """注册单个 Recipe（目录形式）"""
         try:
             # 解析元数据
             metadata = parse_metadata_file(metadata_path)
-            
+
             # 验证元数据
             validate_metadata(metadata)
-            
-            # 查找对应的脚本文件
-            script_path = self._find_script_file(metadata_path, metadata.runtime)
+
+            # 查找对应的脚本文件（在配方目录内查找 recipe.py/js/sh）
+            script_path = self._find_script_file(base_dir, metadata.runtime)
             if not script_path:
                 # 脚本文件不存在，跳过
                 return
-            
+
             # 检查是否已存在同名 Recipe（优先级高的覆盖低的）
             if metadata.name in self.recipes:
                 # 已存在，跳过（因为高优先级路径先扫描）
                 return
-            
+
             # 注册 Recipe
             recipe = Recipe(
                 metadata=metadata,
                 script_path=script_path,
                 metadata_path=metadata_path,
-                source=source
+                source=source,
+                base_dir=base_dir
             )
             self.recipes[metadata.name] = recipe
-        
+
         except Exception:
             # 解析或验证失败，跳过该 Recipe（静默）
             pass
     
-    def _find_script_file(self, metadata_path: Path, runtime: str) -> Optional[Path]:
-        """根据运行时类型查找脚本文件"""
-        base_name = metadata_path.stem
-        dir_path = metadata_path.parent
-        
+    def _find_script_file(self, recipe_dir: Path, runtime: str) -> Optional[Path]:
+        """根据运行时类型在配方目录内查找脚本文件"""
         # 根据 runtime 确定扩展名
         extensions = {
             'chrome-js': ['.js'],
             'python': ['.py'],
             'shell': ['.sh']
         }
-        
+
         for ext in extensions.get(runtime, []):
-            script_path = dir_path / f"{base_name}{ext}"
+            script_path = recipe_dir / f"recipe{ext}"
             if script_path.exists():
                 return script_path
-        
+
         return None
     
     def find(self, name: str) -> Recipe:
@@ -208,28 +225,28 @@ class RecipeRegistry:
 
     def find_all_sources(self, name: str) -> list[tuple[str, Path]]:
         """
-        查找所有来源中是否存在同名 Recipe
+        查找所有来源中是否存在同名 Recipe（目录形式）
 
         Args:
             name: Recipe 名称
 
         Returns:
-            [(source, path), ...] 列表，按优先级排序
+            [(source, recipe_dir), ...] 列表，按优先级排序
         """
         sources = []
 
         for search_path in self.search_paths:
             source = self._get_source_label(search_path)
 
-            # 扫描子目录查找同名 Recipe
+            # 扫描子目录查找同名配方目录
             for subdir in ['atomic/chrome', 'atomic/system', 'workflows']:
                 dir_path = search_path / subdir
                 if not dir_path.exists():
                     continue
 
-                # 查找元数据文件
-                metadata_path = dir_path / f"{name}.md"
-                if metadata_path.exists():
-                    sources.append((source, metadata_path))
+                # 查找配方目录
+                recipe_dir = dir_path / name
+                if recipe_dir.is_dir() and (recipe_dir / 'recipe.md').exists():
+                    sources.append((source, recipe_dir))
 
         return sources

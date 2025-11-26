@@ -1,12 +1,12 @@
 [project]
 name = "frago-cli"
-version = "0.1.3"
+version = "0.2.0"
 description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "Frago Team", email = "caijia@frago.ai"}
+    {name = "Jamey Tsai", email = "caijia@frago.ai"}
 ]
 keywords = ["cdp", "chrome", "devtools", "automation", "browser"]
 classifiers = [
@@ -39,16 +39,6 @@ dependencies = [
     "python-slugify>=8.0.0",
     "rapidfuzz>=3.0.0",
     "arxiv>=2.3.1",
-]
-
-[project.optional-dependencies]
-# 可选功能：剪贴板支持
-clipboard = [
-    "pyperclip>=1.8.0",
-]
-
-# 完整功能（包含所有可选功能）
-all = [
     "pyperclip>=1.8.0",
 ]
 
