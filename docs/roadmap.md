@@ -269,29 +269,53 @@
 
 ## Version History
 
-### v0.1.0 (Current)
-- Core CDP implementation (~3,763 lines)
-- Recipe metadata-driven architecture
-- Run command system
-- Init command and resource installation
-- Environment variable support
+### v0.1.0 (Released - 2025-11-26)
+
+First official release, core infrastructure complete.
+
+**Included Features**:
+- Native CDP protocol layer (~3,763 lines Python, direct Chrome connection)
+- Recipe metadata-driven architecture (chrome-js/python/shell runtime)
+- Run command system (persistent task context, JSONL structured logs)
+- Init command (dependency check, resource installation)
+- Environment variable support (three-level config priority)
 - Claude Code slash commands (/frago.run, /frago.recipe, /frago.exec)
 
 ### v0.2.0 (Planned)
-- Chrome-JS parameter injection
-- Workflow orchestration enhancement
-- Run system enhancement (templates, export)
-- More platform Recipes
+
+**Milestone**: Recipe System Enhancement
+
+**Core Goals**:
+- Chrome-JS parameter injection (solve current JS script parameter passing issue)
+- Workflow orchestration enhancement (conditional branching, loops, error handling)
+- Common platform Recipe library expansion (YouTube, GitHub, Upwork)
+
+**Secondary Goals**:
+- Run system template support
+- Log export (CSV/Excel)
 
 ### v0.3.0 (Planned)
-- Recipe ecosystem building
-- Developer tools (testing framework, debugger)
-- VS Code extension
+
+**Milestone**: Developer Experience
+
+**Core Goals**:
+- Recipe testing framework
+- Recipe debugging tools
+- VS Code extension (syntax highlighting, intellisense)
+
+**Secondary Goals**:
 - Performance optimization
+- More documentation and examples
 
 ### v1.0.0 (Long-term Goal)
+
+**Milestone**: Production Ready
+
+**Core Goals**:
 - Stable public API
 - Comprehensive documentation and tutorials
 - Community Recipe marketplace
-- Multi-browser support
-- Enterprise features
+
+**Secondary Goals**:
+- Multi-browser support (Firefox, Safari)
+- Enterprise features (team sharing, audit logs, access control)
