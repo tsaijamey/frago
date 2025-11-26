@@ -79,6 +79,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/frago"]
 
+# 包含资源文件（slash 命令、示例 recipe）
+include = [
+    "src/frago/**/*.py",
+    "src/frago/**/*.md",
+    "src/frago/**/*.js",
+    "src/frago/**/*.yaml",
+    "src/frago/**/*.yml",
+    "src/frago/**/*.sh",
+]
+
 [tool.setuptools]
 exclude = ["examples*"]
 
