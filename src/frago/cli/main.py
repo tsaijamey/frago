@@ -31,11 +31,12 @@ from .commands import (
 from .init_command import init  # 新的环境初始化命令
 from .recipe_commands import recipe_group
 from .run_commands import run_group
+from .sync_command import sync
 
 
 # 命令分组定义
 COMMAND_GROUPS = OrderedDict([
-    ("环境配置", ["init", "init-dirs", "status"]),
+    ("环境配置", ["init", "init-dirs", "status", "sync"]),
     ("页面操作", ["navigate", "scroll", "zoom", "wait"]),
     ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
     ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "clear-effects"]),
@@ -197,6 +198,7 @@ cli.add_command(spotlight)
 cli.add_command(annotate)
 cli.add_command(init)  # 新的环境初始化命令
 cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
+cli.add_command(sync)  # Recipe 同步命令
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)
