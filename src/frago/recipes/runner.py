@@ -1,7 +1,6 @@
 """Recipe 执行器"""
 import json
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -232,6 +231,9 @@ class RecipeRunner:
         """
         执行 Python Recipe
 
+        使用 `uv run` 执行脚本，支持 PEP 723 内联依赖声明。
+        uv 会自动解析脚本头部的依赖并在隔离环境中执行。
+
         Args:
             script_path: Python 脚本路径
             params: 输入参数
@@ -243,9 +245,10 @@ class RecipeRunner:
         Raises:
             RecipeExecutionError: 执行失败
         """
-        # 构建命令：python3 <script_path> <params_json>
+        # 构建命令：uv run <script_path> <params_json>
+        # uv 会自动处理 PEP 723 内联依赖（# /// script ... # ///）
         params_json = json.dumps(params)
-        cmd = [sys.executable, str(script_path), params_json]
+        cmd = ['uv', 'run', str(script_path), params_json]
 
         try:
             result = subprocess.run(
