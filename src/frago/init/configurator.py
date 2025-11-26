@@ -426,20 +426,14 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         click.echo(f"\n❌ 写入配置失败: {e}")
         click.echo("   请检查 ~/.claude/ 目录权限")
 
-    # 创建 frago 配置（记录使用了自定义端点，但不存储敏感信息）
-    endpoint = APIEndpoint(
-        type=endpoint_type,
-        url=env_config.get("ANTHROPIC_BASE_URL"),
-        api_key="****"  # 不在 frago 配置中存储真实 API Key
-    )
-
+    # frago 配置只记录 auth_method，实际 API 配置在 ~/.claude/settings.json
     if existing_config:
         data = existing_config.model_dump()
         data["auth_method"] = "custom"
-        data["api_endpoint"] = endpoint
+        data["api_endpoint"] = None  # 不在 frago 配置中存储
         return Config(**data)
     else:
-        return Config(auth_method="custom", api_endpoint=endpoint)
+        return Config(auth_method="custom")
 
 
 def display_config_summary(config: Config) -> str:
