@@ -552,6 +552,51 @@ def scroll(ctx, distance: int, no_screenshot: bool = False):
         sys.exit(1)
 
 
+@click.command('scroll-to')
+@click.argument('selector')
+@click.option(
+    '--block',
+    type=click.Choice(['start', 'center', 'end', 'nearest']),
+    default='center',
+    help='垂直对齐方式 (默认: center)'
+)
+@click.option(
+    '--no-screenshot',
+    is_flag=True,
+    help='不自动截图'
+)
+@click.pass_context
+def scroll_to(ctx, selector: str, block: str = 'center', no_screenshot: bool = False):
+    """滚动到指定元素"""
+    try:
+        with create_session(ctx) as session:
+            # 使用 scrollIntoView
+            js_code = f'''
+            (function() {{
+                const el = document.querySelector({repr(selector)});
+                if (el) {{
+                    el.scrollIntoView({{behavior: 'smooth', block: '{block}'}});
+                    return 'success';
+                }} else {{
+                    return 'element not found';
+                }}
+            }})()
+            '''
+            result = session.evaluate(js_code, return_by_value=True)
+
+            if result == 'success':
+                _print_msg("成功", f"滚动到元素: {selector}", "interaction", {"selector": selector, "block": block})
+                time.sleep(0.5)  # 等待滚动动画完成
+                _do_perception(session, f"scroll-to-{selector[:30]}", no_screenshot)
+            else:
+                _print_msg("失败", f"元素未找到: {selector}", "interaction", {"selector": selector})
+                sys.exit(1)
+
+    except CDPError as e:
+        _print_msg("失败", f"滚动到元素失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        sys.exit(1)
+
+
 @click.command('wait')
 @click.argument('seconds', type=float)
 @click.pass_context
@@ -622,8 +667,8 @@ def clear_effects(ctx, no_screenshot: bool = False):
 @click.option(
     '--color',
     type=str,
-    default='yellow',
-    help='高亮颜色，默认黄色'
+    default='magenta',
+    help='高亮颜色，默认洋红'
 )
 @click.option(
     '--width',
@@ -632,17 +677,29 @@ def clear_effects(ctx, no_screenshot: bool = False):
     help='高亮边框宽度（像素），默认3'
 )
 @click.option(
+    '--life-time',
+    type=int,
+    default=5,
+    help='效果持续时间（秒），默认5秒'
+)
+@click.option(
+    '--longlife',
+    is_flag=True,
+    help='始终显示直到手动clear'
+)
+@click.option(
     '--no-screenshot',
     is_flag=True,
     help='不自动截图'
 )
 @click.pass_context
-def highlight(ctx, selector: str, color: str, width: int, no_screenshot: bool = False):
+def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool, no_screenshot: bool = False):
     """高亮显示指定元素，自动截图"""
+    lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
-            session.highlight(selector, color=color, border_width=width)
-            _print_msg("成功", f"高亮元素: {selector} (颜色: {color}, 宽度: {width}px)", "interaction", {"selector": selector, "color": color, "width": width})
+            session.highlight(selector, color=color, border_width=width, lifetime=lifetime_ms)
+            _print_msg("成功", f"高亮元素: {selector} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "color": color, "width": width})
 
             # 截图（不提取 DOM 特征）
             if not no_screenshot:
@@ -658,17 +715,29 @@ def highlight(ctx, selector: str, color: str, width: int, no_screenshot: bool = 
 @click.command('pointer')
 @click.argument('selector')
 @click.option(
+    '--life-time',
+    type=int,
+    default=5,
+    help='效果持续时间（秒），默认5秒'
+)
+@click.option(
+    '--longlife',
+    is_flag=True,
+    help='始终显示直到手动clear'
+)
+@click.option(
     '--no-screenshot',
     is_flag=True,
     help='不自动截图'
 )
 @click.pass_context
-def pointer(ctx, selector: str, no_screenshot: bool = False):
+def pointer(ctx, selector: str, life_time: int, longlife: bool, no_screenshot: bool = False):
     """在元素上显示鼠标指针，自动截图"""
+    lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
-            session.pointer(selector)
-            _print_msg("成功", f"显示指针: {selector}", "interaction", {"selector": selector})
+            session.pointer(selector, lifetime=lifetime_ms)
+            _print_msg("成功", f"显示指针: {selector} (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector})
 
             # 截图（不提取 DOM 特征）
             if not no_screenshot:
@@ -684,17 +753,29 @@ def pointer(ctx, selector: str, no_screenshot: bool = False):
 @click.command('spotlight')
 @click.argument('selector')
 @click.option(
+    '--life-time',
+    type=int,
+    default=5,
+    help='效果持续时间（秒），默认5秒'
+)
+@click.option(
+    '--longlife',
+    is_flag=True,
+    help='始终显示直到手动clear'
+)
+@click.option(
     '--no-screenshot',
     is_flag=True,
     help='不自动截图'
 )
 @click.pass_context
-def spotlight(ctx, selector: str, no_screenshot: bool = False):
+def spotlight(ctx, selector: str, life_time: int, longlife: bool, no_screenshot: bool = False):
     """聚光灯效果显示元素，自动截图"""
+    lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
-            session.spotlight(selector)
-            _print_msg("成功", f"聚光灯显示: {selector}", "interaction", {"selector": selector})
+            session.spotlight(selector, lifetime=lifetime_ms)
+            _print_msg("成功", f"聚光灯显示: {selector} (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector})
 
             # 截图（不提取 DOM 特征）
             if not no_screenshot:
@@ -717,17 +798,29 @@ def spotlight(ctx, selector: str, no_screenshot: bool = False):
     help='标注位置'
 )
 @click.option(
+    '--life-time',
+    type=int,
+    default=5,
+    help='效果持续时间（秒），默认5秒'
+)
+@click.option(
+    '--longlife',
+    is_flag=True,
+    help='始终显示直到手动clear'
+)
+@click.option(
     '--no-screenshot',
     is_flag=True,
     help='不自动截图'
 )
 @click.pass_context
-def annotate(ctx, selector: str, text: str, position: str, no_screenshot: bool = False):
+def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool, no_screenshot: bool = False):
     """在元素上添加标注，自动截图"""
+    lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
-            session.annotate(selector, text, position=position)
-            _print_msg("成功", f"添加标注: {text} ({selector})", "interaction", {"selector": selector, "text": text, "position": position})
+            session.annotate(selector, text, position=position, lifetime=lifetime_ms)
+            _print_msg("成功", f"添加标注: {text} ({selector}) (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "text": text, "position": position})
 
             # 截图（不提取 DOM 特征）
             if not no_screenshot:
@@ -737,6 +830,114 @@ def annotate(ctx, selector: str, text: str, position: str, no_screenshot: bool =
 
     except CDPError as e:
         _print_msg("失败", f"添加标注失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
+        sys.exit(1)
+
+
+@click.command('underline')
+@click.argument('selector')
+@click.option(
+    '--color',
+    type=str,
+    default='magenta',
+    help='线条颜色，默认洋红'
+)
+@click.option(
+    '--width',
+    type=int,
+    default=3,
+    help='线条宽度（像素），默认3'
+)
+@click.option(
+    '--duration',
+    type=int,
+    default=1000,
+    help='动画总时长（毫秒），默认1000'
+)
+@click.option(
+    '--life-time',
+    type=int,
+    default=5,
+    help='效果持续时间（秒），默认5秒'
+)
+@click.option(
+    '--longlife',
+    is_flag=True,
+    help='始终显示直到手动clear'
+)
+@click.option(
+    '--no-screenshot',
+    is_flag=True,
+    help='不自动截图'
+)
+@click.pass_context
+def underline(ctx, selector: str, color: str, width: int, duration: int, life_time: int, longlife: bool, no_screenshot: bool = False):
+    """在元素文本底部逐行画线动画，自动截图"""
+    import json
+    lifetime_ms = 0 if longlife else life_time * 1000
+
+    # 直接用 JS 实现，避免 Python f-string 转义问题
+    js_code = """
+(function(selector, color, width, duration, lifetime) {
+    const elements = document.querySelectorAll(selector);
+    elements.forEach(el => {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const allRects = Array.from(range.getClientRects());
+
+        const lineMap = new Map();
+        allRects.forEach(rect => {
+            if (rect.width <= 0 || rect.height <= 0) return;
+            const topKey = Math.round(rect.top);
+            if (lineMap.has(topKey)) {
+                const existing = lineMap.get(topKey);
+                existing.left = Math.min(existing.left, rect.left);
+                existing.right = Math.max(existing.right, rect.right);
+                existing.bottom = Math.max(existing.bottom, rect.bottom);
+            } else {
+                lineMap.set(topKey, { left: rect.left, right: rect.right, bottom: rect.bottom });
+            }
+        });
+
+        const lines = Array.from(lineMap.values())
+            .map(l => ({ left: l.left, top: l.bottom, width: l.right - l.left }))
+            .sort((a, b) => a.top - b.top);
+
+        if (lines.length === 0) return;
+
+        const createdElements = [];
+        lines.forEach((line, index) => {
+            const u = document.createElement('div');
+            u.className = 'frago-underline';
+            u.style.position = 'fixed';
+            u.style.left = line.left + 'px';
+            u.style.top = line.top + 'px';
+            u.style.width = line.width + 'px';
+            u.style.height = width + 'px';
+            u.style.backgroundColor = color;
+            u.style.zIndex = '999999';
+            u.style.pointerEvents = 'none';
+            document.body.appendChild(u);
+            createdElements.push(u);
+        });
+        if (lifetime > 0) {
+            setTimeout(() => createdElements.forEach(el => el.remove()), lifetime);
+        }
+    });
+})(""" + json.dumps(selector) + "," + json.dumps(color) + "," + str(width) + "," + str(duration) + "," + str(lifetime_ms) + ")"
+
+    try:
+        with create_session(ctx) as session:
+            session.evaluate(js_code)
+            _print_msg("成功", f"划线元素: {selector} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "color": color, "width": width, "duration": duration})
+
+            # 截图（不提取 DOM 特征）
+            if not no_screenshot:
+                screenshot_path = _take_perception_screenshot(session, f"underline-{selector}")
+                if screenshot_path:
+                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
+
+    except CDPError as e:
+        _print_msg("失败", f"划线失败: {e}", "interaction", {"selector": selector, "error": str(e)})
         sys.exit(1)
 
 
@@ -959,3 +1160,107 @@ def chrome_stop(port: int):
         click.echo(f"✓ 已关闭 {killed} 个 Chrome CDP 进程（端口 {port}）")
     else:
         click.echo(f"未找到运行在端口 {port} 的 Chrome CDP 进程")
+
+
+@click.command('list-tabs')
+@click.pass_context
+def list_tabs(ctx):
+    """
+    列出所有打开的浏览器 tabs
+
+    显示每个 tab 的 ID、标题和 URL，用于 switch-tab 命令。
+    """
+    import requests
+    import json
+
+    config = ctx.obj or {}
+    host = config.get('host', GLOBAL_OPTIONS['host'])
+    port = config.get('port', GLOBAL_OPTIONS['port'])
+
+    try:
+        response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
+        targets = response.json()
+
+        pages = [t for t in targets if t.get('type') == 'page']
+
+        if not pages:
+            click.echo("没有找到打开的 tabs")
+            return
+
+        # 输出 JSON 格式便于程序解析
+        output = []
+        for i, p in enumerate(pages):
+            tab_info = {
+                "index": i,
+                "id": p.get('id'),
+                "title": p.get('title', 'No Title'),
+                "url": p.get('url', '')
+            }
+            output.append(tab_info)
+            click.echo(f"{i}. [{p.get('id')[:8]}...] {p.get('title', 'No Title')[:50]}")
+            click.echo(f"   {p.get('url', '')}")
+
+    except Exception as e:
+        click.echo(f"获取 tabs 列表失败: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command('switch-tab')
+@click.argument('tab_id')
+@click.pass_context
+def switch_tab(ctx, tab_id: str):
+    """
+    切换到指定的浏览器 tab
+
+    TAB_ID 可以是完整的 target ID 或部分匹配（如前8位）。
+    使用 list-tabs 命令查看可用的 tab ID。
+    """
+    import requests
+    import json
+    import websocket
+
+    config = ctx.obj or {}
+    host = config.get('host', GLOBAL_OPTIONS['host'])
+    port = config.get('port', GLOBAL_OPTIONS['port'])
+
+    try:
+        response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
+        targets = response.json()
+
+        # 查找匹配的 tab
+        target = None
+        for t in targets:
+            if t.get('type') == 'page':
+                if t.get('id') == tab_id or t.get('id', '').startswith(tab_id):
+                    target = t
+                    break
+
+        if not target:
+            click.echo(f"未找到匹配的 tab: {tab_id}", err=True)
+            click.echo("使用 list-tabs 命令查看可用的 tabs")
+            sys.exit(1)
+
+        ws_url = target.get('webSocketDebuggerUrl')
+        if not ws_url:
+            click.echo(f"Tab {tab_id} 没有可用的 WebSocket URL", err=True)
+            sys.exit(1)
+
+        # 发送 Page.bringToFront 命令
+        ws = websocket.create_connection(ws_url)
+        ws.send(json.dumps({'id': 1, 'method': 'Page.bringToFront', 'params': {}}))
+        result = json.loads(ws.recv())
+        ws.close()
+
+        if 'error' in result:
+            click.echo(f"切换失败: {result['error']}", err=True)
+            sys.exit(1)
+
+        _print_msg("成功", f"已切换到 tab: {target.get('title', 'Unknown')}", "tab_switch", {
+            "tab_id": target.get('id'),
+            "title": target.get('title'),
+            "url": target.get('url')
+        })
+
+    except Exception as e:
+        click.echo(f"切换 tab 失败: {e}", err=True)
+        sys.exit(1)
