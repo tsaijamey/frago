@@ -61,3 +61,6 @@ projects/
 
 # Examples directory (recipes are user-specific)
 examples/
+
+# SpecKit planning files (project-specific)
+.specify/
