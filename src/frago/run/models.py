@@ -51,6 +51,43 @@ class LogStatus(str, Enum):
     WARNING = "warning"
 
 
+class InsightType(str, Enum):
+    """洞察类型枚举"""
+
+    KEY_FACTOR = "key_factor"  # 关键成功要素
+    PITFALL = "pitfall"  # 坑点/陷阱
+    LESSON = "lesson"  # 经验教训
+    WORKAROUND = "workaround"  # 变通方案
+
+
+class InsightEntry(BaseModel):
+    """洞察条目模型 - 记录关键发现和坑点"""
+
+    insight_type: InsightType
+    summary: str = Field(..., min_length=1, max_length=200)  # 简短摘要
+    detail: Optional[str] = Field(default=None, max_length=1000)  # 详细说明
+    context: Optional[str] = Field(default=None, max_length=500)  # 发生场景/上下文
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        result = {
+            "insight_type": self.insight_type.value,
+            "summary": self.summary,
+        }
+        if self.detail:
+            result["detail"] = self.detail
+        if self.context:
+            result["context"] = self.context
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "InsightEntry":
+        """从字典创建实例"""
+        if isinstance(data.get("insight_type"), str):
+            data["insight_type"] = InsightType(data["insight_type"])
+        return cls(**data)
+
+
 class RunInstance(BaseModel):
     """Run实例模型（存储在 .metadata.json）"""
 
@@ -95,7 +132,8 @@ class LogEntry(BaseModel):
     action_type: ActionType
     execution_method: ExecutionMethod
     data: Dict[str, Any] = Field(default_factory=dict)
-    schema_version: str = "1.0"
+    insights: Optional[List["InsightEntry"]] = Field(default=None)  # 关键发现和坑点
+    schema_version: str = "1.1"  # 升级版本号
 
     @field_validator("data")
     @classmethod
@@ -116,11 +154,17 @@ class LogEntry(BaseModel):
             data["action_type"] = ActionType(data["action_type"])
         if isinstance(data.get("execution_method"), str):
             data["execution_method"] = ExecutionMethod(data["execution_method"])
+        # 解析 insights 字段
+        if data.get("insights"):
+            data["insights"] = [
+                InsightEntry.from_dict(i) if isinstance(i, dict) else i
+                for i in data["insights"]
+            ]
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典（ISO 8601时间戳）"""
-        return {
+        result = {
             "timestamp": self.timestamp.isoformat().replace("+00:00", "Z"),
             "step": self.step,
             "status": self.status.value,
@@ -129,6 +173,10 @@ class LogEntry(BaseModel):
             "data": self.data,
             "schema_version": self.schema_version,
         }
+        # 仅当有 insights 时才包含
+        if self.insights:
+            result["insights"] = [i.to_dict() for i in self.insights]
+        return result
 
 
 class Screenshot(BaseModel):

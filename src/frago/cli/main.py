@@ -27,6 +27,8 @@ from .commands import (
     spotlight,
     annotate,
     init as init_dirs,  # 旧的目录初始化命令，保留为 init-dirs
+    chrome_start,
+    chrome_stop,
 )
 from .init_command import init  # 新的环境初始化命令
 from .recipe_commands import recipe_group
@@ -38,6 +40,7 @@ from .update_command import update
 # 命令分组定义
 COMMAND_GROUPS = OrderedDict([
     ("环境配置", ["init", "init-dirs", "status", "sync", "update"]),
+    ("Chrome 管理", ["chrome", "chrome-stop"]),
     ("页面操作", ["navigate", "scroll", "zoom", "wait"]),
     ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
     ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "clear-effects"]),
@@ -148,11 +151,16 @@ class GroupedGroup(click.Group):
     is_flag=True,
     help='绕过代理连接（忽略环境变量和代理配置）'
 )
+@click.option(
+    '--target-id',
+    type=str,
+    help='指定目标tab的ID，用于在多tab环境下精确控制操作哪个页面'
+)
 @click.pass_context
 def cli(ctx, debug: bool, timeout: int, host: str, port: int,
         proxy_host: Optional[str], proxy_port: Optional[int],
         proxy_username: Optional[str], proxy_password: Optional[str],
-        no_proxy: bool):
+        no_proxy: bool, target_id: Optional[str]):
     """
     Frago - AI Agent 多运行时自动化基础设施
 
@@ -172,6 +180,7 @@ def cli(ctx, debug: bool, timeout: int, host: str, port: int,
     ctx.obj['PROXY_USERNAME'] = proxy_username
     ctx.obj['PROXY_PASSWORD'] = proxy_password
     ctx.obj['NO_PROXY'] = no_proxy
+    ctx.obj['TARGET_ID'] = target_id
 
     if debug:
         click.echo(f"调试模式已启用 - 主机: {host}:{port}, 超时: {timeout}s")
@@ -201,6 +210,8 @@ cli.add_command(init)  # 新的环境初始化命令
 cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
 cli.add_command(sync)  # Recipe 同步命令
 cli.add_command(update)  # 自我更新命令
+cli.add_command(chrome_start)  # Chrome 启动命令
+cli.add_command(chrome_stop)  # Chrome 停止命令
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)

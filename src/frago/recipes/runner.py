@@ -186,7 +186,7 @@ class RecipeRunner:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5分钟超时
+                timeout=None,  # 无超时限制
                 check=False,
                 env=env
             )
@@ -273,7 +273,7 @@ class RecipeRunner:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5分钟超时
+                timeout=None,  # 无超时限制
                 check=False,
                 env=env
             )
@@ -355,7 +355,7 @@ class RecipeRunner:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5分钟超时
+                timeout=None,  # 无超时限制
                 check=False,
                 env=env
             )
