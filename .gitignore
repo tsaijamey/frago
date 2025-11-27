@@ -64,3 +64,9 @@ examples/
 
 # SpecKit planning files (project-specific)
 .specify/
+
+# Internal development docs (not for public repo)
+pre-publish-checklist.md
+STEALTH_MODE.md
+test_stealth.html
+.backup_docs/
