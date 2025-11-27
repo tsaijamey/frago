@@ -22,7 +22,7 @@ class VisualEffectsCommands:
         self.session = session
         self.logger = get_logger()
     
-    def highlight(self, selector: str, color: str = "yellow", border_width: int = 3) -> None:
+    def highlight(self, selector: str, color: str = "magenta", border_width: int = 3) -> None:
         """
         高亮显示指定元素
         
@@ -40,41 +40,6 @@ class VisualEffectsCommands:
                 element.style.border = '{border_width}px solid {color}';
                 element.style.outline = '{border_width}px solid {color}';
                 element.setAttribute('data-frago-highlight', 'true');
-            }}
-        }})();
-        """
-        
-        self.session.send_command("Runtime.evaluate", {"expression": script})
-    
-    def pointer(self, selector: str, duration: int = 2000) -> None:
-        """
-        在元素上显示鼠标指针动画
-        
-        Args:
-            selector: CSS选择器
-            duration: 动画持续时间（毫秒）
-        """
-        self.logger.info(f"Showing pointer on element: {selector}")
-        
-        script = f"""
-        (function() {{
-            const element = document.querySelector('{selector}');
-            if (element) {{
-                const rect = element.getBoundingClientRect();
-                const pointer = document.createElement('div');
-                pointer.id = 'frago-pointer';
-                pointer.style.position = 'fixed';
-                pointer.style.left = rect.left + rect.width / 2 + 'px';
-                pointer.style.top = rect.top + rect.height / 2 + 'px';
-                pointer.style.width = '20px';
-                pointer.style.height = '20px';
-                pointer.style.backgroundColor = 'red';
-                pointer.style.borderRadius = '50%';
-                pointer.style.zIndex = '999999';
-                pointer.style.pointerEvents = 'none';
-                document.body.appendChild(pointer);
-                
-                setTimeout(() => pointer.remove(), {duration});
             }}
         }})();
         """
@@ -174,7 +139,7 @@ class VisualEffectsCommands:
                 el.removeAttribute('data-frago-highlight');
             });
             
-            ['frago-pointer', 'frago-spotlight'].forEach(id => {
+            ['frago-spotlight'].forEach(id => {
                 const element = document.getElementById(id);
                 if (element) element.remove();
             });

@@ -19,6 +19,7 @@ from .commands import (
     get_content,
     status,
     scroll,
+    scroll_to,
     wait,
     zoom,
     clear_effects,
@@ -26,9 +27,12 @@ from .commands import (
     pointer,
     spotlight,
     annotate,
+    underline,
     init as init_dirs,  # 旧的目录初始化命令，保留为 init-dirs
     chrome_start,
     chrome_stop,
+    list_tabs,
+    switch_tab,
 )
 from .init_command import init  # 新的环境初始化命令
 from .recipe_commands import recipe_group
@@ -41,9 +45,10 @@ from .update_command import update
 COMMAND_GROUPS = OrderedDict([
     ("环境配置", ["init", "init-dirs", "status", "sync", "update"]),
     ("Chrome 管理", ["chrome", "chrome-stop"]),
-    ("页面操作", ["navigate", "scroll", "zoom", "wait"]),
+    ("Tab 管理", ["list-tabs", "switch-tab"]),
+    ("页面操作", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
     ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
-    ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "clear-effects"]),
+    ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),
     ("自动化", ["recipe", "run"]),
 ])
 
@@ -199,6 +204,7 @@ cli.add_command(get_title)
 cli.add_command(get_content)
 cli.add_command(status)
 cli.add_command(scroll)
+cli.add_command(scroll_to)
 cli.add_command(wait)
 cli.add_command(zoom)
 cli.add_command(clear_effects)
@@ -206,12 +212,15 @@ cli.add_command(highlight)
 cli.add_command(pointer)
 cli.add_command(spotlight)
 cli.add_command(annotate)
+cli.add_command(underline)
 cli.add_command(init)  # 新的环境初始化命令
 cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
 cli.add_command(sync)  # Recipe 同步命令
 cli.add_command(update)  # 自我更新命令
 cli.add_command(chrome_start)  # Chrome 启动命令
 cli.add_command(chrome_stop)  # Chrome 停止命令
+cli.add_command(list_tabs)  # Tab 列表命令
+cli.add_command(switch_tab)  # Tab 切换命令
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)

@@ -454,21 +454,30 @@ class CDPSession(CDPClient):
     def clear_effects(self) -> None:
         """清除所有视觉效果"""
         self.evaluate("""
-            document.querySelectorAll('[style*="highlight"], [style*="pointer"], [style*="spotlight"]').forEach(el => {
+            // 清除元素上的样式
+            document.querySelectorAll('[data-frago-highlight], [style*="pointer"], [style*="spotlight"]').forEach(el => {
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('border');
+                el.style.removeProperty('outline');
                 el.style.removeProperty('box-shadow');
+                el.style.removeProperty('cursor');
+                el.style.removeProperty('z-index');
+                el.style.removeProperty('position');
+                el.removeAttribute('data-frago-highlight');
             });
+            // 移除 frago 添加的 DOM 元素（annotate, underline, pointer 等）
+            document.querySelectorAll('.frago-underline, .frago-annotation, #frago-pointer, #frago-underline-style').forEach(el => el.remove());
         """)
 
-    def highlight(self, selector: str, color: str = "yellow", border_width: int = 3) -> None:
+    def highlight(self, selector: str, color: str = "magenta", border_width: int = 3, lifetime: int = 5000) -> None:
         """
         高亮显示指定元素
 
         Args:
             selector: CSS选择器
-            color: 高亮颜色，默认yellow
+            color: 高亮颜色，默认magenta
             border_width: 边框宽度（像素），默认3
+            lifetime: 效果持续时间（毫秒），0表示永久
         """
         self.evaluate(f"""
             (function() {{
@@ -476,43 +485,93 @@ class CDPSession(CDPClient):
                     el.style.border = '{border_width}px solid {color}';
                     el.style.outline = '{border_width}px solid {color}';
                     el.setAttribute('data-frago-highlight', 'true');
+                    if ({lifetime} > 0) {{
+                        setTimeout(() => {{
+                            el.style.removeProperty('border');
+                            el.style.removeProperty('outline');
+                            el.removeAttribute('data-frago-highlight');
+                        }}, {lifetime});
+                    }}
                 }});
                 return true;
             }})()
         """, return_by_value=True)
 
-    def pointer(self, selector: str) -> None:
+    def pointer(self, selector: str, lifetime: int = 5000) -> None:
         """在元素上显示鼠标指针"""
         self.evaluate(f"""
             document.querySelectorAll('{selector}').forEach(el => {{
                 el.style.cursor = 'pointer';
-                el.style.boxShadow = '0 0 10px rgba(255, 0, 0, 0.5)';
+                el.style.boxShadow = '0 0 10px magenta';
+                el.setAttribute('data-frago-pointer', 'true');
+                if ({lifetime} > 0) {{
+                    setTimeout(() => {{
+                        el.style.removeProperty('cursor');
+                        el.style.removeProperty('boxShadow');
+                        el.removeAttribute('data-frago-pointer');
+                    }}, {lifetime});
+                }}
             }});
         """)
 
-    def spotlight(self, selector: str) -> None:
-        """聚光灯效果显示元素"""
+    def spotlight(self, selector: str, lifetime: int = 5000) -> None:
+        """聚光灯效果显示元素，使用CSS animation实现自动消失"""
+        lifetime_sec = lifetime / 1000
+        # 计算保持时间比例：保持90%时间，最后10%渐变消失
+        hold_percent = 90
         self.evaluate(f"""
-            document.querySelectorAll('{selector}').forEach(el => {{
-                el.style.boxShadow = '0 0 20px rgba(255, 255, 0, 0.8)';
-                el.style.zIndex = '9999';
-                el.style.position = 'relative';
-            }});
+            (function() {{
+                // 注入 keyframes 动画
+                if (!document.getElementById('frago-spotlight-style')) {{
+                    const style = document.createElement('style');
+                    style.id = 'frago-spotlight-style';
+                    style.textContent = `
+                        @keyframes frago-spotlight-fade {{
+                            0% {{ box-shadow: 0 0 20px magenta; }}
+                            {hold_percent}% {{ box-shadow: 0 0 20px magenta; }}
+                            100% {{ box-shadow: none; }}
+                        }}
+                    `;
+                    document.head.appendChild(style);
+                }}
+
+                document.querySelectorAll('{selector}').forEach(el => {{
+                    el.style.zIndex = '9999';
+                    el.style.position = 'relative';
+                    el.setAttribute('data-frago-spotlight', 'true');
+
+                    if ({lifetime} > 0) {{
+                        el.style.animation = 'frago-spotlight-fade {lifetime_sec}s forwards';
+                        el.addEventListener('animationend', function handler() {{
+                            el.style.removeProperty('animation');
+                            el.style.removeProperty('zIndex');
+                            el.style.removeProperty('position');
+                            el.removeAttribute('data-frago-spotlight');
+                            el.removeEventListener('animationend', handler);
+                        }});
+                    }} else {{
+                        el.style.boxShadow = '0 0 20px magenta';
+                    }}
+                }});
+            }})();
         """)
 
-    def annotate(self, selector: str, text: str, position: str = "top") -> None:
+    def annotate(self, selector: str, text: str, position: str = "top", lifetime: int = 5000) -> None:
         """在元素上添加标注"""
         self.evaluate(f"""
             document.querySelectorAll('{selector}').forEach(el => {{
                 const annotation = document.createElement('div');
+                annotation.className = 'frago-annotation';
                 annotation.textContent = '{text}';
                 annotation.style.position = 'absolute';
-                annotation.style.background = 'rgba(255, 255, 0, 0.9)';
-                annotation.style.padding = '5px';
+                annotation.style.background = 'magenta';
+                annotation.style.color = 'white';
+                annotation.style.padding = '5px 8px';
                 annotation.style.borderRadius = '3px';
                 annotation.style.fontSize = '12px';
+                annotation.style.fontWeight = 'bold';
                 annotation.style.zIndex = '10000';
-                
+
                 const rect = el.getBoundingClientRect();
                 switch('{position}') {{
                     case 'top':
@@ -532,9 +591,79 @@ class CDPSession(CDPClient):
                         annotation.style.left = (rect.right + 5) + 'px';
                         break;
                 }}
-                
+
                 document.body.appendChild(annotation);
+                if ({lifetime} > 0) {{
+                    setTimeout(() => annotation.remove(), {lifetime});
+                }}
             }});
+        """)
+
+    def underline(self, selector: str, color: str = "magenta", width: int = 3, duration: int = 1000) -> None:
+        """
+        在元素内的文本底部逐行画线动画
+
+        Args:
+            selector: CSS选择器
+            color: 线条颜色，默认magenta
+            width: 线条宽度（像素），默认3
+            duration: 总动画时长（毫秒），默认1000
+        """
+        self.evaluate(f"""
+            (function() {{
+                const elements = document.querySelectorAll('{selector}');
+                elements.forEach(el => {{
+                    // 使用 Range 获取所有行的位置
+                    const range = document.createRange();
+                    range.selectNodeContents(el);
+                    const allRects = Array.from(range.getClientRects());
+
+                    // 合并同一行的矩形（基于 top 值）
+                    const lineMap = new Map();
+                    allRects.forEach(rect => {{
+                        if (rect.width <= 0 || rect.height <= 0) return;
+                        const topKey = Math.round(rect.top);
+                        if (lineMap.has(topKey)) {{
+                            const existing = lineMap.get(topKey);
+                            existing.left = Math.min(existing.left, rect.left);
+                            existing.right = Math.max(existing.right, rect.right);
+                            existing.bottom = Math.max(existing.bottom, rect.bottom);
+                        }} else {{
+                            lineMap.set(topKey, {{
+                                left: rect.left,
+                                right: rect.right,
+                                bottom: rect.bottom,
+                                top: rect.top
+                            }});
+                        }}
+                    }});
+
+                    // 转换为数组并排序
+                    const lines = Array.from(lineMap.values())
+                        .map(l => ({{ left: l.left, top: l.bottom, width: l.right - l.left }}))
+                        .sort((a, b) => a.top - b.top);
+
+                    if (lines.length === 0) return;
+
+                    // 计算每行动画时长
+                    const perLineDuration = {duration} / lines.length;
+
+                    // 为每行创建下划线（直接显示完整宽度）
+                    lines.forEach((line, index) => {{
+                        const underline = document.createElement('div');
+                        underline.className = 'frago-underline';
+                        underline.style.position = 'fixed';
+                        underline.style.left = line.left + 'px';
+                        underline.style.top = line.top + 'px';
+                        underline.style.width = line.width + 'px';
+                        underline.style.height = '{width}px';
+                        underline.style.backgroundColor = '{color}';
+                        underline.style.zIndex = '999999';
+                        underline.style.pointerEvents = 'none';
+                        document.body.appendChild(underline);
+                    }});
+                }});
+            }})();
         """)
 
     def wait_for_selector(self, selector: str, timeout: Optional[float] = None) -> None:
