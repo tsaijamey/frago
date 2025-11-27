@@ -58,3 +58,6 @@ projects/
 
 
 *.backup
+
+# Examples directory (recipes are user-specific)
+examples/
