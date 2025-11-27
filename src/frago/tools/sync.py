@@ -1,14 +1,187 @@
 """
 同步 examples/ 目录的 Recipe 到 src/frago/resources/recipes/
+同步 .claude/commands/ 目录的命令到 src/frago/resources/commands/
 
-提供将示例 Recipe 同步到 Python 包资源目录的功能，
-使得打包分发时能够包含最新的示例。
+提供将示例 Recipe 和 Claude Code 命令同步到 Python 包资源目录的功能，
+使得打包分发时能够包含最新的内容。
 """
 
 import fnmatch
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
+
+
+class CommandSync:
+    """Claude Code 命令同步器"""
+
+    def __init__(
+        self,
+        source_dir: Optional[Path] = None,
+        target_dir: Optional[Path] = None,
+    ):
+        """
+        初始化同步器
+
+        Args:
+            source_dir: 源目录（.claude/commands/），默认自动检测
+            target_dir: 目标目录（src/frago/resources/commands/），默认自动检测
+        """
+        # 自动检测项目根目录
+        current_file = Path(__file__).resolve()
+        # src/frago/tools/sync.py -> project_root
+        project_root = current_file.parent.parent.parent.parent
+
+        self.source_dir = source_dir or (project_root / ".claude" / "commands")
+        self.target_dir = target_dir or (
+            project_root / "src" / "frago" / "resources" / "commands"
+        )
+
+    def find_commands(self, pattern: Optional[str] = None) -> list[Path]:
+        """
+        查找所有 frago.dev.*.md 命令文件
+
+        Args:
+            pattern: 可选的通配符模式，用于过滤命令名称
+
+        Returns:
+            命令文件路径列表
+        """
+        commands = []
+
+        if not self.source_dir.exists():
+            return commands
+
+        # 查找 frago.dev.*.md 文件
+        for cmd_file in self.source_dir.glob("frago.dev.*.md"):
+            if not cmd_file.is_file():
+                continue
+
+            cmd_name = cmd_file.name
+
+            # 如果指定了 pattern，进行匹配
+            if pattern:
+                if not fnmatch.fnmatch(cmd_name, pattern):
+                    continue
+
+            commands.append(cmd_file)
+
+        return commands
+
+    def get_target_name(self, source_name: str) -> str:
+        """
+        获取目标文件名（去掉 .dev 后缀）
+
+        Args:
+            source_name: 源文件名，如 frago.dev.recipe.md
+
+        Returns:
+            目标文件名，如 frago.recipe.md
+        """
+        # frago.dev.xxx.md -> frago.xxx.md
+        return re.sub(r"^frago\.dev\.", "frago.", source_name)
+
+    def sync(
+        self,
+        pattern: Optional[str] = None,
+        dry_run: bool = False,
+        verbose: bool = False,
+    ) -> list[dict]:
+        """
+        执行同步操作
+
+        Args:
+            pattern: 可选的通配符模式，用于过滤命令名称
+            dry_run: 如果为 True，仅显示将要执行的操作，不实际执行
+            verbose: 显示详细信息
+
+        Returns:
+            同步结果列表，每个元素包含 source_name, target_name, source_file, target_file, action
+        """
+        results = []
+        cmd_files = self.find_commands(pattern)
+
+        if not cmd_files:
+            return results
+
+        for src_file in cmd_files:
+            source_name = src_file.name
+            target_name = self.get_target_name(source_name)
+            target_file = self.target_dir / target_name
+
+            # 确定操作类型
+            if target_file.exists():
+                # 检查是否需要更新（比较修改时间）
+                if src_file.stat().st_mtime > target_file.stat().st_mtime:
+                    action = "update"
+                else:
+                    action = "skip"
+            else:
+                action = "create"
+
+            result = {
+                "source_name": source_name,
+                "target_name": target_name,
+                "source_file": src_file,
+                "target_file": target_file,
+                "action": action,
+            }
+
+            if action == "skip":
+                results.append(result)
+                continue
+
+            if not dry_run:
+                # 确保目标目录存在
+                self.target_dir.mkdir(parents=True, exist_ok=True)
+                # 复制文件
+                shutil.copy2(src_file, target_file)
+
+            results.append(result)
+
+        return results
+
+    def list_synced(self) -> list[Path]:
+        """列出已同步到 resources 的命令文件"""
+        synced = []
+
+        if not self.target_dir.exists():
+            return synced
+
+        for cmd_file in self.target_dir.glob("frago.*.md"):
+            if cmd_file.is_file():
+                synced.append(cmd_file)
+
+        return synced
+
+    def clean(
+        self,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """
+        清理目标目录中不存在于源目录的命令文件
+
+        Args:
+            dry_run: 如果为 True，仅显示将要删除的文件，不实际执行
+
+        Returns:
+            被删除（或将要删除）的文件列表
+        """
+        removed = []
+
+        for target_file in self.list_synced():
+            target_name = target_file.name
+            # 反向推导源文件名: frago.xxx.md -> frago.dev.xxx.md
+            source_name = re.sub(r"^frago\.", "frago.dev.", target_name)
+            source_file = self.source_dir / source_name
+
+            if not source_file.exists():
+                if not dry_run:
+                    target_file.unlink()
+                removed.append(target_file)
+
+        return removed
 
 
 class RecipeSync:

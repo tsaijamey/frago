@@ -117,26 +117,40 @@ class CDPSession(CDPClient):
     def _get_websocket_url(self) -> str:
         """动态获取WebSocket调试URL
 
-        优先获取第一个page的WebSocket URL，如果没有page则使用browser URL
+        如果指定了target_id，连接到对应的tab；否则自动选择第一个page类型的tab。
 
         Returns:
             str: WebSocket URL
         """
         import requests
         try:
-            # 首先尝试获取pages列表
+            # 获取所有targets列表
             response = requests.get(
                 f"{self.config.http_url}/json/list",
                 timeout=self.config.connect_timeout
             )
             response.raise_for_status()
-            pages = response.json()
+            targets = response.json()
 
-            # 查找第一个可用的page
-            for page in pages:
-                if page.get('type') == 'page' and page.get('webSocketDebuggerUrl'):
-                    self.logger.debug(f"Using page: {page.get('title', 'Unknown')}")
-                    return page['webSocketDebuggerUrl']
+            # 如果指定了target_id，查找对应的target
+            if self.config.target_id:
+                for target in targets:
+                    if target.get('id') == self.config.target_id:
+                        ws_url = target.get('webSocketDebuggerUrl')
+                        if ws_url:
+                            self.logger.debug(f"Using specified target: {target.get('title', 'Unknown')} (id: {self.config.target_id})")
+                            return ws_url
+                        else:
+                            raise ConnectionError(f"Target {self.config.target_id} 没有可用的WebSocket URL")
+
+                # 未找到指定的target
+                raise ConnectionError(f"未找到指定的target: {self.config.target_id}")
+
+            # 未指定target_id，查找第一个可用的page
+            for target in targets:
+                if target.get('type') == 'page' and target.get('webSocketDebuggerUrl'):
+                    self.logger.debug(f"Using page: {target.get('title', 'Unknown')}")
+                    return target['webSocketDebuggerUrl']
 
             # 如果没有page，使用browser endpoint
             response = requests.get(
@@ -146,6 +160,9 @@ class CDPSession(CDPClient):
             response.raise_for_status()
             version_info = response.json()
             return version_info['webSocketDebuggerUrl']
+        except ConnectionError:
+            # 重新抛出ConnectionError，不要被下面的except捕获
+            raise
         except Exception:
             # 回退到静态URL
             return self.config.websocket_url
@@ -523,6 +540,10 @@ class CDPSession(CDPClient):
     def wait_for_selector(self, selector: str, timeout: Optional[float] = None) -> None:
         """等待选择器匹配的元素出现"""
         self.page.wait_for_selector(selector, timeout=timeout)
+
+    def wait_for_load(self, timeout: float = 30) -> bool:
+        """等待页面加载完成"""
+        return self.page.wait_for_load(timeout=timeout)
 
     # 延迟加载命令类的属性访问器
     @property

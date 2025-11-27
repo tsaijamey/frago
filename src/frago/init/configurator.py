@@ -470,6 +470,14 @@ def display_config_summary(config: Config) -> str:
 
     lines.append("")
 
+    # 工作目录
+    if config.working_directory:
+        lines.append(f"  工作目录:     {config.working_directory}")
+    else:
+        lines.append("  工作目录:     当前运行目录")
+
+    lines.append("")
+
     # CCR 状态
     if config.ccr_enabled:
         lines.append("  CCR:          已启用")
@@ -607,6 +615,55 @@ def format_final_summary(config: Config) -> str:
     lines.append("=" * 40)
 
     return "\n".join(lines)
+
+
+def prompt_working_directory() -> Optional[str]:
+    """
+    提示用户选择工作目录
+
+    Returns:
+        工作目录绝对路径，选择 current 时返回 None（使用当前目录）
+    """
+    import os
+
+    cwd = os.getcwd()
+
+    click.echo("\n📁 工作目录配置:")
+    click.echo(f"   工作目录用于存储 projects/ 和相关数据")
+    click.echo(f"   当前目录: {cwd}\n")
+
+    choice = click.prompt(
+        "选择工作目录",
+        type=click.Choice(["current", "custom"], case_sensitive=False),
+        default="current",
+        show_choices=True,
+    )
+
+    if choice.lower() == "current":
+        return None  # None 表示使用当前运行目录
+
+    # 用户输入自定义路径
+    while True:
+        path = click.prompt("输入绝对路径", type=str)
+        path = os.path.expanduser(path)  # 展开 ~
+
+        if not os.path.isabs(path):
+            click.echo("❌ 请输入绝对路径（以 / 或 ~ 开头）")
+            continue
+
+        # 检查路径是否存在，不存在则询问是否创建
+        if not os.path.exists(path):
+            if click.confirm(f"目录不存在，是否创建 {path}?", default=True):
+                try:
+                    os.makedirs(path, exist_ok=True)
+                    click.echo(f"✅ 已创建目录: {path}")
+                except Exception as e:
+                    click.echo(f"❌ 创建目录失败: {e}")
+                    continue
+            else:
+                continue
+
+        return path
 
 
 def suggest_next_steps(config: Config) -> list[str]:

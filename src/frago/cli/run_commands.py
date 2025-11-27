@@ -22,7 +22,7 @@ from ..run.exceptions import (
 )
 from ..run.logger import RunLogger
 from ..run.manager import RunManager
-from ..run.models import ActionType, ExecutionMethod, LogStatus, RunStatus
+from ..run.models import ActionType, ExecutionMethod, InsightEntry, InsightType, LogStatus, RunStatus
 
 
 # 获取项目根目录和projects目录
@@ -356,7 +356,12 @@ def archive(run_id: str):
     help="执行方法",
 )
 @click.option("--data", required=True, help="JSON格式的详细数据")
-def log(step: str, status: str, action_type: str, execution_method: str, data: str):
+@click.option(
+    "--insight",
+    multiple=True,
+    help="关键发现/坑点，格式：'type:summary' 或 JSON。type可选：key_factor, pitfall, lesson, workaround",
+)
+def log(step: str, status: str, action_type: str, execution_method: str, data: str, insight: tuple):
     """记录结构化日志
 
     \b
@@ -367,6 +372,20 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
           --action-type "navigation" \\
           --execution-method "command" \\
           --data '{"command": "uv run frago navigate https://upwork.com"}'
+
+    \b
+    带 insight 示例:
+        uv run frago run log \\
+          --step "提取职位列表" \\
+          --status "error" \\
+          --action-type "extraction" \\
+          --execution-method "command" \\
+          --data '{"error": "选择器失效"}' \\
+          --insight "pitfall:动态class导致选择器失效，需用data-testid"
+
+    \b
+    JSON格式 insight:
+        --insight '{"insight_type": "key_factor", "summary": "必须等待页面加载", "detail": "加载动画消失后才能提取"}'
     """
     try:
         # 获取当前上下文
@@ -380,6 +399,34 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
             click.echo(f"Error: Invalid JSON in --data: {e}", err=True)
             sys.exit(2)
 
+        # 解析insights
+        insights_list = None
+        if insight:
+            insights_list = []
+            for i in insight:
+                try:
+                    # 尝试解析JSON格式
+                    if i.strip().startswith("{"):
+                        insight_data = json.loads(i)
+                        insights_list.append(InsightEntry.from_dict(insight_data))
+                    else:
+                        # 简写格式: "type:summary"
+                        if ":" not in i:
+                            click.echo(f"Error: Invalid insight format '{i}'. Use 'type:summary' or JSON.", err=True)
+                            sys.exit(2)
+                        insight_type, summary = i.split(":", 1)
+                        insight_type = insight_type.strip().lower()
+                        if insight_type not in ["key_factor", "pitfall", "lesson", "workaround"]:
+                            click.echo(f"Error: Unknown insight type '{insight_type}'. Use: key_factor, pitfall, lesson, workaround", err=True)
+                            sys.exit(2)
+                        insights_list.append(InsightEntry(
+                            insight_type=InsightType(insight_type),
+                            summary=summary.strip(),
+                        ))
+                except json.JSONDecodeError as e:
+                    click.echo(f"Error: Invalid JSON in --insight: {e}", err=True)
+                    sys.exit(2)
+
         # 写入日志
         run_dir = PROJECTS_DIR / context.run_id
         logger = RunLogger(run_dir)
@@ -389,13 +436,17 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
             action_type=ActionType(action_type),
             execution_method=ExecutionMethod(execution_method),
             data=data_dict,
+            insights=insights_list,
         )
 
-        output_json({
+        result = {
             "logged_at": format_timestamp(entry.timestamp),
             "run_id": context.run_id,
             "log_file": str(run_dir / "logs" / "execution.jsonl"),
-        })
+        }
+        if insights_list:
+            result["insights_count"] = len(insights_list)
+        output_json(result)
     except ContextNotSetError as e:
         handle_error(e)
     except RunException as e:

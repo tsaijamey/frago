@@ -90,6 +90,7 @@ from frago.init.configurator import (
     get_config_path,
     load_config,
     prompt_config_update,
+    prompt_working_directory,
     run_auth_configuration,
     save_config,
     warn_auth_switch,
@@ -307,7 +308,13 @@ def _handle_configuration(
     else:
         # 新配置或未完成的配置
         click.echo("📝 配置认证方式\n")
-        return run_auth_configuration(existing_config)
+        config = run_auth_configuration(existing_config)
+
+        # 配置工作目录
+        working_dir = prompt_working_directory()
+        config.working_directory = working_dir
+
+        return config
 
 
 def _handle_missing_dependencies(

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .exceptions import CorruptedLogError, FileSystemError
-from .models import ActionType, ExecutionMethod, LogEntry, LogStatus
+from .models import ActionType, ExecutionMethod, InsightEntry, InsightType, LogEntry, LogStatus
 
 
 class RunLogger:
@@ -32,6 +32,7 @@ class RunLogger:
         action_type: ActionType,
         execution_method: ExecutionMethod,
         data: Dict,
+        insights: Optional[List[InsightEntry]] = None,
     ) -> LogEntry:
         """写入日志条目
 
@@ -41,6 +42,7 @@ class RunLogger:
             action_type: 操作类型
             execution_method: 执行方法
             data: 详细数据
+            insights: 关键发现和坑点列表
 
         Returns:
             LogEntry实例
@@ -61,7 +63,8 @@ class RunLogger:
             action_type=action_type,
             execution_method=execution_method,
             data=data,
-            schema_version="1.0",
+            insights=insights,
+            schema_version="1.1",
         )
 
         # 追加到JSONL文件

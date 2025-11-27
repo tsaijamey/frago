@@ -32,6 +32,8 @@ class CDPConfig(BaseModel):
     proxy_username: Optional[str] = Field(default=None, description="代理认证用户名", repr=False)
     proxy_password: Optional[str] = Field(default=None, description="代理认证密码", repr=False)
     no_proxy: bool = Field(default=False, description="是否绕过代理")
+
+    target_id: Optional[str] = Field(default=None, description="指定目标tab的ID，不指定则自动选择第一个page")
     
     @model_validator(mode='after')
     def load_proxy_from_env(self):

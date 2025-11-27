@@ -156,10 +156,10 @@ class PageCommands:
     def get_content(self, selector: Optional[str] = None) -> str:
         """
         获取页面或指定元素的文本内容
-        
+
         Args:
             selector: CSS选择器，如果为None则获取整个页面内容
-            
+
         Returns:
             str: 文本内容
         """
@@ -169,7 +169,7 @@ class PageCommands:
         else:
             self.logger.info("Getting page content")
             script = "document.body.textContent || ''"
-        
+
         result = self.session.send_command(
             "Runtime.evaluate",
             {
@@ -177,7 +177,60 @@ class PageCommands:
                 "returnByValue": True
             }
         )
-        
+
         content = result.get("result", {}).get("value", "")
         self.logger.debug(f"Content length: {len(content)} characters")
         return content
+
+    def wait_for_load(self, timeout: float = 30) -> bool:
+        """
+        等待页面加载完成
+
+        使用 document.readyState 检测页面加载状态，
+        等待变为 'complete' 表示页面及所有资源加载完成。
+
+        Args:
+            timeout: 超时时间（秒）
+
+        Returns:
+            bool: 是否加载完成
+        """
+        self.logger.info("Waiting for page load complete")
+
+        script = f"""
+        (function() {{
+            return new Promise((resolve) => {{
+                if (document.readyState === 'complete') {{
+                    resolve(true);
+                    return;
+                }}
+
+                const onLoad = () => {{
+                    window.removeEventListener('load', onLoad);
+                    resolve(true);
+                }};
+
+                window.addEventListener('load', onLoad);
+
+                // 超时处理
+                setTimeout(() => {{
+                    window.removeEventListener('load', onLoad);
+                    // 超时时也返回当前状态，不算失败
+                    resolve(document.readyState === 'complete');
+                }}, {int(timeout * 1000)});
+            }});
+        }})()
+        """
+
+        result = self.session.send_command(
+            "Runtime.evaluate",
+            {
+                "expression": script,
+                "awaitPromise": True,
+                "returnByValue": True
+            }
+        )
+
+        loaded = result.get("result", {}).get("value", False)
+        self.logger.debug(f"Page load complete: {loaded}")
+        return loaded

@@ -53,6 +53,9 @@ class Config(BaseModel):
     ccr_enabled: bool = False
     ccr_config_path: Optional[str] = None
 
+    # 工作目录配置
+    working_directory: Optional[str] = None  # 默认 projects 目录的父目录
+
     # 资源安装状态
     resources_installed: bool = False
     resources_version: Optional[str] = None
