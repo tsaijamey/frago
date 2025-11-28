@@ -24,7 +24,9 @@ class CDPClient(ABC):
             config: CDP配置，如果为None则使用默认配置
         """
         self.config = config or CDPConfig()
-        self.logger = get_logger()
+        # 根据 debug 模式设置日志级别
+        log_level = "INFO" if self.config.debug else "WARNING"
+        self.logger = get_logger(level=log_level)
         self._connected = False
     
     @property
