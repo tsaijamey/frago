@@ -40,6 +40,7 @@ dependencies = [
     "rapidfuzz>=3.0.0",
     "arxiv>=2.3.1",
     "pyperclip>=1.8.0",
+    "obsws-python>=1.8.0",
 ]
 
 # 开发依赖
