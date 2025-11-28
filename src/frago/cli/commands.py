@@ -204,7 +204,7 @@ def create_session(ctx) -> CDPSession:
 
 
 def _get_dom_features(session: CDPSession) -> dict:
-    """提取页面 DOM 特征"""
+    """提取页面 DOM 特征，重点关注当前可视区域内容"""
     script = """
     (function() {
         const body = document.body;
@@ -220,10 +220,51 @@ def _get_dom_features(session: CDPSession) -> dict:
             images: document.images.length,
             headings: document.querySelectorAll('h1, h2, h3').length
         };
-        // 获取主要内容区域的文本预览
-        const main = document.querySelector('main, [role="main"], article, .content, #content') || body;
-        const text = (main.innerText || '').replace(/\\s+/g, ' ').trim();
-        features.text_preview = text.substring(0, 120) + (text.length > 120 ? '...' : '');
+
+        // 获取当前可视区域内的文本内容
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+
+        // 收集视口内可见元素的文本
+        const visibleTexts = [];
+        const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: function(node) {
+                    const parent = node.parentElement;
+                    if (!parent) return NodeFilter.FILTER_REJECT;
+                    const style = window.getComputedStyle(parent);
+                    if (style.display === 'none' || style.visibility === 'hidden') {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    const rect = parent.getBoundingClientRect();
+                    // 检查元素是否在视口内
+                    if (rect.bottom < 0 || rect.top > viewportHeight ||
+                        rect.right < 0 || rect.left > viewportWidth) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    const text = node.textContent.trim();
+                    if (text.length < 2) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            }
+        );
+
+        let charCount = 0;
+        const maxChars = 300;
+        while (walker.nextNode() && charCount < maxChars) {
+            const text = walker.currentNode.textContent.trim();
+            if (text) {
+                visibleTexts.push(text);
+                charCount += text.length;
+            }
+        }
+
+        const visibleContent = visibleTexts.join(' ').replace(/\\s+/g, ' ').trim();
+        features.visible_content = visibleContent.substring(0, 300) + (visibleContent.length > 300 ? '...' : '');
+        features.scroll_y = Math.round(window.scrollY);
+
         return features;
     })()
     """
@@ -248,8 +289,13 @@ def _print_dom_features(features: dict) -> None:
     _print_msg("成功", f"页面标题: {features.get('title', '(无)')}")
     _print_msg("成功", f"Body属性: {body_str}")
     _print_msg("成功", f"元素统计: {elements}")
-    if features.get('text_preview'):
-        _print_msg("成功", f"内容预览: {features['text_preview']}")
+
+    # 输出滚动位置和可视区域内容
+    scroll_y = features.get('scroll_y', 0)
+    _print_msg("成功", f"滚动位置: scrollY={scroll_y}px")
+
+    if features.get('visible_content'):
+        _print_msg("成功", f"可视内容: {features['visible_content']}")
 
 
 def _take_perception_screenshot(session: CDPSession, description: str = "page") -> Optional[str]:
@@ -283,27 +329,25 @@ def _take_perception_screenshot(session: CDPSession, description: str = "page") 
         return None
 
 
-def _do_perception(session: CDPSession, action_desc: str, no_screenshot: bool = False) -> None:
+def _do_perception(session: CDPSession, action_desc: str, delay: float = 0) -> None:
     """
-    执行操作后的感知：获取 DOM 特征并截图
+    执行操作后的感知：获取 DOM 特征
+
+    注意：不再自动截图。截图应由用户显式调用 screenshot 命令。
+    理由：减少对模型的暗示，避免模型过度依赖截图而忽略结构化数据提取。
 
     Args:
         session: CDP会话
-        action_desc: 操作描述，用于截图文件名
-        no_screenshot: 是否禁用截图
+        action_desc: 操作描述（保留用于日志）
+        delay: 获取 DOM 特征前的延迟（秒），用于等待页面加载
     """
+    # 可选延迟
+    if delay > 0:
+        time.sleep(delay)
+
     # 获取并打印 DOM 特征
     features = _get_dom_features(session)
     _print_dom_features(features)
-
-    # 截图
-    if not no_screenshot:
-        screenshot_path = _take_perception_screenshot(
-            session,
-            features.get('title') or action_desc
-        )
-        if screenshot_path:
-            _print_msg("成功", f"截图保存: {screenshot_path}")
 
 
 def _get_run_screenshots_dir() -> Path:
@@ -322,19 +366,14 @@ def _get_run_screenshots_dir() -> Path:
     help='等待选择器出现后再返回'
 )
 @click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
-@click.option(
     '--load-timeout',
     type=float,
     default=30,
     help='等待页面加载完成的超时时间（秒），默认30'
 )
 @click.pass_context
-def navigate(ctx, url: str, wait_for: Optional[str] = None, no_screenshot: bool = False, load_timeout: float = 30):
-    """导航到指定URL，等待加载完成后获取页面特征并截图"""
+def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float = 30):
+    """导航到指定URL，等待加载完成后获取页面特征"""
     try:
         with create_session(ctx) as session:
             # 1. 导航
@@ -350,8 +389,8 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, no_screenshot: bool 
                 session.wait_for_selector(wait_for)
                 _print_msg("成功", f"选择器就绪: {wait_for}", "navigation", {"selector": wait_for})
 
-            # 4. 感知：获取 DOM 特征 + 截图
-            _do_perception(session, f"navigate-{url}", no_screenshot)
+            # 4. 感知：获取 DOM 特征（延迟2秒让动态内容加载）
+            _do_perception(session, f"navigate-{url}", delay=2.0)
 
     except CDPError as e:
         _print_msg("失败", f"导航失败: {e}", "navigation", {"url": url, "error": str(e)})
@@ -366,14 +405,9 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, no_screenshot: bool 
     default=10,
     help='等待元素出现的超时时间（秒）'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def click_element(ctx, selector: str, wait_timeout: int, no_screenshot: bool = False):
-    """点击指定选择器的元素，自动获取页面特征并截图"""
+def click_element(ctx, selector: str, wait_timeout: int):
+    """点击指定选择器的元素，自动获取页面特征"""
     try:
         with create_session(ctx) as session:
             session.click(selector, wait_timeout=wait_timeout)
@@ -382,8 +416,8 @@ def click_element(ctx, selector: str, wait_timeout: int, no_screenshot: bool = F
             # 点击后短暂等待页面响应
             time.sleep(0.5)
 
-            # 感知：获取 DOM 特征 + 截图
-            _do_perception(session, f"click-{selector}", no_screenshot)
+            # 感知：获取 DOM 特征
+            _do_perception(session, f"click-{selector}")
 
     except CDPError as e:
         _print_msg("失败", f"点击失败: {e}", "interaction", {"selector": selector, "error": str(e)})
@@ -422,15 +456,10 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
     is_flag=True,
     help='返回JavaScript执行结果'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def execute_javascript(ctx, script: str, return_value: bool, no_screenshot: bool = False):
+def execute_javascript(ctx, script: str, return_value: bool):
     """
-    执行JavaScript代码，自动获取页面特征并截图
+    执行JavaScript代码，自动获取页面特征
 
     SCRIPT 参数可以是直接的JavaScript代码，也可以是包含代码的文件路径。
     """
@@ -457,8 +486,8 @@ def execute_javascript(ctx, script: str, return_value: bool, no_screenshot: bool
             # JS执行后短暂等待
             time.sleep(0.3)
 
-            # 感知：获取 DOM 特征 + 截图
-            _do_perception(session, "exec-js", no_screenshot)
+            # 感知：获取 DOM 特征
+            _do_perception(session, "exec-js")
 
     except CDPError as e:
         _print_msg("失败", f"JavaScript执行失败: {e}", "interaction", {"error": str(e)})
@@ -528,14 +557,9 @@ def status(ctx):
 
 @click.command('scroll')
 @click.argument('distance', type=int)
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def scroll(ctx, distance: int, no_screenshot: bool = False):
-    """滚动页面，自动获取页面特征并截图"""
+def scroll(ctx, distance: int):
+    """滚动页面，自动获取页面特征"""
     try:
         with create_session(ctx) as session:
             session.scroll.scroll(distance)
@@ -544,8 +568,8 @@ def scroll(ctx, distance: int, no_screenshot: bool = False):
             # 滚动后短暂等待
             time.sleep(0.3)
 
-            # 感知：获取 DOM 特征 + 截图
-            _do_perception(session, f"scroll-{distance}px", no_screenshot)
+            # 感知：获取 DOM 特征
+            _do_perception(session, f"scroll-{distance}px")
 
     except CDPError as e:
         _print_msg("失败", f"滚动失败: {e}", "interaction", {"distance": distance, "error": str(e)})
@@ -553,47 +577,95 @@ def scroll(ctx, distance: int, no_screenshot: bool = False):
 
 
 @click.command('scroll-to')
-@click.argument('selector')
+@click.argument('selector', required=False)
+@click.option(
+    '--text',
+    type=str,
+    help='按文本内容查找元素（支持部分匹配）'
+)
 @click.option(
     '--block',
     type=click.Choice(['start', 'center', 'end', 'nearest']),
     default='center',
     help='垂直对齐方式 (默认: center)'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def scroll_to(ctx, selector: str, block: str = 'center', no_screenshot: bool = False):
-    """滚动到指定元素"""
+def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'center'):
+    """
+    滚动到指定元素
+
+    可以通过 CSS 选择器或文本内容查找元素：
+
+    \b
+    示例：
+      frago scroll-to "article"                    # CSS 选择器
+      frago scroll-to --text "Just canceled"       # 按文本查找
+    """
+    import json
+
+    if not selector and not text:
+        click.echo("错误: 必须提供 SELECTOR 或 --text 参数", err=True)
+        sys.exit(1)
+
     try:
         with create_session(ctx) as session:
-            # 使用 scrollIntoView
-            js_code = f'''
-            (function() {{
-                const el = document.querySelector({repr(selector)});
-                if (el) {{
-                    el.scrollIntoView({{behavior: 'smooth', block: '{block}'}});
-                    return 'success';
-                }} else {{
+            if text:
+                # 按文本内容查找元素
+                js_code = f'''
+                (function() {{
+                    const searchText = {json.dumps(text)};
+                    const block = {json.dumps(block)};
+
+                    // 使用 TreeWalker 遍历所有文本节点
+                    const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_TEXT,
+                        {{
+                            acceptNode: function(node) {{
+                                if (node.textContent.includes(searchText)) {{
+                                    return NodeFilter.FILTER_ACCEPT;
+                                }}
+                                return NodeFilter.FILTER_REJECT;
+                            }}
+                        }}
+                    );
+
+                    const textNode = walker.nextNode();
+                    if (textNode && textNode.parentElement) {{
+                        textNode.parentElement.scrollIntoView({{behavior: 'smooth', block: block}});
+                        return 'success';
+                    }}
                     return 'element not found';
-                }}
-            }})()
-            '''
+                }})()
+                '''
+                display_target = f"文本: {text}"
+            else:
+                # CSS 选择器查找
+                js_code = f'''
+                (function() {{
+                    const el = document.querySelector({repr(selector)});
+                    if (el) {{
+                        el.scrollIntoView({{behavior: 'smooth', block: '{block}'}});
+                        return 'success';
+                    }} else {{
+                        return 'element not found';
+                    }}
+                }})()
+                '''
+                display_target = selector
+
             result = session.evaluate(js_code, return_by_value=True)
 
             if result == 'success':
-                _print_msg("成功", f"滚动到元素: {selector}", "interaction", {"selector": selector, "block": block})
+                _print_msg("成功", f"滚动到元素: {display_target}", "interaction", {"selector": selector, "text": text, "block": block})
                 time.sleep(0.5)  # 等待滚动动画完成
-                _do_perception(session, f"scroll-to-{selector[:30]}", no_screenshot)
+                _do_perception(session, f"scroll-to-{(text or selector)[:30]}")
             else:
-                _print_msg("失败", f"元素未找到: {selector}", "interaction", {"selector": selector})
+                _print_msg("失败", f"元素未找到: {display_target}", "interaction", {"selector": selector, "text": text})
                 sys.exit(1)
 
     except CDPError as e:
-        _print_msg("失败", f"滚动到元素失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        _print_msg("失败", f"滚动到元素失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
         sys.exit(1)
 
 
@@ -613,14 +685,9 @@ def wait(ctx, seconds: float):
 
 @click.command('zoom')
 @click.argument('factor', type=float)
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def zoom(ctx, factor: float, no_screenshot: bool = False):
-    """设置页面缩放比例，自动获取页面特征并截图"""
+def zoom(ctx, factor: float):
+    """设置页面缩放比例，自动获取页面特征"""
     try:
         with create_session(ctx) as session:
             session.zoom(factor)
@@ -629,8 +696,8 @@ def zoom(ctx, factor: float, no_screenshot: bool = False):
             # 缩放后短暂等待
             time.sleep(0.2)
 
-            # 感知：获取 DOM 特征 + 截图
-            _do_perception(session, f"zoom-{factor}x", no_screenshot)
+            # 感知：获取 DOM 特征
+            _do_perception(session, f"zoom-{factor}x")
 
     except CDPError as e:
         _print_msg("失败", f"缩放失败: {e}", "interaction", {"zoom_factor": factor, "error": str(e)})
@@ -638,24 +705,13 @@ def zoom(ctx, factor: float, no_screenshot: bool = False):
 
 
 @click.command('clear-effects')
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def clear_effects(ctx, no_screenshot: bool = False):
-    """清除所有视觉效果，自动截图"""
+def clear_effects(ctx):
+    """清除所有视觉效果"""
     try:
         with create_session(ctx) as session:
             session.clear_effects()
             _print_msg("成功", "视觉效果已清除", "interaction")
-
-            # 截图（不提取 DOM 特征）
-            if not no_screenshot:
-                screenshot_path = _take_perception_screenshot(session, "clear-effects")
-                if screenshot_path:
-                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
 
     except CDPError as e:
         _print_msg("失败", f"清除效果失败: {e}", "interaction", {"error": str(e)})
@@ -687,25 +743,14 @@ def clear_effects(ctx, no_screenshot: bool = False):
     is_flag=True,
     help='始终显示直到手动clear'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool, no_screenshot: bool = False):
-    """高亮显示指定元素，自动截图"""
+def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool):
+    """高亮显示指定元素"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.highlight(selector, color=color, border_width=width, lifetime=lifetime_ms)
             _print_msg("成功", f"高亮元素: {selector} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "color": color, "width": width})
-
-            # 截图（不提取 DOM 特征）
-            if not no_screenshot:
-                screenshot_path = _take_perception_screenshot(session, f"highlight-{selector}")
-                if screenshot_path:
-                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
 
     except CDPError as e:
         _print_msg("失败", f"高亮失败: {e}", "interaction", {"selector": selector, "error": str(e)})
@@ -725,25 +770,14 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
     is_flag=True,
     help='始终显示直到手动clear'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def pointer(ctx, selector: str, life_time: int, longlife: bool, no_screenshot: bool = False):
-    """在元素上显示鼠标指针，自动截图"""
+def pointer(ctx, selector: str, life_time: int, longlife: bool):
+    """在元素上显示鼠标指针"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.pointer(selector, lifetime=lifetime_ms)
             _print_msg("成功", f"显示指针: {selector} (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector})
-
-            # 截图（不提取 DOM 特征）
-            if not no_screenshot:
-                screenshot_path = _take_perception_screenshot(session, f"pointer-{selector}")
-                if screenshot_path:
-                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
 
     except CDPError as e:
         _print_msg("失败", f"显示指针失败: {e}", "interaction", {"selector": selector, "error": str(e)})
@@ -763,25 +797,14 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool, no_screenshot: b
     is_flag=True,
     help='始终显示直到手动clear'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def spotlight(ctx, selector: str, life_time: int, longlife: bool, no_screenshot: bool = False):
-    """聚光灯效果显示元素，自动截图"""
+def spotlight(ctx, selector: str, life_time: int, longlife: bool):
+    """聚光灯效果显示元素"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.spotlight(selector, lifetime=lifetime_ms)
             _print_msg("成功", f"聚光灯显示: {selector} (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector})
-
-            # 截图（不提取 DOM 特征）
-            if not no_screenshot:
-                screenshot_path = _take_perception_screenshot(session, f"spotlight-{selector}")
-                if screenshot_path:
-                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
 
     except CDPError as e:
         _print_msg("失败", f"聚光灯失败: {e}", "interaction", {"selector": selector, "error": str(e)})
@@ -808,25 +831,14 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool, no_screenshot:
     is_flag=True,
     help='始终显示直到手动clear'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool, no_screenshot: bool = False):
-    """在元素上添加标注，自动截图"""
+def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool):
+    """在元素上添加标注"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.annotate(selector, text, position=position, lifetime=lifetime_ms)
             _print_msg("成功", f"添加标注: {text} ({selector}) (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "text": text, "position": position})
-
-            # 截图（不提取 DOM 特征）
-            if not no_screenshot:
-                screenshot_path = _take_perception_screenshot(session, f"annotate-{selector}")
-                if screenshot_path:
-                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
 
     except CDPError as e:
         _print_msg("失败", f"添加标注失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
@@ -834,7 +846,12 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
 
 
 @click.command('underline')
-@click.argument('selector')
+@click.argument('selector', required=False)
+@click.option(
+    '--text',
+    type=str,
+    help='按文本内容查找元素（支持部分匹配）'
+)
 @click.option(
     '--color',
     type=str,
@@ -864,21 +881,54 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
     is_flag=True,
     help='始终显示直到手动clear'
 )
-@click.option(
-    '--no-screenshot',
-    is_flag=True,
-    help='不自动截图'
-)
 @click.pass_context
-def underline(ctx, selector: str, color: str, width: int, duration: int, life_time: int, longlife: bool, no_screenshot: bool = False):
-    """在元素文本底部逐行画线动画，自动截图"""
-    import json
-    lifetime_ms = 0 if longlife else life_time * 1000
+def underline(ctx, selector: Optional[str], text: Optional[str], color: str, width: int, duration: int, life_time: int, longlife: bool):
+    """
+    在元素文本底部逐行画线动画
 
-    # 直接用 JS 实现，避免 Python f-string 转义问题
+    \b
+    示例：
+      frago underline "article"                    # CSS 选择器
+      frago underline --text "Just canceled"       # 按文本查找
+    """
+    import json
+
+    if not selector and not text:
+        click.echo("错误: 必须提供 SELECTOR 或 --text 参数", err=True)
+        sys.exit(1)
+
+    lifetime_ms = 0 if longlife else life_time * 1000
+    display_target = f"文本: {text}" if text else selector
+
+    # JS 代码：支持 selector 或 text 查找
     js_code = """
-(function(selector, color, width, duration, lifetime) {
-    const elements = document.querySelectorAll(selector);
+(function(selector, searchText, color, width, duration, lifetime) {
+    let elements = [];
+
+    if (searchText) {
+        // 按文本查找
+        const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: function(node) {
+                    if (node.textContent.includes(searchText)) {
+                        return NodeFilter.FILTER_ACCEPT;
+                    }
+                    return NodeFilter.FILTER_REJECT;
+                }
+            }
+        );
+        const textNode = walker.nextNode();
+        if (textNode && textNode.parentElement) {
+            elements = [textNode.parentElement];
+        }
+    } else {
+        elements = Array.from(document.querySelectorAll(selector));
+    }
+
+    if (elements.length === 0) return 'element not found';
+
     elements.forEach(el => {
         const range = document.createRange();
         range.selectNodeContents(el);
@@ -923,21 +973,21 @@ def underline(ctx, selector: str, color: str, width: int, duration: int, life_ti
             setTimeout(() => createdElements.forEach(el => el.remove()), lifetime);
         }
     });
-})(""" + json.dumps(selector) + "," + json.dumps(color) + "," + str(width) + "," + str(duration) + "," + str(lifetime_ms) + ")"
+    return 'success';
+})(""" + json.dumps(selector) + "," + json.dumps(text) + "," + json.dumps(color) + "," + str(width) + "," + str(duration) + "," + str(lifetime_ms) + ")"
 
     try:
         with create_session(ctx) as session:
-            session.evaluate(js_code)
-            _print_msg("成功", f"划线元素: {selector} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "color": color, "width": width, "duration": duration})
+            result = session.evaluate(js_code, return_by_value=True)
 
-            # 截图（不提取 DOM 特征）
-            if not no_screenshot:
-                screenshot_path = _take_perception_screenshot(session, f"underline-{selector}")
-                if screenshot_path:
-                    _print_msg("成功", f"截图保存: {screenshot_path}", "screenshot", {"file": screenshot_path})
+            if result == 'element not found':
+                _print_msg("失败", f"元素未找到: {display_target}", "interaction", {"selector": selector, "text": text})
+                sys.exit(1)
+
+            _print_msg("成功", f"划线元素: {display_target} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "text": text, "color": color, "width": width, "duration": duration})
 
     except CDPError as e:
-        _print_msg("失败", f"划线失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        _print_msg("失败", f"划线失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
         sys.exit(1)
 
 

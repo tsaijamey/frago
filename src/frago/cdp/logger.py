@@ -178,18 +178,23 @@ class CDPLogger:
 _logger: Optional[CDPLogger] = None
 
 
-def get_logger(name: str = "frago.cdp", level: str = "INFO") -> CDPLogger:
+def get_logger(name: str = "frago.cdp", level: str = "WARNING") -> CDPLogger:
     """
     获取CDP日志器
-    
+
     Args:
         name: 日志器名称
-        level: 日志级别
-        
+        level: 日志级别（每次调用可更新级别）
+
     Returns:
         CDPLogger: 日志器实例
     """
     global _logger
     if _logger is None:
         _logger = CDPLogger(name, level)
+    else:
+        # 更新日志级别（如果不同）
+        new_level = getattr(logging, level.upper(), logging.WARNING)
+        if _logger.logger.level != new_level:
+            _logger._setup_logger(level)
     return _logger

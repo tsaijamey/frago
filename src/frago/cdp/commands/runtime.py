@@ -34,7 +34,7 @@ class RuntimeCommands:
         Returns:
             Dict[str, Any]: 执行结果
         """
-        self.logger.info(f"Evaluating expression: {expression[:100]}{'...' if len(expression) > 100 else ''}")
+        self.logger.debug(f"Evaluating expression: {expression}")
         
         result = self.session.send_command(
             "Runtime.evaluate",
@@ -65,7 +65,7 @@ class RuntimeCommands:
         Returns:
             Dict[str, Any]: 调用结果
         """
-        self.logger.info(f"Calling function: {function_declaration[:100]}{'...' if len(function_declaration) > 100 else ''}")
+        self.logger.debug(f"Calling function: {function_declaration}")
         
         # 将函数调用包装为表达式
         if args is None:
