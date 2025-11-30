@@ -5,6 +5,7 @@ Frago CLI 命令实现
 实现所有CDP功能的CLI子命令，保持与原有Shell脚本的兼容性。
 """
 
+import functools
 import os
 import sys
 import time
@@ -14,9 +15,234 @@ from typing import Any, Dict, Optional
 
 import click
 
+
+# =============================================================================
+# 命令用法示例（Agent 友好输出）
+# =============================================================================
+
+COMMAND_EXAMPLES = {
+    "navigate": [
+        "frago navigate <url>",
+        "frago navigate https://example.com",
+        "frago navigate https://example.com --wait-for '.content-loaded'",
+    ],
+    "click": [
+        "frago click <selector>",
+        "frago click 'button.submit'",
+        "frago click '#login-btn' --wait-timeout 15",
+    ],
+    "screenshot": [
+        "frago screenshot <output_file>",
+        "frago screenshot page.png",
+        "frago screenshot full.png --full-page --quality 90",
+    ],
+    "exec-js": [
+        "frago exec-js <script>",
+        "frago exec-js 'document.title'",
+        "frago exec-js 'return window.scrollY' --return-value",
+        "frago exec-js ./script.js  # 从文件加载",
+    ],
+    "get-title": [
+        "frago get-title",
+    ],
+    "get-content": [
+        "frago get-content [selector]",
+        "frago get-content  # 默认获取 body",
+        "frago get-content 'article.main' --desc 'article-content'",
+    ],
+    "status": [
+        "frago status",
+    ],
+    "scroll": [
+        "frago scroll <distance>",
+        "frago scroll 500      # 向下滚动 500px",
+        "frago scroll -300     # 向上滚动 300px",
+        "frago scroll down     # 别名: 向下 500px",
+        "frago scroll up       # 别名: 向上 500px",
+    ],
+    "scroll-to": [
+        "frago scroll-to <selector>",
+        "frago scroll-to 'article'",
+        "frago scroll-to --text 'Section Title'",
+        "frago scroll-to '#footer' --block end",
+    ],
+    "wait": [
+        "frago wait <seconds>",
+        "frago wait 2",
+        "frago wait 0.5",
+    ],
+    "zoom": [
+        "frago zoom <factor>",
+        "frago zoom 1.5   # 放大到 150%",
+        "frago zoom 0.8   # 缩小到 80%",
+        "frago zoom 1     # 恢复原始大小",
+    ],
+    "clear-effects": [
+        "frago clear-effects",
+    ],
+    "highlight": [
+        "frago highlight <selector>",
+        "frago highlight 'button.primary'",
+        "frago highlight '#target' --color red --width 5",
+        "frago highlight '.element' --longlife  # 永久显示",
+    ],
+    "pointer": [
+        "frago pointer <selector>",
+        "frago pointer 'button.submit'",
+        "frago pointer '#element' --life-time 10",
+    ],
+    "spotlight": [
+        "frago spotlight <selector>",
+        "frago spotlight '.highlight-me'",
+        "frago spotlight '#focus' --longlife",
+    ],
+    "annotate": [
+        "frago annotate <selector> <text>",
+        "frago annotate 'button' 'Click here'",
+        "frago annotate '#form' 'Fill this' --position bottom",
+    ],
+    "underline": [
+        "frago underline <selector>",
+        "frago underline 'article p'",
+        "frago underline --text 'Important text'",
+        "frago underline '.content' --color blue --width 2",
+    ],
+    "chrome": [
+        "frago chrome",
+        "frago chrome --headless",
+        "frago chrome --void --keep-alive",
+        "frago chrome --port 9333 --width 1920 --height 1080",
+    ],
+    "chrome-stop": [
+        "frago chrome-stop",
+        "frago chrome-stop --port 9333",
+    ],
+    "list-tabs": [
+        "frago list-tabs",
+    ],
+    "switch-tab": [
+        "frago switch-tab <tab_id>",
+        "frago switch-tab ABC123  # 支持部分 ID 匹配",
+    ],
+    "init": [
+        "frago init",
+        "frago init --force",
+    ],
+}
+
+
+def print_usage(func):
+    """
+    装饰器：在命令执行前打印用法示例
+
+    帮助 AI Agent 在跟踪输出时直接理解命令的正确用法。
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        # 从函数名推断命令名（下划线转连字符）
+        cmd_name = func.__name__.replace('_', '-')
+        # 特殊映射
+        name_map = {
+            "click-element": "click",
+            "execute-javascript": "exec-js",
+            "chrome-start": "chrome",
+            "init-dirs": "init",
+        }
+        cmd_name = name_map.get(cmd_name, cmd_name)
+
+        examples = COMMAND_EXAMPLES.get(cmd_name)
+        if examples:
+            click.echo(f"[用法] {examples[0]}")
+            for ex in examples[1:]:
+                click.echo(f"       {ex}")
+            click.echo("")  # 空行分隔
+
+        return func(*args, **kwargs)
+    return wrapper
+
 from ..cdp.config import CDPConfig
 from ..cdp.exceptions import CDPError
 from ..cdp.session import CDPSession
+
+
+# =============================================================================
+# 自定义参数类型（提供友好的错误提示和使用示例）
+# =============================================================================
+
+
+class ScrollDistanceType(click.ParamType):
+    """滚动距离参数类型，支持像素值或 up/down 别名"""
+    name = "distance"
+
+    def convert(self, value, param, ctx):
+        # 支持 up/down 别名
+        aliases = {"up": -500, "down": 500, "page-up": -800, "page-down": 800}
+        if isinstance(value, str) and value.lower() in aliases:
+            return aliases[value.lower()]
+
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            self.fail(
+                f"'{value}' 不是有效的滚动距离。\n\n"
+                "正确用法:\n"
+                "  frago scroll 500       # 向下滚动 500 像素\n"
+                "  frago scroll -300      # 向上滚动 300 像素\n"
+                "  frago scroll down      # 向下滚动 500 像素 (别名)\n"
+                "  frago scroll up        # 向上滚动 500 像素 (别名)\n"
+                "  frago scroll-to 'selector'  # 滚动到指定元素",
+                param,
+                ctx,
+            )
+
+
+class ZoomFactorType(click.ParamType):
+    """缩放因子参数类型"""
+    name = "factor"
+
+    def convert(self, value, param, ctx):
+        try:
+            factor = float(value)
+            if factor <= 0:
+                raise ValueError("必须大于 0")
+            return factor
+        except (ValueError, TypeError):
+            self.fail(
+                f"'{value}' 不是有效的缩放因子。\n\n"
+                "正确用法:\n"
+                "  frago zoom 1.5    # 放大到 150%\n"
+                "  frago zoom 0.8    # 缩小到 80%\n"
+                "  frago zoom 1      # 恢复原始大小",
+                param,
+                ctx,
+            )
+
+
+class WaitSecondsType(click.ParamType):
+    """等待秒数参数类型"""
+    name = "seconds"
+
+    def convert(self, value, param, ctx):
+        try:
+            seconds = float(value)
+            if seconds < 0:
+                raise ValueError("不能为负数")
+            return seconds
+        except (ValueError, TypeError):
+            self.fail(
+                f"'{value}' 不是有效的等待时间。\n\n"
+                "正确用法:\n"
+                "  frago wait 2      # 等待 2 秒\n"
+                "  frago wait 0.5    # 等待 0.5 秒",
+                param,
+                ctx,
+            )
+
+
+# 实例化自定义类型
+SCROLL_DISTANCE = ScrollDistanceType()
+ZOOM_FACTOR = ZoomFactorType()
+WAIT_SECONDS = WaitSecondsType()
 
 
 # 全局选项默认值配置
@@ -372,6 +598,7 @@ def _get_run_screenshots_dir() -> Path:
     help='等待页面加载完成的超时时间（秒），默认30'
 )
 @click.pass_context
+@print_usage
 def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float = 30):
     """导航到指定URL，等待加载完成后获取页面特征"""
     try:
@@ -406,6 +633,7 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float 
     help='等待元素出现的超时时间（秒）'
 )
 @click.pass_context
+@print_usage
 def click_element(ctx, selector: str, wait_timeout: int):
     """点击指定选择器的元素，自动获取页面特征"""
     try:
@@ -438,12 +666,42 @@ def click_element(ctx, selector: str, wait_timeout: int):
     help='图片质量（1-100），默认80'
 )
 @click.pass_context
+@print_usage
 def screenshot(ctx, output_file: str, full_page: bool, quality: int):
-    """截取页面截图"""
+    """
+    截取页面截图
+
+    如果存在活跃的 run context，截图将保存到 run 的 screenshots 目录，
+    OUTPUT_FILE 将作为描述用于生成文件名（自动编号）。
+
+    如果没有 run context，OUTPUT_FILE 作为完整文件路径使用。
+    """
     try:
+        # 检测是否有活跃的 run context
+        actual_output_file = output_file
+        try:
+            from ..run.screenshot import get_next_screenshot_number
+            from slugify import slugify
+
+            screenshots_dir = _get_run_screenshots_dir()
+            run_dir = _get_run_dir()
+
+            # 检查是否是 .tmp 目录（无 run context）
+            if run_dir.name != ".tmp":
+                # 有 run context，将 output_file 作为描述生成文件名
+                # 去掉可能的扩展名作为描述
+                description = Path(output_file).stem
+                seq = get_next_screenshot_number(screenshots_dir)
+                desc_slug = slugify(description or 'screenshot', max_length=40)
+                filename = f"{seq:03d}_{desc_slug}.png"
+                actual_output_file = str(screenshots_dir / filename)
+        except Exception:
+            # 获取 run context 失败，使用原始路径
+            pass
+
         with create_session(ctx) as session:
-            session.screenshot.capture(output_file, full_page=full_page, quality=quality)
-            _print_msg("成功", f"截图保存到: {output_file}", "screenshot", {"file": output_file, "full_page": full_page})
+            session.screenshot.capture(actual_output_file, full_page=full_page, quality=quality)
+            _print_msg("成功", f"截图保存到: {actual_output_file}", "screenshot", {"file": actual_output_file, "full_page": full_page})
     except CDPError as e:
         _print_msg("失败", f"截图失败: {e}", "screenshot", {"file": output_file, "error": str(e)})
         sys.exit(1)
@@ -457,6 +715,7 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
     help='返回JavaScript执行结果'
 )
 @click.pass_context
+@print_usage
 def execute_javascript(ctx, script: str, return_value: bool):
     """
     执行JavaScript代码，自动获取页面特征
@@ -496,6 +755,7 @@ def execute_javascript(ctx, script: str, return_value: bool):
 
 @click.command('get-title')
 @click.pass_context
+@print_usage
 def get_title(ctx):
     """获取页面标题"""
     try:
@@ -507,26 +767,143 @@ def get_title(ctx):
         sys.exit(1)
 
 
+def _get_run_outputs_dir() -> Path:
+    """获取输出目录（run context 或 .tmp）"""
+    run_dir = _get_run_dir()
+    outputs_dir = run_dir / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    return outputs_dir
+
+
+def _get_next_output_number(outputs_dir: Path, ext: str = ".txt") -> int:
+    """获取下一个输出文件序号"""
+    import re
+    max_num = 0
+    for file in outputs_dir.glob(f"*{ext}"):
+        match = re.match(r"^(\d{3})_", file.name)
+        if match:
+            num = int(match.group(1))
+            max_num = max(max_num, num)
+    return max_num + 1
+
+
 @click.command('get-content')
 @click.argument('selector', default='body')
+@click.option(
+    '--desc',
+    type=str,
+    default=None,
+    help='内容描述（用于生成文件名）'
+)
 @click.pass_context
-def get_content(ctx, selector: str):
-    """获取页面或元素的文本内容"""
+@print_usage
+def get_content(ctx, selector: str, desc: Optional[str]):
+    """
+    获取页面或元素的文本内容
+
+    输出包含：
+    - 来源 URL（当前页面地址）
+    - 文本内容
+    - 内容中包含的超链接
+
+    如果存在活跃的 run context，内容将自动保存到 run 的 outputs 目录。
+    """
+    import json as json_module
+
     try:
         with create_session(ctx) as session:
             script = f"""
             (function() {{
                 var el = document.querySelector('{selector}');
-                if (!el) return 'Error: Element not found';
-                return el.innerText || el.textContent || '';
+                if (!el) return JSON.stringify({{error: 'Element not found'}});
+
+                // 获取文本内容
+                var textContent = el.innerText || el.textContent || '';
+
+                // 获取来源 URL
+                var sourceUrl = window.location.href;
+
+                // 获取元素内的所有超链接
+                var links = [];
+                var anchors = el.querySelectorAll('a[href]');
+                anchors.forEach(function(a) {{
+                    var href = a.href;
+                    var text = (a.innerText || a.textContent || '').trim();
+                    if (href && !href.startsWith('javascript:')) {{
+                        links.push({{
+                            url: href,
+                            text: text.substring(0, 100)  // 限制文本长度
+                        }});
+                    }}
+                }});
+
+                return JSON.stringify({{
+                    source_url: sourceUrl,
+                    content: textContent,
+                    links: links
+                }});
             }})()
             """
-            # session.evaluate() 已经提取了值，直接返回结果
-            content = session.evaluate(script, return_by_value=True)
-            if content == 'Error: Element not found':
+            result_str = session.evaluate(script, return_by_value=True)
+
+            try:
+                result = json_module.loads(result_str)
+            except (json_module.JSONDecodeError, TypeError):
+                _print_msg("失败", f"解析结果失败: {result_str}", "extraction", {"selector": selector})
+                sys.exit(1)
+
+            if result.get('error'):
                 _print_msg("失败", f"找不到元素: {selector}", "extraction", {"selector": selector})
                 sys.exit(1)
-            _print_msg("成功", f"获取内容 ({selector}):\n{content if content else ''}", "extraction", {"selector": selector})
+
+            source_url = result.get('source_url', '')
+            content = result.get('content', '')
+            links = result.get('links', [])
+
+            # 格式化输出内容
+            formatted_output = f"来源: {source_url}\n\n"
+            formatted_output += "--- 内容 ---\n"
+            formatted_output += content
+            if links:
+                formatted_output += "\n\n--- 包含的链接 ---\n"
+                for link in links:
+                    link_text = link.get('text', '')
+                    link_url = link.get('url', '')
+                    if link_text:
+                        formatted_output += f"- [{link_text}] {link_url}\n"
+                    else:
+                        formatted_output += f"- {link_url}\n"
+
+            # 尝试保存到 run outputs 目录
+            saved_file = None
+            try:
+                from slugify import slugify
+
+                outputs_dir = _get_run_outputs_dir()
+                run_dir = _get_run_dir()
+
+                if run_dir.name != ".tmp":
+                    seq = _get_next_output_number(outputs_dir)
+                    description = desc or selector.replace(" ", "-")[:30]
+                    desc_slug = slugify(description, max_length=40)
+                    filename = f"{seq:03d}_{desc_slug}.txt"
+                    file_path = outputs_dir / filename
+                    file_path.write_text(formatted_output, encoding="utf-8")
+                    saved_file = str(file_path)
+            except Exception:
+                pass
+
+            # 输出结果（始终打印内容，让 agent 能看到）
+            log_data = {
+                "selector": selector,
+                "source_url": source_url,
+                "links_count": len(links)
+            }
+            if saved_file:
+                log_data["file"] = saved_file
+                _print_msg("成功", f"获取内容 ({selector}), 已保存到: {saved_file}\n{formatted_output}", "extraction", log_data)
+            else:
+                _print_msg("成功", f"获取内容 ({selector}):\n{formatted_output}", "extraction", log_data)
     except CDPError as e:
         _print_msg("失败", f"获取内容失败: {e}", "extraction", {"selector": selector, "error": str(e)})
         sys.exit(1)
@@ -534,6 +911,7 @@ def get_content(ctx, selector: str):
 
 @click.command('status')
 @click.pass_context
+@print_usage
 def status(ctx):
     """检查CDP连接状态"""
     try:
@@ -556,10 +934,18 @@ def status(ctx):
 
 
 @click.command('scroll')
-@click.argument('distance', type=int)
+@click.argument('distance', type=SCROLL_DISTANCE)
 @click.pass_context
+@print_usage
 def scroll(ctx, distance: int):
-    """滚动页面，自动获取页面特征"""
+    """
+    滚动页面，自动获取页面特征
+
+    \b
+    DISTANCE 可以是:
+      - 像素值: 正数向下，负数向上
+      - 别名: down, up, page-down, page-up
+    """
     try:
         with create_session(ctx) as session:
             session.scroll.scroll(distance)
@@ -590,6 +976,7 @@ def scroll(ctx, distance: int):
     help='垂直对齐方式 (默认: center)'
 )
 @click.pass_context
+@print_usage
 def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'center'):
     """
     滚动到指定元素
@@ -670,10 +1057,11 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
 
 
 @click.command('wait')
-@click.argument('seconds', type=float)
+@click.argument('seconds', type=WAIT_SECONDS)
 @click.pass_context
+@print_usage
 def wait(ctx, seconds: float):
-    """等待指定秒数"""
+    """等待指定秒数（支持小数，如 0.5）"""
     try:
         with create_session(ctx) as session:
             session.wait.wait(seconds)
@@ -684,10 +1072,16 @@ def wait(ctx, seconds: float):
 
 
 @click.command('zoom')
-@click.argument('factor', type=float)
+@click.argument('factor', type=ZOOM_FACTOR)
 @click.pass_context
+@print_usage
 def zoom(ctx, factor: float):
-    """设置页面缩放比例，自动获取页面特征"""
+    """
+    设置页面缩放比例，自动获取页面特征
+
+    \b
+    FACTOR 示例: 1.5 (150%), 0.8 (80%), 1 (原始大小)
+    """
     try:
         with create_session(ctx) as session:
             session.zoom(factor)
@@ -706,6 +1100,7 @@ def zoom(ctx, factor: float):
 
 @click.command('clear-effects')
 @click.pass_context
+@print_usage
 def clear_effects(ctx):
     """清除所有视觉效果"""
     try:
@@ -744,6 +1139,7 @@ def clear_effects(ctx):
     help='始终显示直到手动clear'
 )
 @click.pass_context
+@print_usage
 def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool):
     """高亮显示指定元素"""
     lifetime_ms = 0 if longlife else life_time * 1000
@@ -771,6 +1167,7 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
     help='始终显示直到手动clear'
 )
 @click.pass_context
+@print_usage
 def pointer(ctx, selector: str, life_time: int, longlife: bool):
     """在元素上显示鼠标指针"""
     lifetime_ms = 0 if longlife else life_time * 1000
@@ -798,6 +1195,7 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool):
     help='始终显示直到手动clear'
 )
 @click.pass_context
+@print_usage
 def spotlight(ctx, selector: str, life_time: int, longlife: bool):
     """聚光灯效果显示元素"""
     lifetime_ms = 0 if longlife else life_time * 1000
@@ -832,6 +1230,7 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool):
     help='始终显示直到手动clear'
 )
 @click.pass_context
+@print_usage
 def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool):
     """在元素上添加标注"""
     lifetime_ms = 0 if longlife else life_time * 1000
@@ -882,6 +1281,7 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
     help='始终显示直到手动clear'
 )
 @click.pass_context
+@print_usage
 def underline(ctx, selector: Optional[str], text: Optional[str], color: str, width: int, duration: int, life_time: int, longlife: bool):
     """
     在元素文本底部逐行画线动画
@@ -997,6 +1397,7 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
     is_flag=True,
     help='强制重新创建已存在的目录'
 )
+@print_usage
 def init(force: bool):
     """
     初始化 Frago 用户级目录结构
@@ -1101,6 +1502,7 @@ def init(force: bool):
     is_flag=True,
     help='启动后保持运行，直到 Ctrl+C'
 )
+@print_usage
 def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
                  profile_dir: str, no_kill: bool, keep_alive: bool):
     """
@@ -1195,6 +1597,7 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
     default=9222,
     help='CDP 调试端口，默认 9222'
 )
+@print_usage
 def chrome_stop(port: int):
     """
     停止 Chrome CDP 进程
@@ -1214,6 +1617,7 @@ def chrome_stop(port: int):
 
 @click.command('list-tabs')
 @click.pass_context
+@print_usage
 def list_tabs(ctx):
     """
     列出所有打开的浏览器 tabs
@@ -1258,6 +1662,7 @@ def list_tabs(ctx):
 @click.command('switch-tab')
 @click.argument('tab_id')
 @click.pass_context
+@print_usage
 def switch_tab(ctx, tab_id: str):
     """
     切换到指定的浏览器 tab
