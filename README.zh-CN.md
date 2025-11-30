@@ -10,75 +10,92 @@
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
-**文档**: [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
+**文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
 
 ---
 
-## Frago 解决什么问题
+## 为什么需要 Frago
 
-AI agent 在执行自动化任务时，面临三个核心痛点：
+AI 面对 prompt 解决问题时，只能"谈"而不能"做"，只"谈一次"而不会"从头开始做到尾"，例如 2023 年的 ChatGPT 等产品。于是有人设计出了 Agent，Agent 通过接口规范调用工具。
 
-### 1. 无工作记忆
+但现实是，事无穷而工具有尽。
 
-每次任务都从零开始，无法记住之前做过什么：
+你让 AI 提取 YouTube 字幕，它花 5 分钟探索成功了。第二天同样的需求，它又从零开始探索——完全不记得昨天做过。
 
-- 重复推理相同的操作流程（浏览器 DOM 结构、系统命令、API 调用）
-- 验证过的脚本和方法无法积累
-- 相似任务需要重新探索，浪费 token 和时间
+即便 Claude Code 这样的 Agent，在面对每个人不同的个性化任务要求时，仍显笨拙：每一次都要探索，每一次都要花费大量 token，由 Agent 裹挟 LLM 从起点走到终点。慢且不稳定：10 次里，可能 5 次是正确的路线，而剩下 5 次则充满"奇怪"而"艰难"的试错。
 
-### 2. 工具发现困难
+Agent 缺少上下文是事实。但 Agent 缺少什么样的上下文呢？
 
-不知道有哪些可用的自动化能力：
+人们试图用 RAG 这类碎片化的信息拆分方式，让 Agent 通过检索来"找到方法"，这是“理论上正确、但事实上偏离“的巨坑方法。关键问题在于：每个人自己的事务需求是"局部"的，是有边界的，并不需要一个厚重的 RAG 系统来支撑，RAG 把个体解决问题的基本方法复杂化了。
 
-- 没有标准化的工具清单和能力描述
-- 验证过的自动化脚本散落在对话历史中
-- AI 无法自动发现和调用已有的工具
+Anthropic 与 Google 的研究均指向了：直接查找文档。这同样是本项目作者在 2024 年时就提出的观点。但这种理念建立在 Agent 具备足够的能力基础上。Claude Code 正是这类 Agent。
 
-### 3. 需要持续人工介入
+Claude Code 设计了一种文档架构：commands 和 skills，来实践这类哲学。frago 锦上添花，在这个基础上，深入贯彻作者的设计哲学：每一个方法论知识，都需要与具体可执行的工具结合起来。
 
-无法自主完成复杂多步骤任务：
+在 frago 的框架下，skills 是方法论的集合，recipe（"配方"）是可执行工具的集合。
 
-- 缺少任务上下文管理，难以处理中断和恢复
-- 缺少标准化的执行日志，无法回溯和审计
-- 复杂任务需要人类持续参与每个步骤
+作者的期望：通过 frago 提供的 Claude Code slash commands（/frago.run 等核心指令），建立一种 Agent 规范——使其在面对陌生问题时，能探索并将结果标准化为结构化信息；通过自发感知，主动建立 skills 和 recipe 的关联。
+
+最终，你的 Agent 能充分理解你对某一类工作、事务需求的表述，借助已有的 skills 找到并合理运用相关的 recipes，继而实现"仅需花费少量 token 即可驱动事情自动执行"的结果。
+
+frago 不是 Agent 本身，而是 Agent 的"骨骼"。
+
+Agent 已经足够聪明，但还不够机灵。frago 让它记住如何做事。
 
 ---
 
-## 解决方案
+## 如何使用
 
-![Frago 架构图](docs/images/architecture.jpg)
+Frago 结合 Claude Code，通过四个 slash command 构建完整的"探索 → 固化 → 执行"闭环。
 
-Frago 提供三个核心系统来解决上述问题：
-
-### 🧠 Run 系统 - AI 的工作记忆
-
-持久化任务上下文，记录完整的探索过程：
-
-```bash
-# 创建任务实例
-uv run frago run init "调研 YouTube 字幕提取方法"
-
-# 所有后续操作自动关联到该实例
-uv run frago navigate https://youtube.com/watch?v=...
-uv run frago screenshot step1.png
-uv run frago run log --step "定位字幕按钮" --data '{"selector": "..."}'
-
-# 持久化存储
-projects/youtube-transcript-research/
-├── logs/execution.jsonl          # 结构化日志
-├── screenshots/                  # 截图归档
-├── scripts/                      # 验证脚本
-└── outputs/                      # 输出文件
+```
+/frago.run     探索研究，积累经验
+     ↓
+/frago.recipe  将经验固化为可复用的配方
+/frago.test    验证配方（趁上下文还在）
+     ↓
+/frago.exec    通过 skill 指导，快速执行
 ```
 
-**价值**：避免重复探索，积累可审计的执行历史。
+### 第一步：探索研究
 
-### 📚 Recipe 系统 - AI 的“肌肉记忆”
+在 Claude Code 中输入：
 
-元数据驱动的可复用自动化脚本，AI 可自动发现和使用：
+```
+/frago.run 研究如何提取 YouTube 视频字幕
+```
+
+Agent 会：
+- 创建一个 project 存储此次 run 实例
+- 使用 frago 提供的基础工具（navigate、click、exec-js 等）进行探索
+- 自动记录 `execution.jsonl` 和关键收获
+- 所有截图、脚本、输出文件持久化保存
+
+```
+projects/youtube-transcript-research/
+├── logs/execution.jsonl    # 结构化执行日志
+├── screenshots/            # 截图归档
+├── scripts/                # 验证过的脚本
+└── outputs/                # 输出文件
+```
+
+### 第二步：固化配方
+
+探索完成后，输入：
+
+```
+/frago.recipe
+```
+
+Agent 会：
+- 分析探索过程中积累的经验
+- 自动生成完成此任务必要的 recipes
+- 创建对应的 skill（*即将支持*）
+- 将 skill 和 recipe 关联起来
+
+生成的 recipe 示例：
 
 ```yaml
-# examples/atomic/chrome/youtube_extract_video_transcript.md
 ---
 name: youtube_extract_video_transcript
 type: atomic
@@ -87,67 +104,52 @@ description: "提取 YouTube 视频的完整转录文本"
 use_cases:
   - "批量提取视频字幕内容用于文本分析"
   - "为视频创建索引或摘要"
-output_targets: [stdout, file]
 ---
 ```
 
-```bash
-# AI 发现可用 Recipe
-uv run frago recipe list --format json
+### 第三步：验证配方
 
-# 执行 Recipe
-uv run frago recipe run youtube_extract_video_transcript \
-  --params '{"url": "..."}' \
-  --output-file transcript.txt
-
-# 使用环境变量
-uv run frago recipe run openai_chat \
-  --params '{"prompt": "Hello"}' \
-  -e OPENAI_API_KEY=sk-xxx
-```
-
-**价值**：固化高频操作，避免重复 AI 推理，支持三级优先级管理（Project > User > Example）和环境变量配置。
-
-### ⚡ 原生 CDP - 轻量级执行引擎
-
-直连 Chrome DevTools Protocol，无需 Playwright/Selenium 依赖：
-
-```bash
-# 导航
-uv run frago navigate https://github.com
-
-# 点击元素
-uv run frago click 'button[type="submit"]'
-
-# 执行 JavaScript
-uv run frago exec-js 'document.title' --return-value
-
-# 截图
-uv run frago screenshot output.png
-```
-
-**架构对比**：
+趁会话上下文还在，立即测试：
 
 ```
+/frago.test youtube_extract_video_transcript
+```
+
+验证失败？当场调整，不用重新探索。这就是为什么 recipe 和 test 要并行——上下文丢失后再调试成本更高。
+
+### 第四步：快速执行
+
+下次遇到同类需求，输入：
+
+```
+/frago.exec video-production 制作一个关于 AI 的短视频
+```
+
+Agent 会：
+- 加载指定的 skill（video-production）
+- 根据 skill 中的方法论指导，调用相关的 recipes
+- 快速完成任务，不再重复探索
+
+**这就是"骨骼"的价值**：第一次花 5 分钟探索，之后只需几秒钟执行。
+
+---
+
+## 技术基础
+
+上述流程依赖 frago 提供的底层能力：
+
+| 能力 | 说明 |
+|-----|------|
+| **原生 CDP** | 直连 Chrome DevTools Protocol，~2MB 轻量级，无 Node.js 依赖 |
+| **Run 系统** | 持久化任务上下文，JSONL 结构化日志 |
+| **Recipe 系统** | 元数据驱动，三级优先级（Project > User > Example） |
+| **多运行时** | Chrome JS、Python、Shell 三种运行时支持 |
+
+```
+架构对比：
 Playwright:  Python → Node.js 中继 → CDP → Chrome  (~100MB)
-Frago:      Python → CDP → Chrome                  (~2MB)
+Frago:       Python → CDP → Chrome                  (~2MB)
 ```
-
-**价值**：轻量级部署，持久浏览器会话，直连无中继延迟。
-
----
-
-## 核心特性
-
-| 特性                          | 说明                                          |
-| ----------------------------- | --------------------------------------------- |
-| 🧠**Run 命令系统**      | 主题型任务管理，持久化上下文和 JSONL 日志     |
-| 📚**Recipe 元数据驱动** | 可复用脚本，AI 可发现和使用，支持三级优先级   |
-| 🔐**环境变量支持**      | 三级配置优先级，Workflow 上下文共享           |
-| ⚡**原生 CDP**          | ~2MB 轻量级，直连 Chrome，无 Node.js 依赖     |
-| 🔄**多运行时**          | Chrome JS、Python、Shell 三种运行时支持       |
-| 📊**结构化日志**        | JSONL 格式，100% 可程序解析和审计             |
-| 🤖**AI 主持任务**       | Claude Code slash 命令集成（`/frago.run`） |
 
 ---
 
@@ -186,83 +188,117 @@ frago init --reset
 
 ### 基础使用
 
-#### 1. 创建并管理 Run 实例
+安装完成后，进入 Claude Code，使用 slash commands：
 
 ```bash
-# 创建任务实例
-uv run frago run init "在 Upwork 上搜索 Python 职位"
+# 探索研究
+/frago.run 在 Upwork 上搜索 Python 职位并分析技能要求
 
-# 设置当前工作上下文
-uv run frago run set-context <run_id>
+# 固化配方
+/frago.recipe
 
-# 执行操作并记录日志
-uv run frago navigate https://upwork.com/search
-uv run frago run log \
-  --step "导航到搜索页" \
-  --status "success" \
-  --action-type "navigation" \
-  --execution-method "command"
+# 验证配方
+/frago.test upwork_search_jobs
 
-# 查看实例详情
+# 快速执行（下次）
+/frago.exec job-hunting 搜索远程 Python 职位
+```
+
+详细流程见上方「如何使用」章节。
+
+### 命令行工具（人类直接使用）
+
+frago 也提供命令行工具，供调试或脚本集成：
+
+```bash
+# 浏览器操作
+uv run frago navigate https://example.com
+uv run frago click 'button[type="submit"]'
+uv run frago screenshot output.png
+
+# Recipe 管理
+uv run frago recipe list
+uv run frago recipe info <recipe_name>
+uv run frago recipe run <recipe_name> --params '{...}'
+
+# Run 实例管理
+uv run frago run list
 uv run frago run info <run_id>
 ```
 
-#### 2. 使用 Recipe
-
-```bash
-# 列出可用 Recipe
-uv run frago recipe list
-
-# 查看 Recipe 详情
-uv run frago recipe info youtube_extract_video_transcript
-
-# 执行 Recipe
-uv run frago recipe run youtube_extract_video_transcript \
-  --params '{"url": "https://youtube.com/watch?v=..."}' \
-  --output-file transcript.txt
-```
-
-#### 3. Claude Code 集成（AI 主持任务）
-
-在 Claude Code 中使用 slash 命令：
-
-```
-/frago.run 在 Upwork 上搜索 Python 职位并分析技能要求
-```
-
-AI 将自动：
-
-1. 发现或创建 Run 实例
-2. 调用 CDP 命令和 Recipe
-3. 记录所有操作到结构化日志
-4. 生成执行报告和输出文件
-
 ---
 
-## 与其他工具的对比
+## Frago 不是 Playwright/Selenium
 
-### Frago vs Playwright/Selenium
+Playwright 和 Selenium 是**测试工具**——启动浏览器、跑测试、关闭浏览器。每次都是全新的开始。
 
-| 维度                 | Playwright/Selenium                | Frago                            |
-| -------------------- | ---------------------------------- | --------------------------------- |
-| **设计目标**   | 测试自动化框架                     | AI 驱动的多运行时自动化基建       |
-| **核心场景**   | E2E 测试、UI 测试                  | 数据采集、工作流编排、AI 辅助任务 |
-| **浏览器管理** | 完整生命周期（启动→测试→关闭）   | 连接现有 CDP 实例（持久会话）     |
-| **部署体积**   | ~100MB + Node.js                   | ~2MB（纯 Python WebSocket）       |
-| **架构**       | 双 RPC（Python→Node.js→Browser） | 直连 CDP（Python→Browser）       |
-| **知识沉淀**   | 无                                 | Recipe 元数据驱动系统             |
+Frago 是**AI 的骨骼**——连接已有的浏览器，探索、学习、记住。经验可以积累。
 
-**适用场景选择**：
+| 你需要... | 选择 |
+|----------|------|
+| 质量保障、回归测试、CI/CD 集成 | Playwright/Selenium |
+| 数据采集、工作流自动化、AI 辅助任务 | Frago |
+| 一次性脚本，跑完就扔 | Playwright/Selenium |
+| 积累经验，下次更快 | Frago |
 
-- 需要质量保障、回归测试 → Playwright/Selenium
-- 需要数据采集、AI 辅助自动化、知识积累 → Frago
+技术上的差异（轻量级、直连 CDP、无 Node.js 依赖）是结果，不是目的。
 
-详见 [技术架构对比](docs/architecture.md#核心差异对比)
+**核心区别是设计哲学**：测试工具假设你知道要做什么；Frago 假设你在探索，并帮你记住探索的结果。
+
+## 为什么有了 Dify/Coze/n8n，还可以有 Frago
+
+Dify、Coze、n8n 是**工作流编排工具**。
+
+传统用法：你手动拖节点、连线、配参数。n8n 推出了 [AI Workflow Builder](https://docs.n8n.io/advanced-ai/ai-workflow-builder/)，可以用自然语言生成工作流节点（Dify 和 Coze 目前还没有类似功能）。
+
+但不管是手动还是 AI 辅助，你最终得到的是什么？**一张流程图**。
+
+然后呢？
+
+1. 你还是要进入平台，看懂这张图
+2. 运行，报错，回去改节点配置
+3. 再运行，又报错，再改
+4. 调试通过后，流程图跑起来了
+
+**AI 帮你画了图，但调试、修改、维护——还是你自己干。**
+
+用 Frago：
+
+```
+/frago.run 从这个网站抓数据
+```
+
+没有流程图。AI 直接去干活——打开浏览器、点击、提取数据、处理错误。你等着就行。
+
+完事了：
+
+```
+/frago.recipe
+```
+
+配方自动生成。下次：
+
+```
+/frago.exec 抓取类似网站
+```
+
+**你不需要进入任何平台，不需要看任何流程图。**
+
+| | 编排工具（含 AI 辅助） | Frago |
+|--|----------------------|-------|
+| AI 做什么 | 帮你画流程图 | 直接替你干活 |
+| 你要做什么 | 进平台、看图、调试、改配置 | 说需求、等结果 |
+| 产出物 | 一张需要维护的流程图 | 可复用的 recipe |
+
+**编排工具的 AI 是你的"绘图助手"；Frago 的 AI 是你的"执行者"。**
+
+当然，如果你需要定时触发、可视化监控、团队协作审批——编排工具更合适。但如果你只是想把事情做完——Frago 让你用嘴解决问题，不需要学任何平台。
 
 ---
 
 ## 文档导航
 
+- **[关键概念](docs/concepts.zh-CN.md)** - Skill、Recipe、Run 的定义与关系
 - **[使用场景](docs/use-cases.md)** - 从 Recipe 创建到 Workflow 编排的完整流程
 - **[技术架构](docs/architecture.md)** - 核心差异对比、技术选型、系统设计
 - **[安装指南](docs/installation.md)** - 安装方式、依赖说明、可选功能

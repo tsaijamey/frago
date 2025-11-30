@@ -10,75 +10,92 @@
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
-**Docs**: [Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/frago/blob/main/docs/development.md)
+**Docs**: [Key Concepts](https://github.com/tsaijamey/frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/frago/blob/main/docs/development.md)
 
 ---
 
-## What Problems Does Frago Solve
+## Why Frago
 
-AI agents face three core pain points when executing automation tasks:
+When facing prompts, AI can only "talk" but not "do"—it "talks once" but never "follows through from start to finish." Think of ChatGPT in 2023. So people designed Agents. Agents call tools through standardized interfaces.
 
-### 1. No Working Memory
+But reality is: tasks are infinite, while tools are finite.
 
-Every task starts from scratch, unable to remember previous work:
+You ask AI to extract YouTube subtitles. It spends 5 minutes exploring, succeeds. The next day, same request—it starts from scratch again. It completely forgot what it did yesterday.
 
-- Repeated reasoning of same operation flows (browser DOM structure, system commands, API calls)
-- Validated scripts and methods cannot accumulate
-- Similar tasks require re-exploration, wasting tokens and time
+Even an Agent like Claude Code appears clumsy when facing each person's unique task requirements: every time it must explore, every time it burns through tokens, dragging the LLM from start to finish. Slow and unstable: out of 10 attempts, maybe 5 take the right path, while the other 5 are filled with "strange" and "painful" trial-and-error.
 
-### 2. Tool Discovery Difficulty
+Agents lack context—that's a fact. But what kind of context do they lack?
 
-Unaware of available automation capabilities:
+People tried RAG, fragmenting information so Agents could retrieve and "find methods." This is "theoretically correct but practically misguided"—a massive pitfall. The key issue: each person's task requirements are "local" and bounded. They don't need a heavyweight RAG system. RAG over-complicates how individuals solve problems.
 
-- No standardized tool catalog and capability descriptions
-- Validated automation scripts scattered in conversation history
-- AI cannot automatically discover and invoke existing tools
+Research from Anthropic and Google both point to: directly consulting documentation. The author of this project proposed the same view in 2024. But this approach requires Agents with sufficient capability. Claude Code is exactly such an Agent.
 
-### 3. Requires Continuous Manual Intervention
+Claude Code designed a documentation architecture: commands and skills, to practice this philosophy. Frago builds on this foundation, deeply implementing the author's design philosophy: every piece of methodological knowledge must be tied to concrete executable tools.
 
-Unable to autonomously complete complex multi-step tasks:
+In Frago's framework, skills are collections of methodologies, and recipes are collections of executable tools.
 
-- Lack of task context management, difficult to handle interruptions and recovery
-- Lack of standardized execution logs, unable to trace and audit
-- Complex tasks require continuous human participation in every step
+The author's vision: through Frago's Claude Code slash commands (/frago.run and other core commands), establish an Agent specification—enabling it to explore unfamiliar problems and standardize results into structured information; through self-awareness, proactively build the association between skills and recipes.
+
+Ultimately, your Agent can fully understand your descriptions of work and task requirements, leverage existing skills to find and properly use relevant recipes, achieving "driving automated execution with minimal token cost."
+
+Frago is not the Agent itself, but the Agent's "skeleton."
+
+Agents are smart enough, but not yet resourceful. Frago teaches them to remember how to get things done.
 
 ---
 
-## Solutions
+## How to Use
 
-![Frago Architecture](https://raw.githubusercontent.com/tsaijamey/frago/main/docs/images/architecture.jpg)
+Frago integrates with Claude Code through four slash commands, forming a complete "explore → solidify → execute" loop.
 
-Frago provides three core systems to solve the above problems:
-
-### 🧠 Run System - AI's Working Memory
-
-Persistent task context, recording complete exploration process:
-
-```bash
-# Create task instance
-uv run frago run init "Research YouTube subtitle extraction methods"
-
-# All subsequent operations automatically link to this instance
-uv run frago navigate https://youtube.com/watch?v=...
-uv run frago screenshot step1.png
-uv run frago run log --step "Locate subtitle button" --data '{"selector": "..."}'
-
-# Persistent storage
-projects/youtube-transcript-research/
-├── logs/execution.jsonl          # Structured logs
-├── screenshots/                  # Screenshot archive
-├── scripts/                      # Validated scripts
-└── outputs/                      # Output files
+```
+/frago.run     Explore and research, accumulate experience
+     ↓
+/frago.recipe  Solidify experience into reusable recipes
+/frago.test    Validate recipes (while context is fresh)
+     ↓
+/frago.exec    Execute quickly with skill guidance
 ```
 
-**Value**: Avoid repeated exploration, accumulate auditable execution history.
+### Step 1: Explore and Research
 
-### 📚 Recipe System - AI's "Muscle Memory"
+In Claude Code, type:
 
-Metadata-driven reusable automation scripts, AI can automatically discover and use:
+```
+/frago.run Research how to extract YouTube video subtitles
+```
+
+The Agent will:
+- Create a project to store this run instance
+- Use Frago's basic tools (navigate, click, exec-js, etc.) to explore
+- Automatically record `execution.jsonl` and key findings
+- Persist all screenshots, scripts, and output files
+
+```
+projects/youtube-transcript-research/
+├── logs/execution.jsonl    # Structured execution logs
+├── screenshots/            # Screenshot archive
+├── scripts/                # Validated scripts
+└── outputs/                # Output files
+```
+
+### Step 2: Solidify Recipes
+
+After exploration, type:
+
+```
+/frago.recipe
+```
+
+The Agent will:
+- Analyze the experience accumulated during exploration
+- Auto-generate necessary recipes for this task
+- Create corresponding skills (*coming soon*)
+- Associate skills with recipes
+
+Generated recipe example:
 
 ```yaml
-# examples/atomic/chrome/youtube_extract_video_transcript.md
 ---
 name: youtube_extract_video_transcript
 type: atomic
@@ -87,67 +104,52 @@ description: "Extract complete transcript text from YouTube videos"
 use_cases:
   - "Batch extract video subtitle content for text analysis"
   - "Create indexes or summaries for videos"
-output_targets: [stdout, file]
 ---
 ```
 
-```bash
-# AI discovers available Recipes
-uv run frago recipe list --format json
+### Step 3: Validate Recipes
 
-# Execute Recipe
-uv run frago recipe run youtube_extract_video_transcript \
-  --params '{"url": "..."}' \
-  --output-file transcript.txt
-
-# Use environment variables
-uv run frago recipe run openai_chat \
-  --params '{"prompt": "Hello"}' \
-  -e OPENAI_API_KEY=sk-xxx
-```
-
-**Value**: Solidify high-frequency operations, avoid repeated AI reasoning, support three-tier priority management (Project > User > Example) and environment variable configuration.
-
-### ⚡ Native CDP - Lightweight Execution Engine
-
-Direct connection to Chrome DevTools Protocol, no Playwright/Selenium dependencies:
-
-```bash
-# Navigate
-uv run frago navigate https://github.com
-
-# Click element
-uv run frago click 'button[type="submit"]'
-
-# Execute JavaScript
-uv run frago exec-js 'document.title' --return-value
-
-# Screenshot
-uv run frago screenshot output.png
-```
-
-**Architecture Comparison**:
+While the session context is still fresh, test immediately:
 
 ```
+/frago.test youtube_extract_video_transcript
+```
+
+Validation failed? Fix it on the spot, no need to re-explore. This is why recipe and test should be parallel—debugging costs more after context is lost.
+
+### Step 4: Quick Execution
+
+Next time you have a similar need, type:
+
+```
+/frago.exec video-production Create a short video about AI
+```
+
+The Agent will:
+- Load the specified skill (video-production)
+- Follow the methodology in the skill to invoke relevant recipes
+- Complete the task quickly, no repeated exploration
+
+**This is the value of the "skeleton"**: 5 minutes to explore the first time, seconds to execute thereafter.
+
+---
+
+## Technical Foundation
+
+The above workflow relies on Frago's underlying capabilities:
+
+| Capability | Description |
+|------------|-------------|
+| **Native CDP** | Direct Chrome DevTools Protocol connection, ~2MB lightweight, no Node.js deps |
+| **Run System** | Persistent task context, JSONL structured logs |
+| **Recipe System** | Metadata-driven, three-tier priority (Project > User > Example) |
+| **Multi-Runtime** | Chrome JS, Python, Shell runtime support |
+
+```
+Architecture Comparison:
 Playwright:  Python → Node.js relay → CDP → Chrome  (~100MB)
 Frago:       Python → CDP → Chrome                  (~2MB)
 ```
-
-**Value**: Lightweight deployment, persistent browser sessions, direct connection without relay latency.
-
----
-
-## Core Features
-
-| Feature                    | Description                                                     |
-| -------------------------- | --------------------------------------------------------------- |
-| 🧠 **Run Command System**  | Topic-based task management, persistent context and JSONL logs |
-| 📚 **Recipe Metadata**     | Reusable scripts, AI-discoverable, three-tier priority support |
-| 🔐 **Environment Variables** | Three-level config priority, Workflow context sharing        |
-| ⚡ **Native CDP**          | ~2MB lightweight, direct Chrome connection, no Node.js deps    |
-| 🔄 **Multi-Runtime**       | Chrome JS, Python, Shell three runtime support                 |
-| 📊 **Structured Logs**     | JSONL format, 100% programmatically parseable and auditable    |
-| 🤖 **AI-Driven Tasks**     | Claude Code slash command integration (`/frago.run`)           |
 
 ---
 
@@ -186,83 +188,117 @@ See [Installation Guide](https://github.com/tsaijamey/frago/blob/main/docs/insta
 
 ### Basic Usage
 
-#### 1. Create and Manage Run Instances
+After installation, enter Claude Code and use slash commands:
 
 ```bash
-# Create task instance
-uv run frago run init "Search for Python jobs on Upwork"
+# Explore and research
+/frago.run Search for Python jobs on Upwork and analyze skill requirements
 
-# Set current working context
-uv run frago run set-context <run_id>
+# Solidify recipes
+/frago.recipe
 
-# Execute operations and log
-uv run frago navigate https://upwork.com/search
-uv run frago run log \
-  --step "Navigate to search page" \
-  --status "success" \
-  --action-type "navigation" \
-  --execution-method "command"
+# Validate recipes
+/frago.test upwork_search_jobs
 
-# View instance details
+# Quick execution (next time)
+/frago.exec job-hunting Search for remote Python jobs
+```
+
+See the "How to Use" section above for detailed workflow.
+
+### Command Line Tools (Human Direct Use)
+
+Frago also provides CLI tools for debugging or script integration:
+
+```bash
+# Browser operations
+uv run frago navigate https://example.com
+uv run frago click 'button[type="submit"]'
+uv run frago screenshot output.png
+
+# Recipe management
+uv run frago recipe list
+uv run frago recipe info <recipe_name>
+uv run frago recipe run <recipe_name> --params '{...}'
+
+# Run instance management
+uv run frago run list
 uv run frago run info <run_id>
 ```
 
-#### 2. Use Recipes
-
-```bash
-# List available Recipes
-uv run frago recipe list
-
-# View Recipe details
-uv run frago recipe info youtube_extract_video_transcript
-
-# Execute Recipe
-uv run frago recipe run youtube_extract_video_transcript \
-  --params '{"url": "https://youtube.com/watch?v=..."}' \
-  --output-file transcript.txt
-```
-
-#### 3. Claude Code Integration (AI-Driven Tasks)
-
-Use slash commands in Claude Code:
-
-```
-/frago.run Search for Python jobs on Upwork and analyze skill requirements
-```
-
-AI will automatically:
-
-1. Discover or create Run instance
-2. Invoke CDP commands and Recipes
-3. Log all operations to structured logs
-4. Generate execution reports and output files
-
 ---
 
-## Comparison with Other Tools
+## Frago Is Not Playwright/Selenium
 
-### Frago vs Playwright/Selenium
+Playwright and Selenium are **testing tools**—launch browser, run tests, close browser. Every run starts fresh.
 
-| Dimension              | Playwright/Selenium                       | Frago                                        |
-| ---------------------- | ----------------------------------------- | -------------------------------------------- |
-| **Design Goal**        | Test automation framework                 | AI-driven multi-runtime automation infra     |
-| **Core Scenarios**     | E2E testing, UI testing                   | Data collection, workflow orchestration, AI  |
-| **Browser Management** | Complete lifecycle (launch→test→close)    | Connect to existing CDP instance (persistent)|
-| **Deployment Size**    | ~100MB + Node.js                          | ~2MB (pure Python WebSocket)                 |
-| **Architecture**       | Double RPC (Python→Node.js→Browser)       | Direct CDP (Python→Browser)                  |
-| **Knowledge Base**     | None                                      | Recipe metadata-driven system                |
+Frago is **the skeleton for AI**—connect to an existing browser, explore, learn, remember. Experience accumulates.
 
-**Use Case Selection**:
+| You need... | Choose |
+|-------------|--------|
+| Quality assurance, regression testing, CI/CD | Playwright/Selenium |
+| Data collection, workflow automation, AI-assisted tasks | Frago |
+| One-off scripts, run and discard | Playwright/Selenium |
+| Accumulate experience, faster next time | Frago |
 
-- Need quality assurance, regression testing → Playwright/Selenium
-- Need data collection, AI automation, knowledge accumulation → Frago
+Technical differences (lightweight, direct CDP, no Node.js dependency) are outcomes, not goals.
 
-See [Architecture Comparison](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md#core-differences) for details
+**The core difference is design philosophy**: testing tools assume you know what to do; Frago assumes you're exploring, and helps you remember what you discovered.
+
+## Why Frago When You Already Have Dify/Coze/n8n
+
+Dify, Coze, and n8n are **workflow orchestration tools**.
+
+Traditional usage: manually drag nodes, connect lines, configure parameters. n8n launched [AI Workflow Builder](https://docs.n8n.io/advanced-ai/ai-workflow-builder/) that can generate workflow nodes from natural language (Dify and Coze don't have similar features yet).
+
+But whether manual or AI-assisted, what do you end up with? **A flowchart.**
+
+Then what?
+
+1. You still need to enter the platform, understand the diagram
+2. Run, error, go back and modify node config
+3. Run again, another error, modify again
+4. After debugging passes, the flowchart runs
+
+**AI drew the diagram for you, but debugging, modifying, maintaining—still your job.**
+
+Using Frago:
+
+```
+/frago.run Scrape data from this website
+```
+
+No flowchart. AI goes to work directly—opens browser, clicks, extracts data, handles errors. You just wait.
+
+When done:
+
+```
+/frago.recipe
+```
+
+Recipe auto-generated. Next time:
+
+```
+/frago.exec Scrape similar website
+```
+
+**You don't need to enter any platform, don't need to look at any flowchart.**
+
+| | Orchestration Tools (incl. AI-assisted) | Frago |
+|--|----------------------------------------|-------|
+| What AI does | Draws flowcharts for you | Does the work directly |
+| What you do | Enter platform, read diagrams, debug, modify config | State needs, wait for results |
+| Output | A flowchart that needs maintenance | Reusable recipe |
+
+**Orchestration tools' AI is your "diagram assistant"; Frago's AI is your "executor".**
+
+Of course, if you need scheduled triggers, visual monitoring, team collaboration approvals—orchestration tools are better fits. But if you just want to get things done—Frago lets you solve problems by talking, no platform to learn.
 
 ---
 
 ## Documentation Navigation
 
+- **[Key Concepts](https://github.com/tsaijamey/frago/blob/main/docs/concepts.md)** - Skill, Recipe, Run definitions and relationships
 - **[Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md)** - Complete workflow from Recipe creation to Workflow orchestration
 - **[Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md)** - Core differences, technology choices, system design
 - **[Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md)** - Installation methods, dependencies, optional features
