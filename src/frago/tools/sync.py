@@ -1,9 +1,14 @@
 """
+Pack 模块 - 同步开发资源到打包目录
+
 同步 examples/ 目录的 Recipe 到 src/frago/resources/recipes/
 同步 .claude/commands/ 目录的命令到 src/frago/resources/commands/
 
 提供将示例 Recipe 和 Claude Code 命令同步到 Python 包资源目录的功能，
 使得打包分发时能够包含最新的内容。
+
+注意: 这是用于 PyPI 打包的内部功能，与多设备同步无关。
+新的 sync 命令（在 sync_repo.py 中）用于多设备同步。
 """
 
 import fnmatch

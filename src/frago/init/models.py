@@ -56,6 +56,9 @@ class Config(BaseModel):
     # 工作目录配置
     working_directory: Optional[str] = None  # 默认 projects 目录的父目录
 
+    # 多设备同步配置
+    sync_repo_url: Optional[str] = None  # 用户私有仓库 URL（用于 deploy/sync）
+
     # 资源安装状态
     resources_installed: bool = False
     resources_version: Optional[str] = None
