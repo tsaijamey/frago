@@ -1,0 +1,18 @@
+# Frago Pack Manifest
+# Whitelist for PyPI distribution
+
+commands:
+  - frago.dev.run.md
+  - frago.dev.exec.md
+  - frago.dev.recipe.md
+  - frago.dev.test.md
+  - frago/*
+
+skills:
+  - frago-x-extract-tweet-with-comments
+
+recipes:
+  - atomic/system/clipboard_read
+  - atomic/system/file_copy
+  - atomic/system/cdp_list_tabs_and_select_target
+  - atomic/chrome/x_extract_tweet_with_comments
