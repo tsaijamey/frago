@@ -337,10 +337,10 @@ def agent(
 
     \b
     可用的子命令路由:
-      /frago.dev.run    - 探索调研、信息收集
-      /frago.dev.exec   - 一次性任务执行
-      /frago.dev.recipe - 创建自动化配方
-      /frago.dev.test   - 测试验证配方
+      /frago.run    - 探索调研、信息收集
+      /frago.exec   - 一次性任务执行
+      /frago.recipe - 创建自动化配方
+      /frago.test   - 测试验证配方
 
     \b
     可用模型 (--model):
@@ -472,8 +472,9 @@ def agent(
         click.echo(f"\n[执行] {final_prompt}")
         execution_prompt = final_prompt
 
-    # 构建最终命令
-    cmd = ["claude", "-p", execution_prompt, "--output-format", "text"]
+    # 构建最终命令 - 使用 stream-json 实现实时输出
+    # 注意：stream-json 必须配合 --verbose 使用
+    cmd = ["claude", "-p", execution_prompt, "--output-format", "stream-json", "--verbose"]
 
     if model:
         cmd.extend(["--model", model])
@@ -483,24 +484,66 @@ def agent(
 
     click.echo("-" * 60)
 
-    # 执行命令（实时输出）
+    # 执行命令（实时流式输出）
     try:
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             env=env,
             bufsize=1,
             universal_newlines=True
         )
 
+        # 解析 stream-json 格式并实时显示
         for line in iter(process.stdout.readline, ""):
-            click.echo(line, nl=False)
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                event = json.loads(line)
+                event_type = event.get("type", "")
+
+                # 处理不同类型的流式事件
+                if event_type == "assistant":
+                    # 助手消息开始/文本内容
+                    message = event.get("message", {})
+                    content = message.get("content", [])
+                    for block in content:
+                        if block.get("type") == "text":
+                            click.echo(block.get("text", ""), nl=False)
+                elif event_type == "content_block_delta":
+                    # 增量文本
+                    delta = event.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        click.echo(delta.get("text", ""), nl=False)
+                elif event_type == "content_block_start":
+                    # 内容块开始
+                    content_block = event.get("content_block", {})
+                    if content_block.get("type") == "tool_use":
+                        tool_name = content_block.get("name", "unknown")
+                        click.echo(f"\n[Tool: {tool_name}]", nl=True)
+                elif event_type == "result":
+                    # 最终结果
+                    result_text = event.get("result", "")
+                    if result_text:
+                        click.echo(result_text, nl=True)
+                # 忽略其他事件类型（如 message_start, message_stop 等）
+
+            except json.JSONDecodeError:
+                # 非 JSON 行直接输出
+                click.echo(line)
+
+        # 读取 stderr
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            click.echo(f"\n[stderr] {stderr_output}", err=True)
 
         process.wait(timeout=timeout)
 
-        click.echo("-" * 60)
+        click.echo("\n" + "-" * 60)
 
         if process.returncode == 0:
             click.echo("✓ 执行完成")

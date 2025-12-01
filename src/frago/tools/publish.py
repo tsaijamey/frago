@@ -225,6 +225,10 @@ def publish_skills(
             continue
         if skill_dir.name.startswith('.'):
             continue
+        # 只发布 frago- 前缀的 skills
+        if not skill_dir.name.startswith("frago-"):
+            skipped.append(skill_dir.name)
+            continue
 
         target_skill_dir = target_dir / skill_dir.name
 
