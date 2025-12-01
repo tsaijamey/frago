@@ -132,6 +132,7 @@ class ContextManager:
             run_id=run_id,
             last_accessed=datetime.now(),
             theme_description=theme_description,
+            projects_dir=str(self.projects_dir),
         )
 
         try:
