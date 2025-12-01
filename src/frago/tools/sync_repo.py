@@ -25,8 +25,9 @@ SYSTEM_COMMANDS_DIR = SYSTEM_CLAUDE_DIR / "commands"
 SYSTEM_SKILLS_DIR = SYSTEM_CLAUDE_DIR / "skills"
 SYSTEM_RECIPES_DIR = SYSTEM_FRAGO_DIR / "recipes"
 
-# 同步配置：仅同步 frago.* 开头的命令
+# 同步配置：仅同步 frago 相关资源
 COMMANDS_PATTERN = "frago.*.md"
+SKILLS_PREFIX = "frago-"
 
 
 @dataclass
@@ -149,6 +150,8 @@ def sync_skills_to_repo(
     """
     同步 skills 到仓库目录
 
+    仅同步 frago-* 前缀的 skills。
+
     Args:
         source_dir: 源目录 (~/.claude/skills/)
         target_dir: 目标目录 (仓库中的 .claude/skills/)
@@ -171,6 +174,9 @@ def sync_skills_to_repo(
         if not skill_dir.is_dir():
             continue
         if skill_dir.name.startswith('.'):
+            continue
+        # 仅同步 frago-* 前缀的 skills
+        if not skill_dir.name.startswith(SKILLS_PREFIX):
             continue
 
         target_skill_dir = target_dir / skill_dir.name

@@ -1,10 +1,10 @@
 """
-Load 模块 - 从系统目录加载资源到当前项目目录
+Dev-Load 模块 - 从系统目录加载 frago 资源到当前项目目录
 
 从 ~/.claude 和 ~/.frago/recipes 加载 frago 相关内容，
 安装到当前项目的 .claude/ 和 examples/ 目录。
 
-用于在新项目中快速初始化 frago 资源。
+这是开发者工具，用于在 Frago 开发环境中初始化项目资源。
 """
 
 import shutil
@@ -20,8 +20,9 @@ SYSTEM_COMMANDS_DIR = SYSTEM_CLAUDE_DIR / "commands"
 SYSTEM_SKILLS_DIR = SYSTEM_CLAUDE_DIR / "skills"
 SYSTEM_RECIPES_DIR = SYSTEM_FRAGO_DIR / "recipes"
 
-# 同步配置：仅同步 frago.* 开头的命令
+# 同步配置：仅同步 frago 相关资源
 COMMANDS_PATTERN = "frago.*.md"
+SKILLS_PREFIX = "frago-"
 
 
 @dataclass
@@ -125,6 +126,8 @@ def load_skills(
     """
     从系统目录加载 skills 到项目目录
 
+    仅加载 frago-* 前缀的 skills。
+
     Args:
         project_dir: 项目根目录
         source_dir: 源目录 (~/.claude/skills/)
@@ -148,6 +151,9 @@ def load_skills(
         if not skill_dir.is_dir():
             continue
         if skill_dir.name.startswith('.'):
+            continue
+        # 仅加载 frago-* 前缀的 skills
+        if not skill_dir.name.startswith(SKILLS_PREFIX):
             continue
 
         target_skill_dir = target_dir / skill_dir.name

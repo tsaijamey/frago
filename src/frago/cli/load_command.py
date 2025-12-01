@@ -1,4 +1,4 @@
-"""load 命令 - 从系统目录加载资源到当前项目目录"""
+"""dev-load 命令 - 从系统目录加载 frago 资源到当前项目目录（开发者工具）"""
 
 import sys
 from pathlib import Path
@@ -67,7 +67,7 @@ def _format_result(result: LoadResult, dry_run: bool) -> None:
         click.echo("❌ 加载失败", err=True)
 
 
-@click.command(name="load")
+@click.command(name="dev-load")
 @click.argument(
     "project_dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
@@ -99,7 +99,7 @@ def _format_result(result: LoadResult, dry_run: bool) -> None:
     is_flag=True,
     help="仅加载 recipes",
 )
-def load_cmd(
+def dev_load_cmd(
     project_dir: Optional[str],
     force: bool,
     dry_run: bool,
@@ -108,7 +108,7 @@ def load_cmd(
     recipes_only: bool,
 ):
     """
-    从系统目录加载资源到当前项目目录
+    从系统目录加载 frago 资源到当前项目目录（开发者工具）
 
     从 ~/.claude 和 ~/.frago/recipes 加载 frago 相关内容，
     安装到项目的 .claude/ 和 examples/ 目录。
@@ -117,7 +117,7 @@ def load_cmd(
     加载内容:
       ~/.claude/commands/frago.*.md  →  .claude/commands/
       ~/.claude/commands/frago/      →  .claude/commands/frago/
-      ~/.claude/skills/*             →  .claude/skills/
+      ~/.claude/skills/frago-*       →  .claude/skills/
       ~/.frago/recipes/              →  examples/
 
     \b
@@ -125,12 +125,12 @@ def load_cmd(
 
     \b
     示例:
-      frago load                    # 加载到当前目录
-      frago load ~/my-project       # 加载到指定项目目录
-      frago load --force            # 强制覆盖所有文件
-      frago load --dry-run          # 预览将要加载的内容
-      frago load --commands-only    # 仅加载 commands
-      frago load --recipes-only     # 仅加载 recipes
+      frago dev-load                    # 加载到当前目录
+      frago dev-load ~/my-project       # 加载到指定项目目录
+      frago dev-load --force            # 强制覆盖所有文件
+      frago dev-load --dry-run          # 预览将要加载的内容
+      frago dev-load --commands-only    # 仅加载 commands
+      frago dev-load --recipes-only     # 仅加载 recipes
     """
     try:
         # 确定项目目录

@@ -41,14 +41,14 @@ from .sync_command import sync
 from .pack_command import pack
 from .deploy_command import deploy_cmd
 from .publish_command import publish_cmd
-from .load_command import load_cmd
+from .load_command import dev_load_cmd
 from .update_command import update
 
 
 # 命令分组定义
 COMMAND_GROUPS = OrderedDict([
     ("环境配置", ["init", "init-dirs", "status", "update"]),
-    ("资源管理", ["deploy", "publish", "sync", "load", "pack"]),
+    ("资源管理", ["deploy", "publish", "sync", "dev-load", "pack"]),
     ("Chrome 管理", ["chrome", "chrome-stop"]),
     ("Tab 管理", ["list-tabs", "switch-tab"]),
     ("页面操作", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
@@ -224,7 +224,7 @@ cli.add_command(sync)  # 多设备同步命令
 cli.add_command(pack)  # 打包资源命令
 cli.add_command(deploy_cmd, name="deploy")  # 部署命令
 cli.add_command(publish_cmd, name="publish")  # 发布命令
-cli.add_command(load_cmd, name="load")  # 项目加载命令
+cli.add_command(dev_load_cmd, name="dev-load")  # 开发环境资源加载命令
 cli.add_command(update)  # 自我更新命令
 cli.add_command(chrome_start)  # Chrome 启动命令
 cli.add_command(chrome_stop)  # Chrome 停止命令

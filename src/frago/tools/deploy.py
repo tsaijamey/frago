@@ -30,6 +30,7 @@ SYNC_REPO_CACHE_DIR = SYSTEM_FRAGO_DIR / "sync-repo"
 # 部署时去掉 .dev 后缀变为 frago.*.md
 DEV_COMMANDS_PATTERN = "frago.dev.*.md"
 RUNTIME_COMMANDS_PATTERN = "frago.*.md"
+SKILLS_PREFIX = "frago-"
 
 
 @dataclass
@@ -178,6 +179,8 @@ def deploy_skills(
     """
     部署 skills 到系统目录
 
+    仅部署 frago-* 前缀的 skills。
+
     Args:
         source_dir: 源目录 (仓库中的 .claude/skills/)
         target_dir: 目标目录 (~/.claude/skills/)
@@ -196,11 +199,14 @@ def deploy_skills(
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
-    # 遍历每个 skill 目录
+    # 遍历每个 skill 目录，仅处理 frago-* 前缀
     for skill_dir in source_dir.iterdir():
         if not skill_dir.is_dir():
             continue
         if skill_dir.name.startswith('.'):
+            continue
+        # 仅部署 frago-* 前缀的 skills
+        if not skill_dir.name.startswith(SKILLS_PREFIX):
             continue
 
         target_skill_dir = target_dir / skill_dir.name
