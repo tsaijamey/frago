@@ -88,6 +88,23 @@ frago init --update-resources
 | `~/.claude/commands/frago.*.md` | Installed slash commands |
 | `~/.frago/recipes/` | User-level recipes |
 
+### Multi-Device Resource Sync
+
+After initial setup, you can sync your personalized resources (skills, recipes, commands) across devices using your own Git repository:
+
+```bash
+# Configure your private repository (first time only)
+frago sync --set-repo git@github.com:you/my-frago-resources.git
+
+# Deploy resources from your repository
+frago deploy
+
+# After making changes, sync back to repository
+frago publish && frago sync
+```
+
+See [User Guide - Resource Management](user-guide.md#resource-management) for detailed workflows.
+
 ---
 
 ## Optional Features
