@@ -436,7 +436,7 @@ def agent(
 
         if not ok:
             click.echo(f"✗ 路由分析失败: {output}", err=True)
-            sys.exit(1)
+            return
 
         # 从 JSON 响应中提取 result
         result_text = ""
@@ -530,7 +530,7 @@ def agent(
                 elif event_type == "user":
                     # 工具执行结果
                     tool_result = event.get("tool_use_result", {})
-                    if tool_result:
+                    if tool_result and isinstance(tool_result, dict):
                         stdout = tool_result.get("stdout", "")
                         stderr = tool_result.get("stderr", "")
                         if stdout:
@@ -571,14 +571,11 @@ def agent(
     except subprocess.TimeoutExpired:
         process.kill()
         click.echo(f"\n✗ 执行超时 ({timeout}s)", err=True)
-        sys.exit(1)
     except KeyboardInterrupt:
         process.kill()
         click.echo("\n✗ 用户中断", err=True)
-        sys.exit(130)
     except Exception as e:
         click.echo(f"\n✗ 执行错误: {e}", err=True)
-        sys.exit(1)
 
 
 # =============================================================================
