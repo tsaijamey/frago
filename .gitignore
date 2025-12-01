@@ -71,3 +71,5 @@ STEALTH_MODE.md
 test_stealth.html
 .backup_docs/
 tmp/
+
+.crossnote/
