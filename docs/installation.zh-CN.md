@@ -86,6 +86,23 @@ frago init --update-resources
 | `~/.claude/commands/frago.*.md` | 已安装的 slash 命令 |
 | `~/.frago/recipes/` | 用户级 Recipe |
 
+### 多设备资源同步
+
+初始配置完成后，可以通过你自己的 Git 仓库在多台设备间同步个性化资源（skills、recipes、commands）：
+
+```bash
+# 配置你的私有仓库（仅首次）
+frago sync --set-repo git@github.com:you/my-frago-resources.git
+
+# 从仓库部署资源
+frago deploy
+
+# 修改后同步回仓库
+frago publish && frago sync
+```
+
+详见 [使用指南 - 资源管理](user-guide.zh-CN.md#资源管理)。
+
 ---
 
 ## 可选功能

@@ -535,6 +535,113 @@ Error: Failed to save screenshot to /path/to/screenshot.png
 
 ---
 
+## Resource Management
+
+Frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal. Each person has their own application scenarios, personalized knowledge (skills), and custom automation scripts (recipes).
+
+Frago's philosophy: **cross-environment consistency**. Your resources should be available wherever you work—different machines, fresh installations, or new projects. The tool comes from PyPI; your brain comes from your private repository.
+
+### Resource Flow
+
+```
+┌─────────────┐   publish   ┌─────────────┐    sync    ┌─────────────┐
+│   Project   │ ──────────→ │   System    │ ─────────→ │   Remote    │
+│  .claude/   │             │ ~/.claude/  │            │  Git Repo   │
+│  examples/  │             │ ~/.frago/   │            │             │
+└─────────────┘             └─────────────┘            └─────────────┘
+       ↑                          │                          │
+       │       dev-load           │         deploy           │
+       └──────────────────────────┴──────────────────────────┘
+```
+
+### Resource Management Commands
+
+| Command | Direction | Purpose |
+|---------|-----------|---------|
+| `publish` | Project → System | Push project resources to system directories |
+| `sync` | System → Remote | Push system resources to your private Git repo |
+| `deploy` | Remote → System | Pull from your private repo to system directories |
+| `dev-load` | System → Project | Load system resources into current project (dev only) |
+
+### Command Usage
+
+#### Setting Up Your Private Repository
+
+```bash
+# First time: configure your private repository
+frago sync --set-repo git@github.com:you/my-frago-resources.git
+```
+
+#### Publishing Local Changes
+
+```bash
+# After editing recipes/skills in your project
+frago publish              # Project → System (~/.claude/, ~/.frago/)
+frago publish --dry-run    # Preview what will be published
+frago publish --force      # Force overwrite existing files
+
+# Push to remote repository
+frago sync                 # System → Remote Git
+frago sync --no-push       # Commit only, don't push
+frago sync -m "message"    # Custom commit message
+```
+
+#### Deploying to New Machine
+
+```bash
+# Pull from your private repository
+frago deploy               # Remote Git → System
+frago deploy --dry-run     # Preview what will be deployed
+frago deploy --force       # Force overwrite existing files
+
+# For Frago developers: load into project directory
+frago dev-load             # System → Project
+frago dev-load --dry-run   # Preview what will be loaded
+```
+
+### What Gets Synced
+
+Only Frago-specific resources are synced to protect your personal configurations:
+
+| Resource Type | Pattern | Location |
+|--------------|---------|----------|
+| Commands | `frago.*.md` | `~/.claude/commands/` |
+| Command Rules | `frago/` directory | `~/.claude/commands/frago/` |
+| Skills | `frago-*` prefix | `~/.claude/skills/` |
+| Recipes | All recipes | `~/.frago/recipes/` |
+
+Your personal, non-Frago Claude commands and skills are **never touched**.
+
+### Typical Workflows
+
+**Developer Flow** (local changes → cloud):
+```bash
+# 1. Edit recipes in your project (examples/)
+# 2. Publish to system directories
+frago publish
+# 3. Sync to your private repository
+frago sync
+```
+
+**New Machine Flow** (cloud → local):
+```bash
+# 1. Configure repository (first time only)
+frago sync --set-repo git@github.com:you/my-frago-resources.git
+# 2. Deploy from repository
+frago deploy
+# 3. (Optional) Load into project if developing Frago
+frago dev-load
+```
+
+**Regular User** (just uses Frago):
+```bash
+# Get latest resources from your repository
+frago deploy
+# Resources are now in ~/.claude/ and ~/.frago/, ready to use
+```
+
+---
+
 ## Next Steps
 
 - **New to Frago?** Start with [Use Cases](use-cases.md) for real-world examples

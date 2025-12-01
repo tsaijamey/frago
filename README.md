@@ -296,6 +296,79 @@ Of course, if you need scheduled triggers, visual monitoring, team collaboration
 
 ---
 
+## Resource Management
+
+### Why Resource Sync Commands
+
+Frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal.
+
+Each person has:
+- Their own application scenarios
+- Personalized knowledge (skills)
+- Custom automation scripts (recipes)
+
+These personalized resources shouldn't live in the public package. They belong to you.
+
+Frago's philosophy: **cross-environment consistency**. Your resources should be available wherever you work—different machines, fresh installations, or new projects. The tool comes from PyPI; your brain comes from your private repository.
+
+Frago doesn't provide community-level cloud sync services (yet). Instead, it gives you commands to manage sync with your own Git repository.
+
+### Resource Flow Overview
+
+```
+┌─────────────┐   publish   ┌─────────────┐    sync    ┌─────────────┐
+│   Project   │ ──────────→ │   System    │ ─────────→ │   Remote    │
+│  .claude/   │             │ ~/.claude/  │            │  Git Repo   │
+│  examples/  │             │ ~/.frago/   │            │             │
+└─────────────┘             └─────────────┘            └─────────────┘
+       ↑                          │                          │
+       │       dev-load           │         deploy           │
+       └──────────────────────────┴──────────────────────────┘
+```
+
+### Commands
+
+| Command | Direction | Purpose |
+|---------|-----------|---------|
+| `publish` | Project → System | Push project resources to system directories |
+| `sync` | System → Remote | Push system resources to your private Git repo |
+| `deploy` | Remote → System | Pull from your private repo to system directories |
+| `dev-load` | System → Project | Load system resources into current project (dev only) |
+
+### Typical Workflows
+
+**Developer Flow** (local changes → cloud):
+```bash
+# After editing recipes in your project
+frago publish              # Project → System
+frago sync                 # System → Remote Git
+```
+
+**New Machine Flow** (cloud → local):
+```bash
+# First time setup on a new machine
+frago sync --set-repo git@github.com:you/my-frago-resources.git
+frago deploy               # Remote Git → System
+frago dev-load             # System → Project (if developing Frago)
+```
+
+**Regular User** (just uses Frago):
+```bash
+frago deploy               # Get latest resources from your repo
+# Resources are now in ~/.claude/ and ~/.frago/, ready to use
+```
+
+### What Gets Synced
+
+Only Frago-specific resources are synced:
+- `frago.*.md` commands (not your other Claude commands)
+- `frago-*` skills (not your other skills)
+- All recipes in `~/.frago/recipes/`
+
+Your personal, non-Frago Claude commands and skills are never touched.
+
+---
+
 ## Documentation Navigation
 
 - **[Key Concepts](https://github.com/tsaijamey/frago/blob/main/docs/concepts.md)** - Skill, Recipe, Run definitions and relationships
