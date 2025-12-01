@@ -102,7 +102,7 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
             is_running = False
 
         return True, {
-            "type": AuthType.CCR,
+            "type": "ccr",
             "config_path": str(config_path),
             "providers": [p.get("name") for p in providers],
             "default_route": config.get("Router", {}).get("default", "unknown"),
@@ -508,29 +508,46 @@ def agent(
 
                 # 处理不同类型的流式事件
                 if event_type == "assistant":
-                    # 助手消息开始/文本内容
+                    # 助手消息 - 包含文本或工具调用
                     message = event.get("message", {})
                     content = message.get("content", [])
                     for block in content:
-                        if block.get("type") == "text":
-                            click.echo(block.get("text", ""), nl=False)
-                elif event_type == "content_block_delta":
-                    # 增量文本
-                    delta = event.get("delta", {})
-                    if delta.get("type") == "text_delta":
-                        click.echo(delta.get("text", ""), nl=False)
-                elif event_type == "content_block_start":
-                    # 内容块开始
-                    content_block = event.get("content_block", {})
-                    if content_block.get("type") == "tool_use":
-                        tool_name = content_block.get("name", "unknown")
-                        click.echo(f"\n[Tool: {tool_name}]", nl=True)
+                        block_type = block.get("type")
+                        if block_type == "text":
+                            text = block.get("text", "")
+                            if text:
+                                click.echo(text)
+                        elif block_type == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            tool_input = block.get("input", {})
+                            # 显示工具调用信息
+                            if tool_name == "Bash":
+                                cmd = tool_input.get("command", "")
+                                desc = tool_input.get("description", "")
+                                click.echo(f"[Bash] {desc or cmd[:50]}")
+                            else:
+                                click.echo(f"[{tool_name}]")
+                elif event_type == "user":
+                    # 工具执行结果
+                    tool_result = event.get("tool_use_result", {})
+                    if tool_result:
+                        stdout = tool_result.get("stdout", "")
+                        stderr = tool_result.get("stderr", "")
+                        if stdout:
+                            # 只显示前几行，避免输出过多
+                            lines = stdout.strip().split("\n")
+                            if len(lines) > 10:
+                                click.echo(f"  (输出 {len(lines)} 行，显示前 5 行)")
+                                click.echo("\n".join(lines[:5]))
+                                click.echo("  ...")
+                            elif stdout.strip():
+                                click.echo(f"  {stdout.strip()[:200]}")
+                        if stderr:
+                            click.echo(f"  [stderr] {stderr.strip()[:100]}", err=True)
                 elif event_type == "result":
                     # 最终结果
-                    result_text = event.get("result", "")
-                    if result_text:
-                        click.echo(result_text, nl=True)
-                # 忽略其他事件类型（如 message_start, message_stop 等）
+                    pass  # 不重复显示，assistant 已经输出过了
+                # 忽略其他事件类型（如 system, content_block_delta 等）
 
             except json.JSONDecodeError:
                 # 非 JSON 行直接输出
