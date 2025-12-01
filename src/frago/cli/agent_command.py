@@ -2,11 +2,11 @@
 """
 Frago Agent Command - 通过 Claude CLI 执行非交互式 AI 任务
 
-支持多种认证方式的检测：
-1. Claude 订阅登录 (claudeAiOauth)
-2. Anthropic API Key (ANTHROPIC_API_KEY)
-3. 第三方 API (AWS Bedrock, Google Vertex)
-4. CCR (Claude Code Router) 本地代理
+认证策略：
+根据 `frago init` 写入的 ~/.frago/config.json 配置决定：
+1. auth_method == "official" → 直接使用 Claude CLI
+2. auth_method == "custom" → Claude CLI 使用 ~/.claude/settings.json 的 env
+3. ccr_enabled == True 或 --use-ccr → 使用 CCR 代理
 """
 
 import json
@@ -21,21 +21,34 @@ import click
 
 
 # =============================================================================
-# 认证状态枚举
+# 配置加载
 # =============================================================================
 
-class AuthType:
-    """认证类型"""
-    SUBSCRIPTION = "subscription"  # Claude 订阅 (Pro/Max/Team)
-    API_KEY = "api_key"           # Anthropic API Key
-    BEDROCK = "bedrock"           # AWS Bedrock
-    VERTEX = "vertex"             # Google Vertex AI
-    CCR = "ccr"                   # Claude Code Router
-    NONE = "none"                 # 未认证
+def get_frago_config_path() -> Path:
+    """获取 frago 配置文件路径"""
+    return Path.home() / ".frago" / "config.json"
+
+
+def load_frago_config() -> Optional[dict]:
+    """
+    加载 frago 配置
+
+    Returns:
+        配置字典，如果不存在或损坏返回 None
+    """
+    config_path = get_frago_config_path()
+    if not config_path.exists():
+        return None
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
 
 
 # =============================================================================
-# 认证检测函数
+# 工具函数
 # =============================================================================
 
 def find_claude_cli() -> Optional[str]:
@@ -46,83 +59,6 @@ def find_claude_cli() -> Optional[str]:
         claude 可执行文件路径，未找到返回 None
     """
     return shutil.which("claude")
-
-
-def check_subscription_auth() -> Tuple[bool, Optional[dict]]:
-    """
-    检查 Claude 订阅认证状态
-
-    Returns:
-        (是否已认证, 认证信息)
-    """
-    creds_path = Path.home() / ".claude" / ".credentials.json"
-    if not creds_path.exists():
-        return False, None
-
-    try:
-        with open(creds_path, "r") as f:
-            creds = json.load(f)
-
-        oauth = creds.get("claudeAiOauth")
-        if oauth and oauth.get("accessToken"):
-            return True, {
-                "type": AuthType.SUBSCRIPTION,
-                "subscription_type": oauth.get("subscriptionType", "unknown"),
-                "rate_limit_tier": oauth.get("rateLimitTier", "unknown"),
-                "expires_at": oauth.get("expiresAt"),
-            }
-    except (json.JSONDecodeError, IOError):
-        pass
-
-    return False, None
-
-
-def check_api_key_auth() -> Tuple[bool, Optional[dict]]:
-    """
-    检查 Anthropic API Key 认证
-
-    Returns:
-        (是否已认证, 认证信息)
-    """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key and api_key.startswith("sk-ant-"):
-        return True, {
-            "type": AuthType.API_KEY,
-            "key_prefix": api_key[:15] + "...",
-        }
-    return False, None
-
-
-def check_bedrock_auth() -> Tuple[bool, Optional[dict]]:
-    """
-    检查 AWS Bedrock 认证
-
-    Returns:
-        (是否已认证, 认证信息)
-    """
-    use_bedrock = os.environ.get("CLAUDE_CODE_USE_BEDROCK")
-    if use_bedrock and use_bedrock.lower() in ("1", "true", "yes"):
-        return True, {
-            "type": AuthType.BEDROCK,
-            "region": os.environ.get("AWS_REGION", "unknown"),
-        }
-    return False, None
-
-
-def check_vertex_auth() -> Tuple[bool, Optional[dict]]:
-    """
-    检查 Google Vertex AI 认证
-
-    Returns:
-        (是否已认证, 认证信息)
-    """
-    use_vertex = os.environ.get("CLAUDE_CODE_USE_VERTEX")
-    if use_vertex and use_vertex.lower() in ("1", "true", "yes"):
-        return True, {
-            "type": AuthType.VERTEX,
-            "project": os.environ.get("GOOGLE_CLOUD_PROJECT", "unknown"),
-        }
-    return False, None
 
 
 def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
@@ -178,46 +114,28 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
         return False, {"error": f"Failed to read CCR config: {e}"}
 
 
-def detect_auth_method() -> Tuple[str, Optional[dict]]:
+def should_use_ccr(config: Optional[dict], force_ccr: bool = False) -> Tuple[bool, Optional[dict]]:
     """
-    检测当前可用的认证方式（按优先级）
+    判断是否应该使用 CCR
 
-    优先级：
-    1. Claude 订阅（Claude Code 原生登录，最高优先级）
-    2. Anthropic API Key
-    3. AWS Bedrock
-    4. Google Vertex AI
-    5. CCR (作为后备)
+    Args:
+        config: frago 配置
+        force_ccr: 是否强制使用 CCR (--use-ccr 标志)
 
     Returns:
-        (认证类型, 认证信息)
+        (是否使用 CCR, CCR 配置信息)
     """
-    # 1. 检查订阅（Claude Code 原生登录，最高优先级）
-    ok, info = check_subscription_auth()
-    if ok:
-        return AuthType.SUBSCRIPTION, info
+    # 强制使用 CCR
+    if force_ccr:
+        ok, info = check_ccr_auth()
+        return ok, info
 
-    # 2. 检查 API Key
-    ok, info = check_api_key_auth()
-    if ok:
-        return AuthType.API_KEY, info
+    # 根据配置判断
+    if config and config.get("ccr_enabled"):
+        ok, info = check_ccr_auth()
+        return ok, info
 
-    # 3. 检查 Bedrock
-    ok, info = check_bedrock_auth()
-    if ok:
-        return AuthType.BEDROCK, info
-
-    # 4. 检查 Vertex
-    ok, info = check_vertex_auth()
-    if ok:
-        return AuthType.VERTEX, info
-
-    # 5. 检查 CCR（作为后备方案）
-    ok, info = check_ccr_auth()
-    if ok:
-        return AuthType.CCR, info
-
-    return AuthType.NONE, None
+    return False, None
 
 
 def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
@@ -380,11 +298,6 @@ def parse_routing_response(response_text: str) -> Optional[dict]:
     help="强制使用 CCR (Claude Code Router)"
 )
 @click.option(
-    "--skip-auth-check",
-    is_flag=True,
-    help="跳过认证检查，直接执行"
-)
-@click.option(
     "--dry-run",
     is_flag=True,
     help="仅显示将要执行的命令，不实际执行"
@@ -404,7 +317,6 @@ def agent(
     model: Optional[str],
     timeout: int,
     use_ccr: bool,
-    skip_auth_check: bool,
     dry_run: bool,
     ask: bool,
     direct: bool
@@ -446,37 +358,25 @@ def agent(
 
     click.echo(f"✓ Claude CLI: {claude_path}")
 
-    # Step 2: 检测认证方式
-    if not skip_auth_check:
-        auth_type, auth_info = detect_auth_method()
+    # Step 2: 加载 frago 配置
+    frago_config = load_frago_config()
+    if frago_config:
+        auth_method = frago_config.get("auth_method", "official")
+        if auth_method == "official":
+            click.echo("✓ 认证方式: Claude CLI 原生")
+        else:
+            click.echo("✓ 认证方式: 自定义 API 端点")
+    else:
+        click.echo("⚠ 未找到 frago 配置，使用 Claude CLI 默认认证")
+        click.echo("  提示: 运行 'frago init' 进行初始化配置")
 
-        if auth_type == AuthType.NONE:
-            click.echo("\n错误: 未检测到有效的认证方式", err=True)
-            click.echo("\n可用的认证方式:", err=True)
-            click.echo("  1. 订阅登录: 运行 'claude' 后使用 /login", err=True)
-            click.echo("  2. API Key: export ANTHROPIC_API_KEY=sk-ant-...", err=True)
-            click.echo("  3. CCR: 配置 ~/.claude-code-router/config.json 并运行 'ccr start'", err=True)
-            sys.exit(1)
-
-        # 显示认证信息
-        click.echo(f"✓ 认证方式: {auth_type}")
-        if auth_info:
-            if auth_type == AuthType.SUBSCRIPTION:
-                click.echo(f"  订阅类型: {auth_info.get('subscription_type', 'unknown')}")
-            elif auth_type == AuthType.API_KEY:
-                click.echo(f"  API Key: {auth_info.get('key_prefix', 'unknown')}")
-            elif auth_type == AuthType.CCR:
-                click.echo(f"  Providers: {', '.join(auth_info.get('providers', []))}")
-                if not auth_info.get("is_running"):
-                    click.echo("  ⚠ CCR 服务未运行，正在启动...", err=True)
-                    subprocess.run(["ccr", "start"], capture_output=True)
-
-    # Step 3: 设置环境变量
+    # Step 3: 判断是否使用 CCR
     env = os.environ.copy()
-    if use_ccr:
-        ok, ccr_info = check_ccr_auth()
-        if not ok:
-            click.echo(f"\n错误: CCR 不可用 - {ccr_info.get('error', 'unknown')}", err=True)
+    use_ccr_mode, ccr_info = should_use_ccr(frago_config, use_ccr)
+
+    if use_ccr_mode:
+        if not ccr_info:
+            click.echo("\n错误: CCR 配置无效", err=True)
             sys.exit(1)
 
         host = ccr_info.get("host", "127.0.0.1")
@@ -657,47 +557,33 @@ def agent_status():
 
     click.echo()
 
-    # 检查各种认证方式（按优先级排序）
-    checks = [
-        ("Claude 订阅", check_subscription_auth),
-        ("Anthropic API Key", check_api_key_auth),
-        ("AWS Bedrock", check_bedrock_auth),
-        ("Google Vertex AI", check_vertex_auth),
-        ("CCR (Claude Code Router)", check_ccr_auth),
-    ]
+    # 加载 frago 配置
+    click.echo("Frago 配置:")
+    frago_config = load_frago_config()
+    if frago_config:
+        auth_method = frago_config.get("auth_method", "official")
+        ccr_enabled = frago_config.get("ccr_enabled", False)
+        init_completed = frago_config.get("init_completed", False)
 
-    available_auth = []
-
-    for name, check_func in checks:
-        ok, info = check_func()
-        if ok:
-            click.echo(f"✓ {name}")
-            available_auth.append(name)
-            if info:
-                for key, value in info.items():
-                    if key != "type":
-                        click.echo(f"    {key}: {value}")
-        else:
-            click.echo(f"✗ {name}")
-            if info and info.get("error"):
-                click.echo(f"    原因: {info['error']}")
+        click.echo(f"  配置文件: {get_frago_config_path()}")
+        click.echo(f"  认证方式: {'Claude CLI 原生' if auth_method == 'official' else '自定义 API 端点'}")
+        click.echo(f"  CCR 启用: {'是' if ccr_enabled else '否'}")
+        click.echo(f"  初始化状态: {'已完成' if init_completed else '未完成'}")
+    else:
+        click.echo("  ⚠ 未找到配置文件")
+        click.echo(f"  提示: 运行 'frago init' 进行初始化配置")
 
     click.echo()
 
-    # 总结
-    if available_auth:
-        click.echo(f"可用认证方式: {', '.join(available_auth)}")
-
-        # 验证实际工作状态
-        click.echo("\n验证 Claude CLI 连接...")
-        ok, msg = verify_claude_working(timeout=30)
+    # 检查 CCR 状态（如果启用）
+    if frago_config and frago_config.get("ccr_enabled"):
+        click.echo("CCR 状态:")
+        ok, info = check_ccr_auth()
         if ok:
-            click.echo(f"✓ {msg}")
+            click.echo(f"  ✓ CCR 可用")
+            click.echo(f"    Providers: {', '.join(info.get('providers', []))}")
+            click.echo(f"    运行状态: {'运行中' if info.get('is_running') else '未运行'}")
         else:
-            click.echo(f"✗ {msg}")
-    else:
-        click.echo("⚠ 未检测到可用的认证方式")
-        click.echo("\n请使用以下方式之一进行认证:")
-        click.echo("  1. 订阅登录: 运行 'claude' 后使用 /login")
-        click.echo("  2. API Key: export ANTHROPIC_API_KEY=sk-ant-...")
-        click.echo("  3. CCR: 配置并启动 Claude Code Router")
+            click.echo("  ✗ CCR 不可用")
+            if info and info.get("error"):
+                click.echo(f"    原因: {info['error']}")
