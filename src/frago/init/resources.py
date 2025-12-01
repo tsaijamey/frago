@@ -112,12 +112,103 @@ def install_commands(source_dir: Optional[Path] = None, target_dir: Optional[Pat
             shutil.copy2(src_file, target_file)
             result.installed.append(src_file.name)
 
+        # 复制 frago/ 子目录（如果存在）
+        frago_subdir = source_dir / "frago"
+        if frago_subdir.exists() and frago_subdir.is_dir():
+            target_frago_dir = target_dir / "frago"
+            if target_frago_dir.exists():
+                shutil.rmtree(target_frago_dir)
+            shutil.copytree(
+                frago_subdir,
+                target_frago_dir,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+            result.installed.append("frago/ (子目录)")
+
     except FileNotFoundError as e:
         result.errors.append(f"资源目录不存在: {e}")
     except PermissionError as e:
         result.errors.append(f"权限错误: 无法写入 {target_dir}, 请检查目录权限")
     except Exception as e:
         result.errors.append(f"安装命令时出错: {e}")
+
+    return result
+
+
+def install_skills(
+    source_dir: Optional[Path] = None,
+    target_dir: Optional[Path] = None,
+    force_update: bool = False,
+) -> InstallResult:
+    """
+    安装 Claude Code skills（默认仅首次安装，不覆盖已存在目录）
+
+    Args:
+        source_dir: 源目录，默认从包内资源获取
+        target_dir: 目标目录，默认为 ~/.claude/skills/
+        force_update: 是否强制更新（覆盖已存在目录）
+
+    Returns:
+        InstallResult 包含安装、跳过的 skill 列表
+    """
+    result = InstallResult(resource_type=ResourceType.SKILL)
+
+    try:
+        if source_dir is None:
+            source_dir = get_package_resources_path("skills")
+        if target_dir is None:
+            target_dir = get_target_path("skills")
+
+        # 检查源目录是否存在
+        if not source_dir.exists():
+            result.errors.append(f"源资源目录不存在: {source_dir}")
+            return result
+
+        # 查找所有 skill 目录（包含 SKILL.md 的目录）
+        skill_dirs = []
+        for skill_dir in source_dir.iterdir():
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                skill_dirs.append(skill_dir)
+
+        if not skill_dirs:
+            result.errors.append(f"源资源目录为空或损坏: {source_dir} 中没有有效的 skill")
+            return result
+
+        # 确保目标目录存在
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 复制 skill 目录
+        for src_skill_dir in skill_dirs:
+            skill_name = src_skill_dir.name
+            target_skill_dir = target_dir / skill_name
+
+            if target_skill_dir.exists() and not force_update:
+                # 目录已存在且非强制更新模式，跳过
+                result.skipped.append(skill_name)
+            elif target_skill_dir.exists() and force_update:
+                # 强制更新模式，先删除再复制
+                shutil.rmtree(target_skill_dir)
+                shutil.copytree(
+                    src_skill_dir,
+                    target_skill_dir,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+                result.installed.append(skill_name)
+            else:
+                # 新目录，直接复制
+                shutil.copytree(
+                    src_skill_dir,
+                    target_skill_dir,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+                result.installed.append(skill_name)
+
+    except FileNotFoundError as e:
+        result.errors.append(f"资源目录不存在: {e}")
+    except PermissionError as e:
+        result.errors.append(f"权限错误: 无法写入 {target_dir}, 请检查目录权限")
+    except Exception as e:
+        result.errors.append(f"安装 skill 时出错: {e}")
 
     return result
 
@@ -215,6 +306,9 @@ def install_all_resources(skip_recipes: bool = False, force_update: bool = False
     # 安装 slash 命令（始终覆盖）
     status.commands = install_commands()
 
+    # 安装 skills
+    status.skills = install_skills(force_update=force_update)
+
     # 安装示例 recipe（可选）
     if not skip_recipes:
         status.recipes = install_recipes(force_update=force_update)
@@ -245,6 +339,19 @@ def format_install_summary(status: ResourceStatus) -> str:
             for error in cmd.errors:
                 lines.append(f"  ❌ {error}")
 
+    # Skills 摘要
+    if status.skills:
+        skill = status.skills
+        if skill.installed or skill.skipped:
+            lines.append("\n📦 安装 Claude Code Skills...")
+            for name in skill.installed:
+                lines.append(f"  ✅ {name}")
+            for name in skill.skipped:
+                lines.append(f"  ⏭️  {name} (已存在)")
+        if skill.errors:
+            for error in skill.errors:
+                lines.append(f"  ❌ {error}")
+
     # Recipes 摘要
     if status.recipes:
         rec = status.recipes
@@ -267,6 +374,9 @@ def format_install_summary(status: ResourceStatus) -> str:
     total_backed_up = 0
     if status.commands:
         total_installed += len(status.commands.installed)
+    if status.skills:
+        total_installed += len(status.skills.installed)
+        total_skipped += len(status.skills.skipped)
     if status.recipes:
         total_installed += len(status.recipes.installed)
         total_skipped += len(status.recipes.skipped)

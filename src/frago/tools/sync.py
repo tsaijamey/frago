@@ -375,3 +375,109 @@ class RecipeSync:
                 removed.append(target_dir)
 
         return removed
+
+
+class SkillSync:
+    """Skill 同步器"""
+
+    def __init__(
+        self,
+        source_dir: Optional[Path] = None,
+        target_dir: Optional[Path] = None,
+    ):
+        """
+        初始化同步器
+
+        Args:
+            source_dir: 源目录（.claude/skills/），默认自动检测
+            target_dir: 目标目录（src/frago/resources/skills/），默认自动检测
+        """
+        # 自动检测项目根目录
+        current_file = Path(__file__).resolve()
+        # src/frago/tools/sync.py -> project_root
+        project_root = current_file.parent.parent.parent.parent
+
+        self.source_dir = source_dir or (project_root / ".claude" / "skills")
+        self.target_dir = target_dir or (
+            project_root / "src" / "frago" / "resources" / "skills"
+        )
+
+    def find_skills(self, pattern: Optional[str] = None) -> list[Path]:
+        """
+        查找所有 Skill 目录（以 frago- 开头）
+
+        Args:
+            pattern: 可选的通配符模式，用于过滤 Skill 名称
+
+        Returns:
+            Skill 目录路径列表
+        """
+        skills = []
+
+        if not self.source_dir.exists():
+            return skills
+
+        for skill_dir in self.source_dir.iterdir():
+            if not skill_dir.is_dir():
+                continue
+            # 跳过 __pycache__ 目录
+            if skill_dir.name == "__pycache__":
+                continue
+            # 只同步以 frago- 开头的 skill
+            if not skill_dir.name.startswith("frago-"):
+                continue
+
+            # 检查是否包含 SKILL.md
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.exists():
+                continue
+
+            skill_name = skill_dir.name
+
+            # 如果指定了 pattern，进行匹配
+            if pattern:
+                if not fnmatch.fnmatch(skill_name, pattern):
+                    continue
+
+            skills.append(skill_dir)
+
+        return skills
+
+    def list_synced(self) -> list[Path]:
+        """列出已同步到 resources 的 Skill 目录"""
+        synced = []
+
+        if not self.target_dir.exists():
+            return synced
+
+        for skill_dir in self.target_dir.iterdir():
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                synced.append(skill_dir)
+
+        return synced
+
+    def clean(
+        self,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        """
+        清理目标目录中不存在于源目录的 Skill
+
+        Args:
+            dry_run: 如果为 True，仅显示将要删除的目录，不实际执行
+
+        Returns:
+            被删除（或将要删除）的目录列表
+        """
+        removed = []
+
+        for target_dir in self.list_synced():
+            skill_name = target_dir.name
+            source_dir = self.source_dir / skill_name
+
+            if not source_dir.exists():
+                if not dry_run:
+                    shutil.rmtree(target_dir)
+                removed.append(target_dir)
+
+        return removed

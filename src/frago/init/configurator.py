@@ -478,6 +478,14 @@ def display_config_summary(config: Config) -> str:
 
     lines.append("")
 
+    # 同步仓库
+    if config.sync_repo_url:
+        lines.append(f"  同步仓库:     {config.sync_repo_url}")
+    else:
+        lines.append("  同步仓库:     未配置")
+
+    lines.append("")
+
     # CCR 状态
     if config.ccr_enabled:
         lines.append("  CCR:          已启用")
