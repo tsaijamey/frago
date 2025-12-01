@@ -1,6 +1,6 @@
 # Frago - Multi-Runtime Automation Infrastructure
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
@@ -407,7 +407,7 @@ See [Roadmap](https://github.com/tsaijamey/frago/blob/main/docs/roadmap.md) and 
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/tsaijamey/frago/blob/main/LICENSE) file
+AGPL-3.0 License - see [LICENSE](https://github.com/tsaijamey/frago/blob/main/LICENSE) file
 
 ## Author
 
