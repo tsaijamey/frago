@@ -210,6 +210,7 @@ class CurrentRunContext(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=50)
     last_accessed: datetime
     theme_description: str = Field(..., min_length=1, max_length=500)
+    projects_dir: Optional[str] = Field(default=None, description="projects 目录绝对路径")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CurrentRunContext":
@@ -222,8 +223,11 @@ class CurrentRunContext(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
-        return {
+        result = {
             "run_id": self.run_id,
             "last_accessed": self.last_accessed.isoformat().replace("+00:00", "Z"),
             "theme_description": self.theme_description,
         }
+        if self.projects_dir:
+            result["projects_dir"] = self.projects_dir
+        return result

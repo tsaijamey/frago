@@ -265,10 +265,12 @@ def _get_projects_dir() -> Path:
 
     优先级：
     1. 当前目录下的 projects/（如果存在 run context）
-    2. ~/.frago/config.json 中的 working_directory + /projects
-    3. 当前目录下的 projects/（fallback）
+    2. ~/.frago/current_project（全局 context）
+    3. ~/.frago/config.json 中的 working_directory + /projects
+    4. 当前目录下的 projects/（fallback）
     """
     cwd = Path.cwd()
+    home_frago = Path.home() / ".frago"
 
     # 先尝试当前目录
     try:
@@ -277,6 +279,24 @@ def _get_projects_dir() -> Path:
         ctx_mgr = ContextManager(cwd, projects_dir)
         ctx_mgr.get_current_run()  # 检查是否有活跃 context
         return projects_dir
+    except Exception:
+        pass
+
+    # 检查全局 ~/.frago/current_project
+    try:
+        from ..run.context import ContextManager
+        global_current_project = home_frago / "current_project"
+        if global_current_project.exists():
+            # 读取 current_project 获取 projects_dir 路径
+            import json
+            content = global_current_project.read_text().strip()
+            if content:
+                data = json.loads(content)
+                projects_dir_str = data.get("projects_dir")
+                if projects_dir_str:
+                    projects_dir = Path(projects_dir_str)
+                    if projects_dir.exists():
+                        return projects_dir
     except Exception:
         pass
 
