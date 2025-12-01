@@ -96,6 +96,7 @@ def deploy_commands(
     部署 commands 到系统目录
 
     仓库中存储 frago.dev.*.md 格式，部署时去掉 .dev 后缀。
+    同时同步 frago/ 子目录（规则和指南）。
     避免覆盖用户自有命令。
 
     Args:
@@ -116,6 +117,7 @@ def deploy_commands(
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
+    # 同步 frago.dev.*.md 文件
     for src_file in source_dir.glob(DEV_COMMANDS_PATTERN):
         if not src_file.is_file():
             continue
@@ -133,6 +135,36 @@ def deploy_commands(
         if not dry_run:
             shutil.copy2(src_file, target_file)
         installed.append(f"{src_file.name} → {runtime_name}")
+
+    # 同步 frago/ 子目录（规则和指南）
+    frago_source = source_dir / "frago"
+    frago_target = target_dir / "frago"
+
+    if frago_source.exists() and frago_source.is_dir():
+        needs_update = force or not frago_target.exists()
+
+        if not needs_update:
+            # 检查是否有更新的文件
+            for src_file in frago_source.rglob("*"):
+                if src_file.is_file():
+                    rel_path = src_file.relative_to(frago_source)
+                    target_file = frago_target / rel_path
+                    if not target_file.exists() or src_file.stat().st_mtime > target_file.stat().st_mtime:
+                        needs_update = True
+                        break
+
+        if needs_update:
+            if not dry_run:
+                if frago_target.exists():
+                    shutil.rmtree(frago_target)
+                shutil.copytree(
+                    frago_source,
+                    frago_target,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+            installed.append("frago/ (规则和指南)")
+        else:
+            skipped.append("frago/ (规则和指南)")
 
     return installed, skipped
 

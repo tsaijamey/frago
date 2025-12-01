@@ -69,6 +69,7 @@ def sync_commands_to_repo(
     同步 commands 到仓库目录
 
     系统目录中是 frago.*.md，同步到仓库转换为 frago.dev.*.md。
+    同时同步 frago/ 子目录（规则和指南）。
 
     Args:
         source_dir: 源目录 (~/.claude/commands/)
@@ -88,6 +89,7 @@ def sync_commands_to_repo(
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
+    # 同步 frago.*.md 文件
     for src_file in source_dir.glob(COMMANDS_PATTERN):
         if not src_file.is_file():
             continue
@@ -104,6 +106,36 @@ def sync_commands_to_repo(
         if not dry_run:
             shutil.copy2(src_file, target_file)
         synced.append(f"{src_file.name} → {dev_name}")
+
+    # 同步 frago/ 子目录（规则和指南）
+    frago_source = source_dir / "frago"
+    frago_target = target_dir / "frago"
+
+    if frago_source.exists() and frago_source.is_dir():
+        needs_update = force or not frago_target.exists()
+
+        if not needs_update:
+            # 检查是否有更新的文件
+            for src_file in frago_source.rglob("*"):
+                if src_file.is_file():
+                    rel_path = src_file.relative_to(frago_source)
+                    target_file = frago_target / rel_path
+                    if not target_file.exists() or src_file.stat().st_mtime > target_file.stat().st_mtime:
+                        needs_update = True
+                        break
+
+        if needs_update:
+            if not dry_run:
+                if frago_target.exists():
+                    shutil.rmtree(frago_target)
+                shutil.copytree(
+                    frago_source,
+                    frago_target,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+            synced.append("frago/ (规则和指南)")
+        else:
+            skipped.append("frago/ (规则和指南)")
 
     return synced, skipped
 
