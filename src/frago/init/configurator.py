@@ -25,7 +25,7 @@ PRESET_ENDPOINTS = {
     "deepseek": {
         "display_name": "DeepSeek (deepseek-chat)",
         "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-        "ANTHROPIC_MODEL": "deepseek-chat",
+        "ANTHROPIC_MODEL": "deepseek-reason",
         "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-chat",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
@@ -426,14 +426,21 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         click.echo(f"\n❌ 写入配置失败: {e}")
         click.echo("   请检查 ~/.claude/ 目录权限")
 
-    # frago 配置只记录 auth_method，实际 API 配置在 ~/.claude/settings.json
+    # 创建 APIEndpoint 对象用于 frago 配置
+    if endpoint_type == "custom":
+        api_endpoint = APIEndpoint(type="custom", api_key=api_key, url=custom_url)
+    else:
+        # 预设端点类型
+        api_endpoint = APIEndpoint(type=endpoint_type, api_key=api_key, url=None)
+
+    # 更新 frago 配置
     if existing_config:
         data = existing_config.model_dump()
         data["auth_method"] = "custom"
-        data["api_endpoint"] = None  # 不在 frago 配置中存储
+        data["api_endpoint"] = api_endpoint
         return Config(**data)
     else:
-        return Config(auth_method="custom")
+        return Config(auth_method="custom", api_endpoint=api_endpoint)
 
 
 def display_config_summary(config: Config) -> str:
