@@ -7,7 +7,8 @@ from typing import Optional
 import click
 
 from frago.recipes import RecipeRegistry, RecipeRunner, OutputHandler
-from frago.recipes.exceptions import RecipeError
+from frago.recipes.exceptions import RecipeError, MetadataParseError, RecipeValidationError
+from frago.recipes.metadata import parse_metadata_file, validate_metadata
 
 
 @click.group(name='recipe')
@@ -42,14 +43,15 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
     try:
         registry = RecipeRegistry()
         registry.scan()
-        
+
         # 过滤 Recipe
-        recipes = registry.list_all()
-        
         if source != 'all':
-            source_label = source.capitalize()
-            recipes = [r for r in recipes if r.source == source_label]
-        
+            # 指定来源时，直接从该来源获取配方
+            recipes = registry.get_by_source(source)
+        else:
+            # 未指定来源时，返回每个配方的最高优先级版本
+            recipes = registry.list_all()
+
         if recipe_type != 'all':
             recipes = [r for r in recipes if r.metadata.type == recipe_type]
         
@@ -111,18 +113,24 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
 @recipe_group.command(name='info')
 @click.argument('name')
 @click.option(
+    '--source',
+    type=click.Choice(['project', 'user', 'example'], case_sensitive=False),
+    default=None,
+    help='指定配方来源（默认按优先级自动选择）'
+)
+@click.option(
     '--format',
     'output_format',
     type=click.Choice(['text', 'json', 'yaml'], case_sensitive=False),
     default='text',
     help='输出格式'
 )
-def recipe_info(name: str, output_format: str):
+def recipe_info(name: str, source: Optional[str], output_format: str):
     """显示指定 Recipe 的详细信息"""
     try:
         registry = RecipeRegistry()
         registry.scan()
-        recipe = registry.find(name)
+        recipe = registry.find(name, source=source)
         
         if output_format == 'json':
             # 获取示例文件列表
@@ -239,6 +247,12 @@ def recipe_info(name: str, output_format: str):
 @recipe_group.command(name='run')
 @click.argument('name')
 @click.option(
+    '--source',
+    type=click.Choice(['project', 'user', 'example'], case_sensitive=False),
+    default=None,
+    help='指定配方来源（默认按优先级自动选择）'
+)
+@click.option(
     '--params',
     type=str,
     default='{}',
@@ -273,6 +287,7 @@ def recipe_info(name: str, output_format: str):
 )
 def run_recipe(
     name: str,
+    source: Optional[str],
     params: str,
     params_file: Optional[str],
     env_vars: tuple,
@@ -320,7 +335,8 @@ def run_recipe(
             params_dict,
             output_target,
             output_options,
-            env_overrides=env_overrides if env_overrides else None
+            env_overrides=env_overrides if env_overrides else None,
+            source=source
         )
         
         # 处理输出
@@ -443,3 +459,139 @@ def copy_recipe(name: str, force: bool):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+@recipe_group.command('validate')
+@click.argument('path', type=click.Path(exists=True))
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['text', 'json'], case_sensitive=False),
+    default='text',
+    help='输出格式'
+)
+def validate_recipe(path: str, output_format: str):
+    """
+    验证配方目录的字段完整性和正确性
+
+    PATH 可以是：
+    - 配方目录路径（包含 recipe.md 和脚本文件）
+    - recipe.md 文件路径
+    """
+    recipe_path = Path(path)
+
+    # 确定 recipe.md 和配方目录
+    if recipe_path.is_file():
+        if recipe_path.name != 'recipe.md':
+            click.echo(f"错误: 指定的文件不是 recipe.md: {recipe_path.name}", err=True)
+            sys.exit(1)
+        metadata_path = recipe_path
+        recipe_dir = recipe_path.parent
+    else:
+        # 目录形式
+        metadata_path = recipe_path / 'recipe.md'
+        recipe_dir = recipe_path
+        if not metadata_path.exists():
+            click.echo(f"错误: 配方目录中未找到 recipe.md: {recipe_dir}", err=True)
+            sys.exit(1)
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    metadata = None
+
+    # 1. 解析元数据
+    try:
+        metadata = parse_metadata_file(metadata_path)
+    except MetadataParseError as e:
+        errors.append(f"元数据解析失败: {e.reason}")
+
+    # 2. 验证元数据字段
+    if metadata:
+        try:
+            validate_metadata(metadata)
+        except RecipeValidationError as e:
+            errors.extend(e.errors)
+
+    # 3. 检查脚本文件
+    if metadata:
+        script_extensions = {
+            'chrome-js': '.js',
+            'python': '.py',
+            'shell': '.sh'
+        }
+        ext = script_extensions.get(metadata.runtime, '')
+        script_path = recipe_dir / f"recipe{ext}"
+
+        if not script_path.exists():
+            errors.append(f"脚本文件不存在: recipe{ext}（runtime: {metadata.runtime}）")
+        else:
+            # 检查脚本是否为空
+            content = script_path.read_text(encoding='utf-8').strip()
+            if not content:
+                errors.append(f"脚本文件为空: recipe{ext}")
+
+            # 检查脚本基本语法（可选的简单检查）
+            if metadata.runtime == 'python':
+                try:
+                    compile(content, str(script_path), 'exec')
+                except SyntaxError as e:
+                    errors.append(f"Python 语法错误: {e.msg} (行 {e.lineno})")
+            elif metadata.runtime == 'chrome-js':
+                # JavaScript 简单检查：是否包含基本结构
+                if 'return' not in content and 'console' not in content:
+                    warnings.append("JavaScript 脚本未包含 return 语句或 console 输出")
+
+    # 4. 检查 examples 目录（可选）
+    examples_dir = recipe_dir / 'examples'
+    if examples_dir.exists():
+        example_files = list(examples_dir.glob('*'))
+        if not example_files:
+            warnings.append("examples 目录存在但为空")
+
+    # 5. 检查依赖（如果是 workflow）
+    if metadata and metadata.type == 'workflow' and metadata.dependencies:
+        registry = RecipeRegistry()
+        registry.scan()
+        for dep in metadata.dependencies:
+            if dep not in registry.recipes:
+                errors.append(f"依赖的配方不存在: {dep}")
+
+    # 输出结果
+    is_valid = len(errors) == 0
+
+    if output_format == 'json':
+        result = {
+            "valid": is_valid,
+            "path": str(recipe_dir),
+            "name": metadata.name if metadata else None,
+            "type": metadata.type if metadata else None,
+            "runtime": metadata.runtime if metadata else None,
+            "errors": errors,
+            "warnings": warnings,
+        }
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        # text 格式
+        if is_valid:
+            click.echo(f"✓ 配方验证通过: {recipe_dir}")
+            if metadata:
+                click.echo(f"  名称: {metadata.name}")
+                click.echo(f"  类型: {metadata.type}")
+                click.echo(f"  运行时: {metadata.runtime}")
+            if warnings:
+                click.echo()
+                click.echo("⚠ 警告:")
+                for w in warnings:
+                    click.echo(f"  • {w}")
+        else:
+            click.echo(f"✗ 配方验证失败: {recipe_dir}", err=True)
+            click.echo()
+            click.echo("错误:")
+            for e in errors:
+                click.echo(f"  • {e}", err=True)
+            if warnings:
+                click.echo()
+                click.echo("警告:")
+                for w in warnings:
+                    click.echo(f"  • {w}")
+            sys.exit(1)

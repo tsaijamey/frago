@@ -40,7 +40,8 @@ class RecipeRunner:
         output_target: str = 'stdout',
         output_options: dict[str, Any] | None = None,
         env_overrides: dict[str, str] | None = None,
-        workflow_context: WorkflowContext | None = None
+        workflow_context: WorkflowContext | None = None,
+        source: str | None = None
     ) -> dict[str, Any]:
         """
         执行指定的 Recipe
@@ -52,6 +53,7 @@ class RecipeRunner:
             output_options: 输出选项（如 file 需要 'path'）
             env_overrides: CLI --env 参数提供的环境变量覆盖
             workflow_context: Workflow 执行上下文（用于跨 Recipe 共享环境变量）
+            source: 指定配方来源 ('project' | 'user' | 'example')，为 None 时按优先级选择
 
         Returns:
             执行结果字典，格式:
@@ -72,8 +74,8 @@ class RecipeRunner:
         params = params or {}
         output_options = output_options or {}
 
-        # 查找 Recipe
-        recipe = self.registry.find(name)
+        # 查找 Recipe（支持指定来源）
+        recipe = self.registry.find(name, source=source)
 
         # 验证参数
         self._validate_params(recipe.metadata, params)
@@ -171,15 +173,43 @@ class RecipeRunner:
         Raises:
             RecipeExecutionError: 执行失败
         """
+        # 如果有参数，先注入到 window.__FRAGO_PARAMS__
+        if params:
+            params_json = json.dumps(params)
+            inject_cmd = [
+                'uv', 'run', 'frago', 'exec-js',
+                f'window.__FRAGO_PARAMS__ = {params_json}'
+            ]
+            try:
+                inject_result = subprocess.run(
+                    inject_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                    env=env
+                )
+                if inject_result.returncode != 0:
+                    raise RecipeExecutionError(
+                        recipe_name=recipe_name,
+                        runtime='chrome-js',
+                        exit_code=inject_result.returncode,
+                        stderr=f"参数注入失败: {inject_result.stderr}"
+                    )
+            except subprocess.TimeoutExpired:
+                raise RecipeExecutionError(
+                    recipe_name=recipe_name,
+                    runtime='chrome-js',
+                    exit_code=-1,
+                    stderr="参数注入超时"
+                )
+
         # 构建命令：uv run frago exec-js <script_path> --return-value
         cmd = [
             'uv', 'run', 'frago', 'exec-js',
             str(script_path),
             '--return-value'
         ]
-
-        # 如果有参数，需要注入到脚本中（chrome-js 暂不支持参数传递）
-        # 这里我们直接执行脚本，参数传递留给后续版本
 
         try:
             result = subprocess.run(
