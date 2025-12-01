@@ -2,6 +2,7 @@
 # Whitelist for PyPI distribution
 
 commands:
+  - frago.dev.agent.md
   - frago.dev.run.md
   - frago.dev.exec.md
   - frago.dev.recipe.md
