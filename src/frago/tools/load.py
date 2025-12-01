@@ -1,10 +1,10 @@
 """
-Load 模块 - 从当前项目目录加载资源到系统目录
+Load 模块 - 从系统目录加载资源到当前项目目录
 
-从当前目录的 .claude/ 和 examples/ 加载 frago 相关内容，
-安装到 ~/.claude 和 ~/.frago/recipes。
+从 ~/.claude 和 ~/.frago/recipes 加载 frago 相关内容，
+安装到当前项目的 .claude/ 和 examples/ 目录。
 
-用于在项目目录下快速加载项目特定的命令和配方。
+用于在新项目中快速初始化 frago 资源。
 """
 
 import shutil
@@ -20,8 +20,8 @@ SYSTEM_COMMANDS_DIR = SYSTEM_CLAUDE_DIR / "commands"
 SYSTEM_SKILLS_DIR = SYSTEM_CLAUDE_DIR / "skills"
 SYSTEM_RECIPES_DIR = SYSTEM_FRAGO_DIR / "recipes"
 
-# 项目目录模式
-PROJECT_COMMANDS_PATTERN = "frago.*.md"
+# 同步配置：仅同步 frago.* 开头的命令
+COMMANDS_PATTERN = "frago.*.md"
 
 
 @dataclass
@@ -39,18 +39,19 @@ class LoadResult:
 
 def load_commands(
     project_dir: Path,
-    target_dir: Path = SYSTEM_COMMANDS_DIR,
+    source_dir: Path = SYSTEM_COMMANDS_DIR,
     force: bool = False,
     dry_run: bool = False,
 ) -> tuple[List[str], List[str]]:
     """
-    从项目目录加载 commands 到系统目录
+    从系统目录加载 commands 到项目目录
 
-    加载 .claude/commands/frago.*.md 和 .claude/commands/frago/ 目录。
+    加载 ~/.claude/commands/frago.*.md 和 ~/.claude/commands/frago/ 目录
+    到项目的 .claude/commands/
 
     Args:
         project_dir: 项目根目录
-        target_dir: 目标目录 (~/.claude/commands/)
+        source_dir: 源目录 (~/.claude/commands/)
         force: 是否强制覆盖已存在文件
         dry_run: 仅预览不执行
 
@@ -60,15 +61,15 @@ def load_commands(
     loaded = []
     skipped = []
 
-    source_dir = project_dir / ".claude" / "commands"
     if not source_dir.exists():
         return loaded, skipped
 
+    target_dir = project_dir / ".claude" / "commands"
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
     # 加载 frago.*.md 文件
-    for src_file in source_dir.glob(PROJECT_COMMANDS_PATTERN):
+    for src_file in source_dir.glob(COMMANDS_PATTERN):
         if not src_file.is_file():
             continue
 
@@ -117,16 +118,16 @@ def load_commands(
 
 def load_skills(
     project_dir: Path,
-    target_dir: Path = SYSTEM_SKILLS_DIR,
+    source_dir: Path = SYSTEM_SKILLS_DIR,
     force: bool = False,
     dry_run: bool = False,
 ) -> tuple[List[str], List[str]]:
     """
-    从项目目录加载 skills 到系统目录
+    从系统目录加载 skills 到项目目录
 
     Args:
         project_dir: 项目根目录
-        target_dir: 目标目录 (~/.claude/skills/)
+        source_dir: 源目录 (~/.claude/skills/)
         force: 是否强制覆盖已存在文件
         dry_run: 仅预览不执行
 
@@ -136,10 +137,10 @@ def load_skills(
     loaded = []
     skipped = []
 
-    source_dir = project_dir / ".claude" / "skills"
     if not source_dir.exists():
         return loaded, skipped
 
+    target_dir = project_dir / ".claude" / "skills"
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -180,18 +181,16 @@ def load_skills(
 
 def load_recipes(
     project_dir: Path,
-    target_dir: Path = SYSTEM_RECIPES_DIR,
+    source_dir: Path = SYSTEM_RECIPES_DIR,
     force: bool = False,
     dry_run: bool = False,
 ) -> tuple[List[str], List[str]]:
     """
-    从项目目录加载 recipes 到系统目录
-
-    支持 examples/ 目录结构。
+    从系统目录加载 recipes 到项目目录
 
     Args:
         project_dir: 项目根目录
-        target_dir: 目标目录 (~/.frago/recipes/)
+        source_dir: 源目录 (~/.frago/recipes/)
         force: 是否强制覆盖已存在文件
         dry_run: 仅预览不执行
 
@@ -201,10 +200,10 @@ def load_recipes(
     loaded = []
     skipped = []
 
-    source_dir = project_dir / "examples"
     if not source_dir.exists():
         return loaded, skipped
 
+    target_dir = project_dir / "examples"
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -303,7 +302,7 @@ def load(
     """
     主加载函数
 
-    从项目目录加载 frago 资源到系统目录。
+    从系统目录加载 frago 资源到项目目录。
 
     Args:
         project_dir: 项目目录，默认为当前目录

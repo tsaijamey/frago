@@ -1,4 +1,4 @@
-"""load 命令 - 从当前项目目录加载资源到系统目录"""
+"""load 命令 - 从系统目录加载资源到当前项目目录"""
 
 import sys
 from pathlib import Path
@@ -108,25 +108,25 @@ def load_cmd(
     recipes_only: bool,
 ):
     """
-    从当前项目目录加载资源到系统目录
+    从系统目录加载资源到当前项目目录
 
-    从项目的 .claude/ 和 examples/ 目录加载 frago 相关内容，
-    安装到 ~/.claude 和 ~/.frago/recipes。
+    从 ~/.claude 和 ~/.frago/recipes 加载 frago 相关内容，
+    安装到项目的 .claude/ 和 examples/ 目录。
 
     \b
     加载内容:
-      .claude/commands/frago.*.md  →  ~/.claude/commands/
-      .claude/commands/frago/      →  ~/.claude/commands/frago/
-      .claude/skills/*             →  ~/.claude/skills/
-      examples/                    →  ~/.frago/recipes/
+      ~/.claude/commands/frago.*.md  →  .claude/commands/
+      ~/.claude/commands/frago/      →  .claude/commands/frago/
+      ~/.claude/skills/*             →  .claude/skills/
+      ~/.frago/recipes/              →  examples/
 
     \b
     PROJECT_DIR: 项目目录（可选，默认为当前目录）
 
     \b
     示例:
-      frago load                    # 从当前目录加载
-      frago load ~/my-project       # 从指定项目目录加载
+      frago load                    # 加载到当前目录
+      frago load ~/my-project       # 加载到指定项目目录
       frago load --force            # 强制覆盖所有文件
       frago load --dry-run          # 预览将要加载的内容
       frago load --commands-only    # 仅加载 commands
@@ -142,7 +142,7 @@ def load_cmd(
         if dry_run:
             click.echo("=== Dry Run 模式 ===")
 
-        click.echo(f"从项目目录加载: {project_path}")
+        click.echo(f"加载到项目目录: {project_path}")
 
         result = load(
             project_dir=project_path,
