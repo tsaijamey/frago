@@ -1,0 +1,2 @@
+{"type":"tweet","url":"<REAL_TWEET_URL>","author":"@<REAL_USERNAME>","content":"<ACTUAL_TWEET_CONTENT>","scroll_to_text":"<UNIQUE_TEXT_FRAGMENT>"}
+{"type":"comment","parent_url":"<PARENT_TWEET_URL>","url":"<REAL_COMMENT_URL>","author":"@<REAL_USERNAME>","content":"<ACTUAL_COMMENT_CONTENT>","scroll_to_text":"<UNIQUE_TEXT_FRAGMENT>"}
