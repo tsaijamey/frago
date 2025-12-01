@@ -641,7 +641,6 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float 
 
     except CDPError as e:
         _print_msg("失败", f"导航失败: {e}", "navigation", {"url": url, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('click')
@@ -669,7 +668,6 @@ def click_element(ctx, selector: str, wait_timeout: int):
 
     except CDPError as e:
         _print_msg("失败", f"点击失败: {e}", "interaction", {"selector": selector, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('screenshot')
@@ -724,7 +722,6 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
             _print_msg("成功", f"截图保存到: {actual_output_file}", "screenshot", {"file": actual_output_file, "full_page": full_page})
     except CDPError as e:
         _print_msg("失败", f"截图失败: {e}", "screenshot", {"file": output_file, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('exec-js')
@@ -753,7 +750,7 @@ def execute_javascript(ctx, script: str, return_value: bool):
                 script = script_content
             except Exception as e:
                 _print_msg("失败", f"无法读取脚本文件: {e}", "interaction", {"error": str(e)})
-                sys.exit(1)
+                return
 
         with create_session(ctx) as session:
             result = session.evaluate(script, return_by_value=return_value)
@@ -770,7 +767,6 @@ def execute_javascript(ctx, script: str, return_value: bool):
 
     except CDPError as e:
         _print_msg("失败", f"JavaScript执行失败: {e}", "interaction", {"error": str(e)})
-        sys.exit(1)
 
 
 @click.command('get-title')
@@ -784,7 +780,6 @@ def get_title(ctx):
             _print_msg("成功", f"页面标题: {title}", "extraction", {"title": title})
     except CDPError as e:
         _print_msg("失败", f"获取标题失败: {e}", "extraction", {"error": str(e)})
-        sys.exit(1)
 
 
 def _get_run_outputs_dir() -> Path:
@@ -870,11 +865,11 @@ def get_content(ctx, selector: str, desc: Optional[str]):
                 result = json_module.loads(result_str)
             except (json_module.JSONDecodeError, TypeError):
                 _print_msg("失败", f"解析结果失败: {result_str}", "extraction", {"selector": selector})
-                sys.exit(1)
+                return
 
             if result.get('error'):
                 _print_msg("失败", f"找不到元素: {selector}", "extraction", {"selector": selector})
-                sys.exit(1)
+                return
 
             source_url = result.get('source_url', '')
             content = result.get('content', '')
@@ -926,7 +921,6 @@ def get_content(ctx, selector: str, desc: Optional[str]):
                 _print_msg("成功", f"获取内容 ({selector}):\n{formatted_output}", "extraction", log_data)
     except CDPError as e:
         _print_msg("失败", f"获取内容失败: {e}", "extraction", {"selector": selector, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('status')
@@ -947,10 +941,9 @@ def status(ctx):
                 _print_msg("成功", f"WebKit-Version: {chrome_status.get('WebKit-Version', 'unknown')}")
             else:
                 _print_msg("失败", "CDP连接失败")
-                sys.exit(1)
+                return
     except CDPError as e:
         _print_msg("失败", f"状态检查失败: {e}")
-        sys.exit(1)
 
 
 @click.command('scroll')
@@ -979,7 +972,6 @@ def scroll(ctx, distance: int):
 
     except CDPError as e:
         _print_msg("失败", f"滚动失败: {e}", "interaction", {"distance": distance, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('scroll-to')
@@ -1012,7 +1004,7 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
 
     if not selector and not text:
         click.echo("错误: 必须提供 SELECTOR 或 --text 参数", err=True)
-        sys.exit(1)
+        return
 
     try:
         with create_session(ctx) as session:
@@ -1069,11 +1061,10 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
                 _do_perception(session, f"scroll-to-{(text or selector)[:30]}")
             else:
                 _print_msg("失败", f"元素未找到: {display_target}", "interaction", {"selector": selector, "text": text})
-                sys.exit(1)
+                return
 
     except CDPError as e:
         _print_msg("失败", f"滚动到元素失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('wait')
@@ -1088,7 +1079,6 @@ def wait(ctx, seconds: float):
             _print_msg("成功", f"等待 {seconds} 秒完成")
     except CDPError as e:
         _print_msg("失败", f"等待失败: {e}")
-        sys.exit(1)
 
 
 @click.command('zoom')
@@ -1115,7 +1105,6 @@ def zoom(ctx, factor: float):
 
     except CDPError as e:
         _print_msg("失败", f"缩放失败: {e}", "interaction", {"zoom_factor": factor, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('clear-effects')
@@ -1130,7 +1119,6 @@ def clear_effects(ctx):
 
     except CDPError as e:
         _print_msg("失败", f"清除效果失败: {e}", "interaction", {"error": str(e)})
-        sys.exit(1)
 
 
 @click.command('highlight')
@@ -1170,7 +1158,6 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
 
     except CDPError as e:
         _print_msg("失败", f"高亮失败: {e}", "interaction", {"selector": selector, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('pointer')
@@ -1198,7 +1185,6 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool):
 
     except CDPError as e:
         _print_msg("失败", f"显示指针失败: {e}", "interaction", {"selector": selector, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('spotlight')
@@ -1226,7 +1212,6 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool):
 
     except CDPError as e:
         _print_msg("失败", f"聚光灯失败: {e}", "interaction", {"selector": selector, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('annotate')
@@ -1261,7 +1246,6 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
 
     except CDPError as e:
         _print_msg("失败", f"添加标注失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('underline')
@@ -1315,7 +1299,7 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
 
     if not selector and not text:
         click.echo("错误: 必须提供 SELECTOR 或 --text 参数", err=True)
-        sys.exit(1)
+        return
 
     lifetime_ms = 0 if longlife else life_time * 1000
     display_target = f"文本: {text}" if text else selector
@@ -1402,13 +1386,12 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
 
             if result == 'element not found':
                 _print_msg("失败", f"元素未找到: {display_target}", "interaction", {"selector": selector, "text": text})
-                sys.exit(1)
+                return
 
             _print_msg("成功", f"划线元素: {display_target} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "text": text, "color": color, "width": width, "duration": duration})
 
     except CDPError as e:
         _print_msg("失败", f"划线失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
-        sys.exit(1)
 
 
 @click.command('init')
@@ -1453,7 +1436,7 @@ def init(force: bool):
             created.append(str(directory))
         except Exception as e:
             click.echo(f"创建目录失败 {directory}: {e}", err=True)
-            sys.exit(1)
+            return
 
     # 输出结果
     if created:
@@ -1565,7 +1548,7 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
     if not launcher.chrome_path:
         click.echo("错误: 未找到 Chrome 浏览器", err=True)
         click.echo("请安装 Google Chrome 或 Chromium 浏览器", err=True)
-        sys.exit(1)
+        return
 
     click.echo(f"Chrome 路径: {launcher.chrome_path}")
     click.echo(f"Profile 目录: {launcher.profile_dir}")
@@ -1607,7 +1590,6 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
                 launcher.stop()
     else:
         click.echo("✗ Chrome 启动失败", err=True)
-        sys.exit(1)
 
 
 @click.command('chrome-stop')
@@ -1676,7 +1658,6 @@ def list_tabs(ctx):
 
     except Exception as e:
         click.echo(f"获取 tabs 列表失败: {e}", err=True)
-        sys.exit(1)
 
 
 @click.command('switch-tab')
@@ -1713,12 +1694,12 @@ def switch_tab(ctx, tab_id: str):
         if not target:
             click.echo(f"未找到匹配的 tab: {tab_id}", err=True)
             click.echo("使用 list-tabs 命令查看可用的 tabs")
-            sys.exit(1)
+            return
 
         ws_url = target.get('webSocketDebuggerUrl')
         if not ws_url:
             click.echo(f"Tab {tab_id} 没有可用的 WebSocket URL", err=True)
-            sys.exit(1)
+            return
 
         # 发送 Page.bringToFront 命令
         ws = websocket.create_connection(ws_url)
@@ -1728,7 +1709,7 @@ def switch_tab(ctx, tab_id: str):
 
         if 'error' in result:
             click.echo(f"切换失败: {result['error']}", err=True)
-            sys.exit(1)
+            return
 
         _print_msg("成功", f"已切换到 tab: {target.get('title', 'Unknown')}", "tab_switch", {
             "tab_id": target.get('id'),
@@ -1738,4 +1719,3 @@ def switch_tab(ctx, tab_id: str):
 
     except Exception as e:
         click.echo(f"切换 tab 失败: {e}", err=True)
-        sys.exit(1)

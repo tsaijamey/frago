@@ -107,7 +107,6 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
     
     except RecipeError as e:
         click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
 
 
 @recipe_group.command(name='info')
@@ -238,10 +237,9 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
                     click.echo(f"• {example.name}")
             else:
                 click.echo("无")
-    
+
     except RecipeError as e:
         click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
 
 
 @recipe_group.command(name='run')
@@ -353,14 +351,12 @@ def run_recipe(
 
         # 如果执行失败，返回非零退出码
         if not result.get('success'):
-            sys.exit(3)
+            click.echo("配方执行失败", err=True)
 
     except RecipeError as e:
         click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
     except Exception as e:
         click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
 
 
 @recipe_group.command('copy')
@@ -391,7 +387,7 @@ def copy_recipe(name: str, force: bool):
         if recipe.source != 'Example':
             click.echo(f"错误: '{name}' 不是示例 Recipe（来源: {recipe.source}）", err=True)
             click.echo("只能复制示例 Recipe 到用户目录", err=True)
-            sys.exit(1)
+            return
 
         # 确定目标目录
         user_home = Path.home()
@@ -401,13 +397,13 @@ def copy_recipe(name: str, force: bool):
         if not user_recipes_dir.exists():
             click.echo(f"错误: 用户级 Recipe 目录不存在: {user_recipes_dir}", err=True)
             click.echo("请先运行 'frago init' 初始化目录结构", err=True)
-            sys.exit(1)
+            return
 
         # 获取配方目录
         recipe_dir = recipe.base_dir
         if not recipe_dir:
             click.echo(f"错误: 无法确定配方目录", err=True)
-            sys.exit(1)
+            return
 
         # 找到 examples/ 目录
         examples_dir = None
@@ -418,7 +414,7 @@ def copy_recipe(name: str, force: bool):
 
         if not examples_dir:
             click.echo(f"错误: 无法确定示例 Recipe 的目录结构", err=True)
-            sys.exit(1)
+            return
 
         # 计算相对路径（保持目录结构）
         rel_recipe_dir = recipe_dir.relative_to(examples_dir)
@@ -432,7 +428,7 @@ def copy_recipe(name: str, force: bool):
                 click.echo(f"错误: Recipe '{name}' 已存在于用户目录", err=True)
                 click.echo(f"  目录: {dest_recipe_dir}", err=True)
                 click.echo("使用 --force 覆盖现有目录", err=True)
-                sys.exit(1)
+                return
             # 强制覆盖：删除现有目录
             shutil.rmtree(dest_recipe_dir)
 
@@ -453,12 +449,10 @@ def copy_recipe(name: str, force: bool):
 
     except RecipeNotFoundError as e:
         click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
     except Exception as e:
         click.echo(f"错误: {e}", err=True)
         import traceback
         traceback.print_exc()
-        sys.exit(1)
 
 
 @recipe_group.command('validate')
@@ -484,7 +478,7 @@ def validate_recipe(path: str, output_format: str):
     if recipe_path.is_file():
         if recipe_path.name != 'recipe.md':
             click.echo(f"错误: 指定的文件不是 recipe.md: {recipe_path.name}", err=True)
-            sys.exit(1)
+            return
         metadata_path = recipe_path
         recipe_dir = recipe_path.parent
     else:
@@ -493,7 +487,7 @@ def validate_recipe(path: str, output_format: str):
         recipe_dir = recipe_path
         if not metadata_path.exists():
             click.echo(f"错误: 配方目录中未找到 recipe.md: {recipe_dir}", err=True)
-            sys.exit(1)
+            return
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -594,4 +588,3 @@ def validate_recipe(path: str, output_format: str):
                 click.echo("警告:")
                 for w in warnings:
                     click.echo(f"  • {w}")
-            sys.exit(1)

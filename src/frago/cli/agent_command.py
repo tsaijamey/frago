@@ -565,8 +565,8 @@ def agent(
         if process.returncode == 0:
             click.echo("✓ 执行完成")
         else:
-            click.echo(f"✗ 执行失败 (退出码: {process.returncode})", err=True)
-            sys.exit(process.returncode)
+            # 非零退出码不强制退出，Claude CLI 会自适应处理工具错误
+            click.echo(f"⚠ 执行结束 (退出码: {process.returncode})")
 
     except subprocess.TimeoutExpired:
         process.kill()
