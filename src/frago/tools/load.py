@@ -35,6 +35,8 @@ class LoadResult:
     commands_skipped: List[str] = field(default_factory=list)
     skills_skipped: List[str] = field(default_factory=list)
     recipes_skipped: List[str] = field(default_factory=list)
+    commands_cleaned: List[str] = field(default_factory=list)  # 清理的旧文件
+    conflicts: List[str] = field(default_factory=list)  # 本地有未发布的修改
     errors: List[str] = field(default_factory=list)
 
 
@@ -43,7 +45,7 @@ def load_commands(
     source_dir: Path = SYSTEM_COMMANDS_DIR,
     force: bool = False,
     dry_run: bool = False,
-) -> tuple[List[str], List[str]]:
+) -> tuple[List[str], List[str], List[str]]:
     """
     从系统目录加载 commands 到项目目录
 
@@ -57,33 +59,49 @@ def load_commands(
         dry_run: 仅预览不执行
 
     Returns:
-        (loaded, skipped) 元组
+        (loaded, skipped, cleaned) 元组
     """
     loaded = []
     skipped = []
+    cleaned = []
 
     if not source_dir.exists():
-        return loaded, skipped
+        return loaded, skipped, cleaned
 
     target_dir = project_dir / ".claude" / "commands"
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
-    # 加载 frago.*.md 文件
+    # 加载 frago.*.md 文件，重命名为 frago.dev.*.md
     for src_file in source_dir.glob(COMMANDS_PATTERN):
         if not src_file.is_file():
             continue
 
-        target_file = target_dir / src_file.name
+        # frago.run.md -> frago.dev.run.md
+        src_name = src_file.name
+        if src_name.startswith("frago.") and src_name.endswith(".md"):
+            middle = src_name[6:-3]  # 提取 "run", "exec" 等
+            target_name = f"frago.dev.{middle}.md"
+        else:
+            target_name = src_name
+
+        target_file = target_dir / target_name
+
+        # 检查并删除旧命名文件（与源文件同名的文件）
+        old_file = target_dir / src_name
+        if old_file.exists() and old_file != target_file:
+            if not dry_run:
+                old_file.unlink()
+            cleaned.append(src_name)
 
         if target_file.exists() and not force:
             if src_file.stat().st_mtime <= target_file.stat().st_mtime:
-                skipped.append(src_file.name)
+                skipped.append(f"{src_name} → {target_name}")
                 continue
 
         if not dry_run:
             shutil.copy2(src_file, target_file)
-        loaded.append(src_file.name)
+        loaded.append(f"{src_name} → {target_name}")
 
     # 加载 frago/ 子目录
     frago_source = source_dir / "frago"
@@ -114,7 +132,32 @@ def load_commands(
         else:
             skipped.append("frago/ (规则和指南)")
 
-    return loaded, skipped
+    return loaded, skipped, cleaned
+
+
+def _find_local_only_files(source_dir: Path, target_dir: Path) -> List[str]:
+    """
+    查找目标目录中存在但源目录中不存在的文件（本地新增的文件）
+
+    Returns:
+        本地独有文件的相对路径列表
+    """
+    local_only = []
+    if not target_dir.exists():
+        return local_only
+
+    for target_file in target_dir.rglob("*"):
+        if not target_file.is_file():
+            continue
+        if "__pycache__" in str(target_file) or target_file.suffix == ".pyc":
+            continue
+
+        rel_path = target_file.relative_to(target_dir)
+        src_file = source_dir / rel_path
+        if not src_file.exists():
+            local_only.append(str(rel_path))
+
+    return local_only
 
 
 def load_skills(
@@ -122,7 +165,7 @@ def load_skills(
     source_dir: Path = SYSTEM_SKILLS_DIR,
     force: bool = False,
     dry_run: bool = False,
-) -> tuple[List[str], List[str]]:
+) -> tuple[List[str], List[str], List[str]]:
     """
     从系统目录加载 skills 到项目目录
 
@@ -135,13 +178,14 @@ def load_skills(
         dry_run: 仅预览不执行
 
     Returns:
-        (loaded, skipped) 元组
+        (loaded, skipped, conflicts) 元组
     """
     loaded = []
     skipped = []
+    conflicts = []
 
     if not source_dir.exists():
-        return loaded, skipped
+        return loaded, skipped, conflicts
 
     target_dir = project_dir / ".claude" / "skills"
     if not dry_run:
@@ -172,6 +216,12 @@ def load_skills(
             skipped.append(skill_dir.name)
             continue
 
+        # 检测本地独有文件（可能是用户新增但未 publish 的）
+        local_only = _find_local_only_files(skill_dir, target_skill_dir)
+        if local_only and not force:
+            conflicts.append(f"{skill_dir.name}: {', '.join(local_only)}")
+            continue
+
         if not dry_run:
             if target_skill_dir.exists():
                 shutil.rmtree(target_skill_dir)
@@ -182,7 +232,7 @@ def load_skills(
             )
         loaded.append(skill_dir.name)
 
-    return loaded, skipped
+    return loaded, skipped, conflicts
 
 
 def load_recipes(
@@ -334,15 +384,17 @@ def load(
 
         # 加载 commands
         if do_commands:
-            loaded, skipped = load_commands(project_dir, force=force, dry_run=dry_run)
+            loaded, skipped, cleaned = load_commands(project_dir, force=force, dry_run=dry_run)
             result.commands_loaded = loaded
             result.commands_skipped = skipped
+            result.commands_cleaned = cleaned
 
         # 加载 skills
         if do_skills:
-            loaded, skipped = load_skills(project_dir, force=force, dry_run=dry_run)
+            loaded, skipped, conflicts = load_skills(project_dir, force=force, dry_run=dry_run)
             result.skills_loaded = loaded
             result.skills_skipped = skipped
+            result.conflicts.extend(conflicts)
 
         # 加载 recipes
         if do_recipes:
