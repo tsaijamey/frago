@@ -183,34 +183,34 @@ def detect_auth_method() -> Tuple[str, Optional[dict]]:
     检测当前可用的认证方式（按优先级）
 
     优先级：
-    1. Anthropic API Key (环境变量优先)
-    2. AWS Bedrock
-    3. Google Vertex AI
-    4. Claude 订阅
+    1. Claude 订阅（Claude Code 原生登录，最高优先级）
+    2. Anthropic API Key
+    3. AWS Bedrock
+    4. Google Vertex AI
     5. CCR (作为后备)
 
     Returns:
         (认证类型, 认证信息)
     """
-    # 1. 检查 API Key
+    # 1. 检查订阅（Claude Code 原生登录，最高优先级）
+    ok, info = check_subscription_auth()
+    if ok:
+        return AuthType.SUBSCRIPTION, info
+
+    # 2. 检查 API Key
     ok, info = check_api_key_auth()
     if ok:
         return AuthType.API_KEY, info
 
-    # 2. 检查 Bedrock
+    # 3. 检查 Bedrock
     ok, info = check_bedrock_auth()
     if ok:
         return AuthType.BEDROCK, info
 
-    # 3. 检查 Vertex
+    # 4. 检查 Vertex
     ok, info = check_vertex_auth()
     if ok:
         return AuthType.VERTEX, info
-
-    # 4. 检查订阅
-    ok, info = check_subscription_auth()
-    if ok:
-        return AuthType.SUBSCRIPTION, info
 
     # 5. 检查 CCR（作为后备方案）
     ok, info = check_ccr_auth()
@@ -657,12 +657,12 @@ def agent_status():
 
     click.echo()
 
-    # 检查各种认证方式
+    # 检查各种认证方式（按优先级排序）
     checks = [
+        ("Claude 订阅", check_subscription_auth),
         ("Anthropic API Key", check_api_key_auth),
         ("AWS Bedrock", check_bedrock_auth),
         ("Google Vertex AI", check_vertex_auth),
-        ("Claude 订阅", check_subscription_auth),
         ("CCR (Claude Code Router)", check_ccr_auth),
     ]
 
