@@ -15,10 +15,13 @@ from frago.tools.load import (
 def _format_result(result: LoadResult, dry_run: bool) -> None:
     """格式化输出加载结果"""
     action_word = "将要加载" if dry_run else "已加载"
+    clean_word = "将要清理" if dry_run else "已清理"
 
     # Commands
-    if result.commands_loaded or result.commands_skipped:
+    if result.commands_loaded or result.commands_skipped or result.commands_cleaned:
         click.echo("\n📦 Commands")
+        for name in result.commands_cleaned:
+            click.echo(f"  🗑 {clean_word}: {name}")
         for name in result.commands_loaded:
             click.echo(f"  ✓ {action_word}: {name}")
         for name in result.commands_skipped:
@@ -39,6 +42,12 @@ def _format_result(result: LoadResult, dry_run: bool) -> None:
             click.echo(f"  ✓ {action_word}: {name}")
         for name in result.recipes_skipped:
             click.echo(f"  - 跳过: {name}")
+
+    # Conflicts（本地有未发布的修改）
+    if result.conflicts:
+        click.echo("\n⚠️  冲突（本地有未发布的修改，使用 --force 强制覆盖）:")
+        for conflict in result.conflicts:
+            click.echo(f"  {conflict}")
 
     # 错误
     if result.errors:
@@ -62,7 +71,10 @@ def _format_result(result: LoadResult, dry_run: bool) -> None:
     if dry_run:
         click.echo(f"(Dry Run) 将要加载 {total_loaded} 项，跳过 {total_skipped} 项")
     elif result.success:
-        click.echo(f"✅ 加载完成: {total_loaded} 项加载，{total_skipped} 项跳过")
+        summary = f"✅ 加载完成: {total_loaded} 项加载，{total_skipped} 项跳过"
+        if result.conflicts:
+            summary += f"，{len(result.conflicts)} 项冲突"
+        click.echo(summary)
     else:
         click.echo("❌ 加载失败", err=True)
 
