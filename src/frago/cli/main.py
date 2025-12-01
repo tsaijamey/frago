@@ -43,6 +43,7 @@ from .deploy_command import deploy_cmd
 from .publish_command import publish_cmd
 from .load_command import dev_load_cmd
 from .update_command import update
+from .agent_command import agent, agent_status
 
 
 # 命令分组定义
@@ -54,7 +55,7 @@ COMMAND_GROUPS = OrderedDict([
     ("页面操作", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
     ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
     ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),
-    ("自动化", ["recipe", "run"]),
+    ("自动化", ["recipe", "run", "agent", "agent-status"]),
 ])
 
 
@@ -236,6 +237,10 @@ cli.add_command(recipe_group)
 
 # Run 命令系统
 cli.add_command(run_group)
+
+# Agent 命令
+cli.add_command(agent)
+cli.add_command(agent_status)
 
 
 def main():
