@@ -87,7 +87,7 @@ def publish_commands(
     """
     发布 commands 到系统目录
 
-    将 frago.dev.*.md 发布为 frago.*.md。
+    将 frago.dev.*.md 发布为 frago.*.md，同时同步 frago/ 子目录。
 
     Args:
         source_dir: 源目录 (开发环境的 .claude/commands/)
@@ -107,6 +107,7 @@ def publish_commands(
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1. 发布 frago.dev.*.md 文件（重命名为 frago.*.md）
     for src_file in source_dir.glob(DEV_COMMANDS_PATTERN):
         if not src_file.is_file():
             continue
@@ -123,6 +124,71 @@ def publish_commands(
         if not dry_run:
             shutil.copy2(src_file, target_file)
         published.append(f"{src_file.name} → {target_name}")
+
+    # 2. 同步 frago/ 子目录（包含规则、指南、脚本等）
+    frago_subdir = source_dir / "frago"
+    if frago_subdir.exists() and frago_subdir.is_dir():
+        target_frago_subdir = target_dir / "frago"
+        _pub, _skip = _sync_directory(
+            frago_subdir, target_frago_subdir, "frago/", force, dry_run
+        )
+        published.extend(_pub)
+        skipped.extend(_skip)
+
+    return published, skipped
+
+
+def _sync_directory(
+    source_dir: Path,
+    target_dir: Path,
+    prefix: str,
+    force: bool,
+    dry_run: bool,
+) -> tuple[List[str], List[str]]:
+    """
+    同步目录内容
+
+    Args:
+        source_dir: 源目录
+        target_dir: 目标目录
+        prefix: 显示前缀（用于日志）
+        force: 是否强制覆盖
+        dry_run: 仅预览不执行
+
+    Returns:
+        (published, skipped) 元组
+    """
+    published = []
+    skipped = []
+
+    if not source_dir.exists():
+        return published, skipped
+
+    # 遍历源目录中的所有文件
+    for src_file in source_dir.rglob("*"):
+        if not src_file.is_file():
+            continue
+        if "__pycache__" in str(src_file) or src_file.suffix == ".pyc":
+            continue
+
+        rel_path = src_file.relative_to(source_dir)
+        target_file = target_dir / rel_path
+        display_path = f"{prefix}{rel_path}"
+
+        needs_update = force or not target_file.exists()
+
+        if not needs_update:
+            if src_file.stat().st_mtime > target_file.stat().st_mtime:
+                needs_update = True
+
+        if not needs_update:
+            skipped.append(display_path)
+            continue
+
+        if not dry_run:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, target_file)
+        published.append(display_path)
 
     return published, skipped
 

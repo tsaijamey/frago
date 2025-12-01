@@ -113,6 +113,7 @@ def publish_cmd(
     \b
     发布内容:
       .claude/commands/frago.dev.*.md  →  ~/.claude/commands/frago.*.md
+      .claude/commands/frago/          →  ~/.claude/commands/frago/
       .claude/skills/*                 →  ~/.claude/skills/
       examples/                        →  ~/.frago/recipes/
 
