@@ -6,10 +6,10 @@
 
 ```bash
 # 使用 pip
-pip install frago
+pip install frago-cli
 
 # 使用 uv（推荐）
-uv add frago
+uv tool install frago-cli
 ```
 
 **核心功能包含**：
@@ -113,10 +113,10 @@ frago publish && frago sync
 
 ```bash
 # 使用 pip
-pip install frago[clipboard]
+pip install frago-cli[clipboard]
 
 # 使用 uv
-uv add "frago[clipboard]"
+uv tool install "frago-cli[clipboard]"
 ```
 
 **提供的额外功能**：
@@ -131,10 +131,10 @@ uv add "frago[clipboard]"
 
 ```bash
 # 使用 pip
-pip install frago[all]
+pip install frago-cli[all]
 
 # 使用 uv
-uv add "frago[all]"
+uv tool install "frago-cli[all]"
 ```
 
 ---
@@ -218,10 +218,10 @@ frago --help
 
 ```bash
 # 使用 pip
-pip install --upgrade frago
+pip install --upgrade frago-cli
 
 # 使用 uv
-uv add --upgrade frago
+uv tool upgrade frago-cli
 ```
 
 ---
@@ -230,8 +230,8 @@ uv add --upgrade frago
 
 ```bash
 # 使用 pip
-pip uninstall frago
+pip uninstall frago-cli
 
 # 使用 uv
-uv remove frago
+uv tool uninstall frago-cli
 ```

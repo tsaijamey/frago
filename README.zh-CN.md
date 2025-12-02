@@ -159,9 +159,9 @@ Frago:       Python → CDP → Chrome                  (~2MB)
 
 ```bash
 # 基础安装（核心功能）
-pip install frago
+pip install frago-cli
 # 或使用 uv（推荐）
-uv add frago
+uv tool install frago-cli
 
 # 初始化环境（检查依赖、配置认证、安装资源）
 frago init

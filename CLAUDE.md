@@ -39,7 +39,10 @@ Bash/Shell Script (POSIX兼容): Follow standard conventions
 
 ## 前置约定
 
-**frago 已通过 `uv tool install frago-cli` 安装为全局命令。**
+**frago 命令来自 PyPI 包 `frago-cli`，通过 `uv tool install frago-cli` 安装。**
+
+- **PyPI 包名**: `frago-cli`
+- **命令名称**: `frago`
 
 所有示例使用 `frago <command>` 格式。如果提示 `command not found`：
 

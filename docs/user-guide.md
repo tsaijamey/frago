@@ -61,10 +61,10 @@ See [Installation Guide](installation.md) for detailed instructions.
 **Quick Start**:
 ```bash
 # Using uv (recommended)
-uv add frago
+uv tool install frago-cli
 
 # Using pip
-pip install frago
+pip install frago-cli
 
 # Verify installation
 frago --version

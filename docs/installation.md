@@ -8,10 +8,10 @@ Install core features (CDP operations + Recipe system core):
 
 ```bash
 # Using pip
-pip install frago
+pip install frago-cli
 
 # Using uv (recommended)
-uv add frago
+uv tool install frago-cli
 ```
 
 **Core features include**:
@@ -115,10 +115,10 @@ If you need to output Recipe results to clipboard:
 
 ```bash
 # Using pip
-pip install frago[clipboard]
+pip install frago-cli[clipboard]
 
 # Using uv
-uv add "frago[clipboard]"
+uv tool install "frago-cli[clipboard]"
 ```
 
 **Additional features provided**:
@@ -133,10 +133,10 @@ Install all features:
 
 ```bash
 # Using pip
-pip install frago[all]
+pip install frago-cli[all]
 
 # Using uv
-uv add "frago[all]"
+uv tool install "frago-cli[all]"
 ```
 
 ---
@@ -220,10 +220,10 @@ frago --help
 
 ```bash
 # Using pip
-pip install --upgrade frago
+pip install --upgrade frago-cli
 
 # Using uv
-uv add --upgrade frago
+uv tool upgrade frago-cli
 ```
 
 ---
@@ -232,8 +232,8 @@ uv add --upgrade frago
 
 ```bash
 # Using pip
-pip uninstall frago
+pip uninstall frago-cli
 
 # Using uv
-uv remove frago
+uv tool uninstall frago-cli
 ```
