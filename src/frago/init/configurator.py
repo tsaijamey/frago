@@ -98,24 +98,33 @@ def validate_endpoint_url(url: str) -> bool:
 
 def prompt_endpoint_type() -> str:
     """
-    提示用户选择端点类型
+    提示用户选择端点类型（使用交互菜单）
 
     Returns:
         端点类型：deepseek, aliyun, kimi, minimax, custom
     """
-    click.echo("\n支持的 API 端点:")
-    for key, config in PRESET_ENDPOINTS.items():
-        click.echo(f"  - {key:8} : {config['display_name']}")
-    click.echo("  - custom   : 自定义端点\n")
+    from frago.init.ui import ask_question
 
-    choices = list(PRESET_ENDPOINTS.keys()) + ["custom"]
-    endpoint_type = click.prompt(
-        "端点类型",
-        type=click.Choice(choices, case_sensitive=False),
-        default="deepseek",
+    # 构建选项列表
+    options = []
+    for key, config in PRESET_ENDPOINTS.items():
+        options.append({
+            "label": key,
+            "description": config['display_name']
+        })
+    options.append({
+        "label": "custom",
+        "description": "Custom endpoint with manual URL configuration"
+    })
+
+    answer = ask_question(
+        question="Which API endpoint do you want to use?",
+        header="API Endpoint",
+        options=options,
+        default_index=0  # deepseek
     )
 
-    return endpoint_type.lower()
+    return answer.lower()
 
 
 def prompt_api_key(endpoint_name: Optional[str] = None) -> str:
@@ -244,8 +253,7 @@ def get_config_path() -> Path:
     Returns:
         配置文件路径 (~/.frago/config.json)
     """
-    home = Path(os.environ.get("HOME", Path.home()))
-    return home / ".frago" / "config.json"
+    return Path.home() / ".frago" / "config.json"
 
 
 def config_exists() -> bool:
@@ -336,27 +344,31 @@ def save_config(config: Config, config_file: Optional[Path] = None) -> None:
 
 def prompt_auth_method() -> str:
     """
-    提示用户选择认证方式
+    提示用户选择认证方式（使用 AskUserQuestion 交互菜单）
 
     Returns:
         "official" 或 "custom"
     """
-    click.echo("\n🔐 Claude Code 认证配置:\n")
-    click.echo("  1. default - 保持当前配置（用户自行登录或已有配置）")
-    click.echo("  2. custom  - 通过 Frago 配置新的 API 端点\n")
-    click.echo("  💡 提示: 如果你已安装 Claude Code 并完成登录，选择 default 即可")
-    click.echo("          如果需要使用第三方 API（如 Deepseek），选择 custom\n")
+    from frago.init.ui import ask_question
 
-    choice = click.prompt(
-        "选择",
-        type=click.Choice(["default", "custom"], case_sensitive=False),
-        default="default",
-        show_choices=True,
-        show_default=True,
+    answer = ask_question(
+        question="How do you want to configure Claude Code authentication?",
+        header="Authentication",
+        options=[
+            {
+                "label": "Default",
+                "description": "Keep current configuration (user manages login/API key)"
+            },
+            {
+                "label": "Custom",
+                "description": "Configure a third-party API endpoint (e.g., DeepSeek, Kimi)"
+            }
+        ],
+        default_index=0
     )
 
-    # 映射 default -> official（内部仍使用 official 表示不干预）
-    return "official" if choice.lower() == "default" else "custom"
+    # 映射 Default -> official（内部仍使用 official 表示不干预）
+    return "official" if answer == "Default" else "custom"
 
 
 def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
@@ -445,7 +457,7 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
 
 def display_config_summary(config: Config) -> str:
     """
-    生成配置摘要字符串
+    生成配置摘要字符串（简洁版，仅核心信息）
 
     Args:
         config: Config 对象
@@ -453,58 +465,38 @@ def display_config_summary(config: Config) -> str:
     Returns:
         格式化的配置摘要字符串
     """
-    lines = ["当前配置:", ""]
+    items = []
 
     # 依赖信息
     if config.node_version:
-        lines.append(f"  Node.js:      {config.node_version}")
+        items.append(("Node.js", config.node_version))
     if config.claude_code_version:
-        lines.append(f"  Claude Code:  {config.claude_code_version}")
-
-    lines.append("")
+        items.append(("Claude Code", config.claude_code_version))
 
     # 认证信息
     if config.auth_method == "official":
-        lines.append("  认证方式:     用户自行配置")
+        items.append(("Authentication", "User configured"))
     else:
-        lines.append("  认证方式:     Frago 配置的 API 端点")
-        if config.api_endpoint:
-            lines.append(f"  端点类型:     {config.api_endpoint.type}")
-            if config.api_endpoint.url:
-                lines.append(f"  端点 URL:     {config.api_endpoint.url}")
-            # 隐藏 API Key
-            lines.append("  API Key:      ****已配置****")
-
-    lines.append("")
+        endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
+        items.append(("Authentication", f"Frago managed ({endpoint_type})"))
 
     # 工作目录
-    if config.working_directory:
-        lines.append(f"  工作目录:     {config.working_directory}")
-    else:
-        lines.append("  工作目录:     当前运行目录")
-
-    lines.append("")
-
-    # 同步仓库
-    if config.sync_repo_url:
-        lines.append(f"  同步仓库:     {config.sync_repo_url}")
-    else:
-        lines.append("  同步仓库:     未配置")
-
-    lines.append("")
-
-    # CCR 状态
-    if config.ccr_enabled:
-        lines.append("  CCR:          已启用")
-    else:
-        lines.append("  CCR:          未启用")
+    workdir = config.working_directory or "current directory"
+    items.append(("Working Directory", workdir))
 
     # 初始化状态
-    lines.append("")
-    if config.init_completed:
-        lines.append("  状态:         ✅ 初始化完成")
-    else:
-        lines.append("  状态:         ⚠️ 初始化未完成")
+    status = "Completed" if config.init_completed else "Incomplete"
+    items.append(("Status", status))
+
+    # 格式化输出
+    if not items:
+        return ""
+
+    max_key_len = max(len(k) for k, _ in items)
+    lines = []
+    for key, value in items:
+        padded_key = key.ljust(max_key_len)
+        lines.append(f"  {padded_key}  {value}")
 
     return "\n".join(lines)
 
@@ -516,7 +508,8 @@ def prompt_config_update() -> bool:
     Returns:
         True 如果用户选择更新
     """
-    return click.confirm("\n是否需要更新配置?", default=False)
+    click.echo()
+    return click.confirm("Update configuration?", default=False)
 
 
 def select_config_items_to_update() -> List[str]:
@@ -634,46 +627,53 @@ def format_final_summary(config: Config) -> str:
 
 def prompt_working_directory() -> Optional[str]:
     """
-    提示用户选择工作目录
+    提示用户选择工作目录（使用交互菜单）
 
     Returns:
         工作目录绝对路径，选择 current 时返回 None（使用当前目录）
     """
     import os
+    from frago.init.ui import ask_question
 
     cwd = os.getcwd()
 
-    click.echo("\n📁 工作目录配置:")
-    click.echo(f"   工作目录用于存储 projects/ 和相关数据")
-    click.echo(f"   当前目录: {cwd}\n")
-
-    choice = click.prompt(
-        "选择工作目录",
-        type=click.Choice(["current", "custom"], case_sensitive=False),
-        default="current",
-        show_choices=True,
+    answer = ask_question(
+        question=f"Where should Frago store project data?\nCurrent directory: {cwd}",
+        header="Working Directory",
+        options=[
+            {
+                "label": "Current",
+                "description": "Use current directory (default)"
+            },
+            {
+                "label": "Custom",
+                "description": "Specify a custom absolute path"
+            }
+        ],
+        default_index=0
     )
 
-    if choice.lower() == "current":
+    if answer == "Current":
         return None  # None 表示使用当前运行目录
 
     # 用户输入自定义路径
     while True:
-        path = click.prompt("输入绝对路径", type=str)
+        click.echo()
+        path = click.prompt("Enter absolute path", type=str)
         path = os.path.expanduser(path)  # 展开 ~
 
         if not os.path.isabs(path):
-            click.echo("❌ 请输入绝对路径（以 / 或 ~ 开头）")
+            click.secho("Error: Path must be absolute (start with / or ~)", fg="red")
             continue
 
         # 检查路径是否存在，不存在则询问是否创建
         if not os.path.exists(path):
-            if click.confirm(f"目录不存在，是否创建 {path}?", default=True):
+            if click.confirm(f"Directory does not exist. Create {path}?", default=True):
                 try:
                     os.makedirs(path, exist_ok=True)
-                    click.echo(f"✅ 已创建目录: {path}")
+                    click.secho(f"Created directory: {path}", fg="green")
                 except Exception as e:
-                    click.echo(f"❌ 创建目录失败: {e}")
+                    click.secho(f"Failed to create directory: {e}", fg="red")
                     continue
             else:
                 continue

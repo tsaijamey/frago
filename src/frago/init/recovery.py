@@ -30,8 +30,7 @@ def get_temp_state_path() -> Path:
     Returns:
         临时状态文件路径 (~/.frago/.init_state.json)
     """
-    home = Path(os.environ.get("HOME", Path.home()))
-    return home / ".frago" / ".init_state.json"
+    return Path.home() / ".frago" / ".init_state.json"
 
 
 def load_temp_state() -> Optional[TemporaryState]:

@@ -102,6 +102,12 @@ from frago.init.resources import (
     format_install_summary,
     format_resources_status,
 )
+from frago.init.ui import (
+    spinner_context,
+    print_section,
+    print_summary,
+    ProgressReporter,
+)
 
 
 @click.command("init")
@@ -160,7 +166,7 @@ def init(
 
     # 打印彩色 banner
     print_banner()
-    click.echo("🚀 Frago 环境初始化\n")
+    print_section("Frago Environment Initialization")
 
     # 加载现有配置
     existing_config = load_config() if config_exists() else None
@@ -170,17 +176,21 @@ def init(
     if not skip_deps:
         deps_satisfied = _check_and_install_dependencies(non_interactive)
     else:
-        click.echo("⏭️  跳过依赖检查\n")
+        click.secho("Skipped dependency check", dim=True)
+        click.echo()
 
     # 2. 安装资源文件（Claude Code 命令和示例 recipe）
     resources_success = False
     if deps_satisfied and not skip_resources:
         resources_success = _install_resources(force_update=update_resources)
     elif skip_resources:
-        click.echo("⏭️  跳过资源安装\n")
+        click.secho("Skipped resource installation", dim=True)
+        click.echo()
 
     # 3. 配置流程
     if deps_satisfied:
+        if not non_interactive:
+            click.echo()  # 空行分隔
         config = _handle_configuration(existing_config, non_interactive)
 
         # 4. 更新资源安装状态并保存配置
@@ -191,27 +201,62 @@ def init(
             config.resources_installed = True
             config.resources_version = __version__
             config.last_resource_update = datetime.now()
-        save_config(config)
+
+        with spinner_context("Saving configuration", "Configuration saved"):
+            save_config(config)
 
         # 5. 显示完成摘要
-        click.echo("\n" + display_config_summary(config))
-        click.echo("\n✅ 初始化完成\n")
+        _print_completion_summary(config)
 
     sys.exit(InitErrorCode.SUCCESS)
+
+
+def _print_completion_summary(config: Config) -> None:
+    """
+    打印初始化完成摘要（uv 风格）
+
+    Args:
+        config: 配置对象
+    """
+    print_section("Initialization Complete")
+
+    items = []
+
+    # 依赖信息
+    if config.node_version:
+        items.append(("Node.js", config.node_version))
+    if config.claude_code_version:
+        items.append(("Claude Code", config.claude_code_version))
+
+    # 认证方式
+    if config.auth_method == "official":
+        items.append(("Authentication", "User configured"))
+    else:
+        endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
+        items.append(("Authentication", f"Frago managed ({endpoint_type})"))
+
+    # 工作目录
+    workdir = config.working_directory or "current directory"
+    items.append(("Working Directory", workdir))
+
+    print_summary(items, "Configuration")
+
+    click.secho("Run 'frago --help' to get started", fg="cyan")
+    click.echo()
 
 
 def _show_current_config() -> None:
     """显示当前配置和资源状态"""
     if not config_exists():
-        click.echo("\n⚠️  尚未初始化，运行 'frago init' 开始配置\n")
-        # 即使未初始化，也显示资源状态
-        click.echo(format_resources_status() + "\n")
+        print_section("Frago Configuration")
+        click.secho("Not initialized. Run 'frago init' to configure.", dim=True)
+        click.echo()
         return
 
     config = load_config()
-    click.echo("\n" + display_config_summary(config))
+    print_section("Frago Configuration")
+    click.echo(display_config_summary(config))
     click.echo()
-    click.echo(format_resources_status() + "\n")
 
 
 def _handle_reset() -> None:
@@ -221,22 +266,27 @@ def _handle_reset() -> None:
     删除现有配置，允许重新初始化
     """
     if not config_exists():
-        click.echo("ℹ️  没有现有配置需要重置\n")
+        click.secho("No configuration to reset", dim=True)
+        click.echo()
         return
 
     config = load_config()
-    click.echo("\n⚠️  即将重置以下配置:")
+    print_section("Reset Configuration")
+    click.secho("The following configuration will be removed:", fg="yellow")
+    click.echo()
     click.echo(display_config_summary(config))
+    click.echo()
 
-    if not click.confirm("\n确认重置?", default=False):
-        click.echo("\n已取消重置")
+    if not click.confirm("Confirm reset?", default=False):
+        click.secho("Reset cancelled", dim=True)
         sys.exit(InitErrorCode.USER_CANCELLED)
 
     # 删除配置文件
     config_path = get_config_path()
     if config_path.exists():
         config_path.unlink()
-        click.echo("\n✅ 配置已重置\n")
+        click.secho("Configuration reset successfully", fg="green")
+        click.echo()
 
 
 def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
@@ -249,11 +299,18 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
     Returns:
         True 如果所有依赖已满足
     """
-    click.echo("正在检查依赖...")
-    results = parallel_dependency_check()
+    with spinner_context("Checking dependencies", "Resolved dependencies") as reporter:
+        results = parallel_dependency_check()
 
     # 显示检查结果
-    click.echo(format_check_results(results))
+    reporter = ProgressReporter()
+    for name, result in results.items():
+        if result.installed:
+            version = result.version or "unknown"
+            reporter.item_added(name, version)
+        else:
+            reporter.item_error(name, "not found")
+
     click.echo()
 
     # 获取缺失的依赖
@@ -262,7 +319,6 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
     if missing:
         _handle_missing_dependencies(results, missing, non_interactive)
 
-    click.echo("✅ 所有依赖已满足\n")
     return True
 
 
@@ -282,17 +338,17 @@ def _handle_configuration(
     """
     # 非交互模式：使用默认配置（官方认证）
     if non_interactive:
-        click.echo("📝 使用默认配置（非交互模式）\n")
+        click.secho("Using default configuration", dim=True)
         if existing_config:
             return existing_config
         return Config(auth_method="official")
 
     if existing_config and existing_config.init_completed:
-        # 已有完整配置，询问是否更新
+        # 已有完整配置，显示摘要并询问是否更新
+        print_section("Current Configuration")
         click.echo(display_config_summary(existing_config))
 
         if not prompt_config_update():
-            click.echo("\n保持现有配置")
             return existing_config
 
         # 用户选择更新，警告认证方式切换
@@ -301,13 +357,13 @@ def _handle_configuration(
 
         if config.auth_method != current_method:
             if not warn_auth_switch(current_method, config.auth_method):
-                click.echo("\n已取消更新")
+                click.secho("Configuration update cancelled", dim=True)
                 return existing_config
 
         return config
     else:
         # 新配置或未完成的配置
-        click.echo("📝 配置认证方式\n")
+        print_section("Configuration")
         config = run_auth_configuration(existing_config)
 
         # 配置工作目录
@@ -387,26 +443,44 @@ def _install_resources(force_update: bool = False) -> bool:
 
     在依赖检查后、配置前调用
     """
-    click.echo("📦 安装 Frago 资源文件...\n")
-
     try:
-        status = install_all_resources(force_update=force_update)
+        with spinner_context("Installing resources", "Installed resources") as reporter:
+            status = install_all_resources(force_update=force_update)
 
-        # 显示安装摘要
-        summary = format_install_summary(status)
-        if summary:
-            click.echo(summary)
-            click.echo()
+        # 显示安装详情（uv 风格）
+        reporter = ProgressReporter()
+
+        # Commands
+        if status.commands:
+            for name in status.commands.installed:
+                reporter.item_added(name)
+            for error in status.commands.errors:
+                click.secho(f" ✗ {error}", fg="red")
+
+        # Skills
+        if status.skills:
+            for name in status.skills.installed:
+                reporter.item_added(f"skill/{name}")
+            for name in status.skills.skipped:
+                reporter.item_skipped(f"skill/{name}")
+
+        # Recipes
+        if status.recipes:
+            for name in status.recipes.installed:
+                reporter.item_added(f"recipe/{name}")
+            for name in status.recipes.skipped:
+                reporter.item_skipped(f"recipe/{name}")
+
+        click.echo()
 
         # 检查是否有错误
         if not status.all_success:
-            click.echo("⚠️  部分资源安装失败，请检查错误信息\n")
+            click.secho("Warning: Some resources failed to install", fg="yellow")
             return False
 
         return True
 
     except Exception as e:
-        click.echo(f"❌ 资源安装失败: {e}")
-        click.echo("💡 提示: 请确保您有 ~/.claude/ 和 ~/.frago/ 目录的写入权限")
-        click.echo("   可尝试: mkdir -p ~/.claude/commands ~/.frago/recipes\n")
+        click.secho(f"Error: Resource installation failed - {e}", fg="red", err=True)
+        click.secho("  Ensure write permissions for ~/.claude/ and ~/.frago/", dim=True, err=True)
         return False
