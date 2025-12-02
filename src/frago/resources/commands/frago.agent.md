@@ -10,23 +10,23 @@ description: "智能路由器：分析用户意图，返回应执行的 frago �
 
 | 命令 | 适用场景 | 关键词 |
 |------|---------|--------|
-| `/frago.dev.run` | 探索调研、信息收集、为创建 Recipe 做准备 | 调研、探索、了解、收集、研究 |
-| `/frago.dev.exec` | 一次性任务执行、完成具体目标 | 执行、完成、做、申请、下载、提交 |
-| `/frago.dev.recipe` | 创建可复用的自动化配方 | 创建配方、写 recipe、自动化脚本 |
-| `/frago.dev.test` | 测试验证现有配方 | 测试、验证、检查配方 |
+| `/frago.run` | 探索调研、信息收集、为创建 Recipe 做准备 | 调研、探索、了解、收集、研究 |
+| `/frago.exec` | 一次性任务执行、完成具体目标 | 执行、完成、做、申请、下载、提交 |
+| `/frago.recipe` | 创建可复用的自动化配方 | 创建配方、写 recipe、自动化脚本 |
+| `/frago.test` | 测试验证现有配方 | 测试、验证、检查配方 |
 
 ## 判断规则
 
 1. **探索 vs 执行**：
-   - 用户想"了解"、"调研"、"看看" → `/frago.dev.run`
-   - 用户想"完成"、"执行"、"做" → `/frago.dev.exec`
+   - 用户想"了解"、"调研"、"看看" → `/frago.run`
+   - 用户想"完成"、"执行"、"做" → `/frago.exec`
 
 2. **创建 vs 使用**：
-   - 用户想"创建配方"、"写个自动化" → `/frago.dev.recipe`
-   - 用户想"测试配方"、"验证脚本" → `/frago.dev.test`
+   - 用户想"创建配方"、"写个自动化" → `/frago.recipe`
+   - 用户想"测试配方"、"验证脚本" → `/frago.test`
 
 3. **默认规则**：
-   - 不确定时，选择 `/frago.dev.exec`（大多数用户想完成任务）
+   - 不确定时，选择 `/frago.exec`（大多数用户想完成任务）
 
 ## 输出格式
 
@@ -34,7 +34,7 @@ description: "智能路由器：分析用户意图，返回应执行的 frago �
 
 ```json
 {
-  "command": "/frago.dev.run",
+  "command": "/frago.run",
   "prompt": "用户的原始提示词（保持原样）",
   "reason": "简短说明为什么选择这个命令"
 }
@@ -50,7 +50,7 @@ description: "智能路由器：分析用户意图，返回应执行的 frago �
 ### 输出
 ```json
 {
-  "command": "/frago.dev.exec",
+  "command": "/frago.exec",
   "prompt": "帮我在 Upwork 上找 Python 相关的工作",
   "reason": "用户想完成具体任务：搜索并找到工作"
 }
@@ -66,7 +66,7 @@ description: "智能路由器：分析用户意图，返回应执行的 frago �
 ### 输出
 ```json
 {
-  "command": "/frago.dev.run",
+  "command": "/frago.run",
   "prompt": "调研一下 YouTube 的字幕提取接口怎么用",
   "reason": "用户想探索和了解，不是立即执行"
 }
@@ -82,7 +82,7 @@ description: "智能路由器：分析用户意图，返回应执行的 frago �
 ### 输出
 ```json
 {
-  "command": "/frago.dev.recipe",
+  "command": "/frago.recipe",
   "prompt": "写一个配方，自动提取 Twitter 帖子的评论",
   "reason": "用户明确要创建可复用的配方"
 }

@@ -33,7 +33,49 @@ description: "执行AI主持的复杂浏览器自动化任务并管理run实例"
 
 ## 执行流程
 
-### 0. 确保 Chrome 已启动
+### 0. 环境感知 - 立即获取可用资源
+
+在开始调研前，立刻运行命令了解可用的工具和资源：
+
+```bash
+# 1. 查看 frago 命令帮助
+frago --help
+
+# 2. 筛选相关配方（支持多关键词）
+frago recipe list | grep -E "keyword1|keyword2|keyword3"
+
+# 3. 检查已有项目（避免重复创建）
+frago run list | grep -E "keyword1|keyword2"
+```
+
+**目的**：
+- 发现可复用的配方（避免重新探索）
+- 了解已有调研成果（避免重复工作）
+- 评估任务可行性
+
+### 1. 明确调研目标
+
+**首先理解任务需求**，判断是否需要浏览器：
+
+| 场景 | 是否需要浏览器 | 工具选择 |
+|------|---------------|---------|
+| 网页数据抓取、UI 交互 | ✅ 需要 | CDP 命令、配方 |
+| API 调用、文件处理 | ❌ 不需要 | CLI 工具、Python 脚本 |
+| 混合场景 | ⚠️ 视情况 | 先尝试无浏览器方案 |
+
+**调研目标模板**：
+```markdown
+## 调研目标
+- **主题**：[简洁描述，如 "nano-banana-pro image api"]
+- **数据源**：[API / 网页 / 文件 / 混合]
+- **关键问题**：
+  1. [问题1]
+  2. [问题2]
+```
+
+### 2. 启动浏览器（仅在需要时）
+
+**如果任务涉及网页操作**，再启动浏览器：
 
 ```bash
 # 检查 CDP 连接状态
@@ -42,26 +84,23 @@ frago status
 # 如未连接，启动 Chrome（选择合适的模式）
 frago chrome              # 正常窗口
 frago chrome --headless   # 无头模式
-frago chrome --void       # 虚空模式（窗口移到屏幕外）
 ```
 
-### 1. 明确调研目标
+**提示**：先用 `frago recipe list | grep <关键词>` 查找现成配方，可能无需手动操作浏览器。
 
-```markdown
-## 调研目标
-- **主题**：[简洁描述，如 "nano-banana-pro image api"]
-- **关键问题**：
-  1. [问题1]
-  2. [问题2]
-```
+### 3. 检查现有项目（已在步骤 0 完成）
 
-### 2. 发现现有项目
+如果步骤 0 中发现相关项目，可以复用或参考：
 
 ```bash
-frago run list --format json
+# 查看项目详情
+frago run info <project_id>
+
+# 查看项目日志
+cat projects/<project_id>/logs/execution.jsonl | jq
 ```
 
-### 3. 生成项目 ID
+### 4. 生成项目 ID
 
 **规则**：简洁、可读的英文短句（3-5 词）
 
@@ -70,24 +109,24 @@ frago run list --format json
 | "调研nano banana pro的图片生成接口" | `nano-banana-pro-image-api-research` |
 | "在Upwork上搜索Python职位" | `upwork-python-jobs-search` |
 
-### 4. 初始化并设置上下文
+### 5. 初始化并设置上下文
 
 ```bash
 frago run init "nano-banana-pro image api research"
 frago run set-context nano-banana-pro-image-api-research
 ```
 
-### 5. 执行调研
+### 6. 执行调研
 
 **CDP 命令自动记录日志**，Agent 负责：
 - 手动记录 `_insights`（失败、关键发现）
 - 手动记录 `analysis`、`recipe_execution` 等
 
-### 6. 调研完成标志
+### 7. 调研完成标志
 
 最后一条日志包含 `ready_for_recipe: true` 和 `recipe_spec`。
 
-### 7. 释放上下文
+### 8. 释放上下文
 
 ```bash
 frago run release
@@ -144,19 +183,51 @@ frago run log \
 
 ## 输出约束
 
-### 允许的输出
+### 必须的输出
 
-| 输出物 | 用途 |
-|--------|------|
-| `execution.jsonl` | 探索过程记录 |
-| `scripts/test_*.{py,js,sh}` | 验证脚本 |
-| `screenshots/*.png` | 关键步骤截图 |
-| Recipe 草稿（在日志中） | 调研结论 |
-| 符合用户期望的结论文档 | 调研成果 |
+| 输出物 | 位置 | 说明 |
+|--------|------|------|
+| **调研报告** | `outputs/report.md` | **必须生成**，包含调研结论、关键发现、数据摘要 |
+| `execution.jsonl` | `logs/` | 探索过程记录（自动生成） |
+
+### 可选的输出
+
+| 输出物 | 位置 | 用途 |
+|--------|------|------|
+| `scripts/test_*.{py,js,sh}` | `scripts/` | 验证脚本 |
+| `screenshots/*.png` | `screenshots/` | 关键步骤截图 |
+| `outputs/*.json` | `outputs/` | 结构化数据 |
+| Recipe 草稿 | 在日志 `_insights` 中 | 调研结论 |
 
 ### 禁止的输出
 
-- ❌ 其他无关的总结文档
+- ❌ 工作空间外的文件
+- ❌ 无关的总结文档
+
+### 报告生成要求
+
+调研完成时，**必须**在 `outputs/report.md` 生成报告，包含：
+
+```markdown
+# [调研主题] 调研报告
+
+## 调研目标
+[原始调研问题]
+
+## 关键发现
+1. [发现1]
+2. [发现2]
+...
+
+## 数据摘要
+[收集到的关键数据]
+
+## 结论
+[调研结论]
+
+## 建议
+[后续行动建议，如是否创建 Recipe]
+```
 
 ---
 

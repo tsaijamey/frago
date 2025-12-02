@@ -297,7 +297,7 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
         non_interactive: 非交互模式
 
     Returns:
-        True 如果所有依赖已满足
+        True 如果所有依赖已满足或用户选择跳过安装
     """
     with spinner_context("Checking dependencies", "Resolved dependencies") as reporter:
         results = parallel_dependency_check()
@@ -398,8 +398,9 @@ def _handle_missing_dependencies(
     if non_interactive:
         click.echo("📦 自动安装依赖（非交互模式）\n")
     elif not click.confirm("是否安装缺失的依赖?", default=True):
-        click.echo("\n已取消安装")
-        sys.exit(InitErrorCode.USER_CANCELLED)
+        click.secho("Skipped dependency installation", dim=True)
+        click.echo()
+        return
 
     # 按顺序安装
     node_needed = "node" in missing
