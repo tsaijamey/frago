@@ -11,6 +11,7 @@ Frago Agent Command - 通过 Claude CLI 执行非交互式 AI 任务
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -255,7 +256,6 @@ def parse_routing_response(response_text: str) -> Optional[dict]:
         pass
 
     # 尝试从 markdown code block 中提取
-    import re
     json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
     if json_match:
         try:
@@ -272,6 +272,162 @@ def parse_routing_response(response_text: str) -> Optional[dict]:
             pass
 
     return None
+
+
+# =============================================================================
+# Slash Command 展开
+# =============================================================================
+
+def find_slash_command_file(command: str) -> Optional[Path]:
+    """
+    查找 slash command 对应的 markdown 文件
+
+    命令格式转换规则：
+    - /frago.dev.agent → frago.dev.agent.md（开发环境）
+    - /frago.agent → frago.agent.md（生产环境）
+
+    支持 .dev fallback：
+    - 请求 /frago.dev.agent 时，先找 frago.dev.agent.md
+    - 找不到则 fallback 到 frago.agent.md（去掉 .dev）
+
+    搜索路径优先级（每个路径都尝试 .dev 和非 .dev 版本）：
+    1. 当前工作目录 .claude/commands/
+    2. 用户目录 ~/.claude/commands/
+    3. frago 资源目录（打包的默认命令）
+
+    Args:
+        command: slash command 名称，如 "/frago.dev.agent" 或 "frago.agent"
+
+    Returns:
+        找到的文件路径，或 None
+    """
+    # 规范化命令名：去掉前导 /
+    cmd_name = command.lstrip("/")
+
+    # 生成候选文件名列表
+    # 如果是 .dev 命名，同时生成 .dev 版本和非 .dev 版本
+    filenames = [f"{cmd_name}.md"]
+    if ".dev." in cmd_name:
+        # frago.dev.agent → frago.agent
+        non_dev_name = cmd_name.replace(".dev.", ".")
+        filenames.append(f"{non_dev_name}.md")
+
+    # 搜索目录
+    search_dirs = [
+        Path.cwd() / ".claude" / "commands",
+        Path.home() / ".claude" / "commands",
+    ]
+
+    # 添加 frago 资源目录（打包的默认命令）
+    try:
+        from importlib.resources import files
+        resources_dir = files("frago") / "resources" / "commands"
+        # importlib.resources 返回 Traversable，需要转换
+        if hasattr(resources_dir, '_path'):
+            search_dirs.append(Path(resources_dir._path))
+        else:
+            search_dirs.append(Path(str(resources_dir)))
+    except (ImportError, TypeError):
+        pass
+
+    # 按目录优先级搜索，每个目录内先尝试 .dev 再尝试非 .dev
+    for search_dir in search_dirs:
+        for filename in filenames:
+            path = search_dir / filename
+            if path.exists():
+                return path
+
+    return None
+
+
+def expand_slash_command(command: str, arguments: str = "") -> Tuple[bool, str, str]:
+    """
+    展开 slash command 为完整的 prompt 内容
+
+    处理流程：
+    1. 查找命令文件
+    2. 读取并解析 YAML frontmatter（如果有）
+    3. 替换 $ARGUMENTS 占位符
+
+    Args:
+        command: slash command 名称，如 "/frago.dev.agent"
+        arguments: 用户参数，用于替换 $ARGUMENTS
+
+    Returns:
+        (是否成功, 展开后的内容, 错误信息)
+    """
+    cmd_file = find_slash_command_file(command)
+
+    if not cmd_file:
+        return False, "", f"Slash command not found: {command}"
+
+    try:
+        content = cmd_file.read_text(encoding="utf-8")
+    except IOError as e:
+        return False, "", f"Failed to read command file: {e}"
+
+    # 移除 YAML frontmatter（如果存在）
+    # frontmatter 格式：以 --- 开头和结尾
+    if content.startswith("---"):
+        # 找到第二个 ---
+        second_delimiter = content.find("---", 3)
+        if second_delimiter != -1:
+            content = content[second_delimiter + 3:].lstrip("\n")
+
+    # 替换 $ARGUMENTS 占位符
+    content = content.replace("$ARGUMENTS", arguments)
+
+    return True, content, ""
+
+
+def get_available_slash_commands() -> dict:
+    """
+    获取所有可用的 frago slash commands
+
+    Returns:
+        命令名到描述的映射，如 {"/frago.dev.run": "执行AI主持的..."}
+    """
+    commands = {}
+
+    # 搜索路径
+    search_dirs = [
+        Path.cwd() / ".claude" / "commands",
+        Path.home() / ".claude" / "commands",
+    ]
+
+    for search_dir in search_dirs:
+        if not search_dir.exists():
+            continue
+
+        # 查找 frago.*.md 文件
+        for md_file in search_dir.glob("frago*.md"):
+            cmd_name = "/" + md_file.stem  # frago.dev.run.md → /frago.dev.run
+
+            if cmd_name in commands:
+                continue  # 优先使用先找到的
+
+            # 尝试提取 description
+            try:
+                content = md_file.read_text(encoding="utf-8")
+                if content.startswith("---"):
+                    # 解析 YAML frontmatter
+                    second_delimiter = content.find("---", 3)
+                    if second_delimiter != -1:
+                        frontmatter = content[3:second_delimiter].strip()
+                        # 简单提取 description
+                        for line in frontmatter.split("\n"):
+                            if line.startswith("description:"):
+                                desc = line[12:].strip().strip('"\'')
+                                commands[cmd_name] = desc
+                                break
+                        else:
+                            commands[cmd_name] = ""
+                else:
+                    commands[cmd_name] = ""
+            except IOError:
+                commands[cmd_name] = ""
+
+    return commands
 
 
 # =============================================================================
@@ -416,58 +572,77 @@ def agent(
         # 阶段一：路由分析
         click.echo(f"\n[阶段一] 分析意图: {prompt_text}")
 
-        routing_prompt = f"/frago.agent {prompt_text}"
-
-        if dry_run:
-            click.echo(f"[Dry Run] 路由提示词: {routing_prompt}")
-            click.echo("[Dry Run] 跳过实际执行")
-            return
-
-        click.echo("  正在分析...")
-
-        ok, output, parsed = run_claude_command(
-            routing_prompt,
-            env=env,
-            output_format="json",
-            timeout=60,
-            model=model or "haiku",  # 路由分析用快速模型
-            skip_permissions=skip_permissions
-        )
-
+        # 展开 /frago.dev.agent slash command
+        # 注意：claude -p 模式不支持 slash commands，必须手动展开
+        ok, routing_template, error = expand_slash_command("/frago.dev.agent", prompt_text)
         if not ok:
-            click.echo(f"✗ 路由分析失败: {output}", err=True)
-            return
-
-        # 从 JSON 响应中提取 result
-        result_text = ""
-        if parsed and parsed.get("result"):
-            result_text = parsed.get("result", "")
-        else:
-            result_text = output
-
-        # 解析路由结果
-        routing = parse_routing_response(result_text)
-
-        if not routing or "command" not in routing:
-            click.echo(f"✗ 无法解析路由结果", err=True)
-            click.echo(f"  原始响应: {result_text[:500]}", err=True)
-            # 降级：直接执行
+            click.echo(f"✗ 无法加载路由命令: {error}", err=True)
             click.echo("  降级为直接执行模式...")
             target_command = None
             final_prompt = prompt_text
         else:
-            target_command = routing.get("command")
-            final_prompt = routing.get("prompt", prompt_text)
-            reason = routing.get("reason", "")
+            routing_prompt = routing_template
 
-            click.echo(f"  ✓ 路由到: {target_command}")
-            if reason:
-                click.echo(f"  原因: {reason}")
+            if dry_run:
+                click.echo(f"[Dry Run] 路由提示词长度: {len(routing_prompt)} 字符")
+                click.echo("[Dry Run] 跳过实际执行")
+                return
+
+            click.echo("  正在分析...")
+
+            ok, output, parsed = run_claude_command(
+                routing_prompt,
+                env=env,
+                output_format="json",
+                timeout=60,
+                model=model or "haiku",  # 路由分析用快速模型
+                skip_permissions=skip_permissions
+            )
+
+            if not ok:
+                click.echo(f"✗ 路由分析失败: {output}", err=True)
+                return
+
+            # 从 JSON 响应中提取 result
+            result_text = ""
+            if parsed and parsed.get("result"):
+                result_text = parsed.get("result", "")
+            else:
+                result_text = output
+
+            # 解析路由结果
+            routing = parse_routing_response(result_text)
+
+            if not routing or "command" not in routing:
+                click.echo(f"✗ 无法解析路由结果", err=True)
+                click.echo(f"  原始响应: {result_text[:500]}", err=True)
+                # 降级：直接执行
+                click.echo("  降级为直接执行模式...")
+                target_command = None
+                final_prompt = prompt_text
+            else:
+                target_command = routing.get("command")
+                final_prompt = routing.get("prompt", prompt_text)
+                reason = routing.get("reason", "")
+
+                click.echo(f"  ✓ 路由到: {target_command}")
+                if reason:
+                    click.echo(f"  原因: {reason}")
 
     # 阶段二：执行实际命令
     if target_command:
-        click.echo(f"\n[阶段二] 执行: {target_command} {final_prompt}")
-        execution_prompt = f"{target_command} {final_prompt}"
+        click.echo(f"\n[阶段二] 执行: {target_command}")
+
+        # 展开目标 slash command
+        # 注意：claude -p 模式不支持 slash commands，必须手动展开
+        ok, expanded_prompt, error = expand_slash_command(target_command, final_prompt)
+        if not ok:
+            click.echo(f"✗ 无法加载命令 {target_command}: {error}", err=True)
+            click.echo("  降级为直接执行用户提示词...")
+            execution_prompt = final_prompt
+        else:
+            execution_prompt = expanded_prompt
+            click.echo(f"  ✓ 已展开命令 ({len(execution_prompt)} 字符)")
     else:
         click.echo(f"\n[执行] {final_prompt}")
         execution_prompt = final_prompt

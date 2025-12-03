@@ -12,10 +12,13 @@ from frago.tools.publish import publish, PublishResult, get_project_root
 def _format_result(result: PublishResult, dry_run: bool) -> None:
     """格式化输出发布结果"""
     action_word = "将要发布" if dry_run else "已发布"
+    delete_word = "将要删除" if dry_run else "已删除"
 
     # Commands
-    if result.commands_published or result.commands_skipped:
+    if result.commands_published or result.commands_skipped or result.commands_deleted:
         click.echo("\n📦 Commands")
+        for name in result.commands_deleted:
+            click.echo(f"  ✗ {delete_word}: {name}")
         for name in result.commands_published:
             click.echo(f"  ✓ {action_word}: {name}")
         for name in result.commands_skipped:
@@ -54,12 +57,19 @@ def _format_result(result: PublishResult, dry_run: bool) -> None:
         + len(result.skills_skipped)
         + len(result.recipes_skipped)
     )
+    total_deleted = len(result.commands_deleted)
 
     click.echo()
     if dry_run:
-        click.echo(f"(Dry Run) 将要发布 {total_published} 项，跳过 {total_skipped} 项")
+        summary = f"(Dry Run) 将要发布 {total_published} 项，跳过 {total_skipped} 项"
+        if total_deleted:
+            summary += f"，删除 {total_deleted} 项"
+        click.echo(summary)
     elif result.success:
-        click.echo(f"✅ 发布完成: {total_published} 项发布，{total_skipped} 项跳过")
+        summary = f"✅ 发布完成: {total_published} 项发布，{total_skipped} 项跳过"
+        if total_deleted:
+            summary += f"，{total_deleted} 项删除"
+        click.echo(summary)
     else:
         click.echo("❌ 发布失败", err=True)
 
@@ -69,7 +79,7 @@ def _format_result(result: PublishResult, dry_run: bool) -> None:
     "--force",
     "-f",
     is_flag=True,
-    help="强制覆盖所有已存在文件",
+    help="完全替换模式：强制覆盖所有文件，并删除目标目录中不存在于源的 frago*.md 文件",
 )
 @click.option(
     "--dry-run",
