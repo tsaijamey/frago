@@ -49,15 +49,15 @@ description: "创建可复用的浏览器操作配方脚本（支持 Atomic 和 
 
 ```bash
 # 执行操作
-frago click '[aria-label="提交"]'
+frago chrome click '[aria-label="提交"]'
 
 # 等待
-frago wait 0.5
+frago chrome wait 0.5
 
 # 验证结果
-frago screenshot /tmp/step1.png
+frago chrome screenshot /tmp/step1.png
 # 或验证元素
-frago exec-js "document.querySelector('.success') !== null" --return-value
+frago chrome exec-js "document.querySelector('.success') !== null" --return-value
 ```
 
 **关键**：每步必须验证结果

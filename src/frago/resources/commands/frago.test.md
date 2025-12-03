@@ -59,8 +59,8 @@ frago recipe validate <配方目录>
 frago status
 
 # 检查当前页面
-frago exec-js "window.location.href" --return-value
-frago get-title
+frago chrome exec-js "window.location.href" --return-value
+frago chrome get-title
 ```
 
 **如果页面不符合前置条件，中止测试并提示用户导航。**
@@ -72,7 +72,7 @@ frago get-title
 frago recipe run <recipe_name> --output-file result.json
 
 # 传统方式（chrome-js）
-frago exec-js examples/atomic/chrome/<recipe_name>/recipe.js --return-value
+frago chrome exec-js examples/atomic/chrome/<recipe_name>/recipe.js --return-value
 ```
 
 ### 6. 结果验证
@@ -146,15 +146,15 @@ frago recipe validate <配方目录>
 frago recipe validate <配方目录> --format json
 
 # 检查状态
-frago status
-frago exec-js "window.location.href" --return-value
+frago chrome status
+frago chrome exec-js "window.location.href" --return-value
 
 # 执行配方
 frago recipe run <name>
 frago recipe run <name> --output-file result.json
 
 # 直接执行 chrome-js
-frago exec-js examples/atomic/chrome/<name>/recipe.js --return-value
+frago chrome exec-js examples/atomic/chrome/<name>/recipe.js --return-value
 ```
 
 ---
