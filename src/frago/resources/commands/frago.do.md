@@ -2,7 +2,7 @@
 description: "执行一次性的复杂任务（使用完整的frago工具集）"
 ---
 
-# /frago.exec - 执行复杂任务
+# /frago.do - 执行复杂任务
 
 一次性任务执行，专注于任务完成。
 
@@ -16,7 +16,7 @@ description: "执行一次性的复杂任务（使用完整的frago工具集）"
 | **规则** | [TOOL_PRIORITY.md](frago/rules/TOOL_PRIORITY.md) | 工具优先级 |
 | **规则** | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md) | 工作空间管理 |
 | **指南** | [LOGGING_GUIDE.md](frago/guides/LOGGING_GUIDE.md) | 日志系统 |
-| **示例** | [exec_workflow.sh](frago/scripts/exec_workflow.sh) | 工作流示例 |
+| **示例** | [do_workflow.sh](frago/scripts/do_workflow.sh) | 工作流示例 |
 | **示例** | [common_commands.sh](frago/scripts/common_commands.sh) | 通用命令 |
 
 ---
@@ -27,7 +27,7 @@ description: "执行一次性的复杂任务（使用完整的frago工具集）"
 |------|------|
 | **目标** | 完成用户指定的具体任务 |
 | **成功标准** | 任务目标达成 + 结果可验证 |
-| **区别** | `/frago.run` 专注于探索调研，本命令专注于任务完成 |
+| **区别** | `/frago.run` 专注于探索调研，`/frago.do` 专注于任务完成 |
 
 ---
 

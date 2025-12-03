@@ -1,6 +1,6 @@
 #!/bin/bash
-# Exec 命令工作流示例
-# 适用于: /frago.exec（一次性任务执行）
+# Do 命令工作流示例
+# 适用于: /frago.do（一次性任务执行）
 
 # === 1. 明确输出格式（如用户未指定，需先询问）===
 # 使用 AskUserQuestion 工具确认输出格式：
@@ -14,15 +14,15 @@ frago run set-context upwork-python-job-apply
 
 # === 3. 执行任务 ===
 # 导航（自动记录）
-frago navigate "https://upwork.com/jobs"
+frago chrome navigate "https://upwork.com/jobs"
 
 # 搜索
-frago exec-js "document.querySelector('input[type=search]').value = 'Python'" --return-value
-frago click 'button[type=submit]'
-frago wait 2
+frago chrome exec-js "document.querySelector('input[type=search]').value = 'Python'" --return-value
+frago chrome click 'button[type=submit]'
+frago chrome wait 2
 
 # 提取数据
-frago exec-js "Array.from(document.querySelectorAll('.job-tile')).map(el => ({
+frago chrome exec-js "Array.from(document.querySelectorAll('.job-tile')).map(el => ({
   title: el.querySelector('.title')?.textContent,
   url: el.querySelector('a')?.href,
   rate: el.querySelector('.rate')?.textContent
