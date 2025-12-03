@@ -552,7 +552,7 @@ uv run frago --debug recipe run <recipe_name> --params '{...}'
 [DEBUG] RecipeRegistry: Scanning path /home/user/.frago/recipes
 [DEBUG] RecipeRegistry: Found 5 Recipes
 [DEBUG] RecipeRunner: Selected executor ChromeJSExecutor
-[DEBUG] ChromeJSExecutor: Executing command: uv run frago exec-js ...
+[DEBUG] ChromeJSExecutor: Executing command: frago chrome exec-js ...
 [DEBUG] ChromeJSExecutor: Exit code: 0
 {
   "success": true,
@@ -910,7 +910,7 @@ None
 #### Old Method (Direct `exec-js` Call)
 
 ```bash
-uv run frago exec-js src/frago/recipes/upwork_extract_job.js
+frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 ```
 
 #### New Method

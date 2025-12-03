@@ -126,11 +126,11 @@ AI 自动识别意图 → 匹配 `youtube_extract_video_transcript` Recipe → �
 uv run frago run init "排查登录页面布局偏移问题"
 
 # 2. 执行一系列操作（上下文自动关联到当前 Run）
-uv run frago navigate https://staging.example.com/login
-uv run frago exec-js "window.innerWidth"
-uv run frago screenshot before_click.png
-uv run frago click "#login-btn"
-uv run frago screenshot after_click.png
+frago chrome navigate https://staging.example.com/login
+frago chrome exec-js "window.innerWidth"
+frago chrome screenshot before_click.png
+frago chrome click "#login-btn"
+frago chrome screenshot after_click.png
 
 # 3. 记录人工观察结果
 uv run frago run log \

@@ -90,19 +90,19 @@ The Run system provides persistent context management for AI agents, recording c
 
 ```bash
 # 1. Create new Run instance
-uv run frago run init "Research YouTube subtitle extraction methods"
+frago run init "Research YouTube subtitle extraction methods"
 # Output: Created Run instance: youtube-subtitle-research-abc123
 
 # 2. Set as current working context (optional)
-uv run frago run set-context youtube-subtitle-research-abc123
+frago run set-context youtube-subtitle-research-abc123
 
 # 3. Execute operations (automatically logged to current Run)
-uv run frago navigate https://youtube.com/watch?v=...
-uv run frago screenshot initial_page.png
-uv run frago click 'button[aria-label="Show transcript"]'
+frago chrome navigate https://youtube.com/watch?v=...
+frago chrome screenshot initial_page.png
+frago chrome click 'button[aria-label="Show transcript"]'
 
 # 4. Manually log observations or analysis
-uv run frago run log \
+frago run log \
   --step "Located transcript button selector" \
   --status "success" \
   --action-type "dom_inspection" \
@@ -110,13 +110,13 @@ uv run frago run log \
   --data '{"selector": "button[aria-label=\"Show transcript\"]", "reliable": true}'
 
 # 5. View Run details and history
-uv run frago run info youtube-subtitle-research-abc123
+frago run info youtube-subtitle-research-abc123
 
 # 6. List all Run instances
-uv run frago run list
+frago run list
 
 # 7. Archive completed Run
-uv run frago run archive youtube-subtitle-research-abc123
+frago run archive youtube-subtitle-research-abc123
 ```
 
 ### Run Instance Directory Structure
@@ -155,7 +155,7 @@ AI agents can automatically find relevant Run instances using fuzzy matching:
 ```bash
 # User says: "Continue researching YouTube subtitle extraction"
 # AI executes:
-uv run frago run list --format json
+frago run list --format json
 
 # AI uses RapidFuzz to match "YouTube subtitle extraction" against existing Run topics
 # Finds: youtube-subtitle-research-abc123 (95% match)
@@ -166,34 +166,34 @@ uv run frago run list --format json
 
 ## CDP Command Usage Guide
 
-All CDP functionality is accessed through a unified CLI interface (`uv run frago <command>`).
+All CDP functionality is accessed through a unified CLI interface (`frago chrome <command>`).
 
 ### Basic CDP Commands
 
 ```bash
 # Navigate to webpage
-uv run frago navigate <url>
+frago chrome navigate <url>
 
 # Click element
-uv run frago click <selector>
+frago chrome click <selector>
 
 # Execute JavaScript and return result
-uv run frago exec-js <expression> --return-value
+frago chrome exec-js <expression> --return-value
 
 # Take screenshot
-uv run frago screenshot <output_file>
+frago chrome screenshot <output_file>
 
 # Scroll page
-uv run frago scroll <direction> <pixels>
+frago chrome scroll <direction> <pixels>
 
 # Wait for condition
-uv run frago wait <seconds>
+frago chrome wait <seconds>
 
 # Get page status
-uv run frago status
+frago chrome status
 
 # View all commands
-uv run frago --help
+frago --help
 ```
 
 ### Visual Effects (Optional)
@@ -202,16 +202,16 @@ Add visual guidance to browser operations:
 
 ```bash
 # Spotlight effect (dim surrounding area)
-uv run frago spotlight <selector> --duration 3
+frago chrome spotlight <selector> --duration 3
 
 # Highlight element
-uv run frago highlight <selector> --color "#FF6B6B" --duration 2
+frago chrome highlight <selector> --color "#FF6B6B" --duration 2
 
 # Add annotation
-uv run frago annotate <selector> "Annotation text" --position top
+frago chrome annotate <selector> "Annotation text" --position top
 
 # Pointer indicator
-uv run frago pointer <selector> --duration 2
+frago chrome pointer <selector> --duration 2
 ```
 
 ### Proxy Configuration
@@ -230,12 +230,12 @@ export NO_PROXY=localhost,127.0.0.1
 
 ```bash
 # Use proxy
-uv run frago navigate https://example.com \
+frago chrome navigate https://example.com \
     --proxy-host proxy.example.com \
     --proxy-port 8080
 
 # Bypass proxy
-uv run frago navigate https://example.com --no-proxy
+frago chrome navigate https://example.com --no-proxy
 ```
 
 ### Retry Mechanism
@@ -257,29 +257,29 @@ The Recipe system provides metadata-driven automation script management, designe
 
 ```bash
 # List all available Recipes (table format)
-uv run frago recipe list
+frago recipe list
 
 # List in JSON format (for AI parsing)
-uv run frago recipe list --format json
+frago recipe list --format json
 
 # Filter by source
-uv run frago recipe list --source project   # Project-level only
-uv run frago recipe list --source user      # User-level only
-uv run frago recipe list --source example   # Example-level only
+frago recipe list --source project   # Project-level only
+frago recipe list --source user      # User-level only
+frago recipe list --source example   # Example-level only
 
 # Filter by type
-uv run frago recipe list --type atomic      # Atomic Recipes only
-uv run frago recipe list --type workflow    # Workflow Recipes only
+frago recipe list --type atomic      # Atomic Recipes only
+frago recipe list --type workflow    # Workflow Recipes only
 ```
 
 ### Recipe Information
 
 ```bash
 # View Recipe detailed information
-uv run frago recipe info youtube_extract_video_transcript
+frago recipe info youtube_extract_video_transcript
 
 # View in JSON format (for AI parsing)
-uv run frago recipe info youtube_extract_video_transcript --format json
+frago recipe info youtube_extract_video_transcript --format json
 ```
 
 **Example Output**:
@@ -306,12 +306,12 @@ uv run frago recipe info youtube_extract_video_transcript --format json
 
 ```bash
 # Execute Recipe with parameters
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 
 # Output to clipboard
-uv run frago recipe run upwork_extract_job_details_as_markdown \
+frago recipe run upwork_extract_job_details_as_markdown \
     --params '{"url": "..."}' \
     --output-clipboard
 
@@ -323,11 +323,11 @@ cat > params.json <<EOF
 }
 EOF
 
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params-file params.json
 
 # Set execution timeout
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "..."}' \
     --timeout 300
 ```
@@ -360,7 +360,7 @@ Recipes are discovered in priority order:
 
 ```bash
 # Copy example Recipe to user-level
-uv run frago recipe copy youtube_extract_video_transcript
+frago recipe copy youtube_extract_video_transcript
 
 # Recipe is now at: ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.js
 # Customize as needed
@@ -517,7 +517,7 @@ Error: Recipe 'youtube_extract_subtitles' not found
 ```
 
 **Solutions**:
-1. List available Recipes: `uv run frago recipe list`
+1. List available Recipes: `frago recipe list`
 2. Check Recipe name spelling (exact match required)
 3. Verify metadata file (.md) exists alongside script file
 

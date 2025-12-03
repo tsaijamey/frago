@@ -72,10 +72,10 @@ When an exploration succeeds, the working approach gets solidified into a Recipe
 
 ```bash
 # Traditional approach: No memory between operations
-uv run frago navigate https://youtube.com/watch?v=...
-uv run frago screenshot step1.png  # Where did this file go?
-uv run frago click 'button[aria-label="Show transcript"]'
-uv run frago screenshot step2.png  # Lost context from step1
+frago chrome navigate https://youtube.com/watch?v=...
+frago chrome screenshot step1.png  # Where did this file go?
+frago chrome click 'button[aria-label="Show transcript"]'
+frago chrome screenshot step2.png  # Lost context from step1
 
 # Problems:
 ❌ No connection between operations
@@ -94,8 +94,8 @@ uv run frago run init "Research YouTube subtitle extraction methods"
 # Output: Created Run instance: youtube-subtitle-extraction-abc123
 
 # 2. All subsequent operations automatically link to this Run
-uv run frago navigate https://youtube.com/watch?v=dQw4w9WgXcQ
-uv run frago screenshot step1_initial_page.png
+frago chrome navigate https://youtube.com/watch?v=dQw4w9WgXcQ
+frago chrome screenshot step1_initial_page.png
 # ✅ Screenshot saved to: projects/youtube-subtitle-extraction-abc123/screenshots/
 
 # 3. Record exploration steps with structured logs
@@ -106,8 +106,8 @@ uv run frago run log \
   --execution-method "command" \
   --data '{"selector": "button[aria-label=\"Show transcript\"]"}'
 
-uv run frago click 'button[aria-label="Show transcript"]'
-uv run frago screenshot step2_transcript_opened.png
+frago chrome click 'button[aria-label="Show transcript"]'
+frago chrome screenshot step2_transcript_opened.png
 
 # 4. Save validated script for future use
 cat > projects/youtube-subtitle-extraction-abc123/scripts/extract_transcript.js <<'EOF'
@@ -175,9 +175,9 @@ projects/youtube-subtitle-extraction-abc123/
 uv run frago run init "Find best way to extract Upwork job details"
 
 # Interactive exploration
-uv run frago navigate https://www.upwork.com/freelance-jobs/...
-uv run frago screenshot job_page_layout.png
-uv run frago exec-js 'document.querySelector(".job-title").textContent' --return-value
+frago chrome navigate https://www.upwork.com/freelance-jobs/...
+frago chrome screenshot job_page_layout.png
+frago chrome exec-js 'document.querySelector(".job-title").textContent' --return-value
 
 # Record working approach
 uv run frago run log \

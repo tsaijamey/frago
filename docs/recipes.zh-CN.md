@@ -550,7 +550,7 @@ uv run frago --debug recipe run <recipe_name> --params '{...}'
 [DEBUG] RecipeRegistry: 扫描路径 /home/user/.frago/recipes
 [DEBUG] RecipeRegistry: 找到 5 个 Recipe
 [DEBUG] RecipeRunner: 选择执行器 ChromeJSExecutor
-[DEBUG] ChromeJSExecutor: 执行命令: uv run frago exec-js ...
+[DEBUG] ChromeJSExecutor: 执行命令: frago chrome exec-js ...
 [DEBUG] ChromeJSExecutor: 退出码: 0
 {
   "success": true,
@@ -908,7 +908,7 @@ Recipe: openai_chat
 #### 旧方式（直接调用 `exec-js`）
 
 ```bash
-uv run frago exec-js src/frago/recipes/upwork_extract_job.js
+frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 ```
 
 #### 新方式
