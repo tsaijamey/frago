@@ -1,6 +1,6 @@
 # 日志系统指南
 
-适用于：`/frago.run`、`/frago.exec`
+适用于：`/frago.run`、`/frago.do`
 
 ## 一、自动日志与手动日志
 
@@ -63,7 +63,7 @@ frago run log \
 
 ### execution-method 有效值（6种）
 
-1. `command` - CLI 命令执行（如 `frago navigate`）
+1. `command` - CLI 命令执行（如 `frago chrome navigate`）
 2. `recipe` - Recipe 调用
 3. `file` - 执行脚本文件（.py/.js/.sh）
 4. `manual` - 人工手动操作
@@ -78,7 +78,7 @@ frago run log \
 
 ```bash
 # 执行命令
-frago navigate https://upwork.com/search
+frago chrome navigate https://upwork.com/search
 
 # 记录日志
 frago run log \
@@ -86,7 +86,7 @@ frago run log \
   --status "success" \
   --action-type "navigation" \
   --execution-method "command" \
-  --data '{"command": "frago navigate https://upwork.com/search", "exit_code": 0}'
+  --data '{"command": "frago chrome navigate https://upwork.com/search", "exit_code": 0}'
 ```
 
 ### 2. recipe - Recipe 调用
@@ -207,7 +207,7 @@ frago run log \
 
 ```bash
 # 1. 执行 CDP 命令 → 自动记录基础日志
-frago click '.job-card'  # 失败，自动记录错误日志
+frago chrome click '.job-card'  # 失败，自动记录错误日志
 
 # 2. Agent 反思后手动添加 insight
 frago run log \
@@ -216,7 +216,7 @@ frago run log \
   --action-type "analysis" \
   --execution-method "analysis" \
   --data '{
-    "command": "frago click .job-card",
+    "command": "frago chrome click .job-card",
     "error": "Element not found",
     "_insights": [
       {"type": "pitfall", "summary": "动态class不可靠，需用data-testid"}
