@@ -11,37 +11,15 @@ from typing import Optional
 from collections import OrderedDict
 
 from .commands import (
-    navigate,
-    click_element,
-    screenshot,
-    execute_javascript,
-    get_title,
-    get_content,
     status,
-    scroll,
-    scroll_to,
-    wait,
-    zoom,
-    clear_effects,
-    highlight,
-    pointer,
-    spotlight,
-    annotate,
-    underline,
     init as init_dirs,  # 旧的目录初始化命令，保留为 init-dirs
-    chrome_start,
-    chrome_stop,
-    list_tabs,
-    switch_tab,
 )
 from .init_command import init  # 新的环境初始化命令
 from .recipe_commands import recipe_group
 from .run_commands import run_group
-from .sync_command import sync
-from .pack_command import dev_pack
-from .deploy_command import deploy_cmd
-from .publish_command import publish_cmd
-from .load_command import dev_load_cmd
+from .dev_commands import dev_group
+from .usegit_commands import usegit_group
+from .chrome_commands import chrome_group
 from .update_command import update
 from .agent_command import agent, agent_status
 
@@ -49,12 +27,8 @@ from .agent_command import agent, agent_status
 # 命令分组定义
 COMMAND_GROUPS = OrderedDict([
     ("环境配置", ["init", "init-dirs", "status", "update"]),
-    ("资源管理", ["deploy", "publish", "sync", "dev-load", "dev-pack"]),
-    ("Chrome 管理", ["chrome", "chrome-stop"]),
-    ("Tab 管理", ["list-tabs", "switch-tab"]),
-    ("页面操作", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
-    ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
-    ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),
+    ("资源管理", ["use-git", "dev"]),
+    ("浏览器自动化", ["chrome"]),
     ("自动化", ["recipe", "run", "agent", "agent-status"]),
 ])
 
@@ -201,36 +175,16 @@ def cli(ctx, debug: bool, timeout: int, host: str, port: int,
             click.echo(f"代理配置: {proxy_host}:{proxy_port}")
 
 
-# 注册所有子命令
-cli.add_command(navigate)
-cli.add_command(click_element)
-cli.add_command(screenshot)
-cli.add_command(execute_javascript)
-cli.add_command(get_title)
-cli.add_command(get_content)
-cli.add_command(status)
-cli.add_command(scroll)
-cli.add_command(scroll_to)
-cli.add_command(wait)
-cli.add_command(zoom)
-cli.add_command(clear_effects)
-cli.add_command(highlight)
-cli.add_command(pointer)
-cli.add_command(spotlight)
-cli.add_command(annotate)
-cli.add_command(underline)
+# 注册顶层命令
 cli.add_command(init)  # 新的环境初始化命令
 cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
-cli.add_command(sync)  # 多设备同步命令
-cli.add_command(dev_pack, name="dev-pack")  # 开发环境打包资源命令
-cli.add_command(deploy_cmd, name="deploy")  # 部署命令
-cli.add_command(publish_cmd, name="publish")  # 发布命令
-cli.add_command(dev_load_cmd, name="dev-load")  # 开发环境资源加载命令
+cli.add_command(status)  # CDP 连接状态（保留在顶层便于快速检查）
 cli.add_command(update)  # 自我更新命令
-cli.add_command(chrome_start)  # Chrome 启动命令
-cli.add_command(chrome_stop)  # Chrome 停止命令
-cli.add_command(list_tabs)  # Tab 列表命令
-cli.add_command(switch_tab)  # Tab 切换命令
+
+# 命令组
+cli.add_command(dev_group)  # 开发者命令组: dev pack/load/publish
+cli.add_command(usegit_group)  # Git 同步命令组: use-git deploy/sync
+cli.add_command(chrome_group)  # Chrome CDP 命令组
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)

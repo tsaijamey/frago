@@ -108,21 +108,21 @@ COMMAND_EXAMPLES = {
         "frago underline '.content' --color blue --width 2",
     ],
     "chrome": [
-        "frago chrome",
-        "frago chrome --headless",
-        "frago chrome --void --keep-alive",
-        "frago chrome --port 9333 --width 1920 --height 1080",
+        "frago chrome start",
+        "frago chrome start --headless",
+        "frago chrome start --void --keep-alive",
+        "frago chrome start --port 9333 --width 1920 --height 1080",
     ],
     "chrome-stop": [
-        "frago chrome-stop",
-        "frago chrome-stop --port 9333",
+        "frago chrome stop",
+        "frago chrome stop --port 9333",
     ],
     "list-tabs": [
-        "frago list-tabs",
+        "frago chrome list-tabs",
     ],
     "switch-tab": [
-        "frago switch-tab <tab_id>",
-        "frago switch-tab ABC123  # 支持部分 ID 匹配",
+        "frago chrome switch-tab <tab_id>",
+        "frago chrome switch-tab ABC123  # 支持部分 ID 匹配",
     ],
     "init": [
         "frago init",
