@@ -635,13 +635,15 @@ def agent(
 
         # 展开目标 slash command
         # 注意：claude -p 模式不支持 slash commands，必须手动展开
-        ok, expanded_prompt, error = expand_slash_command(target_command, final_prompt)
+        # 这里传空字符串，因为我们会在后面手动拼接用户提示词
+        ok, expanded_prompt, error = expand_slash_command(target_command, "")
         if not ok:
             click.echo(f"✗ 无法加载命令 {target_command}: {error}", err=True)
             click.echo("  降级为直接执行用户提示词...")
             execution_prompt = final_prompt
         else:
-            execution_prompt = expanded_prompt
+            # 拼接：展开的命令文档 + 用户原始提示词
+            execution_prompt = f"{expanded_prompt}\n\n---\n\n## 当前任务\n\n{final_prompt}"
             click.echo(f"  ✓ 已展开命令 ({len(execution_prompt)} 字符)")
     else:
         click.echo(f"\n[执行] {final_prompt}")
