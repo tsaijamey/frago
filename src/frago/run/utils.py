@@ -4,6 +4,7 @@
 """
 
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -12,24 +13,27 @@ from slugify import slugify as _slugify
 
 
 def generate_theme_slug(description: str, max_length: int = 50) -> str:
-    """生成主题slug（直接slug化，保留英文和数字）
+    """生成主题slug（日期前缀 + slug化描述）
 
     Args:
         description: 原始任务描述（应为AI生成的简洁主题短句）
-        max_length: 最大长度限制
+        max_length: 最大长度限制（不含日期前缀）
 
     Returns:
-        slug化的主题名（小写字母、数字、连字符）
+        日期前缀 + slug化的主题名（格式：yyyyMMdd-slug）
 
     Examples:
         >>> generate_theme_slug("nano-banana-pro image api research")
-        'nano-banana-pro-image-api-research'
+        '20251203-nano-banana-pro-image-api-research'
         >>> generate_theme_slug("upwork python jobs search")
-        'upwork-python-jobs-search'
+        '20251203-upwork-python-jobs-search'
 
     Note:
         AI应该直接提供英文主题短句（3-5个词），避免中文转拼音导致的不可读性
     """
+    # 日期前缀 (yyyyMMdd)
+    date_prefix = datetime.now().strftime("%Y%m%d")
+
     # 直接slug化（保留英文、数字，移除中文和特殊字符）
     slug = _slugify(description, max_length=max_length)
 
@@ -37,7 +41,7 @@ def generate_theme_slug(description: str, max_length: int = 50) -> str:
     if not slug:
         slug = f"task-{int(time.time())}"
 
-    return slug
+    return f"{date_prefix}-{slug}"
 
 
 def is_valid_run_id(run_id: str) -> bool:
@@ -51,7 +55,8 @@ def is_valid_run_id(run_id: str) -> bool:
     """
     import re
 
-    pattern = r"^[a-z0-9-]{1,50}$"
+    # 支持日期前缀格式: yyyyMMdd-slug (最多 59 位)
+    pattern = r"^[a-z0-9-]{1,59}$"
     return bool(re.match(pattern, run_id))
 
 

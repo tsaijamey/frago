@@ -39,12 +39,18 @@ class RunManager:
             InvalidRunIDError: run_id格式不合法
             FileSystemError: 目录创建失败
         """
-        # 生成或验证run_id
+        # 生成或验证run_id（始终添加日期前缀）
+        from datetime import datetime as dt
+        date_prefix = dt.now().strftime("%Y%m%d")
+
         if run_id is None:
             run_id = generate_theme_slug(theme_description)
         else:
             if not is_valid_run_id(run_id):
-                raise InvalidRunIDError(run_id, "格式必须为小写字母、数字、连字符，长度1-50")
+                raise InvalidRunIDError(run_id, "格式必须为小写字母、数字、连字符，长度1-59")
+            # 自定义 run_id 也添加日期前缀（如果还没有）
+            if not run_id.startswith(date_prefix):
+                run_id = f"{date_prefix}-{run_id}"
 
         run_dir = self.projects_dir / run_id
         now = datetime.now()
