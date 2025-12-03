@@ -1,35 +1,21 @@
-# Chrome profile data
-chrome_profile/*
-
-# Claude Code configuration (project-specific, not shared)
-.claude/
-
-# Python environments
+# ====================
+# Python
+# ====================
 .venv/
-env/
-venv3/
 venv/
+venv3/
+env/
 __pycache__/
 *.pyc
 *.pyo
+*.egg
 *.egg-info/
 dist/
 build/
-*.egg
 
-# Shell/Bash specific
-*.log
-*.tmp
-*.swp
-*.bak
-*~
-.DS_Store
-Thumbs.db
-
-# macOS specific
-.DS_Store
-
-# Test outputs
+# ====================
+# Testing
+# ====================
 tests/results/
 tests/*.log
 coverage/
@@ -37,39 +23,62 @@ coverage/
 htmlcov/
 .pytest_cache/
 
-# IDE
+# ====================
+# IDE & Editor
+# ====================
 .vscode/
 .idea/
+*.swp
+*.bak
+*~
 
-# Environment files
+# ====================
+# OS Generated
+# ====================
+.DS_Store
+Thumbs.db
+
+# ====================
+# AI Tools
+# ====================
+.claude/
+.agent/
+
+# ====================
+# Frago Runtime
+# ====================
+chrome_profile/*
+projects/
+.frago/test_output/
+.frago/current_project
+examples/
+
+# ====================
+# Environment & Secrets
+# ====================
 .env*
 !.env.example
 !.env.cdpREADME.pdf
 
-# private working files
-workdir/
-
-# Run command system working directories
-projects/
-
-# .frago runtime files (keep video_scripts tracked)
-.frago/test_output/
-.frago/current_project
-
-
+# ====================
+# Temporary & Working Files
+# ====================
+*.log
+*.tmp
 *.backup
+workdir/
+tmp/
 
-# Examples directory (recipes are user-specific)
-examples/
-
-# SpecKit planning files (project-specific)
+# ====================
+# Project-Specific
+# ====================
 .specify/
+.crossnote/
+.backup_docs/
 
-# Internal development docs (not for public repo)
+# ====================
+# Internal Development (not for public)
+# ====================
 pre-publish-checklist.md
 STEALTH_MODE.md
 test_stealth.html
-.backup_docs/
-tmp/
-
-.crossnote/
