@@ -35,6 +35,7 @@ class PublishResult:
     commands_skipped: List[str] = field(default_factory=list)
     skills_skipped: List[str] = field(default_factory=list)
     recipes_skipped: List[str] = field(default_factory=list)
+    commands_deleted: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
 
@@ -83,7 +84,7 @@ def publish_commands(
     target_dir: Path = SYSTEM_COMMANDS_DIR,
     force: bool = False,
     dry_run: bool = False,
-) -> tuple[List[str], List[str]]:
+) -> tuple[List[str], List[str], List[str]]:
     """
     发布 commands 到系统目录
 
@@ -92,20 +93,36 @@ def publish_commands(
     Args:
         source_dir: 源目录 (开发环境的 .claude/commands/)
         target_dir: 目标目录 (~/.claude/commands/)
-        force: 是否强制覆盖已存在文件
+        force: 完全替换模式（清理目标目录中不存在于源的 frago*.md 文件）
         dry_run: 仅预览不执行
 
     Returns:
-        (published, skipped) 元组
+        (published, skipped, deleted) 元组
     """
     published = []
     skipped = []
+    deleted = []
 
     if not source_dir.exists():
-        return published, skipped
+        return published, skipped, deleted
 
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
+
+    # 0. 如果 force 模式，先清理目标目录中不存在于源的 frago*.md 文件
+    if force:
+        # 收集源文件的目标名称集合
+        source_target_names = set()
+        for src_file in source_dir.glob(DEV_COMMANDS_PATTERN):
+            if src_file.is_file():
+                source_target_names.add(get_target_name(src_file.name))
+
+        # 删除目标目录中多余的 frago*.md 文件
+        for target_file in target_dir.glob("frago*.md"):
+            if target_file.is_file() and target_file.name not in source_target_names:
+                if not dry_run:
+                    target_file.unlink()
+                deleted.append(target_file.name)
 
     # 1. 发布 frago.dev.*.md 文件（重命名为 frago.*.md）
     for src_file in source_dir.glob(DEV_COMMANDS_PATTERN):
@@ -135,7 +152,7 @@ def publish_commands(
         published.extend(_pub)
         skipped.extend(_skip)
 
-    return published, skipped
+    return published, skipped, deleted
 
 
 def _sync_directory(
@@ -413,9 +430,10 @@ def publish(
         # 发布 commands
         if do_commands:
             source_commands = project_root / ".claude" / "commands"
-            published, skipped = publish_commands(source_commands, force=force, dry_run=dry_run)
+            published, skipped, deleted = publish_commands(source_commands, force=force, dry_run=dry_run)
             result.commands_published = published
             result.commands_skipped = skipped
+            result.commands_deleted = deleted
 
         # 发布 skills
         if do_skills:

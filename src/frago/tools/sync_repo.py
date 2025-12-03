@@ -7,7 +7,6 @@ Sync 模块 - 将系统目录的资源同步到远程仓库
 仅同步 frago.* 开头的命令，避免将用户私有命令推送到仓库。
 """
 
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -42,22 +41,6 @@ class SyncResult:
     recipes_skipped: List[str] = field(default_factory=list)
     git_status: str = ""
     errors: List[str] = field(default_factory=list)
-
-
-def get_dev_name(runtime_name: str) -> str:
-    """
-    将运行时文件名转换为开发环境文件名
-
-    系统目录中是 frago.*.md，同步到仓库需要转为 frago.dev.*.md。
-
-    Args:
-        runtime_name: 系统目录文件名，如 frago.recipe.md
-
-    Returns:
-        仓库中的文件名，如 frago.dev.recipe.md
-    """
-    # frago.xxx.md → frago.dev.xxx.md
-    return re.sub(r"^frago\.", "frago.dev.", runtime_name)
 
 
 def sync_commands_to_repo(
@@ -95,18 +78,17 @@ def sync_commands_to_repo(
         if not src_file.is_file():
             continue
 
-        # 系统目录 frago.*.md → 仓库 frago.dev.*.md
-        dev_name = get_dev_name(src_file.name)
-        target_file = target_dir / dev_name
+        # 直接同步，保持文件名不变
+        target_file = target_dir / src_file.name
 
         if target_file.exists() and not force:
             if src_file.stat().st_mtime <= target_file.stat().st_mtime:
-                skipped.append(f"{src_file.name} → {dev_name}")
+                skipped.append(src_file.name)
                 continue
 
         if not dry_run:
             shutil.copy2(src_file, target_file)
-        synced.append(f"{src_file.name} → {dev_name}")
+        synced.append(src_file.name)
 
     # 同步 frago/ 子目录（规则和指南）
     frago_source = source_dir / "frago"
