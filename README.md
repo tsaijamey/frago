@@ -212,18 +212,18 @@ Frago also provides CLI tools for debugging or script integration:
 
 ```bash
 # Browser operations
-uv run frago navigate https://example.com
-uv run frago click 'button[type="submit"]'
-uv run frago screenshot output.png
+frago chrome navigate https://example.com
+frago chrome click 'button[type="submit"]'
+frago chrome screenshot output.png
 
 # Recipe management
-uv run frago recipe list
-uv run frago recipe info <recipe_name>
-uv run frago recipe run <recipe_name> --params '{...}'
+frago recipe list
+frago recipe info <recipe_name>
+frago recipe run <recipe_name> --params '{...}'
 
 # Run instance management
-uv run frago run list
-uv run frago run info <run_id>
+frago run list
+frago run info <run_id>
 ```
 
 ---

@@ -118,7 +118,7 @@ User → /frago.recipe → AI generates Recipe → Save to .frago/recipes/
 
 Scenario 3: Direct CLI commands
 ────────────────────────────────
-Developer → uv run frago navigate https://...
+Developer → frago chrome navigate https://...
           → CDP client → WebSocket → Chrome
           → Return execution result
 ```
@@ -224,7 +224,7 @@ uv run frago recipe run youtube_extract_video_transcript \
 uv run frago recipe list --format json
 
 # Method 3: Traditional method - Direct JS execution (bypass metadata system)
-uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
+frago chrome exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
 **Difference from Browser Use**:
@@ -275,7 +275,7 @@ outputs:
 3. Example-level: `examples/` (repository root)
 
 **Three Runtime Support**:
-- `chrome-js`: Execute JavaScript via `uv run frago exec-js`
+- `chrome-js`: Execute JavaScript via `frago chrome exec-js`
 - `python`: Execute via Python interpreter
 - `shell`: Execute script via Shell
 

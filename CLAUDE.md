@@ -57,7 +57,7 @@ uv tool install frago-cli
 | 命令 | 用途 |
 |------|------|
 | `/frago.dev.run` | 探索调研（Recipe 创建前） |
-| `/frago.dev.exec` | 一次性任务执行 |
+| `/frago.dev.do` | 一次性任务执行 |
 | `/frago.dev.recipe` | 配方创建/更新 |
 | `/frago.dev.test` | 配方测试验证 |
 
@@ -71,10 +71,10 @@ uv tool install frago-cli
 
 导航后必须执行的流程：
 ```
-1. frago navigate <url>           ← 导航
+1. frago chrome navigate <url>    ← 导航
 2. frago recipe list | grep xxx   ← 检查是否有现成配方
-3. frago get-content              ← 无配方时用此命令获取内容
-4. （可选）frago screenshot       ← 仅用于验证状态，禁止用于阅读
+3. frago chrome get-content       ← 无配方时用此命令获取内容
+4. （可选）frago chrome screenshot ← 仅用于验证状态，禁止用于阅读
 ```
 
 截图的唯一合法用途：
@@ -89,13 +89,13 @@ uv tool install frago-cli
 正确做法：剥洋葱式层层深入
 ```bash
 # ✅ 第一步：导航到已知首页
-frago navigate "https://example.com"
+frago chrome navigate "https://example.com"
 
 # ✅ 第二步：从页面获取真实链接
-frago exec-js "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).filter(a => a.text)" --return-value
+frago chrome exec-js "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).filter(a => a.text)" --return-value
 
 # ✅ 第三步：使用从上一步获取的真实 URL
-frago navigate "<从上一步获取的真实 URL>"
+frago chrome navigate "<从上一步获取的真实 URL>"
 ```
 
 允许直接导航的 URL 来源：
@@ -116,8 +116,8 @@ frago navigate "<从上一步获取的真实 URL>"
 
 | 需求 | ❌ 不要 | ✅ 应该 |
 |------|--------|--------|
-| 搜索信息 | `WebSearch` | `frago navigate "https://google.com/search?q=..."` |
-| 查看网页 | `WebFetch` | `frago navigate <url>` + `get-content` |
+| 搜索信息 | `WebSearch` | `frago chrome navigate "https://google.com/search?q=..."` |
+| 查看网页 | `WebFetch` | `frago chrome navigate <url>` + `get-content` |
 | 提取数据 | 手写 JS | 先查 `frago recipe list` |
 | 文件操作 | 手动创建 | 使用 Claude Code 的 Write/Edit 工具 |
 
@@ -165,11 +165,12 @@ frago --help                   # 所有命令
 ### 2. 浏览器操作
 
 ```bash
-frago navigate <url>           # 导航
-frago click <selector>         # 点击
-frago exec-js <expr> --return-value  # 执行 JS
-frago get-content              # 获取内容
-frago screenshot output.png    # 截图
+frago chrome start             # 启动 Chrome
+frago chrome navigate <url>    # 导航
+frago chrome click <selector>  # 点击
+frago chrome exec-js <expr> --return-value  # 执行 JS
+frago chrome get-content       # 获取内容
+frago chrome screenshot output.png  # 截图
 ```
 
 ### 3. 项目管理
@@ -262,5 +263,33 @@ examples/                 # 示例级 Recipe
 
 projects/                 # Run实例工作目录
 ```
+
+### 关键目录说明
+
+| 目录 | 用途 | 可编辑性 |
+|------|------|---------|
+| `.claude/` | 开发环境的 Claude Code 配置，包含 slash 命令、skills | ✅ 开发时修改 |
+| `examples/` | 示例级 Recipe（atomic/workflows） | ✅ 开发时修改 |
+| `src/frago/resources/` | 打包资源，供 `frago init` 复制到用户目录 | ❌ 禁止直接修改 |
+
+### 资源更新流程
+
+```
+.claude/commands/     ──┐
+.claude/skills/       ──┼──→  frago dev-pack  ──→  src/frago/resources/
+examples/             ──┘
+```
+
+`frago dev-pack` 命令从开发环境提取最新版本的：
+- frago 相关指令文档（`.claude/commands/frago*`）
+- 配方文档（`examples/`）
+
+打包后写入 `src/frago/resources/`，随 PyPI 包分发。
+
+### 禁止事项
+
+- ❌ **禁止直接修改 `src/frago/resources/`** — 该目录由 `frago dev-pack` 自动生成
+- ❌ **禁止直接修改 `~/.claude/` 或 `~/.frago/`** — 用户级目录必须通过 `frago init` / `frago publish` 等命令统一管理，不允许碎片化直接编辑
+- ✅ 修改源头：`.claude/` 或 `examples/`，然后通过发布命令同步到用户目录
 
 <!-- MANUAL ADDITIONS END -->

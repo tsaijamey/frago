@@ -290,7 +290,7 @@ uv run frago recipe run test_inspect_tab
 set -e
 
 # 导航到GitHub
-uv run frago navigate https://github.com
+frago chrome navigate https://github.com
 sleep 3
 
 # 开始录制
@@ -299,7 +299,7 @@ RECORD_PID=$!
 
 # 执行页面操作
 sleep 2
-uv run frago scroll down 500
+frago chrome scroll down 500
 sleep 3
 
 # 停止录制
@@ -317,7 +317,7 @@ echo "录制完成: shot_001.mp4"
 set -e
 
 # 导航到Notion产品页
-uv run frago navigate https://www.notion.so/product
+frago chrome navigate https://www.notion.so/product
 sleep 3
 
 # 开始录制
@@ -328,19 +328,19 @@ RECORD_PID=$!
 sleep 2
 
 # 聚光灯效果
-uv run frago spotlight ".hero-section" 3
+frago chrome spotlight ".hero-section" 3
 sleep 3
 
 # 高亮特性卡片
-uv run frago highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
+frago chrome highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
 sleep 2
 
 # 滚动页面
-uv run frago scroll down 800 --smooth
+frago chrome scroll down 800 --smooth
 sleep 2
 
 # 添加标注
-uv run frago annotate ".pricing-section" "灵活的定价方案" --position top
+frago chrome annotate ".pricing-section" "灵活的定价方案" --position top
 sleep 2
 
 # 停止录制

@@ -116,7 +116,7 @@ Recipe 三级优先级系统：
 
 场景3：直接CLI命令
 ──────────────
-开发者 → uv run frago navigate https://...
+开发者 → frago chrome navigate https://...
        → CDP客户端 → WebSocket → Chrome
        → 返回执行结果
 ```
@@ -222,7 +222,7 @@ uv run frago recipe run youtube_extract_video_transcript \
 uv run frago recipe list --format json
 
 # 方式3: 传统方式 - 直接执行JS（绕过元数据系统）
-uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
+frago chrome exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
 **与Browser Use的差异**：
@@ -273,7 +273,7 @@ outputs:
 3. 示例级：`examples/`（仓库根目录）
 
 **三种运行时支持**：
-- `chrome-js`：通过 `uv run frago exec-js` 执行JavaScript
+- `chrome-js`：通过 `frago chrome exec-js` 执行JavaScript
 - `python`：通过Python解释器执行
 - `shell`：通过Shell执行脚本
 

@@ -84,23 +84,23 @@ uv run python src/pipeline_master.py "React开发待办事项应用MVP" todo_mvp
 
 ### 基础CDP命令
 
-所有CDP功能通过统一的CLI接口（`uv run frago <command>`）访问。
+所有CDP功能通过统一的CLI接口（`frago chrome <command>`）访问。
 
 ```bash
 # 导航网页
-uv run frago navigate <url>
+frago chrome navigate <url>
 
 # 点击元素
-uv run frago click <selector>
+frago chrome click <selector>
 
 # 执行JavaScript
-uv run frago exec-js <expression>
+frago chrome exec-js <expression>
 
 # 截图
-uv run frago screenshot <output_file>
+frago chrome screenshot <output_file>
 
 # 其他命令
-uv run frago --help
+frago --help
 ```
 
 ### 代理配置
@@ -123,12 +123,12 @@ export NO_PROXY=localhost,127.0.0.1
 
 ```bash
 # 使用代理
-uv run frago navigate https://example.com \
+frago chrome navigate https://example.com \
     --proxy-host proxy.example.com \
     --proxy-port 8080
 
 # 绕过代理
-uv run frago navigate https://example.com --no-proxy
+frago chrome navigate https://example.com --no-proxy
 ```
 
 ### 重试机制
@@ -150,21 +150,21 @@ Recipe系统提供元数据驱动的自动化脚本管理。
 
 ```bash
 # 列出所有可用的Recipe
-uv run frago recipe list
+frago recipe list
 
 # 以JSON格式列出（便于AI解析）
-uv run frago recipe list --format json
+frago recipe list --format json
 
 # 查看Recipe详细信息
-uv run frago recipe info youtube_extract_video_transcript
+frago recipe info youtube_extract_video_transcript
 
 # 执行Recipe（推荐方式）
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 
 # 输出到剪贴板
-uv run frago recipe run upwork_extract_job_details_as_markdown \
+frago recipe run upwork_extract_job_details_as_markdown \
     --params '{"url": "..."}' \
     --output-clipboard
 ```
@@ -183,15 +183,15 @@ uv run frago recipe run upwork_extract_job_details_as_markdown \
 
 ```bash
 # 方式1: 推荐 - 元数据驱动（参数验证、输出处理）
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/..."}' \
     --output-file transcript.txt
 
 # 方式2: 发现可用的Recipe
-uv run frago recipe list --format json
+frago recipe list --format json
 
 # 方式3: 传统方式 - 直接执行JS（绕过元数据系统）
-uv run frago exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
+frago chrome exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
 ### 可用的示例Recipe
