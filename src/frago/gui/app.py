@@ -184,7 +184,7 @@ class FragoGuiApp:
             x=self.config.x,
             y=self.config.y,
             js_api=self._api,
-            confirm_close=True,
+            confirm_close=False,  # 禁用确认，使用原生窗口行为
         )
 
         self.window.events.closing += self._on_closing
@@ -194,21 +194,15 @@ class FragoGuiApp:
     def _on_closing(self) -> bool:
         """Handle window closing event.
 
+        由于使用原生窗口标题栏且不需要确认，总是允许关闭。
+
         Returns:
-            True to allow closing, False to prevent.
+            True to allow closing.
         """
-        from frago.gui.config import load_config
-        from frago.gui.state import AppStateManager
-
-        config = load_config()
-        state = AppStateManager.get_instance()
-
-        if not config.confirm_on_exit:
-            return True
-
-        if state.is_task_running():
-            return False
-
+        # 使用原生窗口标题栏，不需要确认，总是允许关闭
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("窗口关闭事件触发，允许关闭")
         return True
 
     def _get_fallback_html(self) -> str:

@@ -145,36 +145,8 @@ body {
     color: var(--accent-primary);
 }
 
-.header-right {
-    display: flex;
-    gap: var(--spacing-xs);
-    -webkit-app-region: no-drag;
-}
 
-.header-btn {
-    width: 32px;
-    height: 32px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    transition: background var(--transition-fast), color var(--transition-fast);
-}
 
-.header-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-}
-
-.header-btn.close-btn:hover {
-    background: var(--accent-error);
-    color: #ffffff;
-}
 
 /* === Navigation Tabs === */
 /* T021: 更新导航标签样式，调整背景和边框 */

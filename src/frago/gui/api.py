@@ -466,28 +466,7 @@ class FragoGuiApi:
             "message": "Connected to Chrome" if connected else "Chrome not connected",
         }
 
-    def minimize_window(self) -> None:
-        """Minimize the window."""
-        if self.window:
-            self.window.minimize()
 
-    def close_window(self, force: bool = False) -> Dict:
-        """Close the window.
-
-        Args:
-            force: Force close without confirmation.
-
-        Returns:
-            Dictionary indicating if window should close.
-        """
-        has_running_task = self.state.is_task_running()
-
-        if force or not has_running_task:
-            if self.window:
-                self.window.destroy()
-            return {"should_close": True, "has_running_task": has_running_task}
-
-        return {"should_close": False, "has_running_task": has_running_task}
 
     def _push_stream_message(self, message: StreamMessage) -> None:
         """Push a stream message to the frontend.

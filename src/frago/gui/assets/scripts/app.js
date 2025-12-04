@@ -84,10 +84,7 @@ function setupEventListeners() {
         tab.addEventListener('click', () => switchPage(tab.dataset.page));
     });
 
-    // Header buttons
-    document.getElementById('settings-btn')?.addEventListener('click', () => switchPage('settings'));
-    document.getElementById('minimize-btn')?.addEventListener('click', minimizeWindow);
-    document.getElementById('close-btn')?.addEventListener('click', closeWindow);
+    // 移除所有窗口控制按钮事件监听，使用原生窗口标题栏
 
     // Send button
     document.getElementById('send-btn')?.addEventListener('click', sendMessage);
@@ -605,28 +602,6 @@ async function updateStatus() {
     }
 }
 
-// === Window Controls ===
-async function minimizeWindow() {
-    try {
-        await pywebview.api.minimize_window();
-    } catch (error) {
-        console.error('Failed to minimize:', error);
-    }
-}
-
-async function closeWindow() {
-    if (config.confirm_on_exit && isTaskRunning) {
-        if (!confirm('有任务正在运行，确定要关闭吗？')) {
-            return;
-        }
-    }
-
-    try {
-        await pywebview.api.close_window(true);
-    } catch (error) {
-        console.error('Failed to close:', error);
-    }
-}
 
 // === Toast Notifications ===
 window.showToast = function(message, type = 'info') {
