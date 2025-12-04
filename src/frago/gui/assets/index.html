@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frago GUI</title>
+    <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+    <!-- 顶部导航栏（可拖动区域） -->
+    <header class="header" data-drag-region>
+        <div class="header-left">
+            <span class="logo">🚀 Frago</span>
+        </div>
+        <div class="header-right">
+            <button class="header-btn" id="settings-btn" title="设置">⚙️</button>
+            <button class="header-btn" id="minimize-btn" title="最小化">─</button>
+            <button class="header-btn close-btn" id="close-btn" title="关闭">✕</button>
+        </div>
+    </header>
+
+    <!-- 页面标签导航 -->
+    <nav class="nav-tabs">
+        <button class="nav-tab active" data-page="home">主页</button>
+        <button class="nav-tab" data-page="recipes">配方</button>
+        <button class="nav-tab" data-page="skills">Skills</button>
+        <button class="nav-tab" data-page="history">历史</button>
+        <button class="nav-tab" data-page="settings">设置</button>
+    </nav>
+
+    <!-- 主内容区域 -->
+    <main class="main-content">
+        <!-- 主页 -->
+        <section class="page active" id="page-home">
+            <div class="welcome-container">
+                <div class="welcome-logo">🚀</div>
+                <h1 class="welcome-title">Welcome to Frago</h1>
+                <p class="welcome-subtitle">AI-driven multi-runtime automation framework</p>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="input-container">
+                <textarea
+                    id="input-text"
+                    class="input-text"
+                    placeholder="输入命令或问题..."
+                    rows="3"
+                ></textarea>
+                <button class="send-btn" id="send-btn">发送</button>
+            </div>
+
+            <!-- 结果展示区域 -->
+            <div class="output-container" id="output-container">
+                <div class="output-placeholder">响应将显示在这里...</div>
+            </div>
+
+            <!-- 进度条 -->
+            <div class="progress-container" id="progress-container" style="display: none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <span class="progress-step" id="progress-step"></span>
+            </div>
+        </section>
+
+        <!-- 配方页面 -->
+        <section class="page" id="page-recipes">
+            <div class="page-header">
+                <h2>配方列表</h2>
+                <button class="refresh-btn" id="refresh-recipes-btn">刷新</button>
+            </div>
+            <div class="recipe-list" id="recipe-list">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- Skills 页面 -->
+        <section class="page" id="page-skills">
+            <div class="page-header">
+                <h2>Skills 列表</h2>
+                <button class="refresh-btn" id="refresh-skills-btn">刷新</button>
+            </div>
+            <div class="skill-grid" id="skill-grid">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- 历史页面 -->
+        <section class="page" id="page-history">
+            <div class="page-header">
+                <h2>执行历史</h2>
+                <button class="clear-btn" id="clear-history-btn">清空</button>
+            </div>
+            <div class="history-list" id="history-list">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- 设置页面 -->
+        <section class="page" id="page-settings">
+            <div class="page-header">
+                <h2>设置</h2>
+            </div>
+            <div class="settings-form">
+                <div class="setting-item">
+                    <label>主题</label>
+                    <select id="setting-theme">
+                        <option value="dark">深色</option>
+                        <option value="light">浅色</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>字体大小</label>
+                    <input type="range" id="setting-font-size" min="10" max="24" value="14">
+                    <span id="font-size-value">14px</span>
+                </div>
+                <div class="setting-item">
+                    <label>显示系统状态</label>
+                    <input type="checkbox" id="setting-show-status" checked>
+                </div>
+                <div class="setting-item">
+                    <label>关闭时确认</label>
+                    <input type="checkbox" id="setting-confirm-exit" checked>
+                </div>
+                <div class="setting-item">
+                    <label>自动滚动输出</label>
+                    <input type="checkbox" id="setting-auto-scroll" checked>
+                </div>
+                <button class="save-btn" id="save-settings-btn">保存设置</button>
+            </div>
+        </section>
+    </main>
+
+    <!-- 底部状态栏 -->
+    <footer class="status-bar" id="status-bar">
+        <div class="status-left">
+            <span class="status-item" id="cpu-status">CPU: --</span>
+            <span class="status-item" id="memory-status">MEM: --</span>
+        </div>
+        <div class="status-right">
+            <span class="status-indicator" id="connection-status">
+                <span class="indicator-dot disconnected"></span>
+                <span class="indicator-text">未连接</span>
+            </span>
+        </div>
+    </footer>
+
+    <!-- Toast 容器 -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="scripts/app.js"></script>
+</body>
+</html>
