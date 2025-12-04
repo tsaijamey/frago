@@ -112,6 +112,47 @@ class FragoGuiApp:
         self.window: Optional["webview.Window"] = None
         self._api: Optional["FragoGuiApi"] = None
 
+    def _calculate_window_size(self) -> tuple[int, int]:
+        """Calculate window size based on screen dimensions.
+
+        Returns:
+            Tuple of (width, height) calculated as 80% of screen height
+            with the original aspect ratio (600:1434 ≈ 1:2.39).
+        """
+        # 原始宽高比
+        original_width = 600
+        original_height = 1434
+        aspect_ratio = original_width / original_height
+
+        try:
+            screens = webview.screens
+            if screens:
+                # 获取主屏幕（第一个屏幕）
+                primary_screen = screens[0]
+                screen_height = primary_screen.height
+                screen_width = primary_screen.width
+
+                # 计算目标高度为屏幕高度的 80%
+                target_height = int(screen_height * 0.8)
+                target_width = int(target_height * aspect_ratio)
+
+                # 确保宽度不超过屏幕宽度的 90%
+                max_width = int(screen_width * 0.9)
+                if target_width > max_width:
+                    target_width = max_width
+                    target_height = int(target_width / aspect_ratio)
+
+                # 确保不小于最小尺寸
+                target_width = max(target_width, self.config.min_width)
+                target_height = max(target_height, self.config.min_height)
+
+                return target_width, target_height
+        except Exception:
+            # 如果获取屏幕信息失败，使用默认值
+            pass
+
+        return original_width, original_height
+
     def create_window(self) -> "webview.Window":
         """Create the GUI window.
 
@@ -128,11 +169,14 @@ class FragoGuiApp:
         else:
             url = self._get_fallback_html()
 
+        # 动态计算窗口尺寸
+        width, height = self._calculate_window_size()
+
         self.window = webview.create_window(
             title=self.config.title,
             url=url,
-            width=self.config.width,
-            height=self.config.height,
+            width=width,
+            height=height,
             frameless=self.config.frameless,
             resizable=self.config.resizable,
             min_size=(self.config.min_width, self.config.min_height),

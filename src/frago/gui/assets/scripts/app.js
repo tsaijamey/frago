@@ -105,6 +105,10 @@ function setupEventListeners() {
     document.getElementById('refresh-skills-btn')?.addEventListener('click', refreshSkills);
     document.getElementById('clear-history-btn')?.addEventListener('click', clearHistory);
 
+    // Recipe detail page buttons
+    document.getElementById('recipe-detail-back-btn')?.addEventListener('click', backToRecipeList);
+    document.getElementById('recipe-delete-btn')?.addEventListener('click', confirmDeleteRecipe);
+
     // Settings form
     document.getElementById('save-settings-btn')?.addEventListener('click', saveSettings);
     document.getElementById('setting-font-size')?.addEventListener('input', (e) => {
@@ -231,6 +235,8 @@ function updateProgress(progress, step = '') {
 }
 
 // === Recipes ===
+let currentRecipeName = null;
+
 async function loadRecipes() {
     const container = document.getElementById('recipe-list');
     if (!container) return;
@@ -265,38 +271,186 @@ function renderRecipeList(recipes, container) {
     }
 
     container.innerHTML = recipes.map(recipe => `
-        <div class="recipe-card" onclick="runRecipe('${recipe.name}')">
-            <div class="recipe-name">${recipe.name}</div>
-            <div class="recipe-description">${recipe.description || '无描述'}</div>
-            <span class="recipe-category">${recipe.category}</span>
+        <div class="recipe-card" onclick="openRecipeDetail('${escapeHtml(recipe.name)}')">
+            <div class="recipe-name">${escapeHtml(recipe.name)}</div>
+            <div class="recipe-description">${escapeHtml(recipe.description || '无描述')}</div>
+            <div class="recipe-meta">
+                <span class="recipe-category">${escapeHtml(recipe.category || 'atomic')}</span>
+                ${recipe.source ? `<span class="recipe-source">${escapeHtml(recipe.source)}</span>` : ''}
+                ${recipe.runtime ? `<span class="recipe-runtime">${escapeHtml(recipe.runtime)}</span>` : ''}
+            </div>
         </div>
     `).join('');
 }
 
-async function runRecipe(name) {
-    if (isTaskRunning) {
-        showToast('已有任务运行中', 'warning');
-        return;
-    }
+async function openRecipeDetail(name) {
+    currentRecipeName = name;
 
-    isTaskRunning = true;
-    showToast('正在执行配方: ' + name, 'info');
+    // Switch to detail page
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-recipe-detail').classList.add('active');
+
+    // Update nav tabs (none should be active for detail page)
+    document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+
+    // Load detail content
+    const container = document.getElementById('recipe-detail-content');
+    const titleEl = document.getElementById('recipe-detail-title');
+    const deleteBtn = document.getElementById('recipe-delete-btn');
+
+    container.innerHTML = '<div class="loading">加载中...</div>';
+    titleEl.textContent = name;
+    deleteBtn.style.display = 'none';
 
     try {
-        const result = await pywebview.api.run_recipe(name);
+        const detail = await pywebview.api.get_recipe_detail(name);
 
-        if (result.status === 'ok') {
-            showToast('配方执行成功', 'success');
-            switchPage('home');
-            addMessage('配方 ' + name + ' 执行结果:\n' + result.output, 'assistant');
-        } else {
-            showToast('配方执行失败: ' + result.error, 'error');
+        if (detail.error) {
+            container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">❌</div><p>${escapeHtml(detail.error)}</p></div>`;
+            return;
         }
+
+        // Show delete button only for User source
+        if (detail.source === 'User') {
+            deleteBtn.style.display = 'block';
+        }
+
+        renderRecipeDetail(detail, container);
     } catch (error) {
-        showToast('配方执行失败', 'error');
-    } finally {
-        isTaskRunning = false;
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">❌</div><p>加载失败</p></div>';
     }
+}
+
+function renderRecipeDetail(detail, container) {
+    const tagsHtml = (detail.tags || []).map(tag =>
+        `<span class="recipe-tag">${escapeHtml(tag)}</span>`
+    ).join('');
+
+    // Simple markdown rendering
+    let markdownHtml = '';
+    if (detail.metadata_content) {
+        markdownHtml = renderSimpleMarkdown(detail.metadata_content);
+    } else {
+        markdownHtml = '<p class="empty-state-text">无配方文档</p>';
+    }
+
+    container.innerHTML = `
+        <div class="recipe-detail-header">
+            <div class="recipe-detail-name">${escapeHtml(detail.name)}</div>
+            <div class="recipe-detail-desc">${escapeHtml(detail.description || '无描述')}</div>
+            <div class="recipe-detail-meta">
+                <span class="recipe-category">${escapeHtml(detail.category || 'atomic')}</span>
+                ${detail.source ? `<span class="recipe-source">${escapeHtml(detail.source)}</span>` : ''}
+                ${detail.runtime ? `<span class="recipe-runtime">${escapeHtml(detail.runtime)}</span>` : ''}
+            </div>
+            ${tagsHtml ? `<div class="recipe-detail-tags">${tagsHtml}</div>` : ''}
+        </div>
+        <div class="recipe-markdown">${markdownHtml}</div>
+    `;
+}
+
+function renderSimpleMarkdown(md) {
+    // Basic markdown to HTML conversion
+    let html = escapeHtml(md);
+
+    // Code blocks (```...```)
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+
+    // Inline code (`...`)
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Headers
+    html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+    // Bold and italic
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // Lists
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+    // Blockquotes
+    html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+
+    // Paragraphs (double newlines)
+    html = html.replace(/\n\n/g, '</p><p>');
+    html = '<p>' + html + '</p>';
+
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    html = html.replace(/<p>(<h[1-4]>)/g, '$1');
+    html = html.replace(/(<\/h[1-4]>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<pre>)/g, '$1');
+    html = html.replace(/(<\/pre>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<ul>)/g, '$1');
+    html = html.replace(/(<\/ul>)<\/p>/g, '$1');
+    html = html.replace(/<p>(<blockquote>)/g, '$1');
+    html = html.replace(/(<\/blockquote>)<\/p>/g, '$1');
+
+    return html;
+}
+
+function backToRecipeList() {
+    currentRecipeName = null;
+    switchPage('recipes');
+}
+
+async function confirmDeleteRecipe() {
+    if (!currentRecipeName) return;
+
+    showConfirmDialog(
+        '删除配方',
+        `确定要删除配方 "${currentRecipeName}" 吗？此操作不可撤销。`,
+        async () => {
+            try {
+                const result = await pywebview.api.delete_recipe(currentRecipeName);
+                if (result.status === 'ok') {
+                    showToast(result.message, 'success');
+                    backToRecipeList();
+                } else {
+                    showToast(result.message, 'error');
+                }
+            } catch (error) {
+                showToast('删除失败', 'error');
+            }
+        }
+    );
+}
+
+function showConfirmDialog(title, message, onConfirm) {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="confirm-dialog">
+            <div class="confirm-dialog-title">${escapeHtml(title)}</div>
+            <div class="confirm-dialog-message">${escapeHtml(message)}</div>
+            <div class="confirm-dialog-actions">
+                <button class="confirm-dialog-cancel">取消</button>
+                <button class="confirm-dialog-confirm">确认删除</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('.confirm-dialog-cancel').addEventListener('click', () => {
+        overlay.remove();
+    });
+
+    overlay.querySelector('.confirm-dialog-confirm').addEventListener('click', () => {
+        overlay.remove();
+        onConfirm();
+    });
+
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.remove();
+        }
+    });
 }
 
 // === Skills ===

@@ -172,6 +172,9 @@ class RecipeItem:
     category: str = "atomic"
     icon: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    path: Optional[str] = None
+    source: Optional[str] = None
+    runtime: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -181,6 +184,9 @@ class RecipeItem:
             "category": self.category,
             "icon": self.icon,
             "tags": self.tags,
+            "path": self.path,
+            "source": self.source,
+            "runtime": self.runtime,
         }
 
 
