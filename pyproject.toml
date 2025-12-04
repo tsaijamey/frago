@@ -44,6 +44,22 @@ dependencies = [
     "questionary>=2.1.0",
 ]
 
+[project.optional-dependencies]
+# GUI 依赖
+gui = [
+    "pywebview>=6.1",
+]
+
+# Linux GTK 后端
+gui-gtk = [
+    "pywebview[gtk]>=6.1",
+]
+
+# Linux QT 后端
+gui-qt = [
+    "pywebview[qt]>=6.1",
+]
+
 # 开发依赖
 dev = [
     "pytest>=7.4.0",
@@ -71,7 +87,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/frago"]
 
-# 包含资源文件（slash 命令、示例 recipe）
+# 包含资源文件（slash 命令、示例 recipe、GUI assets）
 include = [
     "src/frago/**/*.py",
     "src/frago/**/*.md",
@@ -79,6 +95,8 @@ include = [
     "src/frago/**/*.yaml",
     "src/frago/**/*.yml",
     "src/frago/**/*.sh",
+    "src/frago/**/*.html",
+    "src/frago/**/*.css",
 ]
 
 [tool.setuptools]
