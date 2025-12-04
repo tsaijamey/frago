@@ -1,0 +1,680 @@
+/* Frago GUI - Main Stylesheet */
+
+/* === CSS Variables === */
+:root {
+    /* 深色主题 (默认) */
+    --bg-primary: #1a1a2e;
+    --bg-secondary: #16213e;
+    --bg-tertiary: #0f3460;
+    --bg-card: #1e2746;
+
+    --text-primary: #eaeaea;
+    --text-secondary: #a0a0a0;
+    --text-muted: #666;
+
+    --accent-primary: #00d9ff;
+    --accent-secondary: #0099cc;
+    --accent-success: #00c853;
+    --accent-warning: #ffc107;
+    --accent-error: #ff5252;
+
+    --border-color: #2a3a5a;
+    --shadow-color: rgba(0, 0, 0, 0.3);
+
+    --font-size-base: 14px;
+    --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s ease;
+
+    --header-height: 48px;
+    --nav-height: 44px;
+    --status-height: 32px;
+}
+
+/* 浅色主题 */
+[data-theme="light"] {
+    --bg-primary: #f5f5f5;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e0e0e0;
+    --bg-card: #ffffff;
+
+    --text-primary: #212121;
+    --text-secondary: #666666;
+    --text-muted: #999999;
+
+    --border-color: #e0e0e0;
+    --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+/* === Base Reset === */
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-base);
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* === Header === */
+.header {
+    height: var(--header-height);
+    background: var(--bg-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border-color);
+    -webkit-app-region: drag;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+}
+
+.logo {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.header-right {
+    display: flex;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+}
+
+.header-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: background var(--transition-fast);
+}
+
+.header-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.header-btn.close-btn:hover {
+    background: var(--accent-error);
+    color: white;
+}
+
+/* === Navigation Tabs === */
+.nav-tabs {
+    height: var(--nav-height);
+    background: var(--bg-secondary);
+    display: flex;
+    padding: 0 16px;
+    gap: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.nav-tab {
+    padding: 0 16px;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    position: relative;
+    transition: color var(--transition-fast);
+}
+
+.nav-tab:hover {
+    color: var(--text-primary);
+}
+
+.nav-tab.active {
+    color: var(--accent-primary);
+}
+
+.nav-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent-primary);
+}
+
+/* === Main Content === */
+.main-content {
+    height: calc(100% - var(--header-height) - var(--nav-height) - var(--status-height));
+    overflow: hidden;
+    position: relative;
+}
+
+.page {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 20px;
+    overflow-y: auto;
+    display: none;
+    opacity: 0;
+    transition: opacity var(--transition-normal);
+}
+
+.page.active {
+    display: block;
+    opacity: 1;
+}
+
+/* === Welcome Section === */
+.welcome-container {
+    text-align: center;
+    padding: 40px 20px;
+}
+
+.welcome-logo {
+    font-size: 64px;
+    margin-bottom: 16px;
+}
+
+.welcome-title {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--accent-primary);
+    margin-bottom: 8px;
+}
+
+.welcome-subtitle {
+    color: var(--text-secondary);
+    font-size: 16px;
+}
+
+/* === Input Area === */
+.input-container {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.input-text {
+    flex: 1;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 14px;
+    resize: none;
+    outline: none;
+    transition: border-color var(--transition-fast);
+}
+
+.input-text:focus {
+    border-color: var(--accent-primary);
+}
+
+.input-text::placeholder {
+    color: var(--text-muted);
+}
+
+.send-btn {
+    padding: 12px 24px;
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.send-btn:hover {
+    background: var(--accent-secondary);
+}
+
+.send-btn:active {
+    transform: scale(0.98);
+}
+
+.send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* === Output Area === */
+.output-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 200px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.output-placeholder {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 40px;
+}
+
+.message {
+    margin-bottom: 12px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    max-width: 85%;
+}
+
+.message-user {
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    margin-left: auto;
+}
+
+.message-assistant {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.message-system {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-style: italic;
+    max-width: 100%;
+    text-align: center;
+}
+
+.message-error {
+    background: rgba(255, 82, 82, 0.2);
+    color: var(--accent-error);
+    border: 1px solid var(--accent-error);
+}
+
+/* === Progress Bar === */
+.progress-container {
+    margin-top: 16px;
+}
+
+.progress-bar {
+    height: 4px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-primary);
+    transition: width var(--transition-fast);
+}
+
+.progress-step {
+    display: block;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* === Recipe List === */
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.page-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.refresh-btn, .clear-btn {
+    padding: 8px 16px;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background var(--transition-fast);
+}
+
+.refresh-btn:hover, .clear-btn:hover {
+    background: var(--border-color);
+}
+
+.recipe-list, .skill-grid, .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.recipe-card, .skill-card, .history-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.recipe-card:hover, .skill-card:hover {
+    border-color: var(--accent-primary);
+    transform: translateX(4px);
+}
+
+.recipe-name, .skill-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.recipe-description, .skill-description {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.recipe-category {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 2px 8px;
+    background: var(--bg-tertiary);
+    color: var(--accent-primary);
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+/* === Skill Grid === */
+.skill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 16px;
+}
+
+.skill-card {
+    text-align: center;
+    padding: 24px 16px;
+}
+
+.skill-icon {
+    font-size: 32px;
+    margin-bottom: 12px;
+}
+
+/* === History List === */
+.history-item {
+    cursor: default;
+}
+
+.history-item:hover {
+    transform: none;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.history-input {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.history-timestamp {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.history-status {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.history-status.completed {
+    background: rgba(0, 200, 83, 0.2);
+    color: var(--accent-success);
+}
+
+.history-status.error {
+    background: rgba(255, 82, 82, 0.2);
+    color: var(--accent-error);
+}
+
+.history-output {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
+    font-size: 13px;
+    color: var(--text-secondary);
+    display: none;
+}
+
+.history-item.expanded .history-output {
+    display: block;
+}
+
+/* === Settings === */
+.settings-form {
+    max-width: 500px;
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.setting-item label {
+    font-weight: 500;
+}
+
+.setting-item select,
+.setting-item input[type="range"] {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 12px;
+    min-width: 120px;
+}
+
+.setting-item input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent-primary);
+}
+
+.save-btn {
+    margin-top: 24px;
+    width: 100%;
+    padding: 14px;
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.save-btn:hover {
+    background: var(--accent-secondary);
+}
+
+/* === Status Bar === */
+.status-bar {
+    height: var(--status-height);
+    background: var(--bg-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 16px;
+    border-top: 1px solid var(--border-color);
+    font-size: 12px;
+}
+
+.status-left, .status-right {
+    display: flex;
+    gap: 16px;
+}
+
+.status-item {
+    color: var(--text-secondary);
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.indicator-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-error);
+}
+
+.indicator-dot.connected {
+    background: var(--accent-success);
+}
+
+.indicator-dot.checking {
+    background: var(--accent-warning);
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.indicator-text {
+    color: var(--text-secondary);
+}
+
+/* === Toast Notifications === */
+.toast-container {
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    box-shadow: 0 4px 12px var(--shadow-color);
+    animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+    max-width: 300px;
+}
+
+.toast-info {
+    background: var(--accent-primary);
+}
+
+.toast-success {
+    background: var(--accent-success);
+}
+
+.toast-warning {
+    background: var(--accent-warning);
+    color: #212121;
+}
+
+.toast-error {
+    background: var(--accent-error);
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes fadeOut {
+    to {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+}
+
+/* === Loading State === */
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+}
+
+/* === Empty State === */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+.empty-state-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+/* === Scrollbar === */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}

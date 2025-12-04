@@ -22,11 +22,12 @@ from .usegit_commands import usegit_group
 from .chrome_commands import chrome_group
 from .update_command import update
 from .agent_command import agent, agent_status
+from .gui_command import gui_deps
 
 
 # 命令分组定义
 COMMAND_GROUPS = OrderedDict([
-    ("环境配置", ["init", "init-dirs", "status", "update"]),
+    ("环境配置", ["init", "init-dirs", "status", "update", "gui-deps"]),
     ("资源管理", ["use-git", "dev"]),
     ("浏览器自动化", ["chrome"]),
     ("自动化", ["recipe", "run", "agent", "agent-status"]),
@@ -87,7 +88,12 @@ class GroupedGroup(click.Group):
                 ])
 
 
-@click.group(cls=GroupedGroup)
+@click.group(cls=GroupedGroup, invoke_without_command=True)
+@click.option(
+    '--gui',
+    is_flag=True,
+    help='启动 GUI 应用模式'
+)
 @click.option(
     '--debug',
     is_flag=True,
@@ -142,7 +148,7 @@ class GroupedGroup(click.Group):
     help='指定目标tab的ID，用于在多tab环境下精确控制操作哪个页面'
 )
 @click.pass_context
-def cli(ctx, debug: bool, timeout: int, host: str, port: int,
+def cli(ctx, gui: bool, debug: bool, timeout: int, host: str, port: int,
         proxy_host: Optional[str], proxy_port: Optional[int],
         proxy_username: Optional[str], proxy_password: Optional[str],
         no_proxy: bool, target_id: Optional[str]):
@@ -154,6 +160,10 @@ def cli(ctx, debug: bool, timeout: int, host: str, port: int,
       • Run System   持久化任务上下文，记录完整探索过程
       • Recipe System 元数据驱动的可复用自动化脚本
       • Chrome CDP    浏览器自动化底层能力
+
+    \b
+    GUI 模式:
+      frago --gui    启动桌面 GUI 应用界面
     """
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
@@ -166,6 +176,17 @@ def cli(ctx, debug: bool, timeout: int, host: str, port: int,
     ctx.obj['PROXY_PASSWORD'] = proxy_password
     ctx.obj['NO_PROXY'] = no_proxy
     ctx.obj['TARGET_ID'] = target_id
+
+    # Handle --gui option
+    if gui:
+        from frago.gui.app import start_gui
+        start_gui(debug=debug)
+        return
+
+    # If no subcommand is invoked, show help
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+        return
 
     if debug:
         click.echo(f"调试模式已启用 - 主机: {host}:{port}, 超时: {timeout}s")
@@ -180,6 +201,7 @@ cli.add_command(init)  # 新的环境初始化命令
 cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
 cli.add_command(status)  # CDP 连接状态（保留在顶层便于快速检查）
 cli.add_command(update)  # 自我更新命令
+cli.add_command(gui_deps)  # GUI 依赖检查命令
 
 # 命令组
 cli.add_command(dev_group)  # 开发者命令组: dev pack/load/publish
