@@ -336,134 +336,193 @@ uv run frago recipe run youtube_extract_video_transcript \
 - AI Agent：发现和使用Recipe（通过 `recipe list/run` 命令）
 - Recipe系统是连接两者的桥梁
 
-## 系统架构
+## 会话监控架构
 
-### 三层架构设计
+Session 系统提供 AI agent 执行数据的实时监控和持久化。
+
+### 核心组件
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Pipeline Master (Python调度器)                          │
-│  - 启动Chrome CDP                                        │
-│  - 调度5个阶段                                            │
-│  - 通过.done文件同步                                     │
+│                   会话监控器                               │
+│  - 基于 watchdog 的文件系统监控                           │
+│  - 增量 JSONL 解析                                       │
+│  - 基于时间戳的会话关联                                   │
 └──────────────────┬──────────────────────────────────────┘
-                   │ 调用slash commands
-                   ↓
+                   │
+                   ▼
 ┌─────────────────────────────────────────────────────────┐
-│  Claude AI (创作执行者)                                   │
-│  - /frago.start:      AI自主决策信息收集策略            │
-│  - /frago.storyboard: AI自主设计分镜和时间轴            │
-│  - /frago.generate:   AI为每个clip创作录制脚本          │
-│  - /frago.evaluate:   AI自主评估质量问题                │
-│  - /frago.merge:      AI自主合成视频                    │
+│           Claude Code 会话源                              │
+│  ~/.claude/projects/{project-path}/{session-id}.jsonl   │
+│  - 用户消息和助手响应                                     │
+│  - 工具调用和结果                                        │
+│  - 时间戳和元数据                                        │
 └──────────────────┬──────────────────────────────────────┘
-                   │ 使用工具层
-                   ↓
+                   │
+                   ▼
 ┌─────────────────────────────────────────────────────────┐
-│  CDP工具层 (直连Chrome)                                   │
-│  - uv run frago <command>                               │
-│  - Recipe系统（可选加速）                                 │
-│  - 原生WebSocket连接（无Node.js中继）                    │
+│              Frago 会话存储                               │
+│  ~/.frago/sessions/{agent_type}/{session_id}/           │
+│  ├── metadata.json   (会话元数据)                        │
+│  ├── steps.jsonl     (解析的执行步骤)                    │
+│  └── summary.json    (会话摘要)                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 会话关联逻辑
+
+通过 10 秒时间窗口匹配会话：
+
+```python
+# 当 frago agent 启动时，记录 start_time
+# 当 ~/.claude/projects/... 中有新 JSONL 记录时
+
+record_time = parse_timestamp(record)
+delta = abs((record_time - start_time).total_seconds())
+
+if delta < 10:  # 10秒窗口
+    associate_session(record.session_id)
+```
+
+### 多 Agent 架构
+
+系统使用适配器模式实现可扩展性：
+
+```python
+class AgentAdapter:
+    """Agent 特定实现的抽象基类"""
+
+    def get_session_dir(self, project_path: str) -> Path:
+        """获取该 agent 类型的会话文件目录"""
+        raise NotImplementedError
+
+    def encode_project_path(self, project_path: str) -> str:
+        """将项目路径编码为目录名"""
+        raise NotImplementedError
+
+    def parse_record(self, data: Dict) -> ParsedRecord:
+        """解析 agent 特定的记录格式"""
+        raise NotImplementedError
+
+# 当前已实现
+_adapters = {
+    AgentType.CLAUDE: ClaudeCodeAdapter(),
+    # 未来: CursorAdapter, ClineAdapter
+}
+```
+
+## GUI 架构
+
+GUI 系统使用 pywebview 提供桌面界面。
+
+### 技术栈
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      用户界面                             │
+│  - HTML5/CSS3/JavaScript                                │
+│  - GitHub Dark 配色方案                                  │
+│  - 响应式布局 (600-1600px)                              │
 └──────────────────┬──────────────────────────────────────┘
-                   ↓
-             Chrome浏览器
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                    pywebview                             │
+│  - WebKit2GTK (Linux)                                   │
+│  - WebView2 (Windows)                                   │
+│  - WKWebView (macOS)                                    │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                  Python 后端 (API)                        │
+│  - FragoGuiApi 类 (js_api)                              │
+│  - Recipe 管理                                           │
+│  - 命令执行                                              │
+│  - 历史跟踪                                              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### AI自主决策的体现
+### JS-Python 桥接
 
-**每个阶段都是AI创作过程**，不是简单的脚本执行：
+```javascript
+// 前端 (JavaScript)
+const result = await pywebview.api.execute_command("recipe list");
+const recipes = await pywebview.api.get_recipes();
+const detail = await pywebview.api.run_recipe("name", params);
 
-#### 阶段0: 环境准备
-- **执行者**：Pipeline Master
-- **任务**：启动Chrome CDP (端口9222)
-- **输出**：Chrome进程持久运行
+// 后端 (Python FragoGuiApi 类)
+def execute_command(self, command: str) -> dict:
+    """执行 frago 命令并返回结果"""
+    ...
 
-#### 阶段1: 信息收集 (`/frago.start`)
-- **执行者**：**Claude AI**
-- **输入**：视频主题
-- **AI决策内容**：
-  - 识别主题类型（资讯/GitHub/产品/MVP）
-  - 规划信息源和收集策略
-  - 判断哪些截图和内容是核心
-  - 决定使用哪些工具（CDP/Git/Recipe）
-- **输出**：
-  - `research/report.json` - 信息报告
-  - `research/screenshots/` - 截图素材
-  - `start.done` - 完成标记
+def get_recipes(self) -> list[dict]:
+    """获取所有可用 recipe"""
+    ...
 
-#### 阶段2: 分镜规划 (`/frago.storyboard`)
-- **执行者**：**Claude AI**
-- **输入**：`research/report.json`
-- **AI决策内容**：
-  - 设计叙事结构和逻辑流程
-  - 规划每个镜头的重点和时长
-  - 设计精确到秒的动作时间轴
-  - 选择合适的视觉效果（spotlight/highlight）
-- **输出**：
-  - `shots/shot_xxx.json` - 分镜序列（含详细action_timeline）
-  - `storyboard.done` - 完成标记
-
-#### 阶段3: 视频生成循环 (`/frago.generate`)
-**Pipeline控制循环，AI创作每个clip**：
-
-```
-for each shot_xxx.json:
-    ├── AI分析分镜需求
-    ├── AI编写专属录制脚本 (clips/shot_xxx_record.sh)
-    │   - 精确控制每个动作的时间点
-    │   - 设计视觉效果的出现和消失
-    │   - 协调录制和操作的同步
-    ├── 执行脚本录制 shot_xxx.mp4
-    ├── 生成音频 shot_xxx_audio.mp3
-    ├── AI验证质量（时长、内容、同步）
-    └── 创建标记 shot_xxx.done
+def run_recipe(self, name: str, params: dict) -> dict:
+    """使用参数运行 recipe"""
+    ...
 ```
 
-- **执行者**：**Claude AI** (每次都是独立创作)
-- **核心理念**：不是批量处理，而是为每个clip定制脚本
-- **Recipe角色**：加速高频DOM操作（如YouTube字幕提取），避免重复LLM推理
-- **完成标记**：`generate.done`
+## 四系统集成
 
-#### 阶段4: 素材评估 (`/frago.evaluate`)
-- **执行者**：**Claude AI**
-- **AI决策内容**：
-  - 分析所有clips的完整性
-  - 识别质量问题（模糊、截断、时长不匹配）
-  - 提出修复建议或自动修复
-  - 验证音视频同步
-- **输出**：
-  - `evaluation_report.json` - 评估报告
-  - `evaluate.done` - 完成标记
+Run 系统、Recipe 系统、Session 系统和原生 CDP 如何协同工作：
 
-#### 阶段5: 视频合成 (`/frago.merge`)
-- **执行者**：**Claude AI**
-- **AI决策内容**：
-  - 确定合并顺序和过渡效果
-  - 处理音频同步和平滑
-  - 添加片头片尾（如需要）
-  - 选择输出格式和质量参数
-- **输出**：
-  - `outputs/final_output.mp4` - 最终视频
-  - `merge.done` - 完成标记
+```
+用户任务: "从 Upwork 查找 Python 职位并分析需求"
+│
+├─ Session 系统 (Agent 记忆)
+│  ├─ 监控: ~/.claude/projects/... (watchdog)
+│  ├─ 解析: 实时解析 Claude Code JSONL
+│  └─ 持久化: ~/.frago/sessions/claude/{session}/
+│
+├─ Run 系统 (工作记忆)
+│  ├─ 创建: upwork-python-jobs-abc123
+│  ├─ 日志: 所有操作记录到 JSONL
+│  └─ 持久化: 截图、脚本、输出
+│
+├─ Recipe 系统 (肌肉记忆)
+│  ├─ 发现: upwork_search_jobs (atomic)
+│  ├─ 发现: upwork_extract_job_details (atomic)
+│  └─ 执行: 使用验证过的选择器运行 Recipe
+│
+└─ 原生 CDP (执行引擎)
+   ├─ 命令: navigate, click, exec-js, screenshot
+   ├─ 直连 WebSocket: Python → Chrome
+   └─ 快速: 无 Node.js 中继开销
 
-#### 阶段6: 清理环境
-- **执行者**：Pipeline Master
-- **任务**：关闭Chrome，清理临时文件
+结果:
+├─ jobs.json (结构化数据)
+├─ execution.jsonl (Run 审计轨迹)
+├─ steps.jsonl (Session 执行步骤)
+└─ screenshots/ (视觉证据)
+```
 
-### 核心设计理念
+### 四系统 Token 效率
 
-1. **AI是创作者，不是执行器**
-   - 每个阶段AI都在做创作决策
-   - Pipeline只负责调度和同步
-   - Recipe是给AI用的加速工具
+| 系统 | 首次遇到 | 后续使用 | Token 节省 |
+|--------|----------------|----------------|---------------|
+| **无 Run/Recipe** | AI 探索 (150k tokens) | AI 再次探索 (150k tokens) | 0% |
+| **仅有 Run** | AI 探索 + 日志 (155k tokens) | 查看 Run 日志 (10k tokens) | 93.5% |
+| **Run + Recipe** | AI 探索 + 创建 Recipe (160k tokens) | 执行 Recipe (2k tokens) | **98.7%** |
+
+---
+
+## 核心设计理念
+
+1. **AI 是创作者，不是执行器**
+   - AI 负责任务分析和工作流设计
+   - Recipe 系统处理重复操作
+   - Session 系统提供执行可见性
 
 2. **混合策略的优势**
    ```
-   新场景：AI探索 → 理解 → 执行
-   熟悉场景：Recipe直接复用（省时省token）
-   复杂场景：AI创作 + Recipe加速高频部分
+   新场景：AI 探索 → 理解 → 执行
+   熟悉场景：Recipe 直接复用（省时省 token）
+   复杂场景：AI 创作 + Recipe 加速高频部分
    ```
 
-3. **与Browser Use的本质不同**
-   - Browser Use: 通用任务自动化（适应性强）
-   - Frago: 视频创作流程化（控制力强）
+3. **与 Browser Use 的本质不同**
+   - Browser Use: 通用任务自动化（适应性强，token 消耗高）
+   - Frago: AI 编排 + Recipe 加速（控制力强，token 效率高）

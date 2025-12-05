@@ -1,4 +1,4 @@
-# Frago - Multi-Runtime Automation Infrastructure
+# frago - Multi-Runtime Automation Infrastructure
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
@@ -14,7 +14,7 @@
 
 ---
 
-## 为什么需要 Frago
+## 为什么需要 frago
 
 AI 面对 prompt 解决问题时，只能"谈"而不能"做"，只"谈一次"而不会"从头开始做到尾"，例如 2023 年的 ChatGPT 等产品。于是有人设计出了 Agent，Agent 通过接口规范调用工具。
 
@@ -46,7 +46,7 @@ Agent 已经足够聪明，但还不够机灵。frago 让它记住如何做事�
 
 ## 如何使用
 
-Frago 结合 Claude Code，通过四个 slash command 构建完整的"探索 → 固化 → 执行"闭环。
+frago 结合 Claude Code，通过四个 slash command 构建完整的"探索 → 固化 → 执行"闭环。
 
 ```
 /frago.run     探索研究，积累经验
@@ -143,12 +143,13 @@ Agent 会：
 | **原生 CDP** | 直连 Chrome DevTools Protocol，~2MB 轻量级，无 Node.js 依赖 |
 | **Run 系统** | 持久化任务上下文，JSONL 结构化日志 |
 | **Recipe 系统** | 元数据驱动，三级优先级（Project > User > Example） |
+| **Session 系统** | Agent 会话监控，实时执行跟踪，多 Agent 适配 |
 | **多运行时** | Chrome JS、Python、Shell 三种运行时支持 |
 
 ```
 架构对比：
 Playwright:  Python → Node.js 中继 → CDP → Chrome  (~100MB)
-Frago:       Python → CDP → Chrome                  (~2MB)
+frago:       Python → CDP → Chrome                  (~2MB)
 ```
 
 ---
@@ -228,24 +229,24 @@ frago run info <run_id>
 
 ---
 
-## Frago 不是 Playwright/Selenium
+## frago 不是 Playwright/Selenium
 
 Playwright 和 Selenium 是**测试工具**——启动浏览器、跑测试、关闭浏览器。每次都是全新的开始。
 
-Frago 是**AI 的骨骼**——连接已有的浏览器，探索、学习、记住。经验可以积累。
+frago 是**AI 的骨骼**——连接已有的浏览器，探索、学习、记住。经验可以积累。
 
 | 你需要... | 选择 |
 |----------|------|
 | 质量保障、回归测试、CI/CD 集成 | Playwright/Selenium |
-| 数据采集、工作流自动化、AI 辅助任务 | Frago |
+| 数据采集、工作流自动化、AI 辅助任务 | frago |
 | 一次性脚本，跑完就扔 | Playwright/Selenium |
-| 积累经验，下次更快 | Frago |
+| 积累经验，下次更快 | frago |
 
 技术上的差异（轻量级、直连 CDP、无 Node.js 依赖）是结果，不是目的。
 
-**核心区别是设计哲学**：测试工具假设你知道要做什么；Frago 假设你在探索，并帮你记住探索的结果。
+**核心区别是设计哲学**：测试工具假设你知道要做什么；frago 假设你在探索，并帮你记住探索的结果。
 
-## 为什么有了 Dify/Coze/n8n，还可以有 Frago
+## frago vs Dify/Coze/n8n
 
 Dify、Coze、n8n 是**工作流编排工具**。
 
@@ -262,7 +263,7 @@ Dify、Coze、n8n 是**工作流编排工具**。
 
 **AI 帮你画了图，但调试、修改、维护——还是你自己干。**
 
-用 Frago：
+用 frago：
 
 ```
 /frago.run 从这个网站抓数据
@@ -284,15 +285,15 @@ Dify、Coze、n8n 是**工作流编排工具**。
 
 **你不需要进入任何平台，不需要看任何流程图。**
 
-| | 编排工具（含 AI 辅助） | Frago |
+| | 编排工具（含 AI 辅助） | frago |
 |--|----------------------|-------|
 | AI 做什么 | 帮你画流程图 | 直接替你干活 |
 | 你要做什么 | 进平台、看图、调试、改配置 | 说需求、等结果 |
 | 产出物 | 一张需要维护的流程图 | 可复用的 recipe |
 
-**编排工具的 AI 是你的"绘图助手"；Frago 的 AI 是你的"执行者"。**
+**编排工具的 AI 是你的"绘图助手"；frago 的 AI 是你的"执行者"。**
 
-当然，如果你需要定时触发、可视化监控、团队协作审批——编排工具更合适。但如果你只是想把事情做完——Frago 让你用嘴解决问题，不需要学任何平台。
+当然，如果你需要定时触发、可视化监控、团队协作审批——编排工具更合适。但如果你只是想把事情做完——frago 让你用嘴解决问题，不需要学任何平台。
 
 ---
 
@@ -300,7 +301,7 @@ Dify、Coze、n8n 是**工作流编排工具**。
 
 ### 为什么需要资源同步命令
 
-Frago 是开源项目——任何人都可以通过 PyPI 安装。但**骨骼**是通用的，**大脑**是私人的。
+frago 是开源项目——任何人都可以通过 PyPI 安装。但**骨骼**是通用的，**大脑**是私人的。
 
 每个人都有：
 - 自己的应用场景
@@ -309,9 +310,9 @@ Frago 是开源项目——任何人都可以通过 PyPI 安装。但**骨骼**�
 
 这些个性化资源不应该存在于公开包中，它们属于你自己。
 
-Frago 的理念：**跨环境一致**。无论你在哪台机器、全新安装还是新项目，你的资源都应该随时可用。工具来自 PyPI；大脑来自你的私有仓库。
+frago 的理念：**跨环境一致**。无论你在哪台机器、全新安装还是新项目，你的资源都应该随时可用。工具来自 PyPI；大脑来自你的私有仓库。
 
-Frago 暂时不提供社区级的云同步服务。取而代之的是，提供一套命令让你用自己的 Git 仓库管理同步。
+frago 暂时不提供社区级的云同步服务。取而代之的是，提供一套命令让你用自己的 Git 仓库管理同步。
 
 ### 资源流向概览
 
@@ -349,10 +350,10 @@ frago sync                 # 系统 → 远程 Git
 # 在新机器上首次配置
 frago sync --set-repo git@github.com:you/my-frago-resources.git
 frago deploy               # 远程 Git → 系统
-frago dev-load             # 系统 → 项目（如果你在开发 Frago）
+frago dev-load             # 系统 → 项目（如果你在开发 frago）
 ```
 
-**普通用户**（只使用 Frago）：
+**普通用户**（只使用 frago）：
 ```bash
 frago deploy               # 从你的仓库获取最新资源
 # 资源现在在 ~/.claude/ 和 ~/.frago/，可以直接使用
@@ -360,12 +361,12 @@ frago deploy               # 从你的仓库获取最新资源
 
 ### 同步范围
 
-只同步 Frago 专属资源：
+只同步 frago 专属资源：
 - `frago.*.md` 命令（不动你的其他 Claude 命令）
 - `frago-*` skills（不动你的其他 skills）
 - `~/.frago/recipes/` 下的所有配方
 
-你的个人非 Frago 的 Claude 命令和 skills 永远不会被触及。
+你的个人非 frago 的 Claude 命令和 skills 永远不会被触及。
 
 ---
 
@@ -384,24 +385,26 @@ frago deploy               # 从你的仓库获取最新资源
 
 ## 项目状态
 
-📍 **当前阶段**：Run 命令系统完成，多运行时自动化基建就绪
+📍 **当前阶段**：GUI 应用模式和 Agent 会话监控完成，四大系统协同工作
 
-**已完成（Feature 005）**：
+**已完成（Feature 008-010）**：
 
-- ✅ Run 命令系统 - 主题型任务管理和上下文积累
-- ✅ 结构化日志 - JSONL 格式的执行记录
-- ✅ AI 主持任务执行 - `/frago.run` slash 命令集成
-- ✅ Run 实例自动发现 - 基于 RapidFuzz 的模糊匹配
-- ✅ 完整测试覆盖 - 单元测试、集成测试、契约测试
+- ✅ GUI 应用模式 - pywebview 跨平台桌面界面
+- ✅ GUI 设计重构 - GitHub Dark 配色方案
+- ✅ Agent 会话监控 - 实时执行跟踪和数据持久化
+- ✅ JSONL 增量解析 - watchdog 文件系统监控
+- ✅ 多 Agent 支持 - 适配器模式（Claude Code、Cursor、Cline）
 
 **核心基建**：
 
 - ✅ 原生 CDP 协议层（直接控制 Chrome）
 - ✅ Recipe 元数据驱动架构（多运行时支持）
+- ✅ Run 命令系统（持久化上下文、JSONL 日志）
+- ✅ Session 监控系统（实时执行跟踪）
 - ✅ CLI 工具和命令系统
 - ✅ 三级 Recipe 管理体系
 
-详见 [项目进展](docs/roadmap.md) 和 [Run 命令系统规格说明](specs/005-run-command-system/spec.md)
+详见 [项目进展](docs/roadmap.zh-CN.md)
 
 ---
 
@@ -409,18 +412,18 @@ frago deploy               # 从你的仓库获取最新资源
 
 AGPL-3.0 License - 详见 [LICENSE](LICENSE) 文件
 
-## 作者
-
-**Jamey Tsai** - [caijia@frago.ai](mailto:caijia@frago.ai)
-
-项目创始人和主要维护者
-
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
 
 - 项目问题：[提交 Issue](https://github.com/tsaijamey/Frago/issues)
 - 技术讨论：[Discussions](https://github.com/tsaijamey/Frago/discussions)
+
+### 贡献者
+
+<a href="https://github.com/tsaijamey/Frago/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tsaijamey/Frago" />
+</a>
 
 ---
 

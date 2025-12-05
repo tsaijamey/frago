@@ -50,6 +50,18 @@ Frago/
 │   │   │   ├── manager.py            # Run instance management
 │   │   │   ├── logger.py             # JSONL structured logging
 │   │   │   └── discovery.py          # RapidFuzz-based auto-discovery
+│   │   ├── session/                   # Session monitoring (Feature 010)
+│   │   │   ├── monitor.py             # File system monitoring (watchdog)
+│   │   │   ├── parser.py              # JSONL incremental parsing
+│   │   │   ├── storage.py             # Session data persistence
+│   │   │   ├── models.py              # Data models (Session, Step, ToolCall)
+│   │   │   └── formatter.py           # Output formatters (terminal/JSON)
+│   │   ├── gui/                        # GUI app mode (Feature 008-009)
+│   │   │   ├── app.py                  # Main application (pywebview)
+│   │   │   ├── api.py                  # JS-Python bridge API
+│   │   │   ├── models.py               # GUI configuration models
+│   │   │   └── assets/                 # HTML/CSS/JS frontend
+│   │   │       └── index.html
 │   │   └── tools/                    # Development tools
 │   │       └── function_mapping.py   # CDP function mapping validation tool
 │   ├── chrome_cdp_launcher.py        # Chrome CDP launcher (cross-platform)
@@ -68,7 +80,12 @@ Frago/
 │   ├── 002-cdp-integration-refactor/# CDP integration refactor (Python implementation)
 │   ├── 003-skill-automation/        # Recipe system design
 │   ├── 004-recipe-architecture-refactor/ # Recipe architecture refactor
-│   └── 005-run-command-system/      # Run system implementation (completed)
+│   ├── 005-run-command-system/      # Run system implementation
+│   ├── 006-init-command/            # Init command design
+│   ├── 007-init-commands-setup/     # Resource installation
+│   ├── 008-gui-app-mode/            # GUI desktop application
+│   ├── 009-gui-design-redesign/     # GUI visual design optimization
+│   └── 010-agent-session-monitor/   # Agent session monitoring
 │
 ├── docs/                            # Project documentation
 │   ├── architecture.md              # Technical architecture
@@ -119,6 +136,8 @@ All CDP functionality accessed through unified CLI interface (`uv run frago <com
 - **Browser Control**: Chrome DevTools Protocol (CDP) - native WebSocket
 - **Multi-Runtime Support**: Chrome JS, Python, Shell
 - **Task Management**: Run command system (context persistence, JSONL logs)
+- **Session Monitoring**: watchdog + incremental JSONL parsing
+- **GUI Framework**: pywebview (cross-platform WebView)
 - **Script Orchestration**: Python 3.9+ (Recipe system + CDP tool layer)
 
 ## Development Standards
@@ -127,6 +146,8 @@ All CDP functionality accessed through unified CLI interface (`uv run frago <com
    - CDP command implementations in `src/frago/cdp/commands/`
    - Recipe engine code in `src/frago/recipes/`
    - Run system code in `src/frago/run/`
+   - Session monitoring code in `src/frago/session/`
+   - GUI application code in `src/frago/gui/`
    - Example Recipes in `examples/atomic/chrome/`
 
 2. **File naming**:

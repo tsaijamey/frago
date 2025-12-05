@@ -107,6 +107,47 @@ frago publish && frago sync
 
 ## 可选功能
 
+### GUI 支持
+
+如果需要使用桌面 GUI 界面：
+
+```bash
+# 使用 pip
+pip install frago-cli[gui]
+
+# 使用 uv
+uv tool install "frago-cli[gui]"
+```
+
+**平台特定要求**：
+
+| 平台 | 后端 | 系统依赖 |
+|------|------|----------|
+| **Linux** | WebKit2GTK | `sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1` |
+| **macOS** | WKWebView | 无（内置） |
+| **Windows** | WebView2 | Edge WebView2 Runtime（推荐） |
+
+**Linux 安装示例（Ubuntu/Debian）**：
+```bash
+# 先安装系统依赖
+sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
+
+# 然后安装带 GUI 支持的 frago
+pip install frago-cli[gui]
+
+# 或者一行命令支持 PyGObject 编译
+sudo apt install -y libcairo2-dev libgirepository1.0-dev gir1.2-webkit2-4.1
+pip install frago-cli[gui] PyGObject
+```
+
+**启动 GUI**：
+```bash
+frago gui
+frago gui --debug  # 带开发者工具
+```
+
+---
+
 ### 剪贴板支持
 
 如果需要将 Recipe 结果输出到剪贴板：
@@ -182,8 +223,9 @@ dependencies = [
 
 ```toml
 [project.optional-dependencies]
-clipboard = ["pyperclip>=1.8.0"]  # 剪贴板功能
-all = ["pyperclip>=1.8.0"]         # 所有可选功能
+clipboard = ["pyperclip>=1.8.0"]   # 剪贴板功能
+gui = ["pywebview>=5.0.0"]         # 桌面 GUI 界面
+all = ["pyperclip>=1.8.0", "pywebview>=5.0.0"]  # 所有可选功能
 dev = ["pytest>=7.4.0", ...]       # 开发工具
 ```
 

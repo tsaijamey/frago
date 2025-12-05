@@ -47,6 +47,22 @@ Frago/
 │   │   │   ├── runner.py            # Recipe执行器
 │   │   │   ├── output_handler.py    # 输出处理（stdout/file/clipboard）
 │   │   │   └── exceptions.py        # Recipe异常定义
+│   │   ├── run/                      # Run命令系统（Feature 005）
+│   │   │   ├── manager.py            # Run实例管理
+│   │   │   ├── logger.py             # JSONL结构化日志
+│   │   │   └── discovery.py          # 基于RapidFuzz的自动发现
+│   │   ├── session/                   # 会话监控（Feature 010）
+│   │   │   ├── monitor.py             # 文件系统监控（watchdog）
+│   │   │   ├── parser.py              # JSONL增量解析
+│   │   │   ├── storage.py             # 会话数据持久化
+│   │   │   ├── models.py              # 数据模型（Session、Step、ToolCall）
+│   │   │   └── formatter.py           # 输出格式化（终端/JSON）
+│   │   ├── gui/                        # GUI应用模式（Feature 008-009）
+│   │   │   ├── app.py                  # 主应用（pywebview）
+│   │   │   ├── api.py                  # JS-Python桥接API
+│   │   │   ├── models.py               # GUI配置模型
+│   │   │   └── assets/                 # HTML/CSS/JS前端
+│   │   │       └── index.html
 │   │   └── tools/                   # 开发工具
 │   │       └── function_mapping.py  # CDP功能映射验证工具
 │   ├── chrome_cdp_launcher.py       # Chrome CDP启动器（跨平台）
@@ -65,7 +81,13 @@ Frago/
 │   ├── 001-standardize-cdp-scripts/ # CDP脚本标准化
 │   ├── 002-cdp-integration-refactor/# CDP集成重构（Python实现）
 │   ├── 003-skill-automation/        # Recipe系统设计
-│   └── 004-recipe-architecture-refactor/ # Recipe架构重构
+│   ├── 004-recipe-architecture-refactor/ # Recipe架构重构
+│   ├── 005-run-command-system/      # Run命令系统
+│   ├── 006-init-command/            # Init命令
+│   ├── 007-init-commands-setup/     # 命令资源安装
+│   ├── 008-gui-app-mode/            # GUI应用模式
+│   ├── 009-gui-design-redesign/     # GUI设计重构
+│   └── 010-agent-session-monitor/   # Agent会话监控
 │
 ├── docs/                            # 项目文档
 │   ├── architecture.md              # 技术架构
@@ -118,6 +140,8 @@ src/frago/cdp/commands/
 - **浏览器控制**：Chrome DevTools Protocol (CDP) - 原生WebSocket
 - **多运行时支持**：Chrome JS、Python、Shell
 - **任务管理**：Run命令系统（持久化上下文、JSONL日志）
+- **会话监控**：watchdog文件系统监控 + JSONL增量解析
+- **GUI框架**：pywebview（跨平台桌面应用）
 - **脚本编排**：Python 3.9+（Recipe系统 + CDP工具层）
 
 ## 开发规范

@@ -1,4 +1,4 @@
-# Frago - Multi-Runtime Automation Infrastructure
+# frago - Multi-Runtime Automation Infrastructure
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
@@ -6,15 +6,15 @@
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
-[简体中文](https://github.com/tsaijamey/frago/blob/main/README.zh-CN.md)
+[简体中文](https://github.com/tsaijamey/Frago/blob/main/README.zh-CN.md)
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
-**Docs**: [Key Concepts](https://github.com/tsaijamey/frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/frago/blob/main/docs/development.md)
+**Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
 
 ---
 
-## Why Frago
+## Why frago
 
 When facing prompts, AI can only "talk" but not "do"—it "talks once" but never "follows through from start to finish." Think of ChatGPT in 2023. So people designed Agents. Agents call tools through standardized interfaces.
 
@@ -30,23 +30,23 @@ People tried RAG, fragmenting information so Agents could retrieve and "find met
 
 Research from Anthropic and Google both point to: directly consulting documentation. The author of this project proposed the same view in 2024. But this approach requires Agents with sufficient capability. Claude Code is exactly such an Agent.
 
-Claude Code designed a documentation architecture: commands and skills, to practice this philosophy. Frago builds on this foundation, deeply implementing the author's design philosophy: every piece of methodological knowledge must be tied to concrete executable tools.
+Claude Code designed a documentation architecture: commands and skills, to practice this philosophy. frago builds on this foundation, deeply implementing the author's design philosophy: every piece of methodological knowledge must be tied to concrete executable tools.
 
-In Frago's framework, skills are collections of methodologies, and recipes are collections of executable tools.
+In frago's framework, skills are collections of methodologies, and recipes are collections of executable tools.
 
-The author's vision: through Frago's Claude Code slash commands (/frago.run and other core commands), establish an Agent specification—enabling it to explore unfamiliar problems and standardize results into structured information; through self-awareness, proactively build the association between skills and recipes.
+The author's vision: through frago's Claude Code slash commands (/frago.run and other core commands), establish an Agent specification—enabling it to explore unfamiliar problems and standardize results into structured information; through self-awareness, proactively build the association between skills and recipes.
 
 Ultimately, your Agent can fully understand your descriptions of work and task requirements, leverage existing skills to find and properly use relevant recipes, achieving "driving automated execution with minimal token cost."
 
-Frago is not the Agent itself, but the Agent's "skeleton."
+frago is not the Agent itself, but the Agent's "skeleton."
 
-Agents are smart enough, but not yet resourceful. Frago teaches them to remember how to get things done.
+Agents are smart enough, but not yet resourceful. frago teaches them to remember how to get things done.
 
 ---
 
 ## How to Use
 
-Frago integrates with Claude Code through four slash commands, forming a complete "explore → solidify → execute" loop.
+frago integrates with Claude Code through four slash commands, forming a complete "explore → solidify → execute" loop.
 
 ```
 /frago.run     Explore and research, accumulate experience
@@ -67,7 +67,7 @@ In Claude Code, type:
 
 The Agent will:
 - Create a project to store this run instance
-- Use Frago's basic tools (navigate, click, exec-js, etc.) to explore
+- Use frago's basic tools (navigate, click, exec-js, etc.) to explore
 - Automatically record `execution.jsonl` and key findings
 - Persist all screenshots, scripts, and output files
 
@@ -136,7 +136,7 @@ The Agent will:
 
 ## Technical Foundation
 
-The above workflow relies on Frago's underlying capabilities:
+The above workflow relies on frago's underlying capabilities:
 
 | Capability | Description |
 |------------|-------------|
@@ -148,7 +148,7 @@ The above workflow relies on Frago's underlying capabilities:
 ```
 Architecture Comparison:
 Playwright:  Python → Node.js relay → CDP → Chrome  (~100MB)
-Frago:       Python → CDP → Chrome                  (~2MB)
+frago:       Python → CDP → Chrome                  (~2MB)
 ```
 
 ---
@@ -184,7 +184,7 @@ frago init --show-config
 frago init --reset
 ```
 
-See [Installation Guide](https://github.com/tsaijamey/frago/blob/main/docs/installation.md) for details
+See [Installation Guide](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) for details
 
 ### Basic Usage
 
@@ -208,7 +208,7 @@ See the "How to Use" section above for detailed workflow.
 
 ### Command Line Tools (Human Direct Use)
 
-Frago also provides CLI tools for debugging or script integration:
+frago also provides CLI tools for debugging or script integration:
 
 ```bash
 # Browser operations
@@ -228,24 +228,24 @@ frago run info <run_id>
 
 ---
 
-## Frago Is Not Playwright/Selenium
+## frago Is Not Playwright/Selenium
 
 Playwright and Selenium are **testing tools**—launch browser, run tests, close browser. Every run starts fresh.
 
-Frago is **the skeleton for AI**—connect to an existing browser, explore, learn, remember. Experience accumulates.
+frago is **the skeleton for AI**—connect to an existing browser, explore, learn, remember. Experience accumulates.
 
 | You need... | Choose |
 |-------------|--------|
 | Quality assurance, regression testing, CI/CD | Playwright/Selenium |
-| Data collection, workflow automation, AI-assisted tasks | Frago |
+| Data collection, workflow automation, AI-assisted tasks | frago |
 | One-off scripts, run and discard | Playwright/Selenium |
-| Accumulate experience, faster next time | Frago |
+| Accumulate experience, faster next time | frago |
 
 Technical differences (lightweight, direct CDP, no Node.js dependency) are outcomes, not goals.
 
-**The core difference is design philosophy**: testing tools assume you know what to do; Frago assumes you're exploring, and helps you remember what you discovered.
+**The core difference is design philosophy**: testing tools assume you know what to do; frago assumes you're exploring, and helps you remember what you discovered.
 
-## Why Frago When You Already Have Dify/Coze/n8n
+## frago vs Dify/Coze/n8n
 
 Dify, Coze, and n8n are **workflow orchestration tools**.
 
@@ -262,7 +262,7 @@ Then what?
 
 **AI drew the diagram for you, but debugging, modifying, maintaining—still your job.**
 
-Using Frago:
+Using frago:
 
 ```
 /frago.run Scrape data from this website
@@ -284,15 +284,15 @@ Recipe auto-generated. Next time:
 
 **You don't need to enter any platform, don't need to look at any flowchart.**
 
-| | Orchestration Tools (incl. AI-assisted) | Frago |
+| | Orchestration Tools (incl. AI-assisted) | frago |
 |--|----------------------------------------|-------|
 | What AI does | Draws flowcharts for you | Does the work directly |
 | What you do | Enter platform, read diagrams, debug, modify config | State needs, wait for results |
 | Output | A flowchart that needs maintenance | Reusable recipe |
 
-**Orchestration tools' AI is your "diagram assistant"; Frago's AI is your "executor".**
+**Orchestration tools' AI is your "diagram assistant"; frago's AI is your "executor".**
 
-Of course, if you need scheduled triggers, visual monitoring, team collaboration approvals—orchestration tools are better fits. But if you just want to get things done—Frago lets you solve problems by talking, no platform to learn.
+Of course, if you need scheduled triggers, visual monitoring, team collaboration approvals—orchestration tools are better fits. But if you just want to get things done—frago lets you solve problems by talking, no platform to learn.
 
 ---
 
@@ -300,7 +300,7 @@ Of course, if you need scheduled triggers, visual monitoring, team collaboration
 
 ### Why Resource Sync Commands
 
-Frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal.
+frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal.
 
 Each person has:
 - Their own application scenarios
@@ -309,9 +309,9 @@ Each person has:
 
 These personalized resources shouldn't live in the public package. They belong to you.
 
-Frago's philosophy: **cross-environment consistency**. Your resources should be available wherever you work—different machines, fresh installations, or new projects. The tool comes from PyPI; your brain comes from your private repository.
+frago's philosophy: **cross-environment consistency**. Your resources should be available wherever you work—different machines, fresh installations, or new projects. The tool comes from PyPI; your brain comes from your private repository.
 
-Frago doesn't provide community-level cloud sync services (yet). Instead, it gives you commands to manage sync with your own Git repository.
+frago doesn't provide community-level cloud sync services (yet). Instead, it gives you commands to manage sync with your own Git repository.
 
 ### Resource Flow Overview
 
@@ -349,10 +349,10 @@ frago sync                 # System → Remote Git
 # First time setup on a new machine
 frago sync --set-repo git@github.com:you/my-frago-resources.git
 frago deploy               # Remote Git → System
-frago dev-load             # System → Project (if developing Frago)
+frago dev-load             # System → Project (if developing frago)
 ```
 
-**Regular User** (just uses Frago):
+**Regular User** (just uses frago):
 ```bash
 frago deploy               # Get latest resources from your repo
 # Resources are now in ~/.claude/ and ~/.frago/, ready to use
@@ -360,60 +360,54 @@ frago deploy               # Get latest resources from your repo
 
 ### What Gets Synced
 
-Only Frago-specific resources are synced:
+Only frago-specific resources are synced:
 - `frago.*.md` commands (not your other Claude commands)
 - `frago-*` skills (not your other skills)
 - All recipes in `~/.frago/recipes/`
 
-Your personal, non-Frago Claude commands and skills are never touched.
+Your personal, non-frago Claude commands and skills are never touched.
 
 ---
 
 ## Documentation Navigation
 
-- **[Key Concepts](https://github.com/tsaijamey/frago/blob/main/docs/concepts.md)** - Skill, Recipe, Run definitions and relationships
-- **[Use Cases](https://github.com/tsaijamey/frago/blob/main/docs/use-cases.md)** - Complete workflow from Recipe creation to Workflow orchestration
-- **[Architecture](https://github.com/tsaijamey/frago/blob/main/docs/architecture.md)** - Core differences, technology choices, system design
-- **[Installation](https://github.com/tsaijamey/frago/blob/main/docs/installation.md)** - Installation methods, dependencies, optional features
-- **[User Guide](https://github.com/tsaijamey/frago/blob/main/docs/user-guide.md)** - CDP commands, Recipe management, Run system
-- **[Recipe System](https://github.com/tsaijamey/frago/blob/main/docs/recipes.md)** - AI-First design, metadata-driven, Workflow orchestration
-- **[Development](https://github.com/tsaijamey/frago/blob/main/docs/development.md)** - Project structure, development standards, testing methods
-- **[Roadmap](https://github.com/tsaijamey/frago/blob/main/docs/roadmap.md)** - Completed features, todos, version planning
+- **[Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md)** - Skill, Recipe, Run definitions and relationships
+- **[Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md)** - Complete workflow from Recipe creation to Workflow orchestration
+- **[Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md)** - Core differences, technology choices, system design
+- **[Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md)** - Installation methods, dependencies, optional features
+- **[User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md)** - CDP commands, Recipe management, Run system
+- **[Recipe System](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md)** - AI-First design, metadata-driven, Workflow orchestration
+- **[Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)** - Project structure, development standards, testing methods
+- **[Roadmap](https://github.com/tsaijamey/Frago/blob/main/docs/roadmap.md)** - Completed features, todos, version planning
 
 ---
 
 ## Project Status
 
-📍 **Current Stage**: Run command system completed, multi-runtime automation infrastructure ready
+📍 **Current Stage**: GUI app mode and session monitoring complete, entering developer experience enhancement phase
 
-**Completed (Feature 005)**:
+**Latest Features (Feature 008-010)**:
 
-- ✅ Run command system - Topic-based task management and context accumulation
-- ✅ Structured logs - JSONL format execution records
-- ✅ AI-driven task execution - `/frago.run` slash command integration
-- ✅ Run instance auto-discovery - RapidFuzz-based fuzzy matching
-- ✅ Complete test coverage - unit tests, integration tests, contract tests
+- ✅ GUI app mode - `frago gui` launches desktop interface with pywebview
+- ✅ GUI design optimization - GitHub Dark color scheme for professional visual experience
+- ✅ Agent session monitoring - Real-time tracking and parsing of Claude Code session data
+- ✅ Session data persistence - `~/.frago/sessions/{agent_type}/{session_id}/` structured storage
 
 **Core Infrastructure**:
 
-- ✅ Native CDP protocol layer (direct Chrome control)
-- ✅ Recipe metadata-driven architecture (multi-runtime support)
-- ✅ CLI tools and command system
-- ✅ Three-tier Recipe management system
+- ✅ Native CDP protocol layer (direct Chrome control, ~2MB lightweight)
+- ✅ Recipe metadata-driven architecture (chrome-js/python/shell runtime)
+- ✅ Run command system (topic-based task management, JSONL structured logs)
+- ✅ Init command system (dependency check, resource installation)
+- ✅ CLI tools and grouped command system
 
-See [Roadmap](https://github.com/tsaijamey/frago/blob/main/docs/roadmap.md) and [Run Command System Spec](https://github.com/tsaijamey/frago/blob/main/specs/005-run-command-system/spec.md) for details
+See [Roadmap](https://github.com/tsaijamey/Frago/blob/main/docs/roadmap.md) for details
 
 ---
 
 ## License
 
-AGPL-3.0 License - see [LICENSE](https://github.com/tsaijamey/frago/blob/main/LICENSE) file
-
-## Author
-
-**Jamey Tsai** - [caijia@frago.ai](mailto:caijia@frago.ai)
-
-Project founder and primary maintainer
+AGPL-3.0 License - see [LICENSE](https://github.com/tsaijamey/Frago/blob/main/LICENSE) file
 
 ## Contributing
 
@@ -421,6 +415,12 @@ Issues and Pull Requests are welcome!
 
 - Project issues: [Submit Issue](https://github.com/tsaijamey/Frago/issues)
 - Technical discussion: [Discussions](https://github.com/tsaijamey/Frago/discussions)
+
+### Contributors
+
+<a href="https://github.com/tsaijamey/Frago/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tsaijamey/Frago" />
+</a>
 
 ---
 

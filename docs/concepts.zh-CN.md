@@ -160,6 +160,26 @@ Frago 提供四个 slash command，形成完整的工作闭环：
 | 适用场景 | 海量知识库 | 个人/团队的有限任务集 |
 | 复杂度 | 高（需要向量数据库） | 低（只是文件） |
 
+### Session（Agent 会话）
+
+**本质**：AI agent 执行过程的实时记录。
+
+**存放位置**：`~/.frago/sessions/{agent_type}/{session_id}/`
+
+**结构**：
+```
+~/.frago/sessions/claude/abc123/
+├── metadata.json    # 会话元数据（项目、时间、状态）
+├── steps.jsonl      # 执行步骤（消息、工具调用）
+└── summary.json     # 会话摘要（统计信息）
+```
+
+**特点**：
+- 通过文件系统监控实时监控
+- 支持多种 Agent 类型（Claude、Cursor、Cline）
+- 支持 Agent 行为的事后分析
+- 与原始 Agent 会话存储解耦
+
 ---
 
 ## 总结
@@ -167,4 +187,5 @@ Frago 提供四个 slash command，形成完整的工作闭环：
 - **Skill**（Claude Code）：方法论，告诉 AI 如何做事
 - **Recipe**（Frago）：配方，具体怎么执行
 - **Run**（Frago）：任务实例，记录探索过程
-- **Frago 的贡献**：将三者关联，提供探索→固化→执行的闭环工具
+- **Session**（Frago）：Agent 会话，实时执行监控
+- **Frago 的贡献**：将所有概念关联，提供探索→固化→执行→监控的闭环工具

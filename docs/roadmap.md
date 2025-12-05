@@ -4,15 +4,17 @@
 
 ## Project Status
 
-📍 **Current Phase**: Three-system architecture complete (Run + Recipe + CDP), entering ecosystem building phase
+📍 **Current Phase**: GUI and session monitoring complete, entering developer experience enhancement phase
 
 **Completed**:
 - ✅ Native CDP protocol layer (~3,763 lines of Python)
-- ✅ CLI tools and command system
+- ✅ CLI tools and grouped command system
 - ✅ Recipe metadata-driven architecture (multi-runtime support)
 - ✅ Run command system (topic-based task management)
 - ✅ Init command (dependency check, resource installation)
 - ✅ Environment variable support (three-level config priority)
+- ✅ GUI app mode (pywebview desktop interface)
+- ✅ Agent session monitoring (Claude Code session parsing and persistence)
 
 **Technical Highlights**:
 - 🏆 Native CDP (no Playwright/Selenium dependencies, ~2MB)
@@ -20,6 +22,7 @@
 - 🏆 Recipe acceleration system (solidify high-frequency operations, avoid repeated AI reasoning)
 - 🏆 Run System (AI's working memory with persistent context)
 - 🏆 Environment variable system (sensitive info management + Workflow context sharing)
+- 🏆 Session monitoring (real-time Claude Code session tracking with watchdog)
 
 ---
 
@@ -130,6 +133,70 @@
   - `WorkflowContext` class for cross-Recipe sharing
   - Complete system environment inheritance
   - CLI `-e KEY=VALUE` override
+
+### Feature 008: GUI App Mode
+
+- [x] **Desktop GUI Application**
+  - `frago gui` command launches desktop interface
+  - pywebview backend (WebKit2GTK on Linux, WebView2 on Windows, WKWebView on macOS)
+  - Cross-platform support (Linux, macOS, Windows)
+  - Dynamic window sizing (80% of screen height, maintain aspect ratio)
+
+- [x] **GUI Features**
+  - Recipe listing and detail view
+  - Recipe execution with parameter input
+  - Command input and output display
+  - Connection status indicator
+
+- [x] **Installation**
+  - Optional GUI dependencies: `pip install frago-cli[gui]`
+  - Platform-specific backend auto-detection
+  - Graceful fallback with installation instructions
+
+### Feature 009: GUI Design Redesign
+
+- [x] **Color Scheme Optimization**
+  - GitHub Dark color palette (`--bg-base: #0d1117`)
+  - Soft blue accent color (`--accent-primary: #58a6ff`)
+  - Harmonious text and border colors
+  - Reduced eye strain for long sessions
+
+- [x] **Layout Improvements**
+  - Clear visual hierarchy (input > content > navigation)
+  - Recipe card design with action buttons
+  - Empty state guidance
+  - Responsive layout (600-1600px width)
+
+- [x] **Interaction Feedback**
+  - Loading states with smooth transitions
+  - Message bubble animations
+  - Status indicator updates
+  - Native window title bar (resolved macOS close hang)
+
+### Feature 010: Agent Session Monitoring
+
+- [x] **Session File Monitoring**
+  - watchdog-based file system monitoring
+  - Real-time JSONL parsing from `~/.claude/projects/`
+  - Incremental parsing (only new records)
+  - Session association via timestamp matching (10s window)
+
+- [x] **Session Data Persistence**
+  - Structured storage: `~/.frago/sessions/{agent_type}/{session_id}/`
+  - `metadata.json` - session metadata (project, start time, status)
+  - `steps.jsonl` - execution steps (messages, tool calls)
+  - `summary.json` - session summary (tool call stats)
+
+- [x] **Multi-Agent Support**
+  - `AgentType` enum (CLAUDE, CURSOR, CLINE, OTHER)
+  - `AgentAdapter` abstract base class for extensibility
+  - `ClaudeCodeAdapter` implementation for Claude Code
+  - Adapter registry for future agent support
+
+- [x] **CLI Commands**
+  - `frago session list` - list sessions
+  - `frago session show <id>` - show session details
+  - `frago session watch` - real-time session monitoring
 
 ---
 
@@ -265,6 +332,41 @@
 - Example Recipe copying
 - Resource status view
 
+### 008: GUI App Mode
+**Goal**: Provide desktop GUI interface for non-CLI users
+
+**Achievements**:
+- pywebview-based desktop application
+- Cross-platform support (Linux, macOS, Windows)
+- Recipe management interface
+- Command execution interface
+- Dynamic window sizing based on screen
+
+### 009: GUI Design Redesign
+**Goal**: Improve visual experience and user cognition
+
+**Achievements**:
+- GitHub Dark color scheme (professional, low eye strain)
+- Clear visual hierarchy (input > content > navigation)
+- Interaction feedback (loading states, animations)
+- Native window title bar (resolved macOS close hang issue)
+
+### 010: Agent Session Monitoring
+**Goal**: Real-time monitoring and persistence of Claude Code session data
+
+**Achievements**:
+- watchdog-based file system monitoring
+- JSONL incremental parsing
+- Session data persistence (`~/.frago/sessions/`)
+- Multi-agent architecture (extensible to Cursor, Cline)
+- CLI commands (list, show, watch)
+
+**Key Features**:
+- **Real-time Display**: See Agent execution status as it happens
+- **Data Persistence**: All session data saved for later analysis
+- **Concurrency Isolation**: Multiple sessions don't interfere
+- **Extensibility**: Adapter pattern for future agent support
+
 ---
 
 ## Version History
@@ -317,7 +419,52 @@ First official release, core infrastructure complete.
    - `__version__` now reads from `pyproject.toml` via `importlib.metadata`
    - Single source of truth for version number
 
-### v0.3.0 (Planned)
+### v0.3.0 (Released - 2025-12-01)
+
+**Milestone**: CLI Command Grouping & Resource Sync
+
+**Major Changes**:
+
+1. **CLI Command Grouping**
+   - Commands organized into groups: `chrome`, `recipe`, `run`, `session`
+   - `frago chrome navigate` instead of `frago navigate`
+   - `frago recipe list` instead of `frago list`
+   - Improved discoverability with `--help`
+
+2. **Resource Sync Commands**
+   - `frago publish` - Push project resources to system directories
+   - `frago sync` - Push system resources to remote Git repo
+   - `frago deploy` - Pull from remote Git repo to system
+   - `frago dev-load` - Load system resources to project (dev only)
+
+3. **Agent Command**
+   - `frago agent "task"` - Execute AI-driven tasks
+   - Integration with session monitoring
+
+### v0.4.0 (Released - 2025-12-05)
+
+**Milestone**: GUI App Mode & Session Monitoring
+
+**Major Changes**:
+
+1. **GUI App Mode (Feature 008)**
+   - `frago gui` command launches desktop interface
+   - pywebview backend (cross-platform)
+   - Recipe management and execution
+   - Optional dependency: `pip install frago-cli[gui]`
+
+2. **GUI Design Redesign (Feature 009)**
+   - GitHub Dark color scheme
+   - Improved visual hierarchy
+   - Native window title bar (resolved macOS hang)
+
+3. **Agent Session Monitoring (Feature 010)**
+   - Real-time Claude Code session tracking
+   - JSONL parsing with watchdog
+   - Session data persistence
+   - `frago session list/show/watch` commands
+
+### v0.5.0 (Planned)
 
 **Milestone**: Recipe System Enhancement
 
@@ -329,19 +476,6 @@ First official release, core infrastructure complete.
 **Secondary Goals**:
 - Run system template support
 - Log export (CSV/Excel)
-
-### v0.4.0 (Planned)
-
-**Milestone**: Developer Experience
-
-**Core Goals**:
-- Recipe testing framework
-- Recipe debugging tools
-- VS Code extension (syntax highlighting, intellisense)
-
-**Secondary Goals**:
-- Performance optimization
-- More documentation and examples
 
 ### v1.0.0 (Long-term Goal)
 

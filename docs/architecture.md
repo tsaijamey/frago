@@ -489,14 +489,170 @@ Run instances and Recipes work together:
 - Pinpoint exact failure location
 - Incremental retry from checkpoints
 
+## Session Monitoring Architecture
+
+The Session system provides real-time monitoring and persistence of AI agent execution data.
+
+### Core Components
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                Session Monitor                           │
+│  - watchdog-based file system monitoring                │
+│  - Incremental JSONL parsing                            │
+│  - Timestamp-based session association                  │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│           Claude Code Session Source                     │
+│  ~/.claude/projects/{project-path}/{session-id}.jsonl   │
+│  - User messages and assistant responses                │
+│  - Tool calls and results                               │
+│  - Timestamps and metadata                              │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│              Frago Session Storage                       │
+│  ~/.frago/sessions/{agent_type}/{session_id}/           │
+│  ├── metadata.json   (session metadata)                 │
+│  ├── steps.jsonl     (parsed execution steps)           │
+│  └── summary.json    (session summary)                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Session Association Logic
+
+Sessions are matched using a 10-second time window:
+
+```python
+# When frago agent starts, it records start_time
+# When a new JSONL record arrives in ~/.claude/projects/...
+
+record_time = parse_timestamp(record)
+delta = abs((record_time - start_time).total_seconds())
+
+if delta < 10:  # 10-second window
+    associate_session(record.session_id)
+```
+
+### Multi-Agent Architecture
+
+The system uses an adapter pattern for extensibility:
+
+```python
+class AgentAdapter:
+    """Abstract base class for agent-specific implementations"""
+
+    def get_session_dir(self, project_path: str) -> Path:
+        """Get session file directory for this agent type"""
+        raise NotImplementedError
+
+    def encode_project_path(self, project_path: str) -> str:
+        """Encode project path to directory name"""
+        raise NotImplementedError
+
+    def parse_record(self, data: Dict) -> ParsedRecord:
+        """Parse agent-specific record format"""
+        raise NotImplementedError
+
+# Currently implemented
+_adapters = {
+    AgentType.CLAUDE: ClaudeCodeAdapter(),
+    # Future: CursorAdapter, ClineAdapter
+}
+```
+
+### Session Data Flow
+
+```
+frago agent "Extract data from website"
+    │
+    ├─ Start SessionMonitor (watchdog)
+    │   └─ Watch: ~/.claude/projects/-home-yammi-repos-Project/
+    │
+    ├─ Claude Code executes task
+    │   └─ Writes: {session_id}.jsonl
+    │
+    ├─ SessionMonitor detects file change
+    │   ├─ Parse new JSONL records
+    │   ├─ Match session by timestamp
+    │   └─ Extract steps and tool calls
+    │
+    └─ Persist to Frago storage
+        ├─ metadata.json (session info)
+        ├─ steps.jsonl (execution steps)
+        └─ summary.json (tool call stats)
+```
+
+## GUI Architecture
+
+The GUI system provides a desktop interface using pywebview.
+
+### Technology Stack
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    User Interface                        │
+│  - HTML5/CSS3/JavaScript                                │
+│  - GitHub Dark color scheme                             │
+│  - Responsive layout (600-1600px)                       │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                    pywebview                             │
+│  - WebKit2GTK (Linux)                                   │
+│  - WebView2 (Windows)                                   │
+│  - WKWebView (macOS)                                    │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                  Python Backend (API)                    │
+│  - FragoGuiApi class (js_api)                           │
+│  - Recipe management                                     │
+│  - Command execution                                     │
+│  - History tracking                                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### JS-Python Bridge
+
+```javascript
+// Frontend (JavaScript)
+const result = await pywebview.api.execute_command("recipe list");
+const recipes = await pywebview.api.get_recipes();
+const detail = await pywebview.api.run_recipe("name", params);
+
+// Backend (Python FragoGuiApi class)
+def execute_command(self, command: str) -> dict:
+    """Execute a frago command and return result"""
+    ...
+
+def get_recipes(self) -> list[dict]:
+    """Get all available recipes"""
+    ...
+
+def run_recipe(self, name: str, params: dict) -> dict:
+    """Run a recipe with parameters"""
+    ...
+```
+
 ---
 
-## Three Systems Integration
+## Four Systems Integration
 
-How Run System, Recipe System, and Native CDP work together:
+How Run System, Recipe System, Session System, and Native CDP work together:
 
 ```
 User Task: "Find Python jobs on Upwork and analyze requirements"
+│
+├─ Session System (Agent Memory)
+│  ├─ Monitors: ~/.claude/projects/... (watchdog)
+│  ├─ Parses: Claude Code JSONL in real-time
+│  └─ Persists: ~/.frago/sessions/claude/{session}/
 │
 ├─ Run System (Working Memory)
 │  ├─ Creates: upwork-python-jobs-abc123
@@ -515,11 +671,12 @@ User Task: "Find Python jobs on Upwork and analyze requirements"
 
 Result:
 ├─ jobs.json (structured data)
-├─ execution.jsonl (complete audit trail)
+├─ execution.jsonl (Run audit trail)
+├─ steps.jsonl (Session execution steps)
 └─ screenshots/ (visual evidence)
 ```
 
-### Token Efficiency through Three Systems
+### Token Efficiency through Four Systems
 
 | System | First Encounter | Subsequent Use | Token Savings |
 |--------|----------------|----------------|---------------|

@@ -4,10 +4,11 @@
 
 ## Overview
 
-Frago is a multi-runtime automation infrastructure designed for AI agents, providing three core systems that work together to solve automation challenges:
+Frago is a multi-runtime automation infrastructure designed for AI agents, providing four core systems that work together to solve automation challenges:
 
 - **🧠 Run System**: AI's working memory - persistent context and structured logs
 - **📚 Recipe System**: AI's "muscle memory" - reusable automation scripts
+- **🔍 Session System**: Agent monitoring - real-time execution tracking
 - **⚡ Native CDP**: Lightweight execution engine - direct Chrome control
 
 ---
@@ -389,6 +390,116 @@ Currently provides 4 example Recipes:
 | `youtube_extract_video_transcript` | Extract complete YouTube video subtitles | chrome-js | stdout, file |
 | `upwork_extract_job_details_as_markdown` | Extract Upwork job details as Markdown | chrome-js | stdout, file |
 | `x_extract_tweet_with_comments` | Extract X(Twitter) tweets and comments | chrome-js | stdout, file, clipboard |
+
+---
+
+## Session Monitoring
+
+The Session system provides real-time monitoring and persistence of AI agent execution data.
+
+### Session Commands
+
+```bash
+# List all sessions
+frago session list
+frago session list --status running   # Only running sessions
+frago session list --agent claude     # Only Claude Code sessions
+
+# Show session details
+frago session show <session_id>
+frago session show <session_id> --format json
+
+# Watch session in real-time
+frago session watch                    # Watch latest session
+frago session watch <session_id>       # Watch specific session
+frago session watch --json             # JSON output format
+```
+
+### Session Storage
+
+Session data is stored in `~/.frago/sessions/{agent_type}/{session_id}/`:
+
+```
+~/.frago/sessions/claude/abc123-def456/
+├── metadata.json    # Session metadata (project, time, status)
+├── steps.jsonl      # Execution steps (messages, tool calls)
+└── summary.json     # Session summary (tool call statistics)
+```
+
+### Integration with frago agent
+
+When running `frago agent "task"`, the session monitor automatically:
+1. Starts watching `~/.claude/projects/...` for changes
+2. Associates new session by timestamp (10-second window)
+3. Parses JSONL records incrementally
+4. Displays real-time execution status
+5. Persists session data to `~/.frago/sessions/`
+
+```bash
+# Execute task with session monitoring
+frago agent "Extract data from website"
+
+# Output shows real-time status:
+# [Session] Started: abc123
+# [Step 1] User message: Extract data from website
+# [Tool] Read file: /home/user/project/README.md (success)
+# [Tool] WebFetch: https://example.com (success)
+# [Session] Completed: 5 steps, 3 tool calls
+```
+
+---
+
+## GUI Mode
+
+Frago provides a desktop GUI interface for users who prefer graphical interaction.
+
+### Starting GUI
+
+```bash
+# Launch GUI
+frago gui
+
+# Launch with debug mode (developer tools enabled)
+frago gui --debug
+```
+
+### GUI Installation
+
+GUI mode requires optional dependencies:
+
+```bash
+# Install with GUI support
+pip install frago-cli[gui]
+
+# Or using uv
+uv tool install frago-cli[gui]
+```
+
+**Platform-specific requirements**:
+
+| Platform | Backend | Additional Requirements |
+|----------|---------|------------------------|
+| Linux | WebKit2GTK | `sudo apt install python3-gi gir1.2-webkit2-4.1` |
+| macOS | WKWebView | None (built-in) |
+| Windows | WebView2 | Edge WebView2 Runtime (recommended) |
+
+### GUI Features
+
+The GUI provides:
+
+- **Recipe Browser**: List, view details, and execute recipes
+- **Command Input**: Execute frago commands with visual feedback
+- **Status Display**: Real-time connection and execution status
+- **History**: View command and execution history
+
+### GUI Design
+
+The GUI uses GitHub Dark color scheme for comfortable long-term use:
+
+- **Background**: Deep blue-gray (`#0d1117`)
+- **Accent**: Soft blue (`#58a6ff`)
+- **Text**: High contrast but not harsh
+- **Layout**: Clear visual hierarchy with input area as focal point
 
 ---
 

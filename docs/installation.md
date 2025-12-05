@@ -109,6 +109,47 @@ See [User Guide - Resource Management](user-guide.md#resource-management) for de
 
 ## Optional Features
 
+### GUI Support
+
+If you want to use the desktop GUI interface:
+
+```bash
+# Using pip
+pip install frago-cli[gui]
+
+# Using uv
+uv tool install "frago-cli[gui]"
+```
+
+**Platform-specific requirements**:
+
+| Platform | Backend | System Dependencies |
+|----------|---------|---------------------|
+| **Linux** | WebKit2GTK | `sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1` |
+| **macOS** | WKWebView | None (built-in) |
+| **Windows** | WebView2 | Edge WebView2 Runtime (recommended) |
+
+**Linux Installation Example (Ubuntu/Debian)**:
+```bash
+# Install system dependencies first
+sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
+
+# Then install frago with GUI support
+pip install frago-cli[gui]
+
+# Or one-liner with PyGObject compilation support
+sudo apt install -y libcairo2-dev libgirepository1.0-dev gir1.2-webkit2-4.1
+pip install frago-cli[gui] PyGObject
+```
+
+**Launch GUI**:
+```bash
+frago gui
+frago gui --debug  # With developer tools
+```
+
+---
+
 ### Clipboard Support
 
 If you need to output Recipe results to clipboard:
@@ -184,9 +225,10 @@ dependencies = [
 
 ```toml
 [project.optional-dependencies]
-clipboard = ["pyperclip>=1.8.0"]  # Clipboard functionality
-all = ["pyperclip>=1.8.0"]        # All optional features
-dev = ["pytest>=7.4.0", ...]      # Development tools
+clipboard = ["pyperclip>=1.8.0"]   # Clipboard functionality
+gui = ["pywebview>=5.0.0"]         # Desktop GUI interface
+all = ["pyperclip>=1.8.0", "pywebview>=5.0.0"]  # All optional features
+dev = ["pytest>=7.4.0", ...]       # Development tools
 ```
 
 ---

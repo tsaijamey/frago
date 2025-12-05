@@ -160,6 +160,26 @@ Frago provides four slash commands that form a complete workflow loop:
 | Use case | Massive knowledge bases | Limited task sets for individuals/teams |
 | Complexity | High (requires vector database) | Low (just files) |
 
+### Session (Agent Session)
+
+**Essence**: Real-time record of an AI agent's execution process.
+
+**Storage location**: `~/.frago/sessions/{agent_type}/{session_id}/`
+
+**Structure**:
+```
+~/.frago/sessions/claude/abc123/
+├── metadata.json    # Session metadata (project, time, status)
+├── steps.jsonl      # Execution steps (messages, tool calls)
+└── summary.json     # Session summary (statistics)
+```
+
+**Characteristics**:
+- Real-time monitoring via file system watching
+- Supports multiple agent types (Claude, Cursor, Cline)
+- Enables post-hoc analysis of agent behavior
+- Decoupled from the original agent's session storage
+
 ---
 
 ## Summary
@@ -167,4 +187,5 @@ Frago provides four slash commands that form a complete workflow loop:
 - **Skill** (Claude Code): Methodology, tells AI how to do things
 - **Recipe** (Frago): Recipe, specific execution steps
 - **Run** (Frago): Task instance, records exploration process
-- **Frago's contribution**: Links all three, provides explore → solidify → execute loop tools
+- **Session** (Frago): Agent session, real-time execution monitoring
+- **Frago's contribution**: Links all concepts, provides explore → solidify → execute → monitor loop tools
