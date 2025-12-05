@@ -23,6 +23,7 @@ from .chrome_commands import chrome_group
 from .update_command import update
 from .agent_command import agent, agent_status
 from .gui_command import gui_deps
+from .session_commands import session_group
 
 
 # 命令分组定义
@@ -30,7 +31,7 @@ COMMAND_GROUPS = OrderedDict([
     ("环境配置", ["init", "init-dirs", "status", "update", "gui-deps"]),
     ("资源管理", ["use-git", "dev"]),
     ("浏览器自动化", ["chrome"]),
-    ("自动化", ["recipe", "run", "agent", "agent-status"]),
+    ("自动化", ["recipe", "run", "agent", "agent-status", "session"]),
 ])
 
 
@@ -217,6 +218,9 @@ cli.add_command(run_group)
 # Agent 命令
 cli.add_command(agent)
 cli.add_command(agent_status)
+
+# Session 管理命令组
+cli.add_command(session_group)
 
 
 def main():
