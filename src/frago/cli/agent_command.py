@@ -15,6 +15,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -468,6 +470,26 @@ def get_available_slash_commands() -> dict:
     is_flag=True,
     help="直接执行，跳过路由分析"
 )
+@click.option(
+    "--quiet", "-q",
+    is_flag=True,
+    help="静默模式，不显示实时监控状态"
+)
+@click.option(
+    "--json-status",
+    is_flag=True,
+    help="以 JSON 格式输出监控状态（用于机器处理）"
+)
+@click.option(
+    "--no-monitor",
+    is_flag=True,
+    help="禁用会话监控（不记录会话数据）"
+)
+@click.option(
+    "--yes", "-y",
+    is_flag=True,
+    help="跳过权限确认提示，直接执行"
+)
 def agent(
     prompt: tuple,
     model: Optional[str],
@@ -475,7 +497,11 @@ def agent(
     use_ccr: bool,
     dry_run: bool,
     ask: bool,
-    direct: bool
+    direct: bool,
+    quiet: bool,
+    json_status: bool,
+    no_monitor: bool,
+    yes: bool
 ):
     """
     智能 Agent：分析意图并路由到对应的 frago 子命令
@@ -548,8 +574,8 @@ def agent(
 
         click.echo(f"✓ 使用 CCR: http://{host}:{port}")
 
-    # Step 4: 权限确认
-    if not ask and not dry_run:
+    # Step 4: 权限确认（--yes 跳过确认）
+    if not ask and not dry_run and not yes:
         click.echo()
         click.echo("⚠ 将以 --dangerously-skip-permissions 模式运行")
         click.echo("  Claude 将跳过所有权限确认，直接执行任何操作")
@@ -661,6 +687,33 @@ def agent(
 
     click.echo("-" * 60)
 
+    # 启动会话监控（如果未禁用）
+    monitor = None
+    monitor_enabled = not no_monitor and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
+
+    if monitor_enabled:
+        try:
+            from frago.session.monitor import SessionMonitor
+
+            start_time = datetime.now(timezone.utc)
+            project_path = os.getcwd()
+
+            monitor = SessionMonitor(
+                project_path=project_path,
+                start_time=start_time,
+                json_mode=json_status,
+                persist=True,
+                quiet=quiet,
+            )
+            monitor.start()
+        except ImportError as e:
+            # session 模块可能未安装，静默忽略
+            if not quiet:
+                click.echo(f"  ⚠ 会话监控未启用: {e}", err=True)
+        except Exception as e:
+            if not quiet:
+                click.echo(f"  ⚠ 启动监控失败: {e}", err=True)
+
     # 执行命令（实时流式输出）
     try:
         process = subprocess.Popen(
@@ -673,62 +726,65 @@ def agent(
             universal_newlines=True
         )
 
-        # 解析 stream-json 格式并实时显示
+        # [临时禁用] 解析 stream-json 格式并实时显示
+        # 目的：测试新的 SessionMonitor 监控功能
+        # TODO: 测试完成后决定保留哪套或合并
         for line in iter(process.stdout.readline, ""):
-            line = line.strip()
-            if not line:
-                continue
-
-            try:
-                event = json.loads(line)
-                event_type = event.get("type", "")
-
-                # 处理不同类型的流式事件
-                if event_type == "assistant":
-                    # 助手消息 - 包含文本或工具调用
-                    message = event.get("message", {})
-                    content = message.get("content", [])
-                    for block in content:
-                        block_type = block.get("type")
-                        if block_type == "text":
-                            text = block.get("text", "")
-                            if text:
-                                click.echo(text)
-                        elif block_type == "tool_use":
-                            tool_name = block.get("name", "unknown")
-                            tool_input = block.get("input", {})
-                            # 显示工具调用信息
-                            if tool_name == "Bash":
-                                cmd = tool_input.get("command", "")
-                                desc = tool_input.get("description", "")
-                                click.echo(f"[Bash] {desc or cmd[:50]}")
-                            else:
-                                click.echo(f"[{tool_name}]")
-                elif event_type == "user":
-                    # 工具执行结果
-                    tool_result = event.get("tool_use_result", {})
-                    if tool_result and isinstance(tool_result, dict):
-                        stdout = tool_result.get("stdout", "")
-                        stderr = tool_result.get("stderr", "")
-                        if stdout:
-                            # 只显示前几行，避免输出过多
-                            lines = stdout.strip().split("\n")
-                            if len(lines) > 10:
-                                click.echo(f"  (输出 {len(lines)} 行，显示前 5 行)")
-                                click.echo("\n".join(lines[:5]))
-                                click.echo("  ...")
-                            elif stdout.strip():
-                                click.echo(f"  {stdout.strip()[:200]}")
-                        if stderr:
-                            click.echo(f"  [stderr] {stderr.strip()[:100]}", err=True)
-                elif event_type == "result":
-                    # 最终结果
-                    pass  # 不重复显示，assistant 已经输出过了
-                # 忽略其他事件类型（如 system, content_block_delta 等）
-
-            except json.JSONDecodeError:
-                # 非 JSON 行直接输出
-                click.echo(line)
+            pass  # 消费 stdout 但不处理，让 SessionMonitor 接管显示
+        #     line = line.strip()
+        #     if not line:
+        #         continue
+        #
+        #     try:
+        #         event = json.loads(line)
+        #         event_type = event.get("type", "")
+        #
+        #         # 处理不同类型的流式事件
+        #         if event_type == "assistant":
+        #             # 助手消息 - 包含文本或工具调用
+        #             message = event.get("message", {})
+        #             content = message.get("content", [])
+        #             for block in content:
+        #                 block_type = block.get("type")
+        #                 if block_type == "text":
+        #                     text = block.get("text", "")
+        #                     if text:
+        #                         click.echo(text)
+        #                 elif block_type == "tool_use":
+        #                     tool_name = block.get("name", "unknown")
+        #                     tool_input = block.get("input", {})
+        #                     # 显示工具调用信息
+        #                     if tool_name == "Bash":
+        #                         cmd = tool_input.get("command", "")
+        #                         desc = tool_input.get("description", "")
+        #                         click.echo(f"[Bash] {desc or cmd[:50]}")
+        #                     else:
+        #                         click.echo(f"[{tool_name}]")
+        #         elif event_type == "user":
+        #             # 工具执行结果
+        #             tool_result = event.get("tool_use_result", {})
+        #             if tool_result and isinstance(tool_result, dict):
+        #                 stdout = tool_result.get("stdout", "")
+        #                 stderr = tool_result.get("stderr", "")
+        #                 if stdout:
+        #                     # 只显示前几行，避免输出过多
+        #                     lines = stdout.strip().split("\n")
+        #                     if len(lines) > 10:
+        #                         click.echo(f"  (输出 {len(lines)} 行，显示前 5 行)")
+        #                         click.echo("\n".join(lines[:5]))
+        #                         click.echo("  ...")
+        #                     elif stdout.strip():
+        #                         click.echo(f"  {stdout.strip()[:200]}")
+        #                 if stderr:
+        #                     click.echo(f"  [stderr] {stderr.strip()[:100]}", err=True)
+        #         elif event_type == "result":
+        #             # 最终结果
+        #             pass  # 不重复显示，assistant 已经输出过了
+        #         # 忽略其他事件类型（如 system, content_block_delta 等）
+        #
+        #     except json.JSONDecodeError:
+        #         # 非 JSON 行直接输出
+        #         click.echo(line)
 
         # 读取 stderr
         stderr_output = process.stderr.read()
@@ -753,6 +809,13 @@ def agent(
         click.echo("\n✗ 用户中断", err=True)
     except Exception as e:
         click.echo(f"\n✗ 执行错误: {e}", err=True)
+    finally:
+        # 停止会话监控
+        if monitor:
+            try:
+                monitor.stop()
+            except Exception:
+                pass
 
 
 # =============================================================================
