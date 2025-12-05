@@ -146,7 +146,7 @@ class IncrementalParser:
         Returns:
             解析后的记录，无法解析时返回 None
         """
-        # 必需字段检查（仅 type 和 uuid 是严格必需的）
+        # 必需字段检查
         record_type = data.get("type")
         uuid = data.get("uuid")
         session_id = data.get("sessionId")
@@ -155,10 +155,16 @@ class IncrementalParser:
             logger.debug("记录缺少 type 字段，跳过")
             return None
 
+        # 跳过元数据记录类型（这些不是核心对话数据，无需追踪）
+        METADATA_TYPES = {"file-history-snapshot", "queue-operation", "summary"}
+        if record_type in METADATA_TYPES:
+            logger.debug(f"跳过元数据记录: {record_type}")
+            return None
+
         if not uuid:
-            # uuid 缺失时尝试使用其他标识
+            # uuid 缺失时尝试使用其他标识（针对未知的新记录类型）
             uuid = data.get("id") or data.get("messageId") or f"unknown-{id(data)}"
-            logger.warning(f"记录缺少 uuid 字段，使用备用标识: {uuid[:20]}")
+            logger.debug(f"记录缺少 uuid 字段，使用备用标识: {uuid[:20]}")
 
         # session_id 缺失警告（但不阻止解析）
         if not session_id and not self._session_id:
