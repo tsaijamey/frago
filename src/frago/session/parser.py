@@ -83,14 +83,23 @@ class IncrementalParser:
 
     @property
     def session_id(self) -> Optional[str]:
-        """获取会话 ID（从第一条记录中提取）"""
+        """获取会话 ID（从文件记录中提取）
+
+        注意：文件第一行可能是 file-history-snapshot 等无 sessionId 的记录，
+        需要读取后续行直到找到 sessionId。
+        """
         if self._session_id is None and self.file_path.exists():
             try:
                 with open(self.file_path, "r", encoding="utf-8") as f:
-                    first_line = f.readline().strip()
-                    if first_line:
-                        data = json.loads(first_line)
-                        self._session_id = data.get("sessionId")
+                    for _ in range(10):  # 最多读 10 行
+                        line = f.readline().strip()
+                        if not line:
+                            break
+                        data = json.loads(line)
+                        session_id = data.get("sessionId")
+                        if session_id:
+                            self._session_id = session_id
+                            break
             except Exception as e:
                 logger.warning(f"无法从文件提取 session_id: {e}")
         return self._session_id

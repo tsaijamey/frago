@@ -413,6 +413,9 @@ class SessionMonitor:
         step, tool_calls = record_to_step(record, self._step_id)
 
         if step:
+            # 确保 step 使用监控器关联的 session_id（防止 agent 文件的 session_id 指向父会话）
+            step.session_id = self._session.session_id
+
             # 更新计数
             self._session.step_count = self._step_id
 
@@ -429,6 +432,8 @@ class SessionMonitor:
 
         # 处理工具调用
         for tc in tool_calls:
+            # 同样确保 tool_call 使用正确的 session_id
+            tc.session_id = self._session.session_id
             self._pending_tool_calls[tc.tool_call_id] = tc
             self._session.tool_call_count += 1
 
