@@ -71,7 +71,7 @@ class FragoGuiApi:
         recipes = []
         try:
             result = subprocess.run(
-                ["frago", "recipe", "list", "--json"],
+                ["frago", "recipe", "list", "--format", "json"],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -83,8 +83,11 @@ class FragoGuiApi:
                         RecipeItem(
                             name=item.get("name", ""),
                             description=item.get("description"),
-                            category=item.get("category", "atomic"),
+                            category=item.get("type", "atomic"),
                             tags=item.get("tags", []),
+                            path=item.get("path"),
+                            source=item.get("source"),
+                            runtime=item.get("runtime"),
                         )
                     )
         except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
@@ -463,28 +466,7 @@ class FragoGuiApi:
             "message": "Connected to Chrome" if connected else "Chrome not connected",
         }
 
-    def minimize_window(self) -> None:
-        """Minimize the window."""
-        if self.window:
-            self.window.minimize()
 
-    def close_window(self, force: bool = False) -> Dict:
-        """Close the window.
-
-        Args:
-            force: Force close without confirmation.
-
-        Returns:
-            Dictionary indicating if window should close.
-        """
-        has_running_task = self.state.is_task_running()
-
-        if force or not has_running_task:
-            if self.window:
-                self.window.destroy()
-            return {"should_close": True, "has_running_task": has_running_task}
-
-        return {"should_close": False, "has_running_task": has_running_task}
 
     def _push_stream_message(self, message: StreamMessage) -> None:
         """Push a stream message to the frontend.
@@ -527,6 +509,118 @@ class FragoGuiApi:
         """
         self._recipe_cache = self._load_recipes()
         return [r.to_dict() for r in self._recipe_cache]
+
+    def get_recipe_detail(self, name: str) -> Dict[str, Any]:
+        """Get detailed information about a specific recipe.
+
+        Args:
+            name: Recipe name.
+
+        Returns:
+            Dictionary containing recipe details and metadata content.
+        """
+        # 从缓存中查找配方
+        recipe = None
+        for r in self._recipe_cache:
+            if r.name == name:
+                recipe = r
+                break
+
+        if not recipe:
+            # 刷新缓存后再找
+            self._recipe_cache = self._load_recipes()
+            for r in self._recipe_cache:
+                if r.name == name:
+                    recipe = r
+                    break
+
+        if not recipe:
+            return {"error": f"配方 '{name}' 不存在"}
+
+        result = recipe.to_dict()
+
+        # 读取 recipe.md 内容
+        if recipe.path:
+            recipe_path = Path(recipe.path)
+            # path 可能是脚本路径，需要找到 recipe.md
+            if recipe_path.is_file():
+                recipe_dir = recipe_path.parent
+            else:
+                recipe_dir = recipe_path
+
+            metadata_path = recipe_dir / "recipe.md"
+            if metadata_path.exists():
+                try:
+                    result["metadata_content"] = metadata_path.read_text(encoding="utf-8")
+                except Exception:
+                    result["metadata_content"] = None
+            else:
+                result["metadata_content"] = None
+
+            result["recipe_dir"] = str(recipe_dir)
+        else:
+            result["metadata_content"] = None
+            result["recipe_dir"] = None
+
+        return result
+
+    def delete_recipe(self, name: str) -> Dict[str, Any]:
+        """Delete a recipe (only user-level recipes can be deleted).
+
+        Args:
+            name: Recipe name.
+
+        Returns:
+            Dictionary with status and message.
+        """
+        import shutil
+
+        # 从缓存中查找配方
+        recipe = None
+        for r in self._recipe_cache:
+            if r.name == name:
+                recipe = r
+                break
+
+        if not recipe:
+            return {"status": "error", "message": f"配方 '{name}' 不存在"}
+
+        # 只允许删除用户级配方
+        if recipe.source != "User":
+            return {
+                "status": "error",
+                "message": f"只能删除用户级配方，'{name}' 来源是 {recipe.source}",
+            }
+
+        if not recipe.path:
+            return {"status": "error", "message": "配方路径未知"}
+
+        recipe_path = Path(recipe.path)
+        if recipe_path.is_file():
+            recipe_dir = recipe_path.parent
+        else:
+            recipe_dir = recipe_path
+
+        # 确保是在用户目录下
+        user_recipes_dir = Path.home() / ".frago" / "recipes"
+        try:
+            recipe_dir.relative_to(user_recipes_dir)
+        except ValueError:
+            return {
+                "status": "error",
+                "message": f"配方不在用户目录下，无法删除",
+            }
+
+        if not recipe_dir.exists():
+            return {"status": "error", "message": "配方目录不存在"}
+
+        try:
+            shutil.rmtree(recipe_dir)
+            # 刷新缓存
+            self._recipe_cache = self._load_recipes()
+            return {"status": "ok", "message": f"配方 '{name}' 已删除"}
+        except Exception as e:
+            return {"status": "error", "message": f"删除失败: {e}"}
 
     def refresh_skills(self) -> List[Dict]:
         """Refresh and return the skill list.

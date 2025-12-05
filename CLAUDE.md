@@ -13,6 +13,8 @@ Auto-generated from all feature plans. Last updated: 2025-11-15
 - 文件系统（用户目录 ~/.claude/ 和 ~/.frago/） (007-init-commands-setup)
 - Python 3.9+（符合现有 pyproject.toml 要求） + pywebview>=6.1, click>=8.1.0（现有依赖） (008-gui-app-mode)
 - 文件系统（`~/.frago/` 用户配置、`~/.claude/` 会话上下文） (008-gui-app-mode)
+- Python 3.9+ (后端) + HTML5/CSS3/ES6 (前端) + pywebview >= 6.1, Click >= 8.1.0 (现有依赖) (009-gui-design-redesign)
+- ~/.frago/gui_config.json (用户配置持久化) (009-gui-design-redesign)
 
 - Bash/Shell Script (POSIX兼容) + websocat工具，Chrome DevTools Protocol (001-standardize-cdp-scripts)
 
@@ -32,9 +34,9 @@ tests/
 Bash/Shell Script (POSIX兼容): Follow standard conventions
 
 ## Recent Changes
+- 009-gui-design-redesign: Added Python 3.9+ (后端) + HTML5/CSS3/ES6 (前端) + pywebview >= 6.1, Click >= 8.1.0 (现有依赖)
 - 008-gui-app-mode: Added Python 3.9+（符合现有 pyproject.toml 要求） + pywebview>=6.1, click>=8.1.0（现有依赖）
 - 007-init-commands-setup: Added Python 3.9+（符合 pyproject.toml 要求） + Click 8.1+, PyYAML 6.0+, pathlib (标准库)
-- 006-init-command: Added Python 3.9+（符合 pyproject.toml 要求）
 
 
 <!-- MANUAL ADDITIONS START -->

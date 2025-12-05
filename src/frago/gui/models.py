@@ -62,7 +62,7 @@ class WindowConfig:
     width: int = 600
     height: int = 1434
     title: str = "Frago GUI"
-    frameless: bool = True
+    frameless: bool = False  # 使用原生窗口标题栏，让关闭按钮正常工作
     resizable: bool = False
     min_width: int = 400
     min_height: int = 600
@@ -172,6 +172,9 @@ class RecipeItem:
     category: str = "atomic"
     icon: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    path: Optional[str] = None
+    source: Optional[str] = None
+    runtime: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -181,6 +184,9 @@ class RecipeItem:
             "category": self.category,
             "icon": self.icon,
             "tags": self.tags,
+            "path": self.path,
+            "source": self.source,
+            "runtime": self.runtime,
         }
 
 

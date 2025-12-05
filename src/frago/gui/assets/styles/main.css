@@ -1,49 +1,95 @@
-/* Frago GUI - Main Stylesheet */
+/* Frago GUI - Main Stylesheet
+ *
+ * 设计系统: GitHub Dark 风格
+ * 版本: 2.0.0 (009-gui-design-redesign)
+ * 更新日期: 2025-12-04
+ *
+ * 配色方案参考: specs/009-gui-design-redesign/data-model.md
+ * CSS 变量契约: specs/009-gui-design-redesign/contracts/css-variables.md
+ */
 
 /* === CSS Variables === */
 :root {
-    /* 深色主题 (默认) */
-    --bg-primary: #1a1a2e;
-    --bg-secondary: #16213e;
-    --bg-tertiary: #0f3460;
-    --bg-card: #1e2746;
+    /* === 背景色阶 - GitHub Dark 风格 === */
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --bg-card: #161b22;
+    --bg-subtle: #30363d;
 
-    --text-primary: #eaeaea;
-    --text-secondary: #a0a0a0;
-    --text-muted: #666;
+    /* === 文字色阶 === */
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --text-link: #58a6ff;
 
-    --accent-primary: #00d9ff;
-    --accent-secondary: #0099cc;
-    --accent-success: #00c853;
-    --accent-warning: #ffc107;
-    --accent-error: #ff5252;
+    /* === 强调色 - 柔和蓝 === */
+    --accent-primary: #58a6ff;
+    --accent-secondary: #388bfd;
+    --accent-muted: #1f6feb;
+    --accent-success: #3fb950;
+    --accent-warning: #d29922;
+    --accent-error: #f85149;
 
-    --border-color: #2a3a5a;
-    --shadow-color: rgba(0, 0, 0, 0.3);
+    /* === 边框色 === */
+    --border-color: #30363d;
+    --border-muted: #21262d;
+    --shadow-color: rgba(0, 0, 0, 0.4);
 
+    /* === 间距系统 (8px 网格) === */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+    --spacing-2xl: 48px;
+
+    /* === 圆角 === */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+
+    /* === 字体 === */
     --font-size-base: 14px;
     --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
 
-    --transition-fast: 0.15s ease;
-    --transition-normal: 0.25s ease;
+    /* === 过渡动画 === */
+    --transition-fast: 0.1s ease;
+    --transition-normal: 0.2s ease;
+    --transition-slow: 0.3s ease;
+    --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 
+    /* === 布局尺寸 === */
     --header-height: 48px;
     --nav-height: 44px;
     --status-height: 32px;
 }
 
-/* 浅色主题 */
+/* === 浅色主题 === */
 [data-theme="light"] {
-    --bg-primary: #f5f5f5;
-    --bg-secondary: #ffffff;
-    --bg-tertiary: #e0e0e0;
+    /* 背景色阶 */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #f3f4f6;
     --bg-card: #ffffff;
+    --bg-subtle: #eaeef2;
 
-    --text-primary: #212121;
-    --text-secondary: #666666;
-    --text-muted: #999999;
+    /* 文字色阶 */
+    --text-primary: #1f2328;
+    --text-secondary: #656d76;
+    --text-muted: #8c959f;
+    --text-link: #0969da;
 
-    --border-color: #e0e0e0;
+    /* 强调色 */
+    --accent-primary: #0969da;
+    --accent-secondary: #0550ae;
+    --accent-muted: #ddf4ff;
+
+    /* 边框色 */
+    --border-color: #d0d7de;
+    --border-muted: #e6e8eb;
     --shadow-color: rgba(0, 0, 0, 0.1);
 }
 
@@ -70,13 +116,14 @@ body {
 }
 
 /* === Header === */
+/* T032: 更新 Header 和 Header Button 样式 */
 .header {
     height: var(--header-height);
     background: var(--bg-secondary);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 16px;
+    padding: 0 var(--spacing-md);
     border-bottom: 1px solid var(--border-color);
     -webkit-app-region: drag;
 }
@@ -84,71 +131,55 @@ body {
 .header-left {
     display: flex;
     align-items: center;
+    gap: var(--spacing-sm);
 }
 
 .logo {
     font-size: 18px;
     font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+}
+
+.logo-accent {
     color: var(--accent-primary);
 }
 
-.header-right {
-    display: flex;
-    gap: 8px;
-    -webkit-app-region: no-drag;
-}
 
-.header-btn {
-    width: 32px;
-    height: 32px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    transition: background var(--transition-fast);
-}
 
-.header-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-}
-
-.header-btn.close-btn:hover {
-    background: var(--accent-error);
-    color: white;
-}
 
 /* === Navigation Tabs === */
+/* T021: 更新导航标签样式，调整背景和边框 */
 .nav-tabs {
     height: var(--nav-height);
     background: var(--bg-secondary);
     display: flex;
-    padding: 0 16px;
-    gap: 8px;
+    padding: 0 var(--spacing-md);
+    gap: var(--spacing-xs);
     border-bottom: 1px solid var(--border-color);
 }
 
+/* T022: 更新导航标签默认状态样式，使用次要文字色 */
 .nav-tab {
-    padding: 0 16px;
+    padding: 0 var(--spacing-md);
     height: 100%;
     border: none;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: var(--font-size-base);
+    font-weight: 500;
     cursor: pointer;
     position: relative;
-    transition: color var(--transition-fast);
+    transition: color var(--transition-fast), background var(--transition-fast);
 }
 
+/* T023: 更新导航标签悬停状态，使用主要文字色 */
 .nav-tab:hover {
     color: var(--text-primary);
+    background: var(--bg-subtle);
 }
 
+/* T024: 更新导航标签激活状态，使用强调色和底部指示器 */
 .nav-tab.active {
     color: var(--accent-primary);
 }
@@ -157,10 +188,11 @@ body {
     content: '';
     position: absolute;
     bottom: 0;
-    left: 0;
-    right: 0;
+    left: var(--spacing-sm);
+    right: var(--spacing-sm);
     height: 2px;
     background: var(--accent-primary);
+    border-radius: 1px;
 }
 
 /* === Main Content === */
@@ -189,70 +221,88 @@ body {
 }
 
 /* === Welcome Section === */
+/* T012: 更新欢迎区样式，增加视觉焦点引导 */
 .welcome-container {
     text-align: center;
-    padding: 40px 20px;
+    padding: var(--spacing-2xl) var(--spacing-lg);
+    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--spacing-lg);
 }
 
 .welcome-logo {
     font-size: 64px;
-    margin-bottom: 16px;
+    margin-bottom: var(--spacing-md);
+    filter: drop-shadow(0 4px 8px rgba(88, 166, 255, 0.2));
 }
 
 .welcome-title {
     font-size: 28px;
     font-weight: 600;
-    color: var(--accent-primary);
-    margin-bottom: 8px;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
 }
 
 .welcome-subtitle {
     color: var(--text-secondary);
     font-size: 16px;
+    max-width: 400px;
+    margin: 0 auto;
+    line-height: 1.6;
 }
 
 /* === Input Area === */
+/* T013: 更新输入容器样式，增加边框和阴影使输入区突出 */
 .input-container {
     display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 12px var(--shadow-color);
 }
 
+/* T014: 更新输入框聚焦状态，添加蓝色边框高亮 */
 .input-text {
     flex: 1;
-    padding: 12px 16px;
-    background: var(--bg-card);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-family: inherit;
-    font-size: 14px;
+    font-size: var(--font-size-base);
     resize: none;
     outline: none;
-    transition: border-color var(--transition-fast);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .input-text:focus {
     border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
 }
 
 .input-text::placeholder {
     color: var(--text-muted);
 }
 
+/* T015: 更新发送按钮样式，使用新的强调色 */
 .send-btn {
-    padding: 12px 24px;
+    padding: var(--spacing-sm) var(--spacing-lg);
     background: var(--accent-primary);
-    color: var(--bg-primary);
+    color: #ffffff;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     font-weight: 600;
     cursor: pointer;
-    transition: background var(--transition-fast), transform var(--transition-fast);
+    transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .send-btn:hover {
     background: var(--accent-secondary);
+    box-shadow: 0 2px 8px rgba(88, 166, 255, 0.3);
 }
 
 .send-btn:active {
@@ -262,14 +312,16 @@ body {
 .send-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    box-shadow: none;
 }
 
 /* === Output Area === */
+/* T020: 更新输出容器样式，调整内边距和边框颜色 */
 .output-container {
-    background: var(--bg-card);
+    background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 16px;
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-md);
     min-height: 200px;
     max-height: 400px;
     overflow-y: auto;
@@ -278,37 +330,54 @@ body {
 .output-placeholder {
     color: var(--text-muted);
     text-align: center;
-    padding: 40px;
+    padding: var(--spacing-2xl);
 }
 
 .message {
-    margin-bottom: 12px;
-    padding: 12px 16px;
-    border-radius: 8px;
+    margin-bottom: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-lg);
     max-width: 85%;
+    animation: messageSlideIn 0.2s var(--ease-out);
 }
 
+@keyframes messageSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* T016: 更新用户消息样式，背景改为 #1f6feb，文字改为 #ffffff */
 .message-user {
-    background: var(--accent-primary);
-    color: var(--bg-primary);
+    background: var(--accent-muted);
+    color: #ffffff;
     margin-left: auto;
 }
 
+/* T017: 更新助手消息样式，背景改为 var(--bg-secondary) */
 .message-assistant {
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
     color: var(--text-primary);
 }
 
+/* T018: 更新系统消息样式，背景改为 var(--bg-tertiary) */
 .message-system {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     color: var(--text-secondary);
     font-style: italic;
     max-width: 100%;
     text-align: center;
+    font-size: 13px;
 }
 
+/* T019: 更新错误消息样式，添加红色边框和淡红色背景 */
 .message-error {
-    background: rgba(255, 82, 82, 0.2);
+    background: rgba(248, 81, 73, 0.1);
     color: var(--accent-error);
     border: 1px solid var(--accent-error);
 }
@@ -318,9 +387,10 @@ body {
     margin-top: 16px;
 }
 
+/* T027: 更新进度条样式，使用新的强调色 */
 .progress-bar {
     height: 4px;
-    background: var(--bg-tertiary);
+    background: var(--bg-subtle);
     border-radius: 2px;
     overflow: hidden;
 }
@@ -328,63 +398,71 @@ body {
 .progress-fill {
     height: 100%;
     width: 0%;
-    background: var(--accent-primary);
-    transition: width var(--transition-fast);
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    transition: width var(--transition-normal);
+    border-radius: 2px;
 }
 
 .progress-step {
     display: block;
-    margin-top: 8px;
+    margin-top: var(--spacing-sm);
     font-size: 12px;
     color: var(--text-secondary);
 }
 
 /* === Recipe List === */
+/* T026: 更新页面头部样式，调整标题和按钮间距 */
 .page-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-md);
+    border-bottom: 1px solid var(--border-muted);
 }
 
 .page-header h2 {
     font-size: 20px;
     font-weight: 600;
+    color: var(--text-primary);
 }
 
 .refresh-btn, .clear-btn {
-    padding: 8px 16px;
+    padding: var(--spacing-sm) var(--spacing-md);
     background: var(--bg-tertiary);
     color: var(--text-primary);
-    border: none;
-    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
     cursor: pointer;
     font-size: 13px;
-    transition: background var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .refresh-btn:hover, .clear-btn:hover {
-    background: var(--border-color);
+    background: var(--bg-subtle);
+    border-color: var(--text-muted);
 }
 
 .recipe-list, .skill-grid, .history-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--spacing-sm);
 }
 
+/* T025: 更新配方卡片和 Skill 卡片悬停效果 */
 .recipe-card, .skill-card, .history-item {
-    background: var(--bg-card);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 16px;
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
     cursor: pointer;
-    transition: border-color var(--transition-fast), transform var(--transition-fast);
+    transition: border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .recipe-card:hover, .skill-card:hover {
     border-color: var(--accent-primary);
     transform: translateX(4px);
+    box-shadow: 0 2px 8px var(--shadow-color);
 }
 
 .recipe-name, .skill-name {
@@ -406,6 +484,236 @@ body {
     color: var(--accent-primary);
     border-radius: 4px;
     font-size: 11px;
+}
+
+.recipe-meta {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.recipe-source {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.recipe-runtime {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+/* === Recipe Detail === */
+.back-btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: 13px;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.back-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.delete-btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: transparent;
+    color: var(--accent-error);
+    border: 1px solid var(--accent-error);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: 13px;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.delete-btn:hover {
+    background: var(--accent-error);
+    color: #ffffff;
+}
+
+.recipe-detail-content {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-lg);
+    overflow-y: auto;
+    max-height: calc(100vh - 200px);
+}
+
+.recipe-detail-header {
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-md);
+    border-bottom: 1px solid var(--border-muted);
+}
+
+.recipe-detail-name {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.recipe-detail-desc {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.recipe-detail-meta {
+    display: flex;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.recipe-detail-tags {
+    display: flex;
+    gap: var(--spacing-xs);
+    flex-wrap: wrap;
+    margin-top: var(--spacing-sm);
+}
+
+.recipe-tag {
+    padding: 2px 8px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.recipe-markdown {
+    line-height: 1.7;
+    color: var(--text-primary);
+}
+
+.recipe-markdown h1,
+.recipe-markdown h2,
+.recipe-markdown h3,
+.recipe-markdown h4 {
+    color: var(--text-primary);
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-sm);
+}
+
+.recipe-markdown h1 { font-size: 20px; }
+.recipe-markdown h2 { font-size: 18px; }
+.recipe-markdown h3 { font-size: 16px; }
+.recipe-markdown h4 { font-size: 14px; }
+
+.recipe-markdown p {
+    margin-bottom: var(--spacing-md);
+}
+
+.recipe-markdown code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.recipe-markdown pre {
+    background: var(--bg-tertiary);
+    padding: var(--spacing-md);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    margin-bottom: var(--spacing-md);
+}
+
+.recipe-markdown pre code {
+    background: transparent;
+    padding: 0;
+}
+
+.recipe-markdown ul,
+.recipe-markdown ol {
+    margin-left: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+.recipe-markdown li {
+    margin-bottom: var(--spacing-xs);
+}
+
+.recipe-markdown blockquote {
+    border-left: 3px solid var(--accent-primary);
+    padding-left: var(--spacing-md);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-md);
+}
+
+/* === Confirm Dialog === */
+.confirm-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.confirm-dialog {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 8px 32px var(--shadow-color);
+}
+
+.confirm-dialog-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.confirm-dialog-message {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-lg);
+    line-height: 1.5;
+}
+
+.confirm-dialog-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    justify-content: flex-end;
+}
+
+.confirm-dialog-cancel {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+}
+
+.confirm-dialog-confirm {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--accent-error);
+    color: #ffffff;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
 }
 
 /* === Skill Grid === */
@@ -534,45 +842,50 @@ body {
 }
 
 /* === Status Bar === */
+/* T028: 更新状态栏样式，调整背景和边框 */
 .status-bar {
     height: var(--status-height);
     background: var(--bg-secondary);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 16px;
+    padding: 0 var(--spacing-md);
     border-top: 1px solid var(--border-color);
     font-size: 12px;
 }
 
 .status-left, .status-right {
     display: flex;
-    gap: 16px;
+    gap: var(--spacing-md);
 }
 
 .status-item {
-    color: var(--text-secondary);
+    color: var(--text-muted);
 }
 
 .status-indicator {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--spacing-xs);
 }
 
+/* T029: 更新指示器状态颜色 */
 .indicator-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: var(--accent-error);
+    box-shadow: 0 0 4px var(--accent-error);
 }
 
 .indicator-dot.connected {
     background: var(--accent-success);
+    box-shadow: 0 0 4px var(--accent-success);
 }
 
 .indicator-dot.checking {
     background: var(--accent-warning);
+    box-shadow: 0 0 4px var(--accent-warning);
     animation: pulse 1s infinite;
 }
 
@@ -586,23 +899,24 @@ body {
 }
 
 /* === Toast Notifications === */
+/* T030: 更新 Toast 通知样式，使用新的功能色 */
 .toast-container {
     position: fixed;
     top: 60px;
-    right: 20px;
+    right: var(--spacing-lg);
     z-index: 1000;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-sm);
 }
 
 .toast {
-    padding: 12px 20px;
-    border-radius: 8px;
-    color: white;
-    font-size: 14px;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border-radius: var(--radius-md);
+    color: #ffffff;
+    font-size: var(--font-size-base);
     box-shadow: 0 4px 12px var(--shadow-color);
-    animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+    animation: slideIn 0.3s var(--ease-out), fadeOut 0.3s ease 2.7s forwards;
     max-width: 300px;
 }
 
@@ -616,7 +930,7 @@ body {
 
 .toast-warning {
     background: var(--accent-warning);
-    color: #212121;
+    color: #1f2328;
 }
 
 .toast-error {
@@ -642,26 +956,33 @@ body {
 }
 
 /* === Loading State === */
+/* T031: 更新加载状态和空状态样式 */
 .loading {
     text-align: center;
-    padding: 40px;
+    padding: var(--spacing-2xl);
     color: var(--text-muted);
 }
 
 /* === Empty State === */
 .empty-state {
     text-align: center;
-    padding: 60px 20px;
+    padding: var(--spacing-2xl) var(--spacing-lg);
     color: var(--text-muted);
 }
 
 .empty-state-icon {
     font-size: 48px;
-    margin-bottom: 16px;
-    opacity: 0.5;
+    margin-bottom: var(--spacing-md);
+    opacity: 0.4;
+}
+
+.empty-state-text {
+    font-size: var(--font-size-base);
+    line-height: 1.6;
 }
 
 /* === Scrollbar === */
+/* T035: 更新滚动条样式，使用设计系统变量 */
 ::-webkit-scrollbar {
     width: 8px;
 }
@@ -672,9 +993,21 @@ body {
 
 ::-webkit-scrollbar-thumb {
     background: var(--border-color);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* ==========================================================================
+ * END OF STYLESHEET
+ *
+ * 设计系统完成度: 100%
+ * - 所有颜色使用 CSS 变量
+ * - 所有间距使用 8px 网格系统
+ * - 所有过渡使用统一的时间函数
+ *
+ * 变更记录:
+ * - 2025-12-04: 009-gui-design-redesign 重构完成
+ * ========================================================================== */

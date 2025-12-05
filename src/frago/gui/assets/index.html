@@ -12,11 +12,7 @@
         <div class="header-left">
             <span class="logo">🚀 Frago</span>
         </div>
-        <div class="header-right">
-            <button class="header-btn" id="settings-btn" title="设置">⚙️</button>
-            <button class="header-btn" id="minimize-btn" title="最小化">─</button>
-            <button class="header-btn close-btn" id="close-btn" title="关闭">✕</button>
-        </div>
+        <!-- 移除所有自定义窗口控制按钮，使用原生窗口标题栏 -->
     </header>
 
     <!-- 页面标签导航 -->
@@ -70,6 +66,18 @@
                 <button class="refresh-btn" id="refresh-recipes-btn">刷新</button>
             </div>
             <div class="recipe-list" id="recipe-list">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- 配方详情页面 -->
+        <section class="page" id="page-recipe-detail">
+            <div class="page-header">
+                <button class="back-btn" id="recipe-detail-back-btn">← 返回</button>
+                <h2 id="recipe-detail-title">配方详情</h2>
+                <button class="delete-btn" id="recipe-delete-btn" style="display: none;">删除</button>
+            </div>
+            <div class="recipe-detail-content" id="recipe-detail-content">
                 <div class="loading">加载中...</div>
             </div>
         </section>
