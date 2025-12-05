@@ -42,6 +42,7 @@ dependencies = [
     "pyperclip>=1.8.0",
     "obsws-python>=1.8.0",
     "questionary>=2.1.0",
+    "watchdog>=3.0.0",
 ]
 
 [project.optional-dependencies]
