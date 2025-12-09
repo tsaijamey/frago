@@ -2,6 +2,8 @@
 
 This document explains the core concepts in the Frago project and their origins.
 
+![Concept Relationship Diagram](images/concepts-diagram-en_20251209_132837_0.jpg)
+
 ---
 
 ## Claude Code Concepts (Not Frago Original)

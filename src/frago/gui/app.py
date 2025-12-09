@@ -3,6 +3,7 @@
 Main application class for the Frago GUI using pywebview.
 """
 
+import os
 import platform
 import sys
 from pathlib import Path
@@ -111,6 +112,7 @@ class FragoGuiApp:
         self.debug = debug or is_debug_mode()
         self.window: Optional["webview.Window"] = None
         self._api: Optional["FragoGuiApi"] = None
+        self._http_server: Optional["HTTPServer"] = None
 
     def _calculate_window_size(self) -> tuple[int, int]:
         """Calculate window size based on screen dimensions.
@@ -153,6 +155,99 @@ class FragoGuiApp:
 
         return original_width, original_height
 
+    def _is_dev_mode(self) -> bool:
+        """Check if running in development mode.
+
+        Development mode is enabled by setting FRAGO_GUI_DEV=1 environment variable.
+        In dev mode, the frontend is loaded from Vite dev server.
+
+        Returns:
+            True if in development mode.
+        """
+        return os.getenv("FRAGO_GUI_DEV") == "1"
+
+    def _check_dev_server(self) -> bool:
+        """Check if Vite dev server is running.
+
+        Returns:
+            True if dev server is accessible.
+        """
+        import socket
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            result = sock.connect_ex(("localhost", 5173))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
+
+    def _start_static_server(self) -> int:
+        """Start a local HTTP server for serving static files.
+
+        WebKit2GTK cannot load external JS files via file:// protocol due to
+        security restrictions. This method starts a simple HTTP server to
+        serve the built assets.
+
+        Returns:
+            Port number the server is running on.
+        """
+        import socket
+        import threading
+        from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+        assets_dir = str(get_asset_path(""))
+
+        # Find an available port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+
+        # Create a handler that serves from assets directory and suppresses logs
+        class QuietHandler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=assets_dir, **kwargs)
+
+            def log_message(self, format, *args):
+                pass
+
+        self._http_server = HTTPServer(("127.0.0.1", port), QuietHandler)
+
+        # Run server in background thread
+        thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
+        thread.start()
+
+        return port
+
+    def _get_url(self) -> str:
+        """Get the URL to load based on dev/prod mode.
+
+        Returns:
+            URL string for the GUI.
+        """
+        if self._is_dev_mode():
+            # 开发模式：检查 Vite 服务器是否运行
+            if not self._check_dev_server():
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "Vite 开发服务器未运行。请先运行: cd src/frago/gui/frontend && npm run dev"
+                )
+                # 返回错误页面
+                return self._get_dev_server_error_html()
+            return "http://localhost:5173"
+
+        # 生产模式：使用内置 HTTP 服务器提供静态文件
+        # WebKit2GTK 无法在 file:// 协议下加载外部 JS 文件
+        index_path = get_asset_path("index.html")
+        if index_path.exists():
+            port = self._start_static_server()
+            return f"http://127.0.0.1:{port}/index.html"
+        else:
+            return self._get_build_missing_html()
+
     def create_window(self) -> "webview.Window":
         """Create the GUI window.
 
@@ -162,12 +257,7 @@ class FragoGuiApp:
         from frago.gui.api import FragoGuiApi
 
         self._api = FragoGuiApi()
-        index_path = get_asset_path("index.html")
-
-        if index_path.exists():
-            url = f"file://{index_path}"
-        else:
-            url = self._get_fallback_html()
+        url = self._get_url()
 
         # 动态计算窗口尺寸
         width, height = self._calculate_window_size()
@@ -205,13 +295,94 @@ class FragoGuiApp:
         logger.debug("窗口关闭事件触发，允许关闭")
         return True
 
+    def _get_error_html(self, title: str, message: str, hint: str = "") -> str:
+        """Get error page HTML.
+
+        Args:
+            title: Error title.
+            message: Error message.
+            hint: Optional hint for resolution.
+
+        Returns:
+            HTML string for error page.
+        """
+        hint_html = f'<p class="hint">{hint}</p>' if hint else ""
+        return f"""data:text/html,
+        <!DOCTYPE html>
+        <html data-theme="dark">
+        <head>
+            <meta charset="UTF-8">
+            <title>Frago - Error</title>
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    background: #0d1117;
+                    color: #e6edf3;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                }}
+                .container {{
+                    text-align: center;
+                    padding: 40px;
+                    max-width: 500px;
+                }}
+                h1 {{
+                    color: #f85149;
+                    margin-bottom: 20px;
+                    font-size: 24px;
+                }}
+                p {{
+                    color: #8b949e;
+                    line-height: 1.6;
+                }}
+                .hint {{
+                    background: #161b22;
+                    border: 1px solid #30363d;
+                    border-radius: 6px;
+                    padding: 16px;
+                    margin-top: 20px;
+                    font-family: 'SF Mono', Monaco, Consolas, monospace;
+                    font-size: 13px;
+                    text-align: left;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>{title}</h1>
+                <p>{message}</p>
+                {hint_html}
+            </div>
+        </body>
+        </html>
+        """
+
+    def _get_dev_server_error_html(self) -> str:
+        """Get HTML for dev server not running error."""
+        return self._get_error_html(
+            title="开发服务器未运行",
+            message="Vite 开发服务器无法连接。请先启动开发服务器。",
+            hint="cd src/frago/gui/frontend && npm run dev",
+        )
+
+    def _get_build_missing_html(self) -> str:
+        """Get HTML for missing build output error."""
+        return self._get_error_html(
+            title="构建产物缺失",
+            message="前端构建产物未找到。请先构建前端。",
+            hint="cd src/frago/gui/frontend && npm run build",
+        )
+
     def _get_fallback_html(self) -> str:
         """Get fallback HTML content when index.html is not found.
 
         Returns:
             HTML string for fallback content.
         """
-        return """
+        return """data:text/html,
         <!DOCTYPE html>
         <html>
         <head>
@@ -220,8 +391,8 @@ class FragoGuiApp:
             <style>
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                    background: #1a1a2e;
-                    color: #eee;
+                    background: #0d1117;
+                    color: #e6edf3;
                     display: flex;
                     justify-content: center;
                     align-items: center;
@@ -233,18 +404,18 @@ class FragoGuiApp:
                     padding: 40px;
                 }
                 h1 {
-                    color: #00d9ff;
+                    color: #58a6ff;
                     margin-bottom: 20px;
                 }
                 p {
-                    color: #888;
+                    color: #8b949e;
                 }
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>🚀 Frago GUI</h1>
-                <p>Welcome to Frago GUI Mode</p>
+                <h1>Frago</h1>
+                <p>Welcome to Frago GUI</p>
                 <p id="status">Loading...</p>
             </div>
             <script>
@@ -278,7 +449,10 @@ class FragoGuiApp:
         pass
 
     def close(self) -> None:
-        """Close the GUI window."""
+        """Close the GUI window and cleanup resources."""
+        if self._http_server:
+            self._http_server.shutdown()
+            self._http_server = None
         if self.window:
             self.window.destroy()
 
@@ -292,6 +466,17 @@ def start_gui(debug: bool = False) -> None:
     Raises:
         GuiNotAvailableError: If GUI cannot be started.
     """
+    # Linux 依赖检查和自动安装
+    if platform.system() == "Linux":
+        from frago.gui.deps import ensure_gui_deps
+
+        can_start, msg = ensure_gui_deps()
+        if not can_start:
+            sys.exit(1)
+        if msg == "restart":
+            # 依赖安装成功后重启
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
     if not can_start_gui():
         reason = get_gui_unavailable_reason()
         print(f"Error: Cannot start GUI. {reason}", file=sys.stderr)

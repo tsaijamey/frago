@@ -2,6 +2,8 @@
 
 本文档解释 Frago 项目中的核心概念及其来源。
 
+![概念关系图](images/concepts-diagram-zh_20251209_133008_0.jpg)
+
 ---
 
 ## Claude Code 的概念（非 Frago 原创）
