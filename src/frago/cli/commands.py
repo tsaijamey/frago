@@ -1535,6 +1535,9 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
 
     profile_path = Path(profile_dir) if profile_dir else None
 
+    # 检测是否显式指定了非默认端口
+    use_port_suffix = (port != 9222) and (profile_dir is None)
+
     launcher = ChromeLauncher(
         headless=headless,
         void=void,
@@ -1542,6 +1545,7 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
         width=width,
         height=height,
         profile_dir=profile_path,
+        use_port_suffix=use_port_suffix,
     )
 
     # 检查 Chrome 是否存在

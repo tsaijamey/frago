@@ -30,6 +30,7 @@ class ChromeLauncher:
         width: int = 1280,
         height: int = 960,
         profile_dir: Optional[Path] = None,
+        use_port_suffix: bool = False,
     ):
         self.system = platform.system()
         self.chrome_path = self._find_chrome()
@@ -43,6 +44,9 @@ class ChromeLauncher:
         # Profile 目录：优先使用指定的，否则使用默认位置
         if profile_dir:
             self.profile_dir = Path(profile_dir)
+        elif use_port_suffix:
+            # 非默认端口时，使用带端口号的目录名避免冲突
+            self.profile_dir = Path.home() / ".frago" / f"chrome_profile_{port}"
         else:
             # 默认使用 ~/.frago/chrome_profile
             self.profile_dir = Path.home() / ".frago" / "chrome_profile"
