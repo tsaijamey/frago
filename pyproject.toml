@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "0.4.3"
+version = "0.5.0"
 description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -98,6 +98,11 @@ include = [
     "src/frago/**/*.sh",
     "src/frago/**/*.html",
     "src/frago/**/*.css",
+]
+
+# 排除前端源码（只保留构建产物 gui/assets/）
+exclude = [
+    "src/frago/gui/frontend/**",
 ]
 
 [tool.setuptools]
