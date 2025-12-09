@@ -71,23 +71,11 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
-// 安全地获取 localStorage（兼容 pywebview 环境）
-function safeLocalStorage(): Storage | null {
-  try {
-    if (typeof localStorage !== 'undefined' && localStorage !== null) {
-      return localStorage;
-    }
-  } catch {
-    // localStorage 不可用
-  }
-  return null;
-}
-
 // 应用主题到 DOM
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.style.colorScheme = theme;
-  safeLocalStorage()?.setItem('theme', theme);
+  console.log('[Theme] Applied:', theme, 'data-theme:', document.documentElement.getAttribute('data-theme'));
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -116,22 +104,31 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // 主题切换
   setTheme: (theme) => {
+    console.log('[Theme] setTheme called with:', theme);
     applyTheme(theme);
     const config = get().config;
     if (config) {
       set({ config: { ...config, theme } });
-      api.updateConfig({ theme });
+      api.updateConfig({ theme }).then((result) => {
+        console.log('[Theme] updateConfig result:', result);
+      }).catch((err) => {
+        console.error('[Theme] updateConfig failed:', err);
+      });
+    } else {
+      console.warn('[Theme] config is null, cannot persist theme');
     }
   },
 
   // 加载配置
   loadConfig: async () => {
     try {
+      console.log('[Config] Loading config from backend...');
       const config = await api.getConfig();
+      console.log('[Config] Loaded:', config);
       set({ config });
       applyTheme(config.theme);
     } catch (error) {
-      console.error('Failed to load config:', error);
+      console.error('[Config] Failed to load config:', error);
     }
   },
 

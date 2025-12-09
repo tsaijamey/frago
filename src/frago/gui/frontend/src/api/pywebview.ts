@@ -25,23 +25,58 @@ import type {
 // 等待 pywebview 就绪
 let readyPromise: Promise<PyWebviewApi> | null = null;
 
+// 检查 API 是否完全就绪（方法已注入）
+function isApiFullyReady(): boolean {
+  const api = window.pywebview?.api;
+  // 检查关键方法是否存在
+  return !!(api && typeof api.get_config === 'function');
+}
+
 export function waitForPywebview(): Promise<PyWebviewApi> {
   if (readyPromise) return readyPromise;
 
   readyPromise = new Promise((resolve) => {
-    if (window.pywebview?.api) {
-      resolve(window.pywebview.api);
-      return;
-    }
-
-    const handleReady = () => {
-      if (window.pywebview?.api) {
-        window.removeEventListener('pywebviewready', handleReady);
-        resolve(window.pywebview.api);
+    const checkAndResolve = () => {
+      if (isApiFullyReady()) {
+        const api = window.pywebview!.api;
+        console.log('[pywebview] API fully ready, methods:', Object.keys(api));
+        resolve(api);
+        return true;
       }
+      return false;
+    };
+
+    // 立即检查
+    if (checkAndResolve()) return;
+
+    // 轮询检查（pywebview 方法注入可能有延迟）
+    const pollInterval = setInterval(() => {
+      if (checkAndResolve()) {
+        clearInterval(pollInterval);
+      }
+    }, 50);
+
+    // 同时监听 pywebviewready 事件
+    const handleReady = () => {
+      console.log('[pywebview] pywebviewready event fired');
+      // 事件触发后也需要轮询，因为方法可能还没注入完
+      setTimeout(() => {
+        if (checkAndResolve()) {
+          clearInterval(pollInterval);
+        }
+      }, 100);
+      window.removeEventListener('pywebviewready', handleReady);
     };
 
     window.addEventListener('pywebviewready', handleReady);
+
+    // 超时保护（10秒）
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (!isApiFullyReady()) {
+        console.error('[pywebview] API not ready after 10s timeout');
+      }
+    }, 10000);
   });
 
   return readyPromise;
@@ -52,9 +87,9 @@ export function getApi(): PyWebviewApi | undefined {
   return window.pywebview?.api;
 }
 
-// 检查 API 是否就绪
+// 检查 API 是否就绪（方法已注入）
 export function isApiReady(): boolean {
-  return !!window.pywebview?.api;
+  return isApiFullyReady();
 }
 
 // ============================================================
