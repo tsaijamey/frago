@@ -1,11 +1,24 @@
 /**
  * Frago GUI - Main Application JavaScript
+ *
+ * Updated for 011-gui-tasks-redesign:
+ * - 默认启动页从 home 改为 tips
+ * - 新增 Tasks 页面逻辑
+ * - 新增任务详情页逻辑
  */
 
 // === State ===
-let currentPage = 'home';
+let currentPage = 'tips';  // 默认启动页改为 tips
 let config = {};
 let isTaskRunning = false;
+
+// 011-gui-tasks-redesign: 任务相关状态
+let tasksData = [];          // 任务列表缓存
+let currentTaskId = null;    // 当前查看的任务 ID
+let taskDetailStepsOffset = 0;  // 任务详情步骤偏移量
+let tasksPollingInterval = null;  // 任务列表轮询定时器
+let taskDetailPollingInterval = null;  // 任务详情轮询定时器
+const POLLING_INTERVAL_MS = 3000;  // 轮询间隔：3秒
 
 // === Initialization ===
 window.addEventListener('pywebviewready', () => {
@@ -21,10 +34,12 @@ async function initApp() {
         loadSettingsForm();
 
         // Load initial data
+        // 011-gui-tasks-redesign: 添加 loadTasks 调用
         await Promise.all([
             loadRecipes(),
             loadSkills(),
-            loadHistory()
+            loadHistory(),
+            loadTasks()
         ]);
 
         // Start status polling
@@ -56,13 +71,17 @@ function applyFontSize(size) {
 // === Page Navigation ===
 function switchPage(page) {
     // Update nav tabs
+    // 011-gui-tasks-redesign: 任务详情页不显示 nav tab 激活状态
+    const isDetailPage = page === 'task_detail' || page === 'recipe_detail';
     document.querySelectorAll('.nav-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.page === page);
+        tab.classList.toggle('active', !isDetailPage && tab.dataset.page === page);
     });
 
     // Update pages
     document.querySelectorAll('.page').forEach(p => {
-        p.classList.toggle('active', p.id === 'page-' + page);
+        // 支持带下划线的页面 ID（如 page-task-detail）
+        const pageId = 'page-' + page.replace(/_/g, '-');
+        p.classList.toggle('active', p.id === pageId);
     });
 
     currentPage = page;
@@ -74,6 +93,20 @@ function switchPage(page) {
         loadSkills();
     } else if (page === 'history') {
         loadHistory();
+    } else if (page === 'tasks') {
+        // 011-gui-tasks-redesign: 切换到 tasks 页时刷新任务列表并启动轮询
+        loadTasks();
+        startTasksPolling();
+    }
+
+    // 011-gui-tasks-redesign: 离开 tasks 页时停止轮询
+    if (page !== 'tasks') {
+        stopTasksPolling();
+    }
+
+    // 离开任务详情页时停止详情轮询
+    if (page !== 'task_detail') {
+        stopTaskDetailPolling();
     }
 }
 
@@ -105,6 +138,19 @@ function setupEventListeners() {
     // Recipe detail page buttons
     document.getElementById('recipe-detail-back-btn')?.addEventListener('click', backToRecipeList);
     document.getElementById('recipe-delete-btn')?.addEventListener('click', confirmDeleteRecipe);
+
+    // 011-gui-tasks-redesign: Tasks 页面事件监听
+    document.getElementById('refresh-tasks-btn')?.addEventListener('click', refreshTasks);
+    document.getElementById('task-detail-back-btn')?.addEventListener('click', backToTaskList);
+
+    // Tasks 页面输入区域事件监听
+    document.getElementById('task-send-btn')?.addEventListener('click', sendTaskFromTasksPage);
+    document.getElementById('task-input-text')?.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.key === 'Enter') {
+            e.preventDefault();
+            sendTaskFromTasksPage();
+        }
+    });
 
     // Settings form
     document.getElementById('save-settings-btn')?.addEventListener('click', saveSettings);
@@ -650,5 +696,469 @@ function formatTimestamp(isoString) {
         });
     } catch {
         return isoString;
+    }
+}
+
+// ============================================================
+// 011-gui-tasks-redesign: Tasks 页面逻辑
+// ============================================================
+
+// Tasks 页面任务运行状态
+let isTaskPageTaskRunning = false;
+
+/**
+ * 从 Tasks 页面发送任务
+ * 执行 frago agent {prompt} 命令
+ */
+async function sendTaskFromTasksPage() {
+    const input = document.getElementById('task-input-text');
+    const prompt = input?.value.trim();
+
+    if (!prompt) {
+        showToast('请输入任务描述', 'warning');
+        return;
+    }
+
+    if (isTaskPageTaskRunning) {
+        showToast('已有任务运行中，请稍候', 'warning');
+        return;
+    }
+
+    // 清空输入框
+    input.value = '';
+
+    // 更新状态
+    isTaskPageTaskRunning = true;
+    updateTaskSendButton();
+
+    try {
+        // 调用后端 API 启动 agent 任务
+        const result = await pywebview.api.start_agent_task(prompt);
+
+        if (result.status === 'ok') {
+            showToast('任务已启动', 'success');
+            // 立即刷新任务列表以显示新任务
+            await loadTasks();
+        } else {
+            showToast('启动失败: ' + (result.error || '未知错误'), 'error');
+        }
+
+    } catch (error) {
+        showToast('启动任务失败: ' + (error.message || error), 'error');
+    } finally {
+        isTaskPageTaskRunning = false;
+        updateTaskSendButton();
+    }
+}
+
+/**
+ * 更新 Tasks 页面发送按钮状态
+ */
+function updateTaskSendButton() {
+    const btn = document.getElementById('task-send-btn');
+    if (btn) {
+        btn.disabled = isTaskPageTaskRunning;
+        btn.textContent = isTaskPageTaskRunning ? '运行中...' : '发送';
+    }
+}
+
+/**
+ * 加载任务列表
+ */
+async function loadTasks() {
+    const listEl = document.getElementById('tasks-list');
+    const emptyEl = document.getElementById('tasks-empty');
+    if (!listEl) return;
+
+    try {
+        const tasks = await pywebview.api.get_tasks();
+        tasksData = tasks || [];
+
+        if (tasksData.length === 0) {
+            listEl.innerHTML = '';
+            listEl.style.display = 'none';
+            if (emptyEl) emptyEl.style.display = 'block';
+        } else {
+            if (emptyEl) emptyEl.style.display = 'none';
+            listEl.style.display = 'flex';
+            renderTasksList(tasksData, listEl);
+        }
+    } catch (error) {
+        console.error('Failed to load tasks:', error);
+        listEl.innerHTML = '<div class="empty-state"><div class="empty-state__icon">❌</div><p class="empty-state__description">加载任务失败</p></div>';
+        if (emptyEl) emptyEl.style.display = 'none';
+    }
+}
+
+/**
+ * 刷新任务列表
+ */
+async function refreshTasks() {
+    const listEl = document.getElementById('tasks-list');
+    if (listEl) {
+        listEl.innerHTML = '<div class="loading">刷新中...</div>';
+    }
+
+    try {
+        await loadTasks();
+        showToast('任务列表已刷新', 'success');
+    } catch (error) {
+        showToast('刷新失败', 'error');
+    }
+}
+
+/**
+ * 渲染任务列表
+ * @param {Array} tasks - 任务数组
+ * @param {HTMLElement} container - 容器元素
+ */
+function renderTasksList(tasks, container) {
+    container.innerHTML = tasks.map(task => `
+        <div class="task-card" onclick="openTaskDetail('${escapeHtml(task.session_id)}')">
+            <div class="task-card__header">
+                <div class="task-card__name">${escapeHtml(task.name)}</div>
+                <span class="task-status task-status--${task.status}">${getStatusLabel(task.status)}</span>
+            </div>
+            <div class="task-card__time">${formatTimestamp(task.started_at)}</div>
+            <div class="task-card__stats">
+                <span>⏱️ ${formatDuration(task.duration_ms)}</span>
+                <span>📊 ${task.step_count} 步骤</span>
+                <span>🔧 ${task.tool_call_count} 工具调用</span>
+            </div>
+        </div>
+    `).join('');
+}
+
+/**
+ * 获取状态标签
+ * @param {string} status - 状态值
+ * @returns {string} - 状态标签
+ */
+function getStatusLabel(status) {
+    const labels = {
+        'running': '进行中',
+        'completed': '已完成',
+        'error': '出错',
+        'cancelled': '已取消'
+    };
+    return labels[status] || status;
+}
+
+/**
+ * 格式化持续时间
+ * @param {number} ms - 毫秒数
+ * @returns {string} - 格式化字符串
+ */
+function formatDuration(ms) {
+    if (!ms || ms <= 0) return '0s';
+
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+/**
+ * 打开任务详情页
+ * @param {string} sessionId - 会话 ID
+ */
+async function openTaskDetail(sessionId) {
+    currentTaskId = sessionId;
+    taskDetailStepsOffset = 0;
+
+    // 切换到详情页
+    switchPage('task_detail');
+
+    // 更新标题
+    const titleEl = document.getElementById('task-detail-title');
+    const contentEl = document.getElementById('task-detail-content');
+
+    if (titleEl) titleEl.textContent = '任务详情';
+    if (contentEl) contentEl.innerHTML = '<div class="loading">加载中...</div>';
+
+    try {
+        const detail = await pywebview.api.get_task_detail(sessionId);
+        renderTaskDetail(detail, contentEl);
+
+        // 如果任务正在运行，启动轮询
+        if (detail.status === 'running') {
+            startTaskDetailPolling();
+        }
+    } catch (error) {
+        console.error('Failed to load task detail:', error);
+        if (contentEl) {
+            contentEl.innerHTML = '<div class="empty-state"><div class="empty-state__icon">❌</div><p class="empty-state__description">加载失败</p></div>';
+        }
+    }
+}
+
+/**
+ * 渲染任务详情
+ * @param {Object} detail - 任务详情对象
+ * @param {HTMLElement} container - 容器元素
+ */
+function renderTaskDetail(detail, container) {
+    if (!container) return;
+
+    // 更新标题
+    const titleEl = document.getElementById('task-detail-title');
+    if (titleEl) {
+        titleEl.textContent = detail.name || `Task ${detail.session_id.substring(0, 8)}...`;
+    }
+
+    const statusClass = `task-status--${detail.status}`;
+    const statusLabel = getStatusLabel(detail.status);
+
+    container.innerHTML = `
+        <div class="task-detail__info">
+            <div class="task-detail__status ${statusClass}">${statusLabel}</div>
+            <div class="task-detail__meta">
+                <span>开始: ${formatTimestamp(detail.started_at)}</span>
+                ${detail.ended_at ? `<span>结束: ${formatTimestamp(detail.ended_at)}</span>` : ''}
+                <span>耗时: ${formatDuration(detail.duration_ms)}</span>
+            </div>
+            <div class="task-detail__stats">
+                <span>📊 ${detail.step_count} 步骤</span>
+                <span>💬 ${detail.user_message_count || 0} 用户消息</span>
+                <span>🤖 ${detail.assistant_message_count || 0} 助手消息</span>
+                <span>🔧 ${detail.tool_call_count || 0} 工具调用</span>
+            </div>
+        </div>
+        <div class="task-detail__steps">
+            <h3>步骤记录</h3>
+            <div id="task-steps-list">
+                ${renderSteps(detail.steps || [])}
+            </div>
+            ${detail.has_more_steps ? '<button class="btn-load-more" onclick="loadMoreSteps()">加载更多</button>' : ''}
+        </div>
+    `;
+
+    taskDetailStepsOffset = detail.steps_offset + (detail.steps?.length || 0);
+}
+
+/**
+ * 渲染步骤列表
+ * @param {Array} steps - 步骤数组
+ * @returns {string} - HTML 字符串
+ */
+function renderSteps(steps) {
+    if (!steps || steps.length === 0) {
+        return '<div class="empty-state"><p class="empty-state__description">暂无步骤记录</p></div>';
+    }
+
+    return steps.map(step => `
+        <div class="step step--${step.type}">
+            <div class="step__header">
+                <span class="step__number">#${step.step_id}</span>
+                <span class="step__type">${getStepTypeLabel(step.type)}</span>
+                <span class="step__time">${formatTimestamp(step.timestamp)}</span>
+            </div>
+            <div class="step__content">${escapeHtml(step.content)}</div>
+        </div>
+    `).join('');
+}
+
+/**
+ * 获取步骤类型标签
+ * @param {string} type - 步骤类型
+ * @returns {string} - 标签
+ */
+function getStepTypeLabel(type) {
+    const labels = {
+        'user_message': '用户消息',
+        'assistant_message': '助手消息',
+        'tool_call': '工具调用',
+        'tool_result': '工具结果',
+        'system_event': '系统事件'
+    };
+    return labels[type] || type;
+}
+
+/**
+ * 加载更多步骤
+ */
+async function loadMoreSteps() {
+    if (!currentTaskId) return;
+
+    try {
+        const moreSteps = await pywebview.api.get_task_steps(currentTaskId, taskDetailStepsOffset, 50);
+        const stepsListEl = document.getElementById('task-steps-list');
+
+        if (stepsListEl && moreSteps.steps) {
+            stepsListEl.innerHTML += renderSteps(moreSteps.steps);
+            taskDetailStepsOffset += moreSteps.steps.length;
+
+            // 更新或移除"加载更多"按钮
+            const loadMoreBtn = document.querySelector('.btn-load-more');
+            if (loadMoreBtn) {
+                if (!moreSteps.has_more) {
+                    loadMoreBtn.remove();
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load more steps:', error);
+        showToast('加载更多步骤失败', 'error');
+    }
+}
+
+/**
+ * 返回任务列表
+ */
+function backToTaskList() {
+    currentTaskId = null;
+    stopTaskDetailPolling();
+    switchPage('tasks');
+}
+
+// ============================================================
+// 011-gui-tasks-redesign: 实时更新 - 轮询机制
+// ============================================================
+
+/**
+ * 启动任务列表轮询
+ */
+function startTasksPolling() {
+    stopTasksPolling();  // 先停止已有的轮询
+
+    tasksPollingInterval = setInterval(async () => {
+        if (currentPage !== 'tasks') {
+            stopTasksPolling();
+            return;
+        }
+
+        try {
+            const newTasks = await pywebview.api.get_tasks();
+
+            // 检查是否有变化
+            if (hasTasksChanged(tasksData, newTasks)) {
+                tasksData = newTasks || [];
+                const listEl = document.getElementById('tasks-list');
+                const emptyEl = document.getElementById('tasks-empty');
+
+                if (tasksData.length === 0) {
+                    listEl.innerHTML = '';
+                    listEl.style.display = 'none';
+                    if (emptyEl) emptyEl.style.display = 'block';
+                } else {
+                    if (emptyEl) emptyEl.style.display = 'none';
+                    listEl.style.display = 'flex';
+                    renderTasksList(tasksData, listEl);
+                }
+            }
+        } catch (error) {
+            console.error('Tasks polling error:', error);
+        }
+    }, POLLING_INTERVAL_MS);
+}
+
+/**
+ * 停止任务列表轮询
+ */
+function stopTasksPolling() {
+    if (tasksPollingInterval) {
+        clearInterval(tasksPollingInterval);
+        tasksPollingInterval = null;
+    }
+}
+
+/**
+ * 检查任务列表是否有变化
+ */
+function hasTasksChanged(oldTasks, newTasks) {
+    if (!oldTasks || !newTasks) return true;
+    if (oldTasks.length !== newTasks.length) return true;
+
+    for (let i = 0; i < oldTasks.length; i++) {
+        const oldTask = oldTasks[i];
+        const newTask = newTasks[i];
+
+        // 检查关键字段是否变化
+        if (oldTask.session_id !== newTask.session_id ||
+            oldTask.status !== newTask.status ||
+            oldTask.step_count !== newTask.step_count ||
+            oldTask.duration_ms !== newTask.duration_ms) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * 启动任务详情轮询（仅对运行中的任务）
+ */
+function startTaskDetailPolling() {
+    stopTaskDetailPolling();
+
+    taskDetailPollingInterval = setInterval(async () => {
+        if (currentPage !== 'task_detail' || !currentTaskId) {
+            stopTaskDetailPolling();
+            return;
+        }
+
+        try {
+            const detail = await pywebview.api.get_task_detail(currentTaskId);
+
+            // 如果任务已完成，停止轮询
+            if (detail.status !== 'running') {
+                stopTaskDetailPolling();
+            }
+
+            // 更新详情页（保留当前滚动位置）
+            updateTaskDetailInPlace(detail);
+        } catch (error) {
+            console.error('Task detail polling error:', error);
+        }
+    }, POLLING_INTERVAL_MS);
+}
+
+/**
+ * 停止任务详情轮询
+ */
+function stopTaskDetailPolling() {
+    if (taskDetailPollingInterval) {
+        clearInterval(taskDetailPollingInterval);
+        taskDetailPollingInterval = null;
+    }
+}
+
+/**
+ * 就地更新任务详情（保留滚动位置）
+ */
+function updateTaskDetailInPlace(detail) {
+    // 更新状态
+    const statusEl = document.querySelector('.task-detail__status');
+    if (statusEl) {
+        statusEl.className = `task-detail__status task-status--${detail.status}`;
+        statusEl.textContent = getStatusLabel(detail.status);
+    }
+
+    // 更新统计数据
+    const statsEl = document.querySelector('.task-detail__stats');
+    if (statsEl) {
+        statsEl.innerHTML = `
+            <span>📊 ${detail.step_count} 步骤</span>
+            <span>💬 ${detail.user_message_count || 0} 用户消息</span>
+            <span>🤖 ${detail.assistant_message_count || 0} 助手消息</span>
+            <span>🔧 ${detail.tool_call_count || 0} 工具调用</span>
+        `;
+    }
+
+    // 更新元信息（持续时间等）
+    const metaEl = document.querySelector('.task-detail__meta');
+    if (metaEl) {
+        metaEl.innerHTML = `
+            <span>开始: ${formatTimestamp(detail.started_at)}</span>
+            ${detail.ended_at ? `<span>结束: ${formatTimestamp(detail.ended_at)}</span>` : ''}
+            <span>耗时: ${formatDuration(detail.duration_ms)}</span>
+        `;
     }
 }

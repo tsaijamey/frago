@@ -970,7 +970,8 @@ body {
     color: var(--text-muted);
 }
 
-.empty-state-icon {
+.empty-state-icon,
+.empty-state__icon {
     font-size: 48px;
     margin-bottom: var(--spacing-md);
     opacity: 0.4;
@@ -979,6 +980,378 @@ body {
 .empty-state-text {
     font-size: var(--font-size-base);
     line-height: 1.6;
+}
+
+.empty-state__title {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.empty-state__description {
+    font-size: var(--font-size-base);
+    color: var(--text-secondary);
+    line-height: 1.6;
+    max-width: 400px;
+    margin: 0 auto;
+}
+
+.empty-state__hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: var(--spacing-md);
+}
+
+.empty-state__hint code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
+/* === Tips Page === */
+.tips-empty-state {
+    padding-top: calc(var(--spacing-2xl) * 2);
+}
+
+/* ============================================================
+ * 011-gui-tasks-redesign: 任务状态颜色样式
+ * ============================================================ */
+
+/* 任务状态指示器 */
+.task-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 12px;
+}
+
+.task-status--running {
+    background: rgba(210, 153, 34, 0.15);
+    color: var(--accent-warning);
+}
+
+.task-status--completed {
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent-success);
+}
+
+.task-status--error,
+.task-status--cancelled {
+    background: rgba(248, 81, 73, 0.15);
+    color: var(--accent-error);
+}
+
+/* 状态图标圆点 */
+.task-status::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+/* ============================================================
+ * 011-gui-tasks-redesign: 任务输入区域样式
+ * ============================================================ */
+
+.task-input-container {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.task-input-container .input-text {
+    flex: 1;
+    min-height: 40px;
+    max-height: 100px;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--font-size-base);
+    resize: vertical;
+    outline: none;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.task-input-container .input-text:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+}
+
+.task-input-container .input-text::placeholder {
+    color: var(--text-muted);
+}
+
+.task-input-container .send-btn {
+    align-self: flex-end;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    min-width: 80px;
+    height: 40px;
+}
+
+/* ============================================================
+ * 011-gui-tasks-redesign: 任务卡片样式
+ * ============================================================ */
+
+.tasks-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.task-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.task-card:hover {
+    border-color: var(--accent-primary);
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px var(--shadow-color);
+}
+
+.task-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-xs);
+}
+
+.task-card__name {
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-card__time {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.task-card__stats {
+    display: flex;
+    gap: var(--spacing-md);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* ============================================================
+ * 011-gui-tasks-redesign: 任务详情页样式
+ * ============================================================ */
+
+.task-detail__info {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.task-detail__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 14px;
+    margin-bottom: var(--spacing-sm);
+}
+
+.task-detail__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-md);
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.task-detail__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-lg);
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid var(--border-muted);
+}
+
+.task-detail__steps {
+    margin-top: var(--spacing-md);
+}
+
+/* 步骤列表样式 */
+.step {
+    background: var(--bg-secondary);
+    border-left: 3px solid var(--border-color);
+    padding: var(--spacing-sm) var(--spacing-md);
+    margin-bottom: var(--spacing-xs);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.step--user_message {
+    border-left-color: var(--accent-primary);
+}
+
+.step--assistant_message {
+    border-left-color: var(--accent-success);
+}
+
+.step--tool_call,
+.step--tool_result {
+    border-left-color: var(--accent-warning);
+}
+
+.step--system_event {
+    border-left-color: var(--text-muted);
+}
+
+.step__header {
+    display: flex;
+    gap: var(--spacing-md);
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.step__number {
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.step__type {
+    font-weight: 500;
+}
+
+.step__time {
+    margin-left: auto;
+    color: var(--text-muted);
+}
+
+.step__content {
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* 加载更多按钮 */
+.btn-load-more {
+    display: block;
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    margin-top: var(--spacing-md);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: 13px;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.btn-load-more:hover {
+    background: var(--bg-subtle);
+    color: var(--text-primary);
+}
+
+/* ============================================================
+ * 011-gui-tasks-redesign: 过渡动画
+ * ============================================================ */
+
+/* 任务卡片进入动画 */
+.task-card {
+    animation: taskCardSlideIn 0.2s var(--ease-out);
+}
+
+@keyframes taskCardSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* 步骤条目进入动画 */
+.step {
+    animation: stepFadeIn 0.15s ease-out;
+}
+
+@keyframes stepFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 状态变化过渡 */
+.task-status,
+.task-detail__status {
+    transition: background-color var(--transition-normal), color var(--transition-normal);
+}
+
+/* 进行中任务的脉冲动画 */
+.task-status--running::before {
+    animation: statusPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.6;
+        transform: scale(1.1);
+    }
+}
+
+/* 页面切换淡入淡出 */
+.page {
+    transition: opacity var(--transition-normal);
+}
+
+/* 空状态淡入 */
+.empty-state {
+    animation: emptyStateFadeIn 0.3s ease-out;
+}
+
+@keyframes emptyStateFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
 /* === Scrollbar === */
