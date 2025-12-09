@@ -1,209 +1,41 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Frago GUI</title>
-    <link rel="stylesheet" href="styles/main.css">
-</head>
-<body>
-    <!-- 顶部导航栏（可拖动区域） -->
-    <header class="header" data-drag-region>
-        <div class="header-left">
-            <span class="logo">🚀 Frago</span>
-        </div>
-        <!-- 移除所有自定义窗口控制按钮，使用原生窗口标题栏 -->
-    </header>
-
-    <!-- 页面标签导航 -->
-    <nav class="nav-tabs">
-        <button class="nav-tab active" data-page="tips">Tips</button>
-        <button class="nav-tab" data-page="tasks">Tasks</button>
-        <button class="nav-tab" data-page="recipes">配方</button>
-        <button class="nav-tab" data-page="skills">Skills</button>
-        <button class="nav-tab" data-page="settings">设置</button>
-    </nav>
-
-    <!-- 主内容区域 -->
-    <main class="main-content">
-        <!-- Tips 页面（默认启动页） -->
-        <section class="page active" id="page-tips">
-            <div class="empty-state tips-empty-state">
-                <div class="empty-state__icon">💡</div>
-                <h2 class="empty-state__title">Tips</h2>
-                <p class="empty-state__description">
-                    使用技巧和新功能介绍即将推出...
-                </p>
-            </div>
-        </section>
-
-        <!-- Tasks 页面（任务列表） -->
-        <section class="page" id="page-tasks">
-            <div class="page-header">
-                <h2>Tasks</h2>
-                <button class="refresh-btn" id="refresh-tasks-btn" title="刷新任务列表">🔄</button>
-            </div>
-            <!-- 任务输入区域 -->
-            <div class="task-input-container">
-                <textarea
-                    id="task-input-text"
-                    class="input-text"
-                    placeholder="输入任务描述，按 Ctrl+Enter 或点击发送按钮执行..."
-                    rows="2"
-                ></textarea>
-                <button class="send-btn" id="task-send-btn">发送</button>
-            </div>
-            <div id="tasks-list" class="tasks-list">
-                <div class="loading">加载中...</div>
-            </div>
-            <div id="tasks-empty" class="empty-state" style="display: none;">
-                <div class="empty-state__icon">📋</div>
-                <p class="empty-state__description">暂无任务记录</p>
-                <p class="empty-state__hint">在上方输入框输入任务描述，点击发送执行</p>
-            </div>
-        </section>
-
-        <!-- 任务详情页 -->
-        <section class="page" id="page-task-detail">
-            <div class="page-header">
-                <button class="back-btn" id="task-detail-back-btn">← 返回</button>
-                <h2 id="task-detail-title">任务详情</h2>
-            </div>
-            <div id="task-detail-content">
-                <div class="loading">加载中...</div>
-            </div>
-        </section>
-
-        <!-- 主页（保留兼容） -->
-        <section class="page" id="page-home">
-            <div class="welcome-container">
-                <div class="welcome-logo">🚀</div>
-                <h1 class="welcome-title">Welcome to Frago</h1>
-                <p class="welcome-subtitle">AI-driven multi-runtime automation framework</p>
-            </div>
-
-            <!-- 输入区域 -->
-            <div class="input-container">
-                <textarea
-                    id="input-text"
-                    class="input-text"
-                    placeholder="输入命令或问题..."
-                    rows="3"
-                ></textarea>
-                <button class="send-btn" id="send-btn">发送</button>
-            </div>
-
-            <!-- 结果展示区域 -->
-            <div class="output-container" id="output-container">
-                <div class="output-placeholder">响应将显示在这里...</div>
-            </div>
-
-            <!-- 进度条 -->
-            <div class="progress-container" id="progress-container" style="display: none;">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progress-fill"></div>
-                </div>
-                <span class="progress-step" id="progress-step"></span>
-            </div>
-        </section>
-
-        <!-- 配方页面 -->
-        <section class="page" id="page-recipes">
-            <div class="page-header">
-                <h2>配方列表</h2>
-                <button class="refresh-btn" id="refresh-recipes-btn">刷新</button>
-            </div>
-            <div class="recipe-list" id="recipe-list">
-                <div class="loading">加载中...</div>
-            </div>
-        </section>
-
-        <!-- 配方详情页面 -->
-        <section class="page" id="page-recipe-detail">
-            <div class="page-header">
-                <button class="back-btn" id="recipe-detail-back-btn">← 返回</button>
-                <h2 id="recipe-detail-title">配方详情</h2>
-                <button class="delete-btn" id="recipe-delete-btn" style="display: none;">删除</button>
-            </div>
-            <div class="recipe-detail-content" id="recipe-detail-content">
-                <div class="loading">加载中...</div>
-            </div>
-        </section>
-
-        <!-- Skills 页面 -->
-        <section class="page" id="page-skills">
-            <div class="page-header">
-                <h2>Skills 列表</h2>
-                <button class="refresh-btn" id="refresh-skills-btn">刷新</button>
-            </div>
-            <div class="skill-grid" id="skill-grid">
-                <div class="loading">加载中...</div>
-            </div>
-        </section>
-
-        <!-- 历史页面 -->
-        <section class="page" id="page-history">
-            <div class="page-header">
-                <h2>执行历史</h2>
-                <button class="clear-btn" id="clear-history-btn">清空</button>
-            </div>
-            <div class="history-list" id="history-list">
-                <div class="loading">加载中...</div>
-            </div>
-        </section>
-
-        <!-- 设置页面 -->
-        <section class="page" id="page-settings">
-            <div class="page-header">
-                <h2>设置</h2>
-            </div>
-            <div class="settings-form">
-                <div class="setting-item">
-                    <label>主题</label>
-                    <select id="setting-theme">
-                        <option value="dark">深色</option>
-                        <option value="light">浅色</option>
-                    </select>
-                </div>
-                <div class="setting-item">
-                    <label>字体大小</label>
-                    <input type="range" id="setting-font-size" min="10" max="24" value="14">
-                    <span id="font-size-value">14px</span>
-                </div>
-                <div class="setting-item">
-                    <label>显示系统状态</label>
-                    <input type="checkbox" id="setting-show-status" checked>
-                </div>
-                <div class="setting-item">
-                    <label>关闭时确认</label>
-                    <input type="checkbox" id="setting-confirm-exit" checked>
-                </div>
-                <div class="setting-item">
-                    <label>自动滚动输出</label>
-                    <input type="checkbox" id="setting-auto-scroll" checked>
-                </div>
-                <button class="save-btn" id="save-settings-btn">保存设置</button>
-            </div>
-        </section>
-    </main>
-
-    <!-- 底部状态栏 -->
-    <footer class="status-bar" id="status-bar">
-        <div class="status-left">
-            <span class="status-item" id="cpu-status">CPU: --</span>
-            <span class="status-item" id="memory-status">MEM: --</span>
-        </div>
-        <div class="status-right">
-            <span class="status-indicator" id="connection-status">
-                <span class="indicator-dot disconnected"></span>
-                <span class="indicator-text">未连接</span>
-            </span>
-        </div>
-    </footer>
-
-    <!-- Toast 容器 -->
-    <div class="toast-container" id="toast-container"></div>
-
-    <script src="scripts/app.js"></script>
-</body>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Frago</title>
+    <style>
+      /* 防止 FOUC - 立即应用主题 */
+      html {
+        background-color: #0d1117;
+        color-scheme: dark;
+      }
+      html[data-theme='light'] {
+        background-color: #ffffff;
+        color-scheme: light;
+      }
+    </style>
+    <script>
+      // 在 CSS 加载前应用主题（兼容 localStorage 不可用的环境）
+      (function () {
+        var saved = null;
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage !== null) {
+            saved = localStorage.getItem('theme');
+          }
+        } catch (e) {}
+        var system = window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
+        var theme = saved || system;
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
+    
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./assets/index-BXATalT3.js"></script>
+  </body>
 </html>
