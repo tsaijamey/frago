@@ -77,6 +77,13 @@ tmp/
 .backup_docs/
 
 # ====================
+# Frontend Build
+# ====================
+src/frago/gui/assets/
+src/frago/gui/assets_legacy/
+src/frago/gui/frontend/node_modules/
+
+# ====================
 # Internal Development (not for public)
 # ====================
 pre-publish-checklist.md
