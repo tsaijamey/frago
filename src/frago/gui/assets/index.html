@@ -17,17 +17,65 @@
 
     <!-- 页面标签导航 -->
     <nav class="nav-tabs">
-        <button class="nav-tab active" data-page="home">主页</button>
+        <button class="nav-tab active" data-page="tips">Tips</button>
+        <button class="nav-tab" data-page="tasks">Tasks</button>
         <button class="nav-tab" data-page="recipes">配方</button>
         <button class="nav-tab" data-page="skills">Skills</button>
-        <button class="nav-tab" data-page="history">历史</button>
         <button class="nav-tab" data-page="settings">设置</button>
     </nav>
 
     <!-- 主内容区域 -->
     <main class="main-content">
-        <!-- 主页 -->
-        <section class="page active" id="page-home">
+        <!-- Tips 页面（默认启动页） -->
+        <section class="page active" id="page-tips">
+            <div class="empty-state tips-empty-state">
+                <div class="empty-state__icon">💡</div>
+                <h2 class="empty-state__title">Tips</h2>
+                <p class="empty-state__description">
+                    使用技巧和新功能介绍即将推出...
+                </p>
+            </div>
+        </section>
+
+        <!-- Tasks 页面（任务列表） -->
+        <section class="page" id="page-tasks">
+            <div class="page-header">
+                <h2>Tasks</h2>
+                <button class="refresh-btn" id="refresh-tasks-btn" title="刷新任务列表">🔄</button>
+            </div>
+            <!-- 任务输入区域 -->
+            <div class="task-input-container">
+                <textarea
+                    id="task-input-text"
+                    class="input-text"
+                    placeholder="输入任务描述，按 Ctrl+Enter 或点击发送按钮执行..."
+                    rows="2"
+                ></textarea>
+                <button class="send-btn" id="task-send-btn">发送</button>
+            </div>
+            <div id="tasks-list" class="tasks-list">
+                <div class="loading">加载中...</div>
+            </div>
+            <div id="tasks-empty" class="empty-state" style="display: none;">
+                <div class="empty-state__icon">📋</div>
+                <p class="empty-state__description">暂无任务记录</p>
+                <p class="empty-state__hint">在上方输入框输入任务描述，点击发送执行</p>
+            </div>
+        </section>
+
+        <!-- 任务详情页 -->
+        <section class="page" id="page-task-detail">
+            <div class="page-header">
+                <button class="back-btn" id="task-detail-back-btn">← 返回</button>
+                <h2 id="task-detail-title">任务详情</h2>
+            </div>
+            <div id="task-detail-content">
+                <div class="loading">加载中...</div>
+            </div>
+        </section>
+
+        <!-- 主页（保留兼容） -->
+        <section class="page" id="page-home">
             <div class="welcome-container">
                 <div class="welcome-logo">🚀</div>
                 <h1 class="welcome-title">Welcome to Frago</h1>

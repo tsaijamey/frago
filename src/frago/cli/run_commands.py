@@ -50,6 +50,41 @@ def output_json(data: Dict[str, Any]) -> None:
     click.echo(json.dumps(data, ensure_ascii=False, indent=2))
 
 
+def get_extra_metadata(instance: Any) -> Dict[str, Any]:
+    """获取额外元数据字段（排除核心字段）"""
+    core_fields = {"run_id", "theme_description", "created_at", "last_accessed", "status"}
+
+    # 获取实例的所有字段
+    instance_dict = instance.model_dump()
+
+    # 过滤出额外字段
+    extra_metadata = {}
+    for key, value in instance_dict.items():
+        if key not in core_fields:
+            extra_metadata[key] = value
+
+    return extra_metadata
+
+
+def format_extra_metadata(extra_metadata: Dict[str, Any], indent: str = "  ") -> str:
+    """格式化额外元数据为可读字符串"""
+    if not extra_metadata:
+        return ""
+
+    lines = [f"\nExtra Metadata:"]
+    for key, value in sorted(extra_metadata.items()):
+        if isinstance(value, dict):
+            lines.append(f"{indent}- {key}:")
+            for sub_key, sub_value in value.items():
+                lines.append(f"{indent}  {sub_key}: {json.dumps(sub_value, ensure_ascii=False)}")
+        elif isinstance(value, list):
+            lines.append(f"{indent}- {key}: {json.dumps(value, ensure_ascii=False)}")
+        else:
+            lines.append(f"{indent}- {key}: {value}")
+
+    return "\n".join(lines)
+
+
 def handle_error(e: Exception, exit_code: int = 1) -> None:
     """统一错误处理"""
     click.echo(f"Error: {e}", err=True)
@@ -251,6 +286,7 @@ def info(run_id: str, format: str):
                 "theme_description": instance.theme_description,
                 "created_at": format_timestamp(instance.created_at),
                 "last_accessed": format_timestamp(instance.last_accessed),
+                "extra_metadata": get_extra_metadata(instance),
                 "statistics": stats,
                 "recent_logs": [
                     {
@@ -280,6 +316,11 @@ def info(run_id: str, format: str):
             click.echo(f"- Screenshots: {stats['screenshots']}")
             click.echo(f"- Scripts: {stats['scripts']}")
             click.echo(f"- Disk Usage: {stats['disk_usage_bytes'] / 1024:.1f} KB")
+
+            # 显示额外元数据
+            extra_metadata = get_extra_metadata(instance)
+            if extra_metadata:
+                click.echo(format_extra_metadata(extra_metadata))
 
             if recent_logs:
                 click.echo(f"\nRecent Logs (last 5):")
