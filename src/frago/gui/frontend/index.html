@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Frago</title>
+    <style>
+      /* 防止 FOUC - 立即应用主题 */
+      html {
+        background-color: #0d1117;
+        color-scheme: dark;
+      }
+      html[data-theme='light'] {
+        background-color: #ffffff;
+        color-scheme: light;
+      }
+    </style>
+    <script>
+      // 在 CSS 加载前应用主题（兼容 localStorage 不可用的环境）
+      (function () {
+        var saved = null;
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage !== null) {
+            saved = localStorage.getItem('theme');
+          }
+        } catch (e) {}
+        var system = window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
+        var theme = saved || system;
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
