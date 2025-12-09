@@ -1,6 +1,6 @@
 # 工具优先级
 
-适用于：`/frago.run`、`/frago.do`
+适用于：`/frago.run`、`/frago.exec`
 
 ## 优先级顺序
 
@@ -15,8 +15,8 @@
 
 | 需求 | ❌ 不要 | ✅ 应该 |
 |------|--------|--------|
-| 搜索信息 | `WebSearch` | `frago chrome navigate "https://google.com/search?q=..."` |
-| 查看网页 | `WebFetch` | `frago chrome navigate <url>` + `get-content` |
+| 搜索信息 | `WebSearch` | `frago navigate "https://google.com/search?q=..."` |
+| 查看网页 | `WebFetch` | `frago navigate <url>` + `get-content` |
 | 提取数据 | 手写 JS | 先查 `frago recipe list` |
 | 文件操作 | 手动创建 | 使用 Claude Code 的 Write/Edit 工具 |
 
@@ -30,7 +30,7 @@
 
 ### 2. frago 命令次之
 
-- **跨 agent 通用**：在 run/do/recipe/test 中都能使用
+- **跨 agent 通用**：在 run/exec/recipe/test 中都能使用
 - **自动日志**：CDP 命令自动记录到 execution.jsonl
 - **统一接口**：`frago <command>` 格式一致
 

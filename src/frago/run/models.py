@@ -97,6 +97,10 @@ class RunInstance(BaseModel):
     last_accessed: datetime
     status: RunStatus = RunStatus.ACTIVE
 
+    class Config:
+        """Pydantic配置"""
+        extra = "allow"  # 允许额外字段，支持自定义元数据
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunInstance":
         """从字典创建实例（兼容ISO 8601时间戳字符串）"""
@@ -114,13 +118,15 @@ class RunInstance(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典（ISO 8601时间戳）"""
-        return {
-            "run_id": self.run_id,
-            "theme_description": self.theme_description,
-            "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
-            "last_accessed": self.last_accessed.isoformat().replace("+00:00", "Z"),
-            "status": self.status.value,
-        }
+        # 使用 model_dump() 获取所有字段，包括额外字段
+        result = self.model_dump()
+
+        # 确保时间字段格式正确
+        result["created_at"] = self.created_at.isoformat().replace("+00:00", "Z")
+        result["last_accessed"] = self.last_accessed.isoformat().replace("+00:00", "Z")
+        result["status"] = self.status.value
+
+        return result
 
 
 class LogEntry(BaseModel):

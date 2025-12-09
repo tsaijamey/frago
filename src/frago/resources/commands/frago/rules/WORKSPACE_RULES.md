@@ -1,6 +1,6 @@
 # 工作目录与空间管理
 
-适用于：`/frago.run`、`/frago.do`
+适用于：`/frago.run`、`/frago.exec`
 
 ## 一、确定 projects 目录位置
 

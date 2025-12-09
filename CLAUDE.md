@@ -17,6 +17,7 @@ Auto-generated from all feature plans. Last updated: 2025-11-15
 - ~/.frago/gui_config.json (用户配置持久化) (009-gui-design-redesign)
 - Python 3.9+（符合现有 pyproject.toml 要求） + click>=8.1.0（现有）, pydantic（现有）, watchdog（新增，用于文件监听） (010-agent-session-monitor)
 - 文件系统（`~/.frago/sessions/{agent_type}/{session_id}/`） (010-agent-session-monitor)
+- Python 3.9+ (后端) + HTML5/CSS3/ES6 (前端) + pywebview>=6.1, click>=8.1.0, pydantic>=2.0, watchdog (会话监控) (011-gui-tasks-redesign)
 
 - Bash/Shell Script (POSIX兼容) + websocat工具，Chrome DevTools Protocol (001-standardize-cdp-scripts)
 
@@ -36,9 +37,9 @@ tests/
 Bash/Shell Script (POSIX兼容): Follow standard conventions
 
 ## Recent Changes
+- 011-gui-tasks-redesign: Added Python 3.9+ (后端) + HTML5/CSS3/ES6 (前端) + pywebview>=6.1, click>=8.1.0, pydantic>=2.0, watchdog (会话监控)
 - 010-agent-session-monitor: Added Python 3.9+（符合现有 pyproject.toml 要求） + click>=8.1.0（现有）, pydantic（现有）, watchdog（新增，用于文件监听）
 - 009-gui-design-redesign: Added Python 3.9+ (后端) + HTML5/CSS3/ES6 (前端) + pywebview >= 6.1, Click >= 8.1.0 (现有依赖)
-- 008-gui-app-mode: Added Python 3.9+（符合现有 pyproject.toml 要求） + pywebview>=6.1, click>=8.1.0（现有依赖）
 
 
 <!-- MANUAL ADDITIONS START -->

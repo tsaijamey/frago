@@ -371,6 +371,93 @@ def read_summary(
 # ============================================================
 
 
+def read_steps_paginated(
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    limit: int = 50,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """分页读取会话步骤
+
+    Args:
+        session_id: 会话 ID
+        agent_type: Agent 类型
+        limit: 每页数量（默认 50，最大 100）
+        offset: 偏移量
+
+    Returns:
+        包含 steps、total、offset、limit、has_more 的字典
+    """
+    # 参数验证
+    limit = max(1, min(100, limit))
+    offset = max(0, offset)
+
+    all_steps = read_steps(session_id, agent_type)
+    total = len(all_steps)
+
+    return {
+        "steps": all_steps[offset : offset + limit],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + limit < total,
+    }
+
+
+def count_sessions(
+    agent_type: Optional[AgentType] = None,
+    status: Optional[SessionStatus] = None,
+) -> int:
+    """统计会话数量
+
+    Args:
+        agent_type: 筛选特定 Agent 类型，None 表示所有
+        status: 筛选特定状态
+
+    Returns:
+        会话数量
+    """
+    base_dir = get_session_base_dir()
+
+    if not base_dir.exists():
+        return 0
+
+    count = 0
+
+    # 确定要搜索的 agent 目录
+    if agent_type:
+        agent_dirs = [base_dir / agent_type.value]
+    else:
+        agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
+
+    for agent_dir in agent_dirs:
+        if not agent_dir.exists():
+            continue
+
+        for session_dir in agent_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+
+            metadata_path = session_dir / "metadata.json"
+            if not metadata_path.exists():
+                continue
+
+            # 如果需要状态筛选，读取 metadata
+            if status:
+                try:
+                    with open(metadata_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    session_status = SessionStatus(data.get("status", "running"))
+                    if session_status != status:
+                        continue
+                except Exception:
+                    continue
+
+            count += 1
+
+    return count
+
+
 def list_sessions(
     agent_type: Optional[AgentType] = None,
     limit: int = 20,

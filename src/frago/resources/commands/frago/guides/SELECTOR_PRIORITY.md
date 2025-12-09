@@ -52,13 +52,13 @@ const elem = findElement([
 
 ```bash
 # 验证选择器是否存在
-frago chrome exec-js "document.querySelector('[aria-label=\"提交\"]') !== null" --return-value
+frago exec-js "document.querySelector('[aria-label=\"提交\"]') !== null" --return-value
 
 # 高亮元素确认位置
-frago chrome highlight '[aria-label="提交"]'
+frago highlight '[aria-label="提交"]'
 
 # 获取元素文本确认内容
-frago chrome exec-js "document.querySelector('[aria-label=\"提交\"]')?.textContent" --return-value
+frago exec-js "document.querySelector('[aria-label=\"提交\"]')?.textContent" --return-value
 ```
 
 ## 配方中的验证等待
