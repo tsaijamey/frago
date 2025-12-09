@@ -1,6 +1,7 @@
 """Python API exposed to JavaScript for Frago GUI.
 
 Implements the JS-Python bridge using pywebview's js_api protocol.
+Extended for 011-gui-tasks-redesign: Tasks 相关 API 方法。
 """
 
 import json
@@ -30,8 +31,21 @@ from frago.gui.models import (
     StreamMessage,
     TaskStatus,
     UserConfig,
+    TaskItem,
+    TaskDetail,
+    TaskStep,
 )
 from frago.gui.state import AppStateManager
+
+# 011-gui-tasks-redesign: 导入 session 模块
+from frago.session.storage import (
+    list_sessions,
+    read_metadata,
+    read_steps,
+    read_steps_paginated,
+    read_summary,
+)
+from frago.session.models import AgentType
 
 
 class FragoGuiApi:
@@ -630,3 +644,277 @@ class FragoGuiApi:
         """
         self._skill_cache = self._load_skills()
         return [s.to_dict() for s in self._skill_cache]
+
+    # ============================================================
+    # 011-gui-tasks-redesign: Tasks 相关 API 方法
+    # ============================================================
+
+    def get_tasks(self, limit: int = 50, status: Optional[str] = None) -> List[Dict]:
+        """获取任务列表
+
+        优先从 ~/.frago/sessions/ 读取会话数据，如果为空则从
+        GUI history 中读取 AGENT 类型的记录作为任务列表。
+
+        Args:
+            limit: 最大返回数量，范围 1-100，默认 50
+            status: 筛选状态（可选），支持 running/completed/error/cancelled
+
+        Returns:
+            任务列表
+        """
+        try:
+            from frago.session.models import SessionStatus
+
+            # 参数验证
+            limit = max(1, min(100, limit))
+
+            # 转换状态筛选参数
+            status_filter = None
+            if status:
+                try:
+                    status_filter = SessionStatus(status)
+                except ValueError:
+                    pass  # 无效状态，忽略筛选
+
+            # 尝试从 sessions 目录获取
+            sessions = list_sessions(
+                agent_type=AgentType.CLAUDE,
+                limit=limit,
+                status=status_filter,
+            )
+
+            # 如果有 session 数据，使用 session 数据
+            if sessions:
+                tasks = []
+                for session in sessions:
+                    try:
+                        task = TaskItem.from_session(session)
+                        tasks.append(task.model_dump(mode="json"))
+                    except Exception:
+                        continue
+                return tasks
+
+            # 否则从 GUI history 中读取 AGENT 类型记录
+            return self._get_tasks_from_history(limit, status)
+
+        except Exception:
+            # 降级到 history
+            return self._get_tasks_from_history(limit, status)
+
+    def _get_tasks_from_history(
+        self, limit: int = 50, status: Optional[str] = None
+    ) -> List[Dict]:
+        """从 GUI history 中读取 AGENT 类型记录作为任务列表
+
+        Args:
+            limit: 最大返回数量
+            status: 筛选状态
+
+        Returns:
+            任务列表
+        """
+        # 转换状态筛选
+        task_status = None
+        if status:
+            try:
+                task_status = TaskStatus(status)
+            except ValueError:
+                pass
+
+        # 读取 AGENT 类型的历史记录
+        records = get_history(
+            limit=limit,
+            command_type=CommandType.AGENT,
+            status=task_status,
+        )
+
+        tasks = []
+        for record in records:
+            # 将 CommandRecord 转换为类似 TaskItem 的格式
+            task = {
+                "session_id": record.id,
+                "name": record.input_text[:100] if record.input_text else "未命名任务",
+                "status": record.status.value if record.status else "completed",
+                "started_at": record.timestamp.isoformat() if record.timestamp else None,
+                "ended_at": None,
+                "duration_ms": record.duration_ms or 0,
+                "step_count": 0,
+                "tool_call_count": 0,
+                "last_activity": record.timestamp.isoformat() if record.timestamp else None,
+                "project_path": None,
+            }
+            tasks.append(task)
+
+        return tasks
+
+    def get_task_detail(
+        self,
+        session_id: str,
+        steps_limit: int = 50,
+        steps_offset: int = 0,
+    ) -> Dict[str, Any]:
+        """获取任务详情
+
+        读取指定会话的完整信息，包括元数据、步骤记录和摘要。
+        步骤支持分页加载，默认返回前 50 条。
+
+        Args:
+            session_id: 会话 ID（必填）
+            steps_limit: 步骤数量限制，范围 1-100，默认 50
+            steps_offset: 步骤偏移量，用于分页，默认 0
+
+        Returns:
+            任务详情字典，包含：
+            - session_id, name, status, started_at, ended_at
+            - duration_ms, project_path
+            - step_count, tool_call_count, user_message_count, assistant_message_count
+            - steps (分页的步骤列表)
+            - steps_total, steps_offset, has_more_steps
+            - summary (完成后的摘要)
+            - error (如果出错)
+        """
+        # 参数验证
+        if not session_id:
+            return {"error": "会话 ID 不能为空"}
+
+        steps_limit = max(1, min(100, steps_limit))
+        steps_offset = max(0, steps_offset)
+
+        try:
+            # 读取会话元数据
+            session = read_metadata(session_id, AgentType.CLAUDE)
+            if not session:
+                return {"error": f"会话 {session_id} 不存在"}
+
+            # 分页读取步骤
+            steps_result = read_steps_paginated(
+                session_id, AgentType.CLAUDE, steps_limit, steps_offset
+            )
+            steps = steps_result["steps"]
+            total_steps = steps_result["total"]
+
+            # 读取摘要（可能不存在）
+            summary = read_summary(session_id, AgentType.CLAUDE)
+
+            # 构建 TaskDetail
+            detail = TaskDetail.from_session_data(
+                session=session,
+                steps=steps,
+                summary=summary,
+                offset=steps_offset,
+                limit=steps_limit,
+                total_steps=total_steps,
+            )
+
+            return detail.model_dump(mode="json")
+        except Exception as e:
+            return {"error": f"加载任务详情失败: {str(e)}"}
+
+    def get_task_steps(
+        self,
+        session_id: str,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        """分页获取任务步骤
+
+        用于任务详情页的"加载更多"功能，返回指定范围的步骤记录。
+
+        Args:
+            session_id: 会话 ID（必填）
+            offset: 偏移量，从第几条开始，默认 0
+            limit: 数量限制，范围 1-100，默认 50
+
+        Returns:
+            字典包含：
+            - steps: 步骤列表
+            - total: 总步骤数
+            - offset: 当前偏移量
+            - has_more: 是否还有更多
+            - error: 错误信息（如果出错）
+        """
+        # 参数验证
+        if not session_id:
+            return {"error": "会话 ID 不能为空", "steps": [], "has_more": False}
+
+        limit = max(1, min(100, limit))
+        offset = max(0, offset)
+
+        try:
+            result = read_steps_paginated(session_id, AgentType.CLAUDE, limit, offset)
+
+            # 转换步骤格式为 GUI 所需格式
+            gui_steps = [TaskStep.from_session_step(s) for s in result["steps"]]
+
+            return {
+                "steps": [s.model_dump(mode="json") for s in gui_steps],
+                "total": result["total"],
+                "offset": result["offset"],
+                "has_more": result["has_more"],
+            }
+        except Exception as e:
+            return {
+                "error": f"加载步骤失败: {str(e)}",
+                "steps": [],
+                "has_more": False,
+            }
+
+    def start_agent_task(self, prompt: str) -> Dict[str, Any]:
+        """启动 agent 任务
+
+        在后台执行 `frago agent {prompt}` 命令。
+        任务启动后立即返回，不等待任务完成。
+        同时在 history 中记录一条"运行中"的记录。
+
+        Args:
+            prompt: 任务描述/提示词
+
+        Returns:
+            字典包含：
+            - status: "ok" 或 "error"
+            - message: 状态消息
+            - task_id: 任务 ID（成功时返回）
+            - error: 错误信息（如果出错）
+        """
+        if not prompt or not prompt.strip():
+            return {"status": "error", "error": "任务描述不能为空"}
+
+        prompt = prompt.strip()
+        task_id = str(uuid.uuid4())
+
+        try:
+            # 先记录一条"运行中"的 history 记录
+            record = CommandRecord(
+                id=task_id,
+                timestamp=datetime.now(),
+                command_type=CommandType.AGENT,
+                input_text=prompt,
+                status=TaskStatus.RUNNING,
+                duration_ms=0,
+            )
+            append_record(record)
+
+            # 在后台启动 frago agent 命令
+            # 使用 Popen 启动进程，不等待完成
+            subprocess.Popen(
+                ["frago", "agent", "--yes", prompt],  # --yes 跳过确认
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,  # 分离进程，防止 GUI 关闭时终止任务
+            )
+
+            return {
+                "status": "ok",
+                "task_id": task_id,
+                "message": f"任务已启动: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
+            }
+        except FileNotFoundError:
+            return {
+                "status": "error",
+                "error": "frago 命令未找到，请确保已正确安装",
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": f"启动任务失败: {str(e)}",
+            }
