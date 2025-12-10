@@ -10,6 +10,7 @@ import click
 from typing import Optional
 from collections import OrderedDict
 
+from frago import __version__
 from .commands import (
     status,
     init as init_dirs,  # 旧的目录初始化命令，保留为 init-dirs
@@ -90,6 +91,7 @@ class GroupedGroup(click.Group):
 
 
 @click.group(cls=GroupedGroup, invoke_without_command=True)
+@click.version_option(version=__version__, prog_name="frago")
 @click.option(
     '--gui',
     is_flag=True,
