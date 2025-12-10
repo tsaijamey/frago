@@ -389,6 +389,7 @@ class TaskItem(BaseModel):
     def from_session(cls, session: "MonitoredSession") -> "TaskItem":
         """从 MonitoredSession 转换"""
         from frago.session.models import SessionStatus
+        from frago.session.storage import get_session_dir
 
         # 计算持续时间
         if session.ended_at:
@@ -401,8 +402,8 @@ class TaskItem(BaseModel):
                 started = started.replace(tzinfo=timezone.utc)
             duration = now - started
 
-        # 从 session_id 提取任务名称
-        name = f"Task {session.session_id[:8]}..."
+        # 从 steps.jsonl 提取第一条 user_message 作为任务名称
+        name = cls._extract_task_name(session.session_id)
 
         # 映射状态
         status_map = {
@@ -425,6 +426,105 @@ class TaskItem(BaseModel):
             last_activity=session.last_activity,
             project_path=session.project_path,
         )
+
+    @staticmethod
+    def _extract_task_name(session_id: str, max_length: int = 100) -> str:
+        """从 steps.jsonl 提取任务名称
+
+        读取第一条 user_message，尝试从 <command-args> 提取用户输入，
+        否则使用 content_summary 的第一行。
+
+        Args:
+            session_id: 会话 ID
+            max_length: 名称最大长度
+
+        Returns:
+            任务名称，如果无法提取则返回默认名称
+        """
+        import json
+        import re
+        from frago.session.storage import get_session_dir
+        from frago.session.models import AgentType
+
+        default_name = f"Task {session_id[:8]}..."
+
+        try:
+            session_dir = get_session_dir(session_id, AgentType.CLAUDE)
+            steps_path = session_dir / "steps.jsonl"
+
+            if not steps_path.exists():
+                return default_name
+
+            first_assistant_content = None
+
+            with open(steps_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    step = json.loads(line)
+                    step_type = step.get("type")
+
+                    # 保存第一条 assistant_message 作为备用
+                    if step_type == "assistant_message" and first_assistant_content is None:
+                        first_assistant_content = step.get("content_summary", "") or step.get("content", "")
+
+                    # 优先使用 user_message
+                    if step_type == "user_message":
+                        content = step.get("content_summary", "") or step.get("content", "")
+                        if not content:
+                            continue
+
+                        # 跳过系统警告消息
+                        if content.startswith("Caveat:") or content.startswith("<local-command"):
+                            continue
+
+                        # 跳过空的 command-args（如 /clear 命令）
+                        if "<command-args></command-args>" in content:
+                            continue
+
+                        # 尝试从 <command-args> 提取用户实际输入
+                        # 注意：content_summary 可能被截断，</command-args> 可能不存在
+                        args_match = re.search(r"<command-args>(.*?)(?:</command-args>|$)", content, re.DOTALL)
+                        if args_match:
+                            user_input = args_match.group(1).strip()
+                            # 移除可能的截断标记
+                            user_input = re.sub(r"\.\.\.$", "", user_input).strip()
+                            if user_input:
+                                if len(user_input) > max_length:
+                                    return user_input[:max_length] + "..."
+                                return user_input
+                            # command-args 为空，继续查找下一条
+                            continue
+
+                        # 如果没有 command-args，跳过系统消息标签
+                        # 移除 <command-message>...</command-message> 和 <command-name>...</command-name>
+                        cleaned = re.sub(r"<command-message>.*?</command-message>", "", content, flags=re.DOTALL)
+                        cleaned = re.sub(r"<command-name>.*?</command-name>", "", cleaned, flags=re.DOTALL)
+                        cleaned = cleaned.strip()
+
+                        if cleaned:
+                            first_line = cleaned.split("\n")[0].strip()
+                            # 跳过以 # 开头的标题行（通常是系统 prompt）
+                            if first_line.startswith("#"):
+                                continue
+                            if len(first_line) > max_length:
+                                return first_line[:max_length] + "..."
+                            return first_line if first_line else default_name
+                        # 清理后为空，继续查找
+                        continue
+
+            # 如果没有 user_message，尝试使用第一条 assistant_message 作为描述
+            if first_assistant_content:
+                # 取第一句话作为名称
+                first_line = first_assistant_content.split(".")[0].strip()
+                if first_line:
+                    if len(first_line) > max_length:
+                        return first_line[:max_length] + "..."
+                    return first_line
+
+            return default_name
+        except Exception:
+            return default_name
 
 
 class TaskDetail(BaseModel):

@@ -155,3 +155,45 @@ def trim_history(max_items: int) -> int:
             f.write(line + "\n")
 
     return removed
+
+
+def update_record_status(record_id: str, status: TaskStatus) -> bool:
+    """Update the status of a history record.
+
+    Args:
+        record_id: ID of the record to update.
+        status: New status to set.
+
+    Returns:
+        True if record was found and updated, False otherwise.
+    """
+    if not HISTORY_FILE.exists():
+        return False
+
+    updated = False
+    lines = []
+    try:
+        with HISTORY_FILE.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    lines.append("")
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get("id") == record_id:
+                        data["status"] = status.value
+                        updated = True
+                    lines.append(json.dumps(data, ensure_ascii=False))
+                except (json.JSONDecodeError, KeyError):
+                    lines.append(line)
+    except OSError:
+        return False
+
+    if updated:
+        with HISTORY_FILE.open("w", encoding="utf-8") as f:
+            for line in lines:
+                if line:
+                    f.write(line + "\n")
+
+    return updated

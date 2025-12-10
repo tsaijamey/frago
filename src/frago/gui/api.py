@@ -676,26 +676,40 @@ class FragoGuiApi:
                 except ValueError:
                     pass  # 无效状态，忽略筛选
 
-            # 尝试从 sessions 目录获取
+            tasks = []
+            session_ids = set()
+
+            # 1. 从 sessions 目录获取已有任务
             sessions = list_sessions(
                 agent_type=AgentType.CLAUDE,
                 limit=limit,
                 status=status_filter,
             )
 
-            # 如果有 session 数据，使用 session 数据
-            if sessions:
-                tasks = []
-                for session in sessions:
-                    try:
-                        task = TaskItem.from_session(session)
-                        tasks.append(task.model_dump(mode="json"))
-                    except Exception:
-                        continue
-                return tasks
+            for session in sessions:
+                try:
+                    task = TaskItem.from_session(session)
+                    tasks.append(task.model_dump(mode="json"))
+                    session_ids.add(session.session_id)
+                except Exception:
+                    continue
 
-            # 否则从 GUI history 中读取 AGENT 类型记录
-            return self._get_tasks_from_history(limit, status)
+            # 2. 从 history 获取运行中的任务（可能还没有 session 文件）
+            running_from_history = self._get_tasks_from_history(
+                limit=20,
+                status="running"
+            )
+            for task in running_from_history:
+                if task.get("session_id") not in session_ids:
+                    tasks.insert(0, task)  # 新任务放在最前面
+
+            # 按 started_at 倒序排序
+            tasks.sort(
+                key=lambda t: t.get("started_at") or "",
+                reverse=True
+            )
+
+            return tasks[:limit]
 
         except Exception:
             # 降级到 history
@@ -747,6 +761,34 @@ class FragoGuiApi:
 
         return tasks
 
+    def _get_task_detail_from_history(self, session_id: str) -> Dict[str, Any]:
+        """从 history 获取任务详情（用于刚启动尚未产生 session 数据的任务）"""
+        history = CommandHistory()
+        records = history.get_history(limit=100, command_type=CommandType.AGENT)
+
+        for record in records:
+            if record.id == session_id:
+                return {
+                    "session_id": session_id,
+                    "name": record.command[:100] if record.command else f"Task {session_id[:8]}",
+                    "status": record.status.value if record.status else "running",
+                    "started_at": record.timestamp.isoformat() if record.timestamp else None,
+                    "ended_at": None,
+                    "duration_ms": None,
+                    "project_path": str(record.cwd) if record.cwd else None,
+                    "step_count": 0,
+                    "tool_call_count": 0,
+                    "user_message_count": 0,
+                    "assistant_message_count": 0,
+                    "steps": [],
+                    "steps_total": 0,
+                    "steps_offset": 0,
+                    "has_more_steps": False,
+                    "summary": None,
+                }
+
+        return {"error": f"会话 {session_id} 不存在或已删除"}
+
     def get_task_detail(
         self,
         session_id: str,
@@ -777,14 +819,15 @@ class FragoGuiApi:
         if not session_id:
             return {"error": "会话 ID 不能为空"}
 
-        steps_limit = max(1, min(100, steps_limit))
-        steps_offset = max(0, steps_offset)
+        steps_limit = max(1, min(100, steps_limit or 50))
+        steps_offset = max(0, steps_offset or 0)
 
         try:
             # 读取会话元数据
             session = read_metadata(session_id, AgentType.CLAUDE)
             if not session:
-                return {"error": f"会话 {session_id} 不存在"}
+                # 尝试从 history 获取（可能是刚启动的任务）
+                return self._get_task_detail_from_history(session_id)
 
             # 分页读取步骤
             steps_result = read_steps_paginated(
@@ -895,13 +938,28 @@ class FragoGuiApi:
             append_record(record)
 
             # 在后台启动 frago agent 命令
+            # 使用 shutil.which 查找完整路径，避免环境变量问题
+            import shutil
+            frago_path = shutil.which("frago")
+            if not frago_path:
+                return {
+                    "status": "error",
+                    "error": "frago 命令未找到，请确保已正确安装并在 PATH 中",
+                }
+
             # 使用 Popen 启动进程，不等待完成
-            subprocess.Popen(
-                ["frago", "agent", "--yes", prompt],  # --yes 跳过确认
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,  # 分离进程，防止 GUI 关闭时终止任务
-            )
+            # 重定向输出到日志文件以便调试
+            log_dir = Path.home() / ".frago" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"agent-{task_id[:8]}.log"
+
+            with open(log_file, "w") as f:
+                subprocess.Popen(
+                    [frago_path, "agent", "--yes", prompt],
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # 分离进程，防止 GUI 关闭时终止任务
+                )
 
             return {
                 "status": "ok",
