@@ -21,99 +21,97 @@ import click
 # =============================================================================
 
 COMMAND_EXAMPLES = {
+    # Chrome 子命令（使用完整路径，便于 agent 直接复制）
     "navigate": [
-        "frago navigate <url>",
-        "frago navigate https://example.com",
-        "frago navigate https://example.com --wait-for '.content-loaded'",
+        "frago chrome navigate <url>",
+        "frago chrome navigate https://example.com",
+        "frago chrome navigate https://example.com --wait-for '.content-loaded'",
     ],
     "click": [
-        "frago click <selector>",
-        "frago click 'button.submit'",
-        "frago click '#login-btn' --wait-timeout 15",
+        "frago chrome click <selector>",
+        "frago chrome click 'button.submit'",
+        "frago chrome click '#login-btn' --wait-timeout 15",
     ],
     "screenshot": [
-        "frago screenshot <output_file>",
-        "frago screenshot page.png",
-        "frago screenshot full.png --full-page --quality 90",
+        "frago chrome screenshot <output_file>",
+        "frago chrome screenshot page.png",
+        "frago chrome screenshot full.png --full-page --quality 90",
     ],
     "exec-js": [
-        "frago exec-js <script>",
-        "frago exec-js 'document.title'",
-        "frago exec-js 'return window.scrollY' --return-value",
-        "frago exec-js ./script.js  # 从文件加载",
+        "frago chrome exec-js <script>",
+        "frago chrome exec-js 'document.title'",
+        "frago chrome exec-js 'return window.scrollY' --return-value",
+        "frago chrome exec-js ./script.js  # 从文件加载",
     ],
     "get-title": [
-        "frago get-title",
+        "frago chrome get-title",
     ],
     "get-content": [
-        "frago get-content [selector]",
-        "frago get-content  # 默认获取 body",
-        "frago get-content 'article.main' --desc 'article-content'",
-    ],
-    "status": [
-        "frago status",
+        "frago chrome get-content [selector]",
+        "frago chrome get-content  # 默认获取 body",
+        "frago chrome get-content 'article.main' --desc 'article-content'",
     ],
     "scroll": [
-        "frago scroll <distance>",
-        "frago scroll 500      # 向下滚动 500px",
-        "frago scroll -300     # 向上滚动 300px",
-        "frago scroll down     # 别名: 向下 500px",
-        "frago scroll up       # 别名: 向上 500px",
+        "frago chrome scroll <distance>",
+        "frago chrome scroll 500      # 向下滚动 500px",
+        "frago chrome scroll -300     # 向上滚动 300px",
+        "frago chrome scroll down     # 别名: 向下 500px",
+        "frago chrome scroll up       # 别名: 向上 500px",
     ],
     "scroll-to": [
-        "frago scroll-to <selector>",
-        "frago scroll-to 'article'",
-        "frago scroll-to --text 'Section Title'",
-        "frago scroll-to '#footer' --block end",
+        "frago chrome scroll-to <selector>",
+        "frago chrome scroll-to 'article'",
+        "frago chrome scroll-to --text 'Section Title'",
+        "frago chrome scroll-to '#footer' --block end",
     ],
     "wait": [
-        "frago wait <seconds>",
-        "frago wait 2",
-        "frago wait 0.5",
+        "frago chrome wait <seconds>",
+        "frago chrome wait 2",
+        "frago chrome wait 0.5",
     ],
     "zoom": [
-        "frago zoom <factor>",
-        "frago zoom 1.5   # 放大到 150%",
-        "frago zoom 0.8   # 缩小到 80%",
-        "frago zoom 1     # 恢复原始大小",
+        "frago chrome zoom <factor>",
+        "frago chrome zoom 1.5   # 放大到 150%",
+        "frago chrome zoom 0.8   # 缩小到 80%",
+        "frago chrome zoom 1     # 恢复原始大小",
     ],
     "clear-effects": [
-        "frago clear-effects",
+        "frago chrome clear-effects",
     ],
     "highlight": [
-        "frago highlight <selector>",
-        "frago highlight 'button.primary'",
-        "frago highlight '#target' --color red --width 5",
-        "frago highlight '.element' --longlife  # 永久显示",
+        "frago chrome highlight <selector>",
+        "frago chrome highlight 'button.primary'",
+        "frago chrome highlight '#target' --color red --width 5",
+        "frago chrome highlight '.element' --longlife  # 永久显示",
     ],
     "pointer": [
-        "frago pointer <selector>",
-        "frago pointer 'button.submit'",
-        "frago pointer '#element' --life-time 10",
+        "frago chrome pointer <selector>",
+        "frago chrome pointer 'button.submit'",
+        "frago chrome pointer '#element' --life-time 10",
     ],
     "spotlight": [
-        "frago spotlight <selector>",
-        "frago spotlight '.highlight-me'",
-        "frago spotlight '#focus' --longlife",
+        "frago chrome spotlight <selector>",
+        "frago chrome spotlight '.highlight-me'",
+        "frago chrome spotlight '#focus' --longlife",
     ],
     "annotate": [
-        "frago annotate <selector> <text>",
-        "frago annotate 'button' 'Click here'",
-        "frago annotate '#form' 'Fill this' --position bottom",
+        "frago chrome annotate <selector> <text>",
+        "frago chrome annotate 'button' 'Click here'",
+        "frago chrome annotate '#form' 'Fill this' --position bottom",
     ],
     "underline": [
-        "frago underline <selector>",
-        "frago underline 'article p'",
-        "frago underline --text 'Important text'",
-        "frago underline '.content' --color blue --width 2",
+        "frago chrome underline <selector>",
+        "frago chrome underline 'article p'",
+        "frago chrome underline --text 'Important text'",
+        "frago chrome underline '.content' --color blue --width 2",
     ],
-    "chrome": [
+    "start": [
         "frago chrome start",
         "frago chrome start --headless",
         "frago chrome start --void --keep-alive",
         "frago chrome start --port 9333 --width 1920 --height 1080",
     ],
-    "chrome-stop": [
+    "stop": [
         "frago chrome stop",
         "frago chrome stop --port 9333",
     ],
@@ -124,9 +122,29 @@ COMMAND_EXAMPLES = {
         "frago chrome switch-tab <tab_id>",
         "frago chrome switch-tab ABC123  # 支持部分 ID 匹配",
     ],
+    # 顶层命令
+    "status": [
+        "frago status",
+        "frago chrome status  # 等效",
+    ],
     "init": [
         "frago init",
         "frago init --force",
+    ],
+    # chrome 命令组自身（显示子命令概览）
+    "chrome": [
+        "frago chrome <command>",
+        "frago chrome start      # 启动浏览器",
+        "frago chrome navigate   # 导航到 URL",
+        "frago chrome click      # 点击元素",
+        "frago chrome screenshot # 截图",
+    ],
+    # frago 顶层命令
+    "frago": [
+        "frago <command>",
+        "frago chrome start      # 启动浏览器",
+        "frago status            # 检查 CDP 连接状态",
+        "frago --gui             # 启动 GUI 应用",
     ],
 }
 

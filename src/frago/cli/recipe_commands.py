@@ -9,9 +9,10 @@ import click
 from frago.recipes import RecipeRegistry, RecipeRunner, OutputHandler
 from frago.recipes.exceptions import RecipeError, MetadataParseError, RecipeValidationError
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
+from .agent_friendly import AgentFriendlyGroup
 
 
-@click.group(name='recipe')
+@click.group(name='recipe', cls=AgentFriendlyGroup)
 def recipe_group():
     """Recipe 管理命令组"""
     pass

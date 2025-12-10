@@ -7,7 +7,7 @@ Frago CLI - Chrome DevTools Protocol 命令行接口
 
 import sys
 import click
-from typing import Optional
+from typing import Optional, List, Tuple
 from collections import OrderedDict
 
 from frago import __version__
@@ -25,6 +25,7 @@ from .update_command import update
 from .agent_command import agent, agent_status
 from .gui_command import gui_deps
 from .session_commands import session_group
+from .agent_friendly import AgentFriendlyGroup
 
 
 # 命令分组定义
@@ -35,13 +36,22 @@ COMMAND_GROUPS = OrderedDict([
     ("自动化", ["recipe", "run", "agent", "agent-status", "session"]),
 ])
 
+# 需要展开子命令的命令组
+EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "use-git", "session"]
 
-class GroupedGroup(click.Group):
-    """支持命令分组显示的 Click Group"""
 
-    def format_commands(self, ctx, formatter):
-        """按分组格式化命令列表"""
-        commands = []
+class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
+    """Agent 友好的分组命令组
+
+    结合：
+    - AgentFriendlyGroup: 增强错误信息
+    - 分组显示: 按类别组织命令
+    - 子命令展开: 在帮助中显示命令组的子命令
+    """
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter):
+        """按分组格式化命令列表，展开子命令组"""
+        commands: List[Tuple[str, click.Command]] = []
         for subcommand in self.list_commands(ctx):
             cmd = self.get_command(ctx, subcommand)
             if cmd is None or cmd.hidden:
@@ -67,19 +77,27 @@ class GroupedGroup(click.Group):
             if not found:
                 ungrouped.append((name, cmd))
 
-        # 计算最大命令名长度
-        max_len = max(len(name) for name, _ in commands)
-
         # 按 COMMAND_GROUPS 定义的顺序输出分组命令
         for group_name in COMMAND_GROUPS.keys():
             if group_name not in grouped:
                 continue
             group_cmds = grouped[group_name]
             with formatter.section(group_name):
-                formatter.write_dl([
-                    (name, cmd.get_short_help_str(limit=formatter.width))
-                    for name, cmd in sorted(group_cmds, key=lambda x: COMMAND_GROUPS[group_name].index(x[0]))
-                ])
+                rows = []
+                for name, cmd in sorted(
+                    group_cmds,
+                    key=lambda x: COMMAND_GROUPS[group_name].index(x[0])
+                ):
+                    # 检查是否需要展开子命令
+                    if name in EXPAND_SUBCOMMANDS and isinstance(cmd, click.Group):
+                        # 先添加组本身
+                        rows.append((name, cmd.get_short_help_str(limit=formatter.width)))
+                        # 展开子命令
+                        subcommand_rows = self._get_subcommand_rows(ctx, name, cmd)
+                        rows.extend(subcommand_rows)
+                    else:
+                        rows.append((name, cmd.get_short_help_str(limit=formatter.width)))
+                formatter.write_dl(rows)
 
         # 输出未分组命令
         if ungrouped:
@@ -89,8 +107,33 @@ class GroupedGroup(click.Group):
                     for name, cmd in ungrouped
                 ])
 
+    def _get_subcommand_rows(
+        self,
+        ctx: click.Context,
+        group_name: str,
+        group_cmd: click.Group
+    ) -> List[Tuple[str, str]]:
+        """获取命令组的子命令行（带缩进前缀）"""
+        rows = []
 
-@click.group(cls=GroupedGroup, invoke_without_command=True)
+        # 创建子上下文以获取子命令列表
+        with ctx.scope() as sub_ctx:
+            sub_ctx.info_name = group_name
+
+            for subcmd_name in group_cmd.list_commands(sub_ctx):
+                subcmd = group_cmd.get_command(sub_ctx, subcmd_name)
+                if subcmd is None or subcmd.hidden:
+                    continue
+
+                # 使用 "group subcmd" 格式，方便 agent 直接复制使用
+                full_name = f"  {group_name} {subcmd_name}"
+                help_str = subcmd.get_short_help_str(limit=60)
+                rows.append((full_name, help_str))
+
+        return rows
+
+
+@click.group(cls=AgentFriendlyGroupedGroup, invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="frago")
 @click.option(
     '--gui',

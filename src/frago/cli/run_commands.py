@@ -23,6 +23,7 @@ from ..run.exceptions import (
 from ..run.logger import RunLogger
 from ..run.manager import RunManager
 from ..run.models import ActionType, ExecutionMethod, InsightEntry, InsightType, LogStatus, RunStatus
+from .agent_friendly import AgentFriendlyGroup
 
 
 # 获取项目根目录和projects目录
@@ -91,7 +92,7 @@ def handle_error(e: Exception, exit_code: int = 1) -> None:
     sys.exit(exit_code)
 
 
-@click.group(name="run")
+@click.group(name="run", cls=AgentFriendlyGroup)
 def run_group():
     """Run命令系统 - 管理AI主持的任务执行
 

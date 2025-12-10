@@ -34,9 +34,10 @@ from frago.session.storage import (
     read_steps,
     read_summary,
 )
+from .agent_friendly import AgentFriendlyGroup
 
 
-@click.group("session")
+@click.group("session", cls=AgentFriendlyGroup)
 def session_group():
     """
     会话管理命令组
