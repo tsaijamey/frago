@@ -58,6 +58,7 @@ interface AppState {
   loadConfig: () => Promise<void>;
   loadTasks: () => Promise<void>;
   openTaskDetail: (sessionId: string) => Promise<void>;
+  setTaskDetail: (detail: TaskDetail) => void;
   loadRecipes: () => Promise<void>;
   loadSkills: () => Promise<void>;
   loadSystemStatus: () => Promise<void>;
@@ -136,7 +137,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadTasks: async () => {
     try {
       const tasks = await api.getTasks();
-      set({ tasks });
+      set({ tasks: tasks || [] });
     } catch (error) {
       console.error('Failed to load tasks:', error);
     }
@@ -153,6 +154,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ isLoading: false });
       get().showToast('加载任务详情失败', 'error');
     }
+  },
+
+  // 更新任务详情（用于加载更多步骤）
+  setTaskDetail: (detail) => {
+    set({ taskDetail: detail });
   },
 
   // 加载配方列表

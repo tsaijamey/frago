@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
+import { getTaskSteps } from '@/api/pywebview';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 
@@ -24,7 +26,30 @@ function formatDuration(ms: number): string {
 }
 
 export default function TaskDetail() {
-  const { taskDetail, isLoading, switchPage } = useAppStore();
+  const { taskDetail, isLoading, switchPage, setTaskDetail } = useAppStore();
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const handleLoadMore = async () => {
+    if (!taskDetail || loadingMore) return;
+
+    setLoadingMore(true);
+    try {
+      const currentCount = taskDetail.steps.length;
+      const result = await getTaskSteps(taskDetail.session_id, currentCount, 50);
+
+      if (result.steps && result.steps.length > 0) {
+        setTaskDetail({
+          ...taskDetail,
+          steps: [...taskDetail.steps, ...result.steps],
+          has_more_steps: result.has_more,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load more steps:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -152,9 +177,20 @@ export default function TaskDetail() {
 
         {taskDetail.has_more_steps && (
           <div className="text-center mt-4">
-            <span className="text-[var(--text-muted)] text-sm">
-              还有 {taskDetail.steps_total - taskDetail.steps.length} 个步骤...
-            </span>
+            <button
+              className="btn btn-secondary"
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+            >
+              {loadingMore ? (
+                <>
+                  <LoadingSpinner size="sm" />
+                  <span className="ml-2">加载中...</span>
+                </>
+              ) : (
+                `加载更多 (还有 ${taskDetail.steps_total - taskDetail.steps.length} 个步骤)`
+              )}
+            </button>
           </div>
         )}
       </div>
