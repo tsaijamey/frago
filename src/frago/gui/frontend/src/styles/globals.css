@@ -379,10 +379,10 @@ body {
   }
 }
 
-/* === Task Card === */
-.task-card {
+/* === Task Card V2 === */
+.task-card-v2 {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: var(--spacing-md);
   padding: var(--spacing-md);
   background: var(--bg-card);
@@ -392,62 +392,143 @@ body {
   transition: all var(--transition-fast);
 }
 
-.task-card:hover {
+.task-card-v2:hover {
   border-color: var(--accent-primary);
   background: var(--bg-tertiary);
 }
 
-.task-status-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.task-card-v2:hover .task-arrow {
+  color: var(--accent-primary);
+}
+
+/* 状态徽章 */
+.task-status-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  margin-top: 6px;
+  font-size: 14px;
 }
 
-.task-status-indicator.running {
-  background: var(--accent-warning);
-  animation: pulse 2s infinite;
+.task-status-badge.running {
+  background: rgba(210, 153, 34, 0.15);
+  color: var(--accent-warning);
+  animation: badge-pulse 2s infinite;
 }
 
-.task-status-indicator.completed {
-  background: var(--accent-success);
+.task-status-badge.completed {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--accent-success);
 }
 
-.task-status-indicator.error,
-.task-status-indicator.cancelled {
-  background: var(--accent-error);
+.task-status-badge.error {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--accent-error);
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+.task-status-badge.cancelled {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
 }
 
-.task-info {
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* 主要内容区 */
+.task-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
 }
 
-.task-name {
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.task-title {
   font-weight: 500;
   color: var(--text-primary);
-  margin-bottom: var(--spacing-xs);
-  white-space: nowrap;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.task-meta {
-  display: flex;
-  gap: var(--spacing-md);
+.task-time {
   font-size: 12px;
   color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 进度条 */
+.task-progress {
+  padding: var(--spacing-xs) 0;
+}
+
+.task-progress-bar {
+  height: 3px;
+  background: var(--bg-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  width: 30%;
+  background: var(--accent-warning);
+  border-radius: 2px;
+  animation: progress-slide 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% { transform: translateX(-100%); width: 30%; }
+  50% { width: 50%; }
+  100% { transform: translateX(400%); width: 30%; }
+}
+
+/* 底部元信息 */
+.task-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  font-size: 12px;
+}
+
+.task-status-label {
+  font-weight: 500;
+}
+
+.task-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.task-stat-icon {
+  font-size: 11px;
+}
+
+/* 右侧箭头 */
+.task-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 20px;
+  font-weight: 300;
+  transition: color var(--transition-fast);
 }
 
 /* === Step List === */
@@ -474,6 +555,9 @@ body {
   justify-content: center;
   flex-shrink: 0;
   border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
 }
 
 .step-icon.user {
@@ -495,6 +579,16 @@ body {
   flex: 1;
   min-width: 0;
   color: var(--text-secondary);
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.step-tool-name {
+  margin-right: var(--spacing-sm);
+  padding: 2px 6px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  font-size: 12px;
 }
 
 .step-content code {
@@ -503,4 +597,81 @@ body {
   background: var(--bg-subtle);
   padding: 2px 6px;
   border-radius: 3px;
+}
+
+/* === Task Input === */
+.task-input-wrapper {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-md);
+  transition: border-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.task-input-wrapper:focus-within {
+  border-color: var(--accent-primary);
+}
+
+.task-input {
+  width: 100%;
+  min-height: 80px;
+  max-height: 200px;
+  padding: var(--spacing-md);
+  padding-right: 48px;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.task-input::placeholder {
+  color: var(--text-muted);
+}
+
+.task-input-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-primary);
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity var(--transition-fast), transform var(--transition-fast), background var(--transition-fast);
+}
+
+.task-input-btn.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.task-input-btn:hover {
+  background: var(--accent-secondary);
+}
+
+.task-input-btn:disabled {
+  cursor: not-allowed;
+}
+
+.task-input-btn:disabled.visible {
+  opacity: 0.5;
+}
+
+.task-input-btn .spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
 }

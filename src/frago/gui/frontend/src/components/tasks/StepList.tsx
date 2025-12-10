@@ -4,19 +4,19 @@ interface StepListProps {
   steps: TaskStep[];
 }
 
-// 获取步骤图标
+// 获取步骤图标（使用简洁字母，在小尺寸下更清晰）
 function getStepIcon(type: StepType): string {
   switch (type) {
     case 'user_message':
-      return '👤';
+      return 'U';
     case 'assistant_message':
-      return '🤖';
+      return 'A';
     case 'tool_use':
-      return '🔧';
+      return 'T';
     case 'tool_result':
-      return '📤';
+      return 'R';
     case 'system':
-      return '⚙️';
+      return 'S';
     default:
       return '•';
   }
@@ -37,12 +37,6 @@ function getStepIconClass(type: StepType): string {
   }
 }
 
-// 截断内容
-function truncateContent(content: string, maxLength: number = 100): string {
-  if (content.length <= maxLength) return content;
-  return content.substring(0, maxLength) + '...';
-}
-
 export default function StepList({ steps }: StepListProps) {
   if (steps.length === 0) {
     return (
@@ -61,9 +55,9 @@ export default function StepList({ steps }: StepListProps) {
           </div>
           <div className="step-content">
             {step.tool_name && (
-              <code className="mr-2">{step.tool_name}</code>
+              <code className="step-tool-name">{step.tool_name}</code>
             )}
-            <span>{truncateContent(step.content)}</span>
+            <span>{step.content}</span>
           </div>
         </div>
       ))}

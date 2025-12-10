@@ -101,7 +101,8 @@ export async function getTasks(
   status?: TaskStatus
 ): Promise<TaskItem[]> {
   const api = await waitForPywebview();
-  return api.get_tasks(limit, status);
+  // pywebview 需要显式传参，不传 undefined
+  return api.get_tasks(limit ?? 50, status);
 }
 
 export async function getTaskDetail(
