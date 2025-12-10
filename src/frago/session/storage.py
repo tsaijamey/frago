@@ -511,8 +511,14 @@ def list_sessions(
             except Exception as e:
                 logger.warning(f"读取会话 {session_dir.name} 失败: {e}")
 
-    # 按最后活动时间倒序排列
-    sessions.sort(key=lambda s: s.last_activity, reverse=True)
+    # 按最后活动时间倒序排列（统一为 UTC 时区进行比较）
+    from datetime import timezone
+    def get_sortable_time(s):
+        t = s.last_activity
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return t
+    sessions.sort(key=get_sortable_time, reverse=True)
 
     return sessions[:limit]
 

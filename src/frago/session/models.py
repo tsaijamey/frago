@@ -69,7 +69,7 @@ class SessionStep(BaseModel):
     type: StepType = Field(..., description="步骤类型")
     timestamp: datetime = Field(..., description="步骤时间戳")
     content_summary: str = Field(
-        ..., max_length=200, description="内容摘要（截断至 200 字符）"
+        ..., description="内容（完整内容）"
     )
     raw_uuid: str = Field(..., description="原始记录的 uuid")
     parent_uuid: Optional[str] = Field(None, description="父消息的 uuid")
@@ -159,19 +159,17 @@ class SessionSummary(BaseModel):
 # ============================================================
 
 
-def truncate_content(content: str, max_length: int = 200) -> str:
-    """截断内容到指定长度
+def truncate_content(content: str, max_length: int = 0) -> str:
+    """返回内容（不再截断）
 
     Args:
         content: 原始内容
-        max_length: 最大长度
+        max_length: 已废弃，保留参数兼容性
 
     Returns:
-        截断后的内容，如果超长则添加省略号
+        原始内容
     """
-    if len(content) <= max_length:
-        return content
-    return content[: max_length - 3] + "..."
+    return content
 
 
 def extract_tool_input_summary(input_data: Dict[str, Any]) -> str:
