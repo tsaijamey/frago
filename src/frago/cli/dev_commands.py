@@ -11,9 +11,10 @@ import click
 from .pack_command import dev_pack
 from .load_command import dev_load_cmd
 from .publish_command import publish_cmd
+from .agent_friendly import AgentFriendlyGroup
 
 
-@click.group(name="dev")
+@click.group(name="dev", cls=AgentFriendlyGroup)
 def dev_group():
     """
     Frago 开发者命令

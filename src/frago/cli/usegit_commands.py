@@ -9,9 +9,10 @@ import click
 
 from .deploy_command import deploy_cmd
 from .sync_command import sync
+from .agent_friendly import AgentFriendlyGroup
 
 
-@click.group(name="use-git")
+@click.group(name="use-git", cls=AgentFriendlyGroup)
 def usegit_group():
     """
     从 Git 仓库同步资源

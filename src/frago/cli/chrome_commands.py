@@ -33,9 +33,10 @@ from .commands import (
     list_tabs,
     switch_tab,
 )
+from .agent_friendly import AgentFriendlyGroup
 
 
-@click.group(name="chrome")
+@click.group(name="chrome", cls=AgentFriendlyGroup)
 def chrome_group():
     """
     Chrome CDP 浏览器自动化
