@@ -56,6 +56,10 @@ class ParsedRecord:
     # 工具结果信息 (user 消息可能包含)
     tool_results: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Sidechain 标识（agent 子线程）
+    is_sidechain: bool = False
+    agent_id: Optional[str] = None
+
     # 原始数据
     raw_data: Dict[str, Any] = field(default_factory=dict)
 
@@ -195,6 +199,8 @@ class IncrementalParser:
             timestamp=timestamp,
             record_type=record_type,
             parent_uuid=data.get("parentUuid"),
+            is_sidechain=data.get("isSidechain", False),
+            agent_id=data.get("agentId"),
             raw_data=data,
         )
 
