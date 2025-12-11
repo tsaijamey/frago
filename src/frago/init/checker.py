@@ -4,6 +4,7 @@
 提供并行检查 Node.js 和 Claude Code 安装状态的功能。
 """
 
+import platform
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -71,7 +72,15 @@ def check_node(min_version: str = DEFAULT_NODE_MIN_VERSION) -> DependencyCheckRe
     node_path = shutil.which("node")
     if not node_path:
         result.installed = False
-        result.error = "Node.js 未安装"
+        if platform.system() == "Windows":
+            result.error = (
+                "Node.js 未安装\n\n"
+                "推荐安装方式:\n"
+                "  winget install OpenJS.NodeJS.LTS\n"
+                "  或访问: https://nodejs.org/"
+            )
+        else:
+            result.error = "Node.js 未安装"
         return result
 
     result.path = node_path

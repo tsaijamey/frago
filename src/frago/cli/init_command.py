@@ -424,8 +424,12 @@ def _install_with_progress(name: str) -> None:
     click.echo(f"📦 正在安装 {display_name}...")
 
     try:
-        install_dependency(name)
+        success, warning = install_dependency(name)
         click.echo(f"✅ {display_name} 安装成功\n")
+
+        # 显示 Windows PATH 警告（如有）
+        if warning:
+            click.secho(warning, fg="yellow")
     except CommandError as e:
         click.echo(f"\n❌ {display_name} 安装失败")
         click.echo(str(e))

@@ -5,12 +5,83 @@
 """
 
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from frago.init.exceptions import CommandError, InitErrorCode
+
+
+# ============================================================
+# Windows 兼容性辅助函数
+# ============================================================
+
+
+def check_npm_global_in_path() -> bool:
+    """
+    检查 npm 全局目录是否在 PATH 中
+
+    Returns:
+        True 如果在 PATH 中或非 Windows 平台
+    """
+    if platform.system() != "Windows":
+        return True
+
+    npm_global = os.path.join(os.environ.get("APPDATA", ""), "npm")
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    return any(npm_global.lower() == p.lower() for p in path_dirs)
+
+
+def get_windows_path_hint() -> str:
+    """
+    获取 Windows PATH 修复提示
+
+    Returns:
+        包含修复建议的字符串
+    """
+    return (
+        "\n⚠️  npm 全局目录不在 PATH 中，claude 命令可能无法直接使用\n\n"
+        "请执行以下操作之一：\n\n"
+        "  1. 重新打开 PowerShell 窗口（推荐）\n\n"
+        "  2. 临时使用 npx 启动：\n"
+        "     npx @anthropic-ai/claude-code\n\n"
+        "  3. 手动添加 PATH（当前会话）：\n"
+        "     $env:PATH += \";$env:APPDATA\\npm\"\n\n"
+        "  4. 永久添加 PATH：\n"
+        "     [Environment]::SetEnvironmentVariable(\n"
+        "       'PATH', $env:PATH + ';' + $env:APPDATA + '\\npm', 'User')\n"
+    )
+
+
+def get_platform_node_install_guide() -> str:
+    """
+    根据平台返回 Node.js 安装指南
+
+    Returns:
+        平台特定的安装指南字符串
+    """
+    if platform.system() == "Windows":
+        return (
+            "请使用以下方式之一安装 Node.js:\n\n"
+            "  1. winget (推荐):\n"
+            "     winget install OpenJS.NodeJS.LTS\n\n"
+            "  2. 官方安装程序:\n"
+            "     https://nodejs.org/\n\n"
+            "  3. Chocolatey:\n"
+            "     choco install nodejs-lts"
+        )
+    return (
+        "请先安装 nvm:\n"
+        "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash\n"
+        "或访问: https://github.com/nvm-sh/nvm"
+    )
+
+
+# ============================================================
+# 命令执行辅助函数
+# ============================================================
 
 
 def run_external_command(
@@ -119,7 +190,7 @@ def _find_nvm() -> Optional[str]:
 
 def install_node(version: str = "20") -> bool:
     """
-    安装 Node.js（通过 nvm）
+    安装 Node.js（通过 nvm，仅支持 macOS/Linux）
 
     Args:
         version: Node.js 版本（默认 20）
@@ -128,17 +199,23 @@ def install_node(version: str = "20") -> bool:
         True 安装成功
 
     Raises:
-        CommandError: 安装失败时
+        CommandError: 安装失败时或 Windows 平台不支持自动安装
     """
+    # Windows 不支持通过 nvm 自动安装
+    if platform.system() == "Windows":
+        raise CommandError(
+            "Windows 不支持自动安装 Node.js",
+            InitErrorCode.COMMAND_NOT_FOUND,
+            get_platform_node_install_guide(),
+        )
+
     nvm_path = _find_nvm()
 
     if not nvm_path:
         raise CommandError(
             "nvm 未安装",
             InitErrorCode.COMMAND_NOT_FOUND,
-            "请先安装 nvm:\n"
-            "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash\n"
-            "或访问: https://github.com/nvm-sh/nvm",
+            get_platform_node_install_guide(),
         )
 
     # 通过 bash 调用 nvm
@@ -169,12 +246,12 @@ def install_node(version: str = "20") -> bool:
         )
 
 
-def install_claude_code() -> bool:
+def install_claude_code() -> Tuple[bool, Optional[str]]:
     """
     安装 Claude Code（通过 npm）
 
     Returns:
-        True 安装成功
+        (True, warning) 安装成功，warning 为 PATH 警告（如有）或 None
 
     Raises:
         CommandError: 安装失败时
@@ -192,7 +269,12 @@ def install_claude_code() -> bool:
 
     run_external_command(cmd, timeout=300)
 
-    return True
+    # Windows 平台检查 PATH
+    warning = None
+    if platform.system() == "Windows" and not check_npm_global_in_path():
+        warning = get_windows_path_hint()
+
+    return True, warning
 
 
 def get_installation_order(
@@ -222,7 +304,7 @@ def get_installation_order(
     return order
 
 
-def install_dependency(name: str) -> bool:
+def install_dependency(name: str) -> Tuple[bool, Optional[str]]:
     """
     安装指定依赖
 
@@ -230,14 +312,15 @@ def install_dependency(name: str) -> bool:
         name: 依赖名称 ("node" 或 "claude-code")
 
     Returns:
-        True 安装成功
+        (True, warning) 安装成功，warning 为警告信息（如有）或 None
 
     Raises:
         CommandError: 安装失败时
         ValueError: 未知依赖名称
     """
     if name == "node":
-        return install_node()
+        install_node()
+        return True, None
     elif name == "claude-code":
         return install_claude_code()
     else:
