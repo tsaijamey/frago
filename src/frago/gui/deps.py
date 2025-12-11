@@ -262,9 +262,9 @@ def check_gi_importable() -> bool:
 
 
 def install_pygobject_to_venv() -> tuple[bool, str]:
-    """使用 pip 安装 PyGObject 到当前虚拟环境.
+    """安装 PyGObject 到当前虚拟环境.
 
-    当系统 WebKit 包已安装但 gi 无法导入时使用。
+    优先使用 uv pip，回退到 pip。
 
     Returns:
         (成功与否, 消息) 元组。
@@ -273,11 +273,20 @@ def install_pygobject_to_venv() -> tuple[bool, str]:
     print("正在安装 PyGObject 到 frago 环境...")
     print()
 
-    try:
-        # 使用当前 Python 的 pip 安装
+    # 优先使用 uv pip（frago 通过 uv tool 安装）
+    if shutil.which("uv"):
+        cmd = ["uv", "pip", "install", "--quiet", "PyGObject"]
+    elif shutil.which("pip"):
+        cmd = ["pip", "install", "--quiet", "PyGObject"]
+    elif shutil.which("pip3"):
+        cmd = ["pip3", "install", "--quiet", "PyGObject"]
+    else:
+        # 回退到 python -m pip
         cmd = [sys.executable, "-m", "pip", "install", "--quiet", "PyGObject"]
-        print(f"执行: {' '.join(cmd)}\n")
 
+    print(f"执行: {' '.join(cmd)}\n")
+
+    try:
         returncode = subprocess.call(cmd, timeout=120)
 
         if returncode == 0:
@@ -287,6 +296,8 @@ def install_pygobject_to_venv() -> tuple[bool, str]:
 
     except subprocess.TimeoutExpired:
         return False, "安装超时"
+    except FileNotFoundError:
+        return False, "找不到 pip 或 uv，请手动安装 PyGObject"
     except Exception as e:
         return False, f"安装出错: {e}"
 
