@@ -58,6 +58,37 @@ class FragoGuiApi:
         self._recipe_cache: List[RecipeItem] = []
         self._skill_cache: List[SkillItem] = []
 
+        # GUI 启动时同步当前项目的 Claude 会话
+        self._sync_sessions_on_startup()
+
+    def _sync_sessions_on_startup(self) -> None:
+        """GUI 启动时同步会话数据
+
+        从 ~/.claude/projects/ 同步所有项目到 ~/.frago/sessions/claude/
+        """
+        import threading
+
+        def sync_in_background():
+            try:
+                from frago.session.sync import sync_all_projects
+
+                result = sync_all_projects()
+
+                if result.synced > 0 or result.updated > 0:
+                    import logging
+
+                    logging.getLogger(__name__).info(
+                        f"会话同步完成: synced={result.synced}, updated={result.updated}"
+                    )
+            except Exception as e:
+                import logging
+
+                logging.getLogger(__name__).warning(f"会话同步失败: {e}")
+
+        # 后台线程执行，不阻塞 GUI 启动
+        thread = threading.Thread(target=sync_in_background, daemon=True)
+        thread.start()
+
     def set_window(self, window: "webview.Window") -> None:
         """Set the window reference for evaluate_js calls.
 
@@ -680,28 +711,26 @@ class FragoGuiApi:
             session_ids = set()
 
             # 1. 从 sessions 目录获取已有任务
+            # 请求更多会话以弥补过滤损失
             sessions = list_sessions(
                 agent_type=AgentType.CLAUDE,
-                limit=limit,
+                limit=limit * 3,  # 请求 3 倍数量，过滤后再截取
                 status=status_filter,
             )
 
             for session in sessions:
                 try:
+                    # 应用过滤规则：跳过低价值会话
+                    if not TaskItem.should_display(session):
+                        continue
                     task = TaskItem.from_session(session)
                     tasks.append(task.model_dump(mode="json"))
                     session_ids.add(session.session_id)
                 except Exception:
                     continue
 
-            # 2. 从 history 获取运行中的任务（可能还没有 session 文件）
-            running_from_history = self._get_tasks_from_history(
-                limit=20,
-                status="running"
-            )
-            for task in running_from_history:
-                if task.get("session_id") not in session_ids:
-                    tasks.insert(0, task)  # 新任务放在最前面
+            # 注：移除 history fallback，因为 history 的 task_id 与 Claude session_id 不匹配
+            # 同步机制会确保所有 Claude session 都被导入
 
             # 按 started_at 倒序排序
             tasks.sort(
@@ -763,19 +792,18 @@ class FragoGuiApi:
 
     def _get_task_detail_from_history(self, session_id: str) -> Dict[str, Any]:
         """从 history 获取任务详情（用于刚启动尚未产生 session 数据的任务）"""
-        history = CommandHistory()
-        records = history.get_history(limit=100, command_type=CommandType.AGENT)
+        records = get_history(limit=100, command_type=CommandType.AGENT)
 
         for record in records:
             if record.id == session_id:
                 return {
                     "session_id": session_id,
-                    "name": record.command[:100] if record.command else f"Task {session_id[:8]}",
+                    "name": record.input_text[:100] if record.input_text else f"Task {session_id[:8]}",
                     "status": record.status.value if record.status else "running",
                     "started_at": record.timestamp.isoformat() if record.timestamp else None,
                     "ended_at": None,
-                    "duration_ms": None,
-                    "project_path": str(record.cwd) if record.cwd else None,
+                    "duration_ms": record.duration_ms,
+                    "project_path": None,
                     "step_count": 0,
                     "tool_call_count": 0,
                     "user_message_count": 0,

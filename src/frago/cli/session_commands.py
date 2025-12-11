@@ -432,3 +432,74 @@ def delete_cmd(
     else:
         click.echo("✗ 删除失败", err=True)
         sys.exit(1)
+
+
+@session_group.command("sync")
+@click.option(
+    "--all", "sync_all",
+    is_flag=True,
+    help="同步所有项目（默认仅当前项目）"
+)
+@click.option(
+    "--force", "-f",
+    is_flag=True,
+    help="强制重新同步（包括已存在的会话）"
+)
+@click.option(
+    "--json", "json_output",
+    is_flag=True,
+    help="以 JSON 格式输出"
+)
+def sync_cmd(
+    sync_all: bool,
+    force: bool,
+    json_output: bool
+):
+    """
+    从 Claude 会话文件同步数据
+
+    将 ~/.claude/projects/ 下的会话文件同步到 ~/.frago/sessions/claude/。
+    默认仅同步当前工作目录对应的项目。
+
+    \b
+    示例:
+      frago session sync           # 同步当前项目
+      frago session sync --all     # 同步所有项目
+      frago session sync --force   # 强制重新同步
+    """
+    import os
+
+    from frago.session.sync import sync_all_projects, sync_project_sessions
+
+    if sync_all:
+        click.echo("同步所有项目的会话...")
+        result = sync_all_projects(force=force)
+    else:
+        project_path = os.getcwd()
+        click.echo(f"同步项目: {project_path}")
+        result = sync_project_sessions(project_path, force=force)
+
+    if json_output:
+        import json as json_module
+
+        output = {
+            "synced": result.synced,
+            "updated": result.updated,
+            "skipped": result.skipped,
+            "errors": result.errors,
+        }
+        click.echo(json_module.dumps(output, ensure_ascii=False, indent=2))
+        return
+
+    # 文本输出
+    click.echo(f"\n同步完成:")
+    click.echo(f"  新同步: {result.synced}")
+    click.echo(f"  已更新: {result.updated}")
+    click.echo(f"  已跳过: {result.skipped}")
+
+    if result.errors:
+        click.echo(f"\n⚠️ 错误 ({len(result.errors)}):")
+        for err in result.errors[:5]:
+            click.echo(f"  - {err}")
+        if len(result.errors) > 5:
+            click.echo(f"  ... 还有 {len(result.errors) - 5} 个错误")
