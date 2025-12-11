@@ -1,14 +1,16 @@
 import { useAppStore, type PageType } from '@/stores/appStore';
+import { Lightbulb, ListTodo, BookOpen, Zap, Settings } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
-const tabs: { id: PageType; label: string }[] = [
-  { id: 'tips', label: 'Tips' },
-  { id: 'tasks', label: 'Tasks' },
-  { id: 'recipes', label: 'Recipes' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'settings', label: 'Settings' },
+const tabs: { id: PageType; label: string; icon: LucideIcon }[] = [
+  { id: 'tips', label: 'Tips', icon: Lightbulb },
+  { id: 'tasks', label: 'Tasks', icon: ListTodo },
+  { id: 'recipes', label: 'Recipes', icon: BookOpen },
+  { id: 'skills', label: 'Skills', icon: Zap },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-export default function NavTabs() {
+export default function BottomNav() {
   const { currentPage, switchPage } = useAppStore();
 
   // 判断当前页面属于哪个 tab
@@ -19,16 +21,20 @@ export default function NavTabs() {
   })();
 
   return (
-    <nav className="nav-tabs">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          className={`nav-tab ${activeTab === tab.id ? 'active' : ''}`}
-          onClick={() => switchPage(tab.id)}
-        >
-          {tab.label}
-        </button>
-      ))}
+    <nav className="bottom-nav">
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        return (
+          <button
+            key={tab.id}
+            className={`bottom-nav-item ${activeTab === tab.id ? 'active' : ''}`}
+            onClick={() => switchPage(tab.id)}
+          >
+            <Icon />
+            <span>{tab.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }
