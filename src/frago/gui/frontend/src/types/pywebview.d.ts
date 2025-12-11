@@ -222,6 +222,13 @@ export interface PyWebviewApi {
    */
   start_agent_task(prompt: string): Promise<TaskStartResponse>;
 
+  /**
+   * 在指定会话中继续对话
+   * @param session_id 会话 ID
+   * @param prompt 新的提示词
+   */
+  continue_agent_task(session_id: string, prompt: string): Promise<TaskStartResponse>;
+
   // ============================================================
   // Recipes API
   // ============================================================

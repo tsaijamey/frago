@@ -51,43 +51,60 @@ from frago.session.models import AgentType
 class FragoGuiApi:
     """Python API class exposed to JavaScript via pywebview."""
 
+    # 会话同步间隔（秒）
+    SYNC_INTERVAL_SECONDS = 5
+
     def __init__(self) -> None:
         """Initialize the GUI API."""
         self.window: Optional["webview.Window"] = None
         self.state = AppStateManager.get_instance()
         self._recipe_cache: List[RecipeItem] = []
         self._skill_cache: List[SkillItem] = []
+        self._sync_thread: Optional[threading.Thread] = None
+        self._sync_stop_event = threading.Event()
 
         # GUI 启动时同步当前项目的 Claude 会话
         self._sync_sessions_on_startup()
 
     def _sync_sessions_on_startup(self) -> None:
-        """GUI 启动时同步会话数据
+        """GUI 启动时启动定时会话同步
 
+        启动一个后台线程，每隔 SYNC_INTERVAL_SECONDS 秒同步一次会话数据。
         从 ~/.claude/projects/ 同步所有项目到 ~/.frago/sessions/claude/
         """
-        import threading
+        import logging
 
-        def sync_in_background():
-            try:
-                from frago.session.sync import sync_all_projects
+        logger = logging.getLogger(__name__)
 
-                result = sync_all_projects()
+        def sync_loop():
+            from frago.session.sync import sync_all_projects
 
-                if result.synced > 0 or result.updated > 0:
-                    import logging
+            while not self._sync_stop_event.is_set():
+                try:
+                    result = sync_all_projects()
 
-                    logging.getLogger(__name__).info(
-                        f"会话同步完成: synced={result.synced}, updated={result.updated}"
-                    )
-            except Exception as e:
-                import logging
+                    if result.synced > 0 or result.updated > 0:
+                        logger.debug(
+                            f"会话同步: synced={result.synced}, updated={result.updated}"
+                        )
+                except Exception as e:
+                    logger.warning(f"会话同步失败: {e}")
 
-                logging.getLogger(__name__).warning(f"会话同步失败: {e}")
+                # 等待下一次同步，但可被中断
+                self._sync_stop_event.wait(self.SYNC_INTERVAL_SECONDS)
 
-        # 后台线程执行，不阻塞 GUI 启动
-        thread = threading.Thread(target=sync_in_background, daemon=True)
-        thread.start()
+        # 启动后台同步线程
+        self._sync_thread = threading.Thread(target=sync_loop, daemon=True)
+        self._sync_thread.start()
+        logger.info(f"会话同步线程已启动 (间隔: {self.SYNC_INTERVAL_SECONDS}s)")
+
+    def stop_sync(self) -> None:
+        """停止会话同步线程"""
+        if self._sync_thread and self._sync_thread.is_alive():
+            self._sync_stop_event.set()
+            self._sync_thread.join(timeout=2)
+            import logging
+            logging.getLogger(__name__).info("会话同步线程已停止")
 
     def set_window(self, window: "webview.Window") -> None:
         """Set the window reference for evaluate_js calls.
@@ -826,11 +843,10 @@ class FragoGuiApi:
         """获取任务详情
 
         读取指定会话的完整信息，包括元数据、步骤记录和摘要。
-        步骤支持分页加载，默认返回前 50 条。
 
         Args:
             session_id: 会话 ID（必填）
-            steps_limit: 步骤数量限制，范围 1-100，默认 50
+            steps_limit: 步骤数量限制，0 表示获取全部，默认 0
             steps_offset: 步骤偏移量，用于分页，默认 0
 
         Returns:
@@ -838,7 +854,7 @@ class FragoGuiApi:
             - session_id, name, status, started_at, ended_at
             - duration_ms, project_path
             - step_count, tool_call_count, user_message_count, assistant_message_count
-            - steps (分页的步骤列表)
+            - steps (步骤列表)
             - steps_total, steps_offset, has_more_steps
             - summary (完成后的摘要)
             - error (如果出错)
@@ -847,7 +863,11 @@ class FragoGuiApi:
         if not session_id:
             return {"error": "会话 ID 不能为空"}
 
-        steps_limit = max(1, min(100, steps_limit or 50))
+        # steps_limit = 0 表示获取全部
+        if steps_limit == 0:
+            steps_limit = 10000  # 设置一个足够大的值
+        else:
+            steps_limit = max(1, min(10000, steps_limit))
         steps_offset = max(0, steps_offset or 0)
 
         try:
@@ -1003,4 +1023,61 @@ class FragoGuiApi:
             return {
                 "status": "error",
                 "error": f"启动任务失败: {str(e)}",
+            }
+
+    def continue_agent_task(self, session_id: str, prompt: str) -> Dict[str, Any]:
+        """在指定会话中继续对话
+
+        Args:
+            session_id: 要继续的会话 ID
+            prompt: 用户输入的新提示词
+
+        Returns:
+            字典包含：
+            - status: "ok" 或 "error"
+            - message: 状态消息
+            - error: 错误信息（如果出错）
+        """
+        if not session_id:
+            return {"status": "error", "error": "session_id 不能为空"}
+        if not prompt or not prompt.strip():
+            return {"status": "error", "error": "任务描述不能为空"}
+
+        prompt = prompt.strip()
+
+        try:
+            import shutil
+            frago_path = shutil.which("frago")
+            if not frago_path:
+                return {
+                    "status": "error",
+                    "error": "frago 命令未找到，请确保已正确安装并在 PATH 中",
+                }
+
+            # 使用 Popen 启动进程，不等待完成
+            log_dir = Path.home() / ".frago" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"agent-resume-{session_id[:8]}.log"
+
+            with open(log_file, "w") as f:
+                subprocess.Popen(
+                    [frago_path, "agent", "--resume", session_id, "--yes", prompt],
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+
+            return {
+                "status": "ok",
+                "message": f"已在会话 {session_id[:8]}... 中继续: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
+            }
+        except FileNotFoundError:
+            return {
+                "status": "error",
+                "error": "frago 命令未找到，请确保已正确安装",
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": f"继续任务失败: {str(e)}",
             }
