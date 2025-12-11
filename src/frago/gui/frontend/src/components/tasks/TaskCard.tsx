@@ -1,4 +1,5 @@
 import type { TaskItem, TaskStatus } from '@/types/pywebview.d';
+import { Zap, Check, X, Circle, Clock, FileText, Wrench, ChevronRight, type LucideIcon } from 'lucide-react';
 
 interface TaskCardProps {
   task: TaskItem;
@@ -33,22 +34,22 @@ function formatDuration(ms: number): string {
 }
 
 // 状态配置
-const statusConfig: Record<TaskStatus, { label: string; icon: string }> = {
-  running: { label: '运行中', icon: '⚡' },
-  completed: { label: '已完成', icon: '✓' },
-  error: { label: '出错', icon: '✕' },
-  cancelled: { label: '已取消', icon: '○' },
+const statusConfig: Record<TaskStatus, { label: string; Icon: LucideIcon }> = {
+  running: { label: '运行中', Icon: Zap },
+  completed: { label: '已完成', Icon: Check },
+  error: { label: '出错', Icon: X },
+  cancelled: { label: '已取消', Icon: Circle },
 };
 
 export default function TaskCard({ task, onClick }: TaskCardProps) {
-  const { label: statusLabel, icon: statusIcon } = statusConfig[task.status] || statusConfig.completed;
+  const { label: statusLabel, Icon: StatusIcon } = statusConfig[task.status] || statusConfig.completed;
   const isRunning = task.status === 'running';
 
   return (
     <div className="task-card-v2" onClick={onClick}>
       {/* 左侧：状态指示器 */}
       <div className={`task-status-badge ${task.status}`}>
-        <span className="task-status-icon">{statusIcon}</span>
+        <StatusIcon size={14} />
       </div>
 
       {/* 中间：主要信息 */}
@@ -73,16 +74,16 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
             {statusLabel}
           </span>
           <span className="task-stat">
-            <span className="task-stat-icon">⏱</span>
+            <Clock size={11} />
             {formatDuration(task.duration_ms)}
           </span>
           <span className="task-stat">
-            <span className="task-stat-icon">📝</span>
+            <FileText size={11} />
             {task.step_count} 步
           </span>
           {task.tool_call_count > 0 && (
             <span className="task-stat">
-              <span className="task-stat-icon">🔧</span>
+              <Wrench size={11} />
               {task.tool_call_count} 调用
             </span>
           )}
@@ -90,7 +91,9 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
       </div>
 
       {/* 右侧：箭头 */}
-      <div className="task-arrow">›</div>
+      <div className="task-arrow">
+        <ChevronRight size={20} />
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { ChevronDown } from 'lucide-react';
 
 interface AccordionItemProps {
   title: string;
@@ -36,16 +37,12 @@ export function AccordionItem({ title, children, defaultOpen = false }: Accordio
         onClick={() => setIsOpen(!isOpen)}
       >
         <h2 className="font-medium text-[var(--accent-primary)]">{title}</h2>
-        <svg
-          className={`w-5 h-5 text-[var(--text-secondary)] transition-transform duration-200 ${
+        <ChevronDown
+          size={20}
+          className={`text-[var(--text-secondary)] transition-transform duration-200 ${
             isOpen ? 'rotate-180' : ''
           }`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        />
       </button>
       <div
         ref={contentRef}
