@@ -1,5 +1,6 @@
 import { useAppStore } from '@/stores/appStore';
 import type { Theme } from '@/types/pywebview.d';
+import { Moon, Sun } from 'lucide-react';
 
 export default function SettingsPage() {
   const { config, updateConfig, setTheme } = useAppStore();
@@ -25,7 +26,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4 max-w-xl">
+    <div className="page-scroll flex flex-col gap-4 max-w-xl h-full">
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">
         设置
       </h1>
@@ -51,7 +52,7 @@ export default function SettingsPage() {
               }`}
               onClick={() => handleThemeChange('dark')}
             >
-              🌙 深色
+              <Moon size={16} /> 深色
             </button>
             <button
               className={`btn ${
@@ -59,7 +60,7 @@ export default function SettingsPage() {
               }`}
               onClick={() => handleThemeChange('light')}
             >
-              ☀️ 浅色
+              <Sun size={16} /> 浅色
             </button>
           </div>
         </div>

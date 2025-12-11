@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import EmptyState from '@/components/ui/EmptyState';
+import { Target, BookOpen } from 'lucide-react';
 
 export default function SkillList() {
   const { skills, loadSkills } = useAppStore();
@@ -12,7 +13,7 @@ export default function SkillList() {
   if (skills.length === 0) {
     return (
       <EmptyState
-        icon="🎯"
+        Icon={Target}
         title="暂无技能"
         description="在 .claude/skills/ 目录下创建技能文件"
       />
@@ -20,11 +21,11 @@ export default function SkillList() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="page-scroll flex flex-col gap-2 h-full">
       {skills.map((skill) => (
         <div key={skill.name} className="card">
           <div className="flex items-start gap-3">
-            <span className="text-xl">{skill.icon || '📚'}</span>
+            <BookOpen size={20} className="text-[var(--text-secondary)] flex-shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
               <div className="font-medium text-[var(--text-primary)]">
                 {skill.name}

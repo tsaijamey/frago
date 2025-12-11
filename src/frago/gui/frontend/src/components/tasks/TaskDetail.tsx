@@ -76,7 +76,7 @@ export default function TaskDetail() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="page-scroll flex flex-col gap-4 h-full">
       {/* 返回按钮 */}
       <button
         className="btn btn-ghost self-start"

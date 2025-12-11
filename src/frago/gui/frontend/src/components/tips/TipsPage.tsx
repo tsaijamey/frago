@@ -2,7 +2,7 @@ import { Accordion, AccordionItem } from '../ui/Accordion';
 
 export default function TipsPage() {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="page-scroll flex flex-col gap-4 h-full">
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">欢迎使用 frago</h1>
 
       <Accordion>
