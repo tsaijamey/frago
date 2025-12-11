@@ -408,31 +408,121 @@ def _handle_missing_dependencies(
     install_order = get_installation_order(node_needed, claude_code_needed)
 
     click.echo()
+
+    # 追踪是否刚安装了 Node.js 且 npm 不在 PATH 中
+    node_installed_needs_activation = False
+
     for name in install_order:
-        _install_with_progress(name)
+        # 对于 claude-code：如果刚安装了 node 且 npm 不可用，使用 nvm fallback
+        use_nvm = node_installed_needs_activation and name == "claude-code"
+
+        requires_restart = _install_with_progress(
+            name,
+            use_nvm_fallback=use_nvm,
+            node_just_installed=node_installed_needs_activation,
+        )
+
+        if name == "node" and requires_restart:
+            # Node.js 安装成功但 npm 不在 PATH 中
+            node_installed_needs_activation = True
+
+            # 检查是否还有后续依赖
+            remaining = install_order[install_order.index(name) + 1:]
+            if remaining:
+                # 尝试用 nvm fallback 安装后续依赖，而不是直接要求重启
+                click.echo()
+                click.secho(
+                    "ℹ️  npm 尚未在当前终端生效，尝试通过 nvm 环境继续安装...",
+                    fg="cyan",
+                )
+                continue
+
+        # 如果不是 node，但需要重启（理论上不应该发生）
+        if requires_restart and name != "node":
+            _show_restart_required_message([])
+            sys.exit(0)
 
 
-def _install_with_progress(name: str) -> None:
+def _show_restart_required_message(remaining_deps: list) -> None:
+    """
+    显示需要重启终端的提示
+
+    Args:
+        remaining_deps: 剩余需要安装的依赖
+    """
+    from frago.init.installer import _get_shell_config_file
+
+    click.echo()
+    click.secho("⚠️  Node.js 已安装，但需要激活才能继续", fg="yellow")
+    click.echo()
+
+    shell_config = _get_shell_config_file()
+    if shell_config:
+        click.echo("请执行以下操作之一：")
+        click.echo()
+        click.echo(f"  1. 激活当前终端（推荐）:")
+        click.echo(f"     source {shell_config}")
+        click.echo()
+        click.echo("  2. 重启终端")
+        click.echo()
+    else:
+        click.echo("请重启终端或执行:")
+        click.echo("    source ~/.nvm/nvm.sh")
+        click.echo()
+
+    click.echo("然后重新运行:")
+    click.secho("    frago init", fg="cyan")
+    click.echo()
+
+    remaining_names = ", ".join(
+        "Claude Code" if d == "claude-code" else d for d in remaining_deps
+    )
+    click.echo(f"（剩余依赖: {remaining_names}）")
+
+
+def _install_with_progress(
+    name: str,
+    use_nvm_fallback: bool = False,
+    node_just_installed: bool = False,
+) -> bool:
     """
     带进度提示的安装
 
     Args:
         name: 依赖名称
+        use_nvm_fallback: 对于 claude-code，是否在 npm 不可用时使用 nvm 环境
+        node_just_installed: 是否刚安装了 Node.js（用于错误提示）
+
+    Returns:
+        requires_restart: 是否需要重启终端后继续
     """
     display_name = "Node.js" if name == "node" else "Claude Code"
 
     click.echo(f"📦 正在安装 {display_name}...")
 
     try:
-        success, warning = install_dependency(name)
-        click.echo(f"✅ {display_name} 安装成功\n")
+        success, warning, requires_restart = install_dependency(
+            name,
+            use_nvm_fallback=use_nvm_fallback,
+        )
+        click.echo(f"✅ {display_name} 安装成功")
 
         # 显示 Windows PATH 警告（如有）
         if warning:
             click.secho(warning, fg="yellow")
+
+        click.echo()
+        return requires_restart
+
     except CommandError as e:
         click.echo(f"\n❌ {display_name} 安装失败")
         click.echo(str(e))
+
+        # 如果是因为刚安装 Node.js 导致 npm 不可用，给出更友好的提示
+        if name == "claude-code" and node_just_installed:
+            click.echo()
+            _show_restart_required_message(["claude-code"])
+
         sys.exit(e.code)
 
 

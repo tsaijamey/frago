@@ -50,6 +50,9 @@ from frago.init.configurator import (
     format_final_summary,
     suggest_next_steps,
     display_next_steps,
+    # claude.json 管理
+    check_claude_json_exists,
+    ensure_claude_json_for_custom_auth,
 )
 
 __all__ = [
@@ -93,4 +96,7 @@ __all__ = [
     "format_final_summary",
     "suggest_next_steps",
     "display_next_steps",
+    # claude.json 管理
+    "check_claude_json_exists",
+    "ensure_claude_json_for_custom_auth",
 ]
