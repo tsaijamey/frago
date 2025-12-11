@@ -1,6 +1,6 @@
 # 执行原则
 
-适用于：`/frago.run`、`/frago.exec`
+适用于：`/frago.run`、`/frago.do`
 
 ## 核心原则
 

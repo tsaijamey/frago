@@ -14,13 +14,13 @@ frago run set-context nano-banana-pro-image-api-research
 
 # === 4. 执行调研操作 ===
 # 导航（自动记录日志）
-frago navigate "https://example.com"
+frago chrome navigate "https://example.com"
 
 # 提取页面链接
-frago exec-js "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).filter(a => a.text)" --return-value
+frago chrome exec-js "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).filter(a => a.text)" --return-value
 
 # 截图验证（自动记录日志）
-frago screenshot /tmp/step1.png
+frago chrome screenshot /tmp/step1.png
 
 # === 5. 手动记录分析结果（含 _insights）===
 frago run log \
@@ -38,7 +38,7 @@ frago run log \
 
 # === 6. 记录失败和重试（必须记录 _insights）===
 # 假设点击失败
-frago click '.api-key-btn'  # 失败
+frago chrome click '.api-key-btn'  # 失败
 
 # 记录失败原因
 frago run log \
@@ -47,7 +47,7 @@ frago run log \
   --action-type "analysis" \
   --execution-method "analysis" \
   --data '{
-    "command": "frago click .api-key-btn",
+    "command": "frago chrome click .api-key-btn",
     "error": "Element not found",
     "_insights": [
       {"type": "pitfall", "summary": "动态class不可靠，需用data-testid"}
