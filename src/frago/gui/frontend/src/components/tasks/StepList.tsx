@@ -1,40 +1,21 @@
 import type { TaskStep, StepType } from '@/types/pywebview.d';
+import { User, Bot, Wrench, ArrowRight, Settings, type LucideIcon } from 'lucide-react';
 
 interface StepListProps {
   steps: TaskStep[];
 }
 
-// 获取步骤图标（使用简洁字母，在小尺寸下更清晰）
-function getStepIcon(type: StepType): string {
-  switch (type) {
-    case 'user_message':
-      return 'U';
-    case 'assistant_message':
-      return 'A';
-    case 'tool_use':
-      return 'T';
-    case 'tool_result':
-      return 'R';
-    case 'system':
-      return 'S';
-    default:
-      return '•';
-  }
-}
+// 步骤图标配置
+const stepIconConfig: Record<StepType, { Icon: LucideIcon; className: string }> = {
+  user_message: { Icon: User, className: 'user' },
+  assistant_message: { Icon: Bot, className: 'assistant' },
+  tool_use: { Icon: Wrench, className: 'tool' },
+  tool_result: { Icon: ArrowRight, className: 'tool' },
+  system: { Icon: Settings, className: '' },
+};
 
-// 获取步骤类型样式类
-function getStepIconClass(type: StepType): string {
-  switch (type) {
-    case 'user_message':
-      return 'user';
-    case 'assistant_message':
-      return 'assistant';
-    case 'tool_use':
-    case 'tool_result':
-      return 'tool';
-    default:
-      return '';
-  }
+function getStepConfig(type: StepType) {
+  return stepIconConfig[type] || { Icon: Settings, className: '' };
 }
 
 export default function StepList({ steps }: StepListProps) {
@@ -48,19 +29,22 @@ export default function StepList({ steps }: StepListProps) {
 
   return (
     <div className="step-list">
-      {steps.map((step) => (
-        <div key={step.step_id} className="step-item">
-          <div className={`step-icon ${getStepIconClass(step.type)}`}>
-            {getStepIcon(step.type)}
+      {steps.map((step) => {
+        const { Icon, className } = getStepConfig(step.type);
+        return (
+          <div key={step.step_id} className="step-item">
+            <div className={`step-icon ${className}`}>
+              <Icon size={11} />
+            </div>
+            <div className="step-content">
+              {step.tool_name && (
+                <code className="step-tool-name">{step.tool_name}</code>
+              )}
+              <span>{step.content}</span>
+            </div>
           </div>
-          <div className="step-content">
-            {step.tool_name && (
-              <code className="step-tool-name">{step.tool_name}</code>
-            )}
-            <span>{step.content}</span>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
