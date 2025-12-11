@@ -244,6 +244,53 @@ def check_pywebview_available() -> bool:
         return False
 
 
+def check_gi_importable() -> bool:
+    """检查 gi (PyGObject) 是否可在当前 Python 环境导入.
+
+    Returns:
+        True 如果 gi 可导入。
+    """
+    try:
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import Gtk
+
+        return True
+    except (ImportError, ValueError):
+        return False
+
+
+def install_pygobject_to_venv() -> tuple[bool, str]:
+    """使用 pip 安装 PyGObject 到当前虚拟环境.
+
+    当系统 WebKit 包已安装但 gi 无法导入时使用。
+
+    Returns:
+        (成功与否, 消息) 元组。
+    """
+    print("\n系统 WebKit 依赖已安装，但当前 Python 环境缺少 PyGObject。")
+    print("正在安装 PyGObject 到 frago 环境...")
+    print()
+
+    try:
+        # 使用当前 Python 的 pip 安装
+        cmd = [sys.executable, "-m", "pip", "install", "--quiet", "PyGObject"]
+        print(f"执行: {' '.join(cmd)}\n")
+
+        returncode = subprocess.call(cmd, timeout=120)
+
+        if returncode == 0:
+            return True, "PyGObject 安装成功"
+        else:
+            return False, f"PyGObject 安装失败 (退出码: {returncode})"
+
+    except subprocess.TimeoutExpired:
+        return False, "安装超时"
+    except Exception as e:
+        return False, f"安装出错: {e}"
+
+
 def has_sudo() -> bool:
     """检查 sudo 是否可用.
 
@@ -399,7 +446,11 @@ def prompt_auto_install() -> bool:
 def ensure_gui_deps() -> tuple[bool, str]:
     """确保 GUI 依赖可用.
 
-    检查依赖，必要时提示自动安装。
+    检查流程：
+    1. 检查系统 WebKit 包是否已安装
+    2. 如果没装，提示用户安装系统包
+    3. 如果系统包已装，检查 gi 能否导入
+    4. 如果 gi 不能导入，自动用 pip 装 PyGObject
 
     Returns:
         (可以启动 GUI, 消息) 元组。
@@ -408,38 +459,50 @@ def ensure_gui_deps() -> tuple[bool, str]:
     if platform.system() != "Linux":
         return True, ""
 
-    # 检查 WebKit 是否可用
-    if check_webkit_available():
-        return True, ""
+    # 步骤1: 检查系统 WebKit 包
+    webkit_installed = check_webkit_available()
 
-    # 检测发行版
-    distro = detect_distro()
+    if not webkit_installed:
+        # 系统包未安装，需要用 sudo 安装
+        distro = detect_distro()
 
-    # 检查是否可以自动安装
-    if not distro or not distro.supported:
-        guide = get_manual_install_guide(distro)
-        print(guide)
-        return False, "不支持的发行版"
-
-    if not has_sudo():
-        # sudo 不可用，提供手动安装指南
-        guide = get_manual_install_guide(distro)
-        print(guide)
-        return False, "sudo 不可用，请手动安装依赖"
-
-    # 提示用户是否自动安装
-    if prompt_auto_install():
-        success, msg = auto_install_deps(distro)
-        if success:
-            print(f"\n{msg}")
-            print("正在重新启动 GUI...")
-            return True, "restart"
-        else:
-            print(f"\n{msg}")
+        if not distro or not distro.supported:
             guide = get_manual_install_guide(distro)
             print(guide)
-            return False, msg
+            return False, "不支持的发行版"
+
+        if not has_sudo():
+            guide = get_manual_install_guide(distro)
+            print(guide)
+            return False, "sudo 不可用，请手动安装依赖"
+
+        # 提示用户安装系统包
+        if prompt_auto_install():
+            success, msg = auto_install_deps(distro)
+            if not success:
+                print(f"\n{msg}")
+                guide = get_manual_install_guide(distro)
+                print(guide)
+                return False, msg
+            print(f"\n{msg}")
+            # 系统包安装成功，继续检查 gi
+        else:
+            guide = get_manual_install_guide(distro)
+            print(guide)
+            return False, "用户取消安装"
+
+    # 步骤2: 检查 gi 能否导入
+    if check_gi_importable():
+        return True, ""
+
+    # 步骤3: 系统包已装但 gi 不能导入，用 pip 装 PyGObject
+    success, msg = install_pygobject_to_venv()
+    if success:
+        print(f"\n{msg}")
+        print("正在重新启动 GUI...")
+        return True, "restart"
     else:
-        guide = get_manual_install_guide(distro)
-        print(guide)
-        return False, "用户取消安装"
+        print(f"\n{msg}")
+        print("\n尝试手动安装 PyGObject:")
+        print(f"    {sys.executable} -m pip install PyGObject")
+        return False, msg
