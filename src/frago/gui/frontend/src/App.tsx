@@ -3,8 +3,7 @@ import { useAppStore } from '@/stores/appStore';
 import { isApiReady } from '@/api/pywebview';
 
 // Layout
-import Header from '@/components/layout/Header';
-import NavTabs from '@/components/layout/NavTabs';
+import BottomNav from '@/components/layout/NavTabs';
 import StatusBar from '@/components/layout/StatusBar';
 
 // Pages
@@ -71,9 +70,8 @@ function App() {
 
   return (
     <>
-      <Header />
-      <NavTabs />
       <main className="main-content">{renderPage()}</main>
+      <BottomNav />
       <StatusBar />
 
       {/* Toast 容器 */}
