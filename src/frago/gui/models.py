@@ -431,8 +431,11 @@ class TaskItem(BaseModel):
     def _extract_task_name(session_id: str, max_length: int = 100) -> str:
         """从 steps.jsonl 提取任务名称
 
-        读取第一条 user_message，尝试从 <command-args> 提取用户输入，
-        否则使用 content_summary 的第一行。
+        提取优先级：
+        1. frago_task: 从 "## 当前任务" 提取实际任务
+        2. command-args: 从 <command-args> 提取用户输入
+        3. command-message: 提取命令名作为标题
+        4. 直接用户输入: 第一行非系统内容
 
         Args:
             session_id: 会话 ID
@@ -482,22 +485,37 @@ class TaskItem(BaseModel):
                         if "<command-args></command-args>" in content:
                             continue
 
-                        # 尝试从 <command-args> 提取用户实际输入
-                        # 注意：content_summary 可能被截断，</command-args> 可能不存在
+                        # 1. frago_task: 检查是否为 /frago.* 系统 prompt
+                        if content.startswith("# /frago"):
+                            # 提取 "## 当前任务" 后的内容
+                            task_match = re.search(r"## 当前任务\s*\n+(.+?)(?:\n\n|$)", content, re.DOTALL)
+                            if task_match:
+                                task = task_match.group(1).strip()
+                                if task:
+                                    if len(task) > max_length:
+                                        return task[:max_length] + "..."
+                                    return task
+                            # 没找到当前任务，继续查找
+                            continue
+
+                        # 2. 尝试从 <command-args> 提取用户实际输入
                         args_match = re.search(r"<command-args>(.*?)(?:</command-args>|$)", content, re.DOTALL)
                         if args_match:
                             user_input = args_match.group(1).strip()
-                            # 移除可能的截断标记
                             user_input = re.sub(r"\.\.\.$", "", user_input).strip()
                             if user_input:
                                 if len(user_input) > max_length:
                                     return user_input[:max_length] + "..."
                                 return user_input
-                            # command-args 为空，继续查找下一条
                             continue
 
-                        # 如果没有 command-args，跳过系统消息标签
-                        # 移除 <command-message>...</command-message> 和 <command-name>...</command-name>
+                        # 3. 提取 command-message 中的命令名
+                        cmd_match = re.search(r"<command-message>(\S+)\s+is running", content)
+                        if cmd_match:
+                            cmd_name = cmd_match.group(1)
+                            return f"/{cmd_name}"
+
+                        # 4. 移除系统消息标签，提取真实内容
                         cleaned = re.sub(r"<command-message>.*?</command-message>", "", content, flags=re.DOTALL)
                         cleaned = re.sub(r"<command-name>.*?</command-name>", "", cleaned, flags=re.DOTALL)
                         cleaned = cleaned.strip()
@@ -510,12 +528,10 @@ class TaskItem(BaseModel):
                             if len(first_line) > max_length:
                                 return first_line[:max_length] + "..."
                             return first_line if first_line else default_name
-                        # 清理后为空，继续查找
                         continue
 
-            # 如果没有 user_message，尝试使用第一条 assistant_message 作为描述
+            # 如果没有 user_message，尝试使用第一条 assistant_message
             if first_assistant_content:
-                # 取第一句话作为名称
                 first_line = first_assistant_content.split(".")[0].strip()
                 if first_line:
                     if len(first_line) > max_length:
@@ -525,6 +541,71 @@ class TaskItem(BaseModel):
             return default_name
         except Exception:
             return default_name
+
+    @staticmethod
+    def should_display(session: "MonitoredSession") -> bool:
+        """判断会话是否应该在任务列表中展示
+
+        展示条件（满足任一）：
+        1. 正在运行的任务
+        2. 步骤数 >= 10
+        3. 有 summary 且步骤数 >= 5
+
+        排除条件：
+        1. 步骤数 < 5 且已完成
+        2. 无 assistant 消息 且 步骤数 < 10（系统会话特征）
+
+        Args:
+            session: 会话元数据
+
+        Returns:
+            是否应该展示
+        """
+        import json
+        from frago.session.models import SessionStatus
+        from frago.session.storage import get_session_dir
+
+        # 正在运行的任务始终展示
+        if session.status == SessionStatus.RUNNING:
+            return True
+
+        # 步骤数 >= 10 展示
+        if session.step_count >= 10:
+            return True
+
+        # 步骤数 < 5 且已完成，不展示
+        if session.step_count < 5 and session.status == SessionStatus.COMPLETED:
+            return False
+
+        # 检查是否为系统会话（无 assistant 消息）
+        if session.step_count < 10:
+            session_dir = get_session_dir(session.session_id, session.agent_type)
+            steps_file = session_dir / "steps.jsonl"
+            if steps_file.exists():
+                has_assistant = False
+                try:
+                    with open(steps_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if not line.strip():
+                                continue
+                            step = json.loads(line)
+                            if step.get("type") == "assistant_message":
+                                has_assistant = True
+                                break
+                except Exception:
+                    pass
+
+                # 无 assistant 消息 → 系统会话，不展示
+                if not has_assistant:
+                    return False
+
+        # 有 summary 且步骤数 >= 5 展示
+        if session.step_count >= 5:
+            session_dir = get_session_dir(session.session_id, session.agent_type)
+            if (session_dir / "summary.json").exists():
+                return True
+
+        return False
 
 
 class TaskDetail(BaseModel):
@@ -593,9 +674,12 @@ class TaskDetail(BaseModel):
         }
         gui_status = status_map.get(session.status, GUITaskStatus.RUNNING)
 
+        # 提取任务名称（复用 TaskItem 的逻辑）
+        name = TaskItem._extract_task_name(session.session_id)
+
         return cls(
             session_id=session.session_id,
-            name=f"Task {session.session_id[:8]}...",
+            name=name,
             status=gui_status,
             started_at=session.started_at,
             ended_at=session.ended_at,
