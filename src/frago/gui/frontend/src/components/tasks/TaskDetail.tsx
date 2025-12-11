@@ -91,38 +91,39 @@ export default function TaskDetail() {
           {taskDetail.name}
         </h2>
 
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <span className="text-[var(--text-muted)]">状态：</span>
-            <span className={`ml-2 status-${taskDetail.status}`}>
-              {taskDetail.status}
-            </span>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">状态</span>
+            <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
           </div>
-          <div>
-            <span className="text-[var(--text-muted)]">开始时间：</span>
-            <span className="ml-2">{formatDateTime(taskDetail.started_at)}</span>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">开始时间</span>
+            <span>{formatDateTime(taskDetail.started_at)}</span>
           </div>
-          <div>
-            <span className="text-[var(--text-muted)]">持续时间：</span>
-            <span className="ml-2">{formatDuration(taskDetail.duration_ms)}</span>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">持续时间</span>
+            <span>{formatDuration(taskDetail.duration_ms)}</span>
           </div>
-          <div>
-            <span className="text-[var(--text-muted)]">步骤数：</span>
-            <span className="ml-2">{taskDetail.step_count}</span>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">步骤数</span>
+            <span>{taskDetail.step_count}</span>
           </div>
-          <div>
-            <span className="text-[var(--text-muted)]">工具调用：</span>
-            <span className="ml-2">{taskDetail.tool_call_count}</span>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">工具调用</span>
+            <span>{taskDetail.tool_call_count}</span>
           </div>
-          <div>
-            <span className="text-[var(--text-muted)]">项目路径：</span>
-            <span className="ml-2 font-mono text-xs">{taskDetail.project_path}</span>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)] shrink-0">项目路径</span>
+            <span className="font-mono text-xs text-right break-all ml-4">{taskDetail.project_path}</span>
           </div>
         </div>
       </div>
 
-      {/* 摘要统计 */}
+      {/* 摘要统计 - 仅当有有效数据时显示 */}
       {taskDetail.summary && (
+        taskDetail.summary.tool_success_count + taskDetail.summary.tool_error_count > 0 ||
+        taskDetail.summary.most_used_tools.length > 0
+      ) ? (
         <div className="card">
           <h3 className="font-medium mb-3 text-[var(--accent-primary)]">
             统计摘要
@@ -166,7 +167,7 @@ export default function TaskDetail() {
             </div>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* 步骤列表 */}
       <div className="card">
