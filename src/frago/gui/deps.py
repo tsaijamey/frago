@@ -201,26 +201,17 @@ def check_pywebview_available() -> bool:
         return False
 
 
-def has_pkexec() -> bool:
-    """检查 pkexec 是否可用.
+def has_sudo() -> bool:
+    """检查 sudo 是否可用.
 
     Returns:
-        True 如果 pkexec 存在。
+        True 如果 sudo 存在。
     """
-    return shutil.which("pkexec") is not None
-
-
-def has_display() -> bool:
-    """检查是否有图形显示环境.
-
-    Returns:
-        True 如果有 DISPLAY 或 WAYLAND_DISPLAY 环境变量。
-    """
-    return bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+    return shutil.which("sudo") is not None
 
 
 def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
-    """使用 pkexec 自动安装依赖.
+    """使用 sudo 在终端交互式安装依赖.
 
     Args:
         distro: 发行版信息。
@@ -231,11 +222,8 @@ def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
     if not distro.supported:
         return False, f"不支持自动安装: {distro.name}"
 
-    if not has_pkexec():
-        return False, "pkexec 不可用，无法获取管理员权限"
-
-    if not has_display():
-        return False, "无图形显示环境，无法使用 pkexec"
+    if not has_sudo():
+        return False, "sudo 不可用，无法获取管理员权限"
 
     # 构建安装命令
     pkg_config = None
@@ -250,38 +238,37 @@ def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
     pkg_manager = pkg_config["pkg_manager"]
     packages = pkg_config["packages"]
 
-    # 构建完整命令
+    # 构建完整命令（使用 sudo，终端交互式输入密码）
     if pkg_manager == "apt":
-        cmd = ["pkexec", "apt", "install", "-y"] + packages
+        cmd = ["sudo", "apt", "install", "-y"] + packages
     elif pkg_manager == "dnf":
-        cmd = ["pkexec", "dnf", "install", "-y"] + packages
+        cmd = ["sudo", "dnf", "install", "-y"] + packages
     elif pkg_manager == "pacman":
-        cmd = ["pkexec", "pacman", "-S", "--noconfirm"] + packages
+        cmd = ["sudo", "pacman", "-S", "--noconfirm"] + packages
     elif pkg_manager == "zypper":
-        cmd = ["pkexec", "zypper", "install", "-y"] + packages
+        cmd = ["sudo", "zypper", "install", "-y"] + packages
     else:
         return False, f"不支持的包管理器: {pkg_manager}"
 
-    logger.info(f"执行安装命令: {' '.join(cmd)}")
+    print(f"\n执行: {' '.join(cmd)}\n")
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300,  # 5 分钟超时
-        )
+        # 使用 subprocess.call 让 sudo 直接与终端交互
+        # 不捕获输出，让用户看到安装过程
+        returncode = subprocess.call(cmd, timeout=300)
 
-        if result.returncode == 0:
+        if returncode == 0:
             return True, "依赖安装成功"
         else:
-            error_msg = result.stderr or result.stdout or "安装失败"
-            return False, f"安装失败: {error_msg}"
+            return False, f"安装失败 (退出码: {returncode})"
 
     except subprocess.TimeoutExpired:
         return False, "安装超时（超过 5 分钟）"
     except FileNotFoundError:
         return False, "找不到包管理器"
+    except KeyboardInterrupt:
+        print("\n")
+        return False, "用户取消安装"
     except Exception as e:
         return False, f"安装出错: {e}"
 
@@ -388,22 +375,16 @@ def ensure_gui_deps() -> tuple[bool, str]:
     # 检查是否可以自动安装
     if not distro or not distro.supported:
         guide = get_manual_install_guide(distro)
-        return False, guide
+        print(guide)
+        return False, "不支持的发行版"
 
-    if not has_pkexec():
-        # pkexec 不可用，提供命令行提示
-        print("\n缺少 GUI 系统依赖，请手动安装：")
-        print(f"\n    sudo {distro.install_cmd}\n")
-        return False, "请手动安装依赖后重试"
+    if not has_sudo():
+        # sudo 不可用，提供手动安装指南
+        guide = get_manual_install_guide(distro)
+        print(guide)
+        return False, "sudo 不可用，请手动安装依赖"
 
-    if not has_display():
-        # 无图形环境
-        print("\n缺少 GUI 系统依赖。")
-        print("当前无图形显示环境，请手动安装：")
-        print(f"\n    sudo {distro.install_cmd}\n")
-        return False, "请在图形环境中运行或手动安装依赖"
-
-    # 提示用户
+    # 提示用户是否自动安装
     if prompt_auto_install():
         success, msg = auto_install_deps(distro)
         if success:

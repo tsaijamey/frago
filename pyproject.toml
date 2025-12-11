@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "0.6.0"
+version = "0.6.1"
 description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -43,24 +43,10 @@ dependencies = [
     "obsws-python>=1.8.0",
     "questionary>=2.1.0",
     "watchdog>=3.0.0",
-]
-
-[project.optional-dependencies]
-# GUI 依赖
-gui = [
     "pywebview>=6.1",
 ]
 
-# Linux GTK 后端
-gui-gtk = [
-    "pywebview[gtk]>=6.1",
-]
-
-# Linux QT 后端
-gui-qt = [
-    "pywebview[qt]>=6.1",
-]
-
+[project.optional-dependencies]
 # 开发依赖
 dev = [
     "pytest>=7.4.0",
