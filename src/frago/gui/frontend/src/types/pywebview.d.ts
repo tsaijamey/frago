@@ -14,9 +14,9 @@ export type TaskStatus = 'running' | 'completed' | 'error' | 'cancelled';
 export type StepType =
   | 'user_message'
   | 'assistant_message'
-  | 'tool_use'
+  | 'tool_call'
   | 'tool_result'
-  | 'system';
+  | 'system_event';
 
 export type RecipeCategory = 'atomic' | 'workflow';
 

@@ -6,17 +6,17 @@ interface StepListProps {
   steps: TaskStep[];
 }
 
-// 步骤类型配置
+// 步骤类型配置（与后端 StepType 枚举对应）
 const stepTypeConfig: Record<StepType, { Icon: LucideIcon; label: string; colorClass: string }> = {
   user_message: { Icon: User, label: 'User', colorClass: 'text-[var(--accent-primary)]' },
   assistant_message: { Icon: Bot, label: 'Assistant', colorClass: 'text-[var(--accent-success)]' },
-  tool_use: { Icon: Wrench, label: 'Tool', colorClass: 'text-[var(--accent-warning)]' },
+  tool_call: { Icon: Wrench, label: 'Tool', colorClass: 'text-[var(--accent-warning)]' },
   tool_result: { Icon: ArrowRight, label: 'Result', colorClass: 'text-[var(--accent-warning)]' },
-  system: { Icon: Settings, label: 'System', colorClass: 'text-[var(--text-muted)]' },
+  system_event: { Icon: Settings, label: 'System', colorClass: 'text-[var(--accent-info)]' },
 };
 
 function getStepConfig(type: StepType) {
-  return stepTypeConfig[type] || stepTypeConfig.system;
+  return stepTypeConfig[type] || stepTypeConfig.system_event;
 }
 
 // 格式化时间戳为 +8 时区
@@ -30,14 +30,15 @@ function formatTimestamp(isoString: string): string {
   });
 }
 
-// 可筛选的类型
-const filterableTypes: StepType[] = ['user_message', 'assistant_message', 'tool_use', 'tool_result'];
+// 可筛选的类型（与后端 StepType 枚举对应）
+const filterableTypes: StepType[] = ['user_message', 'assistant_message', 'tool_call', 'tool_result', 'system_event'];
 
 // 每次渲染的数量
 const RENDER_BATCH_SIZE = 50;
 
 export default function StepList({ steps }: StepListProps) {
-  const [activeFilters, setActiveFilters] = useState<Set<StepType>>(new Set(filterableTypes));
+  // 空集合表示显示全部，非空则只显示选中的类型
+  const [activeFilters, setActiveFilters] = useState<Set<StepType>>(new Set());
   const [renderCount, setRenderCount] = useState(RENDER_BATCH_SIZE);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -45,9 +46,7 @@ export default function StepList({ steps }: StepListProps) {
     setActiveFilters(prev => {
       const next = new Set(prev);
       if (next.has(type)) {
-        if (next.size > 1) {
-          next.delete(type);
-        }
+        next.delete(type);
       } else {
         next.add(type);
       }
@@ -57,8 +56,10 @@ export default function StepList({ steps }: StepListProps) {
     setRenderCount(RENDER_BATCH_SIZE);
   };
 
-  // 全量数据上筛选
-  const filteredSteps = steps.filter(step => activeFilters.has(step.type));
+  // 空集合显示全部，否则只显示选中的类型
+  const filteredSteps = activeFilters.size === 0
+    ? steps
+    : steps.filter(step => activeFilters.has(step.type));
 
   // 只渲染前 N 条
   const renderedSteps = filteredSteps.slice(0, renderCount);
@@ -121,17 +122,18 @@ export default function StepList({ steps }: StepListProps) {
         {filterableTypes.map(type => {
           const { Icon, label, colorClass } = getStepConfig(type);
           const isActive = activeFilters.has(type);
+          const showAsActive = activeFilters.size === 0 || isActive;
           return (
             <button
               key={type}
               onClick={() => toggleFilter(type)}
               className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-opacity ${
-                isActive ? 'opacity-100' : 'opacity-40'
+                showAsActive ? 'opacity-100' : 'opacity-40'
               } hover:opacity-100`}
               title={label}
             >
               <Icon size={14} className={colorClass} />
-              <span className={isActive ? colorClass : 'text-[var(--text-muted)]'}>{label}</span>
+              <span className={showAsActive ? colorClass : 'text-[var(--text-muted)]'}>{label}</span>
             </button>
           );
         })}

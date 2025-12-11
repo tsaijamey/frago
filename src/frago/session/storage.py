@@ -382,14 +382,14 @@ def read_steps_paginated(
     Args:
         session_id: 会话 ID
         agent_type: Agent 类型
-        limit: 每页数量（默认 50，最大 100）
+        limit: 每页数量（默认 50，最大 10000）
         offset: 偏移量
 
     Returns:
         包含 steps、total、offset、limit、has_more 的字典
     """
     # 参数验证
-    limit = max(1, min(100, limit))
+    limit = max(1, min(10000, limit))
     offset = max(0, offset)
 
     all_steps = read_steps(session_id, agent_type)
