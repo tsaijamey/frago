@@ -588,6 +588,19 @@ a:not(.btn):not(.nav-tab):hover {
   gap: var(--spacing-sm);
 }
 
+/* 新版步骤卡片 */
+.step-item-new {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--border-primary);
+}
+
+.step-item-new:hover {
+  background: var(--bg-secondary);
+}
+
+/* 旧版步骤样式（保留兼容） */
 .step-item {
   display: flex;
   gap: var(--spacing-sm);
@@ -647,6 +660,29 @@ a:not(.btn):not(.nav-tab):hover {
   background: var(--bg-subtle);
   padding: 2px 6px;
   border-radius: 3px;
+}
+
+/* 步骤列表内部滚动 */
+.step-list-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) transparent;
+}
+
+.step-list-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.step-list-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.step-list-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 3px;
+}
+
+.step-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--border-primary);
 }
 
 /* === Search Box === */

@@ -490,6 +490,12 @@ def get_available_slash_commands() -> dict:
     is_flag=True,
     help="跳过权限确认提示，直接执行"
 )
+@click.option(
+    "--resume", "-r",
+    type=str,
+    default=None,
+    help="在指定会话中继续对话（传入 session_id）"
+)
 def agent(
     prompt: tuple,
     model: Optional[str],
@@ -501,7 +507,8 @@ def agent(
     quiet: bool,
     json_status: bool,
     no_monitor: bool,
-    yes: bool
+    yes: bool,
+    resume: Optional[str]
 ):
     """
     智能 Agent：分析意图并路由到对应的 frago 子命令
@@ -589,9 +596,12 @@ def agent(
     # 两阶段执行流程
     # =========================================================================
 
-    if direct:
-        # 直接模式：跳过路由，直接执行用户提示词
-        click.echo(f"\n[Direct] 直接执行: {prompt_text}")
+    if direct or resume:
+        # 直接模式或继续会话模式：跳过路由，直接执行用户提示词
+        if resume:
+            click.echo(f"\n[Resume] 在会话 {resume[:8]}... 中继续: {prompt_text}")
+        else:
+            click.echo(f"\n[Direct] 直接执行: {prompt_text}")
         target_command = None
         final_prompt = prompt_text
     else:
@@ -679,6 +689,9 @@ def agent(
     # 注意：stream-json 必须配合 --verbose 使用
     cmd = ["claude", "-p", execution_prompt, "--output-format", "stream-json", "--verbose"]
 
+    if resume:
+        cmd.extend(["--resume", resume])
+
     if model:
         cmd.extend(["--model", model])
 
@@ -704,6 +717,7 @@ def agent(
                 json_mode=json_status,
                 persist=True,
                 quiet=quiet,
+                target_session_id=resume,  # resume 时直接监控指定会话
             )
             monitor.start()
         except ImportError as e:

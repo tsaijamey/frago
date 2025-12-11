@@ -162,6 +162,7 @@ class SessionMonitor:
         json_mode: bool = False,
         persist: bool = True,
         quiet: bool = False,
+        target_session_id: Optional[str] = None,
     ):
         """初始化监控器
 
@@ -172,6 +173,7 @@ class SessionMonitor:
             json_mode: 是否使用 JSON 格式输出
             persist: 是否持久化存储
             quiet: 是否静默模式（不输出状态）
+            target_session_id: 指定要监控的会话 ID（用于 resume 场景）
         """
         self.project_path = os.path.abspath(project_path)
         # 使用 UTC 时区，确保与 JSONL 中解析的时间戳类型一致
@@ -180,6 +182,7 @@ class SessionMonitor:
         self.json_mode = json_mode
         self.persist = persist
         self.quiet = quiet
+        self.target_session_id = target_session_id
 
         # 会话状态
         self._session: Optional[MonitoredSession] = None
@@ -244,6 +247,15 @@ class SessionMonitor:
         except PermissionError as e:
             logger.error(f"没有权限读取目录 {watch_dir}: {e}")
             raise
+
+        # 如果指定了 target_session_id，直接定位目标文件
+        if self.target_session_id:
+            target_file = watch_dir / f"{self.target_session_id}.jsonl"
+            if target_file.exists():
+                self._matched_file = str(target_file)
+                logger.info(f"直接监控指定会话: {self.target_session_id}")
+            else:
+                logger.warning(f"指定的会话文件不存在: {target_file}")
 
         # 创建文件监控
         handler = SessionFileHandler(
@@ -363,18 +375,23 @@ class SessionMonitor:
         Returns:
             是否成功关联
         """
-        # 检查时间窗口
-        record_time = record.timestamp
-        delta = abs((record_time - self.start_time).total_seconds())
-
-        if delta > SESSION_MATCH_WINDOW_SECONDS:
-            # 时间差过大，跳过
-            return False
-
-        # 创建会话
         session_id = record.session_id
         if not session_id:
             return False
+
+        # 如果指定了 target_session_id，只匹配该会话
+        if self.target_session_id:
+            if session_id != self.target_session_id:
+                return False
+            # 指定会话时跳过时间窗口检查
+        else:
+            # 未指定时，检查时间窗口
+            record_time = record.timestamp
+            delta = abs((record_time - self.start_time).total_seconds())
+
+            if delta > SESSION_MATCH_WINDOW_SECONDS:
+                # 时间差过大，跳过
+                return False
 
         self._session = MonitoredSession(
             session_id=session_id,

@@ -283,13 +283,13 @@ def generate_summary(
         for name, count in tool_usage.most_common(5)
     ]
 
-    # 计算持续时间
+    # 计算持续时间（确保非负，因为文件中时间戳可能不是严格顺序）
     if session.started_at and session.ended_at:
         delta = session.ended_at - session.started_at
-        total_duration_ms = int(delta.total_seconds() * 1000)
+        total_duration_ms = max(0, int(delta.total_seconds() * 1000))
     elif session.started_at and session.last_activity:
         delta = session.last_activity - session.started_at
-        total_duration_ms = int(delta.total_seconds() * 1000)
+        total_duration_ms = max(0, int(delta.total_seconds() * 1000))
     else:
         total_duration_ms = 0
 

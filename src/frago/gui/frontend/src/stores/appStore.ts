@@ -147,7 +147,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   openTaskDetail: async (sessionId) => {
     set({ isLoading: true, currentPage: 'task_detail', currentTaskId: sessionId });
     try {
-      const taskDetail = await api.getTaskDetail(sessionId);
+      // steps_limit = 0 表示获取全部步骤，便于前端筛选
+      const taskDetail = await api.getTaskDetail(sessionId, 0, 0);
       set({ taskDetail, isLoading: false });
     } catch (error) {
       console.error('Failed to load task detail:', error);

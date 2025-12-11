@@ -208,12 +208,22 @@ def sync_session(
     Returns:
         同步的 session_id，失败返回 None
     """
+    # 跳过空文件（如 Claude CLI resume 时创建的占位文件）
+    if jsonl_path.stat().st_size == 0:
+        logger.debug(f"跳过空文件: {jsonl_path}")
+        return None
+
     # 解析会话文件
     parsed = parse_session_file(jsonl_path)
 
     session_id = parsed["session_id"]
     if not session_id:
         logger.debug(f"文件缺少 session_id: {jsonl_path}")
+        return None
+
+    # 跳过没有有效记录的会话
+    if not parsed["records"]:
+        logger.debug(f"跳过无记录的会话: {jsonl_path}")
         return None
 
     # 跳过 sidechain 会话
@@ -224,10 +234,17 @@ def sync_session(
     # 检查是否已存在
     existing = read_metadata(session_id, AgentType.CLAUDE)
     if existing and not force:
-        # 检查是否需要更新（运行中的会话）
-        if existing.status != SessionStatus.RUNNING:
-            logger.debug(f"会话已存在且已完成: {session_id}")
-            return None
+        # 检查源文件是否有更新（支持继续对话场景）
+        file_mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)
+        existing_last_activity = existing.last_activity
+        if existing_last_activity.tzinfo is None:
+            existing_last_activity = existing_last_activity.replace(tzinfo=timezone.utc)
+
+        # 如果文件修改时间早于记录的最后活动时间，跳过
+        if file_mtime <= existing_last_activity:
+            if existing.status != SessionStatus.RUNNING:
+                logger.debug(f"会话已存在且无更新: {session_id}")
+                return None
 
     # 推断状态
     last_activity = parsed["last_timestamp"] or datetime.now(timezone.utc)
@@ -247,18 +264,34 @@ def sync_session(
         last_activity=last_activity,
     )
 
+    # 获取已存在的步骤数（用于增量同步）
+    existing_step_count = existing.step_count if existing else 0
+
+    # 如果强制同步，清空已有步骤文件
+    if force and existing_step_count > 0:
+        from frago.session.storage import get_session_dir
+        steps_file = get_session_dir(session_id, AgentType.CLAUDE) / "steps.jsonl"
+        if steps_file.exists():
+            steps_file.unlink()
+        existing_step_count = 0
+
     # 使用增量解析器解析步骤
     parser = IncrementalParser(str(jsonl_path))
     records = parser.parse_new_records()
 
-    # 转换为步骤
+    # 转换为步骤（跳过已同步的）
     step_id = 0
+    new_steps = 0
     for record in records:
         step_id += 1
+        # 跳过已同步的步骤
+        if step_id <= existing_step_count:
+            continue
         step, _ = record_to_step(record, step_id)
         if step:
             step.session_id = session_id
             append_step(step, AgentType.CLAUDE)
+            new_steps += 1
 
     session.step_count = step_id
 
@@ -303,16 +336,11 @@ def sync_project_sessions(
             continue
 
         try:
-            # 检查是否已同步
+            # 检查是否已同步（仅用于统计，实际判断由 sync_session 负责）
             session_id = jsonl_file.stem
             existing = read_metadata(session_id, AgentType.CLAUDE)
 
-            if existing and not force:
-                if existing.status != SessionStatus.RUNNING:
-                    result.skipped += 1
-                    continue
-
-            # 同步会话
+            # 同步会话（sync_session 内部会检查文件修改时间决定是否需要更新）
             synced_id = sync_session(jsonl_file, project_path, force)
             if synced_id:
                 if existing:
