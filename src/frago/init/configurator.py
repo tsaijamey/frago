@@ -58,6 +58,15 @@ PRESET_ENDPOINTS = {
 
 # Claude Code 配置文件路径
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+CLAUDE_JSON_PATH = Path.home() / ".claude.json"
+
+# ~/.claude.json 最小化配置（用于跳过官方登录流程）
+# 参考: https://github.com/anthropics/claude-code/issues/441
+CLAUDE_JSON_MINIMAL = {
+    "hasCompletedOnboarding": True,
+    "lastOnboardingVersion": "1.0.0",
+    "isQualifiedForDataSharing": False,
+}
 
 
 # =============================================================================
@@ -213,6 +222,75 @@ def save_claude_settings(settings: dict) -> None:
     # 写入文件
     with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)
+
+
+def check_claude_json_exists() -> bool:
+    """
+    检查 ~/.claude.json 是否存在
+
+    Returns:
+        True 如果文件存在
+    """
+    return CLAUDE_JSON_PATH.exists()
+
+
+def load_claude_json() -> dict:
+    """
+    加载 ~/.claude.json
+
+    Returns:
+        配置字典，如果文件不存在则返回空字典
+    """
+    if not CLAUDE_JSON_PATH.exists():
+        return {}
+
+    try:
+        with open(CLAUDE_JSON_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def ensure_claude_json_for_custom_auth() -> bool:
+    """
+    确保 ~/.claude.json 存在并包含跳过官方登录所需的最小字段
+
+    当用户选择 custom API 端点时调用此函数。
+    如果文件不存在，创建最小化配置；
+    如果文件存在但缺少关键字段，补充缺失字段。
+
+    Returns:
+        True 如果创建或修改了文件，False 如果文件已存在且完整
+    """
+    import click
+
+    file_existed = check_claude_json_exists()
+    existing = load_claude_json()
+    modified = False
+
+    # 检查并补充缺失的关键字段
+    for key, value in CLAUDE_JSON_MINIMAL.items():
+        if key not in existing:
+            existing[key] = value
+            modified = True
+
+    if modified:
+        # 写入文件
+        try:
+            with open(CLAUDE_JSON_PATH, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
+
+            if not file_existed:
+                click.echo("   ✓ 创建 ~/.claude.json（跳过官方登录）")
+            else:
+                click.echo("   ✓ 更新 ~/.claude.json（补充缺失字段）")
+
+            return True
+        except IOError as e:
+            click.secho(f"   ⚠ 无法写入 ~/.claude.json: {e}", fg="yellow")
+            return False
+
+    return False
 
 
 def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = None, custom_model: str = None) -> dict:
@@ -423,10 +501,13 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
     # 构建 env 配置
     env_config = build_claude_env_config(endpoint_type, api_key, custom_url, custom_model)
 
+    # 确保 ~/.claude.json 存在（跳过官方登录流程）
+    ensure_claude_json_for_custom_auth()
+
     # 写入 Claude Code settings.json
     try:
         save_claude_settings({"env": env_config})
-        click.echo(f"\n✅ 已写入 {CLAUDE_SETTINGS_PATH}")
+        click.echo(f"   ✓ 已写入 {CLAUDE_SETTINGS_PATH}")
 
         # 显示配置摘要（隐藏 API Key）
         click.echo("\n   配置内容:")
