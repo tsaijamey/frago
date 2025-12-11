@@ -837,7 +837,7 @@ class FragoGuiApi:
     def get_task_detail(
         self,
         session_id: str,
-        steps_limit: int = 50,
+        steps_limit: int = 0,
         steps_offset: int = 0,
     ) -> Dict[str, Any]:
         """获取任务详情
@@ -863,8 +863,8 @@ class FragoGuiApi:
         if not session_id:
             return {"error": "会话 ID 不能为空"}
 
-        # steps_limit = 0 表示获取全部
-        if steps_limit == 0:
+        # steps_limit = 0 或 None 表示获取全部
+        if not steps_limit:
             steps_limit = 10000  # 设置一个足够大的值
         else:
             steps_limit = max(1, min(10000, steps_limit))
