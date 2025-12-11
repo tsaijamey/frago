@@ -30,62 +30,199 @@ class DistroInfo:
 
 
 # 发行版包映射
+# 包含 WebKit 运行时依赖 + PyGObject/pycairo 编译所需的开发库
+#
+# 注意：PyGObject 3.51.0+ 需要 girepository-2.0
+# - Ubuntu 24.04+: libgirepository-2.0-dev
+# - Ubuntu 22.04 及更早: libgirepository1.0-dev
+# - Debian 12 (bookworm): libgirepository1.0-dev
+# - Debian 13 (trixie)+: libgirepository-2.0-dev
 DISTRO_PACKAGES = {
     # Ubuntu/Debian 系
+    # 注意：Ubuntu 24.04+ 需要 libgirepository-2.0-dev
+    # 通过 _get_girepository_package() 动态选择正确的包
     "ubuntu": {
         "pkg_manager": "apt",
-        "packages": ["python3-gi", "python3-gi-cairo", "gir1.2-webkit2-4.1"],
+        "packages": [
+            # WebKit 运行时
+            "gir1.2-webkit2-4.1",
+            # PyGObject/pycairo 编译依赖
+            "libcairo2-dev",
+            # libgirepository 包通过 _get_girepository_package() 动态添加
+            "pkg-config",
+            "python3-dev",
+        ],
         "install_prefix": "apt install -y",
     },
     "debian": {
         "pkg_manager": "apt",
-        "packages": ["python3-gi", "python3-gi-cairo", "gir1.2-webkit2-4.1"],
+        "packages": [
+            "gir1.2-webkit2-4.1",
+            "libcairo2-dev",
+            # libgirepository 包通过 _get_girepository_package() 动态添加
+            "pkg-config",
+            "python3-dev",
+        ],
         "install_prefix": "apt install -y",
     },
     # Fedora/RHEL 系
     "fedora": {
         "pkg_manager": "dnf",
-        "packages": ["python3-gobject", "python3-gobject-base", "webkit2gtk4.1"],
+        "packages": [
+            "webkit2gtk4.1",
+            "cairo-devel",
+            "gobject-introspection-devel",
+            "pkg-config",
+            "python3-devel",
+        ],
         "install_prefix": "dnf install -y",
     },
     "rhel": {
         "pkg_manager": "dnf",
-        "packages": ["python3-gobject", "python3-gobject-base", "webkit2gtk4.1"],
+        "packages": [
+            "webkit2gtk4.1",
+            "cairo-devel",
+            "gobject-introspection-devel",
+            "pkg-config",
+            "python3-devel",
+        ],
         "install_prefix": "dnf install -y",
     },
     "centos": {
         "pkg_manager": "dnf",
-        "packages": ["python3-gobject", "python3-gobject-base", "webkit2gtk4.1"],
+        "packages": [
+            "webkit2gtk4.1",
+            "cairo-devel",
+            "gobject-introspection-devel",
+            "pkg-config",
+            "python3-devel",
+        ],
         "install_prefix": "dnf install -y",
     },
     # Arch 系
     "arch": {
         "pkg_manager": "pacman",
-        "packages": ["python-gobject", "webkit2gtk-4.1"],
+        "packages": [
+            "webkit2gtk-4.1",
+            "cairo",
+            "gobject-introspection",
+            "pkg-config",
+            "python",
+        ],
         "install_prefix": "pacman -S --noconfirm",
     },
     "manjaro": {
         "pkg_manager": "pacman",
-        "packages": ["python-gobject", "webkit2gtk-4.1"],
+        "packages": [
+            "webkit2gtk-4.1",
+            "cairo",
+            "gobject-introspection",
+            "pkg-config",
+            "python",
+        ],
         "install_prefix": "pacman -S --noconfirm",
     },
     # openSUSE
     "opensuse": {
         "pkg_manager": "zypper",
-        "packages": ["python3-gobject", "webkit2gtk3"],
+        "packages": [
+            "webkit2gtk3",
+            "cairo-devel",
+            "gobject-introspection-devel",
+            "pkg-config",
+            "python3-devel",
+        ],
         "install_prefix": "zypper install -y",
     },
     "opensuse-leap": {
         "pkg_manager": "zypper",
-        "packages": ["python3-gobject", "webkit2gtk3"],
+        "packages": [
+            "webkit2gtk3",
+            "cairo-devel",
+            "gobject-introspection-devel",
+            "pkg-config",
+            "python3-devel",
+        ],
         "install_prefix": "zypper install -y",
     },
     "opensuse-tumbleweed": {
         "pkg_manager": "zypper",
-        "packages": ["python3-gobject", "webkit2gtk3"],
+        "packages": [
+            "webkit2gtk3",
+            "cairo-devel",
+            "gobject-introspection-devel",
+            "pkg-config",
+            "python3-devel",
+        ],
         "install_prefix": "zypper install -y",
     },
 }
+
+
+def _get_girepository_package(distro_id: str, version_id: str, id_like: list[str] = None) -> str:
+    """根据发行版和版本返回正确的 girepository 开发包名.
+
+    PyGObject 3.51.0+ 需要 girepository-2.0。
+    通过 pkg-config 检测系统实际可用的版本来决定。
+
+    Args:
+        distro_id: 发行版 ID（如 'ubuntu', 'debian', 'linuxmint'）
+        version_id: 版本号（如 '24.04', '12', '22.2'）
+        id_like: 父发行版列表（如 ['ubuntu', 'debian']）
+
+    Returns:
+        正确的包名。
+    """
+    # 最可靠的方法：检查 apt 仓库中哪个包可用
+    if shutil.which("apt-cache"):
+        # 优先检查 2.0 版本是否可用
+        try:
+            result = subprocess.run(
+                ["apt-cache", "show", "libgirepository-2.0-dev"],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return "libgirepository-2.0-dev"
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        # 回退到 1.0 版本
+        try:
+            result = subprocess.run(
+                ["apt-cache", "show", "libgirepository1.0-dev"],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return "libgirepository1.0-dev"
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    # 如果 apt-cache 不可用，使用默认值
+    return "libgirepository1.0-dev"
+
+
+def _check_apt_package_available(pkg: str) -> bool:
+    """检查 apt 包是否在仓库中可用.
+
+    Args:
+        pkg: 包名。
+
+    Returns:
+        True 如果包可用。
+    """
+    if not shutil.which("apt-cache"):
+        return False
+    try:
+        result = subprocess.run(
+            ["apt-cache", "show", pkg],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
 
 
 def detect_distro() -> Optional[DistroInfo]:
@@ -137,7 +274,13 @@ def detect_distro() -> Optional[DistroInfo]:
                 break
 
     if config:
-        packages = config["packages"]
+        packages = list(config["packages"])  # 复制列表，避免修改原始配置
+
+        # 对于 apt 系发行版，动态添加正确的 girepository 包
+        if config["pkg_manager"] == "apt":
+            gi_pkg = _get_girepository_package(distro_id, version_id, id_like)
+            packages.append(gi_pkg)
+
         install_cmd = f"{config['install_prefix']} {' '.join(packages)}"
         return DistroInfo(
             id=distro_id,
@@ -161,72 +304,159 @@ def detect_distro() -> Optional[DistroInfo]:
     )
 
 
+def _check_pkg_installed_dpkg(pkg: str) -> bool:
+    """使用 dpkg 检测包是否已安装 (Debian/Ubuntu)."""
+    if not shutil.which("dpkg"):
+        return False
+    try:
+        # 使用 dpkg-query 进行精确匹配，避免 dpkg -l 的模糊匹配问题
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Status}", pkg],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        # 只有状态为 "install ok installed" 才算已安装
+        installed = result.returncode == 0 and "install ok installed" in result.stdout
+        logger.debug(f"dpkg check {pkg}: returncode={result.returncode}, status='{result.stdout.strip()}', installed={installed}")
+        return installed
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _check_pkg_installed_rpm(pkg: str) -> bool:
+    """使用 rpm 检测包是否已安装 (Fedora/RHEL)."""
+    if not shutil.which("rpm"):
+        return False
+    try:
+        result = subprocess.run(
+            ["rpm", "-q", pkg],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _check_pkg_installed_pacman(pkg: str) -> bool:
+    """使用 pacman 检测包是否已安装 (Arch/Manjaro)."""
+    if not shutil.which("pacman"):
+        return False
+    try:
+        result = subprocess.run(
+            ["pacman", "-Q", pkg],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _check_pkg_config(lib: str) -> bool:
+    """使用 pkg-config 检测库是否可用."""
+    if not shutil.which("pkg-config"):
+        return False
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--exists", lib],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def check_all_system_deps(distro: Optional[DistroInfo]) -> tuple[bool, list[str]]:
+    """检查所有必需的系统依赖.
+
+    Args:
+        distro: 发行版信息（包含已动态处理的包列表）。
+
+    Returns:
+        (全部满足, 缺失的包列表) 元组。
+    """
+    if not distro or not distro.supported:
+        return False, []
+
+    missing = []
+    pkg_manager = None
+
+    # 获取包管理器配置
+    for distro_id in [distro.id] + distro.id_like:
+        if distro_id in DISTRO_PACKAGES:
+            pkg_manager = DISTRO_PACKAGES[distro_id]["pkg_manager"]
+            break
+
+    if not pkg_manager:
+        return False, []
+
+    # 使用 distro.packages（已包含动态添加的 girepository 包）
+    packages = distro.packages
+    logger.debug(f"Checking packages for {distro.id} {distro.version_id}: {packages}")
+
+    # 根据包管理器检测每个包
+    for pkg in packages:
+        installed = False
+
+        if pkg_manager == "apt":
+            installed = _check_pkg_installed_dpkg(pkg)
+        elif pkg_manager in ("dnf", "zypper"):
+            installed = _check_pkg_installed_rpm(pkg)
+        elif pkg_manager == "pacman":
+            installed = _check_pkg_installed_pacman(pkg)
+
+        if not installed:
+            missing.append(pkg)
+            logger.debug(f"Package {pkg} is missing")
+
+    logger.debug(f"Missing packages: {missing}")
+    return len(missing) == 0, missing
+
+
 def check_webkit_available() -> bool:
     """检查 WebKit2GTK 系统包是否已安装.
 
-    使用 pkg-config 或 dpkg 检测系统包，而不是 import gi，
-    因为 uv tool 的虚拟环境无法访问系统 Python 包。
+    使用 pkg-config 检测，这是最可靠的跨发行版方法。
 
     Returns:
         True 如果 WebKit2GTK 系统包已安装。
     """
-    # 方法1: 使用 pkg-config 检测 WebKit2GTK
-    if shutil.which("pkg-config"):
-        for pkg in ["webkit2gtk-4.1", "webkit2gtk-4.0", "webkit2gtk-3.0"]:
-            try:
-                result = subprocess.run(
-                    ["pkg-config", "--exists", pkg],
-                    capture_output=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    return True
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
+    for lib in ["webkit2gtk-4.1", "webkit2gtk-4.0", "webkit2gtk-3.0"]:
+        if _check_pkg_config(lib):
+            return True
+    return False
 
-    # 方法2: 使用 dpkg 检测 (Debian/Ubuntu)
-    if shutil.which("dpkg"):
-        try:
-            result = subprocess.run(
-                ["dpkg", "-l", "gir1.2-webkit2-4.1"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            # dpkg -l 输出中 "ii" 表示已安装
-            if result.returncode == 0 and "ii" in result.stdout:
-                return True
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
 
-    # 方法3: 使用 rpm 检测 (Fedora/RHEL/CentOS/Rocky/AlmaLinux/openSUSE)
-    if shutil.which("rpm"):
-        for pkg in ["webkit2gtk4.1", "webkit2gtk3", "webkitgtk4"]:
-            try:
-                result = subprocess.run(
-                    ["rpm", "-q", pkg],
-                    capture_output=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    return True
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
+def check_cairo_dev_available() -> bool:
+    """检查 cairo 开发库是否已安装.
 
-    # 方法4: 使用 pacman 检测 (Arch/Manjaro/EndeavourOS)
-    if shutil.which("pacman"):
-        for pkg in ["webkit2gtk-4.1", "webkit2gtk"]:
-            try:
-                result = subprocess.run(
-                    ["pacman", "-Q", pkg],
-                    capture_output=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    return True
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
+    PyGObject/pycairo 编译需要此库。
 
+    Returns:
+        True 如果 cairo 开发库已安装。
+    """
+    return _check_pkg_config("cairo")
+
+
+def check_girepository_dev_available() -> bool:
+    """检查 girepository 开发库是否已安装.
+
+    PyGObject 编译需要此库。
+    - PyGObject 3.51.0+ 需要 girepository-2.0
+    - 旧版本需要 gobject-introspection-1.0
+
+    Returns:
+        True 如果 girepository 开发库已安装。
+    """
+    # 优先检查 2.0 版本（新版 PyGObject 需要）
+    if _check_pkg_config("girepository-2.0"):
+        return True
+    # 回退检查 1.0 版本
+    if _check_pkg_config("gobject-introspection-1.0"):
+        return True
     return False
 
 
@@ -326,18 +556,18 @@ def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
     if not has_sudo():
         return False, "sudo 不可用，无法获取管理员权限"
 
-    # 构建安装命令
-    pkg_config = None
+    # 获取包管理器类型
+    pkg_manager = None
     for distro_id in [distro.id] + distro.id_like:
         if distro_id in DISTRO_PACKAGES:
-            pkg_config = DISTRO_PACKAGES[distro_id]
+            pkg_manager = DISTRO_PACKAGES[distro_id]["pkg_manager"]
             break
 
-    if not pkg_config:
+    if not pkg_manager:
         return False, f"未找到 {distro.id} 的包配置"
 
-    pkg_manager = pkg_config["pkg_manager"]
-    packages = pkg_config["packages"]
+    # 使用 distro.packages（已包含动态添加的 girepository 包）
+    packages = distro.packages
 
     # 构建完整命令（使用 sudo，终端交互式输入密码）
     if pkg_manager == "apt":
@@ -458,10 +688,11 @@ def ensure_gui_deps() -> tuple[bool, str]:
     """确保 GUI 依赖可用.
 
     检查流程：
-    1. 检查系统 WebKit 包是否已安装
-    2. 如果没装，提示用户安装系统包
-    3. 如果系统包已装，检查 gi 能否导入
-    4. 如果 gi 不能导入，自动用 pip 装 PyGObject
+    1. 检测发行版
+    2. 检查所有必需的系统依赖（WebKit + cairo-dev + gi-dev 等）
+    3. 如果有缺失，一次性提示用户安装所有系统包
+    4. 全部系统包安装完成后，检查 gi 能否导入
+    5. 如果 gi 不能导入，尝试 pip 安装 PyGObject
 
     Returns:
         (可以启动 GUI, 消息) 元组。
@@ -470,24 +701,33 @@ def ensure_gui_deps() -> tuple[bool, str]:
     if platform.system() != "Linux":
         return True, ""
 
-    # 步骤1: 检查系统 WebKit 包
-    webkit_installed = check_webkit_available()
+    # 步骤1: 检测发行版
+    distro = detect_distro()
 
-    if not webkit_installed:
-        # 系统包未安装，需要用 sudo 安装
-        distro = detect_distro()
+    if not distro or not distro.supported:
+        guide = get_manual_install_guide(distro)
+        print(guide)
+        return False, "不支持的发行版"
 
-        if not distro or not distro.supported:
-            guide = get_manual_install_guide(distro)
-            print(guide)
-            return False, "不支持的发行版"
+    # 步骤2: 检查所有系统依赖
+    print(f"检测发行版: {distro.name} ({distro.id} {distro.version_id})")
+    print(f"需要检查的包: {', '.join(distro.packages)}")
+    print()
+
+    all_installed, missing_pkgs = check_all_system_deps(distro)
+
+    if not all_installed:
+        print("\n检测到缺少以下系统依赖:")
+        for pkg in missing_pkgs:
+            print(f"  - {pkg}")
+        print()
 
         if not has_sudo():
-            guide = get_manual_install_guide(distro)
-            print(guide)
+            print("sudo 不可用，请手动安装:")
+            print(f"\n    sudo {distro.install_cmd}\n")
             return False, "sudo 不可用，请手动安装依赖"
 
-        # 提示用户安装系统包
+        # 提示用户安装
         if prompt_auto_install():
             success, msg = auto_install_deps(distro)
             if not success:
@@ -496,17 +736,32 @@ def ensure_gui_deps() -> tuple[bool, str]:
                 print(guide)
                 return False, msg
             print(f"\n{msg}")
-            # 系统包安装成功，继续检查 gi
         else:
             guide = get_manual_install_guide(distro)
             print(guide)
             return False, "用户取消安装"
 
-    # 步骤2: 检查 gi 能否导入
+    # 步骤3: 检查 gi 能否导入
     if check_gi_importable():
         return True, ""
 
-    # 步骤3: 系统包已装但 gi 不能导入，用 pip 装 PyGObject
+    # 步骤4: 系统包已装但 gi 不能导入，尝试 pip 安装 PyGObject
+    # 先确认编译依赖已就绪
+    if not check_cairo_dev_available():
+        print("\n错误: cairo 开发库未正确安装，无法编译 PyGObject")
+        print("请确保已安装所有系统依赖后重试")
+        return False, "cairo 开发库缺失"
+
+    if not check_girepository_dev_available():
+        print("\n错误: girepository 开发库未正确安装，无法编译 PyGObject")
+        print()
+        print("请安装 girepository 开发库:")
+        print("  Ubuntu 24.04+:  sudo apt install libgirepository-2.0-dev")
+        print("  Ubuntu 22.04:   sudo apt install libgirepository1.0-dev")
+        print("  Fedora/RHEL:    sudo dnf install gobject-introspection-devel")
+        print()
+        return False, "girepository 开发库缺失"
+
     success, msg = install_pygobject_to_venv()
     if success:
         print(f"\n{msg}")
