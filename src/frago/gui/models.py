@@ -392,14 +392,18 @@ class TaskItem(BaseModel):
         from frago.session.storage import get_session_dir
 
         # 计算持续时间
+        # 确保时区一致性
+        started = session.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+
         if session.ended_at:
-            duration = session.ended_at - session.started_at
+            ended = session.ended_at
+            if ended.tzinfo is None:
+                ended = ended.replace(tzinfo=timezone.utc)
+            duration = ended - started
         else:
             now = datetime.now(timezone.utc)
-            # 确保 started_at 有时区信息
-            started = session.started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
             duration = now - started
 
         # 从 steps.jsonl 提取第一条 user_message 作为任务名称
@@ -431,6 +435,11 @@ class TaskItem(BaseModel):
     def _extract_task_name(session_id: str, max_length: int = 100) -> str:
         """从 steps.jsonl 提取任务名称
 
+        核心策略：找到第一条有效的 assistant_message，然后找时间戳最接近
+        且早于它的 user_message，从该消息提取标题。
+
+        这样可以跳过预热消息（如 "Warmup"），找到真正触发 assistant 回复的用户消息。
+
         提取优先级：
         1. frago_task: 从 "## 当前任务" 提取实际任务
         2. command-args: 从 <command-args> 提取用户输入
@@ -446,10 +455,56 @@ class TaskItem(BaseModel):
         """
         import json
         import re
+        from datetime import datetime
         from frago.session.storage import get_session_dir
         from frago.session.models import AgentType
 
         default_name = f"Task {session_id[:8]}..."
+
+        def parse_timestamp(ts: str) -> datetime:
+            """解析时间戳，处理多种格式"""
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+        def extract_title_from_content(content: str) -> str | None:
+            """从消息内容提取标题"""
+            # 1. frago_task: 检查是否为 /frago.* 系统 prompt
+            if content.startswith("# /frago"):
+                task_match = re.search(r"## 当前任务\s*\n+(.+?)(?:\n\n|$)", content, re.DOTALL)
+                if task_match:
+                    task = task_match.group(1).strip()
+                    if task:
+                        return task[:max_length] + "..." if len(task) > max_length else task
+                return None  # frago prompt 但没找到当前任务，返回 None 继续查找
+
+            # 2. 尝试从 <command-args> 提取用户实际输入
+            args_match = re.search(r"<command-args>(.*?)(?:</command-args>|$)", content, re.DOTALL)
+            if args_match:
+                user_input = args_match.group(1).strip()
+                user_input = re.sub(r"\.\.\.$", "", user_input).strip()
+                if user_input:
+                    return user_input[:max_length] + "..." if len(user_input) > max_length else user_input
+                return None
+
+            # 3. 提取 command-message 中的命令名
+            cmd_match = re.search(r"<command-message>(\S+)\s+is running", content)
+            if cmd_match:
+                cmd_name = cmd_match.group(1)
+                return f"/{cmd_name}"
+
+            # 4. 移除系统消息标签，提取真实内容
+            cleaned = re.sub(r"<command-message>.*?</command-message>", "", content, flags=re.DOTALL)
+            cleaned = re.sub(r"<command-name>.*?</command-name>", "", cleaned, flags=re.DOTALL)
+            cleaned = cleaned.strip()
+
+            if cleaned:
+                first_line = cleaned.split("\n")[0].strip()
+                # 跳过以 # 开头的标题行（通常是系统 prompt）
+                if first_line.startswith("#"):
+                    return None
+                if first_line:
+                    return first_line[:max_length] + "..." if len(first_line) > max_length else first_line
+
+            return None
 
         try:
             session_dir = get_session_dir(session_id, AgentType.CLAUDE)
@@ -458,85 +513,64 @@ class TaskItem(BaseModel):
             if not steps_path.exists():
                 return default_name
 
-            first_assistant_content = None
-
+            # 读取所有步骤
+            steps = []
             with open(steps_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    if not line.strip():
+                    if line.strip():
+                        steps.append(json.loads(line))
+
+            if not steps:
+                return default_name
+
+            # 空回复的各种表达形式
+            empty_replies = {"(空回复)", "(empty)", "(Empty reply)", ""}
+
+            # 1. 找第一条非空的 assistant_message
+            first_valid_assistant = None
+            for step in steps:
+                if step.get("type") == "assistant_message":
+                    content = step.get("content_summary", "") or step.get("content", "")
+                    if content and content.strip() not in empty_replies:
+                        first_valid_assistant = step
+                        break
+
+            if first_valid_assistant is None:
+                return default_name
+
+            assistant_ts = parse_timestamp(first_valid_assistant["timestamp"])
+
+            # 2. 找时间戳早于 assistant 且最接近的 user_message
+            candidates = []
+            for step in steps:
+                if step.get("type") == "user_message":
+                    content = step.get("content_summary", "") or step.get("content", "")
+                    # 跳过系统消息
+                    if not content:
                         continue
-                    step = json.loads(line)
-                    step_type = step.get("type")
-
-                    # 保存第一条 assistant_message 作为备用
-                    if step_type == "assistant_message" and first_assistant_content is None:
-                        first_assistant_content = step.get("content_summary", "") or step.get("content", "")
-
-                    # 优先使用 user_message
-                    if step_type == "user_message":
-                        content = step.get("content_summary", "") or step.get("content", "")
-                        if not content:
-                            continue
-
-                        # 跳过系统警告消息
-                        if content.startswith("Caveat:") or content.startswith("<local-command"):
-                            continue
-
-                        # 跳过空的 command-args（如 /clear 命令）
-                        if "<command-args></command-args>" in content:
-                            continue
-
-                        # 1. frago_task: 检查是否为 /frago.* 系统 prompt
-                        if content.startswith("# /frago"):
-                            # 提取 "## 当前任务" 后的内容
-                            task_match = re.search(r"## 当前任务\s*\n+(.+?)(?:\n\n|$)", content, re.DOTALL)
-                            if task_match:
-                                task = task_match.group(1).strip()
-                                if task:
-                                    if len(task) > max_length:
-                                        return task[:max_length] + "..."
-                                    return task
-                            # 没找到当前任务，继续查找
-                            continue
-
-                        # 2. 尝试从 <command-args> 提取用户实际输入
-                        args_match = re.search(r"<command-args>(.*?)(?:</command-args>|$)", content, re.DOTALL)
-                        if args_match:
-                            user_input = args_match.group(1).strip()
-                            user_input = re.sub(r"\.\.\.$", "", user_input).strip()
-                            if user_input:
-                                if len(user_input) > max_length:
-                                    return user_input[:max_length] + "..."
-                                return user_input
-                            continue
-
-                        # 3. 提取 command-message 中的命令名
-                        cmd_match = re.search(r"<command-message>(\S+)\s+is running", content)
-                        if cmd_match:
-                            cmd_name = cmd_match.group(1)
-                            return f"/{cmd_name}"
-
-                        # 4. 移除系统消息标签，提取真实内容
-                        cleaned = re.sub(r"<command-message>.*?</command-message>", "", content, flags=re.DOTALL)
-                        cleaned = re.sub(r"<command-name>.*?</command-name>", "", cleaned, flags=re.DOTALL)
-                        cleaned = cleaned.strip()
-
-                        if cleaned:
-                            first_line = cleaned.split("\n")[0].strip()
-                            # 跳过以 # 开头的标题行（通常是系统 prompt）
-                            if first_line.startswith("#"):
-                                continue
-                            if len(first_line) > max_length:
-                                return first_line[:max_length] + "..."
-                            return first_line if first_line else default_name
+                    if content.startswith("Caveat:") or content.startswith("<local-command"):
+                        continue
+                    if "<command-args></command-args>" in content:
                         continue
 
-            # 如果没有 user_message，尝试使用第一条 assistant_message
-            if first_assistant_content:
-                first_line = first_assistant_content.split(".")[0].strip()
-                if first_line:
-                    if len(first_line) > max_length:
-                        return first_line[:max_length] + "..."
-                    return first_line
+                    try:
+                        step_ts = parse_timestamp(step["timestamp"])
+                        if step_ts < assistant_ts:
+                            candidates.append((step_ts, content))
+                    except (KeyError, ValueError):
+                        continue
+
+            if not candidates:
+                return default_name
+
+            # 按时间戳排序，取最接近 assistant 的（即最晚的）
+            candidates.sort(key=lambda x: x[0], reverse=True)
+
+            # 依次尝试提取标题
+            for _, content in candidates:
+                title = extract_title_from_content(content)
+                if title:
+                    return title
 
             return default_name
         except Exception:
@@ -656,13 +690,18 @@ class TaskDetail(BaseModel):
         actual_total = total_steps if total_steps is not None else session.step_count
 
         # 计算持续时间
+        # 确保时区一致性
+        started = session.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+
         if session.ended_at:
-            duration = session.ended_at - session.started_at
+            ended = session.ended_at
+            if ended.tzinfo is None:
+                ended = ended.replace(tzinfo=timezone.utc)
+            duration = ended - started
         else:
             now = datetime.now(timezone.utc)
-            started = session.started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
             duration = now - started
 
         # 映射状态

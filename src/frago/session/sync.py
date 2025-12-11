@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # 无活动超时（用于判断会话是否已结束）
-INACTIVITY_TIMEOUT_MINUTES = 5
+INACTIVITY_TIMEOUT_MINUTES = 1
 
 
 @dataclass
