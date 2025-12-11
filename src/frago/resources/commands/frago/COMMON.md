@@ -19,7 +19,7 @@ uv tool install frago-cli
 | 命令 | 用途 | 文档 |
 |------|------|------|
 | `/frago.run` | 探索调研（Recipe 创建前） | [frago.dev.run.md](../frago.dev.run.md) |
-| `/frago.exec` | 一次性任务执行 | [frago.dev.exec.md](../frago.dev.exec.md) |
+| `/frago.do` | 一次性任务执行 | [frago.dev.do.md](../frago.dev.do.md) |
 | `/frago.recipe` | 配方创建/更新 | [frago.dev.recipe.md](../frago.dev.recipe.md) |
 | `/frago.test` | 配方测试验证 | [frago.dev.test.md](../frago.dev.test.md) |
 
@@ -31,11 +31,11 @@ uv tool install frago-cli
 
 | 文档 | 适用命令 | 说明 |
 |------|---------|------|
-| [EXECUTION_PRINCIPLES.md](rules/EXECUTION_PRINCIPLES.md) | run, exec | 执行原则（意图理解、工具驱动、试错记录） |
+| [EXECUTION_PRINCIPLES.md](rules/EXECUTION_PRINCIPLES.md) | run, do | 执行原则（意图理解、工具驱动、试错记录） |
 | [SCREENSHOT_RULES.md](rules/SCREENSHOT_RULES.md) | 全部 | 截图使用规范（少用截图，多用 get-content） |
-| [NAVIGATION_RULES.md](rules/NAVIGATION_RULES.md) | run, exec | 禁止幻觉导航（严禁猜测 URL） |
-| [TOOL_PRIORITY.md](rules/TOOL_PRIORITY.md) | run, exec | 工具优先级（Recipe > frago > 系统命令） |
-| [WORKSPACE_RULES.md](rules/WORKSPACE_RULES.md) | run, exec | 工作空间管理（隔离、互斥、禁止 cd） |
+| [NAVIGATION_RULES.md](rules/NAVIGATION_RULES.md) | run, do | 禁止幻觉导航（严禁猜测 URL） |
+| [TOOL_PRIORITY.md](rules/TOOL_PRIORITY.md) | run, do | 工具优先级（Recipe > frago > 系统命令） |
+| [WORKSPACE_RULES.md](rules/WORKSPACE_RULES.md) | run, do | 工作空间管理（隔离、互斥、禁止 cd） |
 
 ---
 
@@ -45,7 +45,7 @@ uv tool install frago-cli
 
 | 文档 | 适用命令 | 说明 |
 |------|---------|------|
-| [LOGGING_GUIDE.md](guides/LOGGING_GUIDE.md) | run, exec | 日志系统（自动/手动、6种 execution_method） |
+| [LOGGING_GUIDE.md](guides/LOGGING_GUIDE.md) | run, do | 日志系统（自动/手动、6种 execution_method） |
 | [SELECTOR_PRIORITY.md](guides/SELECTOR_PRIORITY.md) | recipe | 选择器优先级（ARIA > ID > class） |
 
 ---
@@ -58,7 +58,7 @@ uv tool install frago-cli
 |------|---------|------|
 | [common_commands.sh](scripts/common_commands.sh) | 全部 | 通用命令速查 |
 | [run_workflow.sh](scripts/run_workflow.sh) | run | 调研工作流示例 |
-| [exec_workflow.sh](scripts/exec_workflow.sh) | exec | 任务执行工作流示例 |
+| [do_workflow.sh](scripts/do_workflow.sh) | do | 任务执行工作流示例 |
 | [recipe_workflow.sh](scripts/recipe_workflow.sh) | recipe | 配方创建工作流示例 |
 
 ---
@@ -76,11 +76,12 @@ frago --help                   # 所有命令
 ### 2. 浏览器操作
 
 ```bash
-frago navigate <url>           # 导航
-frago click <selector>         # 点击
-frago exec-js <expr> --return-value  # 执行 JS
-frago get-content              # 获取内容
-frago screenshot output.png    # 截图
+frago chrome start             # 启动 Chrome
+frago chrome navigate <url>    # 导航
+frago chrome click <selector>  # 点击
+frago chrome exec-js <expr> --return-value  # 执行 JS
+frago chrome get-content       # 获取内容
+frago chrome screenshot output.png  # 截图
 ```
 
 ### 3. 项目管理
@@ -105,7 +106,7 @@ frago recipe run <name> --params '{}' --output-file result.json
 ```
 .claude/commands/
 ├── frago.dev.run.md       # 探索调研命令
-├── frago.dev.exec.md      # 任务执行命令
+├── frago.dev.do.md        # 任务执行命令
 ├── frago.dev.recipe.md    # 配方创建命令
 ├── frago.dev.test.md      # 配方测试命令
 └── frago/
@@ -122,6 +123,6 @@ frago recipe run <name> --params '{}' --output-file result.json
     └── scripts/           # 脚本示例
         ├── common_commands.sh
         ├── run_workflow.sh
-        ├── exec_workflow.sh
+        ├── do_workflow.sh
         └── recipe_workflow.sh
 ```

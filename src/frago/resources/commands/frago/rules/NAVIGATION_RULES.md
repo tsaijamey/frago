@@ -1,6 +1,6 @@
 # 禁止幻觉导航
 
-适用于：`/frago.run`、`/frago.exec`
+适用于：`/frago.run`、`/frago.do`
 
 ## 核心规则
 
@@ -12,26 +12,26 @@ Claude 容易凭空构造看似合理但不存在的链接。
 
 ```bash
 # ❌ 禁止：你怎么知道有 v2？
-frago navigate "https://example.com/api/v2/docs"
+frago chrome navigate "https://example.com/api/v2/docs"
 
 # ❌ 禁止：验证过参数吗？
-frago navigate "https://upwork.com/search?q=python&sort=relevance"
+frago chrome navigate "https://upwork.com/search?q=python&sort=relevance"
 
 # ❌ 禁止：凭空构造的用户页面
-frago navigate "https://twitter.com/elonmusk/status/123456789"
+frago chrome navigate "https://twitter.com/elonmusk/status/123456789"
 ```
 
 ## 正确做法：剥洋葱式层层深入
 
 ```bash
 # ✅ 第一步：导航到已知首页
-frago navigate "https://example.com"
+frago chrome navigate "https://example.com"
 
 # ✅ 第二步：从页面获取真实链接
-frago exec-js "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).filter(a => a.text)" --return-value
+frago chrome exec-js "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).filter(a => a.text)" --return-value
 
 # ✅ 第三步：使用从上一步获取的真实 URL
-frago navigate "<从上一步获取的真实 URL>"
+frago chrome navigate "<从上一步获取的真实 URL>"
 ```
 
 ## 允许直接导航的 URL 来源
@@ -48,8 +48,8 @@ frago navigate "<从上一步获取的真实 URL>"
 
 ```bash
 # ✅ 使用 Google 搜索
-frago navigate "https://google.com/search?q=site:example.com+api+documentation"
+frago chrome navigate "https://google.com/search?q=site:example.com+api+documentation"
 
 # 然后从搜索结果中提取链接
-frago exec-js "Array.from(document.querySelectorAll('a[href]')).filter(a => a.href.includes('example.com')).map(a => a.href)" --return-value
+frago chrome exec-js "Array.from(document.querySelectorAll('a[href]')).filter(a => a.href.includes('example.com')).map(a => a.href)" --return-value
 ```
