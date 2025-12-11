@@ -2,7 +2,7 @@
  * PyWebview API TypeScript 类型定义
  *
  * 定义 window.pywebview.api 暴露的所有方法和返回类型。
- * 与 Python 后端 FragoGuiApi 类保持同步。
+ * 与 Python 后端 fragoGuiApi 类保持同步。
  */
 
 // ============================================================

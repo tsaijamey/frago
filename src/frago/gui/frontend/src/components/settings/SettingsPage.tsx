@@ -170,7 +170,7 @@ export default function SettingsPage() {
           关于
         </h2>
         <div className="text-sm text-[var(--text-secondary)]">
-          <p>Frago - AI 驱动的浏览器自动化框架</p>
+          <p>frago - AI 驱动的浏览器自动化框架</p>
           <p className="mt-2 text-[var(--text-muted)]">
             前端技术栈: React + TypeScript + TailwindCSS
           </p>

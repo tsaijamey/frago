@@ -133,7 +133,7 @@ class WindowConfig:
 
     width: int = 600
     height: int = 1434
-    title: str = "Frago GUI"
+    title: str = "frago"
     frameless: bool = False  # 使用原生窗口标题栏，让关闭按钮正常工作
     resizable: bool = False
     min_width: int = 400

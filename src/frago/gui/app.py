@@ -312,7 +312,7 @@ class FragoGuiApp:
         <html data-theme="dark">
         <head>
             <meta charset="UTF-8">
-            <title>Frago - Error</title>
+            <title>frago - Error</title>
             <style>
                 body {{
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -387,7 +387,7 @@ class FragoGuiApp:
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>Frago GUI</title>
+            <title>frago</title>
             <style>
                 body {
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -414,8 +414,8 @@ class FragoGuiApp:
         </head>
         <body>
             <div class="container">
-                <h1>Frago</h1>
-                <p>Welcome to Frago GUI</p>
+                <h1>frago</h1>
+                <p>Welcome to frago</p>
                 <p id="status">Loading...</p>
             </div>
             <script>

@@ -13,7 +13,7 @@ export default function Header() {
     <header className="header">
       <div className="header-left">
         <span className="logo">
-          <span className="logo-accent">F</span>rago
+          frago
         </span>
       </div>
       <div className="header-right">
