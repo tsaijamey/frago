@@ -273,9 +273,9 @@ def install_pygobject_to_venv() -> tuple[bool, str]:
     print("正在安装 PyGObject 到 frago 环境...")
     print()
 
-    # 优先使用 uv pip（frago 通过 uv tool 安装）
+    # 优先使用 uv pip（frago 通过 uv tool 安装，需指定 --python）
     if shutil.which("uv"):
-        cmd = ["uv", "pip", "install", "--quiet", "PyGObject"]
+        cmd = ["uv", "pip", "install", "--python", sys.executable, "--quiet", "PyGObject"]
     elif shutil.which("pip"):
         cmd = ["pip", "install", "--quiet", "PyGObject"]
     elif shutil.which("pip3"):
