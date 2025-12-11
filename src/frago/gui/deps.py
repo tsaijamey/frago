@@ -162,29 +162,72 @@ def detect_distro() -> Optional[DistroInfo]:
 
 
 def check_webkit_available() -> bool:
-    """检查 WebKit2GTK 是否可用.
+    """检查 WebKit2GTK 系统包是否已安装.
 
-    尝试导入 gi 模块并加载 WebKit2。
+    使用 pkg-config 或 dpkg 检测系统包，而不是 import gi，
+    因为 uv tool 的虚拟环境无法访问系统 Python 包。
 
     Returns:
-        True 如果 WebKit2GTK 可用。
+        True 如果 WebKit2GTK 系统包已安装。
     """
-    try:
-        import gi
-
-        gi.require_version("Gtk", "3.0")
-        # 尝试多个 WebKit 版本
-        for version in ["4.1", "4.0"]:
+    # 方法1: 使用 pkg-config 检测 WebKit2GTK
+    if shutil.which("pkg-config"):
+        for pkg in ["webkit2gtk-4.1", "webkit2gtk-4.0", "webkit2gtk-3.0"]:
             try:
-                gi.require_version("WebKit2", version)
-                from gi.repository import WebKit2
-
-                return True
-            except (ValueError, ImportError):
+                result = subprocess.run(
+                    ["pkg-config", "--exists", pkg],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    return True
+            except (subprocess.TimeoutExpired, FileNotFoundError):
                 continue
-        return False
-    except ImportError:
-        return False
+
+    # 方法2: 使用 dpkg 检测 (Debian/Ubuntu)
+    if shutil.which("dpkg"):
+        try:
+            result = subprocess.run(
+                ["dpkg", "-l", "gir1.2-webkit2-4.1"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            # dpkg -l 输出中 "ii" 表示已安装
+            if result.returncode == 0 and "ii" in result.stdout:
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    # 方法3: 使用 rpm 检测 (Fedora/RHEL/CentOS/Rocky/AlmaLinux/openSUSE)
+    if shutil.which("rpm"):
+        for pkg in ["webkit2gtk4.1", "webkit2gtk3", "webkitgtk4"]:
+            try:
+                result = subprocess.run(
+                    ["rpm", "-q", pkg],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    return True
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+
+    # 方法4: 使用 pacman 检测 (Arch/Manjaro/EndeavourOS)
+    if shutil.which("pacman"):
+        for pkg in ["webkit2gtk-4.1", "webkit2gtk"]:
+            try:
+                result = subprocess.run(
+                    ["pacman", "-Q", pkg],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    return True
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+
+    return False
 
 
 def check_pywebview_available() -> bool:
