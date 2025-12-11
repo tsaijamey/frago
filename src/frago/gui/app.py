@@ -9,10 +9,17 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-try:
-    import webview
-except ImportError:
-    webview = None
+# 延迟导入 webview，在 start_gui() 中依赖检查通过后再导入
+webview = None
+
+
+def _lazy_import_webview():
+    """延迟导入 webview，避免在依赖检查前触发后端加载."""
+    global webview
+    if webview is None:
+        import webview as _webview
+        webview = _webview
+    return webview
 
 
 def _get_install_instructions() -> str:
@@ -466,7 +473,7 @@ def start_gui(debug: bool = False) -> None:
     Raises:
         GuiNotAvailableError: If GUI cannot be started.
     """
-    # Linux 依赖检查和自动安装
+    # Linux 依赖检查和自动安装（必须在 import webview 之前）
     if platform.system() == "Linux":
         from frago.gui.deps import ensure_gui_deps
 
@@ -476,6 +483,14 @@ def start_gui(debug: bool = False) -> None:
         if msg == "restart":
             # 依赖安装成功后重启
             os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    # 依赖检查通过后，才导入 webview（会触发后端加载）
+    try:
+        _lazy_import_webview()
+    except ImportError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print(_get_install_instructions(), file=sys.stderr)
+        sys.exit(1)
 
     if not can_start_gui():
         reason = get_gui_unavailable_reason()
