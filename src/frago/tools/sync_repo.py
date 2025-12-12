@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import click
+
 # 系统级目录
 FRAGO_HOME = Path.home() / ".frago"
 CLAUDE_HOME = Path.home() / ".claude"
@@ -434,7 +436,7 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
         return False
 
     # fetch
-    result.messages.append("正在从云端获取最新资源...")
+    click.echo("正在从云端获取最新资源...")
     fetch_result = _run_git(["fetch", "origin"], FRAGO_HOME, check=False)
     if fetch_result.returncode != 0:
         # 可能是新仓库，没有远程分支
@@ -501,6 +503,7 @@ def _push_to_remote(result: SyncResult, dry_run: bool = False) -> bool:
     current_branch = branch_result.stdout.strip() or "main"
 
     # 推送
+    click.echo("正在推送到云端...")
     push_result = _run_git(["push", "-u", "origin", current_branch], FRAGO_HOME, check=False)
 
     if push_result.returncode == 0:
@@ -555,12 +558,12 @@ def sync(
         _ensure_gitignore(FRAGO_HOME)
 
         # 1. 安全检查 - 同步 ~/.claude/ 的修改到 ~/.frago/.claude/
-        result.messages.append("检查本地资源修改...")
+        click.echo("检查本地资源修改...")
         _sync_claude_to_frago(result, dry_run)
 
         # 1b. 保存本地修改
         if result.claude_changes_synced > 0 or _has_uncommitted_changes(FRAGO_HOME):
-            result.messages.append("保存本地修改...")
+            click.echo("保存本地修改...")
             _save_local_changes(result, message, dry_run)
 
         # 2. 获取远程更新
@@ -572,7 +575,7 @@ def sync(
             return result
 
         # 3. 更新本地 Claude Code
-        result.messages.append("更新 Claude Code 资源...")
+        click.echo("更新 Claude Code 资源...")
         _sync_frago_to_claude(result, dry_run)
 
         # 4. 推送到云端
