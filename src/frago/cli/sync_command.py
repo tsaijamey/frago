@@ -1,4 +1,4 @@
-"""sync 命令 - 同步 ~/.frago/ 资源到云端"""
+"""sync 命令 - 同步 ~/.frago/ 资源到您的仓库"""
 
 import sys
 from typing import Optional
@@ -11,10 +11,6 @@ from frago.tools.sync_repo import SyncResult, sync
 
 def _format_result(result: SyncResult, dry_run: bool) -> None:
     """格式化输出同步结果"""
-    # 输出所有消息
-    for msg in result.messages:
-        click.echo(msg)
-
     # 冲突信息
     if result.conflicts:
         click.echo()
@@ -36,17 +32,15 @@ def _format_result(result: SyncResult, dry_run: bool) -> None:
         click.echo("(预览模式) 以上操作将在实际运行时执行")
     elif result.success:
         summary_parts = []
-        if result.claude_changes_synced > 0:
-            summary_parts.append(f"收集 {result.claude_changes_synced} 项本地修改")
-        if result.local_changes_saved > 0:
-            summary_parts.append(f"保存 {result.local_changes_saved} 个文件")
-        if result.remote_updates_pulled > 0:
-            summary_parts.append(f"获取 {result.remote_updates_pulled} 个云端更新")
+        if result.local_changes:
+            summary_parts.append(f"保存 {len(result.local_changes)} 项本地修改")
+        if result.remote_updates:
+            summary_parts.append(f"获取 {len(result.remote_updates)} 个仓库更新")
         if result.pushed_to_remote:
-            summary_parts.append("已推送到云端")
+            summary_parts.append("已推送到您的仓库")
 
         if summary_parts:
-            click.echo(f"✅ 同步完成: {', '.join(summary_parts)}")
+            click.echo(f"✅ 同步完成: {' | '.join(summary_parts)}")
         else:
             click.echo("✅ 同步完成: 本地资源已是最新")
     else:
@@ -68,7 +62,7 @@ def _get_configured_repo_url() -> Optional[str]:
 @click.option(
     "--no-push",
     is_flag=True,
-    help="仅保存本地修改，不推送到云端",
+    help="仅保存本地修改，不推送到您的仓库",
 )
 @click.option(
     "--message",
@@ -79,7 +73,7 @@ def _get_configured_repo_url() -> Optional[str]:
 @click.option(
     "--set-repo",
     type=str,
-    help="设置云端仓库地址",
+    help="设置仓库地址",
 )
 def sync_cmd(
     dry_run: bool,
@@ -88,27 +82,27 @@ def sync_cmd(
     set_repo: Optional[str],
 ):
     """
-    同步本地资源到云端
+    同步本地资源到您的仓库
 
-    将 ~/.frago/ 和 ~/.claude/ 中的 Frago 资源同步到配置的云端仓库，
+    将 ~/.frago/ 和 ~/.claude/ 中的 Frago 资源同步到配置的仓库，
     实现多设备之间资源共享。
 
     \b
     同步流程:
       1. 检查本地资源修改，确保不丢失任何内容
-      2. 从云端获取其他设备的更新
+      2. 从您的仓库获取其他设备的更新
       3. 更新本地 Claude Code 使用的资源
-      4. 将本地修改推送到云端
+      4. 将本地修改推送到您的仓库
 
     \b
     首次使用:
-      frago use-git sync --set-repo git@github.com:user/my-resources.git
+      frago sync --set-repo git@github.com:user/my-resources.git
 
     \b
     日常使用:
-      frago use-git sync              # 同步资源
-      frago use-git sync --dry-run    # 预览将要同步的内容
-      frago use-git sync --no-push    # 仅获取更新，不推送
+      frago sync              # 同步资源
+      frago sync --dry-run    # 预览将要同步的内容
+      frago sync --no-push    # 仅获取更新，不推送
 
     \b
     同步内容:
@@ -122,7 +116,7 @@ def sync_cmd(
             config = load_config()
             config.sync_repo_url = set_repo
             save_config(config)
-            click.echo(f"✅ 已保存云端仓库配置: {set_repo}")
+            click.echo(f"✅ 已保存仓库配置: {set_repo}")
 
             # 如果没有其他操作，直接返回
             if not dry_run and not no_push and not message:
@@ -132,10 +126,10 @@ def sync_cmd(
         repo_url = set_repo or _get_configured_repo_url()
 
         if not repo_url:
-            click.echo("错误: 未配置云端仓库", err=True)
+            click.echo("错误: 未配置仓库", err=True)
             click.echo("")
             click.echo("请先配置仓库:", err=True)
-            click.echo("  frago use-git sync --set-repo git@github.com:user/my-resources.git", err=True)
+            click.echo("  frago sync --set-repo git@github.com:user/my-resources.git", err=True)
             sys.exit(1)
 
         if dry_run:

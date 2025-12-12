@@ -12,19 +12,15 @@ from .sync_command import sync_cmd
 @click.group(name="use-git", cls=AgentFriendlyGroup)
 def usegit_group():
     """
-    通过 Git 同步 Frago 资源
+    [已废弃] 通过 Git 同步 Frago 资源
 
-    将本地的命令、Skills 和 Recipes 同步到远程 Git 仓库，
-    实现多设备之间的资源共享。
-
-    \b
-    首次使用:
-      frago use-git sync --set-repo git@github.com:user/my-resources.git
+    此命令已废弃，请使用 `frago sync` 代替。
 
     \b
-    日常使用:
-      frago use-git sync              # 同步资源
-      frago use-git sync --dry-run    # 预览将要同步的内容
+    新命令:
+      frago sync --set-repo git@github.com:user/my-resources.git  # 首次使用
+      frago sync              # 同步资源
+      frago sync --dry-run    # 预览将要同步的内容
 
     \b
     同步内容:
@@ -32,7 +28,7 @@ def usegit_group():
       ~/.claude/skills/frago-*        # Skills
       ~/.frago/recipes/               # Recipes
     """
-    pass
+    click.echo("⚠️  'frago use-git' 命令已废弃，请使用 'frago sync'", err=True)
 
 
 # 注册子命令

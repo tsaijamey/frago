@@ -6,6 +6,7 @@ Sync 模块 - 将 ~/.frago/ 整体作为 Git 仓库同步
 """
 
 import filecmp
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -31,17 +32,25 @@ CLAUDE_SKILLS_DIR = CLAUDE_HOME / "skills"
 
 
 @dataclass
+class FileChange:
+    """文件变更信息"""
+
+    type: str  # "命令", "Skill", "Recipe", "其他"
+    name: str
+    operation: str  # "修改", "新增", "删除"
+    timestamp: Optional[datetime] = None
+
+
+@dataclass
 class SyncResult:
     """同步结果"""
 
     success: bool = False
-    local_changes_saved: int = 0
-    claude_changes_synced: int = 0
-    remote_updates_pulled: int = 0
+    local_changes: list[FileChange] = field(default_factory=list)
+    remote_updates: list[FileChange] = field(default_factory=list)
     pushed_to_remote: bool = False
     conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    messages: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -117,6 +126,121 @@ __pycache__/
                 f.write("\n# Auto-added by frago sync\n")
                 for rule in missing:
                     f.write(f"{rule}\n")
+
+
+def _classify_file(file_path: str) -> tuple[str, str]:
+    """分类文件类型和名称
+
+    Args:
+        file_path: 相对于仓库根目录的文件路径
+
+    Returns:
+        (类型, 名称) 元组
+    """
+    path_obj = Path(file_path)
+
+    if file_path.startswith(".claude/commands/"):
+        # 命令文件：frago.xxx.md -> frago.xxx
+        if path_obj.suffix == ".md":
+            return ("命令", path_obj.stem)
+        # frago/ 目录下的文件
+        return ("命令", path_obj.name)
+    elif file_path.startswith(".claude/skills/"):
+        # Skills 是目录：.claude/skills/frago-xxx/... -> frago-xxx
+        parts = path_obj.parts
+        if len(parts) >= 3:
+            return ("Skill", parts[2])
+        return ("Skill", path_obj.name)
+    elif file_path.startswith("recipes/"):
+        # Recipe：recipes/atomic/xxx.json -> xxx
+        # 或：recipes/workflows/yyy/ -> yyy
+        parts = path_obj.parts
+        if len(parts) >= 3:
+            # 提取文件名（不含扩展名）或目录名
+            name = parts[2]
+            if path_obj.suffix == ".json":
+                name = path_obj.stem
+            return ("Recipe", name)
+        return ("Recipe", path_obj.name)
+
+    return ("其他", path_obj.name)
+
+
+def _get_file_change_info(repo_dir: Path, file_path: str) -> FileChange:
+    """获取文件变更详细信息
+
+    Args:
+        repo_dir: Git 仓库目录
+        file_path: 相对于仓库根目录的文件路径
+
+    Returns:
+        FileChange 对象
+    """
+    file_type, name = _classify_file(file_path)
+
+    # 尝试从 Git 获取时间戳
+    result = _run_git(["log", "--format=%aI", "-1", "--", file_path], repo_dir, check=False)
+    timestamp = None
+
+    if result.returncode == 0 and result.stdout.strip():
+        try:
+            # 去除时区标记 'Z' 或转换为 Python 支持的格式
+            iso_time = result.stdout.strip()
+            if iso_time.endswith('Z'):
+                iso_time = iso_time[:-1] + '+00:00'
+            timestamp = datetime.fromisoformat(iso_time)
+        except ValueError:
+            pass
+
+    # 如果没有 Git 历史，使用文件系统时间
+    if timestamp is None:
+        full_path = repo_dir / file_path
+        if full_path.exists():
+            if full_path.is_file():
+                mtime = os.path.getmtime(full_path)
+                timestamp = datetime.fromtimestamp(mtime)
+            elif full_path.is_dir():
+                # 对于目录，使用目录本身的 mtime
+                mtime = os.path.getmtime(full_path)
+                timestamp = datetime.fromtimestamp(mtime)
+
+    # 检测操作类型
+    status_result = _run_git(["status", "--porcelain", "--", file_path], repo_dir, check=False)
+    operation = "修改"
+    if status_result.stdout:
+        status_code = status_result.stdout[:2]
+        if 'A' in status_code:
+            operation = "新增"
+        elif 'D' in status_code:
+            operation = "删除"
+        elif 'M' in status_code:
+            operation = "修改"
+
+    return FileChange(type=file_type, name=name, operation=operation, timestamp=timestamp)
+
+
+def _format_table(changes: list[FileChange], title: str) -> str:
+    """格式化变更表格
+
+    Args:
+        changes: 文件变更列表
+        title: 表格标题
+
+    Returns:
+        格式化的表格字符串
+    """
+    if not changes:
+        return ""
+
+    lines = [f"\n{title}:"]
+    lines.append(f"{'类型':<10} {'名称':<40} {'操作':<8} {'时间':<20}")
+    lines.append("─" * 80)
+
+    for change in changes:
+        time_str = change.timestamp.strftime("%Y-%m-%d %H:%M") if change.timestamp else "—"
+        lines.append(f"{change.type:<10} {change.name:<40} {change.operation:<8} {time_str:<20}")
+
+    return "\n".join(lines)
 
 
 def _init_git_repo(repo_dir: Path, remote_url: str) -> None:
@@ -214,11 +338,11 @@ def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
                         shutil.move(str(preserved_path), str(target))
 
             _ensure_gitignore(FRAGO_HOME)
-            return True, "已从云端获取资源"
+            return True, "已从您的仓库获取资源"
         else:
             # 克隆失败，可能是空仓库，初始化本地
             _init_git_repo(FRAGO_HOME, repo_url)
-            return True, "已初始化本地仓库（云端仓库为空或不存在）"
+            return True, "已初始化本地仓库（您的仓库为空或不存在）"
 
     except Exception as e:
         return False, f"初始化失败: {e}"
@@ -268,8 +392,6 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
     检查 ~/.claude/commands/frago.*.md 和 ~/.claude/skills/frago-*
     如果比 ~/.frago/.claude/ 中的版本更新，则复制过去
     """
-    synced_count = 0
-
     # 同步 commands
     if CLAUDE_COMMANDS_DIR.exists():
         FRAGO_COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -284,8 +406,10 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
             if not target_file.exists() or not _files_are_identical(src_file, target_file):
                 if not dry_run:
                     shutil.copy2(src_file, target_file)
-                synced_count += 1
-                result.messages.append(f"  同步命令: {src_file.name}")
+                # 收集变更信息
+                file_path = f".claude/commands/{src_file.name}"
+                change = _get_file_change_info(FRAGO_HOME, file_path)
+                result.local_changes.append(change)
 
         # frago/ 子目录
         frago_src = CLAUDE_COMMANDS_DIR / "frago"
@@ -299,8 +423,10 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.copytree(
                         frago_src, frago_target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
                     )
-                synced_count += 1
-                result.messages.append("  同步命令规则: frago/")
+                # 收集 frago/ 目录的变更（选择一个代表性文件）
+                file_path = ".claude/commands/frago"
+                change = _get_file_change_info(FRAGO_HOME, file_path)
+                result.local_changes.append(change)
 
     # 同步 skills
     if CLAUDE_SKILLS_DIR.exists():
@@ -321,10 +447,14 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.copytree(
                         skill_dir, target_skill_dir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
                     )
-                synced_count += 1
-                result.messages.append(f"  同步 skill: {skill_dir.name}")
+                # 收集变更信息
+                file_path = f".claude/skills/{skill_dir.name}"
+                change = _get_file_change_info(FRAGO_HOME, file_path)
+                result.local_changes.append(change)
 
-    result.claude_changes_synced = synced_count
+    # 立即显示表格
+    if result.local_changes:
+        click.echo(_format_table(result.local_changes, "本地修改"))
 
 
 def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
@@ -333,8 +463,6 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
 
     从仓库获取更新后，将资源部署到 Claude Code 运行时目录
     """
-    synced_count = 0
-
     # 同步 commands
     if FRAGO_COMMANDS_DIR.exists():
         CLAUDE_COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
@@ -349,7 +477,6 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
             if not target_file.exists() or not _files_are_identical(src_file, target_file):
                 if not dry_run:
                     shutil.copy2(src_file, target_file)
-                synced_count += 1
 
         # frago/ 子目录
         frago_src = FRAGO_COMMANDS_DIR / "frago"
@@ -363,7 +490,6 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.copytree(
                         frago_src, frago_target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
                     )
-                synced_count += 1
 
     # 同步 skills
     if FRAGO_SKILLS_DIR.exists():
@@ -384,10 +510,6 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.copytree(
                         skill_dir, target_skill_dir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
                     )
-                synced_count += 1
-
-    if synced_count > 0:
-        result.messages.append(f"已更新 {synced_count} 项资源到 Claude Code")
 
 
 def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: bool = False) -> bool:
@@ -401,10 +523,8 @@ def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: boo
         return False
 
     changed_files = _get_changed_files(FRAGO_HOME)
-    result.local_changes_saved = len(changed_files)
 
     if dry_run:
-        result.messages.append(f"将保存 {len(changed_files)} 个本地修改")
         return True
 
     # git add
@@ -414,7 +534,6 @@ def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: boo
     commit_message = message or f"sync: 保存本地修改 ({len(changed_files)} 个文件)"
     _run_git(["commit", "-m", commit_message], FRAGO_HOME)
 
-    result.messages.append(f"已保存 {len(changed_files)} 个本地修改")
     return True
 
 
@@ -426,21 +545,18 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
         是否有冲突
     """
     if dry_run:
-        result.messages.append("将从云端获取最新资源")
         return False
 
     # 检查是否有远程仓库
     remote_result = _run_git(["remote", "-v"], FRAGO_HOME, check=False)
     if not remote_result.stdout.strip():
-        result.messages.append("未配置远程仓库，跳过拉取")
         return False
 
     # fetch
-    click.echo("正在从云端获取最新资源...")
+    click.echo("正在从您的仓库获取最新资源...")
     fetch_result = _run_git(["fetch", "origin"], FRAGO_HOME, check=False)
     if fetch_result.returncode != 0:
         # 可能是新仓库，没有远程分支
-        result.messages.append("云端仓库暂无内容")
         return False
 
     # 检查是否有远程分支
@@ -452,8 +568,11 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
         ["rev-parse", "--verify", f"origin/{current_branch}"], FRAGO_HOME, check=False
     )
     if remote_branch_result.returncode != 0:
-        result.messages.append("云端分支暂无内容")
         return False
+
+    # 保存当前 HEAD，用于后续比较
+    old_head_result = _run_git(["rev-parse", "HEAD"], FRAGO_HOME, check=False)
+    old_head = old_head_result.stdout.strip() if old_head_result.returncode == 0 else None
 
     # 尝试 rebase
     rebase_result = _run_git(["rebase", f"origin/{current_branch}"], FRAGO_HOME, check=False)
@@ -466,12 +585,29 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
         result.conflicts = _get_changed_files(FRAGO_HOME)
         return True
 
-    # 统计更新数量
-    log_result = _run_git(["log", "--oneline", "HEAD@{1}..HEAD"], FRAGO_HOME, check=False)
-    if log_result.stdout.strip():
-        update_count = len(log_result.stdout.strip().split("\n"))
-        result.remote_updates_pulled = update_count
-        result.messages.append(f"已获取 {update_count} 个更新")
+    # 获取新的 HEAD
+    new_head_result = _run_git(["rev-parse", "HEAD"], FRAGO_HOME, check=False)
+    new_head = new_head_result.stdout.strip() if new_head_result.returncode == 0 else None
+
+    # 只有当 HEAD 真的移动了（有新提交），才收集更新信息
+    if old_head and new_head and old_head != new_head:
+        # 使用 git diff --name-status 获取文件变更
+        diff_result = _run_git(
+            ["diff", "--name-status", f"{old_head}..{new_head}"],
+            FRAGO_HOME,
+            check=False
+        )
+        for line in diff_result.stdout.strip().split("\n"):
+            if line:
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    file_path = parts[1]
+                    change = _get_file_change_info(FRAGO_HOME, file_path)
+                    result.remote_updates.append(change)
+
+        # 立即显示表格
+        if result.remote_updates:
+            click.echo(_format_table(result.remote_updates, "从您的仓库获取的更新"))
 
     return False
 
@@ -484,7 +620,6 @@ def _push_to_remote(result: SyncResult, dry_run: bool = False) -> bool:
         是否成功
     """
     if dry_run:
-        result.messages.append("将同步到云端")
         return True
 
     # 检查是否有远程仓库
@@ -495,7 +630,6 @@ def _push_to_remote(result: SyncResult, dry_run: bool = False) -> bool:
     # 检查是否有提交
     log_result = _run_git(["log", "--oneline", "-1"], FRAGO_HOME, check=False)
     if not log_result.stdout.strip():
-        result.messages.append("暂无内容需要同步到云端")
         return True
 
     # 获取当前分支
@@ -503,12 +637,11 @@ def _push_to_remote(result: SyncResult, dry_run: bool = False) -> bool:
     current_branch = branch_result.stdout.strip() or "main"
 
     # 推送
-    click.echo("正在推送到云端...")
+    click.echo("正在推送到您的仓库...")
     push_result = _run_git(["push", "-u", "origin", current_branch], FRAGO_HOME, check=False)
 
     if push_result.returncode == 0:
         result.pushed_to_remote = True
-        result.messages.append("已同步到云端，所有设备可获取最新资源")
         return True
     else:
         result.errors.append(f"推送失败: {push_result.stderr}")
@@ -528,7 +661,7 @@ def sync(
     1. 安全检查 - 保存本地修改，同步 ~/.claude/ 的修改
     2. 获取远程更新 - 拉取并处理冲突
     3. 更新本地 Claude Code - 同步到 ~/.claude/
-    4. 推送到云端 - 如果允许推送
+    4. 推送到您的仓库 - 如果允许推送
 
     Args:
         repo_url: 远程仓库 URL（首次使用时需要）
@@ -545,14 +678,14 @@ def sync(
         # 0. 确保仓库存在
         if not _is_git_repo(FRAGO_HOME):
             if not repo_url:
-                result.errors.append("未配置同步仓库，请先使用 frago use-git sync --set-repo <url> 配置")
+                result.errors.append("未配置同步仓库，请先使用 frago sync --set-repo <url> 配置")
                 return result
 
             success, msg = _clone_or_init_repo(repo_url)
             if not success:
                 result.errors.append(msg)
                 return result
-            result.messages.append(msg)
+            click.echo(msg)
 
         # 确保 .gitignore 存在
         _ensure_gitignore(FRAGO_HOME)
@@ -562,7 +695,7 @@ def sync(
         _sync_claude_to_frago(result, dry_run)
 
         # 1b. 保存本地修改
-        if result.claude_changes_synced > 0 or _has_uncommitted_changes(FRAGO_HOME):
+        if result.local_changes or _has_uncommitted_changes(FRAGO_HOME):
             click.echo("保存本地修改...")
             _save_local_changes(result, message, dry_run)
 
@@ -578,7 +711,7 @@ def sync(
         click.echo("更新 Claude Code 资源...")
         _sync_frago_to_claude(result, dry_run)
 
-        # 4. 推送到云端
+        # 4. 推送到您的仓库
         if not no_push:
             _push_to_remote(result, dry_run)
 

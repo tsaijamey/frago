@@ -20,6 +20,7 @@ from .recipe_commands import recipe_group
 from .run_commands import run_group
 from .dev_commands import dev_group
 from .usegit_commands import usegit_group
+from .sync_command import sync_cmd  # Sync 命令
 from .chrome_commands import chrome_group
 from .update_command import update
 from .agent_command import agent, agent_status
@@ -32,7 +33,7 @@ from .agent_friendly import AgentFriendlyGroup
 COMMAND_GROUPS = OrderedDict([
     ("日常使用", ["chrome", "recipe", "run"]),
     ("会话与智能", ["session", "agent", "agent-status"]),
-    ("环境管理", ["init", "status", "update"]),
+    ("环境管理", ["init", "status", "sync", "update"]),
     ("开发者", ["dev", "use-git", "init-dirs", "gui-deps"]),
 ])
 
@@ -271,12 +272,13 @@ def cli(ctx, gui: bool, debug: bool, timeout: int, host: str, port: int,
 cli.add_command(init)  # 新的环境初始化命令
 cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
 cli.add_command(status)  # CDP 连接状态（保留在顶层便于快速检查）
+cli.add_command(sync_cmd, name="sync")  # 资源同步命令
 cli.add_command(update)  # 自我更新命令
 cli.add_command(gui_deps)  # GUI 依赖检查命令
 
 # 命令组
 cli.add_command(dev_group)  # 开发者命令组: dev pack
-cli.add_command(usegit_group)  # Git 同步命令组: use-git sync
+cli.add_command(usegit_group)  # Git 同步命令组: use-git sync（已废弃，请使用 sync）
 cli.add_command(chrome_group)  # Chrome CDP 命令组
 
 # Recipe 管理命令组
