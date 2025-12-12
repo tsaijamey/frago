@@ -1,6 +1,6 @@
 """Run上下文管理器
 
-负责读写 .frago/current_run 配置文件，支持环境变量优先级
+负责读写 ~/.frago/current_run 配置文件，支持环境变量优先级
 """
 
 import json
@@ -20,17 +20,17 @@ from .models import CurrentRunContext
 class ContextManager:
     """Run上下文管理器"""
 
-    def __init__(self, project_root: Path, projects_dir: Path):
+    def __init__(self, frago_home: Path, projects_dir: Path):
         """初始化上下文管理器
 
         Args:
-            project_root: 项目根目录
+            frago_home: Frago 用户目录 (~/.frago)
             projects_dir: projects目录路径
         """
-        self.project_root = project_root
+        self.frago_home = frago_home
         self.projects_dir = projects_dir
-        self.config_dir = project_root / ".frago"
-        self.config_file = self.config_dir / "current_project"
+        self.config_dir = frago_home
+        self.config_file = self.config_dir / "current_run"
 
     def get_current_run(self) -> CurrentRunContext:
         """获取当前run上下文

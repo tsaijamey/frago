@@ -169,7 +169,6 @@ class FragoGuiApi:
         recipes = []
         recipe_dirs = [
             Path.home() / ".frago" / "recipes",
-            Path.home() / ".frago" / "examples",
         ]
 
         for recipe_dir in recipe_dirs:

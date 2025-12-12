@@ -1,12 +1,13 @@
 # Frago Pack Manifest
 # Whitelist for PyPI distribution
+# Source: ~/.claude/commands/, ~/.claude/skills/, ~/.frago/recipes/
 
 commands:
-  - frago.dev.agent.md
-  - frago.dev.run.md
-  - frago.dev.exec.md
-  - frago.dev.recipe.md
-  - frago.dev.test.md
+  - frago.agent.md
+  - frago.run.md
+  - frago.do.md
+  - frago.recipe.md
+  - frago.test.md
   - frago/*
 
 skills:

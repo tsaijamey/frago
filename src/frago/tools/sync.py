@@ -1,18 +1,18 @@
 """
-Pack 模块 - 同步开发资源到打包目录
+Pack 模块 - 同步用户目录资源到打包目录
 
-同步 examples/ 目录的 Recipe 到 src/frago/resources/recipes/
-同步 .claude/commands/ 目录的命令到 src/frago/resources/commands/
+同步 ~/.frago/recipes/ 目录的 Recipe 到 src/frago/resources/recipes/
+同步 ~/.claude/commands/ 目录的命令到 src/frago/resources/commands/
+同步 ~/.claude/skills/ 目录的 Skill 到 src/frago/resources/skills/
 
-提供将示例 Recipe 和 Claude Code 命令同步到 Python 包资源目录的功能，
+提供将用户目录的 Recipe 和 Claude Code 命令同步到 Python 包资源目录的功能，
 使得打包分发时能够包含最新的内容。
 
-注意: 这是用于 PyPI 打包的内部功能，与多设备同步无关。
-新的 sync 命令（在 sync_repo.py 中）用于多设备同步。
+注意: 这是用于 PyPI 打包的内部功能。
+开发者直接在 ~/.claude/ 和 ~/.frago/ 编辑资源，然后用 dev pack 同步到包内。
 """
 
 import fnmatch
-import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -30,22 +30,23 @@ class CommandSync:
         初始化同步器
 
         Args:
-            source_dir: 源目录（.claude/commands/），默认自动检测
+            source_dir: 源目录（~/.claude/commands/），默认用户目录
             target_dir: 目标目录（src/frago/resources/commands/），默认自动检测
         """
-        # 自动检测项目根目录
+        # 自动检测项目根目录（用于 target_dir）
         current_file = Path(__file__).resolve()
         # src/frago/tools/sync.py -> project_root
         project_root = current_file.parent.parent.parent.parent
 
-        self.source_dir = source_dir or (project_root / ".claude" / "commands")
+        # 源目录改为用户目录
+        self.source_dir = source_dir or (Path.home() / ".claude" / "commands")
         self.target_dir = target_dir or (
             project_root / "src" / "frago" / "resources" / "commands"
         )
 
     def find_commands(self, pattern: Optional[str] = None) -> list[Path]:
         """
-        查找所有 frago.dev.*.md 命令文件
+        查找所有 frago.*.md 命令文件
 
         Args:
             pattern: 可选的通配符模式，用于过滤命令名称
@@ -58,8 +59,8 @@ class CommandSync:
         if not self.source_dir.exists():
             return commands
 
-        # 查找 frago.dev.*.md 文件
-        for cmd_file in self.source_dir.glob("frago.dev.*.md"):
+        # 查找 frago.*.md 文件（用户目录使用正式命名）
+        for cmd_file in self.source_dir.glob("frago.*.md"):
             if not cmd_file.is_file():
                 continue
 
@@ -76,16 +77,16 @@ class CommandSync:
 
     def get_target_name(self, source_name: str) -> str:
         """
-        获取目标文件名（去掉 .dev 后缀）
+        获取目标文件名（直接使用源文件名）
 
         Args:
-            source_name: 源文件名，如 frago.dev.recipe.md
+            source_name: 源文件名，如 frago.recipe.md
 
         Returns:
-            目标文件名，如 frago.recipe.md
+            目标文件名，与源文件名相同
         """
-        # frago.dev.xxx.md -> frago.xxx.md
-        return re.sub(r"^frago\.dev\.", "frago.", source_name)
+        # 用户目录已使用正式命名，无需转换
+        return source_name
 
     def sync(
         self,
@@ -177,9 +178,8 @@ class CommandSync:
 
         for target_file in self.list_synced():
             target_name = target_file.name
-            # 反向推导源文件名: frago.xxx.md -> frago.dev.xxx.md
-            source_name = re.sub(r"^frago\.", "frago.dev.", target_name)
-            source_file = self.source_dir / source_name
+            # 源文件名与目标文件名相同
+            source_file = self.source_dir / target_name
 
             if not source_file.exists():
                 if not dry_run:
@@ -201,15 +201,16 @@ class RecipeSync:
         初始化同步器
 
         Args:
-            source_dir: 源目录（examples/），默认自动检测
+            source_dir: 源目录（~/.frago/recipes/），默认用户目录
             target_dir: 目标目录（src/frago/resources/recipes/），默认自动检测
         """
-        # 自动检测项目根目录
+        # 自动检测项目根目录（用于 target_dir）
         current_file = Path(__file__).resolve()
         # src/frago/tools/sync.py -> project_root
         project_root = current_file.parent.parent.parent.parent
 
-        self.source_dir = source_dir or (project_root / "examples")
+        # 源目录改为用户目录
+        self.source_dir = source_dir or (Path.home() / ".frago" / "recipes")
         self.target_dir = target_dir or (
             project_root / "src" / "frago" / "resources" / "recipes"
         )
@@ -389,15 +390,16 @@ class SkillSync:
         初始化同步器
 
         Args:
-            source_dir: 源目录（.claude/skills/），默认自动检测
+            source_dir: 源目录（~/.claude/skills/），默认用户目录
             target_dir: 目标目录（src/frago/resources/skills/），默认自动检测
         """
-        # 自动检测项目根目录
+        # 自动检测项目根目录（用于 target_dir）
         current_file = Path(__file__).resolve()
         # src/frago/tools/sync.py -> project_root
         project_root = current_file.parent.parent.parent.parent
 
-        self.source_dir = source_dir or (project_root / ".claude" / "skills")
+        # 源目录改为用户目录
+        self.source_dir = source_dir or (Path.home() / ".claude" / "skills")
         self.target_dir = target_dir or (
             project_root / "src" / "frago" / "resources" / "skills"
         )

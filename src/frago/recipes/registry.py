@@ -35,36 +35,18 @@ class Recipe:
 class RecipeRegistry:
     """Recipe 注册表，管理所有可用 Recipe 的索引"""
 
-    # 来源优先级顺序（从高到低）
-    # Examples 优先级最高：开发时先修改 examples/，验证后再发布
-    SOURCE_PRIORITY = ['Examples', 'Project', 'User']
-
     def __init__(self):
         self.search_paths: list[Path] = []
-        # 改为嵌套字典：{recipe_name: {source: Recipe}}
-        # 支持同名配方在不同来源共存
+        # 嵌套字典：{recipe_name: {source: Recipe}}
         self.recipes: dict[str, dict[str, Recipe]] = {}
         self._setup_search_paths()
-    
+
     def _setup_search_paths(self) -> None:
-        """设置三级查找路径（按优先级排序）"""
-        # 1. 项目级: .frago/recipes/ (当前工作目录)
-        project_path = Path.cwd() / '.frago' / 'recipes'
-        if project_path.exists():
-            self.search_paths.append(project_path)
-        
-        # 2. 用户级: ~/.frago/recipes/ (用户家目录)
+        """设置查找路径 - 统一使用 ~/.frago/recipes/"""
+        # 只使用用户目录
         user_path = Path.home() / '.frago' / 'recipes'
         if user_path.exists():
             self.search_paths.append(user_path)
-        
-        # 3. 示例级: examples/ (仓库根目录或安装位置)
-        # 查找 src/frago/recipes/registry.py 的位置，推导出仓库根目录
-        current_file = Path(__file__).resolve()
-        repo_root = current_file.parent.parent.parent.parent
-        example_path = repo_root / 'examples'
-        if example_path.exists():
-            self.search_paths.append(example_path)
     
     def scan(self) -> None:
         """扫描所有 search_paths，解析元数据并构建索引"""
@@ -79,18 +61,8 @@ class RecipeRegistry:
     
     def _get_source_label(self, path: Path) -> str:
         """根据路径返回来源标签"""
-        # 项目级：当前工作目录下的 .frago/recipes/
-        project_path = Path.cwd() / '.frago' / 'recipes'
-        if path == project_path or project_path in path.parents:
-            return 'Project'
-
-        # 用户级：用户家目录下的 .frago/recipes/
-        user_path = Path.home() / '.frago' / 'recipes'
-        if path == user_path or user_path in path.parents:
-            return 'User'
-
-        # 示例级：其他路径（通常是 examples/）
-        return 'Examples'
+        # 统一使用用户目录
+        return 'User'
     
     def _scan_directory(self, base_path: Path, source: str) -> None:
         """递归扫描目录，查找 Recipe（目录形式）"""
@@ -186,10 +158,9 @@ class RecipeRegistry:
                 raise RecipeNotFoundError(f"{name} (source: {source})", searched_paths)
             return sources_dict[source_label]
 
-        # 未指定来源：按优先级返回（Project > User > Example）
-        for priority_source in self.SOURCE_PRIORITY:
-            if priority_source in sources_dict:
-                return sources_dict[priority_source]
+        # 未指定来源：返回 User 来源
+        if 'User' in sources_dict:
+            return sources_dict['User']
 
         # 理论上不应该到达这里，因为 sources_dict 不为空
         raise RecipeNotFoundError(name, searched_paths)
@@ -210,11 +181,9 @@ class RecipeRegistry:
                 # 返回所有来源的配方
                 result.extend(sources_dict.values())
             else:
-                # 按优先级返回最高优先级的
-                for priority_source in self.SOURCE_PRIORITY:
-                    if priority_source in sources_dict:
-                        result.append(sources_dict[priority_source])
-                        break
+                # 返回 User 来源
+                if 'User' in sources_dict:
+                    result.append(sources_dict['User'])
         return sorted(result, key=lambda r: r.metadata.name)
     
     def get_by_source(self, source: str) -> list[Recipe]:
@@ -285,10 +254,9 @@ class RecipeRegistry:
         if name not in self.recipes:
             return []
 
-        # 按优先级顺序返回
+        # 返回 User 来源
         result = []
-        for priority_source in self.SOURCE_PRIORITY:
-            if priority_source in self.recipes[name]:
-                recipe = self.recipes[name][priority_source]
-                result.append((priority_source, recipe.base_dir))
+        if 'User' in self.recipes[name]:
+            recipe = self.recipes[name]['User']
+            result.append(('User', recipe.base_dir))
         return result

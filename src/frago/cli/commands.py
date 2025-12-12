@@ -281,54 +281,9 @@ def _get_projects_dir() -> Path:
     """
     获取 projects 目录
 
-    优先级：
-    1. 当前目录下的 projects/（如果存在 run context）
-    2. ~/.frago/current_project（全局 context）
-    3. ~/.frago/config.json 中的 working_directory + /projects
-    4. 当前目录下的 projects/（fallback）
+    统一使用 ~/.frago/projects/
     """
-    cwd = Path.cwd()
-    home_frago = Path.home() / ".frago"
-
-    # 先尝试当前目录
-    try:
-        from ..run.context import ContextManager
-        projects_dir = cwd / "projects"
-        ctx_mgr = ContextManager(cwd, projects_dir)
-        ctx_mgr.get_current_run()  # 检查是否有活跃 context
-        return projects_dir
-    except Exception:
-        pass
-
-    # 检查全局 ~/.frago/current_project
-    try:
-        from ..run.context import ContextManager
-        global_current_project = home_frago / "current_project"
-        if global_current_project.exists():
-            # 读取 current_project 获取 projects_dir 路径
-            import json
-            content = global_current_project.read_text().strip()
-            if content:
-                data = json.loads(content)
-                projects_dir_str = data.get("projects_dir")
-                if projects_dir_str:
-                    projects_dir = Path(projects_dir_str)
-                    if projects_dir.exists():
-                        return projects_dir
-    except Exception:
-        pass
-
-    # 检查全局配置中的工作目录
-    try:
-        from ..init.configurator import load_config
-        config = load_config()
-        if config.working_directory:
-            return Path(config.working_directory) / "projects"
-    except Exception:
-        pass
-
-    # fallback: 当前目录
-    return cwd / "projects"
+    return Path.home() / ".frago" / "projects"
 
 
 def _get_run_dir() -> Path:
@@ -337,12 +292,12 @@ def _get_run_dir() -> Path:
 
     优先使用活跃的 run context，无 context 时使用 projects/.tmp/
     """
+    frago_home = Path.home() / ".frago"
     projects_dir = _get_projects_dir()
 
     try:
         from ..run.context import ContextManager
-        project_root = projects_dir.parent
-        ctx_mgr = ContextManager(project_root, projects_dir)
+        ctx_mgr = ContextManager(frago_home, projects_dir)
         context = ctx_mgr.get_current_run()
         return projects_dir / context.run_id
     except Exception:

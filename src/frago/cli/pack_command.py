@@ -1,4 +1,4 @@
-"""dev-pack 命令 - 同步开发资源到打包目录（用于 PyPI 分发）"""
+"""dev-pack 命令 - 同步用户目录资源到打包目录（用于 PyPI 分发）"""
 
 import fnmatch
 import sys
@@ -90,13 +90,15 @@ def dev_pack(
     sync_all: bool,
 ):
     """
-    同步开发资源到打包目录（用于 PyPI 分发）
+    同步用户目录资源到打包目录（用于 PyPI 分发）
 
     根据 pack-manifest.yaml 白名单配置，将允许的资源
-    同步到 src/frago/resources/，用于打包分发。
+    从用户目录同步到 src/frago/resources/，用于打包分发。
 
-    Commands 同步时会自动去掉 .dev 后缀:
-      frago.dev.recipe.md → frago.recipe.md
+    源目录:
+      ~/.claude/commands/frago.*.md  → src/frago/resources/commands/
+      ~/.claude/skills/frago-*       → src/frago/resources/skills/
+      ~/.frago/recipes/              → src/frago/resources/recipes/
 
     \b
     示例:
@@ -194,7 +196,7 @@ def _sync_commands(
         if files:
             click.echo(f"  未找到匹配 '{files}' 的命令")
         else:
-            click.echo("  未找到任何 frago.dev.*.md 命令文件")
+            click.echo("  未找到任何 frago.*.md 命令文件")
         return
 
     # 按清单过滤
