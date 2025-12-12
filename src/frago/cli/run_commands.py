@@ -26,9 +26,9 @@ from ..run.models import ActionType, ExecutionMethod, InsightEntry, InsightType,
 from .agent_friendly import AgentFriendlyGroup
 
 
-# 获取项目根目录和projects目录
-PROJECT_ROOT = Path.cwd()
-PROJECTS_DIR = PROJECT_ROOT / "projects"
+# 统一使用用户目录
+FRAGO_HOME = Path.home() / ".frago"
+PROJECTS_DIR = FRAGO_HOME / "projects"
 
 
 def get_manager() -> RunManager:
@@ -38,7 +38,7 @@ def get_manager() -> RunManager:
 
 def get_context_manager() -> ContextManager:
     """获取ContextManager实例"""
-    return ContextManager(PROJECT_ROOT, PROJECTS_DIR)
+    return ContextManager(FRAGO_HOME, PROJECTS_DIR)
 
 
 def format_timestamp(dt: datetime) -> str:
@@ -104,11 +104,11 @@ def run_group():
 
     \b
     典型工作流:
-    1. 创建run: uv run frago run init "任务描述"
-    2. 设置上下文: uv run frago run set-context <run_id>
-    3. 记录日志: uv run frago run log --step "..." --status "success" ...
-    4. 查看进度: uv run frago run info <run_id>
-    5. 归档: uv run frago run archive <run_id>
+    1. 创建run: frago run init "任务描述"
+    2. 设置上下文: frago run set-context <run_id>
+    3. 记录日志: frago run log --step "..." --status "success" ...
+    4. 查看进度: frago run info <run_id>
+    5. 归档: frago run archive <run_id>
     """
     pass
 
@@ -124,8 +124,8 @@ def init(description: str, run_id: Optional[str]):
 
     \b
     示例:
-        uv run frago run init "在Upwork上搜索Python职位"
-        uv run frago run init "测试任务" --run-id custom-id
+        frago run init "在Upwork上搜索Python职位"
+        frago run init "测试任务" --run-id custom-id
     """
     try:
         manager = get_manager()
@@ -150,7 +150,7 @@ def set_context(run_id: str):
 
     \b
     示例:
-        uv run frago run set-context find-job-on-upwork
+        frago run set-context find-job-on-upwork
     """
     try:
         manager = get_manager()
@@ -179,7 +179,7 @@ def release():
 
     \b
     示例:
-        uv run frago run release
+        frago run release
     """
     try:
         context_mgr = get_context_manager()
@@ -214,8 +214,8 @@ def list(format: str, status: str):
 
     \b
     示例:
-        uv run frago run list
-        uv run frago run list --format json --status active
+        frago run list
+        frago run list --format json --status active
     """
     try:
         manager = get_manager()
@@ -268,8 +268,8 @@ def info(run_id: str, format: str):
 
     \b
     示例:
-        uv run frago run info find-job-on-upwork
-        uv run frago run info find-job-on-upwork --format json
+        frago run info find-job-on-upwork
+        frago run info find-job-on-upwork --format json
     """
     try:
         manager = get_manager()
@@ -344,7 +344,7 @@ def archive(run_id: str):
 
     \b
     示例:
-        uv run frago run archive find-job-on-upwork
+        frago run archive find-job-on-upwork
     """
     try:
         manager = get_manager()
@@ -408,16 +408,16 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
 
     \b
     示例:
-        uv run frago run log \\
+        frago run log \\
           --step "导航到搜索页" \\
           --status "success" \\
           --action-type "navigation" \\
           --execution-method "command" \\
-          --data '{"command": "uv run frago navigate https://upwork.com"}'
+          --data '{"command": "frago chrome navigate https://upwork.com"}'
 
     \b
     带 insight 示例:
-        uv run frago run log \\
+        frago run log \\
           --step "提取职位列表" \\
           --status "error" \\
           --action-type "extraction" \\
@@ -502,7 +502,7 @@ def screenshot(description: str):
 
     \b
     示例:
-        uv run frago run screenshot "搜索结果页面"
+        frago run screenshot "搜索结果页面"
     """
     try:
         # 获取当前上下文

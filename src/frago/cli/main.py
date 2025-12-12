@@ -28,16 +28,25 @@ from .session_commands import session_group
 from .agent_friendly import AgentFriendlyGroup
 
 
-# 命令分组定义
+# 命令分组定义（按用户角色）
 COMMAND_GROUPS = OrderedDict([
-    ("环境配置", ["init", "init-dirs", "status", "update", "gui-deps"]),
-    ("资源管理", ["use-git", "dev"]),
-    ("浏览器自动化", ["chrome"]),
-    ("自动化", ["recipe", "run", "agent", "agent-status", "session"]),
+    ("日常使用", ["chrome", "recipe", "run"]),
+    ("会话与智能", ["session", "agent", "agent-status"]),
+    ("环境管理", ["init", "status", "update"]),
+    ("开发者", ["dev", "use-git", "init-dirs", "gui-deps"]),
 ])
 
 # 需要展开子命令的命令组
 EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "use-git", "session"]
+
+# chrome 子命令分组
+CHROME_SUBGROUPS = OrderedDict([
+    ("生命周期", ["start", "stop", "status"]),
+    ("Tab 管理", ["list-tabs", "switch-tab"]),
+    ("页面控制", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
+    ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
+    ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),
+])
 
 
 class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
@@ -120,15 +129,31 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
         with ctx.scope() as sub_ctx:
             sub_ctx.info_name = group_name
 
+            # 获取所有子命令
+            subcmds = {}
             for subcmd_name in group_cmd.list_commands(sub_ctx):
                 subcmd = group_cmd.get_command(sub_ctx, subcmd_name)
                 if subcmd is None or subcmd.hidden:
                     continue
+                subcmds[subcmd_name] = subcmd
 
-                # 使用 "group subcmd" 格式，方便 agent 直接复制使用
-                full_name = f"  {group_name} {subcmd_name}"
-                help_str = subcmd.get_short_help_str(limit=60)
-                rows.append((full_name, help_str))
+            # chrome 命令组使用分组显示
+            if group_name == "chrome" and CHROME_SUBGROUPS:
+                for subgroup_name, subgroup_cmds in CHROME_SUBGROUPS.items():
+                    # 添加分组标签
+                    rows.append((f"  [{subgroup_name}]", ""))
+                    for subcmd_name in subgroup_cmds:
+                        if subcmd_name in subcmds:
+                            subcmd = subcmds[subcmd_name]
+                            full_name = f"    {group_name} {subcmd_name}"
+                            help_str = subcmd.get_short_help_str(limit=55)
+                            rows.append((full_name, help_str))
+            else:
+                # 其他命令组扁平显示
+                for subcmd_name, subcmd in subcmds.items():
+                    full_name = f"  {group_name} {subcmd_name}"
+                    help_str = subcmd.get_short_help_str(limit=60)
+                    rows.append((full_name, help_str))
 
         return rows
 
@@ -250,8 +275,8 @@ cli.add_command(update)  # 自我更新命令
 cli.add_command(gui_deps)  # GUI 依赖检查命令
 
 # 命令组
-cli.add_command(dev_group)  # 开发者命令组: dev pack/load/publish
-cli.add_command(usegit_group)  # Git 同步命令组: use-git deploy/sync
+cli.add_command(dev_group)  # 开发者命令组: dev pack
+cli.add_command(usegit_group)  # Git 同步命令组: use-git sync
 cli.add_command(chrome_group)  # Chrome CDP 命令组
 
 # Recipe 管理命令组
