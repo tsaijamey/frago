@@ -15,25 +15,45 @@
 ## 目录结构
 
 ```
-src/frago/           # 核心代码
-examples/            # 示例 Recipe
-.claude/commands/    # Claude Code slash 命令
-.claude/skills/      # Claude Code skills
+src/frago/              # 核心代码
+src/frago/resources/    # PyPI 包资源（由 dev pack 生成）
+```
+
+## 资源统一到用户目录
+
+所有资源均存放在用户目录：
+
+```
+~/.claude/
+├── commands/
+│   ├── frago.*.md       # Frago 命令
+│   └── frago/           # 命令规则和脚本
+└── skills/
+    └── frago-*/         # Frago skills
+
+~/.frago/
+├── config.json          # 全局配置
+├── current_run          # 当前 run 上下文
+├── projects/            # run 实例目录
+├── recipes/             # Recipe 库
+│   ├── atomic/
+│   └── workflows/
+├── sessions/            # Session 存储
+└── chrome_profile/      # Chrome 配置
 ```
 
 ## 资源更新流程
 
 ```
-.claude/commands/  ──┐
-.claude/skills/    ──┼──→  frago dev-pack  ──→  src/frago/resources/
-examples/          ──┘
+~/.claude/commands/frago.*.md  ──┐
+~/.claude/skills/frago-*       ──┼──→  frago dev pack  ──→  src/frago/resources/
+~/.frago/recipes/              ──┘
 ```
 
 ## 禁止事项
 
-- ❌ 直接修改 `src/frago/resources/`（由 dev-pack 自动生成）
-- ❌ 直接修改 `~/.claude/` 或 `~/.frago/`（用户目录，通过命令管理）
-- ✅ 修改源头 `.claude/` 或 `examples/`，再通过 `frago dev-pack` 同步
+- ❌ 直接修改 `src/frago/resources/`（由 dev pack 自动生成）
+- ✅ 在 `~/.claude/` 和 `~/.frago/` 编辑资源，再通过 `frago dev pack` 同步
 
 ## 文档索引（按需阅读）
 
@@ -42,4 +62,4 @@ examples/          ──┘
 | `docs/concepts.md` | 核心概念与架构设计 |
 | `pyproject.toml` | 依赖版本、入口点配置 |
 | `specs/*/spec.md` | 各功能的规格说明 |
-| `.claude/commands/frago/` | Agent 使用 frago 的行为规范 |
+| `~/.claude/commands/frago/` | Agent 使用 frago 的行为规范 |
