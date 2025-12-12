@@ -710,14 +710,11 @@ def ensure_gui_deps() -> tuple[bool, str]:
         return False, "不支持的发行版"
 
     # 步骤2: 检查所有系统依赖
-    print(f"检测发行版: {distro.name} ({distro.id} {distro.version_id})")
-    print(f"需要检查的包: {', '.join(distro.packages)}")
-    print()
-
     all_installed, missing_pkgs = check_all_system_deps(distro)
 
     if not all_installed:
-        print("\n检测到缺少以下系统依赖:")
+        print(f"检测发行版: {distro.name} ({distro.id} {distro.version_id})")
+        print(f"\n检测到缺少以下系统依赖:")
         for pkg in missing_pkgs:
             print(f"  - {pkg}")
         print()

@@ -507,8 +507,10 @@ a:not(.btn):not(.nav-tab):hover {
 
 .task-title {
   font-weight: 500;
+  font-size: 13px;
   color: var(--text-primary);
   line-height: 1.4;
+  flex: 1;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -552,19 +554,21 @@ a:not(.btn):not(.nav-tab):hover {
 .task-footer {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  font-size: 12px;
+  gap: var(--spacing-sm);
+  font-size: 11px;
 }
 
 .task-status-label {
   font-weight: 500;
+  font-size: 10px;
 }
 
 .task-stat {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   color: var(--text-muted);
+  font-size: 10px;
 }
 
 .task-stat-icon {

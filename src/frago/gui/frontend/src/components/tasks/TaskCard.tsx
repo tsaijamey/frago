@@ -55,7 +55,7 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
       {/* 中间：主要信息 */}
       <div className="task-main">
         <div className="task-header">
-          <span className="task-title">{task.name}</span>
+          <span className="task-title" title={task.name}>{task.name}</span>
           <span className="task-time">{formatRelativeTime(task.started_at)}</span>
         </div>
 

@@ -473,6 +473,35 @@ def start_gui(debug: bool = False) -> None:
     Raises:
         GuiNotAvailableError: If GUI cannot be started.
     """
+    # 在非调试模式下，后台运行 GUI
+    if not debug and platform.system() != "Windows":
+        # Fork 到后台（仅 Unix 系统）
+        try:
+            pid = os.fork()
+            if pid > 0:
+                # 父进程立即退出
+                sys.exit(0)
+        except OSError as e:
+            print(f"Fork 失败: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # 子进程：detach from terminal
+        os.setsid()
+
+        # 重定向标准输入输出到 /dev/null
+        devnull = os.open(os.devnull, os.O_RDWR)
+        os.dup2(devnull, sys.stdin.fileno())
+        os.dup2(devnull, sys.stdout.fileno())
+        os.dup2(devnull, sys.stderr.fileno())
+        os.close(devnull)
+
+    # 在非调试模式下，抑制 GTK/GLib 的警告消息
+    if not debug:
+        os.environ['G_MESSAGES_DEBUG'] = ''
+        os.environ['PYWEBVIEW_LOG'] = 'error'
+        # 抑制 GLib 的所有警告和调试信息
+        os.environ['G_DEBUG'] = 'fatal-criticals'
+
     # Linux 依赖检查和自动安装（必须在 import webview 之前）
     if platform.system() == "Linux":
         from frago.gui.deps import ensure_gui_deps
@@ -486,7 +515,17 @@ def start_gui(debug: bool = False) -> None:
 
     # 依赖检查通过后，才导入 webview（会触发后端加载）
     try:
-        _lazy_import_webview()
+        # 临时抑制 stderr，避免 pywebview/GTK 后端的调试警告
+        import io
+        import contextlib
+
+        stderr_buffer = io.StringIO()
+        with contextlib.redirect_stderr(stderr_buffer):
+            _lazy_import_webview()
+
+        # 抑制 pywebview 的日志
+        import logging
+        logging.getLogger('pywebview').setLevel(logging.ERROR)
     except ImportError as e:
         print(f"Error: {e}", file=sys.stderr)
         print(_get_install_instructions(), file=sys.stderr)
