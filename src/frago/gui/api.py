@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import frontmatter
+
 try:
     import webview
 except ImportError:
@@ -207,6 +209,9 @@ class FragoGuiApi:
     def _load_skills(self) -> List[SkillItem]:
         """Load skills from ~/.claude/skills/ directory.
 
+        Skills are organized as directories with SKILL.md files containing
+        YAML frontmatter for name and description.
+
         Returns:
             List of SkillItem instances.
         """
@@ -216,28 +221,35 @@ class FragoGuiApi:
         if not skills_dir.exists():
             return skills
 
-        for path in skills_dir.glob("*.md"):
-            name = path.stem
-            description = None
+        for skill_path in skills_dir.iterdir():
+            if not skill_path.is_dir():
+                continue
+
+            skill_file = skill_path / "SKILL.md"
+            if not skill_file.exists():
+                continue
 
             try:
-                content = path.read_text(encoding="utf-8")
-                for line in content.split("\n"):
-                    if line.startswith("# "):
-                        name = line[2:].strip()
-                    elif line.strip() and not line.startswith("#") and not line.startswith("---"):
-                        description = line.strip()[:100]
-                        break
-            except Exception:
-                pass
+                post = frontmatter.load(skill_file)
+                name = post.get("name", skill_path.name)
+                description = post.get("description")
 
-            skills.append(
-                SkillItem(
-                    name=name,
-                    description=description,
-                    file_path=str(path),
+                skills.append(
+                    SkillItem(
+                        name=name,
+                        description=description,
+                        file_path=str(skill_file),
+                    )
                 )
-            )
+            except Exception:
+                # fallback: use directory name
+                skills.append(
+                    SkillItem(
+                        name=skill_path.name,
+                        description=None,
+                        file_path=str(skill_file),
+                    )
+                )
 
         return skills
 
