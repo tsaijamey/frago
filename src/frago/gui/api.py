@@ -62,6 +62,7 @@ class FragoGuiApi:
         self._skill_cache: List[SkillItem] = []
         self._sync_thread: Optional[threading.Thread] = None
         self._sync_stop_event = threading.Event()
+        self._sync_result: Optional[Dict[str, Any]] = None  # 用于 Settings 页面的 sync 状态
 
         # GUI 启动时同步当前项目的 Claude 会话
         self._sync_sessions_on_startup()
@@ -1080,3 +1081,586 @@ class FragoGuiApi:
                 "status": "error",
                 "error": f"继续任务失败: {str(e)}",
             }
+
+    # ============================================================
+    # Settings 页面相关 API 方法：主配置管理
+    # ============================================================
+
+    def get_main_config(self) -> Dict[str, Any]:
+        """获取主配置 (~/.frago/config.json)
+
+        Returns:
+            配置字典，包含 Config 模型的所有字段
+        """
+        from frago.init.config_manager import load_config
+
+        try:
+            config = load_config()
+            return config.model_dump(mode='json')
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"加载主配置失败: {e}")
+            # 返回空配置
+            from frago.init.models import Config
+            return Config().model_dump(mode='json')
+
+    def update_main_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """更新主配置
+
+        Args:
+            updates: 部分更新字典，例如 {"working_directory": "/path"}
+
+        Returns:
+            {"status": "ok", "config": {...}} 或 {"status": "error", "error": "..."}
+        """
+        from frago.init.config_manager import update_config
+        from pydantic import ValidationError
+
+        try:
+            config = update_config(updates)
+            return {
+                "status": "ok",
+                "config": config.model_dump(mode='json')
+            }
+        except ValidationError as e:
+            return {
+                "status": "error",
+                "error": f"配置验证失败: {e}"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    def update_auth_method(self, auth_data: Dict[str, Any]) -> Dict[str, Any]:
+        """更新认证方式和 API 端点
+
+        Args:
+            auth_data: {
+                "auth_method": "official" | "custom",
+                "api_endpoint": {  # 仅 custom 时提供
+                    "type": "deepseek" | "aliyun" | "kimi" | "minimax" | "custom",
+                    "url": "...",  # 仅 type=custom 时需要
+                    "api_key": "..."
+                }
+            }
+
+        Returns:
+            {"status": "ok", "config": {...}} 或 {"status": "error", "error": "..."}
+        """
+        from frago.init.config_manager import update_config
+        from pydantic import ValidationError
+
+        try:
+            # 构建更新字典
+            updates: Dict[str, Any] = {
+                "auth_method": auth_data["auth_method"]
+            }
+
+            # 处理 api_endpoint
+            if auth_data["auth_method"] == "custom":
+                if "api_endpoint" not in auth_data:
+                    return {
+                        "status": "error",
+                        "error": "Custom auth requires api_endpoint"
+                    }
+                updates["api_endpoint"] = auth_data["api_endpoint"]
+            else:
+                # official 模式，移除 api_endpoint
+                updates["api_endpoint"] = None
+
+            # 更新配置
+            config = update_config(updates)
+
+            # 对返回的配置进行掩码处理
+            config_dict = config.model_dump(mode='json')
+            if config_dict.get("api_endpoint") and config_dict["api_endpoint"].get("api_key"):
+                config_dict["api_endpoint"]["api_key"] = self._mask_api_key(
+                    config_dict["api_endpoint"]["api_key"]
+                )
+
+            return {
+                "status": "ok",
+                "config": config_dict
+            }
+        except ValidationError as e:
+            return {
+                "status": "error",
+                "error": f"配置验证失败: {e}"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    @staticmethod
+    def _mask_api_key(api_key: str) -> str:
+        """掩码 API key（前4后4，短于8位则完全掩码）
+
+        Args:
+            api_key: 原始 API key
+
+        Returns:
+            掩码后的 API key
+        """
+        if len(api_key) <= 8:
+            return '••••••••'
+        return api_key[:4] + '••••' + api_key[-4:]
+
+    def open_working_directory(self) -> Dict[str, Any]:
+        """在文件管理器中打开工作目录
+
+        Returns:
+            {"status": "ok"} 或 {"status": "error", "error": "..."}
+        """
+        import subprocess
+        import sys
+        from frago.init.config_manager import load_config
+
+        try:
+            config = load_config()
+            work_dir = config.working_directory or str(Path.home() / ".frago" / "projects")
+            work_dir_path = Path(work_dir).expanduser().resolve()
+
+            # 确保目录存在
+            work_dir_path.mkdir(parents=True, exist_ok=True)
+
+            # 根据操作系统打开文件管理器
+            if sys.platform == 'darwin':  # macOS
+                subprocess.Popen(['open', str(work_dir_path)])
+            elif sys.platform == 'win32':  # Windows
+                subprocess.Popen(['explorer', str(work_dir_path)])
+            else:  # Linux
+                subprocess.Popen(['xdg-open', str(work_dir_path)])
+
+            return {"status": "ok"}
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": f"打开目录失败: {str(e)}"
+            }
+
+    # ============================================================
+    # Settings 页面相关 API 方法：环境变量管理
+    # ============================================================
+
+    def get_env_vars(self) -> Dict[str, Any]:
+        """获取用户级环境变量 (~/.frago/.env)
+
+        Returns:
+            {"vars": {...}, "file_exists": bool}
+        """
+        from frago.recipes.env_loader import EnvLoader
+
+        try:
+            env_path = EnvLoader.USER_ENV_PATH
+            loader = EnvLoader()
+
+            # 加载用户级 .env 文件
+            env_vars = loader.load_env_file(env_path)
+
+            return {
+                "vars": env_vars,
+                "file_exists": env_path.exists()
+            }
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"加载环境变量失败: {e}")
+            return {
+                "vars": {},
+                "file_exists": False
+            }
+
+    def update_env_vars(self, updates: Dict[str, Optional[str]]) -> Dict[str, Any]:
+        """批量更新环境变量
+
+        Args:
+            updates: {"KEY": "value", "DELETE_KEY": None} - value=None 表示删除
+
+        Returns:
+            {"status": "ok", "vars": {...}} 或 {"status": "error", "error": "..."}
+        """
+        from frago.recipes.env_loader import EnvLoader, update_env_file
+
+        try:
+            env_path = EnvLoader.USER_ENV_PATH
+
+            # 更新 .env 文件
+            update_env_file(env_path, updates)
+
+            # 重新加载并返回
+            loader = EnvLoader()
+            env_vars = loader.load_env_file(env_path)
+
+            return {
+                "status": "ok",
+                "vars": env_vars
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    def get_recipe_env_requirements(self) -> List[Dict]:
+        """扫描所有 Recipe 的环境变量需求
+
+        Returns:
+            [{
+                "recipe_name": "...",
+                "var_name": "GITHUB_TOKEN",
+                "required": true,
+                "description": "...",
+                "configured": false
+            }, ...]
+        """
+        try:
+            import frontmatter
+        except ImportError:
+            import logging
+            logging.getLogger(__name__).warning(
+                "python-frontmatter 未安装，无法扫描 Recipe 环境变量需求"
+            )
+            return []
+
+        from frago.recipes.env_loader import EnvLoader
+
+        requirements = []
+        recipe_dirs = [
+            Path.home() / ".frago" / "recipes",
+        ]
+
+        # 加载当前环境变量
+        try:
+            current_env = EnvLoader().load_all()
+        except Exception:
+            current_env = {}
+
+        # 扫描 Recipe 目录
+        for recipe_dir in recipe_dirs:
+            if not recipe_dir.exists():
+                continue
+
+            for md_file in recipe_dir.rglob("recipe.md"):
+                try:
+                    # 解析 frontmatter
+                    post = frontmatter.load(md_file)
+                    env_vars = post.metadata.get("env", {})
+
+                    if not env_vars:
+                        continue
+
+                    recipe_name = post.metadata.get("name", md_file.parent.name)
+
+                    for var_name, var_def in env_vars.items():
+                        # var_def 可能是字典或简单的默认值
+                        if isinstance(var_def, dict):
+                            required = var_def.get("required", False)
+                            description = var_def.get("description", "")
+                        else:
+                            required = False
+                            description = ""
+
+                        requirements.append({
+                            "recipe_name": recipe_name,
+                            "var_name": var_name,
+                            "required": required,
+                            "description": description,
+                            "configured": var_name in current_env
+                        })
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"解析 {md_file} 失败: {e}"
+                    )
+                    continue
+
+        # 去重（同一变量被多个 Recipe 使用）
+        unique = {}
+        for req in requirements:
+            key = req["var_name"]
+            if key not in unique:
+                unique[key] = req
+            else:
+                # 合并 recipe_name
+                unique[key]["recipe_name"] += f", {req['recipe_name']}"
+                # 保留更高优先级的属性（任一 required=True 则为 True）
+                if req["required"]:
+                    unique[key]["required"] = True
+
+        return list(unique.values())
+
+    # ============================================================
+    # Settings 页面相关 API 方法：GitHub 集成
+    # ============================================================
+
+    def check_gh_cli(self) -> Dict[str, Any]:
+        """检查 gh CLI 安装和登录状态
+
+        Returns:
+            {
+                "installed": bool,
+                "version": "2.40.1" or None,
+                "authenticated": bool,
+                "username": "..." or None
+            }
+        """
+        result = {
+            "installed": False,
+            "version": None,
+            "authenticated": False,
+            "username": None
+        }
+
+        # 检查 gh 是否安装
+        try:
+            version_result = subprocess.run(
+                ['gh', '--version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if version_result.returncode == 0:
+                result["installed"] = True
+                # 解析版本号（格式如 "gh version 2.40.1 (2023-12-13)"）
+                import re
+                match = re.search(r'gh version ([\d.]+)', version_result.stdout)
+                if match:
+                    result["version"] = match.group(1)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return result
+
+        # 检查登录状态
+        if result["installed"]:
+            try:
+                auth_result = subprocess.run(
+                    ['gh', 'auth', 'status'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                # gh auth status 返回 0 表示已登录
+                if auth_result.returncode == 0:
+                    result["authenticated"] = True
+                    # 解析用户名（从输出中提取）
+                    import re
+                    match = re.search(r'Logged in to github\.com as ([^\s]+)', auth_result.stderr)
+                    if match:
+                        result["username"] = match.group(1)
+            except subprocess.TimeoutExpired:
+                pass
+
+        return result
+
+    def gh_auth_login(self) -> Dict[str, Any]:
+        """在外部终端执行 gh auth login
+
+        Returns:
+            {"status": "ok", "message": "..."} 或 {"status": "error", "error": "..."}
+        """
+        import platform
+
+        try:
+            system = platform.system()
+
+            if system == 'Linux':
+                # 尝试 x-terminal-emulator
+                try:
+                    subprocess.Popen(
+                        ['x-terminal-emulator', '-e', 'gh', 'auth', 'login']
+                    )
+                    return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+                except FileNotFoundError:
+                    # 降级到 gnome-terminal
+                    try:
+                        subprocess.Popen(
+                            ['gnome-terminal', '--', 'gh', 'auth', 'login']
+                        )
+                        return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+                    except FileNotFoundError:
+                        return {
+                            "status": "error",
+                            "error": "未找到可用的终端模拟器 (x-terminal-emulator, gnome-terminal)"
+                        }
+            elif system == 'Darwin':
+                # macOS
+                script = 'tell application "Terminal" to do script "gh auth login; exit"'
+                subprocess.run(['osascript', '-e', script])
+                return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+            else:
+                return {"status": "error", "error": f"不支持的操作系统: {system}"}
+
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def create_sync_repo(self, repo_name: str, private: bool = True) -> Dict[str, Any]:
+        """创建 GitHub 仓库并配置到 config.json
+
+        Args:
+            repo_name: 仓库名称（不含用户名前缀）
+            private: 是否私有仓库
+
+        Returns:
+            {"status": "ok", "repo_url": "..."} 或 {"status": "error", "error": "..."}
+        """
+        from frago.init.config_manager import update_config
+
+        try:
+            # 创建仓库
+            cmd = ['gh', 'repo', 'create', repo_name]
+            if private:
+                cmd.append('--private')
+            else:
+                cmd.append('--public')
+
+            # 添加描述
+            cmd.extend(['--description', 'Frago resources sync repository'])
+
+            # 重试机制
+            max_retries = 3
+            last_error = None
+
+            for attempt in range(max_retries):
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+
+                    if result.returncode == 0:
+                        # 成功创建，解析仓库 URL
+                        # gh repo create 输出类似: ✓ Created repository user/repo on GitHub
+                        # 我们需要获取 SSH URL
+                        username_result = subprocess.run(
+                            ['gh', 'api', 'user', '--jq', '.login'],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        username = username_result.stdout.strip()
+                        repo_url = f"git@github.com:{username}/{repo_name}.git"
+
+                        # 更新配置
+                        update_config({"sync_repo_url": repo_url})
+
+                        return {
+                            "status": "ok",
+                            "repo_url": repo_url
+                        }
+                    else:
+                        last_error = result.stderr.strip()
+                        if "already exists" in last_error.lower():
+                            # 仓库已存在，不需要重试
+                            return {
+                                "status": "error",
+                                "error": f"仓库 {repo_name} 已存在"
+                            }
+                        # 其他错误，继续重试
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue
+
+                except subprocess.TimeoutExpired:
+                    last_error = "创建仓库超时"
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                        continue
+
+            return {
+                "status": "error",
+                "error": last_error or "创建仓库失败"
+            }
+
+        except FileNotFoundError:
+            return {
+                "status": "error",
+                "error": "gh 命令未找到，请确保已安装 GitHub CLI"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    def run_first_sync(self) -> Dict[str, Any]:
+        """执行 frago sync（后台线程）
+
+        Returns:
+            {"status": "ok", "message": "同步已开始"}
+        """
+        # 检查是否有同步正在运行
+        if self._sync_result and self._sync_result.get("status") == "running":
+            return {
+                "status": "error",
+                "error": "同步正在进行中，请稍后再试"
+            }
+
+        # 重置同步结果
+        self._sync_result = {"status": "running"}
+
+        def sync_task():
+            """后台同步任务"""
+            try:
+                import shutil
+                frago_path = shutil.which("frago")
+                if not frago_path:
+                    self._sync_result = {
+                        "status": "error",
+                        "error": "frago 命令未找到"
+                    }
+                    return
+
+                # 执行 frago sync
+                process = subprocess.Popen(
+                    [frago_path, 'sync'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+
+                output_lines = []
+                for line in process.stdout:
+                    output_lines.append(line.strip())
+
+                process.wait()
+
+                if process.returncode == 0:
+                    self._sync_result = {
+                        "status": "ok",
+                        "output": "\n".join(output_lines)
+                    }
+                else:
+                    self._sync_result = {
+                        "status": "error",
+                        "error": "\n".join(output_lines) or "同步失败"
+                    }
+
+            except Exception as e:
+                self._sync_result = {
+                    "status": "error",
+                    "error": str(e)
+                }
+
+        # 启动后台线程
+        thread = threading.Thread(target=sync_task, daemon=True)
+        thread.start()
+
+        return {
+            "status": "ok",
+            "message": "同步已开始"
+        }
+
+    def get_sync_result(self) -> Dict[str, Any]:
+        """获取 sync 结果（轮询）
+
+        Returns:
+            {"status": "running"} 或 {"status": "ok", "output": "..."} 或 {"status": "error", "error": "..."}
+        """
+        if self._sync_result is None:
+            return {"status": "error", "error": "没有正在进行的同步"}
+
+        return self._sync_result
