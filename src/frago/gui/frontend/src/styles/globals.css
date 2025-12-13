@@ -15,6 +15,7 @@
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;
   --bg-card: #161b22;
+  --bg-base: #161b22;
   --bg-subtle: #30363d;
 
   /* 文字色阶 */
@@ -77,6 +78,7 @@
   --bg-secondary: #f6f8fa;
   --bg-tertiary: #f3f4f6;
   --bg-card: #ffffff;
+  --bg-base: #ffffff;
   --bg-subtle: #eaeef2;
 
   --text-primary: #1f2328;

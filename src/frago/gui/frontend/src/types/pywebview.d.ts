@@ -142,6 +142,92 @@ export interface ConnectionStatus {
 }
 
 // ============================================================
+// Settings 页面相关类型（主配置、环境变量、GitHub）
+// ============================================================
+
+export interface APIEndpoint {
+  type: 'deepseek' | 'aliyun' | 'kimi' | 'minimax' | 'custom';
+  url?: string;
+  api_key: string;
+}
+
+export interface MainConfig {
+  schema_version: string;
+  // 依赖信息
+  node_version?: string;
+  node_path?: string;
+  npm_version?: string;
+  claude_code_version?: string;
+  claude_code_path?: string;
+  // 认证配置
+  auth_method: 'official' | 'custom';
+  api_endpoint?: APIEndpoint;
+  // 可选功能
+  ccr_enabled: boolean;
+  ccr_config_path?: string;
+  working_directory?: string;
+  sync_repo_url?: string;
+  // 资源状态
+  resources_installed: boolean;
+  resources_version?: string;
+  last_resource_update?: string;
+  // 元数据
+  created_at: string;
+  updated_at: string;
+  init_completed: boolean;
+}
+
+export interface EnvVarsResponse {
+  vars: Record<string, string>;
+  file_exists: boolean;
+}
+
+export interface RecipeEnvRequirement {
+  recipe_name: string;
+  var_name: string;
+  required: boolean;
+  description: string;
+  configured: boolean;
+}
+
+export interface GhCliStatus {
+  installed: boolean;
+  version?: string;
+  authenticated: boolean;
+  username?: string;
+}
+
+export interface MainConfigUpdateResponse {
+  status: 'ok' | 'error';
+  config?: MainConfig;
+  error?: string;
+}
+
+export interface AuthUpdateRequest {
+  auth_method: 'official' | 'custom';
+  api_endpoint?: APIEndpoint;
+}
+
+export interface EnvVarsUpdateResponse {
+  status: 'ok' | 'error';
+  vars?: Record<string, string>;
+  error?: string;
+}
+
+export interface CreateRepoResponse {
+  status: 'ok' | 'error';
+  repo_url?: string;
+  error?: string;
+}
+
+export interface SyncResponse {
+  status: 'ok' | 'error' | 'running';
+  message?: string;
+  output?: string;
+  error?: string;
+}
+
+// ============================================================
 // API 响应类型
 // ============================================================
 
@@ -284,15 +370,94 @@ export interface PyWebviewApi {
   // ============================================================
 
   /**
-   * 获取用户配置
+   * 获取用户配置（GUI 配置）
    */
   get_config(): Promise<UserConfig>;
 
   /**
-   * 更新用户配置
+   * 更新用户配置（GUI 配置）
    * @param config 配置更新
    */
   update_config(config: Partial<UserConfig>): Promise<ConfigUpdateResponse>;
+
+  // ============================================================
+  // Settings API - 主配置管理
+  // ============================================================
+
+  /**
+   * 获取主配置（~/.frago/config.json）
+   */
+  get_main_config(): Promise<MainConfig>;
+
+  /**
+   * 更新主配置
+   * @param updates 部分更新字典
+   */
+  update_main_config(updates: Partial<MainConfig>): Promise<MainConfigUpdateResponse>;
+
+  /**
+   * 更新认证方式和 API 端点
+   * @param auth_data 认证配置
+   */
+  update_auth_method(auth_data: AuthUpdateRequest): Promise<MainConfigUpdateResponse>;
+
+  /**
+   * 在文件管理器中打开工作目录
+   */
+  open_working_directory(): Promise<ApiResponse>;
+
+  // ============================================================
+  // Settings API - 环境变量管理
+  // ============================================================
+
+  /**
+   * 获取用户级环境变量（~/.frago/.env）
+   */
+  get_env_vars(): Promise<EnvVarsResponse>;
+
+  /**
+   * 批量更新环境变量
+   * @param updates 更新字典，value=null 表示删除
+   */
+  update_env_vars(
+    updates: Record<string, string | null>
+  ): Promise<EnvVarsUpdateResponse>;
+
+  /**
+   * 扫描所有 Recipe 的环境变量需求
+   */
+  get_recipe_env_requirements(): Promise<RecipeEnvRequirement[]>;
+
+  // ============================================================
+  // Settings API - GitHub 集成
+  // ============================================================
+
+  /**
+   * 检查 gh CLI 安装和登录状态
+   */
+  check_gh_cli(): Promise<GhCliStatus>;
+
+  /**
+   * 在外部终端执行 gh auth login
+   */
+  gh_auth_login(): Promise<ApiResponse>;
+
+  /**
+   * 创建 GitHub 仓库并配置到 config.json
+   * @param repo_name 仓库名称
+   * @param private_repo 是否私有仓库
+   */
+  create_sync_repo(repo_name: string, private_repo?: boolean): Promise<CreateRepoResponse>;
+
+  /**
+   * 执行 frago sync（后台线程）
+   */
+  run_first_sync(): Promise<SyncResponse>;
+
+  /**
+   * 获取 sync 结果（轮询）
+   */
+  get_sync_result(): Promise<SyncResponse>;
 
   // ============================================================
   // System API

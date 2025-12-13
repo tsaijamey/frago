@@ -20,6 +20,16 @@ import type {
   ConnectionStatus,
   TaskStartResponse,
   RecipeDeleteResponse,
+  MainConfig,
+  MainConfigUpdateResponse,
+  AuthUpdateRequest,
+  EnvVarsResponse,
+  EnvVarsUpdateResponse,
+  RecipeEnvRequirement,
+  GhCliStatus,
+  ApiResponse,
+  CreateRepoResponse,
+  SyncResponse,
 } from '@/types/pywebview.d';
 
 // 等待 pywebview 就绪
@@ -214,4 +224,85 @@ export async function getSystemStatus(): Promise<SystemStatus> {
 export async function checkConnection(): Promise<ConnectionStatus> {
   const api = await waitForPywebview();
   return api.check_connection();
+}
+
+// ============================================================
+// Settings API - 主配置管理
+// ============================================================
+
+export async function getMainConfig(): Promise<MainConfig> {
+  const api = await waitForPywebview();
+  return api.get_main_config();
+}
+
+export async function updateMainConfig(
+  updates: Partial<MainConfig>
+): Promise<MainConfigUpdateResponse> {
+  const api = await waitForPywebview();
+  return api.update_main_config(updates);
+}
+
+export async function updateAuthMethod(
+  authData: AuthUpdateRequest
+): Promise<MainConfigUpdateResponse> {
+  const api = await waitForPywebview();
+  return api.update_auth_method(authData);
+}
+
+export async function openWorkingDirectory(): Promise<ApiResponse> {
+  const api = await waitForPywebview();
+  return api.open_working_directory();
+}
+
+// ============================================================
+// Settings API - 环境变量管理
+// ============================================================
+
+export async function getEnvVars(): Promise<EnvVarsResponse> {
+  const api = await waitForPywebview();
+  return api.get_env_vars();
+}
+
+export async function updateEnvVars(
+  updates: Record<string, string | null>
+): Promise<EnvVarsUpdateResponse> {
+  const api = await waitForPywebview();
+  return api.update_env_vars(updates);
+}
+
+export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]> {
+  const api = await waitForPywebview();
+  return api.get_recipe_env_requirements();
+}
+
+// ============================================================
+// Settings API - GitHub 集成
+// ============================================================
+
+export async function checkGhCli(): Promise<GhCliStatus> {
+  const api = await waitForPywebview();
+  return api.check_gh_cli();
+}
+
+export async function ghAuthLogin(): Promise<ApiResponse> {
+  const api = await waitForPywebview();
+  return api.gh_auth_login();
+}
+
+export async function createSyncRepo(
+  repoName: string,
+  privateRepo: boolean = true
+): Promise<CreateRepoResponse> {
+  const api = await waitForPywebview();
+  return api.create_sync_repo(repoName, privateRepo);
+}
+
+export async function runFirstSync(): Promise<SyncResponse> {
+  const api = await waitForPywebview();
+  return api.run_first_sync();
+}
+
+export async function getSyncResult(): Promise<SyncResponse> {
+  const api = await waitForPywebview();
+  return api.get_sync_result();
 }
