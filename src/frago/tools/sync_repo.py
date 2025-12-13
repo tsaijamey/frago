@@ -385,12 +385,54 @@ def _dir_files_identical(dir1: Path, dir2: Path) -> bool:
     return True
 
 
+def _get_file_mtime(path: Path) -> float:
+    """获取文件的修改时间"""
+    if path.exists() and path.is_file():
+        return os.path.getmtime(path)
+    return 0.0
+
+
+def _get_dir_latest_mtime(dir_path: Path) -> float:
+    """获取目录中最新文件的修改时间"""
+    if not dir_path.exists() or not dir_path.is_dir():
+        return 0.0
+
+    latest_mtime = 0.0
+    for f in dir_path.rglob("*"):
+        if f.is_file():
+            mtime = os.path.getmtime(f)
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+    return latest_mtime
+
+
+def _is_source_newer(src: Path, target: Path) -> bool:
+    """检查源文件/目录是否比目标更新
+
+    Args:
+        src: 源路径
+        target: 目标路径
+
+    Returns:
+        True 如果源比目标更新，或目标不存在
+    """
+    if not target.exists():
+        return True
+
+    if src.is_file():
+        return _get_file_mtime(src) > _get_file_mtime(target)
+    elif src.is_dir():
+        return _get_dir_latest_mtime(src) > _get_dir_latest_mtime(target)
+
+    return False
+
+
 def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
     """
     将 ~/.claude/ 中的修改同步到 ~/.frago/.claude/
 
     检查 ~/.claude/commands/frago.*.md 和 ~/.claude/skills/frago-*
-    如果比 ~/.frago/.claude/ 中的版本更新，则复制过去
+    只有当 ~/.claude/ 中的版本比 ~/.frago/.claude/ 更新时才复制
     """
     # 同步 commands
     if CLAUDE_COMMANDS_DIR.exists():
@@ -403,7 +445,8 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
 
             target_file = FRAGO_COMMANDS_DIR / src_file.name
 
-            if not target_file.exists() or not _files_are_identical(src_file, target_file):
+            # 只有当内容不同且源文件更新时才复制
+            if not _files_are_identical(src_file, target_file) and _is_source_newer(src_file, target_file):
                 if not dry_run:
                     shutil.copy2(src_file, target_file)
                 # 收集变更信息
@@ -416,7 +459,8 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
         frago_target = FRAGO_COMMANDS_DIR / "frago"
 
         if frago_src.exists() and frago_src.is_dir():
-            if not _dir_files_identical(frago_src, frago_target):
+            # 只有当内容不同且源目录更新时才复制
+            if not _dir_files_identical(frago_src, frago_target) and _is_source_newer(frago_src, frago_target):
                 if not dry_run:
                     if frago_target.exists():
                         shutil.rmtree(frago_target)
@@ -440,7 +484,8 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
 
             target_skill_dir = FRAGO_SKILLS_DIR / skill_dir.name
 
-            if not _dir_files_identical(skill_dir, target_skill_dir):
+            # 只有当内容不同且源目录更新时才复制
+            if not _dir_files_identical(skill_dir, target_skill_dir) and _is_source_newer(skill_dir, target_skill_dir):
                 if not dry_run:
                     if target_skill_dir.exists():
                         shutil.rmtree(target_skill_dir)
