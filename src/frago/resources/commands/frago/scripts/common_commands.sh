@@ -6,10 +6,9 @@
 # 检查 CDP 连接状态
 frago chrome status
 
-# 启动 Chrome（三种模式）
+# 启动 Chrome（两种模式）
 frago chrome start              # 正常窗口模式
 frago chrome start --headless   # 无头模式（无界面）
-frago chrome start --void       # 虚空模式（窗口移到屏幕外）
 
 # 常用启动选项
 frago chrome start --port 9333        # 使用其他端口
