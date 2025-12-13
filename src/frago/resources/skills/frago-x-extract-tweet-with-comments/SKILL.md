@@ -1,5 +1,5 @@
 ---
-name: x-extract-tweet-with-comments
+name: frago-x-extract-tweet-with-comments
 description: Twitter/X 推文及评论提取与内容生产指南。当用户提到 "Twitter 视频"、"推特观点"、"X 评论视频"、"网友观点视频" 或明确指定此 skill 时使用。涵盖素材收集、观点整理、朗读稿生成的内容生产流程。
 ---
 

@@ -11,14 +11,12 @@
 4. Claude Code 内置工具      ← 最后兜底
 ```
 
-## 场景对照表
+## 场景对照
 
-| 需求 | ❌ 不要 | ✅ 应该 |
-|------|--------|--------|
-| 搜索信息 | `WebSearch` | `frago chrome navigate "https://google.com/search?q=..."` |
-| 查看网页 | `WebFetch` | `frago chrome navigate <url>` + `get-content` |
-| 提取数据 | 手写 JS | 先查 `frago recipe list` |
-| 文件操作 | 手动创建 | 使用 Claude Code 的 Write/Edit 工具 |
+- **搜索信息**：❌ `WebSearch` → ✅ `frago chrome navigate "https://google.com/search?q=..."`
+- **查看网页**：❌ `Fetch` → ✅ `frago chrome navigate <url>` + `get-content`
+- **提取数据**：❌ 手写 JS → ✅ 先查 `frago recipe list`
+- **文件操作**：❌ 手动创建 → ✅ 使用 Claude Code 的 Write/Edit 工具
 
 ## 为什么这样设计
 

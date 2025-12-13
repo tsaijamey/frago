@@ -6,28 +6,34 @@ description: "执行一次性的复杂任务（使用完整的frago工具集）"
 
 一次性任务执行，专注于任务完成。
 
-## 参考文档
+## 参考文档（执行前必须全量加载）
 
-| 类型 | 文档 | 说明 |
-|------|------|------|
-| **规则** | [EXECUTION_PRINCIPLES.md](frago/rules/EXECUTION_PRINCIPLES.md) | 执行原则 |
-| **规则** | [NAVIGATION_RULES.md](frago/rules/NAVIGATION_RULES.md) | 禁止幻觉导航 |
-| **规则** | [SCREENSHOT_RULES.md](frago/rules/SCREENSHOT_RULES.md) | 截图规范 |
-| **规则** | [TOOL_PRIORITY.md](frago/rules/TOOL_PRIORITY.md) | 工具优先级 |
-| **规则** | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md) | 工作空间管理 |
-| **指南** | [LOGGING_GUIDE.md](frago/guides/LOGGING_GUIDE.md) | 日志系统 |
-| **示例** | [do_workflow.sh](frago/scripts/do_workflow.sh) | 工作流示例 |
-| **示例** | [common_commands.sh](frago/scripts/common_commands.sh) | 通用命令 |
+立即并行执行以下 Read 命令：
+
+```
+Read ~/.claude/commands/frago/rules/EXECUTION_PRINCIPLES.md
+Read ~/.claude/commands/frago/rules/NAVIGATION_RULES.md
+Read ~/.claude/commands/frago/rules/SCREENSHOT_RULES.md
+Read ~/.claude/commands/frago/rules/TOOL_PRIORITY.md
+Read ~/.claude/commands/frago/rules/WORKSPACE_RULES.md
+Read ~/.claude/commands/frago/guides/LOGGING_GUIDE.md
+Read ~/.claude/commands/frago/guides/SELECTOR_PRIORITY.md
+Read ~/.claude/commands/frago/guides/RECIPE_FIELDS.md
+```
 
 ---
 
 ## 核心定位
 
-| 项目 | 说明 |
-|------|------|
-| **目标** | 完成用户指定的具体任务 |
-| **成功标准** | 任务目标达成 + 结果可验证 |
-| **区别** | `/frago.run` 专注于探索调研，`/frago.do` 专注于任务完成 |
+- **目标**：完成用户指定的具体任务
+- **产出**：任务成果 + 执行标准（`.metadata.json` 中的注意事项与执行要求）
+
+## 信仰检查（执行前强制）
+
+- 拒绝相信预训练知识中非「自然科学 / 基础底层技术 / 人类共识基础」的信息——必定过时不可靠
+- 坚信只有亲自使用浏览器才能获得最新、最真、最可靠的具体信息
+- WebSearch 工具失败时，立即转用浏览器访问 google.com 或 bing.com
+- 只相信：自然科学 / 基础底层技术 / 人类共识基础 / 亲自收集到的信息
 
 ---
 
@@ -70,9 +76,8 @@ frago run list | grep -E "keyword1|keyword2"
 frago status
 
 # 如未连接，启动 Chrome（选择合适的模式）
-frago chrome              # 正常窗口
-frago chrome --headless   # 无头模式
-frago chrome --void       # 虚空模式（窗口移到屏幕外）
+frago chrome start              # 正常窗口
+frago chrome start --headless   # 无头模式
 ```
 
 **提示**：先用 `frago recipe list | grep <关键词>` 查找现成配方，可能无需手动操作浏览器。
