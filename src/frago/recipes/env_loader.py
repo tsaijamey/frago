@@ -236,3 +236,83 @@ class EnvLoader:
         """
         full_env = self.resolve_for_recipe(env_definitions, cli_overrides, workflow_context)
         return {k: full_env[k] for k in env_definitions if k in full_env}
+
+
+def save_env_file(path: Path, env_vars: dict[str, str]) -> None:
+    """
+    完整覆盖写入 .env 文件
+
+    Args:
+        path: .env 文件路径
+        env_vars: 环境变量字典
+
+    Notes:
+        - 会覆盖原有内容
+        - 自动创建父目录
+        - 每行格式: KEY=value
+    """
+    # 确保目录存在
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 生成内容
+    lines = [f'{key}={value}' for key, value in env_vars.items()]
+
+    # 写入文件
+    path.write_text('\n'.join(lines) + '\n' if lines else '', encoding='utf-8')
+
+
+def update_env_file(path: Path, updates: dict[str, str | None]) -> None:
+    """
+    更新 .env 文件（保留注释和格式）
+
+    Args:
+        path: .env 文件路径
+        updates: 更新字典，value=None 表示删除该变量
+
+    Notes:
+        - 保留注释行和空行
+        - 更新已存在的变量
+        - 追加新变量
+        - 删除 value=None 的变量
+    """
+    lines = []
+    updated_keys = set()
+
+    if path.exists():
+        for line in path.read_text(encoding='utf-8').splitlines():
+            stripped = line.strip()
+
+            # 保留空行和注释
+            if not stripped or stripped.startswith('#'):
+                lines.append(line)
+                continue
+
+            # 解析变量行
+            match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', stripped)
+            if not match:
+                lines.append(line)  # 保留不规范的行
+                continue
+
+            key = match.group(1)
+
+            # 更新或删除
+            if key in updates:
+                if updates[key] is not None:
+                    # 更新变量
+                    lines.append(f'{key}={updates[key]}')
+                # else: 删除变量，不添加此行
+                updated_keys.add(key)
+            else:
+                # 保留未修改的变量
+                lines.append(line)
+
+    # 添加新变量
+    for key, value in updates.items():
+        if key not in updated_keys and value is not None:
+            lines.append(f'{key}={value}')
+
+    # 确保目录存在
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 写入文件
+    path.write_text('\n'.join(lines) + '\n' if lines else '', encoding='utf-8')
