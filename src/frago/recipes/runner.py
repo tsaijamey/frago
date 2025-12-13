@@ -177,7 +177,7 @@ class RecipeRunner:
         if params:
             params_json = json.dumps(params)
             inject_cmd = [
-                'uv', 'run', 'frago', 'exec-js',
+                'uv', 'run', 'frago', 'chrome', 'exec-js',
                 f'window.__FRAGO_PARAMS__ = {params_json}'
             ]
             try:
@@ -204,9 +204,9 @@ class RecipeRunner:
                     stderr="参数注入超时"
                 )
 
-        # 构建命令：uv run frago exec-js <script_path> --return-value
+        # 构建命令：uv run frago chrome exec-js <script_path> --return-value
         cmd = [
-            'uv', 'run', 'frago', 'exec-js',
+            'uv', 'run', 'frago', 'chrome', 'exec-js',
             str(script_path),
             '--return-value'
         ]
