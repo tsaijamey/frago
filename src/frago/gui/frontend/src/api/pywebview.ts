@@ -226,6 +226,14 @@ export async function checkConnection(): Promise<ConnectionStatus> {
   return api.check_connection();
 }
 
+export async function openPath(
+  path: string,
+  reveal: boolean = false
+): Promise<ApiResponse> {
+  const api = await waitForPywebview();
+  return api.open_path(path, reveal);
+}
+
 // ============================================================
 // Settings API - 主配置管理
 // ============================================================

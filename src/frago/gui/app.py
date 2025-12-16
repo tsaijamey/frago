@@ -120,18 +120,23 @@ class FragoGuiApp:
         self.window: Optional["webview.Window"] = None
         self._api: Optional["FragoGuiApi"] = None
         self._http_server: Optional["HTTPServer"] = None
+        self._font_scale: float = 1.0  # 字体缩放比例，在 create_window 时计算
 
-    def _calculate_window_size(self) -> tuple[int, int]:
-        """Calculate window size based on screen dimensions.
+    def _calculate_window_size(self) -> tuple[int, int, float]:
+        """Calculate window size and font scale based on screen dimensions.
 
         Returns:
-            Tuple of (width, height) calculated as 80% of screen height
-            with the original aspect ratio (600:1434 ≈ 1:2.39).
+            Tuple of (width, height, font_scale):
+            - width, height: calculated as 80% of screen height with aspect ratio
+            - font_scale: scaling factor for font size (1.0 = 14px base)
         """
         # 原始宽高比
         original_width = 600
         original_height = 1434
         aspect_ratio = original_width / original_height
+
+        # 参考高度：800px 对应字体缩放 1.0
+        reference_height = 800
 
         try:
             screens = webview.screens
@@ -155,12 +160,17 @@ class FragoGuiApp:
                 target_width = max(target_width, self.config.min_width)
                 target_height = max(target_height, self.config.min_height)
 
-                return target_width, target_height
+                # 计算字体缩放比例（基于窗口高度）
+                font_scale = target_height / reference_height
+                # 限制范围：0.75 ~ 1.5
+                font_scale = max(0.75, min(1.5, font_scale))
+
+                return target_width, target_height, font_scale
         except Exception:
             # 如果获取屏幕信息失败，使用默认值
             pass
 
-        return original_width, original_height
+        return original_width, original_height, 1.0
 
     def _is_dev_mode(self) -> bool:
         """Check if running in development mode.
@@ -266,8 +276,8 @@ class FragoGuiApp:
         self._api = FragoGuiApi()
         url = self._get_url()
 
-        # 动态计算窗口尺寸
-        width, height = self._calculate_window_size()
+        # 动态计算窗口尺寸和字体缩放比例
+        width, height, self._font_scale = self._calculate_window_size()
 
         self.window = webview.create_window(
             title=self.config.title,
@@ -452,8 +462,16 @@ class FragoGuiApp:
         )
 
     def _on_loaded(self) -> None:
-        """Callback when the window is loaded."""
-        pass
+        """Callback when the window is loaded.
+
+        Injects CSS variable for font scaling based on window size.
+        """
+        if self.window and hasattr(self, '_font_scale'):
+            # 注入字体缩放 CSS 变量
+            js_code = f"""
+                document.documentElement.style.setProperty('--font-scale', '{self._font_scale:.3f}');
+            """
+            self.window.evaluate_js(js_code)
 
     def close(self) -> None:
         """Close the GUI window and cleanup resources."""
@@ -464,36 +482,30 @@ class FragoGuiApp:
             self.window.destroy()
 
 
-def start_gui(debug: bool = False) -> None:
+def start_gui(debug: bool = False, _background: bool = False) -> None:
     """Start the Frago GUI application.
 
     Args:
         debug: Enable debug mode.
+        _background: Internal flag, True when running as background process.
+                     Do not use directly - set automatically by subprocess launch.
 
     Raises:
         GuiNotAvailableError: If GUI cannot be started.
     """
-    # 在非调试模式下，后台运行 GUI
-    if not debug and platform.system() != "Windows":
-        # Fork 到后台（仅 Unix 系统）
-        try:
-            pid = os.fork()
-            if pid > 0:
-                # 父进程立即退出
-                sys.exit(0)
-        except OSError as e:
-            print(f"Fork 失败: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        # 子进程：detach from terminal
-        os.setsid()
-
-        # 重定向标准输入输出到 /dev/null
-        devnull = os.open(os.devnull, os.O_RDWR)
-        os.dup2(devnull, sys.stdin.fileno())
-        os.dup2(devnull, sys.stdout.fileno())
-        os.dup2(devnull, sys.stderr.fileno())
-        os.close(devnull)
+    # 后台运行逻辑（仅 Unix 系统，非 debug 模式，且不是已经后台运行的进程）
+    # 使用 subprocess 启动新进程，而不是 fork
+    # fork 在 macOS/Linux 上会破坏 GUI 框架（Cocoa/GTK）的图形环境连接
+    if not debug and not _background and platform.system() != "Windows":
+        import subprocess
+        subprocess.Popen(
+            [sys.executable, "-m", "frago.gui.app", "--background"],
+            start_new_session=True,  # 创建新会话，脱离终端
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return  # 父进程直接返回
 
     # 在非调试模式下，抑制 GTK/GLib 的警告消息
     if not debug:
@@ -553,3 +565,15 @@ def start_gui(debug: bool = False) -> None:
         else:
             print(f"Error starting GUI: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+# 模块入口点，供 subprocess 调用
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Frago GUI Application")
+    parser.add_argument("--background", action="store_true", help="Run as background process")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    args = parser.parse_args()
+
+    start_gui(debug=args.debug, _background=args.background)

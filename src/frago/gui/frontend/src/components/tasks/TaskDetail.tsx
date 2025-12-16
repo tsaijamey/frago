@@ -3,7 +3,7 @@ import { useAppStore } from '@/stores/appStore';
 import { getTaskDetail, continueAgentTask } from '@/api/pywebview';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import { Send, MessageSquarePlus } from 'lucide-react';
+import { Send, MessageSquarePlus, ChevronDown, ChevronRight } from 'lucide-react';
 
 // 格式化时间
 function formatDateTime(isoString: string): string {
@@ -34,6 +34,9 @@ export default function TaskDetail() {
   const [continuePrompt, setContinuePrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // 折叠状态
+  const [infoCollapsed, setInfoCollapsed] = useState(false);
 
   // 是否可以继续对话（仅 completed 和 error 状态）
   const canContinue = taskDetail?.status === 'completed' || taskDetail?.status === 'error';
@@ -107,7 +110,7 @@ export default function TaskDetail() {
 
   if (!taskDetail) {
     return (
-      <div className="text-[var(--text-muted)] text-center py-8">
+      <div className="text-[var(--text-muted)] text-center py-scaled-8">
         任务不存在或已被删除
       </div>
     );
@@ -115,14 +118,14 @@ export default function TaskDetail() {
 
   if (taskDetail.error) {
     return (
-      <div className="text-[var(--accent-error)] text-center py-8">
+      <div className="text-[var(--accent-error)] text-center py-scaled-8">
         加载失败: {taskDetail.error}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden gap-4">
+    <div className="flex flex-col h-full overflow-hidden gap-4 p-scaled-4">
       {/* 固定头部区域 */}
       <div className="shrink-0 flex flex-col gap-4">
         {/* 返回按钮 */}
@@ -133,57 +136,80 @@ export default function TaskDetail() {
           ← 返回任务列表
         </button>
 
-        {/* 任务信息卡片 - 保持原样式 */}
+        {/* 任务信息卡片 - 可折叠 */}
         <div className="card">
-          <div className="flex justify-between items-start mb-4">
-            <h2 className="text-lg font-medium text-[var(--text-primary)] flex-1">
-              {taskDetail.name}
-            </h2>
+          {/* 标题行 - 点击折叠 */}
+          <div
+            className="flex justify-between items-center cursor-pointer select-none"
+            onClick={() => setInfoCollapsed(!infoCollapsed)}
+          >
+            <div className="flex items-center gap-scaled-2 flex-1 min-w-0">
+              {infoCollapsed ? (
+                <ChevronRight className="icon-scaled-md text-[var(--text-muted)] shrink-0" />
+              ) : (
+                <ChevronDown className="icon-scaled-md text-[var(--text-muted)] shrink-0" />
+              )}
+              <h2 className="text-scaled-lg font-medium text-[var(--text-primary)] truncate">
+                {taskDetail.name}
+              </h2>
+              {/* 折叠时显示状态摘要 */}
+              {infoCollapsed && (
+                <span className={`status-${taskDetail.status} text-scaled-sm ml-scaled-2 shrink-0`}>
+                  {taskDetail.status}
+                </span>
+              )}
+            </div>
             {/* Continue 按钮 - 放在标题右侧 */}
             {canContinue && !showContinue && (
               <button
-                className="btn btn-primary flex items-center gap-2 ml-4 shrink-0"
-                onClick={() => setShowContinue(true)}
+                className="btn btn-primary flex items-center gap-scaled-2 ml-scaled-4 shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowContinue(true);
+                }}
               >
-                <MessageSquarePlus size={16} />
+                <MessageSquarePlus className="icon-scaled-md" />
                 继续对话
               </button>
             )}
             {/* Running 状态提示 */}
             {taskDetail.status === 'running' && (
-              <div className="flex items-center gap-2 text-sm text-[var(--accent-warning)] ml-4 shrink-0">
+              <div className="flex items-center gap-scaled-2 text-scaled-sm text-[var(--accent-warning)] ml-scaled-4 shrink-0">
                 <LoadingSpinner size="sm" />
                 运行中
               </div>
             )}
           </div>
 
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">状态</span>
-              <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
+          {/* 详情 - 可折叠 */}
+          {!infoCollapsed && (
+            <div className="space-y-2 text-scaled-sm mt-scaled-4">
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">状态</span>
+                <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">开始时间</span>
+                <span>{formatDateTime(taskDetail.started_at)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">持续时间</span>
+                <span>{formatDuration(taskDetail.duration_ms)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">步骤数</span>
+                <span>{taskDetail.step_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)]">工具调用</span>
+                <span>{taskDetail.tool_call_count}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--text-muted)] shrink-0">项目路径</span>
+                <span className="font-mono text-scaled-xs text-right break-all ml-scaled-4">{taskDetail.project_path}</span>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">开始时间</span>
-              <span>{formatDateTime(taskDetail.started_at)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">持续时间</span>
-              <span>{formatDuration(taskDetail.duration_ms)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">步骤数</span>
-              <span>{taskDetail.step_count}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)]">工具调用</span>
-              <span>{taskDetail.tool_call_count}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-[var(--text-muted)] shrink-0">项目路径</span>
-              <span className="font-mono text-xs text-right break-all ml-4">{taskDetail.project_path}</span>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Continue 输入区域 */}
@@ -206,14 +232,14 @@ export default function TaskDetail() {
                 {isSubmitting ? (
                   <div className="spinner" />
                 ) : (
-                  <Send size={16} />
+                  <Send className="icon-scaled-md" />
                 )}
               </button>
             </div>
-            <div className="text-xs text-[var(--text-muted)] mt-2">
+            <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
               Ctrl+Enter 发送 ·
               <button
-                className="text-[var(--accent-primary)] hover:underline ml-1"
+                className="text-[var(--accent-primary)] hover:underline ml-scaled-1"
                 onClick={() => setShowContinue(false)}
               >
                 取消
@@ -225,7 +251,7 @@ export default function TaskDetail() {
 
       {/* 步骤列表区域 - 占据剩余空间，内部滚动 */}
       <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between mb-3 shrink-0">
+        <div className="flex items-center justify-between mb-scaled-3 shrink-0">
           <h3 className="font-medium text-[var(--accent-primary)]">
             执行步骤
           </h3>

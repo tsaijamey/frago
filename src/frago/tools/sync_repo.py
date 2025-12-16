@@ -653,6 +653,8 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
         # 立即显示表格
         if result.remote_updates:
             click.echo(_format_table(result.remote_updates, "从您的仓库获取的更新"))
+    else:
+        click.echo("远程无新的变化")
 
     return False
 

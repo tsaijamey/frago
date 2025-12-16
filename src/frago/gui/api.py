@@ -540,7 +540,43 @@ class FragoGuiApi:
             "message": "Connected to Chrome" if connected else "Chrome not connected",
         }
 
+    def open_path(self, path: str, reveal: bool = False) -> Dict:
+        """Open a file or directory in the system default application.
 
+        Args:
+            path: The file or directory path to open.
+            reveal: If True, reveal in Finder instead of opening.
+
+        Returns:
+            Status dictionary with 'status' and optional 'error'.
+        """
+        import platform
+        from pathlib import Path
+
+        try:
+            p = Path(path)
+            if not p.exists():
+                return {"status": "error", "error": f"Path does not exist: {path}"}
+
+            system = platform.system()
+            if system == "Darwin":  # macOS
+                if reveal:
+                    subprocess.run(["open", "-R", str(p)], check=True)
+                else:
+                    subprocess.run(["open", str(p)], check=True)
+            elif system == "Linux":
+                subprocess.run(["xdg-open", str(p)], check=True)
+            elif system == "Windows":
+                import os
+                os.startfile(str(p))
+            else:
+                return {"status": "error", "error": f"Unsupported platform: {system}"}
+
+            return {"status": "ok"}
+        except subprocess.CalledProcessError as e:
+            return {"status": "error", "error": str(e)}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     def _push_stream_message(self, message: StreamMessage) -> None:
         """Push a stream message to the frontend.
