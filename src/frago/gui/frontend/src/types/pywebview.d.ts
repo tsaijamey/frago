@@ -165,8 +165,9 @@ export interface MainConfig {
   // 可选功能
   ccr_enabled: boolean;
   ccr_config_path?: string;
-  working_directory?: string;
   sync_repo_url?: string;
+  // 工作目录（只读，由后端计算）
+  working_directory_display?: string;
   // 资源状态
   resources_installed: boolean;
   resources_version?: string;

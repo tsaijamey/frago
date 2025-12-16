@@ -90,7 +90,6 @@ from frago.init.configurator import (
     get_config_path,
     load_config,
     prompt_config_update,
-    prompt_working_directory,
     run_auth_configuration,
     save_config,
     warn_auth_switch,
@@ -235,10 +234,6 @@ def _print_completion_summary(config: Config) -> None:
         endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
         items.append(("Authentication", f"Frago managed ({endpoint_type})"))
 
-    # 工作目录
-    workdir = config.working_directory or "current directory"
-    items.append(("Working Directory", workdir))
-
     print_summary(items, "Configuration")
 
     click.secho("Run 'frago --help' to get started", fg="cyan")
@@ -365,10 +360,6 @@ def _handle_configuration(
         # 新配置或未完成的配置
         print_section("Configuration")
         config = run_auth_configuration(existing_config)
-
-        # 配置工作目录
-        working_dir = prompt_working_directory()
-        config.working_directory = working_dir
 
         return config
 

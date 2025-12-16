@@ -77,7 +77,7 @@ def update_config(updates: Dict[str, Any]) -> Config:
     """部分更新配置文件
 
     Args:
-        updates: 要更新的字段字典，例如 {"working_directory": "/path"}
+        updates: 要更新的字段字典，例如 {"sync_repo_url": "git@github.com:user/repo.git"}
 
     Returns:
         更新后的 Config 实例
@@ -86,8 +86,8 @@ def update_config(updates: Dict[str, Any]) -> Config:
         ValidationError: 如果更新后的配置不合法
 
     Examples:
-        >>> config = update_config({"working_directory": "/home/user/projects"})
         >>> config = update_config({"sync_repo_url": "git@github.com:user/repo.git"})
+        >>> config = update_config({"auth_method": "custom"})
     """
     # 加载现有配置
     config = load_config()

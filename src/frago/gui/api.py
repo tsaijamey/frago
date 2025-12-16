@@ -1138,25 +1138,30 @@ class FragoGuiApi:
         """获取主配置 (~/.frago/config.json)
 
         Returns:
-            配置字典，包含 Config 模型的所有字段
+            配置字典，包含 Config 模型的所有字段，以及额外的 working_directory_display
         """
         from frago.init.config_manager import load_config
 
         try:
             config = load_config()
-            return config.model_dump(mode='json')
+            result = config.model_dump(mode='json')
+            # 添加工作目录显示路径（固定为 ~/.frago/projects，但显示实际路径）
+            result['working_directory_display'] = str(Path.home() / ".frago" / "projects")
+            return result
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"加载主配置失败: {e}")
             # 返回空配置
             from frago.init.models import Config
-            return Config().model_dump(mode='json')
+            result = Config().model_dump(mode='json')
+            result['working_directory_display'] = str(Path.home() / ".frago" / "projects")
+            return result
 
     def update_main_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """更新主配置
 
         Args:
-            updates: 部分更新字典，例如 {"working_directory": "/path"}
+            updates: 部分更新字典，例如 {"sync_repo_url": "git@github.com:user/repo.git"}
 
         Returns:
             {"status": "ok", "config": {...}} 或 {"status": "error", "error": "..."}
@@ -1184,6 +1189,11 @@ class FragoGuiApi:
     def update_auth_method(self, auth_data: Dict[str, Any]) -> Dict[str, Any]:
         """更新认证方式和 API 端点
 
+        同时更新:
+        - ~/.frago/config.json (frago 配置)
+        - ~/.claude/settings.json (Claude Code 环境变量)
+        - ~/.claude.json (跳过官方登录)
+
         Args:
             auth_data: {
                 "auth_method": "official" | "custom",
@@ -1198,7 +1208,16 @@ class FragoGuiApi:
             {"status": "ok", "config": {...}} 或 {"status": "error", "error": "..."}
         """
         from frago.init.config_manager import update_config
+        from frago.init.configurator import (
+            build_claude_env_config,
+            save_claude_settings,
+            delete_claude_settings,
+            ensure_claude_json_for_custom_auth,
+        )
         from pydantic import ValidationError
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         try:
             # 构建更新字典
@@ -1214,11 +1233,39 @@ class FragoGuiApi:
                         "error": "Custom auth requires api_endpoint"
                     }
                 updates["api_endpoint"] = auth_data["api_endpoint"]
+
+                # 同步写入 ~/.claude/settings.json
+                endpoint = auth_data["api_endpoint"]
+                endpoint_type = endpoint.get("type", "custom")
+                api_key = endpoint.get("api_key", "")
+                custom_url = endpoint.get("url") if endpoint_type == "custom" else None
+                custom_model = endpoint.get("model") if endpoint_type == "custom" else None
+
+                # 构建 Claude Code env 配置
+                env_config = build_claude_env_config(
+                    endpoint_type=endpoint_type,
+                    api_key=api_key,
+                    custom_url=custom_url,
+                    custom_model=custom_model,
+                )
+
+                # 确保 ~/.claude.json 存在（跳过官方登录流程）
+                ensure_claude_json_for_custom_auth()
+
+                # 写入 ~/.claude/settings.json
+                save_claude_settings({"env": env_config})
+                logger.info("已同步 API 配置到 ~/.claude/settings.json")
             else:
-                # official 模式，移除 api_endpoint
+                # official 模式，移除 api_endpoint 并删除 settings.json
                 updates["api_endpoint"] = None
 
-            # 更新配置
+                # 删除 ~/.claude/settings.json，让 Claude Code 使用官方配置
+                if delete_claude_settings():
+                    logger.info("已删除 ~/.claude/settings.json，切换到官方 API")
+                else:
+                    logger.warning("删除 ~/.claude/settings.json 失败")
+
+            # 更新 ~/.frago/config.json
             config = update_config(updates)
 
             # 对返回的配置进行掩码处理
@@ -1238,6 +1285,7 @@ class FragoGuiApi:
                 "error": f"配置验证失败: {e}"
             }
         except Exception as e:
+            logger.exception("更新认证配置失败")
             return {
                 "status": "error",
                 "error": str(e)
@@ -1260,17 +1308,17 @@ class FragoGuiApi:
     def open_working_directory(self) -> Dict[str, Any]:
         """在文件管理器中打开工作目录
 
+        工作目录固定为 ~/.frago/projects
+
         Returns:
             {"status": "ok"} 或 {"status": "error", "error": "..."}
         """
         import subprocess
         import sys
-        from frago.init.config_manager import load_config
 
         try:
-            config = load_config()
-            work_dir = config.working_directory or str(Path.home() / ".frago" / "projects")
-            work_dir_path = Path(work_dir).expanduser().resolve()
+            # 工作目录固定为 ~/.frago/projects
+            work_dir_path = Path.home() / ".frago" / "projects"
 
             # 确保目录存在
             work_dir_path.mkdir(parents=True, exist_ok=True)

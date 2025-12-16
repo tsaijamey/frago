@@ -275,20 +275,20 @@ export default function GeneralSettings() {
           </button>
         </div>
 
-        {/* 工作目录 */}
+        {/* 工作目录（只读） */}
         <div>
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
             工作目录
           </label>
           <div className="flex gap-2 items-center">
-            <div className="flex-1 bg-[var(--bg-subtle)] rounded-md px-3 py-2">
-              <span className="text-[var(--text-secondary)]">
-                {config.working_directory || '~/.frago/projects 的父目录'}
+            <div className="flex-1 bg-[var(--bg-subtle)] rounded-md px-3 py-2 overflow-x-auto">
+              <span className="text-[var(--text-secondary)] font-mono text-sm whitespace-nowrap">
+                {config.working_directory_display || '~/.frago/projects'}
               </span>
             </div>
             <button
               onClick={handleOpenWorkingDirectory}
-              className="btn btn-ghost btn-sm flex items-center gap-1"
+              className="btn btn-ghost btn-sm flex items-center gap-1 shrink-0"
               title="在文件管理器中打开"
             >
               <FolderOpen size={16} />
