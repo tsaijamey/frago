@@ -260,15 +260,17 @@ export default function SecretsSettings() {
                     className="flex items-start justify-between gap-2 p-3 bg-[var(--bg-base)] rounded-md"
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="mb-1">
                         <code className="text-sm font-mono text-[var(--text-primary)]">
                           {req.var_name}
                         </code>
-                        <span className="text-xs px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 rounded">
+                      </div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs px-1.5 py-0.5 bg-amber-500 text-white rounded">
                           ⚠ 未配置
                         </span>
                         {req.required && (
-                          <span className="text-xs px-1.5 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded">
+                          <span className="text-xs px-1.5 py-0.5 bg-red-500 text-white rounded">
                             必需
                           </span>
                         )}
