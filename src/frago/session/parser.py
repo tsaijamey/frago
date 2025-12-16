@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -183,15 +183,15 @@ class IncrementalParser:
         if not session_id and not self._session_id:
             logger.warning("记录缺少 sessionId 字段，会话关联可能失败")
 
-        # 解析时间戳
+        # 解析时间戳（确保使用 UTC 时区）
         timestamp_str = data.get("timestamp")
         if timestamp_str:
             try:
                 timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             except ValueError:
-                timestamp = datetime.now()
+                timestamp = datetime.now(timezone.utc)
         else:
-            timestamp = datetime.now()
+            timestamp = datetime.now(timezone.utc)
 
         record = ParsedRecord(
             uuid=uuid,

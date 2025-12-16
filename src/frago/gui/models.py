@@ -15,6 +15,17 @@ if TYPE_CHECKING:
     from frago.session.models import MonitoredSession, SessionStep, SessionSummary
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """确保 datetime 为 UTC 时区
+
+    如果没有时区信息，假设为本地时间并转换为 UTC。
+    """
+    if dt.tzinfo is None:
+        # 无时区信息，假设为本地时间，先附加本地时区再转换为 UTC
+        return dt.astimezone().astimezone(timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class TaskStatus(Enum):
     """Task execution status (for existing GUI task management)."""
 
@@ -391,16 +402,11 @@ class TaskItem(BaseModel):
         from frago.session.models import SessionStatus
         from frago.session.storage import get_session_dir
 
-        # 计算持续时间
-        # 确保时区一致性
-        started = session.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
+        # 计算持续时间（确保所有时间戳使用 UTC 时区）
+        started = _ensure_utc(session.started_at)
 
         if session.ended_at:
-            ended = session.ended_at
-            if ended.tzinfo is None:
-                ended = ended.replace(tzinfo=timezone.utc)
+            ended = _ensure_utc(session.ended_at)
             duration = ended - started
         else:
             now = datetime.now(timezone.utc)
@@ -689,16 +695,11 @@ class TaskDetail(BaseModel):
         # 使用传入的 total_steps 或回退到 session.step_count
         actual_total = total_steps if total_steps is not None else session.step_count
 
-        # 计算持续时间
-        # 确保时区一致性
-        started = session.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
+        # 计算持续时间（确保所有时间戳使用 UTC 时区）
+        started = _ensure_utc(session.started_at)
 
         if session.ended_at:
-            ended = session.ended_at
-            if ended.tzinfo is None:
-                ended = ended.replace(tzinfo=timezone.utc)
+            ended = _ensure_utc(session.ended_at)
             duration = ended - started
         else:
             now = datetime.now(timezone.utc)

@@ -9,7 +9,7 @@
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TextIO
 
 from frago.session.models import (
@@ -273,7 +273,7 @@ class JsonFormatter:
             event_type: 事件类型
             data: 事件数据
         """
-        event = {"type": event_type, "timestamp": datetime.now().isoformat(), **data}
+        event = {"type": event_type, "timestamp": datetime.now(timezone.utc).isoformat(), **data}
         print(json.dumps(event, ensure_ascii=False), file=self.output, flush=True)
 
     def emit_session_start(self, session: MonitoredSession) -> None:

@@ -399,7 +399,7 @@ class SessionMonitor:
             project_path=self.project_path,
             source_file=file_path,
             started_at=self.start_time,
-            last_activity=datetime.now(),
+            last_activity=datetime.now(timezone.utc),
         )
 
         # 持久化
@@ -422,8 +422,8 @@ class SessionMonitor:
         Args:
             record: 解析后的记录
         """
-        # 更新最后活动时间
-        self._session.last_activity = datetime.now()
+        # 更新最后活动时间（使用 UTC 确保与其他时间戳一致）
+        self._session.last_activity = datetime.now(timezone.utc)
 
         # 转换为步骤
         self._step_id += 1
@@ -489,7 +489,7 @@ class SessionMonitor:
             return
 
         self._session.status = status
-        self._session.ended_at = datetime.now()
+        self._session.ended_at = datetime.now(timezone.utc)
 
         # 生成并保存摘要
         summary = None
