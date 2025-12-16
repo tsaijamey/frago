@@ -514,17 +514,15 @@ class FragoGuiApi:
     def _check_chrome_connection(self) -> bool:
         """Check if Chrome is connected.
 
+        直接请求 CDP 端点，避免 subprocess 调用 CLI 命令产生日志。
+
         Returns:
             True if Chrome is connected.
         """
         try:
-            result = subprocess.run(
-                ["frago", "chrome", "status"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return result.returncode == 0
+            import requests
+            resp = requests.get("http://127.0.0.1:9222/json/version", timeout=2)
+            return resp.status_code == 200
         except Exception:
             return False
 
