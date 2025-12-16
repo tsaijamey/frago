@@ -104,6 +104,16 @@ export default function SyncSettings() {
           多设备同步
         </h2>
 
+        {/* 提示信息 - 放在卡片内部顶部 */}
+        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+          <h3 className="text-sm font-medium text-blue-900 dark:text-blue-200 mb-1">
+            💡 提示
+          </h3>
+          <p className="text-sm text-blue-700 dark:text-blue-300">
+            首次配置需要安装 GitHub CLI (gh) 并登录 GitHub 账号。向导将引导你完成整个流程。
+          </p>
+        </div>
+
         {syncRepoUrl ? (
           <>
             <div className="flex gap-2 mb-4">
@@ -165,15 +175,6 @@ export default function SyncSettings() {
             </button>
           </>
         )}
-      </div>
-
-      <div className="card bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
-        <h3 className="text-sm font-medium text-blue-900 dark:text-blue-200 mb-2">
-          💡 提示
-        </h3>
-        <p className="text-sm text-blue-700 dark:text-blue-300">
-          首次配置需要安装 GitHub CLI (gh) 并登录 GitHub 账号。向导将引导你完成整个流程。
-        </p>
       </div>
     </div>
   );
