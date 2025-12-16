@@ -444,6 +444,40 @@ class FragoGuiApp:
         </html>
         """
 
+    def _get_icon_path(self) -> Optional[str]:
+        """Get the application icon path based on platform.
+
+        Returns:
+            Path to icon file, or None if not found.
+        """
+        # 图标文件位于 gui/assets/icons/ 目录
+        icons_dir = Path(__file__).parent / "assets" / "icons"
+        system = platform.system()
+
+        if system == "Windows":
+            icon_file = icons_dir / "frago.ico"
+        else:
+            icon_file = icons_dir / "frago.png"
+
+        if icon_file.exists():
+            return str(icon_file)
+        return None
+
+    def _set_macos_dock_icon(self, icon_path: str) -> None:
+        """Set macOS Dock icon using pyobjc.
+
+        Args:
+            icon_path: Path to the icon file.
+        """
+        try:
+            from AppKit import NSApplication, NSImage
+            app = NSApplication.sharedApplication()
+            icon = NSImage.alloc().initWithContentsOfFile_(icon_path)
+            if icon:
+                app.setApplicationIconImage_(icon)
+        except ImportError:
+            pass  # pyobjc not installed, skip
+
     def start(self) -> None:
         """Start the GUI application.
 
@@ -456,10 +490,24 @@ class FragoGuiApp:
 
         self.create_window()
 
-        webview.start(
-            func=self._on_loaded,
-            debug=self.debug,
-        )
+        # 获取图标路径
+        icon_path = self._get_icon_path()
+        system = platform.system()
+
+        # macOS: 使用 pyobjc 设置 Dock 图标
+        if system == "Darwin" and icon_path:
+            self._set_macos_dock_icon(icon_path)
+
+        # Linux (GTK/QT): 使用 webview.start 的 icon 参数
+        # Windows: 开发模式暂不支持，生产环境通过打包器设置
+        start_kwargs = {
+            "func": self._on_loaded,
+            "debug": self.debug,
+        }
+        if system == "Linux" and icon_path:
+            start_kwargs["icon"] = icon_path
+
+        webview.start(**start_kwargs)
 
     def _on_loaded(self) -> None:
         """Callback when the window is loaded.

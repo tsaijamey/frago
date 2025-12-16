@@ -85,6 +85,9 @@ include = [
     "src/frago/**/*.sh",
     "src/frago/**/*.html",
     "src/frago/**/*.css",
+    "src/frago/**/*.png",
+    "src/frago/**/*.ico",
+    "src/frago/**/*.icns",
 ]
 
 # 排除前端源码（只保留构建产物 gui/assets/）
