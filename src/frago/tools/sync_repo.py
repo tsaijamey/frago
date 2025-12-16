@@ -103,6 +103,7 @@ def _ensure_gitignore(repo_dir: Path) -> None:
 sessions/
 chrome_profile/
 current_run
+projects/.tmp/
 
 # 配置文件（包含敏感信息）
 config.json
@@ -119,13 +120,40 @@ __pycache__/
     else:
         # 检查现有内容，如果缺少关键规则则追加
         existing = gitignore_path.read_text()
-        needed_rules = ["sessions/", "chrome_profile/", "current_run", "config.json"]
+        needed_rules = ["sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/"]
         missing = [rule for rule in needed_rules if rule not in existing]
         if missing:
             with open(gitignore_path, "a") as f:
                 f.write("\n# Auto-added by frago sync\n")
                 for rule in missing:
                     f.write(f"{rule}\n")
+
+    # 自动取消对 .tmp 目录的追踪（如果已被追踪）
+    _untrack_ignored_paths(repo_dir)
+
+
+def _untrack_ignored_paths(repo_dir: Path) -> None:
+    """取消对应被忽略但仍被追踪的路径
+
+    解决已有设备上 .tmp 等目录已被追踪的问题。
+    """
+    # 需要取消追踪的路径模式
+    paths_to_untrack = ["projects/.tmp/"]
+
+    for path_pattern in paths_to_untrack:
+        # 检查是否有该路径被追踪
+        result = _run_git(
+            ["ls-files", "--", path_pattern],
+            repo_dir,
+            check=False
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # 有文件被追踪，执行 git rm --cached
+            _run_git(
+                ["rm", "-r", "--cached", "--quiet", path_pattern],
+                repo_dir,
+                check=False
+            )
 
 
 def _classify_file(file_path: str) -> tuple[str, str]:
