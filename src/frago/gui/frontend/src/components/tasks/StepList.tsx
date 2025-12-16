@@ -108,7 +108,7 @@ export default function StepList({ steps }: StepListProps) {
 
   if (steps.length === 0) {
     return (
-      <div className="text-[var(--text-muted)] text-center py-4">
+      <div className="text-[var(--text-muted)] text-center py-scaled-4">
         暂无步骤
       </div>
     );
@@ -116,9 +116,9 @@ export default function StepList({ steps }: StepListProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* 筛选栏 */}
-      <div className="flex items-center gap-2 pb-3 border-b border-[var(--border-primary)] mb-3 shrink-0">
-        <span className="text-xs text-[var(--text-muted)]">筛选:</span>
+      {/* 筛选栏 - 换行布局 */}
+      <div className="flex flex-wrap items-center gap-1 pb-scaled-2 border-b border-[var(--border-primary)] mb-scaled-2 shrink-0">
+        <span className="text-scaled-xs text-[var(--text-muted)]">筛选:</span>
         {filterableTypes.map(type => {
           const { Icon, label, colorClass } = getStepConfig(type);
           const isActive = activeFilters.has(type);
@@ -127,45 +127,45 @@ export default function StepList({ steps }: StepListProps) {
             <button
               key={type}
               onClick={() => toggleFilter(type)}
-              className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-opacity ${
+              className={`flex items-center gap-1 px-2 py-0.5 rounded text-scaled-xs transition-opacity ${
                 showAsActive ? 'opacity-100' : 'opacity-40'
               } hover:opacity-100`}
               title={label}
             >
-              <Icon size={14} className={colorClass} />
+              <Icon className="icon-scaled-sm" />
               <span className={showAsActive ? colorClass : 'text-[var(--text-muted)]'}>{label}</span>
             </button>
           );
         })}
-        <span className="text-xs text-[var(--text-muted)] ml-auto">
-          {filteredSteps.length}/{steps.length}
+        <span className="text-scaled-xs text-[var(--text-muted)] ml-auto">
+          {filteredSteps.length}
         </span>
       </div>
 
       {/* 步骤列表 - 内部滚动 */}
-      <div ref={scrollRef} className="step-list-scroll flex-1 overflow-y-auto min-h-0">
-        <div className="flex flex-col gap-2">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
+        <div className="flex flex-col gap-scaled-2">
           {renderedSteps.map((step) => {
             const { Icon, label, colorClass } = getStepConfig(step.type);
             return (
               <div key={step.step_id} className="step-item-new">
                 {/* 第一行：图标 + 类型名称 + 时间戳 */}
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <Icon size={14} className={colorClass} />
-                    <span className={`text-xs font-medium ${colorClass}`}>{label}</span>
+                <div className="flex items-center justify-between mb-scaled-1">
+                  <div className="flex items-center gap-scaled-2">
+                    <Icon className="icon-scaled-sm" />
+                    <span className={`text-scaled-xs font-medium ${colorClass}`}>{label}</span>
                     {step.tool_name && (
-                      <code className="text-xs px-1.5 py-0.5 bg-[var(--bg-secondary)] rounded font-mono">
+                      <code className="text-scaled-xs px-scaled-2 py-0.5 bg-[var(--bg-secondary)] rounded font-mono">
                         {step.tool_name}
                       </code>
                     )}
                   </div>
-                  <span className="text-xs text-[var(--text-muted)]">
+                  <span className="text-scaled-xs text-[var(--text-muted)]">
                     {formatTimestamp(step.timestamp)}
                   </span>
                 </div>
                 {/* 第二行：消息内容 */}
-                <div className="text-sm text-[var(--text-secondary)] break-words pl-5">
+                <div className="text-scaled-sm text-[var(--text-secondary)] break-words pl-scaled-5">
                   {step.content}
                 </div>
               </div>
@@ -173,7 +173,7 @@ export default function StepList({ steps }: StepListProps) {
           })}
         </div>
         {hasMore && (
-          <div className="text-center py-2 text-xs text-[var(--text-muted)]">
+          <div className="text-center py-scaled-2 text-scaled-xs text-[var(--text-muted)]">
             滚动加载更多...
           </div>
         )}

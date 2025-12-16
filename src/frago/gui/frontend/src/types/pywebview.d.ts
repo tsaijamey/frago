@@ -473,6 +473,13 @@ export interface PyWebviewApi {
    */
   check_connection(): Promise<ConnectionStatus>;
 
+  /**
+   * 打开文件或目录
+   * @param path 文件或目录路径
+   * @param reveal 是否在 Finder 中显示而不是打开
+   */
+  open_path(path: string, reveal?: boolean): Promise<ApiResponse>;
+
   // ============================================================
   // Legacy API（保留兼容性）
   // ============================================================
