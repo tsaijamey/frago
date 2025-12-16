@@ -1275,6 +1275,9 @@ class FragoGuiApi:
                     config_dict["api_endpoint"]["api_key"]
                 )
 
+            # 添加工作目录显示路径
+            config_dict['working_directory_display'] = str(Path.home() / ".frago" / "projects")
+
             return {
                 "status": "ok",
                 "config": config_dict
