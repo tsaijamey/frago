@@ -21,12 +21,13 @@ from frago.init.models import Config, APIEndpoint
 
 # 预设端点配置（用于 Claude Code settings.json 的 env 字段）
 # 各厂商均提供 Anthropic API 兼容接口
+# 注意：新版 Claude Code 使用 ANTHROPIC_DEFAULT_HAIKU_MODEL 替代 ANTHROPIC_SMALL_FAST_MODEL
 PRESET_ENDPOINTS = {
     "deepseek": {
         "display_name": "DeepSeek (deepseek-chat)",
         "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
         "ANTHROPIC_MODEL": "deepseek-reason",
-        "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-chat",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-chat",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
@@ -34,7 +35,7 @@ PRESET_ENDPOINTS = {
         "display_name": "阿里云百炼 (qwen3-coder-plus)",
         "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
         "ANTHROPIC_MODEL": "qwen3-coder-plus",
-        "ANTHROPIC_SMALL_FAST_MODEL": "qwen3-coder-plus",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-coder-plus",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
@@ -42,7 +43,7 @@ PRESET_ENDPOINTS = {
         "display_name": "Kimi K2 (kimi-k2-turbo-preview)",
         "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
         "ANTHROPIC_MODEL": "kimi-k2-turbo-preview",
-        "ANTHROPIC_SMALL_FAST_MODEL": "kimi-k2-turbo-preview",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-k2-turbo-preview",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
@@ -50,7 +51,7 @@ PRESET_ENDPOINTS = {
         "display_name": "MiniMax M2",
         "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
         "ANTHROPIC_MODEL": "MiniMax-M2",
-        "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2",
         "API_TIMEOUT_MS": 3000000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
@@ -224,6 +225,26 @@ def save_claude_settings(settings: dict) -> None:
         json.dump(existing, f, indent=2, ensure_ascii=False)
 
 
+def delete_claude_settings() -> bool:
+    """
+    删除 Claude Code settings.json 文件
+
+    当用户从 custom 切换到 official 模式时调用，
+    直接删除整个配置文件，让 Claude Code 使用官方默认配置。
+
+    Returns:
+        True 如果删除成功或文件不存在，False 如果出错
+    """
+    if not CLAUDE_SETTINGS_PATH.exists():
+        return True
+
+    try:
+        CLAUDE_SETTINGS_PATH.unlink()
+        return True
+    except Exception:
+        return False
+
+
 def check_claude_json_exists() -> bool:
     """
     检查 ~/.claude.json 是否存在
@@ -315,7 +336,7 @@ def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = 
         env = {
             "ANTHROPIC_BASE_URL": custom_url,
             "ANTHROPIC_MODEL": custom_model,
-            "ANTHROPIC_SMALL_FAST_MODEL": custom_model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": custom_model,
             "API_TIMEOUT_MS": 600000,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
@@ -561,10 +582,6 @@ def display_config_summary(config: Config) -> str:
         endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
         items.append(("Authentication", f"Frago managed ({endpoint_type})"))
 
-    # 工作目录
-    workdir = config.working_directory or "current directory"
-    items.append(("Working Directory", workdir))
-
     # 初始化状态
     status = "Completed" if config.init_completed else "Incomplete"
     items.append(("Status", status))
@@ -704,62 +721,6 @@ def format_final_summary(config: Config) -> str:
     lines.append("=" * 40)
 
     return "\n".join(lines)
-
-
-def prompt_working_directory() -> Optional[str]:
-    """
-    提示用户选择工作目录（使用交互菜单）
-
-    Returns:
-        工作目录绝对路径，选择 current 时返回 None（使用当前目录）
-    """
-    import os
-    from frago.init.ui import ask_question
-
-    cwd = os.getcwd()
-
-    answer = ask_question(
-        question=f"Where should Frago store project data?\nCurrent directory: {cwd}",
-        header="Working Directory",
-        options=[
-            {
-                "label": "Current",
-                "description": "Use current directory (default)"
-            },
-            {
-                "label": "Custom",
-                "description": "Specify a custom absolute path"
-            }
-        ],
-        default_index=0
-    )
-
-    if answer == "Current":
-        return None  # None 表示使用当前运行目录
-
-    # 用户输入自定义路径
-    while True:
-        click.echo()
-        path = click.prompt("Enter absolute path", type=str)
-        path = os.path.expanduser(path)  # 展开 ~
-
-        if not os.path.isabs(path):
-            click.secho("Error: Path must be absolute (start with / or ~)", fg="red")
-            continue
-
-        # 检查路径是否存在，不存在则询问是否创建
-        if not os.path.exists(path):
-            if click.confirm(f"Directory does not exist. Create {path}?", default=True):
-                try:
-                    os.makedirs(path, exist_ok=True)
-                    click.secho(f"Created directory: {path}", fg="green")
-                except Exception as e:
-                    click.secho(f"Failed to create directory: {e}", fg="red")
-                    continue
-            else:
-                continue
-
-        return path
 
 
 def suggest_next_steps(config: Config) -> list[str]:
