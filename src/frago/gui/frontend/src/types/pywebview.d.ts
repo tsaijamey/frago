@@ -228,6 +228,13 @@ export interface SyncResponse {
   error?: string;
 }
 
+export interface RepoVisibilityResponse {
+  status: 'ok' | 'error';
+  visibility?: 'public' | 'private';
+  is_public?: boolean;
+  error?: string;
+}
+
 // ============================================================
 // API 响应类型
 // ============================================================
@@ -459,6 +466,11 @@ export interface PyWebviewApi {
    * 获取 sync 结果（轮询）
    */
   get_sync_result(): Promise<SyncResponse>;
+
+  /**
+   * 检查同步仓库的可见性
+   */
+  check_sync_repo_visibility(): Promise<RepoVisibilityResponse>;
 
   // ============================================================
   // System API

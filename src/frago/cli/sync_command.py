@@ -11,6 +11,8 @@ from frago.tools.sync_repo import SyncResult, sync
 
 def _format_result(result: SyncResult, dry_run: bool) -> None:
     """格式化输出同步结果"""
+    # 警告信息（警告已在 sync() 中实时输出，这里不再重复）
+
     # 冲突信息
     if result.conflicts:
         click.echo()
@@ -43,6 +45,11 @@ def _format_result(result: SyncResult, dry_run: bool) -> None:
             click.echo(f"✅ 同步完成: {' | '.join(summary_parts)}")
         else:
             click.echo("✅ 同步完成: 本地资源已是最新")
+
+        # 如果是 public 仓库，在最后再次提醒
+        if result.is_public_repo:
+            click.echo()
+            click.echo("⚠️  提醒：您的同步仓库是 public 仓库，请考虑改为 private 仓库以保护敏感信息。")
     else:
         click.echo("❌ 同步失败", err=True)
 

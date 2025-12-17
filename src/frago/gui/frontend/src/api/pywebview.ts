@@ -30,6 +30,7 @@ import type {
   ApiResponse,
   CreateRepoResponse,
   SyncResponse,
+  RepoVisibilityResponse,
 } from '@/types/pywebview.d';
 
 // 等待 pywebview 就绪
@@ -313,4 +314,9 @@ export async function runFirstSync(): Promise<SyncResponse> {
 export async function getSyncResult(): Promise<SyncResponse> {
   const api = await waitForPywebview();
   return api.get_sync_result();
+}
+
+export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
+  const api = await waitForPywebview();
+  return api.check_sync_repo_visibility();
 }

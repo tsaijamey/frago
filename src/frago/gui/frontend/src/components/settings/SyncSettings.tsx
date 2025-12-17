@@ -4,8 +4,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getMainConfig, runFirstSync, getSyncResult } from '@/api/pywebview';
-import { Github, RefreshCw } from 'lucide-react';
+import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility } from '@/api/pywebview';
+import { Github, RefreshCw, AlertTriangle } from 'lucide-react';
 import GitHubWizard from './GitHubWizard';
 
 export default function SyncSettings() {
@@ -15,6 +15,8 @@ export default function SyncSettings() {
   const [syncing, setSyncing] = useState(false);
   const [syncOutput, setSyncOutput] = useState('');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [isPublicRepo, setIsPublicRepo] = useState(false);
+  const [visibilityChecked, setVisibilityChecked] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -25,6 +27,19 @@ export default function SyncSettings() {
       setLoading(true);
       const config = await getMainConfig();
       setSyncRepoUrl(config.sync_repo_url || null);
+
+      // 如果有配置仓库，检查可见性
+      if (config.sync_repo_url) {
+        try {
+          const visibilityResult = await checkSyncRepoVisibility();
+          if (visibilityResult.status === 'ok') {
+            setIsPublicRepo(visibilityResult.is_public || false);
+            setVisibilityChecked(true);
+          }
+        } catch (err) {
+          console.error('检查仓库可见性失败:', err);
+        }
+      }
     } catch (err) {
       console.error('加载配置失败:', err);
     } finally {
@@ -144,6 +159,27 @@ export default function SyncSettings() {
                 </span>
               </div>
             </div>
+
+            {/* Public 仓库警告 */}
+            {visibilityChecked && isPublicRepo && (
+              <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
+                      安全提醒
+                    </h3>
+                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                      当前同步仓库是 <strong>public</strong> 仓库，任何人都可以访问。
+                      建议将仓库改为 private 以保护您的配置和敏感信息。
+                    </p>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+                      .env 文件已自动添加到 .gitignore，不会被同步。
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 同步输出 */}
             {syncOutput && (

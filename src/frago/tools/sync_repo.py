@@ -51,6 +51,8 @@ class SyncResult:
     pushed_to_remote: bool = False
     conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # 警告信息
+    is_public_repo: bool = False  # 是否为 public 仓库
 
 
 @dataclass
@@ -108,6 +110,12 @@ projects/.tmp/
 # 配置文件（包含敏感信息）
 config.json
 
+# 环境变量文件（敏感信息）
+.env
+.env.*
+.env.local
+.env.*.local
+
 # 系统文件
 .DS_Store
 __pycache__/
@@ -120,7 +128,7 @@ __pycache__/
     else:
         # 检查现有内容，如果缺少关键规则则追加
         existing = gitignore_path.read_text()
-        needed_rules = ["sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/"]
+        needed_rules = ["sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env"]
         missing = [rule for rule in needed_rules if rule not in existing]
         if missing:
             with open(gitignore_path, "a") as f:
@@ -154,6 +162,92 @@ def _untrack_ignored_paths(repo_dir: Path) -> None:
                 repo_dir,
                 check=False
             )
+
+
+def _parse_repo_owner_name(repo_url: str) -> tuple[Optional[str], Optional[str]]:
+    """从仓库 URL 解析 owner 和 repo 名称
+
+    支持格式:
+    - git@github.com:owner/repo.git
+    - https://github.com/owner/repo.git
+    - https://github.com/owner/repo
+
+    Returns:
+        (owner, repo) 元组，解析失败返回 (None, None)
+    """
+    import re
+
+    # SSH 格式: git@github.com:owner/repo.git
+    ssh_match = re.match(r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$", repo_url)
+    if ssh_match:
+        return ssh_match.group(1), ssh_match.group(2)
+
+    # HTTPS 格式: https://github.com/owner/repo.git
+    https_match = re.match(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$", repo_url)
+    if https_match:
+        return https_match.group(1), https_match.group(2)
+
+    return None, None
+
+
+def _check_repo_visibility(repo_url: str) -> Optional[str]:
+    """检查 GitHub 仓库的可见性
+
+    Args:
+        repo_url: 仓库 URL（SSH 或 HTTPS 格式）
+
+    Returns:
+        "public" / "private" / None（无法检测）
+    """
+    owner, repo = _parse_repo_owner_name(repo_url)
+    if not owner or not repo:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["gh", "api", f"repos/{owner}/{repo}", "--jq", ".visibility"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            visibility = result.stdout.strip().lower()
+            if visibility in ("public", "private"):
+                return visibility
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        # gh 命令超时或未安装
+        pass
+
+    return None
+
+
+def _check_and_remove_tracked_env(repo_dir: Path) -> list[str]:
+    """检查并移除已被 git 追踪的 .env 文件
+
+    如果 .env 相关文件已被 git 追踪，执行 git rm --cached 移除但保留本地文件
+
+    Args:
+        repo_dir: Git 仓库目录
+
+    Returns:
+        被移除的文件列表
+    """
+    removed_files = []
+
+    # 检查哪些 .env 文件被追踪
+    result = _run_git(["ls-files", "--", ".env", ".env.*"], repo_dir, check=False)
+    if result.returncode != 0 or not result.stdout.strip():
+        return removed_files
+
+    tracked_env_files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+
+    for env_file in tracked_env_files:
+        # 从 git 索引中移除但保留本地文件
+        rm_result = _run_git(["rm", "--cached", env_file], repo_dir, check=False)
+        if rm_result.returncode == 0:
+            removed_files.append(env_file)
+
+    return removed_files
 
 
 def _classify_file(file_path: str) -> tuple[str, str]:
@@ -764,6 +858,30 @@ def sync(
 
         # 确保 .gitignore 存在
         _ensure_gitignore(FRAGO_HOME)
+
+        # 检查并移除已追踪的 .env 文件
+        if not dry_run:
+            removed_env_files = _check_and_remove_tracked_env(FRAGO_HOME)
+            if removed_env_files:
+                warning_msg = f"已从 git 追踪中移除敏感文件: {', '.join(removed_env_files)}（本地文件已保留）"
+                result.warnings.append(warning_msg)
+                click.echo(f"⚠️  {warning_msg}")
+
+        # 检查仓库可见性
+        actual_repo_url = repo_url
+        if not actual_repo_url:
+            # 从 git remote 获取 URL
+            remote_result = _run_git(["remote", "get-url", "origin"], FRAGO_HOME, check=False)
+            if remote_result.returncode == 0:
+                actual_repo_url = remote_result.stdout.strip()
+
+        if actual_repo_url:
+            visibility = _check_repo_visibility(actual_repo_url)
+            if visibility == "public":
+                result.is_public_repo = True
+                warning_msg = "警告：当前同步仓库是 public 仓库，敏感信息可能被公开。建议使用 private 仓库。"
+                result.warnings.append(warning_msg)
+                click.echo(f"⚠️  {warning_msg}")
 
         # 1. 安全检查 - 同步 ~/.claude/ 的修改到 ~/.frago/.claude/
         click.echo("检查本地资源修改...")

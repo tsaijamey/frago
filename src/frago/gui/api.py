@@ -1761,3 +1761,43 @@ class FragoGuiApi:
             return {"status": "error", "error": "没有正在进行的同步"}
 
         return self._sync_result
+
+    def check_sync_repo_visibility(self) -> Dict[str, Any]:
+        """检查同步仓库的可见性
+
+        Returns:
+            {"status": "ok", "visibility": "public"/"private"} 或
+            {"status": "error", "error": "..."}
+        """
+        from frago.init.configurator import load_config
+        from frago.tools.sync_repo import _check_repo_visibility
+
+        try:
+            config = load_config()
+            repo_url = config.sync_repo_url
+
+            if not repo_url:
+                return {
+                    "status": "error",
+                    "error": "未配置同步仓库"
+                }
+
+            visibility = _check_repo_visibility(repo_url)
+
+            if visibility is None:
+                return {
+                    "status": "error",
+                    "error": "无法检测仓库可见性（可能未安装 gh CLI 或未登录）"
+                }
+
+            return {
+                "status": "ok",
+                "visibility": visibility,
+                "is_public": visibility == "public"
+            }
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
