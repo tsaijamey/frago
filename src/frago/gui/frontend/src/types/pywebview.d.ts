@@ -235,6 +235,26 @@ export interface RepoVisibilityResponse {
   error?: string;
 }
 
+export interface GithubRepo {
+  name: string;
+  full_name: string;
+  private: boolean;
+  ssh_url: string;
+  description: string | null;
+}
+
+export interface ListReposResponse {
+  status: 'ok' | 'error';
+  repos?: GithubRepo[];
+  error?: string;
+}
+
+export interface SelectRepoResponse {
+  status: 'ok' | 'error';
+  repo_url?: string;
+  error?: string;
+}
+
 // ============================================================
 // API 响应类型
 // ============================================================
@@ -471,6 +491,18 @@ export interface PyWebviewApi {
    * 检查同步仓库的可见性
    */
   check_sync_repo_visibility(): Promise<RepoVisibilityResponse>;
+
+  /**
+   * 列出用户的 GitHub 仓库
+   * @param limit 最大返回数量（默认 100）
+   */
+  list_user_repos(limit?: number): Promise<ListReposResponse>;
+
+  /**
+   * 选择已有仓库作为同步仓库
+   * @param ssh_url 仓库的 SSH URL
+   */
+  select_existing_repo(ssh_url: string): Promise<SelectRepoResponse>;
 
   // ============================================================
   // System API

@@ -10,7 +10,10 @@ import {
   createSyncRepo,
   runFirstSync,
   getSyncResult,
+  listUserRepos,
+  selectExistingRepo,
 } from '@/api/pywebview';
+import type { GithubRepo } from '@/types/pywebview.d';
 import { Github, Check, AlertCircle, Loader2, Terminal, FolderGit2, RefreshCw } from 'lucide-react';
 
 interface GitHubWizardProps {
@@ -32,6 +35,11 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [waitingForLogin, setWaitingForLogin] = useState(false);
+  // Step 3: 选择仓库模式
+  const [repoMode, setRepoMode] = useState<'create' | 'select'>('create');
+  const [existingRepos, setExistingRepos] = useState<GithubRepo[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const [loadingRepos, setLoadingRepos] = useState(false);
 
   // Step 1: 检测 gh CLI
   useEffect(() => {
@@ -83,6 +91,55 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       setCurrentStep(3);
     } else {
       setError('登录未完成，请在终端中完成登录后重试');
+    }
+  };
+
+  // Step 3: 加载已有仓库列表
+  const loadExistingRepos = async () => {
+    try {
+      setLoadingRepos(true);
+      setError(null);
+      const result = await listUserRepos(100);
+      if (result.status === 'ok' && result.repos) {
+        setExistingRepos(result.repos);
+      } else {
+        setError(result.error || '获取仓库列表失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '获取仓库列表失败');
+    } finally {
+      setLoadingRepos(false);
+    }
+  };
+
+  // 当切换到选择模式时加载仓库列表
+  useEffect(() => {
+    if (repoMode === 'select' && existingRepos.length === 0 && currentStep === 3) {
+      loadExistingRepos();
+    }
+  }, [repoMode, currentStep]);
+
+  // Step 3: 选择已有仓库
+  const handleSelectRepo = async () => {
+    if (!selectedRepo) {
+      setError('请选择一个仓库');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      const result = await selectExistingRepo(selectedRepo);
+      if (result.status === 'ok' && result.repo_url) {
+        setRepoUrl(result.repo_url);
+        setCurrentStep(4);
+      } else {
+        setError(result.error || '选择仓库失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '选择仓库失败');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -296,37 +353,140 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex items-center gap-3 mb-4">
         <FolderGit2 size={24} className="text-[var(--accent-primary)]" />
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-          步骤 3: 创建同步仓库
+          步骤 3: 配置同步仓库
         </h3>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-          仓库名称
-        </label>
-        <input
-          type="text"
-          value={repoName}
-          onChange={(e) => setRepoName(e.target.value)}
-          placeholder="例如: frago-sync"
-          className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
-        />
-        <p className="mt-2 text-sm text-[var(--text-muted)]">
-          将在你的 GitHub 账号下创建一个私有仓库用于同步 Frago 资源
-        </p>
+      {/* 模式切换 */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setRepoMode('create')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            repoMode === 'create'
+              ? 'bg-[var(--accent-primary)] text-white'
+              : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+          }`}
+        >
+          创建新仓库
+        </button>
+        <button
+          onClick={() => setRepoMode('select')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            repoMode === 'select'
+              ? 'bg-[var(--accent-primary)] text-white'
+              : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
+          }`}
+        >
+          使用已有仓库
+        </button>
       </div>
+
+      {repoMode === 'create' ? (
+        /* 创建新仓库模式 */
+        <div>
+          <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+            仓库名称
+          </label>
+          <input
+            type="text"
+            value={repoName}
+            onChange={(e) => setRepoName(e.target.value)}
+            placeholder="例如: frago-sync"
+            className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
+          />
+          <p className="mt-2 text-sm text-[var(--text-muted)]">
+            将在你的 GitHub 账号下创建一个私有仓库用于同步 Frago 资源
+          </p>
+        </div>
+      ) : (
+        /* 选择已有仓库模式 */
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-[var(--text-primary)]">
+              选择仓库
+            </label>
+            <button
+              onClick={loadExistingRepos}
+              disabled={loadingRepos}
+              className="text-xs text-[var(--accent-primary)] hover:underline disabled:opacity-50"
+            >
+              {loadingRepos ? '加载中...' : '刷新列表'}
+            </button>
+          </div>
+
+          {loadingRepos && existingRepos.length === 0 ? (
+            <div className="flex items-center gap-2 text-[var(--text-muted)] py-4">
+              <Loader2 size={16} className="animate-spin" />
+              正在加载仓库列表...
+            </div>
+          ) : existingRepos.length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)] py-4">
+              未找到任何仓库，请创建新仓库
+            </p>
+          ) : (
+            <div className="max-h-60 overflow-y-auto border border-[var(--border-color)] rounded-md">
+              {existingRepos.map((repo) => (
+                <div
+                  key={repo.ssh_url}
+                  onClick={() => setSelectedRepo(repo.ssh_url)}
+                  className={`px-3 py-2 cursor-pointer flex items-center justify-between hover:bg-[var(--bg-subtle)] ${
+                    selectedRepo === repo.ssh_url
+                      ? 'bg-[var(--accent-primary)]/10 border-l-2 border-[var(--accent-primary)]'
+                      : ''
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Github size={16} className="text-[var(--text-muted)]" />
+                    <div>
+                      <span className="text-sm font-medium text-[var(--text-primary)]">
+                        {repo.name}
+                      </span>
+                      {repo.description && (
+                        <p className="text-xs text-[var(--text-muted)] truncate max-w-[300px]">
+                          {repo.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded ${
+                    repo.private
+                      ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
+                      : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                  }`}>
+                    {repo.private ? 'Private' : 'Public'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="mt-2 text-sm text-[var(--text-muted)]">
+            选择一个已有的仓库用于同步 Frago 资源（推荐使用私有仓库）
+          </p>
+        </div>
+      )}
 
       <div className="flex gap-2 pt-4">
         <button onClick={() => setCurrentStep(2)} className="btn btn-ghost">
           上一步
         </button>
-        <button
-          onClick={handleCreateRepo}
-          className="btn btn-primary"
-          disabled={loading || !repoName.trim()}
-        >
-          {loading ? '创建中...' : '创建仓库'}
-        </button>
+        {repoMode === 'create' ? (
+          <button
+            onClick={handleCreateRepo}
+            className="btn btn-primary"
+            disabled={loading || !repoName.trim()}
+          >
+            {loading ? '创建中...' : '创建仓库'}
+          </button>
+        ) : (
+          <button
+            onClick={handleSelectRepo}
+            className="btn btn-primary"
+            disabled={loading || !selectedRepo}
+          >
+            {loading ? '配置中...' : '使用此仓库'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -466,7 +626,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
         <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
           <span>检测</span>
           <span>登录</span>
-          <span>创建仓库</span>
+          <span>配置仓库</span>
           <span>同步</span>
           <span>完成</span>
         </div>

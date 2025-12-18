@@ -4,9 +4,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility } from '@/api/pywebview';
-import { Github, RefreshCw, AlertTriangle } from 'lucide-react';
+import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility, checkGhCli } from '@/api/pywebview';
+import { Github, RefreshCw, AlertTriangle, Check, X, Loader2, AlertCircle } from 'lucide-react';
 import GitHubWizard from './GitHubWizard';
+
+import type { GhCliStatus } from '@/types/pywebview.d';
 
 export default function SyncSettings() {
   const [syncRepoUrl, setSyncRepoUrl] = useState<string | null>(null);
@@ -17,9 +19,24 @@ export default function SyncSettings() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isPublicRepo, setIsPublicRepo] = useState(false);
   const [visibilityChecked, setVisibilityChecked] = useState(false);
+  const [ghStatus, setGhStatus] = useState<GhCliStatus | null>(null);
+  const [ghStatusLoading, setGhStatusLoading] = useState(false);
+
+  const checkGhStatus = async () => {
+    try {
+      setGhStatusLoading(true);
+      const status = await checkGhCli();
+      setGhStatus(status);
+    } catch (err) {
+      console.error('检测 gh 状态失败:', err);
+    } finally {
+      setGhStatusLoading(false);
+    }
+  };
 
   useEffect(() => {
     loadConfig();
+    checkGhStatus();
   }, []);
 
   const loadConfig = async () => {
@@ -119,14 +136,83 @@ export default function SyncSettings() {
           多设备同步
         </h2>
 
-        {/* 提示信息 - 放在卡片内部顶部 */}
+        {/* GitHub CLI 状态检测 */}
         <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
-          <h3 className="text-sm font-medium text-blue-900 dark:text-blue-200 mb-1">
-            💡 提示
-          </h3>
-          <p className="text-sm text-blue-700 dark:text-blue-300">
-            首次配置需要安装 GitHub CLI (gh) 并登录 GitHub 账号。向导将引导你完成整个流程。
-          </p>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-blue-900 dark:text-blue-200">
+              GitHub CLI 状态
+            </h3>
+            <button
+              onClick={checkGhStatus}
+              disabled={ghStatusLoading}
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
+            >
+              {ghStatusLoading ? '检测中...' : '刷新'}
+            </button>
+          </div>
+
+          {ghStatusLoading && !ghStatus ? (
+            <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+              <Loader2 size={14} className="animate-spin" />
+              正在检测...
+            </div>
+          ) : ghStatus ? (
+            <div className="space-y-1 text-sm">
+              {/* gh 安装状态 */}
+              <div className={`flex items-center gap-2 ${
+                ghStatus.installed
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-red-600 dark:text-red-400'
+              }`}>
+                {ghStatus.installed ? <Check size={14} /> : <X size={14} />}
+                <span>
+                  {ghStatus.installed
+                    ? `gh CLI 已安装 (v${ghStatus.version})`
+                    : 'gh CLI 未安装'}
+                </span>
+              </div>
+
+              {/* 登录状态（仅在已安装时显示） */}
+              {ghStatus.installed && (
+                <div className={`flex items-center gap-2 ${
+                  ghStatus.authenticated
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-yellow-600 dark:text-yellow-400'
+                }`}>
+                  {ghStatus.authenticated ? <Check size={14} /> : <AlertCircle size={14} />}
+                  <span>
+                    {ghStatus.authenticated
+                      ? `已登录 GitHub (@${ghStatus.username})`
+                      : '未登录 GitHub'}
+                  </span>
+                </div>
+              )}
+
+              {/* 操作提示 */}
+              {!ghStatus.installed && (
+                <p className="mt-2 text-blue-700 dark:text-blue-300">
+                  请先安装 GitHub CLI：
+                  <a
+                    href="https://cli.github.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-1 underline"
+                  >
+                    https://cli.github.com/
+                  </a>
+                </p>
+              )}
+              {ghStatus.installed && !ghStatus.authenticated && (
+                <p className="mt-2 text-blue-700 dark:text-blue-300">
+                  点击下方"开始配置"按钮登录 GitHub
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-blue-700 dark:text-blue-300">
+              首次配置需要安装 GitHub CLI (gh) 并登录 GitHub 账号。向导将引导你完成整个流程。
+            </p>
+          )}
         </div>
 
         {syncRepoUrl ? (
