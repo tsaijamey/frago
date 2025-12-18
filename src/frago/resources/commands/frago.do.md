@@ -169,11 +169,30 @@ frago run release
 
 ### 根据用户选择创建输出
 
-| 格式 | 文件类型 | 说明 |
-|------|---------|------|
-| 结构化数据 | `*.json`、`*.csv` | Agent 可直接生成 |
-| 文档报告 | `*.md`、`*.html` | Agent 可直接生成 |
-| 多媒体 | `*.png`（截图） | 通过工具生成 |
+| 格式 | 文件类型 | 适用场景 |
+|------|---------|---------|
+| 结构化数据 | `*.json`、`*.csv` | 后续处理、API 对接、数据分析 |
+| 可预览文档 | `*.md` | 详细阅读、`frago view` 预览 |
+| 演示文稿 | `*.html`（reveal.js） | 汇报演示、`frago view` 幻灯片 |
+| 纯文本 | `*.txt` | 简单记录、日志 |
+| 多媒体 | `*.png`（截图） | 视觉证据、状态记录 |
+
+**选择建议**：
+- 需要程序处理 → JSON/CSV
+- 需要详细阅读 → Markdown 文档
+- 需要演示汇报 → reveal.js 演示文稿
+- 不确定时 → 询问用户
+
+### 可预览内容要求（Markdown 或演示文稿输出时适用）
+
+若选择可预览格式，**必须先加载指南**：
+```
+Read ~/.claude/skills/frago-previewable-content/SKILL.md
+```
+
+按 skill 指南生成：
+- **Markdown 文档**：参考 Part 1，确保 Mermaid 图表语法、代码块标记正确
+- **reveal.js 演示文稿**：参考 Part 2，使用 `<section>` 结构和 fragment 动画
 
 ### 禁止的行为
 

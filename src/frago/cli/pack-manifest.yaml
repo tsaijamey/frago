@@ -12,6 +12,7 @@ commands:
 
 skills:
   - frago-x-extract-tweet-with-comments
+  - frago-previewable-content
 
 recipes:
   - atomic/system/clipboard_read
