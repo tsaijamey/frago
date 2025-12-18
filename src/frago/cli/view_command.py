@@ -7,23 +7,13 @@ from typing import Optional
 import click
 
 
-@click.command("view", short_help="内容查看器：Markdown幻灯片 / PDF / 代码高亮")
+@click.command("view", short_help="内容查看器：Markdown / PDF / 代码高亮")
 @click.argument("file", type=click.Path(exists=True), required=False)
-@click.option(
-    "--present", "-p",
-    is_flag=True,
-    help="Force presentation mode (reveal.js slideshow)"
-)
-@click.option(
-    "--doc", "-d",
-    is_flag=True,
-    help="Force document mode (scrollable document)"
-)
 @click.option(
     "--theme", "-t",
     type=str,
-    default="black",
-    help="Theme name (reveal.js theme for present mode, code theme for doc mode)"
+    default="github-dark",
+    help="Code highlighting theme (github-dark, monokai, etc.)"
 )
 @click.option(
     "--title",
@@ -61,8 +51,6 @@ import click
 )
 def view(
     file: Optional[str],
-    present: bool,
-    doc: bool,
     theme: str,
     title: Optional[str],
     width: int,
@@ -71,11 +59,11 @@ def view(
     stdin: bool,
     content: Optional[str],
 ):
-    """View content in a presentation or document window.
+    """View content in a document window with syntax highlighting and Mermaid support.
 
     \b
     Supported formats:
-      - Markdown (.md) - auto-detects slides with --- separators
+      - Markdown (.md) - rendered with Mermaid diagram support
       - HTML (.html, .htm) - direct rendering
       - PDF (.pdf) - rendered with PDF.js
       - JSON (.json) - formatted and syntax highlighted
@@ -83,9 +71,7 @@ def view(
 
     \b
     Examples:
-      frago view slides.md           # Auto-detect mode
-      frago view slides.md --present # Force presentation mode
-      frago view README.md --doc     # Force document mode
+      frago view README.md           # View Markdown
       frago view report.pdf          # View PDF
       frago view config.json         # View formatted JSON
       cat script.py | frago view --stdin  # Read from stdin
@@ -104,25 +90,13 @@ def view(
         click.echo("Error: Must provide FILE, --stdin, or --content", err=True)
         sys.exit(1)
 
-    # Determine mode
-    if present and doc:
-        click.echo("Error: Cannot use both --present and --doc", err=True)
-        sys.exit(1)
-
-    if present:
-        mode = "present"
-    elif doc:
-        mode = "doc"
-    else:
-        mode = "auto"
-
     # Import and run viewer
     try:
         from frago.viewer import ViewerWindow
 
         viewer = ViewerWindow(
             content=content_input,
-            mode=mode,
+            mode="doc",
             theme=theme,
             title=title,
             width=width,
