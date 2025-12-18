@@ -45,6 +45,7 @@ dependencies = [
     "questionary>=2.1.0",
     "watchdog>=3.0.0",
     "pywebview>=6.1",
+    "markdown>=3.4.0",
 ]
 
 [project.optional-dependencies]

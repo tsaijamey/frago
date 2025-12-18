@@ -92,14 +92,8 @@ class ViewerWindow:
         """Auto-detect the display mode based on content type."""
         if self.file_path:
             ext = self.file_path.suffix.lower()
-            # PDF always uses doc mode
-            if ext == ".pdf":
-                return "doc"
-            # Check for slide markers in markdown
-            if ext == ".md":
-                content = self.file_path.read_text(encoding="utf-8")
-                if "\n---\n" in content or "\n--\n" in content:
-                    return "present"
+            # PDF and Markdown always use doc mode
+            if ext in {".pdf", ".md"}:
                 return "doc"
             # HTML with reveal.js class
             if ext in {".html", ".htm"}:
@@ -190,6 +184,11 @@ class ViewerWindow:
             pdfjs_src = resources / "pdfjs"
             if pdfjs_src.exists():
                 shutil.copytree(pdfjs_src, self._temp_dir / "pdfjs")
+
+            # Copy mermaid
+            mermaid_src = resources / "mermaid"
+            if mermaid_src.exists():
+                shutil.copytree(mermaid_src, self._temp_dir / "mermaid")
 
         # Generate HTML based on mode
         if self.mode == "present":

@@ -2,6 +2,7 @@
 
 import html
 import json
+import re
 from typing import Literal
 
 
@@ -48,20 +49,47 @@ def get_language_from_extension(ext: str) -> str:
 
 
 def render_markdown(content: str) -> str:
-    """Render markdown to HTML using Python markdown library.
+    """Render markdown to HTML with Mermaid support.
 
     Falls back to simple rendering if markdown library not available.
     """
     try:
         import markdown
+
+        # Pre-process: protect mermaid blocks from code highlighting
+        mermaid_blocks: list[str] = []
+
+        def save_mermaid(match: re.Match) -> str:
+            idx = len(mermaid_blocks)
+            mermaid_blocks.append(match.group(1))
+            return f"MERMAID_PLACEHOLDER_{idx}"
+
+        content = re.sub(
+            r"```mermaid\n([\s\S]*?)```", save_mermaid, content
+        )
+
         md = markdown.Markdown(extensions=[
             'fenced_code',
             'codehilite',
             'tables',
             'toc',
-            'nl2br',
+            'sane_lists',
+            'def_list',
+            'abbr',
+            'footnotes',
+            'attr_list',
+            'md_in_html',
         ])
-        return md.convert(content)
+        converted = md.convert(content)
+
+        # Post-process: restore mermaid blocks with proper wrapper
+        for idx, block in enumerate(mermaid_blocks):
+            converted = converted.replace(
+                f"MERMAID_PLACEHOLDER_{idx}",
+                f'<pre class="mermaid">{html.escape(block)}</pre>',
+            )
+
+        return converted
     except ImportError:
         # Fallback: basic escaping and line breaks
         escaped = html.escape(content)
@@ -216,6 +244,12 @@ def render_document(
             border-top: 1px solid #30363d;
             margin: 24px 0;
         }}
+        /* Mermaid diagram styles */
+        .mermaid {{
+            background: transparent;
+            text-align: center;
+            margin: 16px 0;
+        }}
         /* Code content styles */
         .code-content pre {{
             background-color: #161b22;
@@ -234,9 +268,15 @@ def render_document(
 <body>
     {body_content}
     <script src="/highlight/highlight.min.js"></script>
+    <script src="/mermaid/mermaid.min.js"></script>
     <script>
         document.querySelectorAll('pre code').forEach((block) => {{
             hljs.highlightElement(block);
+        }});
+        mermaid.initialize({{
+            startOnLoad: true,
+            theme: 'dark',
+            securityLevel: 'loose'
         }});
     </script>
 </body>
