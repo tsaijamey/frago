@@ -205,6 +205,15 @@ class ViewerWindow:
         if self.file_path and self.file_path.suffix.lower() == ".pdf":
             shutil.copy(self.file_path, self._temp_dir / "source.pdf")
 
+        # Copy relative resources from source file directory (images, etc.)
+        if self.file_path:
+            source_dir = self.file_path.parent
+            # Common resource directories to copy
+            for subdir in ["images", "assets", "img", "media", "figures"]:
+                src_subdir = source_dir / subdir
+                if src_subdir.exists() and src_subdir.is_dir():
+                    shutil.copytree(src_subdir, self._temp_dir / subdir)
+
         return self._temp_dir, entry_file
 
     def _render_present_html(self) -> str:
