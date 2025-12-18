@@ -228,10 +228,10 @@ class SessionMonitor:
         encoded_path = encode_project_path(self.project_path)
         watch_dir = claude_dir / encoded_path
 
-        # 检查并创建目录
+        # 检查并创建目录（首次使用时目录不存在是正常的）
         try:
             if not watch_dir.exists():
-                logger.warning(f"Claude 会话目录不存在: {watch_dir}")
+                logger.debug(f"Claude 会话目录不存在，创建: {watch_dir}")
                 watch_dir.mkdir(parents=True, exist_ok=True)
         except PermissionError as e:
             logger.error(f"没有权限创建目录 {watch_dir}: {e}")

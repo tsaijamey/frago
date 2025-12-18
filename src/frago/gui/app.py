@@ -553,23 +553,32 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
     Raises:
         GuiNotAvailableError: If GUI cannot be started.
     """
-    # 后台运行逻辑（仅 Unix 系统，非 debug 模式，且不是已经后台运行的进程）
-    # 使用 subprocess 启动新进程，而不是 fork
-    # fork 在 macOS/Linux 上会破坏 GUI 框架（Cocoa/GTK）的图形环境连接
-    if not debug and not _background and platform.system() != "Windows":
+    # 后台运行逻辑（非 debug 模式，且不是已经后台运行的进程）
+    # 使用 subprocess 启动新进程，让终端立即返回
+    if not debug and not _background:
         import subprocess
+
+        system = platform.system()
+        popen_kwargs = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+
+        if system == "Windows":
+            # Windows: 使用 CREATE_NEW_PROCESS_GROUP 和 DETACHED_PROCESS
+            # CREATE_NEW_PROCESS_GROUP (0x200): 创建新进程组
+            # DETACHED_PROCESS (0x8): 脱离控制台
+            popen_kwargs["creationflags"] = 0x200 | 0x8
+        else:
+            # Unix: 使用 start_new_session 创建新会话，脱离终端
+            popen_kwargs["start_new_session"] = True
+
         subprocess.Popen(
             [sys.executable, "-m", "frago.gui.app", "--background"],
-            start_new_session=True,  # 创建新会话，脱离终端
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            **popen_kwargs,
         )
         return  # 父进程直接返回
-
-    # Windows 下显示启动提示（因为没有后台进程优化，用户会看到空白等待）
-    if platform.system() == "Windows":
-        print("Starting Frago GUI...", flush=True)
 
     # 在非调试模式下，抑制 GTK/GLib 的警告消息
     if not debug:
@@ -590,9 +599,6 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
     # 依赖检查通过后，才导入 webview（会触发后端加载）
-    if platform.system() == "Windows":
-        print("  Loading webview backend...", flush=True)
-
     try:
         # 临时抑制 stderr，避免 pywebview/GTK 后端的调试警告
         import io
@@ -615,9 +621,6 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         print(f"Error: Cannot start GUI. {reason}", file=sys.stderr)
         print("Hint: Run this command in a graphical desktop environment.", file=sys.stderr)
         sys.exit(1)
-
-    if platform.system() == "Windows":
-        print("  Creating window...", flush=True)
 
     try:
         app = FragoGuiApp(debug=debug)

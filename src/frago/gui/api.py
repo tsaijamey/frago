@@ -5,6 +5,8 @@ Extended for 011-gui-tasks-redesign: Tasks 相关 API 方法。
 """
 
 import json
+import platform
+import shutil
 import subprocess
 import threading
 import time
@@ -15,6 +17,26 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import frontmatter
+
+
+def _prepare_command_for_windows(cmd: List[str]) -> List[str]:
+    """
+    为 Windows 平台调整命令格式
+
+    Windows 上通过 pip/npm 安装的命令是 .CMD/.BAT 批处理文件，
+    subprocess 直接执行会报 [WinError 2]。需要通过 cmd.exe /c 执行。
+    """
+    if platform.system() != "Windows":
+        return cmd
+
+    if not cmd:
+        return cmd
+
+    executable = shutil.which(cmd[0])
+    if executable and executable.lower().endswith(('.cmd', '.bat')):
+        return ["cmd.exe", "/c"] + cmd
+
+    return cmd
 
 try:
     import webview
@@ -136,9 +158,10 @@ class FragoGuiApi:
         recipes = []
         try:
             result = subprocess.run(
-                ["frago", "recipe", "list", "--format", "json"],
+                _prepare_command_for_windows(["frago", "recipe", "list", "--format", "json"]),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -274,9 +297,10 @@ class FragoGuiApi:
                 cmd.extend(["--params", json.dumps(params)])
 
             result = subprocess.run(
-                cmd,
+                _prepare_command_for_windows(cmd),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=300,
             )
 
@@ -361,10 +385,11 @@ class FragoGuiApi:
 
         try:
             process = subprocess.Popen(
-                ["frago", "agent", prompt],
+                _prepare_command_for_windows(["frago", "agent", prompt]),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding='utf-8',
                 bufsize=1,
             )
 
@@ -1049,7 +1074,7 @@ class FragoGuiApi:
 
             with open(log_file, "w") as f:
                 subprocess.Popen(
-                    [frago_path, "agent", "--yes", prompt],
+                    _prepare_command_for_windows([frago_path, "agent", "--yes", prompt]),
                     stdout=f,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,  # 分离进程，防止 GUI 关闭时终止任务
@@ -1107,7 +1132,7 @@ class FragoGuiApi:
 
             with open(log_file, "w") as f:
                 subprocess.Popen(
-                    [frago_path, "agent", "--resume", session_id, "--yes", prompt],
+                    _prepare_command_for_windows([frago_path, "agent", "--resume", session_id, "--yes", prompt]),
                     stdout=f,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -1514,9 +1539,10 @@ class FragoGuiApi:
         # 检查 gh 是否安装
         try:
             version_result = subprocess.run(
-                ['gh', '--version'],
+                _prepare_command_for_windows(['gh', '--version']),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=5
             )
             if version_result.returncode == 0:
@@ -1533,9 +1559,10 @@ class FragoGuiApi:
         if result["installed"]:
             try:
                 auth_result = subprocess.run(
-                    ['gh', 'auth', 'status'],
+                    _prepare_command_for_windows(['gh', 'auth', 'status']),
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
                     timeout=5
                 )
                 # gh auth status 返回 0 表示已登录
@@ -1640,9 +1667,10 @@ class FragoGuiApi:
             for attempt in range(max_retries):
                 try:
                     result = subprocess.run(
-                        cmd,
+                        _prepare_command_for_windows(cmd),
                         capture_output=True,
                         text=True,
+                        encoding='utf-8',
                         timeout=30
                     )
 
@@ -1651,9 +1679,10 @@ class FragoGuiApi:
                         # gh repo create 输出类似: ✓ Created repository user/repo on GitHub
                         # 我们需要获取 SSH URL
                         username_result = subprocess.run(
-                            ['gh', 'api', 'user', '--jq', '.login'],
+                            _prepare_command_for_windows(['gh', 'api', 'user', '--jq', '.login']),
                             capture_output=True,
                             text=True,
+                            encoding='utf-8',
                             timeout=5
                         )
                         username = username_result.stdout.strip()
@@ -1727,13 +1756,14 @@ class FragoGuiApi:
         try:
             # 使用 gh api 获取用户仓库列表
             result = subprocess.run(
-                [
+                _prepare_command_for_windows([
                     'gh', 'api', 'user/repos',
                     '--paginate',
                     '-q', f'.[::{limit}] | .[] | {{name: .name, full_name: .full_name, private: .private, ssh_url: .ssh_url, description: .description}}'
-                ],
+                ]),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=30
             )
 
@@ -1830,7 +1860,8 @@ class FragoGuiApi:
                     [frago_path, 'sync'],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True
+                    text=True,
+                    encoding='utf-8'
                 )
 
                 output_lines = []
