@@ -567,6 +567,10 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         )
         return  # 父进程直接返回
 
+    # Windows 下显示启动提示（因为没有后台进程优化，用户会看到空白等待）
+    if platform.system() == "Windows":
+        print("Starting Frago GUI...", flush=True)
+
     # 在非调试模式下，抑制 GTK/GLib 的警告消息
     if not debug:
         os.environ['G_MESSAGES_DEBUG'] = ''
@@ -586,6 +590,9 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
     # 依赖检查通过后，才导入 webview（会触发后端加载）
+    if platform.system() == "Windows":
+        print("  Loading webview backend...", flush=True)
+
     try:
         # 临时抑制 stderr，避免 pywebview/GTK 后端的调试警告
         import io
@@ -608,6 +615,9 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         print(f"Error: Cannot start GUI. {reason}", file=sys.stderr)
         print("Hint: Run this command in a graphical desktop environment.", file=sys.stderr)
         sys.exit(1)
+
+    if platform.system() == "Windows":
+        print("  Creating window...", flush=True)
 
     try:
         app = FragoGuiApp(debug=debug)
