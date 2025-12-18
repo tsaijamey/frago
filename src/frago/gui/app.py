@@ -512,12 +512,24 @@ class FragoGuiApp:
     def _on_loaded(self) -> None:
         """Callback when the window is loaded.
 
-        Injects CSS variable for font scaling based on window size.
+        Injects CSS variables for font scaling and platform-specific adjustments.
         """
         if self.window and hasattr(self, '_font_scale'):
-            # 注入字体缩放 CSS 变量
+            system = platform.system()
+
+            # macOS 渲染字体较细，Windows/Linux 渲染较粗，调整字重补偿
+            weights = {
+                'Darwin': ('400', '500', '600'),
+                'Windows': ('400', '450', '550'),
+                'Linux': ('400', '450', '550'),
+            }.get(system, ('400', '500', '600'))
+
             js_code = f"""
                 document.documentElement.style.setProperty('--font-scale', '{self._font_scale:.3f}');
+                document.documentElement.style.setProperty('--font-weight-normal', '{weights[0]}');
+                document.documentElement.style.setProperty('--font-weight-medium', '{weights[1]}');
+                document.documentElement.style.setProperty('--font-weight-bold', '{weights[2]}');
+                document.documentElement.setAttribute('data-platform', '{system.lower()}');
             """
             self.window.evaluate_js(js_code)
 
