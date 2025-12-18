@@ -1586,6 +1586,24 @@ class FragoGuiApi:
                 script = 'tell application "Terminal" to do script "gh auth login; exit"'
                 subprocess.run(['osascript', '-e', script])
                 return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+            elif system == 'Windows':
+                # Windows: 优先使用 PowerShell (Windows 10/11 默认)
+                try:
+                    subprocess.Popen(
+                        ['powershell', '-NoExit', '-Command', 'gh auth login'],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE
+                    )
+                    return {"status": "ok", "message": "已打开 PowerShell 窗口，请在窗口中完成登录"}
+                except FileNotFoundError:
+                    # 回退到 cmd
+                    try:
+                        subprocess.Popen(
+                            ['cmd', '/c', 'start', 'cmd', '/k', 'gh auth login'],
+                            creationflags=subprocess.CREATE_NEW_CONSOLE
+                        )
+                        return {"status": "ok", "message": "已打开命令提示符窗口，请在窗口中完成登录"}
+                    except Exception as e:
+                        return {"status": "error", "error": f"无法打开终端窗口: {e}"}
             else:
                 return {"status": "error", "error": f"不支持的操作系统: {system}"}
 
@@ -1677,6 +1695,102 @@ class FragoGuiApi:
                 "status": "error",
                 "error": "gh 命令未找到，请确保已安装 GitHub CLI"
             }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    def list_user_repos(self, limit: int = 100) -> Dict[str, Any]:
+        """列出用户的 GitHub 仓库
+
+        Args:
+            limit: 最大返回数量，默认 100
+
+        Returns:
+            {
+                "status": "ok",
+                "repos": [
+                    {
+                        "name": "repo-name",
+                        "full_name": "username/repo-name",
+                        "private": true,
+                        "ssh_url": "git@github.com:username/repo-name.git",
+                        "description": "..."
+                    },
+                    ...
+                ]
+            }
+        """
+        import json
+
+        try:
+            # 使用 gh api 获取用户仓库列表
+            result = subprocess.run(
+                [
+                    'gh', 'api', 'user/repos',
+                    '--paginate',
+                    '-q', f'.[::{limit}] | .[] | {{name: .name, full_name: .full_name, private: .private, ssh_url: .ssh_url, description: .description}}'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode != 0:
+                return {
+                    "status": "error",
+                    "error": result.stderr.strip() or "获取仓库列表失败"
+                }
+
+            # 解析 JSON Lines 输出
+            repos = []
+            for line in result.stdout.strip().split('\n'):
+                if line:
+                    try:
+                        repos.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+            return {
+                "status": "ok",
+                "repos": repos[:limit]  # 确保不超过 limit
+            }
+
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "error": "获取仓库列表超时"}
+        except FileNotFoundError:
+            return {"status": "error", "error": "gh 命令未找到"}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    def select_existing_repo(self, ssh_url: str) -> Dict[str, Any]:
+        """选择已有仓库作为同步仓库
+
+        Args:
+            ssh_url: 仓库的 SSH URL
+
+        Returns:
+            {"status": "ok", "repo_url": "..."} 或 {"status": "error", "error": "..."}
+        """
+        from frago.init.config_manager import update_config
+
+        try:
+            # 验证 URL 格式
+            if not ssh_url.startswith('git@github.com:') or not ssh_url.endswith('.git'):
+                return {
+                    "status": "error",
+                    "error": "无效的 SSH URL 格式，请使用 git@github.com:user/repo.git 格式"
+                }
+
+            # 更新配置
+            update_config({"sync_repo_url": ssh_url})
+
+            return {
+                "status": "ok",
+                "repo_url": ssh_url
+            }
+
         except Exception as e:
             return {
                 "status": "error",

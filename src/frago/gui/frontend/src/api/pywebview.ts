@@ -31,6 +31,8 @@ import type {
   CreateRepoResponse,
   SyncResponse,
   RepoVisibilityResponse,
+  ListReposResponse,
+  SelectRepoResponse,
 } from '@/types/pywebview.d';
 
 // 等待 pywebview 就绪
@@ -319,4 +321,14 @@ export async function getSyncResult(): Promise<SyncResponse> {
 export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
   const api = await waitForPywebview();
   return api.check_sync_repo_visibility();
+}
+
+export async function listUserRepos(limit?: number): Promise<ListReposResponse> {
+  const api = await waitForPywebview();
+  return api.list_user_repos(limit);
+}
+
+export async function selectExistingRepo(sshUrl: string): Promise<SelectRepoResponse> {
+  const api = await waitForPywebview();
+  return api.select_existing_repo(sshUrl);
 }
