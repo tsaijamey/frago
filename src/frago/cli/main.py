@@ -26,19 +26,20 @@ from .update_command import update
 from .agent_command import agent, agent_status
 from .gui_command import gui_deps
 from .session_commands import session_group
+from .view_command import view
 from .agent_friendly import AgentFriendlyGroup
 
 
 # 命令分组定义（按用户角色）
 COMMAND_GROUPS = OrderedDict([
-    ("日常使用", ["chrome", "recipe", "run"]),
+    ("日常使用", ["chrome", "recipe", "run", "view"]),
     ("会话与智能", ["session", "agent", "agent-status"]),
     ("环境管理", ["init", "status", "sync", "update"]),
-    ("开发者", ["dev", "use-git", "init-dirs", "gui-deps"]),
+    ("开发者", ["dev", "init-dirs", "gui-deps"]),
 ])
 
 # 需要展开子命令的命令组
-EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "use-git", "session"]
+EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "session"]
 
 # chrome 子命令分组
 CHROME_SUBGROUPS = OrderedDict([
@@ -293,6 +294,9 @@ cli.add_command(agent_status)
 
 # Session 管理命令组
 cli.add_command(session_group)
+
+# View 命令 - 通用内容查看器
+cli.add_command(view)
 
 
 def main():
