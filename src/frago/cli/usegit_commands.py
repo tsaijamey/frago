@@ -9,7 +9,7 @@ from .agent_friendly import AgentFriendlyGroup
 from .sync_command import sync_cmd
 
 
-@click.group(name="use-git", cls=AgentFriendlyGroup)
+@click.group(name="use-git", cls=AgentFriendlyGroup, hidden=True)
 def usegit_group():
     """
     [已废弃] 通过 Git 同步 Frago 资源
