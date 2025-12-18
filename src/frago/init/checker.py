@@ -8,9 +8,29 @@ import platform
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from frago.init.models import DependencyCheckResult
+
+
+def _prepare_command_for_windows(cmd: List[str]) -> List[str]:
+    """
+    为 Windows 平台调整命令格式
+
+    Windows 上通过 npm 安装的命令（如 claude）是 .CMD 批处理文件，
+    subprocess 直接执行会报 [WinError 2]。需要通过 cmd.exe /c 执行。
+    """
+    if platform.system() != "Windows":
+        return cmd
+
+    if not cmd:
+        return cmd
+
+    executable = shutil.which(cmd[0])
+    if executable and executable.lower().endswith(('.cmd', '.bat')):
+        return ["cmd.exe", "/c"] + cmd
+
+    return cmd
 
 
 # 默认版本要求
@@ -88,9 +108,10 @@ def check_node(min_version: str = DEFAULT_NODE_MIN_VERSION) -> DependencyCheckRe
     try:
         # 获取版本
         version_output = subprocess.run(
-            ["node", "--version"],
+            _prepare_command_for_windows(["node", "--version"]),
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=5,
         )
 
@@ -142,9 +163,10 @@ def check_claude_code(
     try:
         # 获取版本
         version_output = subprocess.run(
-            ["claude", "--version"],
+            _prepare_command_for_windows(["claude", "--version"]),
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=5,
         )
 

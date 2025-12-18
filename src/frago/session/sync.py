@@ -374,7 +374,8 @@ def sync_all_projects(force: bool = False) -> SyncResult:
     result = SyncResult()
 
     if not CLAUDE_PROJECTS_DIR.exists():
-        logger.warning(f"Claude 项目目录不存在: {CLAUDE_PROJECTS_DIR}")
+        # 首次安装 Claude Code 时目录不存在是正常的，使用 debug 级别
+        logger.debug(f"Claude 项目目录不存在: {CLAUDE_PROJECTS_DIR}")
         return result
 
     for project_dir in CLAUDE_PROJECTS_DIR.iterdir():

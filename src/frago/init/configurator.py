@@ -32,10 +32,10 @@ PRESET_ENDPOINTS = {
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
     "aliyun": {
-        "display_name": "阿里云百炼 (qwen3-coder-plus)",
+        "display_name": "阿里云百炼 (qwen3-max)",
         "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
-        "ANTHROPIC_MODEL": "qwen3-coder-plus",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-coder-plus",
+        "ANTHROPIC_MODEL": "qwen3-max",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-max",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
@@ -301,14 +301,15 @@ def ensure_claude_json_for_custom_auth() -> bool:
             with open(CLAUDE_JSON_PATH, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=2, ensure_ascii=False)
 
+            # 使用 ASCII 兼容的符号，避免 Windows GBK 编码问题
             if not file_existed:
-                click.echo("   ✓ 创建 ~/.claude.json（跳过官方登录）")
+                click.echo("   [OK] Created ~/.claude.json (skip official login)")
             else:
-                click.echo("   ✓ 更新 ~/.claude.json（补充缺失字段）")
+                click.echo("   [OK] Updated ~/.claude.json (added missing fields)")
 
             return True
         except IOError as e:
-            click.secho(f"   ⚠ 无法写入 ~/.claude.json: {e}", fg="yellow")
+            click.secho(f"   [WARN] Cannot write ~/.claude.json: {e}", fg="yellow")
             return False
 
     return False
@@ -528,17 +529,17 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
     # 写入 Claude Code settings.json
     try:
         save_claude_settings({"env": env_config})
-        click.echo(f"   ✓ 已写入 {CLAUDE_SETTINGS_PATH}")
+        click.echo(f"   [OK] Saved to {CLAUDE_SETTINGS_PATH}")
 
         # 显示配置摘要（隐藏 API Key）
-        click.echo("\n   配置内容:")
+        click.echo("\n   Config:")
         click.echo(f"   ANTHROPIC_BASE_URL: {env_config.get('ANTHROPIC_BASE_URL')}")
         click.echo(f"   ANTHROPIC_MODEL: {env_config.get('ANTHROPIC_MODEL')}")
-        click.echo(f"   ANTHROPIC_API_KEY: ****已配置****")
+        click.echo(f"   ANTHROPIC_API_KEY: ****configured****")
 
     except Exception as e:
-        click.echo(f"\n❌ 写入配置失败: {e}")
-        click.echo("   请检查 ~/.claude/ 目录权限")
+        click.echo(f"\n[ERROR] Failed to write config: {e}")
+        click.echo("   Please check ~/.claude/ directory permissions")
 
     # 创建 APIEndpoint 对象用于 frago 配置
     if endpoint_type == "custom":

@@ -11,6 +11,7 @@ Frago Agent Command - 通过 Claude CLI 执行非交互式 AI 任务
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -18,9 +19,41 @@ import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import click
+
+
+# =============================================================================
+# Windows 平台适配
+# =============================================================================
+
+def prepare_command_for_windows(cmd: List[str]) -> List[str]:
+    """
+    为 Windows 平台调整命令格式
+
+    Windows 上通过 npm 安装的命令（如 claude）是 .CMD 批处理文件，
+    subprocess 直接执行会报 [WinError 2]。需要通过 cmd.exe /c 执行。
+
+    Args:
+        cmd: 原始命令列表
+
+    Returns:
+        适配后的命令列表
+    """
+    if platform.system() != "Windows":
+        return cmd
+
+    if not cmd:
+        return cmd
+
+    # 检查第一个命令的实际可执行文件
+    executable = shutil.which(cmd[0])
+    if executable and executable.lower().endswith(('.cmd', '.bat')):
+        # Windows 批处理文件需要通过 cmd.exe 执行
+        return ["cmd.exe", "/c"] + cmd
+
+    return cmd
 
 
 # =============================================================================
@@ -95,9 +128,10 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
         # 检查 CCR 服务状态
         try:
             result = subprocess.run(
-                ["ccr", "status"],
+                prepare_command_for_windows(["ccr", "status"]),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=5
             )
             is_running = "Running" in result.stdout and "Not Running" not in result.stdout
@@ -153,9 +187,10 @@ def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
     """
     try:
         result = subprocess.run(
-            ["claude", "-p", "Say 'OK'", "--output-format", "json"],
+            prepare_command_for_windows(["claude", "-p", "Say 'OK'", "--output-format", "json"]),
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=timeout
         )
 
@@ -217,9 +252,10 @@ def run_claude_command(
 
     try:
         result = subprocess.run(
-            cmd,
+            prepare_command_for_windows(cmd),
             capture_output=True,
             text=True,
+            encoding='utf-8',
             env=env,
             timeout=timeout
         )
@@ -577,7 +613,7 @@ def agent(
 
         if not ccr_info.get("is_running"):
             click.echo("正在启动 CCR 服务...")
-            subprocess.run(["ccr", "start"], capture_output=True, env=env)
+            subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True, env=env)
 
         click.echo(f"✓ 使用 CCR: http://{host}:{port}")
 
@@ -731,13 +767,13 @@ def agent(
     # 执行命令（实时流式输出）
     try:
         process = subprocess.Popen(
-            cmd,
+            prepare_command_for_windows(cmd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
             env=env,
             bufsize=1,
-            universal_newlines=True
         )
 
         # [临时禁用] 解析 stream-json 格式并实时显示
@@ -853,9 +889,10 @@ def agent_status():
         # 获取版本
         try:
             result = subprocess.run(
-                ["claude", "--version"],
+                prepare_command_for_windows(["claude", "--version"]),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=5
             )
             if result.returncode == 0:
