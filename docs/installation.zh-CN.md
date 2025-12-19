@@ -143,46 +143,40 @@ frago init --update-resources
 
 ### 多设备资源同步
 
-初始配置完成后，可以通过你自己的 Git 仓库在多台设备间同步个性化资源（skills、recipes、commands）：
+**为什么需要私有仓库？** 你的 skills 和 recipes 是个人资产——你发现的工作流模式、你构建的自动化脚本。它们不应该被绑定在单台机器上，也不应该在重装系统时丢失。
+
+初始配置完成后，在多台设备间同步资源：
 
 ```bash
-# 配置你的私有仓库（仅首次）
+# 首次：配置你的私有仓库
 frago sync --set-repo git@github.com:you/my-frago-resources.git
 
-# 从仓库部署资源
-frago deploy
-
-# 修改后同步回仓库
-frago publish && frago sync
+# 日常使用：同步变更
+frago sync              # 推送本地变更并拉取远程更新
+frago sync --dry-run    # 预览将要同步的内容
+frago sync --no-push    # 仅拉取，不推送
 ```
-
-详见 [使用指南 - 资源管理](user-guide.zh-CN.md#资源管理)。
 
 ---
 
-## 可选功能
+## GUI 模式
 
-### GUI 支持
+GUI 和剪贴板功能已默认包含——无需额外安装。
 
-```bash
-uv tool install "frago-cli[gui]"
-```
-
-**平台特定要求**：
+**GUI 的平台要求**：
 
 | 平台 | 后端 | 系统依赖 |
 |------|------|----------|
 | **Linux** | WebKit2GTK | `sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1` |
 | **macOS** | WKWebView | 无（内置） |
-| **Windows** | WebView2 | Edge WebView2 Runtime（推荐） |
+| **Windows** | WebView2 | Edge WebView2 Runtime |
 
-**Linux (Ubuntu/Debian)** — 先装系统依赖：
+**Linux 用户**：使用 GUI 前先安装系统依赖：
 ```bash
 sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
-uv tool install "frago-cli[gui]"
 ```
 
-**启动**：
+**启动 GUI**：
 ```bash
 frago gui
 frago gui --debug  # 带开发者工具
@@ -190,78 +184,25 @@ frago gui --debug  # 带开发者工具
 
 ---
 
-### 剪贴板支持
+## 开发环境
+
+参与开发：
 
 ```bash
-uv tool install "frago-cli[clipboard]"
-```
-
----
-
-### 完整安装（所有可选功能）
-
-```bash
-uv tool install "frago-cli[all]"
-```
-
----
-
-## 开发环境安装
-
-如果要参与开发或运行测试：
-
-```bash
-# 克隆仓库
-git clone https://github.com/frago/frago.git
+git clone https://github.com/tsaijamey/frago.git
 cd frago
-
-# 使用 uv 安装开发依赖（推荐）
 uv sync --all-extras --dev
-
-# 或使用 pip
-pip install -e ".[dev,all]"
 ```
 
-**开发依赖包含**：
-- pytest（测试框架）
-- pytest-cov（覆盖率）
-- ruff（代码检查）
-- mypy（类型检查）
-- black（代码格式化）
-
----
-
-## 依赖说明
-
-### 强制依赖（所有用户都会安装）
-
-```toml
-dependencies = [
-    "websocket-client>=1.9.0",  # CDP WebSocket 连接
-    "click>=8.1.0",             # CLI 框架
-    "pydantic>=2.0.0",          # 数据验证
-    "python-dotenv>=1.0.0",     # 环境变量
-    "pyyaml>=6.0.0",            # Recipe 元数据解析
-]
-```
-
-### 可选依赖（按需安装）
-
-```toml
-[project.optional-dependencies]
-clipboard = ["pyperclip>=1.8.0"]   # 剪贴板功能
-gui = ["pywebview>=5.0.0"]         # 桌面 GUI 界面
-all = ["pyperclip>=1.8.0", "pywebview>=5.0.0"]  # 所有可选功能
-dev = ["pytest>=7.4.0", ...]       # 开发工具
-```
+**开发依赖**：pytest、pytest-cov、ruff、mypy、black
 
 ---
 
 ## 系统要求
 
-- **Python**: 3.9+
+- **Python**: 3.9 - 3.13
 - **操作系统**: macOS, Linux, Windows
-- **Chrome 浏览器**: 用于 chrome-js Recipe 执行
+- **Chrome 浏览器**: 用于 CDP 浏览器自动化
 
 ---
 
@@ -349,16 +290,10 @@ paru -S google-chrome
 # Python 3.9+ 已安装
 python3 --version
 
-# pip 可用
-pip --version  # 或：python3 -m pip --version
-
-# 网络可以访问 PyPI
-pip index versions frago-cli
-
-# Chrome 已安装（如使用 CDP 功能）
+# Chrome 已安装（用于 CDP 功能）
 google-chrome --version
 
-# Node.js 20+ 已安装（如使用 Claude Code 集成）
+# Node.js 20+ 已安装（用于 Claude Code 集成）
 node --version
 ```
 
@@ -403,22 +338,19 @@ Chrome 通常已预装或可从 [google.com/chrome](https://www.google.com/chrom
 
 ### 安装前检查清单
 
-在运行 `pip3 install frago-cli` 之前，请验证：
+安装 frago 之前，请验证：
 
 ```bash
 # Python 3.9+ 已安装（macOS 12+ 自带 Python 3）
 python3 --version
 
-# pip3 可用
-pip3 --version
-
 # Xcode 命令行工具已安装
 xcode-select -p
 
-# Chrome 已安装（如使用 CDP 功能）
+# Chrome 已安装（用于 CDP 功能）
 ls /Applications/Google\ Chrome.app
 
-# Node.js 20+ 已安装（如使用 Claude Code 集成）
+# Node.js 20+ 已安装（用于 Claude Code 集成）
 node --version
 ```
 
@@ -496,13 +428,10 @@ winget install Microsoft.EdgeWebView2Runtime
 # Python 3.9+ 已安装
 python --version
 
-# pip 可用
-pip --version
-
 # Node.js 20+ 已安装（frago init 之前必须安装）
 node --version
 
-# Chrome 已安装（如使用 CDP 功能）
+# Chrome 已安装（用于 CDP 功能）
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" --version
 ```
 

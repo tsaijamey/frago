@@ -145,46 +145,40 @@ frago init --update-resources
 
 ### Multi-Device Resource Sync
 
-After initial setup, you can sync your personalized resources (skills, recipes, commands) across devices using your own Git repository:
+**Why a private repository?** Your skills and recipes are personal assets—workflow patterns you've discovered, automation scripts you've built. They shouldn't be tied to a single machine or lost when you reinstall.
+
+After initial setup, sync your resources across devices:
 
 ```bash
-# Configure your private repository (first time only)
+# First time: configure your private repository
 frago sync --set-repo git@github.com:you/my-frago-resources.git
 
-# Deploy resources from your repository
-frago deploy
-
-# After making changes, sync back to repository
-frago publish && frago sync
+# Daily use: sync changes
+frago sync              # Push local changes and pull remote updates
+frago sync --dry-run    # Preview what will be synced
+frago sync --no-push    # Only pull, don't push
 ```
-
-See [User Guide - Resource Management](user-guide.md#resource-management) for detailed workflows.
 
 ---
 
-## Optional Features
+## GUI Mode
 
-### GUI Support
+GUI and clipboard features are included by default—no extra installation needed.
 
-```bash
-uv tool install "frago-cli[gui]"
-```
-
-**Platform-specific requirements**:
+**Platform requirements for GUI**:
 
 | Platform | Backend | System Dependencies |
 |----------|---------|---------------------|
 | **Linux** | WebKit2GTK | `sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1` |
 | **macOS** | WKWebView | None (built-in) |
-| **Windows** | WebView2 | Edge WebView2 Runtime (recommended) |
+| **Windows** | WebView2 | Edge WebView2 Runtime |
 
-**Linux (Ubuntu/Debian)** — install system deps first:
+**Linux users**: Install system dependencies before using GUI:
 ```bash
 sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
-uv tool install "frago-cli[gui]"
 ```
 
-**Launch**:
+**Launch GUI**:
 ```bash
 frago gui
 frago gui --debug  # With developer tools
@@ -192,78 +186,25 @@ frago gui --debug  # With developer tools
 
 ---
 
-### Clipboard Support
+## Development Environment
+
+For contributors:
 
 ```bash
-uv tool install "frago-cli[clipboard]"
-```
-
----
-
-### Full Installation (All Optional Features)
-
-```bash
-uv tool install "frago-cli[all]"
-```
-
----
-
-## Development Environment Installation
-
-If you want to contribute to development or run tests:
-
-```bash
-# Clone repository
-git clone https://github.com/frago/frago.git
+git clone https://github.com/tsaijamey/frago.git
 cd frago
-
-# Install development dependencies using uv (recommended)
 uv sync --all-extras --dev
-
-# Or using pip
-pip install -e ".[dev,all]"
 ```
 
-**Development dependencies include**:
-- pytest (test framework)
-- pytest-cov (coverage)
-- ruff (code linting)
-- mypy (type checking)
-- black (code formatting)
-
----
-
-## Dependency Details
-
-### Required Dependencies (installed for all users)
-
-```toml
-dependencies = [
-    "websocket-client>=1.9.0",  # CDP WebSocket connection
-    "click>=8.1.0",             # CLI framework
-    "pydantic>=2.0.0",          # Data validation
-    "python-dotenv>=1.0.0",     # Environment variables
-    "pyyaml>=6.0.0",            # Recipe metadata parsing
-]
-```
-
-### Optional Dependencies (install as needed)
-
-```toml
-[project.optional-dependencies]
-clipboard = ["pyperclip>=1.8.0"]   # Clipboard functionality
-gui = ["pywebview>=5.0.0"]         # Desktop GUI interface
-all = ["pyperclip>=1.8.0", "pywebview>=5.0.0"]  # All optional features
-dev = ["pytest>=7.4.0", ...]       # Development tools
-```
+**Dev dependencies**: pytest, pytest-cov, ruff, mypy, black
 
 ---
 
 ## System Requirements
 
-- **Python**: 3.9+
+- **Python**: 3.9 - 3.13
 - **Operating System**: macOS, Linux, Windows
-- **Chrome Browser**: For chrome-js Recipe execution
+- **Chrome Browser**: For CDP browser automation
 
 ---
 
@@ -351,16 +292,10 @@ Before installing frago, verify:
 # Python 3.9+ installed
 python3 --version
 
-# pip available
-pip --version  # or: python3 -m pip --version
-
-# Network can access PyPI
-pip index versions frago-cli
-
-# Chrome installed (if using CDP features)
+# Chrome installed (for CDP features)
 google-chrome --version
 
-# Node.js 20+ installed (if using Claude Code integration)
+# Node.js 20+ installed (for Claude Code integration)
 node --version
 ```
 
@@ -405,22 +340,19 @@ Chrome is typically pre-installed or available from [google.com/chrome](https://
 
 ### Pre-Installation Checklist
 
-Before running `pip3 install frago-cli`, verify:
+Before installing frago, verify:
 
 ```bash
 # Python 3.9+ installed (macOS 12+ includes Python 3)
 python3 --version
 
-# pip3 available
-pip3 --version
-
 # Xcode Command Line Tools installed
 xcode-select -p
 
-# Chrome installed (if using CDP features)
+# Chrome installed (for CDP features)
 ls /Applications/Google\ Chrome.app
 
-# Node.js 20+ installed (if using Claude Code integration)
+# Node.js 20+ installed (for Claude Code integration)
 node --version
 ```
 
@@ -498,13 +430,10 @@ Before installing frago, verify in PowerShell:
 # Python 3.9+ installed
 python --version
 
-# pip available
-pip --version
-
 # Node.js 20+ installed (REQUIRED before frago init)
 node --version
 
-# Chrome installed (if using CDP features)
+# Chrome installed (for CDP features)
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" --version
 ```
 
