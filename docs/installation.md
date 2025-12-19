@@ -241,6 +241,105 @@ dev = ["pytest>=7.4.0", ...]       # Development tools
 
 ---
 
+## Linux Prerequisites
+
+Before installing frago on Linux, ensure your system meets the following requirements.
+
+### What You Need to Prepare
+
+| Dependency | Purpose | Required |
+|------------|---------|----------|
+| **Python 3.9+** | Frago runtime | Yes |
+| **Node.js 20+** | Claude Code dependency | Yes (for Claude Code integration) |
+| **Chrome Browser** | CDP browser automation | Yes (for CDP features) |
+| **curl or wget** | Download installation scripts (nvm) | Yes (for auto-install) |
+| **git** | Clone repositories | For development |
+
+### What Frago Does NOT Do For You
+
+1. **Install system packages** - Frago cannot run `sudo apt/dnf/pacman` commands
+2. **Configure network proxy** - You need to set up proxy for npm/pip if needed
+3. **Handle permission issues** - npm global directory permissions need manual setup
+4. **Choose distro-specific commands** - You need to select commands for your distribution
+
+### System Dependencies by Distribution
+
+#### Ubuntu/Debian
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv curl git
+```
+
+#### Fedora/RHEL
+
+```bash
+sudo dnf install -y python3 python3-pip curl git
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S python python-pip curl git
+```
+
+#### openSUSE
+
+```bash
+sudo zypper install -y python3 python3-pip curl git
+```
+
+### Chrome Browser Installation
+
+Chrome is required for CDP (Chrome DevTools Protocol) features.
+
+#### Ubuntu/Debian (64-bit)
+
+```bash
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo dpkg -i google-chrome-stable_current_amd64.deb
+sudo apt -f install  # Fix dependencies if needed
+```
+
+#### Fedora/RHEL
+
+```bash
+sudo dnf install https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+```
+
+#### Arch Linux
+
+```bash
+# Using yay (AUR helper)
+yay -S google-chrome
+
+# Or using paru
+paru -S google-chrome
+```
+
+### Pre-Installation Checklist
+
+Before running `pip install frago-cli`, verify:
+
+```bash
+# Python 3.9+ installed
+python3 --version
+
+# pip available
+pip --version  # or: python3 -m pip --version
+
+# Network can access PyPI
+pip index versions frago-cli
+
+# Chrome installed (if using CDP features)
+google-chrome --version
+
+# Node.js 20+ installed (if using Claude Code integration)
+node --version
+```
+
+---
+
 ## Verify Installation
 
 Verify after installation:

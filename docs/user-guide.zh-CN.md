@@ -442,6 +442,154 @@ frago deploy
 
 ---
 
+## 故障排除
+
+### 常见问题
+
+**问题**：CDP 连接超时
+```
+Error: Failed to connect to Chrome CDP at ws://localhost:9222
+```
+
+**解决方案**：
+1. 检查 Chrome 是否以 CDP 模式运行：
+   ```bash
+   # macOS
+   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+       --remote-debugging-port=9222 \
+       --user-data-dir=./chrome_profile
+
+   # Linux
+   google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug
+   ```
+2. 验证端口 9222 可访问：`lsof -i :9222`
+3. 检查代理配置（如使用代理）
+
+---
+
+**问题**：Recipe 未找到
+```
+Error: Recipe 'youtube_extract_subtitles' not found
+```
+
+**解决方案**：
+1. 列出可用 Recipe：`frago recipe list`
+2. 检查 Recipe 名称拼写（需精确匹配）
+3. 确认元数据文件（.md）与脚本文件配对存在
+
+---
+
+**问题**：截图保存失败
+```
+Error: Failed to save screenshot to /path/to/screenshot.png
+```
+
+**解决方案**：
+1. 使用绝对路径保存截图文件
+2. 确保目标目录存在：`mkdir -p screenshots/`
+3. 检查文件写入权限
+
+---
+
+### Linux 特定问题
+
+**问题**：`pip: command not found`
+
+**解决方案**：
+```bash
+# Ubuntu/Debian
+sudo apt install python3-pip
+
+# Fedora
+sudo dnf install python3-pip
+
+# Arch Linux
+sudo pacman -S python-pip
+
+# 替代方案：使用 python -m pip
+python3 -m pip install frago-cli
+```
+
+---
+
+**问题**：`npm EACCES permission denied`
+```
+npm ERR! Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules'
+```
+
+**解决方案**：
+```bash
+# 方法 1：使用 nvm（推荐）
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+source ~/.bashrc  # 或 ~/.zshrc
+nvm install --lts
+
+# 方法 2：修改 npm 全局目录
+mkdir -p ~/.npm-global
+npm config set prefix ~/.npm-global
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+**问题**：安装后 `nvm: command not found`
+
+**解决方案**：
+```bash
+# 确保 nvm 在当前 shell 中加载
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+# 添加到 ~/.bashrc 或 ~/.zshrc 以持久化
+echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc
+echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+**问题**：Linux 上 Chrome CDP 连接问题
+
+**解决方案**：
+```bash
+# 1. 验证 Chrome 已安装
+google-chrome --version
+
+# 2. 以 CDP 模式启动 Chrome
+google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug
+
+# 3. 验证 CDP 端口正在监听
+lsof -i :9222 | grep LISTEN
+curl http://localhost:9222/json/version
+
+# 4. 如果端口 9222 被占用
+# 查找占用端口的进程
+lsof -i :9222
+# 终止进程或使用其他端口
+google-chrome --remote-debugging-port=9223 --user-data-dir=/tmp/chrome-debug
+```
+
+---
+
+**问题**：Node.js 版本不匹配
+```
+Error: Node.js version 18.x detected, but 20.0.0 or higher is required
+```
+
+**解决方案**：
+```bash
+# 使用 nvm
+nvm install 20
+nvm use 20
+nvm alias default 20
+
+# 验证
+node --version
+```
+
+---
+
 ## 注意事项
 
 1. Chrome 必须启用 CDP 模式运行，保持 9222 端口可用
