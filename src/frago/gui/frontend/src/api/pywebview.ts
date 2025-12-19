@@ -33,6 +33,7 @@ import type {
   RepoVisibilityResponse,
   ListReposResponse,
   SelectRepoResponse,
+  TutorialResponse,
 } from '@/types/pywebview.d';
 
 // 等待 pywebview 就绪
@@ -331,4 +332,17 @@ export async function listUserRepos(limit?: number): Promise<ListReposResponse> 
 export async function selectExistingRepo(sshUrl: string): Promise<SelectRepoResponse> {
   const api = await waitForPywebview();
   return api.select_existing_repo(sshUrl);
+}
+
+// ============================================================
+// Tutorial API
+// ============================================================
+
+export async function openTutorial(
+  tutorialId: string,
+  lang: string = 'auto',
+  anchor: string = ''
+): Promise<TutorialResponse> {
+  const api = await waitForPywebview();
+  return api.open_tutorial(tutorialId, lang, anchor);
 }

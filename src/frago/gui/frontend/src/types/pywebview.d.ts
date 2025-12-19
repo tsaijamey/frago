@@ -290,6 +290,13 @@ export interface RecipeDeleteResponse {
   message?: string;
 }
 
+export interface TutorialResponse {
+  status: 'ok' | 'error';
+  tutorial_id?: string;
+  lang?: string;
+  error?: string;
+}
+
 // ============================================================
 // PyWebview API 接口
 // ============================================================
@@ -560,6 +567,18 @@ export interface PyWebviewApi {
    * 取消 agent 任务（旧版）
    */
   cancel_agent(): Promise<{ status: string; message: string }>;
+
+  // ============================================================
+  // Tutorial API
+  // ============================================================
+
+  /**
+   * 打开教程演示窗口
+   * @param tutorial_id 教程 ID，如 "intro", "guide", "best-practices", "videos"
+   * @param lang 语言，"auto" 自动检测，"zh" 中文，"en" 英文
+   * @param anchor 锚点 ID，用于跳转到页面特定位置，如 "concepts"
+   */
+  open_tutorial(tutorial_id: string, lang?: string, anchor?: string): Promise<TutorialResponse>;
 }
 
 // ============================================================

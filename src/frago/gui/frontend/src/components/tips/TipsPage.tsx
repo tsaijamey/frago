@@ -1,4 +1,50 @@
+import { useState } from 'react';
 import { Accordion, AccordionItem } from '../ui/Accordion';
+import { openTutorial } from '@/api/pywebview';
+import { ExternalLink, Loader2 } from 'lucide-react';
+
+interface TutorialButtonProps {
+  tutorialId: string;
+  label?: string;
+  anchor?: string;
+}
+
+function TutorialButton({ tutorialId, label = '查看详细教程', anchor = '' }: TutorialButtonProps) {
+  const [loading, setLoading] = useState(false);
+
+  const handleClick = async () => {
+    setLoading(true);
+    try {
+      const result = await openTutorial(tutorialId, 'auto', anchor);
+      if (result.status === 'error') {
+        console.error('Failed to open tutorial:', result.error);
+      }
+    } catch (error) {
+      console.error('Failed to open tutorial:', error);
+    } finally {
+      // 延迟重置 loading 状态，给用户视觉反馈
+      setTimeout(() => setLoading(false), 500);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
+                 text-[var(--accent-primary)] bg-[var(--accent-primary)]/10
+                 hover:bg-[var(--accent-primary)]/20 rounded-md transition-colors
+                 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {loading ? (
+        <Loader2 size={14} className="animate-spin" />
+      ) : (
+        <ExternalLink size={14} />
+      )}
+      {label}
+    </button>
+  );
+}
 
 export default function TipsPage() {
   return (
@@ -20,6 +66,7 @@ export default function TipsPage() {
             frago 解决的就是这个问题：第一次探索，记录过程，固化成可复用的配方。下次同样的任务，直接调用，不再重复探索。AI
             足够聪明，但还不够「有经验」。frago 教它记住怎么做事。
           </p>
+          <TutorialButton tutorialId="intro" />
         </AccordionItem>
 
         <AccordionItem title="关键概念">
@@ -36,6 +83,18 @@ export default function TipsPage() {
             ：与 Chrome 浏览器的连接。一个会话可以执行多个任务，共享浏览器上下文（登录状态、cookies
             等）。
           </p>
+          <TutorialButton tutorialId="intro" label="了解更多概念" anchor="concepts" />
+        </AccordionItem>
+
+        <AccordionItem title="功能操作指南">
+          <p className="mb-3">frago 的核心操作流程：</p>
+          <ol className="list-decimal list-inside space-y-1 mb-3">
+            <li>启动 Chrome 调试模式</li>
+            <li>创建或选择配方</li>
+            <li>运行配方，监控任务状态</li>
+            <li>查看结果，优化配方</li>
+          </ol>
+          <TutorialButton tutorialId="guide" />
         </AccordionItem>
 
         <AccordionItem title="用途与场景">
@@ -47,17 +106,15 @@ export default function TipsPage() {
             <li>执行 UI 测试，验证页面功能</li>
             <li>批量下载文件或图片</li>
           </ul>
+          <TutorialButton tutorialId="intro" label="查看应用场景" anchor="use-cases" />
+          <TutorialButton tutorialId="best-practices" label="最佳实践指南" />
         </AccordionItem>
 
-        <AccordionItem title="GUI vs 命令行">
+        <AccordionItem title="视频教程">
           <p className="mb-3">
-            <strong className="text-[var(--text-primary)]">GUI 模式</strong>
-            适合后台执行、批量管理任务。你可以同时监控多个任务的进度，查看历史记录，管理配方库。适合已经验证过的稳定配方。
+            通过视频教程快速上手 frago，包含入门指南、进阶技巧和实战案例。
           </p>
-          <p>
-            <strong className="text-[var(--text-primary)]">命令行模式</strong>
-            适合开发调试、交互式执行。你可以实时看到每一步操作，在关键节点确认后再继续。适合新配方的编写和测试。
-          </p>
+          <TutorialButton tutorialId="videos" label="浏览视频教程" />
         </AccordionItem>
 
         <AccordionItem title="快速开始">
@@ -78,6 +135,7 @@ export default function TipsPage() {
               <strong className="text-[var(--text-primary)]">Tasks</strong> 页面查看执行进度
             </li>
           </ol>
+          <TutorialButton tutorialId="guide" label="查看完整指南" />
         </AccordionItem>
       </Accordion>
     </div>

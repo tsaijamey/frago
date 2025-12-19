@@ -1946,3 +1946,72 @@ class FragoGuiApi:
                 "status": "error",
                 "error": str(e)
             }
+
+    def open_tutorial(self, tutorial_id: str, lang: str = "auto", anchor: str = "") -> Dict[str, Any]:
+        """打开教程演示窗口
+
+        在新窗口中打开指定的教程演示文稿。
+
+        Args:
+            tutorial_id: 教程 ID，如 "intro", "guide", "best-practices", "videos"
+            lang: 语言，"auto" 自动检测，"zh" 中文，"en" 英文
+            anchor: 锚点 ID，用于跳转到页面特定位置，如 "concepts"
+
+        Returns:
+            {"status": "ok", "tutorial_id": "..."} 或 {"status": "error", "error": "..."}
+        """
+        import locale
+
+        # 语言检测
+        if lang == "auto":
+            try:
+                system_lang = locale.getdefaultlocale()[0] or ""
+                lang = "zh" if system_lang.startswith("zh") else "en"
+            except Exception:
+                lang = "en"
+
+        # 构建路径
+        tips_dir = Path.home() / ".frago" / "tips" / "tutorials"
+        filename = f"{tutorial_id}.zh-CN.html" if lang == "zh" else f"{tutorial_id}.html"
+        tutorial_path = tips_dir / filename
+
+        # 检查文件是否存在
+        if not tutorial_path.exists():
+            # 尝试回退到英文版
+            fallback_path = tips_dir / f"{tutorial_id}.html"
+            if fallback_path.exists():
+                tutorial_path = fallback_path
+            else:
+                return {
+                    "status": "error",
+                    "error": f"教程文件不存在: {tutorial_path}"
+                }
+
+        # 在新线程中打开 Viewer 窗口，避免阻塞 GUI
+        def show_viewer():
+            try:
+                from frago.viewer import ViewerWindow
+
+                viewer = ViewerWindow(
+                    content=tutorial_path,
+                    mode="doc",  # 文档模式：完整页面，可滚动
+                    theme="github-dark",
+                    title=f"Frago Tutorial",
+                    width=900,
+                    height=700,
+                    anchor=anchor if anchor else None,
+                )
+                viewer.show()
+            except Exception as e:
+                # 在后台线程中记录错误（无法直接返回给前端）
+                import logging
+                logging.getLogger(__name__).error(f"打开教程窗口失败: {e}")
+
+        thread = threading.Thread(target=show_viewer, daemon=True)
+        thread.start()
+
+        return {
+            "status": "ok",
+            "tutorial_id": tutorial_id,
+            "lang": lang
+        }
