@@ -408,6 +408,102 @@ node --version
 
 ---
 
+## Windows 安装前提条件
+
+在 Windows 上安装 frago 之前，请确保系统满足以下要求。
+
+> **重要**：与 macOS/Linux 不同，Windows 不支持通过 nvm 自动安装 Node.js。你必须在运行 `frago init` 之前手动安装 Node.js。
+
+### 系统要求
+
+- **Windows**: 10 (1809+) 或 Windows 11
+- **架构**: x64 和 ARM64 均支持
+
+### 安装 Python
+
+Windows 默认不包含 Python：
+
+```powershell
+# 方法 1：Microsoft Store（最简单）
+# 在 Microsoft Store 搜索 "Python 3.11" 并安装
+
+# 方法 2：winget
+winget install Python.Python.3.11
+
+# 方法 3：官方安装程序
+# 从 https://www.python.org/downloads/ 下载
+# 重要：安装时勾选 "Add Python to PATH"！
+```
+
+### 安装 Node.js（frago init 之前必须安装）
+
+```powershell
+# 使用 winget（推荐）
+winget install OpenJS.NodeJS.LTS
+
+# 或从 https://nodejs.org/ 下载
+# 选择 LTS 版本（20.x）
+```
+
+### 安装 Chrome 浏览器
+
+```powershell
+# 使用 winget
+winget install Google.Chrome
+
+# 或从 https://www.google.com/chrome/ 下载
+```
+
+### 包管理器
+
+**使用 pip**：
+```powershell
+# Python 安装后，pip 应该可用
+pip install frago-cli
+
+# 如果 pip 找不到，使用：
+python -m pip install frago-cli
+```
+
+**使用 uv（推荐）**：
+```powershell
+# 安装 uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 然后安装 frago
+uv tool install frago-cli
+```
+
+### GUI 支持 (WebView2)
+
+GUI 功能需要 WebView2 Runtime：
+
+```powershell
+# Windows 11 通常已预装
+# Windows 10 需要手动安装：
+winget install Microsoft.EdgeWebView2Runtime
+```
+
+### 安装前检查清单
+
+在运行 `pip install frago-cli` 之前，在 PowerShell 中验证：
+
+```powershell
+# Python 3.9+ 已安装
+python --version
+
+# pip 可用
+pip --version
+
+# Node.js 20+ 已安装（frago init 之前必须安装）
+node --version
+
+# Chrome 已安装（如使用 CDP 功能）
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --version
+```
+
+---
+
 ## 验证安装
 
 安装后验证：

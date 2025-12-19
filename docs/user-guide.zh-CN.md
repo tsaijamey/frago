@@ -670,6 +670,122 @@ xattr -d com.apple.quarantine /path/to/app
 
 ---
 
+### Windows 特定问题
+
+**问题**：`python` 或 `pip` 无法识别
+```
+'python' is not recognized as an internal or external command
+```
+
+**解决方案**：
+```powershell
+# 方法 1：使用 py 启动器（如已安装）
+py -m pip install frago-cli
+
+# 方法 2：将 Python 添加到 PATH
+# 重新安装 Python 并勾选 "Add Python to PATH"
+# 或手动添加到系统环境变量：
+# C:\Users\<用户名>\AppData\Local\Programs\Python\Python311\
+# C:\Users\<用户名>\AppData\Local\Programs\Python\Python311\Scripts\
+
+# 方法 3：使用 Microsoft Store 的 Python
+# 在 Microsoft Store 搜索 "Python 3.11"
+```
+
+---
+
+**问题**：安装后 `node` 无法识别
+```
+'node' is not recognized as an internal or external command
+```
+
+**解决方案**：
+```powershell
+# Node.js 安装后重启 PowerShell
+
+# 如果仍然不行，手动添加到 PATH：
+# C:\Program Files\nodejs\
+
+# 验证安装
+node --version
+```
+
+---
+
+**问题**：npm 全局包找不到（如 claude）
+```
+'claude' is not recognized as an internal or external command
+```
+
+**解决方案**：
+```powershell
+# 将 npm 全局目录添加到 PATH
+$env:PATH += ";$env:APPDATA\npm"
+
+# 永久生效，添加到用户环境变量：
+# 系统属性 → 环境变量 → 用户变量 → Path → 添加：
+# %APPDATA%\npm
+
+# 然后重启 PowerShell
+```
+
+---
+
+**问题**：PowerShell 脚本执行被禁用
+```
+cannot be loaded because running scripts is disabled on this system
+```
+
+**解决方案**：
+```powershell
+# 为当前用户启用脚本执行
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# 验证
+Get-ExecutionPolicy -List
+```
+
+---
+
+**问题**：Windows 上的 Chrome CDP 连接
+
+**解决方案**：
+```powershell
+# 1. 以 CDP 模式启动 Chrome
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+    --remote-debugging-port=9222 `
+    --user-data-dir="$env:USERPROFILE\.frago\chrome_profile"
+
+# 2. 验证 CDP 正在运行
+Test-NetConnection -ComputerName localhost -Port 9222
+Invoke-WebRequest -Uri "http://localhost:9222/json/version"
+
+# 3. 如果端口被占用，查找进程
+netstat -ano | findstr :9222
+# 然后按 PID 终止：
+taskkill /PID <PID> /F
+```
+
+---
+
+**问题**：Windows 不支持自动安装 Node.js
+```
+Error: Windows 不支持自动安装 Node.js
+```
+
+**解决方案**：
+```powershell
+# 必须在运行 frago init 之前手动安装 Node.js
+winget install OpenJS.NodeJS.LTS
+
+# 或从 https://nodejs.org/ 下载
+
+# 验证安装
+node --version  # 应为 20.x 或更高版本
+```
+
+---
+
 ## 注意事项
 
 1. Chrome 必须启用 CDP 模式运行，保持 9222 端口可用
