@@ -149,7 +149,7 @@
   - Connection status indicator
 
 - [x] **Installation**
-  - Optional GUI dependencies: `pip install frago-cli[gui]`
+  - Optional GUI dependencies: `uv tool install "frago-cli[gui]"`
   - Platform-specific backend auto-detection
   - Graceful fallback with installation instructions
 
@@ -451,7 +451,7 @@ First official release, core infrastructure complete.
    - `frago gui` command launches desktop interface
    - pywebview backend (cross-platform)
    - Recipe management and execution
-   - Optional dependency: `pip install frago-cli[gui]`
+   - Optional dependency: `uv tool install "frago-cli[gui]"`
 
 2. **GUI Design Redesign (Feature 009)**
    - GitHub Dark color scheme

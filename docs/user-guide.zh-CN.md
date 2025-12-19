@@ -49,13 +49,7 @@ Frago 适用于各类浏览器自动化和数据采集任务：
 
 **快速开始**：
 ```bash
-# 使用 uv（推荐）
 uv tool install frago-cli
-
-# 使用 pip
-pip install frago-cli
-
-# 验证安装
 frago --version
 ```
 
@@ -283,11 +277,7 @@ frago gui --debug
 GUI 模式需要可选依赖：
 
 ```bash
-# 安装 GUI 支持
-pip install frago-cli[gui]
-
-# 或使用 uv
-uv tool install frago-cli[gui]
+uv tool install "frago-cli[gui]"
 ```
 
 **平台特定要求**：

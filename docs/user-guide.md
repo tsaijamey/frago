@@ -61,13 +61,7 @@ See [Installation Guide](installation.md) for detailed instructions.
 
 **Quick Start**:
 ```bash
-# Using uv (recommended)
 uv tool install frago-cli
-
-# Using pip
-pip install frago-cli
-
-# Verify installation
 frago --version
 ```
 
@@ -468,11 +462,7 @@ frago gui --debug
 GUI mode requires optional dependencies:
 
 ```bash
-# Install with GUI support
-pip install frago-cli[gui]
-
-# Or using uv
-uv tool install frago-cli[gui]
+uv tool install "frago-cli[gui]"
 ```
 
 **Platform-specific requirements**:

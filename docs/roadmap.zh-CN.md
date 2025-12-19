@@ -147,7 +147,7 @@
   - 连接状态指示器
 
 - [x] **安装方式**
-  - 可选 GUI 依赖：`pip install frago-cli[gui]`
+  - 可选 GUI 依赖：`uv tool install "frago-cli[gui]"`
   - 平台特定后端自动检测
   - 优雅降级并提供安装说明
 
@@ -449,7 +449,7 @@
    - `frago gui` 命令启动桌面界面
    - pywebview 后端（跨平台）
    - Recipe 管理和执行
-   - 可选依赖：`pip install frago-cli[gui]`
+   - 可选依赖：`uv tool install "frago-cli[gui]"`
 
 2. **GUI 设计重构（Feature 009）**
    - GitHub Dark 配色方案
