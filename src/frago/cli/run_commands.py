@@ -72,13 +72,15 @@ def format_extra_metadata(extra_metadata: Dict[str, Any], indent: str = "  ") ->
     if not extra_metadata:
         return ""
 
-    lines = [f"\nExtra Metadata:"]
+    lines = ["\nExtra Metadata:"]
     for key, value in sorted(extra_metadata.items()):
-        if isinstance(value, dict):
+        # 使用 type name 检查避免 Pydantic 特殊类型问题
+        type_name = type(value).__name__
+        if type_name == "dict" or isinstance(value, dict):
             lines.append(f"{indent}- {key}:")
             for sub_key, sub_value in value.items():
                 lines.append(f"{indent}  {sub_key}: {json.dumps(sub_value, ensure_ascii=False)}")
-        elif isinstance(value, list):
+        elif type_name == "list" or hasattr(value, "__iter__") and not isinstance(value, (str, dict)):
             lines.append(f"{indent}- {key}: {json.dumps(value, ensure_ascii=False)}")
         else:
             lines.append(f"{indent}- {key}: {value}")
