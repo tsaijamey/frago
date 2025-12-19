@@ -158,14 +158,18 @@ frago:       Python → CDP → Chrome                  (~2MB)
 ### Installation
 
 ```bash
-# Basic installation (core features)
-pip install frago-cli
-# Or use uv (recommended)
+# 1. Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh  # macOS/Linux
+# Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 2. Install frago
 uv tool install frago-cli
 
-# Initialize environment (check dependencies, configure auth, install resources)
+# 3. Initialize environment
 frago init
 ```
+
+> **Note**: See [Installation Guide](docs/installation.md) for OS-specific prerequisites.
 
 ### What `frago init` Does
 

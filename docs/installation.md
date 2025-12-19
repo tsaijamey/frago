@@ -3,15 +3,15 @@
 [简体中文](installation.zh-CN.md)
 
 > [!IMPORTANT]
-> ## ⚠️ Why You Can't Just `pip install` and Go
+> ## ⚠️ Before You Install
 >
-> **frago needs Python + Node.js + Chrome to work.** The problem is:
+> **frago needs Python + Node.js + Chrome.** Each OS has different setup:
 >
-> - **Linux**: Your distro might not have Python/pip pre-installed
-> - **macOS**: Uses `pip3` not `pip` — run `pip install` and nothing happens
-> - **Windows**: Does NOT come with Python or Node.js — you'll get "command not found"
+> - **Linux**: May not have Python pre-installed
+> - **macOS**: Some dependencies need Xcode Command Line Tools
+> - **Windows**: Nothing is pre-installed — Python, Node.js, Chrome all manual
 >
-> **Spend 2 minutes on prerequisites now, or waste 20 minutes debugging later.**
+> **2 minutes of prep now saves 20 minutes of debugging.**
 >
 > | Your OS | Go here first |
 > |---------|---------------|
@@ -166,13 +166,7 @@ See [User Guide - Resource Management](user-guide.md#resource-management) for de
 
 ### GUI Support
 
-If you want to use the desktop GUI interface:
-
 ```bash
-# Using pip
-pip install frago-cli[gui]
-
-# Using uv
 uv tool install "frago-cli[gui]"
 ```
 
@@ -184,20 +178,13 @@ uv tool install "frago-cli[gui]"
 | **macOS** | WKWebView | None (built-in) |
 | **Windows** | WebView2 | Edge WebView2 Runtime (recommended) |
 
-**Linux Installation Example (Ubuntu/Debian)**:
+**Linux (Ubuntu/Debian)** — install system deps first:
 ```bash
-# Install system dependencies first
 sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
-
-# Then install frago with GUI support
-pip install frago-cli[gui]
-
-# Or one-liner with PyGObject compilation support
-sudo apt install -y libcairo2-dev libgirepository1.0-dev gir1.2-webkit2-4.1
-pip install frago-cli[gui] PyGObject
+uv tool install "frago-cli[gui]"
 ```
 
-**Launch GUI**:
+**Launch**:
 ```bash
 frago gui
 frago gui --debug  # With developer tools
@@ -207,31 +194,15 @@ frago gui --debug  # With developer tools
 
 ### Clipboard Support
 
-If you need to output Recipe results to clipboard:
-
 ```bash
-# Using pip
-pip install frago-cli[clipboard]
-
-# Using uv
 uv tool install "frago-cli[clipboard]"
 ```
-
-**Additional features provided**:
-- ✅ `--output-clipboard` option
-- ✅ `clipboard_read` Recipe (system clipboard read)
 
 ---
 
 ### Full Installation (All Optional Features)
 
-Install all features:
-
 ```bash
-# Using pip
-pip install frago-cli[all]
-
-# Using uv
 uv tool install "frago-cli[all]"
 ```
 
@@ -374,7 +345,7 @@ paru -S google-chrome
 
 ### Pre-Installation Checklist
 
-Before running `pip install frago-cli`, verify:
+Before installing frago, verify:
 
 ```bash
 # Python 3.9+ installed
@@ -543,7 +514,7 @@ winget install Microsoft.EdgeWebView2Runtime
 
 ### Pre-Installation Checklist
 
-Before running `pip install frago-cli`, verify in PowerShell:
+Before installing frago, verify in PowerShell:
 
 ```powershell
 # Python 3.9+ installed

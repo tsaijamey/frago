@@ -1,15 +1,15 @@
 # 安装指南
 
 > [!IMPORTANT]
-> ## ⚠️ 为什么不能直接 `pip install` 就完事？
+> ## ⚠️ 安装前必读
 >
-> **frago 需要 Python + Node.js + Chrome 才能工作。** 问题在于：
+> **frago 需要 Python + Node.js + Chrome。** 不同系统的准备工作不同：
 >
-> - **Linux**：你的发行版可能没有预装 Python/pip
-> - **macOS**：用的是 `pip3` 不是 `pip` — 执行 `pip install` 什么都不会发生
-> - **Windows**：系统不自带 Python 和 Node.js — 你会看到"命令未找到"
+> - **Linux**：可能没有预装 Python
+> - **macOS**：部分依赖需要 Xcode 命令行工具
+> - **Windows**：什么都没有 — Python、Node.js、Chrome 全要手动装
 >
-> **现在花 2 分钟看前提条件，还是之后花 20 分钟排错，你选。**
+> **现在花 2 分钟准备，省得之后花 20 分钟排错。**
 >
 > | 你的操作系统 | 先看这里 |
 > |-------------|----------|
@@ -164,13 +164,7 @@ frago publish && frago sync
 
 ### GUI 支持
 
-如果需要使用桌面 GUI 界面：
-
 ```bash
-# 使用 pip
-pip install frago-cli[gui]
-
-# 使用 uv
 uv tool install "frago-cli[gui]"
 ```
 
@@ -182,20 +176,13 @@ uv tool install "frago-cli[gui]"
 | **macOS** | WKWebView | 无（内置） |
 | **Windows** | WebView2 | Edge WebView2 Runtime（推荐） |
 
-**Linux 安装示例（Ubuntu/Debian）**：
+**Linux (Ubuntu/Debian)** — 先装系统依赖：
 ```bash
-# 先安装系统依赖
 sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
-
-# 然后安装带 GUI 支持的 frago
-pip install frago-cli[gui]
-
-# 或者一行命令支持 PyGObject 编译
-sudo apt install -y libcairo2-dev libgirepository1.0-dev gir1.2-webkit2-4.1
-pip install frago-cli[gui] PyGObject
+uv tool install "frago-cli[gui]"
 ```
 
-**启动 GUI**：
+**启动**：
 ```bash
 frago gui
 frago gui --debug  # 带开发者工具
@@ -205,31 +192,15 @@ frago gui --debug  # 带开发者工具
 
 ### 剪贴板支持
 
-如果需要将 Recipe 结果输出到剪贴板：
-
 ```bash
-# 使用 pip
-pip install frago-cli[clipboard]
-
-# 使用 uv
 uv tool install "frago-cli[clipboard]"
 ```
-
-**提供的额外功能**：
-- ✅ `--output-clipboard` 选项
-- ✅ `clipboard_read` Recipe（系统剪贴板读取）
 
 ---
 
 ### 完整安装（所有可选功能）
 
-安装所有功能：
-
 ```bash
-# 使用 pip
-pip install frago-cli[all]
-
-# 使用 uv
 uv tool install "frago-cli[all]"
 ```
 
@@ -372,7 +343,7 @@ paru -S google-chrome
 
 ### 安装前检查清单
 
-在运行 `pip install frago-cli` 之前，请验证：
+安装 frago 之前，请验证：
 
 ```bash
 # Python 3.9+ 已安装
@@ -541,7 +512,7 @@ winget install Microsoft.EdgeWebView2Runtime
 
 ### 安装前检查清单
 
-在运行 `pip install frago-cli` 之前，在 PowerShell 中验证：
+安装 frago 之前，在 PowerShell 中验证：
 
 ```powershell
 # Python 3.9+ 已安装
