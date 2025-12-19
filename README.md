@@ -8,6 +8,14 @@
 
 [简体中文](https://github.com/tsaijamey/Frago/blob/main/README.zh-CN.md)
 
+### Recent Updates
+
+| Version | Highlights |
+|---------|------------|
+| **v0.15.0** | Run completion now updates recipe metadata automatically; fixed CLI display for complex data types |
+| **v0.14.0** | New tutorial viewer in GUI; better anchor links in viewer; fixed Twitter stats extraction order |
+| **v0.13.0** | Sync command now excludes .claude/commands to keep your personal commands safe |
+
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
 **Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)

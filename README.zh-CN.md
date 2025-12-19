@@ -8,6 +8,14 @@
 
 [English](README.md)
 
+### 近期更新
+
+| 版本 | 主要变化 |
+|------|----------|
+| **v0.15.0** | Run 完成时自动更新 recipe 元数据；修复 CLI 对复杂数据类型的显示问题 |
+| **v0.14.0** | GUI 新增教程查看器；viewer 支持锚点跳转；修复 Twitter 统计数据顺序 |
+| **v0.13.0** | Sync 命令现在排除 .claude/commands，保护你的个人命令不被覆盖 |
+
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
 **文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
