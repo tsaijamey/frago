@@ -1,5 +1,19 @@
 # 安装指南
 
+## 开始之前
+
+**请先完成你操作系统对应的前提条件：**
+
+| 操作系统 | 前提条件 | 关键说明 |
+|----------|----------|----------|
+| [Linux](#linux-安装前提条件) | Python, curl, Chrome | `frago init` 会通过 nvm 自动安装 Node.js |
+| [macOS](#macos-安装前提条件) | Xcode CLT, Python 3 | 使用 `pip3` 而非 `pip` |
+| [Windows](#windows-安装前提条件) | Python, Node.js, Chrome | **必须手动安装 Node.js** 后才能运行 `frago init` |
+
+> **Windows 用户注意**：与 macOS/Linux 不同，Windows 不支持自动安装 Node.js。你必须先[安装 Node.js](#安装-nodejs（frago-init-之前必须安装）)，然后再运行 `frago init`。
+
+---
+
 ## 基础安装
 
 安装核心功能（CDP 操作 + Recipe 系统核心）：

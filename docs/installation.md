@@ -2,6 +2,20 @@
 
 [简体中文](installation.zh-CN.md)
 
+## Before You Start
+
+**Complete the prerequisites for your operating system first:**
+
+| Operating System | Prerequisites | Key Notes |
+|------------------|---------------|-----------|
+| [Linux](#linux-prerequisites) | Python, curl, Chrome | `frago init` auto-installs Node.js via nvm |
+| [macOS](#macos-prerequisites) | Xcode CLT, Python 3 | Use `pip3` not `pip` |
+| [Windows](#windows-prerequisites) | Python, Node.js, Chrome | **Must install Node.js manually** before `frago init` |
+
+> **Windows Users**: Unlike macOS/Linux, Windows does NOT support automatic Node.js installation. You must [install Node.js](#install-nodejs-required-before-frago-init) before running `frago init`.
+
+---
+
 ## Basic Installation
 
 Install core features (CDP operations + Recipe system core):
