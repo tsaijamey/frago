@@ -381,27 +381,17 @@ node --version
 xcode-select --install
 ```
 
-### 包管理器
+### 安装 uv
 
-**使用 pip（内置）**:
 ```bash
-# macOS 使用 pip3，而非 pip
-pip3 install frago-cli
-
-# 或使用 python3 -m pip（更可靠）
-python3 -m pip install frago-cli
-```
-
-**使用 uv（推荐）**:
-```bash
-# 先安装 uv
+# 方法 1：官方安装脚本
 curl -LsSf https://astral.sh/uv/install.sh | sh
-# 或通过 Homebrew
-brew install uv
 
-# 然后安装 frago
-uv tool install frago-cli
+# 方法 2：Homebrew
+brew install uv
 ```
+
+然后按照 [第二步](#第二步安装-frago) 安装 frago。
 
 ### Chrome 浏览器
 
@@ -480,25 +470,13 @@ winget install Google.Chrome
 # 或从 https://www.google.com/chrome/ 下载
 ```
 
-### 包管理器
+### 安装 uv
 
-**使用 pip**：
 ```powershell
-# Python 安装后，pip 应该可用
-pip install frago-cli
-
-# 如果 pip 找不到，使用：
-python -m pip install frago-cli
-```
-
-**使用 uv（推荐）**：
-```powershell
-# 安装 uv
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# 然后安装 frago
-uv tool install frago-cli
 ```
+
+然后按照 [第二步](#第二步安装-frago) 安装 frago。
 
 ### GUI 支持 (WebView2)
 
@@ -550,10 +528,6 @@ frago --help
 ## 升级
 
 ```bash
-# 使用 pip
-pip install --upgrade frago-cli
-
-# 使用 uv
 uv tool upgrade frago-cli
 ```
 
@@ -562,9 +536,5 @@ uv tool upgrade frago-cli
 ## 卸载
 
 ```bash
-# 使用 pip
-pip uninstall frago-cli
-
-# 使用 uv
 uv tool uninstall frago-cli
 ```

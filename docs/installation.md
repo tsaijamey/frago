@@ -383,27 +383,17 @@ Required for compiling some Python packages:
 xcode-select --install
 ```
 
-### Package Managers
+### Install uv
 
-**Using pip (built-in)**:
 ```bash
-# macOS uses pip3, not pip
-pip3 install frago-cli
-
-# Or use python3 -m pip (more reliable)
-python3 -m pip install frago-cli
-```
-
-**Using uv (recommended)**:
-```bash
-# Install uv first
+# Option 1: Official installer
 curl -LsSf https://astral.sh/uv/install.sh | sh
-# or via Homebrew
-brew install uv
 
-# Then install frago
-uv tool install frago-cli
+# Option 2: Homebrew
+brew install uv
 ```
+
+Then install frago as described in [Step 2](#step-2-install-frago).
 
 ### Chrome Browser
 
@@ -482,25 +472,13 @@ winget install Google.Chrome
 # Or download from https://www.google.com/chrome/
 ```
 
-### Package Managers
+### Install uv
 
-**Using pip**:
 ```powershell
-# After Python installation, pip should be available
-pip install frago-cli
-
-# If pip not found, use:
-python -m pip install frago-cli
-```
-
-**Using uv (recommended)**:
-```powershell
-# Install uv
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Then install frago
-uv tool install frago-cli
 ```
+
+Then install frago as described in [Step 2](#step-2-install-frago).
 
 ### GUI Support (WebView2)
 
@@ -552,10 +530,6 @@ frago --help
 ## Upgrade
 
 ```bash
-# Using pip
-pip install --upgrade frago-cli
-
-# Using uv
 uv tool upgrade frago-cli
 ```
 
@@ -564,9 +538,5 @@ uv tool upgrade frago-cli
 ## Uninstall
 
 ```bash
-# Using pip
-pip uninstall frago-cli
-
-# Using uv
 uv tool uninstall frago-cli
 ```
