@@ -121,6 +121,37 @@ config.json
 __pycache__/
 *.pyc
 *.bak
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+
+# 音频文件
+*.wav
+*.mp3
+*.aac
+*.flac
+*.ogg
+*.m4a
+
+# 日志文件
+logs/
+*.log
+
+# 压缩包和其他大文件
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.pdf
+*.psd
+*.ai
 """
 
     if not gitignore_path.exists():
@@ -128,7 +159,12 @@ __pycache__/
     else:
         # 检查现有内容，如果缺少关键规则则追加
         existing = gitignore_path.read_text()
-        needed_rules = ["sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env"]
+        needed_rules = [
+            # 运行时数据
+            "sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env",
+            # 大文件类型
+            "*.mp4", "*.wav", "*.log", "logs/",
+        ]
         missing = [rule for rule in needed_rules if rule not in existing]
         if missing:
             with open(gitignore_path, "a") as f:
