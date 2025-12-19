@@ -53,6 +53,7 @@ class ViewerWindow:
         height: int = 800,
         fullscreen: bool = False,
         code_theme: str = "github-dark",
+        anchor: Optional[str] = None,
     ):
         """Initialize the viewer window.
 
@@ -65,6 +66,7 @@ class ViewerWindow:
             height: Window height in pixels
             fullscreen: Start in fullscreen mode
             code_theme: Code highlighting theme for doc mode
+            anchor: Optional anchor ID to scroll to after page load (e.g., "concepts")
         """
         self.content = content
         self.theme = theme
@@ -72,6 +74,7 @@ class ViewerWindow:
         self.height = height
         self.fullscreen = fullscreen
         self.code_theme = code_theme
+        self.anchor = anchor
         self._http_server: Optional[HTTPServer] = None
         self._temp_dir: Optional[Path] = None
 
@@ -208,7 +211,7 @@ class ViewerWindow:
         if self.file_path:
             source_dir = self.file_path.parent
             # Common resource directories to copy
-            for subdir in ["images", "assets", "img", "media", "figures"]:
+            for subdir in ["images", "assets", "img", "media", "figures", "videos", "styles"]:
                 src_subdir = source_dir / subdir
                 if src_subdir.exists() and src_subdir.is_dir():
                     shutil.copytree(src_subdir, self._temp_dir / subdir)
@@ -263,6 +266,10 @@ class ViewerWindow:
         serve_dir, entry_file = self._prepare_content()
         port = self._start_static_server(serve_dir)
         url = f"http://127.0.0.1:{port}/{entry_file}"
+
+        # Append anchor if specified
+        if self.anchor:
+            url = f"{url}#{self.anchor}"
 
         # Create window
         window = webview.create_window(
