@@ -1,7 +1,6 @@
 ---
 description: "执行AI主持的复杂浏览器自动化任务并管理run实例"
 ---
-
 # /frago.run - Run命令系统
 
 探索调研，为 Recipe 创建做准备。
@@ -39,7 +38,7 @@ Read ~/.claude/commands/frago/guides/RECIPE_FIELDS.md
 
 ## 执行流程
 
-### 0. 环境感知 - 立即获取可用资源
+### 1. 环境感知 - 立即获取可用资源
 
 在开始调研前，立刻运行命令了解可用的工具和资源：
 
@@ -55,21 +54,23 @@ frago run list | grep -E "keyword1|keyword2"
 ```
 
 **目的**：
+
 - 发现可复用的配方（避免重新探索）
 - 了解已有调研成果（避免重复工作）
 - 评估任务可行性
 
-### 1. 明确调研目标
+### 2. 明确调研目标
 
 **首先理解任务需求**，判断是否需要浏览器：
 
-| 场景 | 是否需要浏览器 | 工具选择 |
-|------|---------------|---------|
-| 网页数据抓取、UI 交互 | ✅ 需要 | CDP 命令、配方 |
-| API 调用、文件处理 | ❌ 不需要 | CLI 工具、Python 脚本 |
-| 混合场景 | ⚠️ 视情况 | 先尝试无浏览器方案 |
+| 场景                  | 是否需要浏览器 | 工具选择              |
+| --------------------- | -------------- | --------------------- |
+| 网页数据抓取、UI 交互 | ✅ 需要        | CDP 命令、配方        |
+| API 调用、文件处理    | ❌ 不需要      | CLI 工具、Python 脚本 |
+| 混合场景              | ⚠️ 视情况    | 先尝试无浏览器方案    |
 
 **调研目标模板**：
+
 ```markdown
 ## 调研目标
 - **主题**：[简洁描述，如 "nano-banana-pro image api"]
@@ -79,7 +80,7 @@ frago run list | grep -E "keyword1|keyword2"
   2. [问题2]
 ```
 
-### 2. 启动浏览器（仅在需要时）
+### 3. 启动浏览器（仅在需要时）
 
 **如果任务涉及网页操作**，再启动浏览器：
 
@@ -94,7 +95,7 @@ frago chrome start --headless   # 无头模式
 
 **提示**：先用 `frago recipe list | grep <关键词>` 查找现成配方，可能无需手动操作浏览器。
 
-### 3. 检查现有项目（已在步骤 0 完成）
+### 4. 检查现有项目（已在步骤 1 完成）
 
 如果步骤 0 中发现相关项目，可以复用或参考：
 
@@ -106,33 +107,34 @@ frago run info <project_id>
 cat projects/<project_id>/logs/execution.jsonl | jq
 ```
 
-### 4. 生成项目 ID
+### 5. 生成项目 ID
 
 **规则**：简洁、可读的英文短句（3-5 词）
 
-| 用户任务 | 项目 ID |
-|---------|---------|
+| 用户任务                            | 项目 ID                                |
+| ----------------------------------- | -------------------------------------- |
 | "调研nano banana pro的图片生成接口" | `nano-banana-pro-image-api-research` |
-| "在Upwork上搜索Python职位" | `upwork-python-jobs-search` |
+| "在Upwork上搜索Python职位"          | `upwork-python-jobs-search`          |
 
-### 5. 初始化并设置上下文
+### 6. 初始化并设置上下文
 
 ```bash
 frago run init "nano-banana-pro image api research"
 frago run set-context nano-banana-pro-image-api-research
 ```
 
-### 6. 执行调研
+### 7. 执行
 
 **CDP 命令自动记录日志**，Agent 负责：
+
 - 手动记录 `_insights`（失败、关键发现）
 - 手动记录 `analysis`、`recipe_execution` 等
 
-### 7. 调研完成标志
+### 8. 调研完成标志
 
-最后一条日志包含 `ready_for_recipe: true` 和 `recipe_spec`。
+最后一条必须日志包含 `ready_for_recipe: true` 和 `recipe_spec`。
 
-### 8. 释放上下文
+### 9. 释放上下文
 
 ```bash
 frago run release
@@ -142,13 +144,13 @@ frago run release
 
 ## 核心规则（违反即失败）
 
-| 规则 | 说明 | 详细文档 |
-|------|------|---------|
-| **禁止幻觉导航** | 严禁猜测 URL | [NAVIGATION_RULES.md](frago/rules/NAVIGATION_RULES.md) |
-| **⛔ 禁止截图阅读** | 禁止用截图获取页面内容，必须用 `get-content` 或配方 | [SCREENSHOT_RULES.md](frago/rules/SCREENSHOT_RULES.md) |
-| **工具优先级** | 先查配方 `recipe list`，再用 `get-content`，最后才用截图 | [TOOL_PRIORITY.md](frago/rules/TOOL_PRIORITY.md) |
-| **工作空间隔离** | 所有产出在 `projects/<id>/` | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md) |
-| **单一运行互斥** | 同时只允许一个活跃上下文 | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md) |
+| 规则                      | 说明                                                         | 详细文档                                            |
+| ------------------------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| **禁止幻觉导航**    | 严禁猜测 URL                                                 | [NAVIGATION_RULES.md](frago/rules/NAVIGATION_RULES.md) |
+| **⛔ 禁止截图阅读** | 禁止用截图获取页面内容，必须用 `get-content` 或配方        | [SCREENSHOT_RULES.md](frago/rules/SCREENSHOT_RULES.md) |
+| **工具优先级**      | 先查配方 `recipe list`，再用 `get-content`，最后才用截图 | [TOOL_PRIORITY.md](frago/rules/TOOL_PRIORITY.md)       |
+| **工作空间隔离**    | 所有产出在 `projects/<id>/`                                | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md)   |
+| **单一运行互斥**    | 同时只允许一个活跃上下文                                     | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md)   |
 
 ---
 
@@ -156,11 +158,11 @@ frago run release
 
 **每 5 条日志至少 1 条包含 `_insights`**。
 
-| 触发条件 | insight_type | 要求 |
-|---------|--------------|------|
-| 操作失败/报错 | `pitfall` | **必须** |
-| 重试后成功 | `lesson` | **必须** |
-| 找到关键技巧 | `key_factor` | **必须** |
+| 触发条件      | insight_type   | 要求           |
+| ------------- | -------------- | -------------- |
+| 操作失败/报错 | `pitfall`    | **必须** |
+| 重试后成功    | `lesson`     | **必须** |
+| 找到关键技巧  | `key_factor` | **必须** |
 
 ```bash
 frago run log \
@@ -182,6 +184,7 @@ frago run log \
 **自动日志**：`navigate`、`click`、`screenshot` 等 CDP 命令自动记录
 
 **手动日志**：
+
 - `action-type`：`recipe_execution`、`data_processing`、`analysis`、`user_interaction`、`other`
 - `execution-method`：`command`、`recipe`、`file`、`manual`、`analysis`、`tool`
 
@@ -191,20 +194,21 @@ frago run log \
 
 ### 必须的输出
 
-| 输出物 | 位置 | 说明 |
-|--------|------|------|
-| **调研报告** | `outputs/report.*` | **必须生成**，格式见下方说明 |
-| `execution.jsonl` | `logs/` | 探索过程记录（自动生成） |
+| 输出物              | 位置                 | 说明                               |
+| ------------------- | -------------------- | ---------------------------------- |
+| **调研报告**  | `outputs/report.*` | **必须生成**，格式见下方说明 |
+| `execution.jsonl` | `logs/`            | 探索过程记录（自动生成）           |
 
 ### 报告格式选择
 
-| 格式 | 文件 | 适用场景 |
-|------|------|---------|
-| 可预览文档 | `report.md` | 详细阅读、`frago view` 预览 |
-| 演示文稿 | `report.html`（reveal.js） | 汇报演示、`frago view` 幻灯片 |
-| 结构化数据 | `report.json` | 后续程序处理、数据提取 |
+| 格式       | 文件                         | 适用场景                        |
+| ---------- | ---------------------------- | ------------------------------- |
+| 可预览文档 | `report.md`                | 详细阅读、`frago view` 预览   |
+| 演示文稿   | `report.html`（reveal.js） | 汇报演示、`frago view` 幻灯片 |
+| 结构化数据 | `report.json`              | 后续程序处理、数据提取          |
 
 **选择建议**：
+
 - 需要详细阅读 → Markdown 文档
 - 需要演示汇报 → reveal.js 演示文稿
 - 需要程序处理 → JSON
@@ -212,12 +216,12 @@ frago run log \
 
 ### 可选的输出
 
-| 输出物 | 位置 | 用途 |
-|--------|------|------|
-| `scripts/test_*.{py,js,sh}` | `scripts/` | 验证脚本 |
-| `screenshots/*.png` | `screenshots/` | 关键步骤截图 |
-| `outputs/*.json` | `outputs/` | 结构化数据 |
-| Recipe 草稿 | 在日志 `_insights` 中 | 调研结论 |
+| 输出物                        | 位置                    | 用途         |
+| ----------------------------- | ----------------------- | ------------ |
+| `scripts/test_*.{py,js,sh}` | `scripts/`            | 验证脚本     |
+| `screenshots/*.png`         | `screenshots/`        | 关键步骤截图 |
+| `outputs/*.json`            | `outputs/`            | 结构化数据   |
+| Recipe 草稿                   | 在日志 `_insights` 中 | 调研结论     |
 
 ### 禁止的输出
 
@@ -227,11 +231,13 @@ frago run log \
 ### 可预览内容要求（Markdown 或演示文稿输出时适用）
 
 若选择可预览格式，**必须先加载指南**：
+
 ```
 Read ~/.claude/skills/frago-previewable-content/SKILL.md
 ```
 
 按 skill 指南生成：
+
 - **Markdown 文档**：参考 Part 1，确保 Mermaid 图表语法、代码块标记正确
 - **reveal.js 演示文稿**：参考 Part 2，使用 `<section>` 结构和 fragment 动画
 
@@ -251,4 +257,3 @@ Read ~/.claude/skills/frago-previewable-content/SKILL.md
 
 📊 Insights: 2个 key_factor, 1个 pitfall
 ```
-

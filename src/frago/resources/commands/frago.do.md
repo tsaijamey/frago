@@ -1,7 +1,6 @@
 ---
 description: "执行一次性的复杂任务（使用完整的frago工具集）"
 ---
-
 # /frago.do - 执行复杂任务
 
 一次性任务执行，专注于任务完成。
@@ -39,7 +38,7 @@ Read ~/.claude/commands/frago/guides/RECIPE_FIELDS.md
 
 ## 执行流程
 
-### 0. 环境感知 - 立即获取可用资源
+### 1. 环境感知 - 立即获取可用资源
 
 在开始任务前，先了解可用的工具和资源：
 
@@ -55,19 +54,20 @@ frago run list | grep -E "keyword1|keyword2"
 ```
 
 **目的**：
+
 - 发现可复用的配方（避免重新探索）
 - 了解已有成果（避免重复工作）
 - 评估任务可行性
 
-### 1. 明确任务目标和输出格式
+### 2. 明确任务目标和输出格式
 
 **首先理解任务需求**，判断是否需要浏览器：
 
-| 场景 | 是否需要浏览器 | 工具选择 |
-|------|---------------|---------|
-| 网页数据抓取、UI 交互 | ✅ 需要 | CDP 命令、配方 |
-| API 调用、文件处理 | ❌ 不需要 | CLI 工具、Python 脚本 |
-| 混合场景 | ⚠️ 视情况 | 先尝试无浏览器方案 |
+| 场景                  | 是否需要浏览器 | 工具选择              |
+| --------------------- | -------------- | --------------------- |
+| 网页数据抓取、UI 交互 | ✅ 需要        | CDP 命令、配方        |
+| API 调用、文件处理    | ❌ 不需要      | CLI 工具、Python 脚本 |
+| 混合场景              | ⚠️ 视情况    | 先尝试无浏览器方案    |
 
 **如果需要浏览器**：
 
@@ -84,29 +84,29 @@ frago chrome start --headless   # 无头模式
 
 **必须先确认输出格式**。如用户未指定，使用 AskUserQuestion 询问：
 
-| 输出格式 | 适用场景 |
-|---------|---------|
-| 📊 结构化数据（JSON/CSV） | 后续处理和分析 |
-| 📝 文档报告（Markdown/HTML） | 阅读和分享 |
-| 💾 仅执行日志 | 最小化输出 |
+| 输出格式                     | 适用场景       |
+| ---------------------------- | -------------- |
+| 📊 结构化数据（JSON/CSV）    | 后续处理和分析 |
+| 📝 文档报告（Markdown/HTML） | 阅读和分享     |
+| 💾 仅执行日志                | 最小化输出     |
 
-### 2. 生成项目 ID
+### 3. 生成项目 ID
 
 **规则**：简洁、可读的英文短句（3-5 词）
 
-| 用户任务 | 项目 ID |
-|---------|---------|
-| "在Upwork上申请5个Python职位" | `upwork-python-job-apply` |
-| "批量下载YouTube视频字幕" | `youtube-batch-download-subtitles` |
+| 用户任务                      | 项目 ID                              |
+| ----------------------------- | ------------------------------------ |
+| "在Upwork上申请5个Python职位" | `upwork-python-job-apply`          |
+| "批量下载YouTube视频字幕"     | `youtube-batch-download-subtitles` |
 
-### 3. 初始化工作空间
+### 4. 初始化工作空间
 
 ```bash
 frago run init "upwork python job apply"
 frago run set-context upwork-python-job-apply
 ```
 
-### 4. 执行任务
+### 5. 执行任务
 
 **优先使用 Recipe**，加速重复操作：
 
@@ -118,7 +118,7 @@ frago recipe list --format json | grep "关键词"
 frago recipe run <name> --params '{"key": "value"}' --output-file result.json
 ```
 
-### 5. 保存结果
+### 6. 保存结果
 
 ```bash
 # 截图关键步骤
@@ -133,7 +133,7 @@ frago run log \
   --data '{"task_completed": true, "result_file": "outputs/result.json"}'
 ```
 
-### 6. 释放上下文
+### 7. 释放上下文
 
 ```bash
 frago run release
@@ -143,13 +143,13 @@ frago run release
 
 ## 核心规则（违反即失败）
 
-| 规则 | 说明 | 详细文档 |
-|------|------|---------|
-| **禁止幻觉导航** | 严禁猜测 URL | [NAVIGATION_RULES.md](frago/rules/NAVIGATION_RULES.md) |
-| **⛔ 禁止截图阅读** | 禁止用截图获取页面内容，必须用 `get-content` 或配方 | [SCREENSHOT_RULES.md](frago/rules/SCREENSHOT_RULES.md) |
-| **工具优先级** | 先查配方 `recipe list`，再用 `get-content`，最后才用截图 | [TOOL_PRIORITY.md](frago/rules/TOOL_PRIORITY.md) |
-| **工作空间隔离** | 所有产出在 `projects/<id>/` | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md) |
-| **单一运行互斥** | 同时只允许一个活跃上下文 | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md) |
+| 规则                      | 说明                                                         | 详细文档                                            |
+| ------------------------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| **禁止幻觉导航**    | 严禁猜测 URL                                                 | [NAVIGATION_RULES.md](frago/rules/NAVIGATION_RULES.md) |
+| **⛔ 禁止截图阅读** | 禁止用截图获取页面内容，必须用 `get-content` 或配方        | [SCREENSHOT_RULES.md](frago/rules/SCREENSHOT_RULES.md) |
+| **工具优先级**      | 先查配方 `recipe list`，再用 `get-content`，最后才用截图 | [TOOL_PRIORITY.md](frago/rules/TOOL_PRIORITY.md)       |
+| **工作空间隔离**    | 所有产出在 `projects/<id>/`                                | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md)   |
+| **单一运行互斥**    | 同时只允许一个活跃上下文                                     | [WORKSPACE_RULES.md](frago/rules/WORKSPACE_RULES.md)   |
 
 ---
 
@@ -160,6 +160,7 @@ frago run release
 **自动日志**：`navigate`、`click`、`screenshot` 等 CDP 命令自动记录
 
 **手动日志**：
+
 - `action-type`：`recipe_execution`、`data_processing`、`analysis`、`user_interaction`、`other`
 - `execution-method`：`command`、`recipe`、`file`、`manual`、`analysis`、`tool`
 
@@ -169,15 +170,16 @@ frago run release
 
 ### 根据用户选择创建输出
 
-| 格式 | 文件类型 | 适用场景 |
-|------|---------|---------|
-| 结构化数据 | `*.json`、`*.csv` | 后续处理、API 对接、数据分析 |
-| 可预览文档 | `*.md` | 详细阅读、`frago view` 预览 |
-| 演示文稿 | `*.html`（reveal.js） | 汇报演示、`frago view` 幻灯片 |
-| 纯文本 | `*.txt` | 简单记录、日志 |
-| 多媒体 | `*.png`（截图） | 视觉证据、状态记录 |
+| 格式       | 文件类型                | 适用场景                        |
+| ---------- | ----------------------- | ------------------------------- |
+| 结构化数据 | `*.json`、`*.csv`   | 后续处理、API 对接、数据分析    |
+| 可预览文档 | `*.md`                | 详细阅读、`frago view` 预览   |
+| 演示文稿   | `*.html`（reveal.js） | 汇报演示、`frago view` 幻灯片 |
+| 纯文本     | `*.txt`               | 简单记录、日志                  |
+| 多媒体     | `*.png`（截图）       | 视觉证据、状态记录              |
 
 **选择建议**：
+
 - 需要程序处理 → JSON/CSV
 - 需要详细阅读 → Markdown 文档
 - 需要演示汇报 → reveal.js 演示文稿
@@ -186,11 +188,13 @@ frago run release
 ### 可预览内容要求（Markdown 或演示文稿输出时适用）
 
 若选择可预览格式，**必须先加载指南**：
+
 ```
 Read ~/.claude/skills/frago-previewable-content/SKILL.md
 ```
 
 按 skill 指南生成：
+
 - **Markdown 文档**：参考 Part 1，确保 Mermaid 图表语法、代码块标记正确
 - **reveal.js 演示文稿**：参考 Part 2，使用 `<section>` 结构和 fragment 动画
 
@@ -253,4 +257,3 @@ Read ~/.claude/skills/frago-previewable-content/SKILL.md
 
 **详细日志**: projects/upwork-python-job-apply/logs/execution.jsonl
 ```
-
