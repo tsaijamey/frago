@@ -22,12 +22,10 @@ CLAUDE_HOME = Path.home() / ".claude"
 
 # ~/.frago/.claude/ 子目录（Git 追踪）
 FRAGO_CLAUDE_DIR = FRAGO_HOME / ".claude"
-FRAGO_COMMANDS_DIR = FRAGO_CLAUDE_DIR / "commands"
 FRAGO_SKILLS_DIR = FRAGO_CLAUDE_DIR / "skills"
 FRAGO_RECIPES_DIR = FRAGO_HOME / "recipes"
 
 # ~/.claude/ 运行时目录
-CLAUDE_COMMANDS_DIR = CLAUDE_HOME / "commands"
 CLAUDE_SKILLS_DIR = CLAUDE_HOME / "skills"
 
 
@@ -107,6 +105,9 @@ chrome_profile/
 current_run
 projects/.tmp/
 
+# Commands 目录（由 frago 自身管理，不同步）
+.claude/commands/
+
 # 配置文件（包含敏感信息）
 config.json
 
@@ -162,6 +163,10 @@ logs/
         needed_rules = [
             # 运行时数据
             "sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env",
+            # Commands 目录（由 frago 自身管理）
+            ".claude/commands/",
+            # 系统文件
+            ".DS_Store", "__pycache__/",
             # 大文件类型
             "*.mp4", "*.wav", "*.log", "logs/",
         ]
@@ -179,10 +184,10 @@ logs/
 def _untrack_ignored_paths(repo_dir: Path) -> None:
     """取消对应被忽略但仍被追踪的路径
 
-    解决已有设备上 .tmp 等目录已被追踪的问题。
+    解决已有设备上 .tmp、.claude/commands、.DS_Store 等已被追踪的问题。
     """
     # 需要取消追踪的路径模式
-    paths_to_untrack = ["projects/.tmp/"]
+    paths_to_untrack = ["projects/.tmp/", ".claude/commands/", ".DS_Store", "**/.DS_Store"]
 
     for path_pattern in paths_to_untrack:
         # 检查是否有该路径被追踪
@@ -297,13 +302,7 @@ def _classify_file(file_path: str) -> tuple[str, str]:
     """
     path_obj = Path(file_path)
 
-    if file_path.startswith(".claude/commands/"):
-        # 命令文件：frago.xxx.md -> frago.xxx
-        if path_obj.suffix == ".md":
-            return ("命令", path_obj.stem)
-        # frago/ 目录下的文件
-        return ("命令", path_obj.name)
-    elif file_path.startswith(".claude/skills/"):
+    if file_path.startswith(".claude/skills/"):
         # Skills 是目录：.claude/skills/frago-xxx/... -> frago-xxx
         parts = path_obj.parts
         if len(parts) >= 3:
@@ -589,47 +588,9 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
     """
     将 ~/.claude/ 中的修改同步到 ~/.frago/.claude/
 
-    检查 ~/.claude/commands/frago.*.md 和 ~/.claude/skills/frago-*
+    检查 ~/.claude/skills/frago-*
     只有当 ~/.claude/ 中的版本比 ~/.frago/.claude/ 更新时才复制
     """
-    # 同步 commands
-    if CLAUDE_COMMANDS_DIR.exists():
-        FRAGO_COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # frago.*.md 文件
-        for src_file in CLAUDE_COMMANDS_DIR.glob("frago.*.md"):
-            if not src_file.is_file():
-                continue
-
-            target_file = FRAGO_COMMANDS_DIR / src_file.name
-
-            # 只有当内容不同且源文件更新时才复制
-            if not _files_are_identical(src_file, target_file) and _is_source_newer(src_file, target_file):
-                if not dry_run:
-                    shutil.copy2(src_file, target_file)
-                # 收集变更信息
-                file_path = f".claude/commands/{src_file.name}"
-                change = _get_file_change_info(FRAGO_HOME, file_path)
-                result.local_changes.append(change)
-
-        # frago/ 子目录
-        frago_src = CLAUDE_COMMANDS_DIR / "frago"
-        frago_target = FRAGO_COMMANDS_DIR / "frago"
-
-        if frago_src.exists() and frago_src.is_dir():
-            # 只有当内容不同且源目录更新时才复制
-            if not _dir_files_identical(frago_src, frago_target) and _is_source_newer(frago_src, frago_target):
-                if not dry_run:
-                    if frago_target.exists():
-                        shutil.rmtree(frago_target)
-                    shutil.copytree(
-                        frago_src, frago_target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
-                    )
-                # 收集 frago/ 目录的变更（选择一个代表性文件）
-                file_path = ".claude/commands/frago"
-                change = _get_file_change_info(FRAGO_HOME, file_path)
-                result.local_changes.append(change)
-
     # 同步 skills
     if CLAUDE_SKILLS_DIR.exists():
         FRAGO_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -666,34 +627,6 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
 
     从仓库获取更新后，将资源部署到 Claude Code 运行时目录
     """
-    # 同步 commands
-    if FRAGO_COMMANDS_DIR.exists():
-        CLAUDE_COMMANDS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # frago.*.md 文件
-        for src_file in FRAGO_COMMANDS_DIR.glob("frago.*.md"):
-            if not src_file.is_file():
-                continue
-
-            target_file = CLAUDE_COMMANDS_DIR / src_file.name
-
-            if not target_file.exists() or not _files_are_identical(src_file, target_file):
-                if not dry_run:
-                    shutil.copy2(src_file, target_file)
-
-        # frago/ 子目录
-        frago_src = FRAGO_COMMANDS_DIR / "frago"
-        frago_target = CLAUDE_COMMANDS_DIR / "frago"
-
-        if frago_src.exists() and frago_src.is_dir():
-            if not _dir_files_identical(frago_src, frago_target):
-                if not dry_run:
-                    if frago_target.exists():
-                        shutil.rmtree(frago_target)
-                    shutil.copytree(
-                        frago_src, frago_target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
-                    )
-
     # 同步 skills
     if FRAGO_SKILLS_DIR.exists():
         CLAUDE_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
