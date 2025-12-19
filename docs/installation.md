@@ -36,7 +36,7 @@ frago init
 The init command performs the following steps:
 
 1. **Dependency Check**
-   - Detects Node.js (required version ≥18.0.0) and its path
+   - Detects Node.js (required version ≥20.0.0) and its path
    - Detects Claude Code CLI and its version
    - Displays status with ✅/❌ indicators
 

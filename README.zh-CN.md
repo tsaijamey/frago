@@ -172,7 +172,7 @@ frago init
 
 init 命令一步完成环境配置：
 
-- **检查依赖**：Node.js ≥18.0.0、Claude Code CLI
+- **检查依赖**：Node.js ≥20.0.0、Claude Code CLI
 - **自动安装缺失依赖**：Node.js 通过 nvm、Claude Code 通过 npm
 - **配置认证**：默认（Claude Code 内置）或自定义 API 端点（DeepSeek、阿里云、Kimi、MiniMax）
 - **安装资源**：Slash 命令到 `~/.claude/commands/`、示例 Recipe 到 `~/.frago/recipes/`

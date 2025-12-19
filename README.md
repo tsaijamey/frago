@@ -171,7 +171,7 @@ frago init
 
 The init command sets up your environment in one step:
 
-- **Checks dependencies**: Node.js ≥18.0.0, Claude Code CLI
+- **Checks dependencies**: Node.js ≥20.0.0, Claude Code CLI
 - **Auto-installs missing deps**: Node.js via nvm, Claude Code via npm
 - **Configures authentication**: Default (Claude Code built-in) or custom API endpoint (DeepSeek, Aliyun, Kimi, MiniMax)
 - **Installs resources**: Slash commands to `~/.claude/commands/`, example recipes to `~/.frago/recipes/`
