@@ -1,0 +1,84 @@
+<!--
+用途：reveal.js 演示文稿基础骨架
+说明：frago view 自动注入 reveal.js 库，无需手动引入
+预览：frago view slides.html --theme dracula
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>演示标题</title>
+    <style>
+        /* 全局自定义样式 */
+        .slides {
+            /* 可在此添加全局样式 */
+        }
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+
+            <!-- 封面 -->
+            <section>
+                <h1>演示标题</h1>
+                <h3>副标题</h3>
+                <p>演讲者 | 日期</p>
+            </section>
+
+            <!-- 目录 -->
+            <section>
+                <h2>目录</h2>
+                <ul>
+                    <li>章节 1</li>
+                    <li>章节 2</li>
+                    <li>章节 3</li>
+                    <li>总结</li>
+                </ul>
+            </section>
+
+            <!-- 章节 1（含子页面） -->
+            <section>
+                <section>
+                    <h2>章节 1 标题</h2>
+                    <p>章节概述</p>
+                </section>
+                <section>
+                    <h3>详情 1</h3>
+                    <ul>
+                        <li class="fragment">要点 1</li>
+                        <li class="fragment">要点 2</li>
+                        <li class="fragment">要点 3</li>
+                    </ul>
+                </section>
+            </section>
+
+            <!-- 章节 2 -->
+            <section>
+                <h2>章节 2 标题</h2>
+                <p>内容...</p>
+            </section>
+
+            <!-- 章节 3 -->
+            <section>
+                <h2>章节 3 标题</h2>
+                <pre><code class="language-python">
+def example():
+    return "Hello, World!"
+                </code></pre>
+            </section>
+
+            <!-- 总结 -->
+            <section>
+                <h2>总结</h2>
+                <ul>
+                    <li class="fragment">结论 1</li>
+                    <li class="fragment">结论 2</li>
+                </ul>
+                <p class="fragment"><strong>谢谢！</strong></p>
+            </section>
+
+        </div>
+    </div>
+</body>
+</html>

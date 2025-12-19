@@ -1,0 +1,64 @@
+<!--
+用途：标准内容页（标题 + 要点卡片）
+变量：
+  - TITLE: 页面标题
+  - POINTS: 要点列表（建议 3-4 个）
+特点：左侧边框标题 + 卡片式要点 + fragment 动画
+-->
+<section>
+    <style>
+        .content-header {
+            text-align: left;
+            border-left: 4px solid #e94560;
+            padding-left: 20px;
+            margin-bottom: 40px;
+        }
+        .content-header h2 {
+            margin: 0;
+            font-size: 1.5em;
+        }
+        .content-points {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            padding: 0 20px;
+        }
+        .point-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 3px solid #58a6ff;
+            text-align: left;
+        }
+        .point-card h3 {
+            color: #58a6ff;
+            font-size: 1em;
+            margin: 0 0 10px 0;
+        }
+        .point-card p {
+            color: #c9d1d9;
+            font-size: 0.85em;
+            line-height: 1.5;
+            margin: 0;
+        }
+    </style>
+
+    <div class="content-header">
+        <h2>TITLE</h2>
+    </div>
+
+    <div class="content-points">
+        <div class="point-card fragment fade-up">
+            <h3>要点 1 标题</h3>
+            <p>要点 1 的详细描述内容，保持简洁明了。</p>
+        </div>
+        <div class="point-card fragment fade-up">
+            <h3>要点 2 标题</h3>
+            <p>要点 2 的详细描述内容，保持简洁明了。</p>
+        </div>
+        <div class="point-card fragment fade-up">
+            <h3>要点 3 标题</h3>
+            <p>要点 3 的详细描述内容，保持简洁明了。</p>
+        </div>
+    </div>
+</section>

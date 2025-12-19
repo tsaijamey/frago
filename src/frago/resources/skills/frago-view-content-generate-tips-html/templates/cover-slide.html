@@ -1,0 +1,67 @@
+<!--
+用途：演示文稿封面页
+变量：
+  - MAIN_TITLE: 主标题
+  - SUBTITLE: 副标题
+  - AUTHOR: 作者
+  - DATE: 日期
+特点：渐变背景 + 发光装饰 + 渐变文字
+-->
+<section data-background="linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)">
+    <style>
+        .cover-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            text-align: center;
+            position: relative;
+        }
+        .cover-title {
+            font-size: 2.5em;
+            font-weight: bold;
+            background: linear-gradient(90deg, #e94560, #f39c12);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.3em;
+        }
+        .cover-subtitle {
+            font-size: 1.2em;
+            color: #8b949e;
+            margin-bottom: 2em;
+        }
+        .cover-meta {
+            font-size: 0.8em;
+            color: #6e7681;
+        }
+        .cover-decoration {
+            position: absolute;
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            filter: blur(40px);
+            z-index: -1;
+        }
+        .decoration-1 {
+            top: -50px;
+            right: -50px;
+            background: radial-gradient(circle, rgba(233,69,96,0.3) 0%, transparent 70%);
+        }
+        .decoration-2 {
+            bottom: -50px;
+            left: -50px;
+            background: radial-gradient(circle, rgba(88,166,255,0.3) 0%, transparent 70%);
+        }
+    </style>
+
+    <div class="cover-decoration decoration-1"></div>
+    <div class="cover-decoration decoration-2"></div>
+
+    <div class="cover-container">
+        <h1 class="cover-title">MAIN_TITLE</h1>
+        <p class="cover-subtitle">SUBTITLE</p>
+        <p class="cover-meta">AUTHOR | DATE</p>
+    </div>
+</section>

@@ -1,0 +1,93 @@
+<!--
+用途：结尾页（总结 + 行动号召）
+变量：
+  - SUMMARY_POINTS: 总结要点（建议 2-3 个）
+  - CTA: 行动号召文字
+  - CONTACT: 联系方式（可选）
+特点：居中布局 + 总结卡片 + 强调行动号召
+-->
+<section data-background="linear-gradient(135deg, #0f3460 0%, #16213e 50%, #1a1a2e 100%)">
+    <style>
+        .closing-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }
+        .closing-summary {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 50px;
+        }
+        .summary-item {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 20px 30px;
+            border-bottom: 3px solid #58a6ff;
+        }
+        .summary-item h3 {
+            color: #58a6ff;
+            font-size: 0.9em;
+            margin: 0 0 8px 0;
+        }
+        .summary-item p {
+            color: #c9d1d9;
+            font-size: 0.8em;
+            margin: 0;
+        }
+        .closing-cta {
+            font-size: 1.8em;
+            font-weight: bold;
+            background: linear-gradient(90deg, #e94560, #f39c12);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 30px;
+        }
+        .closing-contact {
+            color: #8b949e;
+            font-size: 0.85em;
+        }
+        .closing-contact a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+        .closing-decoration {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(88,166,255,0.15) 0%, transparent 70%);
+            filter: blur(60px);
+            bottom: -100px;
+            right: -100px;
+            z-index: -1;
+        }
+    </style>
+
+    <div class="closing-decoration"></div>
+
+    <div class="closing-container">
+        <div class="closing-summary">
+            <div class="summary-item fragment fade-up">
+                <h3>总结 1</h3>
+                <p>核心要点描述</p>
+            </div>
+            <div class="summary-item fragment fade-up">
+                <h3>总结 2</h3>
+                <p>核心要点描述</p>
+            </div>
+            <div class="summary-item fragment fade-up">
+                <h3>总结 3</h3>
+                <p>核心要点描述</p>
+            </div>
+        </div>
+
+        <p class="closing-cta fragment">CTA_TEXT</p>
+
+        <p class="closing-contact fragment">
+            联系方式：<a href="mailto:email@example.com">email@example.com</a>
+        </p>
+    </div>
+</section>
