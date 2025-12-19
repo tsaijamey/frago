@@ -113,7 +113,6 @@ def sync_cmd(
 
     \b
     同步内容:
-      ~/.claude/commands/frago.*.md   # 命令文件
       ~/.claude/skills/frago-*        # Skills
       ~/.frago/recipes/               # Recipes
     """
