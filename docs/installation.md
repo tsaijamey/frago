@@ -33,28 +33,52 @@
 
 ---
 
-## Basic Installation
+## Step 1: Install uv (Package Manager)
 
-Install core features (CDP operations + Recipe system core):
+**Why uv?** It's faster, cleaner, and handles environments properly. Don't use pip directly.
 
 ```bash
-# Using pip
-pip install frago-cli
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Using uv (recommended)
-uv tool install frago-cli
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**Core features include**:
-- ✅ Chrome DevTools Protocol (CDP) operations
-- ✅ Recipe system (list, execute, metadata management)
-- ✅ Output to stdout and file
-- ✅ Python/Shell Recipe execution
-- ✅ Workflow orchestration
+After installation, **restart your terminal** to make `uv` available.
+
+Verify:
+```bash
+uv --version
+```
 
 ---
 
-## Environment Initialization
+## Step 2: Install frago
+
+```bash
+uv tool install frago-cli
+```
+
+That's it. One command.
+
+<details>
+<summary>Still want to use pip? (Not recommended)</summary>
+
+```bash
+# macOS
+pip3 install frago-cli
+
+# Linux / Windows
+pip install frago-cli
+```
+
+You're on your own for virtual environment management.
+</details>
+
+---
+
+## Step 3: Initialize Environment
 
 After installing the package, run the init command to set up your environment:
 

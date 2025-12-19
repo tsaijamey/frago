@@ -31,28 +31,52 @@
 
 ---
 
-## 基础安装
+## 第一步：安装 uv（包管理器）
 
-安装核心功能（CDP 操作 + Recipe 系统核心）：
+**为什么用 uv？** 更快、更干净、环境管理更省心。别直接用 pip。
 
 ```bash
-# 使用 pip
-pip install frago-cli
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 使用 uv（推荐）
-uv tool install frago-cli
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**核心功能包含**：
-- ✅ Chrome DevTools Protocol (CDP) 操作
-- ✅ Recipe 系统（列表、执行、元数据管理）
-- ✅ 输出到 stdout 和 file
-- ✅ Python/Shell Recipe 执行
-- ✅ Workflow 编排
+安装后，**重启终端** 让 `uv` 命令生效。
+
+验证：
+```bash
+uv --version
+```
 
 ---
 
-## 环境初始化
+## 第二步：安装 frago
+
+```bash
+uv tool install frago-cli
+```
+
+就这一行，完事。
+
+<details>
+<summary>非要用 pip？（不推荐）</summary>
+
+```bash
+# macOS
+pip3 install frago-cli
+
+# Linux / Windows
+pip install frago-cli
+```
+
+虚拟环境的问题你自己解决。
+</details>
+
+---
+
+## 第三步：初始化环境
 
 安装包后，运行 init 命令配置环境：
 
