@@ -272,15 +272,11 @@ frago gui
 frago gui --debug
 ```
 
-### GUI 安装
+### GUI 要求
 
-GUI 模式需要可选依赖：
+GUI 已默认包含——无需额外安装。
 
-```bash
-uv tool install "frago-cli[gui]"
-```
-
-**平台特定要求**：
+**平台特定系统依赖**：
 
 | 平台 | 后端 | 额外依赖 |
 |------|------|----------|
@@ -327,108 +323,31 @@ projects/<run_id>/
 
 ## 资源管理
 
-Frago 是开源项目——任何人都可以通过 PyPI 安装。但**骨骼**是通用的，**大脑**是私人的。每个人都有自己的应用场景、个性化知识（skills）和自定义自动化脚本（recipes）。
+你的 skills 和 recipes 是个人资产——你发现的工作流模式、你构建的自动化脚本。它们不应该被绑定在单台机器上。
 
-Frago 的理念：**跨环境一致**。无论你在哪台机器、全新安装还是新项目，你的资源都应该随时可用。工具来自 PyPI；大脑来自你的私有仓库。
+### Sync 命令
 
-### 资源流向
-
-```
-┌─────────────┐   publish   ┌─────────────┐    sync    ┌─────────────┐
-│   项目目录   │ ──────────→ │   系统目录   │ ─────────→ │   远程仓库   │
-│  .claude/   │             │ ~/.claude/  │            │  Git Repo   │
-│  examples/  │             │ ~/.frago/   │            │             │
-└─────────────┘             └─────────────┘            └─────────────┘
-       ↑                          │                          │
-       │       dev-load           │         deploy           │
-       └──────────────────────────┴──────────────────────────┘
-```
-
-### 资源管理命令
-
-| 命令 | 方向 | 用途 |
-|------|------|------|
-| `publish` | 项目 → 系统 | 将项目资源发布到系统目录 |
-| `sync` | 系统 → 远程 | 将系统资源同步到你的私有 Git 仓库 |
-| `deploy` | 远程 → 系统 | 从私有仓库拉取到系统目录 |
-| `dev-load` | 系统 → 项目 | 将系统资源加载到当前项目（仅开发用） |
-
-### 命令用法
-
-#### 配置私有仓库
+`sync` 命令处理本地系统和私有 Git 仓库之间的双向同步：
 
 ```bash
 # 首次使用：配置你的私有仓库
 frago sync --set-repo git@github.com:you/my-frago-resources.git
-```
 
-#### 发布本地改动
-
-```bash
-# 在项目中编辑完 recipes/skills 后
-frago publish              # 项目 → 系统（~/.claude/, ~/.frago/）
-frago publish --dry-run    # 预览将要发布的内容
-frago publish --force      # 强制覆盖已存在文件
-
-# 推送到远程仓库
-frago sync                 # 系统 → 远程 Git
-frago sync --no-push       # 仅提交，不推送
-frago sync -m "message"    # 自定义提交信息
-```
-
-#### 部署到新设备
-
-```bash
-# 从私有仓库拉取
-frago deploy               # 远程 Git → 系统
-frago deploy --dry-run     # 预览将要部署的内容
-frago deploy --force       # 强制覆盖已存在文件
-
-# Frago 开发者：加载到项目目录
-frago dev-load             # 系统 → 项目
-frago dev-load --dry-run   # 预览将要加载的内容
+# 日常使用
+frago sync              # 推送本地变更并拉取远程更新
+frago sync --dry-run    # 预览将要同步的内容
+frago sync --no-push    # 仅拉取，不推送
+frago sync -m "message" # 自定义提交信息
 ```
 
 ### 同步范围
 
-只同步 Frago 专属资源，保护你的个人配置：
-
 | 资源类型 | 模式 | 位置 |
 |---------|------|------|
-| 命令 | `frago.*.md` | `~/.claude/commands/` |
-| 命令规则 | `frago/` 目录 | `~/.claude/commands/frago/` |
 | Skills | `frago-*` 前缀 | `~/.claude/skills/` |
 | Recipes | 所有配方 | `~/.frago/recipes/` |
 
 你的个人非 Frago 的 Claude 命令和 skills **永远不会被触及**。
-
-### 典型工作流
-
-**开发者流程**（本地改动 → 云端）：
-```bash
-# 1. 在项目中编辑 recipes（examples/）
-# 2. 发布到系统目录
-frago publish
-# 3. 同步到私有仓库
-frago sync
-```
-
-**新设备流程**（云端 → 本地）：
-```bash
-# 1. 配置仓库（仅首次）
-frago sync --set-repo git@github.com:you/my-frago-resources.git
-# 2. 从仓库部署
-frago deploy
-# 3.（可选）如果开发 Frago，加载到项目
-frago dev-load
-```
-
-**普通用户**（只使用 Frago）：
-```bash
-# 从你的仓库获取最新资源
-frago deploy
-# 资源现在在 ~/.claude/ 和 ~/.frago/，可以直接使用
-```
 
 ---
 
@@ -781,5 +700,5 @@ node --version  # 应为 20.x 或更高版本
 1. Chrome 必须启用 CDP 模式运行，保持 9222 端口可用
 2. 所有截图和输出文件必须使用绝对路径
 3. Recipe 执行前确保元数据文件（.md）与脚本文件配对
-4. GUI 模式需要额外安装可选依赖（`frago-cli[gui]`）
+4. GUI 模式已默认包含，Linux 需要安装系统依赖（WebKit2GTK）
 5. 会话监控依赖 watchdog，自动随基础包安装

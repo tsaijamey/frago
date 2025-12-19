@@ -147,7 +147,7 @@
   - 连接状态指示器
 
 - [x] **安装方式**
-  - 可选 GUI 依赖：`uv tool install "frago-cli[gui]"`
+  - GUI 已默认包含（pywebview 是核心依赖）
   - 平台特定后端自动检测
   - 优雅降级并提供安装说明
 
@@ -430,10 +430,7 @@
    - 通过 `--help` 改善可发现性
 
 2. **资源同步命令**
-   - `frago publish` - 推送项目资源到系统目录
-   - `frago sync` - 推送系统资源到远程 Git 仓库
-   - `frago deploy` - 从远程 Git 仓库拉取到系统
-   - `frago dev-load` - 加载系统资源到项目（仅开发）
+   - `frago sync` - 系统与远程 Git 仓库双向同步
 
 3. **Agent 命令**
    - `frago agent "任务"` - 执行 AI 驱动的任务
@@ -449,7 +446,7 @@
    - `frago gui` 命令启动桌面界面
    - pywebview 后端（跨平台）
    - Recipe 管理和执行
-   - 可选依赖：`uv tool install "frago-cli[gui]"`
+   - GUI 已默认包含
 
 2. **GUI 设计重构（Feature 009）**
    - GitHub Dark 配色方案

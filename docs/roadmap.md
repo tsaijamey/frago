@@ -149,7 +149,7 @@
   - Connection status indicator
 
 - [x] **Installation**
-  - Optional GUI dependencies: `uv tool install "frago-cli[gui]"`
+  - GUI included by default (pywebview is a core dependency)
   - Platform-specific backend auto-detection
   - Graceful fallback with installation instructions
 
@@ -431,11 +431,8 @@ First official release, core infrastructure complete.
    - `frago recipe list` instead of `frago list`
    - Improved discoverability with `--help`
 
-2. **Resource Sync Commands**
-   - `frago publish` - Push project resources to system directories
-   - `frago sync` - Push system resources to remote Git repo
-   - `frago deploy` - Pull from remote Git repo to system
-   - `frago dev-load` - Load system resources to project (dev only)
+2. **Resource Sync Command**
+   - `frago sync` - Bidirectional sync between system and remote Git repo
 
 3. **Agent Command**
    - `frago agent "task"` - Execute AI-driven tasks
@@ -451,7 +448,7 @@ First official release, core infrastructure complete.
    - `frago gui` command launches desktop interface
    - pywebview backend (cross-platform)
    - Recipe management and execution
-   - Optional dependency: `uv tool install "frago-cli[gui]"`
+   - GUI included by default
 
 2. **GUI Design Redesign (Feature 009)**
    - GitHub Dark color scheme
