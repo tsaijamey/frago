@@ -1,22 +1,33 @@
 # 安装指南
 
 > [!IMPORTANT]
-> ## ⚠️ 先看这里 — 不要跳过！
+> ## ⚠️ 为什么不能直接 `pip install` 就完事？
 >
-> **跳过前提条件会导致安装失败。**
+> **frago 需要 Python + Node.js + Chrome 才能工作。** 问题在于：
 >
-> | 你的操作系统 | 先做什么 | 耗时 |
-> |-------------|----------|------|
-> | **Linux** | → [Linux 安装前提条件](#linux-安装前提条件) | 2 分钟 |
-> | **macOS** | → [macOS 安装前提条件](#macos-安装前提条件) | 2 分钟 |
-> | **Windows** | → [Windows 安装前提条件](#windows-安装前提条件) | 5 分钟 |
+> - **Linux**：你的发行版可能没有预装 Python/pip
+> - **macOS**：用的是 `pip3` 不是 `pip` — 执行 `pip install` 什么都不会发生
+> - **Windows**：系统不自带 Python 和 Node.js — 你会看到"命令未找到"
+>
+> **现在花 2 分钟看前提条件，还是之后花 20 分钟排错，你选。**
+>
+> | 你的操作系统 | 先看这里 |
+> |-------------|----------|
+> | **Linux** | → [Linux 安装前提条件](#linux-安装前提条件) |
+> | **macOS** | → [macOS 安装前提条件](#macos-安装前提条件) |
+> | **Windows** | → [Windows 安装前提条件](#windows-安装前提条件) |
 
 > [!WARNING]
-> **Windows 用户：必须手动安装 Node.js！**
+> **Windows 用户 — 跳过这步必定报错**
 >
-> 与 macOS/Linux 不同，Windows 无法自动安装 Node.js。跳过这一步会导致 `frago init` 失败。
+> macOS/Linux 上，`frago init` 能帮你自动装 Node.js。**Windows 上不行。**
 >
-> → [立即安装 Node.js](#安装-nodejsfrago-init-之前必须安装)
+> 如果你没装 Node.js 就运行 `frago init`，会看到：
+> ```
+> Error: Windows 不支持自动安装 Node.js
+> ```
+>
+> → [先装 Node.js](#安装-nodejsfrago-init-之前必须安装)（只要 2 分钟）
 
 ---
 

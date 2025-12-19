@@ -3,22 +3,33 @@
 [简体中文](installation.zh-CN.md)
 
 > [!IMPORTANT]
-> ## ⚠️ Read This First — Don't Skip!
+> ## ⚠️ Why You Can't Just `pip install` and Go
 >
-> **Installation will FAIL if you skip the prerequisites for your OS.**
+> **frago needs Python + Node.js + Chrome to work.** The problem is:
 >
-> | Your OS | What to do FIRST | Time |
-> |---------|------------------|------|
-> | **Linux** | → [Linux Prerequisites](#linux-prerequisites) | 2 min |
-> | **macOS** | → [macOS Prerequisites](#macos-prerequisites) | 2 min |
-> | **Windows** | → [Windows Prerequisites](#windows-prerequisites) | 5 min |
+> - **Linux**: Your distro might not have Python/pip pre-installed
+> - **macOS**: Uses `pip3` not `pip` — run `pip install` and nothing happens
+> - **Windows**: Does NOT come with Python or Node.js — you'll get "command not found"
+>
+> **Spend 2 minutes on prerequisites now, or waste 20 minutes debugging later.**
+>
+> | Your OS | Go here first |
+> |---------|---------------|
+> | **Linux** | → [Linux Prerequisites](#linux-prerequisites) |
+> | **macOS** | → [macOS Prerequisites](#macos-prerequisites) |
+> | **Windows** | → [Windows Prerequisites](#windows-prerequisites) |
 
 > [!WARNING]
-> **Windows Users: You MUST install Node.js manually!**
+> **Windows Users — This Will Break If You Skip It**
 >
-> Unlike macOS/Linux, Windows cannot auto-install Node.js. If you skip this step, `frago init` will fail.
+> On macOS/Linux, `frago init` can auto-install Node.js for you. **On Windows, it can't.**
 >
-> → [Install Node.js NOW](#install-nodejs-required-before-frago-init)
+> If you run `frago init` without Node.js installed, you'll get:
+> ```
+> Error: Windows 不支持自动安装 Node.js
+> ```
+>
+> → [Install Node.js first](#install-nodejs-required-before-frago-init) (takes 2 minutes)
 
 ---
 
