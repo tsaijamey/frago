@@ -59,14 +59,14 @@
     const lines = text.split('\n').map(l => l.trim());
     const numbers = lines.filter(l => l.match(/^[\d.]+[KM]?$/));
 
-    // 推文统计数据通常顺序为：评论数、转发数、点赞数、书签数、浏览数
+    // X/Twitter 统计数据顺序为：浏览数、评论数、转发数、点赞数、书签数
     // 评论统计数据通常只有：浏览数
     return {
-      replies: numbers[0] || '0',
-      retweets: numbers[1] || '0',
-      likes: numbers[2] || '0',
-      bookmarks: numbers[3] || '0',
-      views: numbers[4] || numbers[0] || '0'
+      views: numbers[0] || '0',
+      replies: numbers[1] || '0',
+      retweets: numbers[2] || '0',
+      likes: numbers[3] || '0',
+      bookmarks: numbers[4] || '0'
     };
   }
 
