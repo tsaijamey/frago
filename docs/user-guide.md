@@ -825,6 +825,122 @@ xattr -d com.apple.quarantine /path/to/app
 
 ---
 
+### Windows-Specific Issues
+
+**Problem**: `python` or `pip` not recognized
+```
+'python' is not recognized as an internal or external command
+```
+
+**Solutions**:
+```powershell
+# Option 1: Use py launcher (if installed)
+py -m pip install frago-cli
+
+# Option 2: Add Python to PATH
+# Reinstall Python and check "Add Python to PATH"
+# Or manually add to System Environment Variables:
+# C:\Users\<username>\AppData\Local\Programs\Python\Python311\
+# C:\Users\<username>\AppData\Local\Programs\Python\Python311\Scripts\
+
+# Option 3: Use Microsoft Store Python
+# Search "Python 3.11" in Microsoft Store
+```
+
+---
+
+**Problem**: `node` not recognized after installation
+```
+'node' is not recognized as an internal or external command
+```
+
+**Solutions**:
+```powershell
+# Restart PowerShell after Node.js installation
+
+# If still not working, add to PATH manually:
+# C:\Program Files\nodejs\
+
+# Verify installation
+node --version
+```
+
+---
+
+**Problem**: npm global packages not found (e.g., claude)
+```
+'claude' is not recognized as an internal or external command
+```
+
+**Solutions**:
+```powershell
+# Add npm global directory to PATH
+$env:PATH += ";$env:APPDATA\npm"
+
+# To make permanent, add to user environment variables:
+# System Properties → Environment Variables → User variables → Path → Add:
+# %APPDATA%\npm
+
+# Then restart PowerShell
+```
+
+---
+
+**Problem**: PowerShell script execution disabled
+```
+cannot be loaded because running scripts is disabled on this system
+```
+
+**Solutions**:
+```powershell
+# Allow scripts for current user
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Verify
+Get-ExecutionPolicy -List
+```
+
+---
+
+**Problem**: Chrome CDP connection on Windows
+
+**Solutions**:
+```powershell
+# 1. Launch Chrome with CDP enabled
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+    --remote-debugging-port=9222 `
+    --user-data-dir="$env:USERPROFILE\.frago\chrome_profile"
+
+# 2. Verify CDP is running
+Test-NetConnection -ComputerName localhost -Port 9222
+Invoke-WebRequest -Uri "http://localhost:9222/json/version"
+
+# 3. If port is in use, find process
+netstat -ano | findstr :9222
+# Then kill by PID:
+taskkill /PID <PID> /F
+```
+
+---
+
+**Problem**: Windows does not support automatic Node.js installation
+```
+Error: Windows 不支持自动安装 Node.js
+```
+
+**Solutions**:
+```powershell
+# You must install Node.js manually before running frago init
+winget install OpenJS.NodeJS.LTS
+
+# Or download from https://nodejs.org/
+
+# Verify installation
+node --version  # Should be 20.x or higher
+```
+
+---
+
 ## Resource Management
 
 Frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal. Each person has their own application scenarios, personalized knowledge (skills), and custom automation scripts (recipes).

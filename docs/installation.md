@@ -410,6 +410,102 @@ node --version
 
 ---
 
+## Windows Prerequisites
+
+Before installing frago on Windows, ensure your system meets the following requirements.
+
+> **Important**: Unlike macOS/Linux, Windows does NOT support automatic Node.js installation via nvm. You must install Node.js manually before running `frago init`.
+
+### System Requirements
+
+- **Windows**: 10 (1809+) or Windows 11
+- **Architecture**: x64 and ARM64 supported
+
+### Install Python
+
+Windows does not include Python by default:
+
+```powershell
+# Option 1: Microsoft Store (easiest)
+# Search "Python 3.11" in Microsoft Store and install
+
+# Option 2: winget
+winget install Python.Python.3.11
+
+# Option 3: Official installer
+# Download from https://www.python.org/downloads/
+# IMPORTANT: Check "Add Python to PATH" during installation!
+```
+
+### Install Node.js (Required Before frago init)
+
+```powershell
+# Using winget (recommended)
+winget install OpenJS.NodeJS.LTS
+
+# Or download from https://nodejs.org/
+# Choose LTS version (20.x)
+```
+
+### Install Chrome Browser
+
+```powershell
+# Using winget
+winget install Google.Chrome
+
+# Or download from https://www.google.com/chrome/
+```
+
+### Package Managers
+
+**Using pip**:
+```powershell
+# After Python installation, pip should be available
+pip install frago-cli
+
+# If pip not found, use:
+python -m pip install frago-cli
+```
+
+**Using uv (recommended)**:
+```powershell
+# Install uv
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Then install frago
+uv tool install frago-cli
+```
+
+### GUI Support (WebView2)
+
+For GUI features, WebView2 Runtime is required:
+
+```powershell
+# Windows 11 usually has it pre-installed
+# For Windows 10, install manually:
+winget install Microsoft.EdgeWebView2Runtime
+```
+
+### Pre-Installation Checklist
+
+Before running `pip install frago-cli`, verify in PowerShell:
+
+```powershell
+# Python 3.9+ installed
+python --version
+
+# pip available
+pip --version
+
+# Node.js 20+ installed (REQUIRED before frago init)
+node --version
+
+# Chrome installed (if using CDP features)
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --version
+```
+
+---
+
 ## Verify Installation
 
 Verify after installation:
