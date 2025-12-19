@@ -12,7 +12,7 @@ import pypinyin
 from slugify import slugify as _slugify
 
 
-def generate_theme_slug(description: str, max_length: int = 50) -> str:
+def generate_theme_slug(description: str, max_length: int = 90) -> str:
     """生成主题slug（日期前缀 + slug化描述）
 
     Args:
@@ -55,8 +55,8 @@ def is_valid_run_id(run_id: str) -> bool:
     """
     import re
 
-    # 支持日期前缀格式: yyyyMMdd-slug (最多 59 位)
-    pattern = r"^[a-z0-9-]{1,59}$"
+    # 支持日期前缀格式: yyyyMMdd-slug (最多 100 位)
+    pattern = r"^[a-z0-9-]{1,100}$"
     return bool(re.match(pattern, run_id))
 
 
