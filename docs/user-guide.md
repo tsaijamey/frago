@@ -646,6 +646,105 @@ Error: Failed to save screenshot to /path/to/screenshot.png
 
 ---
 
+### Linux-Specific Issues
+
+**Problem**: `pip: command not found`
+
+**Solutions**:
+```bash
+# Ubuntu/Debian
+sudo apt install python3-pip
+
+# Fedora
+sudo dnf install python3-pip
+
+# Arch Linux
+sudo pacman -S python-pip
+
+# Alternative: use python -m pip
+python3 -m pip install frago-cli
+```
+
+---
+
+**Problem**: `npm EACCES permission denied`
+```
+npm ERR! Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules'
+```
+
+**Solutions**:
+```bash
+# Option 1: Use nvm (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+source ~/.bashrc  # or ~/.zshrc
+nvm install --lts
+
+# Option 2: Change npm global directory
+mkdir -p ~/.npm-global
+npm config set prefix ~/.npm-global
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+**Problem**: `nvm: command not found` after installation
+
+**Solutions**:
+```bash
+# Ensure nvm is loaded in current shell
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+# Add to ~/.bashrc or ~/.zshrc for persistence
+echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.bashrc
+echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+**Problem**: Chrome CDP connection issues on Linux
+
+**Solutions**:
+```bash
+# 1. Verify Chrome is installed
+google-chrome --version
+
+# 2. Launch Chrome in CDP mode
+google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug
+
+# 3. Verify CDP port is listening
+lsof -i :9222 | grep LISTEN
+curl http://localhost:9222/json/version
+
+# 4. If port 9222 is occupied
+# Find the process using the port
+lsof -i :9222
+# Kill it or use a different port
+google-chrome --remote-debugging-port=9223 --user-data-dir=/tmp/chrome-debug
+```
+
+---
+
+**Problem**: Node.js version mismatch
+```
+Error: Node.js version 18.x detected, but 20.0.0 or higher is required
+```
+
+**Solutions**:
+```bash
+# Using nvm
+nvm install 20
+nvm use 20
+nvm alias default 20
+
+# Verify
+node --version
+```
+
+---
+
 ## Resource Management
 
 Frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal. Each person has their own application scenarios, personalized knowledge (skills), and custom automation scripts (recipes).

@@ -239,6 +239,105 @@ dev = ["pytest>=7.4.0", ...]       # 开发工具
 
 ---
 
+## Linux 安装前提条件
+
+在 Linux 上安装 frago 之前，请确保系统满足以下要求。
+
+### 需要准备的依赖
+
+| 依赖 | 用途 | 是否必须 |
+|------|------|----------|
+| **Python 3.9+** | Frago 运行时 | 是 |
+| **Node.js 20+** | Claude Code 依赖 | 是（使用 Claude Code 集成时） |
+| **Chrome 浏览器** | CDP 浏览器自动化 | 是（使用 CDP 功能时） |
+| **curl 或 wget** | 下载安装脚本（nvm） | 是（自动安装时） |
+| **git** | 克隆仓库 | 开发时需要 |
+
+### Frago 不会帮你做的事情
+
+1. **安装系统级软件** - Frago 无法执行 `sudo apt/dnf/pacman` 命令
+2. **配置网络代理** - 如需代理访问 npm/pip，需要你自行配置
+3. **处理权限问题** - npm 全局目录权限问题需要手动解决
+4. **选择发行版特定命令** - 你需要根据自己的发行版选择正确的命令
+
+### 各发行版系统依赖安装
+
+#### Ubuntu/Debian
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-pip python3-venv curl git
+```
+
+#### Fedora/RHEL
+
+```bash
+sudo dnf install -y python3 python3-pip curl git
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S python python-pip curl git
+```
+
+#### openSUSE
+
+```bash
+sudo zypper install -y python3 python3-pip curl git
+```
+
+### Chrome 浏览器安装
+
+Chrome 是 CDP（Chrome DevTools Protocol）功能的必要依赖。
+
+#### Ubuntu/Debian (64位)
+
+```bash
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo dpkg -i google-chrome-stable_current_amd64.deb
+sudo apt -f install  # 如有依赖问题则修复
+```
+
+#### Fedora/RHEL
+
+```bash
+sudo dnf install https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+```
+
+#### Arch Linux
+
+```bash
+# 使用 yay（AUR 助手）
+yay -S google-chrome
+
+# 或使用 paru
+paru -S google-chrome
+```
+
+### 安装前检查清单
+
+在运行 `pip install frago-cli` 之前，请验证：
+
+```bash
+# Python 3.9+ 已安装
+python3 --version
+
+# pip 可用
+pip --version  # 或：python3 -m pip --version
+
+# 网络可以访问 PyPI
+pip index versions frago-cli
+
+# Chrome 已安装（如使用 CDP 功能）
+google-chrome --version
+
+# Node.js 20+ 已安装（如使用 Claude Code 集成）
+node --version
+```
+
+---
+
 ## 验证安装
 
 安装后验证：
