@@ -2,17 +2,23 @@
 
 [简体中文](installation.zh-CN.md)
 
-## Before You Start
+> [!IMPORTANT]
+> ## ⚠️ Read This First — Don't Skip!
+>
+> **Installation will FAIL if you skip the prerequisites for your OS.**
+>
+> | Your OS | What to do FIRST | Time |
+> |---------|------------------|------|
+> | **Linux** | → [Linux Prerequisites](#linux-prerequisites) | 2 min |
+> | **macOS** | → [macOS Prerequisites](#macos-prerequisites) | 2 min |
+> | **Windows** | → [Windows Prerequisites](#windows-prerequisites) | 5 min |
 
-**Complete the prerequisites for your operating system first:**
-
-| Operating System | Prerequisites | Key Notes |
-|------------------|---------------|-----------|
-| [Linux](#linux-prerequisites) | Python, curl, Chrome | `frago init` auto-installs Node.js via nvm |
-| [macOS](#macos-prerequisites) | Xcode CLT, Python 3 | Use `pip3` not `pip` |
-| [Windows](#windows-prerequisites) | Python, Node.js, Chrome | **Must install Node.js manually** before `frago init` |
-
-> **Windows Users**: Unlike macOS/Linux, Windows does NOT support automatic Node.js installation. You must [install Node.js](#install-nodejs-required-before-frago-init) before running `frago init`.
+> [!WARNING]
+> **Windows Users: You MUST install Node.js manually!**
+>
+> Unlike macOS/Linux, Windows cannot auto-install Node.js. If you skip this step, `frago init` will fail.
+>
+> → [Install Node.js NOW](#install-nodejs-required-before-frago-init)
 
 ---
 

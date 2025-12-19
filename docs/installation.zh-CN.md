@@ -1,16 +1,22 @@
 # 安装指南
 
-## 开始之前
+> [!IMPORTANT]
+> ## ⚠️ 先看这里 — 不要跳过！
+>
+> **跳过前提条件会导致安装失败。**
+>
+> | 你的操作系统 | 先做什么 | 耗时 |
+> |-------------|----------|------|
+> | **Linux** | → [Linux 安装前提条件](#linux-安装前提条件) | 2 分钟 |
+> | **macOS** | → [macOS 安装前提条件](#macos-安装前提条件) | 2 分钟 |
+> | **Windows** | → [Windows 安装前提条件](#windows-安装前提条件) | 5 分钟 |
 
-**请先完成你操作系统对应的前提条件：**
-
-| 操作系统 | 前提条件 | 关键说明 |
-|----------|----------|----------|
-| [Linux](#linux-安装前提条件) | Python, curl, Chrome | `frago init` 会通过 nvm 自动安装 Node.js |
-| [macOS](#macos-安装前提条件) | Xcode CLT, Python 3 | 使用 `pip3` 而非 `pip` |
-| [Windows](#windows-安装前提条件) | Python, Node.js, Chrome | **必须手动安装 Node.js** 后才能运行 `frago init` |
-
-> **Windows 用户注意**：与 macOS/Linux 不同，Windows 不支持自动安装 Node.js。你必须先[安装 Node.js](#安装-nodejs（frago-init-之前必须安装）)，然后再运行 `frago init`。
+> [!WARNING]
+> **Windows 用户：必须手动安装 Node.js！**
+>
+> 与 macOS/Linux 不同，Windows 无法自动安装 Node.js。跳过这一步会导致 `frago init` 失败。
+>
+> → [立即安装 Node.js](#安装-nodejsfrago-init-之前必须安装)
 
 ---
 
