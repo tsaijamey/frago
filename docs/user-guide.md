@@ -745,6 +745,86 @@ node --version
 
 ---
 
+### macOS-Specific Issues
+
+**Problem**: `pip: command not found`
+
+**Solutions**:
+```bash
+# macOS uses pip3, not pip
+pip3 install frago-cli
+
+# Or use python3 -m pip (most reliable)
+python3 -m pip install frago-cli
+```
+
+---
+
+**Problem**: `xcrun: error: invalid active developer path`
+```
+xcrun: error: invalid active developer path (/Library/Developer/CommandLineTools)
+```
+
+**Solutions**:
+```bash
+# Install Xcode Command Line Tools
+xcode-select --install
+
+# If already installed but broken, reset
+sudo xcode-select --reset
+```
+
+---
+
+**Problem**: Chrome CDP connection on macOS
+
+**Solutions**:
+```bash
+# 1. Launch Chrome with CDP enabled
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+    --remote-debugging-port=9222 \
+    --user-data-dir=~/.frago/chrome_profile
+
+# 2. Verify CDP is running
+lsof -i :9222 | grep LISTEN
+curl http://localhost:9222/json/version
+
+# 3. If port is in use, find and kill the process
+lsof -i :9222
+kill -9 <PID>
+```
+
+---
+
+**Problem**: Homebrew Node.js conflicts with nvm
+
+**Solutions**:
+```bash
+# If you have Node.js via Homebrew and want to use nvm instead:
+brew uninstall node
+
+# If you want to keep Homebrew Node.js, ensure version is 20+
+node --version
+
+# To install specific version with Homebrew
+brew install node@20
+```
+
+---
+
+**Problem**: Gatekeeper blocks downloaded apps
+
+**Solutions**:
+```bash
+# If Chrome or other apps are blocked, allow in System Preferences:
+# System Preferences → Security & Privacy → General → "Allow apps downloaded from"
+
+# Or remove quarantine attribute (use with caution)
+xattr -d com.apple.quarantine /path/to/app
+```
+
+---
+
 ## Resource Management
 
 Frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal. Each person has their own application scenarios, personalized knowledge (skills), and custom automation scripts (recipes).

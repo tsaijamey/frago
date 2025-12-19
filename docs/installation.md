@@ -340,6 +340,76 @@ node --version
 
 ---
 
+## macOS Prerequisites
+
+Before installing frago on macOS, ensure your system meets the following requirements.
+
+### System Requirements
+
+- **macOS**: 10.15 (Catalina) or later
+- **Architecture**: Apple Silicon (M1/M2/M3) and Intel both fully supported
+
+### Install Xcode Command Line Tools
+
+Required for compiling some Python packages:
+
+```bash
+xcode-select --install
+```
+
+### Package Managers
+
+**Using pip (built-in)**:
+```bash
+# macOS uses pip3, not pip
+pip3 install frago-cli
+
+# Or use python3 -m pip (more reliable)
+python3 -m pip install frago-cli
+```
+
+**Using uv (recommended)**:
+```bash
+# Install uv first
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# or via Homebrew
+brew install uv
+
+# Then install frago
+uv tool install frago-cli
+```
+
+### Chrome Browser
+
+Chrome is typically pre-installed or available from [google.com/chrome](https://www.google.com/chrome/). Verify installation:
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version
+```
+
+### Pre-Installation Checklist
+
+Before running `pip3 install frago-cli`, verify:
+
+```bash
+# Python 3.9+ installed (macOS 12+ includes Python 3)
+python3 --version
+
+# pip3 available
+pip3 --version
+
+# Xcode Command Line Tools installed
+xcode-select -p
+
+# Chrome installed (if using CDP features)
+ls /Applications/Google\ Chrome.app
+
+# Node.js 20+ installed (if using Claude Code integration)
+node --version
+```
+
+---
+
 ## Verify Installation
 
 Verify after installation:

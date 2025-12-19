@@ -338,6 +338,76 @@ node --version
 
 ---
 
+## macOS 安装前提条件
+
+在 macOS 上安装 frago 之前，请确保系统满足以下要求。
+
+### 系统要求
+
+- **macOS**: 10.15 (Catalina) 或更高版本
+- **架构**: Apple Silicon (M1/M2/M3) 和 Intel 均完全支持
+
+### 安装 Xcode 命令行工具
+
+编译某些 Python 包需要此工具：
+
+```bash
+xcode-select --install
+```
+
+### 包管理器
+
+**使用 pip（内置）**:
+```bash
+# macOS 使用 pip3，而非 pip
+pip3 install frago-cli
+
+# 或使用 python3 -m pip（更可靠）
+python3 -m pip install frago-cli
+```
+
+**使用 uv（推荐）**:
+```bash
+# 先安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# 或通过 Homebrew
+brew install uv
+
+# 然后安装 frago
+uv tool install frago-cli
+```
+
+### Chrome 浏览器
+
+Chrome 通常已预装或可从 [google.com/chrome](https://www.google.com/chrome/) 下载。验证安装：
+
+```bash
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --version
+```
+
+### 安装前检查清单
+
+在运行 `pip3 install frago-cli` 之前，请验证：
+
+```bash
+# Python 3.9+ 已安装（macOS 12+ 自带 Python 3）
+python3 --version
+
+# pip3 可用
+pip3 --version
+
+# Xcode 命令行工具已安装
+xcode-select -p
+
+# Chrome 已安装（如使用 CDP 功能）
+ls /Applications/Google\ Chrome.app
+
+# Node.js 20+ 已安装（如使用 Claude Code 集成）
+node --version
+```
+
+---
+
 ## 验证安装
 
 安装后验证：

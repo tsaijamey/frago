@@ -590,6 +590,86 @@ node --version
 
 ---
 
+### macOS 特定问题
+
+**问题**：`pip: command not found`
+
+**解决方案**：
+```bash
+# macOS 使用 pip3，而非 pip
+pip3 install frago-cli
+
+# 或使用 python3 -m pip（最可靠）
+python3 -m pip install frago-cli
+```
+
+---
+
+**问题**：`xcrun: error: invalid active developer path`
+```
+xcrun: error: invalid active developer path (/Library/Developer/CommandLineTools)
+```
+
+**解决方案**：
+```bash
+# 安装 Xcode 命令行工具
+xcode-select --install
+
+# 如果已安装但损坏，重置
+sudo xcode-select --reset
+```
+
+---
+
+**问题**：macOS 上的 Chrome CDP 连接
+
+**解决方案**：
+```bash
+# 1. 以 CDP 模式启动 Chrome
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+    --remote-debugging-port=9222 \
+    --user-data-dir=~/.frago/chrome_profile
+
+# 2. 验证 CDP 正在运行
+lsof -i :9222 | grep LISTEN
+curl http://localhost:9222/json/version
+
+# 3. 如果端口被占用，查找并终止进程
+lsof -i :9222
+kill -9 <PID>
+```
+
+---
+
+**问题**：Homebrew Node.js 与 nvm 冲突
+
+**解决方案**：
+```bash
+# 如果你有 Homebrew 的 Node.js 并想使用 nvm：
+brew uninstall node
+
+# 如果想保留 Homebrew 的 Node.js，确保版本为 20+
+node --version
+
+# 通过 Homebrew 安装特定版本
+brew install node@20
+```
+
+---
+
+**问题**：Gatekeeper 阻止下载的应用
+
+**解决方案**：
+```bash
+# 如果 Chrome 或其他应用被阻止，在系统偏好设置中允许：
+# 系统偏好设置 → 安全性与隐私 → 通用 → "允许从以下位置下载的应用"
+
+# 或移除隔离属性（谨慎使用）
+xattr -d com.apple.quarantine /path/to/app
+```
+
+---
+
 ## 注意事项
 
 1. Chrome 必须启用 CDP 模式运行，保持 9222 端口可用
