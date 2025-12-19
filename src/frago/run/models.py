@@ -91,7 +91,7 @@ class InsightEntry(BaseModel):
 class RunInstance(BaseModel):
     """Run实例模型（存储在 .metadata.json）"""
 
-    run_id: str = Field(..., min_length=1, max_length=50, pattern=r"^[a-z0-9-]{1,50}$")
+    run_id: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9-]{1,100}$")
     theme_description: str = Field(..., min_length=1, max_length=500)
     created_at: datetime
     last_accessed: datetime
@@ -213,7 +213,7 @@ class Screenshot(BaseModel):
 class CurrentRunContext(BaseModel):
     """当前Run上下文模型（存储在 .frago/current_run）"""
 
-    run_id: str = Field(..., min_length=1, max_length=50)
+    run_id: str = Field(..., min_length=1, max_length=100)
     last_accessed: datetime
     theme_description: str = Field(..., min_length=1, max_length=500)
     projects_dir: Optional[str] = Field(default=None, description="projects 目录绝对路径")
