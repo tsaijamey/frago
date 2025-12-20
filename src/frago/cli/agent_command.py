@@ -12,11 +12,9 @@ Frago Agent Command - 通过 Claude CLI 执行非交互式 AI 任务
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -220,98 +218,6 @@ def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
         return False, f"Unexpected error: {e}"
 
 
-def run_claude_command(
-    prompt: str,
-    env: dict,
-    output_format: str = "json",
-    timeout: int = 120,
-    model: Optional[str] = None,
-    skip_permissions: bool = True
-) -> Tuple[bool, str, Optional[dict]]:
-    """
-    执行 claude 命令并返回结果
-
-    Args:
-        prompt: 提示词
-        env: 环境变量
-        output_format: 输出格式
-        timeout: 超时时间
-        model: 模型
-        skip_permissions: 是否跳过权限确认
-
-    Returns:
-        (是否成功, 原始输出, 解析后的 JSON)
-    """
-    cmd = ["claude", "-p", prompt, "--output-format", output_format]
-
-    if model:
-        cmd.extend(["--model", model])
-
-    if skip_permissions:
-        cmd.append("--dangerously-skip-permissions")
-
-    try:
-        result = subprocess.run(
-            prepare_command_for_windows(cmd),
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            env=env,
-            timeout=timeout
-        )
-
-        output = result.stdout
-
-        if result.returncode == 0 and output_format == "json":
-            try:
-                parsed = json.loads(output)
-                return True, output, parsed
-            except json.JSONDecodeError:
-                return True, output, None
-
-        return result.returncode == 0, output, None
-
-    except subprocess.TimeoutExpired:
-        return False, f"Timeout after {timeout}s", None
-    except Exception as e:
-        return False, str(e), None
-
-
-def parse_routing_response(response_text: str) -> Optional[dict]:
-    """
-    解析路由响应，提取 JSON
-
-    Args:
-        response_text: Claude 返回的文本
-
-    Returns:
-        解析后的路由信息，或 None
-    """
-    # 尝试直接解析
-    try:
-        return json.loads(response_text.strip())
-    except json.JSONDecodeError:
-        pass
-
-    # 尝试从 markdown code block 中提取
-    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-    if json_match:
-        try:
-            return json.loads(json_match.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    # 尝试从文本中找 JSON 对象
-    json_match = re.search(r'\{[^{}]*"command"[^{}]*\}', response_text)
-    if json_match:
-        try:
-            return json.loads(json_match.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
-
 # =============================================================================
 # Slash Command 展开
 # =============================================================================
@@ -469,6 +375,63 @@ def get_available_slash_commands() -> dict:
 
 
 # =============================================================================
+# Agent Prompt 构建
+# =============================================================================
+
+def _build_agent_prompt(user_prompt: str) -> str:
+    """
+    构建 agent 执行 prompt，包含可用命令说明
+
+    让 agent 根据用户意图自行判断应该使用哪种模式执行任务，
+    而不是先返回 JSON 再二次调用。
+
+    Args:
+        user_prompt: 用户原始提示词
+
+    Returns:
+        包含命令说明和用户任务的完整 prompt
+    """
+    # 获取可用命令及其描述
+    commands = get_available_slash_commands()
+
+    # 提取关键命令的说明
+    command_descriptions = []
+    key_commands = ["/frago.run", "/frago.do", "/frago.recipe", "/frago.test"]
+
+    for cmd in key_commands:
+        if cmd in commands:
+            desc = commands[cmd]
+            command_descriptions.append(f"- {cmd}: {desc}")
+
+    commands_section = "\n".join(command_descriptions) if command_descriptions else "（无可用命令）"
+
+    return f"""# Frago Agent
+
+你是一个智能自动化 agent。根据用户的任务意图，选择合适的执行模式。
+
+## 可用的 Skill
+
+{commands_section}
+
+## 执行策略
+
+根据用户意图，使用 Skill 工具调用合适的 skill：
+- **探索/调研/了解** → frago.run
+- **执行/完成/做** → frago.do
+- **创建配方/自动化** → frago.recipe
+- **测试/验证配方** → frago.test
+
+如果任务简单明确，也可以直接使用其他工具完成，无需调用上述 skill。
+
+---
+
+## 用户任务
+
+{user_prompt}
+"""
+
+
+# =============================================================================
 # CLI 命令
 # =============================================================================
 
@@ -547,25 +510,20 @@ def agent(
     resume: Optional[str]
 ):
     """
-    智能 Agent：分析意图并路由到对应的 frago 子命令
+    智能 Agent：根据用户意图自动选择执行模式
 
-    两阶段执行流程：
-    1. 分析用户提示词，判断应调用哪个 /frago.* 命令
-    2. 使用对应命令执行实际任务
+    agent 会根据任务意图判断使用哪种模式：
+    - 探索/调研 → /frago.run
+    - 执行任务 → /frago.do
+    - 创建配方 → /frago.recipe
+    - 测试配方 → /frago.test
 
     \b
     示例:
       frago agent 帮我在 Upwork 上找 Python 工作
       frago agent 调研 YouTube 字幕提取接口
       frago agent 写一个配方提取 Twitter 评论
-      frago agent --direct 列出当前目录     # 跳过路由，直接执行
-
-    \b
-    可用的子命令路由:
-      /frago.run    - 探索调研、信息收集
-      /frago.exec   - 一次性任务执行
-      /frago.recipe - 创建自动化配方
-      /frago.test   - 测试验证配方
+      frago agent --direct 列出当前目录     # 跳过模式判断，直接执行
 
     \b
     可用模型 (--model):
@@ -629,97 +587,24 @@ def agent(
     skip_permissions = not ask
 
     # =========================================================================
-    # 两阶段执行流程
+    # 单阶段执行：直接让 agent 判断并执行
     # =========================================================================
 
-    if direct or resume:
-        # 直接模式或继续会话模式：跳过路由，直接执行用户提示词
-        if resume:
-            click.echo(f"\n[Resume] 在会话 {resume[:8]}... 中继续: {prompt_text}")
-        else:
-            click.echo(f"\n[Direct] 直接执行: {prompt_text}")
-        target_command = None
-        final_prompt = prompt_text
+    if resume:
+        click.echo(f"\n[Resume] 在会话 {resume[:8]}... 中继续: {prompt_text}")
+        execution_prompt = prompt_text
+    elif direct:
+        click.echo(f"\n[Direct] 直接执行: {prompt_text}")
+        execution_prompt = prompt_text
     else:
-        # 阶段一：路由分析
-        click.echo(f"\n[阶段一] 分析意图: {prompt_text}")
+        click.echo(f"\n[执行] {prompt_text}")
 
-        # 展开 /frago.dev.agent slash command
-        # 注意：claude -p 模式不支持 slash commands，必须手动展开
-        ok, routing_template, error = expand_slash_command("/frago.dev.agent", prompt_text)
-        if not ok:
-            click.echo(f"✗ 无法加载路由命令: {error}", err=True)
-            click.echo("  降级为直接执行模式...")
-            target_command = None
-            final_prompt = prompt_text
-        else:
-            routing_prompt = routing_template
+        if dry_run:
+            click.echo("[Dry Run] 跳过实际执行")
+            return
 
-            if dry_run:
-                click.echo(f"[Dry Run] 路由提示词长度: {len(routing_prompt)} 字符")
-                click.echo("[Dry Run] 跳过实际执行")
-                return
-
-            click.echo("  正在分析...")
-
-            ok, output, parsed = run_claude_command(
-                routing_prompt,
-                env=env,
-                output_format="json",
-                timeout=60,
-                model=model or "haiku",  # 路由分析用快速模型
-                skip_permissions=skip_permissions
-            )
-
-            if not ok:
-                click.echo(f"✗ 路由分析失败: {output}", err=True)
-                return
-
-            # 从 JSON 响应中提取 result
-            result_text = ""
-            if parsed and parsed.get("result"):
-                result_text = parsed.get("result", "")
-            else:
-                result_text = output
-
-            # 解析路由结果
-            routing = parse_routing_response(result_text)
-
-            if not routing or "command" not in routing:
-                click.echo(f"✗ 无法解析路由结果", err=True)
-                click.echo(f"  原始响应: {result_text[:500]}", err=True)
-                # 降级：直接执行
-                click.echo("  降级为直接执行模式...")
-                target_command = None
-                final_prompt = prompt_text
-            else:
-                target_command = routing.get("command")
-                final_prompt = routing.get("prompt", prompt_text)
-                reason = routing.get("reason", "")
-
-                click.echo(f"  ✓ 路由到: {target_command}")
-                if reason:
-                    click.echo(f"  原因: {reason}")
-
-    # 阶段二：执行实际命令
-    if target_command:
-        click.echo(f"\n[阶段二] 执行: {target_command}")
-
-        # 展开目标 slash command
-        # 注意：claude -p 模式不支持 slash commands，必须手动展开
-        # 这里传空字符串，因为我们会在后面手动拼接用户提示词
-        ok, expanded_prompt, error = expand_slash_command(target_command, "")
-        if not ok:
-            click.echo(f"✗ 无法加载命令 {target_command}: {error}", err=True)
-            click.echo("  降级为直接执行用户提示词...")
-            execution_prompt = final_prompt
-        else:
-            # 拼接：展开的命令文档 + 用户原始提示词
-            execution_prompt = f"{expanded_prompt}\n\n---\n\n## 当前任务\n\n{final_prompt}"
-            click.echo(f"  ✓ 已展开命令 ({len(execution_prompt)} 字符)")
-    else:
-        click.echo(f"\n[执行] {final_prompt}")
-        execution_prompt = final_prompt
+        # 构建包含可用命令说明的 prompt，让 agent 自行判断并执行
+        execution_prompt = _build_agent_prompt(prompt_text)
 
     # 构建最终命令 - 使用 stream-json 实现实时输出
     # 注意：stream-json 必须配合 --verbose 使用
