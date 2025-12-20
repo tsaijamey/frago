@@ -117,7 +117,8 @@ class RecipeRunner:
             # 返回成功结果
             return {
                 "success": True,
-                "data": result_data,
+                "data": result_data.get("data"),
+                "stderr": result_data.get("stderr", ""),
                 "error": None,
                 "execution_time": execution_time,
                 "recipe_name": name,
@@ -243,10 +244,12 @@ class RecipeRunner:
             try:
                 # exec-js 的输出可能是纯文本或 JSON
                 # 尝试解析为 JSON，失败则作为文本返回
-                return json.loads(result.stdout)
+                data = json.loads(result.stdout)
             except json.JSONDecodeError:
                 # 返回文本结果
-                return {"result": result.stdout.strip()}
+                data = {"result": result.stdout.strip()}
+
+            return {"data": data, "stderr": result.stderr}
 
         except subprocess.TimeoutExpired:
             raise RecipeExecutionError(
@@ -328,7 +331,7 @@ class RecipeRunner:
 
             # 解析 JSON 输出
             try:
-                return json.loads(result.stdout)
+                data = json.loads(result.stdout)
             except json.JSONDecodeError as e:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
@@ -336,6 +339,8 @@ class RecipeRunner:
                     exit_code=-1,
                     stderr=f"JSON 解析失败: {e}\n输出: {result.stdout[:200]}"
                 )
+
+            return {"data": data, "stderr": result.stderr}
 
         except subprocess.TimeoutExpired:
             raise RecipeExecutionError(
@@ -410,7 +415,7 @@ class RecipeRunner:
 
             # 解析 JSON 输出
             try:
-                return json.loads(result.stdout)
+                data = json.loads(result.stdout)
             except json.JSONDecodeError as e:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
@@ -418,6 +423,8 @@ class RecipeRunner:
                     exit_code=-1,
                     stderr=f"JSON 解析失败: {e}\n输出: {result.stdout[:200]}"
                 )
+
+            return {"data": data, "stderr": result.stderr}
 
         except subprocess.TimeoutExpired:
             raise RecipeExecutionError(

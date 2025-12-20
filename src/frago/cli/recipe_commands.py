@@ -338,6 +338,13 @@ def run_recipe(
             source=source
         )
         
+        # 输出 stderr（脚本执行过程中的日志）
+        stderr_output = result.get('stderr', '')
+        if stderr_output:
+            click.echo("--- Recipe Logs ---", err=True)
+            click.echo(stderr_output, err=True)
+            click.echo("--- End Logs ---", err=True)
+
         # 处理输出
         if output_target == 'stdout':
             OutputHandler.handle(result, 'stdout')
