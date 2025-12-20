@@ -41,14 +41,16 @@ BELIEVE_ONLY: natural science, core tech, human consensus, self-collected info
 
 if START:
     use ENV_SENSE (via Task tool, subagent_type=Explore):
-        run `frago --help`
+        run `frago skill list | grep -E "keyword1|keyword2"`
         run `frago recipe list | grep -E "keyword1|keyword2"`
         run `frago run list | grep -E "keyword1|keyword2"`
+        if SKILL_MATCH:
+            read matched skill for guidance before action
         <info>
         WHY:
+        - discover applicable skills (get best practices first)
         - discover reusable recipes (avoid re-exploring)
         - check existing research results (avoid duplicate work)
-        - assess task feasibility
         </info>
 
 if EXISTING_PROJECT_FOUND:

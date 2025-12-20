@@ -23,8 +23,11 @@ PRINCIPLE: runs without error ≠ correct
 
 if START:
     use LOCATE:
+        run `frago skill list | grep -E "keyword"`
         run `frago recipe list`
         run `frago recipe info <name>`
+        if SKILL_MATCH:
+            read skill for testing guidance
 
 if FOUND:
     use VALIDATE_STRUCTURE:
