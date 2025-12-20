@@ -29,8 +29,14 @@ OUTPUT: Result + Metadata (.metadata.json)
 <faith_check>
 REJECT: pretrained knowledge (except natural science, core tech)
 TRUST: browser-collected, user-provided
-FALLBACK: WebSearch fails => browser google.com / bing.com
 BELIEVE_ONLY: natural science, core tech, human consensus, self-collected info
+
+⚠️ SEARCH RULE (CRITICAL):
+    if GUI_AVAILABLE (desktop mode):
+        WebSearch => FORBIDDEN (causes system crash!)
+        MUST USE: frago chrome navigate "https://google.com/search?q=..."
+    if HEADLESS (no GUI):
+        WebSearch => allowed as fallback
 </faith_check>
 
 if START:

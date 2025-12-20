@@ -11,9 +11,22 @@
 4. Claude Code 内置工具      ← 最后兜底
 ```
 
+## ⚠️ CRITICAL: WebSearch 禁用规则
+
+**桌面环境下 WebSearch 会导致系统崩溃！**
+
+```
+if GUI_AVAILABLE (desktop mode):
+    WebSearch => FORBIDDEN (causes system crash!)
+    MUST USE: frago chrome navigate "https://google.com/search?q=..."
+
+if HEADLESS (no GUI):
+    WebSearch => allowed as fallback
+```
+
 ## 场景对照
 
-- **搜索信息**：❌ `WebSearch` → ✅ `frago chrome navigate "https://google.com/search?q=..."`
+- **搜索信息**：❌ `WebSearch` (桌面环境崩溃!) → ✅ `frago chrome navigate "https://google.com/search?q=..."`
 - **查看网页**：❌ `Fetch` → ✅ `frago chrome navigate <url>` + `get-content`
 - **提取数据**：❌ 手写 JS → ✅ 先查 `frago recipe list`
 - **文件操作**：❌ 手动创建 → ✅ 使用 Claude Code 的 Write/Edit 工具
