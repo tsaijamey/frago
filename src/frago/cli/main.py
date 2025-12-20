@@ -17,6 +17,7 @@ from .commands import (
 )
 from .init_command import init  # 新的环境初始化命令
 from .recipe_commands import recipe_group
+from .skill_commands import skill_group
 from .run_commands import run_group
 from .dev_commands import dev_group
 from .usegit_commands import usegit_group
@@ -32,7 +33,7 @@ from .agent_friendly import AgentFriendlyGroup
 
 # 命令分组定义（按用户角色）
 COMMAND_GROUPS = OrderedDict([
-    ("日常使用", ["chrome", "recipe", "run", "view"]),
+    ("日常使用", ["chrome", "recipe", "skill", "run", "view"]),
     ("会话与智能", ["session", "agent", "agent-status"]),
     ("环境管理", ["init", "status", "sync", "update"]),
     ("开发者", ["dev", "init-dirs", "gui-deps"]),
@@ -284,6 +285,9 @@ cli.add_command(chrome_group)  # Chrome CDP 命令组
 
 # Recipe 管理命令组
 cli.add_command(recipe_group)
+
+# Skill 管理命令组
+cli.add_command(skill_group)
 
 # Run 命令系统
 cli.add_command(run_group)
