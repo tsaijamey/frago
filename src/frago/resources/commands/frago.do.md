@@ -126,7 +126,7 @@ TOOL_PRIORITY:
     => rules/TOOL_PRIORITY.md
 
 WORKSPACE_ISOLATION:
-    all outputs in projects/<id>/
+    all outputs in ~/.frago/projects/<id>/
     => rules/WORKSPACE_RULES.md
 
 SINGLE_CONTEXT:
@@ -204,5 +204,5 @@ every 5 steps output:
     - outputs/applied_jobs.json
     - screenshots/*.png
 
-    Logs: projects/<id>/logs/execution.jsonl
+    Logs: ~/.frago/projects/<id>/logs/execution.jsonl
 </completion_summary>

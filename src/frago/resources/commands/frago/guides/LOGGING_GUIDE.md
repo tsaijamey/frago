@@ -108,7 +108,7 @@ frago run log \
 
 ```bash
 # 保存脚本
-cat > projects/<project_id>/scripts/filter_jobs.py <<EOF
+cat > ~/.frago/projects/<id>/scripts/filter_jobs.py <<EOF
 import json
 jobs = json.load(open('outputs/raw_jobs.json'))
 filtered = [j for j in jobs if j['rate'] > 50]
@@ -116,8 +116,8 @@ json.dump(filtered, open('outputs/filtered_jobs.json', 'w'))
 print(f"筛选出 {len(filtered)} 个高薪职位")
 EOF
 
-# 执行脚本（注意：在项目根目录执行，使用完整相对路径）
-uv run python projects/<project_id>/scripts/filter_jobs.py
+# 执行脚本
+uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py
 
 # 记录日志
 frago run log \
@@ -128,7 +128,7 @@ frago run log \
   --data '{
     "file": "scripts/filter_jobs.py",
     "language": "python",
-    "command": "uv run python projects/<project_id>/scripts/filter_jobs.py",
+    "command": "uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py",
     "exit_code": 0,
     "output": "筛选出 8 个高薪职位",
     "result_file": "outputs/filtered_jobs.json"
@@ -274,11 +274,11 @@ data = {
 
 # ✅ 正确做法
 # 1. 保存脚本
-with open('projects/<project_id>/scripts/filter_jobs.py', 'w') as f:
+with open('~/.frago/projects/<id>/scripts/filter_jobs.py', 'w') as f:
     f.write(script_content)
 
 # 2. 执行脚本
-uv run python projects/<project_id>/scripts/filter_jobs.py
+uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py
 
 # 3. 记录日志
 data = {

@@ -2,49 +2,12 @@
 
 适用于：`/frago.run`、`/frago.do`
 
-## 一、确定 projects 目录位置
+## 一、projects 目录
 
-**在开始任务前，必须先确定 `projects/` 目录的位置。**
-
-### 检查流程
+所有 run 实例存放在 `~/.frago/projects/`，这是固定位置。
 
 ```bash
-# 步骤1: 检查 ~/.frago/config.yaml 是否指定了工作目录
-cat ~/.frago/config.yaml 2>/dev/null | grep -E "workspace|projects"
-
-# 步骤2: 如果没有配置，检查当前目录下是否有 projects 目录
-pwd
-ls -la projects/ 2>/dev/null
-```
-
-### 三种情况处理
-
-| 情况 | 处理方式 |
-|------|---------|
-| `~/.frago/config.yaml` 指定了 `workspace` | 使用配置中的路径 |
-| 当前目录下存在 `projects/` | 使用 `$(pwd)/projects/` |
-| 都没有 | **使用 AskUserQuestion 询问用户** |
-
-### 询问用户（当目录不存在时）
-
-```markdown
-问题：未找到 projects 目录，请选择如何处理：
-选项：
-- 在当前目录创建 - 在 $(pwd)/projects/ 创建新目录
-- 指定已有目录 - 输入已有的 projects 目录路径
-- 使用 ~/.frago/projects - 在用户目录下创建全局工作空间
-```
-
-### 确认后记录
-
-确定 projects 目录后，后续所有路径都基于此目录：
-
-```bash
-# 示例：确定 projects 目录为 /Users/chagee/Repos/AuViMa/projects
-PROJECTS_DIR="/Users/chagee/Repos/AuViMa/projects"
-
-# 后续使用
-frago run init "my-task"  # 会在 $PROJECTS_DIR/my-task/ 创建
+frago run init "my-task"  # 创建 ~/.frago/projects/<id>/
 ```
 
 ---
@@ -54,7 +17,7 @@ frago run init "my-task"  # 会在 $PROJECTS_DIR/my-task/ 创建
 ### 所有产出物必须放在 Project 工作空间内
 
 ```
-projects/<project_id>/       # Project 工作空间根目录
+~/.frago/projects/<id>/      # run 实例工作空间根目录
 ├── project.json             # 元数据
 ├── logs/
 │   └── execution.jsonl      # 执行日志
@@ -75,7 +38,7 @@ projects/<project_id>/       # Project 工作空间根目录
 
 ### 正确做法
 
-- ✅ 所有文件使用 `projects/<project_id>/` 下的路径
+- ✅ 所有文件使用 `~/.frago/projects/<id>/` 下的路径
 - ✅ 调用配方时明确指定 `output_dir` 为工作空间内的目录
 - ✅ 临时文件放在 `temp/`，任务完成后清理
 
@@ -83,8 +46,8 @@ projects/<project_id>/       # Project 工作空间根目录
 # ✅ 正确：所有输出都在工作空间内
 frago recipe run video_produce_from_script \
   --params '{
-    "script_file": "projects/<project_id>/outputs/video_script.json",
-    "output_dir": "projects/<project_id>/outputs/video"
+    "script_file": "~/.frago/projects/<id>/outputs/video_script.json",
+    "output_dir": "~/.frago/projects/<id>/outputs/video"
   }'
 
 # ❌ 错误：使用外部目录
@@ -142,23 +105,23 @@ or 'frago run set-context upwork-python-job-apply' to continue it.
 
 ```bash
 # ✅ 正确：使用绝对路径执行脚本
-uv run python projects/<project_id>/scripts/filter_jobs.py
+uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py
 
-# ✅ 正确：使用相对路径读取文件
-cat projects/<project_id>/outputs/result.json
+# ✅ 正确：使用绝对路径读取文件
+cat ~/.frago/projects/<id>/outputs/result.json
 
 # ✅ 正确：使用 find 查看文件结构
-find projects/<project_id> -type f -name "*.md" | sort
+find ~/.frago/projects/<id> -type f -name "*.md" | sort
 ```
 
 ### 错误做法
 
 ```bash
 # ❌ 错误：不要使用 cd
-cd projects/<project_id> && uv run python scripts/filter_jobs.py
+cd ~/.frago/projects/<id> && uv run python scripts/filter_jobs.py
 
 # ❌ 错误：切换目录后 frago 会失效
-cd projects/<project_id>
+cd ~/.frago/projects/<id>
 frago run log ...  # 这会报错！
 ```
 
@@ -172,13 +135,13 @@ frago run log \
   --data '{"file": "scripts/filter_jobs.py", "result_file": "outputs/filtered_jobs.json"}'
 
 # 但执行脚本时，使用完整相对路径或绝对路径
-uv run python projects/<project_id>/scripts/filter_jobs.py
+uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py
 ```
 
 ---
 
 ## 五、注意事项
 
-- **上下文优先级**：环境变量 `FRAGO_CURRENT_RUN` > 配置文件 `.frago/current_project`
-- **并发安全**：同一时间只在一个 project 中工作
-- **日志格式版本**：当前为 `schema_version: "1.0"`
+- **上下文存储**：`~/.frago/current_run`
+- **上下文优先级**：环境变量 `FRAGO_CURRENT_RUN` > 配置文件
+- **并发安全**：同一时间只在一个 run 实例中工作

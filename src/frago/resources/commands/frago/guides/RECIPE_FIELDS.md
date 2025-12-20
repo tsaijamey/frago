@@ -61,12 +61,10 @@ env:
 
 ### 环境变量加载优先级（高到低）
 
-1. CLI `--env KEY=VALUE` 参数
-2. Workflow 上下文共享变量
-3. 项目级 `.frago/.env`
-4. **用户级 `~/.frago/.env`**
-5. 系统环境变量
-6. 配方定义的 `default` 值
+1. Workflow 上下文共享变量
+2. **`~/.frago/.env`**
+3. 系统环境变量
+4. 配方定义的 `default` 值
 
 ### ~/.frago/.env 配置
 
@@ -81,7 +79,7 @@ ANTHROPIC_API_KEY=sk-ant-xxx
 DEFAULT_MODEL=gpt-4
 ```
 
-配方运行时会自动加载这些变量，无需每次通过 `--env` 传递。
+配方运行时会自动加载这些变量。
 
 ## Python 配方依赖声明（PEP 723）
 
@@ -89,10 +87,9 @@ Python 配方使用 `uv run` 执行，支持 **PEP 723 内联依赖声明**。
 
 ### 格式
 
-在 `recipe.py` 文件头部添加：
+在 `recipe.py` 文件头部添加（无需 shebang）：
 
 ```python
-#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.9"
 # dependencies = ["package1", "package2>=1.0"]
@@ -102,7 +99,6 @@ Python 配方使用 `uv run` 执行，支持 **PEP 723 内联依赖声明**。
 ### 示例
 
 ```python
-#!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.9"
 # dependencies = ["edge-tts", "httpx>=0.24"]

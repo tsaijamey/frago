@@ -54,7 +54,7 @@ if START:
 if EXISTING_PROJECT_FOUND:
     use REUSE:
         run `frago run info <project_id>`
-        run `cat projects/<id>/logs/execution.jsonl | jq`
+        run `cat ~/.frago/projects/<id>/logs/execution.jsonl | jq`
 
 if TASK_RECEIVED:
     use DEFINE_GOAL:
@@ -132,7 +132,7 @@ TOOL_PRIORITY:
     => rules/TOOL_PRIORITY.md
 
 WORKSPACE_ISOLATION:
-    all outputs in projects/<id>/
+    all outputs in ~/.frago/projects/<id>/
     => rules/WORKSPACE_RULES.md
 
 SINGLE_CONTEXT:

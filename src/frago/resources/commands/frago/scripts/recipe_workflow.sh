@@ -30,23 +30,22 @@ frago chrome highlight '[aria-label="提交"]'
 frago chrome exec-js "document.querySelector('[aria-label=\"提交\"]')?.textContent" --return-value
 
 # === 4. Atomic Recipe 目录结构 ===
-# examples/atomic/chrome/<recipe_name>/
+# ~/.frago/recipes/atomic/chrome/<recipe_name>/   (chrome-js)
+# ~/.frago/recipes/atomic/system/<recipe_name>/   (python/shell)
 # ├── recipe.md      # 元数据 + 文档
-# └── recipe.js      # 执行脚本
+# └── recipe.js/py   # 执行脚本
 
 # === 5. Workflow Recipe 目录结构 ===
-# examples/workflows/<workflow_name>/
+# ~/.frago/recipes/workflows/<workflow_name>/
 # ├── recipe.md      # 元数据 + 文档
 # ├── recipe.py      # 执行脚本
 # └── examples/      # 示例数据（可选）
 
-# === 6. 执行配方测试 ===
-# 使用 Recipe 系统
+# === 6. 执行配方 ===
+# ✅ 唯一正确方式
 frago recipe run <recipe_name>
 frago recipe run <recipe_name> --output-file result.json
-
-# 直接执行 chrome-js 配方
-frago chrome exec-js examples/atomic/chrome/<recipe_name>/recipe.js --return-value
+frago recipe run <recipe_name> --params '{"key": "value"}'
 
 # === 7. 更新配方 ===
 # 1. 查看配方位置

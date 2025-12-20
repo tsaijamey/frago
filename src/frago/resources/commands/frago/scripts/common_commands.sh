@@ -26,8 +26,8 @@ frago recipe list --format json  # AI 格式
 # 查看配方详情
 frago recipe info <recipe_name>
 
-# 搜索相关项目记录
-rg -l "关键词" projects/
+# 搜索相关 run 记录
+rg -l "关键词" ~/.frago/projects/
 
 # === 浏览器操作 ===
 # 导航

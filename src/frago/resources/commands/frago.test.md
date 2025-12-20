@@ -48,8 +48,6 @@ if UNDERSTOOD:
 if ENV_OK:
     use EXECUTE:
         run `frago recipe run <name> --output-file result.json`
-        # or traditional:
-        run `frago chrome exec-js examples/atomic/chrome/<name>/recipe.js --return-value`
 
 if EXECUTED:
     use VERIFY_DATA:
@@ -105,7 +103,6 @@ run `frago chrome get-title`
 # execute
 run `frago recipe run <name>`
 run `frago recipe run <name> --output-file result.json`
-run `frago chrome exec-js examples/atomic/chrome/<name>/recipe.js --return-value`
 </commands>
 
 <test_layers>

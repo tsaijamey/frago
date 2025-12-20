@@ -27,7 +27,7 @@ frago recipe list --format json
 
 ### 4. 过程存储
 
-所有产生的文件/记录都必须放在工作空间里（`projects/<project_id>/`）。
+所有产生的文件/记录都必须放在工作空间里（`~/.frago/projects/<id>/`）。
 
 ### 5. 工具驱动
 

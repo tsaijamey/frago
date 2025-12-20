@@ -25,13 +25,14 @@ OUTPUT: Reusable Recipe (Atomic or Workflow)
 <types>
 Atomic:
     use: single operation, data extraction
-    runtime: chrome-js / python / shell
-    dir: examples/atomic/
+    SUPPORTED DIRS (ONLY these two):
+        ~/.frago/recipes/atomic/chrome/   => runtime: chrome-js
+        ~/.frago/recipes/atomic/system/   => runtime: python / shell
 
 Workflow:
     use: orchestrate multiple recipes
     runtime: python
-    dir: examples/workflows/
+    dir: ~/.frago/recipes/workflows/
 </types>
 
 if START:
@@ -64,19 +65,48 @@ if EXPLORED:
 
 if READY:
     use GENERATE_FILES:
-        Atomic:
-            examples/atomic/chrome/<name>/
+        Atomic (chrome):
+            ~/.frago/recipes/atomic/chrome/<name>/
                 recipe.md (metadata)
                 recipe.js (script)
 
+        Atomic (system):
+            ~/.frago/recipes/atomic/system/<name>/
+                recipe.md (metadata)
+                recipe.py or recipe.sh (script)
+
         Workflow:
-            examples/workflows/<name>/
+            ~/.frago/recipes/workflows/<name>/
                 recipe.md (metadata)
                 recipe.py (script)
                 examples/ (optional)
 
     use VALIDATE:
         run `frago recipe validate <dir>`
+
+<env_vars>
+if recipe needs env vars (API keys, secrets):
+    1. declare in recipe.md frontmatter:
+       ```yaml
+       env:
+         API_KEY:
+           required: true
+           description: "API key for service X"
+         TIMEOUT:
+           default: "30"
+       ```
+    2. add actual values to ~/.frago/.env (auto-loaded by frago recipe run)
+</env_vars>
+
+<forbidden>
+❌ chmod +x on recipe scripts
+❌ shebang lines in recipe.py/recipe.js
+❌ direct execution: `uv run recipe.py`, `python recipe.py`, `node recipe.js`
+❌ CLI env override: `frago recipe run <name> -e KEY=VALUE`
+❌ hardcode secrets in recipe scripts
+
+✅ ONLY USE: `frago recipe run <name> --params '{...}'`
+</forbidden>
 
 <commands>
 /frago.recipe create "<desc>"           => create Atomic

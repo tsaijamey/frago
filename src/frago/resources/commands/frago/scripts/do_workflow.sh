@@ -29,7 +29,7 @@ frago chrome exec-js "Array.from(document.querySelectorAll('.job-tile')).map(el 
 }))" --return-value
 
 # === 4. 使用 Recipe 加速重复操作 ===
-frago recipe run upwork_extract_job_list --params '{"keyword": "Python"}' --output-file projects/upwork-python-job-apply/outputs/jobs.json
+frago recipe run upwork_extract_job_list --params '{"keyword": "Python"}' --output-file ~/.frago/projects/upwork-python-job-apply/outputs/jobs.json
 
 # 记录 Recipe 执行
 frago run log \
@@ -41,7 +41,7 @@ frago run log \
 
 # === 5. 数据处理（脚本文件）===
 # 创建筛选脚本
-cat > projects/upwork-python-job-apply/scripts/filter_jobs.py <<'EOF'
+cat > ~/.frago/projects/upwork-python-job-apply/scripts/filter_jobs.py <<'EOF'
 import json
 jobs = json.load(open('outputs/jobs.json'))
 filtered = [j for j in jobs if j.get('rate', 0) > 50]
@@ -49,9 +49,8 @@ json.dump(filtered, open('outputs/filtered_jobs.json', 'w'), indent=2)
 print(f"筛选出 {len(filtered)} 个高薪职位")
 EOF
 
-# 执行脚本
-cd projects/upwork-python-job-apply && uv run python scripts/filter_jobs.py
-cd -  # 返回项目根目录
+# 执行脚本（使用绝对路径，不要 cd）
+uv run python ~/.frago/projects/upwork-python-job-apply/scripts/filter_jobs.py
 
 # 记录脚本执行
 frago run log \
