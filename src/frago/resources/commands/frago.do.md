@@ -9,7 +9,7 @@ One-time task execution, focused on completing user's specific goals.
 </info>
 
 <ref_docs>
-LOAD_BEFORE_START: parallel Read all
+LOAD_BEFORE_START: use Task tool (subagent_type=Explore) to parallel read:
 ~/.claude/commands/frago/rules/EXECUTION_PRINCIPLES.md
 ~/.claude/commands/frago/rules/NAVIGATION_RULES.md
 ~/.claude/commands/frago/rules/SCREENSHOT_RULES.md
@@ -34,7 +34,7 @@ BELIEVE_ONLY: natural science, core tech, human consensus, self-collected info
 </faith_check>
 
 if START:
-    use ENV_SENSE:
+    use ENV_SENSE (via Task tool, subagent_type=Explore):
         run `frago --help`
         run `frago recipe list | grep -E "keyword1|keyword2"`
         run `frago run list | grep -E "keyword1|keyword2"`
@@ -75,9 +75,9 @@ if TASK_RECEIVED:
 
 if READY:
     use PROJECT_INIT:
-        generate PROJECT_ID: 3-5 word slug
-            "在Upwork申请Python职位" => upwork-python-job-apply
-            "批量下载YouTube字幕" => youtube-batch-download-subtitles
+        generate PROJECT_ID: English slug, 3-10 words, hyphen-separated
+            MUST: use English words only (no Chinese, no pinyin)
+            examples: "upwork-python-job-apply", "youtube-batch-download-subtitles"
         run `frago run init "<desc>"`
         run `frago run set-context <id>`
 

@@ -9,7 +9,7 @@ Test and validate existing recipes.
 </info>
 
 <ref_docs>
-LOAD_BEFORE_START: parallel Read all
+LOAD_BEFORE_START: use Task tool (subagent_type=Explore) to parallel read:
 ~/.claude/commands/frago/rules/SCREENSHOT_RULES.md
 ~/.claude/commands/frago/guides/RECIPE_FIELDS.md
 ~/.claude/commands/frago/scripts/common_commands.sh

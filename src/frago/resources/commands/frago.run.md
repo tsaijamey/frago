@@ -9,7 +9,7 @@ Exploration and research, gathering enough info to create Recipes.
 </info>
 
 <ref_docs>
-LOAD_BEFORE_START: parallel Read all
+LOAD_BEFORE_START: use Task tool (subagent_type=Explore) to parallel read:
 ~/.claude/commands/frago/rules/EXECUTION_PRINCIPLES.md
 ~/.claude/commands/frago/rules/NAVIGATION_RULES.md
 ~/.claude/commands/frago/rules/SCREENSHOT_RULES.md
@@ -34,7 +34,7 @@ BELIEVE_ONLY: natural science, core tech, human consensus, self-collected info
 </faith_check>
 
 if START:
-    use ENV_SENSE:
+    use ENV_SENSE (via Task tool, subagent_type=Explore):
         run `frago --help`
         run `frago recipe list | grep -E "keyword1|keyword2"`
         run `frago run list | grep -E "keyword1|keyword2"`
@@ -69,9 +69,9 @@ if TASK_RECEIVED:
 
 if READY:
     use PROJECT_INIT:
-        generate PROJECT_ID: 3-5 word slug
-            "调研nano banana pro图片接口" => nano-banana-pro-image-api-research
-            "在Upwork搜索Python职位" => upwork-python-jobs-search
+        generate PROJECT_ID: English slug, 3-10 words, hyphen-separated
+            MUST: use English words only (no Chinese, no pinyin)
+            examples: "nano-banana-pro-image-api-research", "find-twitter-timeline-high-views-content"
         run `frago run init "<desc>"`
         run `frago run set-context <id>`
 
