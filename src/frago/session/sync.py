@@ -58,7 +58,38 @@ def encode_project_path(project_path: str) -> str:
     Returns:
         编码后的目录名
     """
-    return project_path.replace("/", "-")
+    # 1. 规范化路径分隔符（Windows \ -> /）
+    normalized = project_path.replace("\\", "/")
+
+    # 2. 处理 Windows 驱动器盘符（C: -> C-）
+    # Claude 把 : 也替换成 -，所以 C:/Users -> C-/Users
+    if len(normalized) >= 2 and normalized[1] == ":":
+        normalized = normalized[0] + "-" + normalized[2:]
+
+    # 3. Claude Code 使用连字符编码路径
+    # C-/Users/yammi -> C--Users-yammi
+    return normalized.replace("/", "-")
+
+
+def decode_project_path(encoded: str) -> str:
+    """将 Claude Code 目录名解码为项目路径
+
+    Args:
+        encoded: 编码后的目录名（如 C--Users-yammi）
+
+    Returns:
+        项目绝对路径（如 C:/Users/yammi）
+    """
+    # 检测 Windows 路径：以单个字母开头后跟两个连字符
+    # C--Users-yammi -> C:/Users/yammi
+    if len(encoded) >= 3 and encoded[0].isalpha() and encoded[1:3] == "--":
+        # Windows 路径：C--Users -> C:/Users
+        drive = encoded[0]
+        rest = encoded[3:].replace("-", "/")
+        return f"{drive}:/{rest}"
+    else:
+        # Unix 路径：-home-user -> /home/user
+        return encoded.replace("-", "/")
 
 
 def is_main_session_file(filename: str) -> bool:
@@ -382,10 +413,8 @@ def sync_all_projects(force: bool = False) -> SyncResult:
         if not project_dir.is_dir():
             continue
 
-        # 解码项目路径
-        project_path = project_dir.name.replace("-", "/")
-        if not project_path.startswith("/"):
-            project_path = "/" + project_path
+        # 解码项目路径（支持 Windows 和 Unix）
+        project_path = decode_project_path(project_dir.name)
 
         # 同步该项目
         project_result = sync_project_sessions(project_path, force)

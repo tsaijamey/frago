@@ -80,13 +80,14 @@ def encode_project_path(project_path: str) -> str:
     # 1. 规范化路径分隔符（Windows \ -> /）
     normalized = project_path.replace("\\", "/")
 
-    # 2. 处理 Windows 驱动器盘符（C: -> C）
+    # 2. 处理 Windows 驱动器盘符（C: -> C-）
+    # Claude 把 : 也替换成 -，所以 C:/Users -> C-/Users
     if len(normalized) >= 2 and normalized[1] == ":":
-        normalized = normalized[0] + normalized[2:]
+        normalized = normalized[0] + "-" + normalized[2:]
 
     # 3. Claude Code 使用连字符编码路径
     # /home/yammi/repos/Frago -> -home-yammi-repos-Frago
-    # C/Users/yammi/repos/Frago -> -C-Users-yammi-repos-Frago
+    # C-/Users/yammi -> C--Users-yammi
     return normalized.replace("/", "-")
 
 
