@@ -407,7 +407,13 @@ def _build_agent_prompt(user_prompt: str) -> str:
 # =============================================================================
 
 @click.command("agent")
-@click.argument("prompt", nargs=-1, required=True)
+@click.argument("prompt", nargs=-1, required=False)
+@click.option(
+    "--prompt-file",
+    type=click.File('r', encoding='utf-8'),
+    default=None,
+    help="从文件读取 prompt（使用 '-' 表示 stdin）"
+)
 @click.option(
     "--model",
     type=str,
@@ -468,6 +474,7 @@ def _build_agent_prompt(user_prompt: str) -> str:
 )
 def agent(
     prompt: tuple,
+    prompt_file,
     model: Optional[str],
     timeout: int,
     use_ccr: bool,
@@ -500,8 +507,18 @@ def agent(
     可用模型 (--model):
       sonnet, opus, haiku 或完整模型名
     """
-    # 将多个参数拼接成完整提示词
-    prompt_text = " ".join(prompt)
+    # 确定 prompt 来源：--prompt-file 优先，否则使用命令行参数
+    if prompt_file:
+        prompt_text = prompt_file.read().strip()
+    elif prompt:
+        prompt_text = " ".join(prompt)
+    else:
+        click.echo("错误: 请提供 prompt（命令行参数或 --prompt-file）", err=True)
+        sys.exit(1)
+
+    if not prompt_text:
+        click.echo("错误: prompt 不能为空", err=True)
+        sys.exit(1)
 
     # Step 1: 检查 claude CLI 是否存在
     claude_path = find_claude_cli()
