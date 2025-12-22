@@ -556,6 +556,7 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
     # 后台运行逻辑（非 debug 模式，且不是已经后台运行的进程）
     # 使用 subprocess 启动新进程，让终端立即返回
     if not debug and not _background:
+        import shutil
         import subprocess
 
         system = platform.system()
@@ -574,10 +575,21 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
             # Unix: 使用 start_new_session 创建新会话，脱离终端
             popen_kwargs["start_new_session"] = True
 
-        subprocess.Popen(
-            [sys.executable, "-m", "frago.gui.app", "--background"],
-            **popen_kwargs,
-        )
+        # 优先使用 frago 入口点脚本（适用于 pip/uv tool install 安装的版本）
+        # 这样可以确保子进程有正确的 Python 环境和模块路径
+        frago_cmd = shutil.which("frago")
+        if frago_cmd:
+            # 使用入口点脚本启动，添加 --gui-background 内部标志
+            subprocess.Popen(
+                [frago_cmd, "--gui-background"],
+                **popen_kwargs,
+            )
+        else:
+            # 回退：开发模式下使用 python -m（uv run 环境下能工作）
+            subprocess.Popen(
+                [sys.executable, "-m", "frago.gui.app", "--background"],
+                **popen_kwargs,
+            )
         return  # 父进程直接返回
 
     # 在非调试模式下，抑制 GTK/GLib 的警告消息

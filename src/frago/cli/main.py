@@ -169,6 +169,12 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
     help='启动 GUI 应用模式'
 )
 @click.option(
+    '--gui-background',
+    is_flag=True,
+    hidden=True,
+    help='内部选项：以后台模式启动 GUI（供 subprocess 调用）'
+)
+@click.option(
     '--debug',
     is_flag=True,
     help='启用调试模式，输出详细日志'
@@ -222,7 +228,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
     help='指定目标tab的ID，用于在多tab环境下精确控制操作哪个页面'
 )
 @click.pass_context
-def cli(ctx, gui: bool, debug: bool, timeout: int, host: str, port: int,
+def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: str, port: int,
         proxy_host: Optional[str], proxy_port: Optional[int],
         proxy_username: Optional[str], proxy_password: Optional[str],
         no_proxy: bool, target_id: Optional[str]):
@@ -231,9 +237,9 @@ def cli(ctx, gui: bool, debug: bool, timeout: int, host: str, port: int,
 
     \b
     三大核心系统:
-      • Run System   持久化任务上下文，记录完整探索过程
-      • Recipe System 元数据驱动的可复用自动化脚本
-      • Chrome CDP    浏览器自动化底层能力
+      - Run System   持久化任务上下文，记录完整探索过程
+      - Recipe System 元数据驱动的可复用自动化脚本
+      - Chrome CDP    浏览器自动化底层能力
 
     \b
     GUI 模式:
@@ -251,10 +257,11 @@ def cli(ctx, gui: bool, debug: bool, timeout: int, host: str, port: int,
     ctx.obj['NO_PROXY'] = no_proxy
     ctx.obj['TARGET_ID'] = target_id
 
-    # Handle --gui option
-    if gui:
+    # Handle --gui or --gui-background option
+    if gui or gui_background:
         from frago.gui.app import start_gui
-        start_gui(debug=debug)
+        # gui_background 表示这是由 subprocess 启动的后台进程，直接运行 GUI
+        start_gui(debug=debug, _background=gui_background)
         return
 
     # If no subcommand is invoked, show help
