@@ -37,6 +37,7 @@ htmlcov/
 # ====================
 .DS_Store
 Thumbs.db
+nul
 
 # ====================
 # AI Tools
