@@ -507,9 +507,9 @@ export interface PyWebviewApi {
 
   /**
    * 选择已有仓库作为同步仓库
-   * @param ssh_url 仓库的 SSH URL
+   * @param repo_url 仓库 URL (SSH 或 HTTPS 格式，会自动转换为 HTTPS)
    */
-  select_existing_repo(ssh_url: string): Promise<SelectRepoResponse>;
+  select_existing_repo(repo_url: string): Promise<SelectRepoResponse>;
 
   // ============================================================
   // System API
