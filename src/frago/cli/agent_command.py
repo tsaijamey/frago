@@ -11,7 +11,6 @@ Frago Agent Command - 通过 Claude CLI 执行非交互式 AI 任务
 
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -21,37 +20,7 @@ from typing import List, Optional, Tuple
 
 import click
 
-
-# =============================================================================
-# Windows 平台适配
-# =============================================================================
-
-def prepare_command_for_windows(cmd: List[str]) -> List[str]:
-    """
-    为 Windows 平台调整命令格式
-
-    Windows 上通过 npm 安装的命令（如 claude）是 .CMD 批处理文件，
-    subprocess 直接执行会报 [WinError 2]。需要通过 cmd.exe /c 执行。
-
-    Args:
-        cmd: 原始命令列表
-
-    Returns:
-        适配后的命令列表
-    """
-    if platform.system() != "Windows":
-        return cmd
-
-    if not cmd:
-        return cmd
-
-    # 检查第一个命令的实际可执行文件
-    executable = shutil.which(cmd[0])
-    if executable and executable.lower().endswith(('.cmd', '.bat')):
-        # Windows 批处理文件需要通过 cmd.exe 执行
-        return ["cmd.exe", "/c"] + cmd
-
-    return cmd
+from frago.compat import prepare_command_for_windows
 
 
 # =============================================================================
@@ -380,16 +349,15 @@ def get_available_slash_commands() -> dict:
 
 def _build_agent_prompt(user_prompt: str) -> str:
     """
-    构建 agent 执行 prompt，包含可用命令说明
+    构建 agent 执行 prompt
 
-    让 agent 根据用户意图自行判断应该使用哪种模式执行任务，
-    而不是先返回 JSON 再二次调用。
+    从 ~/.claude/commands/frago.agent.md 读取模板，替换 $ARGUMENTS。
 
     Args:
         user_prompt: 用户原始提示词
 
     Returns:
-        包含命令说明和用户任务的完整 prompt
+        完整的 prompt
     """
     # 获取可用命令及其描述
     commands = get_available_slash_commands()
@@ -405,23 +373,22 @@ def _build_agent_prompt(user_prompt: str) -> str:
 
     commands_section = "\n".join(command_descriptions) if command_descriptions else "（无可用命令）"
 
-    return f"""# Frago Agent
+    commands_to_send = f"""# Frago Agent
 
 你是一个智能自动化 agent。根据用户的任务意图，选择合适的执行模式。
 
-## 可用的 Skill
+## 可用的 Slash Commands
 
 {commands_section}
 
 ## 执行策略
 
-根据用户意图，使用 Skill 工具调用合适的 skill：
-- **探索/调研/了解** → frago.run
-- **执行/完成/做** → frago.do
-- **创建配方/自动化** → frago.recipe
-- **测试/验证配方** → frago.test
-
-如果任务简单明确，也可以直接使用其他工具完成，无需调用上述 skill。
+根据用户意图，使用 Slash Commands 指令调用合适的 skill：
+- **探索/调研/了解** → /frago.run
+- **执行/完成/做** → /frago.do
+- **创建配方/自动化** → /frago.recipe
+- **测试/验证配方** → /frago.test
+如果任务简单明确，也可以直接使用其他工具完成，无需调用上述 Slash Commands。
 
 ---
 
@@ -429,6 +396,10 @@ def _build_agent_prompt(user_prompt: str) -> str:
 
 {user_prompt}
 """
+    # 打印 commands_to_send
+    # click.echo(commands_to_send)
+
+    return commands_to_send
 
 
 # =============================================================================
@@ -539,18 +510,18 @@ def agent(
         click.echo("请先安装 Claude Code: https://claude.ai/code", err=True)
         sys.exit(1)
 
-    click.echo(f"✓ Claude CLI: {claude_path}")
+    click.echo(f"[OK] Claude CLI: {claude_path}")
 
     # Step 2: 加载 frago 配置
     frago_config = load_frago_config()
     if frago_config:
         auth_method = frago_config.get("auth_method", "official")
         if auth_method == "official":
-            click.echo("✓ 认证方式: Claude CLI 原生")
+            click.echo("[OK] 认证方式: Claude CLI 原生")
         else:
-            click.echo("✓ 认证方式: 自定义 API 端点")
+            click.echo("[OK] 认证方式: 自定义 API 端点")
     else:
-        click.echo("⚠ 未找到 frago 配置，使用 Claude CLI 默认认证")
+        click.echo("[!] 未找到 frago 配置，使用 Claude CLI 默认认证")
         click.echo("  提示: 运行 'frago init' 进行初始化配置")
 
     # Step 3: 判断是否使用 CCR
@@ -573,12 +544,12 @@ def agent(
             click.echo("正在启动 CCR 服务...")
             subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True, env=env)
 
-        click.echo(f"✓ 使用 CCR: http://{host}:{port}")
+        click.echo(f"[OK] 使用 CCR: http://{host}:{port}")
 
     # Step 4: 权限确认（--yes 跳过确认）
     if not ask and not dry_run and not yes:
         click.echo()
-        click.echo("⚠ 将以 --dangerously-skip-permissions 模式运行")
+        click.echo("[!] 将以 --dangerously-skip-permissions 模式运行")
         click.echo("  Claude 将跳过所有权限确认，直接执行任何操作")
         if not click.confirm("确认继续？", default=False):
             click.echo("已取消")
@@ -599,12 +570,18 @@ def agent(
     else:
         click.echo(f"\n[执行] {prompt_text}")
 
+        # 构建包含可用命令说明的 prompt，让 agent 自行判断并执行
+        execution_prompt = _build_agent_prompt(prompt_text)
+
+        # 显示构建的 prompt
+        click.echo(f"\n[Prompt] 从 frago.agent.md 构建:")
+        click.echo("-" * 40)
+        click.echo(execution_prompt)
+        click.echo("-" * 40)
+
         if dry_run:
             click.echo("[Dry Run] 跳过实际执行")
             return
-
-        # 构建包含可用命令说明的 prompt，让 agent 自行判断并执行
-        execution_prompt = _build_agent_prompt(prompt_text)
 
     # 构建最终命令 - 使用 stream-json 实现实时输出
     # 注意：stream-json 必须配合 --verbose 使用
@@ -644,10 +621,10 @@ def agent(
         except ImportError as e:
             # session 模块可能未安装，静默忽略
             if not quiet:
-                click.echo(f"  ⚠ 会话监控未启用: {e}", err=True)
+                click.echo(f"  [!] 会话监控未启用: {e}", err=True)
         except Exception as e:
             if not quiet:
-                click.echo(f"  ⚠ 启动监控失败: {e}", err=True)
+                click.echo(f"  [!] 启动监控失败: {e}", err=True)
 
     # 执行命令（实时流式输出）
     try:
@@ -661,65 +638,39 @@ def agent(
             bufsize=1,
         )
 
-        # [临时禁用] 解析 stream-json 格式并实时显示
-        # 目的：测试新的 SessionMonitor 监控功能
-        # TODO: 测试完成后决定保留哪套或合并
+        # 解析 stream-json 格式并实时显示
         for line in iter(process.stdout.readline, ""):
-            pass  # 消费 stdout 但不处理，让 SessionMonitor 接管显示
-        #     line = line.strip()
-        #     if not line:
-        #         continue
-        #
-        #     try:
-        #         event = json.loads(line)
-        #         event_type = event.get("type", "")
-        #
-        #         # 处理不同类型的流式事件
-        #         if event_type == "assistant":
-        #             # 助手消息 - 包含文本或工具调用
-        #             message = event.get("message", {})
-        #             content = message.get("content", [])
-        #             for block in content:
-        #                 block_type = block.get("type")
-        #                 if block_type == "text":
-        #                     text = block.get("text", "")
-        #                     if text:
-        #                         click.echo(text)
-        #                 elif block_type == "tool_use":
-        #                     tool_name = block.get("name", "unknown")
-        #                     tool_input = block.get("input", {})
-        #                     # 显示工具调用信息
-        #                     if tool_name == "Bash":
-        #                         cmd = tool_input.get("command", "")
-        #                         desc = tool_input.get("description", "")
-        #                         click.echo(f"[Bash] {desc or cmd[:50]}")
-        #                     else:
-        #                         click.echo(f"[{tool_name}]")
-        #         elif event_type == "user":
-        #             # 工具执行结果
-        #             tool_result = event.get("tool_use_result", {})
-        #             if tool_result and isinstance(tool_result, dict):
-        #                 stdout = tool_result.get("stdout", "")
-        #                 stderr = tool_result.get("stderr", "")
-        #                 if stdout:
-        #                     # 只显示前几行，避免输出过多
-        #                     lines = stdout.strip().split("\n")
-        #                     if len(lines) > 10:
-        #                         click.echo(f"  (输出 {len(lines)} 行，显示前 5 行)")
-        #                         click.echo("\n".join(lines[:5]))
-        #                         click.echo("  ...")
-        #                     elif stdout.strip():
-        #                         click.echo(f"  {stdout.strip()[:200]}")
-        #                 if stderr:
-        #                     click.echo(f"  [stderr] {stderr.strip()[:100]}", err=True)
-        #         elif event_type == "result":
-        #             # 最终结果
-        #             pass  # 不重复显示，assistant 已经输出过了
-        #         # 忽略其他事件类型（如 system, content_block_delta 等）
-        #
-        #     except json.JSONDecodeError:
-        #         # 非 JSON 行直接输出
-        #         click.echo(line)
+            line = line.strip()
+            if not line:
+                continue
+
+            # 解析 stream-json 并显示关键信息
+            try:
+                event = json.loads(line)
+                event_type = event.get("type", "")
+
+                if event_type == "assistant":
+                    message = event.get("message", {})
+                    content = message.get("content", [])
+                    for block in content:
+                        block_type = block.get("type")
+                        if block_type == "text":
+                            text = block.get("text", "")
+                            if text:
+                                click.echo(text)
+                        elif block_type == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            tool_input = block.get("input", {})
+                            if tool_name == "Bash":
+                                cmd_str = tool_input.get("command", "")
+                                desc = tool_input.get("description", "")
+                                click.echo(f"[Bash] {desc or cmd_str[:50]}")
+                            else:
+                                click.echo(f"[{tool_name}]")
+            except json.JSONDecodeError:
+                # 非 JSON 行直接输出
+                if not quiet:
+                    click.echo(line)
 
         # 读取 stderr
         stderr_output = process.stderr.read()
@@ -731,19 +682,19 @@ def agent(
         click.echo("\n" + "-" * 60)
 
         if process.returncode == 0:
-            click.echo("✓ 执行完成")
+            click.echo("[OK] 执行完成")
         else:
             # 非零退出码不强制退出，Claude CLI 会自适应处理工具错误
-            click.echo(f"⚠ 执行结束 (退出码: {process.returncode})")
+            click.echo(f"[!] 执行结束 (退出码: {process.returncode})")
 
     except subprocess.TimeoutExpired:
         process.kill()
-        click.echo(f"\n✗ 执行超时 ({timeout}s)", err=True)
+        click.echo(f"\n[X] 执行超时 ({timeout}s)", err=True)
     except KeyboardInterrupt:
         process.kill()
-        click.echo("\n✗ 用户中断", err=True)
+        click.echo("\n[X] 用户中断", err=True)
     except Exception as e:
-        click.echo(f"\n✗ 执行错误: {e}", err=True)
+        click.echo(f"\n[X] 执行错误: {e}", err=True)
     finally:
         # 停止会话监控
         if monitor:
@@ -770,7 +721,7 @@ def agent_status():
     # 检查 claude CLI
     claude_path = find_claude_cli()
     if claude_path:
-        click.echo(f"✓ Claude CLI: {claude_path}")
+        click.echo(f"[OK] Claude CLI: {claude_path}")
         # 获取版本
         try:
             result = subprocess.run(
@@ -785,7 +736,7 @@ def agent_status():
         except Exception:
             pass
     else:
-        click.echo("✗ Claude CLI: 未安装")
+        click.echo("[X] Claude CLI: 未安装")
         return
 
     click.echo()
@@ -803,7 +754,7 @@ def agent_status():
         click.echo(f"  CCR 启用: {'是' if ccr_enabled else '否'}")
         click.echo(f"  初始化状态: {'已完成' if init_completed else '未完成'}")
     else:
-        click.echo("  ⚠ 未找到配置文件")
+        click.echo("  [!] 未找到配置文件")
         click.echo(f"  提示: 运行 'frago init' 进行初始化配置")
 
     click.echo()
@@ -813,10 +764,10 @@ def agent_status():
         click.echo("CCR 状态:")
         ok, info = check_ccr_auth()
         if ok:
-            click.echo(f"  ✓ CCR 可用")
+            click.echo(f"  [OK] CCR 可用")
             click.echo(f"    Providers: {', '.join(info.get('providers', []))}")
             click.echo(f"    运行状态: {'运行中' if info.get('is_running') else '未运行'}")
         else:
-            click.echo("  ✗ CCR 不可用")
+            click.echo("  [X] CCR 不可用")
             if info and info.get("error"):
                 click.echo(f"    原因: {info['error']}")
