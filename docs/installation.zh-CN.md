@@ -60,6 +60,12 @@ uv tool install frago-cli
 
 就这一行，完事。
 
+> **Windows 用户**：如果你安装了 Python 3.14+，必须指定 Python 3.13：
+> ```powershell
+> uv tool install frago-cli --python 3.13
+> ```
+> 这是因为 GUI 后端 (pywebview) 使用的 pythonnet 还不支持 Python 3.14。
+
 <details>
 <summary>非要用 pip？（不推荐）</summary>
 
@@ -373,15 +379,17 @@ Windows 默认不包含 Python：
 
 ```powershell
 # 方法 1：Microsoft Store（最简单）
-# 在 Microsoft Store 搜索 "Python 3.11" 并安装
+# 在 Microsoft Store 搜索 "Python 3.13" 并安装
 
-# 方法 2：winget
-winget install Python.Python.3.11
+# 方法 2：winget（推荐）
+winget install Python.Python.3.13
 
 # 方法 3：官方安装程序
 # 从 https://www.python.org/downloads/ 下载
 # 重要：安装时勾选 "Add Python to PATH"！
 ```
+
+> **重要**：请使用 Python 3.9 - 3.13。由于 pywebview/pythonnet 兼容性问题，Windows 上暂不支持 Python 3.14+。
 
 ### 安装 Node.js（frago init 之前必须安装）
 
@@ -419,6 +427,11 @@ GUI 功能需要 WebView2 Runtime：
 # Windows 10 需要手动安装：
 winget install Microsoft.EdgeWebView2Runtime
 ```
+
+> **Python 版本要求**：GUI 模式需要 Python 3.13 或更早版本。如果使用 Python 3.14+，请这样安装：
+> ```powershell
+> uv tool install frago-cli --python 3.13
+> ```
 
 ### 安装前检查清单
 

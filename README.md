@@ -173,11 +173,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh  # macOS/Linux
 # 2. Install frago
 uv tool install frago-cli
 
+# Windows with Python 3.14+: use --python 3.13
+# uv tool install frago-cli --python 3.13
+
 # 3. Initialize environment
 frago init
 ```
 
-> **Note**: See [Installation Guide](docs/installation.md) for OS-specific prerequisites.
+> **Note**: See [Installation Guide](docs/installation.md) for OS-specific prerequisites. Windows users with Python 3.14+ must use `--python 3.13` due to GUI backend compatibility.
 
 ### What `frago init` Does
 
