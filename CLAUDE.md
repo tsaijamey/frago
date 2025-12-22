@@ -79,6 +79,23 @@ Windows 控制台默认非 UTF-8，subprocess 调用需显式指定：
 subprocess.run(cmd, text=True, encoding='utf-8')
 ```
 
+### 空设备重定向
+
+**禁止**在代码中硬编码 `/dev/null`，Windows 上会创建名为 `nul` 的实际文件。
+
+```python
+import os
+import platform
+
+# 正确：跨平台获取空设备
+NULL_DEVICE = 'nul' if platform.system() == 'Windows' else '/dev/null'
+
+# 或使用 subprocess.DEVNULL
+subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+```
+
+执行 shell 命令时，优先使用 `subprocess.DEVNULL` 而非重定向字符串。
+
 ## 资源统一到用户目录
 
 所有资源均存放在用户目录：
