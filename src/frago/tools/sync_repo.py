@@ -69,6 +69,7 @@ def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Compl
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding='utf-8',
         check=check,
     )
 
@@ -249,6 +250,7 @@ def _check_repo_visibility(repo_url: str) -> Optional[str]:
             ["gh", "api", f"repos/{owner}/{repo}", "--jq", ".visibility"],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=10,
         )
         if result.returncode == 0:
@@ -461,6 +463,7 @@ def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
             ["git", "clone", repo_url, str(temp_dir)],
             capture_output=True,
             text=True,
+            encoding='utf-8',
         )
 
         if result.returncode == 0:

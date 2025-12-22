@@ -42,7 +42,7 @@ def get_windows_path_hint() -> str:
         包含修复建议的字符串
     """
     return (
-        "\n⚠️  npm 全局目录不在 PATH 中，claude 命令可能无法直接使用\n\n"
+        "\n[!]  npm 全局目录不在 PATH 中，claude 命令可能无法直接使用\n\n"
         "请执行以下操作之一：\n\n"
         "  1. 重新打开 PowerShell 窗口（推荐）\n\n"
         "  2. 临时使用 npx 启动：\n"
@@ -118,6 +118,7 @@ def run_external_command(
             cmd,
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=timeout,
             cwd=cwd,
             check=False,
@@ -222,6 +223,7 @@ def _install_nvm() -> str:
             cmd,
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=120,
         )
 
@@ -232,7 +234,7 @@ def _install_nvm() -> str:
                 f"错误输出:\n{result.stderr}",
             )
 
-        click.echo("✅ nvm 安装成功")
+        click.echo("[OK] nvm 安装成功")
 
         # 返回新安装的 nvm 路径
         nvm_path = Path.home() / ".nvm" / "nvm.sh"
@@ -316,6 +318,7 @@ def install_node(version: str = "20") -> Tuple[bool, bool]:
             ["bash", "-c", install_cmd],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=300,  # 安装可能需要较长时间
         )
 
@@ -378,6 +381,7 @@ def _install_claude_code_via_nvm() -> Tuple[bool, Optional[str]]:
             ["bash", "-c", install_cmd],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=300,
         )
 
