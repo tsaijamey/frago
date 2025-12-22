@@ -72,22 +72,32 @@ class ChromeLauncher:
             ]
         elif self.system == "Windows":
             # Windows 常见 Chrome 安装路径
-            local_app_data = os.environ.get("LOCALAPPDATA", "")
-            program_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-            program_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
+            local_app_data = os.environ.get("LOCALAPPDATA")
+            program_files = os.environ.get("PROGRAMFILES") or "C:\\Program Files"
+            program_files_x86 = os.environ.get("PROGRAMFILES(X86)") or "C:\\Program Files (x86)"
 
-            possible_paths = [
-                # 用户安装（最常见）
-                os.path.join(local_app_data, "Google", "Chrome", "Application", "chrome.exe"),
-                # 系统安装
+            possible_paths = []
+
+            # 用户安装（最常见）- 仅当 LOCALAPPDATA 存在时
+            if local_app_data:
+                possible_paths.append(
+                    os.path.join(local_app_data, "Google", "Chrome", "Application", "chrome.exe")
+                )
+                possible_paths.append(
+                    os.path.join(local_app_data, "Chromium", "Application", "chrome.exe")
+                )
+
+            # 系统安装
+            possible_paths.extend([
                 os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"),
                 os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"),
-                # Chromium
-                os.path.join(local_app_data, "Chromium", "Application", "chrome.exe"),
-                # 通过 PATH 查找
+            ])
+
+            # 通过 PATH 查找
+            possible_paths.extend([
                 shutil.which("chrome"),
                 shutil.which("chrome.exe"),
-            ]
+            ])
         else:
             return None
 
@@ -273,9 +283,10 @@ class ChromeLauncher:
         self._init_profile_dir()
 
         # Chrome 启动参数
+        # 注意：profile_dir 是 Path 对象，需要显式转换为字符串避免 Windows 路径问题
         cmd = [
             self.chrome_path,
-            f"--user-data-dir={self.profile_dir}",
+            f"--user-data-dir={str(self.profile_dir)}",
             f"--remote-debugging-port={self.debugging_port}",
             "--remote-allow-origins=*",
             # Stealth 反检测参数
@@ -310,8 +321,12 @@ class ChromeLauncher:
             cmd.append("--window-position=-32000,-32000")
 
         # 启动 Chrome
+        # stdin=DEVNULL 防止 Windows 上子进程等待输入导致阻塞
         self.chrome_process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
         )
 
         # 等待启动
