@@ -167,7 +167,7 @@ def prompt_custom_endpoint_url() -> str:
         if validate_endpoint_url(url):
             return url
 
-        click.echo("❌ 无效的 URL 格式，请输入完整的 HTTP/HTTPS URL")
+        click.echo("[X] 无效的 URL 格式，请输入完整的 HTTP/HTTPS URL")
 
 
 def prompt_custom_model() -> str:
@@ -666,9 +666,9 @@ def warn_auth_switch(current_method: str, new_method: str) -> bool:
         return True
 
     if current_method == "custom" and new_method == "official":
-        click.echo("\n⚠️  警告: 切换到官方认证将清除现有的 API 端点配置")
+        click.echo("\n[!]  警告: 切换到官方认证将清除现有的 API 端点配置")
     elif current_method == "official" and new_method == "custom":
-        click.echo("\n⚠️  警告: 切换到自定义端点需要提供 API Key")
+        click.echo("\n[!]  警告: 切换到自定义端点需要提供 API Key")
 
     return click.confirm("确认切换?", default=True)
 
@@ -695,23 +695,23 @@ def format_final_summary(config: Config) -> str:
     # 依赖信息
     lines.append("📦 已安装组件:")
     if config.node_version:
-        lines.append(f"   • Node.js: {config.node_version}")
+        lines.append(f"   - Node.js: {config.node_version}")
     if config.claude_code_version:
-        lines.append(f"   • Claude Code: {config.claude_code_version}")
+        lines.append(f"   - Claude Code: {config.claude_code_version}")
 
     lines.append("")
 
     # 认证信息
     lines.append("🔐 认证配置:")
     if config.auth_method == "official":
-        lines.append("   • 方式: 用户自行配置")
+        lines.append("   - 方式: 用户自行配置")
     else:
-        lines.append("   • 方式: Frago 配置的 API 端点")
+        lines.append("   - 方式: Frago 配置的 API 端点")
         if config.api_endpoint:
-            lines.append(f"   • 端点: {config.api_endpoint.type}")
+            lines.append(f"   - 端点: {config.api_endpoint.type}")
             if config.api_endpoint.url:
-                lines.append(f"   • URL: {config.api_endpoint.url}")
-            lines.append("   • API Key: ****已配置****")
+                lines.append(f"   - URL: {config.api_endpoint.url}")
+            lines.append("   - API Key: ****已配置****")
 
     # CCR 状态
     if config.ccr_enabled:

@@ -22,6 +22,7 @@ def is_tool_installed() -> bool:
             ["uv", "tool", "list"],
             capture_output=True,
             text=True,
+            encoding='utf-8',
             check=True,
         )
         # uv tool list 显示的是 entry point 名称，不是包名
@@ -129,7 +130,7 @@ def update(check_only: bool, reinstall: bool, from_repo: bool):
 
         if result.returncode == 0:
             click.echo()
-            click.echo(f"✓ {TOOL_NAME} 更新完成")
+            click.echo(f"[OK] {TOOL_NAME} 更新完成")
         else:
             click.echo()
             click.echo(f"更新失败，退出码: {result.returncode}", err=True)

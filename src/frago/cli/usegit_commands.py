@@ -28,7 +28,7 @@ def usegit_group():
       ~/.claude/skills/frago-*        # Skills
       ~/.frago/recipes/               # Recipes
     """
-    click.echo("⚠️  'frago use-git' 命令已废弃，请使用 'frago sync'", err=True)
+    click.echo("[!]  'frago use-git' 命令已废弃，请使用 'frago sync'", err=True)
 
 
 # 注册子命令

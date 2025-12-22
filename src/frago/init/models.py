@@ -168,11 +168,11 @@ class DependencyCheckResult(BaseModel):
     def display_status(self) -> str:
         """生成显示状态"""
         if not self.installed:
-            return f"❌ {self.name}: 未安装"
+            return f"[X] {self.name}: 未安装"
         elif not self.version_sufficient:
-            return f"⚠️  {self.name}: 版本不足 (当前 {self.version}, 要求 {self.required_version})"
+            return f"[!]  {self.name}: 版本不足 (当前 {self.version}, 要求 {self.required_version})"
         else:
-            return f"✅ {self.name}: {self.version}"
+            return f"[OK] {self.name}: {self.version}"
 
 
 class ResourceType(str, Enum):

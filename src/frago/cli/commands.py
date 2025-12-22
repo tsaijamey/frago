@@ -1415,7 +1415,7 @@ def init(force: bool):
     if created:
         click.echo("已创建以下目录:")
         for dir_path in created:
-            click.echo(f"  ✓ {dir_path}")
+            click.echo(f"  [OK] {dir_path}")
 
     if skipped:
         click.echo("\n以下目录已存在（使用 --force 强制重新创建）:")
@@ -1534,7 +1534,7 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
 
     # 启动 Chrome
     if launcher.launch(kill_existing=not no_kill):
-        click.echo(f"\n✓ Chrome 已启动，CDP 监听端口: {port}")
+        click.echo(f"\n[OK] Chrome 已启动，CDP 监听端口: {port}")
 
         # 获取并显示状态
         status_info = launcher.get_status()
@@ -1566,7 +1566,7 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
             finally:
                 launcher.stop()
     else:
-        click.echo("✗ Chrome 启动失败", err=True)
+        click.echo("[X] Chrome 启动失败", err=True)
 
 
 @click.command('chrome-stop')
@@ -1589,7 +1589,7 @@ def chrome_stop(port: int):
     killed = launcher.kill_existing_chrome()
 
     if killed > 0:
-        click.echo(f"✓ 已关闭 {killed} 个 Chrome CDP 进程（端口 {port}）")
+        click.echo(f"[OK] 已关闭 {killed} 个 Chrome CDP 进程（端口 {port}）")
     else:
         click.echo(f"未找到运行在端口 {port} 的 Chrome CDP 进程")
 

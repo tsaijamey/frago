@@ -115,7 +115,7 @@ def dev_pack(
         # 加载清单
         if sync_all:
             manifest = {"commands": ["*"], "skills": ["*"], "recipes": ["*"]}
-            click.echo("⚠️  忽略清单，同步所有资源\n")
+            click.echo("[!]  忽略清单，同步所有资源\n")
         else:
             manifest = load_manifest()
             click.echo(f"📋 清单文件: {MANIFEST_FILE.name}\n")
@@ -218,12 +218,12 @@ def _sync_commands(
 
     # 显示结果
     if created:
-        click.echo(f"  ✓ {action_word}创建 {len(created)} 个命令:")
+        click.echo(f"  [OK] {action_word}创建 {len(created)} 个命令:")
         for r in created:
             click.echo(f"    + {r['source_name']} → {r['target_name']}")
 
     if updated:
-        click.echo(f"  ✓ {action_word}更新 {len(updated)} 个命令:")
+        click.echo(f"  [OK] {action_word}更新 {len(updated)} 个命令:")
         for r in updated:
             click.echo(f"    ~ {r['source_name']} → {r['target_name']}")
 
@@ -298,7 +298,7 @@ def _sync_frago_subdir(
                 frago_target,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
-        click.echo(f"  ✓ {action_word}同步 frago/ 子目录")
+        click.echo(f"  [OK] {action_word}同步 frago/ 子目录")
     else:
         if verbose:
             click.echo("  - frago/ 子目录无变化")
@@ -415,14 +415,14 @@ def _sync_skills(
 
     # 显示结果
     if created:
-        click.echo(f"  ✓ {action_word}创建 {len(created)} 个 Skill:")
+        click.echo(f"  [OK] {action_word}创建 {len(created)} 个 Skill:")
         for r in created:
             click.echo(f"    + {r['skill_name']}")
             if verbose:
                 click.echo(f"      → {r['target_dir']}")
 
     if updated:
-        click.echo(f"  ✓ {action_word}更新 {len(updated)} 个 Skill:")
+        click.echo(f"  [OK] {action_word}更新 {len(updated)} 个 Skill:")
         for r in updated:
             click.echo(f"    ~ {r['skill_name']}")
             if verbose:
@@ -558,14 +558,14 @@ def _sync_recipes(
 
     # 显示结果
     if created:
-        click.echo(f"  ✓ {action_word}创建 {len(created)} 个 Recipe:")
+        click.echo(f"  [OK] {action_word}创建 {len(created)} 个 Recipe:")
         for r in created:
             click.echo(f"    + {r['recipe_name']}")
             if verbose:
                 click.echo(f"      → {r['target_dir']}")
 
     if updated:
-        click.echo(f"  ✓ {action_word}更新 {len(updated)} 个 Recipe:")
+        click.echo(f"  [OK] {action_word}更新 {len(updated)} 个 Recipe:")
         for r in updated:
             click.echo(f"    ~ {r['recipe_name']}")
             if verbose:

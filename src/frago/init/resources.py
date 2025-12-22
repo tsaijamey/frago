@@ -332,41 +332,41 @@ def format_install_summary(status: ResourceStatus) -> str:
     if status.commands:
         cmd = status.commands
         if cmd.installed:
-            lines.append("📦 安装 Claude Code 命令...")
+            lines.append("[*] 安装 Claude Code 命令...")
             for name in cmd.installed:
-                lines.append(f"  ✅ {name}")
+                lines.append(f"  [OK] {name}")
         if cmd.errors:
             for error in cmd.errors:
-                lines.append(f"  ❌ {error}")
+                lines.append(f"  [X] {error}")
 
     # Skills 摘要
     if status.skills:
         skill = status.skills
         if skill.installed or skill.skipped:
-            lines.append("\n📦 安装 Claude Code Skills...")
+            lines.append("\n[*] 安装 Claude Code Skills...")
             for name in skill.installed:
-                lines.append(f"  ✅ {name}")
+                lines.append(f"  [OK] {name}")
             for name in skill.skipped:
                 lines.append(f"  ⏭️  {name} (已存在)")
         if skill.errors:
             for error in skill.errors:
-                lines.append(f"  ❌ {error}")
+                lines.append(f"  [X] {error}")
 
     # Recipes 摘要
     if status.recipes:
         rec = status.recipes
         if rec.installed or rec.skipped or rec.backed_up:
-            lines.append("\n📦 安装示例 Recipe...")
+            lines.append("\n[*] 安装示例 Recipe...")
             for name in rec.installed:
                 if name in rec.backed_up:
                     lines.append(f"  🔄 {name} (已更新，旧文件备份为 .bak)")
                 else:
-                    lines.append(f"  ✅ {name}")
+                    lines.append(f"  [OK] {name}")
             for name in rec.skipped:
                 lines.append(f"  ⏭️  {name} (已存在)")
         if rec.errors:
             for error in rec.errors:
-                lines.append(f"  ❌ {error}")
+                lines.append(f"  [X] {error}")
 
     # 总计
     total_installed = 0
@@ -388,7 +388,7 @@ def format_install_summary(status: ResourceStatus) -> str:
             summary_parts.append(f"{total_backed_up} 个备份")
         if total_skipped > 0:
             summary_parts.append(f"{total_skipped} 个跳过")
-        lines.append(f"\n✅ 资源安装完成 ({', '.join(summary_parts)})")
+        lines.append(f"\n[OK] 资源安装完成 ({', '.join(summary_parts)})")
 
     return "\n".join(lines)
 
@@ -478,7 +478,7 @@ def format_resources_status() -> str:
     status = get_resources_status()
     lines = []
 
-    lines.append("📦 已安装资源:")
+    lines.append("[*] 已安装资源:")
     lines.append("")
 
     # Commands 状态

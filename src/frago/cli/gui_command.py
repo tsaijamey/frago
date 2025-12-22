@@ -201,7 +201,7 @@ def gui_deps(install: bool, check: bool):
     click.echo("-" * 40)
 
     pywebview_ok, pywebview_info = _check_pywebview()
-    status = click.style("✓", fg="green") if pywebview_ok else click.style("✗", fg="red")
+    status = click.style("[OK]", fg="green") if pywebview_ok else click.style("[X]", fg="red")
     click.echo(f"  {status} pywebview: {pywebview_info}")
 
     # Check backends
@@ -209,23 +209,23 @@ def gui_deps(install: bool, check: bool):
         gtk_ok, gtk_info = _check_gtk_backend()
         qt_ok, qt_info = _check_qt_backend()
 
-        status = click.style("✓", fg="green") if gtk_ok else click.style("✗", fg="red")
+        status = click.style("[OK]", fg="green") if gtk_ok else click.style("[X]", fg="red")
         click.echo(f"  {status} GTK Backend: {gtk_info}")
 
-        status = click.style("✓", fg="green") if qt_ok else click.style("-", fg="yellow")
+        status = click.style("[OK]", fg="green") if qt_ok else click.style("-", fg="yellow")
         click.echo(f"  {status} QT Backend: {qt_info}")
 
         backend_ok = gtk_ok or qt_ok
 
     elif system_info["platform"] == "Windows":
         win_ok, win_info = _check_windows_backend()
-        status = click.style("✓", fg="green") if win_ok else click.style("✗", fg="red")
+        status = click.style("[OK]", fg="green") if win_ok else click.style("[X]", fg="red")
         click.echo(f"  {status} Windows Backend: {win_info}")
         backend_ok = win_ok
 
     elif system_info["platform"] == "Darwin":
         # macOS always has WebKit available
-        click.echo(f"  {click.style('✓', fg='green')} macOS Backend: Native WebKit (PyObjC)")
+        click.echo(f"  {click.style('[OK]', fg='green')} macOS Backend: Native WebKit (PyObjC)")
         backend_ok = True
 
     else:

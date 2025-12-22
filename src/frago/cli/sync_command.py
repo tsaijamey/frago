@@ -16,7 +16,7 @@ def _format_result(result: SyncResult, dry_run: bool) -> None:
     # 冲突信息
     if result.conflicts:
         click.echo()
-        click.echo("⚠️  发现资源冲突:")
+        click.echo("[!]  发现资源冲突:")
         for conflict in result.conflicts:
             click.echo(f"  - {conflict}")
         click.echo()
@@ -26,7 +26,7 @@ def _format_result(result: SyncResult, dry_run: bool) -> None:
     if result.errors:
         click.echo()
         for error in result.errors:
-            click.echo(f"❌ {error}", err=True)
+            click.echo(f"[X] {error}", err=True)
 
     # 总结
     click.echo()
@@ -42,16 +42,16 @@ def _format_result(result: SyncResult, dry_run: bool) -> None:
             summary_parts.append("已推送到您的仓库")
 
         if summary_parts:
-            click.echo(f"✅ 同步完成: {' | '.join(summary_parts)}")
+            click.echo(f"[OK] 同步完成: {' | '.join(summary_parts)}")
         else:
-            click.echo("✅ 同步完成: 本地资源已是最新")
+            click.echo("[OK] 同步完成: 本地资源已是最新")
 
         # 如果是 public 仓库，在最后再次提醒
         if result.is_public_repo:
             click.echo()
-            click.echo("⚠️  提醒：您的同步仓库是 public 仓库，请考虑改为 private 仓库以保护敏感信息。")
+            click.echo("[!]  提醒：您的同步仓库是 public 仓库，请考虑改为 private 仓库以保护敏感信息。")
     else:
-        click.echo("❌ 同步失败", err=True)
+        click.echo("[X] 同步失败", err=True)
 
 
 def _get_configured_repo_url() -> Optional[str]:
@@ -122,7 +122,7 @@ def sync_cmd(
             config = load_config()
             config.sync_repo_url = set_repo
             save_config(config)
-            click.echo(f"✅ 已保存仓库配置: {set_repo}")
+            click.echo(f"[OK] 已保存仓库配置: {set_repo}")
 
             # 如果没有其他操作，直接返回
             if not dry_run and not no_push and not message:

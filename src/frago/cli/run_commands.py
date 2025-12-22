@@ -328,7 +328,7 @@ def info(run_id: str, format: str):
             if recent_logs:
                 click.echo(f"\nRecent Logs (last 5):")
                 for log in recent_logs:
-                    status_icon = "✓" if log.status == LogStatus.SUCCESS else "✗"
+                    status_icon = "[OK]" if log.status == LogStatus.SUCCESS else "[X]"
                     timestamp = log.timestamp.strftime("%Y-%m-%d %H:%M")
                     click.echo(
                         f"  [{timestamp}] {status_icon} {log.step} "
