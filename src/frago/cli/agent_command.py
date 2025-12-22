@@ -585,7 +585,8 @@ def agent(
 
     # 构建最终命令 - 使用 stream-json 实现实时输出
     # 注意：stream-json 必须配合 --verbose 使用
-    cmd = ["claude", "-p", execution_prompt, "--output-format", "stream-json", "--verbose"]
+    # 使用 "-p -" 从 stdin 读取 prompt，避免 Windows 命令行参数对换行符的截断
+    cmd = ["claude", "-p", "-", "--output-format", "stream-json", "--verbose"]
 
     if resume:
         cmd.extend(["--resume", resume])
@@ -630,6 +631,7 @@ def agent(
     try:
         process = subprocess.Popen(
             prepare_command_for_windows(cmd),
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -637,6 +639,10 @@ def agent(
             env=env,
             bufsize=1,
         )
+
+        # 通过 stdin 传递 prompt（避免 Windows 命令行参数截断多行文本）
+        process.stdin.write(execution_prompt)
+        process.stdin.close()
 
         # 解析 stream-json 格式并实时显示
         for line in iter(process.stdout.readline, ""):
