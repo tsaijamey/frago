@@ -1,6 +1,9 @@
 """Recipe 执行器"""
 import json
+import platform
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -186,6 +189,7 @@ class RecipeRunner:
                     inject_cmd,
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
                     timeout=30,
                     check=False,
                     env=env
@@ -217,6 +221,7 @@ class RecipeRunner:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=None,  # 无超时限制
                 check=False,
                 env=env
@@ -292,7 +297,13 @@ class RecipeRunner:
         if use_system_python:
             # 使用系统 Python（用于依赖 dbus 等系统包的脚本）
             # 必须清除 VIRTUAL_ENV 避免继承 uv 的虚拟环境
-            cmd = ['/usr/bin/python3', str(script_path), params_json]
+            if platform.system() == "Windows":
+                # Windows: 使用当前 Python 解释器
+                python_path = sys.executable
+            else:
+                # Unix: 优先使用系统 Python
+                python_path = shutil.which('python3') or '/usr/bin/python3'
+            cmd = [python_path, str(script_path), params_json]
             # 创建不含虚拟环境变量的环境
             clean_env = {k: v for k, v in env.items() if k not in ('VIRTUAL_ENV', 'PYTHONHOME')}
             env = clean_env
@@ -306,6 +317,7 @@ class RecipeRunner:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=None,  # 无超时限制
                 check=False,
                 env=env
@@ -372,14 +384,15 @@ class RecipeRunner:
         Raises:
             RecipeExecutionError: 执行失败
         """
-        # 检查执行权限
-        if not script_path.stat().st_mode & 0o100:
-            raise RecipeExecutionError(
-                recipe_name=recipe_name,
-                runtime='shell',
-                exit_code=-1,
-                stderr=f"脚本没有执行权限: {script_path}"
-            )
+        # 检查执行权限（仅 Unix 系统，Windows 不使用 Unix 权限模式）
+        if platform.system() != "Windows":
+            if not script_path.stat().st_mode & 0o100:
+                raise RecipeExecutionError(
+                    recipe_name=recipe_name,
+                    runtime='shell',
+                    exit_code=-1,
+                    stderr=f"脚本没有执行权限: {script_path}"
+                )
 
         # 构建命令：<script_path> <params_json>
         params_json = json.dumps(params)
@@ -390,6 +403,7 @@ class RecipeRunner:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
                 timeout=None,  # 无超时限制
                 check=False,
                 env=env
