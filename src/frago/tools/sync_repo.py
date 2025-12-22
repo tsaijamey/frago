@@ -816,7 +816,19 @@ def sync(
     result = SyncResult()
 
     try:
-        # 0. 确保仓库存在
+        # 0. 配置 gh credential helper（如果 gh 已安装）
+        # 这允许 git 使用 gh 的 OAuth token 进行 HTTPS 认证
+        if not dry_run:
+            try:
+                subprocess.run(
+                    ["gh", "auth", "setup-git"],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass  # gh 未安装或超时，忽略
+
+        # 1. 确保仓库存在
         if not _is_git_repo(FRAGO_HOME):
             if not repo_url:
                 result.errors.append("未配置同步仓库，请先使用 frago sync --set-repo <url> 配置")
@@ -846,6 +858,19 @@ def sync(
             remote_result = _run_git(["remote", "get-url", "origin"], FRAGO_HOME, check=False)
             if remote_result.returncode == 0:
                 actual_repo_url = remote_result.stdout.strip()
+
+        # 自动将 SSH URL 转换为 HTTPS URL（配合 gh credential helper）
+        if actual_repo_url and actual_repo_url.startswith("git@github.com:"):
+            import re
+            ssh_match = re.match(r'git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$', actual_repo_url)
+            if ssh_match:
+                owner, repo = ssh_match.group(1), ssh_match.group(2)
+                https_url = f"https://github.com/{owner}/{repo}.git"
+                if not dry_run:
+                    # 更新 git remote URL
+                    _run_git(["remote", "set-url", "origin", https_url], FRAGO_HOME, check=False)
+                    click.echo(f"已将仓库 URL 从 SSH 转换为 HTTPS: {https_url}")
+                actual_repo_url = https_url
 
         if actual_repo_url:
             visibility = _check_repo_visibility(actual_repo_url)

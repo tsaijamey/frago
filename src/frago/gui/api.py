@@ -1674,7 +1674,8 @@ class FragoGuiApi:
                             timeout=5
                         )
                         username = username_result.stdout.strip()
-                        repo_url = f"git@github.com:{username}/{repo_name}.git"
+                        # 使用 HTTPS URL，配合 gh credential helper 无需 SSH key
+                        repo_url = f"https://github.com/{username}/{repo_name}.git"
 
                         # 更新配置
                         update_config({"sync_repo_url": repo_url})
@@ -1782,31 +1783,43 @@ class FragoGuiApi:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    def select_existing_repo(self, ssh_url: str) -> Dict[str, Any]:
+    def select_existing_repo(self, repo_url: str) -> Dict[str, Any]:
         """选择已有仓库作为同步仓库
 
+        支持 SSH 和 HTTPS URL，但会统一转换为 HTTPS URL 以配合 gh credential helper。
+
         Args:
-            ssh_url: 仓库的 SSH URL
+            repo_url: 仓库 URL (SSH 或 HTTPS 格式)
 
         Returns:
             {"status": "ok", "repo_url": "..."} 或 {"status": "error", "error": "..."}
         """
         from frago.init.config_manager import update_config
+        import re
 
         try:
-            # 验证 URL 格式
-            if not ssh_url.startswith('git@github.com:') or not ssh_url.endswith('.git'):
+            # 转换 SSH URL 为 HTTPS URL
+            # SSH: git@github.com:user/repo.git -> HTTPS: https://github.com/user/repo.git
+            ssh_match = re.match(r'git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$', repo_url)
+            if ssh_match:
+                owner, repo = ssh_match.group(1), ssh_match.group(2)
+                repo_url = f"https://github.com/{owner}/{repo}.git"
+            elif repo_url.startswith('https://github.com/'):
+                # 已经是 HTTPS URL，确保以 .git 结尾
+                if not repo_url.endswith('.git'):
+                    repo_url = repo_url.rstrip('/') + '.git'
+            else:
                 return {
                     "status": "error",
-                    "error": "无效的 SSH URL 格式，请使用 git@github.com:user/repo.git 格式"
+                    "error": "无效的仓库 URL 格式，请使用 GitHub 仓库地址"
                 }
 
             # 更新配置
-            update_config({"sync_repo_url": ssh_url})
+            update_config({"sync_repo_url": repo_url})
 
             return {
                 "status": "ok",
-                "repo_url": ssh_url
+                "repo_url": repo_url
             }
 
         except Exception as e:
@@ -1843,18 +1856,39 @@ class FragoGuiApi:
                     }
                     return
 
+                # 先配置 gh credential helper，确保 git 可以使用 gh 的 OAuth token
+                gh_path = shutil.which("gh")
+                if gh_path:
+                    try:
+                        subprocess.run(
+                            _prepare_command_for_windows([gh_path, 'auth', 'setup-git']),
+                            capture_output=True,
+                            timeout=10
+                        )
+                    except Exception:
+                        pass  # 忽略错误，继续尝试同步
+
                 # 执行 frago sync
+                # 使用 errors='replace' 处理 Windows 上可能的编码问题
                 process = subprocess.Popen(
-                    [frago_path, 'sync'],
+                    _prepare_command_for_windows([frago_path, 'sync']),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding='utf-8'
                 )
 
                 output_lines = []
+                # 手动解码以处理编码错误
                 for line in process.stdout:
-                    output_lines.append(line.strip())
+                    try:
+                        decoded = line.decode('utf-8').strip()
+                    except UnicodeDecodeError:
+                        # Windows 可能输出 GBK 编码
+                        try:
+                            decoded = line.decode('gbk').strip()
+                        except UnicodeDecodeError:
+                            decoded = line.decode('utf-8', errors='replace').strip()
+                    if decoded:
+                        output_lines.append(decoded)
 
                 process.wait()
 

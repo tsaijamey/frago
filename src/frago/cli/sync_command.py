@@ -103,7 +103,7 @@ def sync_cmd(
 
     \b
     首次使用:
-      frago sync --set-repo git@github.com:user/my-resources.git
+      frago sync --set-repo https://github.com/user/my-resources.git
 
     \b
     日常使用:
@@ -115,6 +115,11 @@ def sync_cmd(
     同步内容:
       ~/.claude/skills/frago-*        # Skills
       ~/.frago/recipes/               # Recipes
+
+    \b
+    认证说明:
+      推荐使用 HTTPS URL 配合 GitHub CLI (gh) 认证。
+      请先运行 `gh auth login` 登录 GitHub。
     """
     try:
         # 处理 --set-repo
@@ -135,7 +140,7 @@ def sync_cmd(
             click.echo("错误: 未配置仓库", err=True)
             click.echo("")
             click.echo("请先配置仓库:", err=True)
-            click.echo("  frago sync --set-repo git@github.com:user/my-resources.git", err=True)
+            click.echo("  frago sync --set-repo https://github.com/user/my-resources.git", err=True)
             sys.exit(1)
 
         if dry_run:
