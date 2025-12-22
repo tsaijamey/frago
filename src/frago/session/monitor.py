@@ -77,9 +77,17 @@ def encode_project_path(project_path: str) -> str:
     Returns:
         编码后的目录名
     """
-    # Claude Code 使用连字符编码路径
+    # 1. 规范化路径分隔符（Windows \ -> /）
+    normalized = project_path.replace("\\", "/")
+
+    # 2. 处理 Windows 驱动器盘符（C: -> C）
+    if len(normalized) >= 2 and normalized[1] == ":":
+        normalized = normalized[0] + normalized[2:]
+
+    # 3. Claude Code 使用连字符编码路径
     # /home/yammi/repos/Frago -> -home-yammi-repos-Frago
-    return project_path.replace("/", "-")
+    # C/Users/yammi/repos/Frago -> -C-Users-yammi-repos-Frago
+    return normalized.replace("/", "-")
 
 
 # ============================================================
