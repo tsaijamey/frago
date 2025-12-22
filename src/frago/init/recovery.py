@@ -119,7 +119,7 @@ def prompt_resume(state: TemporaryState) -> bool:
     Returns:
         True 如果用户选择恢复
     """
-    click.echo("\n⚠️  检测到上次安装被中断")
+    click.echo("\n[!]  检测到上次安装被中断")
     click.echo(f"   中断时间: {state.interrupted_at.strftime('%Y-%m-%d %H:%M:%S')}")
     if state.current_step:
         click.echo(f"   中断步骤: {state.current_step}")
@@ -128,7 +128,7 @@ def prompt_resume(state: TemporaryState) -> bool:
     if state.completed_steps:
         click.echo("\n   已完成的步骤:")
         for step in state.completed_steps:
-            click.echo(f"     ✅ {step}")
+            click.echo(f"     [OK] {step}")
 
     click.echo()
     return click.confirm("是否从上次中断处继续?", default=True)
@@ -193,7 +193,7 @@ class GracefulInterruptHandler:
         if self.on_interrupt:
             self.on_interrupt()
 
-        click.echo("\n\n⚠️  收到中断信号，正在保存状态...")
+        click.echo("\n\n[!]  收到中断信号，正在保存状态...")
 
 
 def create_initial_state() -> TemporaryState:

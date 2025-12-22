@@ -41,7 +41,7 @@ def format_error_message(
     Returns:
         格式化的错误消息字符串
     """
-    lines = [f"❌ {title}"]
+    lines = [f"[X] {title}"]
 
     if details:
         lines.append("")
@@ -50,7 +50,7 @@ def format_error_message(
 
     if suggestion:
         lines.append("")
-        lines.append(f"💡 建议: {suggestion}")
+        lines.append(f"[TIP] 建议: {suggestion}")
 
     return "\n".join(lines)
 
@@ -69,7 +69,7 @@ def format_success_message(
     Returns:
         格式化的成功消息字符串
     """
-    lines = [f"✅ {title}"]
+    lines = [f"[OK] {title}"]
 
     if details:
         lines.append(f"   {details}")
@@ -91,7 +91,7 @@ def format_warning_message(
     Returns:
         格式化的警告消息字符串
     """
-    lines = [f"⚠️  {title}"]
+    lines = [f"[!]  {title}"]
 
     if details:
         lines.append(f"   {details}")
@@ -126,10 +126,10 @@ def format_dependency_status(results: Dict[str, DependencyCheckResult]) -> str:
 
     for name, result in results.items():
         if result.installed:
-            status = "✅"
+            status = "[OK]"
             version_info = f"v{result.version}" if result.version else "已安装"
         else:
-            status = "❌"
+            status = "[X]"
             version_info = "未安装"
 
         display_name = format_dependency_name(name)
@@ -137,7 +137,7 @@ def format_dependency_status(results: Dict[str, DependencyCheckResult]) -> str:
 
         # 显示版本不满足要求警告
         if result.installed and not result.version_sufficient:
-            lines.append(f"     ⚠️  版本不满足要求: 需要 >= {result.required_version}")
+            lines.append(f"     [!]  版本不满足要求: 需要 >= {result.required_version}")
 
     return "\n".join(lines)
 
@@ -198,7 +198,7 @@ def format_step_complete(step_name: str) -> str:
     Returns:
         格式化的消息
     """
-    return f"✅ {step_name}完成"
+    return f"[OK] {step_name}完成"
 
 
 def format_step_failed(step_name: str, error: Optional[str] = None) -> str:
@@ -212,7 +212,7 @@ def format_step_failed(step_name: str, error: Optional[str] = None) -> str:
     Returns:
         格式化的消息
     """
-    msg = f"❌ {step_name}失败"
+    msg = f"[X] {step_name}失败"
     if error:
         msg += f"\n   {error}"
     return msg

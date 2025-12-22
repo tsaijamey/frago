@@ -57,9 +57,9 @@ def list_skills(output_format: str):
         # names 格式下也输出无效 skill 警告
         if invalid_skills:
             click.echo()
-            click.echo("⚠ 以下 Skill 不符合规范，未加载:", err=True)
+            click.echo("[!] 以下 Skill 不符合规范，未加载:", err=True)
             for inv in invalid_skills:
-                click.echo(f"  • {inv.dir_name}: {inv.reason}", err=True)
+                click.echo(f"  - {inv.dir_name}: {inv.reason}", err=True)
 
     else:  # table
         if not skills and not invalid_skills:
@@ -68,13 +68,13 @@ def list_skills(output_format: str):
 
         if skills:
             for s in skills:
-                click.echo(f"• {s.name}")
+                click.echo(f"- {s.name}")
                 click.echo(f"  {s.description}")
                 click.echo()
 
         # 输出无效 skill 警告
         if invalid_skills:
             click.echo()
-            click.echo("⚠ 以下 Skill 不符合规范，未加载:")
+            click.echo("[!] 以下 Skill 不符合规范，未加载:")
             for inv in invalid_skills:
-                click.echo(f"  • {inv.dir_name}: {inv.reason}")
+                click.echo(f"  - {inv.dir_name}: {inv.reason}")

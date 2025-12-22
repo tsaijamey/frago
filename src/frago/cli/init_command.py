@@ -378,7 +378,7 @@ def _handle_missing_dependencies(
         non_interactive: 非交互模式
     """
     # 显示缺失信息
-    click.echo("⚠️  以下依赖需要安装:")
+    click.echo("[!]  以下依赖需要安装:")
     for name in missing:
         result = results.get(name)
         if result:
@@ -444,7 +444,7 @@ def _show_restart_required_message(remaining_deps: list) -> None:
     from frago.init.installer import _get_shell_config_file
 
     click.echo()
-    click.secho("⚠️  Node.js 已安装，但需要激活才能继续", fg="yellow")
+    click.secho("[!]  Node.js 已安装，但需要激活才能继续", fg="yellow")
     click.echo()
 
     shell_config = _get_shell_config_file()
@@ -496,7 +496,7 @@ def _install_with_progress(
             name,
             use_nvm_fallback=use_nvm_fallback,
         )
-        click.echo(f"✅ {display_name} 安装成功")
+        click.echo(f"[OK] {display_name} 安装成功")
 
         # 显示 Windows PATH 警告（如有）
         if warning:
@@ -506,7 +506,7 @@ def _install_with_progress(
         return requires_restart
 
     except CommandError as e:
-        click.echo(f"\n❌ {display_name} 安装失败")
+        click.echo(f"\n[X] {display_name} 安装失败")
         click.echo(str(e))
 
         # 如果是因为刚安装 Node.js 导致 npm 不可用，给出更友好的提示
@@ -541,7 +541,7 @@ def _install_resources(force_update: bool = False) -> bool:
             for name in status.commands.installed:
                 reporter.item_added(name)
             for error in status.commands.errors:
-                click.secho(f" ✗ {error}", fg="red")
+                click.secho(f" [X] {error}", fg="red")
 
         # Skills
         if status.skills:

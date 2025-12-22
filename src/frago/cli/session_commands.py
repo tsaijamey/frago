@@ -132,8 +132,8 @@ def _get_status_display(status: SessionStatus) -> str:
     """获取状态的显示文本"""
     status_map = {
         SessionStatus.RUNNING: "🟢 运行中",
-        SessionStatus.COMPLETED: "✅ 完成",
-        SessionStatus.ERROR: "❌ 错误",
+        SessionStatus.COMPLETED: "[OK] 完成",
+        SessionStatus.ERROR: "[X] 错误",
         SessionStatus.CANCELLED: "⚪ 取消",
     }
     return status_map.get(status, status.value)
@@ -382,7 +382,7 @@ def clean_cmd(
         if delete_session(s.session_id, s.agent_type):
             cleaned += 1
 
-    click.echo(f"✓ 已清理 {cleaned} 个会话")
+    click.echo(f"[OK] 已清理 {cleaned} 个会话")
 
 
 @session_group.command("delete")
@@ -428,9 +428,9 @@ def delete_cmd(
             return
 
     if delete_session(session.session_id, agent):
-        click.echo(f"✓ 已删除会话: {session.session_id[:8]}...")
+        click.echo(f"[OK] 已删除会话: {session.session_id[:8]}...")
     else:
-        click.echo("✗ 删除失败", err=True)
+        click.echo("[X] 删除失败", err=True)
         sys.exit(1)
 
 
@@ -498,7 +498,7 @@ def sync_cmd(
     click.echo(f"  已跳过: {result.skipped}")
 
     if result.errors:
-        click.echo(f"\n⚠️ 错误 ({len(result.errors)}):")
+        click.echo(f"\n[!] 错误 ({len(result.errors)}):")
         for err in result.errors[:5]:
             click.echo(f"  - {err}")
         if len(result.errors) > 5:

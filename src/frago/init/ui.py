@@ -91,7 +91,7 @@ class ProgressReporter:
 
     def item_error(self, name: str, error: str):
         """显示错误的项目"""
-        click.secho(f" ✗ {name}", fg="red", nl=False)
+        click.secho(f" [X] {name}", fg="red", nl=False)
         click.secho(f" - {error}", dim=True)
 
 

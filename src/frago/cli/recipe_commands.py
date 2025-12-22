@@ -104,7 +104,7 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
                 click.echo()
                 click.echo("注意: 以下 Recipe 在多个来源中存在（使用优先级高的）:")
                 for name, sources in duplicates:
-                    click.echo(f"  • {name}: {' > '.join(sources)}")
+                    click.echo(f"  - {name}: {' > '.join(sources)}")
     
     except RecipeError as e:
         click.echo(f"错误: {e}", err=True)
@@ -186,7 +186,7 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
                 click.echo("使用场景")
                 click.echo("─" * 50)
                 for case in m.use_cases:
-                    click.echo(f"• {case}")
+                    click.echo(f"- {case}")
                 click.echo()
             if m.tags:
                 click.echo("标签")
@@ -204,7 +204,7 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
                     required = "必需" if param_def.get('required', False) else "可选"
                     param_type = param_def.get('type', 'unknown')
                     desc = param_def.get('description', '')
-                    click.echo(f"• {param_name} ({param_type}, {required}): {desc}")
+                    click.echo(f"- {param_name} ({param_type}, {required}): {desc}")
                 click.echo()
             if m.env:
                 click.echo("环境变量")
@@ -214,9 +214,9 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
                     default = env_def.get('default', '')
                     desc = env_def.get('description', '')
                     if default:
-                        click.echo(f"• {env_name} ({required}, 默认: {default}): {desc}")
+                        click.echo(f"- {env_name} ({required}, 默认: {default}): {desc}")
                     else:
-                        click.echo(f"• {env_name} ({required}): {desc}")
+                        click.echo(f"- {env_name} ({required}): {desc}")
                 click.echo()
             if m.dependencies:
                 click.echo("依赖")
@@ -235,7 +235,7 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
             click.echo("─" * 50)
             if examples:
                 for example in examples:
-                    click.echo(f"• {example.name}")
+                    click.echo(f"- {example.name}")
             else:
                 click.echo("无")
 
@@ -351,11 +351,11 @@ def run_recipe(
         elif output_target == 'file':
             OutputHandler.handle(result, 'file', output_options)
             if result.get('success'):
-                click.echo(f"✓ 结果已保存到: {output_file}", err=True)
+                click.echo(f"[OK] 结果已保存到: {output_file}", err=True)
         elif output_target == 'clipboard':
             OutputHandler.handle(result, 'clipboard')
             if result.get('success'):
-                click.echo("✓ 结果已复制到剪贴板", err=True)
+                click.echo("[OK] 结果已复制到剪贴板", err=True)
 
         # 如果执行失败，返回非零退出码
         if not result.get('success'):
@@ -479,24 +479,24 @@ def validate_recipe(path: str, output_format: str):
     else:
         # text 格式
         if is_valid:
-            click.echo(f"✓ 配方验证通过: {recipe_dir}")
+            click.echo(f"[OK] 配方验证通过: {recipe_dir}")
             if metadata:
                 click.echo(f"  名称: {metadata.name}")
                 click.echo(f"  类型: {metadata.type}")
                 click.echo(f"  运行时: {metadata.runtime}")
             if warnings:
                 click.echo()
-                click.echo("⚠ 警告:")
+                click.echo("[!] 警告:")
                 for w in warnings:
-                    click.echo(f"  • {w}")
+                    click.echo(f"  - {w}")
         else:
-            click.echo(f"✗ 配方验证失败: {recipe_dir}", err=True)
+            click.echo(f"[X] 配方验证失败: {recipe_dir}", err=True)
             click.echo()
             click.echo("错误:")
             for e in errors:
-                click.echo(f"  • {e}", err=True)
+                click.echo(f"  - {e}", err=True)
             if warnings:
                 click.echo()
                 click.echo("警告:")
                 for w in warnings:
-                    click.echo(f"  • {w}")
+                    click.echo(f"  - {w}")
