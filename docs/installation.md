@@ -62,6 +62,12 @@ uv tool install frago-cli
 
 That's it. One command.
 
+> **Windows Users**: If you have Python 3.14+ installed, you must specify Python 3.13:
+> ```powershell
+> uv tool install frago-cli --python 3.13
+> ```
+> This is because the GUI backend (pywebview) uses pythonnet which doesn't support Python 3.14 yet.
+
 <details>
 <summary>Still want to use pip? (Not recommended)</summary>
 
@@ -375,15 +381,17 @@ Windows does not include Python by default:
 
 ```powershell
 # Option 1: Microsoft Store (easiest)
-# Search "Python 3.11" in Microsoft Store and install
+# Search "Python 3.13" in Microsoft Store and install
 
-# Option 2: winget
-winget install Python.Python.3.11
+# Option 2: winget (recommended)
+winget install Python.Python.3.13
 
 # Option 3: Official installer
 # Download from https://www.python.org/downloads/
 # IMPORTANT: Check "Add Python to PATH" during installation!
 ```
+
+> **Important**: Use Python 3.9 - 3.13. Python 3.14+ is NOT supported on Windows due to pywebview/pythonnet compatibility issues.
 
 ### Install Node.js (Required Before frago init)
 
@@ -421,6 +429,11 @@ For GUI features, WebView2 Runtime is required:
 # For Windows 10, install manually:
 winget install Microsoft.EdgeWebView2Runtime
 ```
+
+> **Python Version Requirement**: GUI mode requires Python 3.13 or earlier. If using Python 3.14+, install with:
+> ```powershell
+> uv tool install frago-cli --python 3.13
+> ```
 
 ### Pre-Installation Checklist
 
