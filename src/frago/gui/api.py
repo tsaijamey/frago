@@ -1052,9 +1052,13 @@ class FragoGuiApi:
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"agent-{task_id[:8]}.log"
 
-            with open(log_file, "w") as f:
+            # 使用临时文件传递 prompt，避免 Windows 命令行参数截断换行符
+            prompt_file = log_dir / f"prompt-{task_id[:8]}.txt"
+            prompt_file.write_text(prompt, encoding="utf-8")
+
+            with open(log_file, "w", encoding="utf-8") as f:
                 subprocess.Popen(
-                    _prepare_command_for_windows([frago_path, "agent", "--yes", prompt]),
+                    _prepare_command_for_windows([frago_path, "agent", "--yes", "--prompt-file", str(prompt_file)]),
                     stdout=f,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,  # 分离进程，防止 GUI 关闭时终止任务
@@ -1110,9 +1114,13 @@ class FragoGuiApi:
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"agent-resume-{session_id[:8]}.log"
 
-            with open(log_file, "w") as f:
+            # 使用临时文件传递 prompt，避免 Windows 命令行参数截断换行符
+            prompt_file = log_dir / f"prompt-resume-{session_id[:8]}.txt"
+            prompt_file.write_text(prompt, encoding="utf-8")
+
+            with open(log_file, "w", encoding="utf-8") as f:
                 subprocess.Popen(
-                    _prepare_command_for_windows([frago_path, "agent", "--resume", session_id, "--yes", prompt]),
+                    _prepare_command_for_windows([frago_path, "agent", "--resume", session_id, "--yes", "--prompt-file", str(prompt_file)]),
                     stdout=f,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
