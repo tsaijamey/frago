@@ -27,6 +27,58 @@ src/frago/resources/    # PyPI 包资源（由 dev pack 生成）
 2. 人们关心最好的是什么，而不是那些愚蠢呆板的技术开发者偏好的“选项一“、“选项二“，除非极有必要展示差异。项目说明文档和Tips文档中必须给出最佳选择，而不是你可以这样或那样。
 3. 始终站在“用户是否很容易理解这一点“的基础上思考和实施“最佳实践“。
 
+## 跨平台开发注意事项
+
+项目需同时支持 Linux/macOS/Windows，其中 Windows 差异最大。
+
+### 命令行参数
+
+Windows 命令行参数会在换行符处截断，多行文本应通过 stdin 或临时文件传递：
+
+```python
+# 错误：多行 prompt 会被截断
+subprocess.run(["claude", "-p", multi_line_prompt])
+
+# 正确：使用 stdin
+process = subprocess.Popen(["claude", "-p", "-"], stdin=subprocess.PIPE)
+process.stdin.write(prompt.encode())
+process.stdin.close()
+
+# 正确：使用临时文件
+prompt_file.write_text(prompt)
+subprocess.run(["frago", "agent", "--prompt-file", str(prompt_file)])
+```
+
+### 路径编码
+
+Claude Code 将项目路径编码为目录名，Windows 驱动器盘符需特殊处理：
+
+| 原始路径 | 编码结果 |
+|---------|---------|
+| `/home/user/project` | `-home-user-project` |
+| `C:\Users\yammi` | `C--Users-yammi` |
+
+关键：Windows 的 `:` 转换为 `-`，产生双连字符 `C--`。参考 `frago/session/sync.py` 中的 `encode_project_path` 和 `decode_project_path`。
+
+### subprocess 调用
+
+使用 `frago.compat.prepare_command_for_windows` 处理 npm 全局命令：
+
+```python
+from frago.compat import prepare_command_for_windows
+
+# 自动解析 claude.CMD 的完整路径
+subprocess.run(prepare_command_for_windows(["claude", "-p", "test"]))
+```
+
+### 编码问题
+
+Windows 控制台默认非 UTF-8，subprocess 调用需显式指定：
+
+```python
+subprocess.run(cmd, text=True, encoding='utf-8')
+```
+
 ## 资源统一到用户目录
 
 所有资源均存放在用户目录：
