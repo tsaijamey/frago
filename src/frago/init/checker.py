@@ -4,33 +4,12 @@
 提供并行检查 Node.js 和 Claude Code 安装状态的功能。
 """
 
-import platform
-import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 
+from frago.compat import prepare_command_for_windows as _prepare_command_for_windows
 from frago.init.models import DependencyCheckResult
-
-
-def _prepare_command_for_windows(cmd: List[str]) -> List[str]:
-    """
-    为 Windows 平台调整命令格式
-
-    Windows 上通过 npm 安装的命令（如 claude）是 .CMD 批处理文件，
-    subprocess 直接执行会报 [WinError 2]。需要通过 cmd.exe /c 执行。
-    """
-    if platform.system() != "Windows":
-        return cmd
-
-    if not cmd:
-        return cmd
-
-    executable = shutil.which(cmd[0])
-    if executable and executable.lower().endswith(('.cmd', '.bat')):
-        return ["cmd.exe", "/c"] + cmd
-
-    return cmd
 
 
 # 默认版本要求
