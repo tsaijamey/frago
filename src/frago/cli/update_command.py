@@ -8,6 +8,8 @@ from typing import Optional
 
 import click
 
+from frago.init.checker import compare_versions
+
 
 PACKAGE_NAME = "frago-cli"  # PyPI 包名
 TOOL_NAME = "frago"  # CLI 命令名 / entry point
@@ -99,10 +101,16 @@ def update(check_only: bool, reinstall: bool, from_repo: bool):
         click.echo("检查更新中...")
         latest = get_latest_version()
         if latest:
-            if latest == current_version:
-                click.echo(f"已是最新版本 (v{current_version})")
+            cmp = compare_versions(current_version, latest)
+            if cmp >= 0:
+                # 当前版本 >= PyPI 版本
+                if cmp > 0:
+                    click.echo(f"当前为开发版本 (v{current_version} > v{latest})")
+                else:
+                    click.echo(f"已是最新版本 (v{current_version})")
             else:
-                click.echo(f"最新版本: v{latest}")
+                # 当前版本 < PyPI 版本，有更新可用
+                click.echo(f"发现新版本: v{latest}")
                 click.echo(f"运行 'frago update' 更新")
         else:
             click.echo("无法检查更新（网络问题或包未发布）")
@@ -120,8 +128,8 @@ def update(check_only: bool, reinstall: bool, from_repo: bool):
             # 从 GitHub 仓库安装，需要 --reinstall 来覆盖现有安装
             cmd = ["uv", "tool", "install", "--reinstall", REPO_URL]
         else:
-            # 从 PyPI 更新
-            cmd = ["uv", "tool", "upgrade", PACKAGE_NAME]
+            # 从 PyPI 更新，使用 --refresh 确保获取最新索引
+            cmd = ["uv", "tool", "upgrade", "--refresh", PACKAGE_NAME]
             if reinstall:
                 cmd.append("--reinstall")
 
