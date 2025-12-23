@@ -28,12 +28,13 @@ from .agent_command import agent, agent_status
 from .gui_command import gui_deps
 from .session_commands import session_group
 from .view_command import view
+from .serve_command import serve
 from .agent_friendly import AgentFriendlyGroup
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["chrome", "recipe", "skill", "run", "view"]),
+    ("Daily Use", ["chrome", "recipe", "skill", "run", "view", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
     ("Environment", ["init", "status", "sync", "update"]),
     ("Developer", ["dev", "init-dirs", "gui-deps"]),
@@ -166,7 +167,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
 @click.option(
     '--gui',
     is_flag=True,
-    help='Launch GUI application mode'
+    help='[DEPRECATED] Launch GUI. Use "frago serve --open" instead.'
 )
 @click.option(
     '--gui-background',
@@ -257,8 +258,21 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     ctx.obj['NO_PROXY'] = no_proxy
     ctx.obj['TARGET_ID'] = target_id
 
-    # Handle --gui or --gui-background option
-    if gui or gui_background:
+    # Handle --gui option (deprecated, redirects to serve --open)
+    if gui:
+        click.secho(
+            "WARNING: --gui is deprecated and will be removed in v0.19. "
+            "Use 'frago serve --open' instead.",
+            fg="yellow",
+            err=True,
+        )
+        # Import and call serve command
+        from frago.server.runner import run_server
+        run_server(auto_open=True, log_level="debug" if debug else "info")
+        return
+
+    # Handle --gui-background option (internal, for legacy subprocess calls)
+    if gui_background:
         from frago.gui.app import start_gui
         # gui_background means this is a background process started by subprocess, run GUI directly
         start_gui(debug=debug, _background=gui_background)
@@ -308,6 +322,9 @@ cli.add_command(session_group)
 
 # View command - universal content viewer
 cli.add_command(view)
+
+# Serve command - web service GUI
+cli.add_command(serve)
 
 
 def main():
