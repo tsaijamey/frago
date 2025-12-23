@@ -1,7 +1,7 @@
 """
-CLI模块 - 命令行接口
+CLI module - Command line interface
 
-提供与Shell脚本兼容的命令行接口。
+Provides command line interface compatible with shell scripts.
 """
 
 from .main import cli

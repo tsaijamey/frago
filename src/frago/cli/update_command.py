@@ -1,4 +1,4 @@
-"""update 命令 - 自我更新 frago"""
+"""update command - self-update frago"""
 
 import json
 import subprocess
@@ -11,14 +11,14 @@ import click
 from frago.init.checker import compare_versions
 
 
-PACKAGE_NAME = "frago-cli"  # PyPI 包名
-TOOL_NAME = "frago"  # CLI 命令名 / entry point
+PACKAGE_NAME = "frago-cli"  # PyPI package name
+TOOL_NAME = "frago"  # CLI command name / entry point
 REPO_URL = "git+https://github.com/tsaijamey/frago.git"
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
 
 
 def is_tool_installed() -> bool:
-    """检查 frago 是否通过 uv tool 安装"""
+    """Check if frago is installed via uv tool"""
     try:
         result = subprocess.run(
             ["uv", "tool", "list"],
@@ -27,14 +27,14 @@ def is_tool_installed() -> bool:
             encoding='utf-8',
             check=True,
         )
-        # uv tool list 显示的是 entry point 名称，不是包名
+        # uv tool list displays entry point name, not package name
         return TOOL_NAME in result.stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
 
 def get_current_version() -> str:
-    """获取当前版本"""
+    """Get current version"""
     try:
         from frago import __version__
         return __version__
@@ -43,7 +43,7 @@ def get_current_version() -> str:
 
 
 def get_latest_version() -> Optional[str]:
-    """从 PyPI 获取最新版本"""
+    """Get latest version from PyPI"""
     try:
         with urllib.request.urlopen(PYPI_URL, timeout=10) as response:
             data = json.loads(response.read().decode())
@@ -57,97 +57,97 @@ def get_latest_version() -> Optional[str]:
     "--check",
     "check_only",
     is_flag=True,
-    help="仅检查是否有更新，不执行更新",
+    help="Only check for updates, do not perform update",
 )
 @click.option(
     "--reinstall",
     is_flag=True,
-    help="强制重新安装",
+    help="Force reinstall",
 )
 @click.option(
     "--repo",
     "from_repo",
     is_flag=True,
-    help="从 GitHub 仓库安装最新版本（而非 PyPI）",
+    help="Install latest version from GitHub repository (instead of PyPI)",
 )
 def update(check_only: bool, reinstall: bool, from_repo: bool):
     """
-    更新 frago 到最新版本
+    Update frago to the latest version
 
-    默认从 PyPI 更新，使用 --repo 从 GitHub 仓库安装最新代码。
+    Defaults to updating from PyPI, use --repo to install latest code from GitHub repository.
 
     \b
-    示例:
-      frago update              # 从 PyPI 更新
-      frago update --repo       # 从 GitHub 仓库更新
-      frago update --check      # 检查 PyPI 是否有更新
-      frago update --reinstall  # 强制重新安装
+    Examples:
+      frago update              # Update from PyPI
+      frago update --repo       # Update from GitHub repository
+      frago update --check      # Check if updates are available on PyPI
+      frago update --reinstall  # Force reinstall
     """
     current_version = get_current_version()
 
-    click.echo(f"当前版本: {TOOL_NAME} v{current_version}")
+    click.echo(f"Current version: {TOOL_NAME} v{current_version}")
 
-    # 检查是否通过 uv tool 安装
+    # Check if installed via uv tool
     if not is_tool_installed():
         click.echo()
-        click.echo(f"注意: {TOOL_NAME} 未通过 uv tool 安装", err=True)
-        click.echo("如果在开发环境中，请使用 git pull 更新", err=True)
+        click.echo(f"Note: {TOOL_NAME} is not installed via uv tool", err=True)
+        click.echo("If in development environment, please use git pull to update", err=True)
         click.echo()
-        click.echo(f"安装为工具: uv tool install {PACKAGE_NAME}", err=True)
+        click.echo(f"Install as tool: uv tool install {PACKAGE_NAME}", err=True)
         sys.exit(1)
 
     if check_only:
-        # 从 PyPI 检查最新版本
-        click.echo("检查更新中...")
+        # Check latest version from PyPI
+        click.echo("Checking for updates...")
         latest = get_latest_version()
         if latest:
             cmp = compare_versions(current_version, latest)
             if cmp >= 0:
-                # 当前版本 >= PyPI 版本
+                # Current version >= PyPI version
                 if cmp > 0:
-                    click.echo(f"当前为开发版本 (v{current_version} > v{latest})")
+                    click.echo(f"Current is development version (v{current_version} > v{latest})")
                 else:
-                    click.echo(f"已是最新版本 (v{current_version})")
+                    click.echo(f"Already at latest version (v{current_version})")
             else:
-                # 当前版本 < PyPI 版本，有更新可用
-                click.echo(f"发现新版本: v{latest}")
-                click.echo(f"运行 'frago update' 更新")
+                # Current version < PyPI version, update available
+                click.echo(f"New version found: v{latest}")
+                click.echo(f"Run 'frago update' to update")
         else:
-            click.echo("无法检查更新（网络问题或包未发布）")
+            click.echo("Unable to check for updates (network issue or package not published)")
         return
 
-    # 执行更新
+    # Perform update
     if from_repo:
-        click.echo(f"从仓库更新: {REPO_URL}")
+        click.echo(f"Updating from repository: {REPO_URL}")
     else:
-        click.echo("从 PyPI 更新...")
+        click.echo("Updating from PyPI...")
     click.echo()
 
     try:
         if from_repo:
-            # 从 GitHub 仓库安装，需要 --reinstall 来覆盖现有安装
+            # Install from GitHub repository, needs --reinstall to overwrite existing installation
             cmd = ["uv", "tool", "install", "--reinstall", REPO_URL]
         else:
-            # 从 PyPI 更新，使用 --refresh 确保获取最新索引
+            # Update from PyPI, use --refresh to ensure latest index is fetched
             cmd = ["uv", "tool", "upgrade", "--refresh", PACKAGE_NAME]
             if reinstall:
                 cmd.append("--reinstall")
 
-        # 直接执行，让输出显示给用户
+        # Execute directly, let output display to user
         result = subprocess.run(cmd)
 
         if result.returncode == 0:
             click.echo()
-            click.echo(f"[OK] {TOOL_NAME} 更新完成")
+            click.echo(f"[OK] {TOOL_NAME} update completed")
         else:
             click.echo()
-            click.echo(f"更新失败，退出码: {result.returncode}", err=True)
+            click.echo(f"Update failed, exit code: {result.returncode}", err=True)
             sys.exit(result.returncode)
 
     except FileNotFoundError:
-        click.echo("错误: 未找到 uv 命令", err=True)
-        click.echo("请确保 uv 已安装: https://docs.astral.sh/uv/", err=True)
+        click.echo("Error: uv command not found", err=True)
+        click.echo("Please ensure uv is installed: https://docs.astral.sh/uv/", err=True)
         sys.exit(1)
     except KeyboardInterrupt:
-        click.echo("\n操作已取消")
+        click.echo("\nOperation cancelled")
         sys.exit(1)

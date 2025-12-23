@@ -1,11 +1,11 @@
 """
-配置管理模块
+Configuration Management Module
 
-提供 Frago 配置的加载、保存和交互式配置功能：
-- 认证方式选择（官方 vs 自定义端点）
-- 配置持久化到 ~/.frago/config.json
-- 配置摘要显示
-- 配置更新流程
+Provides configuration loading, saving, and interactive configuration:
+- Authentication method selection (official vs custom endpoint)
+- Configuration persistence to ~/.frago/config.json
+- Configuration summary display
+- Configuration update workflow
 """
 
 import json
@@ -19,9 +19,9 @@ import click
 from frago.init.models import Config, APIEndpoint
 
 
-# 预设端点配置（用于 Claude Code settings.json 的 env 字段）
-# 各厂商均提供 Anthropic API 兼容接口
-# 注意：新版 Claude Code 使用 ANTHROPIC_DEFAULT_HAIKU_MODEL 替代 ANTHROPIC_SMALL_FAST_MODEL
+# Preset endpoint configuration (for Claude Code settings.json env field)
+# All vendors provide Anthropic API compatible interfaces
+# Note: New Claude Code version uses ANTHROPIC_DEFAULT_HAIKU_MODEL instead of ANTHROPIC_SMALL_FAST_MODEL
 PRESET_ENDPOINTS = {
     "deepseek": {
         "display_name": "DeepSeek (deepseek-chat)",
@@ -32,7 +32,7 @@ PRESET_ENDPOINTS = {
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
     "aliyun": {
-        "display_name": "阿里云百炼 (qwen3-max)",
+        "display_name": "Aliyun Bailian (qwen3-max)",
         "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
         "ANTHROPIC_MODEL": "qwen3-max",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-max",
@@ -57,12 +57,12 @@ PRESET_ENDPOINTS = {
     },
 }
 
-# Claude Code 配置文件路径
+# Claude Code configuration file paths
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 CLAUDE_JSON_PATH = Path.home() / ".claude.json"
 
-# ~/.claude.json 最小化配置（用于跳过官方登录流程）
-# 参考: https://github.com/anthropics/claude-code/issues/441
+# ~/.claude.json minimal configuration (to skip official login flow)
+# Reference: https://github.com/anthropics/claude-code/issues/441
 CLAUDE_JSON_MINIMAL = {
     "hasCompletedOnboarding": True,
     "lastOnboardingVersion": "1.0.0",
@@ -71,19 +71,19 @@ CLAUDE_JSON_MINIMAL = {
 
 
 # =============================================================================
-# Phase 6: User Story 4 - 自定义 API 端点配置函数
+# Phase 6: User Story 4 - Custom API Endpoint Configuration Functions
 # =============================================================================
 
 
 def validate_endpoint_url(url: str) -> bool:
     """
-    验证 API 端点 URL 格式
+    Validate API endpoint URL format
 
     Args:
-        url: 待验证的 URL
+        url: URL to validate
 
     Returns:
-        True 如果 URL 有效
+        True if URL is valid
     """
     if not url or not isinstance(url, str):
         return False
@@ -92,11 +92,11 @@ def validate_endpoint_url(url: str) -> bool:
     if not url:
         return False
 
-    # 必须以 http:// 或 https:// 开头
+    # Must start with http:// or https://
     if not (url.startswith("http://") or url.startswith("https://")):
         return False
 
-    # 简单检查格式：协议后面需要有内容
+    # Simple format check: protocol must be followed by content
     try:
         from urllib.parse import urlparse
 
@@ -108,14 +108,14 @@ def validate_endpoint_url(url: str) -> bool:
 
 def prompt_endpoint_type() -> str:
     """
-    提示用户选择端点类型（使用交互菜单）
+    Prompt user to select endpoint type (using interactive menu)
 
     Returns:
-        端点类型：deepseek, aliyun, kimi, minimax, custom
+        Endpoint type: deepseek, aliyun, kimi, minimax, custom
     """
     from frago.init.ui import ask_question
 
-    # 构建选项列表
+    # Build options list
     options = []
     for key, config in PRESET_ENDPOINTS.items():
         options.append({
@@ -139,13 +139,13 @@ def prompt_endpoint_type() -> str:
 
 def prompt_api_key(endpoint_name: Optional[str] = None) -> str:
     """
-    提示用户输入 API Key（隐藏输入）
+    Prompt user to enter API Key (hidden input)
 
     Args:
-        endpoint_name: 可选的端点名称，用于提示
+        endpoint_name: Optional endpoint name for the prompt
 
     Returns:
-        用户输入的 API Key
+        User's API Key input
     """
     prompt_text = "API Key"
     if endpoint_name:
@@ -156,36 +156,36 @@ def prompt_api_key(endpoint_name: Optional[str] = None) -> str:
 
 def prompt_custom_endpoint_url() -> str:
     """
-    提示用户输入自定义端点 URL（带验证）
+    Prompt user to enter custom endpoint URL (with validation)
 
     Returns:
-        验证通过的 URL
+        Validated URL
     """
     while True:
-        url = click.prompt("API 端点 URL", type=str)
+        url = click.prompt("API Endpoint URL", type=str)
 
         if validate_endpoint_url(url):
             return url
 
-        click.echo("[X] 无效的 URL 格式，请输入完整的 HTTP/HTTPS URL")
+        click.echo("[X] Invalid URL format, please enter a complete HTTP/HTTPS URL")
 
 
 def prompt_custom_model() -> str:
     """
-    提示用户输入自定义模型名称
+    Prompt user to enter custom model name
 
     Returns:
-        模型名称
+        Model name
     """
-    return click.prompt("模型名称", type=str, default="gpt-4")
+    return click.prompt("Model name", type=str, default="gpt-4")
 
 
 def load_claude_settings() -> dict:
     """
-    加载 Claude Code settings.json
+    Load Claude Code settings.json
 
     Returns:
-        配置字典，如果文件不存在则返回空字典
+        Configuration dictionary, or empty dict if file doesn't exist
     """
     if not CLAUDE_SETTINGS_PATH.exists():
         return {}
@@ -199,41 +199,41 @@ def load_claude_settings() -> dict:
 
 def save_claude_settings(settings: dict) -> None:
     """
-    保存 Claude Code settings.json（合并写入，不覆盖原有字段）
+    Save Claude Code settings.json (merge write, don't overwrite existing fields)
 
     Args:
-        settings: 要合并的配置字典
+        settings: Configuration dictionary to merge
     """
-    # 确保目录存在
+    # Ensure directory exists
     CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # 加载现有配置
+    # Load existing configuration
     existing = load_claude_settings()
 
-    # 合并 env 字段（深度合并）
+    # Merge env field (deep merge)
     if "env" in settings:
         if "env" not in existing:
             existing["env"] = {}
         existing["env"].update(settings["env"])
         del settings["env"]
 
-    # 合并其他顶级字段
+    # Merge other top-level fields
     existing.update(settings)
 
-    # 写入文件
+    # Write file
     with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=2, ensure_ascii=False)
 
 
 def delete_claude_settings() -> bool:
     """
-    删除 Claude Code settings.json 文件
+    Delete Claude Code settings.json file
 
-    当用户从 custom 切换到 official 模式时调用，
-    直接删除整个配置文件，让 Claude Code 使用官方默认配置。
+    Called when user switches from custom to official mode.
+    Deletes the entire config file to let Claude Code use official defaults.
 
     Returns:
-        True 如果删除成功或文件不存在，False 如果出错
+        True if deletion succeeded or file doesn't exist, False if error
     """
     if not CLAUDE_SETTINGS_PATH.exists():
         return True
@@ -247,20 +247,20 @@ def delete_claude_settings() -> bool:
 
 def check_claude_json_exists() -> bool:
     """
-    检查 ~/.claude.json 是否存在
+    Check if ~/.claude.json exists
 
     Returns:
-        True 如果文件存在
+        True if file exists
     """
     return CLAUDE_JSON_PATH.exists()
 
 
 def load_claude_json() -> dict:
     """
-    加载 ~/.claude.json
+    Load ~/.claude.json
 
     Returns:
-        配置字典，如果文件不存在则返回空字典
+        Configuration dictionary, or empty dict if file doesn't exist
     """
     if not CLAUDE_JSON_PATH.exists():
         return {}
@@ -274,14 +274,14 @@ def load_claude_json() -> dict:
 
 def ensure_claude_json_for_custom_auth() -> bool:
     """
-    确保 ~/.claude.json 存在并包含跳过官方登录所需的最小字段
+    Ensure ~/.claude.json exists with minimal fields required to skip official login
 
-    当用户选择 custom API 端点时调用此函数。
-    如果文件不存在，创建最小化配置；
-    如果文件存在但缺少关键字段，补充缺失字段。
+    Called when user selects custom API endpoint.
+    If file doesn't exist, creates minimal configuration.
+    If file exists but missing key fields, adds missing fields.
 
     Returns:
-        True 如果创建或修改了文件，False 如果文件已存在且完整
+        True if file was created or modified, False if file already existed and complete
     """
     import click
 
@@ -289,19 +289,19 @@ def ensure_claude_json_for_custom_auth() -> bool:
     existing = load_claude_json()
     modified = False
 
-    # 检查并补充缺失的关键字段
+    # Check and add missing key fields
     for key, value in CLAUDE_JSON_MINIMAL.items():
         if key not in existing:
             existing[key] = value
             modified = True
 
     if modified:
-        # 写入文件
+        # Write file
         try:
             with open(CLAUDE_JSON_PATH, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=2, ensure_ascii=False)
 
-            # 使用 ASCII 兼容的符号，避免 Windows GBK 编码问题
+            # Use ASCII compatible symbols to avoid Windows GBK encoding issues
             if not file_existed:
                 click.echo("   [OK] Created ~/.claude.json (skip official login)")
             else:
@@ -317,23 +317,23 @@ def ensure_claude_json_for_custom_auth() -> bool:
 
 def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = None, custom_model: str = None) -> dict:
     """
-    构建 Claude Code settings.json 的 env 配置
+    Build env configuration for Claude Code settings.json
 
     Args:
-        endpoint_type: 端点类型 (deepseek, aliyun, kimi, minimax, custom)
+        endpoint_type: Endpoint type (deepseek, aliyun, kimi, minimax, custom)
         api_key: API Key
-        custom_url: 自定义 URL（仅 custom 类型需要）
-        custom_model: 自定义模型名称（仅 custom 类型需要）
+        custom_url: Custom URL (only needed for custom type)
+        custom_model: Custom model name (only needed for custom type)
 
     Returns:
-        env 配置字典
+        env configuration dictionary
     """
     if endpoint_type in PRESET_ENDPOINTS:
         env = PRESET_ENDPOINTS[endpoint_type].copy()
-        # 移除 display_name（仅用于显示，不写入配置）
+        # Remove display_name (only for display, not written to config)
         env.pop("display_name", None)
     else:
-        # custom 类型
+        # custom type
         env = {
             "ANTHROPIC_BASE_URL": custom_url,
             "ANTHROPIC_MODEL": custom_model,
@@ -348,33 +348,33 @@ def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = 
 
 def get_config_path() -> Path:
     """
-    获取配置文件路径
+    Get configuration file path
 
     Returns:
-        配置文件路径 (~/.frago/config.json)
+        Configuration file path (~/.frago/config.json)
     """
     return Path.home() / ".frago" / "config.json"
 
 
 def config_exists() -> bool:
     """
-    检查配置文件是否存在
+    Check if configuration file exists
 
     Returns:
-        True 如果配置文件存在
+        True if configuration file exists
     """
     return get_config_path().exists()
 
 
 def load_config(config_file: Optional[Path] = None) -> Config:
     """
-    加载配置文件
+    Load configuration file
 
     Args:
-        config_file: 配置文件路径，默认使用 get_config_path()
+        config_file: Configuration file path, defaults to get_config_path()
 
     Returns:
-        Config 对象，如果文件不存在或损坏则返回默认配置
+        Config object, returns default config if file doesn't exist or is corrupted
     """
     if config_file is None:
         config_file = get_config_path()
@@ -386,7 +386,7 @@ def load_config(config_file: Optional[Path] = None) -> Config:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # 处理 datetime 字段
+        # Handle datetime fields
         for field in ["created_at", "updated_at"]:
             if field in data and isinstance(data[field], str):
                 try:
@@ -394,47 +394,47 @@ def load_config(config_file: Optional[Path] = None) -> Config:
                 except ValueError:
                     del data[field]
 
-        # 处理嵌套的 api_endpoint
+        # Handle nested api_endpoint
         if "api_endpoint" in data and data["api_endpoint"]:
             data["api_endpoint"] = APIEndpoint(**data["api_endpoint"])
 
         return Config(**data)
 
     except (json.JSONDecodeError, TypeError, ValueError) as e:
-        # 配置文件损坏，备份后返回默认配置
+        # Config file corrupted, backup and return default config
         backup_file = config_file.with_suffix(".json.bak")
         if config_file.exists():
             config_file.rename(backup_file)
-            click.echo(f"配置文件损坏，已备份到: {backup_file}")
+            click.echo(f"Config file corrupted, backed up to: {backup_file}")
         return Config()
 
 
 def save_config(config: Config, config_file: Optional[Path] = None) -> None:
     """
-    保存配置文件
+    Save configuration file
 
     Args:
-        config: Config 对象
-        config_file: 配置文件路径，默认使用 get_config_path()
+        config: Config object
+        config_file: Configuration file path, defaults to get_config_path()
     """
     if config_file is None:
         config_file = get_config_path()
 
-    # 确保目录存在
+    # Ensure directory exists
     config_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # 更新时间戳
+    # Update timestamp
     config.updated_at = datetime.now()
 
-    # 序列化为字典
+    # Serialize to dictionary
     data = config.model_dump()
 
-    # 处理 datetime 序列化
+    # Handle datetime serialization
     for key, value in data.items():
         if isinstance(value, datetime):
             data[key] = value.isoformat()
 
-    # 处理 api_endpoint 嵌套对象
+    # Handle api_endpoint nested object
     if data.get("api_endpoint"):
         data["api_endpoint"] = dict(data["api_endpoint"])
 
@@ -444,10 +444,10 @@ def save_config(config: Config, config_file: Optional[Path] = None) -> None:
 
 def prompt_auth_method() -> str:
     """
-    提示用户选择认证方式（使用 AskUserQuestion 交互菜单）
+    Prompt user to select authentication method (using AskUserQuestion interactive menu)
 
     Returns:
-        "official" 或 "custom"
+        "official" or "custom"
     """
     from frago.init.ui import ask_question
 
@@ -467,26 +467,26 @@ def prompt_auth_method() -> str:
         default_index=0
     )
 
-    # 映射 Default -> official（内部仍使用 official 表示不干预）
+    # Map Default -> official (internally still use official to represent no intervention)
     return "official" if answer == "Default" else "custom"
 
 
 def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
     """
-    配置官方认证
+    Configure official authentication
 
     Args:
-        existing_config: 现有配置（用于保留其他字段）
+        existing_config: Existing configuration (to preserve other fields)
 
     Returns:
-        更新后的 Config 对象
+        Updated Config object
     """
     if existing_config:
-        # 保留其他配置，只更新认证相关字段
+        # Preserve other configuration, only update authentication-related fields
         data = existing_config.model_dump()
         data["auth_method"] = "official"
         data["api_endpoint"] = None
-        # 重新创建以触发验证
+        # Recreate to trigger validation
         return Config(**data)
     else:
         return Config(auth_method="official")
@@ -494,44 +494,44 @@ def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
 
 def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Config:
     """
-    配置自定义 API 端点
+    Configure custom API endpoint
 
-    将配置写入 Claude Code 的 ~/.claude/settings.json 的 env 字段
+    Writes configuration to Claude Code's ~/.claude/settings.json env field
 
     Args:
-        existing_config: 现有配置（用于保留其他字段）
+        existing_config: Existing configuration (to preserve other fields)
 
     Returns:
-        更新后的 Config 对象
+        Updated Config object
     """
-    click.echo("\n📡 自定义 API 端点配置")
-    click.echo("   配置将写入 ~/.claude/settings.json\n")
+    click.echo("\n📡 Custom API Endpoint Configuration")
+    click.echo("   Configuration will be written to ~/.claude/settings.json\n")
 
-    # 获取端点类型
+    # Get endpoint type
     endpoint_type = prompt_endpoint_type()
 
-    # 获取自定义 URL 和模型（仅 custom 类型需要）
+    # Get custom URL and model (only needed for custom type)
     custom_url = None
     custom_model = None
     if endpoint_type == "custom":
         custom_url = prompt_custom_endpoint_url()
         custom_model = prompt_custom_model()
 
-    # 获取 API Key
+    # Get API Key
     api_key = prompt_api_key()
 
-    # 构建 env 配置
+    # Build env configuration
     env_config = build_claude_env_config(endpoint_type, api_key, custom_url, custom_model)
 
-    # 确保 ~/.claude.json 存在（跳过官方登录流程）
+    # Ensure ~/.claude.json exists (skip official login flow)
     ensure_claude_json_for_custom_auth()
 
-    # 写入 Claude Code settings.json
+    # Write Claude Code settings.json
     try:
         save_claude_settings({"env": env_config})
         click.echo(f"   [OK] Saved to {CLAUDE_SETTINGS_PATH}")
 
-        # 显示配置摘要（隐藏 API Key）
+        # Display configuration summary (hide API Key)
         click.echo("\n   Config:")
         click.echo(f"   ANTHROPIC_BASE_URL: {env_config.get('ANTHROPIC_BASE_URL')}")
         click.echo(f"   ANTHROPIC_MODEL: {env_config.get('ANTHROPIC_MODEL')}")
@@ -541,14 +541,14 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         click.echo(f"\n[ERROR] Failed to write config: {e}")
         click.echo("   Please check ~/.claude/ directory permissions")
 
-    # 创建 APIEndpoint 对象用于 frago 配置
+    # Create APIEndpoint object for frago configuration
     if endpoint_type == "custom":
         api_endpoint = APIEndpoint(type="custom", api_key=api_key, url=custom_url)
     else:
-        # 预设端点类型
+        # Preset endpoint type
         api_endpoint = APIEndpoint(type=endpoint_type, api_key=api_key, url=None)
 
-    # 更新 frago 配置
+    # Update frago configuration
     if existing_config:
         data = existing_config.model_dump()
         data["auth_method"] = "custom"
@@ -560,34 +560,34 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
 
 def display_config_summary(config: Config) -> str:
     """
-    生成配置摘要字符串（简洁版，仅核心信息）
+    Generate configuration summary string (concise version, core information only)
 
     Args:
-        config: Config 对象
+        config: Config object
 
     Returns:
-        格式化的配置摘要字符串
+        Formatted configuration summary string
     """
     items = []
 
-    # 依赖信息
+    # Dependency information
     if config.node_version:
         items.append(("Node.js", config.node_version))
     if config.claude_code_version:
         items.append(("Claude Code", config.claude_code_version))
 
-    # 认证信息
+    # Authentication information
     if config.auth_method == "official":
         items.append(("Authentication", "User configured"))
     else:
         endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
         items.append(("Authentication", f"Frago managed ({endpoint_type})"))
 
-    # 初始化状态
+    # Initialization status
     status = "Completed" if config.init_completed else "Incomplete"
     items.append(("Status", status))
 
-    # 格式化输出
+    # Format output
     if not items:
         return ""
 
@@ -602,10 +602,10 @@ def display_config_summary(config: Config) -> str:
 
 def prompt_config_update() -> bool:
     """
-    询问用户是否更新配置
+    Ask user whether to update configuration
 
     Returns:
-        True 如果用户选择更新
+        True if user chooses to update
     """
     click.echo()
     return click.confirm("Update configuration?", default=False)
@@ -613,19 +613,19 @@ def prompt_config_update() -> bool:
 
 def select_config_items_to_update() -> List[str]:
     """
-    让用户选择要更新的配置项
+    Let user select configuration items to update
 
     Returns:
-        要更新的配置项列表
+        List of configuration items to update
     """
-    click.echo("\n可更新的配置项:")
-    click.echo("  auth     - 认证方式")
-    click.echo("  endpoint - API 端点配置")
+    click.echo("\nAvailable configuration items:")
+    click.echo("  auth     - Authentication method")
+    click.echo("  endpoint - API endpoint configuration")
     click.echo("  ccr      - Claude Code Router")
     click.echo("")
 
     choice = click.prompt(
-        "选择要更新的项目（多个用逗号分隔）",
+        "Select items to update (comma-separated)",
         type=str,
         default="auth",
     )
@@ -635,13 +635,13 @@ def select_config_items_to_update() -> List[str]:
 
 def run_auth_configuration(existing_config: Optional[Config] = None) -> Config:
     """
-    运行认证配置流程
+    Run authentication configuration workflow
 
     Args:
-        existing_config: 现有配置
+        existing_config: Existing configuration
 
     Returns:
-        配置后的 Config 对象
+        Configured Config object
     """
     auth_method = prompt_auth_method()
 
@@ -653,47 +653,47 @@ def run_auth_configuration(existing_config: Optional[Config] = None) -> Config:
 
 def warn_auth_switch(current_method: str, new_method: str) -> bool:
     """
-    认证方式切换警告
+    Authentication method switch warning
 
     Args:
-        current_method: 当前认证方式
-        new_method: 新认证方式
+        current_method: Current authentication method
+        new_method: New authentication method
 
     Returns:
-        True 如果用户确认切换
+        True if user confirms the switch
     """
     if current_method == new_method:
         return True
 
     if current_method == "custom" and new_method == "official":
-        click.echo("\n[!]  警告: 切换到官方认证将清除现有的 API 端点配置")
+        click.echo("\n[!]  Warning: Switching to official authentication will clear existing API endpoint configuration")
     elif current_method == "official" and new_method == "custom":
-        click.echo("\n[!]  警告: 切换到自定义端点需要提供 API Key")
+        click.echo("\n[!]  Warning: Switching to custom endpoint requires providing an API Key")
 
-    return click.confirm("确认切换?", default=True)
+    return click.confirm("Confirm switch?", default=True)
 
 
 # =============================================================================
-# Phase 8: User Story 6 - 配置持久化和摘要报告
+# Phase 8: User Story 6 - Configuration Persistence and Summary Report
 # =============================================================================
 
 
 def format_final_summary(config: Config) -> str:
     """
-    生成最终配置摘要（用于初始化完成时显示）
+    Generate final configuration summary (displayed when initialization completes)
 
     Args:
-        config: Config 对象
+        config: Config object
 
     Returns:
-        格式化的最终摘要字符串
+        Formatted final summary string
     """
-    lines = ["", "🎉 Frago 初始化完成!", ""]
+    lines = ["", "🎉 Frago initialization completed!", ""]
     lines.append("=" * 40)
     lines.append("")
 
-    # 依赖信息
-    lines.append("📦 已安装组件:")
+    # Dependency information
+    lines.append("📦 Installed components:")
     if config.node_version:
         lines.append(f"   - Node.js: {config.node_version}")
     if config.claude_code_version:
@@ -701,22 +701,22 @@ def format_final_summary(config: Config) -> str:
 
     lines.append("")
 
-    # 认证信息
-    lines.append("🔐 认证配置:")
+    # Authentication information
+    lines.append("🔐 Authentication configuration:")
     if config.auth_method == "official":
-        lines.append("   - 方式: 用户自行配置")
+        lines.append("   - Method: User configured")
     else:
-        lines.append("   - 方式: Frago 配置的 API 端点")
+        lines.append("   - Method: Frago configured API endpoint")
         if config.api_endpoint:
-            lines.append(f"   - 端点: {config.api_endpoint.type}")
+            lines.append(f"   - Endpoint: {config.api_endpoint.type}")
             if config.api_endpoint.url:
                 lines.append(f"   - URL: {config.api_endpoint.url}")
-            lines.append("   - API Key: ****已配置****")
+            lines.append("   - API Key: ****configured****")
 
-    # CCR 状态
+    # CCR status
     if config.ccr_enabled:
         lines.append("")
-        lines.append("🔄 Claude Code Router: 已启用")
+        lines.append("🔄 Claude Code Router: Enabled")
 
     lines.append("")
     lines.append("=" * 40)
@@ -726,41 +726,41 @@ def format_final_summary(config: Config) -> str:
 
 def suggest_next_steps(config: Config) -> list[str]:
     """
-    根据配置生成下一步操作建议
+    Generate next step suggestions based on configuration
 
     Args:
-        config: Config 对象
+        config: Config object
 
     Returns:
-        建议列表
+        List of suggestions
     """
     steps = []
 
     if config.auth_method == "official":
-        steps.append("如未登录，运行 `claude` 命令完成 Claude Code 登录")
-        steps.append("使用 `frago recipe list` 查看可用的自动化配方")
+        steps.append("If not logged in, run `claude` command to complete Claude Code login")
+        steps.append("Use `frago recipe list` to view available automation recipes")
     else:
-        steps.append("使用 `frago recipe list` 查看可用的自动化配方")
-        steps.append("运行 `frago recipe run <name>` 执行配方")
+        steps.append("Use `frago recipe list` to view available automation recipes")
+        steps.append("Run `frago recipe run <name>` to execute a recipe")
 
-    steps.append("查看文档: https://github.com/tsaijamey/frago")
+    steps.append("View documentation: https://github.com/tsaijamey/frago")
 
     return steps
 
 
 def display_next_steps(config: Config) -> str:
     """
-    显示下一步操作建议
+    Display next step suggestions
 
     Args:
-        config: Config 对象
+        config: Config object
 
     Returns:
-        格式化的建议字符串
+        Formatted suggestion string
     """
     steps = suggest_next_steps(config)
 
-    lines = ["", "📋 下一步:"]
+    lines = ["", "📋 Next steps:"]
     for i, step in enumerate(steps, 1):
         lines.append(f"   {i}. {step}")
     lines.append("")

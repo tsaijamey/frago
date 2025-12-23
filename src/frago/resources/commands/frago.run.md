@@ -1,5 +1,5 @@
 ---
-description: "执行AI主持的复杂浏览器自动化任务并管理run实例"
+description: "Execute AI-driven complex browser automation tasks and manage run instances"
 ---
 
 # /frago.run - Research Explorer

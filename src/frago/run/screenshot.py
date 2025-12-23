@@ -1,6 +1,6 @@
-"""截图自动编号和保存
+"""Screenshot Auto-numbering and Saving
 
-提供截图文件命名、编号、原子性写入功能
+Provides screenshot file naming, numbering, and atomic write functionality
 """
 
 import base64
@@ -16,13 +16,13 @@ from .utils import ensure_directory_exists
 
 
 def get_next_screenshot_number(screenshots_dir: Path) -> int:
-    """获取下一个截图序号
+    """Get next screenshot sequence number
 
     Args:
-        screenshots_dir: 截图目录路径
+        screenshots_dir: screenshots directory path
 
     Returns:
-        下一个序号（1-999）
+        next sequence number (1-999)
     """
     ensure_directory_exists(screenshots_dir)
 
@@ -37,36 +37,36 @@ def get_next_screenshot_number(screenshots_dir: Path) -> int:
 
 
 def capture_screenshot(description: str, screenshots_dir: Path) -> Tuple[Path, int]:
-    """捕获截图并保存
+    """Capture screenshot and save
 
     Args:
-        description: 截图描述
-        screenshots_dir: 截图目录路径
+        description: screenshot description
+        screenshots_dir: screenshots directory path
 
     Returns:
-        (文件路径, 序号)
+        (file path, sequence number)
 
     Raises:
-        FileSystemError: 截图保存失败
+        FileSystemError: screenshot save failed
     """
-    # 获取序号
+    # Get sequence number
     seq = get_next_screenshot_number(screenshots_dir)
 
-    # Slug化描述
+    # Slugify description
     desc_slug = slugify(description, max_length=40)
 
-    # 构造文件名
+    # Construct filename
     filename = f"{seq:03d}_{desc_slug}.png"
     final_path = screenshots_dir / filename
     temp_path = screenshots_dir / f".tmp_{filename}"
 
     try:
-        # 使用CDP会话截图
+        # Use CDP session to capture screenshot
         with CDPSession() as session:
             result = session.screenshot.capture()
             screenshot_data = base64.b64decode(result.get("data", ""))
 
-        # 原子性写入（先写临时文件，再重命名）
+        # Atomic write (write to temp file first, then rename)
         ensure_directory_exists(screenshots_dir)
         temp_path.write_bytes(screenshot_data)
         temp_path.rename(final_path)
@@ -74,7 +74,7 @@ def capture_screenshot(description: str, screenshots_dir: Path) -> Tuple[Path, i
         return final_path, seq
 
     except Exception as e:
-        # 清理临时文件
+        # Clean up temp file
         if temp_path.exists():
             try:
                 temp_path.unlink()

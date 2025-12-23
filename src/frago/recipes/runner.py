@@ -1,4 +1,4 @@
-"""Recipe 执行器"""
+"""Recipe executor"""
 import json
 import platform
 import shutil
@@ -15,7 +15,7 @@ from .registry import RecipeRegistry
 
 
 class RecipeRunner:
-    """Recipe 运行器，负责执行 Recipe"""
+    """Recipe runner, responsible for executing Recipes"""
 
     def __init__(
         self,
@@ -23,11 +23,11 @@ class RecipeRunner:
         project_root: Optional[Path] = None
     ):
         """
-        初始化 RecipeRunner
+        Initialize RecipeRunner
 
         Args:
-            registry: Recipe 注册表（不提供则自动创建并扫描）
-            project_root: 项目根目录（用于加载项目级 .env）
+            registry: Recipe registry (auto-created and scanned if not provided)
+            project_root: Project root directory (used to load project-level .env)
         """
         if registry is None:
             registry = RecipeRegistry()
@@ -47,19 +47,19 @@ class RecipeRunner:
         source: str | None = None
     ) -> dict[str, Any]:
         """
-        执行指定的 Recipe
+        Execute the specified Recipe
 
         Args:
-            name: Recipe 名称
-            params: 输入参数（JSON 字典）
-            output_target: 输出目标 ('stdout' | 'file' | 'clipboard')
-            output_options: 输出选项（如 file 需要 'path'）
-            env_overrides: CLI --env 参数提供的环境变量覆盖
-            workflow_context: Workflow 执行上下文（用于跨 Recipe 共享环境变量）
-            source: 指定配方来源 ('project' | 'user' | 'example')，为 None 时按优先级选择
+            name: Recipe name
+            params: Input parameters (JSON dictionary)
+            output_target: Output target ('stdout' | 'file' | 'clipboard')
+            output_options: Output options (e.g., 'path' required for file)
+            env_overrides: Environment variable overrides provided by CLI --env parameter
+            workflow_context: Workflow execution context (for sharing environment variables across Recipes)
+            source: Specify recipe source ('project' | 'user' | 'example'), selects by priority when None
 
         Returns:
-            执行结果字典，格式:
+            Execution result dictionary in format:
             {
                 "success": bool,
                 "data": dict | None,
@@ -70,20 +70,20 @@ class RecipeRunner:
             }
 
         Raises:
-            RecipeNotFoundError: Recipe 不存在
-            RecipeValidationError: 参数验证失败
-            RecipeExecutionError: 执行失败
+            RecipeNotFoundError: Recipe does not exist
+            RecipeValidationError: Parameter validation failed
+            RecipeExecutionError: Execution failed
         """
         params = params or {}
         output_options = output_options or {}
 
-        # 查找 Recipe（支持指定来源）
+        # Find Recipe (supports specified source)
         recipe = self.registry.find(name, source=source)
 
-        # 验证参数
+        # Validate parameters
         self._validate_params(recipe.metadata, params)
 
-        # 解析环境变量
+        # Resolve environment variables
         try:
             resolved_env = self.env_loader.resolve_for_recipe(
                 env_definitions=recipe.metadata.env,
@@ -93,15 +93,15 @@ class RecipeRunner:
         except ValueError as e:
             raise RecipeValidationError(name, [str(e)])
 
-        # 记录开始时间
+        # Record start time
         start_time = time.time()
 
         try:
-            # 根据运行时类型执行 Recipe
+            # Execute Recipe based on runtime type
             if recipe.metadata.runtime == 'chrome-js':
                 result_data = self._run_chrome_js(name, recipe.script_path, params, resolved_env)
             elif recipe.metadata.runtime == 'python':
-                # 检查是否需要系统 Python（用于依赖 dbus 等系统包的脚本）
+                # Check if system Python is needed (for scripts that depend on system packages like dbus)
                 use_system_python = getattr(recipe.metadata, 'system_packages', False)
                 result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python)
             elif recipe.metadata.runtime == 'shell':
@@ -111,13 +111,13 @@ class RecipeRunner:
                     recipe_name=name,
                     runtime=recipe.metadata.runtime,
                     exit_code=-1,
-                    stderr=f"不支持的运行时类型: {recipe.metadata.runtime}"
+                    stderr=f"Unsupported runtime type: {recipe.metadata.runtime}"
                 )
 
-            # 计算执行时间
+            # Calculate execution time
             execution_time = time.time() - start_time
 
-            # 返回成功结果
+            # Return success result
             return {
                 "success": True,
                 "data": result_data.get("data"),
@@ -129,10 +129,10 @@ class RecipeRunner:
             }
 
         except RecipeExecutionError:
-            # 直接重新抛出 RecipeExecutionError
+            # Re-raise RecipeExecutionError directly
             raise
         except Exception as e:
-            # 其他异常转换为 RecipeExecutionError
+            # Convert other exceptions to RecipeExecutionError
             execution_time = time.time() - start_time
             raise RecipeExecutionError(
                 recipe_name=name,
@@ -143,16 +143,16 @@ class RecipeRunner:
 
     def _validate_params(self, metadata, params: dict[str, Any]) -> None:
         """
-        验证参数是否符合元数据定义
+        Validate if parameters conform to metadata definition
 
         Args:
-            metadata: Recipe 元数据
-            params: 输入参数
+            metadata: Recipe metadata
+            params: Input parameters
 
         Raises:
-            RecipeValidationError: 参数验证失败
+            RecipeValidationError: Parameter validation failed
         """
-        # 使用统一的参数验证函数（包含必需参数和类型检查）
+        # Use unified parameter validation function (includes required parameters and type checking)
         validate_params(metadata, params)
 
     def _run_chrome_js(
@@ -163,21 +163,21 @@ class RecipeRunner:
         env: dict[str, str]
     ) -> dict[str, Any]:
         """
-        执行 Chrome JavaScript Recipe
+        Execute Chrome JavaScript Recipe
 
         Args:
-            recipe_name: Recipe 名称
-            script_path: JS 脚本路径
-            params: 输入参数
-            env: 解析后的环境变量
+            recipe_name: Recipe name
+            script_path: JS script path
+            params: Input parameters
+            env: Resolved environment variables
 
         Returns:
-            执行结果 JSON
+            Execution result JSON
 
         Raises:
-            RecipeExecutionError: 执行失败
+            RecipeExecutionError: Execution failed
         """
-        # 如果有参数，先注入到 window.__FRAGO_PARAMS__
+        # If there are parameters, inject them into window.__FRAGO_PARAMS__ first
         if params:
             params_json = json.dumps(params)
             inject_cmd = [
@@ -199,17 +199,17 @@ class RecipeRunner:
                         recipe_name=recipe_name,
                         runtime='chrome-js',
                         exit_code=inject_result.returncode,
-                        stderr=f"参数注入失败: {inject_result.stderr}"
+                        stderr=f"Parameter injection failed: {inject_result.stderr}"
                     )
             except subprocess.TimeoutExpired:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
                     runtime='chrome-js',
                     exit_code=-1,
-                    stderr="参数注入超时"
+                    stderr="Parameter injection timeout"
                 )
 
-        # 构建命令：uv run frago chrome exec-js <script_path> --return-value
+        # Build command: uv run frago chrome exec-js <script_path> --return-value
         cmd = [
             'uv', 'run', 'frago', 'chrome', 'exec-js',
             str(script_path),
@@ -222,7 +222,7 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                timeout=None,  # 无超时限制
+                timeout=None,  # No timeout limit
                 check=False,
                 env=env
             )
@@ -236,22 +236,22 @@ class RecipeRunner:
                     stderr=result.stderr
                 )
 
-            # 检查输出大小（10MB 限制）
+            # Check output size (10MB limit)
             if len(result.stdout) > 10 * 1024 * 1024:  # 10MB
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
                     runtime='chrome-js',
                     exit_code=-1,
-                    stderr=f"Recipe 输出过大: {len(result.stdout) / 1024 / 1024:.2f}MB (限制: 10MB)"
+                    stderr=f"Recipe output too large: {len(result.stdout) / 1024 / 1024:.2f}MB (limit: 10MB)"
                 )
 
-            # 解析 JSON 输出
+            # Parse JSON output
             try:
-                # exec-js 的输出可能是纯文本或 JSON
-                # 尝试解析为 JSON，失败则作为文本返回
+                # exec-js output can be plain text or JSON
+                # Try parsing as JSON, return as text if it fails
                 data = json.loads(result.stdout)
             except json.JSONDecodeError:
-                # 返回文本结果
+                # Return text result
                 data = {"result": result.stdout.strip()}
 
             return {"data": data, "stderr": result.stderr}
@@ -261,7 +261,7 @@ class RecipeRunner:
                 recipe_name=recipe_name,
                 runtime='chrome-js',
                 exit_code=-1,
-                stderr="执行超时（5分钟）"
+                stderr="Execution timeout (5 minutes)"
             )
 
     def _run_python(
@@ -273,43 +273,43 @@ class RecipeRunner:
         use_system_python: bool = False
     ) -> dict[str, Any]:
         """
-        执行 Python Recipe
+        Execute Python Recipe
 
-        默认使用 `uv run` 执行脚本，支持 PEP 723 内联依赖声明。
-        如果 use_system_python=True，则使用系统 Python（用于依赖系统包如 dbus 的脚本）
+        By default, uses `uv run` to execute the script, supporting PEP 723 inline dependency declarations.
+        If use_system_python=True, uses system Python (for scripts depending on system packages like dbus)
 
         Args:
-            recipe_name: Recipe 名称
-            script_path: Python 脚本路径
-            params: 输入参数
-            env: 解析后的环境变量
-            use_system_python: 是否使用系统 Python
+            recipe_name: Recipe name
+            script_path: Python script path
+            params: Input parameters
+            env: Resolved environment variables
+            use_system_python: Whether to use system Python
 
         Returns:
-            执行结果 JSON
+            Execution result JSON
 
         Raises:
-            RecipeExecutionError: 执行失败
+            RecipeExecutionError: Execution failed
         """
         params_json = json.dumps(params)
         import os
 
         if use_system_python:
-            # 使用系统 Python（用于依赖 dbus 等系统包的脚本）
-            # 必须清除 VIRTUAL_ENV 避免继承 uv 的虚拟环境
+            # Use system Python (for scripts depending on system packages like dbus)
+            # Must clear VIRTUAL_ENV to avoid inheriting uv's virtual environment
             if platform.system() == "Windows":
-                # Windows: 使用当前 Python 解释器
+                # Windows: use current Python interpreter
                 python_path = sys.executable
             else:
-                # Unix: 优先使用系统 Python
+                # Unix: prefer system Python
                 python_path = shutil.which('python3') or '/usr/bin/python3'
             cmd = [python_path, str(script_path), params_json]
-            # 创建不含虚拟环境变量的环境
+            # Create environment without virtual environment variables
             clean_env = {k: v for k, v in env.items() if k not in ('VIRTUAL_ENV', 'PYTHONHOME')}
             env = clean_env
         else:
-            # 构建命令：uv run <script_path> <params_json>
-            # uv 会自动处理 PEP 723 内联依赖（# /// script ... # ///）
+            # Build command: uv run <script_path> <params_json>
+            # uv will automatically handle PEP 723 inline dependencies (# /// script ... # ///)
             cmd = ['uv', 'run', str(script_path), params_json]
 
         try:
@@ -318,7 +318,7 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                timeout=None,  # 无超时限制
+                timeout=None,  # No timeout limit
                 check=False,
                 env=env
             )
@@ -332,16 +332,16 @@ class RecipeRunner:
                     stderr=result.stderr
                 )
 
-            # 检查输出大小（10MB 限制）
+            # Check output size (10MB limit)
             if len(result.stdout) > 10 * 1024 * 1024:  # 10MB
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
                     runtime='python',
                     exit_code=-1,
-                    stderr=f"Recipe 输出过大: {len(result.stdout) / 1024 / 1024:.2f}MB (限制: 10MB)"
+                    stderr=f"Recipe output too large: {len(result.stdout) / 1024 / 1024:.2f}MB (limit: 10MB)"
                 )
 
-            # 解析 JSON 输出
+            # Parse JSON output
             try:
                 data = json.loads(result.stdout)
             except json.JSONDecodeError as e:
@@ -349,7 +349,7 @@ class RecipeRunner:
                     recipe_name=recipe_name,
                     runtime='python',
                     exit_code=-1,
-                    stderr=f"JSON 解析失败: {e}\n输出: {result.stdout[:200]}"
+                    stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout[:200]}"
                 )
 
             return {"data": data, "stderr": result.stderr}
@@ -359,7 +359,7 @@ class RecipeRunner:
                 recipe_name=recipe_name,
                 runtime='python',
                 exit_code=-1,
-                stderr="执行超时（5分钟）"
+                stderr="Execution timeout (5 minutes)"
             )
 
     def _run_shell(
@@ -370,31 +370,31 @@ class RecipeRunner:
         env: dict[str, str]
     ) -> dict[str, Any]:
         """
-        执行 Shell Recipe
+        Execute Shell Recipe
 
         Args:
-            recipe_name: Recipe 名称
-            script_path: Shell 脚本路径
-            params: 输入参数
-            env: 解析后的环境变量
+            recipe_name: Recipe name
+            script_path: Shell script path
+            params: Input parameters
+            env: Resolved environment variables
 
         Returns:
-            执行结果 JSON
+            Execution result JSON
 
         Raises:
-            RecipeExecutionError: 执行失败
+            RecipeExecutionError: Execution failed
         """
-        # 检查执行权限（仅 Unix 系统，Windows 不使用 Unix 权限模式）
+        # Check execution permissions (Unix systems only, Windows does not use Unix permission mode)
         if platform.system() != "Windows":
             if not script_path.stat().st_mode & 0o100:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=-1,
-                    stderr=f"脚本没有执行权限: {script_path}"
+                    stderr=f"Script does not have execute permission: {script_path}"
                 )
 
-        # 构建命令：<script_path> <params_json>
+        # Build command: <script_path> <params_json>
         params_json = json.dumps(params)
         cmd = [str(script_path), params_json]
 
@@ -404,7 +404,7 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
-                timeout=None,  # 无超时限制
+                timeout=None,  # No timeout limit
                 check=False,
                 env=env
             )
@@ -418,16 +418,16 @@ class RecipeRunner:
                     stderr=result.stderr
                 )
 
-            # 检查输出大小（10MB 限制）
+            # Check output size (10MB limit)
             if len(result.stdout) > 10 * 1024 * 1024:  # 10MB
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=-1,
-                    stderr=f"Recipe 输出过大: {len(result.stdout) / 1024 / 1024:.2f}MB (限制: 10MB)"
+                    stderr=f"Recipe output too large: {len(result.stdout) / 1024 / 1024:.2f}MB (limit: 10MB)"
                 )
 
-            # 解析 JSON 输出
+            # Parse JSON output
             try:
                 data = json.loads(result.stdout)
             except json.JSONDecodeError as e:
@@ -435,7 +435,7 @@ class RecipeRunner:
                     recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=-1,
-                    stderr=f"JSON 解析失败: {e}\n输出: {result.stdout[:200]}"
+                    stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout[:200]}"
                 )
 
             return {"data": data, "stderr": result.stderr}
@@ -445,5 +445,5 @@ class RecipeRunner:
                 recipe_name=recipe_name,
                 runtime='shell',
                 exit_code=-1,
-                stderr="执行超时（5分钟）"
+                stderr="Execution timeout (5 minutes)"
             )

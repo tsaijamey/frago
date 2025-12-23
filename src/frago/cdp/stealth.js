@@ -1,16 +1,16 @@
 /**
- * Frago Stealth Mode - 反检测脚本
+ * Frago Stealth Mode - Anti-detection script
  *
- * 用于绕过常见的 headless/自动化检测机制
- * 使用方法：通过 CDP Page.addScriptToEvaluateOnNewDocument 在页面加载前注入
+ * Used to bypass common headless/automation detection mechanisms
+ * Usage: Inject before page load via CDP Page.addScriptToEvaluateOnNewDocument
  */
 
-// 隐藏 webdriver 标志
+// Hide webdriver flag
 Object.defineProperty(navigator, 'webdriver', {
     get: () => false
 });
 
-// 伪造 plugins
+// Spoof plugins
 Object.defineProperty(navigator, 'plugins', {
     get: () => [
         {
@@ -38,7 +38,7 @@ Object.defineProperty(navigator, 'plugins', {
     ]
 });
 
-// 伪造 mimeTypes
+// Spoof mimeTypes
 Object.defineProperty(navigator, 'mimeTypes', {
     get: () => [
         {
@@ -56,12 +56,12 @@ Object.defineProperty(navigator, 'mimeTypes', {
     ]
 });
 
-// 伪造 languages
+// Spoof languages
 Object.defineProperty(navigator, 'languages', {
     get: () => ['zh-CN', 'zh', 'en-US', 'en']
 });
 
-// 添加 chrome runtime
+// Add chrome runtime
 if (!window.chrome) {
     window.chrome = {};
 }
@@ -69,7 +69,7 @@ if (!window.chrome.runtime) {
     window.chrome.runtime = {};
 }
 
-// 覆盖 permissions query
+// Override permissions query
 const originalQuery = navigator.permissions.query;
 navigator.permissions.query = (parameters) => (
     parameters.name === 'notifications' ?
@@ -77,30 +77,30 @@ navigator.permissions.query = (parameters) => (
         originalQuery(parameters)
 );
 
-// 伪造硬件并发数
+// Spoof hardware concurrency
 Object.defineProperty(navigator, 'hardwareConcurrency', {
     get: () => 8
 });
 
-// 伪造设备内存
+// Spoof device memory
 Object.defineProperty(navigator, 'deviceMemory', {
     get: () => 8
 });
 
-// 伪造平台
+// Spoof platform
 Object.defineProperty(navigator, 'platform', {
     get: () => 'Linux x86_64'
 });
 
-// 伪造 vendor
+// Spoof vendor
 Object.defineProperty(navigator, 'vendor', {
     get: () => 'Google Inc.'
 });
 
-// 覆盖 getUserMedia 检测
+// Override getUserMedia detection
 const getParameter = WebGLRenderingContext.prototype.getParameter;
 WebGLRenderingContext.prototype.getParameter = function(parameter) {
-    // 伪造渲染器信息
+    // Spoof renderer info
     if (parameter === 37445) {
         return 'Intel Inc.';
     }
@@ -110,12 +110,12 @@ WebGLRenderingContext.prototype.getParameter = function(parameter) {
     return getParameter.call(this, parameter);
 };
 
-// 移除 headless 特征
+// Remove headless characteristics
 if (navigator.webdriver === false) {
-    // 已处理
+    // Already handled
 }
 
-// 覆盖 Chrome 特有属性
+// Override Chrome-specific properties
 Object.defineProperty(window, 'outerWidth', {
     get: () => window.innerWidth
 });
@@ -124,7 +124,7 @@ Object.defineProperty(window, 'outerHeight', {
     get: () => window.innerHeight
 });
 
-// 伪造电池 API
+// Spoof battery API
 if (navigator.getBattery) {
     navigator.getBattery = () => Promise.resolve({
         charging: true,
@@ -134,7 +134,7 @@ if (navigator.getBattery) {
     });
 }
 
-// 覆盖 Notification.permission（避免检测）
+// Override Notification.permission (avoid detection)
 try {
     if (Notification && Notification.permission === 'default') {
         Object.defineProperty(Notification, 'permission', {
@@ -142,7 +142,7 @@ try {
         });
     }
 } catch (e) {
-    // 忽略错误
+    // Ignore error
 }
 
-console.log('[Frago Stealth] 反检测脚本已加载');
+console.log('[Frago Stealth] Anti-detection script loaded');

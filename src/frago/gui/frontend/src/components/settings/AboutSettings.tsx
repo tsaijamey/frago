@@ -1,13 +1,13 @@
 /**
- * About Settings 组件
- * 显示 Frago 版本信息和技术栈
+ * About Settings Component
+ * Display Frago version information and technology stack
  */
 
 export default function AboutSettings() {
   return (
     <div className="card">
       <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-        关于
+        About
       </h2>
 
       <div className="space-y-4 text-sm text-[var(--text-secondary)]">
@@ -16,18 +16,18 @@ export default function AboutSettings() {
             Frago
           </h3>
           <p className="text-[var(--text-muted)]">
-            AI 驱动的多运行时自动化框架
+            AI-powered multi-runtime automation framework
           </p>
         </div>
 
         <div className="border-t border-[var(--border-color)] pt-4">
           <h3 className="font-medium text-[var(--text-primary)] mb-2">
-            技术栈
+            Technology Stack
           </h3>
           <ul className="space-y-1 text-[var(--text-muted)]">
-            <li>• 前端：React + TypeScript + TailwindCSS + Vite</li>
-            <li>• 后端：Python + pywebview + Pydantic</li>
-            <li>• 自动化：Chrome CDP + Websocket</li>
+            <li>• Frontend: React + TypeScript + TailwindCSS + Vite</li>
+            <li>• Backend: Python + pywebview + Pydantic</li>
+            <li>• Automation: Chrome CDP + Websocket</li>
           </ul>
         </div>
 

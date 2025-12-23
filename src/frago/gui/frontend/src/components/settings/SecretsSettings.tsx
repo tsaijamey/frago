@@ -1,6 +1,6 @@
 /**
- * Secrets Settings 组件
- * 环境变量管理：Recipe 变量提示 + 分组显示 + CRUD
+ * Secrets Settings Component
+ * Environment variable management: Recipe variable hints + grouped display + CRUD
  */
 
 import { useEffect, useState } from 'react';
@@ -40,7 +40,7 @@ export default function SecretsSettings() {
       setRecipeRequirements(recipeResult);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
+      setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
@@ -61,7 +61,7 @@ export default function SecretsSettings() {
     };
 
     Object.entries(vars).forEach(([key, value]) => {
-      // 优先检查是否是 Recipe 变量
+      // Check if it's a Recipe variable first
       if (recipeVarNames.has(key)) {
         groups['Recipe'].push([key, value]);
       } else if (key.startsWith('GITHUB_') || key.startsWith('GH_')) {
@@ -75,7 +75,7 @@ export default function SecretsSettings() {
       }
     });
 
-    // 移除空分组
+    // Remove empty groups
     return Object.fromEntries(
       Object.entries(groups).filter(([_, vars]) => vars.length > 0)
     ) as EnvVarGroup;
@@ -120,7 +120,7 @@ export default function SecretsSettings() {
   };
 
   const handleDelete = async (key: string) => {
-    if (!confirm(`确定要删除环境变量 ${key} 吗？`)) {
+    if (!confirm(`Are you sure you want to delete environment variable ${key}?`)) {
       return;
     }
 
@@ -128,35 +128,35 @@ export default function SecretsSettings() {
       const result = await updateEnvVars({ [key]: null });
       if (result.status === 'ok' && result.vars) {
         setEnvVars(result.vars);
-        // 重新加载 recipe 需求以更新 configured 状态
+        // Reload recipe requirements to update configured status
         const recipeResult = await getRecipeEnvRequirements();
         setRecipeRequirements(recipeResult);
       } else {
-        setError(result.error || '删除失败');
+        setError(result.error || 'Delete failed');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败');
+      setError(err instanceof Error ? err.message : 'Delete failed');
     }
   };
 
   const handleSave = async () => {
-    // 验证
+    // Validation
     if (!formKey.trim()) {
-      setFormError('变量名不能为空');
+      setFormError('Variable name cannot be empty');
       return;
     }
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(formKey)) {
-      setFormError('变量名只能包含字母、数字和下划线，且不能以数字开头');
+      setFormError('Variable name can only contain letters, numbers, and underscores, and cannot start with a number');
       return;
     }
     if (!formValue.trim()) {
-      setFormError('变量值不能为空');
+      setFormError('Variable value cannot be empty');
       return;
     }
 
-    // 检查冲突
+    // Check for conflicts
     if (!editingKey && formKey in envVars) {
-      if (!confirm(`变量 ${formKey} 已存在，是否覆盖？`)) {
+      if (!confirm(`Variable ${formKey} already exists. Overwrite?`)) {
         return;
       }
     }
@@ -167,14 +167,14 @@ export default function SecretsSettings() {
         setEnvVars(result.vars);
         setShowModal(false);
         setError(null);
-        // 重新加载 recipe 需求以更新 configured 状态
+        // Reload recipe requirements to update configured status
         const recipeResult = await getRecipeEnvRequirements();
         setRecipeRequirements(recipeResult);
       } else {
-        setFormError(result.error || '保存失败');
+        setFormError(result.error || 'Save failed');
       }
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : '保存失败');
+      setFormError(err instanceof Error ? err.message : 'Save failed');
     }
   };
 
@@ -188,11 +188,11 @@ export default function SecretsSettings() {
 
   if (loading) {
     return (
-      <div className="text-[var(--text-muted)] text-center py-8">正在加载...</div>
+      <div className="text-[var(--text-muted)] text-center py-8">Loading...</div>
     );
   }
 
-  // 按变量名去重，合并多个 recipe 使用同一变量的情况
+  // Deduplicate by variable name, merging cases where multiple recipes use the same variable
   const groupedRequirements = recipeRequirements.reduce((acc, req) => {
     if (!acc[req.var_name]) {
       acc[req.var_name] = {
@@ -204,7 +204,7 @@ export default function SecretsSettings() {
       };
     } else {
       acc[req.var_name].recipes.push(req.recipe_name);
-      // 如果任一 recipe 标记为必需，则整体标记为必需
+      // If any recipe marks it as required, mark the whole as required
       if (req.required) {
         acc[req.var_name].required = true;
       }
@@ -218,7 +218,7 @@ export default function SecretsSettings() {
     recipes: string[];
   }>);
 
-  // 只显示未配置的 recipe 需求
+  // Only show unconfigured recipe requirements
   const unconfiguredRequirements = Object.values(groupedRequirements).filter(
     req => !req.configured
   );
@@ -233,25 +233,25 @@ export default function SecretsSettings() {
         </div>
       )}
 
-      {/* 环境变量 - 大卡片 */}
+      {/* Environment Variables - Large Card */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[var(--accent-primary)]">环境变量</h2>
+          <h2 className="text-lg font-semibold text-[var(--accent-primary)]">Environment Variables</h2>
           <button onClick={handleAdd} className="btn btn-primary btn-sm flex items-center gap-2">
             <Plus size={16} />
-            添加
+            Add
           </button>
         </div>
 
         <div className="space-y-4">
-          {/* Recipe 环境变量需求 - 只显示未配置的 */}
+          {/* Recipe Environment Variable Requirements - Only show unconfigured */}
           {unconfiguredRequirements.length > 0 && (
             <div className="p-4 bg-[var(--bg-tertiary)] rounded-md border border-[var(--border-color)]">
               <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">
-                Recipe 环境变量需求
+                Recipe Environment Variable Requirements
               </h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">
-                以下环境变量被 Recipe 使用但尚未配置：
+                The following environment variables are used by recipes but not yet configured:
               </p>
               <div className="space-y-2">
                 {unconfiguredRequirements.map((req) => (
@@ -267,11 +267,11 @@ export default function SecretsSettings() {
                       </div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs px-1.5 py-0.5 bg-amber-500 text-white rounded">
-                          ⚠ 未配置
+                          ⚠ Not Configured
                         </span>
                         {req.required && (
                           <span className="text-xs px-1.5 py-0.5 bg-red-500 text-white rounded">
-                            必需
+                            Required
                           </span>
                         )}
                       </div>
@@ -279,7 +279,7 @@ export default function SecretsSettings() {
                         {req.description}
                       </p>
                       <p className="text-xs text-[var(--text-muted)]">
-                        使用者: {req.recipes.join(', ')}
+                        Used by: {req.recipes.join(', ')}
                       </p>
                     </div>
 
@@ -287,7 +287,7 @@ export default function SecretsSettings() {
                       onClick={() => handleQuickAdd({ ...req, recipe_name: req.recipes[0] })}
                       className="btn btn-ghost btn-sm text-xs"
                     >
-                      添加
+                      Add
                     </button>
                   </div>
                 ))}
@@ -295,10 +295,10 @@ export default function SecretsSettings() {
             </div>
           )}
 
-          {/* 已配置的环境变量 - 按分组显示 */}
+          {/* Configured Environment Variables - Grouped Display */}
           {Object.keys(envVars).length === 0 ? (
             <p className="text-sm text-[var(--text-muted)] text-center py-8">
-              暂无环境变量，点击"添加"创建
+              No environment variables yet. Click "Add" to create one.
             </p>
           ) : (
             <div className="space-y-4">
@@ -306,7 +306,7 @@ export default function SecretsSettings() {
                 <div key={group}>
                   <h3 className="text-sm font-medium text-[var(--text-primary)] mb-2 flex items-center gap-2">
                     <Key size={14} />
-                    {group === 'Recipe' ? 'Recipe 环境变量' : group}
+                    {group === 'Recipe' ? 'Recipe Environment Variables' : group}
                   </h3>
                   <div className="space-y-2">
                     {vars.map(([key, value]) => (
@@ -336,14 +336,14 @@ export default function SecretsSettings() {
                           <button
                             onClick={() => handleEdit(key, value)}
                             className="btn btn-ghost btn-sm p-2"
-                            title="编辑"
+                            title="Edit"
                           >
                             <Edit2 size={14} />
                           </button>
                           <button
                             onClick={() => handleDelete(key)}
                             className="btn btn-ghost btn-sm p-2 text-red-600 dark:text-red-400"
-                            title="删除"
+                            title="Delete"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -358,18 +358,18 @@ export default function SecretsSettings() {
         </div>
       </div>
 
-      {/* 添加/编辑模态框 */}
+      {/* Add/Edit Modal */}
       <Modal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        title={editingKey ? '编辑环境变量' : '添加环境变量'}
+        title={editingKey ? 'Edit Environment Variable' : 'Add Environment Variable'}
         footer={
           <>
             <button onClick={() => setShowModal(false)} className="btn btn-ghost flex-1">
-              取消
+              Cancel
             </button>
             <button onClick={handleSave} className="btn btn-primary flex-1">
-              保存
+              Save
             </button>
           </>
         }
@@ -383,29 +383,29 @@ export default function SecretsSettings() {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-              变量名
+              Variable Name
             </label>
             <input
               type="text"
               value={formKey}
               onChange={(e) => setFormKey(e.target.value)}
-              placeholder="例如: GITHUB_TOKEN"
+              placeholder="e.g., GITHUB_TOKEN"
               disabled={!!editingKey}
               className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] disabled:opacity-50 font-mono"
             />
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              只能包含字母、数字和下划线，不能以数字开头
+              Can only contain letters, numbers, and underscores, and cannot start with a number
             </p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-              变量值
+              Variable Value
             </label>
             <textarea
               value={formValue}
               onChange={(e) => setFormValue(e.target.value)}
-              placeholder="输入变量值"
+              placeholder="Enter variable value"
               rows={3}
               className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono resize-none"
             />

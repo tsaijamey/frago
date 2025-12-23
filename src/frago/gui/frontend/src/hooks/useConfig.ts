@@ -3,9 +3,9 @@ import { useAppStore } from '@/stores/appStore';
 import { isApiReady } from '@/api/pywebview';
 
 /**
- * 配置 Hook
+ * Config Hook
  *
- * 自动加载配置并监听 pywebview 就绪事件
+ * Automatically load config and listen to pywebview ready events
  */
 export function useConfig() {
   const { config, loadConfig, updateConfig, setTheme } = useAppStore();

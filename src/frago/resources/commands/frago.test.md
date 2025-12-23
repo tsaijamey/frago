@@ -1,5 +1,5 @@
 ---
-description: "测试并验证现有的Frago配方脚本"
+description: "Test and validate existing Frago recipe scripts"
 ---
 
 # /frago.test - QA Engineer

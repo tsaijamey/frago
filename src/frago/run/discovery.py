@@ -1,6 +1,6 @@
-"""Run实例自动发现
+"""Run Instance Auto-discovery
 
-使用RapidFuzz模糊匹配寻找相似的run实例
+Uses RapidFuzz fuzzy matching to find similar run instances
 """
 
 from pathlib import Path
@@ -12,40 +12,40 @@ from .manager import RunManager
 
 
 class RunDiscovery:
-    """Run实例发现器"""
+    """Run Instance Discovery"""
 
     def __init__(self, manager: RunManager):
-        """初始化发现器
+        """Initialize discovery
 
         Args:
-            manager: RunManager实例
+            manager: RunManager instance
         """
         self.manager = manager
 
     def discover_similar_runs(
         self, task_description: str, threshold: int = 60, max_results: int = 5
     ) -> List[Dict]:
-        """发现相似的run实例
+        """Discover similar run instances
 
         Args:
-            task_description: 用户任务描述
-            threshold: 相似度阈值（0-100）
-            max_results: 最大返回数量
+            task_description: user task description
+            threshold: similarity threshold (0-100)
+            max_results: maximum number of results
 
         Returns:
-            相似run列表（包含相似度分数）
+            list of similar runs (including similarity scores)
         """
         all_runs = self.manager.list_runs()
 
-        # 计算相似度
+        # Calculate similarity
         results = []
         for run in all_runs:
-            # 使用多种算法并取最大值，以提高中文匹配准确性
+            # Use multiple algorithms and take maximum to improve matching accuracy
             theme = run["theme_description"]
             similarity = max(
-                fuzz.token_sort_ratio(task_description, theme),  # 忽略词序
-                fuzz.partial_ratio(task_description, theme),     # 部分匹配
-                fuzz.token_set_ratio(task_description, theme)    # 集合匹配
+                fuzz.token_sort_ratio(task_description, theme),  # Ignore word order
+                fuzz.partial_ratio(task_description, theme),     # Partial matching
+                fuzz.token_set_ratio(task_description, theme)    # Set matching
             )
 
             if similarity >= threshold:
@@ -56,21 +56,21 @@ class RunDiscovery:
                     }
                 )
 
-        # 按相似度降序排序（相似度越高越靠前），相同相似度时按时间降序（时间越晚越靠前）
-        # ISO 8601字符串可以直接比较，较晚的时间字符串值较大
+        # Sort by similarity in descending order (higher similarity first), then by time in descending order (later time first)
+        # ISO 8601 strings can be compared directly, later timestamps have higher string values
         results.sort(key=lambda r: (r["similarity"], r["last_accessed"]), reverse=True)
 
         return results[:max_results]
 
     def find_best_match(self, task_description: str, threshold: int = 80) -> Dict | None:
-        """查找最佳匹配的run实例
+        """Find best matching run instance
 
         Args:
-            task_description: 用户任务描述
-            threshold: 相似度阈值（高阈值，仅返回非常相似的）
+            task_description: user task description
+            threshold: similarity threshold (high threshold, only returns very similar matches)
 
         Returns:
-            最佳匹配run或None
+            best matching run or None
         """
         matches = self.discover_similar_runs(task_description, threshold=threshold, max_results=1)
         return matches[0] if matches else None

@@ -139,13 +139,13 @@ def _get_install_commands(system_info: dict) -> list[str]:
 
     elif system_info["platform"] == "Windows":
         commands = [
-            "# 安装 pywebview",
+            "# Install pywebview",
             "pip install pywebview",
             "",
-            "# 推荐：安装 Edge WebView2 Runtime（更好的性能和兼容性）",
-            "# 下载地址: https://developer.microsoft.com/en-us/microsoft-edge/webview2/",
+            "# Recommended: Install Edge WebView2 Runtime (better performance and compatibility)",
+            "# Download: https://developer.microsoft.com/en-us/microsoft-edge/webview2/",
             "",
-            "# 或使用 winget 安装:",
+            "# Or install via winget:",
             "winget install Microsoft.EdgeWebView2Runtime",
         ]
 
@@ -174,7 +174,7 @@ def gui_deps(install: bool, check: bool):
 
     if install:
         # Show installation commands
-        click.echo("GUI 依赖安装命令:")
+        click.echo("GUI dependency installation commands:")
         click.echo("")
 
         commands = _get_install_commands(system_info)
@@ -182,22 +182,22 @@ def gui_deps(install: bool, check: bool):
             click.echo(f"  {cmd}")
 
         click.echo("")
-        click.echo("安装后请重新运行: frago gui-deps --check")
+        click.echo("After installation, run: frago gui-deps --check")
         return
 
     # Check mode (default)
-    click.echo("Frago GUI 依赖检查")
+    click.echo("Frago GUI Dependency Check")
     click.echo("=" * 40)
     click.echo("")
 
     # System info
-    click.echo(f"系统: {system_info['platform']}")
+    click.echo(f"System: {system_info['platform']}")
     if system_info["distro"]:
-        click.echo(f"发行版: {system_info['distro']}")
+        click.echo(f"Distribution: {system_info['distro']}")
     click.echo("")
 
     # Check pywebview
-    click.echo("依赖状态:")
+    click.echo("Dependency status:")
     click.echo("-" * 40)
 
     pywebview_ok, pywebview_info = _check_pywebview()
@@ -236,8 +236,8 @@ def gui_deps(install: bool, check: bool):
 
     # Summary
     if pywebview_ok and backend_ok:
-        click.echo(click.style("GUI 依赖已就绪!", fg="green", bold=True))
-        click.echo("运行 'frago --gui' 启动 GUI 应用")
+        click.echo(click.style("GUI dependencies ready!", fg="green", bold=True))
+        click.echo("Run 'frago --gui' to start GUI application")
     else:
-        click.echo(click.style("GUI 依赖缺失", fg="red", bold=True))
-        click.echo("运行 'frago gui-deps --install' 查看安装命令")
+        click.echo(click.style("GUI dependencies missing", fg="red", bold=True))
+        click.echo("Run 'frago gui-deps --install' to see installation commands")

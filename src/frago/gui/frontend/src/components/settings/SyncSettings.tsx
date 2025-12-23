@@ -1,6 +1,6 @@
 /**
- * Sync Settings 组件
- * 同步配置和 GitHub 向导
+ * Sync Settings Component
+ * Sync configuration and GitHub wizard
  */
 
 import { useEffect, useState } from 'react';
@@ -28,7 +28,7 @@ export default function SyncSettings() {
       const status = await checkGhCli();
       setGhStatus(status);
     } catch (err) {
-      console.error('检测 gh 状态失败:', err);
+      console.error('Failed to check gh status:', err);
     } finally {
       setGhStatusLoading(false);
     }
@@ -45,7 +45,7 @@ export default function SyncSettings() {
       const config = await getMainConfig();
       setSyncRepoUrl(config.sync_repo_url || null);
 
-      // 如果有配置仓库，检查可见性
+      // If repository is configured, check visibility
       if (config.sync_repo_url) {
         try {
           const visibilityResult = await checkSyncRepoVisibility();
@@ -54,11 +54,11 @@ export default function SyncSettings() {
             setVisibilityChecked(true);
           }
         } catch (err) {
-          console.error('检查仓库可见性失败:', err);
+          console.error('Failed to check repository visibility:', err);
         }
       }
     } catch (err) {
-      console.error('加载配置失败:', err);
+      console.error('Failed to load configuration:', err);
     } finally {
       setLoading(false);
     }
@@ -68,21 +68,21 @@ export default function SyncSettings() {
     try {
       setSyncing(true);
       setSyncError(null);
-      setSyncOutput('正在启动同步...\n');
+      setSyncOutput('Starting sync...\n');
 
       const startResult = await runFirstSync();
       if (startResult.status === 'error') {
-        setSyncError(startResult.error || '同步失败');
+        setSyncError(startResult.error || 'Sync failed');
         setSyncing(false);
         return;
       }
 
-      // 轮询结果
+      // Poll for results
       const pollInterval = setInterval(async () => {
         const result = await getSyncResult();
 
         if (result.status === 'running') {
-          // 仍在进行中
+          // Still running
           return;
         }
 
@@ -90,37 +90,37 @@ export default function SyncSettings() {
         setSyncing(false);
 
         if (result.status === 'ok') {
-          setSyncOutput((prev) => prev + '\n✓ 同步完成\n' + (result.output || ''));
+          setSyncOutput((prev) => prev + '\n✓ Sync completed\n' + (result.output || ''));
         } else {
-          setSyncError(result.error || '同步失败');
-          setSyncOutput((prev) => prev + '\n✗ 同步失败\n' + (result.error || ''));
+          setSyncError(result.error || 'Sync failed');
+          setSyncOutput((prev) => prev + '\n✗ Sync failed\n' + (result.error || ''));
         }
       }, 1000);
 
-      // 超时保护（5 分钟）
+      // Timeout protection (5 minutes)
       setTimeout(() => {
         clearInterval(pollInterval);
         if (syncing) {
           setSyncing(false);
-          setSyncError('同步超时');
+          setSyncError('Sync timeout');
         }
       }, 300000);
 
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : '同步失败');
+      setSyncError(err instanceof Error ? err.message : 'Sync failed');
       setSyncing(false);
     }
   };
 
   const handleWizardComplete = () => {
     setShowWizard(false);
-    loadConfig(); // 重新加载配置
+    loadConfig(); // Reload configuration
   };
 
   if (loading) {
     return (
       <div className="text-[var(--text-muted)] text-center py-8">
-        正在加载配置...
+        Loading configuration...
       </div>
     );
   }
@@ -133,32 +133,32 @@ export default function SyncSettings() {
     <div className="space-y-4">
       <div className="card">
         <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-          多设备同步
+          Multi-Device Sync
         </h2>
 
-        {/* GitHub CLI 状态检测 */}
+        {/* GitHub CLI Status Detection */}
         <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-blue-900 dark:text-blue-200">
-              GitHub CLI 状态
+              GitHub CLI Status
             </h3>
             <button
               onClick={checkGhStatus}
               disabled={ghStatusLoading}
               className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
             >
-              {ghStatusLoading ? '检测中...' : '刷新'}
+              {ghStatusLoading ? 'Checking...' : 'Refresh'}
             </button>
           </div>
 
           {ghStatusLoading && !ghStatus ? (
             <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
               <Loader2 size={14} className="animate-spin" />
-              正在检测...
+              Checking...
             </div>
           ) : ghStatus ? (
             <div className="space-y-1 text-sm">
-              {/* gh 安装状态 */}
+              {/* gh installation status */}
               <div className={`flex items-center gap-2 ${
                 ghStatus.installed
                   ? 'text-green-600 dark:text-green-400'
@@ -167,12 +167,12 @@ export default function SyncSettings() {
                 {ghStatus.installed ? <Check size={14} /> : <X size={14} />}
                 <span>
                   {ghStatus.installed
-                    ? `gh CLI 已安装 (v${ghStatus.version})`
-                    : 'gh CLI 未安装'}
+                    ? `gh CLI installed (v${ghStatus.version})`
+                    : 'gh CLI not installed'}
                 </span>
               </div>
 
-              {/* 登录状态（仅在已安装时显示） */}
+              {/* Login status (only shown when installed) */}
               {ghStatus.installed && (
                 <div className={`flex items-center gap-2 ${
                   ghStatus.authenticated
@@ -182,16 +182,16 @@ export default function SyncSettings() {
                   {ghStatus.authenticated ? <Check size={14} /> : <AlertCircle size={14} />}
                   <span>
                     {ghStatus.authenticated
-                      ? `已登录 GitHub (@${ghStatus.username})`
-                      : '未登录 GitHub'}
+                      ? `Logged in to GitHub (@${ghStatus.username})`
+                      : 'Not logged in to GitHub'}
                   </span>
                 </div>
               )}
 
-              {/* 操作提示 */}
+              {/* Action hints */}
               {!ghStatus.installed && (
                 <p className="mt-2 text-blue-700 dark:text-blue-300">
-                  请先安装 GitHub CLI：
+                  Please install GitHub CLI first:
                   <a
                     href="https://cli.github.com/"
                     target="_blank"
@@ -204,13 +204,13 @@ export default function SyncSettings() {
               )}
               {ghStatus.installed && !ghStatus.authenticated && (
                 <p className="mt-2 text-blue-700 dark:text-blue-300">
-                  点击下方"开始配置"按钮登录 GitHub
+                  Click "Start Setup" button below to log in to GitHub
                 </p>
               )}
             </div>
           ) : (
             <p className="text-sm text-blue-700 dark:text-blue-300">
-              首次配置需要安装 GitHub CLI (gh) 并登录 GitHub 账号。向导将引导你完成整个流程。
+              First-time setup requires installing GitHub CLI (gh) and logging in to your GitHub account. The wizard will guide you through the process.
             </p>
           )}
         </div>
@@ -224,19 +224,19 @@ export default function SyncSettings() {
                 className="btn btn-primary flex items-center gap-2"
               >
                 <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-                {syncing ? '同步中...' : '立即同步'}
+                {syncing ? 'Syncing...' : 'Sync Now'}
               </button>
               <button
                 onClick={() => setShowWizard(true)}
                 className="btn btn-ghost"
               >
-                重新配置
+                Reconfigure
               </button>
             </div>
 
             <div className="mb-4">
               <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-                同步仓库
+                Sync Repository
               </label>
               <div className="flex items-center gap-2 bg-[var(--bg-subtle)] rounded-md px-3 py-2">
                 <Github size={16} className="text-[var(--text-muted)]" />
@@ -246,28 +246,28 @@ export default function SyncSettings() {
               </div>
             </div>
 
-            {/* Public 仓库警告 */}
+            {/* Public repository warning */}
             {visibilityChecked && isPublicRepo && (
               <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
                 <div className="flex items-start gap-2">
                   <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
-                      安全提醒
+                      Security Warning
                     </h3>
                     <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                      当前同步仓库是 <strong>public</strong> 仓库，任何人都可以访问。
-                      建议将仓库改为 private 以保护您的配置和敏感信息。
+                      The current sync repository is <strong>public</strong> and accessible to anyone.
+                      We recommend changing it to private to protect your configuration and sensitive information.
                     </p>
                     <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
-                      .env 文件已自动添加到 .gitignore，不会被同步。
+                      .env files are automatically added to .gitignore and will not be synced.
                     </p>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* 同步输出 */}
+            {/* Sync output */}
             {syncOutput && (
               <div className="mt-4 p-3 bg-black/5 dark:bg-white/5 rounded-md">
                 <pre className="text-xs text-[var(--text-secondary)] whitespace-pre-wrap font-mono">
@@ -276,7 +276,7 @@ export default function SyncSettings() {
               </div>
             )}
 
-            {/* 同步错误 */}
+            {/* Sync error */}
             {syncError && (
               <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
                 <p className="text-sm text-red-700 dark:text-red-400">{syncError}</p>
@@ -286,14 +286,14 @@ export default function SyncSettings() {
         ) : (
           <>
             <p className="text-sm text-[var(--text-muted)] mb-4">
-              使用 GitHub 私有仓库同步 Frago 资源（命令、技能、配方）到多个设备。
+              Use a GitHub private repository to sync Frago resources (commands, skills, recipes) across multiple devices.
             </p>
             <button
               onClick={() => setShowWizard(true)}
               className="btn btn-primary flex items-center gap-2"
             >
               <Github size={16} />
-              开始配置 GitHub 同步
+              Start GitHub Sync Setup
             </button>
           </>
         )}

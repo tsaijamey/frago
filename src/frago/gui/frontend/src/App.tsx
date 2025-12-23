@@ -23,14 +23,14 @@ function App() {
   const [apiReady, setApiReady] = useState(isApiReady());
 
   useEffect(() => {
-    // 检查 API 是否已就绪
+    // Check if API is ready
     if (isApiReady()) {
       setApiReady(true);
       loadConfig();
       return;
     }
 
-    // 监听 pywebview 就绪事件
+    // Listen for pywebview ready event
     const handleReady = () => {
       console.log('pywebview ready');
       setApiReady(true);
@@ -41,12 +41,12 @@ function App() {
     return () => window.removeEventListener('pywebviewready', handleReady);
   }, [loadConfig]);
 
-  // 调试信息
+  // Debug info
   useEffect(() => {
     console.log('App mounted, apiReady:', apiReady);
   }, [apiReady]);
 
-  // 根据当前页面渲染内容
+  // Render content based on current page
   const renderPage = () => {
     switch (currentPage) {
       case 'tips':
@@ -74,7 +74,7 @@ function App() {
       <BottomNav />
       <StatusBar />
 
-      {/* Toast 容器 */}
+      {/* Toast container */}
       {toasts.length > 0 && (
         <div className="toast-container">
           {toasts.map((toast) => (

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Frago CLI 命令实现
+Frago CLI command implementations
 
-实现所有CDP功能的CLI子命令，保持与原有Shell脚本的兼容性。
+Implements all CDP functionality CLI subcommands, maintaining compatibility with original shell scripts.
 """
 
 import functools
@@ -17,11 +17,11 @@ import click
 
 
 # =============================================================================
-# 命令用法示例（Agent 友好输出）
+# Command usage examples (Agent-friendly output)
 # =============================================================================
 
 COMMAND_EXAMPLES = {
-    # Chrome 子命令（使用完整路径，便于 agent 直接复制）
+    # Chrome subcommands (using full paths for easy agent copy-paste)
     "navigate": [
         "frago chrome navigate <url>",
         "frago chrome navigate https://example.com",
@@ -41,22 +41,22 @@ COMMAND_EXAMPLES = {
         "frago chrome exec-js <script>",
         "frago chrome exec-js 'document.title'",
         "frago chrome exec-js 'return window.scrollY' --return-value",
-        "frago chrome exec-js ./script.js  # 从文件加载",
+        "frago chrome exec-js ./script.js  # Load from file",
     ],
     "get-title": [
         "frago chrome get-title",
     ],
     "get-content": [
         "frago chrome get-content [selector]",
-        "frago chrome get-content  # 默认获取 body",
+        "frago chrome get-content  # Default: get body",
         "frago chrome get-content 'article.main' --desc 'article-content'",
     ],
     "scroll": [
         "frago chrome scroll <distance>",
-        "frago chrome scroll 500      # 向下滚动 500px",
-        "frago chrome scroll -300     # 向上滚动 300px",
-        "frago chrome scroll down     # 别名: 向下 500px",
-        "frago chrome scroll up       # 别名: 向上 500px",
+        "frago chrome scroll 500      # Scroll down 500px",
+        "frago chrome scroll -300     # Scroll up 300px",
+        "frago chrome scroll down     # Alias: scroll down 500px",
+        "frago chrome scroll up       # Alias: scroll up 500px",
     ],
     "scroll-to": [
         "frago chrome scroll-to <selector>",
@@ -71,9 +71,9 @@ COMMAND_EXAMPLES = {
     ],
     "zoom": [
         "frago chrome zoom <factor>",
-        "frago chrome zoom 1.5   # 放大到 150%",
-        "frago chrome zoom 0.8   # 缩小到 80%",
-        "frago chrome zoom 1     # 恢复原始大小",
+        "frago chrome zoom 1.5   # Zoom to 150%",
+        "frago chrome zoom 0.8   # Zoom to 80%",
+        "frago chrome zoom 1     # Reset to original size",
     ],
     "clear-effects": [
         "frago chrome clear-effects",
@@ -82,7 +82,7 @@ COMMAND_EXAMPLES = {
         "frago chrome highlight <selector>",
         "frago chrome highlight 'button.primary'",
         "frago chrome highlight '#target' --color red --width 5",
-        "frago chrome highlight '.element' --longlife  # 永久显示",
+        "frago chrome highlight '.element' --longlife  # Permanent display",
     ],
     "pointer": [
         "frago chrome pointer <selector>",
@@ -120,46 +120,46 @@ COMMAND_EXAMPLES = {
     ],
     "switch-tab": [
         "frago chrome switch-tab <tab_id>",
-        "frago chrome switch-tab ABC123  # 支持部分 ID 匹配",
+        "frago chrome switch-tab ABC123  # Supports partial ID matching",
     ],
-    # 顶层命令
+    # Top-level commands
     "status": [
         "frago status",
-        "frago chrome status  # 等效",
+        "frago chrome status  # Equivalent",
     ],
     "init": [
         "frago init",
         "frago init --force",
     ],
-    # chrome 命令组自身（显示子命令概览）
+    # Chrome command group itself (showing subcommand overview)
     "chrome": [
         "frago chrome <command>",
-        "frago chrome start      # 启动浏览器",
-        "frago chrome navigate   # 导航到 URL",
-        "frago chrome click      # 点击元素",
-        "frago chrome screenshot # 截图",
+        "frago chrome start      # Start browser",
+        "frago chrome navigate   # Navigate to URL",
+        "frago chrome click      # Click element",
+        "frago chrome screenshot # Take screenshot",
     ],
-    # frago 顶层命令
+    # Frago top-level commands
     "frago": [
         "frago <command>",
-        "frago chrome start      # 启动浏览器",
-        "frago status            # 检查 CDP 连接状态",
-        "frago --gui             # 启动 GUI 应用",
+        "frago chrome start      # Start browser",
+        "frago status            # Check CDP connection status",
+        "frago --gui             # Launch GUI app",
     ],
 }
 
 
 def print_usage(func):
     """
-    装饰器：在命令执行前打印用法示例
+    Decorator: Print usage examples before command execution
 
-    帮助 AI Agent 在跟踪输出时直接理解命令的正确用法。
+    Helps AI Agents understand correct command usage when tracking output.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        # 从函数名推断命令名（下划线转连字符）
+        # Infer command name from function name (underscore to hyphen)
         cmd_name = func.__name__.replace('_', '-')
-        # 特殊映射
+        # Special mappings
         name_map = {
             "click-element": "click",
             "execute-javascript": "exec-js",
@@ -170,10 +170,10 @@ def print_usage(func):
 
         examples = COMMAND_EXAMPLES.get(cmd_name)
         if examples:
-            click.echo(f"[用法] {examples[0]}")
+            click.echo(f"[Usage] {examples[0]}")
             for ex in examples[1:]:
-                click.echo(f"       {ex}")
-            click.echo("")  # 空行分隔
+                click.echo(f"        {ex}")
+            click.echo("")  # Empty line separator
 
         return func(*args, **kwargs)
     return wrapper
@@ -184,16 +184,16 @@ from ..cdp.session import CDPSession
 
 
 # =============================================================================
-# 自定义参数类型（提供友好的错误提示和使用示例）
+# Custom parameter types (with friendly error messages and usage examples)
 # =============================================================================
 
 
 class ScrollDistanceType(click.ParamType):
-    """滚动距离参数类型，支持像素值或 up/down 别名"""
+    """Scroll distance parameter type, supports pixel values or up/down aliases"""
     name = "distance"
 
     def convert(self, value, param, ctx):
-        # 支持 up/down 别名
+        # Support up/down aliases
         aliases = {"up": -500, "down": 500, "page-up": -800, "page-down": 800}
         if isinstance(value, str) and value.lower() in aliases:
             return aliases[value.lower()]
@@ -202,68 +202,68 @@ class ScrollDistanceType(click.ParamType):
             return int(value)
         except (ValueError, TypeError):
             self.fail(
-                f"'{value}' 不是有效的滚动距离。\n\n"
-                "正确用法:\n"
-                "  frago scroll 500       # 向下滚动 500 像素\n"
-                "  frago scroll -300      # 向上滚动 300 像素\n"
-                "  frago scroll down      # 向下滚动 500 像素 (别名)\n"
-                "  frago scroll up        # 向上滚动 500 像素 (别名)\n"
-                "  frago scroll-to 'selector'  # 滚动到指定元素",
+                f"'{value}' is not a valid scroll distance.\n\n"
+                "Correct usage:\n"
+                "  frago scroll 500       # Scroll down 500 pixels\n"
+                "  frago scroll -300      # Scroll up 300 pixels\n"
+                "  frago scroll down      # Scroll down 500 pixels (alias)\n"
+                "  frago scroll up        # Scroll up 500 pixels (alias)\n"
+                "  frago scroll-to 'selector'  # Scroll to element",
                 param,
                 ctx,
             )
 
 
 class ZoomFactorType(click.ParamType):
-    """缩放因子参数类型"""
+    """Zoom factor parameter type"""
     name = "factor"
 
     def convert(self, value, param, ctx):
         try:
             factor = float(value)
             if factor <= 0:
-                raise ValueError("必须大于 0")
+                raise ValueError("Must be greater than 0")
             return factor
         except (ValueError, TypeError):
             self.fail(
-                f"'{value}' 不是有效的缩放因子。\n\n"
-                "正确用法:\n"
-                "  frago zoom 1.5    # 放大到 150%\n"
-                "  frago zoom 0.8    # 缩小到 80%\n"
-                "  frago zoom 1      # 恢复原始大小",
+                f"'{value}' is not a valid zoom factor.\n\n"
+                "Correct usage:\n"
+                "  frago zoom 1.5    # Zoom to 150%\n"
+                "  frago zoom 0.8    # Zoom to 80%\n"
+                "  frago zoom 1      # Reset to original size",
                 param,
                 ctx,
             )
 
 
 class WaitSecondsType(click.ParamType):
-    """等待秒数参数类型"""
+    """Wait seconds parameter type"""
     name = "seconds"
 
     def convert(self, value, param, ctx):
         try:
             seconds = float(value)
             if seconds < 0:
-                raise ValueError("不能为负数")
+                raise ValueError("Cannot be negative")
             return seconds
         except (ValueError, TypeError):
             self.fail(
-                f"'{value}' 不是有效的等待时间。\n\n"
-                "正确用法:\n"
-                "  frago wait 2      # 等待 2 秒\n"
-                "  frago wait 0.5    # 等待 0.5 秒",
+                f"'{value}' is not a valid wait time.\n\n"
+                "Correct usage:\n"
+                "  frago wait 2      # Wait 2 seconds\n"
+                "  frago wait 0.5    # Wait 0.5 seconds",
                 param,
                 ctx,
             )
 
 
-# 实例化自定义类型
+# Instantiate custom types
 SCROLL_DISTANCE = ScrollDistanceType()
 ZOOM_FACTOR = ZoomFactorType()
 WAIT_SECONDS = WaitSecondsType()
 
 
-# 全局选项默认值配置
+# Global options default configuration
 GLOBAL_OPTIONS = {
     'debug': False,
     'timeout': 30,
@@ -273,24 +273,24 @@ GLOBAL_OPTIONS = {
 
 
 def _format_ts() -> str:
-    """格式化当前时间戳"""
+    """Format current timestamp"""
     return datetime.now().strftime("%Y-%m-%d:%H-%M-%S")
 
 
 def _get_projects_dir() -> Path:
     """
-    获取 projects 目录
+    Get projects directory
 
-    统一使用 ~/.frago/projects/
+    Uses ~/.frago/projects/
     """
     return Path.home() / ".frago" / "projects"
 
 
 def _get_run_dir() -> Path:
     """
-    获取当前 run 目录
+    Get current run directory
 
-    优先使用活跃的 run context，无 context 时使用 projects/.tmp/
+    Uses active run context if available, otherwise uses projects/.tmp/
     """
     frago_home = Path.home() / ".frago"
     projects_dir = _get_projects_dir()
@@ -301,14 +301,14 @@ def _get_run_dir() -> Path:
         context = ctx_mgr.get_current_run()
         return projects_dir / context.run_id
     except Exception:
-        # 无 run context，使用 .tmp 目录
+        # No run context, use .tmp directory
         tmp_dir = projects_dir / ".tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         return tmp_dir
 
 
 def _get_run_logger():
-    """获取日志记录器（run context 或 .tmp）"""
+    """Get logger (run context or .tmp)"""
     try:
         from ..run.logger import RunLogger
         run_dir = _get_run_dir()
@@ -324,13 +324,13 @@ def _write_run_log(
     data: Optional[Dict[str, Any]] = None
 ) -> None:
     """
-    写入 run 日志（如果有活跃的 run context）
+    Write to run log (if there's an active run context)
 
     Args:
-        step: 步骤描述
-        status: 状态 (success/error/warning)
-        action_type: 操作类型
-        data: 额外数据
+        step: Step description
+        status: Status (success/error/warning)
+        action_type: Action type
+        data: Additional data
     """
     logger = _get_run_logger()
     if not logger:
@@ -339,16 +339,16 @@ def _write_run_log(
     try:
         from ..run.models import ActionType, ExecutionMethod, LogStatus
 
-        # 映射状态
+        # Map status
         status_map = {
-            "成功": LogStatus.SUCCESS,
-            "失败": LogStatus.ERROR,
-            "警告": LogStatus.WARNING,
-            "调试": LogStatus.SUCCESS,
+            "success": LogStatus.SUCCESS,
+            "error": LogStatus.ERROR,
+            "warning": LogStatus.WARNING,
+            "debug": LogStatus.SUCCESS,
         }
         log_status = status_map.get(status, LogStatus.SUCCESS)
 
-        # 映射操作类型
+        # Map action type
         action_map = {
             "navigation": ActionType.NAVIGATION,
             "interaction": ActionType.INTERACTION,
@@ -366,7 +366,7 @@ def _write_run_log(
             data=data or {},
         )
     except Exception:
-        # 日志写入失败不应影响命令执行
+        # Log write failure should not affect command execution
         pass
 
 
@@ -377,35 +377,35 @@ def _print_msg(
     log_data: Optional[Dict[str, Any]] = None
 ) -> None:
     """
-    打印格式化消息并自动写入 run 日志
+    Print formatted message and automatically write to run log
 
     Args:
-        status: 状态（成功/失败/警告/调试）
-        message: 消息内容
-        action_type: 操作类型（navigation/interaction/screenshot/extraction/other）
-        log_data: 额外的日志数据
+        status: Status (success/error/warning/debug)
+        message: Message content
+        action_type: Action type (navigation/interaction/screenshot/extraction/other)
+        log_data: Additional log data
     """
     click.echo(f"{_format_ts()}, {status}, {message}")
 
-    # 自动写入 run 日志
+    # Auto write to run log
     _write_run_log(message, status, action_type, log_data)
 
 
 def create_session(ctx) -> CDPSession:
     """
-    创建CDP会话
+    Create CDP session
 
-    使用全局选项：
-    - --debug: 启用调试模式
-    - --timeout: 设置操作超时时间
-    - --host: CDP服务主机地址
-    - --port: CDP服务端口
-    - --proxy-host: 代理服务器主机地址
-    - --proxy-port: 代理服务器端口
-    - --proxy-username: 代理认证用户名
-    - --proxy-password: 代理认证密码
-    - --no-proxy: 绕过代理连接
-    - --target-id: 指定目标tab的ID
+    Uses global options:
+    - --debug: Enable debug mode
+    - --timeout: Set operation timeout
+    - --host: CDP service host address
+    - --port: CDP service port
+    - --proxy-host: Proxy server host address
+    - --proxy-port: Proxy server port
+    - --proxy-username: Proxy auth username
+    - --proxy-password: Proxy auth password
+    - --no-proxy: Bypass proxy connection
+    - --target-id: Specify target tab ID
     """
     config = CDPConfig(
         host=ctx.obj['HOST'],
@@ -423,7 +423,7 @@ def create_session(ctx) -> CDPSession:
 
 
 def _get_dom_features(session: CDPSession) -> dict:
-    """提取页面 DOM 特征，重点关注当前可视区域内容"""
+    """Extract page DOM features, focusing on current visible area content"""
     script = """
     (function() {
         const body = document.body;
@@ -440,11 +440,11 @@ def _get_dom_features(session: CDPSession) -> dict:
             headings: document.querySelectorAll('h1, h2, h3').length
         };
 
-        // 获取当前可视区域内的文本内容
+        // Get text content within current viewport
         const viewportHeight = window.innerHeight;
         const viewportWidth = window.innerWidth;
 
-        // 收集视口内可见元素的文本
+        // Collect text from visible elements in viewport
         const visibleTexts = [];
         const walker = document.createTreeWalker(
             document.body,
@@ -458,7 +458,7 @@ def _get_dom_features(session: CDPSession) -> dict:
                         return NodeFilter.FILTER_REJECT;
                     }
                     const rect = parent.getBoundingClientRect();
-                    // 检查元素是否在视口内
+                    // Check if element is within viewport
                     if (rect.bottom < 0 || rect.top > viewportHeight ||
                         rect.right < 0 || rect.left > viewportWidth) {
                         return NodeFilter.FILTER_REJECT;
@@ -491,42 +491,42 @@ def _get_dom_features(session: CDPSession) -> dict:
 
 
 def _print_dom_features(features: dict) -> None:
-    """打印 DOM 特征摘要"""
+    """Print DOM features summary"""
     if not features:
         return
 
-    # 构建特征摘要
+    # Build feature summary
     body_attrs = []
     if features.get('body_class'):
         body_attrs.append(f"class=\"{features['body_class']}\"")
     if features.get('body_id'):
         body_attrs.append(f"id=\"{features['body_id']}\"")
-    body_str = ', '.join(body_attrs) if body_attrs else '(无)'
+    body_str = ', '.join(body_attrs) if body_attrs else '(none)'
 
     elements = f"{features.get('forms', 0)} forms, {features.get('buttons', 0)} buttons, {features.get('links', 0)} links, {features.get('inputs', 0)} inputs"
 
-    _print_msg("成功", f"页面标题: {features.get('title', '(无)')}")
-    _print_msg("成功", f"Body属性: {body_str}")
-    _print_msg("成功", f"元素统计: {elements}")
+    _print_msg("success", f"Page title: {features.get('title', '(none)')}")
+    _print_msg("success", f"Body attrs: {body_str}")
+    _print_msg("success", f"Element stats: {elements}")
 
-    # 输出滚动位置和可视区域内容
+    # Output scroll position and visible content
     scroll_y = features.get('scroll_y', 0)
-    _print_msg("成功", f"滚动位置: scrollY={scroll_y}px")
+    _print_msg("success", f"Scroll position: scrollY={scroll_y}px")
 
     if features.get('visible_content'):
-        _print_msg("成功", f"可视内容: {features['visible_content']}")
+        _print_msg("success", f"Visible content: {features['visible_content']}")
 
 
 def _take_perception_screenshot(session: CDPSession, description: str = "page") -> Optional[str]:
     """
-    截取感知截图
+    Take perception screenshot
 
     Args:
-        session: CDP会话
-        description: 截图描述，用于生成文件名
+        session: CDP session
+        description: Screenshot description for filename generation
 
     Returns:
-        截图文件路径，失败时返回 None
+        Screenshot file path, None on failure
     """
     try:
         from ..run.screenshot import get_next_screenshot_number
@@ -550,27 +550,27 @@ def _take_perception_screenshot(session: CDPSession, description: str = "page") 
 
 def _do_perception(session: CDPSession, action_desc: str, delay: float = 0) -> None:
     """
-    执行操作后的感知：获取 DOM 特征
+    Post-action perception: get DOM features
 
-    注意：不再自动截图。截图应由用户显式调用 screenshot 命令。
-    理由：减少对模型的暗示，避免模型过度依赖截图而忽略结构化数据提取。
+    Note: No longer auto-screenshots. Screenshots should be explicitly called via screenshot command.
+    Reason: Reduce hints to model, avoid over-reliance on screenshots over structured data extraction.
 
     Args:
-        session: CDP会话
-        action_desc: 操作描述（保留用于日志）
-        delay: 获取 DOM 特征前的延迟（秒），用于等待页面加载
+        session: CDP session
+        action_desc: Action description (kept for logging)
+        delay: Delay before getting DOM features (seconds), for waiting page load
     """
-    # 可选延迟
+    # Optional delay
     if delay > 0:
         time.sleep(delay)
 
-    # 获取并打印 DOM 特征
+    # Get and print DOM features
     features = _get_dom_features(session)
     _print_dom_features(features)
 
 
 def _get_run_screenshots_dir() -> Path:
-    """获取截图目录（run context 或 .tmp）"""
+    """Get screenshots directory (run context or .tmp)"""
     run_dir = _get_run_dir()
     screenshots_dir = run_dir / "screenshots"
     screenshots_dir.mkdir(parents=True, exist_ok=True)
@@ -582,38 +582,38 @@ def _get_run_screenshots_dir() -> Path:
 @click.option(
     '--wait-for',
     type=str,
-    help='等待选择器出现后再返回'
+    help='Wait for selector to appear before returning'
 )
 @click.option(
     '--load-timeout',
     type=float,
     default=30,
-    help='等待页面加载完成的超时时间（秒），默认30'
+    help='Page load timeout in seconds, default 30'
 )
 @click.pass_context
 @print_usage
 def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float = 30):
-    """导航到指定URL，等待加载完成后获取页面特征"""
+    """Navigate to URL and get page features after loading"""
     try:
         with create_session(ctx) as session:
-            # 1. 导航
+            # 1. Navigate
             session.navigate(url)
-            _print_msg("成功", f"导航到 {url}", "navigation", {"url": url})
+            _print_msg("success", f"Navigated to {url}", "navigation", {"url": url})
 
-            # 2. 等待页面加载完成
+            # 2. Wait for page load
             session.wait_for_load(timeout=load_timeout)
-            _print_msg("成功", "页面加载完成", "navigation")
+            _print_msg("success", "Page load complete", "navigation")
 
-            # 3. 如果指定了选择器，额外等待
+            # 3. If selector specified, wait for it
             if wait_for:
                 session.wait_for_selector(wait_for)
-                _print_msg("成功", f"选择器就绪: {wait_for}", "navigation", {"selector": wait_for})
+                _print_msg("success", f"Selector ready: {wait_for}", "navigation", {"selector": wait_for})
 
-            # 4. 感知：获取 DOM 特征（延迟2秒让动态内容加载）
+            # 4. Perception: get DOM features (delay 2s for dynamic content)
             _do_perception(session, f"navigate-{url}", delay=2.0)
 
     except CDPError as e:
-        _print_msg("失败", f"导航失败: {e}", "navigation", {"url": url, "error": str(e)})
+        _print_msg("error", f"Navigation failed: {e}", "navigation", {"url": url, "error": str(e)})
 
 
 @click.command('click')
@@ -622,25 +622,25 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float 
     '--wait-timeout',
     type=int,
     default=10,
-    help='等待元素出现的超时时间（秒）'
+    help='Wait timeout for element to appear (seconds)'
 )
 @click.pass_context
 @print_usage
 def click_element(ctx, selector: str, wait_timeout: int):
-    """点击指定选择器的元素，自动获取页面特征"""
+    """Click element by selector and get page features"""
     try:
         with create_session(ctx) as session:
             session.click(selector, wait_timeout=wait_timeout)
-            _print_msg("成功", f"点击元素: {selector}", "interaction", {"selector": selector})
+            _print_msg("success", f"Clicked element: {selector}", "interaction", {"selector": selector})
 
-            # 点击后短暂等待页面响应
+            # Brief wait for page response after click
             time.sleep(0.5)
 
-            # 感知：获取 DOM 特征
+            # Perception: get DOM features
             _do_perception(session, f"click-{selector}")
 
     except CDPError as e:
-        _print_msg("失败", f"点击失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        _print_msg("error", f"Click failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
 @click.command('screenshot')
@@ -648,27 +648,27 @@ def click_element(ctx, selector: str, wait_timeout: int):
 @click.option(
     '--full-page',
     is_flag=True,
-    help='截取整个页面（包括滚动区域）'
+    help='Capture full page (including scroll area)'
 )
 @click.option(
     '--quality',
     type=int,
     default=80,
-    help='图片质量（1-100），默认80'
+    help='Image quality (1-100), default 80'
 )
 @click.pass_context
 @print_usage
 def screenshot(ctx, output_file: str, full_page: bool, quality: int):
     """
-    截取页面截图
+    Capture page screenshot
 
-    如果存在活跃的 run context，截图将保存到 run 的 screenshots 目录，
-    OUTPUT_FILE 将作为描述用于生成文件名（自动编号）。
+    If there's an active run context, screenshot will be saved to run's screenshots directory,
+    OUTPUT_FILE will be used as description for filename generation (auto-numbered).
 
-    如果没有 run context，OUTPUT_FILE 作为完整文件路径使用。
+    If no run context, OUTPUT_FILE is used as complete file path.
     """
     try:
-        # 检测是否有活跃的 run context
+        # Check for active run context
         actual_output_file = output_file
         try:
             from ..run.screenshot import get_next_screenshot_number
@@ -677,24 +677,24 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
             screenshots_dir = _get_run_screenshots_dir()
             run_dir = _get_run_dir()
 
-            # 检查是否是 .tmp 目录（无 run context）
+            # Check if .tmp directory (no run context)
             if run_dir.name != ".tmp":
-                # 有 run context，将 output_file 作为描述生成文件名
-                # 去掉可能的扩展名作为描述
+                # Has run context, use output_file as description for filename
+                # Remove possible extension as description
                 description = Path(output_file).stem
                 seq = get_next_screenshot_number(screenshots_dir)
                 desc_slug = slugify(description or 'screenshot', max_length=40)
                 filename = f"{seq:03d}_{desc_slug}.png"
                 actual_output_file = str(screenshots_dir / filename)
         except Exception:
-            # 获取 run context 失败，使用原始路径
+            # Get run context failed, use original path
             pass
 
         with create_session(ctx) as session:
             session.screenshot.capture(actual_output_file, full_page=full_page, quality=quality)
-            _print_msg("成功", f"截图保存到: {actual_output_file}", "screenshot", {"file": actual_output_file, "full_page": full_page})
+            _print_msg("success", f"Screenshot saved to: {actual_output_file}", "screenshot", {"file": actual_output_file, "full_page": full_page})
     except CDPError as e:
-        _print_msg("失败", f"截图失败: {e}", "screenshot", {"file": output_file, "error": str(e)})
+        _print_msg("error", f"Screenshot failed: {e}", "screenshot", {"file": output_file, "error": str(e)})
 
 
 @click.command('exec-js')
@@ -702,61 +702,61 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
 @click.option(
     '--return-value',
     is_flag=True,
-    help='返回JavaScript执行结果'
+    help='Return JavaScript execution result'
 )
 @click.pass_context
 @print_usage
 def execute_javascript(ctx, script: str, return_value: bool):
     """
-    执行JavaScript代码，自动获取页面特征
+    Execute JavaScript code and automatically capture page features
 
-    SCRIPT 参数可以是直接的JavaScript代码，也可以是包含代码的文件路径。
+    The SCRIPT argument can be either direct JavaScript code or a file path containing the code.
     """
     try:
-        # 检查是否为文件路径
+        # Check if it's a file path
         if os.path.exists(script) and os.path.isfile(script):
             try:
                 with open(script, 'r', encoding='utf-8') as f:
                     script_content = f.read()
                 if ctx.obj['DEBUG']:
-                    _print_msg("调试", f"从文件加载脚本: {script}", "interaction")
+                    _print_msg("debug", f"Loaded script from file: {script}", "interaction")
                 script = script_content
             except Exception as e:
-                _print_msg("失败", f"无法读取脚本文件: {e}", "interaction", {"error": str(e)})
+                _print_msg("error", f"Failed to read script file: {e}", "interaction", {"error": str(e)})
                 return
 
         with create_session(ctx) as session:
             result = session.evaluate(script, return_by_value=return_value)
             if return_value:
-                _print_msg("成功", f"执行结果: {result}", "interaction", {"result": str(result)})
+                _print_msg("success", f"Execution result: {result}", "interaction", {"result": str(result)})
             else:
-                _print_msg("成功", "JavaScript执行完成", "interaction")
+                _print_msg("success", "JavaScript execution completed", "interaction")
 
-            # JS执行后短暂等待
+            # Brief wait after JS execution
             time.sleep(0.3)
 
-            # 感知：获取 DOM 特征
+            # Perception: capture DOM features
             _do_perception(session, "exec-js")
 
     except CDPError as e:
-        _print_msg("失败", f"JavaScript执行失败: {e}", "interaction", {"error": str(e)})
+        _print_msg("error", f"JavaScript execution failed: {e}", "interaction", {"error": str(e)})
 
 
 @click.command('get-title')
 @click.pass_context
 @print_usage
 def get_title(ctx):
-    """获取页面标题"""
+    """Get page title"""
     try:
         with create_session(ctx) as session:
             title = session.get_title()
-            _print_msg("成功", f"页面标题: {title}", "extraction", {"title": title})
+            _print_msg("success", f"Page title: {title}", "extraction", {"title": title})
     except CDPError as e:
-        _print_msg("失败", f"获取标题失败: {e}", "extraction", {"error": str(e)})
+        _print_msg("error", f"Failed to get title: {e}", "extraction", {"error": str(e)})
 
 
 def _get_run_outputs_dir() -> Path:
-    """获取输出目录（run context 或 .tmp）"""
+    """Get outputs directory (run context or .tmp)"""
     run_dir = _get_run_dir()
     outputs_dir = run_dir / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -764,7 +764,7 @@ def _get_run_outputs_dir() -> Path:
 
 
 def _get_next_output_number(outputs_dir: Path, ext: str = ".txt") -> int:
-    """获取下一个输出文件序号"""
+    """Get next output file sequence number"""
     import re
     max_num = 0
     for file in outputs_dir.glob(f"*{ext}"):
@@ -781,20 +781,20 @@ def _get_next_output_number(outputs_dir: Path, ext: str = ".txt") -> int:
     '--desc',
     type=str,
     default=None,
-    help='内容描述（用于生成文件名）'
+    help='Content description (used for filename generation)'
 )
 @click.pass_context
 @print_usage
 def get_content(ctx, selector: str, desc: Optional[str]):
     """
-    获取页面或元素的文本内容
+    Get text content from page or element
 
-    输出包含：
-    - 来源 URL（当前页面地址）
-    - 文本内容
-    - 内容中包含的超链接
+    Output includes:
+    - Source URL (current page address)
+    - Text content
+    - Hyperlinks contained in the content
 
-    如果存在活跃的 run context，内容将自动保存到 run 的 outputs 目录。
+    If an active run context exists, the content will be automatically saved to the run's outputs directory.
     """
     import json as json_module
 
@@ -805,13 +805,13 @@ def get_content(ctx, selector: str, desc: Optional[str]):
                 var el = document.querySelector('{selector}');
                 if (!el) return JSON.stringify({{error: 'Element not found'}});
 
-                // 获取文本内容
+                // Get text content
                 var textContent = el.innerText || el.textContent || '';
 
-                // 获取来源 URL
+                // Get source URL
                 var sourceUrl = window.location.href;
 
-                // 获取元素内的所有超链接
+                // Get all hyperlinks within the element
                 var links = [];
                 var anchors = el.querySelectorAll('a[href]');
                 anchors.forEach(function(a) {{
@@ -820,7 +820,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
                     if (href && !href.startsWith('javascript:')) {{
                         links.push({{
                             url: href,
-                            text: text.substring(0, 100)  // 限制文本长度
+                            text: text.substring(0, 100)  // Limit text length
                         }});
                     }}
                 }});
@@ -837,23 +837,23 @@ def get_content(ctx, selector: str, desc: Optional[str]):
             try:
                 result = json_module.loads(result_str)
             except (json_module.JSONDecodeError, TypeError):
-                _print_msg("失败", f"解析结果失败: {result_str}", "extraction", {"selector": selector})
+                _print_msg("error", f"Failed to parse result: {result_str}", "extraction", {"selector": selector})
                 return
 
             if result.get('error'):
-                _print_msg("失败", f"找不到元素: {selector}", "extraction", {"selector": selector})
+                _print_msg("error", f"Element not found: {selector}", "extraction", {"selector": selector})
                 return
 
             source_url = result.get('source_url', '')
             content = result.get('content', '')
             links = result.get('links', [])
 
-            # 格式化输出内容
-            formatted_output = f"来源: {source_url}\n\n"
-            formatted_output += "--- 内容 ---\n"
+            # Format output content
+            formatted_output = f"Source: {source_url}\n\n"
+            formatted_output += "--- Content ---\n"
             formatted_output += content
             if links:
-                formatted_output += "\n\n--- 包含的链接 ---\n"
+                formatted_output += "\n\n--- Included Links ---\n"
                 for link in links:
                     link_text = link.get('text', '')
                     link_url = link.get('url', '')
@@ -862,7 +862,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
                     else:
                         formatted_output += f"- {link_url}\n"
 
-            # 尝试保存到 run outputs 目录
+            # Try to save to run outputs directory
             saved_file = None
             try:
                 from slugify import slugify
@@ -881,7 +881,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
             except Exception:
                 pass
 
-            # 输出结果（始终打印内容，让 agent 能看到）
+            # Output results (always print content so agent can see it)
             log_data = {
                 "selector": selector,
                 "source_url": source_url,
@@ -889,34 +889,34 @@ def get_content(ctx, selector: str, desc: Optional[str]):
             }
             if saved_file:
                 log_data["file"] = saved_file
-                _print_msg("成功", f"获取内容 ({selector}), 已保存到: {saved_file}\n{formatted_output}", "extraction", log_data)
+                _print_msg("success", f"Content retrieved ({selector}), saved to: {saved_file}\n{formatted_output}", "extraction", log_data)
             else:
-                _print_msg("成功", f"获取内容 ({selector}):\n{formatted_output}", "extraction", log_data)
+                _print_msg("success", f"Content retrieved ({selector}):\n{formatted_output}", "extraction", log_data)
     except CDPError as e:
-        _print_msg("失败", f"获取内容失败: {e}", "extraction", {"selector": selector, "error": str(e)})
+        _print_msg("error", f"Failed to get content: {e}", "extraction", {"selector": selector, "error": str(e)})
 
 
 @click.command('status')
 @click.pass_context
 @print_usage
 def status(ctx):
-    """检查CDP连接状态"""
+    """Check CDP connection status"""
     try:
         with create_session(ctx) as session:
-            # 执行健康检查
+            # Perform health check
             is_healthy = session.status.health_check()
             if is_healthy:
-                # 获取Chrome状态信息
+                # Get Chrome status information
                 chrome_status = session.status.check_chrome_status()
-                _print_msg("成功", "CDP连接正常")
-                _print_msg("成功", f"Browser: {chrome_status.get('Browser', 'unknown')}")
-                _print_msg("成功", f"Protocol-Version: {chrome_status.get('Protocol-Version', 'unknown')}")
-                _print_msg("成功", f"WebKit-Version: {chrome_status.get('WebKit-Version', 'unknown')}")
+                _print_msg("success", "CDP connection OK")
+                _print_msg("success", f"Browser: {chrome_status.get('Browser', 'unknown')}")
+                _print_msg("success", f"Protocol-Version: {chrome_status.get('Protocol-Version', 'unknown')}")
+                _print_msg("success", f"WebKit-Version: {chrome_status.get('WebKit-Version', 'unknown')}")
             else:
-                _print_msg("失败", "CDP连接失败")
+                _print_msg("error", "CDP connection failed")
                 return
     except CDPError as e:
-        _print_msg("失败", f"状态检查失败: {e}")
+        _print_msg("error", f"Status check failed: {e}")
 
 
 @click.command('scroll')
@@ -925,26 +925,26 @@ def status(ctx):
 @print_usage
 def scroll(ctx, distance: int):
     """
-    滚动页面，自动获取页面特征
+    Scroll page and automatically capture page features
 
     \b
-    DISTANCE 可以是:
-      - 像素值: 正数向下，负数向上
-      - 别名: down, up, page-down, page-up
+    DISTANCE can be:
+      - Pixel value: positive for down, negative for up
+      - Alias: down, up, page-down, page-up
     """
     try:
         with create_session(ctx) as session:
             session.scroll.scroll(distance)
-            _print_msg("成功", f"滚动 {distance} 像素", "interaction", {"distance": distance})
+            _print_msg("success", f"Scrolled {distance} pixels", "interaction", {"distance": distance})
 
-            # 滚动后短暂等待
+            # Brief wait after scroll
             time.sleep(0.3)
 
-            # 感知：获取 DOM 特征
+            # Perception: capture DOM features
             _do_perception(session, f"scroll-{distance}px")
 
     except CDPError as e:
-        _print_msg("失败", f"滚动失败: {e}", "interaction", {"distance": distance, "error": str(e)})
+        _print_msg("error", f"Scroll failed: {e}", "interaction", {"distance": distance, "error": str(e)})
 
 
 @click.command('scroll-to')
@@ -952,43 +952,43 @@ def scroll(ctx, distance: int):
 @click.option(
     '--text',
     type=str,
-    help='按文本内容查找元素（支持部分匹配）'
+    help='Find element by text content (supports partial matching)'
 )
 @click.option(
     '--block',
     type=click.Choice(['start', 'center', 'end', 'nearest']),
     default='center',
-    help='垂直对齐方式 (默认: center)'
+    help='Vertical alignment (default: center)'
 )
 @click.pass_context
 @print_usage
 def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'center'):
     """
-    滚动到指定元素
+    Scroll to specified element
 
-    可以通过 CSS 选择器或文本内容查找元素：
+    You can find elements by CSS selector or text content:
 
     \b
-    示例：
-      frago scroll-to "article"                    # CSS 选择器
-      frago scroll-to --text "Just canceled"       # 按文本查找
+    Examples:
+      frago scroll-to "article"                    # CSS selector
+      frago scroll-to --text "Just canceled"       # Find by text
     """
     import json
 
     if not selector and not text:
-        click.echo("错误: 必须提供 SELECTOR 或 --text 参数", err=True)
+        click.echo("Error: must provide SELECTOR or --text parameter", err=True)
         return
 
     try:
         with create_session(ctx) as session:
             if text:
-                # 按文本内容查找元素
+                # Find element by text content
                 js_code = f'''
                 (function() {{
                     const searchText = {json.dumps(text)};
                     const block = {json.dumps(block)};
 
-                    // 使用 TreeWalker 遍历所有文本节点
+                    // Use TreeWalker to traverse all text nodes
                     const walker = document.createTreeWalker(
                         document.body,
                         NodeFilter.SHOW_TEXT,
@@ -1010,9 +1010,9 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
                     return 'element not found';
                 }})()
                 '''
-                display_target = f"文本: {text}"
+                display_target = f"text: {text}"
             else:
-                # CSS 选择器查找
+                # CSS selector lookup
                 js_code = f'''
                 (function() {{
                     const el = document.querySelector({repr(selector)});
@@ -1029,15 +1029,15 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
             result = session.evaluate(js_code, return_by_value=True)
 
             if result == 'success':
-                _print_msg("成功", f"滚动到元素: {display_target}", "interaction", {"selector": selector, "text": text, "block": block})
-                time.sleep(0.5)  # 等待滚动动画完成
+                _print_msg("success", f"Scrolled to element: {display_target}", "interaction", {"selector": selector, "text": text, "block": block})
+                time.sleep(0.5)  # Wait for scroll animation to complete
                 _do_perception(session, f"scroll-to-{(text or selector)[:30]}")
             else:
-                _print_msg("失败", f"元素未找到: {display_target}", "interaction", {"selector": selector, "text": text})
+                _print_msg("error", f"Element not found: {display_target}", "interaction", {"selector": selector, "text": text})
                 return
 
     except CDPError as e:
-        _print_msg("失败", f"滚动到元素失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
+        _print_msg("error", f"Failed to scroll to element: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
 
 @click.command('wait')
@@ -1045,13 +1045,13 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
 @click.pass_context
 @print_usage
 def wait(ctx, seconds: float):
-    """等待指定秒数（支持小数，如 0.5）"""
+    """Wait for specified seconds (supports decimals, e.g., 0.5)"""
     try:
         with create_session(ctx) as session:
             session.wait.wait(seconds)
-            _print_msg("成功", f"等待 {seconds} 秒完成")
+            _print_msg("success", f"Waited {seconds} seconds")
     except CDPError as e:
-        _print_msg("失败", f"等待失败: {e}")
+        _print_msg("error", f"Wait failed: {e}")
 
 
 @click.command('zoom')
@@ -1060,38 +1060,38 @@ def wait(ctx, seconds: float):
 @print_usage
 def zoom(ctx, factor: float):
     """
-    设置页面缩放比例，自动获取页面特征
+    Set page zoom level and automatically capture page features
 
     \b
-    FACTOR 示例: 1.5 (150%), 0.8 (80%), 1 (原始大小)
+    FACTOR examples: 1.5 (150%), 0.8 (80%), 1 (original size)
     """
     try:
         with create_session(ctx) as session:
             session.zoom(factor)
-            _print_msg("成功", f"页面缩放设置为: {factor}", "interaction", {"zoom_factor": factor})
+            _print_msg("success", f"Page zoom set to: {factor}", "interaction", {"zoom_factor": factor})
 
-            # 缩放后短暂等待
+            # Brief wait after zoom
             time.sleep(0.2)
 
-            # 感知：获取 DOM 特征
+            # Perception: capture DOM features
             _do_perception(session, f"zoom-{factor}x")
 
     except CDPError as e:
-        _print_msg("失败", f"缩放失败: {e}", "interaction", {"zoom_factor": factor, "error": str(e)})
+        _print_msg("error", f"Zoom failed: {e}", "interaction", {"zoom_factor": factor, "error": str(e)})
 
 
 @click.command('clear-effects')
 @click.pass_context
 @print_usage
 def clear_effects(ctx):
-    """清除所有视觉效果"""
+    """Clear all visual effects"""
     try:
         with create_session(ctx) as session:
             session.clear_effects()
-            _print_msg("成功", "视觉效果已清除", "interaction")
+            _print_msg("success", "Visual effects cleared", "interaction")
 
     except CDPError as e:
-        _print_msg("失败", f"清除效果失败: {e}", "interaction", {"error": str(e)})
+        _print_msg("error", f"Failed to clear effects: {e}", "interaction", {"error": str(e)})
 
 
 @click.command('highlight')
@@ -1100,37 +1100,37 @@ def clear_effects(ctx):
     '--color',
     type=str,
     default='magenta',
-    help='高亮颜色，默认洋红'
+    help='Highlight color, default magenta'
 )
 @click.option(
     '--width',
     type=int,
     default=3,
-    help='高亮边框宽度（像素），默认3'
+    help='Highlight border width (pixels), default 3'
 )
 @click.option(
     '--life-time',
     type=int,
     default=5,
-    help='效果持续时间（秒），默认5秒'
+    help='Effect duration (seconds), default 5 seconds'
 )
 @click.option(
     '--longlife',
     is_flag=True,
-    help='始终显示直到手动clear'
+    help='Show permanently until manually cleared'
 )
 @click.pass_context
 @print_usage
 def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool):
-    """高亮显示指定元素"""
+    """Highlight specified element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.highlight(selector, color=color, border_width=width, lifetime=lifetime_ms)
-            _print_msg("成功", f"高亮元素: {selector} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "color": color, "width": width})
+            _print_msg("success", f"Highlighted element: {selector} (color: {color}, width: {width}px, duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "color": color, "width": width})
 
     except CDPError as e:
-        _print_msg("失败", f"高亮失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        _print_msg("error", f"Highlight failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
 @click.command('pointer')
@@ -1139,25 +1139,25 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
     '--life-time',
     type=int,
     default=5,
-    help='效果持续时间（秒），默认5秒'
+    help='Effect duration (seconds), default 5 seconds'
 )
 @click.option(
     '--longlife',
     is_flag=True,
-    help='始终显示直到手动clear'
+    help='Show permanently until manually cleared'
 )
 @click.pass_context
 @print_usage
 def pointer(ctx, selector: str, life_time: int, longlife: bool):
-    """在元素上显示鼠标指针"""
+    """Show mouse pointer on element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.pointer(selector, lifetime=lifetime_ms)
-            _print_msg("成功", f"显示指针: {selector} (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector})
+            _print_msg("success", f"Pointer shown: {selector} (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector})
 
     except CDPError as e:
-        _print_msg("失败", f"显示指针失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        _print_msg("error", f"Failed to show pointer: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
 @click.command('spotlight')
@@ -1166,25 +1166,25 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool):
     '--life-time',
     type=int,
     default=5,
-    help='效果持续时间（秒），默认5秒'
+    help='Effect duration (seconds), default 5 seconds'
 )
 @click.option(
     '--longlife',
     is_flag=True,
-    help='始终显示直到手动clear'
+    help='Show permanently until manually cleared'
 )
 @click.pass_context
 @print_usage
 def spotlight(ctx, selector: str, life_time: int, longlife: bool):
-    """聚光灯效果显示元素"""
+    """Show element with spotlight effect"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.spotlight(selector, lifetime=lifetime_ms)
-            _print_msg("成功", f"聚光灯显示: {selector} (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector})
+            _print_msg("success", f"Spotlight shown: {selector} (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector})
 
     except CDPError as e:
-        _print_msg("失败", f"聚光灯失败: {e}", "interaction", {"selector": selector, "error": str(e)})
+        _print_msg("error", f"Spotlight failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
 @click.command('annotate')
@@ -1194,31 +1194,31 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool):
     '--position',
     type=click.Choice(['top', 'bottom', 'left', 'right']),
     default='top',
-    help='标注位置'
+    help='Annotation position'
 )
 @click.option(
     '--life-time',
     type=int,
     default=5,
-    help='效果持续时间（秒），默认5秒'
+    help='Effect duration (seconds), default 5 seconds'
 )
 @click.option(
     '--longlife',
     is_flag=True,
-    help='始终显示直到手动clear'
+    help='Show permanently until manually cleared'
 )
 @click.pass_context
 @print_usage
 def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool):
-    """在元素上添加标注"""
+    """Add annotation on element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
             session.annotate(selector, text, position=position, lifetime=lifetime_ms)
-            _print_msg("成功", f"添加标注: {text} ({selector}) (持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "text": text, "position": position})
+            _print_msg("success", f"Annotation added: {text} ({selector}) (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "text": text, "position": position})
 
     except CDPError as e:
-        _print_msg("失败", f"添加标注失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
+        _print_msg("error", f"Failed to add annotation: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
 
 @click.command('underline')
@@ -1226,64 +1226,64 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
 @click.option(
     '--text',
     type=str,
-    help='按文本内容查找元素（支持部分匹配）'
+    help='Find element by text content (supports partial matching)'
 )
 @click.option(
     '--color',
     type=str,
     default='magenta',
-    help='线条颜色，默认洋红'
+    help='Line color, default magenta'
 )
 @click.option(
     '--width',
     type=int,
     default=3,
-    help='线条宽度（像素），默认3'
+    help='Line width (pixels), default 3'
 )
 @click.option(
     '--duration',
     type=int,
     default=1000,
-    help='动画总时长（毫秒），默认1000'
+    help='Total animation duration (milliseconds), default 1000'
 )
 @click.option(
     '--life-time',
     type=int,
     default=5,
-    help='效果持续时间（秒），默认5秒'
+    help='Effect duration (seconds), default 5 seconds'
 )
 @click.option(
     '--longlife',
     is_flag=True,
-    help='始终显示直到手动clear'
+    help='Show permanently until manually cleared'
 )
 @click.pass_context
 @print_usage
 def underline(ctx, selector: Optional[str], text: Optional[str], color: str, width: int, duration: int, life_time: int, longlife: bool):
     """
-    在元素文本底部逐行画线动画
+    Draw line animation under element text line by line
 
     \b
-    示例：
-      frago underline "article"                    # CSS 选择器
-      frago underline --text "Just canceled"       # 按文本查找
+    Examples:
+      frago underline "article"                    # CSS selector
+      frago underline --text "Just canceled"       # Find by text
     """
     import json
 
     if not selector and not text:
-        click.echo("错误: 必须提供 SELECTOR 或 --text 参数", err=True)
+        click.echo("Error: must provide SELECTOR or --text parameter", err=True)
         return
 
     lifetime_ms = 0 if longlife else life_time * 1000
-    display_target = f"文本: {text}" if text else selector
+    display_target = f"text: {text}" if text else selector
 
-    # JS 代码：支持 selector 或 text 查找
+    # JS code: supports selector or text lookup
     js_code = """
 (function(selector, searchText, color, width, duration, lifetime) {
     let elements = [];
 
     if (searchText) {
-        // 按文本查找
+        // Find by text
         const walker = document.createTreeWalker(
             document.body,
             NodeFilter.SHOW_TEXT,
@@ -1358,30 +1358,30 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
             result = session.evaluate(js_code, return_by_value=True)
 
             if result == 'element not found':
-                _print_msg("失败", f"元素未找到: {display_target}", "interaction", {"selector": selector, "text": text})
+                _print_msg("error", f"Element not found: {display_target}", "interaction", {"selector": selector, "text": text})
                 return
 
-            _print_msg("成功", f"划线元素: {display_target} (颜色: {color}, 宽度: {width}px, 持续: {'永久' if longlife else f'{life_time}秒'})", "interaction", {"selector": selector, "text": text, "color": color, "width": width, "duration": duration})
+            _print_msg("success", f"Underlined element: {display_target} (color: {color}, width: {width}px, duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "text": text, "color": color, "width": width, "duration": duration})
 
     except CDPError as e:
-        _print_msg("失败", f"划线失败: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
+        _print_msg("error", f"Underline failed: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
 
 @click.command('init')
 @click.option(
     '--force',
     is_flag=True,
-    help='强制重新创建已存在的目录'
+    help='Force recreate existing directories'
 )
 @print_usage
 def init(force: bool):
     """
-    初始化 Frago 用户级目录结构
+    Initialize Frago user-level directory structure
 
-    创建 ~/.frago/recipes/ 目录及其子目录:
-    - atomic/chrome/: Chrome CDP 操作的 Recipe
-    - atomic/system/: 系统操作的 Recipe
-    - workflows/: 编排多个 Recipe 的工作流
+    Creates ~/.frago/recipes/ directory and subdirectories:
+    - atomic/chrome/: Recipes for Chrome CDP operations
+    - atomic/system/: Recipes for system operations
+    - workflows/: Workflows that orchestrate multiple Recipes
     """
     from pathlib import Path
 
@@ -1389,7 +1389,7 @@ def init(force: bool):
     frago_dir = user_home / '.frago'
     recipes_dir = frago_dir / 'recipes'
 
-    # 需要创建的目录列表
+    # List of directories to create
     directories = [
         recipes_dir / 'atomic' / 'chrome',
         recipes_dir / 'atomic' / 'system',
@@ -1408,29 +1408,29 @@ def init(force: bool):
             directory.mkdir(parents=True, exist_ok=True)
             created.append(str(directory))
         except Exception as e:
-            click.echo(f"创建目录失败 {directory}: {e}", err=True)
+            click.echo(f"Failed to create directory {directory}: {e}", err=True)
             return
 
-    # 输出结果
+    # Output results
     if created:
-        click.echo("已创建以下目录:")
+        click.echo("Created the following directories:")
         for dir_path in created:
             click.echo(f"  [OK] {dir_path}")
 
     if skipped:
-        click.echo("\n以下目录已存在（使用 --force 强制重新创建）:")
+        click.echo("\nThe following directories already exist (use --force to recreate):")
         for dir_path in skipped:
             click.echo(f"  - {dir_path}")
 
     if not created and not skipped:
-        click.echo("所有目录已存在")
+        click.echo("All directories already exist")
 
-    click.echo(f"\n用户级 Recipe 目录: {recipes_dir}")
-    click.echo("使用 'frago recipe copy <name>' 复制示例 Recipe 到此目录")
+    click.echo(f"\nUser-level Recipe directory: {recipes_dir}")
+    click.echo("Use 'frago recipe copy <name>' to copy sample Recipes to this directory")
 
 
 # ============================================================
-# Chrome 浏览器管理命令
+# Chrome Browser Management Commands
 # ============================================================
 
 
@@ -1438,77 +1438,77 @@ def init(force: bool):
 @click.option(
     '--headless',
     is_flag=True,
-    help='无头模式：无窗口运行'
+    help='Headless mode: run without window'
 )
 @click.option(
     '--void',
     is_flag=True,
-    help='虚空模式：窗口移到屏幕外（不影响当前桌面）'
+    help='Void mode: window moved off-screen (does not affect current desktop)'
 )
 @click.option(
     '--port',
     type=int,
     default=9222,
-    help='CDP 调试端口，默认 9222'
+    help='CDP debug port, default 9222'
 )
 @click.option(
     '--width',
     type=int,
     default=1280,
-    help='窗口宽度，默认 1280'
+    help='Window width, default 1280'
 )
 @click.option(
     '--height',
     type=int,
     default=960,
-    help='窗口高度，默认 960'
+    help='Window height, default 960'
 )
 @click.option(
     '--profile-dir',
     type=click.Path(),
-    help='Chrome 用户数据目录（默认 ~/.frago/chrome_profile）'
+    help='Chrome user data directory (default ~/.frago/chrome_profile)'
 )
 @click.option(
     '--no-kill',
     is_flag=True,
-    help='不关闭已存在的 CDP Chrome 进程'
+    help='Do not kill existing CDP Chrome processes'
 )
 @click.option(
     '--keep-alive',
     is_flag=True,
-    help='启动后保持运行，直到 Ctrl+C'
+    help='Keep running after launch until Ctrl+C'
 )
 @print_usage
 def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
                  profile_dir: str, no_kill: bool, keep_alive: bool):
     """
-    启动 Chrome 浏览器（带 CDP 调试支持）
+    Launch Chrome browser (with CDP debugging support)
 
     \b
-    模式说明:
-      默认    - 正常窗口模式
-      --headless - 无界面运行
-      --void     - 窗口隐藏到屏幕外
+    Mode descriptions:
+      default    - Normal window mode
+      --headless - Run without UI
+      --void     - Window hidden off-screen
 
     \b
-    示例:
-      frago chrome                    # 正常启动
-      frago chrome --headless         # 无头模式
-      frago chrome --void             # 虚空模式
-      frago chrome --port 9333        # 使用其他端口
-      frago chrome --keep-alive       # 启动后保持运行
+    Examples:
+      frago chrome                    # Normal launch
+      frago chrome --headless         # Headless mode
+      frago chrome --void             # Void mode
+      frago chrome --port 9333        # Use different port
+      frago chrome --keep-alive       # Keep running after launch
     """
     from ..cdp.commands.chrome import ChromeLauncher
     from pathlib import Path
 
-    # headless 和 void 互斥
+    # headless and void are mutually exclusive
     if headless and void:
-        click.echo("警告: --headless 和 --void 不能同时使用，将使用 --headless 模式")
+        click.echo("Warning: --headless and --void cannot be used together, will use --headless mode")
         void = False
 
     profile_path = Path(profile_dir) if profile_dir else None
 
-    # 检测是否显式指定了非默认端口
+    # Detect if a non-default port was explicitly specified
     use_port_suffix = (port != 9222) and (profile_dir is None)
 
     launcher = ChromeLauncher(
@@ -1521,33 +1521,33 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
         use_port_suffix=use_port_suffix,
     )
 
-    # 检查 Chrome 是否存在
+    # Check if Chrome exists
     if not launcher.chrome_path:
-        click.echo("错误: 未找到 Chrome 浏览器", err=True)
-        click.echo("请安装 Google Chrome 或 Chromium 浏览器", err=True)
+        click.echo("Error: Chrome browser not found", err=True)
+        click.echo("Please install Google Chrome or Chromium browser", err=True)
         return
 
-    click.echo(f"Chrome 路径: {launcher.chrome_path}")
-    click.echo(f"Profile 目录: {launcher.profile_dir}")
-    click.echo(f"CDP 端口: {port}")
-    click.echo(f"模式: {'headless' if headless else 'void' if void else '正常窗口'}")
+    click.echo(f"Chrome path: {launcher.chrome_path}")
+    click.echo(f"Profile directory: {launcher.profile_dir}")
+    click.echo(f"CDP port: {port}")
+    click.echo(f"Mode: {'headless' if headless else 'void' if void else 'normal window'}")
 
-    # 启动 Chrome
+    # Launch Chrome
     if launcher.launch(kill_existing=not no_kill):
-        click.echo(f"\n[OK] Chrome 已启动，CDP 监听端口: {port}")
+        click.echo(f"\n[OK] Chrome launched, CDP listening on port: {port}")
 
-        # 获取并显示状态
+        # Get and display status
         status_info = launcher.get_status()
         if status_info.get("running"):
             click.echo(f"Browser: {status_info.get('browser', 'unknown')}")
 
         if keep_alive:
-            click.echo("\n按 Ctrl+C 停止 Chrome...")
+            click.echo("\nPress Ctrl+C to stop Chrome...")
 
             import signal
 
             def signal_handler(_signum, _frame):
-                click.echo("\n正在关闭 Chrome...")
+                click.echo("\nClosing Chrome...")
                 launcher.stop()
                 sys.exit(0)
 
@@ -1556,17 +1556,17 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
             try:
                 while True:
                     time.sleep(30)
-                    # 定期检查状态
+                    # Periodically check status
                     st = launcher.get_status()
                     if not st.get("running"):
-                        click.echo("Chrome 进程已退出")
+                        click.echo("Chrome process has exited")
                         break
             except KeyboardInterrupt:
                 pass
             finally:
                 launcher.stop()
     else:
-        click.echo("[X] Chrome 启动失败", err=True)
+        click.echo("[X] Failed to launch Chrome", err=True)
 
 
 @click.command('chrome-stop')
@@ -1574,14 +1574,14 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
     '--port',
     type=int,
     default=9222,
-    help='CDP 调试端口，默认 9222'
+    help='CDP debug port, default 9222'
 )
 @print_usage
 def chrome_stop(port: int):
     """
-    停止 Chrome CDP 进程
+    Stop Chrome CDP process
 
-    关闭指定端口上运行的 Chrome CDP 实例。
+    Closes the Chrome CDP instance running on the specified port.
     """
     from ..cdp.commands.chrome import ChromeLauncher
 
@@ -1589,9 +1589,9 @@ def chrome_stop(port: int):
     killed = launcher.kill_existing_chrome()
 
     if killed > 0:
-        click.echo(f"[OK] 已关闭 {killed} 个 Chrome CDP 进程（端口 {port}）")
+        click.echo(f"[OK] Closed {killed} Chrome CDP process(es) (port {port})")
     else:
-        click.echo(f"未找到运行在端口 {port} 的 Chrome CDP 进程")
+        click.echo(f"No Chrome CDP process found running on port {port}")
 
 
 @click.command('list-tabs')
@@ -1599,9 +1599,9 @@ def chrome_stop(port: int):
 @print_usage
 def list_tabs(ctx):
     """
-    列出所有打开的浏览器 tabs
+    List all open browser tabs
 
-    显示每个 tab 的 ID、标题和 URL，用于 switch-tab 命令。
+    Shows each tab's ID, title and URL, for use with switch-tab command.
     """
     import requests
     import json
@@ -1617,10 +1617,10 @@ def list_tabs(ctx):
         pages = [t for t in targets if t.get('type') == 'page']
 
         if not pages:
-            click.echo("没有找到打开的 tabs")
+            click.echo("No open tabs found")
             return
 
-        # 输出 JSON 格式便于程序解析
+        # Output JSON format for easy program parsing
         output = []
         for i, p in enumerate(pages):
             tab_info = {
@@ -1634,7 +1634,7 @@ def list_tabs(ctx):
             click.echo(f"   {p.get('url', '')}")
 
     except Exception as e:
-        click.echo(f"获取 tabs 列表失败: {e}", err=True)
+        click.echo(f"Failed to get tabs list: {e}", err=True)
 
 
 @click.command('switch-tab')
@@ -1643,10 +1643,10 @@ def list_tabs(ctx):
 @print_usage
 def switch_tab(ctx, tab_id: str):
     """
-    切换到指定的浏览器 tab
+    Switch to specified browser tab
 
-    TAB_ID 可以是完整的 target ID 或部分匹配（如前8位）。
-    使用 list-tabs 命令查看可用的 tab ID。
+    TAB_ID can be the complete target ID or partial match (e.g., first 8 characters).
+    Use list-tabs command to view available tab IDs.
     """
     import requests
     import json
@@ -1660,7 +1660,7 @@ def switch_tab(ctx, tab_id: str):
         response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
         targets = response.json()
 
-        # 查找匹配的 tab
+        # Find matching tab
         target = None
         for t in targets:
             if t.get('type') == 'page':
@@ -1669,30 +1669,30 @@ def switch_tab(ctx, tab_id: str):
                     break
 
         if not target:
-            click.echo(f"未找到匹配的 tab: {tab_id}", err=True)
-            click.echo("使用 list-tabs 命令查看可用的 tabs")
+            click.echo(f"No matching tab found: {tab_id}", err=True)
+            click.echo("Use list-tabs command to view available tabs")
             return
 
         ws_url = target.get('webSocketDebuggerUrl')
         if not ws_url:
-            click.echo(f"Tab {tab_id} 没有可用的 WebSocket URL", err=True)
+            click.echo(f"Tab {tab_id} has no available WebSocket URL", err=True)
             return
 
-        # 发送 Page.bringToFront 命令
+        # Send Page.bringToFront command
         ws = websocket.create_connection(ws_url)
         ws.send(json.dumps({'id': 1, 'method': 'Page.bringToFront', 'params': {}}))
         result = json.loads(ws.recv())
         ws.close()
 
         if 'error' in result:
-            click.echo(f"切换失败: {result['error']}", err=True)
+            click.echo(f"Switch failed: {result['error']}", err=True)
             return
 
-        _print_msg("成功", f"已切换到 tab: {target.get('title', 'Unknown')}", "tab_switch", {
+        _print_msg("success", f"Switched to tab: {target.get('title', 'Unknown')}", "tab_switch", {
             "tab_id": target.get('id'),
             "title": target.get('title'),
             "url": target.get('url')
         })
 
     except Exception as e:
-        click.echo(f"切换 tab 失败: {e}", err=True)
+        click.echo(f"Failed to switch tab: {e}", err=True)

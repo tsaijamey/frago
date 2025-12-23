@@ -1,7 +1,7 @@
 /**
- * pywebview API 封装层
+ * pywebview API Wrapper
  *
- * 提供类型安全的 API 调用和 pywebview 就绪状态检测
+ * Provides type-safe API calls and pywebview ready state detection
  */
 
 import type {
@@ -36,13 +36,13 @@ import type {
   TutorialResponse,
 } from '@/types/pywebview.d';
 
-// 等待 pywebview 就绪
+// Wait for pywebview ready
 let readyPromise: Promise<PyWebviewApi> | null = null;
 
-// 检查 API 是否完全就绪（方法已注入）
+// Check if API is fully ready (methods injected)
 function isApiFullyReady(): boolean {
   const api = window.pywebview?.api;
-  // 检查关键方法是否存在
+  // Check if key methods exist
   return !!(api && typeof api.get_config === 'function');
 }
 
@@ -60,20 +60,20 @@ export function waitForPywebview(): Promise<PyWebviewApi> {
       return false;
     };
 
-    // 立即检查
+    // Check immediately
     if (checkAndResolve()) return;
 
-    // 轮询检查（pywebview 方法注入可能有延迟）
+    // Poll check (pywebview method injection may be delayed)
     const pollInterval = setInterval(() => {
       if (checkAndResolve()) {
         clearInterval(pollInterval);
       }
     }, 50);
 
-    // 同时监听 pywebviewready 事件
+    // Also listen to pywebviewready event
     const handleReady = () => {
       console.log('[pywebview] pywebviewready event fired');
-      // 事件触发后也需要轮询，因为方法可能还没注入完
+      // Need to poll after event because methods may not be injected yet
       setTimeout(() => {
         if (checkAndResolve()) {
           clearInterval(pollInterval);
@@ -84,7 +84,7 @@ export function waitForPywebview(): Promise<PyWebviewApi> {
 
     window.addEventListener('pywebviewready', handleReady);
 
-    // 超时保护（10秒）
+    // Timeout protection (10 seconds)
     setTimeout(() => {
       clearInterval(pollInterval);
       if (!isApiFullyReady()) {
@@ -96,12 +96,12 @@ export function waitForPywebview(): Promise<PyWebviewApi> {
   return readyPromise;
 }
 
-// 获取 API (可能为 undefined)
+// Get API (may be undefined)
 export function getApi(): PyWebviewApi | undefined {
   return window.pywebview?.api;
 }
 
-// 检查 API 是否就绪（方法已注入）
+// Check if API is ready (methods injected)
 export function isApiReady(): boolean {
   return isApiFullyReady();
 }
@@ -115,7 +115,7 @@ export async function getTasks(
   status?: TaskStatus
 ): Promise<TaskItem[]> {
   const api = await waitForPywebview();
-  // pywebview 需要显式传参，不传 undefined
+  // pywebview requires explicit parameters, do not pass undefined
   return api.get_tasks(limit ?? 50, status);
 }
 
@@ -239,7 +239,7 @@ export async function openPath(
 }
 
 // ============================================================
-// Settings API - 主配置管理
+// Settings API - Main Config Management
 // ============================================================
 
 export async function getMainConfig(): Promise<MainConfig> {
@@ -267,7 +267,7 @@ export async function openWorkingDirectory(): Promise<ApiResponse> {
 }
 
 // ============================================================
-// Settings API - 环境变量管理
+// Settings API - Environment Variables Management
 // ============================================================
 
 export async function getEnvVars(): Promise<EnvVarsResponse> {
@@ -288,7 +288,7 @@ export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]
 }
 
 // ============================================================
-// Settings API - GitHub 集成
+// Settings API - GitHub Integration
 // ============================================================
 
 export async function checkGhCli(): Promise<GhCliStatus> {

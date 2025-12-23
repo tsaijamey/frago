@@ -1,12 +1,12 @@
-# Frago 公共资源索引
+# Frago Common Resources Index
 
-本目录包含所有 `/frago.dev.*` 命令共享的规则、指南和脚本示例。
+This directory contains rules, guides, and script examples shared by all `/frago.dev.*` commands.
 
-## 前置约定
+## Prerequisites
 
-**本文档假设 frago 已通过 `uv tool install frago-cli` 安装为全局命令。**
+**This document assumes frago has been installed as a global command via `uv tool install frago-cli`.**
 
-所有示例使用 `frago <command>` 格式。如果提示 `command not found`：
+All examples use the `frago <command>` format. If you get `command not found`:
 
 ```bash
 uv tool install frago-cli
@@ -14,231 +14,231 @@ uv tool install frago-cli
 
 ---
 
-## 命令速查
+## Command Quick Reference
 
-| 命令 | 用途 | 文档 |
+| Command | Purpose | Documentation |
 |------|------|------|
-| `/frago.run` | 探索调研（Recipe 创建前） | [frago.dev.run.md](../frago.dev.run.md) |
-| `/frago.do` | 一次性任务执行 | [frago.dev.do.md](../frago.dev.do.md) |
-| `/frago.recipe` | 配方创建/更新 | [frago.dev.recipe.md](../frago.dev.recipe.md) |
-| `/frago.test` | 配方测试验证 | [frago.dev.test.md](../frago.dev.test.md) |
-| `frago view` | 内容查看器（演示/文档） | 见下方"内容查看"章节 |
+| `/frago.run` | Exploration & research (before Recipe creation) | [frago.dev.run.md](../frago.dev.run.md) |
+| `/frago.do` | One-time task execution | [frago.dev.do.md](../frago.dev.do.md) |
+| `/frago.recipe` | Recipe creation/update | [frago.dev.recipe.md](../frago.dev.recipe.md) |
+| `/frago.test` | Recipe testing & validation | [frago.dev.test.md](../frago.dev.test.md) |
+| `frago view` | Content viewer (presentations/docs) | See "Content Viewing" section below |
 
 ---
 
-## 规则文档 (rules/)
+## Rules Documentation (rules/)
 
-核心规则，**违反即失败**。
+Core rules, **failure if violated**.
 
-| 文档 | 适用命令 | 说明 |
+| Document | Applicable Commands | Description |
 |------|---------|------|
-| [EXECUTION_PRINCIPLES.md](rules/EXECUTION_PRINCIPLES.md) | run, do | 执行原则（意图理解、工具驱动、试错记录） |
-| [SCREENSHOT_RULES.md](rules/SCREENSHOT_RULES.md) | 全部 | 截图使用规范（少用截图，多用 get-content） |
-| [NAVIGATION_RULES.md](rules/NAVIGATION_RULES.md) | run, do | 禁止幻觉导航（严禁猜测 URL） |
-| [TOOL_PRIORITY.md](rules/TOOL_PRIORITY.md) | run, do | 工具优先级（Recipe > frago > 系统命令） |
-| [WORKSPACE_RULES.md](rules/WORKSPACE_RULES.md) | run, do | 工作空间管理（隔离、互斥、禁止 cd） |
+| [EXECUTION_PRINCIPLES.md](rules/EXECUTION_PRINCIPLES.md) | run, do | Execution principles (intent understanding, tool-driven, trial & error recording) |
+| [SCREENSHOT_RULES.md](rules/SCREENSHOT_RULES.md) | All | Screenshot usage rules (use screenshots less, use get-content more) |
+| [NAVIGATION_RULES.md](rules/NAVIGATION_RULES.md) | run, do | Prohibition of hallucinated navigation (strictly forbid guessing URLs) |
+| [TOOL_PRIORITY.md](rules/TOOL_PRIORITY.md) | run, do | Tool priority (Recipe > frago > system commands) |
+| [WORKSPACE_RULES.md](rules/WORKSPACE_RULES.md) | run, do | Workspace management (isolation, exclusivity, no cd) |
 
 ---
 
-## 指南文档 (guides/)
+## Guide Documentation (guides/)
 
-详细使用指南和最佳实践。
+Detailed usage guides and best practices.
 
-| 文档 | 适用命令 | 说明 |
+| Document | Applicable Commands | Description |
 |------|---------|------|
-| [LOGGING_GUIDE.md](guides/LOGGING_GUIDE.md) | run, do | 日志系统（自动/手动、6种 execution_method） |
-| [SELECTOR_PRIORITY.md](guides/SELECTOR_PRIORITY.md) | recipe | 选择器优先级（ARIA > ID > class） |
+| [LOGGING_GUIDE.md](guides/LOGGING_GUIDE.md) | run, do | Logging system (auto/manual, 6 execution_methods) |
+| [SELECTOR_PRIORITY.md](guides/SELECTOR_PRIORITY.md) | recipe | Selector priority (ARIA > ID > class) |
 
 ---
 
-## 脚本示例 (scripts/)
+## Script Examples (scripts/)
 
-可执行的工作流示例。
+Executable workflow examples.
 
-| 脚本 | 适用命令 | 说明 |
+| Script | Applicable Commands | Description |
 |------|---------|------|
-| [common_commands.sh](scripts/common_commands.sh) | 全部 | 通用命令速查 |
-| [run_workflow.sh](scripts/run_workflow.sh) | run | 调研工作流示例 |
-| [do_workflow.sh](scripts/do_workflow.sh) | do | 任务执行工作流示例 |
-| [recipe_workflow.sh](scripts/recipe_workflow.sh) | recipe | 配方创建工作流示例 |
+| [common_commands.sh](scripts/common_commands.sh) | All | Common command quick reference |
+| [run_workflow.sh](scripts/run_workflow.sh) | run | Research workflow example |
+| [do_workflow.sh](scripts/do_workflow.sh) | do | Task execution workflow example |
+| [recipe_workflow.sh](scripts/recipe_workflow.sh) | recipe | Recipe creation workflow example |
 
 ---
 
-## 快速入门
+## Quick Start
 
-### 1. 发现资源
+### 1. Discover Resources
 
 ```bash
-frago recipe list              # 列出配方
-frago recipe info <name>       # 配方详情
-frago --help                   # 所有命令
+frago recipe list              # List recipes
+frago recipe info <name>       # Recipe details
+frago --help                   # All commands
 ```
 
-### 2. 浏览器操作
+### 2. Browser Operations
 
 ```bash
-frago chrome start             # 启动 Chrome
-frago chrome navigate <url>    # 导航
-frago chrome click <selector>  # 点击
-frago chrome exec-js <expr> --return-value  # 执行 JS
-frago chrome get-content       # 获取内容
-frago chrome screenshot output.png  # 截图
+frago chrome start             # Start Chrome
+frago chrome navigate <url>    # Navigate
+frago chrome click <selector>  # Click
+frago chrome exec-js <expr> --return-value  # Execute JS
+frago chrome get-content       # Get content
+frago chrome screenshot output.png  # Screenshot
 ```
 
-### 3. 项目管理
+### 3. Project Management
 
 ```bash
-frago run init "task desc"     # 创建项目
-frago run set-context <id>     # 设置上下文
-frago run release              # 释放上下文
+frago run init "task desc"     # Create project
+frago run set-context <id>     # Set context
+frago run release              # Release context
 ```
 
-### 4. 执行配方
+### 4. Execute Recipes
 
 ```bash
 frago recipe run <name>
 frago recipe run <name> --params '{}' --output-file result.json
 ```
 
-### 5. 内容查看
+### 5. Content Viewing
 
 ```bash
-frago view slides.md             # 自动检测模式
-frago view slides.md --present   # 强制演示模式（reveal.js）
-frago view README.md --doc       # 强制文档模式
-frago view report.pdf            # 查看 PDF
-frago view config.json           # 格式化 JSON
+frago view slides.md             # Auto-detect mode
+frago view slides.md --present   # Force presentation mode (reveal.js)
+frago view README.md --doc       # Force document mode
+frago view report.pdf            # View PDF
+frago view config.json           # Format JSON
 ```
 
 ---
 
-## 内容查看 (frago view)
+## Content Viewing (frago view)
 
-基于 pywebview 的通用内容查看器，内嵌 reveal.js / PDF.js / highlight.js，**完全离线可用**。
+Universal content viewer based on pywebview, embedded with reveal.js / PDF.js / highlight.js, **fully offline usable**.
 
-### 两种模式
+### Two Modes
 
-| 模式 | 触发条件 | 引擎 | 用途 |
+| Mode | Trigger Condition | Engine | Purpose |
 |------|---------|------|------|
-| **演示模式** | 文件含 `---` 分隔符，或 `--present` | reveal.js | 幻灯片展示 |
-| **文档模式** | 默认，或 `--doc` | HTML + highlight.js | 可滚动文档 |
+| **Presentation mode** | File contains `---` separator, or `--present` | reveal.js | Slideshow presentation |
+| **Document mode** | Default, or `--doc` | HTML + highlight.js | Scrollable document |
 
-### 支持格式
+### Supported Formats
 
-| 格式 | 演示模式 | 文档模式 |
+| Format | Presentation Mode | Document Mode |
 |------|---------|---------|
-| `.md` | reveal.js 幻灯片（`---` 分页） | Markdown 渲染 |
-| `.html` | 直接展示 | 直接渲染 |
-| `.pdf` | ❌ | PDF.js 渲染 |
-| `.json` | ❌ | 格式化 + 语法高亮 |
-| `.py/.js/.ts/...` | ❌ | 语法高亮 |
+| `.md` | reveal.js slides (`---` pagination) | Markdown rendering |
+| `.html` | Direct display | Direct rendering |
+| `.pdf` | ❌ | PDF.js rendering |
+| `.json` | ❌ | Formatting + syntax highlighting |
+| `.py/.js/.ts/...` | ❌ | Syntax highlighting |
 
 ---
 
-### 演示文档规范（重要）
+### Presentation Document Specification (Important)
 
-#### 文件结构
+#### File Structure
 
 ```markdown
-# 演示标题
+# Presentation Title
 
-第一页内容（标题页）
-
----
-
-## 第二页标题
-
-正文内容，支持所有 Markdown 语法：
-
-- 列表项 1
-- 列表项 2
+First page content (title page)
 
 ---
 
-## 代码展示
+## Second Page Title
+
+Body content, supports all Markdown syntax:
+
+- List item 1
+- List item 2
+
+---
+
+## Code Display
 
 ​```python
 def hello():
-    print("语法高亮")
+    print("syntax highlighting")
 ​```
 
 ---
 
-## 垂直幻灯片组
+## Vertical Slide Group
 
-这是主幻灯片
-
---
-
-### 子幻灯片 1
-
-按 ↓ 键导航到这里
+This is the main slide
 
 --
 
-### 子幻灯片 2
+### Sub-slide 1
 
-继续向下
+Press ↓ key to navigate here
+
+--
+
+### Sub-slide 2
+
+Continue downward
 
 ---
 
-# 结束页
+# Ending Page
 
-感谢观看！
+Thank you for watching!
 ```
 
-#### 分隔符规则
+#### Separator Rules
 
-| 分隔符 | 作用 | 导航键 |
+| Separator | Effect | Navigation Keys |
 |--------|------|--------|
-| `---` | 水平分隔（新的一页） | ← → |
-| `--` | 垂直分隔（子页面） | ↑ ↓ |
+| `---` | Horizontal separation (new page) | ← → |
+| `--` | Vertical separation (sub-page) | ↑ ↓ |
 
-**注意**：分隔符前后必须有空行！
+**Note**: Separators must have blank lines before and after!
 
 ```markdown
-内容...
+Content...
 
 ---
 
-下一页...
+Next page...
 ```
 
-#### 支持的 Markdown 语法
+#### Supported Markdown Syntax
 
-| 语法 | 示例 |
+| Syntax | Example |
 |------|------|
-| 标题 | `# H1` `## H2` `### H3` |
-| 列表 | `- item` `1. item` |
-| 代码块 | ` ```python ` |
-| 行内代码 | `` `code` `` |
-| 粗体/斜体 | `**bold**` `*italic*` |
-| 链接 | `[text](url)` |
-| 图片 | `![alt](path)` |
-| 表格 | 标准 Markdown 表格 |
-| 引用 | `> quote` |
+| Headings | `# H1` `## H2` `### H3` |
+| Lists | `- item` `1. item` |
+| Code blocks | ` ```python ` |
+| Inline code | `` `code` `` |
+| Bold/Italic | `**bold**` `*italic*` |
+| Links | `[text](url)` |
+| Images | `![alt](path)` |
+| Tables | Standard Markdown tables |
+| Quotes | `> quote` |
 
-#### 键盘快捷键（演示时）
+#### Keyboard Shortcuts (During Presentation)
 
-| 按键 | 功能 |
+| Key | Function |
 |------|------|
-| `→` `Space` `N` | 下一页 |
-| `←` `P` | 上一页 |
-| `↑` `↓` | 垂直导航 |
-| `F` | 全屏 |
-| `S` | 演讲者备注 |
-| `O` | 幻灯片概览 |
-| `B` | 黑屏暂停 |
-| `Esc` | 退出全屏/概览 |
-| `/` | 搜索 |
+| `→` `Space` `N` | Next page |
+| `←` `P` | Previous page |
+| `↑` `↓` | Vertical navigation |
+| `F` | Fullscreen |
+| `S` | Speaker notes |
+| `O` | Slide overview |
+| `B` | Black screen pause |
+| `Esc` | Exit fullscreen/overview |
+| `/` | Search |
 
 ---
 
-### 可用主题
+### Available Themes
 
-**深色**：`black`(默认), `night`, `moon`, `dracula`, `blood`, `league`
+**Dark**: `black`(default), `night`, `moon`, `dracula`, `blood`, `league`
 
-**浅色**：`white`, `beige`, `serif`, `simple`, `sky`, `solarized`
+**Light**: `white`, `beige`, `serif`, `simple`, `sky`, `solarized`
 
 ```bash
 frago view slides.md --theme dracula
@@ -247,100 +247,100 @@ frago view slides.md --theme white --fullscreen
 
 ---
 
-### 命令选项
+### Command Options
 
 ```bash
-frago view <file>                    # 自动检测模式
-frago view <file> --present          # 强制演示模式
-frago view <file> --doc              # 强制文档模式
-frago view <file> --theme <name>     # 指定主题
-frago view <file> --fullscreen       # 全屏启动
-frago view <file> -w 1920 -h 1080    # 指定窗口尺寸
-frago view --stdin                   # 从标准输入读取
-frago view -c "# Hello"              # 直接传入内容
+frago view <file>                    # Auto-detect mode
+frago view <file> --present          # Force presentation mode
+frago view <file> --doc              # Force document mode
+frago view <file> --theme <name>     # Specify theme
+frago view <file> --fullscreen       # Start fullscreen
+frago view <file> -w 1920 -h 1080    # Specify window size
+frago view --stdin                   # Read from stdin
+frago view -c "# Hello"              # Pass content directly
 ```
 
-| 选项 | 短选项 | 说明 |
+| Option | Short | Description |
 |------|--------|------|
-| `--present` | `-p` | 强制演示模式 |
-| `--doc` | `-d` | 强制文档模式 |
-| `--theme` | `-t` | 主题名称 |
-| `--fullscreen` | `-f` | 全屏启动 |
-| `--width` | `-w` | 窗口宽度（默认 1280） |
-| `--height` | `-h` | 窗口高度（默认 800） |
-| `--title` | | 窗口标题 |
-| `--stdin` | | 从标准输入读取 |
-| `--content` | `-c` | 直接传入内容字符串 |
+| `--present` | `-p` | Force presentation mode |
+| `--doc` | `-d` | Force document mode |
+| `--theme` | `-t` | Theme name |
+| `--fullscreen` | `-f` | Start fullscreen |
+| `--width` | `-w` | Window width (default 1280) |
+| `--height` | `-h` | Window height (default 800) |
+| `--title` | | Window title |
+| `--stdin` | | Read from stdin |
+| `--content` | `-c` | Pass content string directly |
 
 ---
 
-### 自动模式检测逻辑
+### Auto-Mode Detection Logic
 
-1. `.pdf` 文件 → 文档模式
-2. `.md` 文件含 `\n---\n` 或 `\n--\n` → 演示模式
-3. `.html` 文件含 `class="reveal"` → 演示模式
-4. 其他 → 文档模式
+1. `.pdf` file → Document mode
+2. `.md` file contains `\n---\n` or `\n--\n` → Presentation mode
+3. `.html` file contains `class="reveal"` → Presentation mode
+4. Other → Document mode
 
 ---
 
-### 完整演示模板
+### Complete Presentation Template
 
 ```markdown
-# 项目名称
+# Project Name
 
-副标题或简介
+Subtitle or introduction
 
-作者 / 日期
-
----
-
-## 目录
-
-1. 背景介绍
-2. 核心功能
-3. 技术实现
-4. 演示
-5. 总结
+Author / Date
 
 ---
 
-## 1. 背景介绍
+## Table of Contents
 
-### 问题描述
-
-- 痛点 1
-- 痛点 2
-
-### 解决方案
-
-我们的方案是...
+1. Background
+2. Core Features
+3. Technical Implementation
+4. Demo
+5. Summary
 
 ---
 
-## 2. 核心功能
+## 1. Background
 
-### 功能 A
+### Problem Description
 
-详细说明...
+- Pain point 1
+- Pain point 2
+
+### Solution
+
+Our solution is...
+
+---
+
+## 2. Core Features
+
+### Feature A
+
+Detailed explanation...
 
 --
 
-### 功能 B
+### Feature B
 
-详细说明...
+Detailed explanation...
 
 --
 
-### 功能 C
+### Feature C
 
-详细说明...
+Detailed explanation...
 
 ---
 
-## 3. 技术实现
+## 3. Technical Implementation
 
 ​```python
-# 核心代码示例
+# Core code example
 class MyClass:
     def __init__(self):
         pass
@@ -348,49 +348,49 @@ class MyClass:
 
 ---
 
-## 4. 演示
+## 4. Demo
 
-> 这里可以放截图或说明
+> Screenshots or explanations can go here
 
 ---
 
-## 5. 总结
+## 5. Summary
 
-- 要点 1
-- 要点 2
-- 要点 3
+- Key point 1
+- Key point 2
+- Key point 3
 
 ---
 
 # Q&A
 
-感谢观看！
+Thank you for watching!
 
-联系方式 / 链接
+Contact info / Links
 ```
 
 ---
 
-## 目录结构
+## Directory Structure
 
 ```
 .claude/commands/
-├── frago.dev.run.md       # 探索调研命令
-├── frago.dev.do.md        # 任务执行命令
-├── frago.dev.recipe.md    # 配方创建命令
-├── frago.dev.test.md      # 配方测试命令
+├── frago.dev.run.md       # Exploration & research command
+├── frago.dev.do.md        # Task execution command
+├── frago.dev.recipe.md    # Recipe creation command
+├── frago.dev.test.md      # Recipe testing command
 └── frago/
-    ├── COMMON.md          # 本索引文档
-    ├── rules/             # 核心规则
+    ├── COMMON.md          # This index document
+    ├── rules/             # Core rules
     │   ├── EXECUTION_PRINCIPLES.md
     │   ├── SCREENSHOT_RULES.md
     │   ├── NAVIGATION_RULES.md
     │   ├── TOOL_PRIORITY.md
     │   └── WORKSPACE_RULES.md
-    ├── guides/            # 使用指南
+    ├── guides/            # Usage guides
     │   ├── LOGGING_GUIDE.md
     │   └── SELECTOR_PRIORITY.md
-    └── scripts/           # 脚本示例
+    └── scripts/           # Script examples
         ├── common_commands.sh
         ├── run_workflow.sh
         ├── do_workflow.sh

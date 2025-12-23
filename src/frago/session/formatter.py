@@ -1,10 +1,10 @@
 """
-终端输出格式化器
+Terminal Output Formatter
 
-提供会话监控数据的终端显示格式化能力，包括：
-- 人类可读的格式化输出（默认）
-- JSON 格式输出（--json-status 模式）
-- emoji 图标和颜色支持
+Provides terminal display formatting capabilities for session monitoring data, including:
+- Human-readable formatted output (default)
+- JSON formatted output (--json-status mode)
+- Emoji icon and color support
 """
 
 import json
@@ -24,12 +24,12 @@ from frago.session.models import (
 
 
 # ============================================================
-# 图标定义
+# Icon Definitions
 # ============================================================
 
 
 class Icons:
-    """步骤类型图标"""
+    """Step type icons"""
 
     SESSION_START = "🚀"
     SESSION_END = "✨"
@@ -48,30 +48,30 @@ class Icons:
 
 
 # ============================================================
-# 格式化函数
+# Formatting Functions
 # ============================================================
 
 
 def format_timestamp(dt: datetime) -> str:
-    """格式化时间戳为短格式
+    """Format timestamp to short format
 
     Args:
-        dt: datetime 对象
+        dt: datetime object
 
     Returns:
-        格式化的时间字符串 (HH:MM:SS)
+        Formatted time string (HH:MM:SS)
     """
     return dt.strftime("%H:%M:%S")
 
 
 def format_duration(ms: int) -> str:
-    """格式化持续时间
+    """Format duration
 
     Args:
-        ms: 毫秒数
+        ms: Milliseconds
 
     Returns:
-        格式化的持续时间字符串
+        Formatted duration string
     """
     if ms < 1000:
         return f"{ms}ms"
@@ -84,13 +84,13 @@ def format_duration(ms: int) -> str:
 
 
 def get_step_icon(step_type: StepType) -> str:
-    """获取步骤类型对应的图标
+    """Get icon corresponding to step type
 
     Args:
-        step_type: 步骤类型
+        step_type: Step type
 
     Returns:
-        图标字符串
+        Icon string
     """
     icon_map = {
         StepType.USER_MESSAGE: Icons.USER_MESSAGE,
@@ -103,103 +103,103 @@ def get_step_icon(step_type: StepType) -> str:
 
 
 def get_step_label(step_type: StepType) -> str:
-    """获取步骤类型对应的标签
+    """Get label corresponding to step type
 
     Args:
-        step_type: 步骤类型
+        step_type: Step type
 
     Returns:
-        标签字符串
+        Label string
     """
     label_map = {
-        StepType.USER_MESSAGE: "用户",
-        StepType.ASSISTANT_MESSAGE: "助手",
-        StepType.TOOL_CALL: "工具调用",
-        StepType.TOOL_RESULT: "工具结果",
-        StepType.SYSTEM_EVENT: "系统",
+        StepType.USER_MESSAGE: "User",
+        StepType.ASSISTANT_MESSAGE: "Assistant",
+        StepType.TOOL_CALL: "Tool Call",
+        StepType.TOOL_RESULT: "Tool Result",
+        StepType.SYSTEM_EVENT: "System",
     }
-    return label_map.get(step_type, "未知")
+    return label_map.get(step_type, "Unknown")
 
 
 # ============================================================
-# 终端格式化器
+# Terminal Formatter
 # ============================================================
 
 
 class TerminalFormatter:
-    """终端输出格式化器
+    """Terminal output formatter
 
-    将会话数据格式化为人类可读的终端输出。
+    Formats session data into human-readable terminal output.
     """
 
     def __init__(self, output: TextIO = sys.stderr, use_icons: bool = True):
-        """初始化格式化器
+        """Initialize formatter
 
         Args:
-            output: 输出流（默认 stderr，避免干扰管道）
-            use_icons: 是否使用 emoji 图标
+            output: Output stream (default stderr, avoids interfering with pipes)
+            use_icons: Whether to use emoji icons
         """
         self.output = output
         self.use_icons = use_icons
 
     def print(self, message: str) -> None:
-        """输出消息
+        """Output message
 
         Args:
-            message: 消息内容
+            message: Message content
         """
         print(message, file=self.output, flush=True)
 
     def format_session_start(self, session: MonitoredSession) -> str:
-        """格式化会话开始消息
+        """Format session start message
 
         Args:
-            session: 监控会话对象
+            session: Monitored session object
 
         Returns:
-            格式化的消息
+            Formatted message
         """
         icon = Icons.SESSION_START if self.use_icons else ">"
         ts = format_timestamp(session.started_at)
         short_id = session.session_id[:8]
-        return f"[{ts}] {icon} 会话已启动 (session: {short_id}...)"
+        return f"[{ts}] {icon} Session started (session: {short_id}...)"
 
     def format_session_end(
         self, session: MonitoredSession, summary: Optional[SessionSummary] = None
     ) -> str:
-        """格式化会话结束消息
+        """Format session end message
 
         Args:
-            session: 监控会话对象
-            summary: 会话摘要（可选）
+            session: Monitored session object
+            summary: Session summary (optional)
 
         Returns:
-            格式化的消息
+            Formatted message
         """
         if session.status == SessionStatus.ERROR:
             icon = Icons.SESSION_ERROR if self.use_icons else "X"
-            status = "异常终止"
+            status = "Terminated with error"
         else:
             icon = Icons.SESSION_END if self.use_icons else "*"
-            status = "会话完成"
+            status = "Session completed"
 
         ts = format_timestamp(session.ended_at or session.last_activity)
 
         if summary:
             duration = format_duration(summary.total_duration_ms)
             tools = summary.tool_call_count
-            return f"[{ts}] {icon} {status} (耗时: {duration}, 工具调用: {tools}次)"
+            return f"[{ts}] {icon} {status} (duration: {duration}, tool calls: {tools})"
         else:
             return f"[{ts}] {icon} {status}"
 
     def format_step(self, step: SessionStep) -> str:
-        """格式化步骤消息
+        """Format step message
 
         Args:
-            step: 会话步骤对象
+            step: Session step object
 
         Returns:
-            格式化的消息
+            Formatted message
         """
         icon = get_step_icon(step.type) if self.use_icons else "-"
         ts = format_timestamp(step.timestamp)
@@ -209,13 +209,13 @@ class TerminalFormatter:
         return f"[{ts}] {icon} {label}: {content}"
 
     def format_tool_complete(self, tool_call: ToolCallRecord) -> str:
-        """格式化工具调用完成消息
+        """Format tool call complete message
 
         Args:
-            tool_call: 工具调用记录
+            tool_call: Tool call record
 
         Returns:
-            格式化的消息
+            Formatted message
         """
         if tool_call.status == ToolCallStatus.SUCCESS:
             icon = Icons.SUCCESS if self.use_icons else "+"
@@ -226,58 +226,58 @@ class TerminalFormatter:
         name = tool_call.tool_name
         duration = format_duration(tool_call.duration_ms or 0)
 
-        return f"[{ts}] {icon} {name} 完成 ({duration})"
+        return f"[{ts}] {icon} {name} completed ({duration})"
 
     def print_session_start(self, session: MonitoredSession) -> None:
-        """输出会话开始消息"""
+        """Output session start message"""
         self.print(self.format_session_start(session))
 
     def print_session_end(
         self, session: MonitoredSession, summary: Optional[SessionSummary] = None
     ) -> None:
-        """输出会话结束消息"""
+        """Output session end message"""
         self.print(self.format_session_end(session, summary))
 
     def print_step(self, step: SessionStep) -> None:
-        """输出步骤消息"""
+        """Output step message"""
         self.print(self.format_step(step))
 
     def print_tool_complete(self, tool_call: ToolCallRecord) -> None:
-        """输出工具调用完成消息"""
+        """Output tool call complete message"""
         self.print(self.format_tool_complete(tool_call))
 
 
 # ============================================================
-# JSON 格式化器
+# JSON Formatter
 # ============================================================
 
 
 class JsonFormatter:
-    """JSON 输出格式化器
+    """JSON output formatter
 
-    将会话数据格式化为 JSON 输出，便于机器处理。
+    Formats session data into JSON output for easy machine processing.
     """
 
     def __init__(self, output: TextIO = sys.stdout):
-        """初始化格式化器
+        """Initialize formatter
 
         Args:
-            output: 输出流
+            output: Output stream
         """
         self.output = output
 
     def _output(self, event_type: str, data: Dict[str, Any]) -> None:
-        """输出 JSON 事件
+        """Output JSON event
 
         Args:
-            event_type: 事件类型
-            data: 事件数据
+            event_type: Event type
+            data: Event data
         """
         event = {"type": event_type, "timestamp": datetime.now(timezone.utc).isoformat(), **data}
         print(json.dumps(event, ensure_ascii=False), file=self.output, flush=True)
 
     def emit_session_start(self, session: MonitoredSession) -> None:
-        """输出会话开始事件"""
+        """Output session start event"""
         self._output(
             "session_start",
             {
@@ -291,7 +291,7 @@ class JsonFormatter:
     def emit_session_end(
         self, session: MonitoredSession, summary: Optional[SessionSummary] = None
     ) -> None:
-        """输出会话结束事件"""
+        """Output session end event"""
         data = {
             "session_id": session.session_id,
             "status": session.status.value,
@@ -302,7 +302,7 @@ class JsonFormatter:
         self._output("session_end", data)
 
     def emit_step(self, step: SessionStep) -> None:
-        """输出步骤事件"""
+        """Output step event"""
         self._output(
             "step",
             {
@@ -315,7 +315,7 @@ class JsonFormatter:
         )
 
     def emit_tool_complete(self, tool_call: ToolCallRecord) -> None:
-        """输出工具调用完成事件"""
+        """Output tool call complete event"""
         self._output(
             "tool_complete",
             {
@@ -330,7 +330,7 @@ class JsonFormatter:
 
 
 # ============================================================
-# 格式化器工厂
+# Formatter Factory
 # ============================================================
 
 
@@ -339,15 +339,15 @@ def create_formatter(
     output: Optional[TextIO] = None,
     use_icons: bool = True,
 ):
-    """创建格式化器
+    """Create formatter
 
     Args:
-        json_mode: 是否使用 JSON 格式
-        output: 自定义输出流
-        use_icons: 是否使用 emoji 图标
+        json_mode: Whether to use JSON format
+        output: Custom output stream
+        use_icons: Whether to use emoji icons
 
     Returns:
-        TerminalFormatter 或 JsonFormatter 实例
+        TerminalFormatter or JsonFormatter instance
     """
     if json_mode:
         return JsonFormatter(output or sys.stdout)

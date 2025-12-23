@@ -1,128 +1,128 @@
 ---
 name: frago-view-content-generate-tips-html
-description: HTML/reveal.js 内容生成指南。当需要创建可通过 `frago view` 预览的 HTML 演示文稿时使用此 skill。涵盖 reveal.js 高级设计、CSS 技巧、多页协作流程。
+description: HTML/reveal.js content generation guide. Use this skill when you need to create HTML presentations that can be previewed via `frago view`. Covers reveal.js advanced design, CSS techniques, and multi-page collaboration workflow.
 ---
 
-# HTML/reveal.js 内容生成指南
+# HTML/reveal.js Content Generation Guide
 
-创建具有专业设计感的 HTML 演示文稿，通过 `frago view` 预览。
+Create professionally designed HTML presentations and preview them via `frago view`.
 
-## 快速开始
+## Quick Start
 
-### 基础结构
+### Basic Structure
 
 ```html
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>演示标题</title>
+    <title>Presentation Title</title>
 </head>
 <body>
     <div class="reveal">
         <div class="slides">
-            <section>第 1 页</section>
-            <section>第 2 页</section>
+            <section>Slide 1</section>
+            <section>Slide 2</section>
         </div>
     </div>
 </body>
 </html>
 ```
 
-**说明**：`frago view` 自动注入 reveal.js 库，无需手动引入。
+**Note**: `frago view` automatically injects reveal.js library, no manual inclusion needed.
 
-### 触发条件
+### Trigger Condition
 
-HTML 文件中包含 `class="reveal"` 或 `class="slides"` 时自动进入演示模式。
+HTML file automatically enters presentation mode when it contains `class="reveal"` or `class="slides"`.
 
-### 预览命令
+### Preview Commands
 
 ```bash
-frago view slides.html              # 默认主题
-frago view slides.html --theme dracula  # 指定主题
-frago view slides.html --fullscreen     # 全屏模式
+frago view slides.html              # Default theme
+frago view slides.html --theme dracula  # Specify theme
+frago view slides.html --fullscreen     # Fullscreen mode
 ```
 
 ---
 
-## 可用主题
+## Available Themes
 
-| 主题 | 风格 | 适用场景 |
-|------|------|---------|
-| `black` | 深色背景（默认） | 技术演示 |
-| `white` | 浅色背景 | 正式汇报 |
-| `dracula` | Dracula 配色 | 开发者演示 |
-| `moon` | 深蓝 | 夜间模式 |
-| `night` | 深蓝渐变 | 科技风格 |
-| `serif` | 衬线字体 | 学术演示 |
-| `solarized` | Solarized 配色 | 柔和风格 |
-| `blood` | 深红 | 强调风格 |
-| `beige` | 米色 | 温暖风格 |
-| `sky` | 蓝色 | 清新风格 |
-| `league` | 灰色渐变 | 商务风格 |
-| `simple` | 简约白 | 极简风格 |
-
----
-
-## 幻灯片组织
-
-### 水平导航
-
-每个 `<section>` 是一页：
-
-```html
-<section>第 1 页</section>
-<section>第 2 页</section>
-<section>第 3 页</section>
-```
-
-### 垂直导航（嵌套）
-
-嵌套 `<section>` 创建章节内的子页面：
-
-```html
-<section>
-    <section>主题 A - 概述</section>
-    <section>主题 A - 详情 1</section>
-    <section>主题 A - 详情 2</section>
-</section>
-<section>
-    <section>主题 B - 概述</section>
-</section>
-```
+| Theme | Style | Use Case |
+|-------|-------|----------|
+| `black` | Dark background (default) | Technical presentations |
+| `white` | Light background | Formal reports |
+| `dracula` | Dracula color scheme | Developer presentations |
+| `moon` | Dark blue | Night mode |
+| `night` | Dark blue gradient | Tech style |
+| `serif` | Serif font | Academic presentations |
+| `solarized` | Solarized color scheme | Soft style |
+| `blood` | Dark red | Emphasis style |
+| `beige` | Beige | Warm style |
+| `sky` | Blue | Fresh style |
+| `league` | Gray gradient | Business style |
+| `simple` | Simple white | Minimalist style |
 
 ---
 
-## 常用元素
+## Slide Organization
 
-### 标题和文本
+### Horizontal Navigation
+
+Each `<section>` is one slide:
+
+```html
+<section>Slide 1</section>
+<section>Slide 2</section>
+<section>Slide 3</section>
+```
+
+### Vertical Navigation (Nested)
+
+Nested `<section>` creates sub-slides within a section:
 
 ```html
 <section>
-    <h1>大标题</h1>
-    <h2>副标题</h2>
-    <p>正文段落</p>
+    <section>Topic A - Overview</section>
+    <section>Topic A - Detail 1</section>
+    <section>Topic A - Detail 2</section>
+</section>
+<section>
+    <section>Topic B - Overview</section>
 </section>
 ```
 
-### 列表
+---
+
+## Common Elements
+
+### Headings and Text
 
 ```html
 <section>
-    <h2>要点</h2>
+    <h1>Main Heading</h1>
+    <h2>Subtitle</h2>
+    <p>Body paragraph</p>
+</section>
+```
+
+### Lists
+
+```html
+<section>
+    <h2>Key Points</h2>
     <ul>
-        <li>要点 1</li>
-        <li>要点 2</li>
-        <li>要点 3</li>
+        <li>Point 1</li>
+        <li>Point 2</li>
+        <li>Point 3</li>
     </ul>
 </section>
 ```
 
-### 代码块
+### Code Blocks
 
 ```html
 <section>
-    <h2>代码示例</h2>
+    <h2>Code Example</h2>
     <pre><code class="language-python">
 def hello():
     print("Hello, World!")
@@ -130,122 +130,122 @@ def hello():
 </section>
 ```
 
-### 图片
+### Images
 
 ```html
 <section>
-    <h2>架构图</h2>
-    <img src="./images/architecture.png" alt="架构图">
+    <h2>Architecture Diagram</h2>
+    <img src="./images/architecture.png" alt="Architecture diagram">
 </section>
 ```
 
 ---
 
-## Fragment 动画
+## Fragment Animations
 
-`class="fragment"` 让元素逐步显示：
+`class="fragment"` makes elements appear progressively:
 
 ```html
-<p class="fragment">第一步显示</p>
-<p class="fragment">第二步显示</p>
-<p class="fragment fade-up">上滑淡入</p>
-<p class="fragment highlight-red">高亮红色</p>
+<p class="fragment">First step appears</p>
+<p class="fragment">Second step appears</p>
+<p class="fragment fade-up">Slide up and fade in</p>
+<p class="fragment highlight-red">Highlight in red</p>
 ```
 
-**动画类型**：
+**Animation Types**:
 
-| 类型 | 效果 |
-|------|------|
-| `fade-in` | 淡入 |
-| `fade-out` | 淡出 |
-| `fade-up` | 上滑淡入 |
-| `fade-down` | 下滑淡入 |
-| `fade-left` | 左滑淡入 |
-| `fade-right` | 右滑淡入 |
-| `highlight-red` | 高亮红色 |
-| `highlight-green` | 高亮绿色 |
-| `highlight-blue` | 高亮蓝色 |
-| `grow` | 放大 |
-| `shrink` | 缩小 |
-
----
-
-## 键盘快捷键
-
-| 快捷键 | 功能 |
-|--------|------|
-| `→` / `Space` | 下一页 |
-| `←` | 上一页 |
-| `↑` / `↓` | 垂直导航 |
-| `F` | 全屏 |
-| `Esc` | 退出全屏 / 总览 |
-| `O` | 幻灯片总览 |
-| `S` | 演讲者笔记 |
+| Type | Effect |
+|------|--------|
+| `fade-in` | Fade in |
+| `fade-out` | Fade out |
+| `fade-up` | Slide up and fade in |
+| `fade-down` | Slide down and fade in |
+| `fade-left` | Slide left and fade in |
+| `fade-right` | Slide right and fade in |
+| `highlight-red` | Highlight in red |
+| `highlight-green` | Highlight in green |
+| `highlight-blue` | Highlight in blue |
+| `grow` | Grow |
+| `shrink` | Shrink |
 
 ---
 
-## 多页 PPT 协作流程
+## Keyboard Shortcuts
 
-### Phase 1: 规划
+| Shortcut | Function |
+|----------|----------|
+| `→` / `Space` | Next slide |
+| `←` | Previous slide |
+| `↑` / `↓` | Vertical navigation |
+| `F` | Fullscreen |
+| `Esc` | Exit fullscreen / Overview |
+| `O` | Slide overview |
+| `S` | Speaker notes |
 
-与用户确认：
-1. 演示主题和目标受众
-2. 章节大纲
-3. 每页的类型和核心信息
+---
 
-### Phase 2: 骨架生成
+## Multi-Page PPT Collaboration Workflow
 
-创建基础结构和输出目录：
+### Phase 1: Planning
+
+Confirm with user:
+1. Presentation theme and target audience
+2. Section outline
+3. Type and core information for each slide
+
+### Phase 2: Skeleton Generation
+
+Create basic structure and output directory:
 
 ```
 outputs/presentation/
-├── slides.html       # 主文件
-└── images/           # 配图目录
+├── slides.html       # Main file
+└── images/           # Images directory
 ```
 
-### Phase 3: 逐页设计
+### Phase 3: Slide-by-Slide Design
 
-循环工作流：
-1. 用户提供当前页核心内容
-2. Agent 生成 HTML + CSS
-3. 用户预览：`frago view slides.html`
-4. 用户反馈调整
-5. 满意后进入下一页
+Iterative workflow:
+1. User provides core content for current slide
+2. Agent generates HTML + CSS
+3. User previews: `frago view slides.html`
+4. User provides feedback for adjustments
+5. Move to next slide when satisfied
 
-### Phase 4: 整体优化
+### Phase 4: Overall Optimization
 
-1. 检查页间过渡
-2. 统一视觉风格
-3. 添加 fragment 动画
-4. 最终预览确认
-
----
-
-## 模板库
-
-| 模板 | 用途 | 路径 |
-|------|------|------|
-| 基础骨架 | 快速开始 | [templates/basic-structure.html](templates/basic-structure.html) |
-| 封面页 | 开场 | [templates/cover-slide.html](templates/cover-slide.html) |
-| 内容页 | 正文 | [templates/content-slide.html](templates/content-slide.html) |
-| 对比页 | 比较 | [templates/comparison-slide.html](templates/comparison-slide.html) |
-| 时间线 | 历程 | [templates/timeline-slide.html](templates/timeline-slide.html) |
-| 结尾页 | 收尾 | [templates/closing-slide.html](templates/closing-slide.html) |
+1. Check slide transitions
+2. Unify visual style
+3. Add fragment animations
+4. Final preview confirmation
 
 ---
 
-## 设计禁忌
+## Template Library
 
-| 禁忌 | 原因 | 替代方案 |
-|------|------|---------|
-| 过多文字 | 幻灯片不是文档 | 提炼关键词 |
-| 外部 CDN | 离线不可用 | 本地资源 |
-| iframe 嵌入 | 安全限制 | 截图 |
-| 复杂 JavaScript | pywebview 限制 | CSS 实现 |
+| Template | Purpose | Path |
+|----------|---------|------|
+| Basic skeleton | Quick start | [templates/basic-structure.html](templates/basic-structure.html) |
+| Cover slide | Opening | [templates/cover-slide.html](templates/cover-slide.html) |
+| Content slide | Body content | [templates/content-slide.html](templates/content-slide.html) |
+| Comparison slide | Comparison | [templates/comparison-slide.html](templates/comparison-slide.html) |
+| Timeline slide | Timeline | [templates/timeline-slide.html](templates/timeline-slide.html) |
+| Closing slide | Ending | [templates/closing-slide.html](templates/closing-slide.html) |
 
 ---
 
-## 参考
+## Design Pitfalls
 
-- [REFERENCE.md](REFERENCE.md) - CSS 高级技巧 + pywebview 限制
-- [reveal.js 官方文档](https://revealjs.com/)
+| Pitfall | Reason | Alternative |
+|---------|--------|-------------|
+| Too much text | Slides are not documents | Extract keywords |
+| External CDN | Not available offline | Local resources |
+| iframe embedding | Security restrictions | Screenshots |
+| Complex JavaScript | pywebview limitations | CSS implementation |
+
+---
+
+## References
+
+- [REFERENCE.md](REFERENCE.md) - Advanced CSS techniques + pywebview limitations
+- [reveal.js Official Documentation](https://revealjs.com/)

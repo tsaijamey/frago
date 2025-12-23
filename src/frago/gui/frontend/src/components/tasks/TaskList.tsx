@@ -35,12 +35,12 @@ export default function TaskList() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* 任务列表 */}
+      {/* Task List */}
       {tasks.length === 0 ? (
         <EmptyState
           Icon={ClipboardList}
-          title="暂无任务"
-          description="输入任务描述开始你的第一个任务"
+          title="No Tasks"
+          description="Enter a task description to start your first task"
         />
       ) : (
         <div className="page-scroll flex flex-col gap-2">
@@ -54,12 +54,12 @@ export default function TaskList() {
         </div>
       )}
 
-      {/* 输入区域 - 底部固定 */}
+      {/* Input Area - Fixed at Bottom */}
       <div className="task-input-area">
         <div className="task-input-wrapper">
         <textarea
           className="task-input"
-          placeholder="描述你想要执行的任务..."
+          placeholder="Describe the task you want to execute..."
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}

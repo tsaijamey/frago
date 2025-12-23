@@ -1,93 +1,93 @@
-# 工作目录与空间管理
+# Workspace and Directory Management
 
-适用于：`/frago.run`、`/frago.do`
+Applies to: `/frago.run`, `/frago.do`
 
-## 一、projects 目录
+## I. projects Directory
 
-所有 run 实例存放在 `~/.frago/projects/`，这是固定位置。
+All run instances are stored in `~/.frago/projects/`, this is a fixed location.
 
 ```bash
-frago run init "my-task"  # 创建 ~/.frago/projects/<id>/
+frago run init "my-task"  # Creates ~/.frago/projects/<id>/
 ```
 
 ---
 
-## 二、工作空间隔离原则
+## II. Workspace Isolation Principle
 
-### 所有产出物必须放在 Project 工作空间内
+### All Outputs Must Be Placed Inside Project Workspace
 
 ```
-~/.frago/projects/<id>/      # run 实例工作空间根目录
-├── project.json             # 元数据
+~/.frago/projects/<id>/      # Run instance workspace root directory
+├── project.json             # Metadata
 ├── logs/
-│   └── execution.jsonl      # 执行日志
-├── scripts/                 # 执行脚本
-├── screenshots/             # 截图
-├── outputs/                 # 任务产出物（数据、报告、视频等）
-│   ├── video_script.json    # 生成的脚本实例
-│   ├── final_video.mp4      # 视频产出
-│   └── analysis.json        # 分析结果
-└── temp/                    # 临时文件（任务完成后清理）
+│   └── execution.jsonl      # Execution logs
+├── scripts/                 # Execution scripts
+├── screenshots/             # Screenshots
+├── outputs/                 # Task outputs (data, reports, videos, etc.)
+│   ├── video_script.json    # Generated script instance
+│   ├── final_video.mp4      # Video output
+│   └── analysis.json        # Analysis results
+└── temp/                    # Temporary files (clean up after task completion)
 ```
 
-### 禁止的行为
+### Prohibited Behaviors
 
-- ❌ 在桌面、/tmp、下载目录等外部位置创建文件
-- ❌ 配方执行时不指定 output_dir，使用配方默认位置
-- ❌ 产出物散落在工作空间外的目录
+- ❌ Create files in external locations like Desktop, /tmp, Downloads
+- ❌ Use recipe default location without specifying output_dir when executing recipes
+- ❌ Outputs scattered in directories outside workspace
 
-### 正确做法
+### Correct Approach
 
-- ✅ 所有文件使用 `~/.frago/projects/<id>/` 下的路径
-- ✅ 调用配方时明确指定 `output_dir` 为工作空间内的目录
-- ✅ 临时文件放在 `temp/`，任务完成后清理
+- ✅ All files use paths under `~/.frago/projects/<id>/`
+- ✅ Explicitly specify `output_dir` inside workspace when calling recipes
+- ✅ Place temporary files in `temp/`, clean up after task completion
 
 ```bash
-# ✅ 正确：所有输出都在工作空间内
+# ✅ Correct: All outputs inside workspace
 frago recipe run video_produce_from_script \
   --params '{
     "script_file": "~/.frago/projects/<id>/outputs/video_script.json",
     "output_dir": "~/.frago/projects/<id>/outputs/video"
   }'
 
-# ❌ 错误：使用外部目录
+# ❌ Wrong: Using external directory
 frago recipe run video_produce_from_script \
   --params '{"script_file": "~/Desktop/script.json"}'
 ```
 
 ---
 
-## 三、单一运行互斥
+## III. Single Run Exclusivity
 
-**系统仅允许一个活跃的 Project 上下文。** 这是设计约束，确保工作聚焦。
+**The system only allows one active Project context.** This is a design constraint to ensure focused work.
 
-### 互斥规则
+### Exclusivity Rules
 
-- 当 `set-context` 时，若已有其他活跃的 project，命令会失败并提示先释放
-- 同一 project 可以重复 `set-context`（恢复工作）
-- 任务完成后**必须**释放上下文
+- When `set-context` is called, if another project is already active, the command will fail and prompt to release first
+- The same project can be `set-context` multiple times (resume work)
+- **Must** release context after task completion
 
-### 典型工作流
+### Typical Workflow
 
 ```bash
-# 1. 开始任务
+# 1. Start task
 frago run init "upwork python job apply"
 frago run set-context upwork-python-job-apply
 
-# 2. 执行任务...
+# 2. Execute task...
 
-# 3. 任务完成，释放上下文（必须！）
+# 3. Task completed, release context (mandatory!)
 frago run release
 
-# 4. 开始新任务
+# 4. Start new task
 frago run init "another task"
 frago run set-context another-task
 ```
 
-### 如果忘记释放
+### If You Forget to Release
 
 ```bash
-# 尝试设置新上下文时会看到错误
+# You'll see an error when trying to set new context
 Error: Another run 'upwork-python-job-apply' is currently active.
 Run 'frago run release' to release it first,
 or 'frago run set-context upwork-python-job-apply' to continue it.
@@ -95,53 +95,53 @@ or 'frago run set-context upwork-python-job-apply' to continue it.
 
 ---
 
-## 四、工作目录管理
+## IV. Working Directory Management
 
-**禁止使用 `cd` 命令切换目录！** 这会导致 `frago` 命令失效。
+**Do NOT use `cd` command to switch directories!** This will cause `frago` commands to fail.
 
-### 正确做法
+### Correct Approach
 
-**始终在项目根目录执行所有命令**，使用绝对路径或相对路径访问文件：
+**Always execute all commands from the project root directory**, access files using absolute or relative paths:
 
 ```bash
-# ✅ 正确：使用绝对路径执行脚本
+# ✅ Correct: Use absolute path to execute script
 uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py
 
-# ✅ 正确：使用绝对路径读取文件
+# ✅ Correct: Use absolute path to read file
 cat ~/.frago/projects/<id>/outputs/result.json
 
-# ✅ 正确：使用 find 查看文件结构
+# ✅ Correct: Use find to view file structure
 find ~/.frago/projects/<id> -type f -name "*.md" | sort
 ```
 
-### 错误做法
+### Wrong Approach
 
 ```bash
-# ❌ 错误：不要使用 cd
+# ❌ Wrong: Don't use cd
 cd ~/.frago/projects/<id> && uv run python scripts/filter_jobs.py
 
-# ❌ 错误：切换目录后 frago 会失效
+# ❌ Wrong: frago will fail after switching directory
 cd ~/.frago/projects/<id>
-frago run log ...  # 这会报错！
+frago run log ...  # This will error!
 ```
 
-### 文件路径约定
+### File Path Convention
 
-在 project 实例内部引用文件时，使用**相对于 project 根目录的路径**：
+When referencing files inside a project instance, use **paths relative to the project root**:
 
 ```bash
-# 记录日志时，data.file 使用相对路径
+# When logging, data.file uses relative path
 frago run log \
   --data '{"file": "scripts/filter_jobs.py", "result_file": "outputs/filtered_jobs.json"}'
 
-# 但执行脚本时，使用完整相对路径或绝对路径
+# But when executing scripts, use full relative path or absolute path
 uv run python ~/.frago/projects/<id>/scripts/filter_jobs.py
 ```
 
 ---
 
-## 五、注意事项
+## V. Notes
 
-- **上下文存储**：`~/.frago/current_run`
-- **上下文优先级**：环境变量 `FRAGO_CURRENT_RUN` > 配置文件
-- **并发安全**：同一时间只在一个 run 实例中工作
+- **Context storage**: `~/.frago/current_run`
+- **Context priority**: Environment variable `FRAGO_CURRENT_RUN` > config file
+- **Concurrency safety**: Work in only one run instance at a time

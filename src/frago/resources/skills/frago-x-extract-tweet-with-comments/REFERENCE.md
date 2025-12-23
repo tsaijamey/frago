@@ -1,32 +1,32 @@
-# Twitter 元素特征与定位参考
+# Twitter Element Features and Positioning Reference
 
-本文档提供 Twitter/X 平台的 DOM 结构、元素特征、选择器稳定性等技术细节，供素材收集和视频录制时参考。
-
----
-
-## 目录
-
-- [元素特征记录](#元素特征记录)
-- [scroll_to 文本定位](#scroll_to-文本定位)
-- [选择器稳定性分析](#选择器稳定性分析)
-- [常见问题与解决方案](#常见问题与解决方案)
+This document provides technical details about Twitter/X platform DOM structure, element features, selector stability, etc., for reference during material collection and video recording.
 
 ---
 
-## 元素特征记录
+## Table of Contents
 
-### 为什么需要元素特征
+- [Element Feature Recording](#element-feature-recording)
+- [scroll_to Text Positioning](#scroll_to-text-positioning)
+- [Selector Stability Analysis](#selector-stability-analysis)
+- [Common Issues and Solutions](#common-issues-and-solutions)
 
-Twitter 使用虚拟列表渲染，DOM 元素会动态创建/销毁。传统的 CSS 选择器（如 `.css-abc123`）极不稳定。
+---
 
-**推荐方案**：记录内容文本的唯一片段作为特征，后续通过文本搜索定位。
+## Element Feature Recording
 
-### 记录格式
+### Why Element Features Are Needed
+
+Twitter uses virtual list rendering, with DOM elements dynamically created/destroyed. Traditional CSS selectors (like `.css-abc123`) are extremely unstable.
+
+**Recommended Approach**: Record unique text fragments as features, then locate elements via text search later.
+
+### Recording Format
 
 ```json
 {
   "tweet_url": "https://x.com/user/status/123456",
-  "element_feature": "AI 将改变工作方式，但我们需要",
+  "element_feature": "AI will change the way we work, but we need",
   "feature_type": "text_content",
   "context": {
     "author": "@username",
@@ -36,60 +36,60 @@ Twitter 使用虚拟列表渲染，DOM 元素会动态创建/销毁。传统的 
 }
 ```
 
-### 特征选取原则
+### Feature Selection Principles
 
-1. **唯一性**：选取在页面中唯一出现的文本片段
-2. **稳定性**：避免包含动态内容（如时间戳、数字）
-3. **足够长度**：至少 10 个字符，推荐 15-25 个字符
-4. **完整词汇**：不要在词语中间截断
+1. **Uniqueness**: Select text fragments that appear uniquely on the page
+2. **Stability**: Avoid including dynamic content (like timestamps, numbers)
+3. **Sufficient Length**: At least 10 characters, recommend 15-25 characters
+4. **Complete Words**: Don't truncate in the middle of words
 
-**好的特征**：
+**Good Features**:
 ```
-✅ "AI 将改变工作方式，但我们需要"
-✅ "这个观点我完全不同意，因为"
+✅ "AI will change the way we work, but we need"
+✅ "I completely disagree with this view because"
 ✅ "The future of programming is"
 ```
 
-**差的特征**：
+**Bad Features**:
 ```
-❌ "AI"  // 太短，不唯一
-❌ "2.3K likes"  // 包含动态数字
-❌ "12:30 PM"  // 时间戳
-❌ "改变工"  // 在词语中间截断
+❌ "AI"  // Too short, not unique
+❌ "2.3K likes"  // Contains dynamic numbers
+❌ "12:30 PM"  // Timestamp
+❌ "way we wo"  // Truncated in middle of word
 ```
 
 ---
 
-## scroll_to 文本定位
+## scroll_to Text Positioning
 
-### 基本用法
+### Basic Usage
 
 ```bash
-# 滚动到包含指定文本的元素
-uv run frago scroll-to "AI 将改变工作方式"
+# Scroll to element containing specified text
+uv run frago scroll-to "AI will change the way we work"
 ```
 
-### 在分镜脚本中使用
+### Usage in Storyboard Scripts
 
 ```json
 {
   "action": "scroll_to",
-  "text": "AI 将改变工作方式，但我们需要",
+  "text": "AI will change the way we work, but we need",
   "wait": 1.5
 }
 ```
 
-### 定位失败的处理
+### Handling Positioning Failures
 
-当 `scroll_to` 找不到元素时：
+When `scroll_to` cannot find an element:
 
-1. **检查文本是否准确**：复制原文，避免手打错误
-2. **尝试更长的片段**：增加特征文本长度
-3. **使用备用定位**：
+1. **Check text accuracy**: Copy original text to avoid typos
+2. **Try longer fragments**: Increase feature text length
+3. **Use fallback positioning**:
    ```json
    {
      "action": "scroll_to",
-     "text": "备用文本片段",
+     "text": "fallback text fragment",
      "fallback": {
        "action": "scroll",
        "direction": "down",
@@ -99,65 +99,65 @@ uv run frago scroll-to "AI 将改变工作方式"
    }
    ```
 
-### 评论定位技巧
+### Comment Positioning Tips
 
-评论区元素更不稳定，建议：
+Comment section elements are even more unstable, recommendations:
 
-1. **使用评论内容的核心句子**（非开头，避免与其他评论重复）
-2. **结合作者用户名**：`@username: 评论内容`
-3. **优先使用截图备份**：热门推文评论排序会变化
+1. **Use core sentences from comment content** (not the beginning, to avoid duplication with other comments)
+2. **Combine with author username**: `@username: comment content`
+3. **Prioritize screenshot backups**: Popular tweet comment ordering changes
 
 ---
 
-## 选择器稳定性分析
+## Selector Stability Analysis
 
-### Twitter DOM 结构特点
+### Twitter DOM Structure Characteristics
 
-| 元素 | 选择器 | 稳定性 | 说明 |
-|-----|--------|-------|------|
-| 推文容器 | `article[data-testid="tweet"]` | ✅ 稳定 | 官方测试用 |
-| 用户头像 | `[data-testid="Tweet-User-Avatar"]` | ✅ 稳定 | |
-| 推文文本 | `[data-testid="tweetText"]` | ✅ 稳定 | |
-| 回复按钮 | `[data-testid="reply"]` | ✅ 稳定 | |
-| 转发按钮 | `[data-testid="retweet"]` | ✅ 稳定 | |
-| 点赞按钮 | `[data-testid="like"]` | ✅ 稳定 | |
-| 分享按钮 | `[data-testid="share"]` | ⚠️ 中等 | |
-| CSS 类名 | `.css-*`, `.r-*` | ❌ 不稳定 | CSS-in-JS 生成 |
+| Element | Selector | Stability | Notes |
+|---------|----------|-----------|-------|
+| Tweet Container | `article[data-testid="tweet"]` | ✅ Stable | Official test ID |
+| User Avatar | `[data-testid="Tweet-User-Avatar"]` | ✅ Stable | |
+| Tweet Text | `[data-testid="tweetText"]` | ✅ Stable | |
+| Reply Button | `[data-testid="reply"]` | ✅ Stable | |
+| Retweet Button | `[data-testid="retweet"]` | ✅ Stable | |
+| Like Button | `[data-testid="like"]` | ✅ Stable | |
+| Share Button | `[data-testid="share"]` | ⚠️ Medium | |
+| CSS Class Names | `.css-*`, `.r-*` | ❌ Unstable | Generated by CSS-in-JS |
 
-### 推荐的高亮选择器
+### Recommended Highlight Selectors
 
 ```json
 {
   "action": "highlight",
-  "selector": "article[data-testid='tweet']:has([data-testid='tweetText']:contains('目标文本'))",
+  "selector": "article[data-testid='tweet']:has([data-testid='tweetText']:contains('target text'))",
   "duration": 2
 }
 ```
 
-**注意**：`:contains()` 是非标准选择器，需要通过 JavaScript 实现。实际使用时推荐 `scroll_to` + `highlight` 组合。
+**Note**: `:contains()` is a non-standard selector that requires JavaScript implementation. In practice, recommend using `scroll_to` + `highlight` combination.
 
 ---
 
-## 视觉效果组合
+## Visual Effect Combinations
 
-### 展示推文的推荐序列
+### Recommended Sequence for Displaying Tweets
 
 ```json
 {
   "actions": [
-    {"action": "scroll_to", "text": "目标推文的文本特征", "wait": 0.5},
-    {"action": "highlight", "selector": "article:has(:scope *:contains('目标文本'))", "duration": 2},
+    {"action": "scroll_to", "text": "target tweet text feature", "wait": 0.5},
+    {"action": "highlight", "selector": "article:has(:scope *:contains('target text'))", "duration": 2},
     {"action": "wait", "seconds": 0.5}
   ]
 }
 ```
 
-### 展示评论的推荐序列
+### Recommended Sequence for Displaying Comments
 
 ```json
 {
   "actions": [
-    {"action": "scroll_to", "text": "评论文本特征", "wait": 0.5},
+    {"action": "scroll_to", "text": "comment text feature", "wait": 0.5},
     {"action": "pointer", "selector": "[data-testid='tweetText']", "duration": 1.5},
     {"action": "wait", "seconds": 0.5}
   ]
@@ -166,69 +166,69 @@ uv run frago scroll-to "AI 将改变工作方式"
 
 ---
 
-## 常见问题与解决方案
+## Common Issues and Solutions
 
-### Q1: 推文/评论加载慢
+### Q1: Tweet/Comment Loads Slowly
 
-**原因**：网络延迟、Twitter 速率限制
+**Cause**: Network latency, Twitter rate limiting
 
-**解决**：
+**Solution**:
 ```json
 {
   "action": "navigate",
   "url": "https://x.com/user/status/123",
-  "wait": 5  // 增加等待时间
+  "wait": 5  // Increase wait time
 }
 ```
 
-### Q2: scroll_to 找不到元素
+### Q2: scroll_to Cannot Find Element
 
-**可能原因**：
-1. 文本被省略显示（`...`）
-2. 文本包含特殊字符
-3. 页面还未完全加载
+**Possible Causes**:
+1. Text is truncated with ellipsis (`...`)
+2. Text contains special characters
+3. Page hasn't fully loaded yet
 
-**解决**：
+**Solution**:
 ```bash
-# 先等待页面稳定
+# Wait for page to stabilize first
 uv run frago wait 2
 
-# 使用更短的核心文本片段
-uv run frago scroll-to "核心关键词"
+# Use shorter core text fragment
+uv run frago scroll-to "core keywords"
 ```
 
-### Q3: 评论位置在不同时间不同
+### Q3: Comment Position Varies at Different Times
 
-**原因**：热门推文评论按热度排序，会动态变化
+**Cause**: Popular tweet comments are sorted by popularity, which changes dynamically
 
-**解决**：
-1. 收集素材时立即截图
-2. 录制时使用截图作为备份画面
-3. 或接受"展示不同评论"的灵活性
+**Solution**:
+1. Take screenshots immediately when collecting material
+2. Use screenshots as backup footage during recording
+3. Or accept the flexibility of "showing different comments"
 
-### Q4: 高亮效果覆盖错误元素
+### Q4: Highlight Effect Covers Wrong Element
 
-**原因**：选择器不够精确
+**Cause**: Selector not precise enough
 
-**解决**：
+**Solution**:
 ```json
 {
   "action": "highlight",
-  "selector": "article[data-testid='tweet']:nth-of-type(3)",  // 指定第几个
+  "selector": "article[data-testid='tweet']:nth-of-type(3)",  // Specify which one
   "duration": 2
 }
 ```
 
-或使用 `scroll_to` 先定位，再对当前视口中心的元素高亮。
+Or use `scroll_to` to position first, then highlight elements in the current viewport center.
 
 ---
 
-## 参考资料
+## References
 
-- Twitter DOM 结构变化追踪：观察 `data-testid` 属性的变化
-- Frago scroll-to 命令：`uv run frago scroll-to --help`
-- 视频生产配方：`examples/workflows/video_produce_from_script/recipe.md`
+- Twitter DOM structure change tracking: Observe changes in `data-testid` attributes
+- Frago scroll-to command: `uv run frago scroll-to --help`
+- Video production recipe: `examples/workflows/video_produce_from_script/recipe.md`
 
 ---
 
-**最后更新**：2025-11-28
+**Last Updated**: 2025-11-28

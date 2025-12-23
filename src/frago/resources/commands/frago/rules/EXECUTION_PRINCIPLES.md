@@ -1,46 +1,46 @@
-# 执行原则
+# Execution Principles
 
-适用于：`/frago.run`、`/frago.do`
+Applies to: `/frago.run`, `/frago.do`
 
-## 核心原则
+## Core Principles
 
-### 1. 正确理解意图
+### 1. Correctly Understand Intent
 
-人类描述有时候很简洁。如果意图不清晰，通过交互菜单让人类选择或输入你想要了解的信息。
+Human descriptions can be concise. If intent is unclear, use interactive menus to let humans choose or input the information you need.
 
-### 2. 立即感知
+### 2. Immediate Awareness
 
-**立即打印出可用的 frago 配方/工具/Claude Skill**：
+**Immediately print available frago recipes/tools/Claude Skills**:
 
 ```bash
 frago recipe list --format json
 ```
 
-### 3. 实在的工具
+### 3. Practical Tools
 
-放弃预训练记忆，用工具"看"和"交互"获取真实信息：
+Abandon pretrained memory, use tools to "see" and "interact" to obtain real information:
 
-| 类型 | 工具 |
+| Type | Tools |
 |------|------|
-| **看** | 截图、get-content、获取特定元素内容、通过关键字查找元素 |
-| **交互** | 点击、hover、浏览器回退、空白区域点击（一种可能的返回方式） |
+| **See** | Screenshot, get-content, get specific element content, find element by keyword |
+| **Interact** | Click, hover, browser back, click blank area (a possible way to return) |
 
-### 4. 过程存储
+### 4. Process Storage
 
-所有产生的文件/记录都必须放在工作空间里（`~/.frago/projects/<id>/`）。
+All generated files/records must be placed in the workspace (`~/.frago/projects/<id>/`).
 
-### 5. 工具驱动
+### 5. Tool-Driven
 
-放弃预训练记忆，用工具"看"和"交互"获取真实信息。
+Abandon pretrained memory, use tools to "see" and "interact" to obtain real information.
 
-### 6. 试错记录
+### 6. Trial and Error Recording
 
-尝试 → 记录成功/失败 → 反复失败则换思路
+Try → Record success/failure → Change approach if repeatedly failing
 
-### 7. 及时求助
+### 7. Timely Help
 
-反复遇到困难时，向人类寻求帮助。
+When repeatedly encountering difficulties, seek help from humans.
 
-## pwd 后执行命令
+## Confirm Directory Before Executing Commands
 
-**确保在正确目录**。每次执行命令前，使用 `pwd` 确认当前工作目录。
+**Ensure you are in the correct directory**. Before executing each command, use `pwd` to confirm the current working directory.

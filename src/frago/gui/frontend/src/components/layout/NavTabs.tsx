@@ -13,7 +13,7 @@ const tabs: { id: PageType; label: string; icon: LucideIcon }[] = [
 export default function BottomNav() {
   const { currentPage, switchPage } = useAppStore();
 
-  // 判断当前页面属于哪个 tab
+  // Determine which tab the current page belongs to
   const activeTab = (() => {
     if (currentPage === 'task_detail') return 'tasks';
     if (currentPage === 'recipe_detail') return 'recipes';

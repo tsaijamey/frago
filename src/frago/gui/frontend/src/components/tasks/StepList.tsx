@@ -6,7 +6,7 @@ interface StepListProps {
   steps: TaskStep[];
 }
 
-// 步骤类型配置（与后端 StepType 枚举对应）
+// Step type configuration (corresponds to backend StepType enum)
 const stepTypeConfig: Record<StepType, { Icon: LucideIcon; label: string; colorClass: string }> = {
   user_message: { Icon: User, label: 'User', colorClass: 'text-[var(--accent-primary)]' },
   assistant_message: { Icon: Bot, label: 'Assistant', colorClass: 'text-[var(--accent-success)]' },
@@ -19,10 +19,10 @@ function getStepConfig(type: StepType) {
   return stepTypeConfig[type] || stepTypeConfig.system_event;
 }
 
-// 格式化时间戳为 +8 时区
+// Format timestamp to +8 timezone
 function formatTimestamp(isoString: string): string {
   const date = new Date(isoString);
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString('en-US', {
     timeZone: 'Asia/Shanghai',
     hour: '2-digit',
     minute: '2-digit',
@@ -30,14 +30,14 @@ function formatTimestamp(isoString: string): string {
   });
 }
 
-// 可筛选的类型（与后端 StepType 枚举对应）
+// Filterable types (corresponds to backend StepType enum)
 const filterableTypes: StepType[] = ['user_message', 'assistant_message', 'tool_call', 'tool_result', 'system_event'];
 
-// 每次渲染的数量
+// Render batch size
 const RENDER_BATCH_SIZE = 50;
 
 export default function StepList({ steps }: StepListProps) {
-  // 空集合表示显示全部，非空则只显示选中的类型
+  // Empty set means show all, non-empty means only show selected types
   const [activeFilters, setActiveFilters] = useState<Set<StepType>>(new Set());
   const [renderCount, setRenderCount] = useState(RENDER_BATCH_SIZE);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -52,26 +52,26 @@ export default function StepList({ steps }: StepListProps) {
       }
       return next;
     });
-    // 重置渲染数量
+    // Reset render count
     setRenderCount(RENDER_BATCH_SIZE);
   };
 
-  // 空集合显示全部，否则只显示选中的类型
+  // Empty set shows all, otherwise only show selected types
   const filteredSteps = activeFilters.size === 0
     ? steps
     : steps.filter(step => activeFilters.has(step.type));
 
-  // 只渲染前 N 条
+  // Only render first N items
   const renderedSteps = filteredSteps.slice(0, renderCount);
   const hasMore = renderCount < filteredSteps.length;
 
-  // 滚动到底部时加载更多
+  // Load more when scrolling to bottom
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
 
     const { scrollTop, scrollHeight, clientHeight } = el;
-    // 距离底部 100px 时加载更多
+    // Load more when 100px from bottom
     if (scrollHeight - scrollTop - clientHeight < 100) {
       setRenderCount(prev => {
         if (prev >= filteredSteps.length) return prev;
@@ -80,7 +80,7 @@ export default function StepList({ steps }: StepListProps) {
     }
   }, [filteredSteps.length]);
 
-  // 监听滚动
+  // Listen to scroll
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -90,18 +90,18 @@ export default function StepList({ steps }: StepListProps) {
     return () => el.removeEventListener('scroll', onScroll);
   }, [handleScroll]);
 
-  // 检查内容是否不足以滚动，如果是则直接加载全部
+  // Check if content is insufficient to scroll, if so load all directly
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    // 如果内容高度小于容器高度，说明无法滚动，直接加载全部
+    // If content height is less than container height, means cannot scroll, load all directly
     if (el.scrollHeight <= el.clientHeight && renderCount < filteredSteps.length) {
       setRenderCount(filteredSteps.length);
     }
   }, [renderCount, filteredSteps.length]);
 
-  // 当筛选条件变化时重置渲染数量
+  // Reset render count when filter conditions change
   useEffect(() => {
     setRenderCount(RENDER_BATCH_SIZE);
   }, [activeFilters]);
@@ -109,16 +109,16 @@ export default function StepList({ steps }: StepListProps) {
   if (steps.length === 0) {
     return (
       <div className="text-[var(--text-muted)] text-center py-scaled-4">
-        暂无步骤
+        No steps
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full">
-      {/* 筛选栏 - 换行布局 */}
+      {/* Filter bar - wrapping layout */}
       <div className="flex flex-wrap items-center gap-1 pb-scaled-2 border-b border-[var(--border-primary)] mb-scaled-2 shrink-0">
-        <span className="text-scaled-xs text-[var(--text-muted)]">筛选:</span>
+        <span className="text-scaled-xs text-[var(--text-muted)]">Filter:</span>
         {filterableTypes.map(type => {
           const { Icon, label, colorClass } = getStepConfig(type);
           const isActive = activeFilters.has(type);
@@ -142,14 +142,14 @@ export default function StepList({ steps }: StepListProps) {
         </span>
       </div>
 
-      {/* 步骤列表 - 内部滚动 */}
+      {/* Step list - internal scrolling */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="flex flex-col gap-scaled-2">
           {renderedSteps.map((step) => {
             const { Icon, label, colorClass } = getStepConfig(step.type);
             return (
               <div key={step.step_id} className="step-item-new">
-                {/* 第一行：图标 + 类型名称 + 时间戳 */}
+                {/* First line: Icon + Type name + Timestamp */}
                 <div className="flex items-center justify-between mb-scaled-1">
                   <div className="flex items-center gap-scaled-2">
                     <Icon className="icon-scaled-sm" />
@@ -164,7 +164,7 @@ export default function StepList({ steps }: StepListProps) {
                     {formatTimestamp(step.timestamp)}
                   </span>
                 </div>
-                {/* 第二行：消息内容 */}
+                {/* Second line: Message content */}
                 <div className="text-scaled-sm text-[var(--text-secondary)] break-words pl-scaled-5">
                   {step.content}
                 </div>
@@ -174,7 +174,7 @@ export default function StepList({ steps }: StepListProps) {
         </div>
         {hasMore && (
           <div className="text-center py-scaled-2 text-scaled-xs text-[var(--text-muted)]">
-            滚动加载更多...
+            Scroll to load more...
           </div>
         )}
       </div>

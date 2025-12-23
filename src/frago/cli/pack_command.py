@@ -1,4 +1,4 @@
-"""dev-pack 命令 - 同步用户目录资源到打包目录（用于 PyPI 分发）"""
+"""dev-pack command - Sync user directory resources to package directory (for PyPI distribution)"""
 
 import fnmatch
 import sys
@@ -11,14 +11,14 @@ import yaml
 from frago.tools.sync import CommandSync, RecipeSync, SkillSync
 
 
-# 清单文件路径（与本文件同级）
+# Manifest file path (in the same directory as this file)
 MANIFEST_FILE = Path(__file__).parent / "pack-manifest.yaml"
 
 
 def load_manifest() -> Dict[str, Any]:
-    """加载打包清单配置"""
+    """Load packaging manifest configuration"""
     if not MANIFEST_FILE.exists():
-        raise FileNotFoundError(f"清单文件不存在: {MANIFEST_FILE}")
+        raise FileNotFoundError(f"Manifest file not found: {MANIFEST_FILE}")
 
     with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
         manifest = yaml.safe_load(f)
@@ -27,7 +27,7 @@ def load_manifest() -> Dict[str, Any]:
 
 
 def match_pattern(name: str, patterns: List[str]) -> bool:
-    """检查名称是否匹配任意一个模式"""
+    """Check if name matches any pattern"""
     for pattern in patterns:
         if fnmatch.fnmatch(name, pattern):
             return True
@@ -39,45 +39,45 @@ def match_pattern(name: str, patterns: List[str]) -> bool:
     "--files",
     type=str,
     default=None,
-    help="通配符模式过滤名称，如 *stock* 或 clipboard*",
+    help="Filter names with wildcard pattern, e.g. *stock* or clipboard*",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="仅显示将要执行的操作，不实际同步",
+    help="Only show operations that would be performed, do not actually sync",
 )
 @click.option(
     "--clean",
     "do_clean",
     is_flag=True,
-    help="清理目标目录中不存在于清单的文件",
+    help="Clean files in target directory that are not in manifest",
 )
 @click.option(
     "--verbose",
     "-v",
     is_flag=True,
-    help="显示详细信息",
+    help="Show detailed information",
 )
 @click.option(
     "--commands-only",
     is_flag=True,
-    help="仅同步 commands（不同步 recipes）",
+    help="Sync commands only (skip recipes)",
 )
 @click.option(
     "--recipes-only",
     is_flag=True,
-    help="仅同步 recipes（不同步 commands 和 skills）",
+    help="Sync recipes only (skip commands and skills)",
 )
 @click.option(
     "--skills-only",
     is_flag=True,
-    help="仅同步 skills（不同步 commands 和 recipes）",
+    help="Sync skills only (skip commands and recipes)",
 )
 @click.option(
     "--all",
     "sync_all",
     is_flag=True,
-    help="忽略清单，同步所有资源（用于调试）",
+    help="Ignore manifest, sync all resources (for debugging)",
 )
 def dev_pack(
     files: Optional[str],
@@ -90,68 +90,68 @@ def dev_pack(
     sync_all: bool,
 ):
     """
-    同步用户目录资源到打包目录（用于 PyPI 分发）
+    Sync user directory resources to package directory (for PyPI distribution)
 
-    根据 pack-manifest.yaml 白名单配置，将允许的资源
-    从用户目录同步到 src/frago/resources/，用于打包分发。
+    Based on pack-manifest.yaml whitelist configuration, sync allowed resources
+    from user directory to src/frago/resources/ for packaging and distribution.
 
-    源目录:
+    Source directories:
       ~/.claude/commands/frago.*.md  → src/frago/resources/commands/
       ~/.claude/skills/frago-*       → src/frago/resources/skills/
       ~/.frago/recipes/              → src/frago/resources/recipes/
 
     \b
-    示例:
-      frago dev-pack                    # 按清单同步资源
-      frago dev-pack --all              # 忽略清单，同步所有
-      frago dev-pack --commands-only    # 仅同步 commands
-      frago dev-pack --recipes-only     # 仅同步 recipes
-      frago dev-pack --skills-only      # 仅同步 skills
-      frago dev-pack --files "*stock*"  # 额外过滤
-      frago dev-pack --dry-run          # 预览将要同步的文件
-      frago dev-pack --clean            # 清理不在清单中的资源
+    Examples:
+      frago dev-pack                    # Sync resources according to manifest
+      frago dev-pack --all              # Ignore manifest, sync all
+      frago dev-pack --commands-only    # Sync commands only
+      frago dev-pack --recipes-only     # Sync recipes only
+      frago dev-pack --skills-only      # Sync skills only
+      frago dev-pack --files "*stock*"  # Additional filtering
+      frago dev-pack --dry-run          # Preview files to be synced
+      frago dev-pack --clean            # Clean resources not in manifest
     """
     try:
-        # 加载清单
+        # Load manifest
         if sync_all:
             manifest = {"commands": ["*"], "skills": ["*"], "recipes": ["*"]}
-            click.echo("[!]  忽略清单，同步所有资源\n")
+            click.echo("[!]  Ignoring manifest, syncing all resources\n")
         else:
             manifest = load_manifest()
-            click.echo(f"📋 清单文件: {MANIFEST_FILE.name}\n")
+            click.echo(f"📋 Manifest file: {MANIFEST_FILE.name}\n")
 
-        # 确定同步范围
+        # Determine sync scope
         sync_commands = not recipes_only and not skills_only
         sync_skills = not commands_only and not recipes_only
         sync_recipes = not commands_only and not skills_only
 
         if dry_run:
-            click.echo("=== Dry Run 模式 ===\n")
+            click.echo("=== Dry Run Mode ===\n")
 
-        # 同步 Commands
+        # Sync Commands
         if sync_commands:
             _sync_commands(manifest, files, dry_run, do_clean, verbose)
 
-        # 同步 Skills
+        # Sync Skills
         if sync_skills:
             if sync_commands:
-                click.echo()  # 分隔符
+                click.echo()  # Separator
             _sync_skills(manifest, files, dry_run, do_clean, verbose)
 
-        # 同步 Recipes
+        # Sync Recipes
         if sync_recipes:
             if sync_commands or sync_skills:
-                click.echo()  # 分隔符
+                click.echo()  # Separator
             _sync_recipes(manifest, files, dry_run, do_clean, verbose)
 
         if dry_run:
-            click.echo("\n(Dry Run 模式，未执行实际操作)")
+            click.echo("\n(Dry Run mode, no actual operations performed)")
 
     except FileNotFoundError as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -162,44 +162,44 @@ def _sync_commands(
     do_clean: bool,
     verbose: bool,
 ):
-    """同步 commands"""
+    """Sync commands"""
     syncer = CommandSync()
     allowed_patterns = manifest.get("commands", [])
 
-    # 检查源目录是否存在
+    # Check if source directory exists
     if not syncer.source_dir.exists():
-        click.echo(f"Commands 源目录不存在: {syncer.source_dir}", err=True)
+        click.echo(f"Commands source directory not found: {syncer.source_dir}", err=True)
         return
 
-    click.echo("📦 Commands 同步")
+    click.echo("📦 Commands Sync")
 
     if not allowed_patterns:
-        click.echo("  清单中未配置任何 commands，跳过")
+        click.echo("  No commands configured in manifest, skipping")
         return
 
     if do_clean:
-        # 清理模式：删除不在清单中的文件
+        # Clean mode: delete files not in manifest
         removed = syncer.clean(dry_run=dry_run)
         if removed:
-            action_word = "将要删除" if dry_run else "已删除"
-            click.echo(f"  {action_word} {len(removed)} 个文件:")
+            action_word = "Will delete" if dry_run else "Deleted"
+            click.echo(f"  {action_word} {len(removed)} files:")
             for path in removed:
                 click.echo(f"    - {path.name}")
         else:
-            click.echo("  没有需要清理的命令文件")
+            click.echo("  No command files to clean")
         return
 
-    # 同步模式
+    # Sync mode
     results = syncer.sync(pattern=files, dry_run=dry_run, verbose=verbose)
 
     if not results:
         if files:
-            click.echo(f"  未找到匹配 '{files}' 的命令")
+            click.echo(f"  No commands found matching '{files}'")
         else:
-            click.echo("  未找到任何 frago.*.md 命令文件")
+            click.echo("  No frago.*.md command files found")
         return
 
-    # 按清单过滤
+    # Filter by manifest
     filtered_results = []
     excluded = []
     for r in results:
@@ -209,41 +209,41 @@ def _sync_commands(
         else:
             excluded.append(r)
 
-    # 统计
+    # Statistics
     created = [r for r in filtered_results if r["action"] == "create"]
     updated = [r for r in filtered_results if r["action"] == "update"]
     skipped = [r for r in filtered_results if r["action"] == "skip"]
 
-    action_word = "将要" if dry_run else "已"
+    action_word = "Will" if dry_run else ""
 
-    # 显示结果
+    # Display results
     if created:
-        click.echo(f"  [OK] {action_word}创建 {len(created)} 个命令:")
+        click.echo(f"  [OK] {action_word}Created {len(created)} commands:")
         for r in created:
             click.echo(f"    + {r['source_name']} → {r['target_name']}")
 
     if updated:
-        click.echo(f"  [OK] {action_word}更新 {len(updated)} 个命令:")
+        click.echo(f"  [OK] {action_word}Updated {len(updated)} commands:")
         for r in updated:
             click.echo(f"    ~ {r['source_name']} → {r['target_name']}")
 
     if skipped and verbose:
-        click.echo(f"  - 跳过 {len(skipped)} 个未变化的命令:")
+        click.echo(f"  - Skipped {len(skipped)} unchanged commands:")
         for r in skipped:
             click.echo(f"    = {r['source_name']}")
 
     if excluded and verbose:
-        click.echo(f"  ⊘ 清单排除 {len(excluded)} 个命令:")
+        click.echo(f"  ⊘ Excluded {len(excluded)} commands by manifest:")
         for r in excluded:
             click.echo(f"    ⊘ {r['source_name']}")
 
-    # 总结
+    # Summary
     click.echo(
-        f"  总计: {len(created)} 创建, {len(updated)} 更新, {len(skipped)} 跳过"
-        + (f", {len(excluded)} 排除" if excluded else "")
+        f"  Total: {len(created)} created, {len(updated)} updated, {len(skipped)} skipped"
+        + (f", {len(excluded)} excluded" if excluded else "")
     )
 
-    # 同步 frago/ 子目录
+    # Sync frago/ subdirectory
     _sync_frago_subdir(syncer, manifest, dry_run, verbose)
 
 
@@ -253,12 +253,12 @@ def _sync_frago_subdir(
     dry_run: bool,
     verbose: bool,
 ):
-    """同步 frago/ 子目录"""
+    """Sync frago/ subdirectory"""
     import shutil
 
     allowed_patterns = manifest.get("commands", [])
 
-    # 检查是否允许 frago/* 或 frago/
+    # Check if frago/* or frago/ is allowed
     frago_allowed = any(
         p.startswith("frago/") or p == "frago/*"
         for p in allowed_patterns
@@ -266,7 +266,7 @@ def _sync_frago_subdir(
 
     if not frago_allowed:
         if verbose:
-            click.echo("  ⊘ frago/ 子目录未在清单中")
+            click.echo("  ⊘ frago/ subdirectory not in manifest")
         return
 
     frago_source = syncer.source_dir / "frago"
@@ -275,7 +275,7 @@ def _sync_frago_subdir(
     if not frago_source.exists():
         return
 
-    # 检查是否需要更新
+    # Check if update is needed
     needs_update = not frago_target.exists()
 
     if not needs_update:
@@ -287,7 +287,7 @@ def _sync_frago_subdir(
                     needs_update = True
                     break
 
-    action_word = "将要" if dry_run else "已"
+    action_word = "Will sync" if dry_run else "Synced"
 
     if needs_update:
         if not dry_run:
@@ -298,10 +298,10 @@ def _sync_frago_subdir(
                 frago_target,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
-        click.echo(f"  [OK] {action_word}同步 frago/ 子目录")
+        click.echo(f"  [OK] {action_word} frago/ subdirectory")
     else:
         if verbose:
-            click.echo("  - frago/ 子目录无变化")
+            click.echo("  - frago/ subdirectory unchanged")
 
 
 def _sync_skills(
@@ -311,46 +311,46 @@ def _sync_skills(
     do_clean: bool,
     verbose: bool,
 ):
-    """同步 skills"""
+    """Sync skills"""
     import shutil
 
     syncer = SkillSync()
     allowed_patterns = manifest.get("skills", [])
 
-    # 检查源目录是否存在
+    # Check if source directory exists
     if not syncer.source_dir.exists():
-        click.echo(f"Skills 源目录不存在: {syncer.source_dir}", err=True)
+        click.echo(f"Skills source directory not found: {syncer.source_dir}", err=True)
         return
 
-    click.echo("📦 Skills 同步")
+    click.echo("📦 Skills Sync")
 
     if not allowed_patterns:
-        click.echo("  清单中未配置任何 skills，跳过")
+        click.echo("  No skills configured in manifest, skipping")
         return
 
     if do_clean:
-        # 清理模式
+        # Clean mode
         removed = syncer.clean(dry_run=dry_run)
         if removed:
-            action_word = "将要删除" if dry_run else "已删除"
-            click.echo(f"  {action_word} {len(removed)} 个 Skill:")
+            action_word = "Will delete" if dry_run else "Deleted"
+            click.echo(f"  {action_word} {len(removed)} Skills:")
             for path in removed:
                 click.echo(f"    - {path.name}")
         else:
-            click.echo("  没有需要清理的 Skill")
+            click.echo("  No Skills to clean")
         return
 
-    # 获取所有 skills（不执行复制）
+    # Get all skills (without copying)
     skill_dirs = syncer.find_skills(pattern=files)
 
     if not skill_dirs:
         if files:
-            click.echo(f"  未找到匹配 '{files}' 的 Skill")
+            click.echo(f"  No Skills found matching '{files}'")
         else:
-            click.echo("  未找到任何 Skill")
+            click.echo("  No Skills found")
         return
 
-    # 先按清单过滤，再决定是否同步
+    # Filter by manifest first, then decide whether to sync
     filtered_dirs = []
     excluded = []
     for skill_dir in skill_dirs:
@@ -361,7 +361,7 @@ def _sync_skills(
         else:
             excluded.append(skill_name)
 
-    # 对过滤后的 skills 执行同步
+    # Perform sync on filtered skills
     created = []
     updated = []
     skipped = []
@@ -370,7 +370,7 @@ def _sync_skills(
         skill_name = skill_dir.name
         target_dir = syncer.target_dir / skill_name
 
-        # 确定操作类型
+        # Determine operation type
         if target_dir.exists():
             needs_update = False
             for src_file in skill_dir.rglob("*"):
@@ -395,7 +395,7 @@ def _sync_skills(
             skipped.append(result)
             continue
 
-        # 执行复制
+        # Execute copy
         if not dry_run:
             if target_dir.exists():
                 shutil.rmtree(target_dir)
@@ -411,37 +411,37 @@ def _sync_skills(
         else:
             updated.append(result)
 
-    action_word = "将要" if dry_run else "已"
+    action_word = "Will" if dry_run else ""
 
-    # 显示结果
+    # Display results
     if created:
-        click.echo(f"  [OK] {action_word}创建 {len(created)} 个 Skill:")
+        click.echo(f"  [OK] {action_word}Created {len(created)} Skills:")
         for r in created:
             click.echo(f"    + {r['skill_name']}")
             if verbose:
                 click.echo(f"      → {r['target_dir']}")
 
     if updated:
-        click.echo(f"  [OK] {action_word}更新 {len(updated)} 个 Skill:")
+        click.echo(f"  [OK] {action_word}Updated {len(updated)} Skills:")
         for r in updated:
             click.echo(f"    ~ {r['skill_name']}")
             if verbose:
                 click.echo(f"      → {r['target_dir']}")
 
     if skipped and verbose:
-        click.echo(f"  - 跳过 {len(skipped)} 个未变化的 Skill:")
+        click.echo(f"  - Skipped {len(skipped)} unchanged Skills:")
         for r in skipped:
             click.echo(f"    = {r['skill_name']}")
 
     if excluded and verbose:
-        click.echo(f"  ⊘ 清单排除 {len(excluded)} 个 Skill:")
+        click.echo(f"  ⊘ Excluded {len(excluded)} Skills by manifest:")
         for name in excluded:
             click.echo(f"    ⊘ {name}")
 
-    # 总结
+    # Summary
     click.echo(
-        f"  总计: {len(created)} 创建, {len(updated)} 更新, {len(skipped)} 跳过"
-        + (f", {len(excluded)} 排除" if excluded else "")
+        f"  Total: {len(created)} created, {len(updated)} updated, {len(skipped)} skipped"
+        + (f", {len(excluded)} excluded" if excluded else "")
     )
 
 
@@ -452,46 +452,46 @@ def _sync_recipes(
     do_clean: bool,
     verbose: bool,
 ):
-    """同步 recipes"""
+    """Sync recipes"""
     import shutil
 
     syncer = RecipeSync()
     allowed_patterns = manifest.get("recipes", [])
 
-    # 检查源目录是否存在
+    # Check if source directory exists
     if not syncer.source_dir.exists():
-        click.echo(f"Recipes 源目录不存在: {syncer.source_dir}", err=True)
+        click.echo(f"Recipes source directory not found: {syncer.source_dir}", err=True)
         return
 
-    click.echo("📦 Recipes 同步")
+    click.echo("📦 Recipes Sync")
 
     if not allowed_patterns:
-        click.echo("  清单中未配置任何 recipes，跳过")
+        click.echo("  No recipes configured in manifest, skipping")
         return
 
     if do_clean:
-        # 清理模式
+        # Clean mode
         removed = syncer.clean(dry_run=dry_run)
         if removed:
-            action_word = "将要删除" if dry_run else "已删除"
-            click.echo(f"  {action_word} {len(removed)} 个 Recipe:")
+            action_word = "Will delete" if dry_run else "Deleted"
+            click.echo(f"  {action_word} {len(removed)} Recipes:")
             for path in removed:
                 click.echo(f"    - {path.name}")
         else:
-            click.echo("  没有需要清理的 Recipe")
+            click.echo("  No Recipes to clean")
         return
 
-    # 获取所有 recipes（不执行复制）
+    # Get all recipes (without copying)
     recipe_dirs = syncer.find_recipes(pattern=files)
 
     if not recipe_dirs:
         if files:
-            click.echo(f"  未找到匹配 '{files}' 的 Recipe")
+            click.echo(f"  No Recipes found matching '{files}'")
         else:
-            click.echo("  未找到任何 Recipe")
+            click.echo("  No Recipes found")
         return
 
-    # 先按清单过滤，再决定是否同步
+    # Filter by manifest first, then decide whether to sync
     filtered_dirs = []
     excluded = []
     for recipe_dir in recipe_dirs:
@@ -503,7 +503,7 @@ def _sync_recipes(
         else:
             excluded.append(rel_path_str)
 
-    # 对过滤后的 recipes 执行同步
+    # Perform sync on filtered recipes
     created = []
     updated = []
     skipped = []
@@ -513,7 +513,7 @@ def _sync_recipes(
         recipe_name = recipe_dir.name
         target_dir = syncer.target_dir / rel_path
 
-        # 确定操作类型
+        # Determine operation type
         if target_dir.exists():
             needs_update = False
             for src_file in recipe_dir.rglob("*"):
@@ -538,7 +538,7 @@ def _sync_recipes(
             skipped.append(result)
             continue
 
-        # 执行复制
+        # Execute copy
         if not dry_run:
             if target_dir.exists():
                 shutil.rmtree(target_dir)
@@ -554,35 +554,35 @@ def _sync_recipes(
         else:
             updated.append(result)
 
-    action_word = "将要" if dry_run else "已"
+    action_word = "Will" if dry_run else ""
 
-    # 显示结果
+    # Display results
     if created:
-        click.echo(f"  [OK] {action_word}创建 {len(created)} 个 Recipe:")
+        click.echo(f"  [OK] {action_word}Created {len(created)} Recipes:")
         for r in created:
             click.echo(f"    + {r['recipe_name']}")
             if verbose:
                 click.echo(f"      → {r['target_dir']}")
 
     if updated:
-        click.echo(f"  [OK] {action_word}更新 {len(updated)} 个 Recipe:")
+        click.echo(f"  [OK] {action_word}Updated {len(updated)} Recipes:")
         for r in updated:
             click.echo(f"    ~ {r['recipe_name']}")
             if verbose:
                 click.echo(f"      → {r['target_dir']}")
 
     if skipped and verbose:
-        click.echo(f"  - 跳过 {len(skipped)} 个未变化的 Recipe:")
+        click.echo(f"  - Skipped {len(skipped)} unchanged Recipes:")
         for r in skipped:
             click.echo(f"    = {r['recipe_name']}")
 
     if excluded and verbose:
-        click.echo(f"  ⊘ 清单排除 {len(excluded)} 个 Recipe:")
+        click.echo(f"  ⊘ Excluded {len(excluded)} Recipes by manifest:")
         for name in excluded:
             click.echo(f"    ⊘ {name}")
 
-    # 总结
+    # Summary
     click.echo(
-        f"  总计: {len(created)} 创建, {len(updated)} 更新, {len(skipped)} 跳过"
-        + (f", {len(excluded)} 排除" if excluded else "")
+        f"  Total: {len(created)} created, {len(updated)} updated, {len(skipped)} skipped"
+        + (f", {len(excluded)} excluded" if excluded else "")
     )

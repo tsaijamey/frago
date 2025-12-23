@@ -1,50 +1,50 @@
 """
-CDP异常定义
+CDP exception definitions
 
-定义Chrome DevTools Protocol相关的自定义异常。
+Defines custom exceptions related to Chrome DevTools Protocol.
 """
 
 
 class CDPError(Exception):
-    """CDP基础异常类"""
+    """CDP base exception class"""
     pass
 
 
 class ConnectionError(CDPError):
-    """连接相关异常"""
+    """Connection related exception"""
     pass
 
 
 class TimeoutError(CDPError):
-    """超时异常"""
+    """Timeout exception"""
     pass
 
 
 class ProtocolError(CDPError):
-    """协议错误异常"""
+    """Protocol error exception"""
     pass
 
 
 class CommandError(CDPError):
-    """命令执行错误异常"""
+    """Command execution error exception"""
     pass
 
 
 class RetryExhaustedError(CDPError):
-    """重试耗尽异常"""
+    """Retry exhausted exception"""
     pass
 
 
 class InvalidResponseError(CDPError):
-    """无效响应异常"""
+    """Invalid response exception"""
     pass
 
 
 class ProxyConnectionError(ConnectionError):
-    """代理连接异常"""
+    """Proxy connection exception"""
     pass
 
 
 class ProxyConfigError(CDPError):
-    """代理配置错误异常"""
+    """Proxy configuration error exception"""
     pass

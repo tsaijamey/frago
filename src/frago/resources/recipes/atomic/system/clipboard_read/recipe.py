@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Recipe: 读取剪贴板内容
-运行时: python
-输入参数: 无
-输出: JSON 格式的剪贴板内容
+Recipe: Read clipboard content
+Runtime: python
+Input parameters: none
+Output: Clipboard content in JSON format
 """
 
 import json
@@ -11,7 +11,7 @@ import sys
 
 
 def read_clipboard():
-    """读取剪贴板内容并返回 JSON 格式"""
+    """Read clipboard content and return in JSON format"""
     try:
         import pyperclip
         content = pyperclip.paste()

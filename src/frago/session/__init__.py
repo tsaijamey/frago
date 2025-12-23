@@ -1,19 +1,20 @@
 """
-Frago Session 模块 - Agent 会话监控与数据持久化
+Frago Session Module - Agent Session Monitoring and Data Persistence
 
-提供对 Claude Code 等 Agent 工具执行会话的实时监控和数据存储能力。
+Provides real-time monitoring and data storage capabilities for Agent tool execution sessions
+such as Claude Code.
 
-核心组件:
-- models: 会话数据模型 (MonitoredSession, SessionStep, ToolCallRecord, SessionSummary)
-- parser: JSONL 增量解析器
-- storage: 会话数据持久化存储
-- formatter: 终端输出格式化器
-- monitor: 文件系统监控和会话跟踪
+Core components:
+- models: Session data models (MonitoredSession, SessionStep, ToolCallRecord, SessionSummary)
+- parser: JSONL incremental parser
+- storage: Session data persistent storage
+- formatter: Terminal output formatter
+- monitor: File system monitoring and session tracking
 
-环境变量:
-- FRAGO_SESSION_DIR: 自定义会话存储目录（默认 ~/.frago/sessions/）
-- FRAGO_CLAUDE_DIR: 自定义 Claude Code 会话目录（默认 ~/.claude/projects/）
-- FRAGO_MONITOR_ENABLED: 是否启用监控（默认 1，设为 0 禁用）
+Environment variables:
+- FRAGO_SESSION_DIR: Custom session storage directory (default ~/.frago/sessions/)
+- FRAGO_CLAUDE_DIR: Custom Claude Code session directory (default ~/.claude/projects/)
+- FRAGO_MONITOR_ENABLED: Whether to enable monitoring (default 1, set to 0 to disable)
 """
 
 from frago.session.models import (
@@ -28,12 +29,12 @@ from frago.session.models import (
 )
 
 __all__ = [
-    # 枚举类型
+    # Enum types
     "AgentType",
     "SessionStatus",
     "StepType",
     "ToolCallStatus",
-    # 数据模型
+    # Data models
     "MonitoredSession",
     "SessionStep",
     "ToolCallRecord",

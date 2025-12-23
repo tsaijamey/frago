@@ -1,13 +1,13 @@
-"""环境变量加载器
+"""Environment variable loader
 
-支持三级优先级配置：
-1. 项目级 (.frago/.env) - 最高优先级
-2. 用户级 (~/.frago/.env)
-3. 系统环境 (os.environ) - 最低优先级
+Supports three-level priority configuration:
+1. Project-level (.frago/.env) - Highest priority
+2. User-level (~/.frago/.env)
+3. System environment (os.environ) - Lowest priority
 
-还支持：
-- Workflow 上下文共享
-- CLI --env 参数覆盖
+Also supports:
+- Workflow context sharing
+- CLI --env parameter overrides
 """
 import os
 import re
@@ -18,7 +18,7 @@ from typing import Any
 
 @dataclass
 class EnvVarDefinition:
-    """环境变量定义"""
+    """Environment variable definition"""
     required: bool = False
     default: str | None = None
     description: str = ""
@@ -26,60 +26,60 @@ class EnvVarDefinition:
 
 @dataclass
 class WorkflowContext:
-    """Workflow 执行上下文，用于跨 Recipe 共享环境变量"""
+    """Workflow execution context for sharing environment variables across Recipes"""
     shared_env: dict[str, str] = field(default_factory=dict)
 
     def set(self, key: str, value: str) -> None:
-        """设置共享环境变量"""
+        """Set shared environment variable"""
         self.shared_env[key] = value
 
     def get(self, key: str, default: str | None = None) -> str | None:
-        """获取共享环境变量"""
+        """Get shared environment variable"""
         return self.shared_env.get(key, default)
 
     def update(self, env_dict: dict[str, str]) -> None:
-        """批量更新共享环境变量"""
+        """Batch update shared environment variables"""
         self.shared_env.update(env_dict)
 
     def as_dict(self) -> dict[str, str]:
-        """返回所有共享环境变量"""
+        """Return all shared environment variables"""
         return dict(self.shared_env)
 
 
 class EnvLoader:
-    """环境变量加载器"""
+    """Environment variable loader"""
 
-    # 用户级配置文件路径
+    # User-level config file path
     USER_ENV_PATH = Path.home() / ".frago" / ".env"
-    # 项目级配置文件路径（相对于当前工作目录）
+    # Project-level config file path (relative to current working directory)
     PROJECT_ENV_PATH = Path(".frago") / ".env"
 
     def __init__(self, project_root: Path | None = None):
         """
-        初始化环境变量加载器
+        Initialize environment variable loader
 
         Args:
-            project_root: 项目根目录，默认为当前工作目录
+            project_root: Project root directory, defaults to current working directory
         """
         self.project_root = project_root or Path.cwd()
         self._cache: dict[str, str] | None = None
 
     def load_env_file(self, path: Path) -> dict[str, str]:
         """
-        解析 .env 文件
+        Parse .env file
 
-        支持格式：
+        Supported formats:
         - KEY=value
         - KEY="value with spaces"
         - KEY='value with spaces'
-        - # 注释行
-        - 空行
+        - # comment lines
+        - empty lines
 
         Args:
-            path: .env 文件路径
+            path: .env file path
 
         Returns:
-            环境变量字典
+            Environment variable dictionary
         """
         env_vars: dict[str, str] = {}
 
@@ -94,11 +94,11 @@ class EnvLoader:
         for line in content.splitlines():
             line = line.strip()
 
-            # 跳过空行和注释
+            # Skip empty lines and comments
             if not line or line.startswith('#'):
                 continue
 
-            # 解析 KEY=VALUE
+            # Parse KEY=VALUE
             match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', line)
             if not match:
                 continue
@@ -106,7 +106,7 @@ class EnvLoader:
             key = match.group(1)
             value = match.group(2).strip()
 
-            # 移除引号
+            # Remove quotes
             if (value.startswith('"') and value.endswith('"')) or \
                (value.startswith("'") and value.endswith("'")):
                 value = value[1:-1]
@@ -117,30 +117,30 @@ class EnvLoader:
 
     def load_all(self, clear_cache: bool = False) -> dict[str, str]:
         """
-        加载所有层级的环境变量（按优先级合并）
+        Load all levels of environment variables (merged by priority)
 
-        优先级（高到低）：
-        1. 项目级 (.frago/.env)
-        2. 用户级 (~/.frago/.env)
-        3. 系统环境 (os.environ)
+        Priority (high to low):
+        1. Project-level (.frago/.env)
+        2. User-level (~/.frago/.env)
+        3. System environment (os.environ)
 
         Args:
-            clear_cache: 是否清除缓存重新加载
+            clear_cache: Whether to clear cache and reload
 
         Returns:
-            合并后的环境变量字典
+            Merged environment variable dictionary
         """
         if self._cache is not None and not clear_cache:
             return dict(self._cache)
 
-        # 从系统环境开始（最低优先级）
+        # Start from system environment (lowest priority)
         merged: dict[str, str] = dict(os.environ)
 
-        # 用户级覆盖
+        # User-level override
         user_env = self.load_env_file(self.USER_ENV_PATH)
         merged.update(user_env)
 
-        # 项目级覆盖（最高优先级）
+        # Project-level override (highest priority)
         project_env_path = self.project_root / self.PROJECT_ENV_PATH
         project_env = self.load_env_file(project_env_path)
         merged.update(project_env)
@@ -155,40 +155,40 @@ class EnvLoader:
         workflow_context: WorkflowContext | None = None
     ) -> dict[str, str]:
         """
-        为 Recipe 解析环境变量
+        Resolve environment variables for Recipe
 
-        优先级（高到低）：
-        1. CLI --env 参数
-        2. Workflow 上下文共享变量
-        3. 项目级 .env
-        4. 用户级 .env
-        5. 系统环境
-        6. Recipe 定义的默认值
+        Priority (high to low):
+        1. CLI --env parameter
+        2. Workflow context shared variables
+        3. Project-level .env
+        4. User-level .env
+        5. System environment
+        6. Default values defined in Recipe
 
         Args:
-            env_definitions: Recipe 元数据中的 env 定义
-            cli_overrides: CLI --env 参数提供的覆盖值
-            workflow_context: Workflow 执行上下文
+            env_definitions: env definition in Recipe metadata
+            cli_overrides: Override values provided by CLI --env parameter
+            workflow_context: Workflow execution context
 
         Returns:
-            完整的环境变量字典（继承系统环境 + 配置覆盖）
+            Complete environment variable dictionary (inherits system environment + config overrides)
 
         Raises:
-            ValueError: 缺少必需的环境变量
+            ValueError: Missing required environment variables
         """
         cli_overrides = cli_overrides or {}
 
-        # 加载所有层级
+        # Load all levels
         merged = self.load_all()
 
-        # Workflow 上下文覆盖
+        # Workflow context override
         if workflow_context:
             merged.update(workflow_context.as_dict())
 
-        # CLI 覆盖（最高优先级）
+        # CLI override (highest priority)
         merged.update(cli_overrides)
 
-        # 验证并应用默认值
+        # Validate and apply defaults
         missing_required: list[str] = []
 
         for var_name, var_def in env_definitions.items():
@@ -200,17 +200,17 @@ class EnvLoader:
 
             if var_name not in merged:
                 if definition.default is not None:
-                    # 应用默认值
+                    # Apply default value
                     merged[var_name] = str(definition.default)
                 elif definition.required:
-                    # 记录缺失的必需变量
+                    # Record missing required variable
                     desc = f" ({definition.description})" if definition.description else ""
                     missing_required.append(f"{var_name}{desc}")
 
         if missing_required:
             raise ValueError(
-                f"缺少必需的环境变量: {', '.join(missing_required)}\n"
-                f"请在 ~/.frago/.env 或 .frago/.env 中配置，或通过 --env 参数提供"
+                f"Missing required environment variables: {', '.join(missing_required)}\n"
+                f"Please configure in ~/.frago/.env or .frago/.env, or provide via --env parameter"
             )
 
         return merged
@@ -222,17 +222,17 @@ class EnvLoader:
         workflow_context: WorkflowContext | None = None
     ) -> dict[str, str]:
         """
-        获取 Recipe 声明的环境变量子集（仅返回声明的变量）
+        Get subset of environment variables declared by Recipe (only returns declared variables)
 
-        用于调试或日志，避免泄露完整环境
+        For debugging or logging, avoiding leaking full environment
 
         Args:
-            env_definitions: Recipe 元数据中的 env 定义
-            cli_overrides: CLI --env 参数
-            workflow_context: Workflow 执行上下文
+            env_definitions: env definition in Recipe metadata
+            cli_overrides: CLI --env parameter
+            workflow_context: Workflow execution context
 
         Returns:
-            仅包含 Recipe 声明的环境变量
+            Environment variables declared by Recipe only
         """
         full_env = self.resolve_for_recipe(env_definitions, cli_overrides, workflow_context)
         return {k: full_env[k] for k in env_definitions if k in full_env}
@@ -240,40 +240,40 @@ class EnvLoader:
 
 def save_env_file(path: Path, env_vars: dict[str, str]) -> None:
     """
-    完整覆盖写入 .env 文件
+    Completely overwrite .env file
 
     Args:
-        path: .env 文件路径
-        env_vars: 环境变量字典
+        path: .env file path
+        env_vars: Environment variable dictionary
 
     Notes:
-        - 会覆盖原有内容
-        - 自动创建父目录
-        - 每行格式: KEY=value
+        - Will overwrite existing content
+        - Automatically create parent directory
+        - Each line format: KEY=value
     """
-    # 确保目录存在
+    # Ensure directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 生成内容
+    # Generate content
     lines = [f'{key}={value}' for key, value in env_vars.items()]
 
-    # 写入文件
+    # Write file
     path.write_text('\n'.join(lines) + '\n' if lines else '', encoding='utf-8')
 
 
 def update_env_file(path: Path, updates: dict[str, str | None]) -> None:
     """
-    更新 .env 文件（保留注释和格式）
+    Update .env file (preserve comments and formatting)
 
     Args:
-        path: .env 文件路径
-        updates: 更新字典，value=None 表示删除该变量
+        path: .env file path
+        updates: Update dictionary, value=None means delete that variable
 
     Notes:
-        - 保留注释行和空行
-        - 更新已存在的变量
-        - 追加新变量
-        - 删除 value=None 的变量
+        - Preserve comment lines and empty lines
+        - Update existing variables
+        - Append new variables
+        - Delete variables with value=None
     """
     lines = []
     updated_keys = set()
@@ -282,37 +282,37 @@ def update_env_file(path: Path, updates: dict[str, str | None]) -> None:
         for line in path.read_text(encoding='utf-8').splitlines():
             stripped = line.strip()
 
-            # 保留空行和注释
+            # Preserve empty lines and comments
             if not stripped or stripped.startswith('#'):
                 lines.append(line)
                 continue
 
-            # 解析变量行
+            # Parse variable line
             match = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)=(.*)$', stripped)
             if not match:
-                lines.append(line)  # 保留不规范的行
+                lines.append(line)  # Preserve non-standard lines
                 continue
 
             key = match.group(1)
 
-            # 更新或删除
+            # Update or delete
             if key in updates:
                 if updates[key] is not None:
-                    # 更新变量
+                    # Update variable
                     lines.append(f'{key}={updates[key]}')
-                # else: 删除变量，不添加此行
+                # else: Delete variable, don't add this line
                 updated_keys.add(key)
             else:
-                # 保留未修改的变量
+                # Preserve unmodified variables
                 lines.append(line)
 
-    # 添加新变量
+    # Add new variables
     for key, value in updates.items():
         if key not in updated_keys and value is not None:
             lines.append(f'{key}={value}')
 
-    # 确保目录存在
+    # Ensure directory exists
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 写入文件
+    # Write file
     path.write_text('\n'.join(lines) + '\n' if lines else '', encoding='utf-8')

@@ -1,7 +1,7 @@
 """
-CDP会话实现
+CDP session implementation
 
-实现WebSocket连接的CDP会话管理。
+Implements CDP session management with WebSocket connections.
 """
 
 import json
@@ -18,19 +18,19 @@ from .config import CDPConfig
 from .logger import get_logger
 from .exceptions import ConnectionError, TimeoutError, CDPError
 from .types import CDPRequest, CDPResponse
-# 延迟导入以避免循环导入
+# Lazy import to avoid circular imports
 # from .commands import PageCommands, InputCommands, RuntimeCommands, DOMCommands
 
 
 class CDPSession(CDPClient):
-    """CDP会话类"""
-    
+    """CDP session class"""
+
     def __init__(self, config: Optional[CDPConfig] = None):
         """
-        初始化CDP会话
-        
+        Initialize CDP session
+
         Args:
-            config: CDP配置，如果为None则使用默认配置
+            config: CDP configuration, uses default config if None
         """
         super().__init__(config)
         self.ws: Optional[websocket.WebSocket] = None
@@ -41,8 +41,8 @@ class CDPSession(CDPClient):
         self._listener_thread: Optional[threading.Thread] = None
         self._running = False
         self._lock = threading.RLock()
-        
-        # 延迟初始化命令封装
+
+        # Lazy initialization of command wrappers
         self._page = None
         self._input = None
         self._runtime = None
@@ -53,30 +53,30 @@ class CDPSession(CDPClient):
         self._zoom = None
         self._status = None
         self._visual_effects = None
-    
-    def connect(self) -> None:
-        """建立WebSocket连接
 
-        性能优化：
-        - 连接超时默认5秒（本地连接优化）
-        - 禁用不必要的握手检查以加速连接
-        - 支持快速失败机制
+    def connect(self) -> None:
+        """Establish WebSocket connection
+
+        Performance optimizations:
+        - Connection timeout defaults to 5 seconds (optimized for local connections)
+        - Unnecessary handshake checks disabled to speed up connection
+        - Supports fast-fail mechanism
         """
         try:
             start_time = time.time()
 
-            # 动态获取WebSocket URL
+            # Dynamically get WebSocket URL
             ws_url = self._get_websocket_url()
             self.logger.info(f"Connecting to CDP at {ws_url}")
 
-            # 准备WebSocket连接参数（性能优化）
+            # Prepare WebSocket connection options (performance optimization)
             ws_options = {
-                "timeout": 1.0,  # 接收消息超时设置为1秒，用于定期检查_running状态
-                "skip_utf8_validation": True,  # 跳过UTF-8验证以提升性能
-                "enable_multithread": True      # 启用多线程支持
+                "timeout": 1.0,  # Receive message timeout set to 1 second for periodic _running check
+                "skip_utf8_validation": True,  # Skip UTF-8 validation for performance
+                "enable_multithread": True      # Enable multithreading support
             }
 
-            # 配置代理参数
+            # Configure proxy parameters
             if self.config.proxy_host and self.config.proxy_port and not self.config.no_proxy:
                 ws_options["http_proxy_host"] = self.config.proxy_host
                 ws_options["http_proxy_port"] = self.config.proxy_port
@@ -91,7 +91,7 @@ class CDPSession(CDPClient):
             elif self.config.no_proxy:
                 self.logger.debug("Proxy bypassed (no_proxy=True)")
 
-            # 创建WebSocket连接
+            # Create WebSocket connection
             self.ws = websocket.create_connection(
                 ws_url,
                 **ws_options
@@ -100,11 +100,11 @@ class CDPSession(CDPClient):
             self._connected = True
             self._running = True
 
-            # 记录连接时间
-            elapsed = (time.time() - start_time) * 1000  # 转换为毫秒
+            # Log connection time
+            elapsed = (time.time() - start_time) * 1000  # Convert to milliseconds
             self.logger.info(f"CDP connection established in {elapsed:.2f}ms")
 
-            # 启动消息监听线程
+            # Start message listener thread
             self._start_message_listener()
 
         except Exception as e:
@@ -115,16 +115,16 @@ class CDPSession(CDPClient):
             raise ConnectionError(f"Failed to connect to CDP: {e}")
 
     def _get_websocket_url(self) -> str:
-        """动态获取WebSocket调试URL
+        """Dynamically get WebSocket debug URL
 
-        如果指定了target_id，连接到对应的tab；否则自动选择第一个page类型的tab。
+        If target_id is specified, connect to that tab; otherwise auto-select the first page-type tab.
 
         Returns:
             str: WebSocket URL
         """
         import requests
         try:
-            # 获取所有targets列表
+            # Get list of all targets
             response = requests.get(
                 f"{self.config.http_url}/json/list",
                 timeout=self.config.connect_timeout
@@ -132,7 +132,7 @@ class CDPSession(CDPClient):
             response.raise_for_status()
             targets = response.json()
 
-            # 如果指定了target_id，查找对应的target
+            # If target_id specified, find the corresponding target
             if self.config.target_id:
                 for target in targets:
                     if target.get('id') == self.config.target_id:
@@ -141,18 +141,18 @@ class CDPSession(CDPClient):
                             self.logger.debug(f"Using specified target: {target.get('title', 'Unknown')} (id: {self.config.target_id})")
                             return ws_url
                         else:
-                            raise ConnectionError(f"Target {self.config.target_id} 没有可用的WebSocket URL")
+                            raise ConnectionError(f"Target {self.config.target_id} has no WebSocket URL available")
 
-                # 未找到指定的target
-                raise ConnectionError(f"未找到指定的target: {self.config.target_id}")
+                # Specified target not found
+                raise ConnectionError(f"Target not found: {self.config.target_id}")
 
-            # 未指定target_id，查找第一个可用的page
+            # No target_id specified, find first available page
             for target in targets:
                 if target.get('type') == 'page' and target.get('webSocketDebuggerUrl'):
                     self.logger.debug(f"Using page: {target.get('title', 'Unknown')}")
                     return target['webSocketDebuggerUrl']
 
-            # 如果没有page，使用browser endpoint
+            # If no page available, use browser endpoint
             response = requests.get(
                 f"{self.config.http_url}/json/version",
                 timeout=self.config.connect_timeout
@@ -161,20 +161,20 @@ class CDPSession(CDPClient):
             version_info = response.json()
             return version_info['webSocketDebuggerUrl']
         except ConnectionError:
-            # 重新抛出ConnectionError，不要被下面的except捕获
+            # Re-raise ConnectionError, don't let it be caught by except below
             raise
         except Exception:
-            # 回退到静态URL
+            # Fallback to static URL
             return self.config.websocket_url
     
     def disconnect(self) -> None:
-        """断开WebSocket连接"""
-        # 停止消息监听线程
+        """Disconnect WebSocket connection"""
+        # Stop message listener thread
         self._running = False
-        
+
         if self._listener_thread and self._listener_thread.is_alive():
             self._listener_thread.join(timeout=5.0)
-        
+
         if self.ws:
             try:
                 self.ws.close()
@@ -184,193 +184,193 @@ class CDPSession(CDPClient):
             finally:
                 self.ws = None
                 self._connected = False
-    
+
     def send_command(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        发送CDP命令
-        
+        Send CDP command
+
         Args:
-            method: CDP方法名
-            params: 命令参数
-            
+            method: CDP method name
+            params: Command parameters
+
         Returns:
-            Dict[str, Any]: 命令结果
-            
+            Dict[str, Any]: Command result
+
         Raises:
-            CDPError: 命令执行失败
+            CDPError: Command execution failed
         """
         if not self.connected:
-            raise ConnectionError("Not connected to CDP")
-        
-        # 生成请求ID
+            raise ConnectionError("CDP not connected")
+
+        # Generate request ID
         with self._lock:
             request_id = self._request_id
             self._request_id += 1
-        
-        # 构建请求
+
+        # Build request
         request: CDPRequest = {
             "id": request_id,
             "method": method,
             "params": params or {}
         }
-        
-        # 发送请求
+
+        # Send request
         try:
             self.ws.send(json.dumps(request))
             self.logger.debug(f"Sent CDP command: {method} (id: {request_id})")
         except Exception as e:
             raise CDPError(f"Failed to send CDP command: {e}")
-        
-        # 等待响应
+
+        # Wait for response
         return self._wait_for_response(request_id)
     
     def _validate_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """
-        验证CDP响应
-        
+        Validate CDP response
+
         Args:
-            response: CDP响应
-            
+            response: CDP response
+
         Returns:
-            Dict[str, Any]: 验证后的响应
-            
+            Dict[str, Any]: Validated response
+
         Raises:
-            CDPError: 响应错误
+            CDPError: Response error
         """
         if "error" in response:
             error = response["error"]
             raise CDPError(f"CDP error: {error.get('message', 'Unknown error')} (code: {error.get('code')})")
-        
+
         return response
-    
+
     def _wait_for_response(self, request_id: int) -> Dict[str, Any]:
         """
-        等待指定请求ID的响应
-        
+        Wait for response with specified request ID
+
         Args:
-            request_id: 请求ID
-            
+            request_id: Request ID
+
         Returns:
-            Dict[str, Any]: 响应数据
-            
+            Dict[str, Any]: Response data
+
         Raises:
-            TimeoutError: 等待超时
-            CDPError: 响应错误
+            TimeoutError: Timeout waiting
+            CDPError: Response error
         """
         start_time = time.time()
         timeout = self.config.command_timeout
-        
-        # 注册等待的请求
+
+        # Register as pending request
         with self._lock:
             self._pending_requests[request_id] = {
                 "start_time": start_time,
                 "timeout": timeout
             }
-        
+
         try:
             while time.time() - start_time < timeout:
-                # 检查消息队列中是否有我们的响应
+                # Check if our response is in message queue
                 try:
-                    # 非阻塞获取消息
+                    # Non-blocking get
                     message = self._message_queue.get_nowait()
                     response = json.loads(message)
-                    
-                    # 如果是我们等待的响应
+
+                    # If this is the response we're waiting for
                     if response.get("id") == request_id:
                         return self._validate_response(response)
-                    
-                    # 如果是事件，调用事件处理器
+
+                    # If event, call event handler
                     elif "method" in response:
                         self._handle_event(response)
-                        
+
                 except queue.Empty:
-                    # 没有消息，短暂休眠后继续
+                    # Queue empty, sleep briefly and continue
                     time.sleep(0.01)
                     continue
                 except Exception as e:
                     self.logger.error(f"Error processing message: {e}")
                     continue
-            
+
             raise TimeoutError(f"Command timeout after {timeout} seconds")
-        
+
         finally:
-            # 清理等待的请求
+            # Clean up pending request
             with self._lock:
                 self._pending_requests.pop(request_id, None)
     
     def _start_message_listener(self) -> None:
-        """启动消息监听线程"""
+        """Start message listener thread"""
         self._listener_thread = threading.Thread(
             target=self._message_listener,
             daemon=True,
             name="CDPMessageListener"
         )
         self._listener_thread.start()
-    
+
     def _message_listener(self) -> None:
-        """消息监听线程主函数"""
+        """Message listener thread main loop"""
         while self._running and self.ws:
             try:
-                # 接收消息
+                # Receive message
                 message = self.ws.recv()
 
-                # 将消息放入队列
+                # Put into queue
                 self._message_queue.put(message)
 
             except websocket.WebSocketConnectionClosedException:
                 self.logger.warning("WebSocket connection closed")
                 break
             except websocket.WebSocketTimeoutException:
-                # 超时是正常的，用于定期检查_running状态，不记录为错误
+                # Timeout is normal, used for periodic _running check, not an error
                 continue
             except Exception as e:
-                self.logger.error(f"Error in message listener: {e}")
-                # 短暂休眠后继续
+                self.logger.error(f"Message listener error: {e}")
+                # Brief sleep before continuing
                 time.sleep(0.1)
-    
+
     def _handle_event(self, event: Dict[str, Any]) -> None:
         """
-        处理CDP事件
-        
+        Handle CDP event
+
         Args:
-            event: 事件数据
+            event: Event data
         """
         method = event.get("method")
         params = event.get("params", {})
-        
+
         if method in self._event_handlers:
             try:
                 self._event_handlers[method](params)
             except Exception as e:
                 self.logger.error(f"Error in event handler for {method}: {e}")
-    
+
     def on_event(self, event_name: str) -> Callable:
         """
-        事件处理器装饰器
-        
+        Event handler decorator
+
         Args:
-            event_name: 事件名称
-            
+            event_name: Event name
+
         Returns:
-            Callable: 装饰器函数
+            Callable: Decorator function
         """
         def decorator(handler: Callable) -> Callable:
             self._event_handlers[event_name] = handler
             return handler
         return decorator
-    
+
     def health_check(self) -> bool:
         """
-        执行连接健康检查
-        
+        Perform connection health check
+
         Returns:
-            bool: 连接是否健康
+            bool: Whether connection is healthy
         """
         if not self.connected:
             return False
-        
+
         try:
-            # 发送一个简单的ping命令来检查连接
+            # Send a simple ping command to check connection
             result = self.send_command("Runtime.evaluate", {
                 "expression": "1",
                 "returnByValue": True
@@ -380,53 +380,53 @@ class CDPSession(CDPClient):
             self.logger.warning(f"Health check failed: {e}")
             return False
 
-    # CLI便利方法
+    # CLI convenience methods
     def navigate(self, url: str) -> None:
-        """导航到指定URL"""
+        """Navigate to specified URL"""
         self.page.navigate(url)
 
     def click(self, selector: str, wait_timeout: int = 10) -> None:
-        """点击指定选择器的元素"""
-        # 先等待元素出现
+        """Click element matching selector"""
+        # Wait for element first
         self.page.wait_for_selector(selector, timeout=wait_timeout)
 
-        # 获取元素位置并点击
+        # Get element position and click
         result = self.dom.get_document()
-        # CDP返回格式: {"id": ..., "result": {"root": {...}}}
+        # CDP return format: {"id": ..., "result": {"root": {...}}}
         node_id = result.get("result", {}).get("root", {}).get("nodeId")
 
         if not node_id:
-            raise CDPError("无法获取文档节点")
+            raise CDPError("Unable to get document node")
 
         query_result = self.dom.query_selector(node_id, selector)
-        # CDP返回格式: {"id": ..., "result": {"nodeId": ...}}
+        # CDP return format: {"id": ..., "result": {"nodeId": ...}}
         element_node_id = query_result.get("result", {}).get("nodeId")
 
         if not element_node_id:
-            raise CDPError(f"未找到元素: {selector}")
+            raise CDPError(f"Element not found: {selector}")
 
         box_model = self.dom.get_box_model(element_node_id)
-        # CDP返回格式: {"id": ..., "result": {"model": {"content": [...]}}}
+        # CDP return format: {"id": ..., "result": {"model": {"content": [...]}}}
         content = box_model.get("result", {}).get("model", {}).get("content", [])
 
         if not content:
-            raise CDPError(f"无法获取元素位置: {selector}")
+            raise CDPError(f"Cannot get element position: {selector}")
 
-        # 计算元素中心点
+        # Calculate element center
         x = (content[0] + content[2]) / 2
         y = (content[1] + content[5]) / 2
 
         self.input.click(x, y)
 
     def take_screenshot(self, output_file: str, full_page: bool = False, quality: int = 80) -> None:
-        """截取页面截图并保存到文件（便利方法）"""
-        # 委托给screenshot commands
+        """Capture page screenshot and save to file (convenience method)"""
+        # Delegate to screenshot commands
         self.screenshot.capture(output_file, full_page=full_page, quality=quality)
 
     def evaluate(self, script: str, return_by_value: bool = True) -> Any:
-        """执行JavaScript代码"""
+        """Execute JavaScript"""
         response = self.runtime.evaluate(script, return_by_value=return_by_value)
-        # CDP返回格式: {'id': ..., 'result': {'result': {'value': ...}}}
+        # CDP return format: {'id': ..., 'result': {'result': {'value': ...}}}
         if return_by_value and response:
             result = response.get("result", {})
             if "result" in result:
@@ -434,27 +434,27 @@ class CDPSession(CDPClient):
         return response
 
     def get_title(self) -> str:
-        """获取页面标题"""
+        """Get page title"""
         result = self.evaluate("document.title")
         return result or ""
 
     def scroll(self, distance: int) -> None:
-        """滚动页面"""
+        """Scroll page"""
         self.evaluate(f"window.scrollBy(0, {distance})")
 
     def wait(self, seconds: float) -> None:
-        """等待指定秒数"""
+        """Wait for specified seconds"""
         import time
         time.sleep(seconds)
 
     def zoom(self, factor: float) -> None:
-        """设置页面缩放比例"""
+        """Set page zoom factor"""
         self.evaluate(f"document.body.style.zoom = '{factor}'")
 
     def clear_effects(self) -> None:
-        """清除所有视觉效果"""
+        """Clear all visual effects"""
         self.evaluate("""
-            // 清除元素上的样式
+            // Clear element styles
             document.querySelectorAll('[data-frago-highlight], [style*="pointer"], [style*="spotlight"]').forEach(el => {
                 el.style.removeProperty('background-color');
                 el.style.removeProperty('border');
@@ -465,19 +465,19 @@ class CDPSession(CDPClient):
                 el.style.removeProperty('position');
                 el.removeAttribute('data-frago-highlight');
             });
-            // 移除 frago 添加的 DOM 元素（annotate, underline, pointer 等）
+            // Remove frago-added DOM elements (annotate, underline, pointer, etc.)
             document.querySelectorAll('.frago-underline, .frago-annotation, #frago-pointer, #frago-underline-style').forEach(el => el.remove());
         """)
 
     def highlight(self, selector: str, color: str = "magenta", border_width: int = 3, lifetime: int = 5000) -> None:
         """
-        高亮显示指定元素
+        Highlight specified element
 
         Args:
-            selector: CSS选择器
-            color: 高亮颜色，默认magenta
-            border_width: 边框宽度（像素），默认3
-            lifetime: 效果持续时间（毫秒），0表示永久
+            selector: CSS selector
+            color: Highlight color, default magenta
+            border_width: Border width (pixels), default 3
+            lifetime: Effect duration (milliseconds), 0 means permanent
         """
         self.evaluate(f"""
             (function() {{
@@ -498,7 +498,7 @@ class CDPSession(CDPClient):
         """, return_by_value=True)
 
     def pointer(self, selector: str, lifetime: int = 5000) -> None:
-        """在元素上显示鼠标指针"""
+        """Display mouse pointer on element"""
         self.evaluate(f"""
             document.querySelectorAll('{selector}').forEach(el => {{
                 el.style.cursor = 'pointer';
@@ -515,13 +515,13 @@ class CDPSession(CDPClient):
         """)
 
     def spotlight(self, selector: str, lifetime: int = 5000) -> None:
-        """聚光灯效果显示元素，使用CSS animation实现自动消失"""
+        """Spotlight effect to highlight element, auto-fades using CSS animation"""
         lifetime_sec = lifetime / 1000
-        # 计算保持时间比例：保持90%时间，最后10%渐变消失
+        # Hold time ratio: hold 90%, fade out in last 10%
         hold_percent = 90
         self.evaluate(f"""
             (function() {{
-                // 注入 keyframes 动画
+                // Inject keyframes animation
                 if (!document.getElementById('frago-spotlight-style')) {{
                     const style = document.createElement('style');
                     style.id = 'frago-spotlight-style';
@@ -557,7 +557,7 @@ class CDPSession(CDPClient):
         """)
 
     def annotate(self, selector: str, text: str, position: str = "top", lifetime: int = 5000) -> None:
-        """在元素上添加标注"""
+        """Add annotation on element"""
         self.evaluate(f"""
             document.querySelectorAll('{selector}').forEach(el => {{
                 const annotation = document.createElement('div');
@@ -601,24 +601,24 @@ class CDPSession(CDPClient):
 
     def underline(self, selector: str, color: str = "magenta", width: int = 3, duration: int = 1000) -> None:
         """
-        在元素内的文本底部逐行画线动画
+        Draw animated underlines under element text, line by line
 
         Args:
-            selector: CSS选择器
-            color: 线条颜色，默认magenta
-            width: 线条宽度（像素），默认3
-            duration: 总动画时长（毫秒），默认1000
+            selector: CSS selector
+            color: Line color, default magenta
+            width: Line width (pixels), default 3
+            duration: Total animation duration (milliseconds), default 1000
         """
         self.evaluate(f"""
             (function() {{
                 const elements = document.querySelectorAll('{selector}');
                 elements.forEach(el => {{
-                    // 使用 Range 获取所有行的位置
+                    // Use Range to get line positions
                     const range = document.createRange();
                     range.selectNodeContents(el);
                     const allRects = Array.from(range.getClientRects());
 
-                    // 合并同一行的矩形（基于 top 值）
+                    // Merge rectangles on same line (by top value)
                     const lineMap = new Map();
                     allRects.forEach(rect => {{
                         if (rect.width <= 0 || rect.height <= 0) return;
@@ -638,17 +638,17 @@ class CDPSession(CDPClient):
                         }}
                     }});
 
-                    // 转换为数组并排序
+                    // Convert to sorted array
                     const lines = Array.from(lineMap.values())
                         .map(l => ({{ left: l.left, top: l.bottom, width: l.right - l.left }}))
                         .sort((a, b) => a.top - b.top);
 
                     if (lines.length === 0) return;
 
-                    // 计算每行动画时长
+                    // Calculate per-line animation duration
                     const perLineDuration = {duration} / lines.length;
 
-                    // 为每行创建下划线（直接显示完整宽度）
+                    // Create underline for each line (show full width immediately)
                     lines.forEach((line, index) => {{
                         const underline = document.createElement('div');
                         underline.className = 'frago-underline';
@@ -667,14 +667,14 @@ class CDPSession(CDPClient):
         """)
 
     def wait_for_selector(self, selector: str, timeout: Optional[float] = None) -> None:
-        """等待选择器匹配的元素出现"""
+        """Wait for element matching selector"""
         self.page.wait_for_selector(selector, timeout=timeout)
 
     def wait_for_load(self, timeout: float = 30) -> bool:
-        """等待页面加载完成"""
+        """Wait for page to finish loading"""
         return self.page.wait_for_load(timeout=timeout)
 
-    # 延迟加载命令类的属性访问器
+    # Lazy-loaded property accessors for command classes
     @property
     def page(self):
         if self._page is None:

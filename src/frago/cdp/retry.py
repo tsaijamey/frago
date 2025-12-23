@@ -1,7 +1,7 @@
 """
-CDP重试机制
+CDP retry mechanism
 
-实现指数退避重试策略，用于处理CDP连接和命令执行失败。
+Implements exponential backoff retry strategy for handling CDP connection and command execution failures.
 """
 
 import time
@@ -13,7 +13,7 @@ from .exceptions import RetryExhaustedError, ProxyConnectionError, ConnectionErr
 
 
 class RetryPolicy:
-    """重试策略类"""
+    """Retry policy class"""
 
     def __init__(
         self,
@@ -25,15 +25,15 @@ class RetryPolicy:
         retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None
     ):
         """
-        初始化重试策略
+        Initialize retry policy
 
         Args:
-            max_retries: 最大重试次数
-            base_delay: 基础延迟时间（秒）
-            max_delay: 最大延迟时间（秒）
-            exponential_base: 指数退避基数
-            jitter: 是否添加随机抖动
-            retryable_exceptions: 可重试的异常类型元组，None表示所有异常都可重试
+            max_retries: Maximum retry attempts
+            base_delay: Base delay time (seconds)
+            max_delay: Maximum delay time (seconds)
+            exponential_base: Exponential backoff base
+            jitter: Whether to add random jitter
+            retryable_exceptions: Tuple of retryable exception types, None means all exceptions are retryable
         """
         self.max_retries = max_retries
         self.base_delay = base_delay
@@ -45,19 +45,19 @@ class RetryPolicy:
     
     def execute(self, func: Callable, *args, **kwargs) -> Any:
         """
-        执行带重试的函数
+        Execute function with retry
 
         Args:
-            func: 要执行的函数
-            *args: 函数参数
-            **kwargs: 函数关键字参数
+            func: Function to execute
+            *args: Function arguments
+            **kwargs: Function keyword arguments
 
         Returns:
-            Any: 函数执行结果
+            Any: Function execution result
 
         Raises:
-            RetryExhaustedError: 重试耗尽
-            Exception: 最后一次重试的异常（不可重试的异常会立即抛出）
+            RetryExhaustedError: Retry exhausted
+            Exception: Last retry exception (non-retryable exceptions will be raised immediately)
         """
         last_exception = None
 
@@ -71,97 +71,97 @@ class RetryPolicy:
             except Exception as e:
                 last_exception = e
 
-                # 检查异常是否可重试
+                # Check if exception is retryable
                 if self.retryable_exceptions is not None:
                     if not isinstance(e, self.retryable_exceptions):
                         self.logger.error(f"Non-retryable exception: {type(e).__name__}: {e}")
                         raise
 
-                # 如果是最后一次尝试，不再重试
+                # If this is the last attempt, don't retry
                 if attempt == self.max_retries:
                     break
 
-                # 针对代理连接错误提供特殊提示
+                # Provide special hint for proxy connection errors
                 if isinstance(e, ProxyConnectionError):
                     self.logger.warning(
                         f"Proxy connection failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
                         f"Consider checking proxy configuration or using --no-proxy flag."
                     )
 
-                # 计算延迟时间
+                # Calculate delay time
                 delay = self._calculate_delay(attempt)
                 self.logger.warning(
                     f"Operation failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
                     f"Retrying in {delay:.2f}s..."
                 )
 
-                # 等待延迟时间
+                # Wait for delay time
                 time.sleep(delay)
 
-        # 所有重试都失败
+        # All retries failed
         raise RetryExhaustedError(
             f"Operation failed after {self.max_retries + 1} attempts. "
             f"Last exception: {last_exception}"
         ) from last_exception
-    
+
     def _calculate_delay(self, attempt: int) -> float:
         """
-        计算重试延迟时间
-        
+        Calculate retry delay time
+
         Args:
-            attempt: 当前重试次数
-            
+            attempt: Current retry count
+
         Returns:
-            float: 延迟时间（秒）
+            float: Delay time (seconds)
         """
-        # 指数退避
+        # Exponential backoff
         delay = self.base_delay * (self.exponential_base ** attempt)
-        
-        # 限制最大延迟
+
+        # Limit maximum delay
         delay = min(delay, self.max_delay)
-        
-        # 添加随机抖动
+
+        # Add random jitter
         if self.jitter:
             delay = random.uniform(0, delay)
-        
+
         return delay
 
 
 class RetryableOperation:
-    """可重试操作类"""
-    
+    """Retryable operation class"""
+
     def __init__(self, policy: Optional[RetryPolicy] = None):
         """
-        初始化可重试操作
-        
+        Initialize retryable operation
+
         Args:
-            policy: 重试策略，如果为None则使用默认策略
+            policy: Retry policy, uses default policy if None
         """
         self.policy = policy or RetryPolicy()
-    
+
     def __call__(self, func: Callable) -> Callable:
         """
-        装饰器实现
-        
+        Decorator implementation
+
         Args:
-            func: 要装饰的函数
-            
+            func: Function to decorate
+
         Returns:
-            Callable: 装饰后的函数
+            Callable: Decorated function
         """
         def wrapper(*args, **kwargs):
             return self.policy.execute(func, *args, **kwargs)
-        
+
         return wrapper
 
 
-# 常用重试策略实例
+# Common retry policy instances
 default_retry_policy = RetryPolicy()
 aggressive_retry_policy = RetryPolicy(max_retries=5, base_delay=0.5)
 conservative_retry_policy = RetryPolicy(max_retries=2, base_delay=2.0)
 
-# 代理连接专用重试策略
-# 针对代理连接失败，使用更激进的重试策略（更多重试次数，更短的延迟）
+# Proxy connection specific retry policy
+# For proxy connection failures, use more aggressive retry strategy (more retries, shorter delays)
 proxy_connection_retry_policy = RetryPolicy(
     max_retries=5,
     base_delay=0.5,
@@ -171,7 +171,7 @@ proxy_connection_retry_policy = RetryPolicy(
     retryable_exceptions=(ProxyConnectionError, ConnectionError)
 )
 
-# 连接重试策略（用于一般连接问题）
+# Connection retry policy (for general connection issues)
 connection_retry_policy = RetryPolicy(
     max_retries=3,
     base_delay=1.0,
@@ -180,7 +180,7 @@ connection_retry_policy = RetryPolicy(
 )
 
 
-# 便捷装饰器
+# Convenience decorator
 def retryable(
     max_retries: int = 3,
     base_delay: float = 1.0,
@@ -190,18 +190,18 @@ def retryable(
     retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None
 ) -> Callable:
     """
-    重试装饰器
+    Retry decorator
 
     Args:
-        max_retries: 最大重试次数
-        base_delay: 基础延迟时间（秒）
-        max_delay: 最大延迟时间（秒）
-        exponential_base: 指数退避基数
-        jitter: 是否添加随机抖动
-        retryable_exceptions: 可重试的异常类型元组，None表示所有异常都可重试
+        max_retries: Maximum retry attempts
+        base_delay: Base delay time (seconds)
+        max_delay: Maximum delay time (seconds)
+        exponential_base: Exponential backoff base
+        jitter: Whether to add random jitter
+        retryable_exceptions: Tuple of retryable exception types, None means all exceptions are retryable
 
     Returns:
-        Callable: 装饰器函数
+        Callable: Decorator function
     """
     policy = RetryPolicy(
         max_retries=max_retries,

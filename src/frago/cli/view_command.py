@@ -7,7 +7,7 @@ from typing import Optional
 import click
 
 
-@click.command("view", short_help="内容查看器：Markdown / PDF / 代码高亮")
+@click.command("view", short_help="Content viewer: Markdown / PDF / Code highlighting")
 @click.argument("file", type=click.Path(exists=True), required=False)
 @click.option(
     "--theme", "-t",

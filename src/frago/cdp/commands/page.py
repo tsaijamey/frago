@@ -1,7 +1,7 @@
 """
-页面相关CDP命令
+Page-related CDP commands
 
-封装Page域的CDP命令。
+Encapsulates CDP commands for the Page domain.
 """
 
 from typing import Dict, Any, Optional
@@ -11,27 +11,27 @@ from ..logger import get_logger
 
 
 class PageCommands:
-    """页面命令类"""
-    
+    """Page commands class"""
+
     def __init__(self, session: CDPSession):
         """
-        初始化页面命令
-        
+        Initialize page commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def navigate(self, url: str) -> Dict[str, Any]:
         """
-        导航到指定URL
-        
+        Navigate to specified URL
+
         Args:
-            url: 目标URL
-            
+            url: Target URL
+
         Returns:
-            Dict[str, Any]: 导航结果
+            Dict[str, Any]: Navigation result
         """
         self.logger.info(f"Navigating to: {url}")
         
@@ -45,14 +45,14 @@ class PageCommands:
     
     def screenshot(self, format: str = "png", quality: Optional[int] = None) -> Dict[str, Any]:
         """
-        截取页面截图
-        
+        Capture page screenshot
+
         Args:
-            format: 图片格式（"png" 或 "jpeg"）
-            quality: JPEG质量（0-100），仅对JPEG格式有效
-            
+            format: Image format ("png" or "jpeg")
+            quality: JPEG quality (0-100), only valid for JPEG format
+
         Returns:
-            Dict[str, Any]: 截图结果，包含base64编码的图片数据
+            Dict[str, Any]: Screenshot result, contains base64-encoded image data
         """
         self.logger.info(f"Taking screenshot with format: {format}")
         
@@ -69,25 +69,25 @@ class PageCommands:
         return result
     
     def wait_for_selector(
-        self, 
-        selector: str, 
+        self,
+        selector: str,
         timeout: Optional[float] = None,
         visible: bool = True
     ) -> Dict[str, Any]:
         """
-        等待选择器匹配的元素出现
-        
+        Wait for element matching selector to appear
+
         Args:
-            selector: CSS选择器
-            timeout: 超时时间（秒）
-            visible: 是否要求元素可见
-            
+            selector: CSS selector
+            timeout: Timeout (seconds)
+            visible: Whether element must be visible
+
         Returns:
-            Dict[str, Any]: 等待结果
+            Dict[str, Any]: Wait result
         """
         self.logger.info(f"Waiting for selector: {selector}")
-        
-        # 使用Runtime.evaluate来等待元素
+
+        # Use Runtime.evaluate to wait for element
         script = f"""
         (function() {{
             return new Promise((resolve, reject) => {{
@@ -109,8 +109,8 @@ class PageCommands:
                     childList: true,
                     subtree: true
                 }});
-                
-                // 设置超时
+
+                // Set timeout
                 setTimeout(() => {{
                     observer.disconnect();
                     reject(new Error('Timeout waiting for selector'));
@@ -133,10 +133,10 @@ class PageCommands:
     
     def get_title(self) -> str:
         """
-        获取当前页面标题
-        
+        Get current page title
+
         Returns:
-            str: 页面标题
+            str: Page title
         """
         self.logger.info("Getting page title")
         
@@ -155,13 +155,13 @@ class PageCommands:
     
     def get_content(self, selector: Optional[str] = None) -> str:
         """
-        获取页面或指定元素的文本内容
+        Get text content of page or specified element
 
         Args:
-            selector: CSS选择器，如果为None则获取整个页面内容
+            selector: CSS selector, if None gets entire page content
 
         Returns:
-            str: 文本内容
+            str: Text content
         """
         if selector:
             self.logger.info(f"Getting content of element: {selector}")
@@ -184,16 +184,16 @@ class PageCommands:
 
     def wait_for_load(self, timeout: float = 30) -> bool:
         """
-        等待页面加载完成
+        Wait for page load to complete
 
-        使用 document.readyState 检测页面加载状态，
-        等待变为 'complete' 表示页面及所有资源加载完成。
+        Uses document.readyState to detect page load status,
+        waits for 'complete' indicating page and all resources loaded.
 
         Args:
-            timeout: 超时时间（秒）
+            timeout: Timeout (seconds)
 
         Returns:
-            bool: 是否加载完成
+            bool: Whether load completed
         """
         self.logger.info("Waiting for page load complete")
 
@@ -212,10 +212,10 @@ class PageCommands:
 
                 window.addEventListener('load', onLoad);
 
-                // 超时处理
+                // Timeout handling
                 setTimeout(() => {{
                     window.removeEventListener('load', onLoad);
-                    // 超时时也返回当前状态，不算失败
+                    // Return current state even on timeout, not considered failure
                     resolve(document.readyState === 'complete');
                 }}, {int(timeout * 1000)});
             }});

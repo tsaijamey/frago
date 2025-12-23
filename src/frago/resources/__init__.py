@@ -1,7 +1,7 @@
 """
-frago 资源包
+frago resources package
 
-存放随 frago 分发的资源文件：
-- commands/: Claude Code slash 命令
-- recipes/: 示例 recipe
+Contains resource files distributed with frago:
+- commands/: Claude Code slash commands
+- recipes/: Example recipes
 """

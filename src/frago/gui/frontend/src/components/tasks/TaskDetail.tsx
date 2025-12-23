@@ -5,9 +5,9 @@ import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { Send, MessageSquarePlus, ChevronDown, ChevronRight } from 'lucide-react';
 
-// 格式化时间
+// Format date time
 function formatDateTime(isoString: string): string {
-  return new Date(isoString).toLocaleString('zh-CN', {
+  return new Date(isoString).toLocaleString('en-US', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -17,7 +17,7 @@ function formatDateTime(isoString: string): string {
   });
 }
 
-// 格式化持续时间
+// Format duration
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
@@ -29,19 +29,19 @@ function formatDuration(ms: number): string {
 export default function TaskDetail() {
   const { taskDetail, isLoading, switchPage, setTaskDetail, showToast } = useAppStore();
 
-  // Continue 功能状态
+  // Continue feature state
   const [showContinue, setShowContinue] = useState(false);
   const [continuePrompt, setContinuePrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 折叠状态
+  // Collapse state
   const [infoCollapsed, setInfoCollapsed] = useState(false);
 
-  // 是否可以继续对话（仅 completed 和 error 状态）
+  // Whether can continue conversation (only completed and error status)
   const canContinue = taskDetail?.status === 'completed' || taskDetail?.status === 'error';
 
-  // 自动刷新详情（running 状态 3 秒，其他状态 10 秒）
+  // Auto refresh detail (running status 3 seconds, other status 10 seconds)
   useEffect(() => {
     if (!taskDetail) return;
 
@@ -60,14 +60,14 @@ export default function TaskDetail() {
     return () => clearInterval(interval);
   }, [taskDetail?.session_id, taskDetail?.status, setTaskDetail]);
 
-  // 展开输入框时自动聚焦
+  // Auto focus when input expands
   useEffect(() => {
     if (showContinue && textareaRef.current) {
       textareaRef.current.focus();
     }
   }, [showContinue]);
 
-  // 继续对话提交
+  // Continue conversation submit
   const handleContinueSubmit = async () => {
     const trimmed = continuePrompt.trim();
     if (!trimmed || isSubmitting || !taskDetail) return;
@@ -78,16 +78,16 @@ export default function TaskDetail() {
       if (result.status === 'ok') {
         setContinuePrompt('');
         setShowContinue(false);
-        showToast('已发送继续对话请求', 'success');
-        // 刷新详情以获取新状态
+        showToast('Continue conversation request sent', 'success');
+        // Refresh detail to get new status
         const updated = await getTaskDetail(taskDetail.session_id);
         setTaskDetail(updated);
       } else {
-        showToast(result.error || '发送失败', 'error');
+        showToast(result.error || 'Send failed', 'error');
       }
     } catch (error) {
       console.error('Failed to continue task:', error);
-      showToast('发送失败', 'error');
+      showToast('Send failed', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -111,7 +111,7 @@ export default function TaskDetail() {
   if (!taskDetail) {
     return (
       <div className="text-[var(--text-muted)] text-center py-scaled-8">
-        任务不存在或已被删除
+        Task does not exist or has been deleted
       </div>
     );
   }
@@ -119,26 +119,26 @@ export default function TaskDetail() {
   if (taskDetail.error) {
     return (
       <div className="text-[var(--accent-error)] text-center py-scaled-8">
-        加载失败: {taskDetail.error}
+        Failed to load: {taskDetail.error}
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full overflow-hidden gap-4 p-scaled-4">
-      {/* 固定头部区域 */}
+      {/* Fixed header area */}
       <div className="shrink-0 flex flex-col gap-4">
-        {/* 返回按钮 */}
+        {/* Back button */}
         <button
           className="btn btn-ghost self-start"
           onClick={() => switchPage('tasks')}
         >
-          ← 返回任务列表
+          ← Back to Task List
         </button>
 
-        {/* 任务信息卡片 - 可折叠 */}
+        {/* Task info card - collapsible */}
         <div className="card">
-          {/* 标题行 - 点击折叠 */}
+          {/* Title row - click to collapse */}
           <div
             className="flex justify-between items-center cursor-pointer select-none"
             onClick={() => setInfoCollapsed(!infoCollapsed)}
@@ -152,14 +152,14 @@ export default function TaskDetail() {
               <h2 className="text-scaled-lg font-medium text-[var(--text-primary)] truncate">
                 {taskDetail.name}
               </h2>
-              {/* 折叠时显示状态摘要 */}
+              {/* Show status summary when collapsed */}
               {infoCollapsed && (
                 <span className={`status-${taskDetail.status} text-scaled-sm ml-scaled-2 shrink-0`}>
                   {taskDetail.status}
                 </span>
               )}
             </div>
-            {/* Continue 按钮 - 放在标题右侧 */}
+            {/* Continue button - placed on the right of title */}
             {canContinue && !showContinue && (
               <button
                 className="btn btn-primary flex items-center gap-scaled-2 ml-scaled-4 shrink-0"
@@ -169,57 +169,57 @@ export default function TaskDetail() {
                 }}
               >
                 <MessageSquarePlus className="icon-scaled-md" />
-                继续对话
+                Continue Conversation
               </button>
             )}
-            {/* Running 状态提示 */}
+            {/* Running status hint */}
             {taskDetail.status === 'running' && (
               <div className="flex items-center gap-scaled-2 text-scaled-sm text-[var(--accent-warning)] ml-scaled-4 shrink-0">
                 <LoadingSpinner size="sm" />
-                运行中
+                Running
               </div>
             )}
           </div>
 
-          {/* 详情 - 可折叠 */}
+          {/* Details - collapsible */}
           {!infoCollapsed && (
             <div className="space-y-2 text-scaled-sm mt-scaled-4">
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">状态</span>
+                <span className="text-[var(--text-muted)]">Status</span>
                 <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">开始时间</span>
+                <span className="text-[var(--text-muted)]">Start Time</span>
                 <span>{formatDateTime(taskDetail.started_at)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">持续时间</span>
+                <span className="text-[var(--text-muted)]">Duration</span>
                 <span>{formatDuration(taskDetail.duration_ms)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">步骤数</span>
+                <span className="text-[var(--text-muted)]">Step Count</span>
                 <span>{taskDetail.step_count}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">工具调用</span>
+                <span className="text-[var(--text-muted)]">Tool Calls</span>
                 <span>{taskDetail.tool_call_count}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)] shrink-0">项目路径</span>
+                <span className="text-[var(--text-muted)] shrink-0">Project Path</span>
                 <span className="font-mono text-scaled-xs text-right break-all ml-scaled-4">{taskDetail.project_path}</span>
               </div>
             </div>
           )}
         </div>
 
-        {/* Continue 输入区域 */}
+        {/* Continue input area */}
         {showContinue && (
           <div className="card">
             <div className="task-input-wrapper">
               <textarea
                 ref={textareaRef}
                 className="task-input"
-                placeholder="输入要继续的对话内容..."
+                placeholder="Enter content to continue the conversation..."
                 value={continuePrompt}
                 onChange={(e) => setContinuePrompt(e.target.value)}
                 onKeyDown={handleContinueKeyDown}
@@ -237,27 +237,27 @@ export default function TaskDetail() {
               </button>
             </div>
             <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
-              Ctrl+Enter 发送 ·
+              Ctrl+Enter to send ·
               <button
                 className="text-[var(--accent-primary)] hover:underline ml-scaled-1"
                 onClick={() => setShowContinue(false)}
               >
-                取消
+                Cancel
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* 步骤列表区域 - 占据剩余空间，内部滚动 */}
+      {/* Step list area - takes remaining space, scrolls internally */}
       <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between mb-scaled-3 shrink-0">
           <h3 className="font-medium text-[var(--accent-primary)]">
-            执行步骤
+            Execution Steps
           </h3>
         </div>
 
-        {/* StepList 占据剩余空间 */}
+        {/* StepList takes remaining space */}
         <div className="flex-1 min-h-0">
           <StepList steps={[...taskDetail.steps].reverse()} />
         </div>

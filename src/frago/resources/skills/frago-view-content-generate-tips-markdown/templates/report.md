@@ -1,97 +1,97 @@
-# 报告标题
+# Report Title
 
-**日期**：YYYY-MM-DD
-**作者**：作者名称
-
----
-
-## 摘要
-
-关键发现的 3-5 点总结：
-
-- 核心发现 1
-- 核心发现 2
-- 核心发现 3
+**Date**: YYYY-MM-DD
+**Author**: Author Name
 
 ---
 
-## 数据概览
+## Summary
+
+3-5 key findings summary:
+
+- Key Finding 1
+- Key Finding 2
+- Key Finding 3
+
+---
+
+## Data Overview
 
 ```mermaid
 xychart-beta
-    title "关键指标趋势"
+    title "Key Metrics Trend"
     x-axis ["Q1", "Q2", "Q3", "Q4"]
-    y-axis "数值" 0 --> 100
+    y-axis "Value" 0 --> 100
     bar [25, 45, 65, 85]
     line [20, 40, 60, 80]
 ```
 
-| 指标 | 当前值 | 上期值 | 变化 |
-|------|--------|--------|------|
-| 指标 A | 100 | 80 | +25% |
-| 指标 B | 50 | 60 | -17% |
-| 指标 C | 75 | 75 | 0% |
+| Metric | Current | Previous | Change |
+|--------|---------|----------|--------|
+| Metric A | 100 | 80 | +25% |
+| Metric B | 50 | 60 | -17% |
+| Metric C | 75 | 75 | 0% |
 
 ---
 
-## 详细分析
+## Detailed Analysis
 
-### 维度 1：标题
+### Dimension 1: Title
 
-分析内容...
+Analysis content...
 
 ```mermaid
-pie title 分布情况
-    "类别 A" : 40
-    "类别 B" : 30
-    "类别 C" : 20
-    "其他" : 10
+pie title Distribution
+    "Category A" : 40
+    "Category B" : 30
+    "Category C" : 20
+    "Other" : 10
 ```
 
-关键洞察：
+Key Insights:
 
-- 洞察点 1
-- 洞察点 2
+- Insight 1
+- Insight 2
 
-### 维度 2：标题
+### Dimension 2: Title
 
-分析内容...
+Analysis content...
 
-| 子项 | 数据 1 | 数据 2 | 备注 |
-|------|--------|--------|------|
-| 子项 A | 10 | 20 | 说明 |
-| 子项 B | 15 | 25 | 说明 |
-| 子项 C | 20 | 30 | 说明 |
+| Item | Data 1 | Data 2 | Notes |
+|------|--------|--------|-------|
+| Item A | 10 | 20 | Description |
+| Item B | 15 | 25 | Description |
+| Item C | 20 | 30 | Description |
 
-### 维度 3：标题
+### Dimension 3: Title
 
-分析内容...
-
----
-
-## 结论与建议
-
-### 结论
-
-1. 结论 1：基于数据的核心判断
-2. 结论 2：基于数据的核心判断
-3. 结论 3：基于数据的核心判断
-
-### 建议
-
-1. **建议 1**：具体行动建议，预期效果
-2. **建议 2**：具体行动建议，预期效果
-3. **建议 3**：具体行动建议，预期效果
+Analysis content...
 
 ---
 
-## 附录
+## Conclusions and Recommendations
 
-### 数据来源
+### Conclusions
 
-- 数据源 1：说明
-- 数据源 2：说明
+1. Conclusion 1: Core judgment based on data
+2. Conclusion 2: Core judgment based on data
+3. Conclusion 3: Core judgment based on data
 
-### 方法论
+### Recommendations
 
-分析方法和假设说明。
+1. **Recommendation 1**: Specific action recommendation, expected outcome
+2. **Recommendation 2**: Specific action recommendation, expected outcome
+3. **Recommendation 3**: Specific action recommendation, expected outcome
+
+---
+
+## Appendix
+
+### Data Sources
+
+- Data Source 1: Description
+- Data Source 2: Description
+
+### Methodology
+
+Analysis methodology and assumptions.

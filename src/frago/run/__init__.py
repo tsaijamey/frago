@@ -1,4 +1,4 @@
-"""Run命令系统核心模块"""
+"""Run Command System Core Module"""
 
 from .models import RunInstance, LogEntry, Screenshot, CurrentRunContext
 

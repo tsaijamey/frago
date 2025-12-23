@@ -5,10 +5,10 @@ export default function StatusBar() {
   const { systemStatus, loadSystemStatus, config } = useAppStore();
 
   useEffect(() => {
-    // 初始加载
+    // Initial load
     loadSystemStatus();
 
-    // 定期更新
+    // Periodic update
     const interval = setInterval(() => {
       loadSystemStatus();
     }, 5000);
@@ -22,7 +22,7 @@ export default function StatusBar() {
         {config?.show_system_status && systemStatus && (
           <>
             <span>CPU: {systemStatus.cpu_percent.toFixed(1)}%</span>
-            <span>内存: {systemStatus.memory_percent.toFixed(1)}%</span>
+            <span>Memory: {systemStatus.memory_percent.toFixed(1)}%</span>
           </>
         )}
         <span
@@ -32,7 +32,7 @@ export default function StatusBar() {
               : 'text-[var(--text-muted)]'
           }
         >
-          Chrome: {systemStatus?.chrome_connected ? '已连接' : '未连接'}
+          Chrome: {systemStatus?.chrome_connected ? 'Connected' : 'Disconnected'}
         </span>
       </div>
     </div>

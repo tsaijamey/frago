@@ -9,12 +9,12 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# 延迟导入 webview，在 start_gui() 中依赖检查通过后再导入
+# Lazy import webview, import after dependency check in start_gui()
 webview = None
 
 
 def _lazy_import_webview():
-    """延迟导入 webview，避免在依赖检查前触发后端加载."""
+    """Lazy import webview to avoid triggering backend loading before dependency check."""
     global webview
     if webview is None:
         import webview as _webview
@@ -27,7 +27,7 @@ def _get_install_instructions() -> str:
     system = platform.system()
 
     if system == "Linux":
-        # 检测发行版
+        # Detect distribution
         try:
             with open("/etc/os-release") as f:
                 os_info = f.read().lower()
@@ -36,12 +36,12 @@ def _get_install_instructions() -> str:
 
         if "ubuntu" in os_info or "debian" in os_info:
             return """
-请运行以下命令安装 GUI 依赖：
+Run the following commands to install GUI dependencies:
 
     sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
     pip install pywebview
 
-或者一键安装（需要编译）：
+Or install with compilation:
 
     sudo apt install -y libcairo2-dev libgirepository1.0-dev \\
         libgirepository-2.0-dev gir1.2-webkit2-4.1 python3-dev
@@ -49,47 +49,47 @@ def _get_install_instructions() -> str:
 """
         elif "fedora" in os_info or "rhel" in os_info or "centos" in os_info:
             return """
-请运行以下命令安装 GUI 依赖：
+Run the following commands to install GUI dependencies:
 
     sudo dnf install -y python3-gobject python3-gobject-base webkit2gtk4.1
     pip install pywebview
 """
         elif "arch" in os_info:
             return """
-请运行以下命令安装 GUI 依赖：
+Run the following commands to install GUI dependencies:
 
     sudo pacman -S python-gobject webkit2gtk-4.1
     pip install pywebview
 """
         else:
             return """
-请安装以下依赖：
+Please install the following dependencies:
     - PyGObject (python3-gi)
     - WebKit2GTK (gir1.2-webkit2-4.1)
     - pywebview
 
-然后运行: pip install pywebview
+Then run: pip install pywebview
 """
     elif system == "Darwin":
         return """
-请运行以下命令安装 GUI 依赖：
+Run the following command to install GUI dependencies:
 
     pip install pywebview
 """
     elif system == "Windows":
         return """
-请运行以下命令安装 GUI 依赖：
+Run the following command to install GUI dependencies:
 
     pip install pywebview
 
-推荐安装 Edge WebView2 Runtime 以获得更好的性能：
-    下载地址: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+Recommended to install Edge WebView2 Runtime for better performance:
+    Download: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
 
-或使用 winget:
+Or use winget:
     winget install Microsoft.EdgeWebView2Runtime
 """
     else:
-        return "请安装 pywebview: pip install pywebview"
+        return "Please install pywebview: pip install pywebview"
 
 from frago.gui.exceptions import GuiNotAvailableError
 from frago.gui.models import WindowConfig
@@ -120,7 +120,7 @@ class FragoGuiApp:
         self.window: Optional["webview.Window"] = None
         self._api: Optional["FragoGuiApi"] = None
         self._http_server: Optional["HTTPServer"] = None
-        self._font_scale: float = 1.0  # 字体缩放比例，在 create_window 时计算
+        self._font_scale: float = 1.0  # Font scale factor, calculated in create_window
 
     def _calculate_window_size(self) -> tuple[int, int, float]:
         """Calculate window size and font scale based on screen dimensions.
@@ -130,44 +130,44 @@ class FragoGuiApp:
             - width, height: calculated as 80% of screen height with aspect ratio
             - font_scale: scaling factor for font size (1.0 = 14px base)
         """
-        # 原始宽高比
+        # Original aspect ratio
         original_width = 600
         original_height = 1434
         aspect_ratio = original_width / original_height
 
-        # 参考高度：800px 对应字体缩放 1.0
+        # Reference height: 800px corresponds to font scale 1.0
         reference_height = 800
 
         try:
             screens = webview.screens
             if screens:
-                # 获取主屏幕（第一个屏幕）
+                # Get primary screen (first screen)
                 primary_screen = screens[0]
                 screen_height = primary_screen.height
                 screen_width = primary_screen.width
 
-                # 计算目标高度为屏幕高度的 80%
+                # Calculate target height as 80% of screen height
                 target_height = int(screen_height * 0.8)
                 target_width = int(target_height * aspect_ratio)
 
-                # 确保宽度不超过屏幕宽度的 90%
+                # Ensure width does not exceed 90% of screen width
                 max_width = int(screen_width * 0.9)
                 if target_width > max_width:
                     target_width = max_width
                     target_height = int(target_width / aspect_ratio)
 
-                # 确保不小于最小尺寸
+                # Ensure not smaller than minimum size
                 target_width = max(target_width, self.config.min_width)
                 target_height = max(target_height, self.config.min_height)
 
-                # 计算字体缩放比例（基于窗口高度）
+                # Calculate font scale (based on window height)
                 font_scale = target_height / reference_height
-                # 限制范围：0.75 ~ 1.5
+                # Limit range: 0.75 ~ 1.5
                 font_scale = max(0.75, min(1.5, font_scale))
 
                 return target_width, target_height, font_scale
         except Exception:
-            # 如果获取屏幕信息失败，使用默认值
+            # If screen info cannot be obtained, use default values
             pass
 
         return original_width, original_height, 1.0
@@ -244,20 +244,20 @@ class FragoGuiApp:
             URL string for the GUI.
         """
         if self._is_dev_mode():
-            # 开发模式：检查 Vite 服务器是否运行
+            # Development mode: check if Vite server is running
             if not self._check_dev_server():
                 import logging
 
                 logger = logging.getLogger(__name__)
                 logger.warning(
-                    "Vite 开发服务器未运行。请先运行: cd src/frago/gui/frontend && npm run dev"
+                    "Vite dev server is not running. Please run: cd src/frago/gui/frontend && npm run dev"
                 )
-                # 返回错误页面
+                # Return error page
                 return self._get_dev_server_error_html()
             return "http://localhost:5173"
 
-        # 生产模式：使用内置 HTTP 服务器提供静态文件
-        # WebKit2GTK 无法在 file:// 协议下加载外部 JS 文件
+        # Production mode: serve static files using built-in HTTP server
+        # WebKit2GTK cannot load external JS files via file:// protocol
         index_path = get_asset_path("index.html")
         if index_path.exists():
             port = self._start_static_server()
@@ -276,7 +276,7 @@ class FragoGuiApp:
         self._api = FragoGuiApi()
         url = self._get_url()
 
-        # 动态计算窗口尺寸和字体缩放比例
+        # Dynamically calculate window size and font scale
         width, height, self._font_scale = self._calculate_window_size()
 
         self.window = webview.create_window(
@@ -291,7 +291,7 @@ class FragoGuiApp:
             x=self.config.x,
             y=self.config.y,
             js_api=self._api,
-            confirm_close=False,  # 禁用确认，使用原生窗口行为
+            confirm_close=False,  # Disable confirmation, use native window behavior
         )
 
         self.window.events.closing += self._on_closing
@@ -301,15 +301,15 @@ class FragoGuiApp:
     def _on_closing(self) -> bool:
         """Handle window closing event.
 
-        由于使用原生窗口标题栏且不需要确认，总是允许关闭。
+        Since using native window title bar and no confirmation needed, always allow closing.
 
         Returns:
             True to allow closing.
         """
-        # 使用原生窗口标题栏，不需要确认，总是允许关闭
+        # Using native window title bar, no confirmation needed, always allow closing
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug("窗口关闭事件触发，允许关闭")
+        logger.debug("Window close event triggered, allowing close")
         return True
 
     def _get_error_html(self, title: str, message: str, hint: str = "") -> str:
@@ -380,16 +380,16 @@ class FragoGuiApp:
     def _get_dev_server_error_html(self) -> str:
         """Get HTML for dev server not running error."""
         return self._get_error_html(
-            title="开发服务器未运行",
-            message="Vite 开发服务器无法连接。请先启动开发服务器。",
+            title="Dev Server Not Running",
+            message="Cannot connect to Vite dev server. Please start the dev server first.",
             hint="cd src/frago/gui/frontend && npm run dev",
         )
 
     def _get_build_missing_html(self) -> str:
         """Get HTML for missing build output error."""
         return self._get_error_html(
-            title="构建产物缺失",
-            message="前端构建产物未找到。请先构建前端。",
+            title="Build Output Missing",
+            message="Frontend build output not found. Please build the frontend first.",
             hint="cd src/frago/gui/frontend && npm run build",
         )
 
@@ -450,7 +450,7 @@ class FragoGuiApp:
         Returns:
             Path to icon file, or None if not found.
         """
-        # 图标文件位于 gui/assets/icons/ 目录
+        # Icon files are in gui/assets/icons/ directory
         icons_dir = Path(__file__).parent / "assets" / "icons"
         system = platform.system()
 
@@ -490,16 +490,16 @@ class FragoGuiApp:
 
         self.create_window()
 
-        # 获取图标路径
+        # Get icon path
         icon_path = self._get_icon_path()
         system = platform.system()
 
-        # macOS: 使用 pyobjc 设置 Dock 图标
+        # macOS: use pyobjc to set Dock icon
         if system == "Darwin" and icon_path:
             self._set_macos_dock_icon(icon_path)
 
-        # Linux (GTK/QT): 使用 webview.start 的 icon 参数
-        # Windows: 开发模式暂不支持，生产环境通过打包器设置
+        # Linux (GTK/QT): use icon parameter of webview.start
+        # Windows: not supported in dev mode, set by packager in production
         start_kwargs = {
             "func": self._on_loaded,
             "debug": self.debug,
@@ -517,7 +517,7 @@ class FragoGuiApp:
         if self.window and hasattr(self, '_font_scale'):
             system = platform.system()
 
-            # macOS 渲染字体较细，Windows/Linux 渲染较粗，调整字重补偿
+            # macOS renders fonts thinner, Windows/Linux renders thicker, adjust font weight to compensate
             weights = {
                 'Darwin': ('400', '500', '600'),
                 'Windows': ('400', '450', '550'),
@@ -553,8 +553,8 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
     Raises:
         GuiNotAvailableError: If GUI cannot be started.
     """
-    # 后台运行逻辑（非 debug 模式，且不是已经后台运行的进程）
-    # 使用 subprocess 启动新进程，让终端立即返回
+    # Background mode logic (non-debug mode and not already running as background process)
+    # Use subprocess to start new process, allowing terminal to return immediately
     if not debug and not _background:
         import shutil
         import subprocess
@@ -567,39 +567,39 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         }
 
         if system == "Windows":
-            # Windows: 使用 CREATE_NEW_PROCESS_GROUP 和 DETACHED_PROCESS
-            # CREATE_NEW_PROCESS_GROUP (0x200): 创建新进程组
-            # DETACHED_PROCESS (0x8): 脱离控制台
+            # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
+            # CREATE_NEW_PROCESS_GROUP (0x200): create new process group
+            # DETACHED_PROCESS (0x8): detach from console
             popen_kwargs["creationflags"] = 0x200 | 0x8
         else:
-            # Unix: 使用 start_new_session 创建新会话，脱离终端
+            # Unix: use start_new_session to create new session, detach from terminal
             popen_kwargs["start_new_session"] = True
 
-        # 优先使用 frago 入口点脚本（适用于 pip/uv tool install 安装的版本）
-        # 这样可以确保子进程有正确的 Python 环境和模块路径
+        # Prefer using frago entry point script (for pip/uv tool install)
+        # This ensures subprocess has correct Python environment and module paths
         frago_cmd = shutil.which("frago")
         if frago_cmd:
-            # 使用入口点脚本启动，添加 --gui-background 内部标志
+            # Use entry point script, add --gui-background internal flag
             subprocess.Popen(
                 [frago_cmd, "--gui-background"],
                 **popen_kwargs,
             )
         else:
-            # 回退：开发模式下使用 python -m（uv run 环境下能工作）
+            # Fallback: use python -m in dev mode (works in uv run environment)
             subprocess.Popen(
                 [sys.executable, "-m", "frago.gui.app", "--background"],
                 **popen_kwargs,
             )
-        return  # 父进程直接返回
+        return  # Parent process returns immediately
 
-    # 在非调试模式下，抑制 GTK/GLib 的警告消息
+    # In non-debug mode, suppress GTK/GLib warning messages
     if not debug:
         os.environ['G_MESSAGES_DEBUG'] = ''
         os.environ['PYWEBVIEW_LOG'] = 'error'
-        # 抑制 GLib 的所有警告和调试信息
+        # Suppress all GLib warnings and debug info
         os.environ['G_DEBUG'] = 'fatal-criticals'
 
-    # Linux 依赖检查和自动安装（必须在 import webview 之前）
+    # Linux dependency check and auto-install (must be before import webview)
     if platform.system() == "Linux":
         from frago.gui.deps import ensure_gui_deps
 
@@ -607,12 +607,12 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         if not can_start:
             sys.exit(1)
         if msg == "restart":
-            # 依赖安装成功后重启
+            # Restart after dependencies installed successfully
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    # 依赖检查通过后，才导入 webview（会触发后端加载）
+    # Import webview after dependency check passes (triggers backend loading)
     try:
-        # 临时抑制 stderr，避免 pywebview/GTK 后端的调试警告
+        # Temporarily suppress stderr to avoid pywebview/GTK backend debug warnings
         import io
         import contextlib
 
@@ -620,7 +620,7 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         with contextlib.redirect_stderr(stderr_buffer):
             _lazy_import_webview()
 
-        # 抑制 pywebview 的日志
+        # Suppress pywebview logs
         import logging
         logging.getLogger('pywebview').setLevel(logging.ERROR)
     except ImportError as e:
@@ -652,7 +652,7 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
         sys.exit(1)
 
 
-# 模块入口点，供 subprocess 调用
+# Module entry point for subprocess calls
 if __name__ == "__main__":
     import argparse
 

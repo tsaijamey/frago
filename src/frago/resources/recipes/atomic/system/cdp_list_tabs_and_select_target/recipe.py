@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Recipe: cdp_list_tabs_and_select_target
-Description: 列出Chrome所有tabs并选择/锁定其中一个作为CDP操作目标
+Description: List all Chrome tabs and select/lock one as the CDP operation target
 Created: 2025-11-27
 Version: 1.0.0
 """
@@ -13,10 +13,10 @@ from pathlib import Path
 
 def list_tabs(host: str = "127.0.0.1", port: int = 9222) -> list[dict]:
     """
-    获取Chrome所有可用的tabs
+    Get all available Chrome tabs
 
     Returns:
-        list: tab信息列表，每个tab包含id, title, url, type等字段
+        list: List of tab information, each tab contains id, title, url, type fields
     """
     import requests
 
@@ -28,7 +28,7 @@ def list_tabs(host: str = "127.0.0.1", port: int = 9222) -> list[dict]:
         response.raise_for_status()
         all_targets = response.json()
 
-        # 只返回page类型的targets（过滤iframe、worker等）
+        # Only return page type targets (filter out iframe, worker, etc.)
         pages = [
             {
                 "id": t["id"],
@@ -46,49 +46,49 @@ def list_tabs(host: str = "127.0.0.1", port: int = 9222) -> list[dict]:
 
     except requests.exceptions.ConnectionError:
         raise ConnectionError(
-            f"无法连接到Chrome DevTools。请确保Chrome以远程调试模式启动:\n"
+            f"Unable to connect to Chrome DevTools. Please ensure Chrome is launched in remote debugging mode:\n"
             f"  google-chrome --remote-debugging-port={port}"
         )
     except Exception as e:
-        raise RuntimeError(f"获取tabs失败: {e}")
+        raise RuntimeError(f"Failed to get tabs: {e}")
 
 
 def select_tab_by_index(tabs: list[dict], index: int) -> dict:
-    """通过索引选择tab"""
+    """Select tab by index"""
     if index < 0 or index >= len(tabs):
-        raise ValueError(f"索引越界: {index}，有效范围: 0-{len(tabs)-1}")
+        raise ValueError(f"Index out of bounds: {index}, valid range: 0-{len(tabs)-1}")
     return tabs[index]
 
 
 def select_tab_by_title(tabs: list[dict], title_pattern: str) -> dict:
-    """通过标题模糊匹配选择tab"""
+    """Select tab by title fuzzy matching"""
     for tab in tabs:
         if title_pattern.lower() in tab["title"].lower():
             return tab
-    raise ValueError(f"未找到标题包含 '{title_pattern}' 的tab")
+    raise ValueError(f"Tab with title containing '{title_pattern}' not found")
 
 
 def select_tab_by_url(tabs: list[dict], url_pattern: str) -> dict:
-    """通过URL模糊匹配选择tab"""
+    """Select tab by URL fuzzy matching"""
     for tab in tabs:
         if url_pattern.lower() in tab["url"].lower():
             return tab
-    raise ValueError(f"未找到URL包含 '{url_pattern}' 的tab")
+    raise ValueError(f"Tab with URL containing '{url_pattern}' not found")
 
 
 def select_tab_by_id(tabs: list[dict], tab_id: str) -> dict:
-    """通过精确ID选择tab"""
+    """Select tab by exact ID"""
     for tab in tabs:
         if tab["id"] == tab_id:
             return tab
-    raise ValueError(f"未找到ID为 '{tab_id}' 的tab")
+    raise ValueError(f"Tab with ID '{tab_id}' not found")
 
 
 def save_target_config(tab: dict, config_path: Path = None) -> Path:
     """
-    保存选中的tab为目标配置文件
+    Save the selected tab as target configuration file
 
-    后续frago命令可以通过 --target-config 参数使用这个配置
+    Subsequent frago commands can use this configuration via --target-config parameter
     """
     if config_path is None:
         config_path = Path.home() / ".frago" / "current_target.json"
@@ -109,8 +109,8 @@ def save_target_config(tab: dict, config_path: Path = None) -> Path:
 
 
 def main():
-    """主函数"""
-    # 解析输入参数
+    """Main function"""
+    # Parse input parameters
     if len(sys.argv) < 2:
         params = {}
     else:
@@ -119,28 +119,28 @@ def main():
         except json.JSONDecodeError as e:
             print(json.dumps({
                 "success": False,
-                "error": f"参数JSON解析失败: {e}"
+                "error": f"Failed to parse JSON parameters: {e}"
             }, ensure_ascii=False), file=sys.stderr)
             sys.exit(1)
 
-    # 获取配置
+    # Get configuration
     host = params.get("host", "127.0.0.1")
     port = params.get("port", 9222)
     action = params.get("action", "list")  # list | select
 
     try:
-        # 获取所有tabs
+        # Get all tabs
         tabs = list_tabs(host, port)
 
         if not tabs:
             print(json.dumps({
                 "success": False,
-                "error": "没有找到任何Chrome tab"
+                "error": "No Chrome tabs found"
             }, ensure_ascii=False))
             sys.exit(1)
 
         if action == "list":
-            # 仅列出所有tabs
+            # List all tabs only
             output = {
                 "success": True,
                 "action": "list",
@@ -160,7 +160,7 @@ def main():
             print(json.dumps(output, ensure_ascii=False, indent=2))
 
         elif action == "select":
-            # 选择并锁定一个tab
+            # Select and lock a tab
             selected_tab = None
 
             if "index" in params:
@@ -174,11 +174,11 @@ def main():
             else:
                 print(json.dumps({
                     "success": False,
-                    "error": "select操作需要指定 index、title、url 或 id 参数"
+                    "error": "select operation requires index, title, url or id parameter"
                 }, ensure_ascii=False))
                 sys.exit(1)
 
-            # 保存配置
+            # Save configuration
             save_config = params.get("save_config", True)
             config_path = None
             if save_config:
@@ -195,14 +195,14 @@ def main():
                 },
                 "config_saved": save_config,
                 "config_path": str(config_path) if config_path else None,
-                "usage_hint": f"后续命令使用: uv run frago --target-id {selected_tab['id']} <command>"
+                "usage_hint": f"Use in subsequent commands: uv run frago --target-id {selected_tab['id']} <command>"
             }
             print(json.dumps(output, ensure_ascii=False, indent=2))
 
         else:
             print(json.dumps({
                 "success": False,
-                "error": f"未知action: {action}，有效值: list, select"
+                "error": f"Unknown action: {action}, valid values: list, select"
             }, ensure_ascii=False))
             sys.exit(1)
 
@@ -221,7 +221,7 @@ def main():
     except Exception as e:
         print(json.dumps({
             "success": False,
-            "error": f"执行失败: {type(e).__name__}: {e}"
+            "error": f"Execution failed: {type(e).__name__}: {e}"
         }, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)
 

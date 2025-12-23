@@ -1,6 +1,6 @@
 /**
- * General Settings 组件
- * 主配置管理：API endpoint、工作目录、CCR 状态
+ * General Settings Component
+ * Main configuration: API endpoint, working directory, CCR status
  */
 
 import { useEffect, useState } from 'react';
@@ -14,7 +14,7 @@ export default function GeneralSettings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // API 端点编辑状态
+  // API endpoint editing state
   const [authMethod, setAuthMethod] = useState<'official' | 'custom'>('official');
   const [endpointType, setEndpointType] = useState<'deepseek' | 'aliyun' | 'kimi' | 'minimax' | 'custom'>('deepseek');
   const [endpointUrl, setEndpointUrl] = useState('');
@@ -33,7 +33,7 @@ export default function GeneralSettings() {
       const data = await getMainConfig();
       setConfig(data);
 
-      // 初始化 API 端点状态
+      // Initialize API endpoint state
       setAuthMethod(data.auth_method);
       if (data.api_endpoint) {
         setEndpointType(data.api_endpoint.type);
@@ -43,13 +43,13 @@ export default function GeneralSettings() {
 
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载配置失败');
+      setError(err instanceof Error ? err.message : 'Failed to load config');
     } finally {
       setLoading(false);
     }
   };
 
-  // API key 掩码显示
+  // API key mask display
   const maskApiKey = (key: string): string => {
     if (key.length <= 8) {
       return '••••••••';
@@ -57,9 +57,9 @@ export default function GeneralSettings() {
     return key.slice(0, 4) + '••••' + key.slice(-4);
   };
 
-  // 处理认证方式切换
+  // Handle auth method change
   const handleAuthMethodChange = (method: 'official' | 'custom') => {
-    // 从 custom 切换到 official 需要确认
+    // Switching from custom to official requires confirmation
     if (authMethod === 'custom' && method === 'official') {
       setShowConfirmDialog(true);
       return;
@@ -67,28 +67,28 @@ export default function GeneralSettings() {
     setAuthMethod(method);
   };
 
-  // 确认切换到 official
+  // Confirm switch to official
   const confirmSwitchToOfficial = () => {
     setAuthMethod('official');
     setShowConfirmDialog(false);
-    // 清空自定义端点数据
+    // Clear custom endpoint data
     setEndpointType('deepseek');
     setEndpointUrl('');
     setApiKey('');
   };
 
-  // 保存认证配置
+  // Save auth configuration
   const handleSaveAuth = async () => {
     if (!config) return;
 
-    // 验证
+    // Validation
     if (authMethod === 'custom') {
       if (!apiKey.trim()) {
-        setError('API Key 不能为空');
+        setError('API Key cannot be empty');
         return;
       }
       if (endpointType === 'custom' && !endpointUrl.trim()) {
-        setError('自定义端点需要提供 URL');
+        setError('Custom endpoint requires a URL');
         return;
       }
     }
@@ -110,37 +110,37 @@ export default function GeneralSettings() {
       const result = await updateAuthMethod(authData);
       if (result.status === 'ok' && result.config) {
         setConfig(result.config);
-        // 更新本地状态（API key 会被掩码）
+        // Update local state (API key will be masked)
         if (result.config.api_endpoint) {
           setApiKey(result.config.api_endpoint.api_key);
         }
         setError(null);
       } else {
-        setError(result.error || '保存失败');
+        setError(result.error || 'Save failed');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败');
+      setError(err instanceof Error ? err.message : 'Save failed');
     } finally {
       setSaving(false);
     }
   };
 
-  // 打开工作目录
+  // Open working directory
   const handleOpenWorkingDirectory = async () => {
     try {
       const result = await openWorkingDirectory();
       if (result.status === 'error') {
-        setError(result.error || '打开目录失败');
+        setError(result.error || 'Failed to open directory');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '打开目录失败');
+      setError(err instanceof Error ? err.message : 'Failed to open directory');
     }
   };
 
   if (loading) {
     return (
       <div className="text-[var(--text-muted)] text-center py-8">
-        正在加载配置...
+        Loading configuration...
       </div>
     );
   }
@@ -148,7 +148,7 @@ export default function GeneralSettings() {
   if (!config) {
     return (
       <div className="text-[var(--text-error)] text-center py-8">
-        加载配置失败
+        Failed to load configuration
       </div>
     );
   }
@@ -157,7 +157,7 @@ export default function GeneralSettings() {
     <div className="space-y-4">
       <div className="card">
         <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-          通用配置
+          General Configuration
         </h2>
 
         {error && (
@@ -169,10 +169,10 @@ export default function GeneralSettings() {
         {/* API Endpoint */}
         <div className="border-b border-[var(--border-color)] pb-4 mb-4">
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-3">
-            API 端点
+            API Endpoint
           </label>
 
-          {/* 认证方式选择 */}
+          {/* Auth method selection */}
           <div className="space-y-2 mb-3">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -183,7 +183,7 @@ export default function GeneralSettings() {
                 onChange={() => handleAuthMethodChange('official')}
                 className="w-4 h-4 text-[var(--accent-primary)]"
               />
-              <span className="text-sm text-[var(--text-primary)]">官方 Claude API</span>
+              <span className="text-sm text-[var(--text-primary)]">Official Claude API</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -194,17 +194,17 @@ export default function GeneralSettings() {
                 onChange={() => handleAuthMethodChange('custom')}
                 className="w-4 h-4 text-[var(--accent-primary)]"
               />
-              <span className="text-sm text-[var(--text-primary)]">自定义 API 端点</span>
+              <span className="text-sm text-[var(--text-primary)]">Custom API Endpoint</span>
             </label>
           </div>
 
-          {/* Custom 端点配置 */}
+          {/* Custom endpoint configuration */}
           {authMethod === 'custom' && (
             <div className="space-y-3 ml-6 pl-4 border-l-2 border-[var(--border-color)]">
-              {/* 端点类型 */}
+              {/* Endpoint type */}
               <div>
                 <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  端点类型
+                  Endpoint Type
                 </label>
                 <select
                   value={endpointType}
@@ -212,14 +212,14 @@ export default function GeneralSettings() {
                   className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
                 >
                   <option value="deepseek">DeepSeek API</option>
-                  <option value="aliyun">阿里云 API</option>
+                  <option value="aliyun">Aliyun API</option>
                   <option value="kimi">Kimi API</option>
                   <option value="minimax">MiniMax API</option>
-                  <option value="custom">自定义 URL</option>
+                  <option value="custom">Custom URL</option>
                 </select>
               </div>
 
-              {/* URL（仅 custom 类型显示） */}
+              {/* URL (only shown for custom type) */}
               {endpointType === 'custom' && (
                 <div>
                   <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
@@ -245,13 +245,13 @@ export default function GeneralSettings() {
                     type={showApiKey ? "text" : "password"}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="输入 API Key"
+                    placeholder="Enter API Key"
                     className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                   />
                   <button
                     onClick={() => setShowApiKey(!showApiKey)}
                     className="btn btn-ghost btn-sm p-2"
-                    title={showApiKey ? "隐藏" : "显示"}
+                    title={showApiKey ? "Hide" : "Show"}
                   >
                     {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -265,20 +265,20 @@ export default function GeneralSettings() {
             </div>
           )}
 
-          {/* 保存按钮 */}
+          {/* Save button */}
           <button
             onClick={handleSaveAuth}
             disabled={saving}
             className="mt-3 btn btn-primary btn-sm disabled:opacity-50"
           >
-            {saving ? '保存中...' : '保存配置'}
+            {saving ? 'Saving...' : 'Save Configuration'}
           </button>
         </div>
 
-        {/* 工作目录（只读） */}
+        {/* Working directory (read-only) */}
         <div>
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-            工作目录
+            Working Directory
           </label>
           <div className="flex gap-2 items-center">
             <div className="flex-1 bg-[var(--bg-subtle)] rounded-md px-3 py-2 overflow-x-auto">
@@ -289,72 +289,72 @@ export default function GeneralSettings() {
             <button
               onClick={handleOpenWorkingDirectory}
               className="btn btn-ghost btn-sm flex items-center gap-1 shrink-0"
-              title="在文件管理器中打开"
+              title="Open in file manager"
             >
               <FolderOpen size={16} />
-              打开
+              Open
             </button>
           </div>
         </div>
       </div>
 
-      {/* 资源状态 */}
+      {/* Resource status */}
       <div className="card">
         <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-          资源状态
+          Resource Status
         </h2>
 
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-[var(--text-secondary)]">资源已安装</span>
+            <span className="text-[var(--text-secondary)]">Resources Installed</span>
             <span className={config.resources_installed ? 'text-green-600 dark:text-green-400' : 'text-[var(--text-muted)]'}>
-              {config.resources_installed ? '✓ 是' : '否'}
+              {config.resources_installed ? '✓ Yes' : 'No'}
             </span>
           </div>
           {config.resources_version && (
             <div>
               <div className="flex justify-between mb-1">
-                <span className="text-[var(--text-secondary)]">资源版本</span>
+                <span className="text-[var(--text-secondary)]">Resources Version</span>
                 <span className="text-[var(--text-primary)]">{config.resources_version}</span>
               </div>
               <p className="text-xs text-[var(--text-muted)] text-right">
-                资源安装时的 frago 版本，非当前包版本
+                Frago version when resources were installed, not the current package version
               </p>
             </div>
           )}
           <div className="flex justify-between">
-            <span className="text-[var(--text-secondary)]">初始化完成</span>
+            <span className="text-[var(--text-secondary)]">Initialization Complete</span>
             <span className={config.init_completed ? 'text-green-600 dark:text-green-400' : 'text-[var(--text-muted)]'}>
-              {config.init_completed ? '✓ 是' : '否'}
+              {config.init_completed ? '✓ Yes' : 'No'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* 确认对话框 */}
+      {/* Confirmation dialog */}
       <Modal
         isOpen={showConfirmDialog}
         onClose={() => setShowConfirmDialog(false)}
-        title="确认切换到官方 API"
+        title="Confirm Switch to Official API"
         footer={
           <>
             <button
               onClick={() => setShowConfirmDialog(false)}
               className="btn btn-ghost"
             >
-              取消
+              Cancel
             </button>
             <button
               onClick={confirmSwitchToOfficial}
               className="btn btn-primary"
             >
-              确定切换
+              Confirm Switch
             </button>
           </>
         }
       >
         <p className="text-sm text-[var(--text-secondary)]">
-          切换到官方 Claude API 将会清除当前的自定义端点配置（包括 API Key）。此操作不可撤销，确定要继续吗？
+          Switching to official Claude API will clear your current custom endpoint configuration (including API Key). This action cannot be undone. Are you sure you want to continue?
         </p>
       </Modal>
     </div>

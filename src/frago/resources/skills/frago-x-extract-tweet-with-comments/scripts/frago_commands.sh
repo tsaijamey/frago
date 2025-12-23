@@ -1,30 +1,30 @@
 #!/bin/bash
-# Frago CDP 命令示例
+# Frago CDP Command Examples
 
-# === 导航 ===
+# === Navigation ===
 uv run frago navigate "https://x.com/search?q=AI"
 
-# === 滚动定位 ===
-# 滚动到包含指定文本的元素
-uv run frago scroll-to --text "AI 将改变工作方式"
+# === Scroll to Element ===
+# Scroll to element containing specified text
+uv run frago scroll-to --text "AI will change the way we work"
 
-# === 截图 ===
+# === Screenshot ===
 uv run frago screenshot "screenshots/001.png"
 
-# === 等待 ===
+# === Wait ===
 uv run frago wait 2
 
-# === 获取页面内容 ===
+# === Get Page Content ===
 uv run frago get-content
 
-# === 执行 JavaScript ===
+# === Execute JavaScript ===
 uv run frago exec-js "document.querySelector('[data-testid=\"tweetText\"]').innerText"
 
-# === 配方执行 ===
-# 提取推文+评论
+# === Recipe Execution ===
+# Extract tweet + comments
 uv run frago recipe run x_extract_tweet_with_comments \
   --params '{"url": "https://x.com/user/status/123456"}'
 
-# 提取 Timeline
+# Extract Timeline
 uv run frago recipe run x_extract_timeline_with_scroll \
   --params '{"query": "AI", "max_tweets": 20}'

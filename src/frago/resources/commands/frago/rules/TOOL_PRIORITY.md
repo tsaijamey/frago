@@ -1,19 +1,19 @@
-# 工具优先级
+# Tool Priority
 
-适用于：`/frago.run`、`/frago.do`
+Applies to: `/frago.run`, `/frago.do`
 
-## 优先级顺序
+## Priority Order
 
 ```
-1. 已有配方 (Recipe)        ← 最优先
-2. frago 命令               ← 跨 agent 通用
-3. 系统命令或第三方软件命令   ← 功能强大
-4. Claude Code 内置工具      ← 最后兜底
+1. Existing Recipe            ← Highest priority
+2. frago commands              ← Universal across agents
+3. System or third-party commands ← Powerful functionality
+4. Claude Code built-in tools  ← Last resort
 ```
 
-## ⚠️ CRITICAL: WebSearch 禁用规则
+## ⚠️ CRITICAL: WebSearch Prohibition Rule
 
-**桌面环境下 WebSearch 会导致系统崩溃！**
+**WebSearch causes system crash in desktop environments!**
 
 ```
 if GUI_AVAILABLE (desktop mode):
@@ -24,60 +24,60 @@ if HEADLESS (no GUI):
     WebSearch => allowed as fallback
 ```
 
-## 场景对照
+## Scenario Comparison
 
-- **搜索信息**：❌ `WebSearch` (桌面环境崩溃!) → ✅ `frago chrome navigate "https://google.com/search?q=..."`
-- **查看网页**：❌ `Fetch` → ✅ `frago chrome navigate <url>` + `get-content`
-- **提取数据**：❌ 手写 JS → ✅ 先查 `frago recipe list`
-- **文件操作**：❌ 手动创建 → ✅ 使用 Claude Code 的 Write/Edit 工具
+- **Search info**: ❌ `WebSearch` (crashes in desktop!) → ✅ `frago chrome navigate "https://google.com/search?q=..."`
+- **View webpage**: ❌ `Fetch` → ✅ `frago chrome navigate <url>` + `get-content`
+- **Extract data**: ❌ Hand-write JS → ✅ Check `frago recipe list` first
+- **File operations**: ❌ Manual creation → ✅ Use Claude Code's Write/Edit tools
 
-## 为什么这样设计
+## Why This Design
 
-### 1. Recipe 最优先
+### 1. Recipe Has Highest Priority
 
-- **可复用**：已经验证过的自动化流程
-- **稳定**：包含错误处理和降级选择器
-- **文档化**：有使用说明和前置条件
+- **Reusable**: Verified automation workflows
+- **Stable**: Contains error handling and fallback selectors
+- **Documented**: Has usage instructions and preconditions
 
-### 2. frago 命令次之
+### 2. frago Commands Come Second
 
-- **跨 agent 通用**：在 run/do/recipe/test 中都能使用
-- **自动日志**：CDP 命令自动记录到 execution.jsonl
-- **统一接口**：`frago <command>` 格式一致
+- **Universal across agents**: Can be used in run/do/recipe/test
+- **Auto logging**: CDP commands automatically logged to execution.jsonl
+- **Unified interface**: Consistent `frago <command>` format
 
-### 3. 系统命令
+### 3. System Commands
 
-- **功能强大**：`jq` 处理 JSON、`ffmpeg` 处理视频
-- **灵活组合**：管道、重定向等 Shell 特性
+- **Powerful**: `jq` for JSON processing, `ffmpeg` for video
+- **Flexible composition**: Shell features like pipes, redirects
 
-### 4. Claude Code 工具兜底
+### 4. Claude Code Tools as Fallback
 
-- **文件操作**：Read/Write/Edit/Glob/Grep
-- **辅助功能**：AskUserQuestion、TodoWrite
-- 仅当上述工具无法满足时使用
+- **File operations**: Read/Write/Edit/Glob/Grep
+- **Auxiliary functions**: AskUserQuestion, TodoWrite
+- Use only when above tools cannot satisfy requirements
 
-## 发现现有 Recipe
+## Discovering Existing Recipes
 
 ```bash
-# 列出所有 Recipe
+# List all Recipes
 frago recipe list
 
-# AI 格式（JSON）
+# AI format (JSON)
 frago recipe list --format json
 
-# 查看特定 Recipe 详情
+# View specific Recipe details
 frago recipe info <recipe_name>
 
-# 搜索相关 Recipe
-frago recipe list | grep "关键词"
+# Search related Recipes
+frago recipe list | grep "keyword"
 ```
 
-## 命令帮助
+## Command Help
 
 ```bash
-# 查看所有 frago 命令
+# View all frago commands
 frago --help
 
-# 查看具体命令用法
+# View specific command usage
 frago <command> --help
 ```

@@ -1,22 +1,22 @@
-# HTML/reveal.js 详细参考
+# HTML/reveal.js Detailed Reference
 
-## CSS 高级设计技巧
+## Advanced CSS Design Techniques
 
-### 1. 背景设计
+### 1. Background Design
 
-#### 纯色背景
+#### Solid Color Background
 
 ```html
 <section data-background="#4d7e65">
 ```
 
-#### 渐变背景
+#### Gradient Background
 
 ```html
 <section data-background="linear-gradient(135deg, #667eea 0%, #764ba2 100%)">
 ```
 
-#### 图片背景
+#### Image Background
 
 ```html
 <section
@@ -25,7 +25,7 @@
     data-background-opacity="0.3">
 ```
 
-#### 视频背景
+#### Video Background
 
 ```html
 <section data-background-video="./videos/bg.mp4" data-background-video-loop>
@@ -33,9 +33,9 @@
 
 ---
 
-### 2. 层次感设计
+### 2. Layered Design
 
-#### 多层叠加（z-index）
+#### Multi-layer Stacking (z-index)
 
 ```html
 <section>
@@ -44,13 +44,13 @@
         .layer-decoration { position: absolute; z-index: 5; }
         .layer-content { position: relative; z-index: 10; }
     </style>
-    <div class="layer-bg">背景层</div>
-    <div class="layer-decoration">装饰层</div>
-    <div class="layer-content">内容层</div>
+    <div class="layer-bg">Background Layer</div>
+    <div class="layer-decoration">Decoration Layer</div>
+    <div class="layer-content">Content Layer</div>
 </section>
 ```
 
-#### 景深效果
+#### Depth Effect
 
 ```html
 <style>
@@ -62,9 +62,9 @@
 
 ---
 
-### 3. 多边形元素（clip-path）
+### 3. Polygon Elements (clip-path)
 
-#### 三角形
+#### Triangle
 
 ```css
 .triangle {
@@ -72,7 +72,7 @@
 }
 ```
 
-#### 六边形
+#### Hexagon
 
 ```css
 .hexagon {
@@ -80,7 +80,7 @@
 }
 ```
 
-#### 斜角
+#### Skewed Edge
 
 ```css
 .skewed {
@@ -88,7 +88,7 @@
 }
 ```
 
-#### 圆角矩形
+#### Rounded Rectangle
 
 ```css
 .rounded-box {
@@ -98,9 +98,9 @@
 
 ---
 
-### 4. 遮罩效果
+### 4. Mask Effects
 
-#### 渐变遮罩
+#### Gradient Mask
 
 ```css
 .mask-gradient {
@@ -109,7 +109,7 @@
 }
 ```
 
-#### 径向遮罩
+#### Radial Mask
 
 ```css
 .mask-radial {
@@ -120,21 +120,21 @@
 
 ---
 
-### 5. 动画效果
+### 5. Animation Effects
 
-#### Auto-Animate（页间自动动画）
+#### Auto-Animate (Inter-slide Automatic Animation)
 
 ```html
 <section data-auto-animate>
-    <h1 style="margin-top: 100px;">标题</h1>
+    <h1 style="margin-top: 100px;">Title</h1>
 </section>
 <section data-auto-animate>
-    <h1 style="margin-top: 0;">标题</h1>
-    <p>新内容自动出现</p>
+    <h1 style="margin-top: 0;">Title</h1>
+    <p>New content appears automatically</p>
 </section>
 ```
 
-#### 自定义 CSS 动画
+#### Custom CSS Animation
 
 ```html
 <style>
@@ -144,10 +144,10 @@
     }
     .floating { animation: float 3s ease-in-out infinite; }
 </style>
-<div class="floating">漂浮元素</div>
+<div class="floating">Floating Element</div>
 ```
 
-#### 脉冲效果
+#### Pulse Effect
 
 ```css
 @keyframes pulse {
@@ -159,9 +159,9 @@
 
 ---
 
-### 6. 响应式布局
+### 6. Responsive Layout
 
-#### r-stack（居中叠加）
+#### r-stack (Centered Stacking)
 
 ```html
 <div class="r-stack">
@@ -171,27 +171,27 @@
 </div>
 ```
 
-#### r-hstack（横向排列）
+#### r-hstack (Horizontal Arrangement)
 
 ```html
 <div class="r-hstack">
-    <div>左</div>
-    <div>中</div>
-    <div>右</div>
+    <div>Left</div>
+    <div>Center</div>
+    <div>Right</div>
 </div>
 ```
 
-#### r-vstack（纵向排列）
+#### r-vstack (Vertical Arrangement)
 
 ```html
 <div class="r-vstack">
-    <div>上</div>
-    <div>中</div>
-    <div>下</div>
+    <div>Top</div>
+    <div>Middle</div>
+    <div>Bottom</div>
 </div>
 ```
 
-#### Grid 布局
+#### Grid Layout
 
 ```css
 .grid-2x2 {
@@ -205,9 +205,9 @@
 
 ---
 
-### 7. 装饰元素
+### 7. Decorative Elements
 
-#### 发光圆点
+#### Glowing Dot
 
 ```css
 .glow-dot {
@@ -220,7 +220,7 @@
 }
 ```
 
-#### 渐变边框
+#### Gradient Border
 
 ```css
 .gradient-border {
@@ -232,7 +232,7 @@
 }
 ```
 
-#### 玻璃态效果
+#### Glassmorphism Effect
 
 ```css
 .glass {
@@ -245,86 +245,86 @@
 
 ---
 
-## pywebview 限制清单
+## pywebview Limitations
 
-### 与标准浏览器的核心差异
+### Key Differences from Standard Browsers
 
-| 类别 | 限制 | 影响 |
-|------|------|------|
-| **渲染引擎** | 平台不统一 | macOS 用 WebKit，Windows 用 Edge，Linux 用 GTK WebKit |
-| **调试工具** | 无 DevTools | 无法 F12 调试 |
-| **控制台** | console.log 不可见 | 无法查看日志 |
-| **热重载** | 不支持 | 需退出重启预览 |
-| **脚本注入** | 受限 | frago view 自动注入所需库 |
-| **iframe** | 安全限制 | 无法嵌入外部页面 |
-| **跨域请求** | 受限 | Ajax 调用不可用 |
-| **外部字体** | CDN 可能失败 | 使用本地字体 |
+| Category | Limitation | Impact |
+|----------|-----------|--------|
+| **Rendering Engine** | Platform-specific | macOS uses WebKit, Windows uses Edge, Linux uses GTK WebKit |
+| **Debugging Tools** | No DevTools | Cannot debug with F12 |
+| **Console** | console.log invisible | Cannot view logs |
+| **Hot Reload** | Not supported | Need to exit and restart preview |
+| **Script Injection** | Limited | frago view auto-injects required libraries |
+| **iframe** | Security restrictions | Cannot embed external pages |
+| **Cross-Origin Requests** | Limited | Ajax calls unavailable |
+| **External Fonts** | CDN may fail | Use local fonts |
 
-### 规避方案
+### Workarounds
 
-| 需求 | 规避方式 |
-|------|---------|
-| 调试 CSS/HTML | 先在 Chrome 中调试，确认后再 `frago view` |
-| 查看日志 | 使用 `alert()` 或写入页面元素 |
-| 跨平台一致性 | 使用标准 CSS，避免实验性特性 |
-| 字体一致性 | 使用系统字体栈或本地 Web 字体 |
-| 复杂交互 | CSS 动画替代 JavaScript |
+| Requirement | Workaround |
+|-------------|------------|
+| Debug CSS/HTML | Debug in Chrome first, then confirm with `frago view` |
+| View logs | Use `alert()` or write to page elements |
+| Cross-platform consistency | Use standard CSS, avoid experimental features |
+| Font consistency | Use system font stack or local web fonts |
+| Complex interactions | CSS animations instead of JavaScript |
 
-### 推荐做法
+### Recommended Practices
 
-1. **CSS 优先**：复杂效果用 CSS 实现，避免依赖 JavaScript
-2. **本地资源**：图片、字体放在 `images/`、`assets/` 目录
-3. **相对路径**：使用 `./images/xxx.png` 而非绝对路径
-4. **标准特性**：使用广泛支持的 CSS 特性
-5. **静态内容**：frago view 适合静态展示，不适合交互式应用
+1. **CSS First**: Implement complex effects with CSS, avoid relying on JavaScript
+2. **Local Resources**: Place images and fonts in `images/` and `assets/` directories
+3. **Relative Paths**: Use `./images/xxx.png` instead of absolute paths
+4. **Standard Features**: Use widely supported CSS features
+5. **Static Content**: frago view is suitable for static display, not interactive applications
 
 ---
 
-## 颜色参考
+## Color Reference
 
-### 常用配色
+### Common Color Schemes
 
-| 用途 | 颜色 | Hex |
-|------|------|-----|
-| 强调色（红） | 珊瑚红 | `#e94560` |
-| 强调色（蓝） | 天蓝 | `#58a6ff` |
-| 强调色（紫） | 紫罗兰 | `#a855f7` |
-| 强调色（绿） | 翡翠绿 | `#10b981` |
-| 强调色（橙） | 琥珀橙 | `#f59e0b` |
-| 背景深色 | 深灰 | `#0d1117` |
-| 背景次深 | 中灰 | `#161b22` |
-| 文字主色 | 浅灰 | `#c9d1d9` |
-| 文字次色 | 暗灰 | `#8b949e` |
-| 边框 | 边框灰 | `#30363d` |
+| Purpose | Color | Hex |
+|---------|-------|-----|
+| Accent (Red) | Coral Red | `#e94560` |
+| Accent (Blue) | Sky Blue | `#58a6ff` |
+| Accent (Purple) | Violet | `#a855f7` |
+| Accent (Green) | Emerald Green | `#10b981` |
+| Accent (Orange) | Amber Orange | `#f59e0b` |
+| Background Dark | Dark Gray | `#0d1117` |
+| Background Mid | Medium Gray | `#161b22` |
+| Text Primary | Light Gray | `#c9d1d9` |
+| Text Secondary | Muted Gray | `#8b949e` |
+| Border | Border Gray | `#30363d` |
 
-### 渐变组合
+### Gradient Combinations
 
 ```css
-/* 紫红渐变 */
+/* Purple-Red Gradient */
 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 
-/* 深蓝渐变 */
+/* Deep Blue Gradient */
 background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
 
-/* 日落渐变 */
+/* Sunset Gradient */
 background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
 
-/* 海洋渐变 */
+/* Ocean Gradient */
 background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
 ```
 
 ---
 
-## 字体栈
+## Font Stacks
 
-### 系统字体（推荐）
+### System Fonts (Recommended)
 
 ```css
 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
              "Helvetica Neue", Arial, sans-serif;
 ```
 
-### 代码字体
+### Code Fonts
 
 ```css
 font-family: "SF Mono", "Fira Code", Consolas, "Liberation Mono",

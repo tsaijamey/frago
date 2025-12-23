@@ -7,7 +7,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 使用 CSS 变量支持主题切换
+        // Use CSS variables to support theme switching
         'bg-primary': 'var(--bg-primary)',
         'bg-secondary': 'var(--bg-secondary)',
         'bg-tertiary': 'var(--bg-tertiary)',

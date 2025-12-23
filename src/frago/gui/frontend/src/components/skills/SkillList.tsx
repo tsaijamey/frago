@@ -14,8 +14,8 @@ export default function SkillList() {
     return (
       <EmptyState
         Icon={Target}
-        title="暂无技能"
-        description="在 .claude/skills/ 目录下创建技能文件"
+        title="No Skills"
+        description="Create skill files in .claude/skills/ directory"
       />
     );
   }

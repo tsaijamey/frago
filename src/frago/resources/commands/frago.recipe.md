@@ -1,5 +1,5 @@
 ---
-description: "创建可复用的浏览器操作配方脚本（支持 Atomic 和 Workflow Recipe）"
+description: "Create reusable browser operation recipe scripts (supports Atomic and Workflow Recipe)"
 ---
 
 # /frago.recipe - Recipe Creator

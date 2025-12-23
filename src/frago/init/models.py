@@ -1,15 +1,15 @@
 """
-数据模型定义
+Data Model Definitions
 
-包含 frago init 命令使用的所有 Pydantic 模型：
-- Config: 持久化配置
-- APIEndpoint: 自定义 API 端点配置
-- TemporaryState: Ctrl+C 恢复状态
-- InstallationStep: 安装步骤状态机
-- DependencyCheckResult: 依赖检查结果
-- ResourceType: 资源类型枚举
-- InstallResult: 资源安装结果
-- ResourceStatus: 资源安装状态
+Contains all Pydantic models used by frago init command:
+- Config: Persistent configuration
+- APIEndpoint: Custom API endpoint configuration
+- TemporaryState: Ctrl+C recovery state
+- InstallationStep: Installation step state machine
+- DependencyCheckResult: Dependency check result
+- ResourceType: Resource type enumeration
+- InstallResult: Resource installation result
+- ResourceStatus: Resource installation status
 """
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -19,7 +19,7 @@ from enum import Enum
 
 
 class APIEndpoint(BaseModel):
-    """API 端点配置（嵌套在 Config 中）"""
+    """API endpoint configuration (nested in Config)"""
 
     type: Literal["deepseek", "aliyun", "kimi", "minimax", "custom"]
     url: Optional[str] = None
@@ -27,48 +27,48 @@ class APIEndpoint(BaseModel):
 
     @model_validator(mode="after")
     def validate_url_for_custom(self) -> "APIEndpoint":
-        """验证 URL 必填性（custom 类型必须提供 URL）"""
+        """Validate URL requirement (custom type must provide URL)"""
         if self.type == "custom" and not self.url:
             raise ValueError("Custom endpoint requires URL")
         return self
 
 
 class Config(BaseModel):
-    """Frago 配置实体（持久化到 ~/.frago/config.json）"""
+    """Frago configuration entity (persisted to ~/.frago/config.json)"""
 
     schema_version: str = "1.0"
 
-    # 依赖信息
+    # Dependency information
     node_version: Optional[str] = None
     node_path: Optional[str] = None
     npm_version: Optional[str] = None
     claude_code_version: Optional[str] = None
     claude_code_path: Optional[str] = None
 
-    # 认证配置（互斥）
+    # Authentication configuration (mutually exclusive)
     auth_method: Literal["official", "custom"] = "official"
     api_endpoint: Optional[APIEndpoint] = None
 
-    # 可选功能
+    # Optional features
     ccr_enabled: bool = False
     ccr_config_path: Optional[str] = None
 
-    # 多设备同步配置
-    sync_repo_url: Optional[str] = None  # 用户私有仓库 URL（用于 sync）
+    # Multi-device sync configuration
+    sync_repo_url: Optional[str] = None  # User's private repo URL (for sync)
 
-    # 资源安装状态
+    # Resource installation status
     resources_installed: bool = False
     resources_version: Optional[str] = None
     last_resource_update: Optional[datetime] = None
 
-    # 元数据
+    # Metadata
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     init_completed: bool = False
 
     @model_validator(mode="after")
     def validate_auth_consistency(self) -> "Config":
-        """验证认证配置一致性（互斥性约束）"""
+        """Validate authentication configuration consistency (mutual exclusivity constraint)"""
         if self.auth_method == "custom" and not self.api_endpoint:
             raise ValueError("Custom auth requires api_endpoint")
         if self.auth_method == "official" and self.api_endpoint:
@@ -82,7 +82,7 @@ class Config(BaseModel):
 
 
 class TemporaryState(BaseModel):
-    """临时状态（Ctrl+C 恢复用，保存到 ~/.frago/.init_state.json）"""
+    """Temporary state (for Ctrl+C recovery, saved to ~/.frago/.init_state.json)"""
 
     completed_steps: List[str] = Field(default_factory=list)
     current_step: Optional[str] = None
@@ -90,25 +90,25 @@ class TemporaryState(BaseModel):
     recoverable: bool = True
 
     def is_expired(self, days: int = 7) -> bool:
-        """检查是否过期（默认 7 天）"""
+        """Check if expired (default 7 days)"""
         return datetime.now() - self.interrupted_at > timedelta(days=days)
 
     def add_step(self, step: str) -> None:
-        """记录完成步骤"""
+        """Record completed step"""
         if step not in self.completed_steps:
             self.completed_steps.append(step)
 
     def set_current_step(self, step: str) -> None:
-        """设置当前步骤"""
+        """Set current step"""
         self.current_step = step
 
     def is_step_completed(self, step: str) -> bool:
-        """检查步骤是否已完成"""
+        """Check if step is completed"""
         return step in self.completed_steps
 
 
 class StepStatus(str, Enum):
-    """安装步骤状态枚举"""
+    """Installation step status enumeration"""
 
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -118,7 +118,7 @@ class StepStatus(str, Enum):
 
 
 class InstallationStep(BaseModel):
-    """安装步骤状态机"""
+    """Installation step state machine"""
 
     name: str
     status: StepStatus = StepStatus.PENDING
@@ -128,30 +128,30 @@ class InstallationStep(BaseModel):
     error_code: Optional[int] = None
 
     def start(self) -> None:
-        """标记步骤开始"""
+        """Mark step as started"""
         self.status = StepStatus.IN_PROGRESS
         self.started_at = datetime.now()
 
     def complete(self) -> None:
-        """标记步骤成功"""
+        """Mark step as completed successfully"""
         self.status = StepStatus.COMPLETED
         self.completed_at = datetime.now()
 
     def fail(self, error: str, code: int) -> None:
-        """标记步骤失败"""
+        """Mark step as failed"""
         self.status = StepStatus.FAILED
         self.completed_at = datetime.now()
         self.error_message = error
         self.error_code = code
 
     def skip(self) -> None:
-        """标记步骤跳过"""
+        """Mark step as skipped"""
         self.status = StepStatus.SKIPPED
         self.completed_at = datetime.now()
 
 
 class DependencyCheckResult(BaseModel):
-    """依赖检查结果（用于并行检查）"""
+    """Dependency check result (for parallel checking)"""
 
     name: str
     installed: bool = False
@@ -162,49 +162,49 @@ class DependencyCheckResult(BaseModel):
     error: Optional[str] = None
 
     def needs_install(self) -> bool:
-        """是否需要安装"""
+        """Whether installation is needed"""
         return not self.installed or not self.version_sufficient
 
     def display_status(self) -> str:
-        """生成显示状态"""
+        """Generate display status"""
         if not self.installed:
-            return f"[X] {self.name}: 未安装"
+            return f"[X] {self.name}: Not installed"
         elif not self.version_sufficient:
-            return f"[!]  {self.name}: 版本不足 (当前 {self.version}, 要求 {self.required_version})"
+            return f"[!]  {self.name}: Insufficient version (current {self.version}, requires {self.required_version})"
         else:
             return f"[OK] {self.name}: {self.version}"
 
 
 class ResourceType(str, Enum):
-    """资源类型枚举"""
+    """Resource type enumeration"""
 
-    COMMAND = "command"  # Claude Code slash 命令
+    COMMAND = "command"  # Claude Code slash command
     SKILL = "skill"      # Claude Code skill
-    RECIPE = "recipe"    # 示例 recipe
+    RECIPE = "recipe"    # Example recipe
 
 
 class InstallResult(BaseModel):
-    """资源安装操作结果"""
+    """Resource installation operation result"""
 
     resource_type: ResourceType
-    installed: List[str] = Field(default_factory=list)  # 已安装的文件路径列表
-    skipped: List[str] = Field(default_factory=list)    # 跳过的文件路径列表（已存在）
-    backed_up: List[str] = Field(default_factory=list)  # 已备份的文件路径列表
-    errors: List[str] = Field(default_factory=list)     # 错误信息列表
+    installed: List[str] = Field(default_factory=list)  # List of installed file paths
+    skipped: List[str] = Field(default_factory=list)    # List of skipped file paths (already exists)
+    backed_up: List[str] = Field(default_factory=list)  # List of backed up file paths
+    errors: List[str] = Field(default_factory=list)     # List of error messages
 
     @property
     def success(self) -> bool:
-        """是否全部成功（无错误）"""
+        """Whether all operations succeeded (no errors)"""
         return len(self.errors) == 0
 
     @property
     def total_count(self) -> int:
-        """总处理文件数"""
+        """Total number of processed files"""
         return len(self.installed) + len(self.skipped)
 
 
 class ResourceStatus(BaseModel):
-    """资源安装状态（用于 --status 显示）"""
+    """Resource installation status (for --status display)"""
 
     commands: Optional[InstallResult] = None
     skills: Optional[InstallResult] = None
@@ -214,6 +214,6 @@ class ResourceStatus(BaseModel):
 
     @property
     def all_success(self) -> bool:
-        """所有资源是否安装成功"""
+        """Whether all resources were installed successfully"""
         results = [self.commands, self.skills, self.recipes]
         return all(r is None or r.success for r in results)

@@ -1,5 +1,5 @@
 ---
-description: "从对话上下文或用户提供的方法技巧创建 Claude Code Skill"
+description: "Create Claude Code Skills from conversation context or user-provided methods"
 ---
 
 # /frago.skill - Skill Creator
@@ -88,9 +88,9 @@ if NAMED:
 
         create SKILL.md:
             1. YAML frontmatter (name, description)
-            2. 快速参考 section
-            3. 使用方式 section (step by step)
-            4. 示例 section (if applicable)
+            2. Quick Reference section
+            3. Usage section (step by step)
+            4. Examples section (if applicable)
 
         create supporting files:
             REFERENCE.md → detailed docs (>100 lines split here)
@@ -107,12 +107,12 @@ if GENERATED:
 
 <description_quality>
 GOOD description patterns:
-    "当用户需要[具体场景]时使用。涵盖[功能1]、[功能2]。"
-    "[动作]指南。当提到[关键词1]、[关键词2]时使用。"
+    "Use when user needs [specific scenario]. Covers [feature1], [feature2]."
+    "[Action] guide. Use when [keyword1], [keyword2] are mentioned."
 
 BAD description patterns:
-    "一个有用的工具" (太模糊)
-    "PDF处理" (没说何时使用)
+    "A useful tool" (too vague)
+    "PDF processing" (doesn't say when to use)
 </description_quality>
 
 <yaml_rules>
@@ -123,21 +123,21 @@ name:
 
 description:
     - ≤1024 chars
-    - 第三人称
-    - 包含触发关键词
+    - Third person
+    - Include trigger keywords
 </yaml_rules>
 
 <forbidden>
-❌ YAML 使用 Tab 缩进
-❌ name 与目录名不一致
-❌ 嵌套引用 (SKILL.md → index.md → details.md)
+❌ Using Tab indentation in YAML
+❌ name doesn't match directory name
+❌ Nested references (SKILL.md → index.md → details.md)
 ❌ SKILL.md > 500 lines without splitting
-❌ description 太模糊无触发词
+❌ description too vague without trigger words
 
-✅ 空格缩进
-✅ name = 目录名
-✅ 一层引用 (SKILL.md → REFERENCE.md)
-✅ 详细内容拆分到支持文件
+✅ Space indentation
+✅ name = directory name
+✅ One level of reference (SKILL.md → REFERENCE.md)
+✅ Detailed content split into supporting files
 </forbidden>
 
 <commands>
@@ -149,42 +149,42 @@ description:
 <template_skill_md>
 ---
 name: skill-name-here
-description: 这个 skill 做什么。当用户需要[具体场景]时使用。涵盖[功能关键词]。
+description: What this skill does. Use when user needs [specific scenario]. Covers [feature keywords].
 ---
 
-# Skill 标题
+# Skill Title
 
-## 功能说明
+## Functionality
 
-简述此 skill 解决什么问题，何时应被触发。
+Briefly describe what problem this skill solves, when it should be triggered.
 
-## 使用方式
+## Usage
 
-1. 第一步操作
-2. 第二步操作
-3. 验证结果
+1. First operation step
+2. Second operation step
+3. Verify results
 
-## 示例
+## Examples
 
 ```bash
-# 示例命令或代码
+# Example command or code
 ```
 
-## 参考
+## Reference
 
-详细文档见 [REFERENCE.md](REFERENCE.md)（如适用）
+Detailed documentation in [REFERENCE.md](REFERENCE.md) (if applicable)
 </template_skill_md>
 
 <template_reference_md>
 # Reference Documentation
 
 ## Table of Contents
-- [Section 1: 基础概念](#section-1)
-- [Section 2: 详细说明](#section-2)
+- [Section 1: Basic Concepts](#section-1)
+- [Section 2: Detailed Explanation](#section-2)
 
-## Section 1: 基础概念
+## Section 1: Basic Concepts
 ...
 
-## Section 2: 详细说明
+## Section 2: Detailed Explanation
 ...
 </template_reference_md>

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Frago Session Commands - 会话管理命令组
+Frago Session Commands - Session Management Command Group
 
-提供会话数据的查询、查看和管理功能：
-- session list: 列出最近的会话
-- session show: 查看会话详情
-- session watch: 实时监控会话
-- session clean: 清理过期会话
+Provides session data querying, viewing, and management functions:
+- session list: List recent sessions
+- session show: View session details
+- session watch: Monitor sessions in real-time
+- session clean: Clean up expired sessions
 """
 
 import json
@@ -40,9 +40,9 @@ from .agent_friendly import AgentFriendlyGroup
 @click.group("session", cls=AgentFriendlyGroup)
 def session_group():
     """
-    会话管理命令组
+    Session Management Command Group
 
-    查看、监控和管理 Agent 执行会话。
+    View, monitor, and manage Agent execution sessions.
     """
     pass
 
@@ -52,24 +52,24 @@ def session_group():
     "--agent-type", "-a",
     type=click.Choice(["claude", "cursor", "cline", "all"]),
     default="all",
-    help="筛选 Agent 类型"
+    help="Filter by agent type"
 )
 @click.option(
     "--status", "-s",
     type=click.Choice(["running", "completed", "error", "all"]),
     default="all",
-    help="筛选会话状态"
+    help="Filter by session status"
 )
 @click.option(
     "--limit", "-n",
     type=int,
     default=10,
-    help="显示数量限制"
+    help="Limit the number of results"
 )
 @click.option(
     "--json", "json_output",
     is_flag=True,
-    help="以 JSON 格式输出"
+    help="Output in JSON format"
 )
 def list_cmd(
     agent_type: str,
@@ -78,16 +78,16 @@ def list_cmd(
     json_output: bool
 ):
     """
-    列出最近的会话
+    List recent sessions
 
     \b
-    示例:
+    Examples:
       frago session list
       frago session list --agent-type claude
       frago session list --status running
       frago session list --limit 20 --json
     """
-    # 转换参数
+    # Convert parameters
     agent_type_filter = None
     if agent_type != "all":
         agent_type_filter = AgentType(agent_type)
@@ -96,7 +96,7 @@ def list_cmd(
     if status != "all":
         status_filter = SessionStatus(status)
 
-    # 查询会话
+    # Query sessions
     sessions = list_sessions(
         agent_type=agent_type_filter,
         limit=limit,
@@ -104,17 +104,17 @@ def list_cmd(
     )
 
     if json_output:
-        # JSON 输出
+        # JSON output
         data = [s.model_dump(mode="json") for s in sessions]
         click.echo(json.dumps(data, ensure_ascii=False, indent=2))
         return
 
-    # 表格输出
+    # Table output
     if not sessions:
-        click.echo("没有找到会话记录")
+        click.echo("No session records found")
         return
 
-    click.echo(f"{'会话 ID':<12} {'类型':<8} {'状态':<10} {'步骤':<6} {'工具':<6} {'最后活动':<20}")
+    click.echo(f"{'Session ID':<12} {'Type':<8} {'Status':<10} {'Steps':<6} {'Tools':<6} {'Last Activity':<20}")
     click.echo("-" * 70)
 
     for session in sessions:
@@ -129,12 +129,12 @@ def list_cmd(
 
 
 def _get_status_display(status: SessionStatus) -> str:
-    """获取状态的显示文本"""
+    """Get status display text"""
     status_map = {
-        SessionStatus.RUNNING: "🟢 运行中",
-        SessionStatus.COMPLETED: "[OK] 完成",
-        SessionStatus.ERROR: "[X] 错误",
-        SessionStatus.CANCELLED: "⚪ 取消",
+        SessionStatus.RUNNING: "🟢 Running",
+        SessionStatus.COMPLETED: "[OK] Completed",
+        SessionStatus.ERROR: "[X] Error",
+        SessionStatus.CANCELLED: "⚪ Cancelled",
     }
     return status_map.get(status, status.value)
 
@@ -144,18 +144,18 @@ def _get_status_display(status: SessionStatus) -> str:
 @click.option(
     "--steps", "-s",
     is_flag=True,
-    help="显示步骤历史"
+    help="Show step history"
 )
 @click.option(
     "--json", "json_output",
     is_flag=True,
-    help="以 JSON 格式输出"
+    help="Output in JSON format"
 )
 @click.option(
     "--agent-type", "-a",
     type=click.Choice(["claude", "cursor", "cline"]),
     default="claude",
-    help="Agent 类型"
+    help="Agent type"
 )
 def show_cmd(
     session_id: str,
@@ -164,29 +164,29 @@ def show_cmd(
     agent_type: str
 ):
     """
-    查看会话详情
+    View session details
 
-    支持使用完整 ID 或前缀匹配。
+    Supports full ID or prefix matching.
 
     \b
-    示例:
+    Examples:
       frago session show 48c10a46
       frago session show 48c10a46 --steps
       frago session show 48c10a46 --json
     """
     agent = AgentType(agent_type)
 
-    # 支持前缀匹配
+    # Support prefix matching
     session = _find_session_by_prefix(session_id, agent)
     if not session:
-        click.echo(f"未找到会话: {session_id}", err=True)
+        click.echo(f"Session not found: {session_id}", err=True)
         sys.exit(1)
 
     if json_output:
-        # JSON 输出
+        # JSON output
         data = get_session_data(session.session_id, agent)
         if data:
-            # 转换为可序列化格式
+            # Convert to serializable format
             output = {
                 "metadata": data["metadata"].model_dump(mode="json"),
                 "steps": [s.model_dump(mode="json") for s in data["steps"]],
@@ -195,46 +195,46 @@ def show_cmd(
             click.echo(json.dumps(output, ensure_ascii=False, indent=2))
         return
 
-    # 详情输出
+    # Details output
     click.echo("=" * 60)
-    click.echo(f"会话 ID: {session.session_id}")
+    click.echo(f"Session ID: {session.session_id}")
     click.echo("=" * 60)
 
-    click.echo(f"\n📋 基本信息")
-    click.echo(f"  Agent 类型: {session.agent_type.value}")
-    click.echo(f"  项目路径: {session.project_path}")
-    click.echo(f"  状态: {_get_status_display(session.status)}")
+    click.echo(f"\n📋 Basic Information")
+    click.echo(f"  Agent type: {session.agent_type.value}")
+    click.echo(f"  Project path: {session.project_path}")
+    click.echo(f"  Status: {_get_status_display(session.status)}")
 
-    click.echo(f"\n⏱️ 时间信息")
-    click.echo(f"  开始时间: {session.started_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    click.echo(f"\n⏱️ Time Information")
+    click.echo(f"  Started at: {session.started_at.strftime('%Y-%m-%d %H:%M:%S')}")
     if session.ended_at:
-        click.echo(f"  结束时间: {session.ended_at.strftime('%Y-%m-%d %H:%M:%S')}")
-    click.echo(f"  最后活动: {session.last_activity.strftime('%Y-%m-%d %H:%M:%S')}")
+        click.echo(f"  Ended at: {session.ended_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    click.echo(f"  Last activity: {session.last_activity.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    click.echo(f"\n📊 统计信息")
-    click.echo(f"  总步骤数: {session.step_count}")
-    click.echo(f"  工具调用: {session.tool_call_count}")
+    click.echo(f"\n📊 Statistics")
+    click.echo(f"  Total steps: {session.step_count}")
+    click.echo(f"  Tool calls: {session.tool_call_count}")
 
-    # 显示摘要
+    # Show summary
     summary = read_summary(session.session_id, agent)
     if summary:
-        click.echo(f"\n📈 会话摘要")
-        click.echo(f"  总耗时: {format_duration(summary.total_duration_ms)}")
-        click.echo(f"  用户消息: {summary.user_message_count}")
-        click.echo(f"  助手消息: {summary.assistant_message_count}")
-        click.echo(f"  工具成功: {summary.tool_success_count}")
-        click.echo(f"  工具失败: {summary.tool_error_count}")
+        click.echo(f"\n📈 Session Summary")
+        click.echo(f"  Total duration: {format_duration(summary.total_duration_ms)}")
+        click.echo(f"  User messages: {summary.user_message_count}")
+        click.echo(f"  Assistant messages: {summary.assistant_message_count}")
+        click.echo(f"  Tool success: {summary.tool_success_count}")
+        click.echo(f"  Tool errors: {summary.tool_error_count}")
         if summary.most_used_tools:
             tools = ", ".join(f"{t.tool_name}({t.count})" for t in summary.most_used_tools[:5])
-            click.echo(f"  常用工具: {tools}")
+            click.echo(f"  Most used tools: {tools}")
         if summary.model:
-            click.echo(f"  使用模型: {summary.model}")
+            click.echo(f"  Model used: {summary.model}")
 
-    # 显示步骤历史
+    # Show step history
     if steps:
         step_list = read_steps(session.session_id, agent)
         if step_list:
-            click.echo(f"\n📜 步骤历史 ({len(step_list)} 条)")
+            click.echo(f"\n📜 Step History ({len(step_list)} items)")
             click.echo("-" * 60)
             for step in step_list:
                 icon = get_step_icon(step.type)
@@ -244,13 +244,13 @@ def show_cmd(
 
 
 def _find_session_by_prefix(prefix: str, agent_type: AgentType):
-    """通过前缀查找会话"""
-    # 先尝试精确匹配
+    """Find session by prefix"""
+    # Try exact match first
     session = read_metadata(prefix, agent_type)
     if session:
         return session
 
-    # 尝试前缀匹配
+    # Try prefix matching
     sessions = list_sessions(agent_type=agent_type, limit=100)
     for s in sessions:
         if s.session_id.startswith(prefix):
@@ -264,13 +264,13 @@ def _find_session_by_prefix(prefix: str, agent_type: AgentType):
 @click.option(
     "--json", "json_output",
     is_flag=True,
-    help="以 JSON 格式输出"
+    help="Output in JSON format"
 )
 @click.option(
     "--agent-type", "-a",
     type=click.Choice(["claude", "cursor", "cline"]),
     default="claude",
-    help="Agent 类型"
+    help="Agent type"
 )
 def watch_cmd(
     session_id: Optional[str],
@@ -278,31 +278,31 @@ def watch_cmd(
     agent_type: str
 ):
     """
-    实时监控会话
+    Monitor sessions in real-time
 
-    如果不指定 session_id，则监控最新的活跃会话。
+    If session_id is not specified, monitors the latest active session.
 
     \b
-    示例:
-      frago session watch              # 监控最新活跃会话
-      frago session watch 48c10a46     # 监控指定会话
-      frago session watch --json       # JSON 格式输出
+    Examples:
+      frago session watch              # Monitor latest active session
+      frago session watch 48c10a46     # Monitor specified session
+      frago session watch --json       # Output in JSON format
     """
     from frago.session.monitor import watch_latest_session, watch_session
 
     agent = AgentType(agent_type)
 
     if session_id:
-        # 监控指定会话
+        # Monitor specified session
         session = _find_session_by_prefix(session_id, agent)
         if not session:
-            click.echo(f"未找到会话: {session_id}", err=True)
+            click.echo(f"Session not found: {session_id}", err=True)
             sys.exit(1)
 
-        click.echo(f"监控会话: {session.session_id[:8]}...")
+        click.echo(f"Monitoring session: {session.session_id[:8]}...")
         watch_session(session.session_id, agent, json_output)
     else:
-        # 监控最新活跃会话
+        # Monitor latest active session
         watch_latest_session(agent, json_output)
 
 
@@ -311,23 +311,23 @@ def watch_cmd(
     "--days", "-d",
     type=int,
     default=30,
-    help="清理多少天前的会话"
+    help="Clean sessions older than N days"
 )
 @click.option(
     "--agent-type", "-a",
     type=click.Choice(["claude", "cursor", "cline", "all"]),
     default="all",
-    help="筛选 Agent 类型"
+    help="Filter by agent type"
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="仅显示将要删除的会话，不实际删除"
+    help="Only show sessions to be deleted, don't actually delete"
 )
 @click.option(
     "--force", "-f",
     is_flag=True,
-    help="跳过确认提示"
+    help="Skip confirmation prompt"
 )
 def clean_cmd(
     days: int,
@@ -336,15 +336,15 @@ def clean_cmd(
     force: bool
 ):
     """
-    清理过期会话
+    Clean up expired sessions
 
-    删除指定天数之前的会话数据。
+    Delete session data older than the specified number of days.
 
     \b
-    示例:
-      frago session clean              # 清理 30 天前的会话
-      frago session clean --days 7     # 清理 7 天前的会话
-      frago session clean --dry-run    # 预览将要删除的会话
+    Examples:
+      frago session clean              # Clean sessions older than 30 days
+      frago session clean --days 7     # Clean sessions older than 7 days
+      frago session clean --dry-run    # Preview sessions to be deleted
     """
     from datetime import timedelta
 
@@ -352,37 +352,37 @@ def clean_cmd(
     if agent_type != "all":
         agent_filter = AgentType(agent_type)
 
-    # 查找过期会话
+    # Find expired sessions
     cutoff = datetime.now() - timedelta(days=days)
     sessions = list_sessions(agent_type=agent_filter, limit=1000)
     old_sessions = [s for s in sessions if s.last_activity < cutoff]
 
     if not old_sessions:
-        click.echo(f"没有找到 {days} 天前的会话")
+        click.echo(f"No sessions found older than {days} days")
         return
 
-    click.echo(f"找到 {len(old_sessions)} 个过期会话（{days} 天前）")
+    click.echo(f"Found {len(old_sessions)} expired sessions (older than {days} days)")
 
     if dry_run:
-        click.echo("\n[Dry Run] 将要删除的会话:")
-        for s in old_sessions[:20]:  # 最多显示 20 个
+        click.echo("\n[Dry Run] Sessions to be deleted:")
+        for s in old_sessions[:20]:  # Show at most 20
             click.echo(f"  - {s.session_id[:8]}... ({s.last_activity.strftime('%Y-%m-%d')})")
         if len(old_sessions) > 20:
-            click.echo(f"  ... 还有 {len(old_sessions) - 20} 个")
+            click.echo(f"  ... and {len(old_sessions) - 20} more")
         return
 
     if not force:
-        if not click.confirm(f"确认删除 {len(old_sessions)} 个会话？"):
-            click.echo("已取消")
+        if not click.confirm(f"Confirm deletion of {len(old_sessions)} sessions?"):
+            click.echo("Cancelled")
             return
 
-    # 执行删除
+    # Execute deletion
     cleaned = 0
     for s in old_sessions:
         if delete_session(s.session_id, s.agent_type):
             cleaned += 1
 
-    click.echo(f"[OK] 已清理 {cleaned} 个会话")
+    click.echo(f"[OK] Cleaned {cleaned} sessions")
 
 
 @session_group.command("delete")
@@ -391,12 +391,12 @@ def clean_cmd(
     "--agent-type", "-a",
     type=click.Choice(["claude", "cursor", "cline"]),
     default="claude",
-    help="Agent 类型"
+    help="Agent type"
 )
 @click.option(
     "--force", "-f",
     is_flag=True,
-    help="跳过确认提示"
+    help="Skip confirmation prompt"
 )
 def delete_cmd(
     session_id: str,
@@ -404,33 +404,33 @@ def delete_cmd(
     force: bool
 ):
     """
-    删除指定会话
+    Delete specified session
 
     \b
-    示例:
+    Examples:
       frago session delete 48c10a46
       frago session delete 48c10a46 --force
     """
     agent = AgentType(agent_type)
 
-    # 查找会话
+    # Find session
     session = _find_session_by_prefix(session_id, agent)
     if not session:
-        click.echo(f"未找到会话: {session_id}", err=True)
+        click.echo(f"Session not found: {session_id}", err=True)
         sys.exit(1)
 
     if not force:
-        click.echo(f"会话 ID: {session.session_id}")
-        click.echo(f"项目: {session.project_path}")
-        click.echo(f"步骤数: {session.step_count}")
-        if not click.confirm("确认删除此会话？"):
-            click.echo("已取消")
+        click.echo(f"Session ID: {session.session_id}")
+        click.echo(f"Project: {session.project_path}")
+        click.echo(f"Steps: {session.step_count}")
+        if not click.confirm("Confirm deletion of this session?"):
+            click.echo("Cancelled")
             return
 
     if delete_session(session.session_id, agent):
-        click.echo(f"[OK] 已删除会话: {session.session_id[:8]}...")
+        click.echo(f"[OK] Deleted session: {session.session_id[:8]}...")
     else:
-        click.echo("[X] 删除失败", err=True)
+        click.echo("[X] Deletion failed", err=True)
         sys.exit(1)
 
 
@@ -438,17 +438,17 @@ def delete_cmd(
 @click.option(
     "--all", "sync_all",
     is_flag=True,
-    help="同步所有项目（默认仅当前项目）"
+    help="Sync all projects (default: current project only)"
 )
 @click.option(
     "--force", "-f",
     is_flag=True,
-    help="强制重新同步（包括已存在的会话）"
+    help="Force re-sync (including existing sessions)"
 )
 @click.option(
     "--json", "json_output",
     is_flag=True,
-    help="以 JSON 格式输出"
+    help="Output in JSON format"
 )
 def sync_cmd(
     sync_all: bool,
@@ -456,27 +456,27 @@ def sync_cmd(
     json_output: bool
 ):
     """
-    从 Claude 会话文件同步数据
+    Sync data from Claude session files
 
-    将 ~/.claude/projects/ 下的会话文件同步到 ~/.frago/sessions/claude/。
-    默认仅同步当前工作目录对应的项目。
+    Syncs session files from ~/.claude/projects/ to ~/.frago/sessions/claude/.
+    By default, only syncs the project corresponding to the current working directory.
 
     \b
-    示例:
-      frago session sync           # 同步当前项目
-      frago session sync --all     # 同步所有项目
-      frago session sync --force   # 强制重新同步
+    Examples:
+      frago session sync           # Sync current project
+      frago session sync --all     # Sync all projects
+      frago session sync --force   # Force re-sync
     """
     import os
 
     from frago.session.sync import sync_all_projects, sync_project_sessions
 
     if sync_all:
-        click.echo("同步所有项目的会话...")
+        click.echo("Syncing sessions from all projects...")
         result = sync_all_projects(force=force)
     else:
         project_path = os.getcwd()
-        click.echo(f"同步项目: {project_path}")
+        click.echo(f"Syncing project: {project_path}")
         result = sync_project_sessions(project_path, force=force)
 
     if json_output:
@@ -491,15 +491,15 @@ def sync_cmd(
         click.echo(json_module.dumps(output, ensure_ascii=False, indent=2))
         return
 
-    # 文本输出
-    click.echo(f"\n同步完成:")
-    click.echo(f"  新同步: {result.synced}")
-    click.echo(f"  已更新: {result.updated}")
-    click.echo(f"  已跳过: {result.skipped}")
+    # Text output
+    click.echo(f"\nSync completed:")
+    click.echo(f"  Newly synced: {result.synced}")
+    click.echo(f"  Updated: {result.updated}")
+    click.echo(f"  Skipped: {result.skipped}")
 
     if result.errors:
-        click.echo(f"\n[!] 错误 ({len(result.errors)}):")
+        click.echo(f"\n[!] Errors ({len(result.errors)}):")
         for err in result.errors[:5]:
             click.echo(f"  - {err}")
         if len(result.errors) > 5:
-            click.echo(f"  ... 还有 {len(result.errors) - 5} 个错误")
+            click.echo(f"  ... and {len(result.errors) - 5} more errors")

@@ -1,44 +1,44 @@
-# 项目名称
+# Project Name
 
-> 一句话描述项目的核心价值。
+> One-sentence description of the project's core value.
 
-## 项目概述
+## Project Overview
 
-### 背景
+### Background
 
-项目启动的背景和动机（2-3 句话）。
+Project background and motivation (2-3 sentences).
 
-### 目标
+### Goals
 
-- 目标 1：具体可衡量的目标
-- 目标 2：具体可衡量的目标
-- 目标 3：具体可衡量的目标
+- Goal 1: Specific measurable goal
+- Goal 2: Specific measurable goal
+- Goal 3: Specific measurable goal
 
-### 范围
+### Scope
 
-| 包含 | 不包含 |
-|------|--------|
-| 范围内容 1 | 排除内容 1 |
-| 范围内容 2 | 排除内容 2 |
+| In Scope | Out of Scope |
+|----------|--------------|
+| Scope Item 1 | Excluded Item 1 |
+| Scope Item 2 | Excluded Item 2 |
 
 ---
 
-## 技术方案
+## Technical Approach
 
-### 架构设计
+### Architecture Design
 
 ```mermaid
 flowchart TB
-    subgraph 前端
+    subgraph Frontend
         A[Web App]
         B[Mobile App]
     end
-    subgraph 后端
+    subgraph Backend
         C[API Gateway]
         D[Service A]
         E[Service B]
     end
-    subgraph 数据层
+    subgraph Data Layer
         F[(Database)]
         G[(Cache)]
     end
@@ -51,65 +51,65 @@ flowchart TB
     D --> G
 ```
 
-### 技术栈
+### Technology Stack
 
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| 前端 | React | 用户界面 |
-| 后端 | Python/FastAPI | API 服务 |
-| 数据库 | PostgreSQL | 持久化存储 |
-| 缓存 | Redis | 高速缓存 |
+| Layer | Technology | Description |
+|-------|------------|-------------|
+| Frontend | React | User Interface |
+| Backend | Python/FastAPI | API Service |
+| Database | PostgreSQL | Persistent Storage |
+| Cache | Redis | High-speed Cache |
 
 ---
 
-## 进度状态
+## Progress Status
 
 ```mermaid
 gantt
-    title 项目进度
+    title Project Progress
     dateFormat YYYY-MM-DD
-    section 阶段 1
-    需求分析    :done, a1, 2024-01-01, 2w
-    技术设计    :done, a2, after a1, 2w
-    section 阶段 2
-    核心开发    :active, b1, after a2, 4w
-    测试验证    :b2, after b1, 2w
-    section 阶段 3
-    部署上线    :c1, after b2, 1w
+    section Phase 1
+    Requirements Analysis    :done, a1, 2024-01-01, 2w
+    Technical Design    :done, a2, after a1, 2w
+    section Phase 2
+    Core Development    :active, b1, after a2, 4w
+    Testing & Validation    :b2, after b1, 2w
+    section Phase 3
+    Deployment    :c1, after b2, 1w
 ```
 
-| 里程碑 | 计划日期 | 状态 |
-|--------|----------|------|
-| 需求确认 | 2024-01-15 | 已完成 |
-| 设计评审 | 2024-02-01 | 已完成 |
-| 开发完成 | 2024-03-01 | 进行中 |
-| 上线发布 | 2024-03-15 | 待开始 |
+| Milestone | Planned Date | Status |
+|-----------|--------------|--------|
+| Requirements Confirmed | 2024-01-15 | Completed |
+| Design Review | 2024-02-01 | Completed |
+| Development Complete | 2024-03-01 | In Progress |
+| Launch | 2024-03-15 | Pending |
 
 ---
 
-## 团队成员
+## Team Members
 
-| 角色 | 成员 | 职责 |
-|------|------|------|
-| 项目经理 | 张三 | 项目协调、进度管理 |
-| 技术负责 | 李四 | 架构设计、技术决策 |
-| 开发工程师 | 王五 | 后端开发 |
-| 开发工程师 | 赵六 | 前端开发 |
-
----
-
-## 风险与挑战
-
-| 风险 | 影响 | 缓解措施 |
-|------|------|---------|
-| 风险 1 | 高 | 缓解方案描述 |
-| 风险 2 | 中 | 缓解方案描述 |
-| 风险 3 | 低 | 缓解方案描述 |
+| Role | Member | Responsibility |
+|------|--------|----------------|
+| Project Manager | Alice Smith | Project Coordination, Schedule Management |
+| Technical Lead | Bob Johnson | Architecture Design, Technical Decisions |
+| Developer | Charlie Brown | Backend Development |
+| Developer | Diana Lee | Frontend Development |
 
 ---
 
-## 下一步计划
+## Risks and Challenges
 
-1. **短期（1-2 周）**：具体任务描述
-2. **中期（1 个月）**：具体任务描述
-3. **长期（3 个月）**：具体任务描述
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Risk 1 | High | Mitigation plan description |
+| Risk 2 | Medium | Mitigation plan description |
+| Risk 3 | Low | Mitigation plan description |
+
+---
+
+## Next Steps
+
+1. **Short-term (1-2 weeks)**: Specific task description
+2. **Mid-term (1 month)**: Specific task description
+3. **Long-term (3 months)**: Specific task description

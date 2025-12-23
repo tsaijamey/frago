@@ -1,20 +1,20 @@
 /**
  * Recipe: x_extract_tweet_with_comments
  * Platform: x.com (Twitter)
- * Description: 提取推文内容、统计数据及评论列表（最多40条）
+ * Description: Extract tweet content, statistics, and comment list (up to 40 comments)
  * Created: 2025-11-19
  * Version: 1
  */
 
 (async function() {
-  // 辅助函数：等待
+  // Helper function: wait
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // 辅助函数：从article的innerText中解析信息
+  // Helper function: parse information from article's innerText
   function parseArticleText(text) {
     const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
-    // 查找作者名和用户名（通常在前几行）
+    // Find author name and username (usually in the first few lines)
     let author = '';
     let username = '';
     for (let i = 0; i < Math.min(5, lines.length); i++) {
@@ -25,20 +25,20 @@
       }
     }
 
-    // 提取推文内容（跳过作者信息和时间戳，提取中间部分）
+    // Extract tweet content (skip author info and timestamp, extract middle part)
     let contentLines = [];
     let contentStarted = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      // 跳过作者、用户名、时间戳
+      // Skip author, username, timestamp
       if (line === author || line === username || line.includes('·') || line.match(/^\d+[hms]$/)) {
         continue;
       }
-      // 跳过统计数据（Views, 纯数字，K/M后缀）
+      // Skip statistics (Views, pure numbers, K/M suffix)
       if (line === 'Views' || line.match(/^[\d.]+[KM]?$/)) {
         break;
       }
-      // 内容部分
+      // Content section
       if (!contentStarted && line.length > 0) {
         contentStarted = true;
       }
@@ -54,26 +54,26 @@
     };
   }
 
-  // 辅助函数：从innerText中提取统计数据
+  // Helper function: extract statistics from innerText
   function parseStats(text) {
     const lines = text.split('\n').map(l => l.trim());
     const numbers = lines.filter(l => l.match(/^[\d.]+[KM]?$/));
 
-    // X/Twitter 统计数据顺序为：浏览数、评论数、转发数、点赞数、书签数
-    // 评论统计数据通常只有：浏览数
+    // Tweet statistics usually in order: replies, retweets, likes, bookmarks, views
+    // Comment statistics usually only have: views
     return {
-      views: numbers[0] || '0',
-      replies: numbers[1] || '0',
-      retweets: numbers[2] || '0',
-      likes: numbers[3] || '0',
-      bookmarks: numbers[4] || '0'
+      replies: numbers[0] || '0',
+      retweets: numbers[1] || '0',
+      likes: numbers[2] || '0',
+      bookmarks: numbers[3] || '0',
+      views: numbers[4] || numbers[0] || '0'
     };
   }
 
-  // 步骤1：提取主推文信息
+  // Step 1: Extract main tweet information
   const articles = document.querySelectorAll('article');
   if (articles.length === 0) {
-    throw new Error('未找到推文article元素，请确保已导航到推文页面');
+    throw new Error('Tweet article element not found, please ensure you have navigated to the tweet page');
   }
 
   const mainTweetArticle = articles[0];
@@ -88,32 +88,32 @@
     stats: mainTweetStats
   };
 
-  // 步骤2：滚动加载评论直到40条（或无更多评论）
+  // Step 2: Scroll and load comments until 40 (or no more comments)
   const targetComments = 40;
   let previousCount = articles.length;
   let noNewCommentsCount = 0;
   let scrollCount = 0;
-  const maxScrolls = 15; // 最多滚动15次，避免超时
+  const maxScrolls = 15; // Maximum 15 scrolls to avoid timeout
 
   while (scrollCount < maxScrolls) {
     const currentArticles = document.querySelectorAll('article');
-    const currentCommentCount = currentArticles.length - 1; // 减去主推文
+    const currentCommentCount = currentArticles.length - 1; // Subtract main tweet
 
-    // 已达到目标数量
+    // Target count reached
     if (currentCommentCount >= targetComments) {
       break;
     }
 
-    // 滚动加载更多
+    // Scroll to load more
     window.scrollBy(0, 1000);
-    await wait(800); // 减少等待时间到800ms
+    await wait(800); // Reduced wait time to 800ms
     scrollCount++;
 
-    // 检查是否有新评论加载
+    // Check if new comments loaded
     const newArticles = document.querySelectorAll('article');
     if (newArticles.length === previousCount) {
       noNewCommentsCount++;
-      // 连续2次没有新评论，说明已到底部（减少到2次）
+      // 2 consecutive times with no new comments means reached bottom (reduced to 2)
       if (noNewCommentsCount >= 2) {
         break;
       }
@@ -123,7 +123,7 @@
     }
   }
 
-  // 步骤3：提取评论列表（跳过第一个article，它是主推文）
+  // Step 3: Extract comment list (skip first article, which is the main tweet)
   const allArticles = document.querySelectorAll('article');
   const comments = [];
 
@@ -143,7 +143,7 @@
     });
   }
 
-  // 返回结构化数据
+  // Return structured data
   return {
     tweet: mainTweet,
     comments: comments,

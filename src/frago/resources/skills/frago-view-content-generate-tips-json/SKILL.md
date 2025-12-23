@@ -1,49 +1,49 @@
 ---
 name: frago-view-content-generate-tips-json
-description: JSON 文件内容生成指南。当需要创建可通过 `frago view` 预览的 JSON 文件时使用此 skill。涵盖格式化显示、最佳实践。
+description: JSON file content generation guide. Use this skill when you need to create JSON files that can be previewed via `frago view`. Covers formatted display and best practices.
 ---
 
-# JSON 文件内容生成指南
+# JSON File Content Generation Guide
 
-通过 `frago view` 预览 JSON 文件，自动格式化和语法高亮。
+Preview JSON files via `frago view` with automatic formatting and syntax highlighting.
 
-## 预览命令
+## Preview Commands
 
 ```bash
-frago view data.json                      # 默认主题
-frago view config.json --theme monokai    # 指定主题
+frago view data.json                      # Default theme
+frago view config.json --theme monokai    # Specify theme
 ```
 
 ---
 
-## 渲染特性
+## Rendering Features
 
-### 自动格式化
+### Automatic Formatting
 
-- JSON 内容自动美化（Pretty Print）
-- 缩进对齐
-- 键值对清晰显示
+- JSON content automatically beautified (Pretty Print)
+- Indentation aligned
+- Key-value pairs clearly displayed
 
-### 语法高亮
+### Syntax Highlighting
 
-| 元素 | 颜色示例（github-dark） |
-|------|------------------------|
-| 键名 | 紫色 `#d2a8ff` |
-| 字符串值 | 蓝色 `#a5d6ff` |
-| 数字 | 青色 `#79c0ff` |
-| 布尔值 | 红色 `#ff7b72` |
-| null | 红色 `#ff7b72` |
-| 括号/逗号 | 白色 `#c9d1d9` |
+| Element | Color Example (github-dark) |
+|---------|----------------------------|
+| Key names | Purple `#d2a8ff` |
+| String values | Blue `#a5d6ff` |
+| Numbers | Cyan `#79c0ff` |
+| Booleans | Red `#ff7b72` |
+| null | Red `#ff7b72` |
+| Brackets/commas | White `#c9d1d9` |
 
 ---
 
-## JSON 格式规范
+## JSON Format Specification
 
-### 正确格式
+### Correct Format
 
 ```json
 {
-    "name": "项目名称",
+    "name": "Project Name",
     "version": "1.0.0",
     "enabled": true,
     "count": 42,
@@ -55,46 +55,46 @@ frago view config.json --theme monokai    # 指定主题
 }
 ```
 
-### 常见错误
+### Common Errors
 
-| 错误 | 示例 | 修正 |
-|------|------|------|
-| 尾随逗号 | `{"a": 1,}` | `{"a": 1}` |
-| 单引号 | `{'a': 1}` | `{"a": 1}` |
-| 无引号键 | `{a: 1}` | `{"a": 1}` |
-| 注释 | `// comment` | 不支持注释 |
-| undefined | `undefined` | 使用 `null` |
+| Error | Example | Fix |
+|-------|---------|-----|
+| Trailing comma | `{"a": 1,}` | `{"a": 1}` |
+| Single quotes | `{'a': 1}` | `{"a": 1}` |
+| Unquoted keys | `{a: 1}` | `{"a": 1}` |
+| Comments | `// comment` | Comments not supported |
+| undefined | `undefined` | Use `null` |
 
 ---
 
-## 最佳实践
+## Best Practices
 
-### 1. 缩进
+### 1. Indentation
 
-- 使用 **2 或 4 空格** 缩进
-- 保持一致性
+- Use **2 or 4 spaces** for indentation
+- Maintain consistency
 
-### 2. 键命名
+### 2. Key Naming
 
-- 使用 **snake_case** 或 **camelCase**
-- 保持整个文件一致
+- Use **snake_case** or **camelCase**
+- Maintain consistency throughout the file
 
 ```json
 {
-    "user_name": "snake_case 风格",
-    "userName": "camelCase 风格"
+    "user_name": "snake_case style",
+    "userName": "camelCase style"
 }
 ```
 
-### 3. 数据组织
+### 3. Data Organization
 
-- 相关字段分组
-- 重要字段放前面
+- Group related fields
+- Place important fields first
 
 ```json
 {
     "id": "001",
-    "name": "重要字段优先",
+    "name": "Important fields first",
     "metadata": {
         "created_at": "2024-01-01",
         "updated_at": "2024-01-02"
@@ -102,60 +102,60 @@ frago view config.json --theme monokai    # 指定主题
 }
 ```
 
-### 4. 文件大小
+### 4. File Size
 
-- 单文件 < 1MB 最佳
-- 大数据考虑分页或分文件
-
----
-
-## 适用场景
-
-- API 响应数据预览
-- 配置文件查看
-- 数据结构审查
-- 调试数据检查
+- Single file < 1MB optimal
+- Consider pagination or splitting files for large data
 
 ---
 
-## 显示主题
+## Use Cases
 
-与代码文件相同，支持以下主题：
+- API response data preview
+- Configuration file viewing
+- Data structure review
+- Debug data inspection
 
-| 主题 | 命令 |
-|------|------|
-| github-dark（默认） | `frago view data.json` |
+---
+
+## Display Themes
+
+Same as code files, supports the following themes:
+
+| Theme | Command |
+|-------|---------|
+| github-dark (default) | `frago view data.json` |
 | monokai | `frago view data.json --theme monokai` |
 | atom-one-dark | `frago view data.json --theme atom-one-dark` |
 
 ---
 
-## 注意事项
+## Notes
 
-| 问题 | 原因 | 解决 |
-|------|------|------|
-| 解析失败 | JSON 格式错误 | 使用 JSON 验证器 |
-| 显示截断 | 值太长 | 使用嵌套结构 |
-| 渲染慢 | 文件太大 | 拆分或精简 |
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Parse failure | JSON format error | Use JSON validator |
+| Truncated display | Value too long | Use nested structure |
+| Slow rendering | File too large | Split or simplify |
 
 ---
 
-## JSON 验证
+## JSON Validation
 
-预览前确保 JSON 有效：
+Ensure JSON is valid before preview:
 
 ```bash
-# Python 验证
+# Python validation
 python -m json.tool data.json
 
-# jq 验证
+# jq validation
 jq . data.json
 ```
 
 ---
 
-## 相关工具
+## Related Tools
 
-- **jq**：命令行 JSON 处理器
-- **jsonlint**：JSON 验证器
-- **VSCode**：JSON 编辑和格式化
+- **jq**: Command-line JSON processor
+- **jsonlint**: JSON validator
+- **VSCode**: JSON editing and formatting

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Frago Agent Command - 通过 Claude CLI 执行非交互式 AI 任务
+Frago Agent Command - Execute non-interactive AI tasks via Claude CLI
 
-认证策略：
-根据 `frago init` 写入的 ~/.frago/config.json 配置决定：
-1. auth_method == "official" → 直接使用 Claude CLI
-2. auth_method == "custom" → Claude CLI 使用 ~/.claude/settings.json 的 env
-3. ccr_enabled == True 或 --use-ccr → 使用 CCR 代理
+Authentication strategy:
+Based on ~/.frago/config.json configuration written by `frago init`:
+1. auth_method == "official" → Use Claude CLI directly
+2. auth_method == "custom" → Claude CLI uses env from ~/.claude/settings.json
+3. ccr_enabled == True or --use-ccr → Use CCR proxy
 """
 
 import json
@@ -24,20 +24,20 @@ from frago.compat import prepare_command_for_windows
 
 
 # =============================================================================
-# 配置加载
+# Configuration Loading
 # =============================================================================
 
 def get_frago_config_path() -> Path:
-    """获取 frago 配置文件路径"""
+    """Get frago configuration file path"""
     return Path.home() / ".frago" / "config.json"
 
 
 def load_frago_config() -> Optional[dict]:
     """
-    加载 frago 配置
+    Load frago configuration
 
     Returns:
-        配置字典，如果不存在或损坏返回 None
+        Configuration dict, or None if not found or corrupted
     """
     config_path = get_frago_config_path()
     if not config_path.exists():
@@ -51,34 +51,34 @@ def load_frago_config() -> Optional[dict]:
 
 
 # =============================================================================
-# 工具函数
+# Utility Functions
 # =============================================================================
 
 def find_claude_cli() -> Optional[str]:
     """
-    查找 claude CLI 路径
+    Find claude CLI path
 
     Returns:
-        claude 可执行文件路径，未找到返回 None
+        claude executable path, or None if not found
     """
     return shutil.which("claude")
 
 
 def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
     """
-    检查 CCR (Claude Code Router) 配置
+    Check CCR (Claude Code Router) configuration
 
-    CCR 通过设置 ANTHROPIC_BASE_URL 指向本地代理来工作
+    CCR works by setting ANTHROPIC_BASE_URL to point to local proxy
 
     Returns:
-        (是否可用, 配置信息)
+        (is_available, config_info)
     """
-    # 检查 ccr 命令是否存在
+    # Check if ccr command exists
     ccr_path = shutil.which("ccr")
     if not ccr_path:
         return False, None
 
-    # 检查配置文件
+    # Check configuration file
     config_path = Path.home() / ".claude-code-router" / "config.json"
     if not config_path.exists():
         return False, {"error": "CCR config file not found"}
@@ -87,12 +87,12 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
         with open(config_path, "r") as f:
             config = json.load(f)
 
-        # 检查是否有配置的 Provider
+        # Check if Provider is configured
         providers = config.get("Providers", [])
         if not providers:
             return False, {"error": "No providers configured in CCR"}
 
-        # 检查 CCR 服务状态
+        # Check CCR service status
         try:
             result = subprocess.run(
                 prepare_command_for_windows(["ccr", "status"]),
@@ -120,21 +120,21 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
 
 def should_use_ccr(config: Optional[dict], force_ccr: bool = False) -> Tuple[bool, Optional[dict]]:
     """
-    判断是否应该使用 CCR
+    Determine whether to use CCR
 
     Args:
-        config: frago 配置
-        force_ccr: 是否强制使用 CCR (--use-ccr 标志)
+        config: frago configuration
+        force_ccr: Whether to force using CCR (--use-ccr flag)
 
     Returns:
-        (是否使用 CCR, CCR 配置信息)
+        (use CCR, CCR config info)
     """
-    # 强制使用 CCR
+    # Force using CCR
     if force_ccr:
         ok, info = check_ccr_auth()
         return ok, info
 
-    # 根据配置判断
+    # Determine based on configuration
     if config and config.get("ccr_enabled"):
         ok, info = check_ccr_auth()
         return ok, info
@@ -144,13 +144,13 @@ def should_use_ccr(config: Optional[dict], force_ccr: bool = False) -> Tuple[boo
 
 def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
     """
-    通过运行简单提示词验证 Claude CLI 是否正常工作
+    Verify Claude CLI is working by running a simple prompt
 
     Args:
-        timeout: 超时时间（秒）
+        timeout: Timeout in seconds
 
     Returns:
-        (是否正常, 错误信息或成功信息)
+        (is_working, error message or success message)
     """
     try:
         result = subprocess.run(
@@ -170,7 +170,7 @@ def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
                 pass
             return True, "Claude CLI responded"
 
-        # 解析错误信息
+        # Parse error message
         error_msg = result.stderr or result.stdout or "Unknown error"
         if "authentication" in error_msg.lower() or "unauthorized" in error_msg.lower():
             return False, "Authentication failed - please run 'claude' and use /login"
@@ -188,54 +188,54 @@ def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
 
 
 # =============================================================================
-# Slash Command 展开
+# Slash Command Expansion
 # =============================================================================
 
 def find_slash_command_file(command: str) -> Optional[Path]:
     """
-    查找 slash command 对应的 markdown 文件
+    Find markdown file corresponding to slash command
 
-    命令格式转换规则：
-    - /frago.dev.agent → frago.dev.agent.md（开发环境）
-    - /frago.agent → frago.agent.md（生产环境）
+    Command format conversion rules:
+    - /frago.dev.agent → frago.dev.agent.md (development)
+    - /frago.agent → frago.agent.md (production)
 
-    支持 .dev fallback：
-    - 请求 /frago.dev.agent 时，先找 frago.dev.agent.md
-    - 找不到则 fallback 到 frago.agent.md（去掉 .dev）
+    Support .dev fallback:
+    - When requesting /frago.dev.agent, search for frago.dev.agent.md first
+    - Fallback to frago.agent.md (remove .dev) if not found
 
-    搜索路径优先级（每个路径都尝试 .dev 和非 .dev 版本）：
-    1. 当前工作目录 .claude/commands/
-    2. 用户目录 ~/.claude/commands/
-    3. frago 资源目录（打包的默认命令）
+    Search path priority (try both .dev and non-.dev versions in each path):
+    1. Current working directory .claude/commands/
+    2. User directory ~/.claude/commands/
+    3. frago resource directory (packaged default commands)
 
     Args:
-        command: slash command 名称，如 "/frago.dev.agent" 或 "frago.agent"
+        command: slash command name, e.g. "/frago.dev.agent" or "frago.agent"
 
     Returns:
-        找到的文件路径，或 None
+        Found file path, or None
     """
-    # 规范化命令名：去掉前导 /
+    # Normalize command name: remove leading /
     cmd_name = command.lstrip("/")
 
-    # 生成候选文件名列表
-    # 如果是 .dev 命名，同时生成 .dev 版本和非 .dev 版本
+    # Generate candidate filenames
+    # If .dev naming, generate both .dev and non-.dev versions
     filenames = [f"{cmd_name}.md"]
     if ".dev." in cmd_name:
         # frago.dev.agent → frago.agent
         non_dev_name = cmd_name.replace(".dev.", ".")
         filenames.append(f"{non_dev_name}.md")
 
-    # 搜索目录
+    # Search directories
     search_dirs = [
         Path.cwd() / ".claude" / "commands",
         Path.home() / ".claude" / "commands",
     ]
 
-    # 添加 frago 资源目录（打包的默认命令）
+    # Add frago resource directory (packaged default commands)
     try:
         from importlib.resources import files
         resources_dir = files("frago") / "resources" / "commands"
-        # importlib.resources 返回 Traversable，需要转换
+        # importlib.resources returns Traversable, needs conversion
         if hasattr(resources_dir, '_path'):
             search_dirs.append(Path(resources_dir._path))
         else:
@@ -243,7 +243,7 @@ def find_slash_command_file(command: str) -> Optional[Path]:
     except (ImportError, TypeError):
         pass
 
-    # 按目录优先级搜索，每个目录内先尝试 .dev 再尝试非 .dev
+    # Search by directory priority, try .dev first then non-.dev within each directory
     for search_dir in search_dirs:
         for filename in filenames:
             path = search_dir / filename
@@ -255,19 +255,19 @@ def find_slash_command_file(command: str) -> Optional[Path]:
 
 def expand_slash_command(command: str, arguments: str = "") -> Tuple[bool, str, str]:
     """
-    展开 slash command 为完整的 prompt 内容
+    Expand slash command to complete prompt content
 
-    处理流程：
-    1. 查找命令文件
-    2. 读取并解析 YAML frontmatter（如果有）
-    3. 替换 $ARGUMENTS 占位符
+    Processing flow:
+    1. Find command file
+    2. Read and parse YAML frontmatter (if present)
+    3. Replace $ARGUMENTS placeholder
 
     Args:
-        command: slash command 名称，如 "/frago.dev.agent"
-        arguments: 用户参数，用于替换 $ARGUMENTS
+        command: slash command name, e.g. "/frago.dev.agent"
+        arguments: user arguments, for replacing $ARGUMENTS
 
     Returns:
-        (是否成功, 展开后的内容, 错误信息)
+        (success, expanded content, error message)
     """
     cmd_file = find_slash_command_file(command)
 
@@ -279,15 +279,15 @@ def expand_slash_command(command: str, arguments: str = "") -> Tuple[bool, str, 
     except IOError as e:
         return False, "", f"Failed to read command file: {e}"
 
-    # 移除 YAML frontmatter（如果存在）
-    # frontmatter 格式：以 --- 开头和结尾
+    # Remove YAML frontmatter (if present)
+    # frontmatter format: starts and ends with ---
     if content.startswith("---"):
-        # 找到第二个 ---
+        # Find second ---
         second_delimiter = content.find("---", 3)
         if second_delimiter != -1:
             content = content[second_delimiter + 3:].lstrip("\n")
 
-    # 替换 $ARGUMENTS 占位符
+    # Replace $ARGUMENTS placeholder
     content = content.replace("$ARGUMENTS", arguments)
 
     return True, content, ""
@@ -295,14 +295,14 @@ def expand_slash_command(command: str, arguments: str = "") -> Tuple[bool, str, 
 
 def get_available_slash_commands() -> dict:
     """
-    获取所有可用的 frago slash commands
+    Get all available frago slash commands
 
     Returns:
-        命令名到描述的映射，如 {"/frago.dev.run": "执行AI主持的..."}
+        Command name to description mapping, e.g. {"/frago.dev.run": "Execute AI-hosted..."}
     """
     commands = {}
 
-    # 搜索路径
+    # Search paths
     search_dirs = [
         Path.cwd() / ".claude" / "commands",
         Path.home() / ".claude" / "commands",
@@ -312,22 +312,22 @@ def get_available_slash_commands() -> dict:
         if not search_dir.exists():
             continue
 
-        # 查找 frago.*.md 文件
+        # Find frago.*.md files
         for md_file in search_dir.glob("frago*.md"):
             cmd_name = "/" + md_file.stem  # frago.dev.run.md → /frago.dev.run
 
             if cmd_name in commands:
-                continue  # 优先使用先找到的
+                continue  # Use first found
 
-            # 尝试提取 description
+            # Try to extract description
             try:
                 content = md_file.read_text(encoding="utf-8")
                 if content.startswith("---"):
-                    # 解析 YAML frontmatter
+                    # Parse YAML frontmatter
                     second_delimiter = content.find("---", 3)
                     if second_delimiter != -1:
                         frontmatter = content[3:second_delimiter].strip()
-                        # 简单提取 description
+                        # Simple description extraction
                         for line in frontmatter.split("\n"):
                             if line.startswith("description:"):
                                 desc = line[12:].strip().strip('"\'')
@@ -344,25 +344,25 @@ def get_available_slash_commands() -> dict:
 
 
 # =============================================================================
-# Agent Prompt 构建
+# Agent Prompt Building
 # =============================================================================
 
 def _build_agent_prompt(user_prompt: str) -> str:
     """
-    构建 agent 执行 prompt
+    Build agent execution prompt
 
-    从 ~/.claude/commands/frago.agent.md 读取模板，替换 $ARGUMENTS。
+    Read template from ~/.claude/commands/frago.agent.md, replace $ARGUMENTS.
 
     Args:
-        user_prompt: 用户原始提示词
+        user_prompt: User's original prompt
 
     Returns:
-        完整的 prompt
+        Complete prompt
     """
-    # 获取可用命令及其描述
+    # Get available commands and their descriptions
     commands = get_available_slash_commands()
 
-    # 提取关键命令的说明
+    # Extract key command descriptions
     command_descriptions = []
     key_commands = ["/frago.run", "/frago.do", "/frago.recipe", "/frago.test"]
 
@@ -371,39 +371,39 @@ def _build_agent_prompt(user_prompt: str) -> str:
             desc = commands[cmd]
             command_descriptions.append(f"- {cmd}: {desc}")
 
-    commands_section = "\n".join(command_descriptions) if command_descriptions else "（无可用命令）"
+    commands_section = "\n".join(command_descriptions) if command_descriptions else "(No available commands)"
 
     commands_to_send = f"""# Frago Agent
 
-你是一个智能自动化 agent。根据用户的任务意图，选择合适的执行模式。
+You are an intelligent automation agent. Choose the appropriate execution mode based on the user's task intent.
 
-## 可用的 Slash Commands
+## Available Slash Commands
 
 {commands_section}
 
-## 执行策略
+## Execution Strategy
 
-根据用户意图，使用 Slash Commands 指令调用合适的 skill：
-- **探索/调研/了解** → /frago.run
-- **执行/完成/做** → /frago.do
-- **创建配方/自动化** → /frago.recipe
-- **测试/验证配方** → /frago.test
-如果任务简单明确，也可以直接使用其他工具完成，无需调用上述 Slash Commands。
+Use Slash Commands to invoke appropriate skills based on user intent:
+- **Explore/Research/Learn** → /frago.run
+- **Execute/Complete/Do** → /frago.do
+- **Create Recipe/Automation** → /frago.recipe
+- **Test/Verify Recipe** → /frago.test
+If the task is simple and clear, you can also use other tools directly without invoking the above Slash Commands.
 
 ---
 
-## 用户任务
+## User Task
 
 {user_prompt}
 """
-    # 打印 commands_to_send
+    # Print commands_to_send
     # click.echo(commands_to_send)
 
     return commands_to_send
 
 
 # =============================================================================
-# CLI 命令
+# CLI Commands
 # =============================================================================
 
 @click.command("agent")
@@ -412,65 +412,65 @@ def _build_agent_prompt(user_prompt: str) -> str:
     "--prompt-file",
     type=click.File('r', encoding='utf-8'),
     default=None,
-    help="从文件读取 prompt（使用 '-' 表示 stdin）"
+    help="Read prompt from file (use '-' for stdin)"
 )
 @click.option(
     "--model",
     type=str,
     default=None,
-    help="指定模型 (sonnet, opus, haiku 或完整模型名)"
+    help="Specify model (sonnet, opus, haiku or full model name)"
 )
 @click.option(
     "--timeout",
     type=int,
     default=600,
-    help="执行超时时间（秒），默认 600"
+    help="Execution timeout in seconds, default 600"
 )
 @click.option(
     "--use-ccr",
     is_flag=True,
-    help="强制使用 CCR (Claude Code Router)"
+    help="Force using CCR (Claude Code Router)"
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="仅显示将要执行的命令，不实际执行"
+    help="Only show command that would be executed, don't actually run"
 )
 @click.option(
     "--ask",
     is_flag=True,
-    help="启用权限确认（默认跳过）"
+    help="Enable permission confirmation (skip by default)"
 )
 @click.option(
     "--direct",
     is_flag=True,
-    help="直接执行，跳过路由分析"
+    help="Execute directly, skip routing analysis"
 )
 @click.option(
     "--quiet", "-q",
     is_flag=True,
-    help="静默模式，不显示实时监控状态"
+    help="Quiet mode, don't show real-time monitoring status"
 )
 @click.option(
     "--json-status",
     is_flag=True,
-    help="以 JSON 格式输出监控状态（用于机器处理）"
+    help="Output monitoring status in JSON format (for machine processing)"
 )
 @click.option(
     "--no-monitor",
     is_flag=True,
-    help="禁用会话监控（不记录会话数据）"
+    help="Disable session monitoring (don't record session data)"
 )
 @click.option(
     "--yes", "-y",
     is_flag=True,
-    help="跳过权限确认提示，直接执行"
+    help="Skip permission confirmation prompt, execute directly"
 )
 @click.option(
     "--resume", "-r",
     type=str,
     default=None,
-    help="在指定会话中继续对话（传入 session_id）"
+    help="Continue conversation in specified session (pass session_id)"
 )
 def agent(
     prompt: tuple,
@@ -488,66 +488,66 @@ def agent(
     resume: Optional[str]
 ):
     """
-    智能 Agent：根据用户意图自动选择执行模式
+    Intelligent Agent: Automatically choose execution mode based on user intent
 
-    agent 会根据任务意图判断使用哪种模式：
-    - 探索/调研 → /frago.run
-    - 执行任务 → /frago.do
-    - 创建配方 → /frago.recipe
-    - 测试配方 → /frago.test
-
-    \b
-    示例:
-      frago agent 帮我在 Upwork 上找 Python 工作
-      frago agent 调研 YouTube 字幕提取接口
-      frago agent 写一个配方提取 Twitter 评论
-      frago agent --direct 列出当前目录     # 跳过模式判断，直接执行
+    agent determines which mode to use based on task intent:
+    - Explore/Research → /frago.run
+    - Execute Task → /frago.do
+    - Create Recipe → /frago.recipe
+    - Test Recipe → /frago.test
 
     \b
-    可用模型 (--model):
-      sonnet, opus, haiku 或完整模型名
+    Examples:
+      frago agent Help me find Python jobs on Upwork
+      frago agent Research YouTube subtitle extraction API
+      frago agent Write a recipe to extract Twitter comments
+      frago agent --direct List current directory     # Skip mode determination, execute directly
+
+    \b
+    Available models (--model):
+      sonnet, opus, haiku or full model name
     """
-    # 确定 prompt 来源：--prompt-file 优先，否则使用命令行参数
+    # Determine prompt source: --prompt-file has priority, otherwise use command line arguments
     if prompt_file:
         prompt_text = prompt_file.read().strip()
     elif prompt:
         prompt_text = " ".join(prompt)
     else:
-        click.echo("错误: 请提供 prompt（命令行参数或 --prompt-file）", err=True)
+        click.echo("Error: Please provide prompt (command line argument or --prompt-file)", err=True)
         sys.exit(1)
 
     if not prompt_text:
-        click.echo("错误: prompt 不能为空", err=True)
+        click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
-    # Step 1: 检查 claude CLI 是否存在
+    # Step 1: Check if claude CLI exists
     claude_path = find_claude_cli()
     if not claude_path:
-        click.echo("错误: 未找到 claude CLI", err=True)
-        click.echo("请先安装 Claude Code: https://claude.ai/code", err=True)
+        click.echo("Error: claude CLI not found", err=True)
+        click.echo("Please install Claude Code first: https://claude.ai/code", err=True)
         sys.exit(1)
 
     click.echo(f"[OK] Claude CLI: {claude_path}")
 
-    # Step 2: 加载 frago 配置
+    # Step 2: Load frago configuration
     frago_config = load_frago_config()
     if frago_config:
         auth_method = frago_config.get("auth_method", "official")
         if auth_method == "official":
-            click.echo("[OK] 认证方式: Claude CLI 原生")
+            click.echo("[OK] Authentication: Claude CLI native")
         else:
-            click.echo("[OK] 认证方式: 自定义 API 端点")
+            click.echo("[OK] Authentication: Custom API endpoint")
     else:
-        click.echo("[!] 未找到 frago 配置，使用 Claude CLI 默认认证")
-        click.echo("  提示: 运行 'frago init' 进行初始化配置")
+        click.echo("[!] Frago config not found, using Claude CLI default authentication")
+        click.echo("  Tip: Run 'frago init' to initialize configuration")
 
-    # Step 3: 判断是否使用 CCR
+    # Step 3: Determine whether to use CCR
     env = os.environ.copy()
     use_ccr_mode, ccr_info = should_use_ccr(frago_config, use_ccr)
 
     if use_ccr_mode:
         if not ccr_info:
-            click.echo("\n错误: CCR 配置无效", err=True)
+            click.echo("\nError: Invalid CCR configuration", err=True)
             sys.exit(1)
 
         host = ccr_info.get("host", "127.0.0.1")
@@ -558,51 +558,51 @@ def agent(
         env["DISABLE_TELEMETRY"] = "true"
 
         if not ccr_info.get("is_running"):
-            click.echo("正在启动 CCR 服务...")
+            click.echo("Starting CCR service...")
             subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True, env=env)
 
-        click.echo(f"[OK] 使用 CCR: http://{host}:{port}")
+        click.echo(f"[OK] Using CCR: http://{host}:{port}")
 
-    # Step 4: 权限确认（--yes 跳过确认）
+    # Step 4: Permission confirmation (--yes skips confirmation)
     if not ask and not dry_run and not yes:
         click.echo()
-        click.echo("[!] 将以 --dangerously-skip-permissions 模式运行")
-        click.echo("  Claude 将跳过所有权限确认，直接执行任何操作")
-        if not click.confirm("确认继续？", default=False):
-            click.echo("已取消")
+        click.echo("[!] Will run in --dangerously-skip-permissions mode")
+        click.echo("  Claude will skip all permission confirmations and execute any operation directly")
+        if not click.confirm("Confirm to continue?", default=False):
+            click.echo("Cancelled")
             sys.exit(0)
 
     skip_permissions = not ask
 
     # =========================================================================
-    # 单阶段执行：直接让 agent 判断并执行
+    # Single-phase execution: Let agent determine and execute directly
     # =========================================================================
 
     if resume:
-        click.echo(f"\n[Resume] 在会话 {resume[:8]}... 中继续: {prompt_text}")
+        click.echo(f"\n[Resume] Continue in session {resume[:8]}...: {prompt_text}")
         execution_prompt = prompt_text
     elif direct:
-        click.echo(f"\n[Direct] 直接执行: {prompt_text}")
+        click.echo(f"\n[Direct] Execute directly: {prompt_text}")
         execution_prompt = prompt_text
     else:
-        click.echo(f"\n[执行] {prompt_text}")
+        click.echo(f"\n[Execute] {prompt_text}")
 
-        # 构建包含可用命令说明的 prompt，让 agent 自行判断并执行
+        # Build prompt with available command descriptions, let agent determine and execute
         execution_prompt = _build_agent_prompt(prompt_text)
 
-        # 显示构建的 prompt
-        click.echo(f"\n[Prompt] 从 frago.agent.md 构建:")
+        # Display built prompt
+        click.echo(f"\n[Prompt] Built from frago.agent.md:")
         click.echo("-" * 40)
         click.echo(execution_prompt)
         click.echo("-" * 40)
 
         if dry_run:
-            click.echo("[Dry Run] 跳过实际执行")
+            click.echo("[Dry Run] Skip actual execution")
             return
 
-    # 构建最终命令 - 使用 stream-json 实现实时输出
-    # 注意：stream-json 必须配合 --verbose 使用
-    # 使用 "-p -" 从 stdin 读取 prompt，避免 Windows 命令行参数对换行符的截断
+    # Build final command - use stream-json for real-time output
+    # Note: stream-json must be used with --verbose
+    # Use "-p -" to read prompt from stdin, avoid Windows command line argument truncation of newlines
     cmd = ["claude", "-p", "-", "--output-format", "stream-json", "--verbose"]
 
     if resume:
@@ -616,7 +616,7 @@ def agent(
 
     click.echo("-" * 60)
 
-    # 启动会话监控（如果未禁用）
+    # Start session monitoring (if not disabled)
     monitor = None
     monitor_enabled = not no_monitor and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
 
@@ -633,18 +633,18 @@ def agent(
                 json_mode=json_status,
                 persist=True,
                 quiet=quiet,
-                target_session_id=resume,  # resume 时直接监控指定会话
+                target_session_id=resume,  # Monitor specified session directly when resuming
             )
             monitor.start()
         except ImportError as e:
-            # session 模块可能未安装，静默忽略
+            # session module may not be installed, silently ignore
             if not quiet:
-                click.echo(f"  [!] 会话监控未启用: {e}", err=True)
+                click.echo(f"  [!] Session monitoring not enabled: {e}", err=True)
         except Exception as e:
             if not quiet:
-                click.echo(f"  [!] 启动监控失败: {e}", err=True)
+                click.echo(f"  [!] Failed to start monitoring: {e}", err=True)
 
-    # 执行命令（实时流式输出）
+    # Execute command (real-time streaming output)
     try:
         process = subprocess.Popen(
             prepare_command_for_windows(cmd),
@@ -657,17 +657,17 @@ def agent(
             bufsize=1,
         )
 
-        # 通过 stdin 传递 prompt（避免 Windows 命令行参数截断多行文本）
+        # Pass prompt via stdin (avoid Windows command line argument truncation of multi-line text)
         process.stdin.write(execution_prompt)
         process.stdin.close()
 
-        # 解析 stream-json 格式并实时显示
+        # Parse stream-json format and display in real-time
         for line in iter(process.stdout.readline, ""):
             line = line.strip()
             if not line:
                 continue
 
-            # 解析 stream-json 并显示关键信息
+            # Parse stream-json and display key information
             try:
                 event = json.loads(line)
                 event_type = event.get("type", "")
@@ -691,11 +691,11 @@ def agent(
                             else:
                                 click.echo(f"[{tool_name}]")
             except json.JSONDecodeError:
-                # 非 JSON 行直接输出
+                # Non-JSON lines output directly
                 if not quiet:
                     click.echo(line)
 
-        # 读取 stderr
+        # Read stderr
         stderr_output = process.stderr.read()
         if stderr_output:
             click.echo(f"\n[stderr] {stderr_output}", err=True)
@@ -705,21 +705,21 @@ def agent(
         click.echo("\n" + "-" * 60)
 
         if process.returncode == 0:
-            click.echo("[OK] 执行完成")
+            click.echo("[OK] Execution completed")
         else:
-            # 非零退出码不强制退出，Claude CLI 会自适应处理工具错误
-            click.echo(f"[!] 执行结束 (退出码: {process.returncode})")
+            # Non-zero exit code doesn't force exit, Claude CLI will adaptively handle tool errors
+            click.echo(f"[!] Execution finished (exit code: {process.returncode})")
 
     except subprocess.TimeoutExpired:
         process.kill()
-        click.echo(f"\n[X] 执行超时 ({timeout}s)", err=True)
+        click.echo(f"\n[X] Execution timeout ({timeout}s)", err=True)
     except KeyboardInterrupt:
         process.kill()
-        click.echo("\n[X] 用户中断", err=True)
+        click.echo("\n[X] User interrupted", err=True)
     except Exception as e:
-        click.echo(f"\n[X] 执行错误: {e}", err=True)
+        click.echo(f"\n[X] Execution error: {e}", err=True)
     finally:
-        # 停止会话监控
+        # Stop session monitoring
         if monitor:
             try:
                 monitor.stop()
@@ -728,24 +728,24 @@ def agent(
 
 
 # =============================================================================
-# 辅助命令：检查认证状态
+# Auxiliary Command: Check Authentication Status
 # =============================================================================
 
 @click.command("agent-status")
 def agent_status():
     """
-    检查 Claude CLI 认证状态
+    Check Claude CLI authentication status
 
-    显示当前可用的认证方式和配置信息。
+    Display current available authentication methods and configuration information.
     """
-    click.echo("Claude CLI 认证状态检查")
+    click.echo("Claude CLI Authentication Status Check")
     click.echo("=" * 50)
 
-    # 检查 claude CLI
+    # Check claude CLI
     claude_path = find_claude_cli()
     if claude_path:
         click.echo(f"[OK] Claude CLI: {claude_path}")
-        # 获取版本
+        # Get version
         try:
             result = subprocess.run(
                 prepare_command_for_windows(["claude", "--version"]),
@@ -755,42 +755,42 @@ def agent_status():
                 timeout=5
             )
             if result.returncode == 0:
-                click.echo(f"  版本: {result.stdout.strip()}")
+                click.echo(f"  Version: {result.stdout.strip()}")
         except Exception:
             pass
     else:
-        click.echo("[X] Claude CLI: 未安装")
+        click.echo("[X] Claude CLI: Not installed")
         return
 
     click.echo()
 
-    # 加载 frago 配置
-    click.echo("Frago 配置:")
+    # Load frago configuration
+    click.echo("Frago Configuration:")
     frago_config = load_frago_config()
     if frago_config:
         auth_method = frago_config.get("auth_method", "official")
         ccr_enabled = frago_config.get("ccr_enabled", False)
         init_completed = frago_config.get("init_completed", False)
 
-        click.echo(f"  配置文件: {get_frago_config_path()}")
-        click.echo(f"  认证方式: {'Claude CLI 原生' if auth_method == 'official' else '自定义 API 端点'}")
-        click.echo(f"  CCR 启用: {'是' if ccr_enabled else '否'}")
-        click.echo(f"  初始化状态: {'已完成' if init_completed else '未完成'}")
+        click.echo(f"  Config file: {get_frago_config_path()}")
+        click.echo(f"  Authentication: {'Claude CLI native' if auth_method == 'official' else 'Custom API endpoint'}")
+        click.echo(f"  CCR enabled: {'Yes' if ccr_enabled else 'No'}")
+        click.echo(f"  Initialization status: {'Completed' if init_completed else 'Not completed'}")
     else:
-        click.echo("  [!] 未找到配置文件")
-        click.echo(f"  提示: 运行 'frago init' 进行初始化配置")
+        click.echo("  [!] Config file not found")
+        click.echo(f"  Tip: Run 'frago init' to initialize configuration")
 
     click.echo()
 
-    # 检查 CCR 状态（如果启用）
+    # Check CCR status (if enabled)
     if frago_config and frago_config.get("ccr_enabled"):
-        click.echo("CCR 状态:")
+        click.echo("CCR Status:")
         ok, info = check_ccr_auth()
         if ok:
-            click.echo(f"  [OK] CCR 可用")
+            click.echo(f"  [OK] CCR available")
             click.echo(f"    Providers: {', '.join(info.get('providers', []))}")
-            click.echo(f"    运行状态: {'运行中' if info.get('is_running') else '未运行'}")
+            click.echo(f"    Running status: {'Running' if info.get('is_running') else 'Not running'}")
         else:
-            click.echo("  [X] CCR 不可用")
+            click.echo("  [X] CCR not available")
             if info and info.get("error"):
-                click.echo(f"    原因: {info['error']}")
+                click.echo(f"    Reason: {info['error']}")

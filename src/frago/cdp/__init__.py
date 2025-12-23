@@ -1,7 +1,7 @@
 """
-CDP模块 - Chrome DevTools Protocol封装
+CDP module - Chrome DevTools Protocol wrapper
 
-提供浏览器自动化控制的Python接口。
+Provides Python interface for browser automation control.
 """
 
 from .client import CDPClient

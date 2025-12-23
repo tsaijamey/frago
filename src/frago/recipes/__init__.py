@@ -1,4 +1,4 @@
-"""Recipe 系统核心模块"""
+"""Recipe system core module"""
 
 from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import (

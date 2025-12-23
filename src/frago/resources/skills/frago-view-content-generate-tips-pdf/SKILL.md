@@ -1,13 +1,13 @@
 ---
 name: frago-view-content-generate-tips-pdf
-description: PDF 文件内容生成指南。当需要了解 `frago view` 如何预览 PDF 文件时使用此 skill。涵盖渲染特性、限制说明。
+description: PDF file content generation guide. Use this skill when you need to understand how `frago view` previews PDF files. Covers rendering features and limitations.
 ---
 
-# PDF 文件内容生成指南
+# PDF File Content Generation Guide
 
-通过 `frago view` 预览 PDF 文件，基于 PDF.js 客户端渲染。
+Preview PDF files via `frago view`, based on PDF.js client-side rendering.
 
-## 预览命令
+## Preview Commands
 
 ```bash
 frago view document.pdf
@@ -15,94 +15,94 @@ frago view document.pdf
 
 ---
 
-## 渲染特性
+## Rendering Features
 
-### 基于 PDF.js
+### Based on PDF.js
 
-- 使用 Mozilla PDF.js 库
-- 客户端渲染，无需服务器支持
-- 所有页面连续显示
+- Uses Mozilla PDF.js library
+- Client-side rendering, no server support needed
+- All pages displayed continuously
 
-### 支持的 PDF 特性
+### Supported PDF Features
 
-| 特性 | 支持状态 |
-|------|---------|
-| 文本内容 | 支持 |
-| 图片 | 支持 |
-| 矢量图形 | 支持 |
-| 嵌入字体 | 支持 |
-| 书签/目录 | 不支持导航 |
-| 表单填写 | 不支持 |
-| 注释 | 只读显示 |
-| 加密 PDF | 不支持 |
-
----
-
-## 显示模式
-
-### 连续滚动
-
-所有页面按顺序垂直排列，支持滚动浏览。
-
-### 页面间距
-
-页面之间有适当间距，便于区分。
-
-### 自适应宽度
-
-PDF 页面自动适应窗口宽度。
+| Feature | Support Status |
+|---------|---------------|
+| Text content | Supported |
+| Images | Supported |
+| Vector graphics | Supported |
+| Embedded fonts | Supported |
+| Bookmarks/TOC | Navigation not supported |
+| Form filling | Not supported |
+| Annotations | Read-only display |
+| Encrypted PDF | Not supported |
 
 ---
 
-## 最佳实践
+## Display Mode
 
-### 1. PDF 生成建议
+### Continuous Scrolling
 
-- 使用标准字体或嵌入字体
-- 避免过大的图片（建议压缩）
-- 单文件大小 < 10MB
+All pages arranged vertically in sequence, supports scrolling.
 
-### 2. 页面布局
+### Page Spacing
 
-- 纵向布局（Portrait）效果最佳
-- 横向布局（Landscape）可能需要滚动
+Appropriate spacing between pages for easy distinction.
 
-### 3. 文件命名
+### Adaptive Width
 
-- 使用英文或数字命名
-- 避免特殊字符
+PDF pages automatically adapt to window width.
 
 ---
 
-## 限制说明
+## Best Practices
 
-| 限制 | 说明 | 规避方案 |
-|------|------|---------|
-| 无目录导航 | 点击目录不跳转 | 手动滚动 |
-| 无搜索功能 | 无法搜索文本 | 使用专业 PDF 阅读器 |
-| 无缩放控制 | 固定缩放比例 | 调整窗口大小 |
-| 表单不可填 | 只读显示 | 使用 Adobe Reader |
-| 加密不支持 | 无法打开 | 先解密 |
-| 大文件慢 | 渲染耗时 | 拆分或压缩 |
+### 1. PDF Generation Recommendations
 
----
+- Use standard fonts or embed fonts
+- Avoid oversized images (recommend compression)
+- Single file size < 10MB
 
-## 适用场景
+### 2. Page Layout
 
-- 快速预览 PDF 报告
-- 简单文档阅读
-- 幻灯片 PDF 浏览
+- Portrait layout works best
+- Landscape layout may require scrolling
 
-**不适用**：
-- 需要目录导航的长文档
-- 需要表单填写的交互式 PDF
-- 加密或受保护的 PDF
+### 3. File Naming
+
+- Use English or numbers for naming
+- Avoid special characters
 
 ---
 
-## 替代方案
+## Limitations
 
-对于复杂 PDF 需求，建议使用：
-- macOS: 预览.app
+| Limitation | Description | Workaround |
+|------------|-------------|------------|
+| No TOC navigation | Clicking TOC doesn't jump | Manual scrolling |
+| No search function | Cannot search text | Use professional PDF reader |
+| No zoom control | Fixed zoom ratio | Adjust window size |
+| Forms not fillable | Read-only display | Use Adobe Reader |
+| Encryption not supported | Cannot open | Decrypt first |
+| Large files slow | Time-consuming rendering | Split or compress |
+
+---
+
+## Use Cases
+
+- Quick PDF report preview
+- Simple document reading
+- PDF slide browsing
+
+**Not suitable for**:
+- Long documents requiring TOC navigation
+- Interactive PDFs requiring form filling
+- Encrypted or protected PDFs
+
+---
+
+## Alternatives
+
+For complex PDF needs, recommend using:
+- macOS: Preview.app
 - Windows: Adobe Acrobat Reader
-- 跨平台: Firefox/Chrome 内置 PDF 查看器
+- Cross-platform: Firefox/Chrome built-in PDF viewer

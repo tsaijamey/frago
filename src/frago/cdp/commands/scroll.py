@@ -1,7 +1,7 @@
 """
-滚动相关CDP命令
+Scroll-related CDP commands
 
-封装页面滚动功能的CDP命令。
+Encapsulates CDP commands for page scrolling functionality.
 """
 
 from typing import Dict, Any
@@ -10,24 +10,24 @@ from ..logger import get_logger
 
 
 class ScrollCommands:
-    """滚动命令类"""
-    
+    """Scroll commands class"""
+
     def __init__(self, session):
         """
-        初始化滚动命令
-        
+        Initialize scroll commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def scroll(self, distance: int) -> None:
         """
-        滚动页面指定距离
-        
+        Scroll page by specified distance
+
         Args:
-            distance: 滚动距离（正数向下，负数向上）
+            distance: Scroll distance (positive for down, negative for up)
         """
         self.logger.info(f"Scrolling by {distance} pixels")
         
@@ -35,33 +35,33 @@ class ScrollCommands:
         self.session.send_command("Runtime.evaluate", {"expression": script})
     
     def scroll_to_top(self) -> None:
-        """滚动到页面顶部"""
+        """Scroll to page top"""
         self.logger.info("Scrolling to top")
-        
+
         script = "window.scrollTo(0, 0);"
         self.session.send_command("Runtime.evaluate", {"expression": script})
-    
+
     def scroll_to_bottom(self) -> None:
-        """滚动到页面底部"""
+        """Scroll to page bottom"""
         self.logger.info("Scrolling to bottom")
-        
+
         script = "window.scrollTo(0, document.body.scrollHeight);"
         self.session.send_command("Runtime.evaluate", {"expression": script})
-    
+
     def scroll_up(self, distance: int = 100) -> None:
         """
-        向上滚动
-        
+        Scroll up
+
         Args:
-            distance: 滚动距离（像素）
+            distance: Scroll distance (pixels)
         """
         self.scroll(-distance)
-    
+
     def scroll_down(self, distance: int = 100) -> None:
         """
-        向下滚动
-        
+        Scroll down
+
         Args:
-            distance: 滚动距离（像素）
+            distance: Scroll distance (pixels)
         """
         self.scroll(distance)
