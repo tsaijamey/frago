@@ -128,8 +128,8 @@ def update(check_only: bool, reinstall: bool, from_repo: bool):
             # Install from GitHub repository, needs --reinstall to overwrite existing installation
             cmd = ["uv", "tool", "install", "--reinstall", REPO_URL]
         else:
-            # Update from PyPI, use --refresh to ensure latest index is fetched
-            cmd = ["uv", "tool", "upgrade", "--refresh", PACKAGE_NAME]
+            # Update from PyPI
+            cmd = ["uv", "tool", "upgrade", PACKAGE_NAME]
             if reinstall:
                 cmd.append("--reinstall")
 
