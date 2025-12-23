@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { isApiReady } from '@/api/pywebview';
+import { isApiReady, getApiMode, waitForApi } from '@/api';
 
 // Layout
 import BottomNav from '@/components/layout/NavTabs';
@@ -23,22 +23,40 @@ function App() {
   const [apiReady, setApiReady] = useState(isApiReady());
 
   useEffect(() => {
-    // Check if API is ready
-    if (isApiReady()) {
-      setApiReady(true);
-      loadConfig();
-      return;
-    }
+    const initApi = async () => {
+      const mode = getApiMode();
+      console.log('API mode:', mode);
 
-    // Listen for pywebview ready event
-    const handleReady = () => {
-      console.log('pywebview ready');
-      setApiReady(true);
-      loadConfig();
+      if (mode === 'http') {
+        // Web service mode - wait for API connection
+        try {
+          await waitForApi();
+          setApiReady(true);
+          loadConfig();
+        } catch (error) {
+          console.error('Failed to connect to web service:', error);
+        }
+      } else {
+        // pywebview mode - check if already ready
+        if (isApiReady()) {
+          setApiReady(true);
+          loadConfig();
+          return;
+        }
+
+        // Listen for pywebview ready event
+        const handleReady = () => {
+          console.log('pywebview ready');
+          setApiReady(true);
+          loadConfig();
+        };
+
+        window.addEventListener('pywebviewready', handleReady);
+        return () => window.removeEventListener('pywebviewready', handleReady);
+      }
     };
 
-    window.addEventListener('pywebviewready', handleReady);
-    return () => window.removeEventListener('pywebviewready', handleReady);
+    initApi();
   }, [loadConfig]);
 
   // Debug info

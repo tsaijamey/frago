@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getRecipeDetail, runRecipe, openPath } from '@/api/pywebview';
+import { getRecipeDetail, runRecipe, openPath } from '@/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { ExternalLink } from 'lucide-react';
 import type { RecipeDetail as RecipeDetailType } from '@/types/pywebview.d';

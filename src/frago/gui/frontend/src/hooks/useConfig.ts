@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { isApiReady } from '@/api/pywebview';
+import { isApiReady } from '@/api';
 
 /**
  * Config Hook

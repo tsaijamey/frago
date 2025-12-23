@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Accordion, AccordionItem } from '../ui/Accordion';
-import { openTutorial } from '@/api/pywebview';
+import { openTutorial } from '@/api';
 import { ExternalLink, Loader2 } from 'lucide-react';
 
 interface TutorialButtonProps {

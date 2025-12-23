@@ -12,7 +12,7 @@ import {
   getSyncResult,
   listUserRepos,
   selectExistingRepo,
-} from '@/api/pywebview';
+} from '@/api';
 import type { GithubRepo } from '@/types/pywebview.d';
 import { Github, Check, AlertCircle, Loader2, Terminal, FolderGit2, RefreshCw } from 'lucide-react';
 
