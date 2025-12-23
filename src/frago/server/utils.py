@@ -1,16 +1,22 @@
 """Utility functions for Frago Web Service.
 
-Provides helper functions for port discovery, URL handling,
+Provides helper functions for port handling, URL generation,
 and other server-related utilities.
 """
 
 import socket
 from typing import Optional, Tuple
 
+import psutil
+
+# Fixed port configuration (014-server-background-redesign)
+SERVER_PORT = 8093
+SERVER_HOST = "127.0.0.1"
+
 # Global server state (shared across modules)
 _server_started_at: Optional[str] = None
-_server_host: str = "127.0.0.1"
-_server_port: int = 8080
+_server_host: str = SERVER_HOST
+_server_port: int = SERVER_PORT
 
 
 def set_server_state(host: str, port: int, started_at: str) -> None:
@@ -38,6 +44,10 @@ def get_server_info() -> dict:
         "port": _server_port,
         "started_at": _server_started_at,
     }
+
+
+# Alias for backward compatibility
+get_server_state = get_server_info
 
 
 def find_available_port(start_port: int = 8080, max_attempts: int = 100) -> int:
@@ -84,17 +94,45 @@ def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
-def get_server_url(host: str = "127.0.0.1", port: int = 8080) -> str:
+def get_server_url(host: str = SERVER_HOST, port: int = SERVER_PORT) -> str:
     """Get the full server URL.
 
     Args:
-        host: Server host
-        port: Server port
+        host: Server host (default: 127.0.0.1)
+        port: Server port (default: 8093)
 
     Returns:
-        Full URL string (e.g., "http://127.0.0.1:8080")
+        Full URL string (e.g., "http://127.0.0.1:8093")
     """
     return f"http://{host}:{port}"
+
+
+def check_port_conflict(port: int = SERVER_PORT, host: str = SERVER_HOST) -> Tuple[bool, Optional[str]]:
+    """Check if the specified port is available and identify conflicting process.
+
+    Args:
+        port: Port number to check (default: 8093)
+        host: Host to bind to (default: 127.0.0.1)
+
+    Returns:
+        Tuple of (is_available, conflict_info).
+        conflict_info is None if available, otherwise contains process info.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            sock.bind((host, port))
+            return True, None
+    except OSError:
+        # Port is in use, try to identify the conflicting process
+        for conn in psutil.net_connections():
+            if hasattr(conn, 'laddr') and conn.laddr and conn.laddr.port == port:
+                try:
+                    proc = psutil.Process(conn.pid)
+                    return False, f"{proc.name()} (PID: {conn.pid})"
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return False, f"Unknown process (PID: {conn.pid})"
+        return False, "Unknown process"
 
 
 def parse_host_port(address: str, default_port: int = 8080) -> Tuple[str, int]:
