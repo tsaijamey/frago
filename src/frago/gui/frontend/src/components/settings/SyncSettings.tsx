@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility, checkGhCli } from '@/api/pywebview';
+import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility, checkGhCli } from '@/api';
 import { Github, RefreshCw, AlertTriangle, Check, X, Loader2, AlertCircle } from 'lucide-react';
 import GitHubWizard from './GitHubWizard';
 

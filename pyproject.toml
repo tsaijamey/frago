@@ -46,6 +46,9 @@ dependencies = [
     "watchdog>=3.0.0",
     "pywebview>=6.1",
     "markdown>=3.4.0",
+    # Web service GUI (013-change-gui-into-web-service)
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
 ]
 
 [project.optional-dependencies]

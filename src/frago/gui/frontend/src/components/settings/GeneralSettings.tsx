@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getMainConfig, updateAuthMethod, openWorkingDirectory } from '@/api/pywebview';
+import { getMainConfig, updateAuthMethod, openWorkingDirectory } from '@/api';
 import type { MainConfig } from '@/types/pywebview.d';
 import { Eye, EyeOff, FolderOpen } from 'lucide-react';
 import Modal from '@/components/ui/Modal';

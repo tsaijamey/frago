@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTasks } from '@/hooks/useTasks';
-import { startAgentTask } from '@/api/pywebview';
+import { startAgentTask } from '@/api';
 import TaskCard from './TaskCard';
 import EmptyState from '@/components/ui/EmptyState';
 import { Send, ClipboardList } from 'lucide-react';

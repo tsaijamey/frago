@@ -12,7 +12,7 @@ import type {
   SystemStatus,
   Theme,
 } from '@/types/pywebview.d';
-import * as api from '@/api/pywebview';
+import * as api from '@/api';
 
 // Page type
 export type PageType =

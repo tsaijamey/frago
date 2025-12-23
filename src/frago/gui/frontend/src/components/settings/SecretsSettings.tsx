@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getEnvVars, updateEnvVars, getRecipeEnvRequirements } from '@/api/pywebview';
+import { getEnvVars, updateEnvVars, getRecipeEnvRequirements } from '@/api';
 import type { RecipeEnvRequirement } from '@/types/pywebview.d';
 import { Key, Plus, Edit2, Trash2, Eye, EyeOff } from 'lucide-react';
 import Modal from '@/components/ui/Modal';

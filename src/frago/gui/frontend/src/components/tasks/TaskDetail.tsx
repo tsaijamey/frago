@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getTaskDetail, continueAgentTask } from '@/api/pywebview';
+import { getTaskDetail, continueAgentTask } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { Send, MessageSquarePlus, ChevronDown, ChevronRight } from 'lucide-react';

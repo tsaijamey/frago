@@ -177,3 +177,10 @@ DOCS = {
 }
 # Read as needed
 ```
+
+## Active Technologies
+- Python 3.9+ (existing project requirement) + FastAPI, Uvicorn (new), existing React/TypeScript frontend (013-change-gui-into-web-service)
+- N/A (uses existing session storage in `~/.frago/sessions/`) (013-change-gui-into-web-service)
+
+## Recent Changes
+- 013-change-gui-into-web-service: Added Python 3.9+ (existing project requirement) + FastAPI, Uvicorn (new), existing React/TypeScript frontend
