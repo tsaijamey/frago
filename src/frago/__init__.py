@@ -1,8 +1,8 @@
 """
-Frago - 自动化视觉管理系统CDP控制库
+Frago - Automated visual management system CDP control library
 
-提供Chrome DevTools Protocol的Python封装，
-用于浏览器自动化控制和视觉管理。
+Provides Python wrapper for Chrome DevTools Protocol,
+for browser automation control and visual management.
 """
 
 from importlib.metadata import version, PackageNotFoundError
@@ -10,18 +10,18 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("frago-cli")
 except PackageNotFoundError:
-    __version__ = "0.0.0"  # 开发模式下未安装时的回退值
+    __version__ = "0.0.0"  # Fallback value when not installed in development mode
 __author__ = "Jamey Tsai"
 __email__ = "caijia@frago.ai"
 
-# 推荐使用详细导入方式：
+# Recommended to use explicit imports:
 # from frago.recipes import RecipeRegistry, RecipeRunner
 # from frago.run import RunInstance, RunManager
 # from frago.cdp import CDPClient, CDPSession
 # from frago.cli import cli
 
-# 子模块通过路径访问（避免顶层命名空间污染）
-# 例如：import frago.recipes, import frago.run
+# Submodules accessed via path (avoid top-level namespace pollution)
+# Example: import frago.recipes, import frago.run
 
 __all__ = [
     "__version__",

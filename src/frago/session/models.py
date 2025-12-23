@@ -1,9 +1,9 @@
 """
-Session 数据模型定义
+Session Data Models
 
-定义 Agent 会话监控所需的所有数据结构，包括：
-- 枚举类型：AgentType, SessionStatus, StepType, ToolCallStatus
-- 核心实体：MonitoredSession, SessionStep, ToolCallRecord, SessionSummary
+Defines all data structures required for Agent session monitoring, including:
+- Enum types: AgentType, SessionStatus, StepType, ToolCallStatus
+- Core entities: MonitoredSession, SessionStep, ToolCallRecord, SessionSummary
 """
 
 from datetime import datetime
@@ -14,87 +14,87 @@ from pydantic import BaseModel, Field
 
 
 # ============================================================
-# 枚举类型
+# Enum Types
 # ============================================================
 
 
 class AgentType(str, Enum):
-    """Agent 工具类型标识"""
+    """Agent tool type identifier"""
 
     CLAUDE = "claude"  # Claude Code
-    CURSOR = "cursor"  # Cursor (预留)
-    CLINE = "cline"  # Cline (预留)
+    CURSOR = "cursor"  # Cursor (reserved)
+    CLINE = "cline"  # Cline (reserved)
 
 
 class SessionStatus(str, Enum):
-    """会话状态"""
+    """Session status"""
 
-    RUNNING = "running"  # 正在执行
-    COMPLETED = "completed"  # 正常完成
-    ERROR = "error"  # 异常终止
-    CANCELLED = "cancelled"  # 用户取消
+    RUNNING = "running"  # Currently running
+    COMPLETED = "completed"  # Completed normally
+    ERROR = "error"  # Terminated with error
+    CANCELLED = "cancelled"  # Cancelled by user
 
 
 class StepType(str, Enum):
-    """会话步骤类型"""
+    """Session step type"""
 
-    USER_MESSAGE = "user_message"  # 用户输入消息
-    ASSISTANT_MESSAGE = "assistant_message"  # 助手回复消息
-    TOOL_CALL = "tool_call"  # 工具调用请求
-    TOOL_RESULT = "tool_result"  # 工具执行结果
-    SYSTEM_EVENT = "system_event"  # 系统事件（错误、重试等）
+    USER_MESSAGE = "user_message"  # User input message
+    ASSISTANT_MESSAGE = "assistant_message"  # Assistant response message
+    TOOL_CALL = "tool_call"  # Tool call request
+    TOOL_RESULT = "tool_result"  # Tool execution result
+    SYSTEM_EVENT = "system_event"  # System event (error, retry, etc.)
 
 
 class ToolCallStatus(str, Enum):
-    """工具调用状态"""
+    """Tool call status"""
 
-    PENDING = "pending"  # 等待执行
-    SUCCESS = "success"  # 执行成功
-    ERROR = "error"  # 执行失败
+    PENDING = "pending"  # Waiting for execution
+    SUCCESS = "success"  # Executed successfully
+    ERROR = "error"  # Execution failed
 
 
 # ============================================================
-# 核心数据模型
+# Core Data Models
 # ============================================================
 
 
 class SessionStep(BaseModel):
-    """会话步骤记录
+    """Session step record
 
-    表示会话中的一个执行步骤。
+    Represents an execution step in a session.
     """
 
-    step_id: int = Field(..., ge=1, description="步骤序号（从 1 开始）")
-    session_id: str = Field(..., description="所属会话 ID")
-    type: StepType = Field(..., description="步骤类型")
-    timestamp: datetime = Field(..., description="步骤时间戳")
+    step_id: int = Field(..., ge=1, description="Step sequence number (starts from 1)")
+    session_id: str = Field(..., description="Associated session ID")
+    type: StepType = Field(..., description="Step type")
+    timestamp: datetime = Field(..., description="Step timestamp")
     content_summary: str = Field(
-        ..., description="内容（完整内容）"
+        ..., description="Content (full content)"
     )
-    raw_uuid: str = Field(..., description="原始记录的 uuid")
-    parent_uuid: Optional[str] = Field(None, description="父消息的 uuid")
+    raw_uuid: str = Field(..., description="UUID of the original record")
+    parent_uuid: Optional[str] = Field(None, description="UUID of the parent message")
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class ToolCallRecord(BaseModel):
-    """工具调用记录
+    """Tool call record
 
-    表示一次工具调用的详细信息。
+    Represents detailed information about a tool call.
     """
 
-    tool_call_id: str = Field(..., description="工具调用 ID（来自 Claude）")
-    session_id: str = Field(..., description="所属会话 ID")
-    step_id: int = Field(..., ge=1, description="关联的步骤序号")
-    tool_name: str = Field(..., description="工具名称")
-    input_summary: str = Field(..., description="输入参数摘要")
-    called_at: datetime = Field(..., description="调用时间")
-    result_summary: Optional[str] = Field(None, description="执行结果摘要")
-    completed_at: Optional[datetime] = Field(None, description="完成时间")
-    duration_ms: Optional[int] = Field(None, ge=0, description="执行耗时（毫秒）")
+    tool_call_id: str = Field(..., description="Tool call ID (from Claude)")
+    session_id: str = Field(..., description="Associated session ID")
+    step_id: int = Field(..., ge=1, description="Associated step sequence number")
+    tool_name: str = Field(..., description="Tool name")
+    input_summary: str = Field(..., description="Input parameter summary")
+    called_at: datetime = Field(..., description="Call time")
+    result_summary: Optional[str] = Field(None, description="Execution result summary")
+    completed_at: Optional[datetime] = Field(None, description="Completion time")
+    duration_ms: Optional[int] = Field(None, ge=0, description="Execution duration (milliseconds)")
     status: ToolCallStatus = Field(
-        default=ToolCallStatus.PENDING, description="调用状态"
+        default=ToolCallStatus.PENDING, description="Call status"
     )
 
     class Config:
@@ -102,89 +102,89 @@ class ToolCallRecord(BaseModel):
 
 
 class MonitoredSession(BaseModel):
-    """监控会话
+    """Monitored session
 
-    表示一个被 Frago 监控的 Agent 执行会话。
+    Represents an Agent execution session monitored by Frago.
     """
 
-    session_id: str = Field(..., description="Claude Code 会话 ID")
-    agent_type: AgentType = Field(..., description="Agent 类型标识")
-    project_path: str = Field(..., description="项目绝对路径")
-    source_file: str = Field(..., description="原始会话文件路径")
-    started_at: datetime = Field(..., description="监控开始时间")
-    ended_at: Optional[datetime] = Field(None, description="监控结束时间")
+    session_id: str = Field(..., description="Claude Code session ID")
+    agent_type: AgentType = Field(..., description="Agent type identifier")
+    project_path: str = Field(..., description="Project absolute path")
+    source_file: str = Field(..., description="Original session file path")
+    started_at: datetime = Field(..., description="Monitoring start time")
+    ended_at: Optional[datetime] = Field(None, description="Monitoring end time")
     status: SessionStatus = Field(
-        default=SessionStatus.RUNNING, description="会话状态"
+        default=SessionStatus.RUNNING, description="Session status"
     )
-    step_count: int = Field(default=0, ge=0, description="已记录步骤数")
-    tool_call_count: int = Field(default=0, ge=0, description="工具调用次数")
-    last_activity: datetime = Field(..., description="最后活动时间")
+    step_count: int = Field(default=0, ge=0, description="Number of recorded steps")
+    tool_call_count: int = Field(default=0, ge=0, description="Number of tool calls")
+    last_activity: datetime = Field(..., description="Last activity time")
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class ToolUsageStats(BaseModel):
-    """工具使用统计"""
+    """Tool usage statistics"""
 
-    tool_name: str = Field(..., description="工具名称")
-    count: int = Field(..., ge=0, description="使用次数")
+    tool_name: str = Field(..., description="Tool name")
+    count: int = Field(..., ge=0, description="Usage count")
 
 
 class SessionSummary(BaseModel):
-    """会话摘要
+    """Session summary
 
-    会话结束后的统计摘要。
+    Statistical summary after session ends.
     """
 
-    session_id: str = Field(..., description="会话 ID")
-    total_duration_ms: int = Field(..., ge=0, description="总耗时（毫秒）")
-    user_message_count: int = Field(default=0, ge=0, description="用户消息数")
-    assistant_message_count: int = Field(default=0, ge=0, description="助手消息数")
-    tool_call_count: int = Field(default=0, ge=0, description="工具调用总数")
-    tool_success_count: int = Field(default=0, ge=0, description="成功的工具调用数")
-    tool_error_count: int = Field(default=0, ge=0, description="失败的工具调用数")
+    session_id: str = Field(..., description="Session ID")
+    total_duration_ms: int = Field(..., ge=0, description="Total duration (milliseconds)")
+    user_message_count: int = Field(default=0, ge=0, description="User message count")
+    assistant_message_count: int = Field(default=0, ge=0, description="Assistant message count")
+    tool_call_count: int = Field(default=0, ge=0, description="Total tool call count")
+    tool_success_count: int = Field(default=0, ge=0, description="Successful tool call count")
+    tool_error_count: int = Field(default=0, ge=0, description="Failed tool call count")
     most_used_tools: List[ToolUsageStats] = Field(
-        default_factory=list, description="使用最多的工具（前 5）"
+        default_factory=list, description="Most used tools (top 5)"
     )
-    model: Optional[str] = Field(None, description="使用的模型")
-    final_status: SessionStatus = Field(..., description="最终状态")
+    model: Optional[str] = Field(None, description="Model used")
+    final_status: SessionStatus = Field(..., description="Final status")
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 # ============================================================
-# 辅助函数
+# Helper Functions
 # ============================================================
 
 
 def truncate_content(content: str, max_length: int = 0) -> str:
-    """返回内容（不再截断）
+    """Return content (no longer truncates)
 
     Args:
-        content: 原始内容
-        max_length: 已废弃，保留参数兼容性
+        content: Original content
+        max_length: Deprecated, kept for parameter compatibility
 
     Returns:
-        原始内容
+        Original content
     """
     return content
 
 
 def extract_tool_input_summary(input_data: Dict[str, Any]) -> str:
-    """从工具输入数据中提取摘要
+    """Extract summary from tool input data
 
     Args:
-        input_data: 工具调用的 input 参数
+        input_data: Tool call input parameters
 
     Returns:
-        简洁的输入参数摘要
+        Concise input parameter summary
     """
     if not input_data:
-        return "(无参数)"
+        return "(no parameters)"
 
-    # 优先提取常见参数
+    # Extract common parameters first
     priority_keys = ["command", "file_path", "pattern", "query", "url", "content"]
 
     for key in priority_keys:
@@ -193,7 +193,7 @@ def extract_tool_input_summary(input_data: Dict[str, Any]) -> str:
             if isinstance(value, str):
                 return truncate_content(f"{key}={value}", 100)
 
-    # 如果没有优先参数，提取第一个参数
+    # If no priority parameters, extract first parameter
     first_key = next(iter(input_data.keys()), None)
     if first_key:
         value = input_data[first_key]
@@ -201,4 +201,4 @@ def extract_tool_input_summary(input_data: Dict[str, Any]) -> str:
             return truncate_content(f"{first_key}={value}", 100)
         return f"{first_key}=..."
 
-    return "(复杂参数)"
+    return "(complex parameters)"

@@ -3,11 +3,11 @@ name: file_copy
 type: atomic
 runtime: shell
 version: "1.0.0"
-description: 复制文件从源路径到目标路径
+description: Copy file from source path to destination path
 use_cases:
-  - 备份配置文件到指定位置
-  - 在工作流中复制中间结果文件
-  - 批量文件操作的原子步骤
+  - Backup configuration files to specified location
+  - Copy intermediate result files in workflows
+  - Atomic step for batch file operations
 tags:
   - file
   - system
@@ -19,53 +19,53 @@ inputs:
   source_path:
     type: string
     required: true
-    description: 源文件路径
+    description: Source file path
   dest_path:
     type: string
     required: true
-    description: 目标文件路径
+    description: Destination file path
 outputs:
   source:
     type: string
-    description: 源文件路径
+    description: Source file path
   destination:
     type: string
-    description: 目标文件路径
+    description: Destination file path
   size_bytes:
     type: number
-    description: 文件大小（字节）
+    description: File size (bytes)
   operation:
     type: string
-    description: 执行的操作类型
+    description: Type of operation performed
 ---
 
-# Recipe: 复制文件
+# Recipe: Copy File
 
-## 功能描述
+## Description
 
-将文件从源路径复制到目标路径，并返回操作结果信息（包括文件大小）。
+Copy a file from source path to destination path and return operation result information (including file size).
 
-## 使用方法
+## Usage
 
 ```bash
-# 通过命令行参数
+# Via command line parameters
 uv run frago recipe run file_copy --params '{"source_path": "/path/to/source.txt", "dest_path": "/path/to/dest.txt"}'
 
-# 通过参数文件
+# Via parameter file
 echo '{"source_path": "/path/to/source.txt", "dest_path": "/path/to/dest.txt"}' > params.json
 uv run frago recipe run file_copy --params-file params.json
 
-# 输出到文件
+# Output to file
 uv run frago recipe run file_copy --params '{"source_path": "a.txt", "dest_path": "b.txt"}' --output-file result.json
 ```
 
-## 前置条件
+## Prerequisites
 
-- 源文件必须存在且可读
-- 目标路径的父目录必须存在且可写
-- 需要 Bash shell 环境（Linux、macOS、WSL）
+- Source file must exist and be readable
+- Parent directory of destination path must exist and be writable
+- Requires Bash shell environment (Linux, macOS, WSL)
 
-## 预期输出
+## Expected Output
 
 ```json
 {
@@ -79,12 +79,12 @@ uv run frago recipe run file_copy --params '{"source_path": "a.txt", "dest_path"
 }
 ```
 
-## 注意事项
+## Notes
 
-- 如果目标文件已存在，将被覆盖
-- 复制操作不保留文件权限和元数据（使用标准 `cp` 命令）
-- 仅支持单个文件复制，不支持目录
+- If destination file already exists, it will be overwritten
+- Copy operation does not preserve file permissions and metadata (uses standard `cp` command)
+- Only supports single file copying, does not support directories
 
-## 更新历史
+## Update History
 
-- **v1.0.0** (2025-11-21): 初始版本，支持基础文件复制功能
+- **v1.0.0** (2025-11-21): Initial version, supports basic file copying functionality

@@ -9,7 +9,7 @@ interface TutorialButtonProps {
   anchor?: string;
 }
 
-function TutorialButton({ tutorialId, label = '查看详细教程', anchor = '' }: TutorialButtonProps) {
+function TutorialButton({ tutorialId, label = 'View Detailed Tutorial', anchor = '' }: TutorialButtonProps) {
   const [loading, setLoading] = useState(false);
 
   const handleClick = async () => {
@@ -22,7 +22,7 @@ function TutorialButton({ tutorialId, label = '查看详细教程', anchor = '' 
     } catch (error) {
       console.error('Failed to open tutorial:', error);
     } finally {
-      // 延迟重置 loading 状态，给用户视觉反馈
+      // Delay resetting loading state for visual feedback
       setTimeout(() => setLoading(false), 500);
     }
   };
@@ -49,93 +49,97 @@ function TutorialButton({ tutorialId, label = '查看详细教程', anchor = '' 
 export default function TipsPage() {
   return (
     <div className="page-scroll flex flex-col gap-4 h-full">
-      <h1 className="text-xl font-semibold text-[var(--text-primary)]">欢迎使用 frago</h1>
+      <h1 className="text-xl font-semibold text-[var(--text-primary)]">Welcome to frago</h1>
 
       <Accordion>
-        <AccordionItem title="认识 frago" defaultOpen>
+        <AccordionItem title="Understanding frago" defaultOpen>
           <p className="mb-3">
-            你让 AI 提取 YouTube 字幕，它花 5
-            分钟探索成功了。第二天同样的需求——它又从头来过，完全忘了昨天怎么做的。
+            You ask AI to extract YouTube subtitles, and it takes 5 minutes to figure it out successfully.
+            The next day, you have the same need—it starts from scratch again, completely forgetting how
+            it did it yesterday.
           </p>
           <p className="mb-3">
-            即使像 Claude Code
-            这样强大的工具，面对每个人独特的任务需求时也显得笨拙：每次都要重新探索，每次都在烧
-            token，10 次尝试里可能只有 5 次走对了路。
+            Even powerful tools like Claude Code can be clumsy when facing everyone's unique task requirements:
+            they have to explore from scratch every time, burning tokens each time, and maybe only 5 out of
+            10 attempts take the right path.
           </p>
           <p>
-            frago 解决的就是这个问题：第一次探索，记录过程，固化成可复用的配方。下次同样的任务，直接调用，不再重复探索。AI
-            足够聪明，但还不够「有经验」。frago 教它记住怎么做事。
+            frago solves this problem: explore once, record the process, and solidify it into a reusable recipe.
+            Next time you have the same task, call it directly without repeating the exploration. AI is smart enough,
+            but not yet "experienced" enough. frago teaches it to remember how to do things.
           </p>
           <TutorialButton tutorialId="intro" />
         </AccordionItem>
 
-        <AccordionItem title="关键概念">
+        <AccordionItem title="Key Concepts">
           <p className="mb-3">
-            <strong className="text-[var(--text-primary)]">Recipe（配方）</strong>
-            ：可复用的自动化脚本，定义了一系列浏览器操作。配方可以保存、分享、反复执行。
+            <strong className="text-[var(--text-primary)]">Recipe</strong>
+            : A reusable automation script that defines a series of browser operations. Recipes can be
+            saved, shared, and executed repeatedly.
           </p>
           <p className="mb-3">
-            <strong className="text-[var(--text-primary)]">Task（任务）</strong>
-            ：一次配方执行的实例。每个任务有独立的运行状态、日志和结果。
+            <strong className="text-[var(--text-primary)]">Task</strong>
+            : An instance of recipe execution. Each task has its own running status, logs, and results.
           </p>
           <p>
-            <strong className="text-[var(--text-primary)]">Session（会话）</strong>
-            ：与 Chrome 浏览器的连接。一个会话可以执行多个任务，共享浏览器上下文（登录状态、cookies
-            等）。
+            <strong className="text-[var(--text-primary)]">Session</strong>
+            : A connection to the Chrome browser. A session can execute multiple tasks and share browser
+            context (login status, cookies, etc.).
           </p>
-          <TutorialButton tutorialId="intro" label="了解更多概念" anchor="concepts" />
+          <TutorialButton tutorialId="intro" label="Learn More Concepts" anchor="concepts" />
         </AccordionItem>
 
-        <AccordionItem title="功能操作指南">
-          <p className="mb-3">frago 的核心操作流程：</p>
+        <AccordionItem title="Feature Operations Guide">
+          <p className="mb-3">Core workflow of frago:</p>
           <ol className="list-decimal list-inside space-y-1 mb-3">
-            <li>启动 Chrome 调试模式</li>
-            <li>创建或选择配方</li>
-            <li>运行配方，监控任务状态</li>
-            <li>查看结果，优化配方</li>
+            <li>Launch Chrome in debug mode</li>
+            <li>Create or select a recipe</li>
+            <li>Run the recipe and monitor task status</li>
+            <li>View results and optimize the recipe</li>
           </ol>
           <TutorialButton tutorialId="guide" />
         </AccordionItem>
 
-        <AccordionItem title="用途与场景">
-          <p className="mb-3">frago 适用于需要与网页交互的重复性工作：</p>
+        <AccordionItem title="Use Cases and Scenarios">
+          <p className="mb-3">frago is suitable for repetitive work that requires web interaction:</p>
           <ul className="list-disc list-inside space-y-1">
-            <li>从多个网站采集数据并整理成结构化格式</li>
-            <li>自动填写表单、提交申请</li>
-            <li>监控网页变化并触发通知</li>
-            <li>执行 UI 测试，验证页面功能</li>
-            <li>批量下载文件或图片</li>
+            <li>Collect data from multiple websites and organize it into structured formats</li>
+            <li>Automatically fill forms and submit applications</li>
+            <li>Monitor web page changes and trigger notifications</li>
+            <li>Perform UI testing and verify page functionality</li>
+            <li>Batch download files or images</li>
           </ul>
-          <TutorialButton tutorialId="intro" label="查看应用场景" anchor="use-cases" />
-          <TutorialButton tutorialId="best-practices" label="最佳实践指南" />
+          <TutorialButton tutorialId="intro" label="View Application Scenarios" anchor="use-cases" />
+          <TutorialButton tutorialId="best-practices" label="Best Practices Guide" />
         </AccordionItem>
 
-        <AccordionItem title="视频教程">
+        <AccordionItem title="Video Tutorials">
           <p className="mb-3">
-            通过视频教程快速上手 frago，包含入门指南、进阶技巧和实战案例。
+            Get started with frago quickly through video tutorials, including beginner's guides,
+            advanced tips, and practical examples.
           </p>
-          <TutorialButton tutorialId="videos" label="浏览视频教程" />
+          <TutorialButton tutorialId="videos" label="Browse Video Tutorials" />
         </AccordionItem>
 
-        <AccordionItem title="快速开始">
+        <AccordionItem title="Quick Start">
           <ol className="list-decimal list-inside space-y-2">
             <li>
-              确保 Chrome 已启动并开启调试模式（
+              Ensure Chrome is launched with debugging mode enabled (
               <code className="font-mono text-sm bg-[var(--bg-subtle)] px-1.5 py-0.5 rounded">
                 --remote-debugging-port=9222
               </code>
-              ）
+              )
             </li>
             <li>
-              在 <strong className="text-[var(--text-primary)]">Recipes</strong>{' '}
-              页面创建新配方或导入现有配方
+              Create a new recipe or import an existing one on the{' '}
+              <strong className="text-[var(--text-primary)]">Recipes</strong> page
             </li>
             <li>
-              选择配方，点击运行，在{' '}
-              <strong className="text-[var(--text-primary)]">Tasks</strong> 页面查看执行进度
+              Select a recipe, click run, and view execution progress on the{' '}
+              <strong className="text-[var(--text-primary)]">Tasks</strong> page
             </li>
           </ol>
-          <TutorialButton tutorialId="guide" label="查看完整指南" />
+          <TutorialButton tutorialId="guide" label="View Complete Guide" />
         </AccordionItem>
       </Accordion>
     </div>

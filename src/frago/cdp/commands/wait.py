@@ -1,7 +1,7 @@
 """
-等待相关CDP命令
+Wait-related CDP commands
 
-封装等待功能的CDP命令。
+Encapsulates CDP commands for wait functionality.
 """
 
 import time
@@ -12,32 +12,32 @@ from ..exceptions import TimeoutError as CDPTimeoutError
 
 
 class WaitCommands:
-    """等待命令类"""
-    
+    """Wait commands class"""
+
     def __init__(self, session):
         """
-        初始化等待命令
-        
+        Initialize wait commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def wait_for_selector(
-        self, 
-        selector: str, 
+        self,
+        selector: str,
         timeout: Optional[float] = None
     ) -> None:
         """
-        等待选择器匹配的元素出现
-        
+        Wait for element matching selector to appear
+
         Args:
-            selector: CSS选择器
-            timeout: 超时时间（秒），如果为None则使用配置的默认超时
-            
+            selector: CSS selector
+            timeout: Timeout (seconds), uses configured default timeout if None
+
         Raises:
-            CDPTimeoutError: 等待超时
+            CDPTimeoutError: Wait timeout
         """
         timeout = timeout or self.session.config.command_timeout
         self.logger.info(f"Waiting for selector: {selector} (timeout={timeout}s)")
@@ -62,10 +62,10 @@ class WaitCommands:
     
     def wait(self, seconds: float) -> None:
         """
-        等待指定秒数
-        
+        Wait for specified seconds
+
         Args:
-            seconds: 等待时间（秒）
+            seconds: Wait time (seconds)
         """
         self.logger.info(f"Waiting for {seconds} seconds")
         time.sleep(seconds)

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useCallback } from 'react';
 
 /**
- * 轮询 Hook
+ * Polling Hook
  *
- * @param callback 轮询回调函数
- * @param interval 轮询间隔（毫秒）
- * @param enabled 是否启用轮询
+ * @param callback Polling callback function
+ * @param interval Polling interval (milliseconds)
+ * @param enabled Whether polling is enabled
  */
 export function usePolling(
   callback: () => void | Promise<void>,
@@ -15,17 +15,17 @@ export function usePolling(
   const savedCallback = useRef(callback);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 保存最新的回调
+  // Save the latest callback
   useEffect(() => {
     savedCallback.current = callback;
   }, [callback]);
 
-  // 手动触发
+  // Manual trigger
   const trigger = useCallback(() => {
     savedCallback.current();
   }, []);
 
-  // 设置轮询
+  // Setup polling
   useEffect(() => {
     if (!enabled) {
       if (intervalRef.current) {
@@ -35,10 +35,10 @@ export function usePolling(
       return;
     }
 
-    // 立即执行一次
+    // Execute immediately once
     savedCallback.current();
 
-    // 设置定时器
+    // Setup timer
     intervalRef.current = setInterval(() => {
       savedCallback.current();
     }, interval);

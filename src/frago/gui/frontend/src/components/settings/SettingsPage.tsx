@@ -1,4 +1,4 @@
-// 设置组件
+// Settings component
 import GeneralSettings from './GeneralSettings';
 import SyncSettings from './SyncSettings';
 import SecretsSettings from './SecretsSettings';
@@ -9,35 +9,35 @@ export default function SettingsPage() {
   return (
     <div className="h-full overflow-auto">
       <div className="page-scroll p-4 max-w-2xl mx-auto space-y-6">
-        {/* 页面标题 */}
+        {/* Page title */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-[var(--text-primary)]">设置</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Settings</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">
-            配置 Frago 的各项功能
+            Configure Frago features
           </p>
         </div>
 
-        {/* 通用配置 */}
+        {/* General configuration */}
         <section>
           <GeneralSettings />
         </section>
 
-        {/* 多设备同步 */}
+        {/* Multi-device sync */}
         <section>
           <SyncSettings />
         </section>
 
-        {/* 密钥管理 */}
+        {/* Secrets management */}
         <section>
           <SecretsSettings />
         </section>
 
-        {/* 外观设置 */}
+        {/* Appearance settings */}
         <section>
           <AppearanceSettings />
         </section>
 
-        {/* 关于 */}
+        {/* About */}
         <section>
           <AboutSettings />
         </section>

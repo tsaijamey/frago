@@ -1,12 +1,12 @@
 """
-Frago 环境初始化模块
+Frago Environment Initialization Module
 
-该模块提供 `frago init` 命令的完整功能，包括：
-- 并行依赖检查（Node.js, Claude Code）
-- 智能安装缺失组件
-- 认证方式配置（官方登录 vs 自定义 API 端点）
-- 可选 Claude Code Router 集成
-- 配置持久化和状态恢复
+This module provides complete functionality for the `frago init` command, including:
+- Parallel dependency checking (Node.js, Claude Code)
+- Smart installation of missing components
+- Authentication configuration (official login vs custom API endpoint)
+- Optional Claude Code Router integration
+- Configuration persistence and state recovery
 """
 
 from frago.init.models import (
@@ -40,43 +40,43 @@ from frago.init.configurator import (
     configure_official_auth,
     configure_custom_endpoint,
     run_auth_configuration,
-    # Phase 6: 自定义端点配置
+    # Phase 6: Custom endpoint configuration
     PRESET_ENDPOINTS,
     validate_endpoint_url,
     prompt_endpoint_type,
     prompt_api_key,
     prompt_custom_endpoint_url,
-    # Phase 8: 配置摘要
+    # Phase 8: Configuration summary
     format_final_summary,
     suggest_next_steps,
     display_next_steps,
-    # claude.json 管理
+    # claude.json management
     check_claude_json_exists,
     ensure_claude_json_for_custom_auth,
 )
 
 __all__ = [
-    # 数据模型
+    # Data models
     "Config",
     "APIEndpoint",
     "TemporaryState",
     "InstallationStep",
     "StepStatus",
     "DependencyCheckResult",
-    # 异常
+    # Exceptions
     "CommandError",
     "InitErrorCode",
-    # 检查器
+    # Checkers
     "check_node",
     "check_claude_code",
     "parallel_dependency_check",
     "compare_versions",
-    # 安装器
+    # Installers
     "run_external_command",
     "install_node",
     "install_claude_code",
     "get_installation_order",
-    # 配置器
+    # Configurators
     "load_config",
     "save_config",
     "config_exists",
@@ -86,17 +86,17 @@ __all__ = [
     "configure_official_auth",
     "configure_custom_endpoint",
     "run_auth_configuration",
-    # Phase 6: 自定义端点配置
+    # Phase 6: Custom endpoint configuration
     "PRESET_ENDPOINTS",
     "validate_endpoint_url",
     "prompt_endpoint_type",
     "prompt_api_key",
     "prompt_custom_endpoint_url",
-    # Phase 8: 配置摘要
+    # Phase 8: Configuration summary
     "format_final_summary",
     "suggest_next_steps",
     "display_next_steps",
-    # claude.json 管理
+    # claude.json management
     "check_claude_json_exists",
     "ensure_claude_json_for_custom_auth",
 ]

@@ -1,7 +1,7 @@
 """
-状态检查相关CDP命令
+Status check related CDP commands
 
-封装CDP状态检查功能。
+Encapsulates CDP status check functionality.
 """
 
 from typing import List, Dict, Any
@@ -11,24 +11,24 @@ from ..logger import get_logger
 
 
 class StatusCommands:
-    """状态命令类"""
-    
+    """Status commands class"""
+
     def __init__(self, session):
         """
-        初始化状态命令
-        
+        Initialize status commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def health_check(self) -> bool:
         """
-        执行连接健康检查
-        
+        Perform connection health check
+
         Returns:
-            bool: 连接是否健康
+            bool: Whether connection is healthy
         """
         try:
             self.logger.info("Performing health check")
@@ -46,10 +46,10 @@ class StatusCommands:
     
     def get_pages(self) -> List[Dict[str, Any]]:
         """
-        获取所有页面列表
-        
+        Get all pages list
+
         Returns:
-            List[Dict[str, Any]]: 页面信息列表
+            List[Dict[str, Any]]: Pages information list
         """
         try:
             self.logger.info("Getting pages list")
@@ -69,10 +69,10 @@ class StatusCommands:
     
     def check_chrome_status(self) -> Dict[str, Any]:
         """
-        检查Chrome状态
-        
+        Check Chrome status
+
         Returns:
-            Dict[str, Any]: Chrome状态信息
+            Dict[str, Any]: Chrome status information
         """
         try:
             self.logger.info("Checking Chrome status")

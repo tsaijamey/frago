@@ -1,7 +1,7 @@
 """
-截图相关CDP命令
+Screenshot-related CDP commands
 
-封装截图功能的CDP命令。
+Encapsulates CDP commands for screenshot functionality.
 """
 
 from typing import Dict, Any, Optional
@@ -12,36 +12,36 @@ from ..logger import get_logger
 
 
 class ScreenshotCommands:
-    """截图命令类"""
-    
+    """Screenshot commands class"""
+
     def __init__(self, session):
         """
-        初始化截图命令
-        
+        Initialize screenshot commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def capture(
-        self, 
+        self,
         output_file: Optional[str] = None,
         full_page: bool = False,
         format: str = "png",
         quality: int = 80
     ) -> Dict[str, Any]:
         """
-        截取页面截图
-        
+        Capture page screenshot
+
         Args:
-            output_file: 输出文件路径，如果为None则返回base64数据
-            full_page: 是否截取完整页面
-            format: 图片格式（"png" 或 "jpeg"）
-            quality: JPEG质量（0-100），仅对JPEG格式有效
-            
+            output_file: Output file path, if None returns base64 data
+            full_page: Whether to capture full page
+            format: Image format ("png" or "jpeg")
+            quality: JPEG quality (0-100), only valid for JPEG format
+
         Returns:
-            Dict[str, Any]: 截图结果
+            Dict[str, Any]: Screenshot result
         """
         self.logger.info(f"Taking screenshot (full_page={full_page}, format={format}, quality={quality})")
         
@@ -55,7 +55,7 @@ class ScreenshotCommands:
         
         response = self.session.send_command("Page.captureScreenshot", params)
 
-        # CDP返回格式: {'id': ..., 'result': {'data': ...}}
+        # CDP return format: {'id': ..., 'result': {'data': ...}}
         result = response.get('result', {}) if isinstance(response, dict) else {}
 
         if output_file and "data" in result:

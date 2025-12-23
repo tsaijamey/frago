@@ -1,12 +1,12 @@
 /**
- * PyWebview API TypeScript 类型定义
+ * PyWebview API TypeScript Type Definitions
  *
- * 定义 window.pywebview.api 暴露的所有方法和返回类型。
- * 与 Python 后端 fragoGuiApi 类保持同步。
+ * Defines all methods and return types exposed by window.pywebview.api.
+ * Keep in sync with the Python backend fragoGuiApi class.
  */
 
 // ============================================================
-// 基础类型
+// Base Types
 // ============================================================
 
 export type TaskStatus = 'running' | 'completed' | 'error' | 'cancelled';
@@ -29,7 +29,7 @@ export type Theme = 'dark' | 'light';
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
 
 // ============================================================
-// 数据模型
+// Data Models
 // ============================================================
 
 export interface TaskItem {
@@ -142,7 +142,7 @@ export interface ConnectionStatus {
 }
 
 // ============================================================
-// Settings 页面相关类型（主配置、环境变量、GitHub）
+// Settings Page Related Types (Main Config, Environment Variables, GitHub)
 // ============================================================
 
 export interface APIEndpoint {
@@ -153,26 +153,26 @@ export interface APIEndpoint {
 
 export interface MainConfig {
   schema_version: string;
-  // 依赖信息
+  // Dependency information
   node_version?: string;
   node_path?: string;
   npm_version?: string;
   claude_code_version?: string;
   claude_code_path?: string;
-  // 认证配置
+  // Authentication configuration
   auth_method: 'official' | 'custom';
   api_endpoint?: APIEndpoint;
-  // 可选功能
+  // Optional features
   ccr_enabled: boolean;
   ccr_config_path?: string;
   sync_repo_url?: string;
-  // 工作目录（只读，由后端计算）
+  // Working directory (read-only, calculated by backend)
   working_directory_display?: string;
-  // 资源状态
+  // Resource status
   resources_installed: boolean;
   resources_version?: string;
   last_resource_update?: string;
-  // 元数据
+  // Metadata
   created_at: string;
   updated_at: string;
   init_completed: boolean;
@@ -256,7 +256,7 @@ export interface SelectRepoResponse {
 }
 
 // ============================================================
-// API 响应类型
+// API Response Types
 // ============================================================
 
 export interface ApiResponse<T = void> {
@@ -298,26 +298,26 @@ export interface TutorialResponse {
 }
 
 // ============================================================
-// PyWebview API 接口
+// PyWebview API Interface
 // ============================================================
 
 export interface PyWebviewApi {
   // ============================================================
-  // Tasks API（011-gui-tasks-redesign）
+  // Tasks API (011-gui-tasks-redesign)
   // ============================================================
 
   /**
-   * 获取任务列表
-   * @param limit 最大返回数量（1-100，默认 50）
-   * @param status 筛选状态（可选）
+   * Get task list
+   * @param limit Maximum number to return (1-100, default 50)
+   * @param status Filter by status (optional)
    */
   get_tasks(limit?: number, status?: TaskStatus): Promise<TaskItem[]>;
 
   /**
-   * 获取任务详情
-   * @param session_id 会话 ID
-   * @param steps_limit 步骤数量限制（1-100，默认 50）
-   * @param steps_offset 步骤偏移量（默认 0）
+   * Get task details
+   * @param session_id Session ID
+   * @param steps_limit Step count limit (1-100, default 50)
+   * @param steps_offset Step offset (default 0)
    */
   get_task_detail(
     session_id: string,
@@ -326,10 +326,10 @@ export interface PyWebviewApi {
   ): Promise<TaskDetail>;
 
   /**
-   * 分页获取任务步骤
-   * @param session_id 会话 ID
-   * @param offset 偏移量
-   * @param limit 数量限制（1-100，默认 50）
+   * Get task steps with pagination
+   * @param session_id Session ID
+   * @param offset Offset
+   * @param limit Count limit (1-100, default 50)
    */
   get_task_steps(
     session_id: string,
@@ -338,15 +338,15 @@ export interface PyWebviewApi {
   ): Promise<TaskStepsResponse>;
 
   /**
-   * 启动 agent 任务
-   * @param prompt 任务描述
+   * Start agent task
+   * @param prompt Task description
    */
   start_agent_task(prompt: string): Promise<TaskStartResponse>;
 
   /**
-   * 在指定会话中继续对话
-   * @param session_id 会话 ID
-   * @param prompt 新的提示词
+   * Continue conversation in specified session
+   * @param session_id Session ID
+   * @param prompt New prompt
    */
   continue_agent_task(session_id: string, prompt: string): Promise<TaskStartResponse>;
 
@@ -355,25 +355,25 @@ export interface PyWebviewApi {
   // ============================================================
 
   /**
-   * 获取配方列表
+   * Get recipe list
    */
   get_recipes(): Promise<RecipeItem[]>;
 
   /**
-   * 刷新配方列表
+   * Refresh recipe list
    */
   refresh_recipes(): Promise<RecipeItem[]>;
 
   /**
-   * 获取配方详情
-   * @param name 配方名称
+   * Get recipe details
+   * @param name Recipe name
    */
   get_recipe_detail(name: string): Promise<RecipeDetail>;
 
   /**
-   * 执行配方
-   * @param name 配方名称
-   * @param params 参数（可选）
+   * Execute recipe
+   * @param name Recipe name
+   * @param params Parameters (optional)
    */
   run_recipe(
     name: string,
@@ -381,8 +381,8 @@ export interface PyWebviewApi {
   ): Promise<RecipeRunResponse>;
 
   /**
-   * 删除配方（仅用户级）
-   * @param name 配方名称
+   * Delete recipe (user-level only)
+   * @param name Recipe name
    */
   delete_recipe(name: string): Promise<RecipeDeleteResponse>;
 
@@ -391,12 +391,12 @@ export interface PyWebviewApi {
   // ============================================================
 
   /**
-   * 获取技能列表
+   * Get skill list
    */
   get_skills(): Promise<SkillItem[]>;
 
   /**
-   * 刷新技能列表
+   * Refresh skill list
    */
   refresh_skills(): Promise<SkillItem[]>;
 
@@ -405,109 +405,109 @@ export interface PyWebviewApi {
   // ============================================================
 
   /**
-   * 获取用户配置（GUI 配置）
+   * Get user configuration (GUI config)
    */
   get_config(): Promise<UserConfig>;
 
   /**
-   * 更新用户配置（GUI 配置）
-   * @param config 配置更新
+   * Update user configuration (GUI config)
+   * @param config Config update
    */
   update_config(config: Partial<UserConfig>): Promise<ConfigUpdateResponse>;
 
   // ============================================================
-  // Settings API - 主配置管理
+  // Settings API - Main Config Management
   // ============================================================
 
   /**
-   * 获取主配置（~/.frago/config.json）
+   * Get main config (~/.frago/config.json)
    */
   get_main_config(): Promise<MainConfig>;
 
   /**
-   * 更新主配置
-   * @param updates 部分更新字典
+   * Update main config
+   * @param updates Partial update dictionary
    */
   update_main_config(updates: Partial<MainConfig>): Promise<MainConfigUpdateResponse>;
 
   /**
-   * 更新认证方式和 API 端点
-   * @param auth_data 认证配置
+   * Update authentication method and API endpoint
+   * @param auth_data Authentication config
    */
   update_auth_method(auth_data: AuthUpdateRequest): Promise<MainConfigUpdateResponse>;
 
   /**
-   * 在文件管理器中打开工作目录
+   * Open working directory in file manager
    */
   open_working_directory(): Promise<ApiResponse>;
 
   // ============================================================
-  // Settings API - 环境变量管理
+  // Settings API - Environment Variables Management
   // ============================================================
 
   /**
-   * 获取用户级环境变量（~/.frago/.env）
+   * Get user-level environment variables (~/.frago/.env)
    */
   get_env_vars(): Promise<EnvVarsResponse>;
 
   /**
-   * 批量更新环境变量
-   * @param updates 更新字典，value=null 表示删除
+   * Batch update environment variables
+   * @param updates Update dictionary, value=null means delete
    */
   update_env_vars(
     updates: Record<string, string | null>
   ): Promise<EnvVarsUpdateResponse>;
 
   /**
-   * 扫描所有 Recipe 的环境变量需求
+   * Scan all Recipe environment variable requirements
    */
   get_recipe_env_requirements(): Promise<RecipeEnvRequirement[]>;
 
   // ============================================================
-  // Settings API - GitHub 集成
+  // Settings API - GitHub Integration
   // ============================================================
 
   /**
-   * 检查 gh CLI 安装和登录状态
+   * Check gh CLI installation and login status
    */
   check_gh_cli(): Promise<GhCliStatus>;
 
   /**
-   * 在外部终端执行 gh auth login
+   * Execute gh auth login in external terminal
    */
   gh_auth_login(): Promise<ApiResponse>;
 
   /**
-   * 创建 GitHub 仓库并配置到 config.json
-   * @param repo_name 仓库名称
-   * @param private_repo 是否私有仓库
+   * Create GitHub repo and configure in config.json
+   * @param repo_name Repository name
+   * @param private_repo Whether it's a private repo
    */
   create_sync_repo(repo_name: string, private_repo?: boolean): Promise<CreateRepoResponse>;
 
   /**
-   * 执行 frago sync（后台线程）
+   * Execute frago sync (background thread)
    */
   run_first_sync(): Promise<SyncResponse>;
 
   /**
-   * 获取 sync 结果（轮询）
+   * Get sync result (polling)
    */
   get_sync_result(): Promise<SyncResponse>;
 
   /**
-   * 检查同步仓库的可见性
+   * Check sync repository visibility
    */
   check_sync_repo_visibility(): Promise<RepoVisibilityResponse>;
 
   /**
-   * 列出用户的 GitHub 仓库
-   * @param limit 最大返回数量（默认 100）
+   * List user's GitHub repositories
+   * @param limit Maximum number to return (default 100)
    */
   list_user_repos(limit?: number): Promise<ListReposResponse>;
 
   /**
-   * 选择已有仓库作为同步仓库
-   * @param repo_url 仓库 URL (SSH 或 HTTPS 格式，会自动转换为 HTTPS)
+   * Select existing repo as sync repo
+   * @param repo_url Repository URL (SSH or HTTPS format, will be converted to HTTPS)
    */
   select_existing_repo(repo_url: string): Promise<SelectRepoResponse>;
 
@@ -516,40 +516,40 @@ export interface PyWebviewApi {
   // ============================================================
 
   /**
-   * 获取系统状态
+   * Get system status
    */
   get_system_status(): Promise<SystemStatus>;
 
   /**
-   * 检查 Chrome 连接状态
+   * Check Chrome connection status
    */
   check_connection(): Promise<ConnectionStatus>;
 
   /**
-   * 打开文件或目录
-   * @param path 文件或目录路径
-   * @param reveal 是否在 Finder 中显示而不是打开
+   * Open file or directory
+   * @param path File or directory path
+   * @param reveal Whether to reveal in Finder instead of opening
    */
   open_path(path: string, reveal?: boolean): Promise<ApiResponse>;
 
   // ============================================================
-  // Legacy API（保留兼容性）
+  // Legacy API (preserved for compatibility)
   // ============================================================
 
   /**
-   * 获取命令历史
-   * @param limit 最大返回数量
-   * @param offset 偏移量
+   * Get command history
+   * @param limit Maximum number to return
+   * @param offset Offset
    */
   get_history(limit?: number, offset?: number): Promise<unknown[]>;
 
   /**
-   * 清空历史记录
+   * Clear history
    */
   clear_history(): Promise<{ status: string; cleared_count: number }>;
 
   /**
-   * 获取任务状态（旧版）
+   * Get task status (legacy)
    */
   get_task_status(): Promise<{
     status: string;
@@ -559,12 +559,12 @@ export interface PyWebviewApi {
   }>;
 
   /**
-   * 运行 agent（旧版）
+   * Run agent (legacy)
    */
   run_agent(prompt: string): Promise<string>;
 
   /**
-   * 取消 agent 任务（旧版）
+   * Cancel agent task (legacy)
    */
   cancel_agent(): Promise<{ status: string; message: string }>;
 
@@ -573,16 +573,16 @@ export interface PyWebviewApi {
   // ============================================================
 
   /**
-   * 打开教程演示窗口
-   * @param tutorial_id 教程 ID，如 "intro", "guide", "best-practices", "videos"
-   * @param lang 语言，"auto" 自动检测，"zh" 中文，"en" 英文
-   * @param anchor 锚点 ID，用于跳转到页面特定位置，如 "concepts"
+   * Open tutorial demo window
+   * @param tutorial_id Tutorial ID, such as "intro", "guide", "best-practices", "videos"
+   * @param lang Language, "auto" for auto-detect, "zh" for Chinese, "en" for English
+   * @param anchor Anchor ID, used to jump to specific position on page, such as "concepts"
    */
   open_tutorial(tutorial_id: string, lang?: string, anchor?: string): Promise<TutorialResponse>;
 }
 
 // ============================================================
-// 全局类型声明
+// Global Type Declarations
 // ============================================================
 
 declare global {

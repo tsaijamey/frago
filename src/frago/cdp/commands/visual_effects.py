@@ -1,7 +1,7 @@
 """
-视觉效果相关CDP命令
+Visual effects related CDP commands
 
-封装视觉效果功能的CDP命令，包括高亮、指针、聚光灯、标注等。
+Encapsulates CDP commands for visual effects functionality, including highlight, pointer, spotlight, annotation, etc.
 """
 
 from typing import Dict, Any, Optional
@@ -10,26 +10,26 @@ from ..logger import get_logger
 
 
 class VisualEffectsCommands:
-    """视觉效果命令类"""
-    
+    """Visual effects commands class"""
+
     def __init__(self, session):
         """
-        初始化视觉效果命令
-        
+        Initialize visual effects commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def highlight(self, selector: str, color: str = "magenta", border_width: int = 3) -> None:
         """
-        高亮显示指定元素
-        
+        Highlight specified element
+
         Args:
-            selector: CSS选择器
-            color: 高亮颜色
-            border_width: 边框宽度（像素）
+            selector: CSS selector
+            color: Highlight color
+            border_width: Border width (pixels)
         """
         self.logger.info(f"Highlighting element: {selector} with color {color}")
         
@@ -48,11 +48,11 @@ class VisualEffectsCommands:
     
     def spotlight(self, selector: str, opacity: float = 0.7) -> None:
         """
-        聚光灯效果突出显示元素
-        
+        Spotlight effect to highlight element
+
         Args:
-            selector: CSS选择器
-            opacity: 遮罩透明度（0-1）
+            selector: CSS selector
+            opacity: Mask opacity (0-1)
         """
         self.logger.info(f"Applying spotlight to element: {selector}")
         
@@ -83,12 +83,12 @@ class VisualEffectsCommands:
     
     def annotate(self, selector: str, text: str, position: str = "top") -> None:
         """
-        在元素上添加标注文本
-        
+        Add annotation text on element
+
         Args:
-            selector: CSS选择器
-            text: 标注文本
-            position: 标注位置（"top", "bottom", "left", "right"）
+            selector: CSS selector
+            text: Annotation text
+            position: Annotation position ("top", "bottom", "left", "right")
         """
         self.logger.info(f"Adding annotation to element: {selector}")
         
@@ -128,7 +128,7 @@ class VisualEffectsCommands:
         self.session.send_command("Runtime.evaluate", {"expression": script})
     
     def clear_effects(self) -> None:
-        """清除所有由Frago添加的视觉效果"""
+        """Clear all visual effects added by Frago"""
         self.logger.info("Clearing all visual effects")
         
         script = """

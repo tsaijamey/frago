@@ -1,4 +1,4 @@
-"""Recipe 管理命令"""
+"""Recipe management commands"""
 import json
 import sys
 from pathlib import Path
@@ -14,7 +14,7 @@ from .agent_friendly import AgentFriendlyGroup
 
 @click.group(name='recipe', cls=AgentFriendlyGroup)
 def recipe_group():
-    """Recipe 管理命令组"""
+    """Recipe management command group"""
     pass
 
 
@@ -23,42 +23,42 @@ def recipe_group():
     '--source',
     type=click.Choice(['project', 'user', 'example', 'all'], case_sensitive=False),
     default='all',
-    help='过滤来源'
+    help='Filter by source'
 )
 @click.option(
     '--type',
     'recipe_type',
     type=click.Choice(['atomic', 'workflow', 'all'], case_sensitive=False),
     default='all',
-    help='过滤类型'
+    help='Filter by type'
 )
 @click.option(
     '--format',
     'output_format',
     type=click.Choice(['table', 'json', 'names'], case_sensitive=False),
     default='table',
-    help='输出格式'
+    help='Output format'
 )
 def list_recipes(source: str, recipe_type: str, output_format: str):
-    """列出所有可用的 Recipe"""
+    """List all available recipes"""
     try:
         registry = RecipeRegistry()
         registry.scan()
 
-        # 过滤 Recipe
+        # Filter recipes
         if source != 'all':
-            # 指定来源时，直接从该来源获取配方
+            # When source is specified, get recipes from that source directly
             recipes = registry.get_by_source(source)
         else:
-            # 未指定来源时，返回每个配方的最高优先级版本
+            # When source is not specified, return the highest priority version of each recipe
             recipes = registry.list_all()
 
         if recipe_type != 'all':
             recipes = [r for r in recipes if r.metadata.type == recipe_type]
         
-        # 输出
+        # Output
         if output_format == 'json':
-            # AI 友好的 JSON 输出
+            # AI-friendly JSON output
             output = [
                 {
                     "name": r.metadata.name,
@@ -80,10 +80,10 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
                 click.echo(r.metadata.name)
         else:  # table
             if not recipes:
-                click.echo("未找到 Recipe")
+                click.echo("No recipes found")
                 return
 
-            # 表格输出
+            # Table output
             click.echo(f"{'SOURCE':<10} {'TYPE':<10} {'NAME':<40} {'RUNTIME':<10} {'VERSION':<8}")
             click.echo("─" * 80)
             for r in recipes:
@@ -92,7 +92,7 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
                     f"{r.metadata.runtime:<10} {r.metadata.version:<8}"
                 )
 
-            # 检查是否有同名 Recipe 的情况
+            # Check for recipes with the same name
             recipe_names = [r.metadata.name for r in recipes]
             duplicates = []
             for recipe_name in set(recipe_names):
@@ -102,12 +102,12 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
 
             if duplicates:
                 click.echo()
-                click.echo("注意: 以下 Recipe 在多个来源中存在（使用优先级高的）:")
+                click.echo("Note: The following recipes exist in multiple sources (using higher priority):")
                 for name, sources in duplicates:
                     click.echo(f"  - {name}: {' > '.join(sources)}")
-    
+
     except RecipeError as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
 
 
 @recipe_group.command(name='info')
@@ -116,24 +116,24 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
     '--source',
     type=click.Choice(['project', 'user', 'example'], case_sensitive=False),
     default=None,
-    help='指定配方来源（默认按优先级自动选择）'
+    help='Specify recipe source (defaults to auto-select by priority)'
 )
 @click.option(
     '--format',
     'output_format',
     type=click.Choice(['text', 'json', 'yaml'], case_sensitive=False),
     default='text',
-    help='输出格式'
+    help='Output format'
 )
 def recipe_info(name: str, source: Optional[str], output_format: str):
-    """显示指定 Recipe 的详细信息"""
+    """Display detailed information about a specific recipe"""
     try:
         registry = RecipeRegistry()
         registry.scan()
         recipe = registry.find(name, source=source)
         
         if output_format == 'json':
-            # 获取示例文件列表
+            # Get list of example files
             examples = [str(e.name) for e in recipe.list_examples()]
 
             output = {
@@ -161,86 +161,86 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
             click.echo(f"Recipe: {m.name}")
             click.echo("=" * 50)
             click.echo()
-            click.echo("基本信息")
+            click.echo("Basic Information")
             click.echo("─" * 50)
-            click.echo(f"名称:     {m.name}")
-            click.echo(f"类型:     {m.type}")
-            click.echo(f"运行时:   {m.runtime}")
-            click.echo(f"版本:     {m.version}")
-            click.echo(f"来源:     {recipe.source}")
+            click.echo(f"Name:     {m.name}")
+            click.echo(f"Type:     {m.type}")
+            click.echo(f"Runtime:  {m.runtime}")
+            click.echo(f"Version:  {m.version}")
+            click.echo(f"Source:   {recipe.source}")
 
-            # 检查是否有同名 Recipe 在其他来源
+            # Check if there are recipes with the same name in other sources
             all_sources = registry.find_all_sources(name)
             if len(all_sources) > 1:
                 other_sources = [s for s, _ in all_sources if s != recipe.source]
                 if other_sources:
-                    click.echo(f"          (同名 Recipe 也存在于: {', '.join(other_sources)})")
+                    click.echo(f"          (Recipe with same name also exists in: {', '.join(other_sources)})")
 
-            click.echo(f"路径:     {recipe.script_path}")
+            click.echo(f"Path:     {recipe.script_path}")
             click.echo()
-            click.echo("描述")
+            click.echo("Description")
             click.echo("─" * 50)
             click.echo(m.description)
             click.echo()
             if m.use_cases:
-                click.echo("使用场景")
+                click.echo("Use Cases")
                 click.echo("─" * 50)
                 for case in m.use_cases:
                     click.echo(f"- {case}")
                 click.echo()
             if m.tags:
-                click.echo("标签")
+                click.echo("Tags")
                 click.echo("─" * 50)
                 click.echo(", ".join(m.tags))
                 click.echo()
-            click.echo("输出目标")
+            click.echo("Output Targets")
             click.echo("─" * 50)
             click.echo(", ".join(m.output_targets))
             click.echo()
             if m.inputs:
-                click.echo("输入参数")
+                click.echo("Input Parameters")
                 click.echo("─" * 50)
                 for param_name, param_def in m.inputs.items():
-                    required = "必需" if param_def.get('required', False) else "可选"
+                    required = "required" if param_def.get('required', False) else "optional"
                     param_type = param_def.get('type', 'unknown')
                     desc = param_def.get('description', '')
                     click.echo(f"- {param_name} ({param_type}, {required}): {desc}")
                 click.echo()
             if m.env:
-                click.echo("环境变量")
+                click.echo("Environment Variables")
                 click.echo("─" * 50)
                 for env_name, env_def in m.env.items():
-                    required = "必需" if env_def.get('required', False) else "可选"
+                    required = "required" if env_def.get('required', False) else "optional"
                     default = env_def.get('default', '')
                     desc = env_def.get('description', '')
                     if default:
-                        click.echo(f"- {env_name} ({required}, 默认: {default}): {desc}")
+                        click.echo(f"- {env_name} ({required}, default: {default}): {desc}")
                     else:
                         click.echo(f"- {env_name} ({required}): {desc}")
                 click.echo()
             if m.dependencies:
-                click.echo("依赖")
+                click.echo("Dependencies")
                 click.echo("─" * 50)
                 click.echo(", ".join(m.dependencies))
                 click.echo()
             else:
-                click.echo("依赖")
+                click.echo("Dependencies")
                 click.echo("─" * 50)
-                click.echo("无")
+                click.echo("None")
                 click.echo()
 
-            # 显示示例文件
+            # Display example files
             examples = recipe.list_examples()
-            click.echo("示例文件")
+            click.echo("Example Files")
             click.echo("─" * 50)
             if examples:
                 for example in examples:
                     click.echo(f"- {example.name}")
             else:
-                click.echo("无")
+                click.echo("None")
 
     except RecipeError as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
 
 
 @recipe_group.command(name='run')
@@ -249,40 +249,40 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
     '--source',
     type=click.Choice(['project', 'user', 'example'], case_sensitive=False),
     default=None,
-    help='指定配方来源（默认按优先级自动选择）'
+    help='Specify recipe source (defaults to auto-select by priority)'
 )
 @click.option(
     '--params',
     type=str,
     default='{}',
-    help='JSON 格式参数字符串'
+    help='JSON format parameter string'
 )
 @click.option(
     '--params-file',
     type=click.Path(exists=True),
-    help='从文件读取参数（JSON 格式）'
+    help='Read parameters from file (JSON format)'
 )
 @click.option(
     '--env', '-e',
     'env_vars',
     multiple=True,
-    help='环境变量覆盖，格式: KEY=VALUE（可多次使用）'
+    help='Environment variable override, format: KEY=VALUE (can be used multiple times)'
 )
 @click.option(
     '--output-file',
     type=click.Path(),
-    help='将结果写入文件'
+    help='Write result to file'
 )
 @click.option(
     '--output-clipboard',
     is_flag=True,
-    help='将结果复制到剪贴板'
+    help='Copy result to clipboard'
 )
 @click.option(
     '--timeout',
     type=int,
     default=300,
-    help='执行超时时间（秒）'
+    help='Execution timeout (seconds)'
 )
 def run_recipe(
     name: str,
@@ -294,9 +294,9 @@ def run_recipe(
     output_clipboard: bool,
     timeout: int
 ):
-    """执行指定的 Recipe"""
+    """Execute specified recipe"""
     try:
-        # 解析参数
+        # Parse parameters
         if params_file:
             with open(params_file, 'r', encoding='utf-8') as f:
                 params_dict = json.load(f)
@@ -304,19 +304,19 @@ def run_recipe(
             try:
                 params_dict = json.loads(params)
             except json.JSONDecodeError as e:
-                click.echo(f"错误: 参数格式无效\n{e}", err=True)
+                click.echo(f"Error: Invalid parameter format\n{e}", err=True)
                 sys.exit(2)
 
-        # 解析环境变量覆盖
+        # Parse environment variable overrides
         env_overrides: dict[str, str] = {}
         for env_var in env_vars:
             if '=' not in env_var:
-                click.echo(f"错误: 环境变量格式无效: '{env_var}'（应为 KEY=VALUE）", err=True)
+                click.echo(f"Error: Invalid environment variable format: '{env_var}' (should be KEY=VALUE)", err=True)
                 sys.exit(2)
             key, value = env_var.split('=', 1)
             env_overrides[key] = value
 
-        # 确定输出目标
+        # Determine output target
         if output_clipboard:
             output_target = 'clipboard'
             output_options = {}
@@ -327,7 +327,7 @@ def run_recipe(
             output_target = 'stdout'
             output_options = {}
 
-        # 执行 Recipe
+        # Execute recipe
         runner = RecipeRunner()
         result = runner.run(
             name,
@@ -337,34 +337,34 @@ def run_recipe(
             env_overrides=env_overrides if env_overrides else None,
             source=source
         )
-        
-        # 输出 stderr（脚本执行过程中的日志）
+
+        # Output stderr (logs during script execution)
         stderr_output = result.get('stderr', '')
         if stderr_output:
             click.echo("--- Recipe Logs ---", err=True)
             click.echo(stderr_output, err=True)
             click.echo("--- End Logs ---", err=True)
 
-        # 处理输出
+        # Handle output
         if output_target == 'stdout':
             OutputHandler.handle(result, 'stdout')
         elif output_target == 'file':
             OutputHandler.handle(result, 'file', output_options)
             if result.get('success'):
-                click.echo(f"[OK] 结果已保存到: {output_file}", err=True)
+                click.echo(f"[OK] Result saved to: {output_file}", err=True)
         elif output_target == 'clipboard':
             OutputHandler.handle(result, 'clipboard')
             if result.get('success'):
-                click.echo("[OK] 结果已复制到剪贴板", err=True)
+                click.echo("[OK] Result copied to clipboard", err=True)
 
-        # 如果执行失败，返回非零退出码
+        # If execution fails, return non-zero exit code
         if not result.get('success'):
-            click.echo("配方执行失败", err=True)
+            click.echo("Recipe execution failed", err=True)
 
     except RecipeError as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
     except Exception as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
 
 
 @recipe_group.command('validate')
@@ -374,51 +374,51 @@ def run_recipe(
     'output_format',
     type=click.Choice(['text', 'json'], case_sensitive=False),
     default='text',
-    help='输出格式'
+    help='Output format'
 )
 def validate_recipe(path: str, output_format: str):
     """
-    验证配方目录的字段完整性和正确性
+    Validate field completeness and correctness of recipe directory
 
-    PATH 可以是：
-    - 配方目录路径（包含 recipe.md 和脚本文件）
-    - recipe.md 文件路径
+    PATH can be:
+    - Recipe directory path (containing recipe.md and script file)
+    - recipe.md file path
     """
     recipe_path = Path(path)
 
-    # 确定 recipe.md 和配方目录
+    # Determine recipe.md and recipe directory
     if recipe_path.is_file():
         if recipe_path.name != 'recipe.md':
-            click.echo(f"错误: 指定的文件不是 recipe.md: {recipe_path.name}", err=True)
+            click.echo(f"Error: Specified file is not recipe.md: {recipe_path.name}", err=True)
             return
         metadata_path = recipe_path
         recipe_dir = recipe_path.parent
     else:
-        # 目录形式
+        # Directory form
         metadata_path = recipe_path / 'recipe.md'
         recipe_dir = recipe_path
         if not metadata_path.exists():
-            click.echo(f"错误: 配方目录中未找到 recipe.md: {recipe_dir}", err=True)
+            click.echo(f"Error: recipe.md not found in recipe directory: {recipe_dir}", err=True)
             return
 
     errors: list[str] = []
     warnings: list[str] = []
     metadata = None
 
-    # 1. 解析元数据
+    # 1. Parse metadata
     try:
         metadata = parse_metadata_file(metadata_path)
     except MetadataParseError as e:
-        errors.append(f"元数据解析失败: {e.reason}")
+        errors.append(f"Metadata parsing failed: {e.reason}")
 
-    # 2. 验证元数据字段
+    # 2. Validate metadata fields
     if metadata:
         try:
             validate_metadata(metadata)
         except RecipeValidationError as e:
             errors.extend(e.errors)
 
-    # 3. 检查脚本文件
+    # 3. Check script file
     if metadata:
         script_extensions = {
             'chrome-js': '.js',
@@ -429,40 +429,40 @@ def validate_recipe(path: str, output_format: str):
         script_path = recipe_dir / f"recipe{ext}"
 
         if not script_path.exists():
-            errors.append(f"脚本文件不存在: recipe{ext}（runtime: {metadata.runtime}）")
+            errors.append(f"Script file does not exist: recipe{ext} (runtime: {metadata.runtime})")
         else:
-            # 检查脚本是否为空
+            # Check if script is empty
             content = script_path.read_text(encoding='utf-8').strip()
             if not content:
-                errors.append(f"脚本文件为空: recipe{ext}")
+                errors.append(f"Script file is empty: recipe{ext}")
 
-            # 检查脚本基本语法（可选的简单检查）
+            # Check basic script syntax (optional simple check)
             if metadata.runtime == 'python':
                 try:
                     compile(content, str(script_path), 'exec')
                 except SyntaxError as e:
-                    errors.append(f"Python 语法错误: {e.msg} (行 {e.lineno})")
+                    errors.append(f"Python syntax error: {e.msg} (line {e.lineno})")
             elif metadata.runtime == 'chrome-js':
-                # JavaScript 简单检查：是否包含基本结构
+                # Simple JavaScript check: whether it contains basic structure
                 if 'return' not in content and 'console' not in content:
-                    warnings.append("JavaScript 脚本未包含 return 语句或 console 输出")
+                    warnings.append("JavaScript script does not contain return statement or console output")
 
-    # 4. 检查 examples 目录（可选）
+    # 4. Check examples directory (optional)
     examples_dir = recipe_dir / 'examples'
     if examples_dir.exists():
         example_files = list(examples_dir.glob('*'))
         if not example_files:
-            warnings.append("examples 目录存在但为空")
+            warnings.append("examples directory exists but is empty")
 
-    # 5. 检查依赖（如果是 workflow）
+    # 5. Check dependencies (if workflow)
     if metadata and metadata.type == 'workflow' and metadata.dependencies:
         registry = RecipeRegistry()
         registry.scan()
         for dep in metadata.dependencies:
             if dep not in registry.recipes:
-                errors.append(f"依赖的配方不存在: {dep}")
+                errors.append(f"Dependent recipe does not exist: {dep}")
 
-    # 输出结果
+    # Output results
     is_valid = len(errors) == 0
 
     if output_format == 'json':
@@ -477,26 +477,26 @@ def validate_recipe(path: str, output_format: str):
         }
         click.echo(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        # text 格式
+        # text format
         if is_valid:
-            click.echo(f"[OK] 配方验证通过: {recipe_dir}")
+            click.echo(f"[OK] Recipe validation passed: {recipe_dir}")
             if metadata:
-                click.echo(f"  名称: {metadata.name}")
-                click.echo(f"  类型: {metadata.type}")
-                click.echo(f"  运行时: {metadata.runtime}")
+                click.echo(f"  Name: {metadata.name}")
+                click.echo(f"  Type: {metadata.type}")
+                click.echo(f"  Runtime: {metadata.runtime}")
             if warnings:
                 click.echo()
-                click.echo("[!] 警告:")
+                click.echo("[!] Warnings:")
                 for w in warnings:
                     click.echo(f"  - {w}")
         else:
-            click.echo(f"[X] 配方验证失败: {recipe_dir}", err=True)
+            click.echo(f"[X] Recipe validation failed: {recipe_dir}", err=True)
             click.echo()
-            click.echo("错误:")
+            click.echo("Errors:")
             for e in errors:
                 click.echo(f"  - {e}", err=True)
             if warnings:
                 click.echo()
-                click.echo("警告:")
+                click.echo("Warnings:")
                 for w in warnings:
                     click.echo(f"  - {w}")

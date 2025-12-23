@@ -1,7 +1,7 @@
 """
-CDP客户端基类
+CDP client base class
 
-提供Chrome DevTools Protocol客户端的基础功能。
+Provides basic functionality for Chrome DevTools Protocol clients.
 """
 
 import json
@@ -14,82 +14,82 @@ from .exceptions import CDPError
 
 
 class CDPClient(ABC):
-    """CDP客户端基类"""
-    
+    """CDP client base class"""
+
     def __init__(self, config: Optional[CDPConfig] = None):
         """
-        初始化CDP客户端
-        
+        Initialize CDP client
+
         Args:
-            config: CDP配置，如果为None则使用默认配置
+            config: CDP configuration, uses default config if None
         """
         self.config = config or CDPConfig()
-        # 根据 debug 模式设置日志级别
+        # Set log level based on debug mode
         log_level = "INFO" if self.config.debug else "WARNING"
         self.logger = get_logger(level=log_level)
         self._connected = False
-    
+
     @property
     def connected(self) -> bool:
-        """检查是否已连接"""
+        """Check if connected"""
         return self._connected
-    
+
     @abstractmethod
     def connect(self) -> None:
-        """建立连接"""
+        """Establish connection"""
         pass
-    
+
     @abstractmethod
     def disconnect(self) -> None:
-        """断开连接"""
+        """Disconnect"""
         pass
-    
+
     @abstractmethod
     def send_command(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        发送CDP命令
-        
+        Send CDP command
+
         Args:
-            method: CDP方法名
-            params: 命令参数
-            
+            method: CDP method name
+            params: Command parameters
+
         Returns:
-            Dict[str, Any]: 命令结果
-            
+            Dict[str, Any]: Command result
+
         Raises:
-            CDPError: 命令执行失败
+            CDPError: Command execution failed
         """
         pass
-    
+
     def _validate_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
         """
-        验证CDP响应
-        
+        Validate CDP response
+
         Args:
-            response: CDP响应
-            
+            response: CDP response
+
         Returns:
-            Dict[str, Any]: 验证后的响应
-            
+            Dict[str, Any]: Validated response
+
         Raises:
-            CDPError: 响应无效
+            CDPError: Invalid response
         """
         if not isinstance(response, dict):
             raise CDPError(f"Invalid response type: {type(response)}")
-        
+
         if "error" in response:
             error = response["error"]
             error_msg = error.get("message", "Unknown error")
             error_code = error.get("code", -1)
             raise CDPError(f"CDP error {error_code}: {error_msg}")
-        
+
         return response
-    
+
     def __enter__(self):
-        """上下文管理器入口"""
+        """Context manager entry"""
         self.connect()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """上下文管理器出口"""
+        """Context manager exit"""
         self.disconnect()

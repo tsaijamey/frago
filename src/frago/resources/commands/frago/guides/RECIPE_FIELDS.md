@@ -1,93 +1,93 @@
-# Recipe 字段规范
+# Recipe Fields Specification
 
-适用于：`/frago.recipe`、`/frago.test`
+Applies to: `/frago.recipe`, `/frago.test`
 
-## 验证命令
+## Validation Commands
 
 ```bash
-frago recipe validate <配方目录或recipe.md路径>
-frago recipe validate <路径> --format json
+frago recipe validate <recipe directory or recipe.md path>
+frago recipe validate <path> --format json
 ```
 
-## 必需字段
+## Required Fields
 
-| 字段 | 类型 | 要求 |
+| Field | Type | Requirement |
 |------|------|------|
-| `name` | string | 仅含 `[a-zA-Z0-9_-]` |
-| `type` | string | `atomic` 或 `workflow` |
+| `name` | string | Only contains `[a-zA-Z0-9_-]` |
+| `type` | string | `atomic` or `workflow` |
 | `runtime` | string | `chrome-js`, `python`, `shell` |
-| `version` | string | 格式 `1.0` 或 `1.0.0` |
-| `description` | string | 必需，≤200 字符 |
-| `use_cases` | list | 至少一个场景 |
-| `output_targets` | list | `stdout`, `file`, `clipboard` 中的值 |
+| `version` | string | Format `1.0` or `1.0.0` |
+| `description` | string | Required, ≤200 characters |
+| `use_cases` | list | At least one scenario |
+| `output_targets` | list | Values from `stdout`, `file`, `clipboard` |
 
-## 可选字段
+## Optional Fields
 
-| 字段 | 类型 | 说明 |
+| Field | Type | Notes |
 |------|------|------|
-| `inputs` | dict | 输入参数定义（需含 `type` 和 `required`） |
-| `outputs` | dict | 输出定义 |
-| `dependencies` | list | 依赖的其他配方（workflow 类型） |
-| `tags` | list | 标签（AI 可理解字段） |
-| `env` | dict | 环境变量定义（详见下文） |
-| `system_packages` | bool | 是否使用系统 Python |
+| `inputs` | dict | Input parameter definition (needs `type` and `required`) |
+| `outputs` | dict | Output definition |
+| `dependencies` | list | Other recipes depended on (workflow type) |
+| `tags` | list | Tags (AI-understandable field) |
+| `env` | dict | Environment variable definition (see below) |
+| `system_packages` | bool | Whether to use system Python |
 
-## 环境变量（env）字段规范
+## Environment Variables (env) Field Specification
 
-配方可以声明需要的环境变量，运行时会自动从 `~/.frago/.env` 加载。
+Recipes can declare required environment variables, which will be automatically loaded from `~/.frago/.env` at runtime.
 
-### env 字段结构
+### env Field Structure
 
 ```yaml
 env:
   VAR_NAME:
-    required: true          # 是否必需（默认 false）
-    default: "默认值"        # 默认值（字符串）
-    description: "变量说明"  # 描述
+    required: true          # Whether required (default false)
+    default: "default value" # Default value (string)
+    description: "Variable description"  # Description
 ```
 
-### 示例
+### Example
 
 ```yaml
 env:
   OPENAI_API_KEY:
     required: true
-    description: "OpenAI API 密钥"
+    description: "OpenAI API key"
   MODEL_NAME:
     required: false
     default: "gpt-4"
-    description: "使用的模型名称"
+    description: "Model name to use"
 ```
 
-### 环境变量加载优先级（高到低）
+### Environment Variable Loading Priority (High to Low)
 
-1. Workflow 上下文共享变量
+1. Workflow context shared variables
 2. **`~/.frago/.env`**
-3. 系统环境变量
-4. 配方定义的 `default` 值
+3. System environment variables
+4. Recipe-defined `default` value
 
-### ~/.frago/.env 配置
+### ~/.frago/.env Configuration
 
-在 `~/.frago/.env` 中配置常用的环境变量：
+Configure commonly used environment variables in `~/.frago/.env`:
 
 ```bash
-# API 密钥
+# API Keys
 OPENAI_API_KEY=sk-xxx
 ANTHROPIC_API_KEY=sk-ant-xxx
 
-# 其他配置
+# Other configurations
 DEFAULT_MODEL=gpt-4
 ```
 
-配方运行时会自动加载这些变量。
+These variables will be automatically loaded when recipes run.
 
-## Python 配方依赖声明（PEP 723）
+## Python Recipe Dependency Declaration (PEP 723)
 
-Python 配方使用 `uv run` 执行，支持 **PEP 723 内联依赖声明**。
+Python recipes are executed using `uv run`, supporting **PEP 723 inline dependency declaration**.
 
-### 格式
+### Format
 
-在 `recipe.py` 文件头部添加（无需 shebang）：
+Add at the top of `recipe.py` file (no shebang needed):
 
 ```python
 # /// script
@@ -96,7 +96,7 @@ Python 配方使用 `uv run` 执行，支持 **PEP 723 内联依赖声明**。
 # ///
 ```
 
-### 示例
+### Example
 
 ```python
 # /// script
@@ -105,7 +105,7 @@ Python 配方使用 `uv run` 执行，支持 **PEP 723 内联依赖声明**。
 # ///
 """
 Recipe: tts_generate_voice
-Description: 使用 Edge TTS 生成语音
+Description: Generate voice using Edge TTS
 """
 
 import json
@@ -113,46 +113,46 @@ import sys
 # ...
 ```
 
-### 说明
+### Notes
 
-- `uv run` 会自动解析内联依赖并创建临时虚拟环境
-- 无需 `requirements.txt` 或 `pyproject.toml`
-- 依赖仅在首次运行时安装，后续执行使用缓存
-- 若需使用系统包（如 `dbus`），在 `recipe.md` 中设置 `system_packages: true`
+- `uv run` will automatically parse inline dependencies and create a temporary virtual environment
+- No need for `requirements.txt` or `pyproject.toml`
+- Dependencies are installed only on first run, subsequent executions use cache
+- If system packages (like `dbus`) are needed, set `system_packages: true` in `recipe.md`
 
-## 验证内容
+## Validation Content
 
-`frago recipe validate` 检查以下内容：
+`frago recipe validate` checks the following:
 
-1. **YAML frontmatter** - 解析 recipe.md 的 YAML 头
-2. **必需字段** - 所有必需字段是否存在
-3. **字段格式** - name 字符规则、version 格式、枚举值
-4. **脚本文件** - 根据 runtime 检查对应脚本（recipe.js/py/sh）是否存在且非空
-5. **语法检查** - Python 脚本进行语法检查
-6. **依赖检查** - workflow 类型检查依赖的配方是否已注册
+1. **YAML frontmatter** - Parse YAML header in recipe.md
+2. **Required fields** - Whether all required fields exist
+3. **Field format** - name character rules, version format, enum values
+4. **Script files** - Check if corresponding script (recipe.js/py/sh) exists and is non-empty based on runtime
+5. **Syntax check** - Python scripts undergo syntax checking
+6. **Dependency check** - workflow type checks if depended recipes are registered
 
-## 验证输出示例
+## Validation Output Examples
 
-### 验证通过
-
-```
-✓ 配方验证通过: examples/atomic/chrome/my_recipe
-  名称: my_recipe
-  类型: atomic
-  运行时: chrome-js
-```
-
-### 验证失败
+### Validation Passed
 
 ```
-✗ 配方验证失败: examples/atomic/chrome/broken_recipe
-错误:
-  • name 必须仅包含字母、数字、下划线、连字符
-  • use_cases 必须包含至少一个使用场景
-  • 脚本文件不存在: recipe.js（runtime: chrome-js）
+✓ Recipe validation passed: examples/atomic/chrome/my_recipe
+  Name: my_recipe
+  Type: atomic
+  Runtime: chrome-js
 ```
 
-### JSON 格式
+### Validation Failed
+
+```
+✗ Recipe validation failed: examples/atomic/chrome/broken_recipe
+Errors:
+  • name must only contain letters, numbers, underscores, hyphens
+  • use_cases must contain at least one use case
+  • Script file does not exist: recipe.js (runtime: chrome-js)
+```
+
+### JSON Format
 
 ```json
 {
@@ -161,12 +161,12 @@ import sys
   "name": null,
   "type": null,
   "runtime": null,
-  "errors": ["元数据解析失败: 缺少必需字段: 'name'"],
+  "errors": ["Metadata parsing failed: Missing required field: 'name'"],
   "warnings": []
 }
 ```
 
-## 完整 recipe.md 模板
+## Complete recipe.md Template
 
 ```yaml
 ---
@@ -174,10 +174,10 @@ name: platform_action_object
 type: atomic
 runtime: chrome-js
 version: "1.0.0"
-description: "一句话描述配方功能（≤200字符）"
+description: "One-sentence description of recipe function (≤200 characters)"
 use_cases:
-  - "场景1：用户需要..."
-  - "场景2：当..."
+  - "Scenario 1: User needs..."
+  - "Scenario 2: When..."
 output_targets:
   - stdout
   - file
@@ -188,27 +188,27 @@ inputs:
   param_name:
     type: string
     required: true
-    description: "参数说明"
+    description: "Parameter description"
 outputs:
   result:
     type: object
-    description: "输出说明"
+    description: "Output description"
 env:
   API_KEY:
     required: true
-    description: "API 密钥，在 ~/.frago/.env 中配置"
+    description: "API key, configure in ~/.frago/.env"
   TIMEOUT:
     required: false
     default: "30"
-    description: "超时时间（秒）"
+    description: "Timeout (seconds)"
 ---
 
 # platform_action_object
 
-## 功能描述
-## 使用方法
-## 前置条件
-## 预期输出
-## 注意事项
-## 更新历史
+## Feature Description
+## Usage
+## Prerequisites
+## Expected Output
+## Notes
+## Update History
 ```

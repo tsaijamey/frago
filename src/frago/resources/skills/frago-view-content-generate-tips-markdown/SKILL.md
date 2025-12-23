@@ -1,115 +1,115 @@
 ---
 name: frago-view-content-generate-tips-markdown
-description: Markdown 文档内容生成指南。当需要创建可通过 `frago view` 预览的 Markdown 文档时使用此 skill。涵盖元素支持、Mermaid 图表、最佳实践。
+description: Markdown document content generation guide. Use this skill when you need to create Markdown documents that can be previewed via `frago view`. Covers element support, Mermaid charts, and best practices.
 ---
 
-# Markdown 文档内容生成指南
+# Markdown Document Content Generation Guide
 
-创建可通过 `frago view` 预览的高质量 Markdown 文档。
+Create high-quality Markdown documents that can be previewed via `frago view`.
 
-## 预览命令
+## Preview Commands
 
 ```bash
-frago view document.md                    # 默认主题
-frago view document.md --theme monokai    # 指定代码主题
+frago view document.md                    # Default theme
+frago view document.md --theme monokai    # Specify code theme
 ```
 
 ---
 
-## 支持的元素
+## Supported Elements
 
-### 基础元素
+### Basic Elements
 
-| 元素 | 语法 | 渲染效果 |
-|------|------|---------|
-| 标题 | `# H1` ~ `###### H6` | 带底部边框的层级标题 |
-| 段落 | 空行分隔 | 16px 下边距 |
-| 粗体 | `**text**` | 加粗文本 |
-| 斜体 | `*text*` | 斜体文本 |
-| 链接 | `[text](url)` | 蓝色链接（#58a6ff） |
-| 图片 | `![alt](path)` | 自适应宽度 |
-| 代码块 | ` ```lang ` | 语法高亮 |
-| 行内代码 | `` `code` `` | 灰色背景圆角 |
-| 表格 | `\| col \|` | 边框表格 |
-| 列表 | `- item` / `1. item` | 缩进列表 |
-| 引用 | `> quote` | 左侧蓝色边框 |
-| 水平线 | `---` | 灰色分隔线 |
+| Element | Syntax | Rendered Effect |
+|---------|--------|-----------------|
+| Headings | `# H1` ~ `###### H6` | Hierarchical headings with bottom border |
+| Paragraphs | Separated by blank lines | 16px bottom margin |
+| Bold | `**text**` | Bold text |
+| Italic | `*text*` | Italic text |
+| Links | `[text](url)` | Blue links (#58a6ff) |
+| Images | `![alt](path)` | Adaptive width |
+| Code Blocks | ` ```lang ` | Syntax highlighting |
+| Inline Code | `` `code` `` | Gray background with rounded corners |
+| Tables | `\| col \|` | Bordered tables |
+| Lists | `- item` / `1. item` | Indented lists |
+| Blockquotes | `> quote` | Left blue border |
+| Horizontal Rules | `---` | Gray divider line |
 
-### 扩展元素
+### Extended Elements
 
-| 元素 | 语法 | 说明 |
-|------|------|------|
-| 脚注 | `[^1]` | 底部脚注 |
-| 定义列表 | `term\n: definition` | 术语定义 |
-| 缩写 | `*[abbr]: full` | 悬停显示全称 |
-| 属性 | `{#id .class}` | 元素属性 |
-| HTML 内嵌 | `<div markdown>` | HTML 中使用 Markdown |
+| Element | Syntax | Description |
+|---------|--------|-------------|
+| Footnotes | `[^1]` | Bottom footnotes |
+| Definition Lists | `term\n: definition` | Term definitions |
+| Abbreviations | `*[abbr]: full` | Show full text on hover |
+| Attributes | `{#id .class}` | Element attributes |
+| HTML Embedding | `<div markdown>` | Markdown within HTML |
 
 ---
 
-## Mermaid 图表
+## Mermaid Charts
 
-### 支持的图表类型
+### Supported Chart Types
 
-| 类型 | 关键字 | 用途 |
-|------|--------|------|
-| 流程图 | `flowchart` | 流程、决策 |
-| 时序图 | `sequenceDiagram` | 交互流程 |
-| 类图 | `classDiagram` | 类关系 |
-| 状态图 | `stateDiagram` | 状态转换 |
-| ER 图 | `erDiagram` | 数据模型 |
-| 甘特图 | `gantt` | 项目进度 |
-| 饼图 | `pie` | 占比分布 |
-| 思维导图 | `mindmap` | 层级结构 |
-| 时间线 | `timeline` | 事件序列 |
-| XY 图表 | `xychart-beta` | 柱状图/折线图 |
+| Type | Keyword | Purpose |
+|------|---------|---------|
+| Flowcharts | `flowchart` | Flows, decisions |
+| Sequence diagrams | `sequenceDiagram` | Interaction flows |
+| Class diagrams | `classDiagram` | Class relationships |
+| State diagrams | `stateDiagram` | State transitions |
+| ER diagrams | `erDiagram` | Data models |
+| Gantt charts | `gantt` | Project progress |
+| Pie charts | `pie` | Distribution |
+| Mind maps | `mindmap` | Hierarchical structure |
+| Timelines | `timeline` | Event sequences |
+| XY charts | `xychart-beta` | Bar/line charts |
 
-### 流程图示例
+### Flowchart Example
 
 ````markdown
 ```mermaid
 flowchart LR
-    A[开始] --> B{判断}
-    B -->|是| C[执行]
-    B -->|否| D[跳过]
-    C --> E[结束]
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Execute]
+    B -->|No| D[Skip]
+    C --> E[End]
     D --> E
 ```
 ````
 
-### XY 图表示例
+### XY Chart Example
 
 ````markdown
 ```mermaid
 xychart-beta
-    title "月度数据"
-    x-axis ["1月", "2月", "3月", "4月"]
-    y-axis "数量" 0 --> 100
+    title "Monthly Data"
+    x-axis ["Jan", "Feb", "Mar", "Apr"]
+    y-axis "Quantity" 0 --> 100
     bar [30, 45, 60, 80]
     line [25, 40, 55, 75]
 ```
 ````
 
-### 时序图示例
+### Sequence Diagram Example
 
 ````markdown
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant S as 服务器
-    participant D as 数据库
-    U->>S: 发送请求
-    S->>D: 查询数据
-    D-->>S: 返回结果
-    S-->>U: 响应数据
+    participant U as User
+    participant S as Server
+    participant D as Database
+    U->>S: Send request
+    S->>D: Query data
+    D-->>S: Return result
+    S-->>U: Response data
 ```
 ````
 
 ---
 
-## 代码块
+## Code Blocks
 
-### 必须标记语言
+### Must Tag Language
 
 ```markdown
 ```python
@@ -118,12 +118,12 @@ def hello():
 ```
 ```
 
-**不标记语言则无高亮**。
+**No language tag means no highlighting**.
 
-### 支持的语言
+### Supported Languages
 
-| 语言 | 标记 |
-|------|------|
+| Language | Tag |
+|----------|-----|
 | Python | `python` |
 | JavaScript | `javascript` / `js` |
 | TypeScript | `typescript` / `ts` |
@@ -137,103 +137,103 @@ def hello():
 | CSS | `css` |
 | Markdown | `markdown` |
 
-### 代码主题
+### Code Themes
 
-默认：`github-dark`
+Default: `github-dark`
 
-可选：`monokai`、`atom-one-dark`、`atom-one-light`、`vs2015`、`github`
+Available: `monokai`, `atom-one-dark`, `atom-one-light`, `vs2015`, `github`
 
 ---
 
-## 最佳实践
+## Best Practices
 
-### 1. 标题层次
+### 1. Heading Hierarchy
 
 ```markdown
-# 文档标题（仅一个）
+# Document Title (only one)
 
-## 一级章节
+## Level 1 Section
 
-### 二级章节
+### Level 2 Section
 
-#### 三级章节（尽量避免更深）
+#### Level 3 Section (avoid deeper levels)
 ```
 
-**原则**：最多 4 级，层次过深影响阅读。
+**Principle**: Maximum 4 levels, deeper hierarchy affects readability.
 
-### 2. 段落长度
+### 2. Paragraph Length
 
-- 每段 **3-5 句话**
-- 单句不超过 **80 字符**
-- 空行分隔段落
+- Each paragraph **3-5 sentences**
+- Single sentence no more than **80 characters**
+- Blank lines separate paragraphs
 
-### 3. 列表使用
+### 3. List Usage
 
-**适合**：并列要点、步骤说明、特性列举
+**Appropriate**: Parallel points, step instructions, feature enumeration
 
-**不适合**：连续叙述、需要上下文关联的内容
+**Not appropriate**: Continuous narrative, content requiring contextual connection
 
-### 4. 表格设计
+### 4. Table Design
 
-- 列数不超过 **5 列**
-- 单元格内容 **简短**
-- 复杂内容用列表或段落替代
+- No more than **5 columns**
+- Cell content **brief**
+- Use lists or paragraphs for complex content
 
-### 5. 图片处理
+### 5. Image Handling
 
 ```markdown
-![图片说明](./images/diagram.png)
+![Image description](./images/diagram.png)
 ```
 
-**自动复制**：`images/`、`assets/`、`img/`、`media/`、`figures/` 目录会被自动复制。
+**Auto-copy**: `images/`, `assets/`, `img/`, `media/`, `figures/` directories are automatically copied.
 
-**格式推荐**：PNG（无损）、JPG（照片）、SVG（矢量）
+**Format recommendations**: PNG (lossless), JPG (photos), SVG (vector)
 
-**尺寸建议**：源图宽度 800-1200px，文件大小 < 500KB
-
----
-
-## 回避事项
-
-| 语法 | 问题 | 替代方案 |
-|------|------|---------|
-| LaTeX 数学公式 | 不支持 | 使用图片或 Mermaid |
-| `<script>` 标签 | 安全限制 | 不可用 |
-| iframe 嵌入 | 安全限制 | 使用截图 |
-| 超大 Mermaid 图 | 渲染慢 | 拆分为多个小图 |
-| 过多代码块 | 性能压力 | 合并相关代码 |
-| 超长文档 | 滚动卡顿 | 拆分为多文件 |
+**Size recommendations**: Source image width 800-1200px, file size < 500KB
 
 ---
 
-## 样式参考（GitHub Dark）
+## Things to Avoid
 
-| 元素 | 颜色 |
-|------|------|
-| 背景 | `#0d1117` |
-| 文字 | `#c9d1d9` |
-| 链接 | `#58a6ff` |
-| 代码背景 | `#161b22` |
-| 边框 | `#30363d` |
-| 引用文字 | `#8b949e` |
-
----
-
-## 模板库
-
-| 模板 | 用途 | 路径 |
-|------|------|------|
-| 技术文档 | API/功能说明 | [templates/technical-doc.md](templates/technical-doc.md) |
-| 报告文档 | 分析报告 | [templates/report.md](templates/report.md) |
-| 项目总结 | 项目概览 | [templates/project-summary.md](templates/project-summary.md) |
+| Syntax | Issue | Alternative |
+|--------|-------|-------------|
+| LaTeX math formulas | Not supported | Use images or Mermaid |
+| `<script>` tags | Security restrictions | Not available |
+| iframe embedding | Security restrictions | Use screenshots |
+| Oversized Mermaid diagrams | Slow rendering | Split into multiple smaller diagrams |
+| Too many code blocks | Performance pressure | Merge related code |
+| Very long documents | Scrolling lag | Split into multiple files |
 
 ---
 
-## 调试技巧
+## Style Reference (GitHub Dark)
 
-| 问题 | 原因 | 解决 |
-|------|------|------|
-| 代码无高亮 | 未标记语言 | 添加语言标记 |
-| Mermaid 不渲染 | 语法错误 | 检查 mermaid 语法 |
-| 图片不显示 | 路径错误 | 使用相对路径 |
-| 表格错乱 | 列不对齐 | 检查 `\|` 数量 |
+| Element | Color |
+|---------|-------|
+| Background | `#0d1117` |
+| Text | `#c9d1d9` |
+| Links | `#58a6ff` |
+| Code Background | `#161b22` |
+| Borders | `#30363d` |
+| Quote Text | `#8b949e` |
+
+---
+
+## Template Library
+
+| Template | Purpose | Path |
+|----------|---------|------|
+| Technical documentation | API/feature description | [templates/technical-doc.md](templates/technical-doc.md) |
+| Report documentation | Analysis reports | [templates/report.md](templates/report.md) |
+| Project summary | Project overview | [templates/project-summary.md](templates/project-summary.md) |
+
+---
+
+## Debugging Tips
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| No code highlighting | Language not tagged | Add language tag |
+| Mermaid not rendering | Syntax error | Check mermaid syntax |
+| Images not displaying | Path error | Use relative paths |
+| Table misalignment | Columns misaligned | Check `\|` count |

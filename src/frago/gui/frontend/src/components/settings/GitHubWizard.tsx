@@ -1,6 +1,6 @@
 /**
- * GitHub Wizard 组件
- * 5步向导：检测gh CLI → 登录GitHub → 创建仓库 → 首次同步 → 完成
+ * GitHub Wizard Component
+ * 5-step wizard: Detect gh CLI → Login GitHub → Create repository → First sync → Complete
  */
 
 import { useState, useEffect } from 'react';
@@ -35,13 +35,13 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [waitingForLogin, setWaitingForLogin] = useState(false);
-  // Step 3: 选择仓库模式
+  // Step 3: Repository mode selection
   const [repoMode, setRepoMode] = useState<'create' | 'select'>('create');
   const [existingRepos, setExistingRepos] = useState<GithubRepo[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
   const [loadingRepos, setLoadingRepos] = useState(false);
 
-  // Step 1: 检测 gh CLI
+  // Step 1: Detect gh CLI
   useEffect(() => {
     if (currentStep === 1) {
       checkGhStatus();
@@ -58,13 +58,13 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       setGhAuthenticated(status.authenticated);
       setGhUsername(status.username || null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '检测 gh CLI 失败');
+      setError(err instanceof Error ? err.message : 'Failed to detect gh CLI');
     } finally {
       setLoading(false);
     }
   };
 
-  // Step 2: 登录 GitHub
+  // Step 2: Login to GitHub
   const handleLogin = async () => {
     try {
       setLoading(true);
@@ -73,10 +73,10 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       if (result.status === 'ok') {
         setWaitingForLogin(true);
       } else {
-        setError(result.error || '打开终端失败');
+        setError(result.error || 'Failed to open terminal');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败');
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -90,11 +90,11 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       setWaitingForLogin(false);
       setCurrentStep(3);
     } else {
-      setError('登录未完成，请在终端中完成登录后重试');
+      setError('Login not completed. Please complete the login in the terminal and try again');
     }
   };
 
-  // Step 3: 加载已有仓库列表
+  // Step 3: Load existing repository list
   const loadExistingRepos = async () => {
     try {
       setLoadingRepos(true);
@@ -103,26 +103,26 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       if (result.status === 'ok' && result.repos) {
         setExistingRepos(result.repos);
       } else {
-        setError(result.error || '获取仓库列表失败');
+        setError(result.error || 'Failed to get repository list');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '获取仓库列表失败');
+      setError(err instanceof Error ? err.message : 'Failed to get repository list');
     } finally {
       setLoadingRepos(false);
     }
   };
 
-  // 当切换到选择模式时加载仓库列表
+  // Load repository list when switching to select mode
   useEffect(() => {
     if (repoMode === 'select' && existingRepos.length === 0 && currentStep === 3) {
       loadExistingRepos();
     }
   }, [repoMode, currentStep]);
 
-  // Step 3: 选择已有仓库
+  // Step 3: Select existing repository
   const handleSelectRepo = async () => {
     if (!selectedRepo) {
-      setError('请选择一个仓库');
+      setError('Please select a repository');
       return;
     }
 
@@ -134,19 +134,19 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
         setRepoUrl(result.repo_url);
         setCurrentStep(4);
       } else {
-        setError(result.error || '选择仓库失败');
+        setError(result.error || 'Failed to select repository');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '选择仓库失败');
+      setError(err instanceof Error ? err.message : 'Failed to select repository');
     } finally {
       setLoading(false);
     }
   };
 
-  // Step 3: 创建仓库
+  // Step 3: Create repository
   const handleCreateRepo = async () => {
     if (!repoName.trim()) {
-      setError('请输入仓库名称');
+      setError('Please enter repository name');
       return;
     }
 
@@ -158,30 +158,30 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
         setRepoUrl(result.repo_url);
         setCurrentStep(4);
       } else {
-        setError(result.error || '创建仓库失败');
+        setError(result.error || 'Failed to create repository');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建仓库失败');
+      setError(err instanceof Error ? err.message : 'Failed to create repository');
     } finally {
       setLoading(false);
     }
   };
 
-  // Step 4: 首次同步
+  // Step 4: First sync
   const handleFirstSync = async () => {
     try {
       setLoading(true);
       setError(null);
-      setSyncOutput('正在启动同步...\n');
+      setSyncOutput('Starting sync...\n');
 
       const startResult = await runFirstSync();
       if (startResult.status === 'error') {
-        setError(startResult.error || '同步失败');
+        setError(startResult.error || 'Sync failed');
         setLoading(false);
         return;
       }
 
-      // 轮询结果
+      // Poll for results
       const pollInterval = setInterval(async () => {
         const result = await getSyncResult();
 
@@ -193,24 +193,24 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
         setLoading(false);
 
         if (result.status === 'ok') {
-          setSyncOutput((prev) => prev + '\n✓ 同步完成\n' + (result.output || ''));
+          setSyncOutput((prev) => prev + '\n✓ Sync completed\n' + (result.output || ''));
           setCurrentStep(5);
         } else {
-          setError(result.error || '同步失败');
-          setSyncOutput((prev) => prev + '\n✗ 同步失败\n' + (result.error || ''));
+          setError(result.error || 'Sync failed');
+          setSyncOutput((prev) => prev + '\n✗ Sync failed\n' + (result.error || ''));
         }
       }, 1000);
 
-      // 超时保护（5 分钟）
+      // Timeout protection (5 minutes)
       setTimeout(() => {
         clearInterval(pollInterval);
         if (loading) {
           setLoading(false);
-          setError('同步超时');
+          setError('Sync timeout');
         }
       }, 300000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '同步失败');
+      setError(err instanceof Error ? err.message : 'Sync failed');
       setLoading(false);
     }
   };
@@ -220,14 +220,14 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex items-center gap-3 mb-4">
         <Terminal size={24} className="text-[var(--accent-primary)]" />
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-          步骤 1: 检测 GitHub CLI
+          Step 1: Detect GitHub CLI
         </h3>
       </div>
 
       {loading ? (
         <div className="flex items-center gap-2 text-[var(--text-muted)]">
           <Loader2 size={16} className="animate-spin" />
-          正在检测...
+          Detecting...
         </div>
       ) : (
         <>
@@ -235,17 +235,17 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
                 <Check size={16} />
-                <span>gh CLI 已安装 (版本: {ghVersion})</span>
+                <span>gh CLI installed (version: {ghVersion})</span>
               </div>
               {ghAuthenticated ? (
                 <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
                   <Check size={16} />
-                  <span>已登录 GitHub (用户: {ghUsername})</span>
+                  <span>Logged in to GitHub (user: {ghUsername})</span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
                   <AlertCircle size={16} />
-                  <span>尚未登录 GitHub</span>
+                  <span>Not logged in to GitHub</span>
                 </div>
               )}
             </div>
@@ -255,10 +255,10 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
                 <AlertCircle size={16} className="text-yellow-600 dark:text-yellow-400 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-2">
-                    gh CLI 未安装
+                    gh CLI not installed
                   </p>
                   <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-3">
-                    请根据您的操作系统安装 GitHub CLI：
+                    Please install GitHub CLI based on your operating system:
                   </p>
                   <div className="space-y-2 text-sm font-mono bg-black/10 dark:bg-white/10 rounded p-3">
                     <div>
@@ -272,7 +272,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
                       <span className="text-[var(--text-primary)]">sudo apt install gh</span>
                     </div>
                     <div>
-                      <span className="text-[var(--text-muted)]"># 其他系统</span>
+                      <span className="text-[var(--text-muted)]"># Other systems</span>
                       <br />
                       <span className="text-[var(--text-primary)]">https://cli.github.com/</span>
                     </div>
@@ -286,18 +286,18 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
 
       <div className="flex gap-2 pt-4">
         <button onClick={onCancel} className="btn btn-ghost">
-          取消
+          Cancel
         </button>
         {ghInstalled && (
           <>
             <button onClick={checkGhStatus} className="btn btn-ghost" disabled={loading}>
-              重新检测
+              Re-detect
             </button>
             <button
               onClick={() => setCurrentStep(ghAuthenticated ? 3 : 2)}
               className="btn btn-primary"
             >
-              下一步
+              Next
             </button>
           </>
         )}
@@ -310,7 +310,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex items-center gap-3 mb-4">
         <Github size={24} className="text-[var(--accent-primary)]" />
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-          步骤 2: 登录 GitHub
+          Step 2: Login to GitHub
         </h3>
       </div>
 
@@ -318,30 +318,30 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
         <div className="card bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
           <div className="space-y-3">
             <p className="text-sm text-blue-700 dark:text-blue-300">
-              请在打开的终端窗口中完成 GitHub 登录。
+              Please complete GitHub login in the opened terminal window.
             </p>
             <p className="text-sm text-blue-600 dark:text-blue-400">
-              按照终端中的提示选择登录方式（推荐使用浏览器登录）。
+              Follow the prompts in the terminal to choose a login method (browser login recommended).
             </p>
           </div>
         </div>
       ) : (
         <p className="text-sm text-[var(--text-secondary)]">
-          点击下方按钮将打开一个新的终端窗口，请在终端中完成 GitHub 登录。
+          Clicking the button below will open a new terminal window. Please complete GitHub login in the terminal.
         </p>
       )}
 
       <div className="flex gap-2 pt-4">
         <button onClick={() => setCurrentStep(1)} className="btn btn-ghost">
-          上一步
+          Previous
         </button>
         {waitingForLogin ? (
           <button onClick={handleLoginComplete} className="btn btn-primary">
-            我已完成登录
+            I've Completed Login
           </button>
         ) : (
           <button onClick={handleLogin} className="btn btn-primary" disabled={loading}>
-            {loading ? '正在打开终端...' : '打开终端登录'}
+            {loading ? 'Opening terminal...' : 'Open Terminal to Login'}
           </button>
         )}
       </div>
@@ -353,11 +353,11 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex items-center gap-3 mb-4">
         <FolderGit2 size={24} className="text-[var(--accent-primary)]" />
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-          步骤 3: 配置同步仓库
+          Step 3: Configure Sync Repository
         </h3>
       </div>
 
-      {/* 模式切换 */}
+      {/* Mode toggle */}
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => setRepoMode('create')}
@@ -367,7 +367,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
               : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
           }`}
         >
-          创建新仓库
+          Create New Repository
         </button>
         <button
           onClick={() => setRepoMode('select')}
@@ -377,51 +377,51 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
               : 'bg-[var(--bg-subtle)] text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)]'
           }`}
         >
-          使用已有仓库
+          Use Existing Repository
         </button>
       </div>
 
       {repoMode === 'create' ? (
-        /* 创建新仓库模式 */
+        /* Create new repository mode */
         <div>
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-            仓库名称
+            Repository Name
           </label>
           <input
             type="text"
             value={repoName}
             onChange={(e) => setRepoName(e.target.value)}
-            placeholder="例如: frago-sync"
+            placeholder="e.g., frago-sync"
             className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
           />
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            将在你的 GitHub 账号下创建一个私有仓库用于同步 Frago 资源
+            A private repository will be created under your GitHub account to sync Frago resources
           </p>
         </div>
       ) : (
-        /* 选择已有仓库模式 */
+        /* Select existing repository mode */
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="block text-sm font-medium text-[var(--text-primary)]">
-              选择仓库
+              Select Repository
             </label>
             <button
               onClick={loadExistingRepos}
               disabled={loadingRepos}
               className="text-xs text-[var(--accent-primary)] hover:underline disabled:opacity-50"
             >
-              {loadingRepos ? '加载中...' : '刷新列表'}
+              {loadingRepos ? 'Loading...' : 'Refresh List'}
             </button>
           </div>
 
           {loadingRepos && existingRepos.length === 0 ? (
             <div className="flex items-center gap-2 text-[var(--text-muted)] py-4">
               <Loader2 size={16} className="animate-spin" />
-              正在加载仓库列表...
+              Loading repository list...
             </div>
           ) : existingRepos.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)] py-4">
-              未找到任何仓库，请创建新仓库
+              No repositories found. Please create a new repository
             </p>
           ) : (
             <div className="max-h-60 overflow-y-auto border border-[var(--border-color)] rounded-md">
@@ -461,14 +461,14 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
           )}
 
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            选择一个已有的仓库用于同步 Frago 资源（推荐使用私有仓库）
+            Select an existing repository to sync Frago resources (private repository recommended)
           </p>
         </div>
       )}
 
       <div className="flex gap-2 pt-4">
         <button onClick={() => setCurrentStep(2)} className="btn btn-ghost">
-          上一步
+          Previous
         </button>
         {repoMode === 'create' ? (
           <button
@@ -476,7 +476,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
             className="btn btn-primary"
             disabled={loading || !repoName.trim()}
           >
-            {loading ? '创建中...' : '创建仓库'}
+            {loading ? 'Creating...' : 'Create Repository'}
           </button>
         ) : (
           <button
@@ -484,7 +484,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
             className="btn btn-primary"
             disabled={loading || !selectedRepo}
           >
-            {loading ? '配置中...' : '使用此仓库'}
+            {loading ? 'Configuring...' : 'Use This Repository'}
           </button>
         )}
       </div>
@@ -496,14 +496,14 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex items-center gap-3 mb-4">
         <RefreshCw size={24} className="text-[var(--accent-primary)]" />
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-          步骤 4: 首次同步
+          Step 4: First Sync
         </h3>
       </div>
 
       {repoUrl && (
         <div className="mb-4">
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-            同步仓库
+            Sync Repository
           </label>
           <div className="flex items-center gap-2 bg-[var(--bg-subtle)] rounded-md px-3 py-2">
             <Github size={16} className="text-[var(--text-muted)]" />
@@ -515,7 +515,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       )}
 
       <p className="text-sm text-[var(--text-secondary)]">
-        现在将进行首次同步，上传本地的 Frago 资源到 GitHub 仓库。
+        Now performing the first sync to upload local Frago resources to the GitHub repository.
       </p>
 
       {syncOutput && (
@@ -529,13 +529,13 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex gap-2 pt-4">
         {!loading && currentStep === 4 && (
           <button onClick={handleFirstSync} className="btn btn-primary">
-            开始同步
+            Start Sync
           </button>
         )}
         {loading && (
           <div className="flex items-center gap-2 text-[var(--text-muted)]">
             <Loader2 size={16} className="animate-spin" />
-            同步中...
+            Syncing...
           </div>
         )}
       </div>
@@ -547,17 +547,17 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       <div className="flex items-center gap-3 mb-4">
         <Check size={24} className="text-green-600 dark:text-green-400" />
         <h3 className="text-lg font-semibold text-[var(--text-primary)]">
-          配置完成
+          Configuration Complete
         </h3>
       </div>
 
       <div className="card bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
         <div className="space-y-2">
           <p className="text-sm font-medium text-green-800 dark:text-green-200">
-            GitHub 同步已成功配置！
+            GitHub sync successfully configured!
           </p>
           <p className="text-sm text-green-700 dark:text-green-300">
-            你的 Frago 资源（命令、技能、配方）现在可以在多个设备间同步了。
+            Your Frago resources (commands, skills, recipes) can now be synced across multiple devices.
           </p>
         </div>
       </div>
@@ -572,7 +572,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
 
       <div className="flex gap-2 pt-4">
         <button onClick={onComplete} className="btn btn-primary">
-          完成
+          Complete
         </button>
       </div>
     </div>
@@ -597,7 +597,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
 
   return (
     <div className="max-w-2xl">
-      {/* 进度指示器 */}
+      {/* Progress indicator */}
       <div className="mb-8">
         <div className="flex items-center justify-between">
           {[1, 2, 3, 4, 5].map((step) => (
@@ -624,15 +624,15 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
           ))}
         </div>
         <div className="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
-          <span>检测</span>
-          <span>登录</span>
-          <span>配置仓库</span>
-          <span>同步</span>
-          <span>完成</span>
+          <span>Detect</span>
+          <span>Login</span>
+          <span>Configure</span>
+          <span>Sync</span>
+          <span>Complete</span>
         </div>
       </div>
 
-      {/* 错误提示 */}
+      {/* Error message */}
       {error && (
         <div className="card bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 mb-4">
           <div className="flex items-start gap-2">
@@ -642,7 +642,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
         </div>
       )}
 
-      {/* 当前步骤内容 */}
+      {/* Current step content */}
       <div className="card">{renderCurrentStep()}</div>
     </div>
   );

@@ -1,6 +1,6 @@
-"""Linux GUI 依赖检测与自动安装.
+"""Linux GUI dependency detection and automatic installation.
 
-提供 Linux 发行版检测、WebKit/GTK 依赖检查和自动安装功能。
+Provides Linux distribution detection, WebKit/GTK dependency checking and automatic installation.
 """
 
 import logging
@@ -18,37 +18,37 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DistroInfo:
-    """Linux 发行版信息."""
+    """Linux distribution information."""
 
-    id: str  # 如 'ubuntu', 'fedora', 'arch'
-    name: str  # 如 'Ubuntu 24.04 LTS'
-    version_id: str  # 如 '24.04'
-    id_like: list[str]  # 父发行版列表
-    supported: bool  # 是否支持自动安装
-    packages: list[str]  # 需要安装的包列表
-    install_cmd: str  # 安装命令
+    id: str  # e.g. 'ubuntu', 'fedora', 'arch'
+    name: str  # e.g. 'Ubuntu 24.04 LTS'
+    version_id: str  # e.g. '24.04'
+    id_like: list[str]  # Parent distribution list
+    supported: bool  # Whether automatic installation is supported
+    packages: list[str]  # List of packages to install
+    install_cmd: str  # Installation command
 
 
-# 发行版包映射
-# 包含 WebKit 运行时依赖 + PyGObject/pycairo 编译所需的开发库
+# Distribution package mapping
+# Includes WebKit runtime dependencies + PyGObject/pycairo compilation development libraries
 #
-# 注意：PyGObject 3.51.0+ 需要 girepository-2.0
+# Note: PyGObject 3.51.0+ requires girepository-2.0
 # - Ubuntu 24.04+: libgirepository-2.0-dev
-# - Ubuntu 22.04 及更早: libgirepository1.0-dev
+# - Ubuntu 22.04 and earlier: libgirepository1.0-dev
 # - Debian 12 (bookworm): libgirepository1.0-dev
 # - Debian 13 (trixie)+: libgirepository-2.0-dev
 DISTRO_PACKAGES = {
-    # Ubuntu/Debian 系
-    # 注意：Ubuntu 24.04+ 需要 libgirepository-2.0-dev
-    # 通过 _get_girepository_package() 动态选择正确的包
+    # Ubuntu/Debian family
+    # Note: Ubuntu 24.04+ requires libgirepository-2.0-dev
+    # Dynamically select correct package via _get_girepository_package()
     "ubuntu": {
         "pkg_manager": "apt",
         "packages": [
-            # WebKit 运行时
+            # WebKit runtime
             "gir1.2-webkit2-4.1",
-            # PyGObject/pycairo 编译依赖
+            # PyGObject/pycairo compilation dependencies
             "libcairo2-dev",
-            # libgirepository 包通过 _get_girepository_package() 动态添加
+            # libgirepository package dynamically added via _get_girepository_package()
             "pkg-config",
             "python3-dev",
         ],
@@ -59,13 +59,13 @@ DISTRO_PACKAGES = {
         "packages": [
             "gir1.2-webkit2-4.1",
             "libcairo2-dev",
-            # libgirepository 包通过 _get_girepository_package() 动态添加
+            # libgirepository package dynamically added via _get_girepository_package()
             "pkg-config",
             "python3-dev",
         ],
         "install_prefix": "apt install -y",
     },
-    # Fedora/RHEL 系
+    # Fedora/RHEL family
     "fedora": {
         "pkg_manager": "dnf",
         "packages": [
@@ -99,7 +99,7 @@ DISTRO_PACKAGES = {
         ],
         "install_prefix": "dnf install -y",
     },
-    # Arch 系
+    # Arch family
     "arch": {
         "pkg_manager": "pacman",
         "packages": [
@@ -160,22 +160,22 @@ DISTRO_PACKAGES = {
 
 
 def _get_girepository_package(distro_id: str, version_id: str, id_like: list[str] = None) -> str:
-    """根据发行版和版本返回正确的 girepository 开发包名.
+    """Return correct girepository development package name based on distro and version.
 
-    PyGObject 3.51.0+ 需要 girepository-2.0。
-    通过 pkg-config 检测系统实际可用的版本来决定。
+    PyGObject 3.51.0+ requires girepository-2.0.
+    Determined by detecting which version is actually available on the system via pkg-config.
 
     Args:
-        distro_id: 发行版 ID（如 'ubuntu', 'debian', 'linuxmint'）
-        version_id: 版本号（如 '24.04', '12', '22.2'）
-        id_like: 父发行版列表（如 ['ubuntu', 'debian']）
+        distro_id: Distribution ID (e.g. 'ubuntu', 'debian', 'linuxmint')
+        version_id: Version number (e.g. '24.04', '12', '22.2')
+        id_like: Parent distribution list (e.g. ['ubuntu', 'debian'])
 
     Returns:
-        正确的包名。
+        Correct package name.
     """
-    # 最可靠的方法：检查 apt 仓库中哪个包可用
+    # Most reliable method: check which package is available in apt repository
     if shutil.which("apt-cache"):
-        # 优先检查 2.0 版本是否可用
+        # Check if 2.0 version is available first
         try:
             result = subprocess.run(
                 ["apt-cache", "show", "libgirepository-2.0-dev"],
@@ -187,7 +187,7 @@ def _get_girepository_package(distro_id: str, version_id: str, id_like: list[str
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
-        # 回退到 1.0 版本
+        # Fall back to 1.0 version
         try:
             result = subprocess.run(
                 ["apt-cache", "show", "libgirepository1.0-dev"],
@@ -199,18 +199,18 @@ def _get_girepository_package(distro_id: str, version_id: str, id_like: list[str
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
-    # 如果 apt-cache 不可用，使用默认值
+    # If apt-cache unavailable, use default value
     return "libgirepository1.0-dev"
 
 
 def _check_apt_package_available(pkg: str) -> bool:
-    """检查 apt 包是否在仓库中可用.
+    """Check if apt package is available in repository.
 
     Args:
-        pkg: 包名。
+        pkg: Package name.
 
     Returns:
-        True 如果包可用。
+        True if package is available.
     """
     if not shutil.which("apt-cache"):
         return False
@@ -226,12 +226,12 @@ def _check_apt_package_available(pkg: str) -> bool:
 
 
 def detect_distro() -> Optional[DistroInfo]:
-    """检测当前 Linux 发行版.
+    """Detect current Linux distribution.
 
-    通过解析 /etc/os-release 文件获取发行版信息。
+    Retrieve distribution information by parsing /etc/os-release file.
 
     Returns:
-        DistroInfo 对象，如果不是 Linux 或无法检测则返回 None。
+        DistroInfo object, or None if not Linux or cannot detect.
     """
     if platform.system() != "Linux":
         return None
@@ -240,7 +240,7 @@ def detect_distro() -> Optional[DistroInfo]:
     if not os_release_path.exists():
         return None
 
-    # 解析 os-release 文件
+    # Parse os-release file
     info: dict[str, str] = {}
     try:
         with open(os_release_path) as f:
@@ -248,7 +248,7 @@ def detect_distro() -> Optional[DistroInfo]:
                 line = line.strip()
                 if "=" in line:
                     key, _, value = line.partition("=")
-                    # 移除引号
+                    # Remove quotes
                     info[key] = value.strip('"').strip("'")
     except OSError:
         return None
@@ -258,15 +258,15 @@ def detect_distro() -> Optional[DistroInfo]:
     version_id = info.get("VERSION_ID", "")
     id_like = info.get("ID_LIKE", "").split()
 
-    # 查找匹配的发行版配置
+    # Find matching distribution configuration
     config = None
     matched_id = distro_id
 
-    # 优先精确匹配
+    # Try exact match first
     if distro_id in DISTRO_PACKAGES:
         config = DISTRO_PACKAGES[distro_id]
     else:
-        # 尝试匹配父发行版
+        # Try to match parent distribution
         for parent_id in id_like:
             if parent_id in DISTRO_PACKAGES:
                 config = DISTRO_PACKAGES[parent_id]
@@ -274,9 +274,9 @@ def detect_distro() -> Optional[DistroInfo]:
                 break
 
     if config:
-        packages = list(config["packages"])  # 复制列表，避免修改原始配置
+        packages = list(config["packages"])  # Copy list to avoid modifying original config
 
-        # 对于 apt 系发行版，动态添加正确的 girepository 包
+        # For apt-based distributions, dynamically add correct girepository package
         if config["pkg_manager"] == "apt":
             gi_pkg = _get_girepository_package(distro_id, version_id, id_like)
             packages.append(gi_pkg)
@@ -292,7 +292,7 @@ def detect_distro() -> Optional[DistroInfo]:
             install_cmd=install_cmd,
         )
 
-    # 不支持的发行版
+    # Unsupported distribution
     return DistroInfo(
         id=distro_id,
         name=name,
@@ -305,18 +305,18 @@ def detect_distro() -> Optional[DistroInfo]:
 
 
 def _check_pkg_installed_dpkg(pkg: str) -> bool:
-    """使用 dpkg 检测包是否已安装 (Debian/Ubuntu)."""
+    """Check if package is installed using dpkg (Debian/Ubuntu)."""
     if not shutil.which("dpkg"):
         return False
     try:
-        # 使用 dpkg-query 进行精确匹配，避免 dpkg -l 的模糊匹配问题
+        # Use dpkg-query for exact matching, avoiding fuzzy matching issues with dpkg -l
         result = subprocess.run(
             ["dpkg-query", "-W", "-f=${Status}", pkg],
             capture_output=True,
             text=True,
             timeout=5,
         )
-        # 只有状态为 "install ok installed" 才算已安装
+        # Only consider installed if status is "install ok installed"
         installed = result.returncode == 0 and "install ok installed" in result.stdout
         logger.debug(f"dpkg check {pkg}: returncode={result.returncode}, status='{result.stdout.strip()}', installed={installed}")
         return installed
@@ -325,7 +325,7 @@ def _check_pkg_installed_dpkg(pkg: str) -> bool:
 
 
 def _check_pkg_installed_rpm(pkg: str) -> bool:
-    """使用 rpm 检测包是否已安装 (Fedora/RHEL)."""
+    """Check if package is installed using rpm (Fedora/RHEL)."""
     if not shutil.which("rpm"):
         return False
     try:
@@ -340,7 +340,7 @@ def _check_pkg_installed_rpm(pkg: str) -> bool:
 
 
 def _check_pkg_installed_pacman(pkg: str) -> bool:
-    """使用 pacman 检测包是否已安装 (Arch/Manjaro)."""
+    """Check if package is installed using pacman (Arch/Manjaro)."""
     if not shutil.which("pacman"):
         return False
     try:
@@ -355,7 +355,7 @@ def _check_pkg_installed_pacman(pkg: str) -> bool:
 
 
 def _check_pkg_config(lib: str) -> bool:
-    """使用 pkg-config 检测库是否可用."""
+    """Check if library is available using pkg-config."""
     if not shutil.which("pkg-config"):
         return False
     try:
@@ -370,13 +370,13 @@ def _check_pkg_config(lib: str) -> bool:
 
 
 def check_all_system_deps(distro: Optional[DistroInfo]) -> tuple[bool, list[str]]:
-    """检查所有必需的系统依赖.
+    """Check all required system dependencies.
 
     Args:
-        distro: 发行版信息（包含已动态处理的包列表）。
+        distro: Distribution information (including dynamically processed package list).
 
     Returns:
-        (全部满足, 缺失的包列表) 元组。
+        Tuple of (all satisfied, list of missing packages).
     """
     if not distro or not distro.supported:
         return False, []
@@ -384,7 +384,7 @@ def check_all_system_deps(distro: Optional[DistroInfo]) -> tuple[bool, list[str]
     missing = []
     pkg_manager = None
 
-    # 获取包管理器配置
+    # Get package manager configuration
     for distro_id in [distro.id] + distro.id_like:
         if distro_id in DISTRO_PACKAGES:
             pkg_manager = DISTRO_PACKAGES[distro_id]["pkg_manager"]
@@ -393,11 +393,11 @@ def check_all_system_deps(distro: Optional[DistroInfo]) -> tuple[bool, list[str]
     if not pkg_manager:
         return False, []
 
-    # 使用 distro.packages（已包含动态添加的 girepository 包）
+    # Use distro.packages (already includes dynamically added girepository package)
     packages = distro.packages
     logger.debug(f"Checking packages for {distro.id} {distro.version_id}: {packages}")
 
-    # 根据包管理器检测每个包
+    # Check each package based on package manager
     for pkg in packages:
         installed = False
 
@@ -417,12 +417,12 @@ def check_all_system_deps(distro: Optional[DistroInfo]) -> tuple[bool, list[str]
 
 
 def check_webkit_available() -> bool:
-    """检查 WebKit2GTK 系统包是否已安装.
+    """Check if WebKit2GTK system package is installed.
 
-    使用 pkg-config 检测，这是最可靠的跨发行版方法。
+    Uses pkg-config for detection, the most reliable cross-distribution method.
 
     Returns:
-        True 如果 WebKit2GTK 系统包已安装。
+        True if WebKit2GTK system package is installed.
     """
     for lib in ["webkit2gtk-4.1", "webkit2gtk-4.0", "webkit2gtk-3.0"]:
         if _check_pkg_config(lib):
@@ -431,40 +431,40 @@ def check_webkit_available() -> bool:
 
 
 def check_cairo_dev_available() -> bool:
-    """检查 cairo 开发库是否已安装.
+    """Check if cairo development library is installed.
 
-    PyGObject/pycairo 编译需要此库。
+    Required for PyGObject/pycairo compilation.
 
     Returns:
-        True 如果 cairo 开发库已安装。
+        True if cairo development library is installed.
     """
     return _check_pkg_config("cairo")
 
 
 def check_girepository_dev_available() -> bool:
-    """检查 girepository 开发库是否已安装.
+    """Check if girepository development library is installed.
 
-    PyGObject 编译需要此库。
-    - PyGObject 3.51.0+ 需要 girepository-2.0
-    - 旧版本需要 gobject-introspection-1.0
+    Required for PyGObject compilation.
+    - PyGObject 3.51.0+ requires girepository-2.0
+    - Older versions require gobject-introspection-1.0
 
     Returns:
-        True 如果 girepository 开发库已安装。
+        True if girepository development library is installed.
     """
-    # 优先检查 2.0 版本（新版 PyGObject 需要）
+    # Check 2.0 version first (required by newer PyGObject)
     if _check_pkg_config("girepository-2.0"):
         return True
-    # 回退检查 1.0 版本
+    # Fall back to 1.0 version
     if _check_pkg_config("gobject-introspection-1.0"):
         return True
     return False
 
 
 def check_pywebview_available() -> bool:
-    """检查 pywebview 是否可用.
+    """Check if pywebview is available.
 
     Returns:
-        True 如果 pywebview 可导入。
+        True if pywebview can be imported.
     """
     try:
         import webview
@@ -475,10 +475,10 @@ def check_pywebview_available() -> bool:
 
 
 def check_gi_importable() -> bool:
-    """检查 gi (PyGObject) 是否可在当前 Python 环境导入.
+    """Check if gi (PyGObject) can be imported in current Python environment.
 
     Returns:
-        True 如果 gi 可导入。
+        True if gi can be imported.
     """
     try:
         import gi
@@ -492,18 +492,18 @@ def check_gi_importable() -> bool:
 
 
 def install_pygobject_to_venv() -> tuple[bool, str]:
-    """安装 PyGObject 到当前虚拟环境.
+    """Install PyGObject to current virtual environment.
 
-    优先使用 uv pip，回退到 pip。
+    Prefer uv pip, fall back to pip.
 
     Returns:
-        (成功与否, 消息) 元组。
+        Tuple of (success, message).
     """
-    print("\n系统 WebKit 依赖已安装，但当前 Python 环境缺少 PyGObject。")
-    print("正在安装 PyGObject 到 frago 环境...")
+    print("\nSystem WebKit dependencies installed, but current Python environment is missing PyGObject.")
+    print("Installing PyGObject to frago environment...")
     print()
 
-    # 优先使用 uv pip（frago 通过 uv tool 安装，需指定 --python）
+    # Prefer uv pip (frago installed via uv tool, needs --python specified)
     if shutil.which("uv"):
         cmd = ["uv", "pip", "install", "--python", sys.executable, "--quiet", "PyGObject"]
     elif shutil.which("pip"):
@@ -511,52 +511,52 @@ def install_pygobject_to_venv() -> tuple[bool, str]:
     elif shutil.which("pip3"):
         cmd = ["pip3", "install", "--quiet", "PyGObject"]
     else:
-        # 回退到 python -m pip
+        # Fall back to python -m pip
         cmd = [sys.executable, "-m", "pip", "install", "--quiet", "PyGObject"]
 
-    print(f"执行: {' '.join(cmd)}\n")
+    print(f"Executing: {' '.join(cmd)}\n")
 
     try:
         returncode = subprocess.call(cmd, timeout=120)
 
         if returncode == 0:
-            return True, "PyGObject 安装成功"
+            return True, "PyGObject installed successfully"
         else:
-            return False, f"PyGObject 安装失败 (退出码: {returncode})"
+            return False, f"PyGObject installation failed (exit code: {returncode})"
 
     except subprocess.TimeoutExpired:
-        return False, "安装超时"
+        return False, "Installation timed out"
     except FileNotFoundError:
-        return False, "找不到 pip 或 uv，请手动安装 PyGObject"
+        return False, "Cannot find pip or uv, please install PyGObject manually"
     except Exception as e:
-        return False, f"安装出错: {e}"
+        return False, f"Installation error: {e}"
 
 
 def has_sudo() -> bool:
-    """检查 sudo 是否可用.
+    """Check if sudo is available.
 
     Returns:
-        True 如果 sudo 存在。
+        True if sudo exists.
     """
     return shutil.which("sudo") is not None
 
 
 def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
-    """使用 sudo 在终端交互式安装依赖.
+    """Install dependencies interactively in terminal using sudo.
 
     Args:
-        distro: 发行版信息。
+        distro: Distribution information.
 
     Returns:
-        (成功与否, 消息) 元组。
+        Tuple of (success, message).
     """
     if not distro.supported:
-        return False, f"不支持自动安装: {distro.name}"
+        return False, f"Automatic installation not supported: {distro.name}"
 
     if not has_sudo():
-        return False, "sudo 不可用，无法获取管理员权限"
+        return False, "sudo not available, cannot obtain administrator privileges"
 
-    # 获取包管理器类型
+    # Get package manager type
     pkg_manager = None
     for distro_id in [distro.id] + distro.id_like:
         if distro_id in DISTRO_PACKAGES:
@@ -564,12 +564,12 @@ def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
             break
 
     if not pkg_manager:
-        return False, f"未找到 {distro.id} 的包配置"
+        return False, f"Package configuration not found for {distro.id}"
 
-    # 使用 distro.packages（已包含动态添加的 girepository 包）
+    # Use distro.packages (already includes dynamically added girepository package)
     packages = distro.packages
 
-    # 构建完整命令（使用 sudo，终端交互式输入密码）
+    # Build complete command (using sudo, interactive password input in terminal)
     if pkg_manager == "apt":
         cmd = ["sudo", "apt", "install", "-y"] + packages
     elif pkg_manager == "dnf":
@@ -579,58 +579,58 @@ def auto_install_deps(distro: DistroInfo) -> tuple[bool, str]:
     elif pkg_manager == "zypper":
         cmd = ["sudo", "zypper", "install", "-y"] + packages
     else:
-        return False, f"不支持的包管理器: {pkg_manager}"
+        return False, f"Unsupported package manager: {pkg_manager}"
 
-    print(f"\n执行: {' '.join(cmd)}\n")
+    print(f"\nExecuting: {' '.join(cmd)}\n")
 
     try:
-        # 使用 subprocess.call 让 sudo 直接与终端交互
-        # 不捕获输出，让用户看到安装过程
+        # Use subprocess.call to let sudo interact directly with terminal
+        # Don't capture output, let user see installation process
         returncode = subprocess.call(cmd, timeout=300)
 
         if returncode == 0:
-            return True, "依赖安装成功"
+            return True, "Dependencies installed successfully"
         else:
-            return False, f"安装失败 (退出码: {returncode})"
+            return False, f"Installation failed (exit code: {returncode})"
 
     except subprocess.TimeoutExpired:
-        return False, "安装超时（超过 5 分钟）"
+        return False, "Installation timed out (over 5 minutes)"
     except FileNotFoundError:
-        return False, "找不到包管理器"
+        return False, "Package manager not found"
     except KeyboardInterrupt:
         print("\n")
-        return False, "用户取消安装"
+        return False, "User cancelled installation"
     except Exception as e:
-        return False, f"安装出错: {e}"
+        return False, f"Installation error: {e}"
 
 
 def get_manual_install_guide(distro: Optional[DistroInfo]) -> str:
-    """获取手动安装指南.
+    """Get manual installation guide.
 
     Args:
-        distro: 发行版信息，可为 None。
+        distro: Distribution information, can be None.
 
     Returns:
-        手动安装指南文本。
+        Manual installation guide text.
     """
     if distro and distro.supported:
         return f"""
-请手动运行以下命令安装 GUI 依赖：
+Please manually run the following command to install GUI dependencies:
 
     sudo {distro.install_cmd}
 
-安装完成后重新运行 frago gui。
+After installation, run frago gui again.
 """
 
     if distro:
         return f"""
-无法识别您的发行版 ({distro.name})，请手动安装以下依赖：
+Unable to recognize your distribution ({distro.name}), please manually install the following dependencies:
 
-    - Python GObject 绑定 (python3-gi 或 python-gobject)
-    - WebKit2GTK 库 (webkit2gtk 或类似包)
+    - Python GObject bindings (python3-gi or python-gobject)
+    - WebKit2GTK library (webkit2gtk or similar package)
     - pywebview: pip install pywebview
 
-常见发行版的安装命令：
+Installation commands for common distributions:
 
     # Ubuntu/Debian
     sudo apt install -y python3-gi gir1.2-webkit2-4.1
@@ -644,30 +644,30 @@ def get_manual_install_guide(distro: Optional[DistroInfo]) -> str:
     # openSUSE
     sudo zypper install -y python3-gobject webkit2gtk3
 
-安装完成后重新运行 frago gui。
+After installation, run frago gui again.
 """
 
     return """
-请安装 GUI 依赖后重试：
+Please install GUI dependencies and retry:
 
     pip install pywebview
 
-在 Linux 上还需要安装系统包：
-    - Python GObject 绑定
-    - WebKit2GTK 库
+On Linux, system packages are also required:
+    - Python GObject bindings
+    - WebKit2GTK library
 
-详细说明请参考: https://pywebview.flowrl.com/guide/installation.html
+For details, see: https://pywebview.flowrl.com/guide/installation.html
 """
 
 
 def prompt_auto_install() -> bool:
-    """提示用户是否自动安装依赖.
+    """Prompt user whether to automatically install dependencies.
 
     Returns:
-        True 如果用户确认安装。
+        True if user confirms installation.
     """
-    print("\n检测到缺少 GUI 系统依赖。")
-    print("是否自动安装？(需要管理员权限)")
+    print("\nMissing GUI system dependencies detected.")
+    print("Install automatically? (requires administrator privileges)")
     print()
 
     while True:
@@ -678,53 +678,53 @@ def prompt_auto_install() -> bool:
             elif response in ("n", "no"):
                 return False
             else:
-                print("请输入 y 或 n")
+                print("Please enter y or n")
         except (KeyboardInterrupt, EOFError):
             print()
             return False
 
 
 def ensure_gui_deps() -> tuple[bool, str]:
-    """确保 GUI 依赖可用.
+    """Ensure GUI dependencies are available.
 
-    检查流程：
-    1. 检测发行版
-    2. 检查所有必需的系统依赖（WebKit + cairo-dev + gi-dev 等）
-    3. 如果有缺失，一次性提示用户安装所有系统包
-    4. 全部系统包安装完成后，检查 gi 能否导入
-    5. 如果 gi 不能导入，尝试 pip 安装 PyGObject
+    Check process:
+    1. Detect distribution
+    2. Check all required system dependencies (WebKit + cairo-dev + gi-dev etc.)
+    3. If missing, prompt user to install all system packages at once
+    4. After all system packages installed, check if gi can be imported
+    5. If gi cannot be imported, try pip install PyGObject
 
     Returns:
-        (可以启动 GUI, 消息) 元组。
+        Tuple of (can start GUI, message).
     """
-    # 非 Linux 系统，跳过
+    # Non-Linux systems, skip
     if platform.system() != "Linux":
         return True, ""
 
-    # 步骤1: 检测发行版
+    # Step 1: Detect distribution
     distro = detect_distro()
 
     if not distro or not distro.supported:
         guide = get_manual_install_guide(distro)
         print(guide)
-        return False, "不支持的发行版"
+        return False, "Unsupported distribution"
 
-    # 步骤2: 检查所有系统依赖
+    # Step 2: Check all system dependencies
     all_installed, missing_pkgs = check_all_system_deps(distro)
 
     if not all_installed:
-        print(f"检测发行版: {distro.name} ({distro.id} {distro.version_id})")
-        print(f"\n检测到缺少以下系统依赖:")
+        print(f"Detected distribution: {distro.name} ({distro.id} {distro.version_id})")
+        print(f"\nMissing the following system dependencies:")
         for pkg in missing_pkgs:
             print(f"  - {pkg}")
         print()
 
         if not has_sudo():
-            print("sudo 不可用，请手动安装:")
+            print("sudo not available, please install manually:")
             print(f"\n    sudo {distro.install_cmd}\n")
-            return False, "sudo 不可用，请手动安装依赖"
+            return False, "sudo not available, please install dependencies manually"
 
-        # 提示用户安装
+        # Prompt user for installation
         if prompt_auto_install():
             success, msg = auto_install_deps(distro)
             if not success:
@@ -736,36 +736,36 @@ def ensure_gui_deps() -> tuple[bool, str]:
         else:
             guide = get_manual_install_guide(distro)
             print(guide)
-            return False, "用户取消安装"
+            return False, "User cancelled installation"
 
-    # 步骤3: 检查 gi 能否导入
+    # Step 3: Check if gi can be imported
     if check_gi_importable():
         return True, ""
 
-    # 步骤4: 系统包已装但 gi 不能导入，尝试 pip 安装 PyGObject
-    # 先确认编译依赖已就绪
+    # Step 4: System packages installed but gi cannot be imported, try pip install PyGObject
+    # First confirm compilation dependencies are ready
     if not check_cairo_dev_available():
-        print("\n错误: cairo 开发库未正确安装，无法编译 PyGObject")
-        print("请确保已安装所有系统依赖后重试")
-        return False, "cairo 开发库缺失"
+        print("\nError: cairo development library not properly installed, cannot compile PyGObject")
+        print("Please ensure all system dependencies are installed and retry")
+        return False, "cairo development library missing"
 
     if not check_girepository_dev_available():
-        print("\n错误: girepository 开发库未正确安装，无法编译 PyGObject")
+        print("\nError: girepository development library not properly installed, cannot compile PyGObject")
         print()
-        print("请安装 girepository 开发库:")
+        print("Please install girepository development library:")
         print("  Ubuntu 24.04+:  sudo apt install libgirepository-2.0-dev")
         print("  Ubuntu 22.04:   sudo apt install libgirepository1.0-dev")
         print("  Fedora/RHEL:    sudo dnf install gobject-introspection-devel")
         print()
-        return False, "girepository 开发库缺失"
+        return False, "girepository development library missing"
 
     success, msg = install_pygobject_to_venv()
     if success:
         print(f"\n{msg}")
-        print("正在重新启动 GUI...")
+        print("Restarting GUI...")
         return True, "restart"
     else:
         print(f"\n{msg}")
-        print("\n尝试手动安装 PyGObject:")
+        print("\nTry installing PyGObject manually:")
         print(f"    {sys.executable} -m pip install PyGObject")
         return False, msg

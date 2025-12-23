@@ -1,9 +1,9 @@
-"""Agent-Friendly CLI 增强模块
+"""Agent-Friendly CLI Enhancement Module
 
-为 AI Agent 提供更友好的错误信息和帮助输出：
-- 未知命令时显示相似命令建议和可用命令列表
-- 缺少参数时直接展示正确用法示例
-- 帮助信息中展开子命令组
+Provide AI Agent with more friendly error messages and help output:
+- Show similar command suggestions and available commands list for unknown commands
+- Show correct usage examples when parameters are missing
+- Expand subcommand groups in help information
 """
 
 import difflib
@@ -14,19 +14,19 @@ from click import Context
 
 
 def get_command_examples(cmd_name: str, group_prefix: str = "") -> List[str]:
-    """获取命令的使用示例
+    """Get command usage examples
 
     Args:
-        cmd_name: 命令名称
-        group_prefix: 命令组前缀（如 "chrome"）
+        cmd_name: Command name
+        group_prefix: Command group prefix (e.g. "chrome")
 
     Returns:
-        示例列表
+        List of examples
     """
-    # 延迟导入避免循环依赖
+    # Lazy import to avoid circular dependencies
     from .commands import COMMAND_EXAMPLES
 
-    # 尝试多种键名格式
+    # Try multiple key name formats
     keys_to_try = [
         f"{group_prefix}/{cmd_name}" if group_prefix else cmd_name,
         cmd_name,
@@ -41,39 +41,39 @@ def get_command_examples(cmd_name: str, group_prefix: str = "") -> List[str]:
 
 
 class AgentFriendlyGroup(click.Group):
-    """Agent 友好的命令组
+    """Agent-friendly command group
 
-    增强错误处理，在命令解析失败时提供：
-    - 相似命令建议（基于编辑距离）
-    - 正确用法示例
-    - 可用命令列表
+    Enhanced error handling, provides when command parsing fails:
+    - Similar command suggestions (based on edit distance)
+    - Correct usage examples
+    - Available commands list
     """
 
     def resolve_command(
         self, ctx: Context, args: List[str]
     ) -> Tuple[Optional[str], Optional[click.Command], List[str]]:
-        """重写命令解析，增强错误信息"""
+        """Override command resolution to enhance error messages"""
         cmd_name = args[0] if args else None
 
         if cmd_name:
             cmd = self.get_command(ctx, cmd_name)
 
             if cmd is None and not ctx.resilient_parsing:
-                # 获取所有可用命令
+                # Get all available commands
                 available = self.list_commands(ctx)
 
-                # 使用模糊匹配找相似命令
+                # Use fuzzy matching to find similar commands
                 matches = difflib.get_close_matches(
                     cmd_name, available, n=3, cutoff=0.5
                 )
 
-                # 构建详细错误信息
+                # Build detailed error message
                 error_lines = [f"No such command '{cmd_name}'."]
 
                 if matches:
                     error_lines.append(f"\nDid you mean: {', '.join(matches)}?")
 
-                    # 展示最相似命令的用法示例
+                    # Show usage examples for most similar command
                     group_prefix = self._get_group_prefix(ctx)
                     examples = get_command_examples(matches[0], group_prefix)
                     if examples:
@@ -81,7 +81,7 @@ class AgentFriendlyGroup(click.Group):
                         for ex in examples[:3]:
                             error_lines.append(f"  {ex}")
 
-                # 始终显示可用命令列表
+                # Always show available commands list
                 error_lines.append(f"\nAvailable commands: {', '.join(sorted(available))}")
 
                 ctx.fail("\n".join(error_lines))
@@ -89,7 +89,7 @@ class AgentFriendlyGroup(click.Group):
         return super().resolve_command(ctx, args)
 
     def _get_group_prefix(self, ctx: Context) -> str:
-        """获取当前命令组的前缀（如 'chrome'）"""
+        """Get current command group prefix (e.g. 'chrome')"""
         if ctx.info_name:
             return ctx.info_name
         return ""
@@ -101,15 +101,15 @@ class AgentFriendlyGroup(click.Group):
         parent: Optional[Context] = None,
         **extra,
     ) -> Context:
-        """重写上下文创建，捕获并增强参数错误"""
+        """Override context creation to capture and enhance parameter errors"""
         try:
             return super().make_context(info_name, args, parent, **extra)
         except click.MissingParameter as e:
-            # 增强缺少参数的错误信息
+            # Enhance missing parameter error message
             self._enhance_missing_param_error(e, info_name, parent)
             raise
         except click.BadParameter as e:
-            # 增强参数错误的错误信息
+            # Enhance bad parameter error message
             self._enhance_bad_param_error(e, info_name, parent)
             raise
 
@@ -119,7 +119,7 @@ class AgentFriendlyGroup(click.Group):
         info_name: Optional[str],
         parent: Optional[Context],
     ) -> None:
-        """增强 MissingParameter 错误信息"""
+        """Enhance MissingParameter error message"""
         if not info_name:
             return
 
@@ -139,16 +139,16 @@ class AgentFriendlyGroup(click.Group):
         info_name: Optional[str],
         parent: Optional[Context],
     ) -> None:
-        """增强 BadParameter 错误信息"""
-        # BadParameter 通常已经由自定义 ParamType 处理得很好
-        # 这里作为额外的增强点
+        """Enhance BadParameter error message"""
+        # BadParameter is usually handled well by custom ParamType
+        # This serves as an additional enhancement point
         pass
 
 
 class AgentFriendlyCommand(click.Command):
-    """Agent 友好的命令
+    """Agent-friendly command
 
-    在参数解析失败时提供正确用法示例
+    Provides correct usage examples when parameter parsing fails
     """
 
     def make_context(
@@ -158,14 +158,14 @@ class AgentFriendlyCommand(click.Command):
         parent: Optional[Context] = None,
         **extra,
     ) -> Context:
-        """重写上下文创建，捕获并增强参数错误"""
+        """Override context creation to capture and enhance parameter errors"""
         try:
             return super().make_context(info_name, args, parent, **extra)
         except click.MissingParameter as e:
             self._enhance_error_with_examples(e, info_name, parent)
             raise
         except click.BadParameter as e:
-            # BadParameter 通常已有详细信息，不额外处理
+            # BadParameter usually has detailed information, no additional handling
             raise
 
     def _enhance_error_with_examples(
@@ -174,11 +174,11 @@ class AgentFriendlyCommand(click.Command):
         info_name: Optional[str],
         parent: Optional[Context],
     ) -> None:
-        """为错误添加使用示例"""
+        """Add usage examples to error"""
         if not info_name:
             return
 
-        # 获取命令组前缀
+        # Get command group prefix
         group_prefix = ""
         if parent and parent.info_name:
             group_prefix = parent.info_name
@@ -194,17 +194,17 @@ class AgentFriendlyCommand(click.Command):
 
 
 def _get_available_options(ctx: Optional[Context]) -> List[str]:
-    """从上下文中获取可用的选项列表"""
+    """Get available options list from context"""
     if not ctx or not ctx.command:
         return []
 
     options = []
     for param in ctx.command.params:
         if isinstance(param, click.Option):
-            # 获取选项名（优先使用长选项）
+            # Get option name (prefer long option)
             opt_names = param.opts
             if opt_names:
-                # 优先选择 -- 开头的长选项
+                # Prefer long options starting with --
                 long_opts = [o for o in opt_names if o.startswith("--")]
                 if long_opts:
                     options.append(long_opts[0])
@@ -215,19 +215,19 @@ def _get_available_options(ctx: Optional[Context]) -> List[str]:
 
 
 def install_agent_friendly_errors():
-    """安装全局的 Agent 友好错误处理
+    """Install global Agent-friendly error handling
 
-    通过 monkey-patch Click 的 UsageError.show 方法，
-    在所有错误信息后自动添加使用示例。
+    By monkey-patching Click's UsageError.show method,
+    automatically add usage examples after all error messages.
     """
     original_show = click.UsageError.show
 
     def enhanced_show(self, file=None):
-        """增强的错误显示"""
-        # 先调用原始的 show 方法
+        """Enhanced error display"""
+        # Call original show method first
         original_show(self, file)
 
-        # 尝试从上下文获取命令信息并添加示例
+        # Try to get command info from context and add examples
         if not self.ctx:
             return
 
@@ -235,33 +235,33 @@ def install_agent_friendly_errors():
         if not cmd_name:
             return
 
-        # 获取父上下文的命令组名
+        # Get parent context's command group name
         group_prefix = ""
         if self.ctx.parent and self.ctx.parent.info_name:
             group_prefix = self.ctx.parent.info_name
 
-        # 获取示例
+        # Get examples
         examples = get_command_examples(cmd_name, group_prefix)
         if not examples:
             return
 
-        # 检查错误类型，添加相应的示例
+        # Check error type and add corresponding examples
         error_msg = self.format_message()
         import sys
         err_file = file or sys.stderr
 
-        # 处理缺少参数的错误
+        # Handle missing parameter errors
         if "Missing" in error_msg or "required" in error_msg.lower():
             click.echo("\nCorrect usage:", file=err_file)
             for ex in examples[:3]:
                 click.echo(f"  {ex}", file=err_file)
-        # 处理无效选项的错误
+        # Handle invalid option errors
         elif "No such option" in error_msg or "no such option" in error_msg.lower():
-            # 显示可用选项
+            # Show available options
             available_options = _get_available_options(self.ctx)
             if available_options:
                 click.echo(f"\nAvailable options: {', '.join(available_options)}", file=err_file)
-            # 显示正确用法
+            # Show correct usage
             click.echo("\nCorrect usage:", file=err_file)
             for ex in examples[:3]:
                 click.echo(f"  {ex}", file=err_file)
@@ -269,5 +269,5 @@ def install_agent_friendly_errors():
     click.UsageError.show = enhanced_show
 
 
-# 自动安装增强错误处理
+# Automatically install enhanced error handling
 install_agent_friendly_errors()

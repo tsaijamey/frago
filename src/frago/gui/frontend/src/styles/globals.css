@@ -1,7 +1,7 @@
 /**
- * frago GUI 全局样式
+ * frago GUI Global Styles
  *
- * 基于 GitHub Dark 设计风格，支持深色/浅色主题切换
+ * Based on GitHub Dark design style, supports dark/light theme switching
  */
 
 @tailwind base;
@@ -10,10 +10,10 @@
 
 /* === CSS Variables - Dark Theme (Default) === */
 :root {
-  /* 字体缩放比例（由 Python 端根据窗口尺寸注入，默认 1.0） */
+  /* Font scale ratio (injected by Python based on window size, default 1.0) */
   --font-scale: 1;
 
-  /* 背景色阶 - GitHub Dark */
+  /* Background color scale - GitHub Dark */
   --bg-primary: #0d1117;
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;
@@ -21,14 +21,14 @@
   --bg-base: #161b22;
   --bg-subtle: #30363d;
 
-  /* 文字色阶 */
+  /* Text color scale */
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
   --text-muted: #6e7681;
   --text-link: #58a6ff;
   --text-on-accent: #ffffff;
 
-  /* 强调色 - 柔和蓝 */
+  /* Accent colors - Soft blue */
   --accent-primary: #58a6ff;
   --accent-secondary: #388bfd;
   --accent-muted: #1f6feb;
@@ -36,17 +36,17 @@
   --accent-warning: #d29922;
   --accent-error: #f85149;
 
-  /* 边框色 */
+  /* Border colors */
   --border-color: #30363d;
   --border-muted: #21262d;
   --shadow-color: rgba(0, 0, 0, 0.4);
 
-  /* 状态徽章背景 */
+  /* Status badge backgrounds */
   --status-running-bg: rgba(210, 153, 34, 0.15);
   --status-completed-bg: rgba(63, 185, 80, 0.15);
   --status-error-bg: rgba(248, 81, 73, 0.15);
 
-  /* 间距系统 (8px 网格，固定值) */
+  /* Spacing system (8px grid, fixed values) */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 16px;
@@ -54,12 +54,12 @@
   --spacing-xl: 32px;
   --spacing-2xl: 48px;
 
-  /* 圆角 */
+  /* Border radius */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
 
-  /* 字体（固定字号） */
+  /* Fonts (fixed sizes) */
   --font-size-base: 12px;
   --font-size-sm: 11px;
   --font-size-xs: 10px;
@@ -70,17 +70,17 @@
     'Microsoft YaHei', 'Noto Sans SC', sans-serif;
   --font-mono: 'Geist Mono', 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
 
-  /* 平台自适应字重（由 Python 注入覆盖） */
+  /* Platform-adaptive font weights (overridden by Python injection) */
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-bold: 600;
 
-  /* 过渡动画 */
+  /* Transition animations */
   --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
 
-  /* 布局尺寸（固定值） */
+  /* Layout dimensions (fixed values) */
   --bottom-nav-height: 48px;
   --status-height: 28px;
 }
@@ -111,14 +111,14 @@
   --border-muted: #e6e8eb;
   --shadow-color: rgba(0, 0, 0, 0.1);
 
-  /* 状态徽章背景 */
+  /* Status badge backgrounds */
   --status-running-bg: rgba(154, 103, 0, 0.12);
   --status-completed-bg: rgba(26, 127, 55, 0.12);
   --status-error-bg: rgba(207, 34, 46, 0.12);
 }
 
 /* === Responsive Font Size === */
-/* 注：字体大小现在由 Python 端根据窗口尺寸动态注入 --font-scale 变量控制 */
+/* Note: Font size is now controlled by --font-scale variable dynamically injected by Python based on window size */
 
 /* === Base Reset === */
 *,
@@ -145,7 +145,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 平台特定字体渲染优化 */
+/* Platform-specific font rendering optimization */
 [data-platform='windows'],
 [data-platform='linux'] {
   -webkit-font-smoothing: subpixel-antialiased;
@@ -261,7 +261,7 @@ a:not(.btn):not(.nav-tab):hover {
   background: var(--bg-primary);
 }
 
-/* 页面滚动容器 - 滚动条贴边，内容有 padding */
+/* Page scroll container - scrollbar at edge, content has padding */
 .page-scroll {
   flex: 1;
   overflow-x: hidden;
@@ -461,7 +461,7 @@ a:not(.btn):not(.nav-tab):hover {
   color: var(--accent-primary);
 }
 
-/* 状态徽章 */
+/* Status badge */
 .task-status-badge {
   width: 28px;
   height: 28px;
@@ -499,7 +499,7 @@ a:not(.btn):not(.nav-tab):hover {
   50% { opacity: 0.6; }
 }
 
-/* 主要内容区 */
+/* Main content area */
 .task-main {
   flex: 1;
   min-width: 0;
@@ -534,7 +534,7 @@ a:not(.btn):not(.nav-tab):hover {
   flex-shrink: 0;
 }
 
-/* 进度条 */
+/* Progress bar */
 .task-progress {
   padding: var(--spacing-xs) 0;
 }
@@ -560,7 +560,7 @@ a:not(.btn):not(.nav-tab):hover {
   100% { transform: translateX(400%); width: 30%; }
 }
 
-/* 底部元信息 */
+/* Bottom metadata */
 .task-footer {
   display: flex;
   align-items: center;
@@ -585,7 +585,7 @@ a:not(.btn):not(.nav-tab):hover {
   font-size: var(--font-size-xs);
 }
 
-/* 右侧箭头 */
+/* Right arrow */
 .task-arrow {
   display: flex;
   align-items: center;
@@ -602,7 +602,7 @@ a:not(.btn):not(.nav-tab):hover {
   gap: var(--spacing-sm);
 }
 
-/* 新版步骤卡片 */
+/* New step card */
 .step-item-new {
   padding: var(--spacing-sm) var(--spacing-md);
   background: var(--bg-tertiary);
@@ -614,7 +614,7 @@ a:not(.btn):not(.nav-tab):hover {
   background: var(--bg-secondary);
 }
 
-/* 旧版步骤样式（保留兼容） */
+/* Legacy step style (preserved for compatibility) */
 .step-item {
   display: flex;
   gap: var(--spacing-sm);

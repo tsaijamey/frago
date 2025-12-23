@@ -1,7 +1,7 @@
 """
-自定义异常类
+Custom exception classes
 
-定义 frago init 命令使用的所有异常和错误码。
+Defines all exceptions and error codes used by the frago init command.
 """
 
 from enum import IntEnum
@@ -9,7 +9,7 @@ from typing import Optional
 
 
 class InitErrorCode(IntEnum):
-    """Init 命令错误码枚举"""
+    """Init command error code enumeration"""
 
     SUCCESS = 0
     INSTALL_FAILED = 1
@@ -23,7 +23,7 @@ class InitErrorCode(IntEnum):
 
 
 class CommandError(Exception):
-    """外部命令执行错误"""
+    """External command execution error"""
 
     def __init__(
         self,
@@ -37,8 +37,8 @@ class CommandError(Exception):
         super().__init__(message)
 
     def __str__(self) -> str:
-        """字符串表示"""
+        """String representation"""
         result = f"[{self.code.name}] {self.message}"
         if self.details:
-            result += f"\n详细信息:\n{self.details}"
+            result += f"\nDetails:\n{self.details}"
         return result

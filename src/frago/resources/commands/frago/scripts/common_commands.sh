@@ -1,99 +1,99 @@
 #!/bin/bash
-# Frago 通用命令速查
-# 适用于: /frago.run, /frago.do, /frago.recipe, /frago.test
+# Frago Common Command Quick Reference
+# Applies to: /frago.run, /frago.do, /frago.recipe, /frago.test
 
-# === Chrome 管理（首先执行）===
-# 检查 CDP 连接状态
+# === Chrome Management (Execute First) ===
+# Check CDP connection status
 frago chrome status
 
-# 启动 Chrome（两种模式）
-frago chrome start              # 正常窗口模式
-frago chrome start --headless   # 无头模式（无界面）
+# Start Chrome (two modes)
+frago chrome start              # Normal window mode
+frago chrome start --headless   # Headless mode (no UI)
 
-# 常用启动选项
-frago chrome start --port 9333        # 使用其他端口
-frago chrome start --keep-alive       # 启动后保持运行，直到 Ctrl+C
-frago chrome start --no-kill          # 不关闭已存在的 CDP Chrome 进程
+# Common startup options
+frago chrome start --port 9333        # Use different port
+frago chrome start --keep-alive       # Keep running after start, until Ctrl+C
+frago chrome start --no-kill          # Don't kill existing CDP Chrome process
 
-# 停止 Chrome
+# Stop Chrome
 frago chrome stop
 
-# === 发现资源 ===
-# 列出所有配方
+# === Discover Resources ===
+# List all recipes
 frago recipe list
-frago recipe list --format json  # AI 格式
+frago recipe list --format json  # AI format
 
-# 查看配方详情
+# View recipe details
 frago recipe info <recipe_name>
 
-# 搜索相关 run 记录
-rg -l "关键词" ~/.frago/projects/
+# Search related run records
+rg -l "keyword" ~/.frago/projects/
 
-# === 浏览器操作 ===
-# 导航
+# === Browser Operations ===
+# Navigate
 frago chrome navigate <url>
 frago chrome navigate <url> --wait-for <selector>
 
-# 点击
+# Click
 frago chrome click <selector>
 frago chrome click <selector> --wait-timeout 10
 
-# 滚动
-frago chrome scroll <pixels>  # 正数向下，负数向上
-frago chrome scroll-to --text "目标文本"
+# Scroll
+frago chrome scroll <pixels>  # Positive for down, negative for up
+frago chrome scroll-to --text "target text"
 
-# 等待
+# Wait
 frago chrome wait <seconds>
 
-# === 信息提取 ===
-# 获取标题
+# === Information Extraction ===
+# Get title
 frago chrome get-title
 
-# 获取内容
+# Get content
 frago chrome get-content
 frago chrome get-content <selector>
 
-# 执行 JavaScript
+# Execute JavaScript
 frago chrome exec-js <expression>
 frago chrome exec-js <expression> --return-value
-frago chrome exec-js "window.location.href" --return-value  # 获取 URL
+frago chrome exec-js "window.location.href" --return-value  # Get URL
 
-# 截图
+# Screenshot
 frago chrome screenshot output.png
 frago chrome screenshot output.png --full-page
 
-# === 视觉效果 ===
+# === Visual Effects ===
 frago chrome highlight <selector>
 frago chrome pointer <selector>
 frago chrome spotlight <selector>
-frago chrome annotate <selector> --text "说明"
+frago chrome annotate <selector> --text "description"
 
-# === Run/Project 管理 ===
-# 列出项目
+# === Run/Project Management ===
+# List projects
 frago run list
 frago run list --format json
 
-# 初始化项目
+# Initialize project
 frago run init "task description"
 
-# 设置上下文
+# Set context
 frago run set-context <project_id>
 
-# 释放上下文
+# Release context
 frago run release
 
-# 记录日志
+# Log
 frago run log \
-  --step "步骤描述" \
+  --step "step description" \
   --status "success" \
   --action-type "analysis" \
   --execution-method "analysis" \
   --data '{"key": "value"}'
 
-# 截图（在上下文中）
-frago run screenshot "步骤描述"
+# Screenshot (in context)
+frago run screenshot "step description"
 
-# === Recipe 执行 ===
+# === Recipe Execution ===
 frago recipe run <name>
 frago recipe run <name> --params '{"key": "value"}'
 frago recipe run <name> --output-file result.json

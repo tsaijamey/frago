@@ -1,5 +1,5 @@
 ---
-description: "执行一次性的复杂任务（使用完整的frago工具集）"
+description: "Execute one-time complex tasks (using complete frago toolset)"
 ---
 
 # /frago.do - Task Executor

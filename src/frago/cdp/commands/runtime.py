@@ -1,7 +1,7 @@
 """
-运行时相关CDP命令
+Runtime-related CDP commands
 
-封装Runtime域的CDP命令。
+Encapsulates CDP commands for the Runtime domain.
 """
 
 from typing import Dict, Any, Optional
@@ -11,28 +11,28 @@ from ..logger import get_logger
 
 
 class RuntimeCommands:
-    """运行时命令类"""
-    
+    """Runtime commands class"""
+
     def __init__(self, session: CDPSession):
         """
-        初始化运行时命令
-        
+        Initialize runtime commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def evaluate(self, expression: str, return_by_value: bool = True) -> Dict[str, Any]:
         """
-        在页面上下文中执行JavaScript表达式
-        
+        Execute JavaScript expression in page context
+
         Args:
-            expression: JavaScript表达式
-            return_by_value: 是否返回值而不是对象引用
-            
+            expression: JavaScript expression
+            return_by_value: Whether to return value instead of object reference
+
         Returns:
-            Dict[str, Any]: 执行结果
+            Dict[str, Any]: Execution result
         """
         self.logger.debug(f"Evaluating expression: {expression}")
         
@@ -49,29 +49,29 @@ class RuntimeCommands:
         return result
     
     def call_function(
-        self, 
-        function_declaration: str, 
+        self,
+        function_declaration: str,
         args: Optional[list] = None,
         return_by_value: bool = True
     ) -> Dict[str, Any]:
         """
-        调用JavaScript函数
-        
+        Call JavaScript function
+
         Args:
-            function_declaration: 函数声明
-            args: 函数参数
-            return_by_value: 是否返回值而不是对象引用
-            
+            function_declaration: Function declaration
+            args: Function arguments
+            return_by_value: Whether to return value instead of object reference
+
         Returns:
-            Dict[str, Any]: 调用结果
+            Dict[str, Any]: Call result
         """
         self.logger.debug(f"Calling function: {function_declaration}")
-        
-        # 将函数调用包装为表达式
+
+        # Wrap function call as expression
         if args is None:
             args = []
-        
-        # 构建函数调用表达式
+
+        # Build function call expression
         call_expression = f"({function_declaration})({', '.join(map(repr, args))})"
         
         result = self.session.send_command(

@@ -1,17 +1,17 @@
-"""Run命令系统自定义异常
+"""Run Command System Custom Exceptions
 
-定义所有run系统相关的异常类型
+Defines all run system related exception types
 """
 
 
 class RunException(Exception):
-    """Run系统基础异常"""
+    """Run system base exception"""
 
     pass
 
 
 class RunNotFoundError(RunException):
-    """Run实例不存在"""
+    """Run instance does not exist"""
 
     def __init__(self, run_id: str):
         self.run_id = run_id
@@ -19,7 +19,7 @@ class RunNotFoundError(RunException):
 
 
 class InvalidRunIDError(RunException):
-    """Run ID格式不合法"""
+    """Run ID format is invalid"""
 
     def __init__(self, run_id: str, reason: str = ""):
         self.run_id = run_id
@@ -31,7 +31,7 @@ class InvalidRunIDError(RunException):
 
 
 class ContextNotSetError(RunException):
-    """当前Run上下文未设置"""
+    """Current Run context not set"""
 
     def __init__(self):
         super().__init__(
@@ -41,7 +41,7 @@ class ContextNotSetError(RunException):
 
 
 class ContextAlreadySetError(RunException):
-    """已有Run上下文正在运行（互斥锁）"""
+    """Run context already running (mutex lock)"""
 
     def __init__(self, existing_run_id: str):
         self.existing_run_id = existing_run_id
@@ -53,7 +53,7 @@ class ContextAlreadySetError(RunException):
 
 
 class CorruptedLogError(RunException):
-    """JSONL日志文件损坏"""
+    """JSONL log file corrupted"""
 
     def __init__(self, file_path: str, line_number: int, reason: str = ""):
         self.file_path = file_path
@@ -66,7 +66,7 @@ class CorruptedLogError(RunException):
 
 
 class FileSystemError(RunException):
-    """文件系统操作失败"""
+    """File system operation failed"""
 
     def __init__(self, operation: str, path: str, reason: str = ""):
         self.operation = operation

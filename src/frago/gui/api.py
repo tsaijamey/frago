@@ -1,7 +1,7 @@
 """Python API exposed to JavaScript for Frago GUI.
 
 Implements the JS-Python bridge using pywebview's js_api protocol.
-Extended for 011-gui-tasks-redesign: Tasks 相关 API 方法。
+Extended for 011-gui-tasks-redesign: Tasks-related API methods.
 """
 
 import json
@@ -41,7 +41,7 @@ from frago.gui.models import (
 )
 from frago.gui.state import AppStateManager
 
-# 011-gui-tasks-redesign: 导入 session 模块
+# 011-gui-tasks-redesign: Import session module
 from frago.session.storage import (
     list_sessions,
     read_metadata,
@@ -55,7 +55,7 @@ from frago.session.models import AgentType
 class FragoGuiApi:
     """Python API class exposed to JavaScript via pywebview."""
 
-    # 会话同步间隔（秒）
+    # Session sync interval (seconds)
     SYNC_INTERVAL_SECONDS = 5
 
     def __init__(self) -> None:
@@ -66,16 +66,16 @@ class FragoGuiApi:
         self._skill_cache: List[SkillItem] = []
         self._sync_thread: Optional[threading.Thread] = None
         self._sync_stop_event = threading.Event()
-        self._sync_result: Optional[Dict[str, Any]] = None  # 用于 Settings 页面的 sync 状态
+        self._sync_result: Optional[Dict[str, Any]] = None  # Sync state for Settings page
 
-        # GUI 启动时同步当前项目的 Claude 会话
+        # Sync current project Claude sessions on GUI startup
         self._sync_sessions_on_startup()
 
     def _sync_sessions_on_startup(self) -> None:
-        """GUI 启动时启动定时会话同步
+        """Start periodic session sync on GUI startup
 
-        启动一个后台线程，每隔 SYNC_INTERVAL_SECONDS 秒同步一次会话数据。
-        从 ~/.claude/projects/ 同步所有项目到 ~/.frago/sessions/claude/
+        Start a background thread to sync session data every SYNC_INTERVAL_SECONDS seconds.
+        Sync all projects from ~/.claude/projects/ to ~/.frago/sessions/claude/
         """
         import logging
 
@@ -90,26 +90,26 @@ class FragoGuiApi:
 
                     if result.synced > 0 or result.updated > 0:
                         logger.debug(
-                            f"会话同步: synced={result.synced}, updated={result.updated}"
+                            f"Session sync: synced={result.synced}, updated={result.updated}"
                         )
                 except Exception as e:
-                    logger.warning(f"会话同步失败: {e}")
+                    logger.warning(f"Session sync failed: {e}")
 
-                # 等待下一次同步，但可被中断
+                # Wait for next sync, but can be interrupted
                 self._sync_stop_event.wait(self.SYNC_INTERVAL_SECONDS)
 
-        # 启动后台同步线程
+        # Start background sync thread
         self._sync_thread = threading.Thread(target=sync_loop, daemon=True)
         self._sync_thread.start()
-        logger.info(f"会话同步线程已启动 (间隔: {self.SYNC_INTERVAL_SECONDS}s)")
+        logger.info(f"Session sync thread started (interval: {self.SYNC_INTERVAL_SECONDS}s)")
 
     def stop_sync(self) -> None:
-        """停止会话同步线程"""
+        """Stop session sync thread"""
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_stop_event.set()
             self._sync_thread.join(timeout=2)
             import logging
-            logging.getLogger(__name__).info("会话同步线程已停止")
+            logging.getLogger(__name__).info("Session sync thread stopped")
 
     def set_window(self, window: "webview.Window") -> None:
         """Set the window reference for evaluate_js calls.
@@ -519,7 +519,7 @@ class FragoGuiApi:
     def _check_chrome_connection(self) -> bool:
         """Check if Chrome is connected.
 
-        直接请求 CDP 端点，避免 subprocess 调用 CLI 命令产生日志。
+        Directly request CDP endpoint to avoid subprocess CLI command logs.
 
         Returns:
             True if Chrome is connected.
@@ -632,7 +632,7 @@ class FragoGuiApi:
         Returns:
             Dictionary containing recipe details and metadata content.
         """
-        # 从缓存中查找配方
+        # Find recipe in cache
         recipe = None
         for r in self._recipe_cache:
             if r.name == name:
@@ -640,7 +640,7 @@ class FragoGuiApi:
                 break
 
         if not recipe:
-            # 刷新缓存后再找
+            # Refresh cache and search again
             self._recipe_cache = self._load_recipes()
             for r in self._recipe_cache:
                 if r.name == name:
@@ -648,14 +648,14 @@ class FragoGuiApi:
                     break
 
         if not recipe:
-            return {"error": f"配方 '{name}' 不存在"}
+            return {"error": f"Recipe '{name}' does not exist"}
 
         result = recipe.to_dict()
 
-        # 读取 recipe.md 内容
+        # Read recipe.md content
         if recipe.path:
             recipe_path = Path(recipe.path)
-            # path 可能是脚本路径，需要找到 recipe.md
+            # path might be script path, need to find recipe.md
             if recipe_path.is_file():
                 recipe_dir = recipe_path.parent
             else:
@@ -688,7 +688,7 @@ class FragoGuiApi:
         """
         import shutil
 
-        # 从缓存中查找配方
+        # Find recipe in cache
         recipe = None
         for r in self._recipe_cache:
             if r.name == name:
@@ -696,17 +696,17 @@ class FragoGuiApi:
                 break
 
         if not recipe:
-            return {"status": "error", "message": f"配方 '{name}' 不存在"}
+            return {"status": "error", "message": f"Recipe '{name}' does not exist"}
 
-        # 只允许删除用户级配方
+        # Only allow deletion of user-level recipes
         if recipe.source != "User":
             return {
                 "status": "error",
-                "message": f"只能删除用户级配方，'{name}' 来源是 {recipe.source}",
+                "message": f"Only user-level recipes can be deleted, '{name}' is from {recipe.source}",
             }
 
         if not recipe.path:
-            return {"status": "error", "message": "配方路径未知"}
+            return {"status": "error", "message": "Recipe path is unknown"}
 
         recipe_path = Path(recipe.path)
         if recipe_path.is_file():
@@ -714,26 +714,26 @@ class FragoGuiApi:
         else:
             recipe_dir = recipe_path
 
-        # 确保是在用户目录下
+        # Ensure it's in user directory
         user_recipes_dir = Path.home() / ".frago" / "recipes"
         try:
             recipe_dir.relative_to(user_recipes_dir)
         except ValueError:
             return {
                 "status": "error",
-                "message": f"配方不在用户目录下，无法删除",
+                "message": f"Recipe is not in user directory, cannot delete",
             }
 
         if not recipe_dir.exists():
-            return {"status": "error", "message": "配方目录不存在"}
+            return {"status": "error", "message": "Recipe directory does not exist"}
 
         try:
             shutil.rmtree(recipe_dir)
-            # 刷新缓存
+            # Refresh cache
             self._recipe_cache = self._load_recipes()
-            return {"status": "ok", "message": f"配方 '{name}' 已删除"}
+            return {"status": "ok", "message": f"Recipe '{name}' has been deleted"}
         except Exception as e:
-            return {"status": "error", "message": f"删除失败: {e}"}
+            return {"status": "error", "message": f"Deletion failed: {e}"}
 
     def refresh_skills(self) -> List[Dict]:
         """Refresh and return the skill list.
@@ -745,50 +745,50 @@ class FragoGuiApi:
         return [s.to_dict() for s in self._skill_cache]
 
     # ============================================================
-    # 011-gui-tasks-redesign: Tasks 相关 API 方法
+    # 011-gui-tasks-redesign: Tasks-related API methods
     # ============================================================
 
     def get_tasks(self, limit: int = 50, status: Optional[str] = None) -> List[Dict]:
-        """获取任务列表
+        """Get task list
 
-        优先从 ~/.frago/sessions/ 读取会话数据，如果为空则从
-        GUI history 中读取 AGENT 类型的记录作为任务列表。
+        Prioritize reading session data from ~/.frago/sessions/, if empty
+        read AGENT type records from GUI history as task list.
 
         Args:
-            limit: 最大返回数量，范围 1-100，默认 50
-            status: 筛选状态（可选），支持 running/completed/error/cancelled
+            limit: Maximum number to return, range 1-100, default 50
+            status: Status filter (optional), supports running/completed/error/cancelled
 
         Returns:
-            任务列表
+            Task list
         """
         try:
             from frago.session.models import SessionStatus
 
-            # 参数验证
+            # Parameter validation
             limit = max(1, min(100, limit))
 
-            # 转换状态筛选参数
+            # Convert status filter parameter
             status_filter = None
             if status:
                 try:
                     status_filter = SessionStatus(status)
                 except ValueError:
-                    pass  # 无效状态，忽略筛选
+                    pass  # Invalid status, ignore filter
 
             tasks = []
             session_ids = set()
 
-            # 1. 从 sessions 目录获取已有任务
-            # 请求更多会话以弥补过滤损失
+            # 1. Get existing tasks from sessions directory
+            # Request more sessions to compensate for filtering losses
             sessions = list_sessions(
                 agent_type=AgentType.CLAUDE,
-                limit=limit * 3,  # 请求 3 倍数量，过滤后再截取
+                limit=limit * 3,  # Request 3x amount, then trim after filtering
                 status=status_filter,
             )
 
             for session in sessions:
                 try:
-                    # 应用过滤规则：跳过低价值会话
+                    # Apply filter rules: skip low-value sessions
                     if not TaskItem.should_display(session):
                         continue
                     task = TaskItem.from_session(session)
@@ -797,10 +797,10 @@ class FragoGuiApi:
                 except Exception:
                     continue
 
-            # 注：移除 history fallback，因为 history 的 task_id 与 Claude session_id 不匹配
-            # 同步机制会确保所有 Claude session 都被导入
+            # Note: Removed history fallback because history task_id doesn't match Claude session_id
+            # Sync mechanism ensures all Claude sessions are imported
 
-            # 按 started_at 倒序排序
+            # Sort by started_at descending
             tasks.sort(
                 key=lambda t: t.get("started_at") or "",
                 reverse=True
@@ -809,22 +809,22 @@ class FragoGuiApi:
             return tasks[:limit]
 
         except Exception:
-            # 降级到 history
+            # Fallback to history
             return self._get_tasks_from_history(limit, status)
 
     def _get_tasks_from_history(
         self, limit: int = 50, status: Optional[str] = None
     ) -> List[Dict]:
-        """从 GUI history 中读取 AGENT 类型记录作为任务列表
+        """Read AGENT type records from GUI history as task list
 
         Args:
-            limit: 最大返回数量
-            status: 筛选状态
+            limit: Maximum number to return
+            status: Status filter
 
         Returns:
-            任务列表
+            Task list
         """
-        # 转换状态筛选
+        # Convert status filter
         task_status = None
         if status:
             try:
@@ -832,7 +832,7 @@ class FragoGuiApi:
             except ValueError:
                 pass
 
-        # 读取 AGENT 类型的历史记录
+        # Read AGENT type history records
         records = get_history(
             limit=limit,
             command_type=CommandType.AGENT,
@@ -841,10 +841,10 @@ class FragoGuiApi:
 
         tasks = []
         for record in records:
-            # 将 CommandRecord 转换为类似 TaskItem 的格式
+            # Convert CommandRecord to TaskItem-like format
             task = {
                 "session_id": record.id,
-                "name": record.input_text[:100] if record.input_text else "未命名任务",
+                "name": record.input_text[:100] if record.input_text else "Unnamed task",
                 "status": record.status.value if record.status else "completed",
                 "started_at": record.timestamp.isoformat() if record.timestamp else None,
                 "ended_at": None,
@@ -859,7 +859,7 @@ class FragoGuiApi:
         return tasks
 
     def _get_task_detail_from_history(self, session_id: str) -> Dict[str, Any]:
-        """从 history 获取任务详情（用于刚启动尚未产生 session 数据的任务）"""
+        """Get task details from history (for newly started tasks without session data yet)"""
         records = get_history(limit=100, command_type=CommandType.AGENT)
 
         for record in records:
@@ -883,7 +883,7 @@ class FragoGuiApi:
                     "summary": None,
                 }
 
-        return {"error": f"会话 {session_id} 不存在或已删除"}
+        return {"error": f"Session {session_id} does not exist or has been deleted"}
 
     def get_task_detail(
         self,
@@ -891,54 +891,54 @@ class FragoGuiApi:
         steps_limit: int = 0,
         steps_offset: int = 0,
     ) -> Dict[str, Any]:
-        """获取任务详情
+        """Get task details
 
-        读取指定会话的完整信息，包括元数据、步骤记录和摘要。
+        Read complete information for specified session, including metadata, step records, and summary.
 
         Args:
-            session_id: 会话 ID（必填）
-            steps_limit: 步骤数量限制，0 表示获取全部，默认 0
-            steps_offset: 步骤偏移量，用于分页，默认 0
+            session_id: Session ID (required)
+            steps_limit: Step count limit, 0 means get all, default 0
+            steps_offset: Step offset for pagination, default 0
 
         Returns:
-            任务详情字典，包含：
+            Task detail dictionary containing:
             - session_id, name, status, started_at, ended_at
             - duration_ms, project_path
             - step_count, tool_call_count, user_message_count, assistant_message_count
-            - steps (步骤列表)
+            - steps (step list)
             - steps_total, steps_offset, has_more_steps
-            - summary (完成后的摘要)
-            - error (如果出错)
+            - summary (summary after completion)
+            - error (if error occurred)
         """
-        # 参数验证
+        # Parameter validation
         if not session_id:
-            return {"error": "会话 ID 不能为空"}
+            return {"error": "Session ID cannot be empty"}
 
-        # steps_limit = 0 或 None 表示获取全部
+        # steps_limit = 0 or None means get all
         if not steps_limit:
-            steps_limit = 10000  # 设置一个足够大的值
+            steps_limit = 10000  # Set a sufficiently large value
         else:
             steps_limit = max(1, min(10000, steps_limit))
         steps_offset = max(0, steps_offset or 0)
 
         try:
-            # 读取会话元数据
+            # Read session metadata
             session = read_metadata(session_id, AgentType.CLAUDE)
             if not session:
-                # 尝试从 history 获取（可能是刚启动的任务）
+                # Try to get from history (might be a newly started task)
                 return self._get_task_detail_from_history(session_id)
 
-            # 分页读取步骤
+            # Read steps with pagination
             steps_result = read_steps_paginated(
                 session_id, AgentType.CLAUDE, steps_limit, steps_offset
             )
             steps = steps_result["steps"]
             total_steps = steps_result["total"]
 
-            # 读取摘要（可能不存在）
+            # Read summary (might not exist)
             summary = read_summary(session_id, AgentType.CLAUDE)
 
-            # 构建 TaskDetail
+            # Build TaskDetail
             detail = TaskDetail.from_session_data(
                 session=session,
                 steps=steps,
@@ -950,7 +950,7 @@ class FragoGuiApi:
 
             return detail.model_dump(mode="json")
         except Exception as e:
-            return {"error": f"加载任务详情失败: {str(e)}"}
+            return {"error": f"Failed to load task details: {str(e)}"}
 
     def get_task_steps(
         self,
@@ -958,26 +958,26 @@ class FragoGuiApi:
         offset: int = 0,
         limit: int = 50,
     ) -> Dict[str, Any]:
-        """分页获取任务步骤
+        """Get task steps with pagination
 
-        用于任务详情页的"加载更多"功能，返回指定范围的步骤记录。
+        Used for "load more" functionality in task detail page, returns step records in specified range.
 
         Args:
-            session_id: 会话 ID（必填）
-            offset: 偏移量，从第几条开始，默认 0
-            limit: 数量限制，范围 1-100，默认 50
+            session_id: Session ID (required)
+            offset: Offset, starting from which record, default 0
+            limit: Count limit, range 1-100, default 50
 
         Returns:
-            字典包含：
-            - steps: 步骤列表
-            - total: 总步骤数
-            - offset: 当前偏移量
-            - has_more: 是否还有更多
-            - error: 错误信息（如果出错）
+            Dictionary containing:
+            - steps: Step list
+            - total: Total step count
+            - offset: Current offset
+            - has_more: Whether there are more
+            - error: Error message (if error occurred)
         """
-        # 参数验证
+        # Parameter validation
         if not session_id:
-            return {"error": "会话 ID 不能为空", "steps": [], "has_more": False}
+            return {"error": "Session ID cannot be empty", "steps": [], "has_more": False}
 
         limit = max(1, min(100, limit))
         offset = max(0, offset)
@@ -985,7 +985,7 @@ class FragoGuiApi:
         try:
             result = read_steps_paginated(session_id, AgentType.CLAUDE, limit, offset)
 
-            # 转换步骤格式为 GUI 所需格式
+            # Convert step format to GUI required format
             gui_steps = [TaskStep.from_session_step(s) for s in result["steps"]]
 
             return {
@@ -996,36 +996,36 @@ class FragoGuiApi:
             }
         except Exception as e:
             return {
-                "error": f"加载步骤失败: {str(e)}",
+                "error": f"Failed to load steps: {str(e)}",
                 "steps": [],
                 "has_more": False,
             }
 
     def start_agent_task(self, prompt: str) -> Dict[str, Any]:
-        """启动 agent 任务
+        """Start agent task
 
-        在后台执行 `frago agent {prompt}` 命令。
-        任务启动后立即返回，不等待任务完成。
-        同时在 history 中记录一条"运行中"的记录。
+        Execute `frago agent {prompt}` command in background.
+        Returns immediately after task starts, does not wait for task completion.
+        Also records a "running" entry in history.
 
         Args:
-            prompt: 任务描述/提示词
+            prompt: Task description/prompt
 
         Returns:
-            字典包含：
-            - status: "ok" 或 "error"
-            - message: 状态消息
-            - task_id: 任务 ID（成功时返回）
-            - error: 错误信息（如果出错）
+            Dictionary containing:
+            - status: "ok" or "error"
+            - message: Status message
+            - task_id: Task ID (returned on success)
+            - error: Error message (if error occurred)
         """
         if not prompt or not prompt.strip():
-            return {"status": "error", "error": "任务描述不能为空"}
+            return {"status": "error", "error": "Task description cannot be empty"}
 
         prompt = prompt.strip()
         task_id = str(uuid.uuid4())
 
         try:
-            # 先记录一条"运行中"的 history 记录
+            # First record a "running" history entry
             record = CommandRecord(
                 id=task_id,
                 timestamp=datetime.now(),
@@ -1036,23 +1036,23 @@ class FragoGuiApi:
             )
             append_record(record)
 
-            # 在后台启动 frago agent 命令
-            # 使用 shutil.which 查找完整路径，避免环境变量问题
+            # Start frago agent command in background
+            # Use shutil.which to find full path, avoid environment variable issues
             import shutil
             frago_path = shutil.which("frago")
             if not frago_path:
                 return {
                     "status": "error",
-                    "error": "frago 命令未找到，请确保已正确安装并在 PATH 中",
+                    "error": "frago command not found, please ensure it's properly installed and in PATH",
                 }
 
-            # 使用 Popen 启动进程，不等待完成
-            # 重定向输出到日志文件以便调试
+            # Use Popen to start process, don't wait for completion
+            # Redirect output to log file for debugging
             log_dir = Path.home() / ".frago" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"agent-{task_id[:8]}.log"
 
-            # 使用临时文件传递 prompt，避免 Windows 命令行参数截断换行符
+            # Use temp file to pass prompt, avoid Windows command line truncating newlines
             prompt_file = log_dir / f"prompt-{task_id[:8]}.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
 
@@ -1061,42 +1061,42 @@ class FragoGuiApi:
                     _prepare_command_for_windows([frago_path, "agent", "--yes", "--prompt-file", str(prompt_file)]),
                     stdout=f,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True,  # 分离进程，防止 GUI 关闭时终止任务
+                    start_new_session=True,  # Detach process, prevent termination when GUI closes
                 )
 
             return {
                 "status": "ok",
                 "task_id": task_id,
-                "message": f"任务已启动: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
+                "message": f"Task started: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
             }
         except FileNotFoundError:
             return {
                 "status": "error",
-                "error": "frago 命令未找到，请确保已正确安装",
+                "error": "frago command not found, please ensure it's properly installed",
             }
         except Exception as e:
             return {
                 "status": "error",
-                "error": f"启动任务失败: {str(e)}",
+                "error": f"Failed to start task: {str(e)}",
             }
 
     def continue_agent_task(self, session_id: str, prompt: str) -> Dict[str, Any]:
-        """在指定会话中继续对话
+        """Continue conversation in specified session
 
         Args:
-            session_id: 要继续的会话 ID
-            prompt: 用户输入的新提示词
+            session_id: Session ID to continue
+            prompt: User's new prompt
 
         Returns:
-            字典包含：
-            - status: "ok" 或 "error"
-            - message: 状态消息
-            - error: 错误信息（如果出错）
+            Dictionary containing:
+            - status: "ok" or "error"
+            - message: Status message
+            - error: Error message (if error occurred)
         """
         if not session_id:
-            return {"status": "error", "error": "session_id 不能为空"}
+            return {"status": "error", "error": "session_id cannot be empty"}
         if not prompt or not prompt.strip():
-            return {"status": "error", "error": "任务描述不能为空"}
+            return {"status": "error", "error": "Task description cannot be empty"}
 
         prompt = prompt.strip()
 
@@ -1106,15 +1106,15 @@ class FragoGuiApi:
             if not frago_path:
                 return {
                     "status": "error",
-                    "error": "frago 命令未找到，请确保已正确安装并在 PATH 中",
+                    "error": "frago command not found, please ensure it's properly installed and in PATH",
                 }
 
-            # 使用 Popen 启动进程，不等待完成
+            # Use Popen to start process, don't wait for completion
             log_dir = Path.home() / ".frago" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / f"agent-resume-{session_id[:8]}.log"
 
-            # 使用临时文件传递 prompt，避免 Windows 命令行参数截断换行符
+            # Use temp file to pass prompt, avoid Windows command line truncating newlines
             prompt_file = log_dir / f"prompt-resume-{session_id[:8]}.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
 
@@ -1128,54 +1128,54 @@ class FragoGuiApi:
 
             return {
                 "status": "ok",
-                "message": f"已在会话 {session_id[:8]}... 中继续: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
+                "message": f"Continued in session {session_id[:8]}...: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
             }
         except FileNotFoundError:
             return {
                 "status": "error",
-                "error": "frago 命令未找到，请确保已正确安装",
+                "error": "frago command not found, please ensure it's properly installed",
             }
         except Exception as e:
             return {
                 "status": "error",
-                "error": f"继续任务失败: {str(e)}",
+                "error": f"Failed to continue task: {str(e)}",
             }
 
     # ============================================================
-    # Settings 页面相关 API 方法：主配置管理
+    # Settings page-related API methods: Main configuration management
     # ============================================================
 
     def get_main_config(self) -> Dict[str, Any]:
-        """获取主配置 (~/.frago/config.json)
+        """Get main configuration (~/.frago/config.json)
 
         Returns:
-            配置字典，包含 Config 模型的所有字段，以及额外的 working_directory_display
+            Configuration dictionary containing all fields from Config model, plus additional working_directory_display
         """
         from frago.init.config_manager import load_config
 
         try:
             config = load_config()
             result = config.model_dump(mode='json')
-            # 添加工作目录显示路径（固定为 ~/.frago/projects，但显示实际路径）
+            # Add working directory display path (fixed to ~/.frago/projects, but show actual path)
             result['working_directory_display'] = str(Path.home() / ".frago" / "projects")
             return result
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"加载主配置失败: {e}")
-            # 返回空配置
+            logging.getLogger(__name__).error(f"Failed to load main config: {e}")
+            # Return empty config
             from frago.init.models import Config
             result = Config().model_dump(mode='json')
             result['working_directory_display'] = str(Path.home() / ".frago" / "projects")
             return result
 
     def update_main_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        """更新主配置
+        """Update main configuration
 
         Args:
-            updates: 部分更新字典，例如 {"sync_repo_url": "git@github.com:user/repo.git"}
+            updates: Partial update dictionary, e.g. {"sync_repo_url": "git@github.com:user/repo.git"}
 
         Returns:
-            {"status": "ok", "config": {...}} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "config": {...}} or {"status": "error", "error": "..."}
         """
         from frago.init.config_manager import update_config
         from pydantic import ValidationError
@@ -1189,7 +1189,7 @@ class FragoGuiApi:
         except ValidationError as e:
             return {
                 "status": "error",
-                "error": f"配置验证失败: {e}"
+                "error": f"Config validation failed: {e}"
             }
         except Exception as e:
             return {
@@ -1198,25 +1198,25 @@ class FragoGuiApi:
             }
 
     def update_auth_method(self, auth_data: Dict[str, Any]) -> Dict[str, Any]:
-        """更新认证方式和 API 端点
+        """Update authentication method and API endpoint
 
-        同时更新:
-        - ~/.frago/config.json (frago 配置)
-        - ~/.claude/settings.json (Claude Code 环境变量)
-        - ~/.claude.json (跳过官方登录)
+        Updates simultaneously:
+        - ~/.frago/config.json (frago configuration)
+        - ~/.claude/settings.json (Claude Code environment variables)
+        - ~/.claude.json (skip official login)
 
         Args:
             auth_data: {
                 "auth_method": "official" | "custom",
-                "api_endpoint": {  # 仅 custom 时提供
+                "api_endpoint": {  # Only provided for custom
                     "type": "deepseek" | "aliyun" | "kimi" | "minimax" | "custom",
-                    "url": "...",  # 仅 type=custom 时需要
+                    "url": "...",  # Only needed for type=custom
                     "api_key": "..."
                 }
             }
 
         Returns:
-            {"status": "ok", "config": {...}} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "config": {...}} or {"status": "error", "error": "..."}
         """
         from frago.init.config_manager import update_config
         from frago.init.configurator import (
@@ -1231,12 +1231,12 @@ class FragoGuiApi:
         logger = logging.getLogger(__name__)
 
         try:
-            # 构建更新字典
+            # Build update dictionary
             updates: Dict[str, Any] = {
                 "auth_method": auth_data["auth_method"]
             }
 
-            # 处理 api_endpoint
+            # Handle api_endpoint
             if auth_data["auth_method"] == "custom":
                 if "api_endpoint" not in auth_data:
                     return {
@@ -1245,14 +1245,14 @@ class FragoGuiApi:
                     }
                 updates["api_endpoint"] = auth_data["api_endpoint"]
 
-                # 同步写入 ~/.claude/settings.json
+                # Sync write to ~/.claude/settings.json
                 endpoint = auth_data["api_endpoint"]
                 endpoint_type = endpoint.get("type", "custom")
                 api_key = endpoint.get("api_key", "")
                 custom_url = endpoint.get("url") if endpoint_type == "custom" else None
                 custom_model = endpoint.get("model") if endpoint_type == "custom" else None
 
-                # 构建 Claude Code env 配置
+                # Build Claude Code env config
                 env_config = build_claude_env_config(
                     endpoint_type=endpoint_type,
                     api_key=api_key,
@@ -1260,33 +1260,33 @@ class FragoGuiApi:
                     custom_model=custom_model,
                 )
 
-                # 确保 ~/.claude.json 存在（跳过官方登录流程）
+                # Ensure ~/.claude.json exists (skip official login flow)
                 ensure_claude_json_for_custom_auth()
 
-                # 写入 ~/.claude/settings.json
+                # Write to ~/.claude/settings.json
                 save_claude_settings({"env": env_config})
-                logger.info("已同步 API 配置到 ~/.claude/settings.json")
+                logger.info("Synced API config to ~/.claude/settings.json")
             else:
-                # official 模式，移除 api_endpoint 并删除 settings.json
+                # Official mode, remove api_endpoint and delete settings.json
                 updates["api_endpoint"] = None
 
-                # 删除 ~/.claude/settings.json，让 Claude Code 使用官方配置
+                # Delete ~/.claude/settings.json, let Claude Code use official config
                 if delete_claude_settings():
-                    logger.info("已删除 ~/.claude/settings.json，切换到官方 API")
+                    logger.info("Deleted ~/.claude/settings.json, switched to official API")
                 else:
-                    logger.warning("删除 ~/.claude/settings.json 失败")
+                    logger.warning("Failed to delete ~/.claude/settings.json")
 
-            # 更新 ~/.frago/config.json
+            # Update ~/.frago/config.json
             config = update_config(updates)
 
-            # 对返回的配置进行掩码处理
+            # Mask returned config
             config_dict = config.model_dump(mode='json')
             if config_dict.get("api_endpoint") and config_dict["api_endpoint"].get("api_key"):
                 config_dict["api_endpoint"]["api_key"] = self._mask_api_key(
                     config_dict["api_endpoint"]["api_key"]
                 )
 
-            # 添加工作目录显示路径
+            # Add working directory display path
             config_dict['working_directory_display'] = str(Path.home() / ".frago" / "projects")
 
             return {
@@ -1296,10 +1296,10 @@ class FragoGuiApi:
         except ValidationError as e:
             return {
                 "status": "error",
-                "error": f"配置验证失败: {e}"
+                "error": f"Config validation failed: {e}"
             }
         except Exception as e:
-            logger.exception("更新认证配置失败")
+            logger.exception("Failed to update auth config")
             return {
                 "status": "error",
                 "error": str(e)
@@ -1307,37 +1307,37 @@ class FragoGuiApi:
 
     @staticmethod
     def _mask_api_key(api_key: str) -> str:
-        """掩码 API key（前4后4，短于8位则完全掩码）
+        """Mask API key (first 4 and last 4, fully mask if shorter than 8 chars)
 
         Args:
-            api_key: 原始 API key
+            api_key: Original API key
 
         Returns:
-            掩码后的 API key
+            Masked API key
         """
         if len(api_key) <= 8:
             return '••••••••'
         return api_key[:4] + '••••' + api_key[-4:]
 
     def open_working_directory(self) -> Dict[str, Any]:
-        """在文件管理器中打开工作目录
+        """Open working directory in file manager
 
-        工作目录固定为 ~/.frago/projects
+        Working directory is fixed to ~/.frago/projects
 
         Returns:
-            {"status": "ok"} 或 {"status": "error", "error": "..."}
+            {"status": "ok"} or {"status": "error", "error": "..."}
         """
         import subprocess
         import sys
 
         try:
-            # 工作目录固定为 ~/.frago/projects
+            # Working directory is fixed to ~/.frago/projects
             work_dir_path = Path.home() / ".frago" / "projects"
 
-            # 确保目录存在
+            # Ensure directory exists
             work_dir_path.mkdir(parents=True, exist_ok=True)
 
-            # 根据操作系统打开文件管理器
+            # Open file manager according to OS
             if sys.platform == 'darwin':  # macOS
                 subprocess.Popen(['open', str(work_dir_path)])
             elif sys.platform == 'win32':  # Windows
@@ -1349,15 +1349,15 @@ class FragoGuiApi:
         except Exception as e:
             return {
                 "status": "error",
-                "error": f"打开目录失败: {str(e)}"
+                "error": f"Failed to open directory: {str(e)}"
             }
 
     # ============================================================
-    # Settings 页面相关 API 方法：环境变量管理
+    # Settings page-related API methods: Environment variable management
     # ============================================================
 
     def get_env_vars(self) -> Dict[str, Any]:
-        """获取用户级环境变量 (~/.frago/.env)
+        """Get user-level environment variables (~/.frago/.env)
 
         Returns:
             {"vars": {...}, "file_exists": bool}
@@ -1368,7 +1368,7 @@ class FragoGuiApi:
             env_path = EnvLoader.USER_ENV_PATH
             loader = EnvLoader()
 
-            # 加载用户级 .env 文件
+            # Load user-level .env file
             env_vars = loader.load_env_file(env_path)
 
             return {
@@ -1377,30 +1377,30 @@ class FragoGuiApi:
             }
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"加载环境变量失败: {e}")
+            logging.getLogger(__name__).error(f"Failed to load environment variables: {e}")
             return {
                 "vars": {},
                 "file_exists": False
             }
 
     def update_env_vars(self, updates: Dict[str, Optional[str]]) -> Dict[str, Any]:
-        """批量更新环境变量
+        """Batch update environment variables
 
         Args:
-            updates: {"KEY": "value", "DELETE_KEY": None} - value=None 表示删除
+            updates: {"KEY": "value", "DELETE_KEY": None} - value=None means delete
 
         Returns:
-            {"status": "ok", "vars": {...}} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "vars": {...}} or {"status": "error", "error": "..."}
         """
         from frago.recipes.env_loader import EnvLoader, update_env_file
 
         try:
             env_path = EnvLoader.USER_ENV_PATH
 
-            # 更新 .env 文件
+            # Update .env file
             update_env_file(env_path, updates)
 
-            # 重新加载并返回
+            # Reload and return
             loader = EnvLoader()
             env_vars = loader.load_env_file(env_path)
 
@@ -1415,7 +1415,7 @@ class FragoGuiApi:
             }
 
     def get_recipe_env_requirements(self) -> List[Dict]:
-        """扫描所有 Recipe 的环境变量需求
+        """Scan all Recipe environment variable requirements
 
         Returns:
             [{
@@ -1431,7 +1431,7 @@ class FragoGuiApi:
         except ImportError:
             import logging
             logging.getLogger(__name__).warning(
-                "python-frontmatter 未安装，无法扫描 Recipe 环境变量需求"
+                "python-frontmatter not installed, unable to scan Recipe environment variable requirements"
             )
             return []
 
@@ -1442,20 +1442,20 @@ class FragoGuiApi:
             Path.home() / ".frago" / "recipes",
         ]
 
-        # 加载当前环境变量
+        # Load current environment variables
         try:
             current_env = EnvLoader().load_all()
         except Exception:
             current_env = {}
 
-        # 扫描 Recipe 目录
+        # Scan Recipe directories
         for recipe_dir in recipe_dirs:
             if not recipe_dir.exists():
                 continue
 
             for md_file in recipe_dir.rglob("recipe.md"):
                 try:
-                    # 解析 frontmatter
+                    # Parse frontmatter
                     post = frontmatter.load(md_file)
                     env_vars = post.metadata.get("env", {})
 
@@ -1465,7 +1465,7 @@ class FragoGuiApi:
                     recipe_name = post.metadata.get("name", md_file.parent.name)
 
                     for var_name, var_def in env_vars.items():
-                        # var_def 可能是字典或简单的默认值
+                        # var_def may be a dict or a simple default value
                         if isinstance(var_def, dict):
                             required = var_def.get("required", False)
                             description = var_def.get("description", "")
@@ -1483,31 +1483,31 @@ class FragoGuiApi:
                 except Exception as e:
                     import logging
                     logging.getLogger(__name__).warning(
-                        f"解析 {md_file} 失败: {e}"
+                        f"Failed to parse {md_file}: {e}"
                     )
                     continue
 
-        # 去重（同一变量被多个 Recipe 使用）
+        # Deduplicate (same variable used by multiple Recipes)
         unique = {}
         for req in requirements:
             key = req["var_name"]
             if key not in unique:
                 unique[key] = req
             else:
-                # 合并 recipe_name
+                # Merge recipe_name
                 unique[key]["recipe_name"] += f", {req['recipe_name']}"
-                # 保留更高优先级的属性（任一 required=True 则为 True）
+                # Keep higher priority attribute (if any required=True, set to True)
                 if req["required"]:
                     unique[key]["required"] = True
 
         return list(unique.values())
 
     # ============================================================
-    # Settings 页面相关 API 方法：GitHub 集成
+    # Settings page-related API methods: GitHub integration
     # ============================================================
 
     def check_gh_cli(self) -> Dict[str, Any]:
-        """检查 gh CLI 安装和登录状态
+        """Check gh CLI installation and login status
 
         Returns:
             {
@@ -1524,7 +1524,7 @@ class FragoGuiApi:
             "username": None
         }
 
-        # 检查 gh 是否安装
+        # Check if gh is installed
         try:
             version_result = subprocess.run(
                 _prepare_command_for_windows(['gh', '--version']),
@@ -1535,7 +1535,7 @@ class FragoGuiApi:
             )
             if version_result.returncode == 0:
                 result["installed"] = True
-                # 解析版本号（格式如 "gh version 2.40.1 (2023-12-13)"）
+                # Parse version number (format like "gh version 2.40.1 (2023-12-13)")
                 import re
                 match = re.search(r'gh version ([\d.]+)', version_result.stdout)
                 if match:
@@ -1543,7 +1543,7 @@ class FragoGuiApi:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return result
 
-        # 检查登录状态
+        # Check login status
         if result["installed"]:
             try:
                 auth_result = subprocess.run(
@@ -1553,10 +1553,10 @@ class FragoGuiApi:
                     encoding='utf-8',
                     timeout=5
                 )
-                # gh auth status 返回 0 表示已登录
+                # gh auth status returns 0 if logged in
                 if auth_result.returncode == 0:
                     result["authenticated"] = True
-                    # 解析用户名（从输出中提取）
+                    # Parse username (extract from output)
                     import re
                     match = re.search(r'Logged in to github\.com as ([^\s]+)', auth_result.stderr)
                     if match:
@@ -1567,10 +1567,10 @@ class FragoGuiApi:
         return result
 
     def gh_auth_login(self) -> Dict[str, Any]:
-        """在外部终端执行 gh auth login
+        """Execute gh auth login in external terminal
 
         Returns:
-            {"status": "ok", "message": "..."} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "message": "..."} or {"status": "error", "error": "..."}
         """
         import platform
 
@@ -1578,77 +1578,77 @@ class FragoGuiApi:
             system = platform.system()
 
             if system == 'Linux':
-                # 尝试 x-terminal-emulator
+                # Try x-terminal-emulator
                 try:
                     subprocess.Popen(
                         ['x-terminal-emulator', '-e', 'gh', 'auth', 'login']
                     )
-                    return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+                    return {"status": "ok", "message": "Terminal opened, please complete login in terminal"}
                 except FileNotFoundError:
-                    # 降级到 gnome-terminal
+                    # Fall back to gnome-terminal
                     try:
                         subprocess.Popen(
                             ['gnome-terminal', '--', 'gh', 'auth', 'login']
                         )
-                        return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+                        return {"status": "ok", "message": "Terminal opened, please complete login in terminal"}
                     except FileNotFoundError:
                         return {
                             "status": "error",
-                            "error": "未找到可用的终端模拟器 (x-terminal-emulator, gnome-terminal)"
+                            "error": "No available terminal emulator found (x-terminal-emulator, gnome-terminal)"
                         }
             elif system == 'Darwin':
                 # macOS
                 script = 'tell application "Terminal" to do script "gh auth login; exit"'
                 subprocess.run(['osascript', '-e', script])
-                return {"status": "ok", "message": "已打开终端，请在终端中完成登录"}
+                return {"status": "ok", "message": "Terminal opened, please complete login in terminal"}
             elif system == 'Windows':
-                # Windows: 优先使用 PowerShell (Windows 10/11 默认)
+                # Windows: Prefer PowerShell (default in Windows 10/11)
                 try:
                     subprocess.Popen(
                         ['powershell', '-NoExit', '-Command', 'gh auth login'],
                         creationflags=subprocess.CREATE_NEW_CONSOLE
                     )
-                    return {"status": "ok", "message": "已打开 PowerShell 窗口，请在窗口中完成登录"}
+                    return {"status": "ok", "message": "PowerShell window opened, please complete login in window"}
                 except FileNotFoundError:
-                    # 回退到 cmd
+                    # Fall back to cmd
                     try:
                         subprocess.Popen(
                             ['cmd', '/c', 'start', 'cmd', '/k', 'gh auth login'],
                             creationflags=subprocess.CREATE_NEW_CONSOLE
                         )
-                        return {"status": "ok", "message": "已打开命令提示符窗口，请在窗口中完成登录"}
+                        return {"status": "ok", "message": "Command Prompt window opened, please complete login in window"}
                     except Exception as e:
-                        return {"status": "error", "error": f"无法打开终端窗口: {e}"}
+                        return {"status": "error", "error": f"Unable to open terminal window: {e}"}
             else:
-                return {"status": "error", "error": f"不支持的操作系统: {system}"}
+                return {"status": "error", "error": f"Unsupported operating system: {system}"}
 
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     def create_sync_repo(self, repo_name: str, private: bool = True) -> Dict[str, Any]:
-        """创建 GitHub 仓库并配置到 config.json
+        """Create GitHub repository and configure in config.json
 
         Args:
-            repo_name: 仓库名称（不含用户名前缀）
-            private: 是否私有仓库
+            repo_name: Repository name (without username prefix)
+            private: Whether repository is private
 
         Returns:
-            {"status": "ok", "repo_url": "..."} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "repo_url": "..."} or {"status": "error", "error": "..."}
         """
         from frago.init.config_manager import update_config
 
         try:
-            # 创建仓库
+            # Create repository
             cmd = ['gh', 'repo', 'create', repo_name]
             if private:
                 cmd.append('--private')
             else:
                 cmd.append('--public')
 
-            # 添加描述
+            # Add description
             cmd.extend(['--description', 'Frago resources sync repository'])
 
-            # 重试机制
+            # Retry mechanism
             max_retries = 3
             last_error = None
 
@@ -1663,9 +1663,9 @@ class FragoGuiApi:
                     )
 
                     if result.returncode == 0:
-                        # 成功创建，解析仓库 URL
-                        # gh repo create 输出类似: ✓ Created repository user/repo on GitHub
-                        # 我们需要获取 SSH URL
+                        # Successfully created, parse repository URL
+                        # gh repo create output is like: ✓ Created repository user/repo on GitHub
+                        # We need to get SSH URL
                         username_result = subprocess.run(
                             _prepare_command_for_windows(['gh', 'api', 'user', '--jq', '.login']),
                             capture_output=True,
@@ -1674,10 +1674,10 @@ class FragoGuiApi:
                             timeout=5
                         )
                         username = username_result.stdout.strip()
-                        # 使用 HTTPS URL，配合 gh credential helper 无需 SSH key
+                        # Use HTTPS URL, works with gh credential helper without SSH key
                         repo_url = f"https://github.com/{username}/{repo_name}.git"
 
-                        # 更新配置
+                        # Update configuration
                         update_config({"sync_repo_url": repo_url})
 
                         return {
@@ -1687,31 +1687,31 @@ class FragoGuiApi:
                     else:
                         last_error = result.stderr.strip()
                         if "already exists" in last_error.lower():
-                            # 仓库已存在，不需要重试
+                            # Repository already exists, no need to retry
                             return {
                                 "status": "error",
-                                "error": f"仓库 {repo_name} 已存在"
+                                "error": f"Repository {repo_name} already exists"
                             }
-                        # 其他错误，继续重试
+                        # Other errors, continue retrying
                         if attempt < max_retries - 1:
                             time.sleep(2)
                             continue
 
                 except subprocess.TimeoutExpired:
-                    last_error = "创建仓库超时"
+                    last_error = "Repository creation timed out"
                     if attempt < max_retries - 1:
                         time.sleep(2)
                         continue
 
             return {
                 "status": "error",
-                "error": last_error or "创建仓库失败"
+                "error": last_error or "Repository creation failed"
             }
 
         except FileNotFoundError:
             return {
                 "status": "error",
-                "error": "gh 命令未找到，请确保已安装 GitHub CLI"
+                "error": "gh command not found, please ensure GitHub CLI is installed"
             }
         except Exception as e:
             return {
@@ -1720,10 +1720,10 @@ class FragoGuiApi:
             }
 
     def list_user_repos(self, limit: int = 100) -> Dict[str, Any]:
-        """列出用户的 GitHub 仓库
+        """List user's GitHub repositories
 
         Args:
-            limit: 最大返回数量，默认 100
+            limit: Maximum number to return, default 100
 
         Returns:
             {
@@ -1743,7 +1743,7 @@ class FragoGuiApi:
         import json
 
         try:
-            # 使用 gh api 获取用户仓库列表
+            # Use gh api to get user repository list
             result = subprocess.run(
                 _prepare_command_for_windows([
                     'gh', 'api', 'user/repos',
@@ -1759,10 +1759,10 @@ class FragoGuiApi:
             if result.returncode != 0:
                 return {
                     "status": "error",
-                    "error": result.stderr.strip() or "获取仓库列表失败"
+                    "error": result.stderr.strip() or "Failed to get repository list"
                 }
 
-            # 解析 JSON Lines 输出
+            # Parse JSON Lines output
             repos = []
             for line in result.stdout.strip().split('\n'):
                 if line:
@@ -1773,48 +1773,48 @@ class FragoGuiApi:
 
             return {
                 "status": "ok",
-                "repos": repos[:limit]  # 确保不超过 limit
+                "repos": repos[:limit]  # Ensure not exceeding limit
             }
 
         except subprocess.TimeoutExpired:
-            return {"status": "error", "error": "获取仓库列表超时"}
+            return {"status": "error", "error": "Repository list retrieval timed out"}
         except FileNotFoundError:
-            return {"status": "error", "error": "gh 命令未找到"}
+            return {"status": "error", "error": "gh command not found"}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     def select_existing_repo(self, repo_url: str) -> Dict[str, Any]:
-        """选择已有仓库作为同步仓库
+        """Select existing repository as sync repository
 
-        支持 SSH 和 HTTPS URL，但会统一转换为 HTTPS URL 以配合 gh credential helper。
+        Supports SSH and HTTPS URLs, but converts to HTTPS URL to work with gh credential helper.
 
         Args:
-            repo_url: 仓库 URL (SSH 或 HTTPS 格式)
+            repo_url: Repository URL (SSH or HTTPS format)
 
         Returns:
-            {"status": "ok", "repo_url": "..."} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "repo_url": "..."} or {"status": "error", "error": "..."}
         """
         from frago.init.config_manager import update_config
         import re
 
         try:
-            # 转换 SSH URL 为 HTTPS URL
+            # Convert SSH URL to HTTPS URL
             # SSH: git@github.com:user/repo.git -> HTTPS: https://github.com/user/repo.git
             ssh_match = re.match(r'git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$', repo_url)
             if ssh_match:
                 owner, repo = ssh_match.group(1), ssh_match.group(2)
                 repo_url = f"https://github.com/{owner}/{repo}.git"
             elif repo_url.startswith('https://github.com/'):
-                # 已经是 HTTPS URL，确保以 .git 结尾
+                # Already HTTPS URL, ensure it ends with .git
                 if not repo_url.endswith('.git'):
                     repo_url = repo_url.rstrip('/') + '.git'
             else:
                 return {
                     "status": "error",
-                    "error": "无效的仓库 URL 格式，请使用 GitHub 仓库地址"
+                    "error": "Invalid repository URL format, please use GitHub repository address"
                 }
 
-            # 更新配置
+            # Update configuration
             update_config({"sync_repo_url": repo_url})
 
             return {
@@ -1829,34 +1829,34 @@ class FragoGuiApi:
             }
 
     def run_first_sync(self) -> Dict[str, Any]:
-        """执行 frago sync（后台线程）
+        """Execute frago sync (background thread)
 
         Returns:
-            {"status": "ok", "message": "同步已开始"}
+            {"status": "ok", "message": "Sync started"}
         """
-        # 检查是否有同步正在运行
+        # Check if sync is already running
         if self._sync_result and self._sync_result.get("status") == "running":
             return {
                 "status": "error",
-                "error": "同步正在进行中，请稍后再试"
+                "error": "Sync in progress, please try again later"
             }
 
-        # 重置同步结果
+        # Reset sync result
         self._sync_result = {"status": "running"}
 
         def sync_task():
-            """后台同步任务"""
+            """Background sync task"""
             try:
                 import shutil
                 frago_path = shutil.which("frago")
                 if not frago_path:
                     self._sync_result = {
                         "status": "error",
-                        "error": "frago 命令未找到"
+                        "error": "frago command not found"
                     }
                     return
 
-                # 先配置 gh credential helper，确保 git 可以使用 gh 的 OAuth token
+                # Configure gh credential helper first, ensure git can use gh's OAuth token
                 gh_path = shutil.which("gh")
                 if gh_path:
                     try:
@@ -1866,10 +1866,10 @@ class FragoGuiApi:
                             timeout=10
                         )
                     except Exception:
-                        pass  # 忽略错误，继续尝试同步
+                        pass  # Ignore errors, continue trying sync
 
-                # 执行 frago sync
-                # 使用 errors='replace' 处理 Windows 上可能的编码问题
+                # Execute frago sync
+                # Use errors='replace' to handle possible encoding issues on Windows
                 process = subprocess.Popen(
                     _prepare_command_for_windows([frago_path, 'sync']),
                     stdout=subprocess.PIPE,
@@ -1877,12 +1877,12 @@ class FragoGuiApi:
                 )
 
                 output_lines = []
-                # 手动解码以处理编码错误
+                # Manually decode to handle encoding errors
                 for line in process.stdout:
                     try:
                         decoded = line.decode('utf-8').strip()
                     except UnicodeDecodeError:
-                        # Windows 可能输出 GBK 编码
+                        # Windows may output GBK encoding
                         try:
                             decoded = line.decode('gbk').strip()
                         except UnicodeDecodeError:
@@ -1900,7 +1900,7 @@ class FragoGuiApi:
                 else:
                     self._sync_result = {
                         "status": "error",
-                        "error": "\n".join(output_lines) or "同步失败"
+                        "error": "\n".join(output_lines) or "Sync failed"
                     }
 
             except Exception as e:
@@ -1909,31 +1909,31 @@ class FragoGuiApi:
                     "error": str(e)
                 }
 
-        # 启动后台线程
+        # Start background thread
         thread = threading.Thread(target=sync_task, daemon=True)
         thread.start()
 
         return {
             "status": "ok",
-            "message": "同步已开始"
+            "message": "Sync started"
         }
 
     def get_sync_result(self) -> Dict[str, Any]:
-        """获取 sync 结果（轮询）
+        """Get sync result (polling)
 
         Returns:
-            {"status": "running"} 或 {"status": "ok", "output": "..."} 或 {"status": "error", "error": "..."}
+            {"status": "running"} or {"status": "ok", "output": "..."} or {"status": "error", "error": "..."}
         """
         if self._sync_result is None:
-            return {"status": "error", "error": "没有正在进行的同步"}
+            return {"status": "error", "error": "No sync in progress"}
 
         return self._sync_result
 
     def check_sync_repo_visibility(self) -> Dict[str, Any]:
-        """检查同步仓库的可见性
+        """Check sync repository visibility
 
         Returns:
-            {"status": "ok", "visibility": "public"/"private"} 或
+            {"status": "ok", "visibility": "public"/"private"} or
             {"status": "error", "error": "..."}
         """
         from frago.init.configurator import load_config
@@ -1946,7 +1946,7 @@ class FragoGuiApi:
             if not repo_url:
                 return {
                     "status": "error",
-                    "error": "未配置同步仓库"
+                    "error": "Sync repository not configured"
                 }
 
             visibility = _check_repo_visibility(repo_url)
@@ -1954,7 +1954,7 @@ class FragoGuiApi:
             if visibility is None:
                 return {
                     "status": "error",
-                    "error": "无法检测仓库可见性（可能未安装 gh CLI 或未登录）"
+                    "error": "Unable to detect repository visibility (gh CLI may not be installed or not logged in)"
                 }
 
             return {
@@ -1970,21 +1970,21 @@ class FragoGuiApi:
             }
 
     def open_tutorial(self, tutorial_id: str, lang: str = "auto", anchor: str = "") -> Dict[str, Any]:
-        """打开教程演示窗口
+        """Open tutorial presentation window
 
-        在新窗口中打开指定的教程演示文稿。
+        Open specified tutorial presentation in new window.
 
         Args:
-            tutorial_id: 教程 ID，如 "intro", "guide", "best-practices", "videos"
-            lang: 语言，"auto" 自动检测，"zh" 中文，"en" 英文
-            anchor: 锚点 ID，用于跳转到页面特定位置，如 "concepts"
+            tutorial_id: Tutorial ID, such as "intro", "guide", "best-practices", "videos"
+            lang: Language, "auto" auto-detect, "zh" Chinese, "en" English
+            anchor: Anchor ID for jumping to specific page position, such as "concepts"
 
         Returns:
-            {"status": "ok", "tutorial_id": "..."} 或 {"status": "error", "error": "..."}
+            {"status": "ok", "tutorial_id": "..."} or {"status": "error", "error": "..."}
         """
         import locale
 
-        # 语言检测
+        # Language detection
         if lang == "auto":
             try:
                 system_lang = locale.getdefaultlocale()[0] or ""
@@ -1992,31 +1992,31 @@ class FragoGuiApi:
             except Exception:
                 lang = "en"
 
-        # 构建路径
+        # Build path
         tips_dir = Path.home() / ".frago" / "tips" / "tutorials"
         filename = f"{tutorial_id}.zh-CN.html" if lang == "zh" else f"{tutorial_id}.html"
         tutorial_path = tips_dir / filename
 
-        # 检查文件是否存在
+        # Check if file exists
         if not tutorial_path.exists():
-            # 尝试回退到英文版
+            # Try falling back to English version
             fallback_path = tips_dir / f"{tutorial_id}.html"
             if fallback_path.exists():
                 tutorial_path = fallback_path
             else:
                 return {
                     "status": "error",
-                    "error": f"教程文件不存在: {tutorial_path}"
+                    "error": f"Tutorial file does not exist: {tutorial_path}"
                 }
 
-        # 在新线程中打开 Viewer 窗口，避免阻塞 GUI
+        # Open Viewer window in new thread to avoid blocking GUI
         def show_viewer():
             try:
                 from frago.viewer import ViewerWindow
 
                 viewer = ViewerWindow(
                     content=tutorial_path,
-                    mode="doc",  # 文档模式：完整页面，可滚动
+                    mode="doc",  # Document mode: full page, scrollable
                     theme="github-dark",
                     title=f"Frago Tutorial",
                     width=900,
@@ -2025,9 +2025,9 @@ class FragoGuiApi:
                 )
                 viewer.show()
             except Exception as e:
-                # 在后台线程中记录错误（无法直接返回给前端）
+                # Log error in background thread (cannot return directly to frontend)
                 import logging
-                logging.getLogger(__name__).error(f"打开教程窗口失败: {e}")
+                logging.getLogger(__name__).error(f"Failed to open tutorial window: {e}")
 
         thread = threading.Thread(target=show_viewer, daemon=True)
         thread.start()

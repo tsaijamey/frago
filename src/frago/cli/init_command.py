@@ -1,11 +1,11 @@
 """
-frago init 命令实现
+frago init command implementation
 
-提供交互式环境初始化功能：
-- 并行检查依赖（Node.js, Claude Code）
-- 智能安装缺失组件
-- 认证方式配置（官方 vs 自定义端点）
-- 配置持久化和更新
+Provides interactive environment initialization features:
+- Parallel dependency checking (Node.js, Claude Code)
+- Smart installation of missing components
+- Authentication method configuration (official vs custom endpoint)
+- Configuration persistence and updates
 """
 
 import sys
@@ -13,7 +13,7 @@ from typing import Dict, Optional
 
 import click
 
-# ASCII Art Banner - 使用块字符创建填充效果
+# ASCII Art Banner - using block characters for fill effect
 FRAGO_BANNER = """\
 ███████╗██████╗  █████╗  ██████╗  ██████╗
 ██╔════╝██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗
@@ -23,7 +23,7 @@ FRAGO_BANNER = """\
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝
 """
 
-# 渐变色配置：从青色过渡到蓝色再到紫色
+# Gradient color configuration: transition from cyan to blue to purple
 GRADIENT_COLORS = [
     (0, 255, 255),    # cyan
     (0, 191, 255),    # deep sky blue
@@ -35,17 +35,17 @@ GRADIENT_COLORS = [
 
 
 def _rgb_to_ansi(r: int, g: int, b: int) -> str:
-    """将 RGB 转换为 ANSI 256 色转义序列"""
+    """Convert RGB to ANSI 256-color escape sequence"""
     return f"\033[38;2;{r};{g};{b}m"
 
 
 def _interpolate_color(color1: tuple, color2: tuple, t: float) -> tuple:
-    """在两个颜色之间线性插值"""
+    """Linear interpolation between two colors"""
     return tuple(int(c1 + (c2 - c1) * t) for c1, c2 in zip(color1, color2))
 
 
 def _get_gradient_color(position: float) -> tuple:
-    """根据位置 (0-1) 获取渐变色"""
+    """Get gradient color based on position (0-1)"""
     if position >= 1.0:
         return GRADIENT_COLORS[-1]
 
@@ -58,7 +58,7 @@ def _get_gradient_color(position: float) -> tuple:
 
 
 def print_banner() -> None:
-    """打印渐变色 ASCII art banner"""
+    """Print gradient ASCII art banner"""
     lines = FRAGO_BANNER.rstrip().split("\n")
     total_lines = len(lines)
     use_color = sys.stdout.isatty()
@@ -113,32 +113,32 @@ from frago.init.ui import (
 @click.option(
     "--skip-deps",
     is_flag=True,
-    help="跳过依赖检查（仅更新配置）",
+    help="Skip dependency check (only update configuration)",
 )
 @click.option(
     "--show-config",
     is_flag=True,
-    help="显示当前配置并退出",
+    help="Show current configuration and exit",
 )
 @click.option(
     "--reset",
     is_flag=True,
-    help="重置配置（删除现有配置后重新初始化）",
+    help="Reset configuration (delete existing configuration and reinitialize)",
 )
 @click.option(
     "--non-interactive",
     is_flag=True,
-    help="非交互模式（使用默认值，适合 CI/CD）",
+    help="Non-interactive mode (use default values, suitable for CI/CD)",
 )
 @click.option(
     "--skip-resources",
     is_flag=True,
-    help="跳过资源安装（Claude Code 命令和示例 recipe）",
+    help="Skip resource installation (Claude Code commands and sample recipes)",
 )
 @click.option(
     "--update-resources",
     is_flag=True,
-    help="强制更新所有资源（包括覆盖已存在的 recipe）",
+    help="Force update all resources (including overwriting existing recipes)",
 )
 def init(
     skip_deps: bool = False,
@@ -149,28 +149,28 @@ def init(
     update_resources: bool = False,
 ) -> None:
     """
-    初始化 Frago 开发环境
+    Initialize Frago development environment
 
-    检查并安装必要的依赖项（Node.js、Claude Code），
-    配置认证方式和相关设置。
+    Check and install necessary dependencies (Node.js, Claude Code),
+    configure authentication method and related settings.
     """
-    # 仅显示配置
+    # Show configuration only
     if show_config:
         _show_current_config()
         sys.exit(InitErrorCode.SUCCESS)
 
-    # 重置模式
+    # Reset mode
     if reset:
         _handle_reset()
 
-    # 打印彩色 banner
+    # Print colored banner
     print_banner()
     print_section("Frago Environment Initialization")
 
-    # 加载现有配置
+    # Load existing configuration
     existing_config = load_config() if config_exists() else None
 
-    # 1. 依赖检查
+    # 1. Dependency check
     deps_satisfied = True
     if not skip_deps:
         deps_satisfied = _check_and_install_dependencies(non_interactive)
@@ -178,7 +178,7 @@ def init(
         click.secho("Skipped dependency check", dim=True)
         click.echo()
 
-    # 2. 安装资源文件（Claude Code 命令和示例 recipe）
+    # 2. Install resource files (Claude Code commands and sample recipes)
     resources_success = False
     if deps_satisfied and not skip_resources:
         resources_success = _install_resources(force_update=update_resources)
@@ -186,13 +186,13 @@ def init(
         click.secho("Skipped resource installation", dim=True)
         click.echo()
 
-    # 3. 配置流程
+    # 3. Configuration process
     if deps_satisfied:
         if not non_interactive:
-            click.echo()  # 空行分隔
+            click.echo()  # Empty line separator
         config = _handle_configuration(existing_config, non_interactive)
 
-        # 4. 更新资源安装状态并保存配置
+        # 4. Update resource installation status and save configuration
         config.init_completed = True
         if resources_success:
             from datetime import datetime
@@ -204,7 +204,7 @@ def init(
         with spinner_context("Saving configuration", "Configuration saved"):
             save_config(config)
 
-        # 5. 显示完成摘要
+        # 5. Display completion summary
         _print_completion_summary(config)
 
     sys.exit(InitErrorCode.SUCCESS)
@@ -212,22 +212,22 @@ def init(
 
 def _print_completion_summary(config: Config) -> None:
     """
-    打印初始化完成摘要（uv 风格）
+    Print initialization completion summary (uv style)
 
     Args:
-        config: 配置对象
+        config: Configuration object
     """
     print_section("Initialization Complete")
 
     items = []
 
-    # 依赖信息
+    # Dependency information
     if config.node_version:
         items.append(("Node.js", config.node_version))
     if config.claude_code_version:
         items.append(("Claude Code", config.claude_code_version))
 
-    # 认证方式
+    # Authentication method
     if config.auth_method == "official":
         items.append(("Authentication", "User configured"))
     else:
@@ -241,7 +241,7 @@ def _print_completion_summary(config: Config) -> None:
 
 
 def _show_current_config() -> None:
-    """显示当前配置和资源状态"""
+    """Show current configuration and resource status"""
     if not config_exists():
         print_section("Frago Configuration")
         click.secho("Not initialized. Run 'frago init' to configure.", dim=True)
@@ -256,9 +256,9 @@ def _show_current_config() -> None:
 
 def _handle_reset() -> None:
     """
-    处理配置重置
+    Handle configuration reset
 
-    删除现有配置，允许重新初始化
+    Delete existing configuration, allowing reinitialization
     """
     if not config_exists():
         click.secho("No configuration to reset", dim=True)
@@ -276,7 +276,7 @@ def _handle_reset() -> None:
         click.secho("Reset cancelled", dim=True)
         sys.exit(InitErrorCode.USER_CANCELLED)
 
-    # 删除配置文件
+    # Delete configuration file
     config_path = get_config_path()
     if config_path.exists():
         config_path.unlink()
@@ -286,18 +286,18 @@ def _handle_reset() -> None:
 
 def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
     """
-    检查并安装依赖
+    Check and install dependencies
 
     Args:
-        non_interactive: 非交互模式
+        non_interactive: Non-interactive mode
 
     Returns:
-        True 如果所有依赖已满足或用户选择跳过安装
+        True if all dependencies are satisfied or user chooses to skip installation
     """
     with spinner_context("Checking dependencies", "Resolved dependencies") as reporter:
         results = parallel_dependency_check()
 
-    # 显示检查结果
+    # Display check results
     reporter = ProgressReporter()
     for name, result in results.items():
         if result.installed:
@@ -308,7 +308,7 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
 
     click.echo()
 
-    # 获取缺失的依赖
+    # Get missing dependencies
     missing = get_missing_dependencies(results)
 
     if missing:
@@ -322,16 +322,16 @@ def _handle_configuration(
     non_interactive: bool = False,
 ) -> Config:
     """
-    处理配置流程
+    Handle configuration process
 
     Args:
-        existing_config: 现有配置（如果存在）
-        non_interactive: 非交互模式
+        existing_config: Existing configuration (if exists)
+        non_interactive: Non-interactive mode
 
     Returns:
-        配置后的 Config 对象
+        Configured Config object
     """
-    # 非交互模式：使用默认配置（官方认证）
+    # Non-interactive mode: use default configuration (official authentication)
     if non_interactive:
         click.secho("Using default configuration", dim=True)
         if existing_config:
@@ -339,14 +339,14 @@ def _handle_configuration(
         return Config(auth_method="official")
 
     if existing_config and existing_config.init_completed:
-        # 已有完整配置，显示摘要并询问是否更新
+        # Have complete configuration, show summary and ask if update needed
         print_section("Current Configuration")
         click.echo(display_config_summary(existing_config))
 
         if not prompt_config_update():
             return existing_config
 
-        # 用户选择更新，警告认证方式切换
+        # User chose to update, warn about authentication method switch
         current_method = existing_config.auth_method
         config = run_auth_configuration(existing_config)
 
@@ -357,7 +357,7 @@ def _handle_configuration(
 
         return config
     else:
-        # 新配置或未完成的配置
+        # New configuration or incomplete configuration
         print_section("Configuration")
         config = run_auth_configuration(existing_config)
 
@@ -370,41 +370,41 @@ def _handle_missing_dependencies(
     non_interactive: bool = False,
 ) -> None:
     """
-    处理缺失的依赖
+    Handle missing dependencies
 
     Args:
-        results: 依赖检查结果
-        missing: 缺失的依赖列表
-        non_interactive: 非交互模式
+        results: Dependency check results
+        missing: List of missing dependencies
+        non_interactive: Non-interactive mode
     """
-    # 显示缺失信息
-    click.echo("[!]  以下依赖需要安装:")
+    # Display missing information
+    click.echo("[!]  The following dependencies need to be installed:")
     for name in missing:
         result = results.get(name)
         if result:
             click.echo(f"  - {result.display_status()}")
     click.echo()
 
-    # 非交互模式：自动安装
+    # Non-interactive mode: auto install
     if non_interactive:
-        click.echo("📦 自动安装依赖（非交互模式）\n")
-    elif not click.confirm("是否安装缺失的依赖?", default=True):
+        click.echo("Installing dependencies automatically (non-interactive mode)\n")
+    elif not click.confirm("Install missing dependencies?", default=True):
         click.secho("Skipped dependency installation", dim=True)
         click.echo()
         return
 
-    # 按顺序安装
+    # Install in order
     node_needed = "node" in missing
     claude_code_needed = "claude-code" in missing
     install_order = get_installation_order(node_needed, claude_code_needed)
 
     click.echo()
 
-    # 追踪是否刚安装了 Node.js 且 npm 不在 PATH 中
+    # Track whether Node.js was just installed and npm is not in PATH
     node_installed_needs_activation = False
 
     for name in install_order:
-        # 对于 claude-code：如果刚安装了 node 且 npm 不可用，使用 nvm fallback
+        # For claude-code: if node was just installed and npm is unavailable, use nvm fallback
         use_nvm = node_installed_needs_activation and name == "claude-code"
 
         requires_restart = _install_with_progress(
@@ -414,21 +414,21 @@ def _handle_missing_dependencies(
         )
 
         if name == "node" and requires_restart:
-            # Node.js 安装成功但 npm 不在 PATH 中
+            # Node.js installed successfully but npm is not in PATH
             node_installed_needs_activation = True
 
-            # 检查是否还有后续依赖
+            # Check if there are remaining dependencies
             remaining = install_order[install_order.index(name) + 1:]
             if remaining:
-                # 尝试用 nvm fallback 安装后续依赖，而不是直接要求重启
+                # Try to install remaining dependencies using nvm fallback instead of requiring restart
                 click.echo()
                 click.secho(
-                    "ℹ️  npm 尚未在当前终端生效，尝试通过 nvm 环境继续安装...",
+                    "npm not yet active in current terminal, attempting to continue installation via nvm environment...",
                     fg="cyan",
                 )
                 continue
 
-        # 如果不是 node，但需要重启（理论上不应该发生）
+        # If not node, but requires restart (shouldn't happen in theory)
         if requires_restart and name != "node":
             _show_restart_required_message([])
             sys.exit(0)
@@ -436,39 +436,39 @@ def _handle_missing_dependencies(
 
 def _show_restart_required_message(remaining_deps: list) -> None:
     """
-    显示需要重启终端的提示
+    Display terminal restart required message
 
     Args:
-        remaining_deps: 剩余需要安装的依赖
+        remaining_deps: Remaining dependencies to install
     """
     from frago.init.installer import _get_shell_config_file
 
     click.echo()
-    click.secho("[!]  Node.js 已安装，但需要激活才能继续", fg="yellow")
+    click.secho("[!]  Node.js installed, but needs to be activated to continue", fg="yellow")
     click.echo()
 
     shell_config = _get_shell_config_file()
     if shell_config:
-        click.echo("请执行以下操作之一：")
+        click.echo("Please perform one of the following operations:")
         click.echo()
-        click.echo(f"  1. 激活当前终端（推荐）:")
+        click.echo(f"  1. Activate current terminal (recommended):")
         click.echo(f"     source {shell_config}")
         click.echo()
-        click.echo("  2. 重启终端")
+        click.echo("  2. Restart terminal")
         click.echo()
     else:
-        click.echo("请重启终端或执行:")
+        click.echo("Please restart terminal or run:")
         click.echo("    source ~/.nvm/nvm.sh")
         click.echo()
 
-    click.echo("然后重新运行:")
+    click.echo("Then run again:")
     click.secho("    frago init", fg="cyan")
     click.echo()
 
     remaining_names = ", ".join(
         "Claude Code" if d == "claude-code" else d for d in remaining_deps
     )
-    click.echo(f"（剩余依赖: {remaining_names}）")
+    click.echo(f"(Remaining dependencies: {remaining_names})")
 
 
 def _install_with_progress(
@@ -477,28 +477,28 @@ def _install_with_progress(
     node_just_installed: bool = False,
 ) -> bool:
     """
-    带进度提示的安装
+    Installation with progress indication
 
     Args:
-        name: 依赖名称
-        use_nvm_fallback: 对于 claude-code，是否在 npm 不可用时使用 nvm 环境
-        node_just_installed: 是否刚安装了 Node.js（用于错误提示）
+        name: Dependency name
+        use_nvm_fallback: For claude-code, whether to use nvm environment when npm is unavailable
+        node_just_installed: Whether Node.js was just installed (for error messages)
 
     Returns:
-        requires_restart: 是否需要重启终端后继续
+        requires_restart: Whether terminal restart is required to continue
     """
     display_name = "Node.js" if name == "node" else "Claude Code"
 
-    click.echo(f"📦 正在安装 {display_name}...")
+    click.echo(f"Installing {display_name}...")
 
     try:
         success, warning, requires_restart = install_dependency(
             name,
             use_nvm_fallback=use_nvm_fallback,
         )
-        click.echo(f"[OK] {display_name} 安装成功")
+        click.echo(f"[OK] {display_name} installed successfully")
 
-        # 显示 Windows PATH 警告（如有）
+        # Display Windows PATH warning (if any)
         if warning:
             click.secho(warning, fg="yellow")
 
@@ -506,10 +506,10 @@ def _install_with_progress(
         return requires_restart
 
     except CommandError as e:
-        click.echo(f"\n[X] {display_name} 安装失败")
+        click.echo(f"\n[X] {display_name} installation failed")
         click.echo(str(e))
 
-        # 如果是因为刚安装 Node.js 导致 npm 不可用，给出更友好的提示
+        # If npm is unavailable due to just installing Node.js, give more friendly message
         if name == "claude-code" and node_just_installed:
             click.echo()
             _show_restart_required_message(["claude-code"])
@@ -519,21 +519,21 @@ def _install_with_progress(
 
 def _install_resources(force_update: bool = False) -> bool:
     """
-    安装资源文件（Claude Code 命令和示例 recipe）
+    Install resource files (Claude Code commands and sample recipes)
 
     Args:
-        force_update: 强制更新所有资源（覆盖已存在的 recipe）
+        force_update: Force update all resources (overwrite existing recipes)
 
     Returns:
-        True 如果资源安装成功（无错误）
+        True if resource installation succeeded (no errors)
 
-    在依赖检查后、配置前调用
+    Called after dependency check, before configuration
     """
     try:
         with spinner_context("Installing resources", "Installed resources") as reporter:
             status = install_all_resources(force_update=force_update)
 
-        # 显示安装详情（uv 风格）
+        # Display installation details (uv style)
         reporter = ProgressReporter()
 
         # Commands
@@ -559,7 +559,7 @@ def _install_resources(force_update: bool = False) -> bool:
 
         click.echo()
 
-        # 检查是否有错误
+        # Check for errors
         if not status.all_success:
             click.secho("Warning: Some resources failed to install", fg="yellow")
             return False

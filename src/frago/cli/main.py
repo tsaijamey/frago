@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Frago CLI - Chrome DevTools Protocol 命令行接口
+Frago CLI - Chrome DevTools Protocol command-line interface
 
-提供向后兼容的CLI接口，支持所有原Shell脚本功能。
+Provides backward-compatible CLI interface supporting all original shell script features.
 """
 
 import sys
@@ -13,15 +13,15 @@ from collections import OrderedDict
 from frago import __version__
 from .commands import (
     status,
-    init as init_dirs,  # 旧的目录初始化命令，保留为 init-dirs
+    init as init_dirs,  # Legacy directory init command, kept as init-dirs
 )
-from .init_command import init  # 新的环境初始化命令
+from .init_command import init  # New environment init command
 from .recipe_commands import recipe_group
 from .skill_commands import skill_group
 from .run_commands import run_group
 from .dev_commands import dev_group
 from .usegit_commands import usegit_group
-from .sync_command import sync_cmd  # Sync 命令
+from .sync_command import sync_cmd  # Sync command
 from .chrome_commands import chrome_group
 from .update_command import update
 from .agent_command import agent, agent_status
@@ -31,38 +31,38 @@ from .view_command import view
 from .agent_friendly import AgentFriendlyGroup
 
 
-# 命令分组定义（按用户角色）
+# Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("日常使用", ["chrome", "recipe", "skill", "run", "view"]),
-    ("会话与智能", ["session", "agent", "agent-status"]),
-    ("环境管理", ["init", "status", "sync", "update"]),
-    ("开发者", ["dev", "init-dirs", "gui-deps"]),
+    ("Daily Use", ["chrome", "recipe", "skill", "run", "view"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status"]),
+    ("Environment", ["init", "status", "sync", "update"]),
+    ("Developer", ["dev", "init-dirs", "gui-deps"]),
 ])
 
-# 需要展开子命令的命令组
+# Command groups to expand subcommands
 EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "session"]
 
-# chrome 子命令分组
+# Chrome subcommand groups
 CHROME_SUBGROUPS = OrderedDict([
-    ("生命周期", ["start", "stop", "status"]),
-    ("Tab 管理", ["list-tabs", "switch-tab"]),
-    ("页面控制", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
-    ("元素交互", ["click", "exec-js", "get-title", "get-content"]),
-    ("视觉效果", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),
+    ("Lifecycle", ["start", "stop", "status"]),
+    ("Tab Management", ["list-tabs", "switch-tab"]),
+    ("Page Control", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
+    ("Element Interaction", ["click", "exec-js", "get-title", "get-content"]),
+    ("Visual Effects", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),
 ])
 
 
 class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
-    """Agent 友好的分组命令组
+    """Agent-friendly grouped command group
 
-    结合：
-    - AgentFriendlyGroup: 增强错误信息
-    - 分组显示: 按类别组织命令
-    - 子命令展开: 在帮助中显示命令组的子命令
+    Combines:
+    - AgentFriendlyGroup: Enhanced error messages
+    - Grouped display: Organize commands by category
+    - Subcommand expansion: Show subcommands of command groups in help
     """
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter):
-        """按分组格式化命令列表，展开子命令组"""
+        """Format command list by groups, expanding subcommand groups"""
         commands: List[Tuple[str, click.Command]] = []
         for subcommand in self.list_commands(ctx):
             cmd = self.get_command(ctx, subcommand)
@@ -73,7 +73,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
         if not commands:
             return
 
-        # 按分组组织命令
+        # Organize commands by groups
         grouped = OrderedDict()
         ungrouped = []
 
@@ -89,7 +89,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
             if not found:
                 ungrouped.append((name, cmd))
 
-        # 按 COMMAND_GROUPS 定义的顺序输出分组命令
+        # Output grouped commands in COMMAND_GROUPS order
         for group_name in COMMAND_GROUPS.keys():
             if group_name not in grouped:
                 continue
@@ -100,20 +100,20 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
                     group_cmds,
                     key=lambda x: COMMAND_GROUPS[group_name].index(x[0])
                 ):
-                    # 检查是否需要展开子命令
+                    # Check if subcommands need to be expanded
                     if name in EXPAND_SUBCOMMANDS and isinstance(cmd, click.Group):
-                        # 先添加组本身
+                        # Add group itself first
                         rows.append((name, cmd.get_short_help_str(limit=formatter.width)))
-                        # 展开子命令
+                        # Expand subcommands
                         subcommand_rows = self._get_subcommand_rows(ctx, name, cmd)
                         rows.extend(subcommand_rows)
                     else:
                         rows.append((name, cmd.get_short_help_str(limit=formatter.width)))
                 formatter.write_dl(rows)
 
-        # 输出未分组命令
+        # Output ungrouped commands
         if ungrouped:
-            with formatter.section("其他"):
+            with formatter.section("Other"):
                 formatter.write_dl([
                     (name, cmd.get_short_help_str(limit=formatter.width))
                     for name, cmd in ungrouped
@@ -125,14 +125,14 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
         group_name: str,
         group_cmd: click.Group
     ) -> List[Tuple[str, str]]:
-        """获取命令组的子命令行（带缩进前缀）"""
+        """Get subcommand rows for a command group (with indent prefix)"""
         rows = []
 
-        # 创建子上下文以获取子命令列表
+        # Create sub-context to get subcommand list
         with ctx.scope() as sub_ctx:
             sub_ctx.info_name = group_name
 
-            # 获取所有子命令
+            # Get all subcommands
             subcmds = {}
             for subcmd_name in group_cmd.list_commands(sub_ctx):
                 subcmd = group_cmd.get_command(sub_ctx, subcmd_name)
@@ -140,10 +140,10 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
                     continue
                 subcmds[subcmd_name] = subcmd
 
-            # chrome 命令组使用分组显示
+            # Chrome command group uses grouped display
             if group_name == "chrome" and CHROME_SUBGROUPS:
                 for subgroup_name, subgroup_cmds in CHROME_SUBGROUPS.items():
-                    # 添加分组标签
+                    # Add group label
                     rows.append((f"  [{subgroup_name}]", ""))
                     for subcmd_name in subgroup_cmds:
                         if subcmd_name in subcmds:
@@ -152,7 +152,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
                             help_str = subcmd.get_short_help_str(limit=55)
                             rows.append((full_name, help_str))
             else:
-                # 其他命令组扁平显示
+                # Other command groups use flat display
                 for subcmd_name, subcmd in subcmds.items():
                     full_name = f"  {group_name} {subcmd_name}"
                     help_str = subcmd.get_short_help_str(limit=60)
@@ -166,66 +166,66 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
 @click.option(
     '--gui',
     is_flag=True,
-    help='启动 GUI 应用模式'
+    help='Launch GUI application mode'
 )
 @click.option(
     '--gui-background',
     is_flag=True,
     hidden=True,
-    help='内部选项：以后台模式启动 GUI（供 subprocess 调用）'
+    help='Internal option: Launch GUI in background mode (for subprocess calls)'
 )
 @click.option(
     '--debug',
     is_flag=True,
-    help='启用调试模式，输出详细日志'
+    help='Enable debug mode with verbose logging'
 )
 @click.option(
     '--timeout',
     type=int,
     default=30,
-    help='设置操作超时时间（秒），默认30秒'
+    help='Set operation timeout in seconds, default 30'
 )
 @click.option(
     '--host',
     type=str,
     default='127.0.0.1',
-    help='Chrome DevTools Protocol 主机地址，默认127.0.0.1'
+    help='Chrome DevTools Protocol host address, default 127.0.0.1'
 )
 @click.option(
     '--port',
     type=int,
     default=9222,
-    help='Chrome DevTools Protocol 端口，默认9222'
+    help='Chrome DevTools Protocol port, default 9222'
 )
 @click.option(
     '--proxy-host',
     type=str,
-    help='代理服务器主机地址（支持环境变量HTTP_PROXY/HTTPS_PROXY）'
+    help='Proxy server host (supports HTTP_PROXY/HTTPS_PROXY env vars)'
 )
 @click.option(
     '--proxy-port',
     type=int,
-    help='代理服务器端口'
+    help='Proxy server port'
 )
 @click.option(
     '--proxy-username',
     type=str,
-    help='代理认证用户名'
+    help='Proxy authentication username'
 )
 @click.option(
     '--proxy-password',
     type=str,
-    help='代理认证密码'
+    help='Proxy authentication password'
 )
 @click.option(
     '--no-proxy',
     is_flag=True,
-    help='绕过代理连接（忽略环境变量和代理配置）'
+    help='Bypass proxy (ignore env vars and proxy config)'
 )
 @click.option(
     '--target-id',
     type=str,
-    help='指定目标tab的ID，用于在多tab环境下精确控制操作哪个页面'
+    help='Specify target tab ID for precise control in multi-tab environments'
 )
 @click.pass_context
 def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: str, port: int,
@@ -233,17 +233,17 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
         proxy_username: Optional[str], proxy_password: Optional[str],
         no_proxy: bool, target_id: Optional[str]):
     """
-    Frago - AI Agent 多运行时自动化基础设施
+    Frago - AI Agent Multi-Runtime Automation Infrastructure
 
     \b
-    三大核心系统:
-      - Run System   持久化任务上下文，记录完整探索过程
-      - Recipe System 元数据驱动的可复用自动化脚本
-      - Chrome CDP    浏览器自动化底层能力
+    Three Core Systems:
+      - Run System    Persistent task context, records complete exploration process
+      - Recipe System Metadata-driven reusable automation scripts
+      - Chrome CDP    Browser automation low-level capabilities
 
     \b
-    GUI 模式:
-      frago --gui    启动桌面 GUI 应用界面
+    GUI Mode:
+      frago --gui    Launch desktop GUI application
     """
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
@@ -260,7 +260,7 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     # Handle --gui or --gui-background option
     if gui or gui_background:
         from frago.gui.app import start_gui
-        # gui_background 表示这是由 subprocess 启动的后台进程，直接运行 GUI
+        # gui_background means this is a background process started by subprocess, run GUI directly
         start_gui(debug=debug, _background=gui_background)
         return
 
@@ -270,55 +270,55 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
         return
 
     if debug:
-        click.echo(f"调试模式已启用 - 主机: {host}:{port}, 超时: {timeout}s")
+        click.echo(f"Debug mode enabled - Host: {host}:{port}, Timeout: {timeout}s")
         if no_proxy:
-            click.echo("代理已禁用 (--no-proxy)")
+            click.echo("Proxy disabled (--no-proxy)")
         elif proxy_host and proxy_port:
-            click.echo(f"代理配置: {proxy_host}:{proxy_port}")
+            click.echo(f"Proxy config: {proxy_host}:{proxy_port}")
 
 
-# 注册顶层命令
-cli.add_command(init)  # 新的环境初始化命令
-cli.add_command(init_dirs, name="init-dirs")  # 旧的目录初始化命令
-cli.add_command(status)  # CDP 连接状态（保留在顶层便于快速检查）
-cli.add_command(sync_cmd, name="sync")  # 资源同步命令
-cli.add_command(update)  # 自我更新命令
-cli.add_command(gui_deps)  # GUI 依赖检查命令
+# Register top-level commands
+cli.add_command(init)  # New environment init command
+cli.add_command(init_dirs, name="init-dirs")  # Legacy directory init command
+cli.add_command(status)  # CDP connection status (kept at top level for quick checks)
+cli.add_command(sync_cmd, name="sync")  # Resource sync command
+cli.add_command(update)  # Self-update command
+cli.add_command(gui_deps)  # GUI dependency check command
 
-# 命令组
-cli.add_command(dev_group)  # 开发者命令组: dev pack
-cli.add_command(usegit_group)  # Git 同步命令组: use-git sync（已废弃，请使用 sync）
-cli.add_command(chrome_group)  # Chrome CDP 命令组
+# Command groups
+cli.add_command(dev_group)  # Developer command group: dev pack
+cli.add_command(usegit_group)  # Git sync command group: use-git sync (deprecated, use sync)
+cli.add_command(chrome_group)  # Chrome CDP command group
 
-# Recipe 管理命令组
+# Recipe management command group
 cli.add_command(recipe_group)
 
-# Skill 管理命令组
+# Skill management command group
 cli.add_command(skill_group)
 
-# Run 命令系统
+# Run command system
 cli.add_command(run_group)
 
-# Agent 命令
+# Agent commands
 cli.add_command(agent)
 cli.add_command(agent_status)
 
-# Session 管理命令组
+# Session management command group
 cli.add_command(session_group)
 
-# View 命令 - 通用内容查看器
+# View command - universal content viewer
 cli.add_command(view)
 
 
 def main():
-    """CLI入口点"""
+    """CLI entry point"""
     try:
         cli()
     except KeyboardInterrupt:
-        click.echo("\n操作已取消", err=True)
+        click.echo("\nOperation cancelled", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 

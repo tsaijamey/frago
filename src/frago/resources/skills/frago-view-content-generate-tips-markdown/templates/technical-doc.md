@@ -1,29 +1,29 @@
-# 功能名称
+# Feature Name
 
-简短描述功能用途（1-2 句话）。
+Brief description of feature purpose (1-2 sentences).
 
-## 概述
+## Overview
 
-2-3 句话说明核心价值和解决的问题。
+2-3 sentences explaining the core value and problems it solves.
 
-## 使用方法
+## Usage
 
-### 基本用法
+### Basic Usage
 
 ```python
-# 基础示例代码
+# Basic example code
 from module import feature
 
 result = feature.do_something()
 print(result)
 ```
 
-说明基本用法的要点。
+Key points about basic usage.
 
-### 高级用法
+### Advanced Usage
 
 ```python
-# 进阶示例代码
+# Advanced example code
 from module import feature
 
 config = {
@@ -34,44 +34,44 @@ config = {
 result = feature.do_something_advanced(config)
 ```
 
-说明高级用法的场景和注意事项。
+Scenarios and considerations for advanced usage.
 
-## 配置选项
+## Configuration Options
 
-| 选项 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `option1` | string | `"default"` | 选项 1 的作用 |
-| `option2` | boolean | `false` | 选项 2 的作用 |
-| `option3` | number | `10` | 选项 3 的作用 |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `option1` | string | `"default"` | Purpose of option 1 |
+| `option2` | boolean | `false` | Purpose of option 2 |
+| `option3` | number | `10` | Purpose of option 3 |
 
-## 工作流程
+## Workflow
 
 ```mermaid
 flowchart LR
-    A[输入] --> B[处理]
-    B --> C{判断}
-    C -->|成功| D[输出]
-    C -->|失败| E[错误处理]
+    A[Input] --> B[Process]
+    B --> C{Decision}
+    C -->|Success| D[Output]
+    C -->|Failure| E[Error Handling]
     E --> B
 ```
 
-## 注意事项
+## Important Notes
 
-- 注意事项 1：说明重要的限制或前提条件
-- 注意事项 2：说明常见的错误用法
-- 注意事项 3：说明性能或安全考量
+- Note 1: Important limitations or prerequisites
+- Note 2: Common incorrect usage patterns
+- Note 3: Performance or security considerations
 
-## 常见问题
+## FAQ
 
-### Q: 问题 1？
+### Q: Question 1?
 
-A: 问题 1 的解答。
+A: Answer to question 1.
 
-### Q: 问题 2？
+### Q: Question 2?
 
-A: 问题 2 的解答。
+A: Answer to question 2.
 
-## 参考
+## References
 
-- [相关文档 1](url)
-- [相关文档 2](url)
+- [Related Documentation 1](url)
+- [Related Documentation 2](url)

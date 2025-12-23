@@ -1,17 +1,17 @@
 <!--
-用途：reveal.js 演示文稿基础骨架
-说明：frago view 自动注入 reveal.js 库，无需手动引入
-预览：frago view slides.html --theme dracula
+Purpose: Basic reveal.js presentation structure
+Note: frago view automatically injects reveal.js library, no manual import needed
+Preview: frago view slides.html --theme dracula
 -->
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>演示标题</title>
+    <title>Presentation Title</title>
     <style>
-        /* 全局自定义样式 */
+        /* Global custom styles */
         .slides {
-            /* 可在此添加全局样式 */
+            /* Add global styles here */
         }
     </style>
 </head>
@@ -19,63 +19,63 @@
     <div class="reveal">
         <div class="slides">
 
-            <!-- 封面 -->
+            <!-- Cover -->
             <section>
-                <h1>演示标题</h1>
-                <h3>副标题</h3>
-                <p>演讲者 | 日期</p>
+                <h1>Presentation Title</h1>
+                <h3>Subtitle</h3>
+                <p>Speaker | Date</p>
             </section>
 
-            <!-- 目录 -->
+            <!-- Table of Contents -->
             <section>
-                <h2>目录</h2>
+                <h2>Agenda</h2>
                 <ul>
-                    <li>章节 1</li>
-                    <li>章节 2</li>
-                    <li>章节 3</li>
-                    <li>总结</li>
+                    <li>Section 1</li>
+                    <li>Section 2</li>
+                    <li>Section 3</li>
+                    <li>Summary</li>
                 </ul>
             </section>
 
-            <!-- 章节 1（含子页面） -->
+            <!-- Section 1 (with sub-pages) -->
             <section>
                 <section>
-                    <h2>章节 1 标题</h2>
-                    <p>章节概述</p>
+                    <h2>Section 1 Title</h2>
+                    <p>Section overview</p>
                 </section>
                 <section>
-                    <h3>详情 1</h3>
+                    <h3>Details 1</h3>
                     <ul>
-                        <li class="fragment">要点 1</li>
-                        <li class="fragment">要点 2</li>
-                        <li class="fragment">要点 3</li>
+                        <li class="fragment">Point 1</li>
+                        <li class="fragment">Point 2</li>
+                        <li class="fragment">Point 3</li>
                     </ul>
                 </section>
             </section>
 
-            <!-- 章节 2 -->
+            <!-- Section 2 -->
             <section>
-                <h2>章节 2 标题</h2>
-                <p>内容...</p>
+                <h2>Section 2 Title</h2>
+                <p>Content...</p>
             </section>
 
-            <!-- 章节 3 -->
+            <!-- Section 3 -->
             <section>
-                <h2>章节 3 标题</h2>
+                <h2>Section 3 Title</h2>
                 <pre><code class="language-python">
 def example():
     return "Hello, World!"
                 </code></pre>
             </section>
 
-            <!-- 总结 -->
+            <!-- Summary -->
             <section>
-                <h2>总结</h2>
+                <h2>Summary</h2>
                 <ul>
-                    <li class="fragment">结论 1</li>
-                    <li class="fragment">结论 2</li>
+                    <li class="fragment">Conclusion 1</li>
+                    <li class="fragment">Conclusion 2</li>
                 </ul>
-                <p class="fragment"><strong>谢谢！</strong></p>
+                <p class="fragment"><strong>Thank You!</strong></p>
             </section>
 
         </div>

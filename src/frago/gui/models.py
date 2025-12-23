@@ -16,12 +16,12 @@ if TYPE_CHECKING:
 
 
 def _ensure_utc(dt: datetime) -> datetime:
-    """确保 datetime 为 UTC 时区
+    """Ensure datetime is in UTC timezone
 
-    如果没有时区信息，假设为本地时间并转换为 UTC。
+    If no timezone info, assume local time and convert to UTC.
     """
     if dt.tzinfo is None:
-        # 无时区信息，假设为本地时间，先附加本地时区再转换为 UTC
+        # No timezone info, assume local time, attach local timezone then convert to UTC
         return dt.astimezone().astimezone(timezone.utc)
     return dt.astimezone(timezone.utc)
 
@@ -37,29 +37,29 @@ class TaskStatus(Enum):
 
 
 # ============================================================
-# 011-gui-tasks-redesign: 新增任务状态枚举（用于 Tasks 页面显示）
+# 011-gui-tasks-redesign: New task status enum (for Tasks page display)
 # ============================================================
 
 
 class GUITaskStatus(str, Enum):
-    """任务状态（GUI Tasks 页面展示用）
+    """Task status (for GUI Tasks page display)
 
-    使用字符串枚举以便 JSON 序列化。
-    颜色映射：
-    - RUNNING: 黄色 (var(--accent-warning))
-    - COMPLETED: 绿色 (var(--accent-success))
-    - ERROR: 红色 (var(--accent-error))
-    - CANCELLED: 红色 (var(--accent-error))
+    Uses string enum for JSON serialization.
+    Color mapping:
+    - RUNNING: yellow (var(--accent-warning))
+    - COMPLETED: green (var(--accent-success))
+    - ERROR: red (var(--accent-error))
+    - CANCELLED: red (var(--accent-error))
     """
 
-    RUNNING = "running"  # 进行中 - 黄色
-    COMPLETED = "completed"  # 已完成 - 绿色
-    ERROR = "error"  # 出错 - 红色
-    CANCELLED = "cancelled"  # 已取消 - 红色
+    RUNNING = "running"  # In progress - yellow
+    COMPLETED = "completed"  # Completed - green
+    ERROR = "error"  # Error - red
+    CANCELLED = "cancelled"  # Cancelled - red
 
     @property
     def color(self) -> str:
-        """返回状态对应的 CSS 颜色变量"""
+        """Return CSS color variable for status"""
         colors = {
             GUITaskStatus.RUNNING: "var(--accent-warning)",
             GUITaskStatus.COMPLETED: "var(--accent-success)",
@@ -70,7 +70,7 @@ class GUITaskStatus(str, Enum):
 
     @property
     def icon(self) -> str:
-        """返回状态图标"""
+        """Return status icon"""
         icons = {
             GUITaskStatus.RUNNING: "●",
             GUITaskStatus.COMPLETED: "✓",
@@ -81,12 +81,12 @@ class GUITaskStatus(str, Enum):
 
     @property
     def label(self) -> str:
-        """返回状态标签（中文）"""
+        """Return status label"""
         labels = {
-            GUITaskStatus.RUNNING: "进行中",
-            GUITaskStatus.COMPLETED: "已完成",
-            GUITaskStatus.ERROR: "出错",
-            GUITaskStatus.CANCELLED: "已取消",
+            GUITaskStatus.RUNNING: "Running",
+            GUITaskStatus.COMPLETED: "Completed",
+            GUITaskStatus.ERROR: "Error",
+            GUITaskStatus.CANCELLED: "Cancelled",
         }
         return labels[self]
 
@@ -103,21 +103,21 @@ class PageType(Enum):
     """GUI page types.
 
     Updated for 011-gui-tasks-redesign:
-    - 新增 TIPS 页面（默认启动页）
-    - 新增 TASKS 页面（原 HOME 重命名）
-    - 新增 TASK_DETAIL 页面（任务详情）
-    - 移除 HISTORY（合并到 TASKS）
+    - Added TIPS page (default startup page)
+    - Added TASKS page (renamed from HOME)
+    - Added TASK_DETAIL page (task details)
+    - Removed HISTORY (merged into TASKS)
     """
 
-    TIPS = "tips"  # 新增：Tips 页面（默认）
-    TASKS = "tasks"  # 新增：Tasks 页面（原 home）
-    TASK_DETAIL = "task_detail"  # 新增：任务详情页
-    HOME = "home"  # 保留：兼容旧代码
-    RECIPES = "recipes"  # 保留
-    RECIPE_DETAIL = "recipe_detail"  # 保留
-    SKILLS = "skills"  # 保留
-    HISTORY = "history"  # 保留：兼容旧代码
-    SETTINGS = "settings"  # 保留
+    TIPS = "tips"  # Added: Tips page (default)
+    TASKS = "tasks"  # Added: Tasks page (formerly home)
+    TASK_DETAIL = "task_detail"  # Added: Task detail page
+    HOME = "home"  # Kept: Compatibility with old code
+    RECIPES = "recipes"  # Kept
+    RECIPE_DETAIL = "recipe_detail"  # Kept
+    SKILLS = "skills"  # Kept
+    HISTORY = "history"  # Kept: Compatibility with old code
+    SETTINGS = "settings"  # Kept
 
 
 class CommandType(Enum):
@@ -145,7 +145,7 @@ class WindowConfig:
     width: int = 600
     height: int = 1434
     title: str = "frago"
-    frameless: bool = False  # 使用原生窗口标题栏，让关闭按钮正常工作
+    frameless: bool = False  # Use native window title bar to make close button work properly
     resizable: bool = False
     min_width: int = 400
     min_height: int = 600
@@ -316,33 +316,33 @@ class StreamMessage:
 
 
 # ============================================================
-# 011-gui-tasks-redesign: Tasks 页面数据模型
+# 011-gui-tasks-redesign: Tasks page data models
 # ============================================================
 
 
 class ToolUsageStat(BaseModel):
-    """工具使用统计"""
+    """Tool usage statistics"""
 
-    name: str = Field(..., description="工具名称")
-    count: int = Field(..., ge=0, description="使用次数")
+    name: str = Field(..., description="Tool name")
+    count: int = Field(..., ge=0, description="Usage count")
 
 
 class TaskSummary(BaseModel):
-    """任务摘要 - 会话完成后生成"""
+    """Task summary - generated after session completion"""
 
-    total_duration_ms: int = Field(..., ge=0, description="总耗时")
-    user_message_count: int = Field(0, description="用户消息数")
-    assistant_message_count: int = Field(0, description="助手消息数")
-    tool_call_count: int = Field(0, description="工具调用总数")
-    tool_success_count: int = Field(0, description="成功的工具调用")
-    tool_error_count: int = Field(0, description="失败的工具调用")
+    total_duration_ms: int = Field(..., ge=0, description="Total duration")
+    user_message_count: int = Field(0, description="User message count")
+    assistant_message_count: int = Field(0, description="Assistant message count")
+    tool_call_count: int = Field(0, description="Total tool call count")
+    tool_success_count: int = Field(0, description="Successful tool calls")
+    tool_error_count: int = Field(0, description="Failed tool calls")
     most_used_tools: List[ToolUsageStat] = Field(
-        default_factory=list, description="最常用工具"
+        default_factory=list, description="Most used tools"
     )
 
     @classmethod
     def from_session_summary(cls, summary: "SessionSummary") -> "TaskSummary":
-        """从 SessionSummary 转换"""
+        """Convert from SessionSummary"""
         from frago.session.models import SessionSummary as SS
 
         return cls(
@@ -360,18 +360,18 @@ class TaskSummary(BaseModel):
 
 
 class TaskStep(BaseModel):
-    """任务步骤 - GUI 展示用"""
+    """Task step - for GUI display"""
 
-    step_id: int = Field(..., ge=1, description="步骤序号")
-    type: str = Field(..., description="步骤类型")
-    timestamp: datetime = Field(..., description="时间戳")
-    content: str = Field(..., description="内容摘要")
-    tool_name: Optional[str] = Field(None, description="工具名称")
-    tool_status: Optional[str] = Field(None, description="工具调用状态")
+    step_id: int = Field(..., ge=1, description="Step number")
+    type: str = Field(..., description="Step type")
+    timestamp: datetime = Field(..., description="Timestamp")
+    content: str = Field(..., description="Content summary")
+    tool_name: Optional[str] = Field(None, description="Tool name")
+    tool_status: Optional[str] = Field(None, description="Tool call status")
 
     @classmethod
     def from_session_step(cls, step: "SessionStep") -> "TaskStep":
-        """从 SessionStep 转换"""
+        """Convert from SessionStep"""
         return cls(
             step_id=step.step_id,
             type=step.type.value,
@@ -383,26 +383,26 @@ class TaskStep(BaseModel):
 
 
 class TaskItem(BaseModel):
-    """任务列表项 - 用于 Tasks 页面"""
+    """Task list item - for Tasks page"""
 
-    session_id: str = Field(..., description="会话 ID（唯一标识）")
-    name: str = Field(..., description="任务名称（从首条消息提取）")
-    status: GUITaskStatus = Field(..., description="任务状态")
-    started_at: datetime = Field(..., description="开始时间")
-    ended_at: Optional[datetime] = Field(None, description="结束时间")
-    duration_ms: int = Field(0, ge=0, description="持续时间（毫秒）")
-    step_count: int = Field(0, ge=0, description="步骤总数")
-    tool_call_count: int = Field(0, ge=0, description="工具调用次数")
-    last_activity: datetime = Field(..., description="最后活动时间")
-    project_path: str = Field(..., description="关联项目路径")
+    session_id: str = Field(..., description="Session ID (unique identifier)")
+    name: str = Field(..., description="Task name (extracted from first message)")
+    status: GUITaskStatus = Field(..., description="Task status")
+    started_at: datetime = Field(..., description="Start time")
+    ended_at: Optional[datetime] = Field(None, description="End time")
+    duration_ms: int = Field(0, ge=0, description="Duration (milliseconds)")
+    step_count: int = Field(0, ge=0, description="Total step count")
+    tool_call_count: int = Field(0, ge=0, description="Tool call count")
+    last_activity: datetime = Field(..., description="Last activity time")
+    project_path: str = Field(..., description="Associated project path")
 
     @classmethod
     def from_session(cls, session: "MonitoredSession") -> "TaskItem":
-        """从 MonitoredSession 转换"""
+        """Convert from MonitoredSession"""
         from frago.session.models import SessionStatus
         from frago.session.storage import get_session_dir
 
-        # 计算持续时间（确保所有时间戳使用 UTC 时区）
+        # Calculate duration (ensure all timestamps use UTC timezone)
         started = _ensure_utc(session.started_at)
 
         if session.ended_at:
@@ -412,10 +412,10 @@ class TaskItem(BaseModel):
             now = datetime.now(timezone.utc)
             duration = now - started
 
-        # 从 steps.jsonl 提取第一条 user_message 作为任务名称
+        # Extract first user_message from steps.jsonl as task name
         name = cls._extract_task_name(session.session_id)
 
-        # 映射状态
+        # Map status
         status_map = {
             SessionStatus.RUNNING: GUITaskStatus.RUNNING,
             SessionStatus.COMPLETED: GUITaskStatus.COMPLETED,
@@ -439,25 +439,26 @@ class TaskItem(BaseModel):
 
     @staticmethod
     def _extract_task_name(session_id: str, max_length: int = 100) -> str:
-        """从 steps.jsonl 提取任务名称
+        """Extract task name from steps.jsonl
 
-        核心策略：找到第一条有效的 assistant_message，然后找时间戳最接近
-        且早于它的 user_message，从该消息提取标题。
+        Core strategy: Find the first valid assistant_message, then find the user_message
+        with the closest timestamp that's earlier than it, and extract title from that message.
 
-        这样可以跳过预热消息（如 "Warmup"），找到真正触发 assistant 回复的用户消息。
+        This skips warmup messages (like "Warmup") and finds the user message that actually
+        triggered the assistant response.
 
-        提取优先级：
-        1. frago_task: 从 "## 当前任务" 提取实际任务
-        2. command-args: 从 <command-args> 提取用户输入
-        3. command-message: 提取命令名作为标题
-        4. 直接用户输入: 第一行非系统内容
+        Extraction priority:
+        1. frago_task: Extract actual task from "## Current Task"
+        2. command-args: Extract user input from <command-args>
+        3. command-message: Extract command name as title
+        4. Direct user input: First line of non-system content
 
         Args:
-            session_id: 会话 ID
-            max_length: 名称最大长度
+            session_id: Session ID
+            max_length: Maximum name length
 
         Returns:
-            任务名称，如果无法提取则返回默认名称
+            Task name, or default name if extraction fails
         """
         import json
         import re
@@ -468,21 +469,21 @@ class TaskItem(BaseModel):
         default_name = f"Task {session_id[:8]}..."
 
         def parse_timestamp(ts: str) -> datetime:
-            """解析时间戳，处理多种格式"""
+            """Parse timestamp, handling multiple formats"""
             return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
         def extract_title_from_content(content: str) -> str | None:
-            """从消息内容提取标题"""
-            # 1. frago_task: 检查是否为 /frago.* 系统 prompt
+            """Extract title from message content"""
+            # 1. frago_task: Check if it's a /frago.* system prompt
             if content.startswith("# /frago"):
-                task_match = re.search(r"## 当前任务\s*\n+(.+?)(?:\n\n|$)", content, re.DOTALL)
+                task_match = re.search(r"## Current Task\s*\n+(.+?)(?:\n\n|$)", content, re.DOTALL)
                 if task_match:
                     task = task_match.group(1).strip()
                     if task:
                         return task[:max_length] + "..." if len(task) > max_length else task
-                return None  # frago prompt 但没找到当前任务，返回 None 继续查找
+                return None  # frago prompt but no current task found, return None to continue search
 
-            # 2. 尝试从 <command-args> 提取用户实际输入
+            # 2. Try to extract user actual input from <command-args>
             args_match = re.search(r"<command-args>(.*?)(?:</command-args>|$)", content, re.DOTALL)
             if args_match:
                 user_input = args_match.group(1).strip()
@@ -491,20 +492,20 @@ class TaskItem(BaseModel):
                     return user_input[:max_length] + "..." if len(user_input) > max_length else user_input
                 return None
 
-            # 3. 提取 command-message 中的命令名
+            # 3. Extract command name from command-message
             cmd_match = re.search(r"<command-message>(\S+)\s+is running", content)
             if cmd_match:
                 cmd_name = cmd_match.group(1)
                 return f"/{cmd_name}"
 
-            # 4. 移除系统消息标签，提取真实内容
+            # 4. Remove system message tags, extract real content
             cleaned = re.sub(r"<command-message>.*?</command-message>", "", content, flags=re.DOTALL)
             cleaned = re.sub(r"<command-name>.*?</command-name>", "", cleaned, flags=re.DOTALL)
             cleaned = cleaned.strip()
 
             if cleaned:
                 first_line = cleaned.split("\n")[0].strip()
-                # 跳过以 # 开头的标题行（通常是系统 prompt）
+                # Skip lines starting with # (usually system prompts)
                 if first_line.startswith("#"):
                     return None
                 if first_line:
@@ -519,7 +520,7 @@ class TaskItem(BaseModel):
             if not steps_path.exists():
                 return default_name
 
-            # 读取所有步骤
+            # Read all steps
             steps = []
             with open(steps_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -529,10 +530,10 @@ class TaskItem(BaseModel):
             if not steps:
                 return default_name
 
-            # 空回复的各种表达形式
-            empty_replies = {"(空回复)", "(empty)", "(Empty reply)", ""}
+            # Various forms of empty replies
+            empty_replies = {"(empty reply)", "(empty)", "(Empty reply)", ""}
 
-            # 1. 找第一条非空的 assistant_message
+            # 1. Find first non-empty assistant_message
             first_valid_assistant = None
             for step in steps:
                 if step.get("type") == "assistant_message":
@@ -546,12 +547,12 @@ class TaskItem(BaseModel):
 
             assistant_ts = parse_timestamp(first_valid_assistant["timestamp"])
 
-            # 2. 找时间戳早于 assistant 且最接近的 user_message
+            # 2. Find user_message with timestamp earlier than assistant and closest to it
             candidates = []
             for step in steps:
                 if step.get("type") == "user_message":
                     content = step.get("content_summary", "") or step.get("content", "")
-                    # 跳过系统消息
+                    # Skip system messages
                     if not content:
                         continue
                     if content.startswith("Caveat:") or content.startswith("<local-command"):
@@ -569,10 +570,10 @@ class TaskItem(BaseModel):
             if not candidates:
                 return default_name
 
-            # 按时间戳排序，取最接近 assistant 的（即最晚的）
+            # Sort by timestamp, take the closest to assistant (i.e., the latest)
             candidates.sort(key=lambda x: x[0], reverse=True)
 
-            # 依次尝试提取标题
+            # Try to extract title from each candidate
             for _, content in candidates:
                 title = extract_title_from_content(content)
                 if title:
@@ -584,40 +585,40 @@ class TaskItem(BaseModel):
 
     @staticmethod
     def should_display(session: "MonitoredSession") -> bool:
-        """判断会话是否应该在任务列表中展示
+        """Determine if session should be displayed in task list
 
-        展示条件（满足任一）：
-        1. 正在运行的任务
-        2. 步骤数 >= 10
-        3. 有 summary 且步骤数 >= 5
+        Display criteria (any of):
+        1. Running task
+        2. Step count >= 10
+        3. Has summary and step count >= 5
 
-        排除条件：
-        1. 步骤数 < 5 且已完成
-        2. 无 assistant 消息 且 步骤数 < 10（系统会话特征）
+        Exclusion criteria:
+        1. Step count < 5 and completed
+        2. No assistant messages and step count < 10 (system session characteristics)
 
         Args:
-            session: 会话元数据
+            session: Session metadata
 
         Returns:
-            是否应该展示
+            Whether should be displayed
         """
         import json
         from frago.session.models import SessionStatus
         from frago.session.storage import get_session_dir
 
-        # 正在运行的任务始终展示
+        # Always display running tasks
         if session.status == SessionStatus.RUNNING:
             return True
 
-        # 步骤数 >= 10 展示
+        # Display if step count >= 10
         if session.step_count >= 10:
             return True
 
-        # 步骤数 < 5 且已完成，不展示
+        # Don't display if step count < 5 and completed
         if session.step_count < 5 and session.status == SessionStatus.COMPLETED:
             return False
 
-        # 检查是否为系统会话（无 assistant 消息）
+        # Check if it's a system session (no assistant messages)
         if session.step_count < 10:
             session_dir = get_session_dir(session.session_id, session.agent_type)
             steps_file = session_dir / "steps.jsonl"
@@ -635,11 +636,11 @@ class TaskItem(BaseModel):
                 except Exception:
                     pass
 
-                # 无 assistant 消息 → 系统会话，不展示
+                # No assistant messages → system session, don't display
                 if not has_assistant:
                     return False
 
-        # 有 summary 且步骤数 >= 5 展示
+        # Display if has summary and step count >= 5
         if session.step_count >= 5:
             session_dir = get_session_dir(session.session_id, session.agent_type)
             if (session_dir / "summary.json").exists():
@@ -649,9 +650,9 @@ class TaskItem(BaseModel):
 
 
 class TaskDetail(BaseModel):
-    """任务详情 - 用于任务详情页"""
+    """Task detail - for task detail page"""
 
-    # 基本信息（来自 TaskItem）
+    # Basic information (from TaskItem)
     session_id: str
     name: str
     status: GUITaskStatus
@@ -660,20 +661,20 @@ class TaskDetail(BaseModel):
     duration_ms: int
     project_path: str
 
-    # 统计信息
-    step_count: int = Field(0, description="步骤总数")
-    tool_call_count: int = Field(0, description="工具调用次数")
-    user_message_count: int = Field(0, description="用户消息数")
-    assistant_message_count: int = Field(0, description="助手消息数")
+    # Statistics
+    step_count: int = Field(0, description="Total step count")
+    tool_call_count: int = Field(0, description="Tool call count")
+    user_message_count: int = Field(0, description="User message count")
+    assistant_message_count: int = Field(0, description="Assistant message count")
 
-    # 会话内容（分页）
-    steps: List[TaskStep] = Field(default_factory=list, description="步骤列表")
-    steps_total: int = Field(0, description="步骤总数")
-    steps_offset: int = Field(0, description="当前偏移量")
-    has_more_steps: bool = Field(False, description="是否有更多步骤")
+    # Session content (paginated)
+    steps: List[TaskStep] = Field(default_factory=list, description="Step list")
+    steps_total: int = Field(0, description="Total steps")
+    steps_offset: int = Field(0, description="Current offset")
+    has_more_steps: bool = Field(False, description="Whether there are more steps")
 
-    # 摘要（会话完成后）
-    summary: Optional[TaskSummary] = Field(None, description="会话摘要")
+    # Summary (after session completion)
+    summary: Optional[TaskSummary] = Field(None, description="Session summary")
 
     @classmethod
     def from_session_data(
@@ -685,17 +686,17 @@ class TaskDetail(BaseModel):
         limit: int = 50,
         total_steps: Optional[int] = None,
     ) -> "TaskDetail":
-        """从会话数据构建任务详情"""
+        """Build task detail from session data"""
         from frago.session.models import SessionStatus, StepType
 
-        # 计算消息统计
+        # Calculate message statistics
         user_count = sum(1 for s in steps if s.type == StepType.USER_MESSAGE)
         assistant_count = sum(1 for s in steps if s.type == StepType.ASSISTANT_MESSAGE)
 
-        # 使用传入的 total_steps 或回退到 session.step_count
+        # Use passed total_steps or fall back to session.step_count
         actual_total = total_steps if total_steps is not None else session.step_count
 
-        # 计算持续时间（确保所有时间戳使用 UTC 时区）
+        # Calculate duration (ensure all timestamps use UTC timezone)
         started = _ensure_utc(session.started_at)
 
         if session.ended_at:
@@ -705,7 +706,7 @@ class TaskDetail(BaseModel):
             now = datetime.now(timezone.utc)
             duration = now - started
 
-        # 映射状态
+        # Map status
         status_map = {
             SessionStatus.RUNNING: GUITaskStatus.RUNNING,
             SessionStatus.COMPLETED: GUITaskStatus.COMPLETED,
@@ -714,7 +715,7 @@ class TaskDetail(BaseModel):
         }
         gui_status = status_map.get(session.status, GUITaskStatus.RUNNING)
 
-        # 提取任务名称（复用 TaskItem 的逻辑）
+        # Extract task name (reuse TaskItem's logic)
         name = TaskItem._extract_task_name(session.session_id)
 
         return cls(

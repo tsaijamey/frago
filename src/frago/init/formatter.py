@@ -1,11 +1,11 @@
 """
-格式化模块
+Formatter Module
 
-提供标准化的消息格式化功能：
-- 错误消息格式化
-- 成功消息格式化
-- 依赖状态格式化
-- 进度提示
+Provides standardized message formatting functionality:
+- Error message formatting
+- Success message formatting
+- Dependency status formatting
+- Progress prompts
 """
 
 from typing import Dict, Optional
@@ -15,9 +15,9 @@ import click
 from frago.init.models import DependencyCheckResult
 
 
-# 颜色常量
+# Color constants
 class Colors:
-    """ANSI 颜色"""
+    """ANSI Colors"""
     SUCCESS = "green"
     ERROR = "red"
     WARNING = "yellow"
@@ -31,15 +31,15 @@ def format_error_message(
     suggestion: Optional[str] = None,
 ) -> str:
     """
-    格式化错误消息
+    Format error message
 
     Args:
-        title: 错误标题
-        details: 错误详情（可选）
-        suggestion: 解决建议（可选）
+        title: Error title
+        details: Error details (optional)
+        suggestion: Solution suggestion (optional)
 
     Returns:
-        格式化的错误消息字符串
+        Formatted error message string
     """
     lines = [f"[X] {title}"]
 
@@ -50,7 +50,7 @@ def format_error_message(
 
     if suggestion:
         lines.append("")
-        lines.append(f"[TIP] 建议: {suggestion}")
+        lines.append(f"[TIP] Suggestion: {suggestion}")
 
     return "\n".join(lines)
 
@@ -60,14 +60,14 @@ def format_success_message(
     details: Optional[str] = None,
 ) -> str:
     """
-    格式化成功消息
+    Format success message
 
     Args:
-        title: 成功标题
-        details: 详情（可选）
+        title: Success title
+        details: Details (optional)
 
     Returns:
-        格式化的成功消息字符串
+        Formatted success message string
     """
     lines = [f"[OK] {title}"]
 
@@ -82,14 +82,14 @@ def format_warning_message(
     details: Optional[str] = None,
 ) -> str:
     """
-    格式化警告消息
+    Format warning message
 
     Args:
-        title: 警告标题
-        details: 详情（可选）
+        title: Warning title
+        details: Details (optional)
 
     Returns:
-        格式化的警告消息字符串
+        Formatted warning message string
     """
     lines = [f"[!]  {title}"]
 
@@ -101,56 +101,56 @@ def format_warning_message(
 
 def format_info_message(title: str) -> str:
     """
-    格式化信息消息
+    Format info message
 
     Args:
-        title: 信息标题
+        title: Info title
 
     Returns:
-        格式化的信息消息字符串
+        Formatted info message string
     """
     return f"ℹ️  {title}"
 
 
 def format_dependency_status(results: Dict[str, DependencyCheckResult]) -> str:
     """
-    格式化依赖检查状态
+    Format dependency check status
 
     Args:
-        results: 依赖检查结果字典
+        results: Dependency check result dictionary
 
     Returns:
-        格式化的状态字符串
+        Formatted status string
     """
-    lines = ["依赖检查结果:", ""]
+    lines = ["Dependency Check Results:", ""]
 
     for name, result in results.items():
         if result.installed:
             status = "[OK]"
-            version_info = f"v{result.version}" if result.version else "已安装"
+            version_info = f"v{result.version}" if result.version else "Installed"
         else:
             status = "[X]"
-            version_info = "未安装"
+            version_info = "Not installed"
 
         display_name = format_dependency_name(name)
         lines.append(f"  {status} {display_name}: {version_info}")
 
-        # 显示版本不满足要求警告
+        # Display version requirement warning
         if result.installed and not result.version_sufficient:
-            lines.append(f"     [!]  版本不满足要求: 需要 >= {result.required_version}")
+            lines.append(f"     [!]  Version requirement not met: requires >= {result.required_version}")
 
     return "\n".join(lines)
 
 
 def format_dependency_name(name: str) -> str:
     """
-    格式化依赖名称显示
+    Format dependency name for display
 
     Args:
-        name: 依赖内部名称
+        name: Dependency internal name
 
     Returns:
-        用户友好的显示名称
+        User-friendly display name
     """
     name_map = {
         "node": "Node.js",
@@ -162,57 +162,57 @@ def format_dependency_name(name: str) -> str:
 
 def format_progress(current: int, total: int, message: str) -> str:
     """
-    格式化进度信息
+    Format progress information
 
     Args:
-        current: 当前步骤
-        total: 总步骤数
-        message: 进度消息
+        current: Current step
+        total: Total steps
+        message: Progress message
 
     Returns:
-        格式化的进度字符串
+        Formatted progress string
     """
     return f"[{current}/{total}] {message}"
 
 
 def format_step_start(step_name: str) -> str:
     """
-    格式化步骤开始消息
+    Format step start message
 
     Args:
-        step_name: 步骤名称
+        step_name: Step name
 
     Returns:
-        格式化的消息
+        Formatted message
     """
-    return f"📦 正在{step_name}..."
+    return f"📦 {step_name}..."
 
 
 def format_step_complete(step_name: str) -> str:
     """
-    格式化步骤完成消息
+    Format step complete message
 
     Args:
-        step_name: 步骤名称
+        step_name: Step name
 
     Returns:
-        格式化的消息
+        Formatted message
     """
-    return f"[OK] {step_name}完成"
+    return f"[OK] {step_name} completed"
 
 
 def format_step_failed(step_name: str, error: Optional[str] = None) -> str:
     """
-    格式化步骤失败消息
+    Format step failed message
 
     Args:
-        step_name: 步骤名称
-        error: 错误信息（可选）
+        step_name: Step name
+        error: Error message (optional)
 
     Returns:
-        格式化的消息
+        Formatted message
     """
-    msg = f"[X] {step_name}失败"
+    msg = f"[X] {step_name} failed"
     if error:
         msg += f"\n   {error}"
     return msg
@@ -220,43 +220,43 @@ def format_step_failed(step_name: str, error: Optional[str] = None) -> str:
 
 def echo_error(title: str, details: Optional[str] = None, suggestion: Optional[str] = None) -> None:
     """
-    输出错误消息（带颜色）
+    Output error message (with color)
 
     Args:
-        title: 错误标题
-        details: 错误详情
-        suggestion: 解决建议
+        title: Error title
+        details: Error details
+        suggestion: Solution suggestion
     """
     click.secho(format_error_message(title, details, suggestion), fg=Colors.ERROR)
 
 
 def echo_success(title: str, details: Optional[str] = None) -> None:
     """
-    输出成功消息（带颜色）
+    Output success message (with color)
 
     Args:
-        title: 成功标题
-        details: 详情
+        title: Success title
+        details: Details
     """
     click.secho(format_success_message(title, details), fg=Colors.SUCCESS)
 
 
 def echo_warning(title: str, details: Optional[str] = None) -> None:
     """
-    输出警告消息（带颜色）
+    Output warning message (with color)
 
     Args:
-        title: 警告标题
-        details: 详情
+        title: Warning title
+        details: Details
     """
     click.secho(format_warning_message(title, details), fg=Colors.WARNING)
 
 
 def echo_info(title: str) -> None:
     """
-    输出信息消息（带颜色）
+    Output info message (with color)
 
     Args:
-        title: 信息标题
+        title: Info title
     """
     click.secho(format_info_message(title), fg=Colors.INFO)

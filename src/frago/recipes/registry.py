@@ -1,4 +1,4 @@
-"""Recipe 注册表"""
+"""Recipe registry"""
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -9,16 +9,16 @@ from .metadata import RecipeMetadata, parse_metadata_file, validate_metadata
 
 @dataclass
 class Recipe:
-    """Recipe 实体"""
+    """Recipe entity"""
     metadata: RecipeMetadata
     script_path: Path
     metadata_path: Path
     source: str  # Project | User | Example
-    base_dir: Optional[Path] = None  # 配方根目录（目录形式配方）
+    base_dir: Optional[Path] = None  # Recipe root directory (directory-based recipe)
 
     @property
     def examples_dir(self) -> Optional[Path]:
-        """返回示例目录路径（如果存在）"""
+        """Return examples directory path (if exists)"""
         if self.base_dir:
             examples = self.base_dir / 'examples'
             if examples.exists():
@@ -26,75 +26,75 @@ class Recipe:
         return None
 
     def list_examples(self) -> list[Path]:
-        """列出所有示例文件"""
+        """List all example files"""
         if self.examples_dir:
             return list(self.examples_dir.glob('*'))
         return []
 
 
 class RecipeRegistry:
-    """Recipe 注册表，管理所有可用 Recipe 的索引"""
+    """Recipe registry, managing all available Recipe indices"""
 
     def __init__(self):
         self.search_paths: list[Path] = []
-        # 嵌套字典：{recipe_name: {source: Recipe}}
+        # Nested dictionary: {recipe_name: {source: Recipe}}
         self.recipes: dict[str, dict[str, Recipe]] = {}
         self._setup_search_paths()
 
     def _setup_search_paths(self) -> None:
-        """设置查找路径 - 统一使用 ~/.frago/recipes/"""
-        # 只使用用户目录
+        """Set up search paths - unified to use ~/.frago/recipes/"""
+        # Only use user directory
         user_path = Path.home() / '.frago' / 'recipes'
         if user_path.exists():
             self.search_paths.append(user_path)
-    
+
     def scan(self) -> None:
-        """扫描所有 search_paths，解析元数据并构建索引"""
+        """Scan all search_paths, parse metadata and build index"""
         self.recipes.clear()
 
         for search_path in self.search_paths:
             source = self._get_source_label(search_path)
             self._scan_directory(search_path, source)
 
-        # 验证 Workflow 的依赖
+        # Validate Workflow dependencies
         self._validate_dependencies()
-    
+
     def _get_source_label(self, path: Path) -> str:
-        """根据路径返回来源标签"""
-        # 统一使用用户目录
+        """Return source label based on path"""
+        # Unified to use user directory
         return 'User'
-    
+
     def _scan_directory(self, base_path: Path, source: str) -> None:
-        """递归扫描目录，查找 Recipe（目录形式）"""
-        # 扫描子目录: atomic/chrome/, atomic/system/, workflows/
+        """Recursively scan directory, find Recipes (directory-based)"""
+        # Scan subdirectories: atomic/chrome/, atomic/system/, workflows/
         for subdir in ['atomic/chrome', 'atomic/system', 'workflows']:
             dir_path = base_path / subdir
             if not dir_path.exists():
                 continue
 
-            # 查找所有配方目录（包含 recipe.md 的目录）
+            # Find all recipe directories (directories containing recipe.md)
             for recipe_dir in dir_path.iterdir():
                 if recipe_dir.is_dir():
                     metadata_path = recipe_dir / 'recipe.md'
                     if metadata_path.exists():
                         self._register_recipe(metadata_path, source, recipe_dir)
-    
+
     def _register_recipe(self, metadata_path: Path, source: str, base_dir: Path) -> None:
-        """注册单个 Recipe（目录形式）"""
+        """Register a single Recipe (directory-based)"""
         try:
-            # 解析元数据
+            # Parse metadata
             metadata = parse_metadata_file(metadata_path)
 
-            # 验证元数据
+            # Validate metadata
             validate_metadata(metadata)
 
-            # 查找对应的脚本文件（在配方目录内查找 recipe.py/js/sh）
+            # Find corresponding script file (search for recipe.py/js/sh in recipe directory)
             script_path = self._find_script_file(base_dir, metadata.runtime)
             if not script_path:
-                # 脚本文件不存在，跳过
+                # Script file does not exist, skip
                 return
 
-            # 创建 Recipe 对象
+            # Create Recipe object
             recipe = Recipe(
                 metadata=metadata,
                 script_path=script_path,
@@ -103,20 +103,20 @@ class RecipeRegistry:
                 base_dir=base_dir
             )
 
-            # 初始化配方名称的字典（如果不存在）
+            # Initialize dictionary for recipe name (if not exists)
             if metadata.name not in self.recipes:
                 self.recipes[metadata.name] = {}
 
-            # 按来源存储（同一来源下同名配方仍然覆盖）
+            # Store by source (same-name recipes under the same source still override)
             self.recipes[metadata.name][source] = recipe
 
         except Exception:
-            # 解析或验证失败，跳过该 Recipe（静默）
+            # Parse or validation failed, skip this Recipe (silently)
             pass
-    
+
     def _find_script_file(self, recipe_dir: Path, runtime: str) -> Optional[Path]:
-        """根据运行时类型在配方目录内查找脚本文件"""
-        # 根据 runtime 确定扩展名
+        """Find script file in recipe directory based on runtime type"""
+        # Determine extension based on runtime
         extensions = {
             'chrome-js': ['.js'],
             'python': ['.py'],
@@ -132,17 +132,17 @@ class RecipeRegistry:
     
     def find(self, name: str, source: Optional[str] = None) -> Recipe:
         """
-        查找指定名称的 Recipe
+        Find Recipe by specified name
 
         Args:
-            name: Recipe 名称
-            source: 指定来源 ('project' | 'user' | 'example')，为 None 时按优先级返回
+            name: Recipe name
+            source: Specify source ('project' | 'user' | 'example'), return by priority when None
 
         Returns:
-            Recipe 对象
+            Recipe object
 
         Raises:
-            RecipeNotFoundError: Recipe 不存在时抛出
+            RecipeNotFoundError: Raised when Recipe does not exist
         """
         searched_paths = [str(p) for p in self.search_paths]
 
@@ -152,49 +152,49 @@ class RecipeRegistry:
         sources_dict = self.recipes[name]
 
         if source:
-            # 指定来源查找
+            # Find by specified source
             source_label = source.capitalize()
             if source_label not in sources_dict:
                 raise RecipeNotFoundError(f"{name} (source: {source})", searched_paths)
             return sources_dict[source_label]
 
-        # 未指定来源：返回 User 来源
+        # Source not specified: return User source
         if 'User' in sources_dict:
             return sources_dict['User']
 
-        # 理论上不应该到达这里，因为 sources_dict 不为空
+        # Should not reach here in theory, since sources_dict is not empty
         raise RecipeNotFoundError(name, searched_paths)
-    
+
     def list_all(self, include_all_sources: bool = False) -> list[Recipe]:
         """
-        列出所有 Recipe
+        List all Recipes
 
         Args:
-            include_all_sources: 是否包含所有来源的配方（默认只返回最高优先级的）
+            include_all_sources: Whether to include recipes from all sources (default only returns highest priority)
 
         Returns:
-            Recipe 列表（按名称排序）
+            Recipe list (sorted by name)
         """
         result = []
         for name, sources_dict in self.recipes.items():
             if include_all_sources:
-                # 返回所有来源的配方
+                # Return recipes from all sources
                 result.extend(sources_dict.values())
             else:
-                # 返回 User 来源
+                # Return User source
                 if 'User' in sources_dict:
                     result.append(sources_dict['User'])
         return sorted(result, key=lambda r: r.metadata.name)
-    
+
     def get_by_source(self, source: str) -> list[Recipe]:
         """
-        按来源过滤 Recipe
+        Filter Recipes by source
 
         Args:
-            source: 来源标签 (Project | User | Example)
+            source: Source label (Project | User | Example)
 
         Returns:
-            匹配来源的 Recipe 列表（按名称排序）
+            Recipe list matching the source (sorted by name)
         """
         source_label = source.capitalize()
         result = []
@@ -205,56 +205,56 @@ class RecipeRegistry:
 
     def _validate_dependencies(self) -> None:
         """
-        验证所有 Workflow Recipe 的依赖是否存在
+        Validate if all Workflow Recipe dependencies exist
 
-        如果 Workflow 声明了 dependencies，检查这些依赖 Recipe 是否已注册。
-        依赖缺失的 Recipe 会被从注册表中移除，并在日志中记录警告。
+        If a Workflow declares dependencies, check if these dependent Recipes are registered.
+        Recipes with missing dependencies will be removed from the registry and warnings logged.
         """
-        # 收集需要移除的配方：[(recipe_name, source), ...]
+        # Collect recipes to be removed: [(recipe_name, source), ...]
         invalid_recipes = []
 
         for name, sources_dict in self.recipes.items():
             for source, recipe in sources_dict.items():
-                # 只检查 Workflow 类型的 Recipe
+                # Only check Workflow type Recipes
                 if recipe.metadata.type != 'workflow':
                     continue
 
-                # 检查依赖列表
+                # Check dependency list
                 dependencies = recipe.metadata.dependencies or []
                 missing_deps = []
 
                 for dep_name in dependencies:
-                    # 依赖存在只要在任意来源有即可
+                    # Dependency exists as long as it's in any source
                     if dep_name not in self.recipes:
                         missing_deps.append(dep_name)
 
                 if missing_deps:
-                    # 记录缺失依赖的 Recipe
+                    # Record Recipes with missing dependencies
                     invalid_recipes.append((name, source, missing_deps))
 
-        # 移除依赖缺失的 Recipe
+        # Remove Recipes with missing dependencies
         for recipe_name, source, missing_deps in invalid_recipes:
             del self.recipes[recipe_name][source]
-            # 如果该配方名下没有任何来源了，删除整个条目
+            # If no more sources under this recipe name, delete the entire entry
             if not self.recipes[recipe_name]:
                 del self.recipes[recipe_name]
-            # 可以在这里添加日志记录，但为了保持简单，我们只静默移除
-            # print(f"警告: Recipe '{recipe_name}' ({source}) 的依赖缺失: {', '.join(missing_deps)}", file=sys.stderr)
+            # Can add logging here, but to keep it simple, we just silently remove
+            # print(f"Warning: Recipe '{recipe_name}' ({source}) has missing dependencies: {', '.join(missing_deps)}", file=sys.stderr)
 
     def find_all_sources(self, name: str) -> list[tuple[str, Path]]:
         """
-        查找所有来源中是否存在同名 Recipe
+        Find if same-name Recipe exists in all sources
 
         Args:
-            name: Recipe 名称
+            name: Recipe name
 
         Returns:
-            [(source, recipe_dir), ...] 列表，按优先级排序
+            [(source, recipe_dir), ...] list, sorted by priority
         """
         if name not in self.recipes:
             return []
 
-        # 返回 User 来源
+        # Return User source
         result = []
         if 'User' in self.recipes[name]:
             recipe = self.recipes[name]['User']

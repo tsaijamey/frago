@@ -1,4 +1,4 @@
-"""Skills 模块 - Claude Code Skill 管理"""
+"""Skills module - Claude Code Skill management"""
 
 from .registry import Skill, SkillRegistry, InvalidSkill
 

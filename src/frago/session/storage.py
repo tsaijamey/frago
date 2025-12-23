@@ -1,12 +1,12 @@
 """
-会话数据持久化存储
+Session Data Persistence Storage
 
-提供会话数据的本地存储能力，包括：
-- 会话目录创建和管理
-- metadata.json 读写
-- steps.jsonl 追加写入
-- summary.json 生成
-- 会话列表查询
+Provides local storage capabilities for session data, including:
+- Session directory creation and management
+- metadata.json read/write
+- steps.jsonl append write
+- summary.json generation
+- Session list queries
 """
 
 import json
@@ -31,17 +31,17 @@ from frago.session.models import (
 
 logger = logging.getLogger(__name__)
 
-# 默认存储目录
+# Default storage directory
 DEFAULT_SESSION_DIR = Path.home() / ".frago" / "sessions"
 
 
 def get_session_base_dir() -> Path:
-    """获取会话存储基础目录
+    """Get session storage base directory
 
-    支持通过环境变量 FRAGO_SESSION_DIR 自定义。
+    Supports customization via environment variable FRAGO_SESSION_DIR.
 
     Returns:
-        会话存储基础目录路径
+        Session storage base directory path
     """
     custom_dir = os.environ.get("FRAGO_SESSION_DIR")
     if custom_dir:
@@ -50,21 +50,21 @@ def get_session_base_dir() -> Path:
 
 
 # ============================================================
-# 会话目录管理
+# Session Directory Management
 # ============================================================
 
 
 def get_session_dir(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> Path:
-    """获取会话存储目录路径
+    """Get session storage directory path
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        会话目录路径
+        Session directory path
     """
     base_dir = get_session_base_dir()
     return base_dir / agent_type.value / session_id
@@ -73,34 +73,34 @@ def get_session_dir(
 def create_session_dir(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> Path:
-    """创建会话存储目录
+    """Create session storage directory
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        创建的会话目录路径
+        Created session directory path
     """
     session_dir = get_session_dir(session_id, agent_type)
     session_dir.mkdir(parents=True, exist_ok=True)
-    logger.debug(f"创建会话目录: {session_dir}")
+    logger.debug(f"Created session directory: {session_dir}")
     return session_dir
 
 
 # ============================================================
-# metadata.json 读写
+# metadata.json Read/Write
 # ============================================================
 
 
 def write_metadata(session: MonitoredSession) -> Path:
-    """写入会话元数据
+    """Write session metadata
 
     Args:
-        session: 监控会话对象
+        session: Monitored session object
 
     Returns:
-        metadata.json 文件路径
+        metadata.json file path
     """
     session_dir = create_session_dir(session.session_id, session.agent_type)
     metadata_path = session_dir / "metadata.json"
@@ -110,21 +110,21 @@ def write_metadata(session: MonitoredSession) -> Path:
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    logger.debug(f"写入元数据: {metadata_path}")
+    logger.debug(f"Wrote metadata: {metadata_path}")
     return metadata_path
 
 
 def read_metadata(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> Optional[MonitoredSession]:
-    """读取会话元数据
+    """Read session metadata
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        监控会话对象，不存在时返回 None
+        Monitored session object, None if does not exist
     """
     session_dir = get_session_dir(session_id, agent_type)
     metadata_path = session_dir / "metadata.json"
@@ -137,7 +137,7 @@ def read_metadata(
             data = json.load(f)
         return MonitoredSession.model_validate(data)
     except Exception as e:
-        logger.warning(f"读取元数据失败: {e}")
+        logger.warning(f"Failed to read metadata: {e}")
         return None
 
 
@@ -146,21 +146,21 @@ def update_metadata(
     agent_type: AgentType = AgentType.CLAUDE,
     **updates: Any,
 ) -> Optional[MonitoredSession]:
-    """更新会话元数据
+    """Update session metadata
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
-        **updates: 要更新的字段
+        session_id: Session ID
+        agent_type: Agent type
+        **updates: Fields to update
 
     Returns:
-        更新后的监控会话对象
+        Updated monitored session object
     """
     session = read_metadata(session_id, agent_type)
     if not session:
         return None
 
-    # 更新字段
+    # Update fields
     for key, value in updates.items():
         if hasattr(session, key):
             setattr(session, key, value)
@@ -170,19 +170,19 @@ def update_metadata(
 
 
 # ============================================================
-# steps.jsonl 追加写入
+# steps.jsonl Append Write
 # ============================================================
 
 
 def append_step(step: SessionStep, agent_type: AgentType = AgentType.CLAUDE) -> Path:
-    """追加写入步骤记录
+    """Append write step record
 
     Args:
-        step: 会话步骤对象
-        agent_type: Agent 类型
+        step: Session step object
+        agent_type: Agent type
 
     Returns:
-        steps.jsonl 文件路径
+        steps.jsonl file path
     """
     session_dir = create_session_dir(step.session_id, agent_type)
     steps_path = session_dir / "steps.jsonl"
@@ -193,21 +193,21 @@ def append_step(step: SessionStep, agent_type: AgentType = AgentType.CLAUDE) -> 
     with open(steps_path, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
-    logger.debug(f"追加步骤 {step.step_id}: {steps_path}")
+    logger.debug(f"Appended step {step.step_id}: {steps_path}")
     return steps_path
 
 
 def read_steps(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> List[SessionStep]:
-    """读取所有步骤记录
+    """Read all step records
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        步骤记录列表
+        List of step records
     """
     session_dir = get_session_dir(session_id, agent_type)
     steps_path = session_dir / "steps.jsonl"
@@ -224,13 +224,13 @@ def read_steps(
                     data = json.loads(line)
                     steps.append(SessionStep.model_validate(data))
     except Exception as e:
-        logger.warning(f"读取步骤记录失败: {e}")
+        logger.warning(f"Failed to read step records: {e}")
 
     return steps
 
 
 # ============================================================
-# summary.json 生成
+# summary.json Generation
 # ============================================================
 
 
@@ -239,15 +239,15 @@ def generate_summary(
     agent_type: AgentType = AgentType.CLAUDE,
     tool_calls: Optional[List[ToolCallRecord]] = None,
 ) -> Optional[SessionSummary]:
-    """生成会话摘要
+    """Generate session summary
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
-        tool_calls: 工具调用记录列表（可选，用于统计）
+        session_id: Session ID
+        agent_type: Agent type
+        tool_calls: Tool call record list (optional, for statistics)
 
     Returns:
-        会话摘要对象
+        Session summary object
     """
     session = read_metadata(session_id, agent_type)
     if not session:
@@ -255,11 +255,11 @@ def generate_summary(
 
     steps = read_steps(session_id, agent_type)
 
-    # 统计消息数量
+    # Count messages
     user_count = sum(1 for s in steps if s.type == StepType.USER_MESSAGE)
     assistant_count = sum(1 for s in steps if s.type == StepType.ASSISTANT_MESSAGE)
 
-    # 统计工具调用
+    # Count tool calls
     tool_call_count = 0
     tool_success_count = 0
     tool_error_count = 0
@@ -274,16 +274,16 @@ def generate_summary(
             elif tc.status == ToolCallStatus.ERROR:
                 tool_error_count += 1
     else:
-        # 从步骤中估算
+        # Estimate from steps
         tool_call_count = sum(1 for s in steps if s.type == StepType.TOOL_CALL)
 
-    # 计算最常用工具
+    # Calculate most used tools
     most_used = [
         ToolUsageStats(tool_name=name, count=count)
         for name, count in tool_usage.most_common(5)
     ]
 
-    # 计算持续时间（确保非负，因为文件中时间戳可能不是严格顺序）
+    # Calculate duration (ensure non-negative, as timestamps in file may not be strictly ordered)
     if session.started_at and session.ended_at:
         delta = session.ended_at - session.started_at
         total_duration_ms = max(0, int(delta.total_seconds() * 1000))
@@ -313,15 +313,15 @@ def write_summary(
     agent_type: AgentType = AgentType.CLAUDE,
     tool_calls: Optional[List[ToolCallRecord]] = None,
 ) -> Optional[Path]:
-    """生成并写入会话摘要
+    """Generate and write session summary
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
-        tool_calls: 工具调用记录列表
+        session_id: Session ID
+        agent_type: Agent type
+        tool_calls: Tool call record list
 
     Returns:
-        summary.json 文件路径
+        summary.json file path
     """
     summary = generate_summary(session_id, agent_type, tool_calls)
     if not summary:
@@ -335,21 +335,21 @@ def write_summary(
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    logger.debug(f"写入摘要: {summary_path}")
+    logger.debug(f"Wrote summary: {summary_path}")
     return summary_path
 
 
 def read_summary(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> Optional[SessionSummary]:
-    """读取会话摘要
+    """Read session summary
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        会话摘要对象
+        Session summary object
     """
     session_dir = get_session_dir(session_id, agent_type)
     summary_path = session_dir / "summary.json"
@@ -362,12 +362,12 @@ def read_summary(
             data = json.load(f)
         return SessionSummary.model_validate(data)
     except Exception as e:
-        logger.warning(f"读取摘要失败: {e}")
+        logger.warning(f"Failed to read summary: {e}")
         return None
 
 
 # ============================================================
-# 会话列表查询
+# Session List Queries
 # ============================================================
 
 
@@ -377,18 +377,18 @@ def read_steps_paginated(
     limit: int = 50,
     offset: int = 0,
 ) -> Dict[str, Any]:
-    """分页读取会话步骤
+    """Read session steps with pagination
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
-        limit: 每页数量（默认 50，最大 10000）
-        offset: 偏移量
+        session_id: Session ID
+        agent_type: Agent type
+        limit: Page size (default 50, max 10000)
+        offset: Offset
 
     Returns:
-        包含 steps、total、offset、limit、has_more 的字典
+        Dictionary containing steps, total, offset, limit, has_more
     """
-    # 参数验证
+    # Parameter validation
     limit = max(1, min(10000, limit))
     offset = max(0, offset)
 
@@ -408,14 +408,14 @@ def count_sessions(
     agent_type: Optional[AgentType] = None,
     status: Optional[SessionStatus] = None,
 ) -> int:
-    """统计会话数量
+    """Count sessions
 
     Args:
-        agent_type: 筛选特定 Agent 类型，None 表示所有
-        status: 筛选特定状态
+        agent_type: Filter by specific Agent type, None for all
+        status: Filter by specific status
 
     Returns:
-        会话数量
+        Session count
     """
     base_dir = get_session_base_dir()
 
@@ -424,7 +424,7 @@ def count_sessions(
 
     count = 0
 
-    # 确定要搜索的 agent 目录
+    # Determine agent directories to search
     if agent_type:
         agent_dirs = [base_dir / agent_type.value]
     else:
@@ -442,7 +442,7 @@ def count_sessions(
             if not metadata_path.exists():
                 continue
 
-            # 如果需要状态筛选，读取 metadata
+            # If status filtering needed, read metadata
             if status:
                 try:
                     with open(metadata_path, "r", encoding="utf-8") as f:
@@ -463,15 +463,15 @@ def list_sessions(
     limit: int = 20,
     status: Optional[SessionStatus] = None,
 ) -> List[MonitoredSession]:
-    """列出会话
+    """List sessions
 
     Args:
-        agent_type: 筛选特定 Agent 类型，None 表示所有
-        limit: 返回数量限制
-        status: 筛选特定状态
+        agent_type: Filter by specific Agent type, None for all
+        limit: Return count limit
+        status: Filter by specific status
 
     Returns:
-        会话列表，按最后活动时间倒序排列
+        Session list, sorted by last activity time descending
     """
     base_dir = get_session_base_dir()
 
@@ -480,7 +480,7 @@ def list_sessions(
 
     sessions = []
 
-    # 确定要搜索的 agent 目录
+    # Determine agent directories to search
     if agent_type:
         agent_dirs = [base_dir / agent_type.value]
     else:
@@ -503,15 +503,15 @@ def list_sessions(
                     data = json.load(f)
                 session = MonitoredSession.model_validate(data)
 
-                # 状态筛选
+                # Status filtering
                 if status and session.status != status:
                     continue
 
                 sessions.append(session)
             except Exception as e:
-                logger.warning(f"读取会话 {session_dir.name} 失败: {e}")
+                logger.warning(f"Failed to read session {session_dir.name}: {e}")
 
-    # 按最后活动时间倒序排列（统一为 UTC 时区进行比较）
+    # Sort by last activity time descending (normalize to UTC timezone for comparison)
     from datetime import timezone
     def get_sortable_time(s):
         t = s.last_activity
@@ -526,14 +526,14 @@ def list_sessions(
 def get_session_data(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> Optional[Dict[str, Any]]:
-    """获取会话完整数据
+    """Get complete session data
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        包含 metadata、steps、summary 的字典
+        Dictionary containing metadata, steps, summary
     """
     session = read_metadata(session_id, agent_type)
     if not session:
@@ -549,14 +549,14 @@ def get_session_data(
 def delete_session(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
 ) -> bool:
-    """删除会话数据
+    """Delete session data
 
     Args:
-        session_id: 会话 ID
-        agent_type: Agent 类型
+        session_id: Session ID
+        agent_type: Agent type
 
     Returns:
-        是否删除成功
+        Whether deletion was successful
     """
     import shutil
 
@@ -567,10 +567,10 @@ def delete_session(
 
     try:
         shutil.rmtree(session_dir)
-        logger.info(f"删除会话: {session_id}")
+        logger.info(f"Deleted session: {session_id}")
         return True
     except Exception as e:
-        logger.error(f"删除会话失败: {e}")
+        logger.error(f"Failed to delete session: {e}")
         return False
 
 
@@ -578,14 +578,14 @@ def clean_old_sessions(
     max_age_days: int = 30,
     agent_type: Optional[AgentType] = None,
 ) -> int:
-    """清理过期会话
+    """Clean expired sessions
 
     Args:
-        max_age_days: 最大保留天数
-        agent_type: 筛选特定 Agent 类型
+        max_age_days: Maximum retention days
+        agent_type: Filter by specific Agent type
 
     Returns:
-        清理的会话数量
+        Number of cleaned sessions
     """
     from datetime import timedelta
 
@@ -598,5 +598,5 @@ def clean_old_sessions(
             if delete_session(session.session_id, session.agent_type):
                 cleaned += 1
 
-    logger.info(f"清理了 {cleaned} 个过期会话")
+    logger.info(f"Cleaned {cleaned} expired sessions")
     return cleaned

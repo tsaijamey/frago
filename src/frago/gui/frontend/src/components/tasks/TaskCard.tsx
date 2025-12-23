@@ -6,23 +6,23 @@ interface TaskCardProps {
   onClick: () => void;
 }
 
-// 格式化相对时间
+// Format relative time
 function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
 
-  if (diff < 60000) return '刚刚';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} hr ago`;
 
-  return date.toLocaleDateString('zh-CN', {
+  return date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
   });
 }
 
-// 格式化持续时间
+// Format duration
 function formatDuration(ms: number): string {
   if (ms < 1000) return '<1s';
   if (ms < 60000) return `${Math.floor(ms / 1000)}s`;
@@ -33,12 +33,12 @@ function formatDuration(ms: number): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-// 状态配置
+// Status configuration
 const statusConfig: Record<TaskStatus, { label: string; Icon: LucideIcon }> = {
-  running: { label: '运行中', Icon: Zap },
-  completed: { label: '已完成', Icon: Check },
-  error: { label: '出错', Icon: X },
-  cancelled: { label: '已取消', Icon: Circle },
+  running: { label: 'Running', Icon: Zap },
+  completed: { label: 'Completed', Icon: Check },
+  error: { label: 'Error', Icon: X },
+  cancelled: { label: 'Cancelled', Icon: Circle },
 };
 
 export default function TaskCard({ task, onClick }: TaskCardProps) {
@@ -47,19 +47,19 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
 
   return (
     <div className="task-card-v2" onClick={onClick}>
-      {/* 左侧：状态指示器 */}
+      {/* Left: Status indicator */}
       <div className={`task-status-badge ${task.status}`}>
         <StatusIcon size={14} />
       </div>
 
-      {/* 中间：主要信息 */}
+      {/* Center: Main information */}
       <div className="task-main">
         <div className="task-header">
           <span className="task-title" title={task.name}>{task.name}</span>
           <span className="task-time">{formatRelativeTime(task.started_at)}</span>
         </div>
 
-        {/* 进度条（仅运行中显示） */}
+        {/* Progress bar (only shown when running) */}
         {isRunning && (
           <div className="task-progress">
             <div className="task-progress-bar">
@@ -68,7 +68,7 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
           </div>
         )}
 
-        {/* 元信息 */}
+        {/* Metadata */}
         <div className="task-footer">
           <span className={`task-status-label status-${task.status}`}>
             {statusLabel}
@@ -79,18 +79,18 @@ export default function TaskCard({ task, onClick }: TaskCardProps) {
           </span>
           <span className="task-stat">
             <FileText size={11} />
-            {task.step_count} 步
+            {task.step_count} steps
           </span>
           {task.tool_call_count > 0 && (
             <span className="task-stat">
               <Wrench size={11} />
-              {task.tool_call_count} 调用
+              {task.tool_call_count} calls
             </span>
           )}
         </div>
       </div>
 
-      {/* 右侧：箭头 */}
+      {/* Right: Arrow */}
       <div className="task-arrow">
         <ChevronRight size={20} />
       </div>

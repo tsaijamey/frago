@@ -1,6 +1,6 @@
 /**
- * Appearance Settings 组件
- * 主题切换和字体大小调节
+ * Appearance Settings Component
+ * Theme switching and font size adjustment
  */
 
 import { useAppStore } from '@/stores/appStore';
@@ -13,7 +13,7 @@ export default function AppearanceSettings() {
   if (!config) {
     return (
       <div className="text-[var(--text-muted)] text-center py-8">
-        正在加载配置...
+        Loading configuration...
       </div>
     );
   }
@@ -32,18 +32,18 @@ export default function AppearanceSettings() {
 
   return (
     <div className="space-y-4">
-      {/* 外观设置 */}
+      {/* Appearance settings */}
       <div className="card">
         <h2 className="font-medium mb-4 text-[var(--accent-primary)]">
-          外观
+          Appearance
         </h2>
 
-        {/* 主题切换 */}
+        {/* Theme switch */}
         <div className="flex items-center justify-between py-2">
           <div>
-            <div className="text-[var(--text-primary)]">主题</div>
+            <div className="text-[var(--text-primary)]">Theme</div>
             <div className="text-sm text-[var(--text-muted)]">
-              选择深色或浅色外观
+              Choose dark or light appearance
             </div>
           </div>
           <div className="flex gap-2">
@@ -53,7 +53,7 @@ export default function AppearanceSettings() {
               }`}
               onClick={() => handleThemeChange('dark')}
             >
-              <Moon size={16} /> 深色
+              <Moon size={16} /> Dark
             </button>
             <button
               className={`btn ${
@@ -61,17 +61,17 @@ export default function AppearanceSettings() {
               }`}
               onClick={() => handleThemeChange('light')}
             >
-              <Sun size={16} /> 浅色
+              <Sun size={16} /> Light
             </button>
           </div>
         </div>
 
-        {/* 字体大小 */}
+        {/* Font size */}
         <div className="flex items-center justify-between py-2 border-t border-[var(--border-color)]">
           <div>
-            <div className="text-[var(--text-primary)]">字体大小</div>
+            <div className="text-[var(--text-primary)]">Font Size</div>
             <div className="text-sm text-[var(--text-muted)]">
-              调整界面文字大小
+              Adjust interface text size
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -98,18 +98,18 @@ export default function AppearanceSettings() {
         </div>
       </div>
 
-      {/* 行为设置 */}
+      {/* Behavior settings */}
       <div className="card">
         <h2 className="font-medium mb-4 text-[var(--accent-primary)]">
-          行为
+          Behavior
         </h2>
 
-        {/* 显示系统状态 */}
+        {/* Show system status */}
         <div className="flex items-center justify-between py-2">
           <div>
-            <div className="text-[var(--text-primary)]">显示系统状态</div>
+            <div className="text-[var(--text-primary)]">Show System Status</div>
             <div className="text-sm text-[var(--text-muted)]">
-              在状态栏显示 CPU 和内存使用情况
+              Display CPU and memory usage in status bar
             </div>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
@@ -125,12 +125,12 @@ export default function AppearanceSettings() {
           </label>
         </div>
 
-        {/* 退出确认 */}
+        {/* Exit confirmation */}
         <div className="flex items-center justify-between py-2 border-t border-[var(--border-color)]">
           <div>
-            <div className="text-[var(--text-primary)]">退出确认</div>
+            <div className="text-[var(--text-primary)]">Exit Confirmation</div>
             <div className="text-sm text-[var(--text-muted)]">
-              关闭窗口时显示确认对话框
+              Show confirmation dialog when closing window
             </div>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
@@ -144,12 +144,12 @@ export default function AppearanceSettings() {
           </label>
         </div>
 
-        {/* 自动滚动 */}
+        {/* Auto scroll */}
         <div className="flex items-center justify-between py-2 border-t border-[var(--border-color)]">
           <div>
-            <div className="text-[var(--text-primary)]">自动滚动输出</div>
+            <div className="text-[var(--text-primary)]">Auto Scroll Output</div>
             <div className="text-sm text-[var(--text-muted)]">
-              新内容时自动滚动到底部
+              Automatically scroll to bottom when new content appears
             </div>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">

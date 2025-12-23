@@ -1,12 +1,12 @@
 #!/bin/bash
-# Recipe: 复制文件
-# 运行时: shell
-# 输入参数: source_path, dest_path
-# 输出: JSON 格式的操作结果
+# Recipe: Copy file
+# Runtime: shell
+# Input parameters: source_path, dest_path
+# Output: Operation result in JSON format
 
 set -euo pipefail
 
-# 解析输入参数（JSON 格式）
+# Parse input parameters (JSON format)
 if [ $# -eq 0 ]; then
     echo '{"source_path": "missing", "dest_path": "missing"}'
     exit 0
@@ -14,23 +14,23 @@ fi
 
 PARAMS_JSON="$1"
 
-# 提取参数
+# Extract parameters
 SOURCE=$(echo "$PARAMS_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('source_path', ''))")
 DEST=$(echo "$PARAMS_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin).get('dest_path', ''))")
 
-# 验证参数（参数验证应由 RecipeRunner 完成，这里只是额外检查）
+# Validate parameters (parameter validation should be done by RecipeRunner, this is just an extra check)
 if [ -z "$SOURCE" ] || [ -z "$DEST" ]; then
     >&2 echo "Error: Missing required parameters: source_path and dest_path"
     exit 1
 fi
 
-# 检查源文件是否存在
+# Check if source file exists
 if [ ! -f "$SOURCE" ]; then
     >&2 echo "Error: Source file not found: $SOURCE"
     exit 1
 fi
 
-# 执行复制操作
+# Execute copy operation
 if cp "$SOURCE" "$DEST" 2>/dev/null; then
     SOURCE_SIZE=$(stat -c%s "$SOURCE" 2>/dev/null || stat -f%z "$SOURCE" 2>/dev/null)
     echo "{\"source\": \"$SOURCE\", \"destination\": \"$DEST\", \"size_bytes\": $SOURCE_SIZE, \"operation\": \"copy\"}"

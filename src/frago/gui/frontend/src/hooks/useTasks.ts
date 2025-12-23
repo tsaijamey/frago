@@ -3,9 +3,9 @@ import { useAppStore } from '@/stores/appStore';
 import { usePolling } from './usePolling';
 
 /**
- * 任务 Hook
+ * Tasks Hook
  *
- * 提供任务列表轮询和任务详情加载
+ * Provides task list polling and task detail loading
  */
 export function useTasks(pollingInterval: number = 3000) {
   const {
@@ -17,7 +17,7 @@ export function useTasks(pollingInterval: number = 3000) {
     currentPage,
   } = useAppStore();
 
-  // 仅在任务列表页面时启用轮询
+  // Enable polling only on the task list page
   const enabled = currentPage === 'tasks';
 
   const { trigger: refresh } = usePolling(loadTasks, pollingInterval, enabled);

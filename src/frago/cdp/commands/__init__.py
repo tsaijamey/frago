@@ -1,7 +1,7 @@
 """
-CDP命令封装
+CDP command wrappers
 
-提供Chrome DevTools Protocol命令的Python封装。
+Provides Python wrappers for Chrome DevTools Protocol commands.
 """
 
 from .page import PageCommands

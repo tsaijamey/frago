@@ -1,7 +1,7 @@
 """
-DOM相关CDP命令
+DOM-related CDP commands
 
-封装DOM域的CDP命令。
+Encapsulates CDP commands for the DOM domain.
 """
 
 from typing import Dict, Any, Optional
@@ -11,24 +11,24 @@ from ..logger import get_logger
 
 
 class DOMCommands:
-    """DOM命令类"""
-    
+    """DOM commands class"""
+
     def __init__(self, session: CDPSession):
         """
-        初始化DOM命令
-        
+        Initialize DOM commands
+
         Args:
-            session: CDP会话实例
+            session: CDP session instance
         """
         self.session = session
         self.logger = get_logger()
-    
+
     def get_document(self) -> Dict[str, Any]:
         """
-        获取文档根节点
-        
+        Get document root node
+
         Returns:
-            Dict[str, Any]: 文档信息
+            Dict[str, Any]: Document information
         """
         self.logger.info("Getting document")
         
@@ -39,14 +39,14 @@ class DOMCommands:
     
     def query_selector(self, node_id: int, selector: str) -> Dict[str, Any]:
         """
-        在指定节点中查询选择器匹配的元素
-        
+        Query for element matching selector in specified node
+
         Args:
-            node_id: 节点ID
-            selector: CSS选择器
-            
+            node_id: Node ID
+            selector: CSS selector
+
         Returns:
-            Dict[str, Any]: 查询结果
+            Dict[str, Any]: Query result
         """
         self.logger.info(f"Querying selector '{selector}' in node {node_id}")
         
@@ -63,13 +63,13 @@ class DOMCommands:
     
     def get_attributes(self, node_id: int) -> Dict[str, Any]:
         """
-        获取节点的属性
-        
+        Get node attributes
+
         Args:
-            node_id: 节点ID
-            
+            node_id: Node ID
+
         Returns:
-            Dict[str, Any]: 属性信息
+            Dict[str, Any]: Attribute information
         """
         self.logger.info(f"Getting attributes for node {node_id}")
         
@@ -83,13 +83,13 @@ class DOMCommands:
     
     def get_box_model(self, node_id: int) -> Dict[str, Any]:
         """
-        获取节点的盒子模型
-        
+        Get node box model
+
         Args:
-            node_id: 节点ID
-            
+            node_id: Node ID
+
         Returns:
-            Dict[str, Any]: 盒子模型信息
+            Dict[str, Any]: Box model information
         """
         self.logger.info(f"Getting box model for node {node_id}")
         

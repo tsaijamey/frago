@@ -1,5 +1,5 @@
 /**
- * 应用全局状态管理 (Zustand)
+ * Application Global State Management (Zustand)
  */
 
 import { create } from 'zustand';
@@ -14,7 +14,7 @@ import type {
 } from '@/types/pywebview.d';
 import * as api from '@/api/pywebview';
 
-// 页面类型
+// Page type
 export type PageType =
   | 'tips'
   | 'tasks'
@@ -24,7 +24,7 @@ export type PageType =
   | 'skills'
   | 'settings';
 
-// Toast 类型
+// Toast type
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
 
 export interface Toast {
@@ -33,14 +33,14 @@ export interface Toast {
   type: ToastType;
 }
 
-// 应用状态
+// Application state
 interface AppState {
-  // 页面状态
+  // Page state
   currentPage: PageType;
   currentTaskId: string | null;
   currentRecipeName: string | null;
 
-  // 数据缓存
+  // Data cache
   config: UserConfig | null;
   tasks: TaskItem[];
   taskDetail: TaskDetail | null;
@@ -48,7 +48,7 @@ interface AppState {
   skills: SkillItem[];
   systemStatus: SystemStatus | null;
 
-  // UI 状态
+  // UI state
   isLoading: boolean;
   toasts: Toast[];
 
@@ -67,12 +67,12 @@ interface AppState {
   dismissToast: (id: string) => void;
 }
 
-// 生成唯一 ID
+// Generate unique ID
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
-// 应用主题到 DOM
+// Apply theme to DOM
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.style.colorScheme = theme;
@@ -80,7 +80,7 @@ function applyTheme(theme: Theme) {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // 初始状态
+  // Initial state
   currentPage: 'tips',
   currentTaskId: null,
   currentRecipeName: null,
@@ -93,7 +93,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   isLoading: false,
   toasts: [],
 
-  // 页面切换
+  // Page switching
   switchPage: (page, id) => {
     set({
       currentPage: page,
@@ -103,7 +103,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  // 主题切换
+  // Theme switching
   setTheme: (theme) => {
     console.log('[Theme] setTheme called with:', theme);
     applyTheme(theme);
@@ -120,7 +120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // 加载配置
+  // Load config
   loadConfig: async () => {
     try {
       console.log('[Config] Loading config from backend...');
@@ -133,7 +133,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // 加载任务列表
+  // Load task list
   loadTasks: async () => {
     try {
       const tasks = await api.getTasks();
@@ -143,26 +143,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // 打开任务详情
+  // Open task detail
   openTaskDetail: async (sessionId) => {
     set({ isLoading: true, currentPage: 'task_detail', currentTaskId: sessionId });
     try {
-      // steps_limit = 0 表示获取全部步骤，便于前端筛选
+      // steps_limit = 0 means get all steps for frontend filtering
       const taskDetail = await api.getTaskDetail(sessionId, 0, 0);
       set({ taskDetail, isLoading: false });
     } catch (error) {
       console.error('Failed to load task detail:', error);
       set({ isLoading: false });
-      get().showToast('加载任务详情失败', 'error');
+      get().showToast('Failed to load task details', 'error');
     }
   },
 
-  // 更新任务详情（用于加载更多步骤）
+  // Update task detail (for loading more steps)
   setTaskDetail: (detail) => {
     set({ taskDetail: detail });
   },
 
-  // 加载配方列表
+  // Load recipe list
   loadRecipes: async () => {
     try {
       const recipes = await api.getRecipes();
@@ -172,7 +172,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // 加载技能列表
+  // Load skill list
   loadSkills: async () => {
     try {
       const skills = await api.getSkills();
@@ -182,7 +182,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // 加载系统状态
+  // Load system status
   loadSystemStatus: async () => {
     try {
       const systemStatus = await api.getSystemStatus();
@@ -192,7 +192,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // 更新配置
+  // Update config
   updateConfig: async (configUpdate) => {
     const currentConfig = get().config;
     if (!currentConfig) return;
@@ -208,24 +208,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (error) {
       console.error('Failed to update config:', error);
       set({ config: currentConfig });
-      get().showToast('保存设置失败', 'error');
+      get().showToast('Failed to save settings', 'error');
     }
   },
 
-  // 显示 Toast
+  // Show toast
   showToast: (message, type) => {
     const id = generateId();
     set((state) => ({
       toasts: [...state.toasts, { id, message, type }],
     }));
 
-    // 自动消失
+    // Auto dismiss
     setTimeout(() => {
       get().dismissToast(id);
     }, 3000);
   },
 
-  // 关闭 Toast
+  // Dismiss toast
   dismissToast: (id) => {
     set((state) => ({
       toasts: state.toasts.filter((t) => t.id !== id),

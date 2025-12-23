@@ -1,4 +1,4 @@
-"""sync 命令 - 同步 ~/.frago/ 资源到您的仓库"""
+"""sync command - Synchronize ~/.frago/ resources to your repository"""
 
 import sys
 from typing import Optional
@@ -10,52 +10,52 @@ from frago.tools.sync_repo import SyncResult, sync
 
 
 def _format_result(result: SyncResult, dry_run: bool) -> None:
-    """格式化输出同步结果"""
-    # 警告信息（警告已在 sync() 中实时输出，这里不再重复）
+    """Format and output sync results"""
+    # Warning messages (already output in real-time by sync(), not repeated here)
 
-    # 冲突信息
+    # Conflict information
     if result.conflicts:
         click.echo()
-        click.echo("[!]  发现资源冲突:")
+        click.echo("[!]  Resource conflicts detected:")
         for conflict in result.conflicts:
             click.echo(f"  - {conflict}")
         click.echo()
-        click.echo("请在 ~/.frago/ 目录中手动解决冲突后重新同步")
+        click.echo("Please manually resolve conflicts in ~/.frago/ directory and sync again")
 
-    # 错误信息
+    # Error messages
     if result.errors:
         click.echo()
         for error in result.errors:
             click.echo(f"[X] {error}", err=True)
 
-    # 总结
+    # Summary
     click.echo()
     if dry_run:
-        click.echo("(预览模式) 以上操作将在实际运行时执行")
+        click.echo("(Preview mode) The above operations will be executed in actual run")
     elif result.success:
         summary_parts = []
         if result.local_changes:
-            summary_parts.append(f"保存 {len(result.local_changes)} 项本地修改")
+            summary_parts.append(f"Saved {len(result.local_changes)} local change(s)")
         if result.remote_updates:
-            summary_parts.append(f"获取 {len(result.remote_updates)} 个仓库更新")
+            summary_parts.append(f"Fetched {len(result.remote_updates)} repository update(s)")
         if result.pushed_to_remote:
-            summary_parts.append("已推送到您的仓库")
+            summary_parts.append("Pushed to your repository")
 
         if summary_parts:
-            click.echo(f"[OK] 同步完成: {' | '.join(summary_parts)}")
+            click.echo(f"[OK] Sync completed: {' | '.join(summary_parts)}")
         else:
-            click.echo("[OK] 同步完成: 本地资源已是最新")
+            click.echo("[OK] Sync completed: Local resources are already up to date")
 
-        # 如果是 public 仓库，在最后再次提醒
+        # Remind again if it's a public repository
         if result.is_public_repo:
             click.echo()
-            click.echo("[!]  提醒：您的同步仓库是 public 仓库，请考虑改为 private 仓库以保护敏感信息。")
+            click.echo("[!]  Reminder: Your sync repository is public. Please consider changing it to private to protect sensitive information.")
     else:
-        click.echo("[X] 同步失败", err=True)
+        click.echo("[X] Sync failed", err=True)
 
 
 def _get_configured_repo_url() -> Optional[str]:
-    """获取配置的仓库 URL"""
+    """Get the configured repository URL"""
     config = load_config()
     return config.sync_repo_url
 
@@ -64,23 +64,23 @@ def _get_configured_repo_url() -> Optional[str]:
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="仅预览将要执行的操作，不实际同步",
+    help="Only preview operations to be executed, do not actually sync",
 )
 @click.option(
     "--no-push",
     is_flag=True,
-    help="仅保存本地修改，不推送到您的仓库",
+    help="Only save local changes, do not push to your repository",
 )
 @click.option(
     "--message",
     "-m",
     type=str,
-    help="自定义保存说明",
+    help="Custom commit message",
 )
 @click.option(
     "--set-repo",
     type=str,
-    help="设置仓库地址",
+    help="Set repository URL",
 )
 def sync_cmd(
     dry_run: bool,
@@ -89,62 +89,62 @@ def sync_cmd(
     set_repo: Optional[str],
 ):
     """
-    同步本地资源到您的仓库
+    Synchronize local resources to your repository
 
-    将 ~/.frago/ 和 ~/.claude/ 中的 Frago 资源同步到配置的仓库，
-    实现多设备之间资源共享。
-
-    \b
-    同步流程:
-      1. 检查本地资源修改，确保不丢失任何内容
-      2. 从您的仓库获取其他设备的更新
-      3. 更新本地 Claude Code 使用的资源
-      4. 将本地修改推送到您的仓库
+    Sync Frago resources from ~/.frago/ and ~/.claude/ to the configured repository,
+    enabling resource sharing across multiple devices.
 
     \b
-    首次使用:
+    Sync workflow:
+      1. Check local resource modifications to ensure no content is lost
+      2. Fetch updates from your repository made on other devices
+      3. Update local resources used by Claude Code
+      4. Push local modifications to your repository
+
+    \b
+    First-time usage:
       frago sync --set-repo https://github.com/user/my-resources.git
 
     \b
-    日常使用:
-      frago sync              # 同步资源
-      frago sync --dry-run    # 预览将要同步的内容
-      frago sync --no-push    # 仅获取更新，不推送
+    Daily usage:
+      frago sync              # Sync resources
+      frago sync --dry-run    # Preview what will be synced
+      frago sync --no-push    # Only fetch updates, do not push
 
     \b
-    同步内容:
+    Synced content:
       ~/.claude/skills/frago-*        # Skills
       ~/.frago/recipes/               # Recipes
 
     \b
-    认证说明:
-      推荐使用 HTTPS URL 配合 GitHub CLI (gh) 认证。
-      请先运行 `gh auth login` 登录 GitHub。
+    Authentication:
+      It's recommended to use HTTPS URL with GitHub CLI (gh) authentication.
+      Please run `gh auth login` to authenticate with GitHub first.
     """
     try:
-        # 处理 --set-repo
+        # Handle --set-repo
         if set_repo:
             config = load_config()
             config.sync_repo_url = set_repo
             save_config(config)
-            click.echo(f"[OK] 已保存仓库配置: {set_repo}")
+            click.echo(f"[OK] Repository configuration saved: {set_repo}")
 
-            # 如果没有其他操作，直接返回
+            # If no other operations, return directly
             if not dry_run and not no_push and not message:
                 return
 
-        # 获取仓库 URL
+        # Get repository URL
         repo_url = set_repo or _get_configured_repo_url()
 
         if not repo_url:
-            click.echo("错误: 未配置仓库", err=True)
+            click.echo("Error: Repository not configured", err=True)
             click.echo("")
-            click.echo("请先配置仓库:", err=True)
+            click.echo("Please configure repository first:", err=True)
             click.echo("  frago sync --set-repo https://github.com/user/my-resources.git", err=True)
             sys.exit(1)
 
         if dry_run:
-            click.echo("=== 预览模式 ===")
+            click.echo("=== Preview Mode ===")
             click.echo()
 
         result = sync(
@@ -160,5 +160,5 @@ def sync_cmd(
             sys.exit(1)
 
     except Exception as e:
-        click.echo(f"错误: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)

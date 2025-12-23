@@ -1,72 +1,72 @@
-# 选择器优先级规则
+# Selector Priority Rules
 
-适用于：`/frago.recipe`
+Applies to: `/frago.recipe`
 
-## 优先级排序
+## Priority Ranking
 
-在生成 JavaScript 时，按此优先级排序选择器（5 最高，1 最低）：
+When generating JavaScript, rank selectors by this priority (5 is highest, 1 is lowest):
 
-| 优先级 | 类型 | 示例 | 稳定性 | 说明 |
+| Priority | Type | Example | Stability | Notes |
 |--------|------|------|--------|------|
-| **5** | ARIA 标签 | `[aria-label="按钮"]` | ✅ 很稳定 | 无障碍属性，极少改变 |
-| **5** | data 属性 | `[data-testid="submit"]` | ✅ 很稳定 | 专门用于测试 |
-| **4** | 稳定 ID | `#main-button` | ✅ 稳定 | 语义化 ID 名称 |
-| **3** | 语义化类名 | `.btn-primary` | ⚠️ 中等 | BEM 规范类名 |
-| **3** | HTML5 语义标签 | `button`, `nav` | ⚠️ 中等 | 标准语义标签 |
-| **2** | 结构选择器 | `div > button` | ⚠️ 脆弱 | 依赖 DOM 结构 |
-| **1** | 生成的类名 | `.css-abc123` | ❌ 很脆弱 | CSS-in-JS，随时变化 |
+| **5** | ARIA labels | `[aria-label="Button"]` | ✅ Very stable | Accessibility attributes, rarely change |
+| **5** | data attributes | `[data-testid="submit"]` | ✅ Very stable | Specifically for testing |
+| **4** | Stable ID | `#main-button` | ✅ Stable | Semantic ID names |
+| **3** | Semantic class names | `.btn-primary` | ⚠️ Medium | BEM convention class names |
+| **3** | HTML5 semantic tags | `button`, `nav` | ⚠️ Medium | Standard semantic tags |
+| **2** | Structural selectors | `div > button` | ⚠️ Fragile | Depends on DOM structure |
+| **1** | Generated class names | `.css-abc123` | ❌ Very fragile | CSS-in-JS, changes anytime |
 
-## 脆弱选择器识别
+## Identifying Fragile Selectors
 
-以下选择器应**尽量避免**或作为**最后降级选项**：
+The following selectors should be **avoided** or used as **last fallback option**:
 
-- `.css-*` 或 `._*` 开头的类名（CSS-in-JS 生成）
-- 纯数字 ID：`#12345`
-- 过长的 ID/类名（>20 字符）
-- 深层嵌套的结构选择器：`div > div > div > span`
+- `.css-*` or `._*` prefixed class names (CSS-in-JS generated)
+- Pure numeric IDs: `#12345`
+- Overly long ID/class names (>20 characters)
+- Deeply nested structural selectors: `div > div > div > span`
 
-## 在配方中使用降级选择器
+## Using Fallback Selectors in Recipes
 
 ```javascript
-// 辅助函数：按优先级尝试多个选择器
+// Helper function: Try multiple selectors by priority
 function findElement(selectors, description) {
   for (const sel of selectors) {
     const elem = document.querySelector(sel.selector);
     if (elem) return elem;
   }
-  throw new Error(`无法找到${description}`);
+  throw new Error(`Unable to find ${description}`);
 }
 
-// 使用示例：提供 2-3 个降级选择器
+// Usage example: Provide 2-3 fallback selectors
 const elem = findElement([
-  { selector: '[aria-label="提交"]', priority: 5 },      // 最稳定
+  { selector: '[aria-label="Submit"]', priority: 5 },      // Most stable
   { selector: '[data-testid="submit-btn"]', priority: 5 },
-  { selector: '#submit-button', priority: 4 },           // 降级
-  { selector: '.btn-submit', priority: 3 }               // 再降级
-], '提交按钮');
+  { selector: '#submit-button', priority: 4 },             // Fallback
+  { selector: '.btn-submit', priority: 3 }                 // Further fallback
+], 'submit button');
 ```
 
-## 探索时验证选择器
+## Validating Selectors During Exploration
 
-在创建配方前，使用 frago 命令验证选择器有效性：
+Before creating a recipe, validate selector validity using frago commands:
 
 ```bash
-# 验证选择器是否存在
-frago chrome exec-js "document.querySelector('[aria-label=\"提交\"]') !== null" --return-value
+# Verify if selector exists
+frago chrome exec-js "document.querySelector('[aria-label=\"Submit\"]') !== null" --return-value
 
-# 高亮元素确认位置
-frago chrome highlight '[aria-label="提交"]'
+# Highlight element to confirm position
+frago chrome highlight '[aria-label="Submit"]'
 
-# 获取元素文本确认内容
-frago chrome exec-js "document.querySelector('[aria-label=\"提交\"]')?.textContent" --return-value
+# Get element text to confirm content
+frago chrome exec-js "document.querySelector('[aria-label=\"Submit\"]')?.textContent" --return-value
 ```
 
-## 配方中的验证等待
+## Validation Waits in Recipes
 
-每个操作步骤后，使用 `waitForElement` 验证结果：
+After each operation step, use `waitForElement` to validate results:
 
 ```javascript
-// 辅助函数：等待并验证元素出现
+// Helper function: Wait for and validate element appearance
 async function waitForElement(selector, description, timeout = 5000) {
   const startTime = Date.now();
   while (Date.now() - startTime < timeout) {
@@ -74,19 +74,19 @@ async function waitForElement(selector, description, timeout = 5000) {
     if (elem) return elem;
     await new Promise(r => setTimeout(r, 100));
   }
-  throw new Error(`等待超时：${description} (${selector})`);
+  throw new Error(`Wait timeout: ${description} (${selector})`);
 }
 
-// 使用示例
+// Usage example
 elem.click();
-await waitForElement('.result-panel', '结果面板出现');
+await waitForElement('.result-panel', 'result panel appears');
 ```
 
-## 常见网站的选择器特征
+## Selector Characteristics for Common Sites
 
-| 网站 | 推荐选择器类型 | 注意事项 |
+| Site | Recommended Selector Types | Notes |
 |------|---------------|---------|
-| YouTube | `aria-label`, `data-*` | 类名多为生成的 |
-| Twitter/X | `data-testid`, `aria-label` | 类名极不稳定 |
-| GitHub | ID, 语义化类名 | 相对稳定 |
-| Upwork | `data-*`, 语义化类名 | 部分生成类名 |
+| YouTube | `aria-label`, `data-*` | Most class names are generated |
+| Twitter/X | `data-testid`, `aria-label` | Class names extremely unstable |
+| GitHub | ID, semantic class names | Relatively stable |
+| Upwork | `data-*`, semantic class names | Some generated class names |

@@ -1,7 +1,7 @@
 """
-CDP日志配置
+CDP logging configuration
 
-配置结构化日志记录器，用于CDP操作日志。
+Configures structured logger for CDP operations logging.
 """
 
 import logging
@@ -10,190 +10,190 @@ from typing import Optional
 
 
 class CDPLogger:
-    """CDP日志管理器"""
-    
+    """CDP logger manager"""
+
     def __init__(self, name: str = "frago.cdp", level: str = "INFO"):
         """
-        初始化日志管理器
-        
+        Initialize logger manager
+
         Args:
-            name: 日志器名称
-            level: 日志级别
+            name: Logger name
+            level: Log level
         """
         self.logger = logging.getLogger(name)
         self._setup_logger(level)
-    
+
     def _setup_logger(self, level: str):
-        """设置日志器配置"""
-        # 清除已有的处理器
+        """Set up logger configuration"""
+        # Clear existing handlers
         self.logger.handlers.clear()
-        
-        # 设置日志级别
+
+        # Set log level
         log_level = getattr(logging, level.upper(), logging.INFO)
         self.logger.setLevel(log_level)
-        
-        # 创建格式化器
+
+        # Create formatter
         formatter = logging.Formatter(
             fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-        
-        # 创建控制台处理器（输出到stderr而不是stdout，避免污染命令输出）
+
+        # Create console handler (output to stderr instead of stdout to avoid polluting command output)
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(log_level)
         console_handler.setFormatter(formatter)
-        
-        # 添加处理器
+
+        # Add handler
         self.logger.addHandler(console_handler)
-        
-        # 防止日志传播到根日志器
+
+        # Prevent log propagation to root logger
         self.logger.propagate = False
-    
+
     def debug(self, message: str, *args, **kwargs):
-        """记录调试日志"""
+        """Log debug message"""
         self.logger.debug(message, *args, **kwargs)
-    
+
     def info(self, message: str, *args, **kwargs):
-        """记录信息日志"""
+        """Log info message"""
         self.logger.info(message, *args, **kwargs)
-    
+
     def warning(self, message: str, *args, **kwargs):
-        """记录警告日志"""
+        """Log warning message"""
         self.logger.warning(message, *args, **kwargs)
-    
+
     def error(self, message: str, *args, **kwargs):
-        """记录错误日志"""
+        """Log error message"""
         self.logger.error(message, *args, **kwargs)
-    
+
     def exception(self, message: str, *args, **kwargs):
-        """记录异常日志"""
+        """Log exception message"""
         self.logger.exception(message, *args, **kwargs)
 
     # ========================================
-    # T049: 代理连接相关日志记录方法
+    # T049: Proxy connection logging methods
     # ========================================
 
     def log_proxy_config(self, proxy_info: Optional[dict]):
         """
-        记录代理配置信息
+        Log proxy configuration information
 
         Args:
-            proxy_info: 代理配置信息字典，包含host、port、has_auth等
+            proxy_info: Proxy configuration info dictionary, contains host, port, has_auth, etc.
         """
         if proxy_info is None:
-            self.debug("代理配置: 未使用代理")
+            self.debug("Proxy configuration: Not using proxy")
             return
 
         host = proxy_info.get('host', 'unknown')
         port = proxy_info.get('port', 'unknown')
         has_auth = proxy_info.get('has_auth', False)
 
-        auth_str = " (带认证)" if has_auth else ""
-        self.info(f"代理配置: {host}:{port}{auth_str}")
+        auth_str = " (with auth)" if has_auth else ""
+        self.info(f"Proxy configuration: {host}:{port}{auth_str}")
 
     def log_proxy_connection_attempt(self, proxy_host: str, proxy_port: int):
         """
-        记录代理连接尝试
+        Log proxy connection attempt
 
         Args:
-            proxy_host: 代理主机
-            proxy_port: 代理端口
+            proxy_host: Proxy host
+            proxy_port: Proxy port
         """
-        self.debug(f"正在通过代理连接: {proxy_host}:{proxy_port}")
+        self.debug(f"Connecting through proxy: {proxy_host}:{proxy_port}")
 
     def log_proxy_connection_success(self, proxy_host: str, proxy_port: int):
         """
-        记录代理连接成功
+        Log proxy connection success
 
         Args:
-            proxy_host: 代理主机
-            proxy_port: 代理端口
+            proxy_host: Proxy host
+            proxy_port: Proxy port
         """
-        self.info(f"代理连接成功: {proxy_host}:{proxy_port}")
+        self.info(f"Proxy connection successful: {proxy_host}:{proxy_port}")
 
     def log_proxy_connection_error(self, proxy_host: str, proxy_port: int, error: Exception):
         """
-        记录代理连接错误
+        Log proxy connection error
 
         Args:
-            proxy_host: 代理主机
-            proxy_port: 代理端口
-            error: 错误信息
+            proxy_host: Proxy host
+            proxy_port: Proxy port
+            error: Error information
         """
-        self.error(f"代理连接失败: {proxy_host}:{proxy_port} - {error}")
+        self.error(f"Proxy connection failed: {proxy_host}:{proxy_port} - {error}")
 
-    def log_proxy_bypass(self, reason: str = "no_proxy设置"):
+    def log_proxy_bypass(self, reason: str = "no_proxy setting"):
         """
-        记录代理绕过
+        Log proxy bypass
 
         Args:
-            reason: 绕过原因
+            reason: Bypass reason
         """
-        self.debug(f"绕过代理: {reason}")
+        self.debug(f"Bypassing proxy: {reason}")
 
     def log_proxy_auth(self, proxy_host: str, proxy_port: int, username: str):
         """
-        记录代理认证（不记录密码）
+        Log proxy authentication (does not log password)
 
-        安全提示：此方法只记录用户名，不记录密码信息
+        Security note: This method only logs username, not password information
 
         Args:
-            proxy_host: 代理主机
-            proxy_port: 代理端口
-            username: 用户名
+            proxy_host: Proxy host
+            proxy_port: Proxy port
+            username: Username
         """
-        # 安全处理：只显示用户名的前3个字符，其余用*代替
+        # Security handling: only show first 3 characters of username, replace rest with *
         safe_username = username[:3] + '*' * max(0, len(username) - 3) if len(username) > 3 else username
-        self.debug(f"使用代理认证: {proxy_host}:{proxy_port} (用户: {safe_username})")
+        self.debug(f"Using proxy authentication: {proxy_host}:{proxy_port} (user: {safe_username})")
 
     def log_proxy_env_loaded(self, source: str, proxy_url: str):
         """
-        记录从环境变量加载代理配置
+        Log loading proxy configuration from environment variable
 
-        安全提示：此方法会自动隐藏URL中的用户名和密码信息
+        Security note: This method automatically hides username and password in URL
 
         Args:
-            source: 环境变量名称（如HTTP_PROXY）
-            proxy_url: 代理URL（会隐藏密码）
+            source: Environment variable name (e.g. HTTP_PROXY)
+            proxy_url: Proxy URL (password will be hidden)
         """
-        # 隐藏密码和用户名部分
+        # Hide password and username parts
         safe_url = proxy_url
         if '@' in safe_url:
-            # URL格式: protocol://username:password@host:port
+            # URL format: protocol://username:password@host:port
             parts = safe_url.split('@')
             protocol_and_auth = parts[0]
-            host_and_port = '@'.join(parts[1:])  # 处理可能的多个@符号
+            host_and_port = '@'.join(parts[1:])  # Handle possible multiple @ symbols
 
-            # 提取协议部分
+            # Extract protocol part
             if '//' in protocol_and_auth:
                 protocol = protocol_and_auth.split('//')[0]
                 safe_url = f"{protocol}//***:***@{host_and_port}"
             else:
                 safe_url = f"***:***@{host_and_port}"
 
-        self.debug(f"从环境变量 {source} 加载代理配置: {safe_url}")
+        self.debug(f"Loaded proxy configuration from environment variable {source}: {safe_url}")
 
 
-# 全局日志器实例
+# Global logger instance
 _logger: Optional[CDPLogger] = None
 
 
 def get_logger(name: str = "frago.cdp", level: str = "WARNING") -> CDPLogger:
     """
-    获取CDP日志器
+    Get CDP logger
 
     Args:
-        name: 日志器名称
-        level: 日志级别（每次调用可更新级别）
+        name: Logger name
+        level: Log level (can be updated on each call)
 
     Returns:
-        CDPLogger: 日志器实例
+        CDPLogger: Logger instance
     """
     global _logger
     if _logger is None:
         _logger = CDPLogger(name, level)
     else:
-        # 更新日志级别（如果不同）
+        # Update log level (if different)
         new_level = getattr(logging, level.upper(), logging.WARNING)
         if _logger.logger.level != new_level:
             _logger._setup_logger(level)

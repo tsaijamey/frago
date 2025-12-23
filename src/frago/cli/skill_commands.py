@@ -1,4 +1,4 @@
-"""Skill 管理命令"""
+"""Skill management commands"""
 
 import json
 
@@ -10,7 +10,7 @@ from .agent_friendly import AgentFriendlyGroup
 
 @click.group(name='skill', cls=AgentFriendlyGroup)
 def skill_group():
-    """Skill 管理命令组"""
+    """Skill management command group"""
     pass
 
 
@@ -20,10 +20,10 @@ def skill_group():
     'output_format',
     type=click.Choice(['table', 'json', 'names'], case_sensitive=False),
     default='table',
-    help='输出格式'
+    help='Output format'
 )
 def list_skills(output_format: str):
-    """列出所有可用的 Skill"""
+    """List all available Skills"""
     registry = SkillRegistry()
     registry.scan()
 
@@ -54,16 +54,16 @@ def list_skills(output_format: str):
     elif output_format == 'names':
         for s in skills:
             click.echo(s.name)
-        # names 格式下也输出无效 skill 警告
+        # Also output invalid skill warnings in names format
         if invalid_skills:
             click.echo()
-            click.echo("[!] 以下 Skill 不符合规范，未加载:", err=True)
+            click.echo("[!] The following Skills do not comply with specifications and were not loaded:", err=True)
             for inv in invalid_skills:
                 click.echo(f"  - {inv.dir_name}: {inv.reason}", err=True)
 
     else:  # table
         if not skills and not invalid_skills:
-            click.echo("未找到 Skill")
+            click.echo("No Skills found")
             return
 
         if skills:
@@ -72,9 +72,9 @@ def list_skills(output_format: str):
                 click.echo(f"  {s.description}")
                 click.echo()
 
-        # 输出无效 skill 警告
+        # Output invalid skill warnings
         if invalid_skills:
             click.echo()
-            click.echo("[!] 以下 Skill 不符合规范，未加载:")
+            click.echo("[!] The following Skills do not comply with specifications and were not loaded:")
             for inv in invalid_skills:
                 click.echo(f"  - {inv.dir_name}: {inv.reason}")

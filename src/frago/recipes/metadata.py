@@ -1,4 +1,4 @@
-"""Recipe 元数据解析和验证"""
+"""Recipe metadata parsing and validation"""
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,60 +11,60 @@ from .exceptions import MetadataParseError, RecipeValidationError
 
 @dataclass
 class RecipeMetadata:
-    """Recipe 元数据"""
+    """Recipe metadata"""
     name: str
     type: str  # atomic | workflow
     runtime: str  # chrome-js | python | shell
     version: str
-    description: str  # AI 可理解字段
-    use_cases: list[str]  # AI 可理解字段
-    output_targets: list[str]  # AI 可理解字段: stdout | file | clipboard
+    description: str  # AI-understandable field
+    use_cases: list[str]  # AI-understandable field
+    output_targets: list[str]  # AI-understandable field: stdout | file | clipboard
     inputs: dict[str, dict[str, Any]] = field(default_factory=dict)
     outputs: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
-    tags: list[str] = field(default_factory=list)  # AI 可理解字段
-    env: dict[str, dict[str, Any]] = field(default_factory=dict)  # 环境变量定义
-    system_packages: bool = False  # 使用系统 Python（用于依赖 dbus 等系统包）
+    tags: list[str] = field(default_factory=list)  # AI-understandable field
+    env: dict[str, dict[str, Any]] = field(default_factory=dict)  # Environment variable definitions
+    system_packages: bool = False  # Use system Python (for scripts depending on system packages like dbus)
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
     """
-    从 Markdown 文件的 YAML frontmatter 解析元数据
-    
+    Parse metadata from YAML frontmatter in Markdown file
+
     Args:
-        path: 元数据文件路径（.md 文件）
-    
+        path: Metadata file path (.md file)
+
     Returns:
-        RecipeMetadata 对象
-    
+        RecipeMetadata object
+
     Raises:
-        MetadataParseError: 解析失败时抛出
+        MetadataParseError: Raised when parsing fails
     """
     try:
         content = path.read_text(encoding='utf-8')
     except Exception as e:
-        raise MetadataParseError(str(path), f"无法读取文件: {e}")
-    
-    # 提取 YAML frontmatter
+        raise MetadataParseError(str(path), f"Cannot read file: {e}")
+
+    # Extract YAML frontmatter
     if not content.startswith('---'):
-        raise MetadataParseError(str(path), "文件不以 '---' 开头，缺少 YAML frontmatter")
-    
+        raise MetadataParseError(str(path), "File does not start with '---', missing YAML frontmatter")
+
     parts = content.split('---', 2)
     if len(parts) < 3:
-        raise MetadataParseError(str(path), "YAML frontmatter 格式错误，缺少结束的 '---'")
-    
+        raise MetadataParseError(str(path), "YAML frontmatter format error, missing closing '---'")
+
     yaml_content = parts[1].strip()
-    
-    # 解析 YAML
+
+    # Parse YAML
     try:
         data = yaml.safe_load(yaml_content)
     except yaml.YAMLError as e:
-        raise MetadataParseError(str(path), f"YAML 解析失败: {e}")
-    
+        raise MetadataParseError(str(path), f"YAML parsing failed: {e}")
+
     if not isinstance(data, dict):
-        raise MetadataParseError(str(path), "YAML frontmatter 必须是字典格式")
-    
-    # 构建 RecipeMetadata 对象
+        raise MetadataParseError(str(path), "YAML frontmatter must be in dictionary format")
+
+    # Build RecipeMetadata object
     try:
         metadata = RecipeMetadata(
             name=data['name'],
@@ -82,75 +82,75 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             system_packages=data.get('system_packages', False),
         )
     except KeyError as e:
-        raise MetadataParseError(str(path), f"缺少必需字段: {e}")
+        raise MetadataParseError(str(path), f"Missing required field: {e}")
     except Exception as e:
-        raise MetadataParseError(str(path), f"元数据构建失败: {e}")
+        raise MetadataParseError(str(path), f"Metadata construction failed: {e}")
     
     return metadata
 
 
 def validate_metadata(metadata: RecipeMetadata) -> None:
     """
-    验证元数据的有效性
-    
+    Validate metadata validity
+
     Args:
-        metadata: 要验证的元数据对象
-    
+        metadata: Metadata object to validate
+
     Raises:
-        RecipeValidationError: 验证失败时抛出
+        RecipeValidationError: Raised when validation fails
     """
     errors = []
-    
-    # 验证 name
+
+    # Validate name
     if not metadata.name or not re.match(r'^[a-zA-Z0-9_-]+$', metadata.name):
-        errors.append("name 必须仅包含字母、数字、下划线、连字符")
-    
-    # 验证 type
+        errors.append("name must only contain letters, numbers, underscores, and hyphens")
+
+    # Validate type
     if metadata.type not in ['atomic', 'workflow']:
-        errors.append(f"type 必须是 'atomic' 或 'workflow'，当前值: '{metadata.type}'")
-    
-    # 验证 runtime
+        errors.append(f"type must be 'atomic' or 'workflow', current value: '{metadata.type}'")
+
+    # Validate runtime
     if metadata.runtime not in ['chrome-js', 'python', 'shell']:
-        errors.append(f"runtime 必须是 'chrome-js', 'python' 或 'shell'，当前值: '{metadata.runtime}'")
-    
-    # 验证 version
+        errors.append(f"runtime must be 'chrome-js', 'python' or 'shell', current value: '{metadata.runtime}'")
+
+    # Validate version
     if not re.match(r'^\d+\.\d+(\.\d+)?$', metadata.version):
-        errors.append(f"version 格式无效: '{metadata.version}'，期望格式: '1.0' 或 '1.0.0'")
-    
-    # AI 字段验证
+        errors.append(f"version format invalid: '{metadata.version}', expected format: '1.0' or '1.0.0'")
+
+    # AI field validation
     if not metadata.description or len(metadata.description) > 200:
-        errors.append("description 必须存在且长度 <= 200 字符")
-    
+        errors.append("description must exist and length <= 200 characters")
+
     if not metadata.use_cases or len(metadata.use_cases) == 0:
-        errors.append("use_cases 必须包含至少一个使用场景")
-    
+        errors.append("use_cases must contain at least one use case")
+
     if not metadata.output_targets or len(metadata.output_targets) == 0:
-        errors.append("output_targets 必须包含至少一个输出目标")
-    
+        errors.append("output_targets must contain at least one output target")
+
     for target in metadata.output_targets:
         if target not in ['stdout', 'file', 'clipboard']:
-            errors.append(f"output_targets 包含无效值: '{target}'，有效值: stdout, file, clipboard")
-    
-    # 验证 inputs
+            errors.append(f"output_targets contains invalid value: '{target}', valid values: stdout, file, clipboard")
+
+    # Validate inputs
     for param_name, param_def in metadata.inputs.items():
         if 'type' not in param_def or 'required' not in param_def:
-            errors.append(f"输入参数 '{param_name}' 缺少 'type' 或 'required' 字段")
+            errors.append(f"Input parameter '{param_name}' is missing 'type' or 'required' field")
 
-    # 验证 env
+    # Validate env
     for env_name, env_def in metadata.env.items():
-        # 环境变量名必须符合规范
+        # Environment variable name must comply with specification
         if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', env_name):
-            errors.append(f"环境变量 '{env_name}' 名称无效，必须以字母或下划线开头")
-        # env_def 应该是字典
+            errors.append(f"Environment variable '{env_name}' name invalid, must start with letter or underscore")
+        # env_def should be a dictionary
         if not isinstance(env_def, dict):
-            errors.append(f"环境变量 '{env_name}' 定义必须是字典格式")
+            errors.append(f"Environment variable '{env_name}' definition must be in dictionary format")
         else:
-            # required 字段如果存在必须是布尔值
+            # required field must be boolean if present
             if 'required' in env_def and not isinstance(env_def['required'], bool):
-                errors.append(f"环境变量 '{env_name}' 的 'required' 字段必须是布尔值")
-            # default 字段如果存在必须是字符串
+                errors.append(f"Environment variable '{env_name}' 'required' field must be boolean")
+            # default field must be string if present
             if 'default' in env_def and not isinstance(env_def['default'], str):
-                errors.append(f"环境变量 '{env_name}' 的 'default' 字段必须是字符串")
+                errors.append(f"Environment variable '{env_name}' 'default' field must be string")
 
     if errors:
         raise RecipeValidationError(metadata.name, errors)
@@ -158,28 +158,28 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
 
 def validate_params(metadata: RecipeMetadata, params: dict[str, Any]) -> None:
     """
-    验证运行时提供的参数是否符合元数据定义
+    Validate if runtime-provided parameters conform to metadata definition
 
     Args:
-        metadata: Recipe 元数据
-        params: 用户提供的参数
+        metadata: Recipe metadata
+        params: User-provided parameters
 
     Raises:
-        RecipeValidationError: 参数验证失败时抛出
+        RecipeValidationError: Raised when parameter validation fails
     """
     errors = []
 
-    # 检查必需参数是否提供
+    # Check if required parameters are provided
     for param_name, param_def in metadata.inputs.items():
         if param_def.get('required', False):
             if param_name not in params:
                 param_desc = param_def.get('description', '')
-                error_msg = f"缺少必需参数: '{param_name}'"
+                error_msg = f"Missing required parameter: '{param_name}'"
                 if param_desc:
                     error_msg += f" ({param_desc})"
                 errors.append(error_msg)
 
-    # 检查提供的参数类型
+    # Check provided parameter types
     for param_name, param_value in params.items():
         if param_name in metadata.inputs:
             param_def = metadata.inputs[param_name]
@@ -194,19 +194,19 @@ def validate_params(metadata: RecipeMetadata, params: dict[str, Any]) -> None:
 
 def check_param_type(param_name: str, value: Any, expected_type: str) -> list[str]:
     """
-    检查参数值的类型是否符合预期
+    Check if parameter value type matches expected type
 
     Args:
-        param_name: 参数名称
-        value: 参数值
-        expected_type: 期望的类型 (string, number, boolean, array, object)
+        param_name: Parameter name
+        value: Parameter value
+        expected_type: Expected type (string, number, boolean, array, object)
 
     Returns:
-        错误消息列表（为空表示验证通过）
+        Error message list (empty means validation passed)
     """
     errors = []
 
-    # 类型映射
+    # Type mapping
     type_checks = {
         'string': lambda v: isinstance(v, str),
         'number': lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
@@ -216,12 +216,12 @@ def check_param_type(param_name: str, value: Any, expected_type: str) -> list[st
     }
 
     if expected_type not in type_checks:
-        # 未知类型，跳过检查
+        # Unknown type, skip check
         return errors
 
     check_func = type_checks[expected_type]
     if not check_func(value):
-        # 类型不匹配
+        # Type mismatch
         actual_type = type(value).__name__
         if isinstance(value, bool):
             actual_type = 'boolean'
@@ -235,7 +235,7 @@ def check_param_type(param_name: str, value: Any, expected_type: str) -> list[st
             actual_type = 'object'
 
         errors.append(
-            f"参数 '{param_name}' 类型错误: 期望 {expected_type}，实际 {actual_type}"
+            f"Parameter '{param_name}' type error: expected {expected_type}, actual {actual_type}"
         )
 
     return errors

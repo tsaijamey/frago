@@ -1,15 +1,15 @@
 """
-Pack 模块 - 同步用户目录资源到打包目录
+Pack module - Sync user directory resources to package directory
 
-同步 ~/.frago/recipes/ 目录的 Recipe 到 src/frago/resources/recipes/
-同步 ~/.claude/commands/ 目录的命令到 src/frago/resources/commands/
-同步 ~/.claude/skills/ 目录的 Skill 到 src/frago/resources/skills/
+Sync Recipes from ~/.frago/recipes/ to src/frago/resources/recipes/
+Sync commands from ~/.claude/commands/ to src/frago/resources/commands/
+Sync Skills from ~/.claude/skills/ to src/frago/resources/skills/
 
-提供将用户目录的 Recipe 和 Claude Code 命令同步到 Python 包资源目录的功能，
-使得打包分发时能够包含最新的内容。
+Provides functionality to sync Recipes and Claude Code commands from user directory
+to Python package resource directory, enabling latest content to be included during packaging.
 
-注意: 这是用于 PyPI 打包的内部功能。
-开发者直接在 ~/.claude/ 和 ~/.frago/ 编辑资源，然后用 dev pack 同步到包内。
+Note: This is an internal feature for PyPI packaging.
+Developers edit resources directly in ~/.claude/ and ~/.frago/, then use dev pack to sync to package.
 """
 
 import fnmatch
@@ -19,7 +19,7 @@ from typing import Optional
 
 
 class CommandSync:
-    """Claude Code 命令同步器"""
+    """Claude Code command synchronizer"""
 
     def __init__(
         self,
@@ -27,18 +27,18 @@ class CommandSync:
         target_dir: Optional[Path] = None,
     ):
         """
-        初始化同步器
+        Initialize synchronizer
 
         Args:
-            source_dir: 源目录（~/.claude/commands/），默认用户目录
-            target_dir: 目标目录（src/frago/resources/commands/），默认自动检测
+            source_dir: Source directory (~/.claude/commands/), defaults to user directory
+            target_dir: Target directory (src/frago/resources/commands/), defaults to auto-detect
         """
-        # 自动检测项目根目录（用于 target_dir）
+        # Auto-detect project root directory (for target_dir)
         current_file = Path(__file__).resolve()
         # src/frago/tools/sync.py -> project_root
         project_root = current_file.parent.parent.parent.parent
 
-        # 源目录改为用户目录
+        # Change source directory to user directory
         self.source_dir = source_dir or (Path.home() / ".claude" / "commands")
         self.target_dir = target_dir or (
             project_root / "src" / "frago" / "resources" / "commands"
@@ -46,27 +46,27 @@ class CommandSync:
 
     def find_commands(self, pattern: Optional[str] = None) -> list[Path]:
         """
-        查找所有 frago.*.md 命令文件
+        Find all frago.*.md command files
 
         Args:
-            pattern: 可选的通配符模式，用于过滤命令名称
+            pattern: Optional wildcard pattern for filtering command names
 
         Returns:
-            命令文件路径列表
+            List of command file paths
         """
         commands = []
 
         if not self.source_dir.exists():
             return commands
 
-        # 查找 frago.*.md 文件（用户目录使用正式命名）
+        # Find frago.*.md files (user directory uses official naming)
         for cmd_file in self.source_dir.glob("frago.*.md"):
             if not cmd_file.is_file():
                 continue
 
             cmd_name = cmd_file.name
 
-            # 如果指定了 pattern，进行匹配
+            # If pattern specified, perform matching
             if pattern:
                 if not fnmatch.fnmatch(cmd_name, pattern):
                     continue
@@ -77,15 +77,15 @@ class CommandSync:
 
     def get_target_name(self, source_name: str) -> str:
         """
-        获取目标文件名（直接使用源文件名）
+        Get target filename (directly use source filename)
 
         Args:
-            source_name: 源文件名，如 frago.recipe.md
+            source_name: Source filename, e.g. frago.recipe.md
 
         Returns:
-            目标文件名，与源文件名相同
+            Target filename, same as source filename
         """
-        # 用户目录已使用正式命名，无需转换
+        # User directory already uses official naming, no conversion needed
         return source_name
 
     def sync(
@@ -95,15 +95,15 @@ class CommandSync:
         verbose: bool = False,
     ) -> list[dict]:
         """
-        执行同步操作
+        Execute sync operation
 
         Args:
-            pattern: 可选的通配符模式，用于过滤命令名称
-            dry_run: 如果为 True，仅显示将要执行的操作，不实际执行
-            verbose: 显示详细信息
+            pattern: Optional wildcard pattern for filtering command names
+            dry_run: If True, only show operations to be executed, don't actually execute
+            verbose: Show detailed information
 
         Returns:
-            同步结果列表，每个元素包含 source_name, target_name, source_file, target_file, action
+            Sync result list, each element contains source_name, target_name, source_file, target_file, action
         """
         results = []
         cmd_files = self.find_commands(pattern)
@@ -116,9 +116,9 @@ class CommandSync:
             target_name = self.get_target_name(source_name)
             target_file = self.target_dir / target_name
 
-            # 确定操作类型
+            # Determine operation type
             if target_file.exists():
-                # 检查是否需要更新（比较修改时间）
+                # Check if update needed (compare modification time)
                 if src_file.stat().st_mtime > target_file.stat().st_mtime:
                     action = "update"
                 else:
@@ -139,9 +139,9 @@ class CommandSync:
                 continue
 
             if not dry_run:
-                # 确保目标目录存在
+                # Ensure target directory exists
                 self.target_dir.mkdir(parents=True, exist_ok=True)
-                # 复制文件
+                # Copy file
                 shutil.copy2(src_file, target_file)
 
             results.append(result)
@@ -149,7 +149,7 @@ class CommandSync:
         return results
 
     def list_synced(self) -> list[Path]:
-        """列出已同步到 resources 的命令文件"""
+        """List command files synced to resources"""
         synced = []
 
         if not self.target_dir.exists():
@@ -166,19 +166,19 @@ class CommandSync:
         dry_run: bool = False,
     ) -> list[Path]:
         """
-        清理目标目录中不存在于源目录的命令文件
+        Clean command files in target directory that don't exist in source directory
 
         Args:
-            dry_run: 如果为 True，仅显示将要删除的文件，不实际执行
+            dry_run: If True, only show files to be deleted, don't actually execute
 
         Returns:
-            被删除（或将要删除）的文件列表
+            List of deleted (or to be deleted) files
         """
         removed = []
 
         for target_file in self.list_synced():
             target_name = target_file.name
-            # 源文件名与目标文件名相同
+            # Source filename is same as target filename
             source_file = self.source_dir / target_name
 
             if not source_file.exists():
@@ -190,7 +190,7 @@ class CommandSync:
 
 
 class RecipeSync:
-    """Recipe 同步器"""
+    """Recipe synchronizer"""
 
     def __init__(
         self,
@@ -198,18 +198,18 @@ class RecipeSync:
         target_dir: Optional[Path] = None,
     ):
         """
-        初始化同步器
+        Initialize synchronizer
 
         Args:
-            source_dir: 源目录（~/.frago/recipes/），默认用户目录
-            target_dir: 目标目录（src/frago/resources/recipes/），默认自动检测
+            source_dir: Source directory (~/.frago/recipes/), defaults to user directory
+            target_dir: Target directory (src/frago/resources/recipes/), defaults to auto-detect
         """
-        # 自动检测项目根目录（用于 target_dir）
+        # Auto-detect project root directory (for target_dir)
         current_file = Path(__file__).resolve()
         # src/frago/tools/sync.py -> project_root
         project_root = current_file.parent.parent.parent.parent
 
-        # 源目录改为用户目录
+        # Change source directory to user directory
         self.source_dir = source_dir or (Path.home() / ".frago" / "recipes")
         self.target_dir = target_dir or (
             project_root / "src" / "frago" / "resources" / "recipes"
@@ -217,39 +217,39 @@ class RecipeSync:
 
     def find_recipes(self, pattern: Optional[str] = None) -> list[Path]:
         """
-        查找所有 Recipe 目录
+        Find all Recipe directories
 
         Args:
-            pattern: 可选的通配符模式，用于过滤 Recipe 名称
+            pattern: Optional wildcard pattern for filtering Recipe names
 
         Returns:
-            配方目录路径列表
+            List of recipe directory paths
         """
         recipes = []
 
-        # 遍历 examples/ 下的子目录 (atomic/chrome, atomic/system, workflows)
+        # Traverse subdirectories under examples/ (atomic/chrome, atomic/system, workflows)
         for subdir in ["atomic/chrome", "atomic/system", "workflows"]:
             category_path = self.source_dir / subdir
             if not category_path.exists():
                 continue
 
-            # 查找所有配方目录（包含 recipe.md 的目录）
+            # Find all recipe directories (directories containing recipe.md)
             for recipe_dir in category_path.iterdir():
                 if not recipe_dir.is_dir():
                     continue
-                # 跳过 __pycache__ 目录
+                # Skip __pycache__ directory
                 if recipe_dir.name == "__pycache__":
                     continue
 
-                # 检查是否包含 recipe.md
+                # Check if recipe.md exists
                 metadata_path = recipe_dir / "recipe.md"
                 if not metadata_path.exists():
                     continue
 
-                # 获取 Recipe 名称（目录名）
+                # Get Recipe name (directory name)
                 recipe_name = recipe_dir.name
 
-                # 如果指定了 pattern，进行匹配
+                # If pattern specified, perform matching
                 if pattern:
                     if not fnmatch.fnmatch(recipe_name, pattern):
                         continue
@@ -265,15 +265,15 @@ class RecipeSync:
         verbose: bool = False,
     ) -> list[dict]:
         """
-        执行同步操作（目录形式配方）
+        Execute sync operation (directory-based recipes)
 
         Args:
-            pattern: 可选的通配符模式，用于过滤 Recipe 名称
-            dry_run: 如果为 True，仅显示将要执行的操作，不实际执行
-            verbose: 显示详细信息
+            pattern: Optional wildcard pattern for filtering Recipe names
+            dry_run: If True, only show operations to be executed, don't actually execute
+            verbose: Show detailed information
 
         Returns:
-            同步结果列表，每个元素包含 recipe_name, source_dir, target_dir, action
+            Sync result list, each element contains recipe_name, source_dir, target_dir, action
         """
         results = []
         recipe_dirs = self.find_recipes(pattern)
@@ -282,16 +282,16 @@ class RecipeSync:
             return results
 
         for recipe_dir in recipe_dirs:
-            # 计算相对路径
+            # Calculate relative path
             rel_path = recipe_dir.relative_to(self.source_dir)
             recipe_name = recipe_dir.name
 
-            # 目标路径
+            # Target path
             target_dir = self.target_dir / rel_path
 
-            # 确定操作类型
+            # Determine operation type
             if target_dir.exists():
-                # 检查是否需要更新（比较目录内所有文件的修改时间）
+                # Check if update needed (compare modification time of all files in directory)
                 needs_update = False
                 for src_file in recipe_dir.rglob("*"):
                     if src_file.is_file() and "__pycache__" not in str(src_file):
@@ -319,11 +319,11 @@ class RecipeSync:
                 continue
 
             if not dry_run:
-                # 删除旧目录（如果存在）
+                # Delete old directory (if exists)
                 if target_dir.exists():
                     shutil.rmtree(target_dir)
 
-                # 复制整个目录（排除 __pycache__）
+                # Copy entire directory (excluding __pycache__)
                 shutil.copytree(
                     recipe_dir,
                     target_dir,
@@ -335,10 +335,10 @@ class RecipeSync:
         return results
 
     def list_synced(self) -> list[Path]:
-        """列出已同步到 resources 的 Recipe 目录"""
+        """List Recipe directories synced to resources"""
         synced = []
 
-        # 遍历 target_dir 下的子目录
+        # Traverse subdirectories under target_dir
         for subdir in ["atomic/chrome", "atomic/system", "workflows"]:
             category_path = self.target_dir / subdir
             if not category_path.exists():
@@ -355,18 +355,18 @@ class RecipeSync:
         dry_run: bool = False,
     ) -> list[Path]:
         """
-        清理目标目录中不存在于源目录的 Recipe
+        Clean Recipes in target directory that don't exist in source directory
 
         Args:
-            dry_run: 如果为 True，仅显示将要删除的目录，不实际执行
+            dry_run: If True, only show directories to be deleted, don't actually execute
 
         Returns:
-            被删除（或将要删除）的目录列表
+            List of deleted (or to be deleted) directories
         """
         removed = []
 
         for target_dir in self.list_synced():
-            # 计算对应的源路径
+            # Calculate corresponding source path
             rel_path = target_dir.relative_to(self.target_dir)
             source_dir = self.source_dir / rel_path
 
@@ -379,7 +379,7 @@ class RecipeSync:
 
 
 class SkillSync:
-    """Skill 同步器"""
+    """Skill synchronizer"""
 
     def __init__(
         self,
@@ -387,18 +387,18 @@ class SkillSync:
         target_dir: Optional[Path] = None,
     ):
         """
-        初始化同步器
+        Initialize synchronizer
 
         Args:
-            source_dir: 源目录（~/.claude/skills/），默认用户目录
-            target_dir: 目标目录（src/frago/resources/skills/），默认自动检测
+            source_dir: Source directory (~/.claude/skills/), defaults to user directory
+            target_dir: Target directory (src/frago/resources/skills/), defaults to auto-detect
         """
-        # 自动检测项目根目录（用于 target_dir）
+        # Auto-detect project root directory (for target_dir)
         current_file = Path(__file__).resolve()
         # src/frago/tools/sync.py -> project_root
         project_root = current_file.parent.parent.parent.parent
 
-        # 源目录改为用户目录
+        # Change source directory to user directory
         self.source_dir = source_dir or (Path.home() / ".claude" / "skills")
         self.target_dir = target_dir or (
             project_root / "src" / "frago" / "resources" / "skills"
@@ -406,13 +406,13 @@ class SkillSync:
 
     def find_skills(self, pattern: Optional[str] = None) -> list[Path]:
         """
-        查找所有 Skill 目录（以 frago- 开头）
+        Find all Skill directories (starting with frago-)
 
         Args:
-            pattern: 可选的通配符模式，用于过滤 Skill 名称
+            pattern: Optional wildcard pattern for filtering Skill names
 
         Returns:
-            Skill 目录路径列表
+            List of Skill directory paths
         """
         skills = []
 
@@ -422,21 +422,21 @@ class SkillSync:
         for skill_dir in self.source_dir.iterdir():
             if not skill_dir.is_dir():
                 continue
-            # 跳过 __pycache__ 目录
+            # Skip __pycache__ directory
             if skill_dir.name == "__pycache__":
                 continue
-            # 只同步以 frago- 开头的 skill
+            # Only sync skills starting with frago-
             if not skill_dir.name.startswith("frago-"):
                 continue
 
-            # 检查是否包含 SKILL.md
+            # Check if SKILL.md exists
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
 
             skill_name = skill_dir.name
 
-            # 如果指定了 pattern，进行匹配
+            # If pattern specified, perform matching
             if pattern:
                 if not fnmatch.fnmatch(skill_name, pattern):
                     continue
@@ -445,8 +445,80 @@ class SkillSync:
 
         return skills
 
+    def sync(
+        self,
+        pattern: Optional[str] = None,
+        dry_run: bool = False,
+        verbose: bool = False,
+    ) -> list[dict]:
+        """
+        Execute sync operation (directory-based skills)
+
+        Args:
+            pattern: Optional wildcard pattern for filtering Skill names
+            dry_run: If True, only show operations to be executed, don't actually execute
+            verbose: Show detailed information
+
+        Returns:
+            Sync result list, each element contains skill_name, source_dir, target_dir, action
+        """
+        results = []
+        skill_dirs = self.find_skills(pattern)
+
+        if not skill_dirs:
+            return results
+
+        for skill_dir in skill_dirs:
+            skill_name = skill_dir.name
+            target_dir = self.target_dir / skill_name
+
+            # Determine operation type
+            if target_dir.exists():
+                # Check if update needed (compare modification time of all files in directory)
+                needs_update = False
+                for src_file in skill_dir.rglob("*"):
+                    if src_file.is_file() and "__pycache__" not in str(src_file):
+                        rel_file = src_file.relative_to(skill_dir)
+                        tgt_file = target_dir / rel_file
+                        if not tgt_file.exists():
+                            needs_update = True
+                            break
+                        if src_file.stat().st_mtime > tgt_file.stat().st_mtime:
+                            needs_update = True
+                            break
+                action = "update" if needs_update else "skip"
+            else:
+                action = "create"
+
+            result = {
+                "skill_name": skill_name,
+                "source_dir": skill_dir,
+                "target_dir": target_dir,
+                "action": action,
+            }
+
+            if action == "skip":
+                results.append(result)
+                continue
+
+            if not dry_run:
+                # Delete old directory (if exists)
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+
+                # Copy entire directory (excluding __pycache__)
+                shutil.copytree(
+                    skill_dir,
+                    target_dir,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+
+            results.append(result)
+
+        return results
+
     def list_synced(self) -> list[Path]:
-        """列出已同步到 resources 的 Skill 目录"""
+        """List Skill directories synced to resources"""
         synced = []
 
         if not self.target_dir.exists():
@@ -463,13 +535,13 @@ class SkillSync:
         dry_run: bool = False,
     ) -> list[Path]:
         """
-        清理目标目录中不存在于源目录的 Skill
+        Clean Skills in target directory that don't exist in source directory
 
         Args:
-            dry_run: 如果为 True，仅显示将要删除的目录，不实际执行
+            dry_run: If True, only show directories to be deleted, don't actually execute
 
         Returns:
-            被删除（或将要删除）的目录列表
+            List of deleted (or to be deleted) directories
         """
         removed = []
 

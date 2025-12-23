@@ -1,10 +1,10 @@
 """
-中断恢复模块
+Interrupt Recovery Module
 
-提供 Ctrl+C 优雅中断处理和状态恢复功能：
-- GracefulInterruptHandler: 信号处理器
-- 临时状态保存/加载/删除
-- 恢复提示
+Provides graceful Ctrl+C interrupt handling and state recovery:
+- GracefulInterruptHandler: Signal handler
+- Temporary state save/load/delete
+- Recovery prompts
 """
 
 import json
@@ -19,26 +19,26 @@ import click
 from frago.init.models import TemporaryState
 
 
-# 临时状态过期时间（天）
+# Temporary state expiry time (days)
 TEMP_STATE_EXPIRY_DAYS = 7
 
 
 def get_temp_state_path() -> Path:
     """
-    获取临时状态文件路径
+    Get temporary state file path
 
     Returns:
-        临时状态文件路径 (~/.frago/.init_state.json)
+        Temporary state file path (~/.frago/.init_state.json)
     """
     return Path.home() / ".frago" / ".init_state.json"
 
 
 def load_temp_state() -> Optional[TemporaryState]:
     """
-    加载临时状态
+    Load temporary state
 
     Returns:
-        TemporaryState 对象，如果不存在或已过期则返回 None
+        TemporaryState object, or None if not exists or expired
     """
     state_file = get_temp_state_path()
 
@@ -49,13 +49,13 @@ def load_temp_state() -> Optional[TemporaryState]:
         with open(state_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # 处理 datetime
+        # Handle datetime
         if "interrupted_at" in data and isinstance(data["interrupted_at"], str):
             data["interrupted_at"] = datetime.fromisoformat(data["interrupted_at"])
 
         state = TemporaryState(**data)
 
-        # 检查是否过期
+        # Check if expired
         if state.is_expired(days=TEMP_STATE_EXPIRY_DAYS):
             delete_temp_state()
             return None
@@ -63,24 +63,24 @@ def load_temp_state() -> Optional[TemporaryState]:
         return state
 
     except (json.JSONDecodeError, TypeError, ValueError):
-        # 状态文件损坏，删除
+        # State file corrupted, delete it
         delete_temp_state()
         return None
 
 
 def save_temp_state(state: TemporaryState) -> None:
     """
-    保存临时状态
+    Save temporary state
 
     Args:
-        state: TemporaryState 对象
+        state: TemporaryState object
     """
     state_file = get_temp_state_path()
 
-    # 确保目录存在
+    # Ensure directory exists
     state_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # 序列化
+    # Serialize
     data = {
         "completed_steps": state.completed_steps,
         "current_step": state.current_step,
@@ -94,10 +94,10 @@ def save_temp_state(state: TemporaryState) -> None:
 
 def delete_temp_state() -> bool:
     """
-    删除临时状态文件
+    Delete temporary state file
 
     Returns:
-        True 如果成功删除或文件不存在
+        True if successfully deleted or file does not exist
     """
     state_file = get_temp_state_path()
 
@@ -111,69 +111,69 @@ def delete_temp_state() -> bool:
 
 def prompt_resume(state: TemporaryState) -> bool:
     """
-    询问用户是否恢复上次中断的安装
+    Ask user if they want to resume interrupted installation
 
     Args:
-        state: TemporaryState 对象
+        state: TemporaryState object
 
     Returns:
-        True 如果用户选择恢复
+        True if user chooses to resume
     """
-    click.echo("\n[!]  检测到上次安装被中断")
-    click.echo(f"   中断时间: {state.interrupted_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    click.echo("\n[!]  Detected interrupted installation")
+    click.echo(f"   Interrupted at: {state.interrupted_at.strftime('%Y-%m-%d %H:%M:%S')}")
     if state.current_step:
-        click.echo(f"   中断步骤: {state.current_step}")
+        click.echo(f"   Interrupted step: {state.current_step}")
 
-    # 显示已完成的步骤
+    # Show completed steps
     if state.completed_steps:
-        click.echo("\n   已完成的步骤:")
+        click.echo("\n   Completed steps:")
         for step in state.completed_steps:
             click.echo(f"     [OK] {step}")
 
     click.echo()
-    return click.confirm("是否从上次中断处继续?", default=True)
+    return click.confirm("Resume from interruption?", default=True)
 
 
 def format_resume_summary(state: TemporaryState) -> str:
     """
-    格式化恢复摘要
+    Format recovery summary
 
     Args:
-        state: TemporaryState 对象
+        state: TemporaryState object
 
     Returns:
-        格式化的摘要字符串
+        Formatted summary string
     """
-    lines = ["恢复信息:"]
+    lines = ["Recovery information:"]
 
     completed = len(state.completed_steps)
     if completed:
-        lines.append(f"  已完成: {completed} 步")
+        lines.append(f"  Completed: {completed} steps")
     if state.current_step:
-        lines.append(f"  当前步骤: {state.current_step}")
+        lines.append(f"  Current step: {state.current_step}")
 
     return "\n".join(lines)
 
 
 class GracefulInterruptHandler:
     """
-    优雅中断处理器
+    Graceful interrupt handler
 
-    用于捕获 Ctrl+C 信号并执行清理操作
+    Used to capture Ctrl+C signal and perform cleanup operations
 
     Usage:
         with GracefulInterruptHandler() as handler:
-            # 长时间运行的操作
+            # Long-running operation
             if handler.interrupted:
                 break
     """
 
     def __init__(self, on_interrupt: Optional[Callable[[], None]] = None):
         """
-        初始化中断处理器
+        Initialize interrupt handler
 
         Args:
-            on_interrupt: 中断时执行的回调函数
+            on_interrupt: Callback function to execute on interrupt
         """
         self.interrupted = False
         self.on_interrupt = on_interrupt
@@ -188,20 +188,20 @@ class GracefulInterruptHandler:
         return False
 
     def _handler(self, signum, frame):
-        """信号处理函数"""
+        """Signal handler function"""
         self.interrupted = True
         if self.on_interrupt:
             self.on_interrupt()
 
-        click.echo("\n\n[!]  收到中断信号，正在保存状态...")
+        click.echo("\n\n[!]  Interrupt signal received, saving state...")
 
 
 def create_initial_state() -> TemporaryState:
     """
-    创建初始临时状态
+    Create initial temporary state
 
     Returns:
-        TemporaryState 对象
+        TemporaryState object
     """
     return TemporaryState(
         completed_steps=[],
@@ -213,21 +213,21 @@ def create_initial_state() -> TemporaryState:
 
 def mark_step_completed(state: TemporaryState, step_name: str) -> None:
     """
-    标记步骤为已完成
+    Mark step as completed
 
     Args:
-        state: TemporaryState 对象
-        step_name: 步骤名称
+        state: TemporaryState object
+        step_name: Step name
     """
     state.add_step(step_name)
 
 
 def set_current_step(state: TemporaryState, step_name: str) -> None:
     """
-    设置当前步骤
+    Set current step
 
     Args:
-        state: TemporaryState 对象
-        step_name: 步骤名称
+        state: TemporaryState object
+        step_name: Step name
     """
     state.set_current_step(step_name)
