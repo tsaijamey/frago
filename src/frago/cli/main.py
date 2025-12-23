@@ -167,7 +167,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
 @click.option(
     '--gui',
     is_flag=True,
-    help='[DEPRECATED] Launch GUI. Use "frago serve --open" instead.'
+    help='Launch GUI (pywebview desktop window)'
 )
 @click.option(
     '--gui-background',
@@ -258,17 +258,10 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     ctx.obj['NO_PROXY'] = no_proxy
     ctx.obj['TARGET_ID'] = target_id
 
-    # Handle --gui option (deprecated, redirects to serve --open)
+    # Handle --gui option (launches pywebview desktop window)
     if gui:
-        click.secho(
-            "WARNING: --gui is deprecated and will be removed in v0.19. "
-            "Use 'frago serve --open' instead.",
-            fg="yellow",
-            err=True,
-        )
-        # Import and call serve command
-        from frago.server.runner import run_server
-        run_server(auto_open=True, log_level="debug" if debug else "info")
+        from frago.gui.app import start_gui
+        start_gui(debug=debug)
         return
 
     # Handle --gui-background option (internal, for legacy subprocess calls)
