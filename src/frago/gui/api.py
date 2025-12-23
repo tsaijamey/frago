@@ -5,6 +5,7 @@ Extended for 011-gui-tasks-redesign: Tasks-related API methods.
 """
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -50,6 +51,19 @@ from frago.session.storage import (
     read_summary,
 )
 from frago.session.models import AgentType
+
+
+def _get_utf8_env() -> Dict[str, str]:
+    """Get environment variables with UTF-8 encoding for Windows.
+
+    Sets PYTHONIOENCODING to ensure Click outputs UTF-8 on Windows,
+    where the default encoding is typically GBK.
+    See: https://github.com/python/cpython/issues/105312
+    """
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
 
 
 class FragoGuiApi:
@@ -142,6 +156,7 @@ class FragoGuiApi:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
+                env=_get_utf8_env(),
                 timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
