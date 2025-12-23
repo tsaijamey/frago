@@ -1,0 +1,471 @@
+openapi: 3.1.0
+info:
+  title: Frago Web Service API
+  description: REST API for Frago GUI web service
+  version: 0.17.0
+  contact:
+    name: Frago Team
+    email: caijia@frago.ai
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local development server
+
+paths:
+  # ============================================================
+  # Recipes
+  # ============================================================
+  /api/recipes:
+    get:
+      summary: List all recipes
+      operationId: listRecipes
+      tags: [Recipes]
+      responses:
+        "200":
+          description: List of recipes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecipeItem"
+
+  /api/recipes/{name}:
+    get:
+      summary: Get recipe details
+      operationId: getRecipe
+      tags: [Recipes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Recipe details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecipeItem"
+        "404":
+          description: Recipe not found
+
+  /api/recipes/{name}/run:
+    post:
+      summary: Execute a recipe
+      operationId: runRecipe
+      tags: [Recipes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                params:
+                  type: object
+                  description: Recipe parameters
+                timeout:
+                  type: integer
+                  description: Timeout in seconds
+      responses:
+        "200":
+          description: Recipe execution started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskItem"
+        "404":
+          description: Recipe not found
+
+  # ============================================================
+  # Tasks
+  # ============================================================
+  /api/tasks:
+    get:
+      summary: List all tasks
+      operationId: listTasks
+      tags: [Tasks]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [running, completed, error, cancelled]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TaskItem"
+                  total:
+                    type: integer
+
+  /api/tasks/{id}:
+    get:
+      summary: Get task details
+      operationId: getTask
+      tags: [Tasks]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDetail"
+        "404":
+          description: Task not found
+
+  /api/tasks/{id}/steps:
+    get:
+      summary: Get task steps (paginated)
+      operationId: getTaskSteps
+      tags: [Tasks]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Task steps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  steps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TaskStep"
+                  total:
+                    type: integer
+                  has_more:
+                    type: boolean
+
+  # ============================================================
+  # Agent
+  # ============================================================
+  /api/agent:
+    post:
+      summary: Start an agent task
+      operationId: startAgent
+      tags: [Agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  description: Agent task prompt
+                project_path:
+                  type: string
+                  description: Project path context
+      responses:
+        "200":
+          description: Agent task started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskItem"
+
+  # ============================================================
+  # Configuration
+  # ============================================================
+  /api/config:
+    get:
+      summary: Get user configuration
+      operationId: getConfig
+      tags: [Configuration]
+      responses:
+        "200":
+          description: User configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserConfig"
+
+    put:
+      summary: Update user configuration
+      operationId: updateConfig
+      tags: [Configuration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserConfig"
+      responses:
+        "200":
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserConfig"
+        "400":
+          description: Invalid configuration
+
+  # ============================================================
+  # System
+  # ============================================================
+  /api/status:
+    get:
+      summary: Get system status
+      operationId: getStatus
+      tags: [System]
+      responses:
+        "200":
+          description: System status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatus"
+
+  /api/info:
+    get:
+      summary: Get server information
+      operationId: getInfo
+      tags: [System]
+      responses:
+        "200":
+          description: Server information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfo"
+
+  # ============================================================
+  # WebSocket
+  # ============================================================
+  /ws:
+    get:
+      summary: WebSocket endpoint for real-time updates
+      operationId: websocket
+      tags: [WebSocket]
+      description: |
+        Connect via WebSocket for real-time updates.
+
+        Message format:
+        ```json
+        {
+          "type": "session_sync|task_started|task_updated|task_completed|connection",
+          "payload": {...},
+          "timestamp": "2025-12-23T12:00:00Z"
+        }
+        ```
+      responses:
+        "101":
+          description: WebSocket connection established
+
+components:
+  schemas:
+    RecipeItem:
+      type: object
+      required: [name, category]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          enum: [atomic, workflow]
+        icon:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        path:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        runtime:
+          type: string
+          nullable: true
+
+    TaskItem:
+      type: object
+      required: [id, title, status, agent_type, started_at]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [running, completed, error, cancelled]
+        project_path:
+          type: string
+          nullable: true
+        agent_type:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+
+    TaskDetail:
+      type: object
+      required: [id, title, status]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [running, completed, error, cancelled]
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskStep"
+        summary:
+          $ref: "#/components/schemas/TaskSummary"
+          nullable: true
+
+    TaskStep:
+      type: object
+      required: [timestamp, type, content]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        type:
+          type: string
+        content:
+          type: string
+        tool_name:
+          type: string
+          nullable: true
+        tool_result:
+          type: string
+          nullable: true
+
+    TaskSummary:
+      type: object
+      properties:
+        total_duration_ms:
+          type: integer
+        user_message_count:
+          type: integer
+        assistant_message_count:
+          type: integer
+        tool_call_count:
+          type: integer
+        tool_success_count:
+          type: integer
+        tool_error_count:
+          type: integer
+        most_used_tools:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              count:
+                type: integer
+
+    UserConfig:
+      type: object
+      properties:
+        theme:
+          type: string
+          enum: [dark, light]
+        font_size:
+          type: integer
+          minimum: 10
+          maximum: 24
+        show_system_status:
+          type: boolean
+        confirm_on_exit:
+          type: boolean
+        auto_scroll_output:
+          type: boolean
+        max_history_items:
+          type: integer
+          minimum: 10
+          maximum: 1000
+        shortcuts:
+          type: object
+          additionalProperties:
+            type: string
+
+    SystemStatus:
+      type: object
+      properties:
+        chrome_available:
+          type: boolean
+        chrome_connected:
+          type: boolean
+        projects_count:
+          type: integer
+        tasks_running:
+          type: integer
+
+    ServerInfo:
+      type: object
+      properties:
+        version:
+          type: string
+        host:
+          type: string
+        port:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
