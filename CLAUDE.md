@@ -181,6 +181,8 @@ DOCS = {
 ## Active Technologies
 - Python 3.9+ (existing project requirement) + FastAPI, Uvicorn (new), existing React/TypeScript frontend (013-change-gui-into-web-service)
 - N/A (uses existing session storage in `~/.frago/sessions/`) (013-change-gui-into-web-service)
+- Python 3.9+ (backend), TypeScript/React 18 (frontend) + FastAPI, Uvicorn, Click (backend); React, Zustand, Tailwind CSS, Vite (frontend) (014-server-background-redesign)
+- File-based (existing `~/.frago/` directory structure) (014-server-background-redesign)
 
 ## Recent Changes
 - 013-change-gui-into-web-service: Added Python 3.9+ (existing project requirement) + FastAPI, Uvicorn (new), existing React/TypeScript frontend

@@ -29,12 +29,13 @@ from .gui_command import gui_deps
 from .session_commands import session_group
 from .view_command import view
 from .serve_command import serve
+from .server_command import server_group
 from .agent_friendly import AgentFriendlyGroup
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["chrome", "recipe", "skill", "run", "view", "serve"]),
+    ("Daily Use", ["chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
     ("Environment", ["init", "status", "sync", "update"]),
     ("Developer", ["dev", "init-dirs", "gui-deps"]),
@@ -316,8 +317,11 @@ cli.add_command(session_group)
 # View command - universal content viewer
 cli.add_command(view)
 
-# Serve command - web service GUI
+# Serve command - web service GUI (deprecated, use 'server' instead)
 cli.add_command(serve)
+
+# Server command group - background web service management
+cli.add_command(server_group)
 
 
 def main():
