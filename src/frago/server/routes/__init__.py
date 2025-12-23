@@ -2,6 +2,7 @@
 
 This package contains FastAPI routers for different API domains:
 - system: Server status and info endpoints
+- dashboard: Dashboard overview data
 - recipes: Recipe listing and execution
 - tasks: Task/session management
 - config: User configuration
@@ -11,6 +12,7 @@ This package contains FastAPI routers for different API domains:
 """
 
 from frago.server.routes.system import router as system_router
+from frago.server.routes.dashboard import router as dashboard_router
 from frago.server.routes.recipes import router as recipes_router
 from frago.server.routes.tasks import router as tasks_router
 from frago.server.routes.agent import router as agent_router
@@ -20,6 +22,7 @@ from frago.server.routes.settings import router as settings_router
 
 __all__ = [
     "system_router",
+    "dashboard_router",
     "recipes_router",
     "tasks_router",
     "agent_router",

@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from frago.server.routes import (
     system_router,
+    dashboard_router,
     recipes_router,
     tasks_router,
     agent_router,
@@ -28,21 +29,21 @@ from frago.server.websocket import manager, MessageType, create_message
 
 
 def get_frontend_path() -> Path:
-    """Get the path to frontend build assets.
+    """Get the path to frontend build assets for the web service.
 
     Returns:
-        Path to the frontend dist directory
+        Path to the server frontend dist directory
     """
-    # Look for built assets in gui/assets (packaged) or gui/frontend/dist (dev)
-    gui_dir = Path(__file__).parent.parent / "gui"
+    # Look for built assets in server/assets (packaged) or server/web/dist (dev)
+    server_dir = Path(__file__).parent
 
     # Check for packaged assets first
-    assets_dir = gui_dir / "assets"
+    assets_dir = server_dir / "assets"
     if assets_dir.exists() and (assets_dir / "index.html").exists():
         return assets_dir
 
     # Fall back to frontend build output
-    frontend_dist = gui_dir / "frontend" / "dist"
+    frontend_dist = server_dir / "web" / "dist"
     if frontend_dist.exists():
         return frontend_dist
 
@@ -121,6 +122,7 @@ def create_app(
 
     # Include API routers
     app.include_router(system_router, prefix="/api", tags=["system"])
+    app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
     app.include_router(recipes_router, prefix="/api", tags=["recipes"])
     app.include_router(tasks_router, prefix="/api", tags=["tasks"])
     app.include_router(agent_router, prefix="/api", tags=["agent"])
@@ -206,11 +208,11 @@ def create_app(
                 <h1>Frontend assets not found</h1>
                 <p>Please build the frontend first:</p>
                 <pre style="background: #333; padding: 1rem; border-radius: 4px;">
-cd src/frago/gui/frontend
+cd src/frago/server/web
 pnpm install
 pnpm build
                 </pre>
-                <p>Then restart <code>frago serve</code></p>
+                <p>Then restart <code>frago server</code></p>
             </body>
             </html>
             """,
