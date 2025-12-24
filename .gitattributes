@@ -1,0 +1,7 @@
+# Exclude JavaScript from GitHub language statistics
+*.js linguist-vendored
+*.mjs linguist-vendored
+
+# Chrome profile and coverage reports are vendored/generated
+chrome_profile/** linguist-vendored
+htmlcov/** linguist-generated
