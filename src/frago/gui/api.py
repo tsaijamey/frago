@@ -1572,8 +1572,11 @@ class FragoGuiApi:
                 if auth_result.returncode == 0:
                     result["authenticated"] = True
                     # Parse username (extract from output)
+                    # Output format: "Logged in to github.com account USERNAME (keyring)"
                     import re
-                    match = re.search(r'Logged in to github\.com as ([^\s]+)', auth_result.stderr)
+                    # Try both old format "as USERNAME" and new format "account USERNAME"
+                    output = auth_result.stderr + auth_result.stdout
+                    match = re.search(r'Logged in to github\.com (?:as|account) ([^\s(]+)', output)
                     if match:
                         result["username"] = match.group(1)
             except subprocess.TimeoutExpired:
