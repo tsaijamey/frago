@@ -171,6 +171,7 @@ def parse_session_file(jsonl_path: Path) -> Dict[str, Any]:
         "step_count": 0,
         "tool_call_count": 0,
         "is_sidechain": False,
+        "first_user_message": None,
     }
 
     try:
@@ -214,6 +215,26 @@ def parse_session_file(jsonl_path: Path) -> Dict[str, Any]:
                                 if isinstance(block, dict):
                                     if block.get("type") == "tool_use":
                                         result["tool_call_count"] += 1
+
+                    # Extract first real user message for session name
+                    if result["first_user_message"] is None:
+                        if (
+                            record.get("type") == "user"
+                            and not record.get("isMeta")
+                        ):
+                            msg_content = message.get("content", "") if isinstance(message, dict) else ""
+                            # Handle array content (e.g., with images)
+                            if isinstance(msg_content, list):
+                                for block in msg_content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        msg_content = block.get("text", "")
+                                        break
+                                else:
+                                    msg_content = ""
+                            # Skip command messages
+                            if isinstance(msg_content, str) and msg_content.strip():
+                                if not msg_content.strip().startswith("<"):
+                                    result["first_user_message"] = msg_content.strip()
 
                 except json.JSONDecodeError:
                     continue
@@ -281,11 +302,20 @@ def sync_session(
     last_activity = parsed["last_timestamp"] or datetime.now(timezone.utc)
     status = infer_session_status(parsed["records"], last_activity)
 
+    # Extract session name from first user message (truncate to 100 chars)
+    session_name = None
+    first_msg = parsed.get("first_user_message")
+    if first_msg:
+        # Take first line and truncate
+        first_line = first_msg.split("\n")[0].strip()
+        session_name = first_line[:100] if len(first_line) > 100 else first_line
+
     # Create or update session metadata
     session = MonitoredSession(
         session_id=session_id,
         agent_type=AgentType.CLAUDE,
         project_path=project_path,
+        name=session_name,
         source_file=str(jsonl_path),
         started_at=parsed["first_timestamp"] or datetime.now(timezone.utc),
         ended_at=last_activity if status != SessionStatus.RUNNING else None,
