@@ -154,6 +154,9 @@ def format_uptime(seconds: float) -> str:
 def check_port_available() -> Tuple[bool, Optional[str]]:
     """Check if port 8093 is available.
 
+    Uses SO_REUSEADDR to allow binding even if port is in TIME_WAIT state.
+    This matches Uvicorn's behavior which also sets SO_REUSEADDR.
+
     Returns:
         Tuple of (is_available, conflicting_process_info).
         conflicting_process_info is None if available.
@@ -162,20 +165,26 @@ def check_port_available() -> Tuple[bool, Optional[str]]:
 
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.settimeout(1)
         sock.bind((SERVER_HOST, SERVER_PORT))
         sock.close()
         return True, None
     except OSError:
         # Port is in use, try to identify the process
-        for conn in psutil.net_connections():
-            if hasattr(conn, 'laddr') and conn.laddr and conn.laddr.port == SERVER_PORT:
-                try:
-                    proc = psutil.Process(conn.pid)
-                    return False, f"{proc.name()} (PID: {conn.pid})"
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    return False, f"Unknown process (PID: {conn.pid})"
-        return False, "Unknown process"
+        # Note: psutil.net_connections() requires elevated permissions on macOS
+        try:
+            for conn in psutil.net_connections():
+                if hasattr(conn, 'laddr') and conn.laddr and conn.laddr.port == SERVER_PORT:
+                    try:
+                        proc = psutil.Process(conn.pid)
+                        return False, f"{proc.name()} (PID: {conn.pid})"
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        return False, f"Unknown process (PID: {conn.pid})"
+        except psutil.AccessDenied:
+            # macOS requires root to enumerate all network connections
+            pass
+        return False, "another process"
 
 
 def start_daemon() -> Tuple[bool, str]:
@@ -247,6 +256,9 @@ def start_daemon() -> Tuple[bool, str]:
 def stop_daemon() -> Tuple[bool, str]:
     """Stop the running Frago server daemon.
 
+    Terminates the main process and all child processes to ensure
+    complete cleanup and immediate port release.
+
     Returns:
         Tuple of (success, message)
     """
@@ -256,19 +268,39 @@ def stop_daemon() -> Tuple[bool, str]:
 
     try:
         proc = psutil.Process(pid)
+
+        # Get all child processes before terminating parent
+        children = proc.children(recursive=True)
+
         # Send SIGTERM for graceful shutdown
         if platform.system() == "Windows":
             proc.terminate()
         else:
             os.kill(pid, signal.SIGTERM)
 
-        # Wait for process to terminate (max 5 seconds)
+        # Wait for main process to terminate (max 3 seconds)
         try:
-            proc.wait(timeout=5)
+            proc.wait(timeout=3)
         except psutil.TimeoutExpired:
             # Force kill if graceful shutdown fails
             proc.kill()
             proc.wait(timeout=2)
+
+        # Terminate any remaining child processes
+        for child in children:
+            try:
+                if child.is_running():
+                    child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        # Wait a moment then force kill any stubborn children
+        gone, alive = psutil.wait_procs(children, timeout=2)
+        for child in alive:
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
         # Clean up PID file
         clear_pid()
