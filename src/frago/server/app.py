@@ -26,6 +26,7 @@ from frago.server.routes import (
     config_router,
     skills_router,
     settings_router,
+    sync_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.sync_service import SyncService
@@ -151,6 +152,7 @@ def create_app(
     app.include_router(config_router, prefix="/api", tags=["config"])
     app.include_router(skills_router, prefix="/api", tags=["skills"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])
+    app.include_router(sync_router, prefix="/api", tags=["sync"])
 
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")

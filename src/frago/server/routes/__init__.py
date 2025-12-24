@@ -9,6 +9,7 @@ This package contains FastAPI routers for different API domains:
 - agent: Agent task execution
 - skills: Claude Code skills
 - settings: Main config, env vars, GitHub integration
+- sync: Multi-device sync via GitHub
 """
 
 from frago.server.routes.system import router as system_router
@@ -19,6 +20,7 @@ from frago.server.routes.agent import router as agent_router
 from frago.server.routes.config import router as config_router
 from frago.server.routes.skills import router as skills_router
 from frago.server.routes.settings import router as settings_router
+from frago.server.routes.sync import router as sync_router
 
 __all__ = [
     "system_router",
@@ -29,4 +31,5 @@ __all__ = [
     "config_router",
     "skills_router",
     "settings_router",
+    "sync_router",
 ]
