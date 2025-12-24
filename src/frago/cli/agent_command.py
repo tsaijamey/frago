@@ -187,112 +187,6 @@ def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
         return False, f"Unexpected error: {e}"
 
 
-# =============================================================================
-# Slash Command Expansion
-# =============================================================================
-
-def find_slash_command_file(command: str) -> Optional[Path]:
-    """
-    Find markdown file corresponding to slash command
-
-    Command format conversion rules:
-    - /frago.dev.agent → frago.dev.agent.md (development)
-    - /frago.agent → frago.agent.md (production)
-
-    Support .dev fallback:
-    - When requesting /frago.dev.agent, search for frago.dev.agent.md first
-    - Fallback to frago.agent.md (remove .dev) if not found
-
-    Search path priority (try both .dev and non-.dev versions in each path):
-    1. Current working directory .claude/commands/
-    2. User directory ~/.claude/commands/
-    3. frago resource directory (packaged default commands)
-
-    Args:
-        command: slash command name, e.g. "/frago.dev.agent" or "frago.agent"
-
-    Returns:
-        Found file path, or None
-    """
-    # Normalize command name: remove leading /
-    cmd_name = command.lstrip("/")
-
-    # Generate candidate filenames
-    # If .dev naming, generate both .dev and non-.dev versions
-    filenames = [f"{cmd_name}.md"]
-    if ".dev." in cmd_name:
-        # frago.dev.agent → frago.agent
-        non_dev_name = cmd_name.replace(".dev.", ".")
-        filenames.append(f"{non_dev_name}.md")
-
-    # Search directories
-    search_dirs = [
-        Path.cwd() / ".claude" / "commands",
-        Path.home() / ".claude" / "commands",
-    ]
-
-    # Add frago resource directory (packaged default commands)
-    try:
-        from importlib.resources import files
-        resources_dir = files("frago") / "resources" / "commands"
-        # importlib.resources returns Traversable, needs conversion
-        if hasattr(resources_dir, '_path'):
-            search_dirs.append(Path(resources_dir._path))
-        else:
-            search_dirs.append(Path(str(resources_dir)))
-    except (ImportError, TypeError):
-        pass
-
-    # Search by directory priority, try .dev first then non-.dev within each directory
-    for search_dir in search_dirs:
-        for filename in filenames:
-            path = search_dir / filename
-            if path.exists():
-                return path
-
-    return None
-
-
-def expand_slash_command(command: str, arguments: str = "") -> Tuple[bool, str, str]:
-    """
-    Expand slash command to complete prompt content
-
-    Processing flow:
-    1. Find command file
-    2. Read and parse YAML frontmatter (if present)
-    3. Replace $ARGUMENTS placeholder
-
-    Args:
-        command: slash command name, e.g. "/frago.dev.agent"
-        arguments: user arguments, for replacing $ARGUMENTS
-
-    Returns:
-        (success, expanded content, error message)
-    """
-    cmd_file = find_slash_command_file(command)
-
-    if not cmd_file:
-        return False, "", f"Slash command not found: {command}"
-
-    try:
-        content = cmd_file.read_text(encoding="utf-8")
-    except IOError as e:
-        return False, "", f"Failed to read command file: {e}"
-
-    # Remove YAML frontmatter (if present)
-    # frontmatter format: starts and ends with ---
-    if content.startswith("---"):
-        # Find second ---
-        second_delimiter = content.find("---", 3)
-        if second_delimiter != -1:
-            content = content[second_delimiter + 3:].lstrip("\n")
-
-    # Replace $ARGUMENTS placeholder
-    content = content.replace("$ARGUMENTS", arguments)
-
-    return True, content, ""
-
-
 def get_available_slash_commands() -> dict:
     """
     Get all available frago slash commands
@@ -351,7 +245,8 @@ def _build_agent_prompt(user_prompt: str) -> str:
     """
     Build agent execution prompt
 
-    Read template from ~/.claude/commands/frago.agent.md, replace $ARGUMENTS.
+    Constructs a prompt that includes available slash command descriptions
+    and the user's task, letting the agent determine which mode to use.
 
     Args:
         user_prompt: User's original prompt
@@ -591,7 +486,7 @@ def agent(
         execution_prompt = _build_agent_prompt(prompt_text)
 
         # Display built prompt
-        click.echo(f"\n[Prompt] Built from frago.agent.md:")
+        click.echo(f"\n[Prompt] Agent prompt:")
         click.echo("-" * 40)
         click.echo(execution_prompt)
         click.echo("-" * 40)
