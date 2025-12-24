@@ -8,7 +8,7 @@ import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility, ch
 import { Github, RefreshCw, AlertTriangle, Check, X, Loader2, AlertCircle } from 'lucide-react';
 import GitHubWizard from './GitHubWizard';
 
-import type { GhCliStatus } from '@/types/pywebview.d';
+import type { GhCliStatus } from '@/types/pywebview';
 
 export default function SyncSettings() {
   const [syncRepoUrl, setSyncRepoUrl] = useState<string | null>(null);

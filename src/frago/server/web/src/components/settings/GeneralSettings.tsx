@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { getMainConfig, updateAuthMethod, openWorkingDirectory } from '@/api';
-import type { MainConfig } from '@/types/pywebview.d';
+import type { MainConfig } from '@/types/pywebview';
 import { Eye, EyeOff, FolderOpen } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 
@@ -203,10 +203,11 @@ export default function GeneralSettings() {
             <div className="space-y-3 ml-6 pl-4 border-l-2 border-[var(--border-color)]">
               {/* Endpoint type */}
               <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <label htmlFor="endpoint-type" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                   Endpoint Type
                 </label>
                 <select
+                  id="endpoint-type"
                   value={endpointType}
                   onChange={(e) => setEndpointType(e.target.value as any)}
                   className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
@@ -222,10 +223,11 @@ export default function GeneralSettings() {
               {/* URL (only shown for custom type) */}
               {endpointType === 'custom' && (
                 <div>
-                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                  <label htmlFor="api-url" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                     API URL
                   </label>
                   <input
+                    id="api-url"
                     type="text"
                     value={endpointUrl}
                     onChange={(e) => setEndpointUrl(e.target.value)}
@@ -237,11 +239,12 @@ export default function GeneralSettings() {
 
               {/* API Key */}
               <div>
-                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                <label htmlFor="api-key" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                   API Key
                 </label>
                 <div className="flex gap-2">
                   <input
+                    id="api-key"
                     type={showApiKey ? "text" : "password"}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
