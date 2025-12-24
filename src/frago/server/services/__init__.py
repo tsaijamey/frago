@@ -12,6 +12,7 @@ from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
 from frago.server.services.recipe_service import RecipeService
 from frago.server.services.skill_service import SkillService
+from frago.server.services.sync_service import SyncService
 from frago.server.services.system_service import SystemService
 from frago.server.services.task_service import TaskService
 
@@ -27,6 +28,7 @@ __all__ = [
     "MainConfigService",
     "RecipeService",
     "SkillService",
+    "SyncService",
     "SystemService",
     "TaskService",
 ]

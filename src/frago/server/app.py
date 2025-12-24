@@ -5,8 +5,10 @@ Creates and configures the FastAPI application with:
 - Static file serving for frontend assets
 - API routers for all endpoints
 - WebSocket endpoint for real-time updates
+- Background session synchronization
 """
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +28,25 @@ from frago.server.routes import (
     settings_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
+from frago.server.services.sync_service import SyncService
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager.
+
+    Handles startup and shutdown events:
+    - Start background session sync on startup
+    - Stop sync service on shutdown
+    """
+    # Startup
+    sync_service = SyncService.get_instance()
+    await sync_service.start()
+
+    yield
+
+    # Shutdown
+    await sync_service.stop()
 
 
 def get_frontend_path() -> Path:
@@ -80,6 +101,7 @@ def create_app(
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",
+        lifespan=lifespan,
     )
 
     # Configure CORS for local development
