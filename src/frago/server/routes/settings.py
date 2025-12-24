@@ -22,6 +22,7 @@ class GhCliStatusResponse(BaseModel):
     """GitHub CLI status response"""
     installed: bool
     authenticated: bool
+    version: Optional[str] = None
     username: Optional[str] = None
 
 
@@ -78,6 +79,7 @@ async def check_gh_cli() -> GhCliStatusResponse:
     return GhCliStatusResponse(
         installed=status.get("installed", False),
         authenticated=status.get("authenticated", False),
+        version=status.get("version"),
         username=status.get("username"),
     )
 
@@ -105,9 +107,9 @@ async def get_main_config() -> MainConfigResponse:
     config = adapter.get_main_config()
 
     return MainConfigResponse(
-        working_directory=config.get("working_directory", "~/.frago"),
+        working_directory=config.get("working_directory_display", "~/.frago"),
         auth_method=config.get("auth_method", "api_key"),
-        sync_repo=config.get("sync_repo"),
+        sync_repo=config.get("sync_repo_url"),
     )
 
 
@@ -122,17 +124,20 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
     if request.auth_method is not None:
         updates["auth_method"] = request.auth_method
     if request.sync_repo is not None:
-        updates["sync_repo"] = request.sync_repo
+        updates["sync_repo_url"] = request.sync_repo
 
     result = adapter.update_main_config(updates)
 
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
 
+    # Get the config field from the result (which contains the full config)
+    config = result.get("config", result)
+
     return MainConfigResponse(
-        working_directory=result.get("working_directory", "~/.frago"),
-        auth_method=result.get("auth_method", "api_key"),
-        sync_repo=result.get("sync_repo"),
+        working_directory=config.get("working_directory_display", "~/.frago"),
+        auth_method=config.get("auth_method", "api_key"),
+        sync_repo=config.get("sync_repo_url"),
     )
 
 

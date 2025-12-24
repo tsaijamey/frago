@@ -248,6 +248,7 @@ export async function getSkills(): Promise<SkillItem[]> {
 export interface GhCliStatus {
   installed: boolean;
   authenticated: boolean;
+  version?: string | null;
   username?: string | null;
 }
 

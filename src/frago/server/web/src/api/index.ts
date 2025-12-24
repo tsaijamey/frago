@@ -590,6 +590,8 @@ export async function checkGhCli(): Promise<GhCliStatus> {
   return {
     installed: status.installed,
     authenticated: status.authenticated,
+    version: status.version ?? undefined,
+    username: status.username ?? undefined,
   };
 }
 
