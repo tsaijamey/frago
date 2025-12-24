@@ -72,11 +72,16 @@ function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
 }
 
-// Apply theme to DOM
+// Apply theme to DOM and persist to localStorage for FOUC prevention
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.style.colorScheme = theme;
-  console.log('[Theme] Applied:', theme, 'data-theme:', document.documentElement.getAttribute('data-theme'));
+  // Save to localStorage so index.html can read it before JS loads
+  try {
+    localStorage.setItem('theme', theme);
+  } catch {
+    // localStorage not available
+  }
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
