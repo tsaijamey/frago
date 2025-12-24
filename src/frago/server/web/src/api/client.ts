@@ -313,19 +313,34 @@ export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]
 // Dashboard API
 // ============================================================
 
+export interface HourlyActivity {
+  hour: string;
+  session_count: number;
+  tool_call_count: number;
+  completed_count: number;
+}
+
+export interface ActivityStats {
+  total_sessions: number;
+  completed_sessions: number;
+  running_sessions: number;
+  error_sessions: number;
+  total_tool_calls: number;
+  total_steps: number;
+}
+
+export interface ActivityOverview {
+  hourly_distribution: HourlyActivity[];
+  stats: ActivityStats;
+}
+
 export interface DashboardData {
   server: {
     running: boolean;
     uptime_seconds: number;
     started_at: string | null;
   };
-  recent_activity: Array<{
-    id: string;
-    type: string;
-    title: string;
-    status: string;
-    timestamp: string;
-  }>;
+  activity_overview: ActivityOverview;
   resource_counts: {
     tasks: number;
     recipes: number;

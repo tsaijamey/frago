@@ -2,17 +2,19 @@
 
 Provides system overview data including:
 - Server status and uptime
-- Recent task activity
+- Activity overview (6-hour statistics and hourly distribution)
 - Resource counts (tasks, recipes, skills)
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from frago.server.utils import get_server_state
+from frago.session.models import SessionStatus
 
 router = APIRouter()
 
@@ -24,13 +26,28 @@ class ServerInfo(BaseModel):
     started_at: Optional[str] = None
 
 
-class RecentActivity(BaseModel):
-    """Recent activity item."""
-    id: str
-    type: str  # 'task', 'recipe_run'
-    title: str
-    status: str
-    timestamp: str
+class HourlyActivity(BaseModel):
+    """Activity data for a single hour bucket."""
+    hour: str  # ISO format hour start, e.g., "2025-12-24T14:00:00"
+    session_count: int
+    tool_call_count: int
+    completed_count: int
+
+
+class ActivityStats(BaseModel):
+    """Aggregated activity statistics for past 12 hours."""
+    total_sessions: int
+    completed_sessions: int
+    running_sessions: int
+    error_sessions: int
+    total_tool_calls: int
+    total_steps: int
+
+
+class ActivityOverview(BaseModel):
+    """Complete activity overview for dashboard."""
+    hourly_distribution: list[HourlyActivity]
+    stats: ActivityStats
 
 
 class ResourceCounts(BaseModel):
@@ -43,45 +60,115 @@ class ResourceCounts(BaseModel):
 class DashboardData(BaseModel):
     """Complete dashboard data response."""
     server: ServerInfo
-    recent_activity: list[RecentActivity]
+    activity_overview: ActivityOverview
     resource_counts: ResourceCounts
+
+
+def calculate_activity_overview() -> ActivityOverview:
+    """Calculate activity statistics for the past 12 hours.
+
+    Returns hourly distribution and aggregated stats.
+    """
+    from frago.session.storage import list_sessions
+
+    now = datetime.now(timezone.utc)
+    time_range_ago = now - timedelta(hours=12)
+
+    # Initialize hourly buckets (12 hours, oldest first)
+    hourly_data: dict[str, dict] = {}
+    for i in range(12):
+        hour_start = now - timedelta(hours=11 - i)
+        hour_start = hour_start.replace(minute=0, second=0, microsecond=0)
+        hourly_data[hour_start.isoformat()] = {
+            "session_count": 0,
+            "tool_call_count": 0,
+            "completed_count": 0,
+        }
+
+    # Get all sessions and filter by time
+    try:
+        all_sessions = list_sessions(limit=1000)
+    except Exception:
+        all_sessions = []
+
+    # Normalize timezone for comparison
+    def normalize_dt(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    # Filter sessions active in past 12 hours
+    recent_sessions = []
+    for s in all_sessions:
+        last_activity = normalize_dt(s.last_activity)
+        is_running = s.status == SessionStatus.RUNNING
+        if last_activity >= time_range_ago or is_running:
+            recent_sessions.append(s)
+
+    # Aggregate statistics
+    stats = ActivityStats(
+        total_sessions=len(recent_sessions),
+        completed_sessions=sum(
+            1 for s in recent_sessions if s.status == SessionStatus.COMPLETED
+        ),
+        running_sessions=sum(
+            1 for s in recent_sessions if s.status == SessionStatus.RUNNING
+        ),
+        error_sessions=sum(
+            1 for s in recent_sessions if s.status == SessionStatus.ERROR
+        ),
+        total_tool_calls=sum(s.tool_call_count for s in recent_sessions),
+        total_steps=sum(s.step_count for s in recent_sessions),
+    )
+
+    # Fill hourly buckets based on last_activity
+    for session in recent_sessions:
+        last_activity = normalize_dt(session.last_activity)
+        session_hour = last_activity.replace(minute=0, second=0, microsecond=0)
+        hour_key = session_hour.isoformat()
+        if hour_key in hourly_data:
+            hourly_data[hour_key]["session_count"] += 1
+            hourly_data[hour_key]["tool_call_count"] += session.tool_call_count
+            if session.status == SessionStatus.COMPLETED:
+                hourly_data[hour_key]["completed_count"] += 1
+
+    # Convert to list sorted by hour
+    hourly_distribution = [
+        HourlyActivity(hour=hour, **data)
+        for hour, data in sorted(hourly_data.items())
+    ]
+
+    return ActivityOverview(
+        hourly_distribution=hourly_distribution,
+        stats=stats,
+    )
 
 
 @router.get("/dashboard", response_model=DashboardData)
 async def get_dashboard():
     """Get dashboard overview data.
 
-    Returns server status, recent activity, and resource counts.
+    Returns server status, activity overview, and resource counts.
     """
     # Get server state
     server_state = get_server_state()
     uptime_seconds = 0.0
     if server_state.get("started_at"):
         try:
-            started = datetime.fromisoformat(server_state["started_at"].replace("Z", "+00:00"))
+            started = datetime.fromisoformat(
+                server_state["started_at"].replace("Z", "+00:00")
+            )
             uptime_seconds = (datetime.now(timezone.utc) - started).total_seconds()
         except (ValueError, AttributeError):
             pass
 
-    # Get recent tasks
-    from frago.session.storage import list_sessions
-    recent_activity: list[RecentActivity] = []
-
-    try:
-        tasks = list_sessions(limit=5)
-        for task in tasks:
-            recent_activity.append(RecentActivity(
-                id=task.session_id,
-                type="task",
-                title=task.name or "Unknown Task",
-                status=task.status.value if task.status else "unknown",
-                timestamp=task.started_at.isoformat() if task.started_at else "",
-            ))
-    except Exception:
-        pass  # Continue with empty activity
+    # Calculate activity overview
+    activity_overview = calculate_activity_overview()
 
     # Get resource counts using the adapter
     from frago.server.adapter import FragoApiAdapter
+    from frago.session.storage import list_sessions
+
     adapter = FragoApiAdapter.get_instance()
 
     try:
@@ -108,7 +195,7 @@ async def get_dashboard():
             uptime_seconds=uptime_seconds,
             started_at=server_state.get("started_at"),
         ),
-        recent_activity=recent_activity,
+        activity_overview=activity_overview,
         resource_counts=ResourceCounts(
             tasks=task_count,
             recipes=recipe_count,

@@ -3,14 +3,13 @@
  *
  * Admin panel dashboard with:
  * - Server status and uptime
- * - Recent task activity
+ * - Activity overview (6-hour line chart and stats)
  * - Resource statistics (tasks, recipes, skills)
- * - Quick action shortcuts
  */
 
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { getDashboard } from '@/api';
+import { getDashboard, DashboardData, HourlyActivity } from '@/api';
 import {
   Server,
   Clock,
@@ -19,29 +18,10 @@ import {
   Zap,
   Activity,
   ChevronRight,
-  Plus,
-  Settings,
+  CheckCircle,
+  AlertCircle,
+  Wrench,
 } from 'lucide-react';
-
-interface DashboardData {
-  server: {
-    running: boolean;
-    uptime_seconds: number;
-    started_at: string | null;
-  };
-  recent_activity: Array<{
-    id: string;
-    type: string;
-    title: string;
-    status: string;
-    timestamp: string;
-  }>;
-  resource_counts: {
-    tasks: number;
-    recipes: number;
-    skills: number;
-  };
-}
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -51,25 +31,128 @@ function formatUptime(seconds: number): string {
   return `${hours}h ${mins}m`;
 }
 
-function formatRelativeTime(isoString: string): string {
-  if (!isoString) return '';
+function formatHourLabel(isoString: string): string {
   const date = new Date(isoString);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return date.getHours().toString().padStart(2, '0') + ':00';
 }
 
-function getStatusDotClass(status: string): string {
-  switch (status) {
-    case 'completed': return 'dashboard-activity-dot completed';
-    case 'running': return 'dashboard-activity-dot running';
-    case 'error': return 'dashboard-activity-dot error';
-    default: return 'dashboard-activity-dot default';
-  }
+interface LineChartProps {
+  data: HourlyActivity[];
+  height?: number;
+}
+
+function ActivityLineChart({ data, height = 200 }: LineChartProps) {
+  const padding = { top: 20, right: 20, bottom: 40, left: 45 };
+  const width = 900;
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  const maxValue = Math.max(1, ...data.map(d => d.session_count));
+  const yTicks = [0, Math.ceil(maxValue / 2), maxValue];
+
+  // Calculate points for session_count line
+  const points = data.map((d, i) => {
+    const x = padding.left + (i / (data.length - 1)) * chartWidth;
+    const y = padding.top + chartHeight - (d.session_count / maxValue) * chartHeight;
+    return { x, y, data: d };
+  });
+
+  // Create SVG path for the line
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+  // Create area path (fill below line)
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="activity-line-chart"
+      preserveAspectRatio="none"
+    >
+      {/* Grid lines */}
+      {yTicks.map((tick) => {
+        const y = padding.top + chartHeight - (tick / maxValue) * chartHeight;
+        return (
+          <g key={tick}>
+            <line
+              x1={padding.left}
+              y1={y}
+              x2={width - padding.right}
+              y2={y}
+              className="chart-grid-line"
+            />
+            <text
+              x={padding.left - 10}
+              y={y + 4}
+              className="chart-axis-label"
+              textAnchor="end"
+            >
+              {tick}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* X axis line */}
+      <line
+        x1={padding.left}
+        y1={padding.top + chartHeight}
+        x2={width - padding.right}
+        y2={padding.top + chartHeight}
+        className="chart-axis-line"
+      />
+
+      {/* Y axis line */}
+      <line
+        x1={padding.left}
+        y1={padding.top}
+        x2={padding.left}
+        y2={padding.top + chartHeight}
+        className="chart-axis-line"
+      />
+
+      {/* Area fill */}
+      <path d={areaPath} className="chart-area" />
+
+      {/* Line */}
+      <path d={linePath} className="chart-line" fill="none" />
+
+      {/* Data points and X labels */}
+      {points.map((p, i) => (
+        <g key={i}>
+          {/* X axis label */}
+          <text
+            x={p.x}
+            y={padding.top + chartHeight + 25}
+            className="chart-axis-label"
+            textAnchor="middle"
+          >
+            {formatHourLabel(p.data.hour)}
+          </text>
+          {/* Data point */}
+          <circle
+            cx={p.x}
+            cy={p.y}
+            r={4}
+            className="chart-point"
+          />
+          {/* Hover area for tooltip */}
+          <title>{`${formatHourLabel(p.data.hour)}: ${p.data.session_count} sessions, ${p.data.tool_call_count} tool calls`}</title>
+        </g>
+      ))}
+
+      {/* Y axis title */}
+      <text
+        x={15}
+        y={padding.top + chartHeight / 2}
+        className="chart-axis-title"
+        textAnchor="middle"
+        transform={`rotate(-90, 15, ${padding.top + chartHeight / 2})`}
+      >
+        Sessions
+      </text>
+    </svg>
+  );
 }
 
 export default function DashboardPage() {
@@ -170,90 +253,70 @@ export default function DashboardPage() {
                   </div>
       </div>
 
-      {/* Recent Activity & Quick Actions Row */}
-      <div className="dashboard-row">
-        {/* Recent Activity */}
-        <div className="dashboard-card">
-          <div className="dashboard-section-header">
-            <h2 className="dashboard-section-title">
-              <Activity size={18} />
-              Recent Activity
-            </h2>
-            <button
-              type="button"
-              onClick={() => switchPage('tasks')}
-              className="dashboard-view-all-btn"
-            >
-              View all <ChevronRight size={14} />
-            </button>
-          </div>
+      {/* Activity Overview - Full Width */}
+      <div className="dashboard-card dashboard-card-full">
+        <div className="dashboard-section-header">
+          <h2 className="dashboard-section-title">
+            <Activity size={18} />
+            Activity Overview
+          </h2>
+          <button
+            type="button"
+            onClick={() => switchPage('tasks')}
+            className="dashboard-view-all-btn"
+          >
+            View all <ChevronRight size={14} />
+          </button>
+        </div>
 
-          {data?.recent_activity && data.recent_activity.length > 0 ? (
-            <div className="dashboard-activity-list">
-              {data.recent_activity.map((activity) => (
-                <div
-                  key={activity.id}
-                  onClick={() => switchPage('task_detail', activity.id)}
-                  className="dashboard-activity-item"
-                >
-                  <div className={getStatusDotClass(activity.status)} />
-                  <div className="dashboard-activity-content">
-                    <div className="dashboard-activity-title">
-                      {activity.title}
-                    </div>
-                    <div className="dashboard-activity-time">
-                      {formatRelativeTime(activity.timestamp)}
-                    </div>
-                  </div>
-                  <ChevronRight size={16} className="text-muted" />
+        {data?.activity_overview && data.activity_overview.hourly_distribution.length > 0 ? (
+          <>
+            {/* Line Chart */}
+            <div className="activity-chart-container">
+              <ActivityLineChart
+                data={data.activity_overview.hourly_distribution}
+                height={220}
+              />
+            </div>
+
+            {/* Stats Grid */}
+            <div className="activity-stats-grid">
+              <div className="activity-stat">
+                <Clock size={16} className="text-info" />
+                <span className="activity-stat-value">{data.activity_overview.stats.total_sessions}</span>
+                <span className="activity-stat-label">Sessions</span>
+              </div>
+              <div className="activity-stat">
+                <Wrench size={16} className="text-warning" />
+                <span className="activity-stat-value">{data.activity_overview.stats.total_tool_calls}</span>
+                <span className="activity-stat-label">Tool Calls</span>
+              </div>
+              <div className="activity-stat">
+                <CheckCircle size={16} className="text-success" />
+                <span className="activity-stat-value">{data.activity_overview.stats.completed_sessions}</span>
+                <span className="activity-stat-label">Completed</span>
+              </div>
+              {data.activity_overview.stats.running_sessions > 0 && (
+                <div className="activity-stat">
+                  <Activity size={16} className="text-warning" />
+                  <span className="activity-stat-value">{data.activity_overview.stats.running_sessions}</span>
+                  <span className="activity-stat-label">Running</span>
                 </div>
-              ))}
+              )}
+              {data.activity_overview.stats.error_sessions > 0 && (
+                <div className="activity-stat">
+                  <AlertCircle size={16} className="text-error" />
+                  <span className="activity-stat-value">{data.activity_overview.stats.error_sessions}</span>
+                  <span className="activity-stat-label">Errors</span>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="dashboard-empty">
-              No recent activity
-            </div>
-          )}
-        </div>
-
-        {/* Quick Actions */}
-        <div className="dashboard-card">
-          <h2 className="dashboard-section-title-only">Quick Actions</h2>
-          <div className="dashboard-actions-list">
-            <button
-              type="button"
-              onClick={() => switchPage('tasks')}
-              className="dashboard-action-btn"
-            >
-              <Plus size={18} className="text-accent" />
-              <span className="dashboard-action-label">New Task</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => switchPage('recipes')}
-              className="dashboard-action-btn"
-            >
-              <BookOpen size={18} className="text-warning" />
-              <span className="dashboard-action-label">Browse Recipes</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => switchPage('skills')}
-              className="dashboard-action-btn"
-            >
-              <Zap size={18} className="text-purple" />
-              <span className="dashboard-action-label">View Skills</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => switchPage('settings')}
-              className="dashboard-action-btn"
-            >
-              <Settings size={18} className="text-muted" />
-              <span className="dashboard-action-label">Settings</span>
-            </button>
+          </>
+        ) : (
+          <div className="dashboard-empty">
+            No activity data in the past 12 hours
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
