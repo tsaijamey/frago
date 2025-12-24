@@ -119,6 +119,7 @@ export default function DashboardPage() {
             <div className={`dashboard-card-icon ${data?.server.running ? 'success' : 'error'}`}>
               <Server size={20} className={data?.server.running ? 'text-success' : 'text-error'} />
             </div>
+            <span className="dashboard-card-icon-label">Server</span>
           </div>
           <div className="dashboard-card-value">
             {data?.server.running ? 'Online' : 'Offline'}
@@ -135,12 +136,12 @@ export default function DashboardPage() {
             <div className="dashboard-card-icon info">
               <ListTodo size={20} className="text-info" />
             </div>
+            <span className="dashboard-card-icon-label">Tasks</span>
           </div>
           <div className="dashboard-card-value">
             {data?.resource_counts.tasks ?? 0}
           </div>
-          <div className="dashboard-card-label">Tasks</div>
-        </div>
+                  </div>
 
         {/* Recipes Count */}
         <div className="dashboard-card clickable" onClick={() => switchPage('recipes')}>
@@ -148,12 +149,12 @@ export default function DashboardPage() {
             <div className="dashboard-card-icon warning">
               <BookOpen size={20} className="text-warning" />
             </div>
+            <span className="dashboard-card-icon-label">Recipes</span>
           </div>
           <div className="dashboard-card-value">
             {data?.resource_counts.recipes ?? 0}
           </div>
-          <div className="dashboard-card-label">Recipes</div>
-        </div>
+                  </div>
 
         {/* Skills Count */}
         <div className="dashboard-card clickable" onClick={() => switchPage('skills')}>
@@ -161,12 +162,12 @@ export default function DashboardPage() {
             <div className="dashboard-card-icon purple">
               <Zap size={20} className="text-purple" />
             </div>
+            <span className="dashboard-card-icon-label">Skills</span>
           </div>
           <div className="dashboard-card-value">
             {data?.resource_counts.skills ?? 0}
           </div>
-          <div className="dashboard-card-label">Skills</div>
-        </div>
+                  </div>
       </div>
 
       {/* Recent Activity & Quick Actions Row */}
