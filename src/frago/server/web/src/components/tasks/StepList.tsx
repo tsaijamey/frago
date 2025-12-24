@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { TaskStep, StepType } from '@/types/pywebview';
 import { User, Bot, Wrench, ArrowRight, Settings, type LucideIcon } from 'lucide-react';
+import MarkdownContent from '@/components/ui/MarkdownContent';
 
 interface StepListProps {
   steps: TaskStep[];
@@ -166,7 +167,11 @@ export default function StepList({ steps }: StepListProps) {
                 </div>
                 {/* Second line: Message content */}
                 <div className="text-scaled-sm text-[var(--text-secondary)] break-words pl-scaled-5">
-                  {step.content}
+                  {step.type === 'assistant_message' ? (
+                    <MarkdownContent content={step.content} />
+                  ) : (
+                    step.content
+                  )}
                 </div>
               </div>
             );
