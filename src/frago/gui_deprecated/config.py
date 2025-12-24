@@ -8,8 +8,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
-from frago.gui.exceptions import ConfigValidationError
-from frago.gui.models import UserConfig
+from frago.gui_deprecated.exceptions import ConfigValidationError
+from frago.gui_deprecated.models import UserConfig
 
 CONFIG_DIR = Path.home() / ".frago"
 CONFIG_FILE = CONFIG_DIR / "gui_config.json"

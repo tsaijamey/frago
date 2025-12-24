@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
-from frago.gui.config import ensure_config_dir
-from frago.gui.models import CommandRecord, CommandType, TaskStatus
+from frago.gui_deprecated.config import ensure_config_dir
+from frago.gui_deprecated.models import CommandRecord, CommandType, TaskStatus
 
 HISTORY_FILE = Path.home() / ".frago" / "gui_history.jsonl"
 

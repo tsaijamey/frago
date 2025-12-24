@@ -7,8 +7,8 @@ existing business logic.
 
 from typing import Any, Dict, List, Optional
 
-from frago.gui.api import FragoGuiApi
-from frago.gui.models import RecipeItem, TaskItem, TaskDetail, UserConfig
+from frago.gui_deprecated.api import FragoGuiApi
+from frago.gui_deprecated.models import RecipeItem, TaskItem, TaskDetail, UserConfig
 
 
 class FragoApiAdapter:

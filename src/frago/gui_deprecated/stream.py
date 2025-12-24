@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Iterator, Optional
 
-from frago.gui.models import MessageType, StreamMessage
+from frago.gui_deprecated.models import MessageType, StreamMessage
 
 
 @dataclass

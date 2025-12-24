@@ -96,7 +96,7 @@ include = [
 
 # 排除前端源码（只保留构建产物 assets/）
 exclude = [
-    "src/frago/gui/frontend/**",
+    "src/frago/gui_deprecated/frontend/**",
     "src/frago/server/web/**",
 ]
 

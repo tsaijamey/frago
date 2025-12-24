@@ -7,8 +7,8 @@ import threading
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
-from frago.gui.exceptions import TaskAlreadyRunningError
-from frago.gui.models import AppState, ConnectionStatus, PageType, TaskStatus
+from frago.gui_deprecated.exceptions import TaskAlreadyRunningError
+from frago.gui_deprecated.models import AppState, ConnectionStatus, PageType, TaskStatus
 
 
 class AppStateManager:

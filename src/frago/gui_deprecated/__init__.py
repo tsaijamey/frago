@@ -12,8 +12,8 @@ __all__ = [
 def _lazy_import():
     """Lazy import to avoid loading pywebview unless GUI is used."""
     try:
-        from frago.gui.app import FragoGuiApp
-        from frago.gui.utils import can_start_gui
+        from frago.gui_deprecated.app import FragoGuiApp
+        from frago.gui_deprecated.utils import can_start_gui
 
         return FragoGuiApp, can_start_gui
     except ImportError as e:

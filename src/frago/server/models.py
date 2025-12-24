@@ -1,7 +1,7 @@
 """Pydantic models for API request/response validation.
 
 These models define the JSON schema for HTTP API endpoints.
-Most map directly to existing GUI models in frago.gui.models.
+Most map directly to existing GUI models in frago.gui_deprecated.models.
 """
 
 from datetime import datetime

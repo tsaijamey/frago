@@ -24,10 +24,10 @@ try:
 except ImportError:
     webview = None
 
-from frago.gui.config import load_config, save_config, update_config
-from frago.gui.exceptions import RecipeNotFoundError, TaskAlreadyRunningError
-from frago.gui.history import append_record, clear_history, get_history
-from frago.gui.models import (
+from frago.gui_deprecated.config import load_config, save_config, update_config
+from frago.gui_deprecated.exceptions import RecipeNotFoundError, TaskAlreadyRunningError
+from frago.gui_deprecated.history import append_record, clear_history, get_history
+from frago.gui_deprecated.models import (
     CommandRecord,
     CommandType,
     MessageType,
@@ -40,7 +40,7 @@ from frago.gui.models import (
     TaskDetail,
     TaskStep,
 )
-from frago.gui.state import AppStateManager
+from frago.gui_deprecated.state import AppStateManager
 
 # 011-gui-tasks-redesign: Import session module
 from frago.session.storage import (

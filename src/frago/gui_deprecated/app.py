@@ -91,9 +91,9 @@ Or use winget:
     else:
         return "Please install pywebview: pip install pywebview"
 
-from frago.gui.exceptions import GuiNotAvailableError
-from frago.gui.models import WindowConfig
-from frago.gui.utils import can_start_gui, get_asset_path, get_gui_unavailable_reason, is_debug_mode
+from frago.gui_deprecated.exceptions import GuiNotAvailableError
+from frago.gui_deprecated.models import WindowConfig
+from frago.gui_deprecated.utils import can_start_gui, get_asset_path, get_gui_unavailable_reason, is_debug_mode
 
 
 class FragoGuiApp:
@@ -271,7 +271,7 @@ class FragoGuiApp:
         Returns:
             webview.Window instance.
         """
-        from frago.gui.api import FragoGuiApi
+        from frago.gui_deprecated.api import FragoGuiApi
 
         self._api = FragoGuiApi()
         url = self._get_url()
@@ -601,7 +601,7 @@ def start_gui(debug: bool = False, _background: bool = False) -> None:
 
     # Linux dependency check and auto-install (must be before import webview)
     if platform.system() == "Linux":
-        from frago.gui.deps import ensure_gui_deps
+        from frago.gui_deprecated.deps import ensure_gui_deps
 
         can_start, msg = ensure_gui_deps()
         if not can_start:
