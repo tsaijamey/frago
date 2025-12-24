@@ -32,10 +32,28 @@
         document.documentElement.style.colorScheme = theme;
       })();
     </script>
+    <script>
+      // Calculate font scale based on SCREEN resolution (not viewport)
+      // Base: 1080p screen height = 13px, linear scale with min/max limits
+      (function () {
+        var baseHeight = 1080;
+        var baseFontSize = 13;
+        var minFontSize = 10;
+        var maxFontSize = 18;
+
+        // Use screen.height (screen resolution), not innerHeight (viewport)
+        var screenHeight = window.screen.height;
+        var calculatedSize = (screenHeight / baseHeight) * baseFontSize;
+        var clampedSize = Math.max(minFontSize, Math.min(maxFontSize, calculatedSize));
+        var scale = clampedSize / baseFontSize;
+
+        document.documentElement.style.setProperty('--font-scale', scale);
+      })();
+    </script>
     
   </head>
   <body>
     <div id="root"></div>
-    <script src="./assets/index-8D5W4JTQ.js"></script>
+    <script src="./assets/index-D7bGYoPL.js"></script>
   </body>
 </html>
