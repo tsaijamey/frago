@@ -66,7 +66,7 @@ const CollapseIcon = ({ collapsed }: { collapsed: boolean }) => (
     strokeWidth="2"
     strokeLinecap="round"
     strokeLinejoin="round"
-    style={{ transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}
+    className={`collapse-icon ${collapsed ? 'collapsed' : ''}`}
   >
     <polyline points="15 18 9 12 15 6" />
   </svg>
@@ -112,117 +112,28 @@ export default function Sidebar() {
   };
 
   return (
-    <aside
-      className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}
-      style={{
-        width: sidebarCollapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)',
-        minWidth: sidebarCollapsed ? 'var(--sidebar-collapsed-width)' : 'var(--sidebar-width)',
-        height: '100%',
-        background: 'var(--bg-secondary)',
-        borderRight: '1px solid var(--border-color)',
-        display: 'flex',
-        flexDirection: 'column',
-        transition: 'width 0.2s ease, min-width 0.2s ease',
-        overflow: 'hidden',
-      }}
-    >
+    <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
       {/* Logo / Header */}
-      <div
-        style={{
-          padding: sidebarCollapsed ? '16px 12px' : '16px 20px',
-          borderBottom: '1px solid var(--border-color)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          minHeight: '56px',
-        }}
-      >
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            background: 'var(--accent-primary)',
-            borderRadius: '8px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--text-on-accent)',
-            fontWeight: 700,
-            fontSize: '14px',
-            flexShrink: 0,
-          }}
-        >
-          F
-        </div>
-        {!sidebarCollapsed && (
-          <span
-            style={{
-              fontWeight: 600,
-              fontSize: '16px',
-              color: 'var(--text-primary)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Frago
-          </span>
-        )}
+      <div className="sidebar-header">
+        <div className="sidebar-logo">F</div>
+        {!sidebarCollapsed && <span className="sidebar-title">Frago</span>}
       </div>
 
       {/* Navigation Menu */}
-      <nav
-        style={{
-          flex: 1,
-          padding: '12px 8px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '4px',
-        }}
-      >
+      <nav className="sidebar-nav">
         {menuItems.map((item) => {
           const active = isActive(item.id);
           return (
             <button
+              type="button"
               key={item.id}
               onClick={() => switchPage(item.id)}
               title={sidebarCollapsed ? item.label : undefined}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: sidebarCollapsed ? '12px' : '12px 16px',
-                justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-                background: active ? 'var(--bg-tertiary)' : 'transparent',
-                border: 'none',
-                borderRadius: '8px',
-                color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-                width: '100%',
-              }}
-              onMouseEnter={(e) => {
-                if (!active) {
-                  e.currentTarget.style.background = 'var(--bg-tertiary)';
-                  e.currentTarget.style.color = 'var(--text-primary)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!active) {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-secondary)';
-                }
-              }}
+              className={`sidebar-menu-item ${active ? 'active' : ''}`}
             >
-              <span style={{ flexShrink: 0 }}>{item.icon}</span>
+              <span className="sidebar-menu-icon">{item.icon}</span>
               {!sidebarCollapsed && (
-                <span
-                  style={{
-                    fontSize: '14px',
-                    fontWeight: active ? 500 : 400,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {item.label}
-                </span>
+                <span className="sidebar-menu-label">{item.label}</span>
               )}
             </button>
           );
@@ -230,41 +141,16 @@ export default function Sidebar() {
       </nav>
 
       {/* Collapse Toggle Button */}
-      <div
-        style={{
-          padding: '12px 8px',
-          borderTop: '1px solid var(--border-color)',
-        }}
-      >
+      <div className="sidebar-footer">
         <button
+          type="button"
           onClick={toggleSidebar}
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-            gap: '12px',
-            padding: sidebarCollapsed ? '12px' : '12px 16px',
-            width: '100%',
-            background: 'transparent',
-            border: 'none',
-            borderRadius: '8px',
-            color: 'var(--text-muted)',
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'var(--bg-tertiary)';
-            e.currentTarget.style.color = 'var(--text-secondary)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent';
-            e.currentTarget.style.color = 'var(--text-muted)';
-          }}
+          className="sidebar-collapse-btn"
         >
           <CollapseIcon collapsed={sidebarCollapsed} />
           {!sidebarCollapsed && (
-            <span style={{ fontSize: '13px' }}>Collapse</span>
+            <span className="sidebar-collapse-label">Collapse</span>
           )}
         </button>
       </div>
