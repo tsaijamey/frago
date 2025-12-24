@@ -110,6 +110,7 @@ class MonitoredSession(BaseModel):
     session_id: str = Field(..., description="Claude Code session ID")
     agent_type: AgentType = Field(..., description="Agent type identifier")
     project_path: str = Field(..., description="Project absolute path")
+    name: Optional[str] = Field(None, description="Session name from first user message")
     source_file: str = Field(..., description="Original session file path")
     started_at: datetime = Field(..., description="Monitoring start time")
     ended_at: Optional[datetime] = Field(None, description="Monitoring end time")
