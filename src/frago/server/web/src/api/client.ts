@@ -376,3 +376,84 @@ export async function waitForApi(): Promise<void> {
     throw new Error('Failed to connect to Frago web service');
   }
 }
+
+// ============================================================
+// Multi-Device Sync API
+// ============================================================
+
+export interface GithubRepo {
+  name: string;
+  full_name: string;
+  description: string | null;
+  private: boolean;
+  ssh_url: string;
+  url: string;
+}
+
+export interface CreateRepoResponse {
+  status: 'ok' | 'error';
+  repo_url?: string;
+  error?: string;
+}
+
+export interface ListReposResponse {
+  status: 'ok' | 'error';
+  repos?: GithubRepo[];
+  error?: string;
+}
+
+export interface SelectRepoResponse {
+  status: 'ok' | 'error';
+  repo_url?: string;
+  error?: string;
+}
+
+export interface RepoVisibilityResponse {
+  status: 'ok' | 'error';
+  is_public?: boolean;
+  error?: string;
+}
+
+export interface SyncResponse {
+  status: 'ok' | 'error' | 'running' | 'idle';
+  success?: boolean;
+  output?: string;
+  error?: string;
+  message?: string;
+  local_changes?: number;
+  remote_updates?: number;
+  pushed_to_remote?: boolean;
+  conflicts?: string[];
+  warnings?: string[];
+  is_public_repo?: boolean;
+}
+
+export async function createSyncRepo(repoName: string, privateRepo: boolean = true): Promise<CreateRepoResponse> {
+  return fetchApi<CreateRepoResponse>('/sync/create-repo', {
+    method: 'POST',
+    body: JSON.stringify({ repo_name: repoName, private: privateRepo }),
+  });
+}
+
+export async function listUserRepos(limit: number = 100): Promise<ListReposResponse> {
+  return fetchApi<ListReposResponse>(`/sync/repos?limit=${limit}`);
+}
+
+export async function selectExistingRepo(repoUrl: string): Promise<SelectRepoResponse> {
+  return fetchApi<SelectRepoResponse>('/sync/select-repo', {
+    method: 'POST',
+    body: JSON.stringify({ repo_url: repoUrl }),
+  });
+}
+
+export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
+  return fetchApi<RepoVisibilityResponse>('/sync/repo-visibility');
+}
+
+export async function runSync(): Promise<SyncResponse> {
+  return fetchApi<SyncResponse>('/sync/run', { method: 'POST' });
+}
+
+export async function getSyncStatus(): Promise<SyncResponse> {
+  return fetchApi<SyncResponse>('/sync/status');
+}

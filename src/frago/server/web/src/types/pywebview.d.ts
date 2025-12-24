@@ -222,10 +222,17 @@ export interface CreateRepoResponse {
 }
 
 export interface SyncResponse {
-  status: 'ok' | 'error' | 'running';
+  status: 'ok' | 'error' | 'running' | 'idle';
   message?: string;
   output?: string;
   error?: string;
+  success?: boolean;
+  local_changes?: number;
+  remote_updates?: number;
+  pushed_to_remote?: boolean;
+  conflicts?: string[];
+  warnings?: string[];
+  is_public_repo?: boolean;
 }
 
 export interface RepoVisibilityResponse {

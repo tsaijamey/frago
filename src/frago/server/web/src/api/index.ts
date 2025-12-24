@@ -616,10 +616,8 @@ export async function createSyncRepo(
     return pywebviewApi.createSyncRepo(repoName, privateRepo);
   }
 
-  return {
-    status: 'error',
-    error: 'Sync repo creation not available in web service mode',
-  };
+  // HTTP API
+  return httpApi.createSyncRepo(repoName, privateRepo);
 }
 
 export async function runFirstSync(): Promise<SyncResponse> {
@@ -627,10 +625,8 @@ export async function runFirstSync(): Promise<SyncResponse> {
     return pywebviewApi.runFirstSync();
   }
 
-  return {
-    status: 'error',
-    error: 'Sync not available in web service mode',
-  };
+  // HTTP API
+  return httpApi.runSync();
 }
 
 export async function getSyncResult(): Promise<SyncResponse> {
@@ -638,10 +634,8 @@ export async function getSyncResult(): Promise<SyncResponse> {
     return pywebviewApi.getSyncResult();
   }
 
-  return {
-    status: 'error',
-    error: 'Sync not available in web service mode',
-  };
+  // HTTP API
+  return httpApi.getSyncStatus();
 }
 
 export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
@@ -649,10 +643,8 @@ export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse>
     return pywebviewApi.checkSyncRepoVisibility();
   }
 
-  return {
-    status: 'error',
-    error: 'Sync repo visibility check not available in web service mode',
-  };
+  // HTTP API
+  return httpApi.checkSyncRepoVisibility();
 }
 
 export async function listUserRepos(limit?: number): Promise<ListReposResponse> {
@@ -660,10 +652,8 @@ export async function listUserRepos(limit?: number): Promise<ListReposResponse> 
     return pywebviewApi.listUserRepos(limit);
   }
 
-  return {
-    status: 'error',
-    error: 'Repo listing not available in web service mode',
-  };
+  // HTTP API
+  return httpApi.listUserRepos(limit);
 }
 
 export async function selectExistingRepo(sshUrl: string): Promise<SelectRepoResponse> {
@@ -671,10 +661,8 @@ export async function selectExistingRepo(sshUrl: string): Promise<SelectRepoResp
     return pywebviewApi.selectExistingRepo(sshUrl);
   }
 
-  return {
-    status: 'error',
-    error: 'Repo selection not available in web service mode',
-  };
+  // HTTP API
+  return httpApi.selectExistingRepo(sshUrl);
 }
 
 // ============================================================
