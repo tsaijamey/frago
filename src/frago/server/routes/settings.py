@@ -8,7 +8,9 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from frago.server.adapter import FragoApiAdapter
+from frago.server.services.env_service import EnvService
+from frago.server.services.github_service import GitHubService
+from frago.server.services.main_config_service import MainConfigService
 
 router = APIRouter()
 
@@ -73,8 +75,7 @@ class ApiResponse(BaseModel):
 @router.get("/settings/gh-cli", response_model=GhCliStatusResponse)
 async def check_gh_cli() -> GhCliStatusResponse:
     """Check GitHub CLI installation and authentication status."""
-    adapter = FragoApiAdapter.get_instance()
-    status = adapter.check_gh_cli()
+    status = GitHubService.check_gh_cli()
 
     return GhCliStatusResponse(
         installed=status.get("installed", False),
@@ -87,8 +88,7 @@ async def check_gh_cli() -> GhCliStatusResponse:
 @router.post("/settings/gh-cli/login", response_model=ApiResponse)
 async def gh_auth_login() -> ApiResponse:
     """Initiate GitHub CLI authentication."""
-    adapter = FragoApiAdapter.get_instance()
-    result = adapter.gh_auth_login()
+    result = GitHubService.auth_login()
 
     if result.get("status") == "ok":
         return ApiResponse(status="ok", message=result.get("message", "Authentication initiated"))
@@ -103,8 +103,7 @@ async def gh_auth_login() -> ApiResponse:
 @router.get("/settings/main-config", response_model=MainConfigResponse)
 async def get_main_config() -> MainConfigResponse:
     """Get main configuration."""
-    adapter = FragoApiAdapter.get_instance()
-    config = adapter.get_main_config()
+    config = MainConfigService.get_config()
 
     return MainConfigResponse(
         working_directory=config.get("working_directory_display", "~/.frago"),
@@ -116,8 +115,6 @@ async def get_main_config() -> MainConfigResponse:
 @router.put("/settings/main-config", response_model=MainConfigResponse)
 async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResponse:
     """Update main configuration."""
-    adapter = FragoApiAdapter.get_instance()
-
     updates = {}
     if request.working_directory is not None:
         updates["working_directory"] = request.working_directory
@@ -126,12 +123,12 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
     if request.sync_repo is not None:
         updates["sync_repo_url"] = request.sync_repo
 
-    result = adapter.update_main_config(updates)
+    result = MainConfigService.update_config(updates)
 
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
 
-    # Get the config field from the result (which contains the full config)
+    # Get the config field from the result
     config = result.get("config", result)
 
     return MainConfigResponse(
@@ -149,8 +146,7 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
 @router.get("/settings/env-vars", response_model=EnvVarsResponse)
 async def get_env_vars() -> EnvVarsResponse:
     """Get environment variables from .env file."""
-    adapter = FragoApiAdapter.get_instance()
-    result = adapter.get_env_vars()
+    result = EnvService.get_env_vars()
 
     return EnvVarsResponse(
         vars=result.get("vars", {}),
@@ -161,8 +157,7 @@ async def get_env_vars() -> EnvVarsResponse:
 @router.put("/settings/env-vars", response_model=EnvVarsResponse)
 async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
     """Update environment variables."""
-    adapter = FragoApiAdapter.get_instance()
-    result = adapter.update_env_vars(request.updates)
+    result = EnvService.update_env_vars(request.updates)
 
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
@@ -176,12 +171,11 @@ async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
 @router.get("/settings/recipe-env-requirements", response_model=List[RecipeEnvRequirement])
 async def get_recipe_env_requirements() -> List[RecipeEnvRequirement]:
     """Get environment variable requirements from recipes."""
-    adapter = FragoApiAdapter.get_instance()
-    requirements = adapter.get_recipe_env_requirements()
+    requirements = EnvService.get_recipe_env_requirements()
 
     return [
         RecipeEnvRequirement(
-            name=r.get("name", ""),
+            name=r.get("var_name", ""),
             description=r.get("description"),
             required=r.get("required", False),
         )

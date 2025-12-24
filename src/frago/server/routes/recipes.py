@@ -7,12 +7,12 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException
 
-from frago.server.adapter import FragoApiAdapter
 from frago.server.models import (
     RecipeItemResponse,
     RecipeRunRequest,
     TaskItemResponse,
 )
+from frago.server.services.recipe_service import RecipeService
 
 router = APIRouter()
 
@@ -23,8 +23,7 @@ async def list_recipes() -> List[RecipeItemResponse]:
 
     Returns a list of all recipes from both atomic and workflow categories.
     """
-    adapter = FragoApiAdapter.get_instance()
-    recipes = adapter.get_recipes()
+    recipes = RecipeService.get_recipes()
 
     return [
         RecipeItemResponse(
@@ -54,8 +53,7 @@ async def get_recipe(name: str) -> RecipeItemResponse:
     Raises:
         HTTPException: 404 if recipe not found
     """
-    adapter = FragoApiAdapter.get_instance()
-    recipe = adapter.get_recipe(name)
+    recipe = RecipeService.get_recipe(name)
 
     if recipe is None:
         raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
@@ -86,33 +84,32 @@ async def run_recipe(name: str, request: RecipeRunRequest = None) -> TaskItemRes
     Raises:
         HTTPException: 404 if recipe not found
     """
+    import uuid
     from datetime import datetime, timezone
 
-    adapter = FragoApiAdapter.get_instance()
-
     # Verify recipe exists
-    recipe = adapter.get_recipe(name)
+    recipe = RecipeService.get_recipe(name)
     if recipe is None:
         raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
 
     # Execute recipe
     params = request.params if request else None
-    timeout = request.timeout if request else None
+    timeout = request.timeout if request else 300
 
-    result = adapter.run_recipe(name, params, timeout)
+    result = RecipeService.run_recipe(name, params, timeout)
 
     # Check for error
-    if isinstance(result, dict) and result.get("error"):
+    if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error"))
 
     # Return task information
     return TaskItemResponse(
-        id=result.get("id", ""),
-        title=result.get("title", f"Recipe: {name}"),
-        status=result.get("status", "running"),
-        project_path=result.get("project_path"),
-        agent_type=result.get("agent_type", "recipe"),
-        started_at=datetime.fromisoformat(result.get("started_at", datetime.now(timezone.utc).isoformat())),
-        completed_at=None,
-        duration_ms=None,
+        id=str(uuid.uuid4()),
+        title=f"Recipe: {name}",
+        status="completed" if result.get("status") == "ok" else "error",
+        project_path=None,
+        agent_type="recipe",
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        duration_ms=result.get("duration_ms"),
     )

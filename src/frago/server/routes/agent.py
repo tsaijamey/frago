@@ -5,8 +5,8 @@ Provides endpoints for starting agent tasks.
 
 from fastapi import APIRouter, HTTPException
 
-from frago.server.adapter import FragoApiAdapter
 from frago.server.models import AgentStartRequest, TaskItemResponse
+from frago.server.services.agent_service import AgentService
 
 router = APIRouter()
 
@@ -26,15 +26,13 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
     """
     from datetime import datetime, timezone
 
-    adapter = FragoApiAdapter.get_instance()
-
-    result = adapter.start_agent(
+    result = AgentService.start_task(
         prompt=request.prompt,
         project_path=request.project_path,
     )
 
     # Check for error
-    if isinstance(result, dict) and result.get("error"):
+    if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error"))
 
     # Parse started_at
@@ -47,7 +45,7 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
     return TaskItemResponse(
         id=result.get("id", ""),
         title=result.get("title", request.prompt[:50] + "..." if len(request.prompt) > 50 else request.prompt),
-        status=result.get("status", "running"),
+        status="running",
         project_path=result.get("project_path") or request.project_path,
         agent_type=result.get("agent_type", "claude"),
         started_at=started_at,

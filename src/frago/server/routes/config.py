@@ -5,8 +5,8 @@ Provides endpoints for reading and updating user configuration.
 
 from fastapi import APIRouter, HTTPException
 
-from frago.server.adapter import FragoApiAdapter
 from frago.server.models import ConfigUpdateRequest, UserConfigResponse
+from frago.server.services.config_service import ConfigService, ConfigValidationError
 
 router = APIRouter()
 
@@ -17,8 +17,7 @@ async def get_config() -> UserConfigResponse:
 
     Returns current user preferences including theme, font size, etc.
     """
-    adapter = FragoApiAdapter.get_instance()
-    config = adapter.get_config()
+    config = ConfigService.get_config()
 
     return UserConfigResponse(
         theme=config.get("theme", "dark"),
@@ -44,8 +43,6 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
     Raises:
         HTTPException: 400 if configuration is invalid
     """
-    adapter = FragoApiAdapter.get_instance()
-
     # Build update dict from non-None fields
     updates = {}
     if request.theme is not None:
@@ -67,11 +64,10 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
         # No updates, just return current config
         return await get_config()
 
-    result = adapter.update_config(updates)
-
-    # Check for error
-    if isinstance(result, dict) and result.get("error"):
-        raise HTTPException(status_code=400, detail=result.get("error"))
+    try:
+        result = ConfigService.update_config(updates)
+    except ConfigValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return UserConfigResponse(
         theme=result.get("theme", "dark"),

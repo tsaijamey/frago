@@ -7,8 +7,8 @@ from typing import List
 
 from fastapi import APIRouter
 
-from frago.server.adapter import FragoApiAdapter
 from frago.server.models import SkillItemResponse
+from frago.server.services.skill_service import SkillService
 
 router = APIRouter()
 
@@ -19,8 +19,7 @@ async def list_skills() -> List[SkillItemResponse]:
 
     Returns all Claude Code skills installed in ~/.claude/skills/
     """
-    adapter = FragoApiAdapter.get_instance()
-    skills = adapter.get_skills()
+    skills = SkillService.get_skills()
 
     return [
         SkillItemResponse(
