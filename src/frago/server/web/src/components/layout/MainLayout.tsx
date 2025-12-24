@@ -17,39 +17,14 @@ interface MainLayoutProps {
 
 export default function MainLayout({ children }: MainLayoutProps) {
   return (
-    <div
-      className="main-layout"
-      style={{
-        display: 'flex',
-        height: '100%',
-        width: '100%',
-        overflow: 'hidden',
-      }}
-    >
+    <div className="main-layout">
       {/* Sidebar */}
       <Sidebar />
 
       {/* Content Area */}
-      <div
-        className="content-area"
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          minWidth: 0, // Allow flex item to shrink below content size
-        }}
-      >
+      <div className="content-area">
         {/* Main Content */}
-        <main
-          className="main-content"
-          style={{
-            flex: 1,
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
+        <main className="main-content">
           {children}
         </main>
 

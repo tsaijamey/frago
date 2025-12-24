@@ -20,6 +20,7 @@ import {
   Activity,
   ChevronRight,
   Plus,
+  Settings,
 } from 'lucide-react';
 
 interface DashboardData {
@@ -62,6 +63,15 @@ function formatRelativeTime(isoString: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function getStatusDotClass(status: string): string {
+  switch (status) {
+    case 'completed': return 'dashboard-activity-dot completed';
+    case 'running': return 'dashboard-activity-dot running';
+    case 'error': return 'dashboard-activity-dot error';
+    default: return 'dashboard-activity-dot default';
+  }
+}
+
 export default function DashboardPage() {
   const { switchPage } = useAppStore();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -87,331 +97,159 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="page-scroll" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="page-scroll dashboard-loading">
         <div className="spinner" />
       </div>
     );
   }
 
   return (
-    <div className="page-scroll" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div className="page-scroll dashboard-container">
       {/* Header */}
-      <div>
-        <h1 style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>
-          Dashboard
-        </h1>
-        <p style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
-          System overview and quick access to your resources
-        </p>
+      <div className="dashboard-header">
+        <h1>Dashboard</h1>
+        <p>System overview and quick access to your resources</p>
       </div>
 
       {/* Stats Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px' }}>
+      <div className="dashboard-stats-grid">
         {/* Server Status */}
-        <div
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                background: data?.server.running ? 'rgba(63, 185, 80, 0.15)' : 'rgba(248, 81, 73, 0.15)',
-                borderRadius: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Server size={20} style={{ color: data?.server.running ? 'var(--accent-success)' : 'var(--accent-error)' }} />
+        <div className="dashboard-card">
+          <div className="dashboard-card-icon-wrapper">
+            <div className={`dashboard-card-icon ${data?.server.running ? 'success' : 'error'}`}>
+              <Server size={20} className={data?.server.running ? 'text-success' : 'text-error'} />
             </div>
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          <div className="dashboard-card-value">
             {data?.server.running ? 'Online' : 'Offline'}
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div className="dashboard-card-label">
             <Clock size={12} />
             {data?.server.uptime_seconds ? formatUptime(data.server.uptime_seconds) : '--'}
           </div>
         </div>
 
         {/* Tasks Count */}
-        <div
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-            cursor: 'pointer',
-          }}
-          onClick={() => switchPage('tasks')}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                background: 'rgba(88, 166, 255, 0.15)',
-                borderRadius: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <ListTodo size={20} style={{ color: '#58a6ff' }} />
+        <div className="dashboard-card clickable" onClick={() => switchPage('tasks')}>
+          <div className="dashboard-card-icon-wrapper">
+            <div className="dashboard-card-icon info">
+              <ListTodo size={20} className="text-info" />
             </div>
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          <div className="dashboard-card-value">
             {data?.resource_counts.tasks ?? 0}
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Tasks</div>
+          <div className="dashboard-card-label">Tasks</div>
         </div>
 
         {/* Recipes Count */}
-        <div
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-            cursor: 'pointer',
-          }}
-          onClick={() => switchPage('recipes')}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                background: 'rgba(210, 153, 34, 0.15)',
-                borderRadius: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <BookOpen size={20} style={{ color: 'var(--accent-warning)' }} />
+        <div className="dashboard-card clickable" onClick={() => switchPage('recipes')}>
+          <div className="dashboard-card-icon-wrapper">
+            <div className="dashboard-card-icon warning">
+              <BookOpen size={20} className="text-warning" />
             </div>
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          <div className="dashboard-card-value">
             {data?.resource_counts.recipes ?? 0}
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Recipes</div>
+          <div className="dashboard-card-label">Recipes</div>
         </div>
 
         {/* Skills Count */}
-        <div
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-            cursor: 'pointer',
-          }}
-          onClick={() => switchPage('skills')}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                background: 'rgba(139, 92, 246, 0.15)',
-                borderRadius: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Zap size={20} style={{ color: '#8b5cf6' }} />
+        <div className="dashboard-card clickable" onClick={() => switchPage('skills')}>
+          <div className="dashboard-card-icon-wrapper">
+            <div className="dashboard-card-icon purple">
+              <Zap size={20} className="text-purple" />
             </div>
           </div>
-          <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+          <div className="dashboard-card-value">
             {data?.resource_counts.skills ?? 0}
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Skills</div>
+          <div className="dashboard-card-label">Skills</div>
         </div>
       </div>
 
       {/* Recent Activity & Quick Actions Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px' }}>
+      <div className="dashboard-row">
         {/* Recent Activity */}
-        <div
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div className="dashboard-card">
+          <div className="dashboard-section-header">
+            <h2 className="dashboard-section-title">
               <Activity size={18} />
               Recent Activity
             </h2>
             <button
+              type="button"
               onClick={() => switchPage('tasks')}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontSize: '13px',
-              }}
+              className="dashboard-view-all-btn"
             >
               View all <ChevronRight size={14} />
             </button>
           </div>
 
           {data?.recent_activity && data.recent_activity.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div className="dashboard-activity-list">
               {data.recent_activity.map((activity) => (
                 <div
                   key={activity.id}
                   onClick={() => switchPage('task_detail', activity.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '12px',
-                    background: 'var(--bg-tertiary)',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                  }}
+                  className="dashboard-activity-item"
                 >
-                  <div
-                    style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      background:
-                        activity.status === 'completed' ? 'var(--accent-success)' :
-                        activity.status === 'running' ? 'var(--accent-warning)' :
-                        activity.status === 'error' ? 'var(--accent-error)' :
-                        'var(--text-muted)',
-                    }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: '13px',
-                        color: 'var(--text-primary)',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
+                  <div className={getStatusDotClass(activity.status)} />
+                  <div className="dashboard-activity-content">
+                    <div className="dashboard-activity-title">
                       {activity.title}
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    <div className="dashboard-activity-time">
                       {formatRelativeTime(activity.timestamp)}
                     </div>
                   </div>
-                  <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />
+                  <ChevronRight size={16} className="text-muted" />
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+            <div className="dashboard-empty">
               No recent activity
             </div>
           )}
         </div>
 
         {/* Quick Actions */}
-        <div
-          style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '12px',
-            padding: '20px',
-          }}
-        >
-          <h2 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '16px' }}>
-            Quick Actions
-          </h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div className="dashboard-card">
+          <h2 className="dashboard-section-title-only">Quick Actions</h2>
+          <div className="dashboard-actions-list">
             <button
+              type="button"
               onClick={() => switchPage('tasks')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                background: 'var(--bg-tertiary)',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: 'var(--text-primary)',
-                textAlign: 'left',
-              }}
+              className="dashboard-action-btn"
             >
-              <Plus size={18} style={{ color: 'var(--accent-primary)' }} />
-              <span style={{ fontSize: '14px' }}>New Task</span>
+              <Plus size={18} className="text-accent" />
+              <span className="dashboard-action-label">New Task</span>
             </button>
             <button
+              type="button"
               onClick={() => switchPage('recipes')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                background: 'var(--bg-tertiary)',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: 'var(--text-primary)',
-                textAlign: 'left',
-              }}
+              className="dashboard-action-btn"
             >
-              <BookOpen size={18} style={{ color: 'var(--accent-warning)' }} />
-              <span style={{ fontSize: '14px' }}>Browse Recipes</span>
+              <BookOpen size={18} className="text-warning" />
+              <span className="dashboard-action-label">Browse Recipes</span>
             </button>
             <button
+              type="button"
               onClick={() => switchPage('skills')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                background: 'var(--bg-tertiary)',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: 'var(--text-primary)',
-                textAlign: 'left',
-              }}
+              className="dashboard-action-btn"
             >
-              <Zap size={18} style={{ color: '#8b5cf6' }} />
-              <span style={{ fontSize: '14px' }}>View Skills</span>
+              <Zap size={18} className="text-purple" />
+              <span className="dashboard-action-label">View Skills</span>
             </button>
             <button
+              type="button"
               onClick={() => switchPage('settings')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                background: 'var(--bg-tertiary)',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: 'var(--text-primary)',
-                textAlign: 'left',
-              }}
+              className="dashboard-action-btn"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span style={{ fontSize: '14px' }}>Settings</span>
+              <Settings size={18} className="text-muted" />
+              <span className="dashboard-action-label">Settings</span>
             </button>
           </div>
         </div>
