@@ -166,6 +166,34 @@ def modify_resources():
     run("frago dev pack")
 ```
 
+## Frontend Development
+
+```tsx
+// --- Form Element Accessibility ---
+// When creating <input>, <select>, <textarea>, then MUST provide accessible label
+
+// WRONG: missing label association
+<select value={value} onChange={...}>
+
+// CORRECT: use id + htmlFor when visible label exists
+<label htmlFor="endpoint-type">Endpoint Type</label>
+<select id="endpoint-type" value={value} onChange={...}>
+
+// CORRECT: use aria-label when no visible label (search box, sr-only toggle)
+<input type="text" aria-label="Search recipes" placeholder="Search..." />
+<input type="checkbox" aria-label="Enable dark mode" className="sr-only peer" />
+
+// --- Button Type Attribute ---
+// When creating <button>, then MUST set type attribute
+
+// WRONG
+<button onClick={...}>Submit</button>
+
+// CORRECT
+<button type="button" onClick={...}>Cancel</button>
+<button type="submit">Submit</button>
+```
+
 ## Documentation Index
 
 ```python
