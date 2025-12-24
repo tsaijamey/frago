@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import type { TaskStep, StepType } from '@/types/pywebview.d';
+import type { TaskStep, StepType } from '@/types/pywebview';
 import { User, Bot, Wrench, ArrowRight, Settings, type LucideIcon } from 'lucide-react';
 
 interface StepListProps {

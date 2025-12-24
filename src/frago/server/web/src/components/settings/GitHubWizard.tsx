@@ -13,7 +13,7 @@ import {
   listUserRepos,
   selectExistingRepo,
 } from '@/api';
-import type { GithubRepo } from '@/types/pywebview.d';
+import type { GithubRepo } from '@/types/pywebview';
 import { Github, Check, AlertCircle, Loader2, Terminal, FolderGit2, RefreshCw } from 'lucide-react';
 
 interface GitHubWizardProps {
@@ -384,10 +384,11 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       {repoMode === 'create' ? (
         /* Create new repository mode */
         <div>
-          <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+          <label htmlFor="repo-name" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
             Repository Name
           </label>
           <input
+            id="repo-name"
             type="text"
             value={repoName}
             onChange={(e) => setRepoName(e.target.value)}

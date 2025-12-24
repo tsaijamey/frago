@@ -11,7 +11,7 @@ import type {
   UserConfig,
   SystemStatus,
   Theme,
-} from '@/types/pywebview.d';
+} from '@/types/pywebview';
 import * as api from '@/api';
 
 // Page type - Updated for new admin panel layout

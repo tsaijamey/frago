@@ -1,20 +1,20 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import EmptyState from '@/components/ui/EmptyState';
-import type { RecipeItem } from '@/types/pywebview.d';
+import type { RecipeItem } from '@/types/pywebview';
 import { Package, Search, X } from 'lucide-react';
 
-// Get source tag color
-function getSourceColor(source: RecipeItem['source']): string {
+// Get source tag classes
+function getSourceClasses(source: RecipeItem['source']): string {
   switch (source) {
     case 'User':
-      return 'var(--accent-primary)';
+      return 'bg-[var(--bg-subtle)] text-[var(--accent-primary)]';
     case 'Project':
-      return 'var(--accent-success)';
+      return 'bg-[var(--bg-subtle)] text-[var(--accent-success)]';
     case 'System':
-      return 'var(--accent-warning)';
+      return 'bg-[var(--bg-subtle)] text-[var(--accent-warning)]';
     default:
-      return 'var(--text-muted)';
+      return 'bg-[var(--bg-subtle)] text-[var(--text-muted)]';
   }
 }
 
@@ -58,11 +58,14 @@ export default function RecipeList() {
           placeholder="Search by name or tag..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search recipes"
         />
         {search && (
           <button
+            type="button"
             className="search-clear"
             onClick={() => setSearch('')}
+            aria-label="Clear search"
           >
             <X size={14} />
           </button>
@@ -90,25 +93,17 @@ export default function RecipeList() {
                 {/* Line 2: Type + Source + Language Type */}
                 <div className="flex items-center gap-2 mt-1 text-xs">
                   <span
-                    className="px-2 py-0.5 rounded"
-                    style={{
-                      backgroundColor: recipe.category === 'atomic'
-                        ? 'var(--status-running-bg)'
-                        : 'var(--status-completed-bg)',
-                      color: recipe.category === 'atomic'
-                        ? 'var(--accent-warning)'
-                        : 'var(--accent-success)',
-                    }}
+                    className={`px-2 py-0.5 rounded ${
+                      recipe.category === 'atomic'
+                        ? 'bg-[var(--status-running-bg)] text-[var(--accent-warning)]'
+                        : 'bg-[var(--status-completed-bg)] text-[var(--accent-success)]'
+                    }`}
                   >
                     {recipe.category === 'atomic' ? 'Atomic' : 'Workflow'}
                   </span>
                   {recipe.source && (
                     <span
-                      className="px-2 py-0.5 rounded"
-                      style={{
-                        backgroundColor: 'var(--bg-subtle)',
-                        color: getSourceColor(recipe.source),
-                      }}
+                      className={`px-2 py-0.5 rounded ${getSourceClasses(recipe.source)}`}
                     >
                       {recipe.source}
                     </span>

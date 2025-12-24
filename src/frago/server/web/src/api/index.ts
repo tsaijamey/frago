@@ -36,7 +36,7 @@ import type {
   ListReposResponse,
   SelectRepoResponse,
   TutorialResponse,
-} from '@/types/pywebview.d';
+} from '@/types/pywebview';
 
 // ============================================================
 // Mode Detection

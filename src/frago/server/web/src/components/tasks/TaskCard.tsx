@@ -1,4 +1,4 @@
-import type { TaskItem, TaskStatus } from '@/types/pywebview.d';
+import type { TaskItem, TaskStatus } from '@/types/pywebview';
 import { Zap, Check, X, Circle, Clock, FileText, Wrench, ChevronRight, type LucideIcon } from 'lucide-react';
 
 interface TaskCardProps {

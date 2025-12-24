@@ -34,7 +34,7 @@ import type {
   ListReposResponse,
   SelectRepoResponse,
   TutorialResponse,
-} from '@/types/pywebview.d';
+} from '@/types/pywebview';
 
 // Wait for pywebview ready
 let readyPromise: Promise<PyWebviewApi> | null = null;

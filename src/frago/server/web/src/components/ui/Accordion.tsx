@@ -33,6 +33,7 @@ export function AccordionItem({ title, children, defaultOpen = false }: Accordio
   return (
     <div className="card overflow-hidden">
       <button
+        type="button"
         className="w-full flex items-center justify-between text-left"
         onClick={() => setIsOpen(!isOpen)}
       >
@@ -46,8 +47,10 @@ export function AccordionItem({ title, children, defaultOpen = false }: Accordio
       </button>
       <div
         ref={contentRef}
-        style={{ height: height === undefined ? 'auto' : height }}
-        className="overflow-hidden transition-[height] duration-200 ease-in-out"
+        className={`overflow-hidden transition-[height] duration-200 ease-in-out ${
+          height === undefined ? 'h-auto' : ''
+        }`}
+        {...(height !== undefined && { style: { height } })}
       >
         <div className="pt-3 text-[var(--text-secondary)] leading-relaxed">{children}</div>
       </div>
