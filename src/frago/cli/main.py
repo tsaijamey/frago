@@ -168,7 +168,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
 @click.option(
     '--gui',
     is_flag=True,
-    help='Launch GUI (pywebview desktop window)'
+    help='[DEPRECATED] Use "frago server start" instead'
 )
 @click.option(
     '--gui-background',
@@ -244,8 +244,8 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
       - Chrome CDP    Browser automation low-level capabilities
 
     \b
-    GUI Mode:
-      frago --gui    Launch desktop GUI application
+    GUI Mode (deprecated):
+      frago --gui    Use 'frago server start' instead
     """
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
@@ -259,17 +259,22 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     ctx.obj['NO_PROXY'] = no_proxy
     ctx.obj['TARGET_ID'] = target_id
 
-    # Handle --gui option (launches pywebview desktop window)
+    # Handle --gui option (deprecated, show migration notice)
     if gui:
-        from frago.gui.app import start_gui
-        start_gui(debug=debug)
+        click.echo("⚠️  The --gui option is deprecated.")
+        click.echo("")
+        click.echo("Please use the web-based interface instead:")
+        click.echo("  frago server            # Start the web server")
+        click.echo("  frago server stop       # Stop the web server")
+        click.echo("  frago server status     # Check server status")
+        click.echo("")
+        click.echo("Then open http://127.0.0.1:8093 in your browser.")
         return
 
-    # Handle --gui-background option (internal, for legacy subprocess calls)
+    # Handle --gui-background option (deprecated)
     if gui_background:
-        from frago.gui.app import start_gui
-        # gui_background means this is a background process started by subprocess, run GUI directly
-        start_gui(debug=debug, _background=gui_background)
+        click.echo("⚠️  The --gui-background option is deprecated.")
+        click.echo("Please use 'frago server start' instead.")
         return
 
     # If no subcommand is invoked, show help
