@@ -504,6 +504,12 @@ a:not(.btn):not(.nav-tab):hover {
   background: rgba(139, 92, 246, 0.15);
 }
 
+.dashboard-card-icon-label {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .dashboard-card-value {
   font-size: var(--font-size-2xl);
   font-weight: 600;
