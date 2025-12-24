@@ -120,6 +120,7 @@ export default function AppearanceSettings() {
                 handleToggle('show_system_status', e.target.checked)
               }
               className="sr-only peer"
+              aria-label="Show System Status"
             />
             <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-success)]"></div>
           </label>
@@ -139,6 +140,7 @@ export default function AppearanceSettings() {
               checked={config.confirm_on_exit}
               onChange={(e) => handleToggle('confirm_on_exit', e.target.checked)}
               className="sr-only peer"
+              aria-label="Exit Confirmation"
             />
             <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-success)]"></div>
           </label>
@@ -160,6 +162,7 @@ export default function AppearanceSettings() {
                 handleToggle('auto_scroll_output', e.target.checked)
               }
               className="sr-only peer"
+              aria-label="Auto Scroll Output"
             />
             <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-success)]"></div>
           </label>
