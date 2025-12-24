@@ -1,7 +1,7 @@
 /**
  * frago GUI Global Styles
  *
- * Based on GitHub Dark design style, supports dark/light theme switching
+ * Based on Next.js-inspired design language, supports dark/light theme switching
  */
 
 @tailwind base;
@@ -9,37 +9,39 @@
 @tailwind utilities;
 
 /* === CSS Variables - Dark Theme (Default) === */
+/* Based on Next.js-inspired design language */
 :root {
   /* Font scale ratio (injected by Python based on window size, default 1.0) */
   --font-scale: 1;
 
-  /* Background color scale - GitHub Dark */
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #21262d;
-  --bg-card: #161b22;
-  --bg-base: #161b22;
-  --bg-subtle: #30363d;
+  /* Background color scale - Next.js Dark */
+  --bg-primary: #000000;
+  --bg-secondary: #0A0A0A;
+  --bg-tertiary: #1A1A1A;
+  --bg-card: #0A0A0A;
+  --bg-base: #0A0A0A;
+  --bg-subtle: #1A1A1A;
 
   /* Text color scale */
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #6e7681;
-  --text-link: #58a6ff;
-  --text-on-accent: #ffffff;
+  --text-primary: #FFFFFF;
+  --text-secondary: #ADADAD;
+  --text-muted: #888888;
+  --text-link: #EDEDED;
+  --text-on-accent: #0A0A0A;
 
-  /* Accent colors - Soft blue */
-  --accent-primary: #58a6ff;
-  --accent-secondary: #388bfd;
-  --accent-muted: #1f6feb;
+  /* Accent colors - High contrast monochrome */
+  --accent-primary: #EDEDED;
+  --accent-secondary: #FFFFFF;
+  --accent-muted: #888888;
   --accent-success: #3fb950;
   --accent-warning: #d29922;
   --accent-error: #f85149;
 
   /* Border colors */
-  --border-color: #30363d;
-  --border-muted: #21262d;
-  --shadow-color: rgba(0, 0, 0, 0.4);
+  --border-color: #1A1A1A;
+  --border-muted: #0A0A0A;
+  --border-primary: #EDEDED;
+  --shadow-color: rgba(0, 0, 0, 0.6);
 
   /* Status badge backgrounds */
   --status-running-bg: rgba(210, 153, 34, 0.15);
@@ -86,29 +88,31 @@
 }
 
 /* === Light Theme === */
+/* Black & white minimal style with black accent */
 [data-theme='light'] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f6f8fa;
-  --bg-tertiary: #f3f4f6;
-  --bg-card: #ffffff;
-  --bg-base: #ffffff;
-  --bg-subtle: #eaeef2;
+  --bg-primary: #FFFFFF;
+  --bg-secondary: #FAFAFA;
+  --bg-tertiary: #F5F5F5;
+  --bg-card: #FFFFFF;
+  --bg-base: #FFFFFF;
+  --bg-subtle: #E5E5E5;
 
-  --text-primary: #1f2328;
-  --text-secondary: #656d76;
-  --text-muted: #8c959f;
-  --text-link: #0969da;
-  --text-on-accent: #ffffff;
+  --text-primary: #0A0A0A;
+  --text-secondary: #666666;
+  --text-muted: #888888;
+  --text-link: #0A0A0A;
+  --text-on-accent: #FFFFFF;
 
-  --accent-primary: #0969da;
-  --accent-secondary: #0550ae;
-  --accent-muted: #ddf4ff;
+  --accent-primary: #0A0A0A;
+  --accent-secondary: #000000;
+  --accent-muted: #888888;
   --accent-success: #1a7f37;
   --accent-warning: #9a6700;
   --accent-error: #cf222e;
 
-  --border-color: #d0d7de;
-  --border-muted: #e6e8eb;
+  --border-color: #E5E5E5;
+  --border-muted: #EBEBEB;
+  --border-primary: #0A0A0A;
   --shadow-color: rgba(0, 0, 0, 0.1);
 
   /* Status badge backgrounds */
