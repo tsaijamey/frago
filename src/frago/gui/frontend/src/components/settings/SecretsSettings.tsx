@@ -382,10 +382,11 @@ export default function SecretsSettings() {
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+            <label htmlFor="env-var-name" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               Variable Name
             </label>
             <input
+              id="env-var-name"
               type="text"
               value={formKey}
               onChange={(e) => setFormKey(e.target.value)}
@@ -399,10 +400,11 @@ export default function SecretsSettings() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
+            <label htmlFor="env-var-value" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
               Variable Value
             </label>
             <textarea
+              id="env-var-value"
               value={formValue}
               onChange={(e) => setFormValue(e.target.value)}
               placeholder="Enter variable value"
