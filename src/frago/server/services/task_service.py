@@ -248,7 +248,7 @@ class TaskService:
         return {
             "timestamp": timestamp,
             "type": step_type,
-            "content": getattr(step, "content", ""),
+            "content": getattr(step, "content_summary", ""),
             "tool_name": getattr(step, "tool_name", None),
             "tool_result": getattr(step, "tool_result", None),
         }
