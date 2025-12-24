@@ -7,7 +7,6 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from frago.server.adapter import FragoApiAdapter
 from frago.server.models import (
     TaskItemResponse,
     TaskDetailResponse,
@@ -17,6 +16,7 @@ from frago.server.models import (
     TaskSummaryResponse,
     ToolUsageStatResponse,
 )
+from frago.server.services.task_service import TaskService
 
 router = APIRouter()
 
@@ -39,8 +39,7 @@ async def list_tasks(
     """
     from datetime import datetime, timezone
 
-    adapter = FragoApiAdapter.get_instance()
-    result = adapter.get_tasks(status=status, limit=limit, offset=offset)
+    result = TaskService.get_tasks(status=status, limit=limit, offset=offset)
 
     tasks = []
     for t in result.get("tasks", []):
@@ -88,8 +87,7 @@ async def get_task(task_id: str) -> TaskDetailResponse:
     """
     from datetime import datetime, timezone
 
-    adapter = FragoApiAdapter.get_instance()
-    task = adapter.get_task(task_id)
+    task = TaskService.get_task(task_id)
 
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
@@ -161,14 +159,12 @@ async def get_task_steps(
     """
     from datetime import datetime, timezone
 
-    adapter = FragoApiAdapter.get_instance()
-
     # Verify task exists
-    task = adapter.get_task(task_id)
+    task = TaskService.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
-    result = adapter.get_task_steps(task_id, limit=limit, offset=offset)
+    result = TaskService.get_task_steps(task_id, limit=limit, offset=offset)
 
     steps = []
     for s in result.get("steps", []):

@@ -165,20 +165,19 @@ async def get_dashboard():
     # Calculate activity overview
     activity_overview = calculate_activity_overview()
 
-    # Get resource counts using the adapter
-    from frago.server.adapter import FragoApiAdapter
+    # Get resource counts using services
+    from frago.server.services.recipe_service import RecipeService
+    from frago.server.services.skill_service import SkillService
     from frago.session.storage import list_sessions
 
-    adapter = FragoApiAdapter.get_instance()
-
     try:
-        recipes = adapter.get_recipes()
+        recipes = RecipeService.get_recipes()
         recipe_count = len(recipes) if recipes else 0
     except Exception:
         recipe_count = 0
 
     try:
-        skills = adapter.get_skills()
+        skills = SkillService.get_skills()
         skill_count = len(skills) if skills else 0
     except Exception:
         skill_count = 0

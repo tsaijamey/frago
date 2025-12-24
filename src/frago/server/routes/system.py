@@ -5,8 +5,8 @@ Provides endpoints for server health checks and information.
 
 from fastapi import APIRouter
 
-from frago.server.adapter import FragoApiAdapter
 from frago.server.models import SystemStatusResponse, ServerInfoResponse
+from frago.server.services.system_service import SystemService
 from frago.server.utils import get_server_info
 
 router = APIRouter()
@@ -19,8 +19,7 @@ async def get_status() -> SystemStatusResponse:
     Returns information about Chrome availability,
     running tasks, and monitored projects.
     """
-    adapter = FragoApiAdapter.get_instance()
-    status = adapter.get_status()
+    status = SystemService.get_status()
 
     return SystemStatusResponse(
         chrome_available=status.get("chrome_available", False),
@@ -39,9 +38,8 @@ async def get_info() -> ServerInfoResponse:
     from datetime import datetime, timezone
 
     server_info = get_server_info()
-    adapter = FragoApiAdapter.get_instance()
 
-    info = adapter.get_info(
+    info = SystemService.get_info(
         host=server_info.get("host", "127.0.0.1"),
         port=server_info.get("port", 8080),
         started_at=server_info.get("started_at", datetime.now(timezone.utc).isoformat()),
