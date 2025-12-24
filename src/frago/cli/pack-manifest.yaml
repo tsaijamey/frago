@@ -3,7 +3,6 @@
 # Source: ~/.claude/commands/, ~/.claude/skills/, ~/.frago/recipes/
 
 commands:
-  - frago.agent.md
   - frago.run.md
   - frago.do.md
   - frago.recipe.md
