@@ -9,6 +9,7 @@
 
 import { useEffect } from 'react';
 import { useAppStore, type PageType } from '@/stores/appStore';
+import { Sun, Moon } from 'lucide-react';
 
 // Menu item configuration
 interface MenuItem {
@@ -49,6 +50,18 @@ const SkillsIcon = () => (
   </svg>
 );
 
+const SyncIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 0 1 9-9" />
+  </svg>
+);
+
+const SecretsIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+  </svg>
+);
+
 const SettingsIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3" />
@@ -78,6 +91,8 @@ const menuItems: MenuItem[] = [
   { id: 'tasks', label: 'Tasks', icon: <TasksIcon /> },
   { id: 'recipes', label: 'Recipes', icon: <RecipesIcon /> },
   { id: 'skills', label: 'Skills', icon: <SkillsIcon /> },
+  { id: 'sync', label: 'Sync', icon: <SyncIcon /> },
+  { id: 'secrets', label: 'Secrets', icon: <SecretsIcon /> },
   { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
 ];
 
@@ -85,7 +100,7 @@ const menuItems: MenuItem[] = [
 const NARROW_VIEWPORT_WIDTH = 768;
 
 export default function Sidebar() {
-  const { currentPage, sidebarCollapsed, switchPage, toggleSidebar, setSidebarCollapsed } = useAppStore();
+  const { currentPage, sidebarCollapsed, switchPage, toggleSidebar, setSidebarCollapsed, config, setTheme } = useAppStore();
 
   // Handle responsive behavior - auto-collapse on narrow viewports
   useEffect(() => {
@@ -116,7 +131,7 @@ export default function Sidebar() {
       {/* Logo / Header */}
       <div className="sidebar-header">
         <div className="sidebar-logo">F</div>
-        {!sidebarCollapsed && <span className="sidebar-title">Frago</span>}
+        {!sidebarCollapsed && <span className="sidebar-title">frago</span>}
       </div>
 
       {/* Navigation Menu */}
@@ -140,18 +155,23 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Collapse Toggle Button */}
+      {/* Footer: Theme Toggle + Collapse Button */}
       <div className="sidebar-footer">
+        <button
+          type="button"
+          onClick={() => setTheme(config?.theme === 'dark' ? 'light' : 'dark')}
+          title={config?.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="sidebar-footer-btn"
+        >
+          {config?.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
         <button
           type="button"
           onClick={toggleSidebar}
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="sidebar-collapse-btn"
+          className="sidebar-footer-btn"
         >
           <CollapseIcon collapsed={sidebarCollapsed} />
-          {!sidebarCollapsed && (
-            <span className="sidebar-collapse-label">Collapse</span>
-          )}
         </button>
       </div>
     </aside>

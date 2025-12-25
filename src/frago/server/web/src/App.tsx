@@ -12,6 +12,8 @@ import TaskDetail from '@/components/tasks/TaskDetail';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
 import SkillList from '@/components/skills/SkillList';
+import SyncPage from '@/components/sync/SyncPage';
+import SecretsPage from '@/components/secrets/SecretsPage';
 import SettingsPage from '@/components/settings/SettingsPage';
 
 // UI
@@ -79,6 +81,10 @@ function App() {
         return <RecipeDetail />;
       case 'skills':
         return <SkillList />;
+      case 'sync':
+        return <SyncPage />;
+      case 'secrets':
+        return <SecretsPage />;
       case 'settings':
         return <SettingsPage />;
       default:

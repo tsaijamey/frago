@@ -22,6 +22,8 @@ export type PageType =
   | 'recipes'
   | 'recipe_detail'
   | 'skills'
+  | 'sync'
+  | 'secrets'
   | 'settings';
 
 // Sidebar storage key for localStorage
