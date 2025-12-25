@@ -3,6 +3,9 @@
 Provides endpoints for main config, environment variables, and GitHub integration.
 """
 
+import os
+import platform
+import subprocess
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -33,6 +36,9 @@ class MainConfigResponse(BaseModel):
     working_directory: str
     auth_method: str
     sync_repo: Optional[str] = None
+    resources_installed: bool = True
+    resources_version: Optional[str] = None
+    init_completed: bool = True
 
 
 class MainConfigUpdateRequest(BaseModel):
@@ -58,6 +64,8 @@ class RecipeEnvRequirement(BaseModel):
     name: str
     description: Optional[str] = None
     required: bool = False
+    configured: bool = False
+    recipe_name: Optional[str] = None
 
 
 class ApiResponse(BaseModel):
@@ -109,6 +117,9 @@ async def get_main_config() -> MainConfigResponse:
         working_directory=config.get("working_directory_display", "~/.frago"),
         auth_method=config.get("auth_method", "api_key"),
         sync_repo=config.get("sync_repo_url"),
+        resources_installed=config.get("resources_installed", True),
+        resources_version=config.get("resources_version"),
+        init_completed=config.get("init_completed", True),
     )
 
 
@@ -178,6 +189,43 @@ async def get_recipe_env_requirements() -> List[RecipeEnvRequirement]:
             name=r.get("var_name", ""),
             description=r.get("description"),
             required=r.get("required", False),
+            configured=r.get("configured", False),
+            recipe_name=r.get("recipe_name"),
         )
         for r in requirements
     ]
+
+
+# ============================================================
+# Working Directory Endpoints
+# ============================================================
+
+
+@router.post("/settings/open-working-directory", response_model=ApiResponse)
+async def open_working_directory() -> ApiResponse:
+    """Open working directory in system file manager."""
+    try:
+        config = MainConfigService.get_config()
+        working_dir = config.get("working_directory", os.path.expanduser("~/.frago"))
+
+        # Expand user path
+        working_dir = os.path.expanduser(working_dir)
+
+        if not os.path.exists(working_dir):
+            return ApiResponse(status="error", error=f"Directory does not exist: {working_dir}")
+
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.run(["open", working_dir], check=True)
+        elif system == "Linux":
+            subprocess.run(["xdg-open", working_dir], check=True)
+        elif system == "Windows":
+            os.startfile(working_dir)  # type: ignore
+        else:
+            return ApiResponse(status="error", error=f"Unsupported platform: {system}")
+
+        return ApiResponse(status="ok", message="Working directory opened")
+    except subprocess.CalledProcessError as e:
+        return ApiResponse(status="error", error=f"Failed to open directory: {e}")
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))

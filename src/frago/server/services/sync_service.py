@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Sync interval in seconds
-SYNC_INTERVAL_SECONDS = 30
+# Sync interval in seconds (same as deprecated GUI for fast session discovery)
+SYNC_INTERVAL_SECONDS = 5
 
 
 class SyncService:

@@ -21,7 +21,6 @@ class UserConfig:
     """User preferences, persisted to ~/.frago/gui_config.json."""
 
     theme: str = "dark"
-    font_size: int = 14
     show_system_status: bool = True
     confirm_on_exit: bool = True
     auto_scroll_output: bool = True
@@ -43,8 +42,6 @@ class UserConfig:
         errors = []
         if self.theme not in ("dark", "light"):
             errors.append(f"theme must be 'dark' or 'light', got '{self.theme}'")
-        if not 10 <= self.font_size <= 24:
-            errors.append(f"font_size must be between 10 and 24, got {self.font_size}")
         if not 10 <= self.max_history_items <= 1000:
             errors.append(
                 f"max_history_items must be between 10 and 1000, got {self.max_history_items}"
@@ -91,7 +88,6 @@ class ConfigService:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             config = UserConfig(
                 theme=data.get("theme", "dark"),
-                font_size=data.get("font_size", 14),
                 show_system_status=data.get("show_system_status", True),
                 confirm_on_exit=data.get("confirm_on_exit", True),
                 auto_scroll_output=data.get("auto_scroll_output", True),
