@@ -63,6 +63,9 @@ async def list_tasks(
                 started_at=started_at,
                 completed_at=completed_at,
                 duration_ms=t.get("duration_ms"),
+                step_count=t.get("step_count", 0),
+                tool_call_count=t.get("tool_call_count", 0),
+                source=t.get("source", "unknown"),
             )
         )
 
@@ -115,10 +118,19 @@ async def get_task(task_id: str) -> TaskDetailResponse:
     summary = None
     if task.get("summary"):
         s = task["summary"]
-        most_used_tools = [
-            ToolUsageStatResponse(name=t.get("name", ""), count=t.get("count", 0))
-            for t in s.get("most_used_tools", [])
-        ]
+        # most_used_tools can be ToolUsageStats objects (from storage) or dicts
+        most_used_tools = []
+        for t in s.get("most_used_tools", []):
+            if hasattr(t, "tool_name"):
+                # It's a ToolUsageStats object
+                most_used_tools.append(
+                    ToolUsageStatResponse(name=t.tool_name, count=t.count)
+                )
+            else:
+                # It's a dict
+                most_used_tools.append(
+                    ToolUsageStatResponse(name=t.get("name", ""), count=t.get("count", 0))
+                )
         summary = TaskSummaryResponse(
             total_duration_ms=s.get("total_duration_ms", 0),
             user_message_count=s.get("user_message_count", 0),
@@ -129,11 +141,29 @@ async def get_task(task_id: str) -> TaskDetailResponse:
             most_used_tools=most_used_tools,
         )
 
+    # Parse started_at and completed_at
+    started_at = task.get("started_at")
+    if isinstance(started_at, str):
+        started_at = datetime.fromisoformat(started_at)
+
+    completed_at = task.get("completed_at")
+    if isinstance(completed_at, str):
+        completed_at = datetime.fromisoformat(completed_at)
+
     return TaskDetailResponse(
         id=task.get("id", task_id),
         title=task.get("title", ""),
         status=task.get("status", "running"),
+        project_path=task.get("project_path"),
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_ms=task.get("duration_ms"),
+        step_count=task.get("step_count", len(steps)),
+        tool_call_count=task.get("tool_call_count", 0),
         steps=steps,
+        steps_total=task.get("steps_total", len(steps)),
+        steps_offset=task.get("steps_offset", 0),
+        has_more_steps=task.get("has_more_steps", False),
         summary=summary,
     )
 

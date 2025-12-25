@@ -58,6 +58,9 @@ class TaskService:
 
             for session in sessions:
                 try:
+                    # Filter out sessions that shouldn't be displayed
+                    if not TaskService._should_display(session):
+                        continue
                     task = TaskService._session_to_task(session)
                     if task:
                         tasks.append(task)
@@ -113,6 +116,10 @@ class TaskService:
         if started_at and ended_at:
             duration_ms = int((ended_at - started_at).total_seconds() * 1000)
 
+        # Get source field if available
+        source = getattr(session, "source", None)
+        source_str = source.value if source else "unknown"
+
         return {
             "id": session.session_id,
             "title": name,
@@ -122,7 +129,76 @@ class TaskService:
             "started_at": started_at.isoformat() if started_at else None,
             "completed_at": ended_at.isoformat() if ended_at else None,
             "duration_ms": duration_ms,
+            "step_count": getattr(session, "step_count", 0),
+            "tool_call_count": getattr(session, "tool_call_count", 0),
+            "source": source_str,
         }
+
+    @staticmethod
+    def _should_display(session) -> bool:
+        """Determine if session should be displayed in task list.
+
+        Display criteria (any of):
+        1. Running task
+        2. Step count >= 10
+        3. Step count >= 5
+
+        Exclusion criteria:
+        1. Step count < 5 and completed
+        2. No assistant messages and step count < 10
+
+        Args:
+            session: Session metadata object.
+
+        Returns:
+            Whether session should be displayed.
+        """
+        import json
+        from frago.session.models import SessionStatus
+        from frago.session.storage import get_session_dir
+
+        status = getattr(session, "status", None)
+        step_count = getattr(session, "step_count", 0)
+
+        # Always display running tasks
+        if status == SessionStatus.RUNNING:
+            return True
+
+        # Display if step count >= 10
+        if step_count >= 10:
+            return True
+
+        # Don't display if step count < 5 and completed
+        if step_count < 5 and status == SessionStatus.COMPLETED:
+            return False
+
+        # Check for assistant messages if step_count < 10
+        if step_count < 10:
+            session_dir = get_session_dir(session.session_id, session.agent_type)
+            steps_file = session_dir / "steps.jsonl"
+            if steps_file.exists():
+                has_assistant = False
+                try:
+                    with open(steps_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if not line.strip():
+                                continue
+                            step = json.loads(line)
+                            if step.get("type") == "assistant_message":
+                                has_assistant = True
+                                break
+                except Exception:
+                    pass
+
+                # No assistant messages → system session, don't display
+                if not has_assistant:
+                    return False
+
+        # Display if step count >= 5
+        if step_count >= 5:
+            return True
+
+        return False
 
     @staticmethod
     def get_task(session_id: str) -> Optional[Dict[str, Any]]:
@@ -150,9 +226,9 @@ class TaskService:
             if not session:
                 return None
 
-            # Read steps
+            # Read steps (from end, newest first)
             steps_result = read_steps_paginated(
-                session_id, AgentType.CLAUDE, limit=100, offset=0
+                session_id, AgentType.CLAUDE, limit=100, offset=0, from_end=True
             )
             steps = steps_result.get("steps", [])
 
@@ -223,7 +299,12 @@ class TaskService:
             "started_at": started_at.isoformat() if started_at else None,
             "completed_at": ended_at.isoformat() if ended_at else None,
             "duration_ms": duration_ms,
+            "step_count": getattr(session, "step_count", 0),
+            "tool_call_count": getattr(session, "tool_call_count", 0),
             "steps": gui_steps,
+            "steps_total": steps_result.get("total", len(gui_steps)),
+            "steps_offset": steps_result.get("offset", 0),
+            "has_more_steps": steps_result.get("has_more", False),
             "summary": summary_dict,
         }
 
@@ -258,6 +339,7 @@ class TaskService:
         session_id: str,
         limit: int = 50,
         offset: int = 0,
+        from_end: bool = True,
     ) -> Dict[str, Any]:
         """Get task steps with pagination.
 
@@ -265,6 +347,7 @@ class TaskService:
             session_id: Session identifier.
             limit: Maximum steps to return (1-100).
             offset: Number of steps to skip.
+            from_end: If True, read from end (newest first).
 
         Returns:
             Dictionary with 'steps', 'total', and 'has_more'.
@@ -279,7 +362,9 @@ class TaskService:
             limit = max(1, min(100, limit))
             offset = max(0, offset)
 
-            result = read_steps_paginated(session_id, AgentType.CLAUDE, limit, offset)
+            result = read_steps_paginated(
+                session_id, AgentType.CLAUDE, limit, offset, from_end=from_end
+            )
 
             # Convert steps
             gui_steps = [TaskService._step_to_dict(s) for s in result.get("steps", [])]
