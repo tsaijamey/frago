@@ -35,11 +35,16 @@ class AgentStartRequest(BaseModel):
     )
 
 
+class AgentContinueRequest(BaseModel):
+    """Request body for POST /api/agent/{session_id}/continue"""
+
+    prompt: str = Field(..., min_length=1, description="Continuation prompt")
+
+
 class ConfigUpdateRequest(BaseModel):
     """Request body for PUT /api/config"""
 
     theme: Optional[str] = Field(default=None, pattern="^(dark|light)$")
-    font_size: Optional[int] = Field(default=None, ge=10, le=24)
     show_system_status: Optional[bool] = None
     confirm_on_exit: Optional[bool] = None
     auto_scroll_output: Optional[bool] = None
@@ -76,6 +81,9 @@ class TaskItemResponse(BaseModel):
     started_at: datetime
     completed_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
+    step_count: int = 0
+    tool_call_count: int = 0
+    source: str = "unknown"  # terminal, web, or unknown
 
 
 class TaskStepResponse(BaseModel):
@@ -113,7 +121,16 @@ class TaskDetailResponse(BaseModel):
     id: str
     title: str
     status: str
+    project_path: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    step_count: int = 0
+    tool_call_count: int = 0
     steps: List[TaskStepResponse] = Field(default_factory=list)
+    steps_total: int = 0
+    steps_offset: int = 0
+    has_more_steps: bool = False
     summary: Optional[TaskSummaryResponse] = None
 
 
@@ -136,7 +153,6 @@ class UserConfigResponse(BaseModel):
     """Response for GET /api/config"""
 
     theme: str = "dark"
-    font_size: int = 14
     show_system_status: bool = True
     confirm_on_exit: bool = True
     auto_scroll_output: bool = True

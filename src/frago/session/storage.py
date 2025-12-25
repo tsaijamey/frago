@@ -376,6 +376,7 @@ def read_steps_paginated(
     agent_type: AgentType = AgentType.CLAUDE,
     limit: int = 50,
     offset: int = 0,
+    from_end: bool = False,
 ) -> Dict[str, Any]:
     """Read session steps with pagination
 
@@ -384,6 +385,7 @@ def read_steps_paginated(
         agent_type: Agent type
         limit: Page size (default 50, max 10000)
         offset: Offset
+        from_end: If True, read from end (newest first). offset=0 means latest N steps.
 
     Returns:
         Dictionary containing steps, total, offset, limit, has_more
@@ -395,13 +397,29 @@ def read_steps_paginated(
     all_steps = read_steps(session_id, agent_type)
     total = len(all_steps)
 
-    return {
-        "steps": all_steps[offset : offset + limit],
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "has_more": offset + limit < total,
-    }
+    if from_end:
+        # Read from end: offset=0 gets the latest `limit` steps
+        # Steps are returned in reverse order (newest first)
+        start = max(0, total - offset - limit)
+        end = total - offset
+        steps = all_steps[start:end]
+        steps.reverse()  # Newest first
+        return {
+            "steps": steps,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": start > 0,
+        }
+    else:
+        # Original logic: read from beginning
+        return {
+            "steps": all_steps[offset : offset + limit],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + limit < total,
+        }
 
 
 def count_sessions(
