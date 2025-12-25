@@ -71,6 +71,9 @@ export interface TaskItem {
   started_at: string;
   completed_at: string | null;
   duration_ms: number | null;
+  step_count: number;
+  tool_call_count: number;
+  source: string;  // terminal, web, or unknown
 }
 
 export interface TaskStep {
@@ -100,7 +103,16 @@ export interface TaskDetail {
   id: string;
   title: string;
   status: string;
+  project_path: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  step_count: number;
+  tool_call_count: number;
   steps: TaskStep[];
+  steps_total: number;
+  steps_offset: number;
+  has_more_steps: boolean;
   summary: TaskSummary | null;
 }
 
@@ -117,7 +129,6 @@ export interface TaskStepsResponse {
 
 export interface UserConfig {
   theme: string;
-  font_size: number;
   show_system_status: boolean;
   confirm_on_exit: boolean;
   auto_scroll_output: boolean;
@@ -210,6 +221,31 @@ export async function startAgent(
   });
 }
 
+export interface AgentContinueResponse {
+  status: 'ok' | 'error';
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Continue conversation in an existing Claude session.
+ *
+ * @param sessionId - The Claude session_id (from task list), NOT the web task_id
+ * @param prompt - The continuation prompt
+ */
+export async function continueAgent(
+  sessionId: string,
+  prompt: string
+): Promise<AgentContinueResponse> {
+  return fetchApi<AgentContinueResponse>(
+    `/agent/${encodeURIComponent(sessionId)}/continue`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }
+  );
+}
+
 // ============================================================
 // Config API
 // ============================================================
@@ -256,6 +292,9 @@ export interface MainConfig {
   working_directory: string;
   auth_method: string;
   sync_repo?: string | null;
+  resources_installed: boolean;
+  resources_version?: string | null;
+  init_completed: boolean;
 }
 
 export interface EnvVarsResponse {
@@ -267,12 +306,14 @@ export interface RecipeEnvRequirement {
   name: string;
   description?: string | null;
   required: boolean;
+  configured: boolean;
+  recipe_name?: string | null;
 }
 
 export interface ApiResponse {
-  status: string;
-  message?: string | null;
-  error?: string | null;
+  status: 'ok' | 'error';
+  message?: string;
+  error?: string;
 }
 
 export async function checkGhCli(): Promise<GhCliStatus> {
@@ -307,6 +348,10 @@ export async function updateEnvVars(updates: Record<string, string | null>): Pro
 
 export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]> {
   return fetchApi<RecipeEnvRequirement[]>('/settings/recipe-env-requirements');
+}
+
+export async function openWorkingDirectory(): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/open-working-directory', { method: 'POST' });
 }
 
 // ============================================================

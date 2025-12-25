@@ -259,7 +259,7 @@ export default function TaskDetail() {
 
         {/* StepList takes remaining space */}
         <div className="flex-1 min-h-0">
-          <StepList steps={[...taskDetail.steps].reverse()} />
+          <StepList steps={taskDetail.steps} />
         </div>
       </div>
     </div>

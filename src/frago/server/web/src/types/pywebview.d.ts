@@ -32,6 +32,8 @@ export type ToastType = 'info' | 'success' | 'warning' | 'error';
 // Data Models
 // ============================================================
 
+export type SessionSource = 'terminal' | 'web' | 'unknown';
+
 export interface TaskItem {
   session_id: string;
   name: string;
@@ -43,6 +45,7 @@ export interface TaskItem {
   tool_call_count: number;
   last_activity: string;
   project_path: string;
+  source: SessionSource;
 }
 
 export interface TaskStep {
@@ -122,7 +125,6 @@ export interface SkillItem {
 
 export interface UserConfig {
   theme: Theme;
-  font_size: number;
   show_system_status: boolean;
   confirm_on_exit: boolean;
   auto_scroll_output: boolean;

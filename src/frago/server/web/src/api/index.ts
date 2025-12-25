@@ -102,10 +102,11 @@ export async function getTasks(
     started_at: t.started_at,
     ended_at: t.completed_at,
     duration_ms: t.duration_ms ?? 0,
-    step_count: 0, // Not available in list response
-    tool_call_count: 0, // Not available in list response
+    step_count: t.step_count ?? 0,
+    tool_call_count: t.tool_call_count ?? 0,
     last_activity: t.started_at,
     project_path: t.project_path ?? '',
+    source: (t.source ?? 'unknown') as TaskItem['source'],
   }));
 }
 
@@ -125,12 +126,12 @@ export async function getTaskDetail(
     session_id: task.id,
     name: task.title,
     status: task.status as TaskStatus,
-    started_at: '', // Not in current response
-    ended_at: null,
-    duration_ms: task.summary?.total_duration_ms ?? 0,
-    project_path: '',
-    step_count: task.steps.length,
-    tool_call_count: task.summary?.tool_call_count ?? 0,
+    started_at: task.started_at ?? '',
+    ended_at: task.completed_at ?? null,
+    duration_ms: task.duration_ms ?? task.summary?.total_duration_ms ?? 0,
+    project_path: task.project_path ?? '',
+    step_count: task.step_count ?? task.steps.length,
+    tool_call_count: task.tool_call_count ?? task.summary?.tool_call_count ?? 0,
     user_message_count: task.summary?.user_message_count ?? 0,
     assistant_message_count: task.summary?.assistant_message_count ?? 0,
     steps: task.steps.map((s, i) => ({
@@ -141,9 +142,9 @@ export async function getTaskDetail(
       tool_name: s.tool_name,
       tool_status: null,
     })),
-    steps_total: task.steps.length,
-    steps_offset: stepsOffset ?? 0,
-    has_more_steps: false,
+    steps_total: task.steps_total ?? task.steps.length,
+    steps_offset: task.steps_offset ?? 0,
+    has_more_steps: task.has_more_steps ?? false,
     summary: task.summary
       ? {
           total_duration_ms: task.summary.total_duration_ms,
@@ -191,10 +192,13 @@ export async function startAgentTask(
     return pywebviewApi.startAgentTask(prompt);
   }
 
+  // Start the task - the returned task_id is NOT the Claude session_id
+  // Frontend should poll the task list to get the real session_id
   const task = await httpApi.startAgent(prompt);
   return {
     status: 'ok',
-    task_id: task.id,
+    // Don't return task_id - it won't match the Claude session_id
+    // The real session_id will appear in the task list after sync
     message: `Started task: ${task.title}`,
   };
 }
@@ -207,12 +211,12 @@ export async function continueAgentTask(
     return pywebviewApi.continueAgentTask(sessionId, prompt);
   }
 
-  // HTTP API doesn't support continue yet - start new task
-  const task = await httpApi.startAgent(prompt);
+  // Use the Claude session_id (from task list) to continue the conversation
+  // This calls frago agent --resume {session_id} on the backend
+  const result = await httpApi.continueAgent(sessionId, prompt);
   return {
-    status: 'ok',
-    task_id: task.id,
-    message: `Started new task (continue not supported in web mode): ${task.title}`,
+    status: result.status,
+    message: result.message || `Continuing session ${sessionId.slice(0, 8)}...`,
   };
 }
 
@@ -345,7 +349,6 @@ export async function getConfig(): Promise<UserConfig> {
   const config = await httpApi.getConfig();
   return {
     theme: config.theme as UserConfig['theme'],
-    font_size: config.font_size,
     show_system_status: config.show_system_status,
     confirm_on_exit: config.confirm_on_exit,
     auto_scroll_output: config.auto_scroll_output,
@@ -367,7 +370,6 @@ export async function updateConfig(
       status: 'ok',
       config: {
         theme: updated.theme as UserConfig['theme'],
-        font_size: updated.font_size,
         show_system_status: updated.show_system_status,
         confirm_on_exit: updated.confirm_on_exit,
         auto_scroll_output: updated.auto_scroll_output,
@@ -451,10 +453,11 @@ export async function getMainConfig(): Promise<MainConfig> {
     ccr_enabled: false,
     sync_repo_url: config.sync_repo ?? undefined,
     working_directory_display: config.working_directory,
-    resources_installed: true,
+    resources_installed: config.resources_installed,
+    resources_version: config.resources_version ?? undefined,
+    init_completed: config.init_completed,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    init_completed: true,
   };
 }
 
@@ -515,10 +518,7 @@ export async function openWorkingDirectory(): Promise<ApiResponse> {
     return pywebviewApi.openWorkingDirectory();
   }
 
-  return {
-    status: 'error',
-    error: 'Cannot open working directory in web service mode',
-  };
+  return httpApi.openWorkingDirectory();
 }
 
 // ============================================================
@@ -568,11 +568,11 @@ export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]
   // HTTP API
   const requirements = await httpApi.getRecipeEnvRequirements();
   return requirements.map((r) => ({
-    recipe_name: '',  // Not available from simple API
+    recipe_name: r.recipe_name ?? '',
     var_name: r.name,
     description: r.description ?? '',
     required: r.required,
-    configured: false,  // Will need to check against env vars
+    configured: r.configured,
   }));
 }
 
