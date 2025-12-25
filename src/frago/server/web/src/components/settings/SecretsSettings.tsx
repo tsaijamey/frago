@@ -309,47 +309,69 @@ export default function SecretsSettings() {
                     {group === 'Recipe' ? 'Recipe Environment Variables' : group}
                   </h3>
                   <div className="space-y-2">
-                    {vars.map(([key, value]) => (
-                      <div
-                        key={key}
-                        className="flex items-center gap-2 p-3 bg-[var(--bg-subtle)] rounded-md"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-mono text-[var(--text-primary)] mb-1">
-                            {key}
+                    {vars.map(([key, value]) => {
+                      // Find recipe info for this variable
+                      const recipeInfo = groupedRequirements[key];
+                      // Handle both array and comma-separated string formats
+                      const usedByRecipes = recipeInfo?.recipes
+                        ?.flatMap(r => r.split(',').map(s => s.trim()))
+                        ?.filter(Boolean) || [];
+
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center gap-2 p-3 bg-[var(--bg-subtle)] rounded-md"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-mono text-[var(--text-primary)] mb-1">
+                              {key}
+                            </div>
+                            <div className="text-sm font-mono text-[var(--text-secondary)] flex items-center gap-2">
+                              <span className="truncate">{maskValue(value, key)}</span>
+                              <button
+                                onClick={() => toggleVisibility(key)}
+                                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {visibleVars.has(key) ? (
+                                  <EyeOff size={14} />
+                                ) : (
+                                  <Eye size={14} />
+                                )}
+                              </button>
+                            </div>
+                            {group === 'Recipe' && usedByRecipes.length > 0 && (
+                              <div className="text-xs text-[var(--text-muted)] mt-2 flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[var(--text-muted)]">Used by</span>
+                                {usedByRecipes.map((recipe, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                                  >
+                                    {recipe}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <div className="text-sm font-mono text-[var(--text-secondary)] flex items-center gap-2">
-                            <span className="truncate">{maskValue(value, key)}</span>
+                          <div className="flex items-center gap-1">
                             <button
-                              onClick={() => toggleVisibility(key)}
-                              className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                              onClick={() => handleEdit(key, value)}
+                              className="btn btn-ghost btn-sm p-2"
+                              title="Edit"
                             >
-                              {visibleVars.has(key) ? (
-                                <EyeOff size={14} />
-                              ) : (
-                                <Eye size={14} />
-                              )}
+                              <Edit2 size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(key)}
+                              className="btn btn-ghost btn-sm p-2 text-red-600 dark:text-red-400"
+                              title="Delete"
+                            >
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => handleEdit(key, value)}
-                            className="btn btn-ghost btn-sm p-2"
-                            title="Edit"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(key)}
-                            className="btn btn-ghost btn-sm p-2 text-red-600 dark:text-red-400"
-                            title="Delete"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}

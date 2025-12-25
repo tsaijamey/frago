@@ -286,7 +286,7 @@ export default function SyncSettings() {
         ) : (
           <>
             <p className="text-sm text-[var(--text-muted)] mb-4">
-              Use a GitHub private repository to sync Frago resources (commands, skills, recipes) across multiple devices.
+              Use a GitHub private repository to sync frago resources (commands, skills, recipes) across multiple devices.
             </p>
             <button
               onClick={() => setShowWizard(true)}

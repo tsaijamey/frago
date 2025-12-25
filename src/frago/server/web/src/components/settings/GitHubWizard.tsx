@@ -396,7 +396,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
             className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
           />
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            A private repository will be created under your GitHub account to sync Frago resources
+            A private repository will be created under your GitHub account to sync frago resources
           </p>
         </div>
       ) : (
@@ -462,7 +462,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
           )}
 
           <p className="mt-2 text-sm text-[var(--text-muted)]">
-            Select an existing repository to sync Frago resources (private repository recommended)
+            Select an existing repository to sync frago resources (private repository recommended)
           </p>
         </div>
       )}
@@ -516,7 +516,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
       )}
 
       <p className="text-sm text-[var(--text-secondary)]">
-        Now performing the first sync to upload local Frago resources to the GitHub repository.
+        Now performing the first sync to upload local frago resources to the GitHub repository.
       </p>
 
       {syncOutput && (
@@ -558,7 +558,7 @@ export default function GitHubWizard({ onComplete, onCancel }: GitHubWizardProps
             GitHub sync successfully configured!
           </p>
           <p className="text-sm text-green-700 dark:text-green-300">
-            Your Frago resources (commands, skills, recipes) can now be synced across multiple devices.
+            Your frago resources (commands, skills, recipes) can now be synced across multiple devices.
           </p>
         </div>
       </div>

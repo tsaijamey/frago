@@ -127,6 +127,15 @@
   --status-error-bg: rgba(207, 34, 46, 0.12);
 }
 
+/* Light theme task input overrides */
+[data-theme='light'] .task-input-wrapper {
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08), 0 -1px 3px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme='light'] .task-input-wrapper:focus-within {
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12), 0 -1px 3px rgba(0, 0, 0, 0.08);
+}
+
 /* === Base Reset === */
 *,
 *::before,
@@ -391,37 +400,35 @@ a:not(.btn):not(.nav-tab):hover {
 }
 
 .sidebar-footer {
-  padding: 12px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
   border-top: 1px solid var(--border-color);
 }
 
-.sidebar-collapse-btn {
+.sidebar.collapsed .sidebar-footer {
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 8px;
+}
+
+.sidebar-footer-btn {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 12px;
-  padding: 12px 16px;
-  width: 100%;
+  justify-content: center;
+  padding: 8px;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--text-muted);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.sidebar.collapsed .sidebar-collapse-btn {
-  padding: 12px;
-  justify-content: center;
-}
-
-.sidebar-collapse-btn:hover {
+.sidebar-footer-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-}
-
-.sidebar-collapse-label {
-  font-size: var(--font-size-base);
 }
 
 .collapse-icon {
@@ -1246,22 +1253,23 @@ a:not(.btn):not(.nav-tab):hover {
 /* === Task Input === */
 .task-input-area {
   flex-shrink: 0;
-  background: var(--bg-secondary);
+  background: transparent;
   margin-top: auto;
   padding: var(--spacing-md);
-  border-top: 1px solid var(--border-color);
 }
 
 .task-input-wrapper {
   position: relative;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  transition: border-color var(--transition-fast);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3), 0 -1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .task-input-wrapper:focus-within {
   border-color: var(--accent-primary);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4), 0 -1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .task-input {

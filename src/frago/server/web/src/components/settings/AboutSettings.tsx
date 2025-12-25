@@ -1,6 +1,6 @@
 /**
  * About Settings Component
- * Display Frago version information and technology stack
+ * Display Frago version information
  */
 
 export default function AboutSettings() {
@@ -10,32 +10,13 @@ export default function AboutSettings() {
         About
       </h2>
 
-      <div className="space-y-4 text-sm text-[var(--text-secondary)]">
-        <div>
-          <h3 className="font-medium text-[var(--text-primary)] mb-2">
-            Frago
-          </h3>
-          <p className="text-[var(--text-muted)]">
-            AI-powered multi-runtime automation framework
-          </p>
-        </div>
-
-        <div className="border-t border-[var(--border-color)] pt-4">
-          <h3 className="font-medium text-[var(--text-primary)] mb-2">
-            Technology Stack
-          </h3>
-          <ul className="space-y-1 text-[var(--text-muted)]">
-            <li>• Frontend: React + TypeScript + TailwindCSS + Vite</li>
-            <li>• Backend: Python + pywebview + Pydantic</li>
-            <li>• Automation: Chrome CDP + Websocket</li>
-          </ul>
-        </div>
-
-        <div className="border-t border-[var(--border-color)] pt-4">
-          <p className="text-[var(--text-muted)]">
-            © 2024 Frago. All rights reserved.
-          </p>
-        </div>
+      <div className="space-y-3 text-sm text-[var(--text-muted)]">
+        <p>
+          <span className="font-medium text-[var(--text-primary)]">frago</span> is a multi-runtime infrastructure framework for AI Agents.
+        </p>
+        <p className="pt-2 border-t border-[var(--border-color)]">
+          © 2025 frago · AGPL-3.0
+        </p>
       </div>
     </div>
   );
