@@ -367,6 +367,12 @@ If the task is simple and clear, you can also use other tools directly without i
     default=None,
     help="Continue conversation in specified session (pass session_id)"
 )
+@click.option(
+    "--source",
+    type=click.Choice(["terminal", "web"], case_sensitive=False),
+    default="terminal",
+    help="Session source (terminal or web) for tracking origin"
+)
 def agent(
     prompt: tuple,
     prompt_file,
@@ -380,7 +386,8 @@ def agent(
     json_status: bool,
     no_monitor: bool,
     yes: bool,
-    resume: Optional[str]
+    resume: Optional[str],
+    source: str
 ):
     """
     Intelligent Agent: Automatically choose execution mode based on user intent
@@ -522,6 +529,11 @@ def agent(
             start_time = datetime.now(timezone.utc)
             project_path = os.getcwd()
 
+            from frago.session.models import SessionSource
+
+            # Convert source string to SessionSource enum
+            session_source = SessionSource.WEB if source.lower() == "web" else SessionSource.TERMINAL
+
             monitor = SessionMonitor(
                 project_path=project_path,
                 start_time=start_time,
@@ -529,6 +541,7 @@ def agent(
                 persist=True,
                 quiet=quiet,
                 target_session_id=resume,  # Monitor specified session directly when resuming
+                source=session_source,
             )
             monitor.start()
         except ImportError as e:

@@ -59,7 +59,8 @@ class AgentService:
             prompt_file.write_text(prompt, encoding="utf-8")
 
             # Build command
-            cmd = [frago_path, "agent", "--yes", "--prompt-file", str(prompt_file)]
+            # Pass --source web to mark this session as created from web interface
+            cmd = [frago_path, "agent", "--yes", "--source", "web", "--prompt-file", str(prompt_file)]
             if project_path:
                 cmd.extend(["--project", project_path])
 

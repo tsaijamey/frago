@@ -53,6 +53,14 @@ class ToolCallStatus(str, Enum):
     ERROR = "error"  # Execution failed
 
 
+class SessionSource(str, Enum):
+    """Session source - distinguishes how the session was created"""
+
+    TERMINAL = "terminal"  # Created via terminal/CLI
+    WEB = "web"  # Created via web interface
+    UNKNOWN = "unknown"  # Legacy data or cannot be determined
+
+
 # ============================================================
 # Core Data Models
 # ============================================================
@@ -120,6 +128,10 @@ class MonitoredSession(BaseModel):
     step_count: int = Field(default=0, ge=0, description="Number of recorded steps")
     tool_call_count: int = Field(default=0, ge=0, description="Number of tool calls")
     last_activity: datetime = Field(..., description="Last activity time")
+    source: SessionSource = Field(
+        default=SessionSource.UNKNOWN,
+        description="Session source (terminal/web/unknown)",
+    )
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
