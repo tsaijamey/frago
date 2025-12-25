@@ -23,6 +23,7 @@ from frago.session.formatter import JsonFormatter, TerminalFormatter, create_for
 from frago.session.models import (
     AgentType,
     MonitoredSession,
+    SessionSource,
     SessionStatus,
     SessionStep,
     SessionSummary,
@@ -172,6 +173,7 @@ class SessionMonitor:
         persist: bool = True,
         quiet: bool = False,
         target_session_id: Optional[str] = None,
+        source: SessionSource = SessionSource.TERMINAL,
     ):
         """Initialize monitor
 
@@ -183,6 +185,7 @@ class SessionMonitor:
             persist: Whether to persist storage
             quiet: Whether to use quiet mode (no status output)
             target_session_id: Specified session ID to monitor (for resume scenario)
+            source: Session source (terminal/web) for tracking origin
         """
         self.project_path = os.path.abspath(project_path)
         # Use UTC timezone to ensure consistency with timestamps parsed from JSONL
@@ -192,6 +195,7 @@ class SessionMonitor:
         self.persist = persist
         self.quiet = quiet
         self.target_session_id = target_session_id
+        self.source = source
 
         # Session state
         self._session: Optional[MonitoredSession] = None
@@ -409,6 +413,7 @@ class SessionMonitor:
             source_file=file_path,
             started_at=self.start_time,
             last_activity=datetime.now(timezone.utc),
+            source=self.source,
         )
 
         # Persist
