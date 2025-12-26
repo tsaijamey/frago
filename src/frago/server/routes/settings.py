@@ -201,6 +201,56 @@ async def get_recipe_env_requirements() -> List[RecipeEnvRequirement]:
 # ============================================================
 
 
+class OpenPathRequest(BaseModel):
+    """Request for opening a path"""
+    path: str
+    reveal: bool = False
+
+
+@router.post("/settings/open-path", response_model=ApiResponse)
+async def open_path(request: OpenPathRequest) -> ApiResponse:
+    """Open a file or directory in system file manager.
+
+    If reveal=True, opens the parent directory and selects the file.
+    """
+    try:
+        path = os.path.expanduser(request.path)
+
+        if not os.path.exists(path):
+            return ApiResponse(status="error", error=f"Path does not exist: {path}")
+
+        system = platform.system()
+
+        if request.reveal:
+            # Reveal in file manager (select the file)
+            if system == "Darwin":
+                subprocess.run(["open", "-R", path], check=True)
+            elif system == "Linux":
+                # Linux: open parent directory
+                parent = os.path.dirname(path)
+                subprocess.run(["xdg-open", parent], check=True)
+            elif system == "Windows":
+                subprocess.run(["explorer", "/select,", path], check=True)
+            else:
+                return ApiResponse(status="error", error=f"Unsupported platform: {system}")
+        else:
+            # Open directly
+            if system == "Darwin":
+                subprocess.run(["open", path], check=True)
+            elif system == "Linux":
+                subprocess.run(["xdg-open", path], check=True)
+            elif system == "Windows":
+                os.startfile(path)  # type: ignore
+            else:
+                return ApiResponse(status="error", error=f"Unsupported platform: {system}")
+
+        return ApiResponse(status="ok", message="Path opened")
+    except subprocess.CalledProcessError as e:
+        return ApiResponse(status="error", error=f"Failed to open path: {e}")
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
 @router.post("/settings/open-working-directory", response_model=ApiResponse)
 async def open_working_directory() -> ApiResponse:
     """Open working directory in system file manager."""

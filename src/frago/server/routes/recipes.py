@@ -9,6 +9,9 @@ from fastapi import APIRouter, HTTPException
 
 from frago.server.models import (
     RecipeItemResponse,
+    RecipeDetailResponse,
+    RecipeInputSchema,
+    RecipeOutputSchema,
     RecipeRunRequest,
     TaskItemResponse,
 )
@@ -40,15 +43,15 @@ async def list_recipes() -> List[RecipeItemResponse]:
     ]
 
 
-@router.get("/recipes/{name}", response_model=RecipeItemResponse)
-async def get_recipe(name: str) -> RecipeItemResponse:
+@router.get("/recipes/{name}", response_model=RecipeDetailResponse)
+async def get_recipe(name: str) -> RecipeDetailResponse:
     """Get recipe details by name.
 
     Args:
         name: Recipe name
 
     Returns:
-        Recipe details including source code
+        Recipe details including rich metadata
 
     Raises:
         HTTPException: 404 if recipe not found
@@ -58,15 +61,51 @@ async def get_recipe(name: str) -> RecipeItemResponse:
     if recipe is None:
         raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
 
-    return RecipeItemResponse(
+    # Parse inputs
+    inputs = {}
+    raw_inputs = recipe.get("inputs", {})
+    if isinstance(raw_inputs, dict):
+        for k, v in raw_inputs.items():
+            if isinstance(v, dict):
+                inputs[k] = RecipeInputSchema(
+                    type=v.get("type", "string"),
+                    required=v.get("required", False),
+                    default=v.get("default"),
+                    description=v.get("description"),
+                )
+
+    # Parse outputs
+    outputs = {}
+    raw_outputs = recipe.get("outputs", {})
+    if isinstance(raw_outputs, dict):
+        for k, v in raw_outputs.items():
+            if isinstance(v, dict):
+                outputs[k] = RecipeOutputSchema(
+                    type=v.get("type", "string"),
+                    description=v.get("description"),
+                )
+
+    return RecipeDetailResponse(
         name=recipe.get("name", name),
         description=recipe.get("description"),
-        category=recipe.get("category", "atomic"),
+        category=recipe.get("type") or recipe.get("category") or "atomic",
         icon=recipe.get("icon"),
         tags=recipe.get("tags", []),
-        path=recipe.get("path"),
+        path=recipe.get("path") or recipe.get("script_path"),
         source=recipe.get("source"),
         runtime=recipe.get("runtime"),
+        # Rich metadata
+        version=recipe.get("version"),
+        base_dir=recipe.get("base_dir"),
+        script_path=recipe.get("script_path"),
+        metadata_path=recipe.get("metadata_path"),
+        use_cases=recipe.get("use_cases", []),
+        output_targets=recipe.get("output_targets", []),
+        inputs=inputs,
+        outputs=outputs,
+        dependencies=recipe.get("dependencies", []),
+        env=recipe.get("env", {}),
+        source_code=recipe.get("source_code"),
     )
 
 

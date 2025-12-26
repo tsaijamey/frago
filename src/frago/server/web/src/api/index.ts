@@ -256,18 +256,31 @@ export async function getRecipeDetail(name: string): Promise<RecipeDetail> {
     return pywebviewApi.getRecipeDetail(name);
   }
 
-  const recipe = await httpApi.getRecipe(name);
+  // HTTP API returns extended recipe data
+  const recipe = await httpApi.getRecipe(name) as unknown as Record<string, unknown>;
   return {
-    name: recipe.name,
-    description: recipe.description,
-    category: recipe.category as RecipeDetail['category'],
-    icon: recipe.icon,
-    tags: recipe.tags,
-    path: recipe.path,
+    name: recipe.name as string,
+    description: recipe.description as string | null,
+    category: ((recipe.type || recipe.category) as RecipeDetail['category']) || 'atomic',
+    icon: (recipe.icon as string) || null,
+    tags: (recipe.tags as string[]) || [],
+    path: (recipe.path || recipe.script_path) as string | null,
     source: recipe.source as RecipeDetail['source'],
     runtime: recipe.runtime as RecipeDetail['runtime'],
     metadata_content: null,
-    recipe_dir: null,
+    recipe_dir: (recipe.base_dir as string) || null,
+    // Rich metadata fields
+    version: recipe.version as string | undefined,
+    base_dir: recipe.base_dir as string | undefined,
+    script_path: recipe.script_path as string | undefined,
+    metadata_path: recipe.metadata_path as string | undefined,
+    use_cases: recipe.use_cases as string[] | undefined,
+    output_targets: recipe.output_targets as string[] | undefined,
+    inputs: recipe.inputs as RecipeDetail['inputs'],
+    outputs: recipe.outputs as RecipeDetail['outputs'],
+    dependencies: recipe.dependencies as string[] | undefined,
+    env: recipe.env as Record<string, unknown> | undefined,
+    source_code: recipe.source_code as string | undefined,
   };
 }
 
@@ -429,11 +442,7 @@ export async function openPath(
     return pywebviewApi.openPath(path, reveal);
   }
 
-  // HTTP API can't open paths on client
-  return {
-    status: 'error',
-    error: 'Cannot open paths in web service mode',
-  };
+  return httpApi.openPath(path, reveal);
 }
 
 // ============================================================

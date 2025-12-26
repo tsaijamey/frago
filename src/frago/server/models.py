@@ -58,7 +58,7 @@ class ConfigUpdateRequest(BaseModel):
 
 
 class RecipeItemResponse(BaseModel):
-    """Response for recipe list/detail endpoints"""
+    """Response for recipe list endpoints"""
 
     name: str
     description: Optional[str] = None
@@ -68,6 +68,47 @@ class RecipeItemResponse(BaseModel):
     path: Optional[str] = None
     source: Optional[str] = None
     runtime: Optional[str] = None
+
+
+class RecipeInputSchema(BaseModel):
+    """Recipe input parameter schema"""
+
+    type: str
+    required: bool = False
+    default: Optional[Any] = None
+    description: Optional[str] = None
+
+
+class RecipeOutputSchema(BaseModel):
+    """Recipe output schema"""
+
+    type: str
+    description: Optional[str] = None
+
+
+class RecipeDetailResponse(BaseModel):
+    """Response for recipe detail endpoint with rich metadata"""
+
+    name: str
+    description: Optional[str] = None
+    category: str = "atomic"
+    icon: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    path: Optional[str] = None
+    source: Optional[str] = None
+    runtime: Optional[str] = None
+    # Rich metadata fields
+    version: Optional[str] = None
+    base_dir: Optional[str] = None
+    script_path: Optional[str] = None
+    metadata_path: Optional[str] = None
+    use_cases: List[str] = Field(default_factory=list)
+    output_targets: List[str] = Field(default_factory=list)
+    inputs: Dict[str, RecipeInputSchema] = Field(default_factory=dict)
+    outputs: Dict[str, RecipeOutputSchema] = Field(default_factory=dict)
+    dependencies: List[str] = Field(default_factory=list)
+    env: Dict[str, Any] = Field(default_factory=dict)
+    source_code: Optional[str] = None
 
 
 class TaskItemResponse(BaseModel):

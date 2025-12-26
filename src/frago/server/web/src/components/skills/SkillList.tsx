@@ -21,7 +21,7 @@ export default function SkillList() {
   }
 
   return (
-    <div className="page-scroll flex flex-col gap-2 h-full">
+    <div className="page-scroll grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 content-start">
       {skills.map((skill) => (
         <div key={skill.name} className="card">
           <div className="flex items-start gap-3">
@@ -35,7 +35,7 @@ export default function SkillList() {
                   {skill.description}
                 </p>
               )}
-              <div className="text-xs text-[var(--text-muted)] mt-2 font-mono">
+              <div className="text-xs text-[var(--text-muted)] mt-2 font-mono truncate">
                 {skill.file_path}
               </div>
             </div>
