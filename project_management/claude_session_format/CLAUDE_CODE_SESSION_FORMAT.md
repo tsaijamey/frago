@@ -1,8 +1,8 @@
 # Claude Code Session File Format Specification
 
 > **Purpose**: Track Claude Code session message format changes for rapid iteration updates.
-> **Last Updated**: 2024-12-24
-> **Claude Code Version Tested**: 2.0.76
+> **Last Updated**: 2025-12-26
+> **Claude Code Version Tested**: 2.0.76+
 
 ## Overview
 
@@ -301,6 +301,26 @@ File system state snapshot for undo/redo functionality.
   "input": { ... }
 }
 ```
+
+**Known Tool Types**:
+
+| Tool Name | Input Parameters | Description | Since Version |
+|-----------|------------------|-------------|---------------|
+| `Bash` | `command`, `description`, `timeout?`, `run_in_background?` | Execute shell commands | - |
+| `Read` | `file_path`, `offset?`, `limit?` | Read file contents | - |
+| `Write` | `file_path`, `content` | Write file contents | - |
+| `Edit` | `file_path`, `old_string`, `new_string`, `replace_all?` | Edit file with string replacement | - |
+| `Glob` | `pattern`, `path?` | Find files by glob pattern | - |
+| `Grep` | `pattern`, `path?`, `glob?`, `type?`, `output_mode?` | Search file contents | - |
+| `Task` | `prompt`, `description`, `subagent_type`, `model?`, `run_in_background?`, `resume?` | Launch subagent for complex tasks | - |
+| `TaskOutput` | `task_id`, `block?`, `timeout?` | Get output from background task | - |
+| `WebFetch` | `url`, `prompt` | Fetch and analyze web content | - |
+| `WebSearch` | `query`, `allowed_domains?`, `blocked_domains?` | Search the web | - |
+| `TodoWrite` | `todos` | Manage task list | - |
+| `AskUserQuestion` | `questions` | Ask user for clarification | - |
+| `Skill` | `skill`, `args?` | Execute a skill | - |
+| `BashOutput` | `bash_id` | Get output from background bash command | 2.0.55 |
+| `SlashCommand` | `command` | Execute slash command (deprecated, use Skill) | 2.0.58 |
 
 ### Tool Result Block
 ```json
