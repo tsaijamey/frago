@@ -55,6 +55,7 @@ export interface TaskStep {
   content: string;
   tool_name: string | null;
   tool_status: string | null;
+  tool_call_id?: string;
 }
 
 export interface ToolUsageStat {

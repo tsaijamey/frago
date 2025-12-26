@@ -1490,3 +1490,256 @@ a:not(.btn):not(.nav-tab):hover {
 .markdown-content em {
   font-style: italic;
 }
+
+/* === Step Content Formatting === */
+
+/* Preformatted content - preserves whitespace and line breaks */
+.step-content-pre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+/* Collapsible content wrapper */
+.collapsible-content {
+  position: relative;
+}
+
+/* Collapsed state - limit height with fade */
+.collapsible-collapsed {
+  max-height: 6em;
+  overflow: hidden;
+  position: relative;
+}
+
+.collapsible-collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2em;
+  background: linear-gradient(transparent, var(--bg-tertiary));
+  pointer-events: none;
+}
+
+/* Collapsed state inside hover - adjust gradient */
+.step-item-new:hover .collapsible-collapsed::after {
+  background: linear-gradient(transparent, var(--bg-secondary));
+}
+
+/* Toggle button */
+.collapsible-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-top: var(--spacing-xs);
+  padding: 2px 0;
+  font-size: var(--font-size-xs);
+  color: var(--accent-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.collapsible-toggle:hover {
+  color: var(--accent-secondary);
+}
+
+/* Icon size in collapsible toggle */
+.icon-scaled-xs {
+  width: 12px;
+  height: 12px;
+}
+
+/* === Bash Content === */
+.bash-content {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.bash-content-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.bash-content-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.bash-content-copy {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all var(--transition-fast);
+}
+
+.bash-content-copy:hover {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.bash-content-code {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.bash-prompt {
+  color: var(--accent-success);
+  user-select: none;
+  margin-right: 6px;
+}
+
+/* === File Content === */
+.file-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-content-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-content-icon {
+  color: var(--accent-warning);
+  flex-shrink: 0;
+}
+
+.file-path-text {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--accent-primary);
+  background: var(--bg-secondary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  word-break: break-all;
+}
+
+.file-content-detail {
+  margin: 0;
+  padding-left: 20px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* === JSON Content === */
+.json-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.json-content-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  transition: color var(--transition-fast);
+}
+
+.json-content-toggle:hover {
+  color: var(--text-primary);
+}
+
+.json-preview {
+  color: var(--accent-primary);
+}
+
+.json-content-code {
+  margin: 4px 0 0 0;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+  overflow-x: auto;
+}
+
+/* === Paired Tool Step === */
+.paired-tool-step {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-tertiary);
+}
+
+.paired-step-call {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.paired-step-result {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-secondary);
+}
+
+.paired-step-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.paired-step-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+}
+
+.paired-step-tool-name {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 2px 6px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  color: var(--text-primary);
+}
+
+.paired-step-content {
+  padding-left: 20px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}

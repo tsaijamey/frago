@@ -261,12 +261,18 @@ def record_to_step(
     step = None
     tool_records = []
 
-    # Determine step type
+    # Determine step type and extract tool info
+    tool_call_id = None
+    tool_name = None
+
     if record.record_type == "user":
         if record.tool_results:
             # Contains tool results
             step_type = StepType.TOOL_RESULT
             content = _summarize_tool_results(record.tool_results)
+            # Extract tool_use_id for pairing with tool_call
+            if record.tool_results:
+                tool_call_id = record.tool_results[0].get("tool_use_id")
         else:
             step_type = StepType.USER_MESSAGE
             content = truncate_content(record.content_text or "(empty message)")
@@ -276,6 +282,10 @@ def record_to_step(
             # Contains tool calls
             step_type = StepType.TOOL_CALL
             content = _summarize_tool_calls(record.tool_calls)
+            # Extract tool_call_id and tool_name for pairing and display
+            first_call = record.tool_calls[0]
+            tool_call_id = first_call.get("id")
+            tool_name = first_call.get("name")
 
             # Create tool call records
             for tc in record.tool_calls:
@@ -309,6 +319,8 @@ def record_to_step(
         content_summary=content,
         raw_uuid=record.uuid,
         parent_uuid=record.parent_uuid,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
     )
 
     return step, tool_records

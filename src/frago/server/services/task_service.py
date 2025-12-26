@@ -327,10 +327,12 @@ class TaskService:
             step_type = step_type.value
 
         return {
+            "step_id": getattr(step, "step_id", 0),
             "timestamp": timestamp,
             "type": step_type,
             "content": getattr(step, "content_summary", ""),
             "tool_name": getattr(step, "tool_name", None),
+            "tool_call_id": getattr(step, "tool_call_id", None),
             "tool_result": getattr(step, "tool_result", None),
         }
 

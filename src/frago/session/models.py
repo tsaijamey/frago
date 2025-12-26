@@ -81,6 +81,8 @@ class SessionStep(BaseModel):
     )
     raw_uuid: str = Field(..., description="UUID of the original record")
     parent_uuid: Optional[str] = Field(None, description="UUID of the parent message")
+    tool_call_id: Optional[str] = Field(None, description="Tool call ID for pairing tool_call and tool_result")
+    tool_name: Optional[str] = Field(None, description="Tool name for tool_call steps")
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
