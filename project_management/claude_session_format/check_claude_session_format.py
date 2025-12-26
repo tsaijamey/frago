@@ -103,6 +103,9 @@ KNOWN_TOOLS: Dict[str, Set[str]] = {
     "EnterPlanMode": set(),
     "KillShell": {"shell_id"},
     "NotebookEdit": {"notebook_path", "new_source", "cell_id", "cell_type", "edit_mode"},
+    # Added in 2.0.55+
+    "BashOutput": {"bash_id"},  # Get output from background bash command
+    "SlashCommand": {"command"},  # Execute slash command (deprecated, use Skill)
 }
 
 
