@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import EmptyState from '@/components/ui/EmptyState';
 import type { RecipeItem } from '@/types/pywebview';
-import { Package, Search, X } from 'lucide-react';
+import { Package, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
 
 // Get source tag classes
 function getSourceClasses(source: RecipeItem['source']): string {
@@ -18,23 +18,125 @@ function getSourceClasses(source: RecipeItem['source']): string {
   }
 }
 
+interface RecipeCardProps {
+  recipe: RecipeItem;
+  onClick: () => void;
+}
+
+function RecipeCard({ recipe, onClick }: RecipeCardProps) {
+  return (
+    <div className="card cursor-pointer" onClick={onClick}>
+      <div>
+        {/* Line 1: Name */}
+        <div className="font-medium text-[var(--text-primary)] truncate">
+          {recipe.name}
+        </div>
+        {/* Line 2: Source + Runtime */}
+        <div className="flex items-center gap-2 mt-1 text-xs">
+          {recipe.source && (
+            <span className={`px-2 py-0.5 rounded ${getSourceClasses(recipe.source)}`}>
+              {recipe.source}
+            </span>
+          )}
+          {recipe.runtime && (
+            <span className="text-[var(--text-muted)]">{recipe.runtime}</span>
+          )}
+        </div>
+        {/* Line 3: Description */}
+        {recipe.description && (
+          <p className="text-sm text-[var(--text-secondary)] mt-1">
+            {recipe.description}
+          </p>
+        )}
+        {/* Line 4: Tags */}
+        {recipe.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {recipe.tags.map((tag) => (
+              <span
+                key={tag}
+                className="text-xs bg-[var(--bg-subtle)] text-[var(--text-muted)] px-2 py-0.5 rounded max-w-full truncate"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface CollapsibleSectionProps {
+  title: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  colorClass: string;
+  tip: string;
+  children: React.ReactNode;
+}
+
+function CollapsibleSection({
+  title,
+  count,
+  expanded,
+  onToggle,
+  colorClass,
+  tip,
+  children,
+}: CollapsibleSectionProps) {
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        className="flex flex-col items-start w-full text-left py-2 px-1 hover:bg-[var(--bg-hover)] rounded transition-colors"
+        onClick={onToggle}
+      >
+        <div className="flex items-center gap-2">
+          {expanded ? (
+            <ChevronDown size={16} className="text-[var(--text-muted)]" />
+          ) : (
+            <ChevronRight size={16} className="text-[var(--text-muted)]" />
+          )}
+          <span className={`font-medium ${colorClass}`}>{title}</span>
+          <span className="text-xs text-[var(--text-muted)]">({count})</span>
+        </div>
+        <div className="text-xs text-[var(--text-muted)] ml-6 mt-0.5">{tip}</div>
+      </button>
+      {expanded && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-2">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function RecipeList() {
   const { recipes, loadRecipes, switchPage } = useAppStore();
   const [search, setSearch] = useState('');
+  const [atomicExpanded, setAtomicExpanded] = useState(true);
+  const [workflowExpanded, setWorkflowExpanded] = useState(true);
 
   useEffect(() => {
     loadRecipes();
   }, [loadRecipes]);
 
-  // Filter recipes
-  const filteredRecipes = useMemo(() => {
-    if (!search.trim()) return recipes;
-    const query = search.toLowerCase();
-    return recipes.filter(
-      (recipe) =>
-        recipe.name.toLowerCase().includes(query) ||
-        recipe.tags.some((tag) => tag.toLowerCase().includes(query))
-    );
+  // Filter and group recipes
+  const { atomicRecipes, workflowRecipes } = useMemo(() => {
+    let filtered = recipes;
+    if (search.trim()) {
+      const query = search.toLowerCase();
+      filtered = recipes.filter(
+        (recipe) =>
+          recipe.name.toLowerCase().includes(query) ||
+          recipe.tags.some((tag) => tag.toLowerCase().includes(query))
+      );
+    }
+    return {
+      atomicRecipes: filtered.filter((r) => r.category === 'atomic'),
+      workflowRecipes: filtered.filter((r) => r.category === 'workflow'),
+    };
   }, [recipes, search]);
 
   if (recipes.length === 0) {
@@ -46,6 +148,8 @@ export default function RecipeList() {
       />
     );
   }
+
+  const noResults = atomicRecipes.length === 0 && workflowRecipes.length === 0;
 
   return (
     <div className="flex flex-col h-full">
@@ -73,69 +177,48 @@ export default function RecipeList() {
       </div>
 
       {/* Recipe list */}
-      {filteredRecipes.length === 0 ? (
+      {noResults ? (
         <div className="flex-1 flex items-center justify-center text-[var(--text-muted)]">
           No matching results
         </div>
       ) : (
-        <div className="page-scroll flex flex-col gap-2">
-          {filteredRecipes.map((recipe) => (
-            <div
-              key={recipe.name}
-              className="card cursor-pointer"
-              onClick={() => switchPage('recipe_detail', recipe.name)}
+        <div className="page-scroll">
+          {workflowRecipes.length > 0 && (
+            <CollapsibleSection
+              title="Workflow"
+              count={workflowRecipes.length}
+              expanded={workflowExpanded}
+              onToggle={() => setWorkflowExpanded(!workflowExpanded)}
+              colorClass="text-[var(--accent-success)]"
+              tip="Chain multiple steps to automate complex tasks"
             >
-              <div>
-                {/* Line 1: Name */}
-                <div className="font-medium text-[var(--text-primary)] truncate">
-                  {recipe.name}
-                </div>
-                {/* Line 2: Type + Source + Language Type */}
-                <div className="flex items-center gap-2 mt-1 text-xs">
-                  <span
-                    className={`px-2 py-0.5 rounded ${
-                      recipe.category === 'atomic'
-                        ? 'bg-[var(--status-running-bg)] text-[var(--accent-warning)]'
-                        : 'bg-[var(--status-completed-bg)] text-[var(--accent-success)]'
-                    }`}
-                  >
-                    {recipe.category === 'atomic' ? 'Atomic' : 'Workflow'}
-                  </span>
-                  {recipe.source && (
-                    <span
-                      className={`px-2 py-0.5 rounded ${getSourceClasses(recipe.source)}`}
-                    >
-                      {recipe.source}
-                    </span>
-                  )}
-                  {recipe.runtime && (
-                    <span className="text-[var(--text-muted)]">
-                      {recipe.runtime}
-                    </span>
-                  )}
-                </div>
-                {/* Line 3: Description */}
-                {recipe.description && (
-                  <p className="text-sm text-[var(--text-secondary)] mt-1">
-                    {recipe.description}
-                  </p>
-                )}
-                {/* Line 4: Tags */}
-                {recipe.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {recipe.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="text-xs bg-[var(--bg-subtle)] text-[var(--text-muted)] px-2 py-0.5 rounded max-w-full truncate"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+              {workflowRecipes.map((recipe) => (
+                <RecipeCard
+                  key={recipe.name}
+                  recipe={recipe}
+                  onClick={() => switchPage('recipe_detail', recipe.name)}
+                />
+              ))}
+            </CollapsibleSection>
+          )}
+          {atomicRecipes.length > 0 && (
+            <CollapsibleSection
+              title="Atomic"
+              count={atomicRecipes.length}
+              expanded={atomicExpanded}
+              onToggle={() => setAtomicExpanded(!atomicExpanded)}
+              colorClass="text-[var(--accent-warning)]"
+              tip="Small recipe that solves one specific problem, composable"
+            >
+              {atomicRecipes.map((recipe) => (
+                <RecipeCard
+                  key={recipe.name}
+                  recipe={recipe}
+                  onClick={() => switchPage('recipe_detail', recipe.name)}
+                />
+              ))}
+            </CollapsibleSection>
+          )}
         </div>
       )}
     </div>

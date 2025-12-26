@@ -112,9 +112,33 @@ export interface RecipeItem {
   runtime: RecipeRuntime | null;
 }
 
+export interface RecipeInput {
+  type: string;
+  required: boolean;
+  default?: string | number | boolean;
+  description?: string;
+}
+
+export interface RecipeOutput {
+  type: string;
+  description?: string;
+}
+
 export interface RecipeDetail extends RecipeItem {
   metadata_content: string | null;
   recipe_dir: string | null;
+  // Rich metadata fields
+  version?: string;
+  base_dir?: string;
+  script_path?: string;
+  metadata_path?: string;
+  use_cases?: string[];
+  output_targets?: string[];
+  inputs?: Record<string, RecipeInput>;
+  outputs?: Record<string, RecipeOutput>;
+  dependencies?: string[];
+  env?: Record<string, unknown>;
+  source_code?: string;
 }
 
 export interface SkillItem {

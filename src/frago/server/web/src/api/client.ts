@@ -354,6 +354,13 @@ export async function openWorkingDirectory(): Promise<ApiResponse> {
   return fetchApi<ApiResponse>('/settings/open-working-directory', { method: 'POST' });
 }
 
+export async function openPath(path: string, reveal: boolean = false): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/open-path', {
+    method: 'POST',
+    body: JSON.stringify({ path, reveal }),
+  });
+}
+
 // ============================================================
 // Dashboard API
 // ============================================================

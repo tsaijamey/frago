@@ -119,17 +119,30 @@ class RecipeService:
         Returns:
             Recipe dictionary or None if not found.
         """
+        # Try to get detailed info via frago recipe info command
+        try:
+            result = run_subprocess(
+                ["frago", "recipe", "info", name, "--format", "json"],
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                # Read source code if script_path exists
+                script_path = data.get("script_path")
+                if script_path:
+                    try:
+                        data["source_code"] = Path(script_path).read_text(encoding="utf-8")
+                    except Exception as e:
+                        logger.warning("Failed to read recipe source code: %s", e)
+                        data["source_code"] = None
+                return data
+        except Exception as e:
+            logger.warning("Failed to get recipe info from command: %s", e)
+
+        # Fallback to list lookup
         recipes = cls.get_recipes()
         for recipe in recipes:
             if recipe.get("name") == name:
-                # Load source if path is available
-                path = recipe.get("path")
-                if path and not recipe.get("source"):
-                    try:
-                        recipe["source"] = Path(path).read_text(encoding="utf-8")
-                    except Exception as e:
-                        logger.warning("Failed to read recipe source: %s", e)
-
                 return recipe
 
         return None
