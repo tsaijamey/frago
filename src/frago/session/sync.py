@@ -67,8 +67,9 @@ def encode_project_path(project_path: str) -> str:
         normalized = normalized[0] + "-" + normalized[2:]
 
     # 3. Claude Code uses hyphens to encode paths
-    # C-/Users/yammi -> C--Users-yammi
-    return normalized.replace("/", "-")
+    # Replace both / and . with -
+    # /home/yammi/.frago -> -home-yammi--frago
+    return normalized.replace("/", "-").replace(".", "-")
 
 
 def decode_project_path(encoded: str) -> str:
