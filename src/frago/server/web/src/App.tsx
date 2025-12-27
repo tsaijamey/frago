@@ -15,6 +15,7 @@ import SkillList from '@/components/skills/SkillList';
 import SyncPage from '@/components/sync/SyncPage';
 import SecretsPage from '@/components/secrets/SecretsPage';
 import SettingsPage from '@/components/settings/SettingsPage';
+import ConsolePage from '@/components/console/ConsolePage';
 
 // UI
 import Toast from '@/components/ui/Toast';
@@ -87,6 +88,8 @@ function App() {
         return <SecretsPage />;
       case 'settings':
         return <SettingsPage />;
+      case 'console':
+        return <ConsolePage />;
       default:
         return <TaskList />;
     }

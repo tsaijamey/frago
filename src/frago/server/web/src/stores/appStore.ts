@@ -24,7 +24,8 @@ export type PageType =
   | 'skills'
   | 'sync'
   | 'secrets'
-  | 'settings';
+  | 'settings'
+  | 'console';
 
 // Sidebar storage key for localStorage
 const SIDEBAR_COLLAPSED_KEY = 'frago-sidebar-collapsed';
@@ -174,7 +175,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       const config = await api.getConfig();
       console.log('[Config] Loaded:', config);
       set({ config });
-      applyTheme(config.theme);
+
+      // Preserve localStorage theme preference (user's local choice is authoritative)
+      let savedTheme: Theme | null = null;
+      try {
+        const stored = localStorage.getItem('theme');
+        if (stored === 'dark' || stored === 'light') {
+          savedTheme = stored;
+        }
+      } catch {
+        // localStorage not available
+      }
+
+      if (savedTheme) {
+        // If localStorage has a valid theme, use it and sync to backend if different
+        if (savedTheme !== config.theme) {
+          console.log('[Config] Syncing localStorage theme to backend:', savedTheme);
+          applyTheme(savedTheme);
+          api.updateConfig({ theme: savedTheme }).catch((err) => {
+            console.error('[Config] Failed to sync theme to backend:', err);
+          });
+        } else {
+          applyTheme(config.theme);
+        }
+      } else {
+        // No localStorage theme, use backend value
+        applyTheme(config.theme);
+      }
     } catch (error) {
       console.error('[Config] Failed to load config:', error);
     }
