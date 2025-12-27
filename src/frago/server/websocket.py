@@ -111,6 +111,13 @@ class MessageType:
     RECIPE_STARTED = "recipe_started"
     RECIPE_COMPLETED = "recipe_completed"
 
+    # Console events
+    CONSOLE_USER_MESSAGE = "console_user_message"
+    CONSOLE_ASSISTANT_THINKING = "console_assistant_thinking"
+    CONSOLE_TOOL_EXECUTING = "console_tool_executing"
+    CONSOLE_TOOL_RESULT = "console_tool_result"
+    CONSOLE_SESSION_STATUS = "console_session_status"
+
 
 def create_message(
     msg_type: str,

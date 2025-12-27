@@ -41,6 +41,24 @@ class AgentContinueRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="Continuation prompt")
 
 
+class ConsoleStartRequest(BaseModel):
+    """Request body for POST /api/console/start"""
+
+    prompt: str = Field(..., min_length=1, description="Initial message to Claude")
+    project_path: Optional[str] = Field(
+        default=None, description="Project path context"
+    )
+    auto_approve: bool = Field(
+        default=True, description="Auto-approve all tool calls (default: true)"
+    )
+
+
+class ConsoleSendMessageRequest(BaseModel):
+    """Request body for POST /api/console/{session_id}/message"""
+
+    message: str = Field(..., min_length=1, description="User message to send")
+
+
 class ConfigUpdateRequest(BaseModel):
     """Request body for PUT /api/config"""
 
@@ -188,6 +206,44 @@ class TaskStepsResponse(BaseModel):
     steps: List[TaskStepResponse]
     total: int
     has_more: bool
+
+
+class ConsoleMessageResponse(BaseModel):
+    """Response for console message item"""
+
+    type: str  # user, assistant, tool_call, tool_result
+    content: str
+    timestamp: str
+    tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ConsoleStartResponse(BaseModel):
+    """Response for POST /api/console/start"""
+
+    session_id: str
+    status: str  # running
+    project_path: str
+    auto_approve: bool
+
+
+class ConsoleHistoryResponse(BaseModel):
+    """Response for GET /api/console/{session_id}/history"""
+
+    messages: List[ConsoleMessageResponse]
+    total: int
+    has_more: bool
+
+
+class ConsoleSessionInfoResponse(BaseModel):
+    """Response for GET /api/console/{session_id}/info"""
+
+    session_id: str
+    project_path: str
+    auto_approve: bool
+    running: bool
+    message_count: int
 
 
 class UserConfigResponse(BaseModel):
