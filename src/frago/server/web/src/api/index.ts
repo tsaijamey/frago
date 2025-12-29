@@ -407,11 +407,12 @@ export async function getSystemStatus(): Promise<SystemStatus> {
     return pywebviewApi.getSystemStatus();
   }
 
-  // HTTP API - return mock system status
+  // HTTP API - call real /api/status endpoint
+  const status = await httpApi.getServerStatus();
   return {
-    cpu_percent: 0,
-    memory_percent: 0,
-    chrome_connected: false,
+    cpu_percent: status.cpu_percent ?? 0,
+    memory_percent: status.memory_percent ?? 0,
+    chrome_connected: status.chrome_connected ?? false,
   };
 }
 

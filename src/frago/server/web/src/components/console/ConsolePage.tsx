@@ -21,7 +21,6 @@ export default function ConsolePage() {
   const [messages, setMessages] = useState<ConsoleMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isRunning, setIsRunning] = useState(false);
-  const [autoApprove] = useState(true);  // Console always uses auto-approve
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -165,7 +164,7 @@ export default function ConsolePage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: inputValue,
-            auto_approve: autoApprove
+            auto_approve: true
           })
         });
 
@@ -230,7 +229,6 @@ export default function ConsolePage() {
         <ConsoleControls
           sessionId={sessionId}
           isRunning={isRunning}
-          autoApprove={autoApprove}
           onNewSession={handleNewSession}
           onStop={handleStop}
         />
@@ -255,10 +253,7 @@ export default function ConsolePage() {
               <div className="text-scaled-sm text-[var(--text-secondary)]">
                 <p className="font-medium text-[var(--accent-warning)] mb-1">Auto-approve is always enabled</p>
                 <p className="mb-2">All tool calls (file operations, shell commands, etc.) will be executed without confirmation. Use with caution on sensitive projects.</p>
-                <p>For interactive mode with manual approval, use Claude Code directly:</p>
-                <code className="block mt-2 px-scaled-2 py-scaled-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-mono text-scaled-xs">
-                  claude
-                </code>
+                <p>For interactive mode with manual approval, use Claude Code directly: <code className="inline px-scaled-2 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-mono text-scaled-xs">claude</code></p>
               </div>
             </div>
           </div>

@@ -47,8 +47,12 @@ export interface ServerInfo {
 }
 
 export interface ServerStatus {
-  status: string;
-  timestamp: string;
+  cpu_percent: number;
+  memory_percent: number;
+  chrome_available: boolean;
+  chrome_connected: boolean;
+  projects_count: number;
+  tasks_running: number;
 }
 
 export interface RecipeItem {

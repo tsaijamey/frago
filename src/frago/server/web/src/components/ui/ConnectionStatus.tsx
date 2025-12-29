@@ -36,14 +36,14 @@ export default function ConnectionStatus({
         <>
           <Wifi size={14} className="text-green-500" />
           {showLabel && (
-            <span className="text-xs text-green-500">Connected</span>
+            <span className="text-xs text-green-500">Server</span>
           )}
         </>
       ) : (
         <>
           <WifiOff size={14} className="text-red-500" />
           {showLabel && (
-            <span className="text-xs text-red-500">Disconnected</span>
+            <span className="text-xs text-red-500">Offline</span>
           )}
         </>
       )}

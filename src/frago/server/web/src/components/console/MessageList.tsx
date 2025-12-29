@@ -1,4 +1,5 @@
 import { RefObject } from 'react';
+import { Terminal } from 'lucide-react';
 import MessageItem from './MessageItem';
 import type { ConsoleMessage } from './ConsolePage';
 
@@ -12,7 +13,7 @@ export default function MessageList({ messages, messagesEndRef }: MessageListPro
     return (
       <div className="flex-1 flex items-center justify-center text-[var(--text-muted)] p-scaled-8">
         <div className="text-center">
-          <div className="text-scaled-2xl mb-scaled-2">💬</div>
+          <Terminal size={48} strokeWidth={1.5} className="mx-auto mb-scaled-2 opacity-40" />
           <div className="text-scaled-lg mb-scaled-1">Console</div>
           <div className="text-scaled-sm">
             Start a conversation with Claude Code
