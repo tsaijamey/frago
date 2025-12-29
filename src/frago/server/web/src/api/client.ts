@@ -292,9 +292,19 @@ export interface GhCliStatus {
   username?: string | null;
 }
 
+export interface APIEndpointConfig {
+  type: string;
+  url?: string | null;
+  api_key: string;
+  default_model?: string | null;
+  sonnet_model?: string | null;
+  haiku_model?: string | null;
+}
+
 export interface MainConfig {
   working_directory: string;
   auth_method: string;
+  api_endpoint?: APIEndpointConfig | null;
   sync_repo?: string | null;
   resources_installed: boolean;
   resources_version?: string | null;
@@ -339,6 +349,27 @@ export async function updateMainConfig(updates: Partial<MainConfig>): Promise<Ma
   });
 }
 
+export interface APIEndpointRequest {
+  type: string;
+  api_key: string;
+  url?: string;
+  default_model?: string;
+  sonnet_model?: string;
+  haiku_model?: string;
+}
+
+export interface AuthUpdateRequest {
+  auth_method: 'official' | 'custom';
+  api_endpoint?: APIEndpointRequest;
+}
+
+export async function updateAuth(request: AuthUpdateRequest): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/update-auth', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
 export async function getEnvVars(): Promise<EnvVarsResponse> {
   return fetchApi<EnvVarsResponse>('/settings/env-vars');
 }
@@ -363,6 +394,22 @@ export async function openPath(path: string, reveal: boolean = false): Promise<A
     method: 'POST',
     body: JSON.stringify({ path, reveal }),
   });
+}
+
+// ============================================================
+// VSCode Integration API
+// ============================================================
+
+export interface VSCodeStatus {
+  available: boolean;  // True only if VSCode installed AND settings.json exists
+}
+
+export async function checkVSCode(): Promise<VSCodeStatus> {
+  return fetchApi<VSCodeStatus>('/settings/vscode-status');
+}
+
+export async function openConfigInVSCode(): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/open-in-vscode', { method: 'POST' });
 }
 
 // ============================================================

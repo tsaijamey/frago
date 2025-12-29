@@ -4,9 +4,9 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getMainConfig, updateAuthMethod, openWorkingDirectory } from '@/api';
+import { getMainConfig, updateAuthMethod, openWorkingDirectory, checkVSCode, openConfigInVSCode } from '@/api';
 import type { MainConfig } from '@/types/pywebview';
-import { Eye, EyeOff, FolderOpen } from 'lucide-react';
+import { Eye, EyeOff, FolderOpen, Code } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 
 export default function GeneralSettings() {
@@ -19,9 +19,13 @@ export default function GeneralSettings() {
   const [endpointType, setEndpointType] = useState<'deepseek' | 'aliyun' | 'kimi' | 'minimax' | 'custom'>('deepseek');
   const [endpointUrl, setEndpointUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [defaultModel, setDefaultModel] = useState('');
+  const [sonnetModel, setSonnetModel] = useState('');
+  const [haikuModel, setHaikuModel] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [vscodeInstalled, setVscodeInstalled] = useState(false);
 
   useEffect(() => {
     loadConfig();
@@ -39,6 +43,18 @@ export default function GeneralSettings() {
         setEndpointType(data.api_endpoint.type);
         setEndpointUrl(data.api_endpoint.url || '');
         setApiKey(data.api_endpoint.api_key);
+        setDefaultModel(data.api_endpoint.default_model || '');
+        setSonnetModel(data.api_endpoint.sonnet_model || '');
+        setHaikuModel(data.api_endpoint.haiku_model || '');
+      }
+
+      // Check VSCode availability (requires VSCode + ~/.claude/settings.json)
+      try {
+        const vscodeStatus = await checkVSCode();
+        setVscodeInstalled(vscodeStatus.available);
+      } catch {
+        // Ignore errors, just don't show the button
+        setVscodeInstalled(false);
       }
 
       setError(null);
@@ -75,6 +91,9 @@ export default function GeneralSettings() {
     setEndpointType('deepseek');
     setEndpointUrl('');
     setApiKey('');
+    setDefaultModel('');
+    setSonnetModel('');
+    setHaikuModel('');
   };
 
   // Save auth configuration
@@ -87,9 +106,15 @@ export default function GeneralSettings() {
         setError('API Key cannot be empty');
         return;
       }
-      if (endpointType === 'custom' && !endpointUrl.trim()) {
-        setError('Custom endpoint requires a URL');
-        return;
+      if (endpointType === 'custom') {
+        if (!endpointUrl.trim()) {
+          setError('Custom endpoint requires a URL');
+          return;
+        }
+        if (!sonnetModel.trim()) {
+          setError('Custom endpoint requires a main model name');
+          return;
+        }
       }
     }
 
@@ -103,7 +128,11 @@ export default function GeneralSettings() {
         authData.api_endpoint = {
           type: endpointType,
           api_key: apiKey,
-          ...(endpointType === 'custom' && { url: endpointUrl })
+          ...(endpointType === 'custom' && { url: endpointUrl }),
+          // Include model overrides (for all types, including presets)
+          ...(defaultModel.trim() && { default_model: defaultModel.trim() }),
+          ...(sonnetModel.trim() && { sonnet_model: sonnetModel.trim() }),
+          ...(haikuModel.trim() && { haiku_model: haikuModel.trim() })
         };
       }
 
@@ -113,8 +142,19 @@ export default function GeneralSettings() {
         // Update local state (API key will be masked)
         if (result.config.api_endpoint) {
           setApiKey(result.config.api_endpoint.api_key);
+          setDefaultModel(result.config.api_endpoint.default_model || '');
+          setSonnetModel(result.config.api_endpoint.sonnet_model || '');
+          setHaikuModel(result.config.api_endpoint.haiku_model || '');
         }
         setError(null);
+
+        // Re-check VSCode availability (settings.json may have been created/deleted)
+        try {
+          const vscodeStatus = await checkVSCode();
+          setVscodeInstalled(vscodeStatus.available);
+        } catch {
+          // Ignore errors
+        }
       } else {
         setError(result.error || 'Save failed');
       }
@@ -134,6 +174,18 @@ export default function GeneralSettings() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to open directory');
+    }
+  };
+
+  // Open config in VSCode
+  const handleOpenInVSCode = async () => {
+    try {
+      const result = await openConfigInVSCode();
+      if (result.status === 'error') {
+        setError(result.error || 'Failed to open in VSCode');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to open in VSCode');
     }
   };
 
@@ -252,6 +304,7 @@ export default function GeneralSettings() {
                     className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                   />
                   <button
+                    type="button"
                     onClick={() => setShowApiKey(!showApiKey)}
                     className="btn btn-ghost btn-sm p-2"
                     title={showApiKey ? "Hide" : "Show"}
@@ -265,17 +318,77 @@ export default function GeneralSettings() {
                   </p>
                 )}
               </div>
+
+              {/* Model Configuration */}
+              <div>
+                <label htmlFor="default-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                  Default Model {endpointType !== 'custom' && <span className="text-[var(--text-muted)]">- optional override</span>}
+                </label>
+                <input
+                  id="default-model"
+                  type="text"
+                  value={defaultModel}
+                  onChange={(e) => setDefaultModel(e.target.value)}
+                  placeholder={endpointType === 'custom' ? 'e.g., gpt-4' : 'Leave empty to use preset default'}
+                  className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+                />
+                <p className="mt-1 text-xs text-[var(--text-muted)]">ANTHROPIC_MODEL</p>
+              </div>
+
+              <div>
+                <label htmlFor="sonnet-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                  Sonnet Model {endpointType !== 'custom' && <span className="text-[var(--text-muted)]">- optional override</span>}
+                </label>
+                <input
+                  id="sonnet-model"
+                  type="text"
+                  value={sonnetModel}
+                  onChange={(e) => setSonnetModel(e.target.value)}
+                  placeholder={endpointType === 'custom' ? 'e.g., gpt-4' : 'Leave empty to use preset default'}
+                  className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+                />
+                <p className="mt-1 text-xs text-[var(--text-muted)]">ANTHROPIC_DEFAULT_SONNET_MODEL</p>
+              </div>
+
+              <div>
+                <label htmlFor="haiku-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                  Haiku Model <span className="text-[var(--text-muted)]">- optional</span>
+                </label>
+                <input
+                  id="haiku-model"
+                  type="text"
+                  value={haikuModel}
+                  onChange={(e) => setHaikuModel(e.target.value)}
+                  placeholder="Leave empty to use sonnet model"
+                  className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
+                />
+                <p className="mt-1 text-xs text-[var(--text-muted)]">ANTHROPIC_DEFAULT_HAIKU_MODEL</p>
+              </div>
             </div>
           )}
 
-          {/* Save button */}
-          <button
-            onClick={handleSaveAuth}
-            disabled={saving}
-            className="mt-3 btn btn-primary btn-sm disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save Configuration'}
-          </button>
+          {/* Save button and Edit button */}
+          <div className="mt-3 flex gap-2 items-center">
+            <button
+              type="button"
+              onClick={handleSaveAuth}
+              disabled={saving}
+              className="btn btn-primary btn-sm disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Configuration'}
+            </button>
+            {vscodeInstalled && (
+              <button
+                type="button"
+                onClick={handleOpenInVSCode}
+                className="btn btn-ghost btn-sm flex items-center gap-1"
+                title="Edit ~/.claude/settings.json in VSCode"
+              >
+                <Code size={16} />
+                Edit
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Working directory (read-only) */}

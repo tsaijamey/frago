@@ -24,6 +24,10 @@ class APIEndpoint(BaseModel):
     type: Literal["deepseek", "aliyun", "kimi", "minimax", "custom"]
     url: Optional[str] = None
     api_key: str
+    # Model configuration (optional, uses preset defaults if not specified)
+    default_model: Optional[str] = None  # Maps to ANTHROPIC_MODEL
+    sonnet_model: Optional[str] = None   # Maps to ANTHROPIC_DEFAULT_SONNET_MODEL
+    haiku_model: Optional[str] = None    # Maps to ANTHROPIC_DEFAULT_HAIKU_MODEL
 
     @model_validator(mode="after")
     def validate_url_for_custom(self) -> "APIEndpoint":

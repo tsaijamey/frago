@@ -176,6 +176,9 @@ export interface APIEndpoint {
   type: 'deepseek' | 'aliyun' | 'kimi' | 'minimax' | 'custom';
   url?: string;
   api_key: string;
+  default_model?: string;  // Maps to ANTHROPIC_MODEL
+  sonnet_model?: string;   // Maps to ANTHROPIC_DEFAULT_SONNET_MODEL
+  haiku_model?: string;    // Maps to ANTHROPIC_DEFAULT_HAIKU_MODEL
 }
 
 export interface MainConfig {
