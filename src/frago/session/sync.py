@@ -311,6 +311,16 @@ def sync_session(
         first_line = first_msg.split("\n")[0].strip()
         session_name = first_line[:100] if len(first_line) > 100 else first_line
 
+    # Check for AI-generated title (preserve if exists)
+    try:
+        from frago.session.title_manager import get_title_manager
+        title_manager = get_title_manager()
+        ai_title = title_manager.get_title(session_id)
+        if ai_title:
+            session_name = ai_title
+    except Exception as e:
+        logger.debug(f"Could not check AI title: {e}")
+
     # Create or update session metadata
     session = MonitoredSession(
         session_id=session_id,

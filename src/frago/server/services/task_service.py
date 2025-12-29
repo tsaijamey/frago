@@ -4,10 +4,15 @@ Provides functionality for listing and viewing tasks from session storage.
 """
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Track if background title generation is running
+_title_generation_lock = threading.Lock()
+_title_generation_running = False
 
 
 class TaskService:
@@ -18,6 +23,7 @@ class TaskService:
         limit: int = 50,
         offset: int = 0,
         status: Optional[str] = None,
+        generate_titles: bool = False,
     ) -> Dict[str, Any]:
         """Get task list.
 
@@ -27,6 +33,7 @@ class TaskService:
             limit: Maximum number to return (1-100).
             offset: Number of tasks to skip.
             status: Status filter (running/completed/error/cancelled).
+            generate_titles: If True, generate AI titles for sessions without one.
 
         Returns:
             Dictionary with 'tasks' list and 'total' count.
@@ -34,10 +41,14 @@ class TaskService:
         try:
             from frago.session.models import AgentType, SessionStatus
             from frago.session.storage import list_sessions
+            from frago.session.title_manager import get_title_manager
 
             # Parameter validation
             limit = max(1, min(100, limit))
             offset = max(0, offset)
+
+            # Get title manager
+            title_manager = get_title_manager()
 
             # Convert status filter
             status_filter = None
@@ -56,17 +67,35 @@ class TaskService:
                 status=status_filter,
             )
 
+            # Track sessions that need title generation
+            sessions_needing_titles = []
+
             for session in sessions:
                 try:
+                    # Skip excluded sessions (e.g., title generation sessions)
+                    if title_manager.is_excluded_session(session.session_id):
+                        continue
+
                     # Filter out sessions that shouldn't be displayed
                     if not TaskService._should_display(session):
                         continue
-                    task = TaskService._session_to_task(session)
+
+                    # Collect sessions needing titles (don't generate yet)
+                    if generate_titles and not title_manager.has_title(session.session_id):
+                        sessions_needing_titles.append(session)
+
+                    task = TaskService._session_to_task(session, title_manager)
                     if task:
                         tasks.append(task)
                 except Exception as e:
                     logger.debug("Failed to convert session: %s", e)
                     continue
+
+            # Start background thread for title generation (non-blocking)
+            if sessions_needing_titles:
+                TaskService._start_background_title_generation(
+                    sessions_needing_titles, title_manager
+                )
 
             # Sort by started_at descending
             tasks.sort(
@@ -87,11 +116,55 @@ class TaskService:
             return {"tasks": [], "total": 0}
 
     @staticmethod
-    def _session_to_task(session) -> Optional[Dict[str, Any]]:
+    def _start_background_title_generation(sessions, title_manager) -> None:
+        """Start background thread to generate titles for sessions.
+
+        Only one background generation runs at a time to avoid overwhelming
+        the system with concurrent haiku API calls.
+
+        Args:
+            sessions: List of sessions needing title generation.
+            title_manager: TitleManager instance.
+        """
+        global _title_generation_running
+
+        with _title_generation_lock:
+            if _title_generation_running:
+                logger.debug("Title generation already running, skipping")
+                return
+            _title_generation_running = True
+
+        def generate_titles():
+            global _title_generation_running
+            try:
+                for session in sessions:
+                    try:
+                        # Check if title already exists (might have been generated)
+                        if title_manager.has_title(session.session_id):
+                            continue
+                        logger.info(f"Generating title for session {session.session_id[:8]}...")
+                        title_manager.generate_title_if_needed(
+                            session.session_id, session.agent_type
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to generate title for {session.session_id[:8]}: {e}")
+                        continue
+            finally:
+                with _title_generation_lock:
+                    _title_generation_running = False
+                logger.debug("Background title generation completed")
+
+        thread = threading.Thread(target=generate_titles, daemon=True)
+        thread.start()
+        logger.debug(f"Started background title generation for {len(sessions)} sessions")
+
+    @staticmethod
+    def _session_to_task(session, title_manager=None) -> Optional[Dict[str, Any]]:
         """Convert session metadata to task dictionary.
 
         Args:
             session: Session metadata object.
+            title_manager: Optional TitleManager instance for AI title lookup.
 
         Returns:
             Task dictionary or None if session should be filtered.
@@ -100,8 +173,12 @@ class TaskService:
         if not session:
             return None
 
-        # Get session name or generate from first message
-        name = getattr(session, "name", None)
+        # Get session name: prefer AI title, then session name, then fallback
+        name = None
+        if title_manager:
+            name = title_manager.get_title(session.session_id)
+        if not name:
+            name = getattr(session, "name", None)
         if not name:
             name = f"Session {session.session_id[:8]}"
 
