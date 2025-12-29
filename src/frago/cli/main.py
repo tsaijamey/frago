@@ -25,7 +25,6 @@ from .sync_command import sync_cmd  # Sync command
 from .chrome_commands import chrome_group
 from .update_command import update
 from .agent_command import agent, agent_status
-from .gui_command import gui_deps
 from .session_commands import session_group
 from .view_command import view
 from .serve_command import serve
@@ -38,7 +37,7 @@ COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
     ("Environment", ["init", "status", "sync", "update"]),
-    ("Developer", ["dev", "init-dirs", "gui-deps"]),
+    ("Developer", ["dev", "init-dirs"]),
 ])
 
 # Command groups to expand subcommands
@@ -296,7 +295,6 @@ cli.add_command(init_dirs, name="init-dirs")  # Legacy directory init command
 cli.add_command(status)  # CDP connection status (kept at top level for quick checks)
 cli.add_command(sync_cmd, name="sync")  # Resource sync command
 cli.add_command(update)  # Self-update command
-cli.add_command(gui_deps)  # GUI dependency check command
 
 # Command groups
 cli.add_command(dev_group)  # Developer command group: dev pack

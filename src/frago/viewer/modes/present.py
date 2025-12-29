@@ -57,6 +57,7 @@ def render_presentation(
     content_type: Literal["markdown", "html"],
     theme: str = "black",
     title: str = "Presentation",
+    resources_base: str = "",
 ) -> str:
     """Render a reveal.js presentation HTML.
 
@@ -65,6 +66,7 @@ def render_presentation(
         content_type: Type of content
         theme: reveal.js theme name
         title: Page title
+        resources_base: Base path for resources (e.g., "/viewer/resources")
 
     Returns:
         Complete HTML document string
@@ -86,11 +88,11 @@ def render_presentation(
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{html.escape(title)}</title>
-    <link rel="stylesheet" href="/reveal/dist/reset.css">
-    <link rel="stylesheet" href="/reveal/dist/reveal.css">
-    <link rel="stylesheet" href="/reveal/dist/theme/{theme}.css">
+    <link rel="stylesheet" href="{resources_base}/reveal/dist/reset.css">
+    <link rel="stylesheet" href="{resources_base}/reveal/dist/reveal.css">
+    <link rel="stylesheet" href="{resources_base}/reveal/dist/theme/{theme}.css">
     <!-- Code highlighting theme -->
-    <link rel="stylesheet" href="/highlight/styles/github-dark.min.css">
+    <link rel="stylesheet" href="{resources_base}/highlight/styles/github-dark.min.css">
     <style>
         /* Smaller font sizes for better content fit */
         .reveal {{
@@ -151,13 +153,13 @@ def render_presentation(
         </div>
     </div>
 
-    <script src="/reveal/dist/reveal.js"></script>
-    <script src="/reveal/dist/plugin/markdown/markdown.js"></script>
-    <script src="/reveal/dist/plugin/highlight/highlight.js"></script>
-    <script src="/reveal/dist/plugin/notes/notes.js"></script>
-    <script src="/reveal/dist/plugin/math/math.js"></script>
-    <script src="/reveal/dist/plugin/search/search.js"></script>
-    <script src="/reveal/dist/plugin/zoom/zoom.js"></script>
+    <script src="{resources_base}/reveal/dist/reveal.js"></script>
+    <script src="{resources_base}/reveal/dist/plugin/markdown/markdown.js"></script>
+    <script src="{resources_base}/reveal/dist/plugin/highlight/highlight.js"></script>
+    <script src="{resources_base}/reveal/dist/plugin/notes/notes.js"></script>
+    <script src="{resources_base}/reveal/dist/plugin/math/math.js"></script>
+    <script src="{resources_base}/reveal/dist/plugin/search/search.js"></script>
+    <script src="{resources_base}/reveal/dist/plugin/zoom/zoom.js"></script>
     <script>
         Reveal.initialize({{
             hash: true,

@@ -29,6 +29,7 @@ from frago.server.routes import (
     sync_router,
     console_router,
     init_router,
+    viewer_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.sync_service import SyncService
@@ -158,6 +159,9 @@ def create_app(
     app.include_router(console_router, prefix="/api", tags=["console"])
     app.include_router(init_router, prefix="/api", tags=["init"])
 
+    # Viewer routes for content preview (not under /api)
+    app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
+
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
@@ -213,11 +217,11 @@ def create_app(
         This enables client-side routing by serving index.html
         for any path that doesn't match an API route.
         """
-        # Don't serve SPA for API routes (they should 404 naturally)
-        if full_path.startswith("api/"):
+        # Don't serve SPA for API or viewer routes (they should 404 naturally)
+        if full_path.startswith("api/") or full_path.startswith("viewer/"):
             from fastapi import HTTPException
 
-            raise HTTPException(status_code=404, detail="API endpoint not found")
+            raise HTTPException(status_code=404, detail="Endpoint not found")
 
         # Serve index.html for SPA routing
         index_path = frontend_path / "index.html"
