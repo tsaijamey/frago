@@ -26,6 +26,7 @@ async def list_tasks(
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(50, ge=1, le=100, description="Maximum tasks to return"),
     offset: int = Query(0, ge=0, description="Number of tasks to skip"),
+    generate_titles: bool = Query(False, description="Generate AI titles for sessions"),
 ) -> TaskListResponse:
     """List all tasks with optional filtering.
 
@@ -33,13 +34,16 @@ async def list_tasks(
         status: Filter by status (running, completed, error, cancelled)
         limit: Maximum number of tasks to return
         offset: Number of tasks to skip for pagination
+        generate_titles: If True, generate AI titles using haiku model
 
     Returns:
         List of tasks with total count
     """
     from datetime import datetime, timezone
 
-    result = TaskService.get_tasks(status=status, limit=limit, offset=offset)
+    result = TaskService.get_tasks(
+        status=status, limit=limit, offset=offset, generate_titles=generate_titles
+    )
 
     tasks = []
     for t in result.get("tasks", []):

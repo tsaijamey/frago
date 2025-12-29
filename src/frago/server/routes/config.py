@@ -27,6 +27,7 @@ async def get_config() -> UserConfigResponse:
         auto_scroll_output=config.get("auto_scroll_output", True),
         max_history_items=config.get("max_history_items", 100),
         shortcuts=config.get("shortcuts", {}),
+        ai_title_enabled=config.get("ai_title_enabled", False),
     )
 
 
@@ -59,6 +60,8 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
         updates["max_history_items"] = request.max_history_items
     if request.shortcuts is not None:
         updates["shortcuts"] = request.shortcuts
+    if request.ai_title_enabled is not None:
+        updates["ai_title_enabled"] = request.ai_title_enabled
 
     if not updates:
         # No updates, just return current config
@@ -77,4 +80,5 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
         auto_scroll_output=result.get("auto_scroll_output", True),
         max_history_items=result.get("max_history_items", 100),
         shortcuts=result.get("shortcuts", {}),
+        ai_title_enabled=result.get("ai_title_enabled", False),
     )

@@ -210,7 +210,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Load task list
   loadTasks: async () => {
     try {
-      const tasks = await api.getTasks();
+      const config = get().config;
+      const generateTitles = config?.ai_title_enabled ?? false;
+      const tasks = await api.getTasks({ generateTitles });
       set({ tasks: tasks || [] });
     } catch (error) {
       console.error('Failed to load tasks:', error);

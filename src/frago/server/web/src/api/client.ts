@@ -137,6 +137,7 @@ export interface UserConfig {
   confirm_on_exit: boolean;
   auto_scroll_output: boolean;
   max_history_items: number;
+  ai_title_enabled: boolean;
   shortcuts: Record<string, string>;
 }
 
@@ -183,11 +184,13 @@ export async function getTasks(options?: {
   status?: string;
   limit?: number;
   offset?: number;
+  generateTitles?: boolean;
 }): Promise<TaskListResponse> {
   const params = new URLSearchParams();
   if (options?.status) params.set('status', options.status);
   if (options?.limit) params.set('limit', String(options.limit));
   if (options?.offset) params.set('offset', String(options.offset));
+  if (options?.generateTitles) params.set('generate_titles', 'true');
 
   const query = params.toString();
   return fetchApi<TaskListResponse>(`/tasks${query ? `?${query}` : ''}`);

@@ -63,11 +63,13 @@ class ConfigUpdateRequest(BaseModel):
     """Request body for PUT /api/config"""
 
     theme: Optional[str] = Field(default=None, pattern="^(dark|light)$")
+    font_size: Optional[int] = Field(default=None, ge=8, le=32)
     show_system_status: Optional[bool] = None
     confirm_on_exit: Optional[bool] = None
     auto_scroll_output: Optional[bool] = None
     max_history_items: Optional[int] = Field(default=None, ge=10, le=1000)
     shortcuts: Optional[Dict[str, str]] = None
+    ai_title_enabled: Optional[bool] = None
 
 
 # ============================================================
@@ -250,11 +252,13 @@ class UserConfigResponse(BaseModel):
     """Response for GET /api/config"""
 
     theme: str = "dark"
+    font_size: int = 14
     show_system_status: bool = True
     confirm_on_exit: bool = True
     auto_scroll_output: bool = True
     max_history_items: int = 100
     shortcuts: Dict[str, str] = Field(default_factory=dict)
+    ai_title_enabled: bool = False
 
 
 class SystemStatusResponse(BaseModel):
