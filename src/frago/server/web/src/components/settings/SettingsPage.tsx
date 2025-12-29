@@ -2,8 +2,13 @@
 import GeneralSettings from './GeneralSettings';
 import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
+import { InitSettings } from './InitSettings';
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  onOpenInitWizard?: () => void;
+}
+
+export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
   return (
     <div className="h-full overflow-auto">
       <div className="page-scroll p-4 max-w-2xl mx-auto space-y-6">
@@ -14,6 +19,11 @@ export default function SettingsPage() {
             Configure frago features
           </p>
         </div>
+
+        {/* Initialization status */}
+        <section>
+          <InitSettings onOpenWizard={onOpenInitWizard || (() => {})} />
+        </section>
 
         {/* General configuration */}
         <section>

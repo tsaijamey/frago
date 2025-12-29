@@ -328,3 +328,128 @@ class ConnectionPayload(BaseModel):
     """Payload for connection status message"""
 
     status: str  # connected, disconnected, reconnecting
+
+
+# ============================================================
+# Initialization Models
+# ============================================================
+
+
+class DependencyStatusResponse(BaseModel):
+    """Dependency status for init endpoint"""
+
+    name: str
+    installed: bool = False
+    version: Optional[str] = None
+    path: Optional[str] = None
+    version_sufficient: bool = False
+    required_version: str
+    error: Optional[str] = None
+    install_guide: str = ""
+
+
+class InitStatusResponse(BaseModel):
+    """Response for GET /api/init/status"""
+
+    init_completed: bool = False
+    node: DependencyStatusResponse
+    claude_code: DependencyStatusResponse
+    resources_installed: bool = False
+    resources_version: Optional[str] = None
+    resources_update_available: bool = False
+    current_frago_version: str
+    auth_configured: bool = False
+    auth_method: Optional[str] = None
+    resources_info: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DependencyCheckResponse(BaseModel):
+    """Response for POST /api/init/check-deps"""
+
+    node: DependencyStatusResponse
+    claude_code: DependencyStatusResponse
+    all_satisfied: bool = False
+
+
+class InstallResultSummary(BaseModel):
+    """Summary for resource installation result"""
+
+    installed: int = 0
+    skipped: int = 0
+    errors: List[str] = Field(default_factory=list)
+
+
+class ResourceInstallResponse(BaseModel):
+    """Response for POST /api/init/install-resources"""
+
+    status: str  # ok, partial, error
+    commands: InstallResultSummary
+    skills: InstallResultSummary
+    recipes: InstallResultSummary
+    total_installed: int = 0
+    total_skipped: int = 0
+    errors: List[str] = Field(default_factory=list)
+    frago_version: Optional[str] = None
+    message: Optional[str] = None
+
+
+class DependencyInstallRequest(BaseModel):
+    """Request for POST /api/init/install-dep/{name}"""
+
+    pass  # No body needed, name is in path
+
+
+class DependencyInstallResponse(BaseModel):
+    """Response for POST /api/init/install-dep/{name}"""
+
+    status: str  # ok, error
+    message: str
+    requires_restart: bool = False
+    warning: Optional[str] = None
+    install_guide: Optional[str] = None
+    error_code: Optional[str] = None
+    details: Optional[str] = None
+
+
+class ResourceInstallRequest(BaseModel):
+    """Request for POST /api/init/install-resources"""
+
+    force_update: bool = False
+
+
+class InitCompleteResponse(BaseModel):
+    """Response for POST /api/init/complete"""
+
+    status: str  # ok, error
+    message: str
+    init_completed: bool = False
+
+
+# ============================================================
+# Init WebSocket Message Types
+# ============================================================
+
+
+class InitProgressPayload(BaseModel):
+    """Payload for init_progress message"""
+
+    step: str  # dependencies, resources, auth
+    status: str  # checking, installing, complete, error
+    progress: Optional[int] = None  # 0-100
+    message: Optional[str] = None
+
+
+class InitStepCompletePayload(BaseModel):
+    """Payload for init_step_complete message"""
+
+    step: str
+    status: str  # ok, error, skipped
+    message: Optional[str] = None
+
+
+class InitErrorPayload(BaseModel):
+    """Payload for init_error message"""
+
+    step: str
+    error: str
+    details: Optional[str] = None
