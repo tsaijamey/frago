@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+import psutil
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,18 +38,26 @@ class SystemService:
             )
             tasks_running = len(running_sessions)
 
-            # Check Chrome status (basic check)
+            # Check Chrome status via CDP
             chrome_available = False
             chrome_connected = False
             try:
-                from frago.browser.chrome_pool import ChromePool
-                pool = ChromePool()
-                chrome_available = pool.is_available()
-                chrome_connected = pool.is_connected()
+                from frago.cdp.commands.chrome import ChromeLauncher
+                launcher = ChromeLauncher()
+                chrome_available = launcher.chrome_path is not None
+                status = launcher.get_status()
+                chrome_connected = status.get("running", False)
             except Exception:
                 pass
 
+            # Get CPU and memory usage
+            cpu_percent = psutil.cpu_percent(interval=None)
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+
             return {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
                 "chrome_available": chrome_available,
                 "chrome_connected": chrome_connected,
                 "projects_count": 0,  # TODO: implement project counting
@@ -57,6 +67,8 @@ class SystemService:
         except Exception as e:
             logger.error("Failed to get system status: %s", e)
             return {
+                "cpu_percent": 0.0,
+                "memory_percent": 0.0,
                 "chrome_available": False,
                 "chrome_connected": False,
                 "projects_count": 0,

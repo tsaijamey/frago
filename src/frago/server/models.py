@@ -260,6 +260,8 @@ class UserConfigResponse(BaseModel):
 class SystemStatusResponse(BaseModel):
     """Response for GET /api/status"""
 
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
     chrome_available: bool = False
     chrome_connected: bool = False
     projects_count: int = 0

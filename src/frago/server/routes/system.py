@@ -22,6 +22,8 @@ async def get_status() -> SystemStatusResponse:
     status = SystemService.get_status()
 
     return SystemStatusResponse(
+        cpu_percent=status.get("cpu_percent", 0.0),
+        memory_percent=status.get("memory_percent", 0.0),
         chrome_available=status.get("chrome_available", False),
         chrome_connected=status.get("chrome_connected", False),
         projects_count=status.get("projects_count", 0),
