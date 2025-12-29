@@ -15,8 +15,8 @@ export default function ConsoleControls({
 }: ConsoleControlsProps) {
   return (
     <div className="card">
-      <div className="flex flex-wrap items-center justify-between gap-scaled-4">
-        {/* Session Status */}
+      <div className="flex items-center justify-between gap-scaled-4">
+        {/* Session Status - left */}
         <div className="flex items-center gap-scaled-2">
           <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[var(--accent-success)] animate-pulse' : 'bg-[var(--text-muted)]'}`} />
           <span className="text-scaled-sm text-[var(--text-muted)]">
@@ -24,8 +24,25 @@ export default function ConsoleControls({
           </span>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-scaled-2">
+        {/* Right group: Auto-approve reminder + Action Buttons */}
+        <div className="flex items-center gap-scaled-4">
+          {/* Auto-approve indicator - reminds user before action */}
+          <div className="flex items-center gap-scaled-2 opacity-60">
+            <input
+              id="auto-approve"
+              type="checkbox"
+              className="w-4 h-4 cursor-not-allowed"
+              checked
+              disabled
+              aria-label="Auto-approve tools (always enabled)"
+            />
+            <label htmlFor="auto-approve" className="text-scaled-sm text-[var(--text-muted)] cursor-not-allowed">
+              Auto-approve
+            </label>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-scaled-2">
           {isRunning ? (
             <button
               type="button"
@@ -46,6 +63,7 @@ export default function ConsoleControls({
               New Session
             </button>
           )}
+          </div>
         </div>
       </div>
     </div>
