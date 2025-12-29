@@ -120,6 +120,7 @@ def render_document(
     theme: str = "github-dark",
     title: str = "Document",
     language: str = "plaintext",
+    resources_base: str = "",
 ) -> str:
     """Render a document HTML page.
 
@@ -129,6 +130,7 @@ def render_document(
         theme: Code highlighting theme
         title: Page title
         language: Programming language for code highlighting
+        resources_base: Base path for resources (e.g., "/viewer/resources")
 
     Returns:
         Complete HTML document string
@@ -147,7 +149,7 @@ def render_document(
 
     # PDF viewer needs special handling
     if content_type == "pdf":
-        return _render_pdf_page(title, theme)
+        return _render_pdf_page(title, theme, resources_base)
 
     return f'''<!DOCTYPE html>
 <html>
@@ -155,7 +157,7 @@ def render_document(
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{html.escape(title)}</title>
-    <link rel="stylesheet" href="/highlight/styles/{theme}.min.css">
+    <link rel="stylesheet" href="{resources_base}/highlight/styles/{theme}.min.css">
     <style>
         * {{
             box-sizing: border-box;
@@ -267,8 +269,8 @@ def render_document(
 </head>
 <body>
     {body_content}
-    <script src="/highlight/highlight.min.js"></script>
-    <script src="/mermaid/mermaid.min.js"></script>
+    <script src="{resources_base}/highlight/highlight.min.js"></script>
+    <script src="{resources_base}/mermaid/mermaid.min.js"></script>
     <script>
         document.querySelectorAll('pre code').forEach((block) => {{
             hljs.highlightElement(block);
@@ -288,8 +290,14 @@ def _render_pdf_viewer() -> str:
     return '<div id="pdf-container"></div>'
 
 
-def _render_pdf_page(title: str, theme: str) -> str:
-    """Render complete PDF viewer page."""
+def _render_pdf_page(title: str, theme: str, resources_base: str = "") -> str:
+    """Render complete PDF viewer page.
+
+    Args:
+        title: Page title
+        theme: Theme name (unused for PDF but kept for consistency)
+        resources_base: Base path for resources
+    """
     return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -361,9 +369,9 @@ def _render_pdf_page(title: str, theme: str) -> str:
     </div>
 
     <script type="module">
-        import * as pdfjsLib from '/pdfjs/pdf.min.mjs';
+        import * as pdfjsLib from '{resources_base}/pdfjs/pdf.min.mjs';
 
-        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdfjs/pdf.worker.min.mjs';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '{resources_base}/pdfjs/pdf.worker.min.mjs';
 
         let pdfDoc = null;
         let scale = 1.0;

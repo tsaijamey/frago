@@ -53,6 +53,7 @@ class CDPSession(CDPClient):
         self._zoom = None
         self._status = None
         self._visual_effects = None
+        self._target = None
 
     def connect(self) -> None:
         """Establish WebSocket connection
@@ -744,3 +745,10 @@ class CDPSession(CDPClient):
             from .commands.visual_effects import VisualEffectsCommands
             self._visual_effects = VisualEffectsCommands(self)
         return self._visual_effects
+
+    @property
+    def target(self):
+        if self._target is None:
+            from .commands.target import TargetCommands
+            self._target = TargetCommands(self)
+        return self._target

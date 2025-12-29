@@ -44,7 +44,6 @@ dependencies = [
     "obsws-python>=1.8.0",
     "questionary>=2.1.0",
     "watchdog>=3.0.0",
-    "pywebview>=6.1",
     "markdown>=3.4.0",
     # Web service GUI (013-change-gui-into-web-service)
     "fastapi>=0.100.0",
