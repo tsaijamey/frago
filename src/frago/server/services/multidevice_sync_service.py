@@ -10,7 +10,7 @@ import re
 import threading
 from typing import Any, Dict, List, Optional
 
-from frago.init.configurator import load_config, save_config
+from frago.init.config_manager import load_config, save_config
 from frago.server.services.base import run_subprocess
 
 logger = logging.getLogger(__name__)

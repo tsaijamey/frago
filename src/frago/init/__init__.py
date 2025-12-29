@@ -30,9 +30,8 @@ from frago.init.installer import (
     install_claude_code,
     get_installation_order,
 )
+from frago.init.config_manager import load_config, save_config
 from frago.init.configurator import (
-    load_config,
-    save_config,
     config_exists,
     get_config_path,
     display_config_summary,

@@ -21,12 +21,13 @@ from frago.init.models import Config, APIEndpoint
 
 # Preset endpoint configuration (for Claude Code settings.json env field)
 # All vendors provide Anthropic API compatible interfaces
-# Note: New Claude Code version uses ANTHROPIC_DEFAULT_HAIKU_MODEL instead of ANTHROPIC_SMALL_FAST_MODEL
+# Model fields: ANTHROPIC_MODEL (default), ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL
 PRESET_ENDPOINTS = {
     "deepseek": {
         "display_name": "DeepSeek (deepseek-chat)",
         "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
         "ANTHROPIC_MODEL": "deepseek-reason",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-reason",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-chat",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
@@ -35,6 +36,7 @@ PRESET_ENDPOINTS = {
         "display_name": "Aliyun Bailian (qwen3-max)",
         "ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic",
         "ANTHROPIC_MODEL": "qwen3-max",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "qwen3-max",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-max",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
@@ -43,6 +45,7 @@ PRESET_ENDPOINTS = {
         "display_name": "Kimi K2 (kimi-k2-turbo-preview)",
         "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic",
         "ANTHROPIC_MODEL": "kimi-k2-turbo-preview",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2-turbo-preview",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-k2-turbo-preview",
         "API_TIMEOUT_MS": 600000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
@@ -51,6 +54,7 @@ PRESET_ENDPOINTS = {
         "display_name": "MiniMax M2",
         "ANTHROPIC_BASE_URL": "https://api.minimaxi.com/anthropic",
         "ANTHROPIC_MODEL": "MiniMax-M2",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2",
         "API_TIMEOUT_MS": 3000000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
@@ -170,14 +174,16 @@ def prompt_custom_endpoint_url() -> str:
         click.echo("[X] Invalid URL format, please enter a complete HTTP/HTTPS URL")
 
 
-def prompt_custom_model() -> str:
+def prompt_custom_models() -> tuple[str, str]:
     """
-    Prompt user to enter custom model name
+    Prompt user to enter custom model names (sonnet and haiku)
 
     Returns:
-        Model name
+        Tuple of (sonnet_model, haiku_model)
     """
-    return click.prompt("Model name", type=str, default="gpt-4")
+    sonnet_model = click.prompt("Main model (ANTHROPIC_MODEL)", type=str, default="gpt-4")
+    haiku_model = click.prompt("Fast model (ANTHROPIC_DEFAULT_HAIKU_MODEL)", type=str, default=sonnet_model)
+    return sonnet_model, haiku_model
 
 
 def load_claude_settings() -> dict:
@@ -315,7 +321,14 @@ def ensure_claude_json_for_custom_auth() -> bool:
     return False
 
 
-def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = None, custom_model: str = None) -> dict:
+def build_claude_env_config(
+    endpoint_type: str,
+    api_key: str,
+    custom_url: str = None,
+    default_model: str = None,
+    sonnet_model: str = None,
+    haiku_model: str = None,
+) -> dict:
     """
     Build env configuration for Claude Code settings.json
 
@@ -323,7 +336,9 @@ def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = 
         endpoint_type: Endpoint type (deepseek, aliyun, kimi, minimax, custom)
         api_key: API Key
         custom_url: Custom URL (only needed for custom type)
-        custom_model: Custom model name (only needed for custom type)
+        default_model: Override for ANTHROPIC_MODEL
+        sonnet_model: Override for ANTHROPIC_DEFAULT_SONNET_MODEL
+        haiku_model: Override for ANTHROPIC_DEFAULT_HAIKU_MODEL
 
     Returns:
         env configuration dictionary
@@ -333,14 +348,24 @@ def build_claude_env_config(endpoint_type: str, api_key: str, custom_url: str = 
         # Remove display_name (only for display, not written to config)
         env.pop("display_name", None)
     else:
-        # custom type
+        # custom type - requires model configuration
+        model = default_model or "gpt-4"
         env = {
             "ANTHROPIC_BASE_URL": custom_url,
-            "ANTHROPIC_MODEL": custom_model,
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": custom_model,
+            "ANTHROPIC_MODEL": model,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": sonnet_model or model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": haiku_model or model,
             "API_TIMEOUT_MS": 600000,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
+
+    # Override model names if explicitly provided (for preset endpoints too)
+    if default_model:
+        env["ANTHROPIC_MODEL"] = default_model
+    if sonnet_model:
+        env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = sonnet_model
+    if haiku_model:
+        env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = haiku_model
 
     env["ANTHROPIC_API_KEY"] = api_key
     return env
@@ -366,80 +391,10 @@ def config_exists() -> bool:
     return get_config_path().exists()
 
 
-def load_config(config_file: Optional[Path] = None) -> Config:
-    """
-    Load configuration file
-
-    Args:
-        config_file: Configuration file path, defaults to get_config_path()
-
-    Returns:
-        Config object, returns default config if file doesn't exist or is corrupted
-    """
-    if config_file is None:
-        config_file = get_config_path()
-
-    if not config_file.exists():
-        return Config()
-
-    try:
-        with open(config_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        # Handle datetime fields
-        for field in ["created_at", "updated_at"]:
-            if field in data and isinstance(data[field], str):
-                try:
-                    data[field] = datetime.fromisoformat(data[field])
-                except ValueError:
-                    del data[field]
-
-        # Handle nested api_endpoint
-        if "api_endpoint" in data and data["api_endpoint"]:
-            data["api_endpoint"] = APIEndpoint(**data["api_endpoint"])
-
-        return Config(**data)
-
-    except (json.JSONDecodeError, TypeError, ValueError) as e:
-        # Config file corrupted, backup and return default config
-        backup_file = config_file.with_suffix(".json.bak")
-        if config_file.exists():
-            config_file.rename(backup_file)
-            click.echo(f"Config file corrupted, backed up to: {backup_file}")
-        return Config()
-
-
-def save_config(config: Config, config_file: Optional[Path] = None) -> None:
-    """
-    Save configuration file
-
-    Args:
-        config: Config object
-        config_file: Configuration file path, defaults to get_config_path()
-    """
-    if config_file is None:
-        config_file = get_config_path()
-
-    # Ensure directory exists
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Update timestamp
-    config.updated_at = datetime.now()
-
-    # Serialize to dictionary
-    data = config.model_dump()
-
-    # Handle datetime serialization
-    for key, value in data.items():
-        if isinstance(value, datetime):
-            data[key] = value.isoformat()
-
-    # Handle api_endpoint nested object
-    if data.get("api_endpoint"):
-        data["api_endpoint"] = dict(data["api_endpoint"])
-
-    with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+# DEPRECATED: load_config and save_config have been moved to config_manager.py
+# Import from frago.init.config_manager instead
+# These re-exports are kept for backward compatibility but will be removed in a future version
+from frago.init.config_manager import load_config, save_config  # noqa: F401
 
 
 def prompt_auth_method() -> str:
@@ -512,16 +467,23 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
 
     # Get custom URL and model (only needed for custom type)
     custom_url = None
-    custom_model = None
+    sonnet_model = None
+    haiku_model = None
     if endpoint_type == "custom":
         custom_url = prompt_custom_endpoint_url()
-        custom_model = prompt_custom_model()
+        sonnet_model, haiku_model = prompt_custom_models()
 
     # Get API Key
     api_key = prompt_api_key()
 
     # Build env configuration
-    env_config = build_claude_env_config(endpoint_type, api_key, custom_url, custom_model)
+    env_config = build_claude_env_config(
+        endpoint_type=endpoint_type,
+        api_key=api_key,
+        custom_url=custom_url,
+        sonnet_model=sonnet_model,
+        haiku_model=haiku_model,
+    )
 
     # Ensure ~/.claude.json exists (skip official login flow)
     ensure_claude_json_for_custom_auth()
@@ -534,7 +496,8 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         # Display configuration summary (hide API Key)
         click.echo("\n   Config:")
         click.echo(f"   ANTHROPIC_BASE_URL: {env_config.get('ANTHROPIC_BASE_URL')}")
-        click.echo(f"   ANTHROPIC_MODEL: {env_config.get('ANTHROPIC_MODEL')}")
+        click.echo(f"   ANTHROPIC_DEFAULT_SONNET_MODEL: {env_config.get('ANTHROPIC_DEFAULT_SONNET_MODEL')}")
+        click.echo(f"   ANTHROPIC_DEFAULT_HAIKU_MODEL: {env_config.get('ANTHROPIC_DEFAULT_HAIKU_MODEL')}")
         click.echo(f"   ANTHROPIC_API_KEY: ****configured****")
 
     except Exception as e:
@@ -543,7 +506,13 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
 
     # Create APIEndpoint object for frago configuration
     if endpoint_type == "custom":
-        api_endpoint = APIEndpoint(type="custom", api_key=api_key, url=custom_url)
+        api_endpoint = APIEndpoint(
+            type="custom",
+            api_key=api_key,
+            url=custom_url,
+            sonnet_model=sonnet_model,
+            haiku_model=haiku_model,
+        )
     else:
         # Preset endpoint type
         api_endpoint = APIEndpoint(type=endpoint_type, api_key=api_key, url=None)

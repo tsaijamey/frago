@@ -5,7 +5,7 @@ from typing import Optional
 
 import click
 
-from frago.init.configurator import load_config, save_config
+from frago.init.config_manager import load_config, save_config
 from frago.tools.sync_repo import SyncResult, sync
 
 

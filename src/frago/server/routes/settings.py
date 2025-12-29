@@ -5,6 +5,7 @@ Provides endpoints for main config, environment variables, and GitHub integratio
 
 import os
 import platform
+import shutil
 import subprocess
 from typing import Dict, List, Optional
 
@@ -31,10 +32,21 @@ class GhCliStatusResponse(BaseModel):
     username: Optional[str] = None
 
 
+class APIEndpointResponse(BaseModel):
+    """API endpoint configuration response"""
+    type: str
+    url: Optional[str] = None
+    api_key: str
+    default_model: Optional[str] = None
+    sonnet_model: Optional[str] = None
+    haiku_model: Optional[str] = None
+
+
 class MainConfigResponse(BaseModel):
     """Main configuration response"""
     working_directory: str
     auth_method: str
+    api_endpoint: Optional[APIEndpointResponse] = None
     sync_repo: Optional[str] = None
     resources_installed: bool = True
     resources_version: Optional[str] = None
@@ -46,6 +58,22 @@ class MainConfigUpdateRequest(BaseModel):
     working_directory: Optional[str] = None
     auth_method: Optional[str] = None
     sync_repo: Optional[str] = None
+
+
+class APIEndpointRequest(BaseModel):
+    """API endpoint configuration"""
+    type: str  # deepseek, aliyun, kimi, minimax, custom
+    api_key: str
+    url: Optional[str] = None  # Only for custom type
+    default_model: Optional[str] = None  # Override for ANTHROPIC_MODEL
+    sonnet_model: Optional[str] = None   # Override for ANTHROPIC_DEFAULT_SONNET_MODEL
+    haiku_model: Optional[str] = None    # Override for ANTHROPIC_DEFAULT_HAIKU_MODEL
+
+
+class AuthUpdateRequest(BaseModel):
+    """Authentication update request"""
+    auth_method: str  # official or custom
+    api_endpoint: Optional[APIEndpointRequest] = None
 
 
 class EnvVarsResponse(BaseModel):
@@ -73,6 +101,11 @@ class ApiResponse(BaseModel):
     status: str
     message: Optional[str] = None
     error: Optional[str] = None
+
+
+class VSCodeStatusResponse(BaseModel):
+    """VSCode installation status response"""
+    available: bool  # True only if VSCode installed AND settings.json exists
 
 
 # ============================================================
@@ -111,11 +144,35 @@ async def gh_auth_login() -> ApiResponse:
 @router.get("/settings/main-config", response_model=MainConfigResponse)
 async def get_main_config() -> MainConfigResponse:
     """Get main configuration."""
+    from frago.init.configurator import PRESET_ENDPOINTS
+
     config = MainConfigService.get_config()
+
+    # Build api_endpoint response if exists
+    api_endpoint = None
+    if config.get("api_endpoint"):
+        ep = config["api_endpoint"]
+        ep_type = ep.get("type", "custom")
+
+        # Get preset defaults if available
+        preset = PRESET_ENDPOINTS.get(ep_type, {})
+        default_model = ep.get("default_model") or preset.get("ANTHROPIC_MODEL")
+        sonnet_model = ep.get("sonnet_model") or preset.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+        haiku_model = ep.get("haiku_model") or preset.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+
+        api_endpoint = APIEndpointResponse(
+            type=ep_type,
+            url=ep.get("url"),
+            api_key=ep.get("api_key", ""),
+            default_model=default_model,
+            sonnet_model=sonnet_model,
+            haiku_model=haiku_model,
+        )
 
     return MainConfigResponse(
         working_directory=config.get("working_directory_display", "~/.frago"),
-        auth_method=config.get("auth_method", "api_key"),
+        auth_method=config.get("auth_method", "official"),
+        api_endpoint=api_endpoint,
         sync_repo=config.get("sync_repo_url"),
         resources_installed=config.get("resources_installed", True),
         resources_version=config.get("resources_version"),
@@ -144,9 +201,79 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
 
     return MainConfigResponse(
         working_directory=config.get("working_directory_display", "~/.frago"),
-        auth_method=config.get("auth_method", "api_key"),
+        auth_method=config.get("auth_method", "official"),
         sync_repo=config.get("sync_repo_url"),
     )
+
+
+@router.post("/settings/update-auth", response_model=ApiResponse)
+async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
+    """Update authentication method and API endpoint.
+
+    When auth_method is 'custom', creates ~/.claude/settings.json with the API config.
+    When auth_method is 'official', deletes ~/.claude/settings.json.
+    """
+    from frago.init.config_manager import load_config, save_config
+    from frago.init.configurator import (
+        build_claude_env_config,
+        save_claude_settings,
+        delete_claude_settings,
+        ensure_claude_json_for_custom_auth,
+    )
+    from frago.init.models import APIEndpoint
+
+    try:
+        # Load existing config
+        config = load_config()
+
+        if request.auth_method == "custom":
+            if not request.api_endpoint:
+                return ApiResponse(status="error", error="API endpoint required for custom auth")
+
+            endpoint = request.api_endpoint
+
+            # Build env config for Claude Code
+            env_config = build_claude_env_config(
+                endpoint_type=endpoint.type,
+                api_key=endpoint.api_key,
+                custom_url=endpoint.url if endpoint.type == "custom" else None,
+                default_model=endpoint.default_model,
+                sonnet_model=endpoint.sonnet_model,
+                haiku_model=endpoint.haiku_model,
+            )
+
+            # Ensure ~/.claude.json exists (to skip official login)
+            ensure_claude_json_for_custom_auth()
+
+            # Save to ~/.claude/settings.json
+            save_claude_settings({"env": env_config})
+
+            # Update frago config
+            config.auth_method = "custom"
+            config.api_endpoint = APIEndpoint(
+                type=endpoint.type,
+                api_key=endpoint.api_key,
+                url=endpoint.url,
+                default_model=endpoint.default_model,
+                sonnet_model=endpoint.sonnet_model,
+                haiku_model=endpoint.haiku_model,
+            )
+
+        else:  # official
+            # Delete ~/.claude/settings.json
+            delete_claude_settings()
+
+            # Update frago config
+            config.auth_method = "official"
+            config.api_endpoint = None
+
+        # Save frago config
+        save_config(config)
+
+        return ApiResponse(status="ok", message="Authentication updated")
+
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
 
 
 # ============================================================
@@ -277,5 +404,71 @@ async def open_working_directory() -> ApiResponse:
         return ApiResponse(status="ok", message="Working directory opened")
     except subprocess.CalledProcessError as e:
         return ApiResponse(status="error", error=f"Failed to open directory: {e}")
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
+# ============================================================
+# VSCode Integration Endpoints
+# ============================================================
+
+
+def _find_vscode() -> str | None:
+    """Find VSCode executable path.
+
+    Returns the path to use for opening files, or None if not found.
+    - macOS: checks PATH first, then /Applications/Visual Studio Code.app
+    - Linux/Windows: checks PATH
+    """
+    # First check if 'code' command is in PATH
+    code_path = shutil.which("code")
+    if code_path:
+        return code_path
+
+    # On macOS, check if VSCode.app exists
+    if platform.system() == "Darwin":
+        vscode_app = "/Applications/Visual Studio Code.app"
+        if os.path.exists(vscode_app):
+            return vscode_app
+
+    return None
+
+
+@router.get("/settings/vscode-status", response_model=VSCodeStatusResponse)
+async def check_vscode() -> VSCodeStatusResponse:
+    """Check if VSCode is installed AND ~/.claude/settings.json exists.
+
+    The Edit button should only show when both conditions are met.
+    ~/.claude/settings.json is created when user configures custom API endpoint.
+    """
+    vscode_path = _find_vscode()
+    settings_path = os.path.expanduser("~/.claude/settings.json")
+    settings_exists = os.path.exists(settings_path)
+
+    return VSCodeStatusResponse(available=vscode_path is not None and settings_exists)
+
+
+@router.post("/settings/open-in-vscode", response_model=ApiResponse)
+async def open_in_vscode() -> ApiResponse:
+    """Open ~/.claude/settings.json in VSCode."""
+    try:
+        settings_path = os.path.expanduser("~/.claude/settings.json")
+
+        if not os.path.exists(settings_path):
+            return ApiResponse(status="error", error="Settings file not found")
+
+        vscode_path = _find_vscode()
+        if not vscode_path:
+            return ApiResponse(status="error", error="VSCode not found")
+
+        # Use Popen to avoid blocking the server
+        if vscode_path.endswith(".app"):
+            # macOS: use 'open -a' to open with the app
+            subprocess.Popen(["open", "-a", vscode_path, settings_path])
+        else:
+            # Linux/Windows: use the 'code' command directly
+            subprocess.Popen([vscode_path, settings_path])
+
+        return ApiResponse(status="ok", message="Opened in VSCode")
     except Exception as e:
         return ApiResponse(status="error", error=str(e))

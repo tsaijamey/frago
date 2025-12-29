@@ -84,14 +84,13 @@ from frago.init.installer import (
     get_installation_order,
     install_dependency,
 )
+from frago.init.config_manager import load_config, save_config
 from frago.init.configurator import (
     config_exists,
     display_config_summary,
     get_config_path,
-    load_config,
     prompt_config_update,
     run_auth_configuration,
-    save_config,
     warn_auth_switch,
 )
 from frago.init.models import Config, DependencyCheckResult
