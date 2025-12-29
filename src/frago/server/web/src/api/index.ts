@@ -25,6 +25,7 @@ import type {
   MainConfig,
   MainConfigUpdateResponse,
   AuthUpdateRequest,
+  APIEndpoint,
   EnvVarsResponse,
   EnvVarsUpdateResponse,
   RecipeEnvRequirement,
@@ -459,7 +460,15 @@ export async function getMainConfig(): Promise<MainConfig> {
   const config = await httpApi.getMainConfig();
   return {
     schema_version: '1.0',
-    auth_method: (config.auth_method === 'api_key' ? 'custom' : 'official') as MainConfig['auth_method'],
+    auth_method: config.auth_method as MainConfig['auth_method'],
+    api_endpoint: config.api_endpoint ? {
+      type: config.api_endpoint.type as APIEndpoint['type'],
+      url: config.api_endpoint.url ?? undefined,
+      api_key: config.api_endpoint.api_key,
+      default_model: config.api_endpoint.default_model ?? undefined,
+      sonnet_model: config.api_endpoint.sonnet_model ?? undefined,
+      haiku_model: config.api_endpoint.haiku_model ?? undefined,
+    } : undefined,
     ccr_enabled: false,
     sync_repo_url: config.sync_repo ?? undefined,
     working_directory_display: config.working_directory,
@@ -483,7 +492,8 @@ export async function updateMainConfig(
     // Map frontend fields to backend fields
     const backendUpdates: Record<string, string | undefined> = {};
     if (updates.auth_method) {
-      backendUpdates.auth_method = updates.auth_method === 'custom' ? 'api_key' : 'official';
+      // Pass through directly: backend accepts 'official' or 'custom'
+      backendUpdates.auth_method = updates.auth_method;
     }
     if (updates.sync_repo_url !== undefined) {
       backendUpdates.sync_repo = updates.sync_repo_url;
@@ -494,7 +504,7 @@ export async function updateMainConfig(
       status: 'ok',
       config: {
         schema_version: '1.0',
-        auth_method: (config.auth_method === 'api_key' ? 'custom' : 'official') as MainConfig['auth_method'],
+        auth_method: config.auth_method as MainConfig['auth_method'],
         ccr_enabled: false,
         sync_repo_url: config.sync_repo ?? undefined,
         working_directory_display: config.working_directory,
@@ -519,8 +529,57 @@ export async function updateAuthMethod(
     return pywebviewApi.updateAuthMethod(authData);
   }
 
-  // HTTP API - update auth_method through main config
-  return updateMainConfig({ auth_method: authData.auth_method });
+  // HTTP API - use dedicated auth update endpoint that creates ~/.claude/settings.json
+  try {
+    const result = await httpApi.updateAuth({
+      auth_method: authData.auth_method,
+      api_endpoint: authData.api_endpoint ? {
+        type: authData.api_endpoint.type,
+        api_key: authData.api_endpoint.api_key,
+        url: authData.api_endpoint.url,
+        default_model: authData.api_endpoint.default_model,
+        sonnet_model: authData.api_endpoint.sonnet_model,
+        haiku_model: authData.api_endpoint.haiku_model,
+      } : undefined,
+    });
+
+    if (result.status === 'ok') {
+      // Reload config to get updated state
+      const config = await httpApi.getMainConfig();
+      return {
+        status: 'ok',
+        config: {
+          schema_version: '1.0',
+          auth_method: config.auth_method as MainConfig['auth_method'],
+          api_endpoint: config.api_endpoint ? {
+            type: config.api_endpoint.type as APIEndpoint['type'],
+            url: config.api_endpoint.url ?? undefined,
+            api_key: config.api_endpoint.api_key,
+            default_model: config.api_endpoint.default_model ?? undefined,
+            sonnet_model: config.api_endpoint.sonnet_model ?? undefined,
+            haiku_model: config.api_endpoint.haiku_model ?? undefined,
+          } : undefined,
+          ccr_enabled: false,
+          sync_repo_url: config.sync_repo ?? undefined,
+          working_directory_display: config.working_directory,
+          resources_installed: config.resources_installed,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          init_completed: config.init_completed,
+        },
+      };
+    } else {
+      return {
+        status: 'error',
+        error: result.error || 'Failed to update auth',
+      };
+    }
+  } catch (error) {
+    return {
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function openWorkingDirectory(): Promise<ApiResponse> {
@@ -692,6 +751,24 @@ export async function openTutorial(
     status: 'error',
     error: 'Tutorial not available in web service mode',
   };
+}
+
+// ============================================================
+// VSCode Integration API
+// ============================================================
+
+export async function checkVSCode(): Promise<{ available: boolean }> {
+  if (isPywebviewMode()) {
+    return { available: false }; // pywebview mode doesn't support this
+  }
+  return httpApi.checkVSCode();
+}
+
+export async function openConfigInVSCode(): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.openConfigInVSCode();
 }
 
 // ============================================================

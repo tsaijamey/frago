@@ -4,13 +4,17 @@ Provides read and write operations for ~/.frago/config.json with support for par
 """
 
 import json
+import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from frago.init.models import Config
 from pydantic import ValidationError
+
+from frago.init.models import Config
+
+logger = logging.getLogger(__name__)
 
 # Main configuration file path
 CONFIG_PATH = Path.home() / ".frago" / "config.json"
@@ -24,7 +28,7 @@ def load_config() -> Config:
 
     Notes:
         - If file does not exist, return default configuration
-        - If file is corrupted, backup and return default configuration
+        - If file is corrupted, backup and try to recover valid fields
     """
     if not CONFIG_PATH.exists():
         return Config()
@@ -37,12 +41,17 @@ def load_config() -> Config:
         _backup_corrupted_config(f"json_error_{e}")
         return Config()
     except ValidationError as e:
-        # Pydantic validation failed, backup corrupted file
-        _backup_corrupted_config(f"validation_error")
-        return Config()
+        # Pydantic validation failed, backup and try to recover valid fields
+        _backup_corrupted_config("validation_error")
+        logger.warning("Config validation failed: %s. Attempting recovery.", e)
+        try:
+            data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+            return _recover_config_from_data(data)
+        except Exception:
+            return Config()
     except Exception as e:
         # Other errors
-        _backup_corrupted_config(f"unknown_error")
+        _backup_corrupted_config("unknown_error")
         return Config()
 
 
@@ -119,3 +128,47 @@ def _backup_corrupted_config(reason: str) -> None:
         shutil.copy(CONFIG_PATH, backup_path)
     except Exception:
         pass  # Backup failure does not affect main flow
+
+
+def _recover_config_from_data(data: Dict[str, Any]) -> Config:
+    """Recover valid fields from corrupted config data.
+
+    When config validation fails (e.g., invalid auth_method), this function
+    preserves critical non-auth fields while resetting auth to a valid state.
+
+    Args:
+        data: Raw config data dictionary
+
+    Returns:
+        Config instance with recovered fields
+    """
+    safe_fields: Dict[str, Any] = {}
+
+    # Preserve critical non-auth fields that don't affect validation
+    preserve_fields = [
+        'sync_repo_url',
+        'resources_installed',
+        'resources_version',
+        'last_resource_update',
+        'init_completed',
+        'created_at',
+        'schema_version',
+        'node_version',
+        'node_path',
+        'npm_version',
+        'claude_code_version',
+        'claude_code_path',
+        'ccr_enabled',
+        'ccr_config_path',
+    ]
+
+    for field in preserve_fields:
+        if field in data and data[field] is not None:
+            safe_fields[field] = data[field]
+
+    # Reset auth to valid default state (official without api_endpoint)
+    safe_fields['auth_method'] = 'official'
+    safe_fields['api_endpoint'] = None
+
+    logger.info("Recovered config fields: %s", list(safe_fields.keys()))
+    return Config(**safe_fields)
