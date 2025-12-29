@@ -573,3 +573,123 @@ export async function getConsoleHistory(
     `/console/${sessionId}/history?limit=${limit}&offset=${offset}`
   );
 }
+
+// ============================================================
+// Init API - Web-based frago initialization
+// ============================================================
+
+export interface DependencyStatus {
+  name: string;
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+  version_sufficient: boolean;
+  required_version: string;
+  error: string | null;
+  install_guide: string;
+}
+
+export interface InitStatus {
+  init_completed: boolean;
+  node: DependencyStatus;
+  claude_code: DependencyStatus;
+  resources_installed: boolean;
+  resources_version: string | null;
+  resources_update_available: boolean;
+  current_frago_version: string;
+  auth_configured: boolean;
+  auth_method: string | null;
+  resources_info: {
+    commands?: { installed: number; path: string; files: string[] };
+    recipes?: { installed: number; path: string };
+    frago_version?: string;
+  };
+}
+
+export interface DependencyCheckResult {
+  node: DependencyStatus;
+  claude_code: DependencyStatus;
+  all_satisfied: boolean;
+}
+
+export interface InstallResultSummary {
+  installed: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface ResourceInstallResult {
+  status: 'ok' | 'partial' | 'error';
+  commands: InstallResultSummary;
+  skills: InstallResultSummary;
+  recipes: InstallResultSummary;
+  total_installed: number;
+  total_skipped: number;
+  errors: string[];
+  frago_version: string | null;
+  message: string | null;
+}
+
+export interface DependencyInstallResult {
+  status: 'ok' | 'error';
+  message: string;
+  requires_restart: boolean;
+  warning: string | null;
+  install_guide: string | null;
+  error_code: string | null;
+  details: string | null;
+}
+
+export interface InitCompleteResult {
+  status: 'ok' | 'error';
+  message: string;
+  init_completed: boolean;
+}
+
+/**
+ * Get comprehensive initialization status.
+ * Returns dependency status, resource status, and auth configuration.
+ */
+export async function getInitStatus(): Promise<InitStatus> {
+  return fetchApi<InitStatus>('/init/status');
+}
+
+/**
+ * Run fresh dependency check for Node.js and Claude Code.
+ */
+export async function checkDependencies(): Promise<DependencyCheckResult> {
+  return fetchApi<DependencyCheckResult>('/init/check-deps', { method: 'POST' });
+}
+
+/**
+ * Install a specific dependency (node or claude-code).
+ * Note: Node.js installation on Windows requires manual installation.
+ */
+export async function installDependency(name: 'node' | 'claude-code'): Promise<DependencyInstallResult> {
+  return fetchApi<DependencyInstallResult>(`/init/install-dep/${name}`, { method: 'POST' });
+}
+
+/**
+ * Install or update resources (commands, skills, recipes).
+ */
+export async function installResources(forceUpdate: boolean = false): Promise<ResourceInstallResult> {
+  return fetchApi<ResourceInstallResult>('/init/install-resources', {
+    method: 'POST',
+    body: JSON.stringify({ force_update: forceUpdate }),
+  });
+}
+
+/**
+ * Mark initialization as complete.
+ * The init wizard will not show again after this.
+ */
+export async function markInitComplete(): Promise<InitCompleteResult> {
+  return fetchApi<InitCompleteResult>('/init/complete', { method: 'POST' });
+}
+
+/**
+ * Reset initialization status to re-run the wizard.
+ */
+export async function resetInitStatus(): Promise<InitCompleteResult> {
+  return fetchApi<InitCompleteResult>('/init/reset', { method: 'POST' });
+}

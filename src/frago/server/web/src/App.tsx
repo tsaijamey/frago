@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isApiReady, getApiMode, waitForApi } from '@/api';
+import { getInitStatus } from '@/api/client';
 
 // Layout - New admin panel layout with sidebar
 import MainLayout from '@/components/layout/MainLayout';
@@ -20,9 +21,13 @@ import ConsolePage from '@/components/console/ConsolePage';
 // UI
 import Toast from '@/components/ui/Toast';
 
+// Init wizard
+import { InitWizardModal } from '@/components/init';
+
 function App() {
   const { currentPage, loadConfig, toasts } = useAppStore();
   const [apiReady, setApiReady] = useState(isApiReady());
+  const [showInitWizard, setShowInitWizard] = useState(false);
 
   useEffect(() => {
     const initApi = async () => {
@@ -35,6 +40,16 @@ function App() {
           await waitForApi();
           setApiReady(true);
           loadConfig();
+
+          // Check init status after API is ready
+          try {
+            const initStatus = await getInitStatus();
+            if (!initStatus.init_completed) {
+              setShowInitWizard(true);
+            }
+          } catch (err) {
+            console.warn('Failed to check init status:', err);
+          }
         } catch (error) {
           console.error('Failed to connect to web service:', error);
         }
@@ -60,6 +75,16 @@ function App() {
 
     initApi();
   }, [loadConfig]);
+
+  // Handle init wizard completion
+  const handleInitComplete = () => {
+    setShowInitWizard(false);
+  };
+
+  // Allow opening wizard from settings
+  const handleOpenWizard = () => {
+    setShowInitWizard(true);
+  };
 
   // Debug info
   useEffect(() => {
@@ -87,7 +112,7 @@ function App() {
       case 'secrets':
         return <SecretsPage />;
       case 'settings':
-        return <SettingsPage />;
+        return <SettingsPage onOpenInitWizard={handleOpenWizard} />;
       case 'console':
         return <ConsolePage />;
       default:
@@ -98,6 +123,13 @@ function App() {
   return (
     <>
       <MainLayout>{renderPage()}</MainLayout>
+
+      {/* Init wizard modal */}
+      <InitWizardModal
+        isOpen={showInitWizard}
+        onClose={() => setShowInitWizard(false)}
+        onComplete={handleInitComplete}
+      />
 
       {/* Toast container */}
       {toasts.length > 0 && (

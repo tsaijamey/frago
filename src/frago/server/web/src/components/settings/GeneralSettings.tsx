@@ -301,38 +301,6 @@ export default function GeneralSettings() {
         </div>
       </div>
 
-      {/* Resource status */}
-      <div className="card">
-        <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-          Resource Status
-        </h2>
-
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-[var(--text-secondary)]">Resources Installed</span>
-            <span className={config.resources_installed ? 'text-green-600 dark:text-green-400' : 'text-[var(--text-muted)]'}>
-              {config.resources_installed ? '✓ Yes' : 'No'}
-            </span>
-          </div>
-          {config.resources_version && (
-            <div>
-              <div className="flex justify-between mb-1">
-                <span className="text-[var(--text-secondary)]">Resources Version</span>
-                <span className="text-[var(--text-primary)]">{config.resources_version}</span>
-              </div>
-              <p className="text-xs text-[var(--text-muted)] text-right">
-                Frago version when resources were installed, not the current package version
-              </p>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-[var(--text-secondary)]">Initialization Complete</span>
-            <span className={config.init_completed ? 'text-green-600 dark:text-green-400' : 'text-[var(--text-muted)]'}>
-              {config.init_completed ? '✓ Yes' : 'No'}
-            </span>
-          </div>
-        </div>
-      </div>
 
       {/* Confirmation dialog */}
       <Modal

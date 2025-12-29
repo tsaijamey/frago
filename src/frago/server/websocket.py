@@ -118,6 +118,11 @@ class MessageType:
     CONSOLE_TOOL_RESULT = "console_tool_result"
     CONSOLE_SESSION_STATUS = "console_session_status"
 
+    # Init events
+    INIT_PROGRESS = "init_progress"
+    INIT_STEP_COMPLETE = "init_step_complete"
+    INIT_ERROR = "init_error"
+
 
 def create_message(
     msg_type: str,
