@@ -8,13 +8,14 @@
  */
 
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore, type PageType } from '@/stores/appStore';
 import { Sun, Moon } from 'lucide-react';
 
 // Menu item configuration
 interface MenuItem {
   id: PageType;
-  label: string;
+  labelKey: string; // Translation key for the label
   icon: JSX.Element;
 }
 
@@ -94,20 +95,21 @@ const CollapseIcon = ({ collapsed }: { collapsed: boolean }) => (
 
 // Menu items configuration
 const menuItems: MenuItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
-  { id: 'console', label: 'Console', icon: <ConsoleIcon /> },
-  { id: 'tasks', label: 'Tasks', icon: <TasksIcon /> },
-  { id: 'recipes', label: 'Recipes', icon: <RecipesIcon /> },
-  { id: 'skills', label: 'Skills', icon: <SkillsIcon /> },
-  { id: 'sync', label: 'Sync', icon: <SyncIcon /> },
-  { id: 'secrets', label: 'Secrets', icon: <SecretsIcon /> },
-  { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
+  { id: 'dashboard', labelKey: 'sidebar.dashboard', icon: <DashboardIcon /> },
+  { id: 'console', labelKey: 'sidebar.console', icon: <ConsoleIcon /> },
+  { id: 'tasks', labelKey: 'sidebar.tasks', icon: <TasksIcon /> },
+  { id: 'recipes', labelKey: 'sidebar.recipes', icon: <RecipesIcon /> },
+  { id: 'skills', labelKey: 'sidebar.skills', icon: <SkillsIcon /> },
+  { id: 'sync', labelKey: 'sidebar.sync', icon: <SyncIcon /> },
+  { id: 'secrets', labelKey: 'sidebar.secrets', icon: <SecretsIcon /> },
+  { id: 'settings', labelKey: 'sidebar.settings', icon: <SettingsIcon /> },
 ];
 
 // Responsive breakpoint for auto-collapse
 const NARROW_VIEWPORT_WIDTH = 768;
 
 export default function Sidebar() {
+  const { t } = useTranslation();
   const { currentPage, sidebarCollapsed, switchPage, toggleSidebar, setSidebarCollapsed, config, setTheme } = useAppStore();
 
   // Handle responsive behavior - auto-collapse on narrow viewports
@@ -146,17 +148,18 @@ export default function Sidebar() {
       <nav className="sidebar-nav">
         {menuItems.map((item) => {
           const active = isActive(item.id);
+          const label = t(item.labelKey);
           return (
             <button
               type="button"
               key={item.id}
               onClick={() => switchPage(item.id)}
-              title={sidebarCollapsed ? item.label : undefined}
+              title={sidebarCollapsed ? label : undefined}
               className={`sidebar-menu-item ${active ? 'active' : ''}`}
             >
               <span className="sidebar-menu-icon">{item.icon}</span>
               {!sidebarCollapsed && (
-                <span className="sidebar-menu-label">{item.label}</span>
+                <span className="sidebar-menu-label">{label}</span>
               )}
             </button>
           );
@@ -168,7 +171,7 @@ export default function Sidebar() {
         <button
           type="button"
           onClick={() => setTheme(config?.theme === 'dark' ? 'light' : 'dark')}
-          title={config?.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={config?.theme === 'dark' ? t('sidebar.theme.switchToLight') : t('sidebar.theme.switchToDark')}
           className="sidebar-footer-btn"
         >
           {config?.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
@@ -176,7 +179,7 @@ export default function Sidebar() {
         <button
           type="button"
           onClick={toggleSidebar}
-          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={sidebarCollapsed ? t('sidebar.collapse.expand') : t('sidebar.collapse.collapse')}
           className="sidebar-footer-btn"
         >
           <CollapseIcon collapsed={sidebarCollapsed} />
