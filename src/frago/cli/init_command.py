@@ -214,29 +214,61 @@ def init(
 
 
 def _offer_autostart_configuration() -> None:
-    """Offer to enable frago server autostart on system boot."""
+    """Offer to configure frago server autostart on system boot."""
     try:
         from frago.autostart import get_autostart_manager
+        from frago.init.ui import ask_question
 
         manager = get_autostart_manager()
+        is_enabled = manager.is_enabled()
 
-        # Skip if already enabled
-        if manager.is_enabled():
-            return
+        # Build options based on current state
+        if is_enabled:
+            options = [
+                {
+                    "label": "Keep enabled",
+                    "description": "Keep autostart enabled (current setting)"
+                },
+                {
+                    "label": "Disable",
+                    "description": "Disable autostart on system boot"
+                }
+            ]
+        else:
+            options = [
+                {
+                    "label": "Enable",
+                    "description": "Start frago server automatically on system boot"
+                },
+                {
+                    "label": "Skip",
+                    "description": "Configure later with 'frago autostart enable'"
+                }
+            ]
 
-        click.echo()
-        print_section("Autostart Configuration")
+        answer = ask_question(
+            question="Configure frago server autostart?",
+            header="Autostart Configuration",
+            options=options,
+            default_index=0
+        )
 
-        if click.confirm(
-            "Enable frago server to start automatically on system boot?",
-            default=True,
-        ):
+        # Handle user choice
+        if answer == "Enable":
             success, message = manager.enable()
             if success:
                 click.secho(f"✓ {message}", fg="green")
             else:
                 click.secho(f"✗ {message}", fg="red")
-        else:
+        elif answer == "Disable":
+            success, message = manager.disable()
+            if success:
+                click.secho(f"✓ {message}", fg="green")
+            else:
+                click.secho(f"✗ {message}", fg="red")
+        elif answer == "Keep enabled":
+            click.secho("✓ Autostart remains enabled", fg="green")
+        else:  # Skip
             click.secho("Skipped autostart configuration", dim=True)
             click.echo("  Run 'frago autostart enable' to configure later")
 
