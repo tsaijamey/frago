@@ -12,11 +12,11 @@
 
 | Version | Highlights |
 |---------|------------|
+| **v0.22.0** | Cross-platform autostart; `frago autostart` command; integrated into init workflow |
+| **v0.21.0** | i18n support; user language preference for AI title generation |
 | **v0.20.0** | AI title generation; interactive console UI; model override settings |
 | **v0.19.0** | Enhanced settings; multi-device sync; background session sync |
 | **v0.18.0** | Session name extraction; dashboard activity overview |
-| **v0.17.0** | Web service architecture; `frago server` command; browser-based GUI |
-| **v0.16.0** | Windows cross-platform support; path encoding fixes |
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
@@ -410,13 +410,14 @@ Your personal, non-frago Claude commands and skills are never touched.
 
 📍 **Current Stage**: Web service architecture complete with AI-powered features
 
-**Latest Features (v0.17.0 - v0.20.0)**:
+**Latest Features (v0.17.0 - v0.22.0)**:
 
+- ✅ Cross-platform autostart - `frago autostart` manages server boot startup (macOS/Linux/Windows)
+- ✅ i18n support - UI internationalization with user language preferences
 - ✅ Web service mode - `frago server` launches browser-based GUI on port 8093
 - ✅ AI title generation - Claude Haiku auto-generates session titles
 - ✅ Interactive console - Execute Claude Code tasks from web UI
 - ✅ Multi-device sync - Sync sessions across devices via web service
-- ✅ Model override settings - Configure default/sonnet/haiku models
 
 **Core Infrastructure**:
 
