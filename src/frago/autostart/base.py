@@ -1,5 +1,7 @@
 """Abstract base class for cross-platform autostart management."""
 
+import platform
+import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,3 +82,44 @@ class AutostartManager(ABC):
             platform=self.platform_name,
             config_path=self.config_path if self.is_enabled() else None,
         )
+
+    def _collect_environment_path(self) -> str:
+        """Collect PATH including node/claude locations for autostart environment.
+
+        Autostart mechanisms (LaunchAgent, systemd, Registry Run) don't inherit
+        the user's shell PATH configuration. This method collects paths where
+        critical commands are located so they can be explicitly set.
+
+        Returns:
+            Colon-separated (Unix) or semicolon-separated (Windows) PATH string
+        """
+        paths: set[str] = set()
+        system = platform.system()
+
+        # Get paths of critical commands from current environment
+        for cmd in ["node", "claude", "frago"]:
+            cmd_path = shutil.which(cmd)
+            if cmd_path:
+                paths.add(str(Path(cmd_path).parent))
+
+        # Platform-specific common paths
+        if system == "Darwin":
+            # macOS: homebrew locations
+            paths.update(["/opt/homebrew/bin", "/usr/local/bin"])
+            # Common user bin
+            paths.add(str(Path.home() / ".local/bin"))
+        elif system == "Linux":
+            # Linux: user local bin
+            paths.add(str(Path.home() / ".local/bin"))
+            paths.add("/usr/local/bin")
+        elif system == "Windows":
+            # Windows: common locations handled by _get_frago_path
+            pass
+
+        # System base paths (always include)
+        if system != "Windows":
+            paths.update(["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
+
+        # Use appropriate separator
+        separator = ";" if system == "Windows" else ":"
+        return separator.join(sorted(filter(None, paths)))

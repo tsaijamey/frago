@@ -38,17 +38,30 @@ class WindowsAutostartManager(AutostartManager):
             return str(frago_exe)
         return "frago"  # Hope it's in PATH at login
 
+    def _build_command(self) -> str:
+        """Build the autostart command with proper PATH setup."""
+        frago_path = self._get_frago_path()
+        # Quote path if it contains spaces
+        if " " in frago_path:
+            frago_cmd = f'"{frago_path}"'
+        else:
+            frago_cmd = frago_path
+
+        # Collect extra paths that may not be in system PATH
+        extra_paths = self._collect_environment_path()
+        if extra_paths:
+            # Use cmd /c to set PATH before running frago
+            # %PATH% preserves existing PATH, extra_paths adds node/claude locations
+            return f'cmd /c "set PATH={extra_paths};%PATH% && {frago_cmd} server start"'
+        else:
+            return f"{frago_cmd} server start"
+
     def enable(self) -> tuple[bool, str]:
         """Enable autostart by adding Registry Run key."""
         try:
             import winreg
 
-            frago_path = self._get_frago_path()
-            # Quote path if it contains spaces
-            if " " in frago_path:
-                command = f'"{frago_path}" server start'
-            else:
-                command = f"{frago_path} server start"
+            command = self._build_command()
 
             # Open the Run key
             key = winreg.OpenKey(

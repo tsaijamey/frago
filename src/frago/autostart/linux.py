@@ -42,6 +42,7 @@ class LinuxAutostartManager(AutostartManager):
     def _generate_service(self) -> str:
         """Generate the systemd service file content."""
         frago_path = self._get_frago_path()
+        env_path = self._collect_environment_path()
 
         return dedent(f"""\
             [Unit]
@@ -50,6 +51,7 @@ class LinuxAutostartManager(AutostartManager):
 
             [Service]
             Type=exec
+            Environment=PATH={env_path}
             ExecStart={frago_path} server start
             Restart=no
 
