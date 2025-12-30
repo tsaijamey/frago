@@ -53,6 +53,9 @@ class MacOSAutostartManager(AutostartManager):
             "KeepAlive": False,  # Only start at boot, don't restart on crash
             "StandardOutPath": str(log_path),
             "StandardErrorPath": str(log_path),
+            "EnvironmentVariables": {
+                "PATH": self._collect_environment_path(),
+            },
         }
 
     def enable(self) -> tuple[bool, str]:
