@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useTasks } from '@/hooks/useTasks';
 import { startAgentTask } from '@/api';
 import { useAppStore } from '@/stores/appStore';
@@ -7,6 +8,7 @@ import EmptyState from '@/components/ui/EmptyState';
 import { Send, ClipboardList } from 'lucide-react';
 
 export default function TaskList() {
+  const { t } = useTranslation();
   const { tasks, viewDetail, refresh } = useTasks();
   const { config, updateConfig } = useAppStore();
   const [prompt, setPrompt] = useState('');
@@ -52,9 +54,9 @@ export default function TaskList() {
             checked={aiTitleEnabled}
             onChange={(e) => handleAiTitleToggle(e.target.checked)}
             className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            aria-label="Enable AI title generation"
+            aria-label={t('tasks.aiTitleToggle')}
           />
-          <span>Use haiku to generate readable titles</span>
+          <span>{t('tasks.aiTitleToggle')}</span>
         </label>
       </div>
 
@@ -62,8 +64,8 @@ export default function TaskList() {
       {tasks.length === 0 ? (
         <EmptyState
           Icon={ClipboardList}
-          title="No Tasks"
-          description="Enter a task description to start your first task"
+          title={t('tasks.noTasks')}
+          description={t('tasks.noTasksDescription')}
         />
       ) : (
         <div className="page-scroll flex flex-col gap-2">
@@ -82,7 +84,7 @@ export default function TaskList() {
         <div className="task-input-wrapper">
         <textarea
           className="task-input"
-          placeholder="Describe the task you want to execute..."
+          placeholder={t('tasks.inputPlaceholder')}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
