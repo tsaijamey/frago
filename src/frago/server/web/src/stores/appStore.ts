@@ -3,6 +3,7 @@
  */
 
 import { create } from 'zustand';
+import i18n from '@/i18n';
 import type {
   TaskItem,
   TaskDetail,
@@ -11,6 +12,7 @@ import type {
   UserConfig,
   SystemStatus,
   Theme,
+  Language,
 } from '@/types/pywebview';
 import * as api from '@/api';
 
@@ -66,6 +68,7 @@ interface AppState {
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setTheme: (theme: Theme) => void;
+  setLanguage: (language: Language) => void;
   loadConfig: () => Promise<void>;
   loadTasks: () => Promise<void>;
   openTaskDetail: (sessionId: string) => Promise<void>;
@@ -168,6 +171,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  // Language switching
+  setLanguage: (language) => {
+    console.log('[Language] setLanguage called with:', language);
+    i18n.changeLanguage(language);
+    const config = get().config;
+    if (config) {
+      set({ config: { ...config, language } });
+      api.updateConfig({ language }).then((result) => {
+        console.log('[Language] updateConfig result:', result);
+      }).catch((err) => {
+        console.error('[Language] updateConfig failed:', err);
+      });
+    } else {
+      console.warn('[Language] config is null, cannot persist language');
+    }
+  },
+
   // Load config
   loadConfig: async () => {
     try {
@@ -201,6 +221,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else {
         // No localStorage theme, use backend value
         applyTheme(config.theme);
+      }
+
+      // Sync i18n language with config
+      const language = config.language || 'en';
+      if (i18n.language !== language) {
+        console.log('[Config] Syncing i18n language:', language);
+        i18n.changeLanguage(language);
       }
     } catch (error) {
       console.error('[Config] Failed to load config:', error);

@@ -21,6 +21,7 @@ async def get_config() -> UserConfigResponse:
 
     return UserConfigResponse(
         theme=config.get("theme", "dark"),
+        language=config.get("language", "en"),
         font_size=config.get("font_size", 14),
         show_system_status=config.get("show_system_status", True),
         confirm_on_exit=config.get("confirm_on_exit", True),
@@ -48,6 +49,8 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
     updates = {}
     if request.theme is not None:
         updates["theme"] = request.theme
+    if request.language is not None:
+        updates["language"] = request.language
     if request.font_size is not None:
         updates["font_size"] = request.font_size
     if request.show_system_status is not None:
@@ -74,6 +77,7 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
 
     return UserConfigResponse(
         theme=result.get("theme", "dark"),
+        language=result.get("language", "en"),
         font_size=result.get("font_size", 14),
         show_system_status=result.get("show_system_status", True),
         confirm_on_exit=result.get("confirm_on_exit", True),

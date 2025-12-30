@@ -21,6 +21,7 @@ class UserConfig:
     """User preferences, persisted to ~/.frago/gui_config.json."""
 
     theme: str = "dark"
+    language: str = "en"  # 'en' or 'zh'
     show_system_status: bool = True
     confirm_on_exit: bool = True
     auto_scroll_output: bool = True
@@ -43,6 +44,8 @@ class UserConfig:
         errors = []
         if self.theme not in ("dark", "light"):
             errors.append(f"theme must be 'dark' or 'light', got '{self.theme}'")
+        if self.language not in ("en", "zh"):
+            errors.append(f"language must be 'en' or 'zh', got '{self.language}'")
         if not 10 <= self.max_history_items <= 1000:
             errors.append(
                 f"max_history_items must be between 10 and 1000, got {self.max_history_items}"
@@ -89,6 +92,7 @@ class ConfigService:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             config = UserConfig(
                 theme=data.get("theme", "dark"),
+                language=data.get("language", "en"),
                 show_system_status=data.get("show_system_status", True),
                 confirm_on_exit=data.get("confirm_on_exit", True),
                 auto_scroll_output=data.get("auto_scroll_output", True),
@@ -159,3 +163,15 @@ class ConfigService:
         """
         config = ConfigService.get_config()
         return config.get(key, default)
+
+    @staticmethod
+    def get_user_language() -> str:
+        """Get user's preferred language for AI output.
+
+        Returns:
+            Language code ('en' or 'zh'), defaults to 'en'.
+        """
+        try:
+            return ConfigService.get_config_value("language", "en")
+        except Exception:
+            return "en"
