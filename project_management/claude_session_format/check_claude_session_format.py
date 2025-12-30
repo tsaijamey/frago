@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 # Known record types
 KNOWN_TYPES = {"queue-operation", "user", "assistant", "summary", "file-history-snapshot", "system"}
 
-# Metadata types (skipped by Frago, but known)
+# Metadata types (skipped by frago, but known)
 METADATA_TYPES = {"queue-operation", "summary", "file-history-snapshot", "system"}
 
 # Required top-level fields by record type
@@ -315,7 +315,7 @@ class SchemaChecker:
             print("✅ All records match known schema.")
             return 0
         elif has_errors:
-            print("❌ Schema errors detected. Review and update Frago implementation.")
+            print("❌ Schema errors detected. Review and update frago implementation.")
             return 2
         else:
             print("⚠️  New schema elements detected. Review and update documentation.")

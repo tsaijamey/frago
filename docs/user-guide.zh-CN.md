@@ -1,17 +1,18 @@
-# Frago 使用指南
+# frago 使用指南
 
 ## 概述
 
-Frago 是为 AI agent 设计的多运行时自动化基础设施，提供四个核心系统协同工作：
+frago 是为 AI agent 设计的多运行时自动化基础设施，提供四个核心系统协同工作：
 
 - **🧠 Run 系统**：AI 的工作记忆 - 持久化上下文和结构化日志
 - **📚 Recipe 系统**：AI 的"肌肉记忆" - 可复用的自动化脚本
 - **🔍 Session 系统**：Agent 监控 - 实时执行跟踪
 - **⚡ 原生 CDP**：轻量级执行引擎 - 直连 Chrome 控制
+- **🌐 Web 服务**：基于浏览器的 GUI，支持 AI 功能
 
 ## 核心使用场景
 
-Frago 适用于各类浏览器自动化和数据采集任务：
+frago 适用于各类浏览器自动化和数据采集任务：
 
 1. **交互式探索与调试**
    - 探索未知页面同时保持完整上下文
@@ -78,7 +79,7 @@ frago --help
 
 ### 代理配置
 
-Frago的CDP集成支持代理配置，适用于需要通过代理访问网络的环境。
+frago的CDP集成支持代理配置，适用于需要通过代理访问网络的环境。
 
 #### 环境变量配置
 
@@ -258,44 +259,65 @@ frago agent "从网站提取数据"
 
 ---
 
-## GUI 模式
+## Web 服务模式
 
-Frago 为偏好图形交互的用户提供桌面 GUI 界面。
+frago 通过本地 Web 服务提供基于浏览器的 GUI。无需额外安装——只需 Chrome 浏览器。
 
-### 启动 GUI
+### 启动 Web 服务
 
 ```bash
-# 启动 GUI
-frago gui
+# 启动后台服务（推荐）
+frago server start      # 在端口 8093 启动
 
-# 启动调试模式（启用开发者工具）
-frago gui --debug
+# 或在前台启动（用于调试）
+frago server --debug    # 运行直到 Ctrl+C，带日志
 ```
 
-### GUI 要求
+### 服务命令
 
-GUI 已默认包含——无需额外安装。
+```bash
+frago server start      # 启动后台服务
+frago server stop       # 停止后台服务
+frago server status     # 检查服务是否运行
+```
 
-**平台特定系统依赖**：
+### 访问 GUI
 
-| 平台 | 后端 | 额外依赖 |
-|------|------|----------|
-| Linux | WebKit2GTK | `sudo apt install python3-gi gir1.2-webkit2-4.1` |
-| macOS | WKWebView | 无（内置） |
-| Windows | WebView2 | Edge WebView2 Runtime（推荐） |
+启动服务后，在浏览器中打开：
 
-### GUI 功能
+```
+http://127.0.0.1:8093
+```
 
-GUI 提供：
+### Web 服务功能
 
-- **Recipe 浏览器**：列出、查看详情和执行 recipe
-- **命令输入**：执行 frago 命令并可视化反馈
-- **状态显示**：实时连接和执行状态
-- **历史记录**：查看命令和执行历史
+基于 Web 的 GUI 提供：
 
-### GUI 设计
+- **仪表板**：最近会话和系统状态概览
+- **任务页面**：交互式 Claude Code 控制台，实时会话监控
+- **Recipe 页面**：浏览、查看详情和执行 recipe
+- **技能页面**：管理和查看已安装的技能
+- **设置页面**：配置模型覆盖、外观和同步选项
+- **AI 标题生成**：使用 Claude Haiku 自动生成会话标题
 
-GUI 使用 GitHub Dark 配色方案，适合长时间使用：
+### AI 标题生成
+
+会话可以使用 Claude Haiku 模型自动生成标题：
+
+- **开关**：在任务页面头部启用/禁用
+- **模型**：使用 Claude Haiku 实现快速、经济的标题生成
+- **存储**：标题存储在 `~/.frago/sessions.json`
+- **备选**：始终支持手动编辑标题
+
+### 平台说明
+
+- 适用于任何有 Chrome/Edge/Firefox 的平台
+- 无需平台特定依赖（不同于之前基于 pywebview 的 GUI）
+- 服务默认运行在端口 8093
+
+### 设计
+
+Web GUI 使用 GitHub Dark 配色方案，适合长时间使用：
 
 - **背景**：深蓝灰色（`#0d1117`）
 - **强调色**：柔和蓝色（`#58a6ff`）
@@ -347,7 +369,7 @@ frago sync -m "message" # 自定义提交信息
 | Skills | `frago-*` 前缀 | `~/.claude/skills/` |
 | Recipes | 所有配方 | `~/.frago/recipes/` |
 
-你的个人非 Frago 的 Claude 命令和 skills **永远不会被触及**。
+你的个人非 frago 的 Claude 命令和 skills **永远不会被触及**。
 
 ---
 
@@ -700,5 +722,5 @@ node --version  # 应为 20.x 或更高版本
 1. Chrome 必须启用 CDP 模式运行，保持 9222 端口可用
 2. 所有截图和输出文件必须使用绝对路径
 3. Recipe 执行前确保元数据文件（.md）与脚本文件配对
-4. GUI 模式已默认包含，Linux 需要安装系统依赖（WebKit2GTK）
+4. Web 服务模式无需额外安装，任何带有现代浏览器的平台均可使用
 5. 会话监控依赖 watchdog，自动随基础包安装

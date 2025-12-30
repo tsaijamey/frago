@@ -12,9 +12,11 @@
 
 | 版本 | 主要变化 |
 |------|----------|
-| **v0.15.0** | Run 完成时自动更新 recipe 元数据；修复 CLI 对复杂数据类型的显示问题 |
-| **v0.14.0** | GUI 新增教程查看器；viewer 支持锚点跳转；修复 Twitter 统计数据顺序 |
-| **v0.13.0** | Sync 命令现在排除 .claude/commands，保护你的个人命令不被覆盖 |
+| **v0.20.0** | AI 标题生成；交互式控制台 UI；模型覆盖设置 |
+| **v0.19.0** | 增强设置；多设备同步；后台会话同步 |
+| **v0.18.0** | 会话名称提取；仪表板活动概览 |
+| **v0.17.0** | Web 服务架构；`frago server` 命令；浏览器端 GUI |
+| **v0.16.0** | Windows 跨平台支持；路径编码修复 |
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
@@ -151,7 +153,7 @@ Agent 会：
 | **原生 CDP** | 直连 Chrome DevTools Protocol，~2MB 轻量级，无 Node.js 依赖 |
 | **Run 系统** | 持久化任务上下文，JSONL 结构化日志 |
 | **Recipe 系统** | 元数据驱动，三级优先级（Project > User > Example） |
-| **Session 系统** | Agent 会话监控，实时执行跟踪，多 Agent 适配 |
+| **Web 服务** | FastAPI 后端 + React 前端，浏览器端 GUI（端口 8093） |
 | **多运行时** | Chrome JS、Python、Shell 三种运行时支持 |
 
 ```
@@ -224,6 +226,12 @@ frago init --reset
 frago 也提供命令行工具，供调试或脚本集成：
 
 ```bash
+# Web 服务（浏览器端 GUI）
+frago server start      # 启动后台服务（端口 8093）
+frago server stop       # 停止后台服务
+frago server status     # 检查服务状态
+# 然后在浏览器中打开 http://127.0.0.1:8093
+
 # 浏览器操作
 frago chrome navigate https://example.com
 frago chrome click 'button[type="submit"]'
@@ -397,24 +405,23 @@ frago deploy               # 从你的仓库获取最新资源
 
 ## 项目状态
 
-📍 **当前阶段**：GUI 应用模式和 Agent 会话监控完成，四大系统协同工作
+📍 **当前阶段**：Web 服务架构完成，AI 驱动功能增强
 
-**已完成（Feature 008-010）**：
+**最新功能（v0.17.0 - v0.20.0）**：
 
-- ✅ GUI 应用模式 - pywebview 跨平台桌面界面
-- ✅ GUI 设计重构 - GitHub Dark 配色方案
-- ✅ Agent 会话监控 - 实时执行跟踪和数据持久化
-- ✅ JSONL 增量解析 - watchdog 文件系统监控
-- ✅ 多 Agent 支持 - 适配器模式（Claude Code、Cursor、Cline）
+- ✅ Web 服务模式 - `frago server` 启动浏览器端 GUI（端口 8093）
+- ✅ AI 标题生成 - Claude Haiku 自动生成会话标题
+- ✅ 交互式控制台 - 从 Web UI 执行 Claude Code 任务
+- ✅ 多设备同步 - 通过 Web 服务跨设备同步会话
+- ✅ 模型覆盖设置 - 配置 default/sonnet/haiku 模型
 
 **核心基建**：
 
-- ✅ 原生 CDP 协议层（直接控制 Chrome）
-- ✅ Recipe 元数据驱动架构（多运行时支持）
-- ✅ Run 命令系统（持久化上下文、JSONL 日志）
-- ✅ Session 监控系统（实时执行跟踪）
-- ✅ CLI 工具和命令系统
-- ✅ 三级 Recipe 管理体系
+- ✅ 原生 CDP 协议层（直接控制 Chrome，~2MB 轻量级）
+- ✅ Recipe 元数据驱动架构（chrome-js/python/shell 运行时）
+- ✅ Run 命令系统（主题型任务管理、JSONL 结构化日志）
+- ✅ Web 服务后端（FastAPI + React 前端）
+- ✅ CLI 工具和分组命令系统
 
 详见 [项目进展](docs/roadmap.zh-CN.md)
 

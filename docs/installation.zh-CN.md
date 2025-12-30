@@ -142,7 +142,7 @@ frago init --update-resources
 
 | 文件 | 用途 |
 |------|------|
-| `~/.frago/config.json` | Frago 配置（认证方式、资源状态） |
+| `~/.frago/config.json` | frago 配置（认证方式、资源状态） |
 | `~/.claude/settings.json` | Claude Code 设置（自定义 API 端点配置） |
 | `~/.claude/commands/frago.*.md` | 已安装的 slash 命令 |
 | `~/.frago/recipes/` | 用户级 Recipe |
@@ -165,28 +165,33 @@ frago sync --no-push    # 仅拉取，不推送
 
 ---
 
-## GUI 模式
+## Web 服务模式
 
-GUI 和剪贴板功能已默认包含——无需额外安装。
+frago 通过本地 Web 服务提供基于浏览器的 GUI。无需额外安装——只需 Chrome 浏览器。
 
-**GUI 的平台要求**：
-
-| 平台 | 后端 | 系统依赖 |
-|------|------|----------|
-| **Linux** | WebKit2GTK | `sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1` |
-| **macOS** | WKWebView | 无（内置） |
-| **Windows** | WebView2 | Edge WebView2 Runtime |
-
-**Linux 用户**：使用 GUI 前先安装系统依赖：
+**启动 Web 服务**：
 ```bash
-sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
+# 启动后台服务（推荐）
+frago server start      # 在端口 8093 启动
+
+# 或在前台启动（用于调试）
+frago server --debug    # 运行直到 Ctrl+C，带日志
 ```
 
-**启动 GUI**：
+**服务命令**：
 ```bash
-frago gui
-frago gui --debug  # 带开发者工具
+frago server start      # 启动后台服务
+frago server stop       # 停止后台服务
+frago server status     # 检查服务是否运行
 ```
+
+**访问 GUI**：
+- 启动服务后，在浏览器中打开 `http://127.0.0.1:8093`
+
+**平台说明**：
+- 适用于任何有 Chrome/Edge/Firefox 的平台
+- 无需平台特定依赖
+- 服务默认运行在端口 8093
 
 ---
 
@@ -220,15 +225,15 @@ uv sync --all-extras --dev
 
 | 依赖 | 用途 | 是否必须 |
 |------|------|----------|
-| **Python 3.9+** | Frago 运行时 | 是 |
+| **Python 3.9+** | frago 运行时 | 是 |
 | **Node.js 20+** | Claude Code 依赖 | 是（使用 Claude Code 集成时） |
 | **Chrome 浏览器** | CDP 浏览器自动化 | 是（使用 CDP 功能时） |
 | **curl 或 wget** | 下载安装脚本（nvm） | 是（自动安装时） |
 | **git** | 克隆仓库 | 开发时需要 |
 
-### Frago 不会帮你做的事情
+### frago 不会帮你做的事情
 
-1. **安装系统级软件** - Frago 无法执行 `sudo apt/dnf/pacman` 命令
+1. **安装系统级软件** - frago 无法执行 `sudo apt/dnf/pacman` 命令
 2. **配置网络代理** - 如需代理访问 npm/pip，需要你自行配置
 3. **处理权限问题** - npm 全局目录权限问题需要手动解决
 4. **选择发行版特定命令** - 你需要根据自己的发行版选择正确的命令

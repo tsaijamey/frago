@@ -144,7 +144,7 @@ frago init --update-resources
 
 | File | Purpose |
 |------|---------|
-| `~/.frago/config.json` | Frago configuration (auth method, resource status) |
+| `~/.frago/config.json` | frago configuration (auth method, resource status) |
 | `~/.claude/settings.json` | Claude Code settings (custom API endpoint config) |
 | `~/.claude/commands/frago.*.md` | Installed slash commands |
 | `~/.frago/recipes/` | User-level recipes |
@@ -167,28 +167,33 @@ frago sync --no-push    # Only pull, don't push
 
 ---
 
-## GUI Mode
+## Web Service Mode
 
-GUI and clipboard features are included by default—no extra installation needed.
+frago provides a browser-based GUI through a local web service. No extra installation needed—just Chrome browser.
 
-**Platform requirements for GUI**:
-
-| Platform | Backend | System Dependencies |
-|----------|---------|---------------------|
-| **Linux** | WebKit2GTK | `sudo apt install python3-gi python3-gi-cairo gir1.2-webkit2-4.1` |
-| **macOS** | WKWebView | None (built-in) |
-| **Windows** | WebView2 | Edge WebView2 Runtime |
-
-**Linux users**: Install system dependencies before using GUI:
+**Launch Web Service**:
 ```bash
-sudo apt install -y python3-gi python3-gi-cairo gir1.2-webkit2-4.1
+# Start background server (recommended)
+frago server start      # Starts on port 8093
+
+# Or start in foreground (for debugging)
+frago server --debug    # Runs until Ctrl+C with logs
 ```
 
-**Launch GUI**:
+**Server Commands**:
 ```bash
-frago gui
-frago gui --debug  # With developer tools
+frago server start      # Start background server
+frago server stop       # Stop background server
+frago server status     # Check if server is running
 ```
+
+**Access the GUI**:
+- Open `http://127.0.0.1:8093` in your browser after starting the server
+
+**Platform Notes**:
+- Works on any platform with Chrome/Edge/Firefox
+- No platform-specific dependencies required
+- Server runs on port 8093 by default
 
 ---
 
@@ -222,15 +227,15 @@ Before installing frago on Linux, ensure your system meets the following require
 
 | Dependency | Purpose | Required |
 |------------|---------|----------|
-| **Python 3.9+** | Frago runtime | Yes |
+| **Python 3.9+** | frago runtime | Yes |
 | **Node.js 20+** | Claude Code dependency | Yes (for Claude Code integration) |
 | **Chrome Browser** | CDP browser automation | Yes (for CDP features) |
 | **curl or wget** | Download installation scripts (nvm) | Yes (for auto-install) |
 | **git** | Clone repositories | For development |
 
-### What Frago Does NOT Do For You
+### What frago Does NOT Do For You
 
-1. **Install system packages** - Frago cannot run `sudo apt/dnf/pacman` commands
+1. **Install system packages** - frago cannot run `sudo apt/dnf/pacman` commands
 2. **Configure network proxy** - You need to set up proxy for npm/pip if needed
 3. **Handle permission issues** - npm global directory permissions need manual setup
 4. **Choose distro-specific commands** - You need to select commands for your distribution

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Frago Common Command Quick Reference
+# frago Common Command Quick Reference
 # Applies to: /frago.run, /frago.do, /frago.recipe, /frago.test
 
 # === Chrome Management (Execute First) ===

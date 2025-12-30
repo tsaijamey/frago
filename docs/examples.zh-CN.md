@@ -1,4 +1,4 @@
-# Frago 示例参考
+# frago 示例参考
 
 ## 分镜JSON示例
 

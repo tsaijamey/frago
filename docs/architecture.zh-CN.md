@@ -1,9 +1,9 @@
-# Frago 技术架构
+# frago 技术架构
 
 ## 🏗️ 系统架构
 
 ```
-Frago 使用流程架构图
+frago 使用流程架构图
 ===================
 
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -123,9 +123,9 @@ Recipe 三级优先级系统：
 
 ## 🎯 核心差异对比
 
-### Frago vs Playwright / Selenium
+### frago vs Playwright / Selenium
 
-| 维度 | **Playwright / Selenium** | **Frago** |
+| 维度 | **Playwright / Selenium** | **frago** |
 |------|--------------------------|-----------|
 | **核心定位** | 测试自动化框架 | AI驱动的多运行时自动化框架 |
 | **设计目标** | 验证软件质量 | 可复用的自动化脚本和任务编排 |
@@ -138,14 +138,14 @@ Recipe 三级优先级系统：
 | **适用场景** | 质量保障、回归测试 | 数据采集、自动化脚本、AI辅助任务 |
 
 **关键差异**：
-- ✅ **持久化浏览器会话** - Playwright每次测试启动新浏览器，Frago连接已运行的Chrome实例
+- ✅ **持久化浏览器会话** - Playwright每次测试启动新浏览器，frago连接已运行的Chrome实例
 - ✅ **Recipe元数据驱动** - 可复用的自动化脚本，支持三级优先级管理
 - ✅ **零中继层** - 直接WebSocket连接CDP，无Node.js中继，延迟更低
 - ✅ **轻量级部署** - 无需Node.js环境，纯Python实现
 
-### Frago vs Browser Use
+### frago vs Browser Use
 
-| 维度 | **Browser Use** | **Frago** |
+| 维度 | **Browser Use** | **frago** |
 |------|----------------|-----------|
 | **核心定位** | 通用AI自动化平台 | AI辅助的可复用自动化框架 |
 | **AI角色** | 任务执行者（用户说"做什么"） | 任务编排者（AI调度Recipe和命令） |
@@ -174,7 +174,7 @@ Recipe 三级优先级系统：
 1. **性能瓶颈消除**
    ```
    Playwright: Python → Node.js中继 → CDP → Chrome
-   Frago:     Python → CDP → Chrome
+   frago:     Python → CDP → Chrome
    ```
    - 双RPC架构在大量CDP调用时产生明显延迟
    - 迁移后："Massively increased speed for element extraction and screenshots"
@@ -187,7 +187,7 @@ Recipe 三级优先级系统：
 
 3. **依赖轻量化**
    - Playwright: ~400MB + Node.js运行时
-   - Frago: ~2MB (websocket-client)
+   - frago: ~2MB (websocket-client)
 
 **结论**：对于需要**频繁CDP调用、大量截图、持久会话**的自动化场景，原生CDP是更优选择。
 
@@ -227,7 +227,7 @@ frago chrome exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 
 **与Browser Use的差异**：
 - Browser Use: 每次任务都需LLM推理（$$$）
-- Frago: AI决策（分镜设计）+ Recipe加速（重复操作）
+- frago: AI决策（分镜设计）+ Recipe加速（重复操作）
 
 ### Recipe元数据驱动架构（004迭代）
 
@@ -361,7 +361,7 @@ Session 系统提供 AI agent 执行数据的实时监控和持久化。
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Frago 会话存储                               │
+│              frago 会话存储                               │
 │  ~/.frago/sessions/{agent_type}/{session_id}/           │
 │  ├── metadata.json   (会话元数据)                        │
 │  ├── steps.jsonl     (解析的执行步骤)                    │
@@ -411,59 +411,99 @@ _adapters = {
 }
 ```
 
-## GUI 架构
+## Web 服务架构
 
-GUI 系统使用 pywebview 提供桌面界面。
+Web 服务系统通过 FastAPI 后端和 React 前端提供基于浏览器的 GUI。
 
 ### 技术栈
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      用户界面                             │
-│  - HTML5/CSS3/JavaScript                                │
+│                      浏览器界面                           │
+│  - React 18 + TypeScript                                │
+│  - Zustand（状态管理）                                   │
+│  - Tailwind CSS（样式）                                  │
 │  - GitHub Dark 配色方案                                  │
-│  - 响应式布局 (600-1600px)                              │
+└──────────────────┬──────────────────────────────────────┘
+                   │ HTTP / WebSocket
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                  FastAPI 后端                            │
+│  - RESTful API 端点                                     │
+│  - WebSocket 实时更新                                   │
+│  - Uvicorn ASGI 服务器                                  │
+│  - 后台守护进程模式                                      │
 └──────────────────┬──────────────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    pywebview                             │
-│  - WebKit2GTK (Linux)                                   │
-│  - WebView2 (Windows)                                   │
-│  - WKWebView (macOS)                                    │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Python 后端 (API)                        │
-│  - FragoGuiApi 类 (js_api)                              │
-│  - Recipe 管理                                           │
-│  - 命令执行                                              │
-│  - 历史跟踪                                              │
+│                    核心服务                               │
+│  - 会话同步服务                                          │
+│  - Recipe 管理                                          │
+│  - 配置管理                                              │
+│  - AI 标题生成 (Claude Haiku)                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### JS-Python 桥接
+### 服务命令
 
-```javascript
-// 前端 (JavaScript)
-const result = await pywebview.api.execute_command("recipe list");
-const recipes = await pywebview.api.get_recipes();
-const detail = await pywebview.api.run_recipe("name", params);
-
-// 后端 (Python FragoGuiApi 类)
-def execute_command(self, command: str) -> dict:
-    """执行 frago 命令并返回结果"""
-    ...
-
-def get_recipes(self) -> list[dict]:
-    """获取所有可用 recipe"""
-    ...
-
-def run_recipe(self, name: str, params: dict) -> dict:
-    """使用参数运行 recipe"""
-    ...
+```bash
+frago server start      # 在端口 8093 启动后台守护进程
+frago server stop       # 停止后台守护进程
+frago server status     # 检查服务状态
+frago server --debug    # 在前台运行并显示日志
 ```
+
+### API 端点
+
+```python
+# Recipe 端点
+GET  /api/recipes              # 列出所有 recipe
+GET  /api/recipes/{name}       # 获取 recipe 详情
+POST /api/recipes/{name}/run   # 执行 recipe
+
+# 会话端点
+GET  /api/sessions             # 列出所有会话
+GET  /api/sessions/{id}        # 获取会话详情
+POST /api/sessions/{id}/title  # 更新会话标题
+
+# 配置端点
+GET  /api/config               # 获取配置
+PUT  /api/config               # 更新配置
+
+# 同步端点
+POST /api/sync                 # 触发资源同步
+```
+
+### 前端架构
+
+```typescript
+// 使用 Zustand 进行状态管理
+interface AppStore {
+  sessions: Session[];
+  selectedSession: Session | null;
+  aiTitleEnabled: boolean;
+  syncSessions: () => Promise<void>;
+  generateTitle: (sessionId: string) => Promise<void>;
+}
+
+// 实时会话监控
+useEffect(() => {
+  const interval = setInterval(() => {
+    syncSessions();
+  }, 5000);
+  return () => clearInterval(interval);
+}, []);
+```
+
+### 主要功能
+
+- **仪表板**：最近会话和系统状态概览
+- **任务页面**：交互式 Claude Code 控制台，实时监控
+- **Recipe 页面**：浏览、搜索和执行 recipe
+- **技能页面**：查看和管理已安装的技能
+- **设置页面**：配置模型、外观和同步选项
+- **AI 标题生成**：使用 Claude Haiku 自动生成会话标题
 
 ## 四系统集成
 
@@ -525,4 +565,4 @@ Run 系统、Recipe 系统、Session 系统和原生 CDP 如何协同工作：
 
 3. **与 Browser Use 的本质不同**
    - Browser Use: 通用任务自动化（适应性强，token 消耗高）
-   - Frago: AI 编排 + Recipe 加速（控制力强，token 效率高）
+   - frago: AI 编排 + Recipe 加速（控制力强，token 效率高）

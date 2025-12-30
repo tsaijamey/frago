@@ -12,9 +12,11 @@
 
 | Version | Highlights |
 |---------|------------|
-| **v0.15.0** | Run completion now updates recipe metadata automatically; fixed CLI display for complex data types |
-| **v0.14.0** | New tutorial viewer in GUI; better anchor links in viewer; fixed Twitter stats extraction order |
-| **v0.13.0** | Sync command now excludes .claude/commands to keep your personal commands safe |
+| **v0.20.0** | AI title generation; interactive console UI; model override settings |
+| **v0.19.0** | Enhanced settings; multi-device sync; background session sync |
+| **v0.18.0** | Session name extraction; dashboard activity overview |
+| **v0.17.0** | Web service architecture; `frago server` command; browser-based GUI |
+| **v0.16.0** | Windows cross-platform support; path encoding fixes |
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
@@ -151,6 +153,7 @@ The above workflow relies on frago's underlying capabilities:
 | **Native CDP** | Direct Chrome DevTools Protocol connection, ~2MB lightweight, no Node.js deps |
 | **Run System** | Persistent task context, JSONL structured logs |
 | **Recipe System** | Metadata-driven, three-tier priority (Project > User > Example) |
+| **Web Service** | FastAPI backend + React frontend, browser-based GUI on port 8093 |
 | **Multi-Runtime** | Chrome JS, Python, Shell runtime support |
 
 ```
@@ -226,6 +229,12 @@ See the "How to Use" section above for detailed workflow.
 frago also provides CLI tools for debugging or script integration:
 
 ```bash
+# Web service (browser-based GUI)
+frago server start      # Start background server on port 8093
+frago server stop       # Stop background server
+frago server status     # Check server status
+# Then open http://127.0.0.1:8093 in your browser
+
 # Browser operations
 frago chrome navigate https://example.com
 frago chrome click 'button[type="submit"]'
@@ -399,21 +408,22 @@ Your personal, non-frago Claude commands and skills are never touched.
 
 ## Project Status
 
-📍 **Current Stage**: GUI app mode and session monitoring complete, entering developer experience enhancement phase
+📍 **Current Stage**: Web service architecture complete with AI-powered features
 
-**Latest Features (Feature 008-010)**:
+**Latest Features (v0.17.0 - v0.20.0)**:
 
-- ✅ GUI app mode - `frago gui` launches desktop interface with pywebview
-- ✅ GUI design optimization - GitHub Dark color scheme for professional visual experience
-- ✅ Agent session monitoring - Real-time tracking and parsing of Claude Code session data
-- ✅ Session data persistence - `~/.frago/sessions/{agent_type}/{session_id}/` structured storage
+- ✅ Web service mode - `frago server` launches browser-based GUI on port 8093
+- ✅ AI title generation - Claude Haiku auto-generates session titles
+- ✅ Interactive console - Execute Claude Code tasks from web UI
+- ✅ Multi-device sync - Sync sessions across devices via web service
+- ✅ Model override settings - Configure default/sonnet/haiku models
 
 **Core Infrastructure**:
 
 - ✅ Native CDP protocol layer (direct Chrome control, ~2MB lightweight)
 - ✅ Recipe metadata-driven architecture (chrome-js/python/shell runtime)
 - ✅ Run command system (topic-based task management, JSONL structured logs)
-- ✅ Init command system (dependency check, resource installation)
+- ✅ Web service backend (FastAPI + React frontend)
 - ✅ CLI tools and grouped command system
 
 See [Roadmap](https://github.com/tsaijamey/Frago/blob/main/docs/roadmap.md) for details

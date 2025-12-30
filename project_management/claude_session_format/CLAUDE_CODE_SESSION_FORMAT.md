@@ -39,7 +39,7 @@ Queue management metadata, not part of conversation content.
 | `timestamp` | ISO8601 | ✅ | Operation timestamp |
 | `sessionId` | UUID | ✅ | Session identifier |
 
-**Frago Handling**: Skipped by parser.
+**frago Handling**: Skipped by parser.
 
 ---
 
@@ -113,7 +113,7 @@ User input or tool execution results.
    }
    ```
 
-**Frago Handling**:
+**frago Handling**:
 - Plain text → `StepType.USER_MESSAGE`
 - Tool result → `StepType.TOOL_RESULT`
 
@@ -199,7 +199,7 @@ Claude model responses, may contain text and/or tool calls.
    }
    ```
 
-**Frago Handling**:
+**frago Handling**:
 - Text only → `StepType.ASSISTANT_MESSAGE`
 - Contains tool_use → `StepType.TOOL_CALL` + `ToolCallRecord`
 
@@ -243,7 +243,7 @@ System events such as errors, retries, and internal state changes.
 | `compactMetadata` | object | ❌ | Compact summary metadata |
 | `logicalParentUuid` | UUID | ❌ | Logical parent for threading |
 
-**Frago Handling**: Skipped by parser.
+**frago Handling**: Skipped by parser.
 
 ---
 
@@ -260,7 +260,7 @@ Session summary generated at end.
 }
 ```
 
-**Frago Handling**: Skipped by parser, used for status inference.
+**frago Handling**: Skipped by parser, used for status inference.
 
 ---
 
@@ -278,7 +278,7 @@ File system state snapshot for undo/redo functionality.
 }
 ```
 
-**Frago Handling**: Skipped by parser.
+**frago Handling**: Skipped by parser.
 
 ---
 
@@ -386,7 +386,7 @@ File system state snapshot for undo/redo functionality.
 | `output_tokens` | Generated output tokens |
 | `service_tier` | Service tier: `"standard"` |
 
-**Frago Handling**: Currently discarded (not stored).
+**frago Handling**: Currently discarded (not stored).
 
 ---
 
@@ -418,11 +418,11 @@ Agent tool spawns child sessions marked with:
 }
 ```
 
-**Frago Handling**: Sidechain sessions are skipped during sync.
+**frago Handling**: Sidechain sessions are skipped during sync.
 
 ---
 
-## Frago Implementation Reference
+## frago Implementation Reference
 
 ### Data Flow
 
@@ -437,13 +437,13 @@ Claude JSONL → Parser → SessionStep → Storage → GUI Models
 | Record Parser | `src/frago/session/parser.py` | Parse JSONL records, extract content |
 | Data Models | `src/frago/session/models.py` | SessionStep, ToolCallRecord, etc. |
 | Storage | `src/frago/session/storage.py` | Read/write steps.jsonl, metadata.json |
-| Sync Logic | `src/frago/session/sync.py` | Sync from Claude → Frago format |
+| Sync Logic | `src/frago/session/sync.py` | Sync from Claude → frago format |
 | GUI Models | `src/frago/gui/models.py` | TaskItem, TaskStep, TaskDetail |
 | API Adapter | `src/frago/server/adapter.py` | HTTP API wrapper |
 
 ### Data Transformation
 
-| Claude Field | Frago Field | Notes |
+| Claude Field | frago Field | Notes |
 |--------------|-------------|-------|
 | `sessionId` | `MonitoredSession.session_id` | Direct mapping |
 | `uuid` | `SessionStep.raw_uuid` | Preserved for reference |
@@ -504,4 +504,4 @@ When Claude Code updates, check for:
 3. **Changed field types** - Run schema check, look for `TYPE_MISMATCH` warnings
 4. **Removed fields** - Run schema check, look for `MISSING_FIELD` warnings
 
-Update this document and relevant Frago code when changes are detected.
+Update this document and relevant frago code when changes are detected.

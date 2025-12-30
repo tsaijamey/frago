@@ -1,21 +1,22 @@
 [简体中文](user-guide.zh-CN.md)
 
-# Frago User Guide
+# frago User Guide
 
 ## Overview
 
-Frago is a multi-runtime automation infrastructure designed for AI agents, providing four core systems that work together to solve automation challenges:
+frago is a multi-runtime automation infrastructure designed for AI agents, providing four core systems that work together to solve automation challenges:
 
 - **🧠 Run System**: AI's working memory - persistent context and structured logs
 - **📚 Recipe System**: AI's "muscle memory" - reusable automation scripts
 - **🔍 Session System**: Agent monitoring - real-time execution tracking
 - **⚡ Native CDP**: Lightweight execution engine - direct Chrome control
+- **🌐 Web Service**: Browser-based GUI with AI-powered features
 
 ---
 
 ## Core Use Cases
 
-Frago is suitable for various browser automation and data collection tasks:
+frago is suitable for various browser automation and data collection tasks:
 
 1. **Interactive Exploration & Debugging**
    - Explore unknown pages while maintaining full context
@@ -211,7 +212,7 @@ frago chrome pointer <selector> --duration 2
 
 ### Proxy Configuration
 
-Frago's CDP integration supports proxy configuration for environments requiring network access through a proxy.
+frago's CDP integration supports proxy configuration for environments requiring network access through a proxy.
 
 #### Environment Variable Configuration
 
@@ -443,44 +444,65 @@ frago agent "Extract data from website"
 
 ---
 
-## GUI Mode
+## Web Service Mode
 
-Frago provides a desktop GUI interface for users who prefer graphical interaction.
+frago provides a browser-based GUI through a local web service. No extra installation needed—just Chrome browser.
 
-### Starting GUI
+### Starting Web Service
 
 ```bash
-# Launch GUI
-frago gui
+# Start background server (recommended)
+frago server start      # Starts on port 8093
 
-# Launch with debug mode (developer tools enabled)
-frago gui --debug
+# Or start in foreground (for debugging)
+frago server --debug    # Runs until Ctrl+C with logs
 ```
 
-### GUI Requirements
+### Server Commands
 
-GUI is included by default—no extra installation needed.
+```bash
+frago server start      # Start background server
+frago server stop       # Stop background server
+frago server status     # Check if server is running
+```
 
-**Platform-specific system dependencies**:
+### Accessing the GUI
 
-| Platform | Backend | Additional Requirements |
-|----------|---------|------------------------|
-| Linux | WebKit2GTK | `sudo apt install python3-gi gir1.2-webkit2-4.1` |
-| macOS | WKWebView | None (built-in) |
-| Windows | WebView2 | Edge WebView2 Runtime (recommended) |
+After starting the server, open your browser and navigate to:
 
-### GUI Features
+```
+http://127.0.0.1:8093
+```
 
-The GUI provides:
+### Web Service Features
 
-- **Recipe Browser**: List, view details, and execute recipes
-- **Command Input**: Execute frago commands with visual feedback
-- **Status Display**: Real-time connection and execution status
-- **History**: View command and execution history
+The web-based GUI provides:
 
-### GUI Design
+- **Dashboard**: Overview of recent sessions and system status
+- **Tasks Page**: Interactive Claude Code console with real-time session monitoring
+- **Recipes Page**: Browse, view details, and execute recipes
+- **Skills Page**: Manage and view installed skills
+- **Settings Page**: Configure model overrides, appearance, and sync options
+- **AI Title Generation**: Automatically generate session titles using Claude Haiku
 
-The GUI uses GitHub Dark color scheme for comfortable long-term use:
+### AI Title Generation
+
+Sessions can be automatically titled using Claude Haiku model:
+
+- **Toggle**: Enable/disable in Tasks page header
+- **Model**: Uses Claude Haiku for fast, cost-effective title generation
+- **Storage**: Titles stored in `~/.frago/sessions.json`
+- **Fallback**: Manual title editing always available
+
+### Platform Notes
+
+- Works on any platform with Chrome/Edge/Firefox
+- No platform-specific dependencies required (unlike previous pywebview-based GUI)
+- Server runs on port 8093 by default
+
+### Design
+
+The web GUI uses GitHub Dark color scheme for comfortable long-term use:
 
 - **Background**: Deep blue-gray (`#0d1117`)
 - **Accent**: Soft blue (`#58a6ff`)
@@ -491,7 +513,7 @@ The GUI uses GitHub Dark color scheme for comfortable long-term use:
 
 ## Integration with Claude Code
 
-Frago provides slash commands for Claude Code integration, enabling AI-driven task execution.
+frago provides slash commands for Claude Code integration, enabling AI-driven task execution.
 
 ### Available Slash Commands
 
@@ -953,13 +975,13 @@ frago sync -m "message" # Custom commit message
 | Skills | `frago-*` prefix | `~/.claude/skills/` |
 | Recipes | All recipes | `~/.frago/recipes/` |
 
-Your personal, non-Frago Claude commands and skills are **never touched**.
+Your personal, non-frago Claude commands and skills are **never touched**.
 
 ---
 
 ## Next Steps
 
-- **New to Frago?** Start with [Use Cases](use-cases.md) for real-world examples
+- **New to frago?** Start with [Use Cases](use-cases.md) for real-world examples
 - **Want technical details?** Read [Architecture](architecture.md)
 - **Creating Recipes?** See [Recipe System Guide](recipes.md)
 - **Contributing?** Check [Development Guide](development.md)

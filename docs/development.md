@@ -1,11 +1,11 @@
 [简体中文](development.zh-CN.md)
 
-# Frago Development Guide
+# frago Development Guide
 
 ## Project Directory Structure
 
 ```
-Frago/
+frago/
 ├── README.md                        # Project description
 ├── CLAUDE.md                        # Project configuration (tech stack, code style)
 ├── .claude/
@@ -16,7 +16,7 @@ Frago/
 │   └── settings.local.json          # Project configuration
 │
 ├── src/                             # Core Python code
-│   ├── frago/                      # Frago core package
+│   ├── frago/                      # frago core package
 │   │   ├── cdp/                     # CDP protocol implementation (native WebSocket)
 │   │   │   ├── client.py            # CDP client base class
 │   │   │   ├── session.py           # Session management (connection/retry/events)

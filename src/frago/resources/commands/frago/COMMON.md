@@ -1,4 +1,4 @@
-# Frago Common Resources Index
+# frago Common Resources Index
 
 This directory contains rules, guides, and script examples shared by all `/frago.dev.*` commands.
 

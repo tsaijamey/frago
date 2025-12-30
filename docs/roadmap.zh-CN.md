@@ -1,8 +1,8 @@
-# Frago 项目进展
+# frago 项目进展
 
 ## 项目状态
 
-📍 **当前阶段**：GUI 和会话监控完成，进入开发者体验增强阶段
+📍 **当前阶段**：Web 服务架构完成，AI 驱动功能增强（v0.20.0）
 
 **已完成**：
 - ✅ 原生 CDP 协议层（~3,763 行 Python）
@@ -11,16 +11,18 @@
 - ✅ Run 命令系统（主题型任务管理）
 - ✅ Init 命令（依赖检查、资源安装）
 - ✅ 环境变量支持（三级配置优先级）
-- ✅ GUI 应用模式（pywebview 桌面界面）
+- ✅ Web 服务模式（FastAPI + React，浏览器端 GUI）
 - ✅ Agent 会话监控（Claude Code 会话解析和持久化）
+- ✅ AI 标题生成（Claude Haiku 模型）
+- ✅ 交互式 Claude Code 控制台 UI
 
 **技术亮点**：
 - 🏆 原生 CDP（无 Playwright/Selenium 依赖，~2MB）
 - 🏆 AI-First 设计（Claude AI 主持任务执行和工作流编排）
 - 🏆 Recipe 加速系统（固化高频操作，避免重复 AI 推理）
 - 🏆 Run 系统（AI 的工作记忆，持久化上下文）
-- 🏆 环境变量系统（敏感信息管理 + Workflow 上下文共享）
-- 🏆 会话监控（使用 watchdog 实时跟踪 Claude Code 会话）
+- 🏆 Web 服务架构（FastAPI 后端 + React 前端，端口 8093）
+- 🏆 AI 标题生成（使用 Claude Haiku 自动命名会话）
 
 ---
 
@@ -196,6 +198,66 @@
   - `frago session show <id>` - 显示会话详情
   - `frago session watch` - 实时会话监控
 
+### Feature 011: 查看器迁移到 Chrome
+
+- [x] **内容查看器重构**
+  - 从 pywebview 迁移到 Chrome 浏览器
+  - 改善跨平台兼容性
+  - 更好的性能和稳定性
+
+### Feature 012: Sync 命令保护
+
+- [x] **个人命令保护**
+  - `frago sync` 现在排除 `.claude/commands`
+  - 个人命令受保护，不被同步操作覆盖
+  - 只同步 frago 专属资源
+
+### Feature 013: Web 服务架构
+
+- [x] **FastAPI 后端**
+  - 为所有 GUI 功能提供 RESTful API 端点
+  - WebSocket 支持实时更新
+  - 后台守护进程模式，带 PID 管理
+
+- [x] **React 前端**
+  - 从 pywebview 迁移到基于 Web 的 UI
+  - Zustand 状态管理
+  - Tailwind CSS 样式
+
+- [x] **服务命令**
+  - `frago server start` - 启动后台服务（端口 8093）
+  - `frago server stop` - 停止后台服务
+  - `frago server status` - 检查服务状态
+
+### Feature 014: 服务后台重设计
+
+- [x] **后台守护进程模式**
+  - 服务作为后台进程运行
+  - PID 文件管理（`~/.frago/server.pid`）
+  - 跨平台进程控制
+
+- [x] **增强的仪表板**
+  - 系统状态显示（CPU、内存）
+  - 活动概览
+  - 会话管理
+
+### Feature 015: AI 驱动功能
+
+- [x] **AI 标题生成**
+  - Claude Haiku 自动生成会话标题
+  - 标题存储在 `~/.frago/sessions.json`
+  - 在 Tasks 页面提供切换控制
+
+- [x] **模型覆盖设置**
+  - 配置 default_model、sonnet_model、haiku_model
+  - VSCode 设置集成
+  - Web UI 中的设置页面
+
+- [x] **交互式控制台**
+  - 从 Web UI 执行 Claude Code 任务
+  - 实时输出显示
+  - 会话续接支持
+
 ---
 
 ## 待完成功能 📝
@@ -365,6 +427,59 @@
 - **并发隔离**：多会话互不干扰
 - **可扩展性**：适配器模式支持未来 Agent
 
+### 011: 查看器迁移到 Chrome
+**目标**：将内容查看器从 pywebview 迁移到 Chrome 浏览器
+
+**成果**：
+- 基于 Chrome 的内容查看
+- 改善跨平台兼容性
+- 更好的性能和稳定性
+
+### 012: Sync 命令保护
+**目标**：保护个人命令不被同步操作覆盖
+
+**成果**：
+- `.claude/commands` 从同步中排除
+- 只同步 frago 专属资源
+- 个人自定义保持不变
+
+### 013: Web 服务架构
+**目标**：用基于 Web 的 GUI 替代 pywebview
+
+**成果**：
+- FastAPI 后端，带 RESTful API
+- React 前端，使用 Zustand 状态管理
+- WebSocket 实时更新
+- 后台守护进程模式
+
+**关键特性**：
+- **基于浏览器**：无需 pywebview 依赖
+- **跨平台**：只需 Chrome 即可工作
+- **守护进程模式**：服务在后台运行
+
+### 014: 服务后台重设计
+**目标**：改善服务生命周期管理
+
+**成果**：
+- PID 文件管理（`~/.frago/server.pid`）
+- `frago server start/stop/status` 命令
+- 增强的仪表板，带系统指标
+- 活动概览
+
+### 015: AI 驱动功能
+**目标**：添加 AI 驱动的功能
+
+**成果**：
+- Claude Haiku 标题生成
+- 模型覆盖设置（default/sonnet/haiku）
+- 交互式 Claude Code 控制台
+- VSCode 集成
+
+**关键特性**：
+- **自动命名**：AI 生成有意义的会话标题
+- **模型灵活性**：覆盖默认模型
+- **Web 控制台**：从浏览器执行任务
+
 ---
 
 ## 版本历史
@@ -459,18 +574,124 @@
    - 会话数据持久化
    - `frago session list/show/watch` 命令
 
-### v0.5.0（规划中）
+### v0.5.0（已发布 - 2025-12-05）
 
-**里程碑**：Recipe 系统增强
+**里程碑**：前端架构升级
 
-**核心目标**：
-- Chrome-JS 参数注入（解决当前 JS 脚本无法接收参数的问题）
-- Workflow 编排增强（条件分支、循环、错误处理）
-- 常用平台 Recipe 库扩展（YouTube、GitHub、Upwork）
+**重大变更**：
+- React/TypeScript 前端，使用 Vite 构建系统
+- Tasks 页面重设计（Tips/Tasks/TaskDetail）
+- GitHub Dark 配色方案
+- 原生窗口标题栏（解决 macOS 挂起问题）
+- 会话监控优化
 
-**次要目标**：
-- Run 系统模板支持
-- 日志导出（CSV/Excel）
+### v0.6.0 - v0.8.0（已发布）
+
+**里程碑**：Recipe 系统改进
+
+**重大变更**：
+- Recipe 执行优化
+- 输出处理器增强
+- CLI 命令改进
+- Bug 修复和稳定性
+
+### v0.9.0 - v0.12.0（已发布）
+
+**里程碑**：稳定性和 CLI
+
+**重大变更**：
+- View 命令改进
+- 查看器锚点链接支持
+- 各种 Bug 修复
+
+### v0.13.0（已发布）
+
+**里程碑**：Sync 命令保护
+
+**重大变更**：
+- `frago sync` 现在排除 `.claude/commands`
+- 个人命令受保护，不被同步操作覆盖
+
+### v0.14.0（已发布）
+
+**里程碑**：查看器增强
+
+**重大变更**：
+- GUI 中的教程查看器
+- 更好的锚点链接
+- Twitter 统计数据提取修复
+
+### v0.15.0（已发布）
+
+**里程碑**：Recipe 元数据自动更新
+
+**重大变更**：
+- Run 完成时自动更新 Recipe 元数据
+- CLI 对复杂数据类型的显示修复
+
+### v0.16.0（已发布）
+
+**里程碑**：Windows 跨平台支持
+
+**重大变更**：
+- Windows 路径编码修复
+- subprocess 调用的 UTF-8 编码
+- Chrome 启动器 Windows 兼容性
+- Windows 上 Python 3.13 要求（GUI 后端）
+
+### v0.17.0（已发布）
+
+**里程碑**：Web 服务架构（Feature 013-014）
+
+**重大变更**：
+1. **FastAPI 后端**
+   - RESTful API 端点
+   - WebSocket 实时更新
+   - 后台守护进程模式
+
+2. **React 前端迁移**
+   - 从 pywebview 迁移到基于 Web 的 UI
+   - 浏览器端 GUI（端口 8093）
+
+3. **服务命令**
+   - `frago server start/stop/status/open`
+
+### v0.18.0（已发布）
+
+**里程碑**：会话增强
+
+**重大变更**：
+- 从第一条用户消息提取会话名称
+- 仪表板活动概览
+- 助手消息的 Markdown 渲染
+
+### v0.19.0（已发布）
+
+**里程碑**：设置和多设备同步
+
+**重大变更**：
+- 增强的设置 API
+- 同步和密钥页面
+- Web 服务模式下的多设备同步
+- 后台会话同步服务
+
+### v0.20.0（已发布 - 当前）
+
+**里程碑**：AI 和控制台增强（Feature 015）
+
+**重大变更**：
+1. **AI 标题生成**
+   - Claude Haiku 自动生成会话标题
+   - 标题存储在 `~/.frago/sessions.json`
+   - 在 Tasks 页面提供切换控制
+
+2. **交互式控制台**
+   - 从 Web UI 执行 Claude Code 任务
+   - 实时输出显示
+
+3. **模型覆盖设置**
+   - 配置 default_model、sonnet_model、haiku_model
+   - VSCode 设置集成
 
 ### v1.0.0（远期目标）
 

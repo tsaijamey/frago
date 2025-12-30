@@ -1,14 +1,14 @@
 # Key Concepts
 
-This document explains the core concepts in the Frago project and their origins.
+This document explains the core concepts in the frago project and their origins.
 
 ![Concept Relationship Diagram](images/concepts-diagram-en_20251209_132837_0.jpg)
 
 ---
 
-## Claude Code Concepts (Not Frago Original)
+## Claude Code Concepts (Not frago Original)
 
-The following concepts come from [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Frago extends upon these concepts.
+The following concepts come from [Claude Code](https://docs.anthropic.com/en/docs/claude-code). frago extends upon these concepts.
 
 ### Skill (Methodology)
 
@@ -37,9 +37,9 @@ Claude Code's slash command mechanism, stored in the `.claude/commands/` directo
 
 ---
 
-## Frago Concepts
+## frago Concepts
 
-The following concepts are original designs from the Frago project.
+The following concepts are original designs from the frago project.
 
 ### Recipe
 
@@ -97,13 +97,13 @@ projects/youtube-transcript-research/
 
 ---
 
-## Frago's Contribution
+## frago's Contribution
 
-Frago didn't invent new concepts. Instead, it **links Claude Code's skill with Frago's recipe** and provides a complete toolchain.
+frago didn't invent new concepts. Instead, it **links Claude Code's skill with frago's recipe** and provides a complete toolchain.
 
 ### Linking Skill and Recipe
 
-| | Skill (Claude Code) | Recipe (Frago) |
+| | Skill (Claude Code) | Recipe (frago) |
 |--|---------------------|----------------|
 | Essence | Methodology document | Executable script |
 | Answers | "What to do", "Why" | "How to do it" |
@@ -126,7 +126,7 @@ uv run frago recipe run volcengine_tts_with_emotion \
 
 ### Explore → Solidify → Execute Loop
 
-Frago provides four slash commands that form a complete workflow loop:
+frago provides four slash commands that form a complete workflow loop:
 
 ```
 /frago.run     Explore and research, accumulate experience (Output: Run instance)
@@ -147,7 +147,7 @@ Frago provides four slash commands that form a complete workflow loop:
 
 ### vs Workflow Nodes (Dify/Coze/n8n)
 
-| | Workflow Nodes | Frago Recipe |
+| | Workflow Nodes | frago Recipe |
 |--|----------------|--------------|
 | Creation method | Manual drag-drop / AI-assisted diagramming | Auto-generated after AI exploration |
 | Output | Flowchart (needs maintenance) | Executable script (runs directly) |
@@ -155,7 +155,7 @@ Frago provides four slash commands that form a complete workflow loop:
 
 ### vs RAG
 
-| | RAG | Frago Skill + Recipe |
+| | RAG | frago Skill + Recipe |
 |--|-----|---------------------|
 | Knowledge form | Fragmented vectors | Structured documents + executable scripts |
 | Retrieval method | Semantic similarity | AI directly reads documents |
@@ -187,7 +187,7 @@ Frago provides four slash commands that form a complete workflow loop:
 ## Summary
 
 - **Skill** (Claude Code): Methodology, tells AI how to do things
-- **Recipe** (Frago): Recipe, specific execution steps
-- **Run** (Frago): Task instance, records exploration process
-- **Session** (Frago): Agent session, real-time execution monitoring
-- **Frago's contribution**: Links all concepts, provides explore → solidify → execute → monitor loop tools
+- **Recipe** (frago): Recipe, specific execution steps
+- **Run** (frago): Task instance, records exploration process
+- **Session** (frago): Agent session, real-time execution monitoring
+- **frago's contribution**: Links all concepts, provides explore → solidify → execute → monitor loop tools

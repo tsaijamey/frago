@@ -1,11 +1,11 @@
 [简体中文](architecture.zh-CN.md)
 
-# Frago Technical Architecture
+# frago Technical Architecture
 
 ## System Architecture
 
 ```
-Frago Usage Flow Architecture
+frago Usage Flow Architecture
 ==============================
 
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -125,9 +125,9 @@ Developer → frago chrome navigate https://...
 
 ## Core Differences Comparison
 
-### Frago vs Playwright / Selenium
+### frago vs Playwright / Selenium
 
-| Dimension | **Playwright / Selenium** | **Frago** |
+| Dimension | **Playwright / Selenium** | **frago** |
 |-----------|---------------------------|-----------|
 | **Core Positioning** | Test automation framework | AI-driven multi-runtime automation framework |
 | **Design Goal** | Verify software quality | Reusable automation scripts and task orchestration |
@@ -140,14 +140,14 @@ Developer → frago chrome navigate https://...
 | **Use Cases** | Quality assurance, regression testing | Data collection, automation scripts, AI-assisted tasks |
 
 **Key Differences**:
-- ✅ **Persistent browser sessions** - Playwright launches new browser per test, Frago connects to running Chrome instance
+- ✅ **Persistent browser sessions** - Playwright launches new browser per test, frago connects to running Chrome instance
 - ✅ **Recipe metadata-driven** - Reusable automation scripts with three-level priority management
 - ✅ **Zero relay layer** - Direct WebSocket to CDP, no Node.js relay, lower latency
 - ✅ **Lightweight deployment** - No Node.js environment needed, pure Python implementation
 
-### Frago vs Browser Use
+### frago vs Browser Use
 
-| Dimension | **Browser Use** | **Frago** |
+| Dimension | **Browser Use** | **frago** |
 |-----------|----------------|-----------|
 | **Core Positioning** | General AI automation platform | AI-assisted reusable automation framework |
 | **AI Role** | Task executor (user says "do what") | Task orchestrator (AI schedules Recipes and commands) |
@@ -176,7 +176,7 @@ Developer → frago chrome navigate https://...
 1. **Performance Bottleneck Elimination**
    ```
    Playwright: Python → Node.js relay → CDP → Chrome
-   Frago:     Python → CDP → Chrome
+   frago:     Python → CDP → Chrome
    ```
    - Dual RPC architecture produces noticeable latency with many CDP calls
    - After migration: "Massively increased speed for element extraction and screenshots"
@@ -189,7 +189,7 @@ Developer → frago chrome navigate https://...
 
 3. **Dependency Lightweighting**
    - Playwright: ~400MB + Node.js runtime
-   - Frago: ~2MB (websocket-client)
+   - frago: ~2MB (websocket-client)
 
 **Conclusion**: For automation scenarios requiring **frequent CDP calls, extensive screenshots, persistent sessions**, native CDP is the better choice.
 
@@ -229,7 +229,7 @@ frago chrome exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 
 **Difference from Browser Use**:
 - Browser Use: Every task needs LLM reasoning ($$$)
-- Frago: AI decision-making (storyboard design) + Recipe acceleration (repeated operations)
+- frago: AI decision-making (storyboard design) + Recipe acceleration (repeated operations)
 
 ### Recipe Metadata-Driven Architecture (Iteration 004)
 
@@ -514,7 +514,7 @@ The Session system provides real-time monitoring and persistence of AI agent exe
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Frago Session Storage                       │
+│              frago Session Storage                       │
 │  ~/.frago/sessions/{agent_type}/{session_id}/           │
 │  ├── metadata.json   (session metadata)                 │
 │  ├── steps.jsonl     (parsed execution steps)           │
@@ -580,65 +580,105 @@ frago agent "Extract data from website"
     │   ├─ Match session by timestamp
     │   └─ Extract steps and tool calls
     │
-    └─ Persist to Frago storage
+    └─ Persist to frago storage
         ├─ metadata.json (session info)
         ├─ steps.jsonl (execution steps)
         └─ summary.json (tool call stats)
 ```
 
-## GUI Architecture
+## Web Service Architecture
 
-The GUI system provides a desktop interface using pywebview.
+The Web Service system provides a browser-based GUI through FastAPI backend and React frontend.
 
 ### Technology Stack
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    User Interface                        │
-│  - HTML5/CSS3/JavaScript                                │
+│                    Browser Interface                     │
+│  - React 18 + TypeScript                                │
+│  - Zustand (state management)                           │
+│  - Tailwind CSS (styling)                               │
 │  - GitHub Dark color scheme                             │
-│  - Responsive layout (600-1600px)                       │
+└──────────────────┬──────────────────────────────────────┘
+                   │ HTTP / WebSocket
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                  FastAPI Backend                         │
+│  - RESTful API endpoints                                │
+│  - WebSocket for real-time updates                      │
+│  - Uvicorn ASGI server                                  │
+│  - Background daemon mode                               │
 └──────────────────┬──────────────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    pywebview                             │
-│  - WebKit2GTK (Linux)                                   │
-│  - WebView2 (Windows)                                   │
-│  - WKWebView (macOS)                                    │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Python Backend (API)                    │
-│  - FragoGuiApi class (js_api)                           │
-│  - Recipe management                                     │
-│  - Command execution                                     │
-│  - History tracking                                      │
+│                  Core Services                           │
+│  - Session sync service                                 │
+│  - Recipe management                                    │
+│  - Config management                                    │
+│  - AI title generation (Claude Haiku)                   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### JS-Python Bridge
+### Server Commands
 
-```javascript
-// Frontend (JavaScript)
-const result = await pywebview.api.execute_command("recipe list");
-const recipes = await pywebview.api.get_recipes();
-const detail = await pywebview.api.run_recipe("name", params);
-
-// Backend (Python FragoGuiApi class)
-def execute_command(self, command: str) -> dict:
-    """Execute a frago command and return result"""
-    ...
-
-def get_recipes(self) -> list[dict]:
-    """Get all available recipes"""
-    ...
-
-def run_recipe(self, name: str, params: dict) -> dict:
-    """Run a recipe with parameters"""
-    ...
+```bash
+frago server start      # Start background daemon on port 8093
+frago server stop       # Stop background daemon
+frago server status     # Check server status
+frago server --debug    # Run in foreground with logs
 ```
+
+### API Endpoints
+
+```python
+# Recipe endpoints
+GET  /api/recipes              # List all recipes
+GET  /api/recipes/{name}       # Get recipe details
+POST /api/recipes/{name}/run   # Execute recipe
+
+# Session endpoints
+GET  /api/sessions             # List all sessions
+GET  /api/sessions/{id}        # Get session details
+POST /api/sessions/{id}/title  # Update session title
+
+# Config endpoints
+GET  /api/config               # Get configuration
+PUT  /api/config               # Update configuration
+
+# Sync endpoint
+POST /api/sync                 # Trigger resource sync
+```
+
+### Frontend Architecture
+
+```typescript
+// State management with Zustand
+interface AppStore {
+  sessions: Session[];
+  selectedSession: Session | null;
+  aiTitleEnabled: boolean;
+  syncSessions: () => Promise<void>;
+  generateTitle: (sessionId: string) => Promise<void>;
+}
+
+// Real-time session monitoring
+useEffect(() => {
+  const interval = setInterval(() => {
+    syncSessions();
+  }, 5000);
+  return () => clearInterval(interval);
+}, []);
+```
+
+### Key Features
+
+- **Dashboard**: Overview of recent sessions and system status
+- **Tasks Page**: Interactive Claude Code console with real-time monitoring
+- **Recipes Page**: Browse, search, and execute recipes
+- **Skills Page**: View and manage installed skills
+- **Settings Page**: Configure models, appearance, and sync options
+- **AI Title Generation**: Auto-generate session titles using Claude Haiku
 
 ---
 

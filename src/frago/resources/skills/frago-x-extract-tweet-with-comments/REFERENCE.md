@@ -226,7 +226,7 @@ Or use `scroll_to` to position first, then highlight elements in the current vie
 ## References
 
 - Twitter DOM structure change tracking: Observe changes in `data-testid` attributes
-- Frago scroll-to command: `uv run frago scroll-to --help`
+- frago scroll-to command: `uv run frago scroll-to --help`
 - Video production recipe: `examples/workflows/video_produce_from_script/recipe.md`
 
 ---

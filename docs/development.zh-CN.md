@@ -1,9 +1,9 @@
-# Frago 开发指南
+# frago 开发指南
 
 ## 项目目录结构
 
 ```
-Frago/
+frago/
 ├── README.md                        # 项目说明
 ├── CLAUDE.md                        # 项目配置（技术栈、代码风格）
 ├── .claude/
@@ -17,7 +17,7 @@ Frago/
 │   └── settings.local.json          # 项目配置
 │
 ├── src/                             # 核心Python代码
-│   ├── frago/                      # Frago核心包
+│   ├── frago/                      # frago核心包
 │   │   ├── cdp/                     # CDP协议实现（原生WebSocket）
 │   │   │   ├── client.py            # CDP客户端基类
 │   │   │   ├── session.py           # 会话管理（连接/重试/事件）

@@ -1,10 +1,10 @@
 [简体中文](roadmap.zh-CN.md)
 
-# Frago Project Progress
+# frago Project Progress
 
 ## Project Status
 
-📍 **Current Phase**: GUI and session monitoring complete, entering developer experience enhancement phase
+📍 **Current Phase**: Web service architecture complete with AI-powered features (v0.20.0)
 
 **Completed**:
 - ✅ Native CDP protocol layer (~3,763 lines of Python)
@@ -13,16 +13,18 @@
 - ✅ Run command system (topic-based task management)
 - ✅ Init command (dependency check, resource installation)
 - ✅ Environment variable support (three-level config priority)
-- ✅ GUI app mode (pywebview desktop interface)
+- ✅ Web service mode (FastAPI + React, browser-based GUI)
 - ✅ Agent session monitoring (Claude Code session parsing and persistence)
+- ✅ AI title generation (Claude Haiku model)
+- ✅ Interactive Claude Code console UI
 
 **Technical Highlights**:
 - 🏆 Native CDP (no Playwright/Selenium dependencies, ~2MB)
 - 🏆 AI-First design (Claude AI hosts task execution and workflow orchestration)
 - 🏆 Recipe acceleration system (solidify high-frequency operations, avoid repeated AI reasoning)
 - 🏆 Run System (AI's working memory with persistent context)
-- 🏆 Environment variable system (sensitive info management + Workflow context sharing)
-- 🏆 Session monitoring (real-time Claude Code session tracking with watchdog)
+- 🏆 Web Service Architecture (FastAPI backend + React frontend on port 8093)
+- 🏆 AI Title Generation (automatic session naming with Claude Haiku)
 
 ---
 
@@ -198,6 +200,66 @@
   - `frago session show <id>` - show session details
   - `frago session watch` - real-time session monitoring
 
+### Feature 011: Viewer Migration to Chrome
+
+- [x] **Content Viewer Refactor**
+  - Migrated from pywebview to Chrome browser
+  - Improved cross-platform compatibility
+  - Better performance and stability
+
+### Feature 012: Sync Command Protection
+
+- [x] **Personal Command Protection**
+  - `frago sync` now excludes `.claude/commands`
+  - Personal commands protected from sync operations
+  - Only frago-specific resources are synced
+
+### Feature 013: Web Service Architecture
+
+- [x] **FastAPI Backend**
+  - RESTful API endpoints for all GUI functionality
+  - WebSocket support for real-time updates
+  - Background daemon mode with PID management
+
+- [x] **React Frontend**
+  - Migrated from pywebview to web-based UI
+  - Zustand state management
+  - Tailwind CSS styling
+
+- [x] **Server Commands**
+  - `frago server start` - Start background server (port 8093)
+  - `frago server stop` - Stop background server
+  - `frago server status` - Check server status
+
+### Feature 014: Server Background Redesign
+
+- [x] **Background Daemon Mode**
+  - Server runs as background process
+  - PID file management (`~/.frago/server.pid`)
+  - Cross-platform process control
+
+- [x] **Enhanced Dashboard**
+  - System status display (CPU, memory)
+  - Activity overview
+  - Session management
+
+### Feature 015: AI-Powered Features
+
+- [x] **AI Title Generation**
+  - Claude Haiku auto-generates session titles
+  - Titles stored in `~/.frago/sessions.json`
+  - Toggle control in Tasks page
+
+- [x] **Model Override Settings**
+  - Configure default_model, sonnet_model, haiku_model
+  - VSCode settings integration
+  - Settings page in web UI
+
+- [x] **Interactive Console**
+  - Execute Claude Code tasks from web UI
+  - Real-time output display
+  - Session continuation support
+
 ---
 
 ## Pending Features 📝
@@ -367,6 +429,59 @@
 - **Concurrency Isolation**: Multiple sessions don't interfere
 - **Extensibility**: Adapter pattern for future agent support
 
+### 011: Viewer Migration to Chrome
+**Goal**: Migrate content viewer from pywebview to Chrome browser
+
+**Achievements**:
+- Chrome-based content viewing
+- Improved cross-platform compatibility
+- Better performance and stability
+
+### 012: Sync Command Protection
+**Goal**: Protect personal commands from sync operations
+
+**Achievements**:
+- `.claude/commands` excluded from sync
+- Only frago-specific resources are synced
+- Personal customizations preserved
+
+### 013: Web Service Architecture
+**Goal**: Replace pywebview with web-based GUI
+
+**Achievements**:
+- FastAPI backend with RESTful APIs
+- React frontend with Zustand state management
+- WebSocket real-time updates
+- Background daemon mode
+
+**Key Features**:
+- **Browser-based**: No pywebview dependency
+- **Cross-platform**: Works on any system with Chrome
+- **Daemon mode**: Server runs in background
+
+### 014: Server Background Redesign
+**Goal**: Improve server lifecycle management
+
+**Achievements**:
+- PID file management (`~/.frago/server.pid`)
+- `frago server start/stop/status` commands
+- Enhanced dashboard with system metrics
+- Activity overview
+
+### 015: AI-Powered Features
+**Goal**: Add AI-driven functionality
+
+**Achievements**:
+- Claude Haiku title generation
+- Model override settings (default/sonnet/haiku)
+- Interactive Claude Code console
+- VSCode integration
+
+**Key Features**:
+- **Automatic Naming**: AI generates meaningful session titles
+- **Model Flexibility**: Override default models
+- **Web Console**: Execute tasks from browser
+
 ---
 
 ## Version History
@@ -461,18 +576,124 @@ First official release, core infrastructure complete.
    - Session data persistence
    - `frago session list/show/watch` commands
 
-### v0.5.0 (Planned)
+### v0.5.0 (Released - 2025-12-05)
 
-**Milestone**: Recipe System Enhancement
+**Milestone**: Frontend Architecture Upgrade
 
-**Core Goals**:
-- Chrome-JS parameter injection (solve current JS script parameter passing issue)
-- Workflow orchestration enhancement (conditional branching, loops, error handling)
-- Common platform Recipe library expansion (YouTube, GitHub, Upwork)
+**Major Changes**:
+- React/TypeScript frontend with Vite build system
+- Tasks page redesign (Tips/Tasks/TaskDetail)
+- GitHub Dark color scheme
+- Native window title bar (resolved macOS hang)
+- Session monitoring optimization
 
-**Secondary Goals**:
-- Run system template support
-- Log export (CSV/Excel)
+### v0.6.0 - v0.8.0 (Released)
+
+**Milestone**: Recipe System Improvements
+
+**Major Changes**:
+- Recipe execution optimization
+- Output handler enhancements
+- CLI command improvements
+- Bug fixes and stability
+
+### v0.9.0 - v0.12.0 (Released)
+
+**Milestone**: Stability and CLI
+
+**Major Changes**:
+- View command improvements
+- Anchor link support in viewer
+- Various bug fixes
+
+### v0.13.0 (Released)
+
+**Milestone**: Sync Command Protection
+
+**Major Changes**:
+- `frago sync` now excludes `.claude/commands`
+- Personal commands protected from sync operations
+
+### v0.14.0 (Released)
+
+**Milestone**: Viewer Enhancements
+
+**Major Changes**:
+- Tutorial viewer in GUI
+- Better anchor links in viewer
+- Twitter stats extraction fixes
+
+### v0.15.0 (Released)
+
+**Milestone**: Recipe Metadata Auto-Update
+
+**Major Changes**:
+- Run completion auto-updates recipe metadata
+- CLI display fixes for complex data types
+
+### v0.16.0 (Released)
+
+**Milestone**: Windows Cross-Platform Support
+
+**Major Changes**:
+- Windows path encoding fixes
+- UTF-8 encoding for subprocess calls
+- Chrome launcher Windows compatibility
+- Python 3.13 requirement on Windows (GUI backend)
+
+### v0.17.0 (Released)
+
+**Milestone**: Web Service Architecture (Feature 013-014)
+
+**Major Changes**:
+1. **FastAPI Backend**
+   - RESTful API endpoints
+   - WebSocket real-time updates
+   - Background daemon mode
+
+2. **React Frontend Migration**
+   - Migrated from pywebview to web-based UI
+   - Browser-based GUI on port 8093
+
+3. **Server Commands**
+   - `frago server start/stop/status/open`
+
+### v0.18.0 (Released)
+
+**Milestone**: Session Enhancement
+
+**Major Changes**:
+- Session name extraction from first user message
+- Dashboard activity overview
+- Markdown rendering for assistant messages
+
+### v0.19.0 (Released)
+
+**Milestone**: Settings and Multi-Device Sync
+
+**Major Changes**:
+- Enhanced settings API
+- Sync and Secrets pages
+- Multi-device sync in web service mode
+- Background session sync service
+
+### v0.20.0 (Released - Current)
+
+**Milestone**: AI & Console Enhancements (Feature 015)
+
+**Major Changes**:
+1. **AI Title Generation**
+   - Claude Haiku auto-generates session titles
+   - Titles stored in `~/.frago/sessions.json`
+   - Toggle control in Tasks page
+
+2. **Interactive Console**
+   - Execute Claude Code tasks from web UI
+   - Real-time output display
+
+3. **Model Override Settings**
+   - Configure default_model, sonnet_model, haiku_model
+   - VSCode settings integration
 
 ### v1.0.0 (Long-term Goal)
 

@@ -1,14 +1,14 @@
 [简体中文](use-cases.zh-CN.md)
 
-# Frago Use Cases
+# frago Use Cases
 
-This document demonstrates Frago's application in real-world scenarios, showcasing how the three core systems (Run System + Recipe System + Native CDP) work together to solve AI agents' automation challenges.
+This document demonstrates frago's application in real-world scenarios, showcasing how the three core systems (Run System + Recipe System + Native CDP) work together to solve AI agents' automation challenges.
 
 ---
 
-## Why Frago for AI-Driven Automation
+## Why frago for AI-Driven Automation
 
-AI agents executing browser automation face a fundamental problem: each conversation starts fresh with no memory of past work. Frago addresses this through three mechanisms:
+AI agents executing browser automation face a fundamental problem: each conversation starts fresh with no memory of past work. frago addresses this through three mechanisms:
 
 **Standardized Context Accumulation**
 
@@ -500,7 +500,7 @@ User Request: "Find and analyze Python jobs on Upwork"
 
 ## Next Steps
 
-- **New to Frago?** Start with [Installation Guide](installation.md)
+- **New to frago?** Start with [Installation Guide](installation.md)
 - **Want to create Recipes?** Read [Recipe System Guide](recipes.md)
 - **Need technical details?** Check [Architecture](architecture.md)
 - **Looking for examples?** See [Example Reference](examples.md)

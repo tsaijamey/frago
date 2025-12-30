@@ -1,5 +1,5 @@
 """
-Frago - Automated visual management system CDP control library
+frago - Automated visual management system CDP control library
 
 Provides Python wrapper for Chrome DevTools Protocol,
 for browser automation control and visual management.

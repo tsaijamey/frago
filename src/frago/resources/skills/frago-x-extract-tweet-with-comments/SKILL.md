@@ -97,4 +97,4 @@ Template see [templates/03_narration.md](templates/03_narration.md)
 ## Reference Documentation
 
 - Twitter element features and selectors: [REFERENCE.md](REFERENCE.md)
-- Frago CDP commands: `uv run frago --help`
+- frago CDP commands: `uv run frago --help`

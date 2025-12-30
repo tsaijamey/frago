@@ -1,8 +1,8 @@
 [简体中文](examples.zh-CN.md)
 
-# Frago Example Reference
+# frago Example Reference
 
-This document provides practical examples of using Frago's three core systems (Run + Recipe + CDP) for various automation tasks.
+This document provides practical examples of using frago's three core systems (Run + Recipe + CDP) for various automation tasks.
 
 ---
 
@@ -377,7 +377,7 @@ eBay offers $50 savings, but consider condition and shipping costs.
 Total eBay cost: $764 (still $35 cheaper)
 
 ---
-Generated with Frago | Run ID: iphone-15-price-monitoring-abc123
+Generated with frago | Run ID: iphone-15-price-monitoring-abc123
 ```
 
 ---

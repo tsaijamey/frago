@@ -1,5 +1,5 @@
 #!/bin/bash
-# Frago CDP Command Examples
+# frago CDP Command Examples
 
 # === Navigation ===
 uv run frago navigate "https://x.com/search?q=AI"
