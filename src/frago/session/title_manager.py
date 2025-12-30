@@ -197,7 +197,17 @@ class TitleManager:
         Returns:
             Generated title or None on failure
         """
-        prompt = f'''Based on the following conversation excerpt, generate a concise title (max 60 characters) that captures the main topic or task being discussed. Return ONLY the title text, no quotes, no explanation.
+        # Get user's language preference for AI output
+        from frago.server.services.config_service import ConfigService
+
+        language = ConfigService.get_user_language()
+        lang_instruction = (
+            "Generate the title in Chinese (中文)."
+            if language == "zh"
+            else "Generate the title in English."
+        )
+
+        prompt = f'''Based on the following conversation excerpt, generate a concise title (max 60 characters) that captures the main topic or task being discussed. {lang_instruction} Return ONLY the title text, no quotes, no explanation.
 
 Conversation:
 {content}

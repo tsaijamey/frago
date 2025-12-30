@@ -254,6 +254,16 @@ def _build_agent_prompt(user_prompt: str) -> str:
     Returns:
         Complete prompt
     """
+    # Get user's language preference for AI output
+    from frago.server.services.config_service import ConfigService
+
+    language = ConfigService.get_user_language()
+    lang_section = (
+        "\n\n## Language\n\nRespond in Chinese (中文)."
+        if language == "zh"
+        else ""
+    )
+
     # Get available commands and their descriptions
     commands = get_available_slash_commands()
 
@@ -283,7 +293,7 @@ Use Slash Commands to invoke appropriate skills based on user intent:
 - **Execute/Complete/Do** → /frago.do
 - **Create Recipe/Automation** → /frago.recipe
 - **Test/Verify Recipe** → /frago.test
-If the task is simple and clear, you can also use other tools directly without invoking the above Slash Commands.
+If the task is simple and clear, you can also use other tools directly without invoking the above Slash Commands.{lang_section}
 
 ---
 
