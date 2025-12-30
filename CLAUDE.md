@@ -1,4 +1,8 @@
-# Frago Development Guidelines
+# frago Development Guidelines
+
+> **Naming Convention**: `frago` is the only correct casing. NEVER USE `Frago`.
+>
+> **Emphasis Style**: Use ALL CAPS for emphasis (e.g., `NEVER`, `MUST`, `PROHIBITED`).
 
 ## Document Maintenance Principles
 
@@ -115,11 +119,11 @@ subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 USER_RESOURCES = {
     "~/.claude/": {
         "commands/": {
-            "frago.*.md":  "Frago commands",
+            "frago.*.md":  "frago commands",
             "frago/":      "Command rules and scripts",
         },
         "skills/": {
-            "frago-*/":    "Frago skills",
+            "frago-*/":    "frago skills",
         },
     },
     "~/.frago/": {
