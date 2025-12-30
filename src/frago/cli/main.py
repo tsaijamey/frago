@@ -29,6 +29,7 @@ from .session_commands import session_group
 from .view_command import view
 from .serve_command import serve
 from .server_command import server_group
+from .autostart_command import autostart_group
 from .agent_friendly import AgentFriendlyGroup
 
 
@@ -36,7 +37,7 @@ from .agent_friendly import AgentFriendlyGroup
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
-    ("Environment", ["init", "status", "sync", "update"]),
+    ("Environment", ["init", "status", "sync", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
 
@@ -325,6 +326,9 @@ cli.add_command(serve)
 
 # Server command group - background web service management
 cli.add_command(server_group)
+
+# Autostart command group - manage server autostart on boot
+cli.add_command(autostart_group)
 
 
 def main():

@@ -203,10 +203,49 @@ def init(
         with spinner_context("Saving configuration", "Configuration saved"):
             save_config(config)
 
-        # 5. Display completion summary
+        # 5. Offer autostart configuration (unless non-interactive)
+        if not non_interactive:
+            _offer_autostart_configuration()
+
+        # 6. Display completion summary
         _print_completion_summary(config)
 
     sys.exit(InitErrorCode.SUCCESS)
+
+
+def _offer_autostart_configuration() -> None:
+    """Offer to enable frago server autostart on system boot."""
+    try:
+        from frago.autostart import get_autostart_manager
+
+        manager = get_autostart_manager()
+
+        # Skip if already enabled
+        if manager.is_enabled():
+            return
+
+        click.echo()
+        print_section("Autostart Configuration")
+
+        if click.confirm(
+            "Enable frago server to start automatically on system boot?",
+            default=True,
+        ):
+            success, message = manager.enable()
+            if success:
+                click.secho(f"✓ {message}", fg="green")
+            else:
+                click.secho(f"✗ {message}", fg="red")
+        else:
+            click.secho("Skipped autostart configuration", dim=True)
+            click.echo("  Run 'frago autostart enable' to configure later")
+
+    except NotImplementedError:
+        # Platform not supported, silently skip
+        pass
+    except Exception as e:
+        # Don't fail init if autostart fails
+        click.secho(f"Warning: Could not configure autostart: {e}", fg="yellow")
 
 
 def _print_completion_summary(config: Config) -> None:
