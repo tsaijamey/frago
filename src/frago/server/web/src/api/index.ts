@@ -365,6 +365,7 @@ export async function getConfig(): Promise<UserConfig> {
   const config = await httpApi.getConfig();
   return {
     theme: config.theme as UserConfig['theme'],
+    language: (config.language || 'en') as UserConfig['language'],
     show_system_status: config.show_system_status,
     confirm_on_exit: config.confirm_on_exit,
     auto_scroll_output: config.auto_scroll_output,
@@ -387,6 +388,7 @@ export async function updateConfig(
       status: 'ok',
       config: {
         theme: updated.theme as UserConfig['theme'],
+        language: (updated.language || 'en') as UserConfig['language'],
         show_system_status: updated.show_system_status,
         confirm_on_exit: updated.confirm_on_exit,
         auto_scroll_output: updated.auto_scroll_output,

@@ -63,6 +63,7 @@ class ConfigUpdateRequest(BaseModel):
     """Request body for PUT /api/config"""
 
     theme: Optional[str] = Field(default=None, pattern="^(dark|light)$")
+    language: Optional[str] = Field(default=None, pattern="^(en|zh)$")
     font_size: Optional[int] = Field(default=None, ge=8, le=32)
     show_system_status: Optional[bool] = None
     confirm_on_exit: Optional[bool] = None
@@ -252,6 +253,7 @@ class UserConfigResponse(BaseModel):
     """Response for GET /api/config"""
 
     theme: str = "dark"
+    language: str = "en"
     font_size: int = 14
     show_system_status: bool = True
     confirm_on_exit: bool = True
