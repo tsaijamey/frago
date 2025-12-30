@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import ConsoleControls from './ConsoleControls';
@@ -16,6 +17,7 @@ export interface ConsoleMessage {
 }
 
 export default function ConsolePage() {
+  const { t } = useTranslation();
   const { showToast } = useAppStore();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConsoleMessage[]>([]);
@@ -242,8 +244,8 @@ export default function ConsolePage() {
             <div className="flex gap-scaled-3 p-scaled-3 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-color)]">
               <Info className="icon-scaled-base text-[var(--accent-primary)] shrink-0 mt-0.5" />
               <div className="text-scaled-sm text-[var(--text-secondary)]">
-                <p className="font-medium text-[var(--text-primary)] mb-1">Recipe Development Console</p>
-                <p>This console is designed for creating and testing Frago recipes. Claude will execute tasks automatically without requiring manual approval for each tool call.</p>
+                <p className="font-medium text-[var(--text-primary)] mb-1">{t('console.devConsoleTitle')}</p>
+                <p>{t('console.devConsoleDesc')}</p>
               </div>
             </div>
 
@@ -251,9 +253,9 @@ export default function ConsolePage() {
             <div className="flex gap-scaled-3 p-scaled-3 rounded-lg bg-[color-mix(in_srgb,var(--accent-warning)_10%,transparent)] border border-[color-mix(in_srgb,var(--accent-warning)_30%,var(--border-color))]">
               <AlertTriangle className="icon-scaled-base text-[var(--accent-warning)] shrink-0 mt-0.5" />
               <div className="text-scaled-sm text-[var(--text-secondary)]">
-                <p className="font-medium text-[var(--accent-warning)] mb-1">Auto-approve is always enabled</p>
-                <p className="mb-2">All tool calls (file operations, shell commands, etc.) will be executed without confirmation. Use with caution on sensitive projects.</p>
-                <p>For interactive mode with manual approval, use Claude Code directly: <code className="inline px-scaled-2 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-mono text-scaled-xs">claude</code></p>
+                <p className="font-medium text-[var(--accent-warning)] mb-1">{t('console.autoApproveWarningTitle')}</p>
+                <p className="mb-2">{t('console.autoApproveWarningDesc')}</p>
+                <p>{t('console.interactiveMode')} <code className="inline px-scaled-2 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-mono text-scaled-xs">claude</code></p>
               </div>
             </div>
           </div>
@@ -268,7 +270,7 @@ export default function ConsolePage() {
           onChange={setInputValue}
           onSend={handleSend}
           disabled={isRunning && messages[messages.length - 1]?.type === 'assistant' && !messages[messages.length - 1]?.done}
-          placeholder={sessionId ? 'Continue conversation...' : 'Start a new conversation...'}
+          placeholder={sessionId ? t('console.continueConversation') : t('console.startConversation')}
         />
       </div>
     </div>

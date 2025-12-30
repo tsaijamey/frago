@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   CheckCircle,
   XCircle,
@@ -28,9 +29,10 @@ interface DependencyCardProps {
   dep: DependencyStatus;
   onInstall: () => Promise<void>;
   installing: boolean;
+  t: (key: string, options?: Record<string, unknown>) => string;
 }
 
-function DependencyCard({ dep, onInstall, installing }: DependencyCardProps) {
+function DependencyCard({ dep, onInstall, installing, t }: DependencyCardProps) {
   const [showGuide, setShowGuide] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
 
@@ -63,11 +65,11 @@ function DependencyCard({ dep, onInstall, installing }: DependencyCardProps) {
             </h4>
             <p className="text-sm text-gray-400">
               {dep.installed
-                ? `v${dep.version}`
-                : 'Not installed'}
+                ? t('init.versionCurrent', { version: dep.version })
+                : t('init.notInstalled')}
               {dep.installed && !dep.version_sufficient && (
                 <span className="text-yellow-400 ml-2">
-                  (requires &ge;{dep.required_version})
+                  ({t('init.versionRequired', { version: dep.required_version })})
                 </span>
               )}
             </p>
@@ -84,12 +86,12 @@ function DependencyCard({ dep, onInstall, installing }: DependencyCardProps) {
             {installing ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                Installing...
+                {t('init.installing')}
               </>
             ) : (
               <>
                 <Download className="w-4 h-4" />
-                Install
+                {t('init.install')}
               </>
             )}
           </button>
@@ -116,7 +118,7 @@ function DependencyCard({ dep, onInstall, installing }: DependencyCardProps) {
             ) : (
               <ChevronDown className="w-4 h-4" />
             )}
-            Manual installation guide
+            {t('init.manualGuide')}
           </button>
 
           {showGuide && (
@@ -136,6 +138,7 @@ export function DependencyStep({
   onSkip,
   onRefresh,
 }: DependencyStepProps) {
+  const { t } = useTranslation();
   const [checking, setChecking] = useState(false);
   const [installingNode, setInstallingNode] = useState(false);
   const [installingClaude, setInstallingClaude] = useState(false);
@@ -189,10 +192,10 @@ export function DependencyStep({
       {/* Header */}
       <div>
         <h3 className="text-lg font-semibold text-white mb-2">
-          System Dependencies
+          {t('init.systemDeps')}
         </h3>
         <p className="text-gray-400">
-          Frago requires Node.js and Claude Code to function properly.
+          {t('init.systemDepsDesc')}
         </p>
       </div>
 
@@ -202,11 +205,13 @@ export function DependencyStep({
           dep={initStatus.node}
           onInstall={handleInstallNode}
           installing={installingNode}
+          t={t}
         />
         <DependencyCard
           dep={initStatus.claude_code}
           onInstall={handleInstallClaude}
           installing={installingClaude}
+          t={t}
         />
       </div>
 
@@ -218,7 +223,7 @@ export function DependencyStep({
         className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300"
       >
         <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
-        {checking ? 'Checking...' : 'Refresh status'}
+        {checking ? t('init.checking') : t('init.refreshStatus')}
       </button>
 
       {/* Actions */}
@@ -228,7 +233,7 @@ export function DependencyStep({
           onClick={onSkip}
           className="text-gray-400 hover:text-gray-300 text-sm"
         >
-          Skip for now
+          {t('init.skipForNow')}
         </button>
 
         <button
@@ -237,7 +242,7 @@ export function DependencyStep({
           disabled={!allOk}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          Continue
+          {t('init.continue')}
           <ArrowRight className="w-4 h-4" />
         </button>
       </div>
@@ -246,7 +251,7 @@ export function DependencyStep({
       {!allOk && (
         <p className="text-sm text-yellow-400 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" />
-          Some features may not work without all dependencies installed.
+          {t('init.skipWarning')}
         </p>
       )}
     </div>

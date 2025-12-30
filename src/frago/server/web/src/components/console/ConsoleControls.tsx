@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { PlusCircle, Square } from 'lucide-react';
 
 interface ConsoleControlsProps {
@@ -13,6 +14,8 @@ export default function ConsoleControls({
   onNewSession,
   onStop
 }: ConsoleControlsProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="card">
       <div className="flex items-center justify-between gap-scaled-4">
@@ -20,7 +23,7 @@ export default function ConsoleControls({
         <div className="flex items-center gap-scaled-2">
           <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[var(--accent-success)] animate-pulse' : 'bg-[var(--text-muted)]'}`} />
           <span className="text-scaled-sm text-[var(--text-muted)]">
-            {sessionId ? `Session: ${sessionId.substring(0, 8)}...` : 'No active session'}
+            {sessionId ? `${t('console.session')}: ${sessionId.substring(0, 8)}...` : t('console.noActiveSession')}
           </span>
         </div>
 
@@ -34,10 +37,10 @@ export default function ConsoleControls({
               className="w-4 h-4 cursor-not-allowed"
               checked
               disabled
-              aria-label="Auto-approve tools (always enabled)"
+              aria-label={t('console.autoApprove')}
             />
             <label htmlFor="auto-approve" className="text-scaled-sm text-[var(--text-muted)] cursor-not-allowed">
-              Auto-approve
+              {t('console.autoApprove')}
             </label>
           </div>
 
@@ -50,7 +53,7 @@ export default function ConsoleControls({
               onClick={onStop}
             >
               <Square className="icon-scaled-sm fill-current" />
-              Stop
+              {t('console.stop')}
             </button>
           ) : (
             <button
@@ -60,7 +63,7 @@ export default function ConsoleControls({
               disabled={!sessionId}
             >
               <PlusCircle className="icon-scaled-sm" />
-              New Session
+              {t('console.newSession')}
             </button>
           )}
           </div>

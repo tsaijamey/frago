@@ -4,12 +4,14 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { getMainConfig, updateAuthMethod, openWorkingDirectory, checkVSCode, openConfigInVSCode } from '@/api';
 import type { MainConfig } from '@/types/pywebview';
 import { Eye, EyeOff, FolderOpen, Code } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 
 export default function GeneralSettings() {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<MainConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export default function GeneralSettings() {
 
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load config');
+      setError(err instanceof Error ? err.message : t('settings.general.failedToLoadConfig'));
     } finally {
       setLoading(false);
     }
@@ -103,16 +105,16 @@ export default function GeneralSettings() {
     // Validation
     if (authMethod === 'custom') {
       if (!apiKey.trim()) {
-        setError('API Key cannot be empty');
+        setError(t('errors.apiKeyEmpty'));
         return;
       }
       if (endpointType === 'custom') {
         if (!endpointUrl.trim()) {
-          setError('Custom endpoint requires a URL');
+          setError(t('errors.customEndpointRequired'));
           return;
         }
         if (!sonnetModel.trim()) {
-          setError('Custom endpoint requires a main model name');
+          setError(t('errors.customEndpointModelRequired'));
           return;
         }
       }
@@ -156,10 +158,10 @@ export default function GeneralSettings() {
           // Ignore errors
         }
       } else {
-        setError(result.error || 'Save failed');
+        setError(result.error || t('errors.saveFailed'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed');
+      setError(err instanceof Error ? err.message : t('errors.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -170,10 +172,10 @@ export default function GeneralSettings() {
     try {
       const result = await openWorkingDirectory();
       if (result.status === 'error') {
-        setError(result.error || 'Failed to open directory');
+        setError(result.error || t('settings.general.failedToOpenDir'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open directory');
+      setError(err instanceof Error ? err.message : t('settings.general.failedToOpenDir'));
     }
   };
 
@@ -182,17 +184,17 @@ export default function GeneralSettings() {
     try {
       const result = await openConfigInVSCode();
       if (result.status === 'error') {
-        setError(result.error || 'Failed to open in VSCode');
+        setError(result.error || t('settings.general.failedToOpenVSCode'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to open in VSCode');
+      setError(err instanceof Error ? err.message : t('settings.general.failedToOpenVSCode'));
     }
   };
 
   if (loading) {
     return (
       <div className="text-[var(--text-muted)] text-center py-8">
-        Loading configuration...
+        {t('common.loadingConfiguration')}
       </div>
     );
   }
@@ -200,7 +202,7 @@ export default function GeneralSettings() {
   if (!config) {
     return (
       <div className="text-[var(--text-error)] text-center py-8">
-        Failed to load configuration
+        {t('settings.general.failedToLoadConfig')}
       </div>
     );
   }
@@ -209,7 +211,7 @@ export default function GeneralSettings() {
     <div className="space-y-4">
       <div className="card">
         <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-          General Configuration
+          {t('settings.general.title')}
         </h2>
 
         {error && (
@@ -221,7 +223,7 @@ export default function GeneralSettings() {
         {/* API Endpoint */}
         <div className="border-b border-[var(--border-color)] pb-4 mb-4">
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-3">
-            API Endpoint
+            {t('settings.general.apiEndpoint')}
           </label>
 
           {/* Auth method selection */}
@@ -235,7 +237,7 @@ export default function GeneralSettings() {
                 onChange={() => handleAuthMethodChange('official')}
                 className="w-4 h-4 text-[var(--accent-primary)]"
               />
-              <span className="text-sm text-[var(--text-primary)]">Official Claude API</span>
+              <span className="text-sm text-[var(--text-primary)]">{t('settings.general.officialApi')}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -246,7 +248,7 @@ export default function GeneralSettings() {
                 onChange={() => handleAuthMethodChange('custom')}
                 className="w-4 h-4 text-[var(--accent-primary)]"
               />
-              <span className="text-sm text-[var(--text-primary)]">Custom API Endpoint</span>
+              <span className="text-sm text-[var(--text-primary)]">{t('settings.general.customEndpoint')}</span>
             </label>
           </div>
 
@@ -256,7 +258,7 @@ export default function GeneralSettings() {
               {/* Endpoint type */}
               <div>
                 <label htmlFor="endpoint-type" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  Endpoint Type
+                  {t('settings.general.endpointType')}
                 </label>
                 <select
                   id="endpoint-type"
@@ -276,7 +278,7 @@ export default function GeneralSettings() {
               {endpointType === 'custom' && (
                 <div>
                   <label htmlFor="api-url" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                    API URL
+                    {t('settings.general.apiUrl')}
                   </label>
                   <input
                     id="api-url"
@@ -292,7 +294,7 @@ export default function GeneralSettings() {
               {/* API Key */}
               <div>
                 <label htmlFor="api-key" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  API Key
+                  {t('settings.general.apiKey')}
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -300,14 +302,14 @@ export default function GeneralSettings() {
                     type={showApiKey ? "text" : "password"}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Enter API Key"
+                    placeholder={t('settings.general.enterApiKey')}
                     className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                   />
                   <button
                     type="button"
                     onClick={() => setShowApiKey(!showApiKey)}
                     className="btn btn-ghost btn-sm p-2"
-                    title={showApiKey ? "Hide" : "Show"}
+                    title={showApiKey ? t('settings.general.hide') : t('settings.general.show')}
                   >
                     {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
@@ -322,14 +324,14 @@ export default function GeneralSettings() {
               {/* Model Configuration */}
               <div>
                 <label htmlFor="default-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  Default Model {endpointType !== 'custom' && <span className="text-[var(--text-muted)]">- optional override</span>}
+                  {t('settings.general.defaultModel')} {endpointType !== 'custom' && <span className="text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>}
                 </label>
                 <input
                   id="default-model"
                   type="text"
                   value={defaultModel}
                   onChange={(e) => setDefaultModel(e.target.value)}
-                  placeholder={endpointType === 'custom' ? 'e.g., gpt-4' : 'Leave empty to use preset default'}
+                  placeholder={endpointType === 'custom' ? 'e.g., gpt-4' : t('settings.general.leaveEmptyDefault')}
                   className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                 />
                 <p className="mt-1 text-xs text-[var(--text-muted)]">ANTHROPIC_MODEL</p>
@@ -337,14 +339,14 @@ export default function GeneralSettings() {
 
               <div>
                 <label htmlFor="sonnet-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  Sonnet Model {endpointType !== 'custom' && <span className="text-[var(--text-muted)]">- optional override</span>}
+                  {t('settings.general.sonnetModel')} {endpointType !== 'custom' && <span className="text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>}
                 </label>
                 <input
                   id="sonnet-model"
                   type="text"
                   value={sonnetModel}
                   onChange={(e) => setSonnetModel(e.target.value)}
-                  placeholder={endpointType === 'custom' ? 'e.g., gpt-4' : 'Leave empty to use preset default'}
+                  placeholder={endpointType === 'custom' ? 'e.g., gpt-4' : t('settings.general.leaveEmptyDefault')}
                   className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                 />
                 <p className="mt-1 text-xs text-[var(--text-muted)]">ANTHROPIC_DEFAULT_SONNET_MODEL</p>
@@ -352,14 +354,14 @@ export default function GeneralSettings() {
 
               <div>
                 <label htmlFor="haiku-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                  Haiku Model <span className="text-[var(--text-muted)]">- optional</span>
+                  {t('settings.general.haikuModel')} <span className="text-[var(--text-muted)]">- {t('settings.general.optional')}</span>
                 </label>
                 <input
                   id="haiku-model"
                   type="text"
                   value={haikuModel}
                   onChange={(e) => setHaikuModel(e.target.value)}
-                  placeholder="Leave empty to use sonnet model"
+                  placeholder={t('settings.general.leaveEmptySonnet')}
                   className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                 />
                 <p className="mt-1 text-xs text-[var(--text-muted)]">ANTHROPIC_DEFAULT_HAIKU_MODEL</p>
@@ -375,7 +377,7 @@ export default function GeneralSettings() {
               disabled={saving}
               className="btn btn-primary btn-sm disabled:opacity-50"
             >
-              {saving ? 'Saving...' : 'Save Configuration'}
+              {saving ? t('settings.general.saving') : t('settings.general.saveConfiguration')}
             </button>
             {vscodeInstalled && (
               <button
@@ -385,7 +387,7 @@ export default function GeneralSettings() {
                 title="Edit ~/.claude/settings.json in VSCode"
               >
                 <Code size={16} />
-                Edit
+                {t('settings.general.edit')}
               </button>
             )}
           </div>
@@ -394,7 +396,7 @@ export default function GeneralSettings() {
         {/* Working directory (read-only) */}
         <div>
           <label className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-            Working Directory
+            {t('settings.general.workingDirectory')}
           </label>
           <div className="flex gap-2 items-center">
             <div className="flex-1 bg-[var(--bg-subtle)] rounded-md px-3 py-2 overflow-x-auto">
@@ -408,7 +410,7 @@ export default function GeneralSettings() {
               title="Open in file manager"
             >
               <FolderOpen size={16} />
-              Open
+              {t('settings.general.open')}
             </button>
           </div>
         </div>
@@ -419,26 +421,26 @@ export default function GeneralSettings() {
       <Modal
         isOpen={showConfirmDialog}
         onClose={() => setShowConfirmDialog(false)}
-        title="Confirm Switch to Official API"
+        title={t('settings.general.confirmSwitch')}
         footer={
           <>
             <button
               onClick={() => setShowConfirmDialog(false)}
               className="btn btn-ghost"
             >
-              Cancel
+              {t('settings.general.cancel')}
             </button>
             <button
               onClick={confirmSwitchToOfficial}
               className="btn btn-primary"
             >
-              Confirm Switch
+              {t('settings.general.confirmSwitchBtn')}
             </button>
           </>
         }
       >
         <p className="text-sm text-[var(--text-secondary)]">
-          Switching to official Claude API will clear your current custom endpoint configuration (including API Key). This action cannot be undone. Are you sure you want to continue?
+          {t('settings.general.confirmSwitchFullDesc')}
         </p>
       </Modal>
     </div>

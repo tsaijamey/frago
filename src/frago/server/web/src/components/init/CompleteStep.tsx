@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   CheckCircle,
   XCircle,
@@ -32,6 +33,7 @@ export function CompleteStep({
   onComplete,
   onBack,
 }: CompleteStepProps) {
+  const { t } = useTranslation();
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,18 +66,18 @@ export function CompleteStep({
       <div className="text-center">
         <PartyPopper className="w-12 h-12 text-yellow-400 mx-auto mb-4" />
         <h3 className="text-xl font-semibold text-white mb-2">
-          {allStepsComplete ? "You're all set!" : 'Almost there!'}
+          {allStepsComplete ? t('init.allSet') : t('init.almostThere')}
         </h3>
         <p className="text-gray-400">
           {allStepsComplete
-            ? 'Frago is ready to use. Click the button below to finish setup.'
-            : 'Review the setup summary below before finishing.'}
+            ? t('init.readyToUse')
+            : t('init.reviewSummary')}
         </p>
       </div>
 
       {/* Setup summary */}
       <div className="bg-gray-800 rounded-lg p-4 space-y-3">
-        <h4 className="font-medium text-white mb-3">Setup Summary</h4>
+        <h4 className="font-medium text-white mb-3">{t('init.compSummary')}</h4>
 
         {/* Dependencies */}
         <div className="flex items-center gap-3">
@@ -85,11 +87,11 @@ export function CompleteStep({
             <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           )}
           <div>
-            <span className="text-white">Dependencies</span>
+            <span className="text-white">{t('settings.init.dependencies')}</span>
             <span className="text-gray-400 text-sm ml-2">
               {stepsCompleted.dependencies
                 ? `Node.js ${initStatus.node.version}, Claude Code ${initStatus.claude_code.version}`
-                : 'Not fully configured'}
+                : t('init.notFullyConfigured')}
             </span>
           </div>
         </div>
@@ -102,11 +104,11 @@ export function CompleteStep({
             <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           )}
           <div>
-            <span className="text-white">Resources</span>
+            <span className="text-white">{t('settings.init.resources')}</span>
             <span className="text-gray-400 text-sm ml-2">
               {stepsCompleted.resources
                 ? `v${initStatus.resources_version || initStatus.current_frago_version}`
-                : 'Not installed'}
+                : t('init.notInstalled')}
             </span>
           </div>
         </div>
@@ -119,13 +121,13 @@ export function CompleteStep({
             <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
           )}
           <div>
-            <span className="text-white">Authentication</span>
+            <span className="text-white">{t('settings.init.auth')}</span>
             <span className="text-gray-400 text-sm ml-2">
               {stepsCompleted.auth
                 ? initStatus.auth_method === 'official'
-                  ? 'Official (user-managed)'
-                  : 'Custom API endpoint'
-                : 'Configure in Settings later'}
+                  ? t('init.officialUserManaged')
+                  : t('init.customEndpoint')
+                : t('init.configureInSettings')}
             </span>
           </div>
         </div>
@@ -136,12 +138,8 @@ export function CompleteStep({
         <div className="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-4 text-sm text-yellow-300 flex items-start gap-3">
           <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-medium mb-1">Some steps were skipped</p>
-            <p>
-              You can still complete setup, but some features may not work correctly
-              until all steps are completed. You can access these settings anytime from
-              the Settings page.
-            </p>
+            <p className="font-medium mb-1">{t('init.stepsSkippedTitle')}</p>
+            <p>{t('init.stepsSkippedDesc')}</p>
           </div>
         </div>
       )}
@@ -161,7 +159,7 @@ export function CompleteStep({
           className="flex items-center gap-2 text-gray-400 hover:text-gray-300"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back
+          {t('init.back')}
         </button>
 
         <button
@@ -173,12 +171,12 @@ export function CompleteStep({
           {completing ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Finishing...
+              {t('init.finishing')}
             </>
           ) : (
             <>
               <CheckCircle className="w-5 h-5" />
-              Finish Setup
+              {t('init.finishSetup')}
             </>
           )}
         </button>

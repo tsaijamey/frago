@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import EmptyState from '@/components/ui/EmptyState';
 import { Target, BookOpen } from 'lucide-react';
 
 export default function SkillList() {
+  const { t } = useTranslation();
   const { skills, loadSkills } = useAppStore();
 
   useEffect(() => {
@@ -14,8 +16,8 @@ export default function SkillList() {
     return (
       <EmptyState
         Icon={Target}
-        title="No Skills"
-        description="Create skill files in .claude/skills/ directory"
+        title={t('skills.noSkills')}
+        description={t('skills.createSkillHint')}
       />
     );
   }

@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { getEnvVars, updateEnvVars, getRecipeEnvRequirements } from '@/api';
 import type { RecipeEnvRequirement } from '@/types/pywebview';
 import { Key, Plus, Edit2, Trash2, Eye, EyeOff } from 'lucide-react';
@@ -14,6 +15,7 @@ interface EnvVarGroup {
 }
 
 export default function SecretsSettings() {
+  const { t } = useTranslation();
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [recipeRequirements, setRecipeRequirements] = useState<RecipeEnvRequirement[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +42,7 @@ export default function SecretsSettings() {
       setRecipeRequirements(recipeResult);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load');
+      setError(err instanceof Error ? err.message : t('errors.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -120,7 +122,7 @@ export default function SecretsSettings() {
   };
 
   const handleDelete = async (key: string) => {
-    if (!confirm(`Are you sure you want to delete environment variable ${key}?`)) {
+    if (!confirm(t('secrets.deleteConfirm', { name: key }))) {
       return;
     }
 
@@ -132,31 +134,31 @@ export default function SecretsSettings() {
         const recipeResult = await getRecipeEnvRequirements();
         setRecipeRequirements(recipeResult);
       } else {
-        setError(result.error || 'Delete failed');
+        setError(result.error || t('secrets.deleteFailed'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed');
+      setError(err instanceof Error ? err.message : t('secrets.deleteFailed'));
     }
   };
 
   const handleSave = async () => {
     // Validation
     if (!formKey.trim()) {
-      setFormError('Variable name cannot be empty');
+      setFormError(t('secrets.varNameEmpty'));
       return;
     }
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(formKey)) {
-      setFormError('Variable name can only contain letters, numbers, and underscores, and cannot start with a number');
+      setFormError(t('secrets.varNameInvalid'));
       return;
     }
     if (!formValue.trim()) {
-      setFormError('Variable value cannot be empty');
+      setFormError(t('secrets.varValueEmpty'));
       return;
     }
 
     // Check for conflicts
     if (!editingKey && formKey in envVars) {
-      if (!confirm(`Variable ${formKey} already exists. Overwrite?`)) {
+      if (!confirm(t('secrets.varExistsConfirm', { name: formKey }))) {
         return;
       }
     }
@@ -171,10 +173,10 @@ export default function SecretsSettings() {
         const recipeResult = await getRecipeEnvRequirements();
         setRecipeRequirements(recipeResult);
       } else {
-        setFormError(result.error || 'Save failed');
+        setFormError(result.error || t('secrets.saveFailed'));
       }
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Save failed');
+      setFormError(err instanceof Error ? err.message : t('secrets.saveFailed'));
     }
   };
 
@@ -188,7 +190,7 @@ export default function SecretsSettings() {
 
   if (loading) {
     return (
-      <div className="text-[var(--text-muted)] text-center py-8">Loading...</div>
+      <div className="text-[var(--text-muted)] text-center py-8">{t('common.loading')}</div>
     );
   }
 
@@ -236,10 +238,10 @@ export default function SecretsSettings() {
       {/* Environment Variables - Large Card */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[var(--accent-primary)]">Environment Variables</h2>
+          <h2 className="text-lg font-semibold text-[var(--accent-primary)]">{t('secrets.envVars')}</h2>
           <button onClick={handleAdd} className="btn btn-primary btn-sm flex items-center gap-2">
             <Plus size={16} />
-            Add
+            {t('secrets.add')}
           </button>
         </div>
 
@@ -248,10 +250,10 @@ export default function SecretsSettings() {
           {unconfiguredRequirements.length > 0 && (
             <div className="p-4 bg-[var(--bg-tertiary)] rounded-md border border-[var(--border-color)]">
               <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">
-                Recipe Environment Variable Requirements
+                {t('secrets.recipeEnvRequirements')}
               </h3>
               <p className="text-xs text-[var(--text-muted)] mb-3">
-                The following environment variables are used by recipes but not yet configured:
+                {t('secrets.envVarsNotConfigured')}
               </p>
               <div className="space-y-2">
                 {unconfiguredRequirements.map((req) => (
@@ -267,11 +269,11 @@ export default function SecretsSettings() {
                       </div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs px-1.5 py-0.5 bg-amber-500 text-white rounded">
-                          ⚠ Not Configured
+                          {t('secrets.notConfiguredBadge')}
                         </span>
                         {req.required && (
                           <span className="text-xs px-1.5 py-0.5 bg-red-500 text-white rounded">
-                            Required
+                            {t('secrets.requiredBadge')}
                           </span>
                         )}
                       </div>
@@ -279,7 +281,7 @@ export default function SecretsSettings() {
                         {req.description}
                       </p>
                       <p className="text-xs text-[var(--text-muted)]">
-                        Used by: {req.recipes.join(', ')}
+                        {t('secrets.usedBy')}: {req.recipes.join(', ')}
                       </p>
                     </div>
 
@@ -287,7 +289,7 @@ export default function SecretsSettings() {
                       onClick={() => handleQuickAdd({ ...req, recipe_name: req.recipes[0] })}
                       className="btn btn-ghost btn-sm text-xs"
                     >
-                      Add
+                      {t('secrets.add')}
                     </button>
                   </div>
                 ))}
@@ -298,7 +300,7 @@ export default function SecretsSettings() {
           {/* Configured Environment Variables - Grouped Display */}
           {Object.keys(envVars).length === 0 ? (
             <p className="text-sm text-[var(--text-muted)] text-center py-8">
-              No environment variables yet. Click "Add" to create one.
+              {t('secrets.noEnvVars')}
             </p>
           ) : (
             <div className="space-y-4">
@@ -306,7 +308,7 @@ export default function SecretsSettings() {
                 <div key={group}>
                   <h3 className="text-sm font-medium text-[var(--text-primary)] mb-2 flex items-center gap-2">
                     <Key size={14} />
-                    {group === 'Recipe' ? 'Recipe Environment Variables' : group}
+                    {group === 'Recipe' ? t('secrets.recipeEnvVars') : group}
                   </h3>
                   <div className="space-y-2">
                     {vars.map(([key, value]) => {
@@ -341,7 +343,7 @@ export default function SecretsSettings() {
                             </div>
                             {group === 'Recipe' && usedByRecipes.length > 0 && (
                               <div className="text-xs text-[var(--text-muted)] mt-2 flex items-center gap-1.5 flex-wrap">
-                                <span className="text-[var(--text-muted)]">Used by</span>
+                                <span className="text-[var(--text-muted)]">{t('secrets.usedBy')}</span>
                                 {usedByRecipes.map((recipe, idx) => (
                                   <span
                                     key={idx}
@@ -357,14 +359,14 @@ export default function SecretsSettings() {
                             <button
                               onClick={() => handleEdit(key, value)}
                               className="btn btn-ghost btn-sm p-2"
-                              title="Edit"
+                              title={t('common.edit')}
                             >
                               <Edit2 size={14} />
                             </button>
                             <button
                               onClick={() => handleDelete(key)}
                               className="btn btn-ghost btn-sm p-2 text-red-600 dark:text-red-400"
-                              title="Delete"
+                              title={t('common.delete')}
                             >
                               <Trash2 size={14} />
                             </button>
@@ -384,14 +386,14 @@ export default function SecretsSettings() {
       <Modal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        title={editingKey ? 'Edit Environment Variable' : 'Add Environment Variable'}
+        title={editingKey ? t('secrets.editEnvVar') : t('secrets.addEnvVar')}
         footer={
           <>
             <button onClick={() => setShowModal(false)} className="btn btn-ghost flex-1">
-              Cancel
+              {t('common.cancel')}
             </button>
             <button onClick={handleSave} className="btn btn-primary flex-1">
-              Save
+              {t('common.save')}
             </button>
           </>
         }
@@ -405,7 +407,7 @@ export default function SecretsSettings() {
         <div className="space-y-4">
           <div>
             <label htmlFor="env-var-name" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-              Variable Name
+              {t('secrets.variableName')}
             </label>
             <input
               id="env-var-name"
@@ -417,19 +419,19 @@ export default function SecretsSettings() {
               className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] disabled:opacity-50 font-mono"
             />
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              Can only contain letters, numbers, and underscores, and cannot start with a number
+              {t('secrets.varNameHint')}
             </p>
           </div>
 
           <div>
             <label htmlFor="env-var-value" className="block text-sm font-medium text-[var(--text-primary)] mb-2">
-              Variable Value
+              {t('secrets.variableValue')}
             </label>
             <textarea
               id="env-var-value"
               value={formValue}
               onChange={(e) => setFormValue(e.target.value)}
-              placeholder="Enter variable value"
+              placeholder={t('secrets.enterVarValue')}
               rows={3}
               className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono resize-none"
             />

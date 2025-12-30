@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import EmptyState from '@/components/ui/EmptyState';
 import type { RecipeItem } from '@/types/pywebview';
@@ -113,6 +114,7 @@ function CollapsibleSection({
 }
 
 export default function RecipeList() {
+  const { t } = useTranslation();
   const { recipes, loadRecipes, switchPage } = useAppStore();
   const [search, setSearch] = useState('');
   const [atomicExpanded, setAtomicExpanded] = useState(true);
@@ -143,8 +145,8 @@ export default function RecipeList() {
     return (
       <EmptyState
         Icon={Package}
-        title="No Recipes"
-        description="Use frago recipe create to create a new recipe"
+        title={t('recipes.noRecipes')}
+        description={t('recipes.noRecipesDescription')}
       />
     );
   }
@@ -159,10 +161,10 @@ export default function RecipeList() {
         <input
           type="text"
           className="search-input"
-          placeholder="Search by name or tag..."
+          placeholder={t('recipes.searchByNameOrTag')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search recipes"
+          aria-label={t('recipes.searchPlaceholder')}
         />
         {search && (
           <button
@@ -179,18 +181,18 @@ export default function RecipeList() {
       {/* Recipe list */}
       {noResults ? (
         <div className="flex-1 flex items-center justify-center text-[var(--text-muted)]">
-          No matching results
+          {t('recipes.noResults')}
         </div>
       ) : (
         <div className="page-scroll">
           {workflowRecipes.length > 0 && (
             <CollapsibleSection
-              title="Workflow"
+              title={t('recipes.workflow')}
               count={workflowRecipes.length}
               expanded={workflowExpanded}
               onToggle={() => setWorkflowExpanded(!workflowExpanded)}
               colorClass="text-[var(--accent-success)]"
-              tip="Chain multiple steps to automate complex tasks"
+              tip={t('recipes.workflowTip')}
             >
               {workflowRecipes.map((recipe) => (
                 <RecipeCard
@@ -203,12 +205,12 @@ export default function RecipeList() {
           )}
           {atomicRecipes.length > 0 && (
             <CollapsibleSection
-              title="Atomic"
+              title={t('recipes.atomic')}
               count={atomicRecipes.length}
               expanded={atomicExpanded}
               onToggle={() => setAtomicExpanded(!atomicExpanded)}
               colorClass="text-[var(--accent-warning)]"
-              tip="Small recipe that solves one specific problem, composable"
+              tip={t('recipes.atomicTip')}
             >
               {atomicRecipes.map((recipe) => (
                 <RecipeCard

@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, CheckCircle, Circle, Loader2 } from 'lucide-react';
 import { DependencyStep } from './DependencyStep';
 import { ResourceStep } from './ResourceStep';
@@ -25,14 +26,15 @@ interface InitWizardModalProps {
   onComplete: () => void;
 }
 
-const STEPS: { id: WizardStep; label: string }[] = [
-  { id: 'dependencies', label: 'Dependencies' },
-  { id: 'resources', label: 'Resources' },
-  { id: 'auth', label: 'Auth' },
-  { id: 'complete', label: 'Complete' },
+const STEPS: { id: WizardStep; labelKey: string }[] = [
+  { id: 'dependencies', labelKey: 'settings.init.dependencies' },
+  { id: 'resources', labelKey: 'settings.init.resources' },
+  { id: 'auth', labelKey: 'settings.init.auth' },
+  { id: 'complete', labelKey: 'settings.init.complete' },
 ];
 
 export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModalProps) {
+  const { t } = useTranslation();
   const [currentStep, setCurrentStep] = useState<WizardStep>('dependencies');
   const [initStatus, setInitStatus] = useState<InitStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -125,12 +127,12 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
       <div className="bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white">Welcome to Frago</h2>
+          <h2 className="text-xl font-semibold text-white">{t('init.welcome')}</h2>
           <button
             type="button"
             onClick={onClose}
             className="p-2 hover:bg-gray-800 rounded-lg transition-colors"
-            aria-label="Close wizard"
+            aria-label={t('init.closeWizard')}
           >
             <X className="w-5 h-5 text-gray-400" />
           </button>
@@ -163,7 +165,7 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
                     ) : (
                       <Circle className="w-4 h-4" />
                     )}
-                    <span className="text-sm font-medium">{step.label}</span>
+                    <span className="text-sm font-medium">{t(step.labelKey)}</span>
                   </button>
 
                   {/* Connector line */}
@@ -185,7 +187,7 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12">
               <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-4" />
-              <p className="text-gray-400">Loading initialization status...</p>
+              <p className="text-gray-400">{t('init.loadingStatus')}</p>
             </div>
           ) : error ? (
             <div className="text-center py-12">
@@ -195,7 +197,7 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
                 onClick={loadInitStatus}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
               >
-                Retry
+                {t('init.retry')}
               </button>
             </div>
           ) : initStatus ? (

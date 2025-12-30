@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getTaskDetail, continueAgentTask } from '@/api';
 import StepList from './StepList';
@@ -27,6 +28,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function TaskDetail() {
+  const { t } = useTranslation();
   const { taskDetail, isLoading, switchPage, setTaskDetail, showToast } = useAppStore();
 
   // Continue feature state
@@ -111,7 +113,7 @@ export default function TaskDetail() {
   if (!taskDetail) {
     return (
       <div className="text-[var(--text-muted)] text-center py-scaled-8">
-        Task does not exist or has been deleted
+        {t('tasks.taskNotExist')}
       </div>
     );
   }
@@ -119,7 +121,7 @@ export default function TaskDetail() {
   if (taskDetail.error) {
     return (
       <div className="text-[var(--accent-error)] text-center py-scaled-8">
-        Failed to load: {taskDetail.error}
+        {t('tasks.failedToLoad')}: {taskDetail.error}
       </div>
     );
   }
@@ -133,7 +135,7 @@ export default function TaskDetail() {
           className="btn btn-ghost self-start"
           onClick={() => switchPage('tasks')}
         >
-          ← Back to Task List
+          ← {t('tasks.backToTaskList')}
         </button>
 
         {/* Task info card - collapsible */}
@@ -169,14 +171,14 @@ export default function TaskDetail() {
                 }}
               >
                 <MessageSquarePlus className="icon-scaled-md" />
-                Continue Conversation
+                {t('tasks.continueConversation')}
               </button>
             )}
             {/* Running status hint */}
             {taskDetail.status === 'running' && (
               <div className="flex items-center gap-scaled-2 text-scaled-sm text-[var(--accent-warning)] ml-scaled-4 shrink-0">
                 <LoadingSpinner size="sm" />
-                Running
+                {t('tasks.status.running')}
               </div>
             )}
           </div>
@@ -185,27 +187,27 @@ export default function TaskDetail() {
           {!infoCollapsed && (
             <div className="space-y-2 text-scaled-sm mt-scaled-4">
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">Status</span>
+                <span className="text-[var(--text-muted)]">{t('tasks.statusLabel')}</span>
                 <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">Start Time</span>
+                <span className="text-[var(--text-muted)]">{t('tasks.startTime')}</span>
                 <span>{formatDateTime(taskDetail.started_at)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">Duration</span>
+                <span className="text-[var(--text-muted)]">{t('tasks.duration')}</span>
                 <span>{formatDuration(taskDetail.duration_ms)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">Step Count</span>
+                <span className="text-[var(--text-muted)]">{t('tasks.stepCount')}</span>
                 <span>{taskDetail.step_count}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">Tool Calls</span>
+                <span className="text-[var(--text-muted)]">{t('tasks.toolCalls')}</span>
                 <span>{taskDetail.tool_call_count}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[var(--text-muted)] shrink-0">Project Path</span>
+                <span className="text-[var(--text-muted)] shrink-0">{t('tasks.projectPath')}</span>
                 <span className="font-mono text-scaled-xs text-right break-all ml-scaled-4">{taskDetail.project_path}</span>
               </div>
             </div>
@@ -219,7 +221,7 @@ export default function TaskDetail() {
               <textarea
                 ref={textareaRef}
                 className="task-input"
-                placeholder="Enter content to continue the conversation..."
+                placeholder={t('tasks.enterContinueContent')}
                 value={continuePrompt}
                 onChange={(e) => setContinuePrompt(e.target.value)}
                 onKeyDown={handleContinueKeyDown}
@@ -237,12 +239,12 @@ export default function TaskDetail() {
               </button>
             </div>
             <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
-              Ctrl+Enter to send ·
+              {t('tasks.ctrlEnterToSend')} ·
               <button
                 className="text-[var(--accent-primary)] hover:underline ml-scaled-1"
                 onClick={() => setShowContinue(false)}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
           </div>
@@ -253,7 +255,7 @@ export default function TaskDetail() {
       <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between mb-scaled-3 shrink-0">
           <h3 className="font-medium text-[var(--accent-primary)]">
-            Execution Steps
+            {t('tasks.executionSteps')}
           </h3>
         </div>
 

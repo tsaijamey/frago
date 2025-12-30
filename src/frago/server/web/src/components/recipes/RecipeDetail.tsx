@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getRecipeDetail, runRecipe, openPath } from '@/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -40,6 +41,7 @@ function CollapsibleSection({ title, icon, defaultExpanded = true, children }: C
 }
 
 export default function RecipeDetail() {
+  const { t } = useTranslation();
   const { currentRecipeName, switchPage, showToast } = useAppStore();
   const [recipe, setRecipe] = useState<RecipeDetailType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,10 +55,10 @@ export default function RecipeDetail() {
       .then(setRecipe)
       .catch((err) => {
         console.error('Failed to load recipe:', err);
-        showToast('Failed to load recipe details', 'error');
+        showToast(t('recipes.failedToLoad'), 'error');
       })
       .finally(() => setIsLoading(false));
-  }, [currentRecipeName, showToast]);
+  }, [currentRecipeName, showToast, t]);
 
   const handleRun = async () => {
     if (!currentRecipeName || isRunning) return;
@@ -65,13 +67,13 @@ export default function RecipeDetail() {
     try {
       const result = await runRecipe(currentRecipeName);
       if (result.status === 'ok') {
-        showToast('Recipe executed successfully', 'success');
+        showToast(t('recipes.executedSuccess'), 'success');
       } else {
-        showToast(result.error || 'Execution failed', 'error');
+        showToast(result.error || t('recipes.executionFailed'), 'error');
       }
     } catch (err) {
       console.error('Failed to run recipe:', err);
-      showToast('Failed to execute recipe', 'error');
+      showToast(t('recipes.failedToExecute'), 'error');
     } finally {
       setIsRunning(false);
     }
@@ -88,7 +90,7 @@ export default function RecipeDetail() {
   if (!recipe) {
     return (
       <div className="text-[var(--text-muted)] text-center py-scaled-8">
-        Recipe does not exist
+        {t('recipes.recipeNotExist')}
       </div>
     );
   }
@@ -105,7 +107,7 @@ export default function RecipeDetail() {
         className="btn btn-ghost self-start shrink-0"
         onClick={() => switchPage('recipes')}
       >
-        ← Back to Recipe List
+        ← {t('recipes.backToRecipeList')}
       </button>
 
       {/* Scrollable content */}
@@ -136,33 +138,33 @@ export default function RecipeDetail() {
               onClick={handleRun}
               disabled={isRunning}
             >
-              {isRunning ? <LoadingSpinner size="sm" /> : 'Run'}
+              {isRunning ? <LoadingSpinner size="sm" /> : t('recipes.run')}
             </button>
           </div>
 
           {/* Metadata grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
             <div>
-              <span className="text-[var(--text-muted)] block text-xs">Type</span>
+              <span className="text-[var(--text-muted)] block text-xs">{t('recipes.type')}</span>
               <span className={`inline-block mt-1 px-2 py-0.5 rounded text-xs ${
                 recipe.category === 'atomic'
                   ? 'bg-[var(--status-running-bg)] text-[var(--accent-warning)]'
                   : 'bg-[var(--status-completed-bg)] text-[var(--accent-success)]'
               }`}>
-                {recipe.category === 'atomic' ? 'Atomic' : 'Workflow'}
+                {recipe.category === 'atomic' ? t('recipes.atomic') : t('recipes.workflow')}
               </span>
             </div>
             <div>
-              <span className="text-[var(--text-muted)] block text-xs">Source</span>
+              <span className="text-[var(--text-muted)] block text-xs">{t('recipes.source')}</span>
               <span className="text-[var(--text-primary)] mt-1 block">{recipe.source || '-'}</span>
             </div>
             <div>
-              <span className="text-[var(--text-muted)] block text-xs">Runtime</span>
+              <span className="text-[var(--text-muted)] block text-xs">{t('recipes.runtime')}</span>
               <span className="text-[var(--text-primary)] mt-1 block">{recipe.runtime || '-'}</span>
             </div>
             {recipe.output_targets && recipe.output_targets.length > 0 && (
               <div>
-                <span className="text-[var(--text-muted)] block text-xs">Output</span>
+                <span className="text-[var(--text-muted)] block text-xs">{t('recipes.output')}</span>
                 <span className="text-[var(--text-primary)] mt-1 block">
                   {recipe.output_targets.join(', ')}
                 </span>
@@ -179,10 +181,10 @@ export default function RecipeDetail() {
                 onClick={async () => {
                   const result = await openPath(recipe.script_path!, true);
                   if (result.status !== 'ok') {
-                    showToast(result.error || 'Unable to open path', 'error');
+                    showToast(result.error || t('recipes.unableToOpenPath'), 'error');
                   }
                 }}
-                title="Show in file manager"
+                title={t('recipes.showInFileManager')}
               >
                 {recipe.script_path}
                 <ExternalLink size={12} className="shrink-0 mt-0.5" />
@@ -208,7 +210,7 @@ export default function RecipeDetail() {
         {/* Use Cases */}
         {hasUseCases && (
           <CollapsibleSection
-            title="Use Cases"
+            title={t('recipes.useCases')}
             icon={<Lightbulb size={16} className="text-[var(--accent-warning)]" />}
           >
             <ul className="space-y-2">
@@ -225,18 +227,18 @@ export default function RecipeDetail() {
         {/* Parameters */}
         {hasInputs && (
           <CollapsibleSection
-            title="Parameters"
+            title={t('recipes.parameters')}
             icon={<Settings size={16} className="text-[var(--accent-primary)]" />}
           >
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[var(--border-color)]">
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">Name</th>
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">Type</th>
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">Required</th>
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">Default</th>
-                    <th className="text-left py-2 text-[var(--text-muted)] font-medium">Description</th>
+                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.name')}</th>
+                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.type')}</th>
+                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.required')}</th>
+                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.default')}</th>
+                    <th className="text-left py-2 text-[var(--text-muted)] font-medium">{t('recipes.description')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -246,9 +248,9 @@ export default function RecipeDetail() {
                       <td className="py-2 pr-4 text-[var(--text-secondary)]">{input.type}</td>
                       <td className="py-2 pr-4">
                         {input.required ? (
-                          <span className="text-[var(--accent-error)]">Yes</span>
+                          <span className="text-[var(--accent-error)]">{t('recipes.yes')}</span>
                         ) : (
-                          <span className="text-[var(--text-muted)]">No</span>
+                          <span className="text-[var(--text-muted)]">{t('recipes.no')}</span>
                         )}
                       </td>
                       <td className="py-2 pr-4 font-mono text-xs text-[var(--text-muted)]">
@@ -266,7 +268,7 @@ export default function RecipeDetail() {
         {/* Dependencies */}
         {hasDependencies && (
           <CollapsibleSection
-            title="Dependencies"
+            title={t('recipes.dependencies')}
             icon={<Link2 size={16} className="text-[var(--accent-success)]" />}
           >
             <div className="flex flex-wrap gap-2">
@@ -285,7 +287,7 @@ export default function RecipeDetail() {
         {/* Source Code */}
         {recipe.source_code && (
           <CollapsibleSection
-            title="Source Code"
+            title={t('recipes.sourceCode')}
             icon={<Code size={16} className="text-[var(--text-muted)]" />}
             defaultExpanded={false}
           >

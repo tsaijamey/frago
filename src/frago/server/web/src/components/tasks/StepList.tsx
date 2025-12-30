@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { TaskStep, StepType } from '@/types/pywebview';
 import { User, Bot, Wrench, ArrowRight, Settings, type LucideIcon } from 'lucide-react';
 import { StepContent, PairedToolStep } from './content';
@@ -8,12 +9,12 @@ interface StepListProps {
 }
 
 // Step type configuration (corresponds to backend StepType enum)
-const stepTypeConfig: Record<StepType, { Icon: LucideIcon; label: string; colorClass: string }> = {
-  user_message: { Icon: User, label: 'User', colorClass: 'text-[var(--accent-primary)]' },
-  assistant_message: { Icon: Bot, label: 'Assistant', colorClass: 'text-[var(--accent-success)]' },
-  tool_call: { Icon: Wrench, label: 'Tool', colorClass: 'text-[var(--accent-warning)]' },
-  tool_result: { Icon: ArrowRight, label: 'Result', colorClass: 'text-[var(--accent-warning)]' },
-  system_event: { Icon: Settings, label: 'System', colorClass: 'text-[var(--accent-info)]' },
+const stepTypeConfig: Record<StepType, { Icon: LucideIcon; labelKey: string; colorClass: string }> = {
+  user_message: { Icon: User, labelKey: 'tasks.user', colorClass: 'text-[var(--accent-primary)]' },
+  assistant_message: { Icon: Bot, labelKey: 'tasks.assistant', colorClass: 'text-[var(--accent-success)]' },
+  tool_call: { Icon: Wrench, labelKey: 'tasks.tool', colorClass: 'text-[var(--accent-warning)]' },
+  tool_result: { Icon: ArrowRight, labelKey: 'tasks.result', colorClass: 'text-[var(--accent-warning)]' },
+  system_event: { Icon: Settings, labelKey: 'tasks.system', colorClass: 'text-[var(--accent-info)]' },
 };
 
 function getStepConfig(type: StepType) {
@@ -101,6 +102,7 @@ function pairToolSteps(steps: TaskStep[]): DisplayStep[] {
 }
 
 export default function StepList({ steps }: StepListProps) {
+  const { t } = useTranslation();
   // Empty set means show all, non-empty means only show selected types
   const [activeFilters, setActiveFilters] = useState<Set<StepType>>(new Set());
   const [renderCount, setRenderCount] = useState(RENDER_BATCH_SIZE);
@@ -176,7 +178,7 @@ export default function StepList({ steps }: StepListProps) {
   if (steps.length === 0) {
     return (
       <div className="text-[var(--text-muted)] text-center py-scaled-4">
-        No steps
+        {t('tasks.noSteps')}
       </div>
     );
   }
@@ -185,9 +187,10 @@ export default function StepList({ steps }: StepListProps) {
     <div className="flex flex-col h-full">
       {/* Filter bar - wrapping layout */}
       <div className="flex flex-wrap items-center gap-1 pb-scaled-2 border-b border-[var(--border-primary)] mb-scaled-2 shrink-0">
-        <span className="text-scaled-xs text-[var(--text-muted)]">Filter:</span>
+        <span className="text-scaled-xs text-[var(--text-muted)]">{t('tasks.filter')}:</span>
         {filterableTypes.map(type => {
-          const { Icon, label, colorClass } = getStepConfig(type);
+          const { Icon, labelKey, colorClass } = getStepConfig(type);
+          const label = t(labelKey);
           const isActive = activeFilters.has(type);
           const showAsActive = activeFilters.size === 0 || isActive;
           return (
@@ -226,7 +229,8 @@ export default function StepList({ steps }: StepListProps) {
 
             // Render single step
             const step = displayStep.step;
-            const { Icon, label, colorClass } = getStepConfig(step.type);
+            const { Icon, labelKey, colorClass } = getStepConfig(step.type);
+            const label = t(labelKey);
             return (
               <div key={displayStep.key} className="step-item-new">
                 {/* First line: Icon + Type name + Timestamp */}
@@ -254,7 +258,7 @@ export default function StepList({ steps }: StepListProps) {
         </div>
         {hasMore && (
           <div className="text-center py-scaled-2 text-scaled-xs text-[var(--text-muted)]">
-            Scroll to load more...
+            {t('tasks.scrollToLoadMore')}
           </div>
         )}
       </div>

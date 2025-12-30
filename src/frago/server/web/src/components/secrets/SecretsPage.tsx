@@ -3,6 +3,7 @@
  * Standalone page for environment variables configuration
  */
 
+import { useTranslation } from 'react-i18next';
 import SecretsSettings from '@/components/settings/SecretsSettings';
 
 // Shield icon for security notice
@@ -13,14 +14,16 @@ const ShieldIcon = () => (
 );
 
 export default function SecretsPage() {
+  const { t } = useTranslation();
+
   return (
     <div className="h-full overflow-auto">
       <div className="page-scroll p-4 max-w-2xl mx-auto space-y-6">
         {/* Page title */}
         <div className="mb-6">
-          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Secrets</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">{t('secrets.title')}</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">
-            Manage environment variables for recipes and integrations
+            {t('secrets.pageDesc')}
           </p>
         </div>
 
@@ -31,9 +34,7 @@ export default function SecretsPage() {
           </div>
           <div className="text-sm text-[var(--text-secondary)] leading-relaxed">
             <p>
-              Your secrets are stored locally on this device and never leave your machine.
-              They are accessed only by recipes you run — frago does not manage or transmit them.
-              By default, secrets are excluded from sync even if you have configured a private repository.
+              {t('secrets.securityNotice')}
             </p>
           </div>
         </div>

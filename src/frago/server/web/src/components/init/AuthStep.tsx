@@ -5,6 +5,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   CheckCircle,
   ArrowRight,
@@ -28,6 +29,7 @@ export function AuthStep({
   onSkip,
   onBack,
 }: AuthStepProps) {
+  const { t } = useTranslation();
   const [acknowledged, setAcknowledged] = useState(false);
 
   const authConfigured = initStatus.auth_configured;
@@ -38,10 +40,10 @@ export function AuthStep({
       {/* Header */}
       <div>
         <h3 className="text-lg font-semibold text-white mb-2">
-          Authentication Setup
+          {t('init.authTitle')}
         </h3>
         <p className="text-gray-400">
-          Configure how Claude Code authenticates with Anthropic or a third-party API.
+          {t('init.authDesc')}
         </p>
       </div>
 
@@ -54,11 +56,11 @@ export function AuthStep({
             <Shield className="w-5 h-5 text-gray-500" />
           )}
           <div>
-            <h4 className="font-medium text-white">Authentication Status</h4>
+            <h4 className="font-medium text-white">{t('init.authStatus')}</h4>
             <p className="text-sm text-gray-400">
               {authConfigured
-                ? `Configured: ${authMethod === 'official' ? 'Official (user-managed)' : 'Custom API endpoint'}`
-                : 'Not configured'}
+                ? t('init.authConfigured', { method: authMethod === 'official' ? t('init.officialUserManaged') : t('init.customEndpoint') })
+                : t('init.authNotConfigured')}
             </p>
           </div>
         </div>
@@ -70,10 +72,9 @@ export function AuthStep({
           <div className="flex items-start gap-3">
             <Key className="w-5 h-5 text-blue-400 mt-0.5" />
             <div>
-              <h4 className="font-medium text-white">Official Authentication</h4>
+              <h4 className="font-medium text-white">{t('init.officialAuth')}</h4>
               <p className="text-sm text-gray-400 mt-1">
-                Use Anthropic's official authentication. You manage your own Claude login.
-                This is the default and recommended option for most users.
+                {t('init.officialAuthDesc')}
               </p>
             </div>
           </div>
@@ -83,10 +84,9 @@ export function AuthStep({
           <div className="flex items-start gap-3">
             <Settings className="w-5 h-5 text-purple-400 mt-0.5" />
             <div>
-              <h4 className="font-medium text-white">Custom API Endpoint</h4>
+              <h4 className="font-medium text-white">{t('init.customEndpoint')}</h4>
               <p className="text-sm text-gray-400 mt-1">
-                Connect to a third-party API endpoint (DeepSeek, Aliyun, Kimi, etc.)
-                with your own API key. Configure this in Settings after setup.
+                {t('init.customEndpointDesc')}
               </p>
             </div>
           </div>
@@ -103,7 +103,7 @@ export function AuthStep({
             className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-blue-500"
           />
           <span className="text-sm text-gray-400">
-            I'll configure authentication later in Settings
+            {t('init.skipAuthCheckbox')}
           </span>
         </label>
       )}
@@ -111,9 +111,7 @@ export function AuthStep({
       {/* Info note */}
       <div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4 text-sm text-blue-300">
         <p>
-          <strong>Note:</strong> You can change authentication settings anytime from the
-          Settings page. If using official authentication, make sure to log in to Claude
-          Code via terminal first.
+          <strong>{t('common.note')}:</strong> {t('init.authNote')}
         </p>
       </div>
 
@@ -125,7 +123,7 @@ export function AuthStep({
           className="flex items-center gap-2 text-gray-400 hover:text-gray-300"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back
+          {t('init.back')}
         </button>
 
         <div className="flex items-center gap-3">
@@ -134,7 +132,7 @@ export function AuthStep({
             onClick={onSkip}
             className="text-gray-400 hover:text-gray-300 text-sm"
           >
-            Skip
+            {t('init.skip')}
           </button>
 
           <button
@@ -143,7 +141,7 @@ export function AuthStep({
             disabled={!authConfigured && !acknowledged}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            Continue
+            {t('init.continue')}
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   CheckCircle,
   XCircle,
@@ -33,6 +34,7 @@ export function ResourceStep({
   onBack,
   onRefresh,
 }: ResourceStepProps) {
+  const { t } = useTranslation();
   const [installing, setInstalling] = useState(false);
   const [installResult, setInstallResult] = useState<ResourceInstallResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,10 +67,10 @@ export function ResourceStep({
       {/* Header */}
       <div>
         <h3 className="text-lg font-semibold text-white mb-2">
-          Install Resources
+          {t('init.resTitle')}
         </h3>
         <p className="text-gray-400">
-          Install Claude Code commands, skills, and example recipes.
+          {t('init.resDesc')}
         </p>
       </div>
 
@@ -81,14 +83,14 @@ export function ResourceStep({
             <XCircle className="w-5 h-5 text-gray-500" />
           )}
           <div>
-            <h4 className="font-medium text-white">Resources Status</h4>
+            <h4 className="font-medium text-white">{t('init.resourcesStatus')}</h4>
             <p className="text-sm text-gray-400">
               {resourcesInstalled
-                ? `Installed (v${initStatus.resources_version || 'unknown'})`
-                : 'Not installed'}
+                ? t('init.resourcesInstalled', { version: initStatus.resources_version || 'unknown' })
+                : t('init.resourcesNotInstalled')}
               {updateAvailable && (
                 <span className="ml-2 text-blue-400">
-                  Update available (v{initStatus.current_frago_version})
+                  {t('init.updateAvailable', { version: initStatus.current_frago_version })}
                 </span>
               )}
             </p>
@@ -100,17 +102,17 @@ export function ResourceStep({
           <div className="flex items-center gap-2 text-gray-400">
             <Package className="w-4 h-4" />
             <span className="text-sm">
-              {initStatus.resources_info?.commands?.installed || 0} Commands
+              {initStatus.resources_info?.commands?.installed || 0} {t('init.commands')}
             </span>
           </div>
           <div className="flex items-center gap-2 text-gray-400">
             <Zap className="w-4 h-4" />
-            <span className="text-sm">Skills</span>
+            <span className="text-sm">{t('skills.title')}</span>
           </div>
           <div className="flex items-center gap-2 text-gray-400">
             <BookOpen className="w-4 h-4" />
             <span className="text-sm">
-              {initStatus.resources_info?.recipes?.installed || 0} Recipes
+              {initStatus.resources_info?.recipes?.installed || 0} {t('recipes.title')}
             </span>
           </div>
         </div>
@@ -126,7 +128,7 @@ export function ResourceStep({
             className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-blue-500"
           />
           <span className="text-sm text-gray-400">
-            Force update (overwrite existing resources)
+            {t('init.forceUpdate')}
           </span>
         </label>
       )}
@@ -141,22 +143,22 @@ export function ResourceStep({
         {installing ? (
           <>
             <Loader2 className="w-5 h-5 animate-spin" />
-            Installing resources...
+            {t('init.installingResources')}
           </>
         ) : resourcesInstalled && !updateAvailable ? (
           <>
             <RefreshCw className="w-5 h-5" />
-            Reinstall Resources
+            {t('init.reinstallResources')}
           </>
         ) : updateAvailable ? (
           <>
             <Download className="w-5 h-5" />
-            Update Resources
+            {t('init.updateResources')}
           </>
         ) : (
           <>
             <Download className="w-5 h-5" />
-            Install Resources
+            {t('init.installResources')}
           </>
         )}
       </button>
@@ -190,21 +192,21 @@ export function ResourceStep({
               }`}
             >
               {installResult.status === 'ok'
-                ? 'Installation complete!'
+                ? t('init.installComplete')
                 : installResult.status === 'partial'
-                  ? 'Partial installation'
-                  : 'Installation failed'}
+                  ? t('init.installPartial')
+                  : t('init.installFailed')}
             </span>
           </div>
 
           <div className="text-sm text-gray-300 space-y-1">
-            <p>Installed: {installResult.total_installed} files</p>
+            <p>{t('init.filesInstalled', { count: installResult.total_installed })}</p>
             {installResult.total_skipped > 0 && (
-              <p>Skipped: {installResult.total_skipped} files (already exist)</p>
+              <p>{t('init.filesSkipped', { count: installResult.total_skipped })}</p>
             )}
             {installResult.errors.length > 0 && (
               <div className="mt-2">
-                <p className="text-red-400">Errors:</p>
+                <p className="text-red-400">{t('init.errorsLabel')}</p>
                 <ul className="list-disc list-inside text-red-300">
                   {installResult.errors.map((err, i) => (
                     <li key={i}>{err}</li>
@@ -231,7 +233,7 @@ export function ResourceStep({
           className="flex items-center gap-2 text-gray-400 hover:text-gray-300"
         >
           <ArrowLeft className="w-4 h-4" />
-          Back
+          {t('init.back')}
         </button>
 
         <div className="flex items-center gap-3">
@@ -240,7 +242,7 @@ export function ResourceStep({
             onClick={onSkip}
             className="text-gray-400 hover:text-gray-300 text-sm"
           >
-            Skip
+            {t('init.skip')}
           </button>
 
           <button
@@ -249,7 +251,7 @@ export function ResourceStep({
             disabled={!resourcesInstalled && !installResult}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            Continue
+            {t('init.continue')}
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

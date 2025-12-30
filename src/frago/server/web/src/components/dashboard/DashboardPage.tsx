@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getDashboard, DashboardData, HourlyActivity } from '@/api';
 import {
@@ -156,6 +157,7 @@ function ActivityLineChart({ data, height = 200 }: LineChartProps) {
 }
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
   const { switchPage } = useAppStore();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -190,8 +192,8 @@ export default function DashboardPage() {
     <div className="page-scroll dashboard-container">
       {/* Header */}
       <div className="dashboard-header">
-        <h1>Dashboard</h1>
-        <p>System overview and quick access to your resources</p>
+        <h1>{t('dashboard.title')}</h1>
+        <p>{t('dashboard.pageDesc')}</p>
       </div>
 
       {/* Stats Cards */}
@@ -202,10 +204,10 @@ export default function DashboardPage() {
             <div className={`dashboard-card-icon ${data?.server.running ? 'success' : 'error'}`}>
               <Server size={20} className={data?.server.running ? 'text-success' : 'text-error'} />
             </div>
-            <span className="dashboard-card-icon-label">Server</span>
+            <span className="dashboard-card-icon-label">{t('dashboard.server')}</span>
           </div>
           <div className="dashboard-card-value">
-            {data?.server.running ? 'Online' : 'Offline'}
+            {data?.server.running ? t('dashboard.online') : t('dashboard.offline')}
           </div>
           <div className="dashboard-card-label">
             <Clock size={12} />
@@ -219,12 +221,12 @@ export default function DashboardPage() {
             <div className="dashboard-card-icon info">
               <ListTodo size={20} className="text-info" />
             </div>
-            <span className="dashboard-card-icon-label">Tasks</span>
+            <span className="dashboard-card-icon-label">{t('dashboard.tasks')}</span>
           </div>
           <div className="dashboard-card-value">
             {data?.resource_counts.tasks ?? 0}
           </div>
-                  </div>
+        </div>
 
         {/* Recipes Count */}
         <div className="dashboard-card clickable" onClick={() => switchPage('recipes')}>
@@ -232,12 +234,12 @@ export default function DashboardPage() {
             <div className="dashboard-card-icon warning">
               <BookOpen size={20} className="text-warning" />
             </div>
-            <span className="dashboard-card-icon-label">Recipes</span>
+            <span className="dashboard-card-icon-label">{t('dashboard.recipes')}</span>
           </div>
           <div className="dashboard-card-value">
             {data?.resource_counts.recipes ?? 0}
           </div>
-                  </div>
+        </div>
 
         {/* Skills Count */}
         <div className="dashboard-card clickable" onClick={() => switchPage('skills')}>
@@ -245,12 +247,12 @@ export default function DashboardPage() {
             <div className="dashboard-card-icon purple">
               <Zap size={20} className="text-purple" />
             </div>
-            <span className="dashboard-card-icon-label">Skills</span>
+            <span className="dashboard-card-icon-label">{t('dashboard.skills')}</span>
           </div>
           <div className="dashboard-card-value">
             {data?.resource_counts.skills ?? 0}
           </div>
-                  </div>
+        </div>
       </div>
 
       {/* Activity Overview - Full Width */}
@@ -258,14 +260,14 @@ export default function DashboardPage() {
         <div className="dashboard-section-header">
           <h2 className="dashboard-section-title">
             <Activity size={18} />
-            Activity Overview
+            {t('dashboard.activityOverview')}
           </h2>
           <button
             type="button"
             onClick={() => switchPage('tasks')}
             className="dashboard-view-all-btn"
           >
-            View all <ChevronRight size={14} />
+            {t('dashboard.viewAll')} <ChevronRight size={14} />
           </button>
         </div>
 
@@ -284,37 +286,37 @@ export default function DashboardPage() {
               <div className="activity-stat">
                 <Clock size={16} className="text-info" />
                 <span className="activity-stat-value">{data.activity_overview.stats.total_sessions}</span>
-                <span className="activity-stat-label">Sessions</span>
+                <span className="activity-stat-label">{t('dashboard.sessions')}</span>
               </div>
               <div className="activity-stat">
                 <Wrench size={16} className="text-warning" />
                 <span className="activity-stat-value">{data.activity_overview.stats.total_tool_calls}</span>
-                <span className="activity-stat-label">Tool Calls</span>
+                <span className="activity-stat-label">{t('dashboard.toolCalls')}</span>
               </div>
               <div className="activity-stat">
                 <CheckCircle size={16} className="text-success" />
                 <span className="activity-stat-value">{data.activity_overview.stats.completed_sessions}</span>
-                <span className="activity-stat-label">Completed</span>
+                <span className="activity-stat-label">{t('dashboard.completed')}</span>
               </div>
               {data.activity_overview.stats.running_sessions > 0 && (
                 <div className="activity-stat">
                   <Activity size={16} className="text-warning" />
                   <span className="activity-stat-value">{data.activity_overview.stats.running_sessions}</span>
-                  <span className="activity-stat-label">Running</span>
+                  <span className="activity-stat-label">{t('dashboard.running')}</span>
                 </div>
               )}
               {data.activity_overview.stats.error_sessions > 0 && (
                 <div className="activity-stat">
                   <AlertCircle size={16} className="text-error" />
                   <span className="activity-stat-value">{data.activity_overview.stats.error_sessions}</span>
-                  <span className="activity-stat-label">Errors</span>
+                  <span className="activity-stat-label">{t('dashboard.errors')}</span>
                 </div>
               )}
             </div>
           </>
         ) : (
           <div className="dashboard-empty">
-            No activity data in the past 12 hours
+            {t('dashboard.noActivityData')}
           </div>
         )}
       </div>
