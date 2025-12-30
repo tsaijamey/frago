@@ -1,0 +1,160 @@
+{
+  "sidebar": {
+    "dashboard": "Dashboard",
+    "console": "Console",
+    "tasks": "Tasks",
+    "recipes": "Recipes",
+    "skills": "Skills",
+    "sync": "Sync",
+    "secrets": "Secrets",
+    "settings": "Settings",
+    "theme": {
+      "switchToLight": "Switch to light mode",
+      "switchToDark": "Switch to dark mode"
+    },
+    "collapse": {
+      "expand": "Expand sidebar",
+      "collapse": "Collapse sidebar"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "systemOverview": "System Overview",
+    "server": "Server",
+    "online": "Online",
+    "offline": "Offline",
+    "tasks": "Tasks",
+    "recipes": "Recipes",
+    "skills": "Skills",
+    "activityOverview": "Activity Overview",
+    "viewAll": "View all",
+    "sessions": "Sessions",
+    "toolCalls": "Tool Calls",
+    "completed": "Completed",
+    "running": "Running",
+    "errors": "Errors"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "noTasks": "No Tasks",
+    "noTasksDescription": "Enter a task description to start your first task",
+    "inputPlaceholder": "Describe the task you want to execute...",
+    "aiTitleToggle": "Use haiku to generate readable titles",
+    "status": {
+      "running": "Running",
+      "completed": "Completed",
+      "error": "Error",
+      "cancelled": "Cancelled"
+    },
+    "steps": "steps",
+    "calls": "calls"
+  },
+  "recipes": {
+    "title": "Recipes",
+    "noRecipes": "No Recipes",
+    "noRecipesDescription": "No recipes found in your library",
+    "searchPlaceholder": "Search recipes...",
+    "run": "Run",
+    "view": "View"
+  },
+  "skills": {
+    "title": "Skills",
+    "noSkills": "No Skills",
+    "noSkillsDescription": "No skills found"
+  },
+  "console": {
+    "title": "Console",
+    "connecting": "Connecting...",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "inputPlaceholder": "Type your message...",
+    "autoApprove": "Auto Approve"
+  },
+  "sync": {
+    "title": "Sync",
+    "description": "Sync your frago resources across devices"
+  },
+  "secrets": {
+    "title": "Secrets",
+    "description": "Manage your API keys and secrets"
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Configure frago features",
+    "tabs": {
+      "general": "General",
+      "appearance": "Appearance",
+      "init": "Init",
+      "about": "About"
+    },
+    "general": {
+      "title": "General Configuration",
+      "apiEndpoint": "API Endpoint",
+      "officialApi": "Official Claude API",
+      "customEndpoint": "Custom API Endpoint",
+      "endpointType": "Endpoint Type",
+      "apiUrl": "API URL",
+      "apiKey": "API Key",
+      "defaultModel": "Default Model",
+      "sonnetModel": "Sonnet Model",
+      "haikuModel": "Haiku Model",
+      "saveConfiguration": "Save Configuration",
+      "edit": "Edit",
+      "workingDirectory": "Working Directory",
+      "open": "Open",
+      "confirmSwitch": "Confirm Switch to Official API",
+      "confirmSwitchDesc": "This will remove your custom API configuration",
+      "confirm": "Confirm",
+      "cancel": "Cancel"
+    },
+    "appearance": {
+      "title": "Appearance",
+      "behavior": "Behavior",
+      "language": "Language",
+      "languageDesc": "Select your preferred interface language",
+      "english": "English",
+      "chinese": "Chinese",
+      "showSystemStatus": "Show System Status",
+      "showSystemStatusDesc": "Display CPU and memory usage in status bar",
+      "exitConfirmation": "Exit Confirmation",
+      "exitConfirmationDesc": "Show confirmation dialog when closing window",
+      "autoScrollOutput": "Auto Scroll Output",
+      "autoScrollOutputDesc": "Automatically scroll to bottom when new content appears"
+    },
+    "init": {
+      "title": "Initialization",
+      "dependencies": "Dependencies",
+      "resources": "Resources",
+      "auth": "Auth",
+      "complete": "Complete"
+    },
+    "about": {
+      "title": "About",
+      "version": "Version",
+      "checkUpdate": "Check for Updates"
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "loadingConfiguration": "Loading configuration...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "open": "Open",
+    "close": "Close",
+    "confirm": "Confirm",
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Info",
+    "retry": "Retry",
+    "refresh": "Refresh"
+  },
+  "errors": {
+    "loadFailed": "Failed to load",
+    "saveFailed": "Failed to save",
+    "apiKeyEmpty": "API Key cannot be empty",
+    "customEndpointRequired": "Custom endpoint requires API URL"
+  }
+}

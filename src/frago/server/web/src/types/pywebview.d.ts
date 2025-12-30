@@ -26,6 +26,8 @@ export type RecipeRuntime = 'js' | 'python' | 'shell';
 
 export type Theme = 'dark' | 'light';
 
+export type Language = 'en' | 'zh';
+
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
 
 // ============================================================
@@ -150,6 +152,7 @@ export interface SkillItem {
 
 export interface UserConfig {
   theme: Theme;
+  language: Language;
   show_system_status: boolean;
   confirm_on_exit: boolean;
   auto_scroll_output: boolean;

@@ -1,0 +1,160 @@
+{
+  "sidebar": {
+    "dashboard": "仪表盘",
+    "console": "控制台",
+    "tasks": "任务",
+    "recipes": "配方",
+    "skills": "技能",
+    "sync": "同步",
+    "secrets": "密钥",
+    "settings": "设置",
+    "theme": {
+      "switchToLight": "切换到浅色模式",
+      "switchToDark": "切换到深色模式"
+    },
+    "collapse": {
+      "expand": "展开侧边栏",
+      "collapse": "收起侧边栏"
+    }
+  },
+  "dashboard": {
+    "title": "仪表盘",
+    "systemOverview": "系统概览",
+    "server": "服务器",
+    "online": "在线",
+    "offline": "离线",
+    "tasks": "任务",
+    "recipes": "配方",
+    "skills": "技能",
+    "activityOverview": "活动概览",
+    "viewAll": "查看全部",
+    "sessions": "会话",
+    "toolCalls": "工具调用",
+    "completed": "已完成",
+    "running": "运行中",
+    "errors": "错误"
+  },
+  "tasks": {
+    "title": "任务",
+    "noTasks": "暂无任务",
+    "noTasksDescription": "输入任务描述以开始您的第一个任务",
+    "inputPlaceholder": "描述您想要执行的任务...",
+    "aiTitleToggle": "使用 haiku 生成可读标题",
+    "status": {
+      "running": "运行中",
+      "completed": "已完成",
+      "error": "错误",
+      "cancelled": "已取消"
+    },
+    "steps": "步骤",
+    "calls": "调用"
+  },
+  "recipes": {
+    "title": "配方",
+    "noRecipes": "暂无配方",
+    "noRecipesDescription": "您的配方库中没有配方",
+    "searchPlaceholder": "搜索配方...",
+    "run": "运行",
+    "view": "查看"
+  },
+  "skills": {
+    "title": "技能",
+    "noSkills": "暂无技能",
+    "noSkillsDescription": "未找到技能"
+  },
+  "console": {
+    "title": "控制台",
+    "connecting": "连接中...",
+    "connected": "已连接",
+    "disconnected": "已断开",
+    "inputPlaceholder": "输入您的消息...",
+    "autoApprove": "自动批准"
+  },
+  "sync": {
+    "title": "同步",
+    "description": "跨设备同步您的 frago 资源"
+  },
+  "secrets": {
+    "title": "密钥",
+    "description": "管理您的 API 密钥和凭证"
+  },
+  "settings": {
+    "title": "设置",
+    "description": "配置 frago 功能",
+    "tabs": {
+      "general": "通用",
+      "appearance": "外观",
+      "init": "初始化",
+      "about": "关于"
+    },
+    "general": {
+      "title": "通用配置",
+      "apiEndpoint": "API 端点",
+      "officialApi": "官方 Claude API",
+      "customEndpoint": "自定义 API 端点",
+      "endpointType": "端点类型",
+      "apiUrl": "API 地址",
+      "apiKey": "API 密钥",
+      "defaultModel": "默认模型",
+      "sonnetModel": "Sonnet 模型",
+      "haikuModel": "Haiku 模型",
+      "saveConfiguration": "保存配置",
+      "edit": "编辑",
+      "workingDirectory": "工作目录",
+      "open": "打开",
+      "confirmSwitch": "确认切换到官方 API",
+      "confirmSwitchDesc": "这将移除您的自定义 API 配置",
+      "confirm": "确认",
+      "cancel": "取消"
+    },
+    "appearance": {
+      "title": "外观",
+      "behavior": "行为",
+      "language": "语言",
+      "languageDesc": "选择您偏好的界面语言",
+      "english": "English",
+      "chinese": "中文",
+      "showSystemStatus": "显示系统状态",
+      "showSystemStatusDesc": "在状态栏显示 CPU 和内存使用率",
+      "exitConfirmation": "退出确认",
+      "exitConfirmationDesc": "关闭窗口时显示确认对话框",
+      "autoScrollOutput": "自动滚动输出",
+      "autoScrollOutputDesc": "当新内容出现时自动滚动到底部"
+    },
+    "init": {
+      "title": "初始化",
+      "dependencies": "依赖项",
+      "resources": "资源",
+      "auth": "认证",
+      "complete": "完成"
+    },
+    "about": {
+      "title": "关于",
+      "version": "版本",
+      "checkUpdate": "检查更新"
+    }
+  },
+  "common": {
+    "loading": "加载中...",
+    "loadingConfiguration": "加载配置中...",
+    "save": "保存",
+    "cancel": "取消",
+    "edit": "编辑",
+    "delete": "删除",
+    "open": "打开",
+    "close": "关闭",
+    "confirm": "确认",
+    "success": "成功",
+    "error": "错误",
+    "warning": "警告",
+    "info": "信息",
+    "retry": "重试",
+    "refresh": "刷新"
+  },
+  "errors": {
+    "loadFailed": "加载失败",
+    "saveFailed": "保存失败",
+    "apiKeyEmpty": "API 密钥不能为空",
+    "customEndpointRequired": "自定义端点需要 API 地址"
+  }
+}
