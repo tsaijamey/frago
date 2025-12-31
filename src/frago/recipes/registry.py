@@ -7,13 +7,17 @@ from .exceptions import RecipeNotFoundError
 from .metadata import RecipeMetadata, parse_metadata_file, validate_metadata
 
 
+# Source priority order (highest to lowest)
+SOURCE_PRIORITY = ['User', 'Community', 'Official']
+
+
 @dataclass
 class Recipe:
     """Recipe entity"""
     metadata: RecipeMetadata
     script_path: Path
     metadata_path: Path
-    source: str  # Project | User | Example
+    source: str  # User | Community | Official
     base_dir: Optional[Path] = None  # Recipe root directory (directory-based recipe)
 
     @property
@@ -42,11 +46,26 @@ class RecipeRegistry:
         self._setup_search_paths()
 
     def _setup_search_paths(self) -> None:
-        """Set up search paths - unified to use ~/.frago/recipes/"""
-        # Only use user directory
+        """Set up search paths for User > Community > Official priority"""
+        # 1. User recipes (highest priority)
         user_path = Path.home() / '.frago' / 'recipes'
         if user_path.exists():
             self.search_paths.append(user_path)
+
+        # 2. Community recipes
+        community_path = Path.home() / '.frago' / 'community-recipes'
+        if community_path.exists():
+            self.search_paths.append(community_path)
+
+        # 3. Official recipes (from package resources)
+        try:
+            from frago.init.resources import get_package_resources_path
+            official_path = get_package_resources_path("recipes")
+            if official_path.exists():
+                self.search_paths.append(official_path)
+        except (ImportError, FileNotFoundError, ValueError):
+            # Official resources not available
+            pass
 
     def scan(self) -> None:
         """Scan all search_paths, parse metadata and build index"""
@@ -61,8 +80,13 @@ class RecipeRegistry:
 
     def _get_source_label(self, path: Path) -> str:
         """Return source label based on path"""
-        # Unified to use user directory
-        return 'User'
+        path_str = str(path)
+        if 'community-recipes' in path_str:
+            return 'Community'
+        elif '.frago/recipes' in path_str or '.frago\\recipes' in path_str:
+            return 'User'
+        else:
+            return 'Official'
 
     def _scan_directory(self, base_path: Path, source: str) -> None:
         """Recursively scan directory, find Recipes (directory-based)"""
@@ -136,7 +160,7 @@ class RecipeRegistry:
 
         Args:
             name: Recipe name
-            source: Specify source ('project' | 'user' | 'example'), return by priority when None
+            source: Specify source ('user' | 'community' | 'official'), return by priority when None
 
         Returns:
             Recipe object
@@ -158,9 +182,10 @@ class RecipeRegistry:
                 raise RecipeNotFoundError(f"{name} (source: {source})", searched_paths)
             return sources_dict[source_label]
 
-        # Source not specified: return User source
-        if 'User' in sources_dict:
-            return sources_dict['User']
+        # Source not specified: return by priority (User > Community > Official)
+        for priority_source in SOURCE_PRIORITY:
+            if priority_source in sources_dict:
+                return sources_dict[priority_source]
 
         # Should not reach here in theory, since sources_dict is not empty
         raise RecipeNotFoundError(name, searched_paths)
@@ -181,9 +206,11 @@ class RecipeRegistry:
                 # Return recipes from all sources
                 result.extend(sources_dict.values())
             else:
-                # Return User source
-                if 'User' in sources_dict:
-                    result.append(sources_dict['User'])
+                # Return highest priority version (User > Community > Official)
+                for priority_source in SOURCE_PRIORITY:
+                    if priority_source in sources_dict:
+                        result.append(sources_dict[priority_source])
+                        break
         return sorted(result, key=lambda r: r.metadata.name)
 
     def get_by_source(self, source: str) -> list[Recipe]:
@@ -191,7 +218,7 @@ class RecipeRegistry:
         Filter Recipes by source
 
         Args:
-            source: Source label (Project | User | Example)
+            source: Source label (User | Community | Official)
 
         Returns:
             Recipe list matching the source (sorted by name)
@@ -249,14 +276,16 @@ class RecipeRegistry:
             name: Recipe name
 
         Returns:
-            [(source, recipe_dir), ...] list, sorted by priority
+            [(source, recipe_dir), ...] list, sorted by priority (User > Community > Official)
         """
         if name not in self.recipes:
             return []
 
-        # Return User source
+        # Return all sources in priority order
         result = []
-        if 'User' in self.recipes[name]:
-            recipe = self.recipes[name]['User']
-            result.append(('User', recipe.base_dir))
+        sources_dict = self.recipes[name]
+        for priority_source in SOURCE_PRIORITY:
+            if priority_source in sources_dict:
+                recipe = sources_dict[priority_source]
+                result.append((priority_source, recipe.base_dir))
         return result

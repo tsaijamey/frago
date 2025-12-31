@@ -21,9 +21,9 @@ def recipe_group():
 @recipe_group.command(name='list')
 @click.option(
     '--source',
-    type=click.Choice(['project', 'user', 'example', 'all'], case_sensitive=False),
+    type=click.Choice(['user', 'community', 'official', 'all'], case_sensitive=False),
     default='all',
-    help='Filter by source'
+    help='Filter by source (user | community | official | all)'
 )
 @click.option(
     '--type',
@@ -114,7 +114,7 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
 @click.argument('name')
 @click.option(
     '--source',
-    type=click.Choice(['project', 'user', 'example'], case_sensitive=False),
+    type=click.Choice(['user', 'community', 'official'], case_sensitive=False),
     default=None,
     help='Specify recipe source (defaults to auto-select by priority)'
 )
@@ -247,7 +247,7 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
 @click.argument('name')
 @click.option(
     '--source',
-    type=click.Choice(['project', 'user', 'example'], case_sensitive=False),
+    type=click.Choice(['user', 'community', 'official'], case_sensitive=False),
     default=None,
     help='Specify recipe source (defaults to auto-select by priority)'
 )
@@ -500,3 +500,579 @@ def validate_recipe(path: str, output_format: str):
                 click.echo("Warnings:")
                 for w in warnings:
                     click.echo(f"  - {w}")
+
+
+@recipe_group.command(name='install')
+@click.argument('source')
+@click.option(
+    '--force', '-f',
+    is_flag=True,
+    help='Overwrite existing recipe if it exists'
+)
+@click.option(
+    '--name',
+    'name_override',
+    type=str,
+    default=None,
+    help='Override the recipe name'
+)
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['text', 'json'], case_sensitive=False),
+    default='text',
+    help='Output format'
+)
+def install_recipe(source: str, force: bool, name_override: Optional[str], output_format: str):
+    """
+    Install a recipe from various sources
+
+    SOURCE can be:
+
+    \b
+    - community:<name>     Install from frago community recipes
+    - /path/to/recipe      Install from local directory
+
+    \b
+    Examples:
+      frago recipe install community:stock-monitor
+      frago recipe install /path/to/recipe --name custom-name
+      frago recipe install community:stock-monitor --force
+    """
+    from frago.recipes.installer import RecipeInstaller
+    from frago.recipes.exceptions import RecipeAlreadyExistsError, RecipeInstallError
+
+    try:
+        installer = RecipeInstaller()
+        recipe_name = installer.install(source, force=force, name_override=name_override)
+
+        if output_format == 'json':
+            result = {
+                "success": True,
+                "recipe_name": recipe_name,
+                "source": source,
+            }
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"[OK] Recipe '{recipe_name}' installed successfully")
+            click.echo(f"  Source: {source}")
+            click.echo()
+            click.echo(f"Run 'frago recipe info {recipe_name}' to see details")
+
+    except RecipeAlreadyExistsError as e:
+        if output_format == 'json':
+            result = {"success": False, "error": str(e), "code": "already_exists"}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    except RecipeInstallError as e:
+        if output_format == 'json':
+            result = {"success": False, "error": str(e), "code": "install_error"}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    except RecipeError as e:
+        if output_format == 'json':
+            result = {"success": False, "error": str(e), "code": "error"}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@recipe_group.command(name='uninstall')
+@click.argument('name')
+@click.option(
+    '--yes', '-y',
+    is_flag=True,
+    help='Skip confirmation prompt'
+)
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['text', 'json'], case_sensitive=False),
+    default='text',
+    help='Output format'
+)
+def uninstall_recipe(name: str, yes: bool, output_format: str):
+    """
+    Uninstall an installed recipe
+
+    \b
+    Examples:
+      frago recipe uninstall stock-monitor
+      frago recipe uninstall stock-monitor --yes
+    """
+    from frago.recipes.installer import RecipeInstaller
+
+    installer = RecipeInstaller()
+
+    # Check if recipe exists
+    installed = installer.manifest.recipes.get(name)
+    if not installed and not installer._find_installed_recipe(name):
+        if output_format == 'json':
+            result = {"success": False, "error": f"Recipe '{name}' not found", "code": "not_found"}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: Recipe '{name}' not found in community-recipes", err=True)
+        sys.exit(1)
+
+    # Confirm
+    if not yes and output_format != 'json':
+        if not click.confirm(f"Uninstall recipe '{name}'?"):
+            click.echo("Cancelled")
+            return
+
+    if installer.uninstall(name):
+        if output_format == 'json':
+            result = {"success": True, "recipe_name": name}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"[OK] Recipe '{name}' uninstalled")
+    else:
+        if output_format == 'json':
+            result = {"success": False, "error": "Uninstall failed", "code": "uninstall_error"}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: Failed to uninstall '{name}'", err=True)
+        sys.exit(1)
+
+
+@recipe_group.command(name='update')
+@click.argument('name', required=False)
+@click.option(
+    '--all', 'update_all',
+    is_flag=True,
+    help='Update all installed recipes'
+)
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['text', 'json'], case_sensitive=False),
+    default='text',
+    help='Output format'
+)
+def update_recipe(name: Optional[str], update_all: bool, output_format: str):
+    """
+    Update installed recipes by re-fetching from original source
+
+    \b
+    Examples:
+      frago recipe update stock-monitor
+      frago recipe update --all
+    """
+    from frago.recipes.installer import RecipeInstaller
+    from frago.recipes.exceptions import RecipeInstallError
+
+    if not name and not update_all:
+        click.echo("Error: Specify a recipe name or use --all", err=True)
+        sys.exit(1)
+
+    installer = RecipeInstaller()
+
+    if update_all:
+        # Update all installed recipes
+        results = installer.update_all()
+        if output_format == 'json':
+            output = {
+                "success": all(r[1] for r in results),
+                "results": [
+                    {"name": r[0], "success": r[1], "message": r[2]}
+                    for r in results
+                ]
+            }
+            click.echo(json.dumps(output, ensure_ascii=False, indent=2))
+        else:
+            if not results:
+                click.echo("No installed recipes to update")
+                return
+
+            success_count = sum(1 for r in results if r[1])
+            fail_count = len(results) - success_count
+
+            for recipe_name, success, message in results:
+                if success:
+                    click.echo(f"[OK] {recipe_name}: {message}")
+                else:
+                    click.echo(f"[X] {recipe_name}: {message}", err=True)
+
+            click.echo()
+            click.echo(f"Updated: {success_count}, Failed: {fail_count}")
+    else:
+        # Update single recipe
+        try:
+            installer.update(name)
+            if output_format == 'json':
+                result = {"success": True, "recipe_name": name}
+                click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                click.echo(f"[OK] Recipe '{name}' updated successfully")
+        except RecipeInstallError as e:
+            if output_format == 'json':
+                result = {"success": False, "error": str(e), "code": "update_error"}
+                click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+
+@recipe_group.command(name='search')
+@click.argument('query', required=False)
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['table', 'json'], case_sensitive=False),
+    default='table',
+    help='Output format'
+)
+def search_recipes(query: Optional[str], output_format: str):
+    """
+    Search for recipes in community repository
+
+    QUERY supports '|' separated multiple keywords (OR logic).
+
+    \b
+    Examples:
+      frago recipe search twitter
+      frago recipe search "twitter|x"
+      frago recipe search
+    """
+    from frago.recipes.installer import RecipeInstaller
+
+    installer = RecipeInstaller()
+    results = installer.search_community(query)
+
+    if output_format == 'json':
+        click.echo(json.dumps(results, ensure_ascii=False, indent=2))
+    else:
+        if not results:
+            if query:
+                click.echo(f"No recipes found matching '{query}'")
+            else:
+                click.echo("No community recipes available")
+            return
+
+        click.echo(f"{'NAME':<30} {'VERSION':<10} {'TYPE':<10} {'DESCRIPTION'}")
+        click.echo("-" * 80)
+        for recipe in results:
+            name = recipe.get('name', '')
+            version = recipe.get('version', '')
+            recipe_type = recipe.get('type', '')
+            description = recipe.get('description', '')[:40]
+            click.echo(f"{name:<30} {version:<10} {recipe_type:<10} {description}")
+
+        click.echo()
+        click.echo(f"Found {len(results)} recipe(s)")
+        click.echo("Install with: frago recipe install community:<name>")
+
+
+@recipe_group.command(name='share')
+@click.argument('name')
+@click.option(
+    '--yes', '-y',
+    is_flag=True,
+    help='Skip confirmation prompt'
+)
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['text', 'json'], case_sensitive=False),
+    default='text',
+    help='Output format'
+)
+def share_recipe(name: str, yes: bool, output_format: str):
+    """
+    Share a recipe to the community repository via GitHub PR
+
+    This command will:
+    1. Validate the recipe format
+    2. Fork the frago repository (if needed)
+    3. Create a branch and copy the recipe
+    4. Submit a Pull Request
+
+    Prerequisites:
+    - GitHub CLI (gh) must be installed and authenticated
+    - Recipe must pass validation
+
+    \b
+    Examples:
+      frago recipe share my-recipe
+      frago recipe share my-recipe --yes
+    """
+    import subprocess
+    import tempfile
+
+    # Helper functions
+    def run_cmd(cmd: list[str], capture: bool = True, check: bool = True) -> subprocess.CompletedProcess:
+        """Run a command and return result"""
+        return subprocess.run(
+            cmd,
+            capture_output=capture,
+            text=True,
+            check=check,
+            encoding='utf-8'
+        )
+
+    def echo_step(step: int, total: int, message: str, status: str = ""):
+        """Print step progress"""
+        if output_format == 'text':
+            if status:
+                click.echo(f"[{step}/{total}] {message}")
+                click.echo(f"  {status}")
+            else:
+                click.echo(f"[{step}/{total}] {message}")
+
+    def echo_item(prefix: str, message: str):
+        """Print item"""
+        if output_format == 'text':
+            click.echo(f"  {prefix} {message}")
+
+    # Step 1: Check prerequisites
+    echo_step(1, 4, "Checking prerequisites...")
+
+    # Check gh is installed
+    try:
+        run_cmd(["gh", "--version"])
+    except FileNotFoundError:
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": "gh CLI not installed", "code": "gh_not_found"}))
+        else:
+            click.echo("Error: GitHub CLI (gh) is not installed", err=True)
+            click.echo("Install from: https://cli.github.com/", err=True)
+        sys.exit(1)
+
+    # Check gh is authenticated
+    try:
+        result = run_cmd(["gh", "auth", "status"])
+        # Extract username from output
+        gh_user = None
+        for line in result.stderr.split('\n'):
+            if 'Logged in to github.com account' in line:
+                # Format: "Logged in to github.com account USERNAME"
+                parts = line.strip().split()
+                if parts:
+                    gh_user = parts[-1].strip('()')
+                    break
+            elif 'as' in line.lower() and 'account' in line.lower():
+                # Alternative format
+                parts = line.split()
+                for i, p in enumerate(parts):
+                    if p.lower() == 'as':
+                        if i + 1 < len(parts):
+                            gh_user = parts[i + 1].strip('()')
+                            break
+    except subprocess.CalledProcessError:
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": "gh not authenticated", "code": "gh_not_auth"}))
+        else:
+            click.echo("Error: GitHub CLI is not authenticated", err=True)
+            click.echo("Run: gh auth login", err=True)
+        sys.exit(1)
+
+    echo_item("✓", f"gh authenticated{f' as: {gh_user}' if gh_user else ''}")
+
+    # Find and validate the recipe
+    registry = RecipeRegistry()
+    registry.scan()
+
+    try:
+        recipe = registry.find(name, source='user')
+    except RecipeError:
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": f"Recipe '{name}' not found in user recipes", "code": "not_found"}))
+        else:
+            click.echo(f"Error: Recipe '{name}' not found in user recipes", err=True)
+            click.echo("Only user recipes (in ~/.frago/recipes/) can be shared", err=True)
+        sys.exit(1)
+
+    # Validate recipe
+    from frago.recipes.metadata import parse_metadata_file, validate_metadata
+    try:
+        metadata = parse_metadata_file(recipe.metadata_path)
+        validate_metadata(metadata)
+        echo_item("✓", f"Recipe '{name}' validated")
+    except Exception as e:
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": f"Recipe validation failed: {e}", "code": "validation_failed"}))
+        else:
+            click.echo(f"Error: Recipe validation failed: {e}", err=True)
+            click.echo(f"Run: frago recipe validate {recipe.base_dir}", err=True)
+        sys.exit(1)
+
+    # Check if recipe already exists in community
+    from frago.recipes.installer import RecipeInstaller
+    installer = RecipeInstaller()
+    community_recipes = installer.search_community(name)
+    exact_match = any(r.get('name') == name for r in community_recipes)
+    if exact_match:
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": f"Recipe '{name}' already exists in community", "code": "already_exists"}))
+        else:
+            click.echo(f"Error: Recipe '{name}' already exists in community repository", err=True)
+        sys.exit(1)
+
+    echo_item("✓", "Recipe name available in community")
+
+    # Confirm before proceeding
+    if not yes and output_format != 'json':
+        click.echo()
+        click.echo(f"Recipe to share: {name}")
+        click.echo(f"  Type: {metadata.type}")
+        click.echo(f"  Runtime: {metadata.runtime}")
+        click.echo(f"  Description: {metadata.description}")
+        click.echo()
+        if not click.confirm("Proceed with sharing?"):
+            click.echo("Cancelled")
+            return
+
+    # Step 2: Prepare submission
+    echo_step(2, 4, "Preparing submission...")
+
+    # Community repository (configurable via config file)
+    from frago.init.config_manager import load_config
+    config = load_config()
+    UPSTREAM_REPO = config.community_repo
+    BRANCH_NAME = f"recipe/{name}"
+
+    # Check if user has push permission to upstream (owner or collaborator)
+    can_push_directly = False
+    try:
+        result = run_cmd(["gh", "api", f"repos/{UPSTREAM_REPO}", "--jq", ".permissions.push"], check=False)
+        can_push_directly = result.stdout.strip().lower() == "true"
+    except Exception:
+        pass  # Default to fork flow
+
+    if can_push_directly:
+        # User has push permission, push directly to upstream
+        echo_item("✓", f"Push permission verified for {UPSTREAM_REPO}")
+        clone_repo = UPSTREAM_REPO
+        pr_head = BRANCH_NAME
+    else:
+        # No push permission, need to fork
+        repo_name = UPSTREAM_REPO.split("/")[-1]
+        try:
+            result = run_cmd(["gh", "repo", "view", f"{gh_user}/{repo_name}", "--json", "name"], check=False)
+            if result.returncode != 0:
+                # Fork doesn't exist, create it
+                echo_item("→", "Forking repository...")
+                run_cmd(["gh", "repo", "fork", UPSTREAM_REPO, "--clone=false"])
+                echo_item("✓", f"Fork created: {gh_user}/{repo_name}")
+            else:
+                echo_item("✓", f"Fork exists: {gh_user}/{repo_name}")
+            clone_repo = f"{gh_user}/{repo_name}"
+            pr_head = f"{gh_user}:{BRANCH_NAME}"
+        except subprocess.CalledProcessError as e:
+            if output_format == 'json':
+                click.echo(json.dumps({"success": False, "error": f"Failed to check/create fork: {e}", "code": "fork_failed"}))
+            else:
+                click.echo(f"Error: Failed to check/create fork: {e}", err=True)
+            sys.exit(1)
+
+    # Step 3: Clone, copy files, commit
+    echo_step(3, 4, "Copying recipe files...")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        repo_path = temp_path / "frago"
+
+        try:
+            # Clone the repository
+            run_cmd(["gh", "repo", "clone", clone_repo, str(repo_path), "--", "--depth", "1"])
+
+            if can_push_directly:
+                # User has push permission: fetch latest main and create branch
+                run_cmd(["git", "-C", str(repo_path), "fetch", "origin", "main"])
+                run_cmd(["git", "-C", str(repo_path), "checkout", "-b", BRANCH_NAME, "origin/main"])
+            else:
+                # No push permission: add upstream and create branch from upstream/main
+                run_cmd(["git", "-C", str(repo_path), "remote", "add", "upstream", f"https://github.com/{UPSTREAM_REPO}.git"])
+                run_cmd(["git", "-C", str(repo_path), "fetch", "upstream", "main"])
+                run_cmd(["git", "-C", str(repo_path), "checkout", "-b", BRANCH_NAME, "upstream/main"])
+
+            # Copy recipe files
+            target_dir = repo_path / "community-recipes" / "recipes" / name
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            import shutil
+            for item in recipe.base_dir.iterdir():
+                if item.name.startswith('.'):
+                    continue
+                if item.is_file():
+                    shutil.copy2(item, target_dir / item.name)
+                    echo_item("→", f"{name}/{item.name}")
+                elif item.is_dir():
+                    shutil.copytree(item, target_dir / item.name)
+                    echo_item("→", f"{name}/{item.name}/")
+
+            # Commit
+            run_cmd(["git", "-C", str(repo_path), "add", "."])
+            commit_msg = f"feat(recipe): add {name} recipe\n\n{metadata.description}"
+            run_cmd(["git", "-C", str(repo_path), "commit", "-m", commit_msg])
+
+            # Push to fork
+            run_cmd(["git", "-C", str(repo_path), "push", "-u", "origin", BRANCH_NAME, "--force"])
+
+        except subprocess.CalledProcessError as e:
+            if output_format == 'json':
+                click.echo(json.dumps({"success": False, "error": f"Git operation failed: {e.stderr or e}", "code": "git_failed"}))
+            else:
+                click.echo(f"Error: Git operation failed: {e.stderr or e}", err=True)
+            sys.exit(1)
+
+        # Step 4: Create PR
+        echo_step(4, 4, "Creating Pull Request...")
+
+        try:
+            pr_title = f"feat(recipe): add {name} recipe"
+            pr_body = f"""## New Recipe: {name}
+
+**Type:** {metadata.type}
+**Runtime:** {metadata.runtime}
+**Version:** {metadata.version}
+
+### Description
+
+{metadata.description}
+
+### Use Cases
+
+{chr(10).join(f'- {uc}' for uc in metadata.use_cases)}
+
+---
+
+*Submitted via `frago recipe share`*
+"""
+            result = run_cmd([
+                "gh", "pr", "create",
+                "--repo", UPSTREAM_REPO,
+                "--head", pr_head,
+                "--title", pr_title,
+                "--body", pr_body
+            ])
+
+            # Extract PR URL from output
+            pr_url = result.stdout.strip()
+
+            if output_format == 'json':
+                click.echo(json.dumps({
+                    "success": True,
+                    "recipe_name": name,
+                    "pr_url": pr_url
+                }, ensure_ascii=False, indent=2))
+            else:
+                click.echo()
+                click.echo(f"✓ PR created: {pr_url}")
+                click.echo()
+                click.echo("Your recipe has been submitted for review!")
+                click.echo("The maintainers will review and merge your contribution.")
+
+        except subprocess.CalledProcessError as e:
+            if output_format == 'json':
+                click.echo(json.dumps({"success": False, "error": f"Failed to create PR: {e.stderr or e}", "code": "pr_failed"}))
+            else:
+                click.echo(f"Error: Failed to create PR: {e.stderr or e}", err=True)
+            sys.exit(1)
