@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from frago.server.services.cache_service import CacheService
 from frago.server.utils import get_server_state
 from frago.session.models import SessionStatus
 
@@ -149,8 +150,41 @@ async def get_dashboard():
     """Get dashboard overview data.
 
     Returns server status, activity overview, and resource counts.
+    Uses cache for fast response when available.
     """
-    # Get server state
+    # Use cache if available
+    cache = CacheService.get_instance()
+    if cache.is_initialized():
+        cached = await cache.get_dashboard()
+        if cached:
+            # Convert cached dict to response models
+            server = cached.get("server", {})
+            activity = cached.get("activity_overview", {})
+            resources = cached.get("resource_counts", {})
+
+            hourly_dist = [
+                HourlyActivity(**h)
+                for h in activity.get("hourly_distribution", [])
+            ]
+
+            return DashboardData(
+                server=ServerInfo(
+                    running=server.get("running", True),
+                    uptime_seconds=server.get("uptime_seconds", 0),
+                    started_at=server.get("started_at"),
+                ),
+                activity_overview=ActivityOverview(
+                    hourly_distribution=hourly_dist,
+                    stats=ActivityStats(**activity.get("stats", {})),
+                ),
+                resource_counts=ResourceCounts(
+                    tasks=resources.get("tasks", 0),
+                    recipes=resources.get("recipes", 0),
+                    skills=resources.get("skills", 0),
+                ),
+            )
+
+    # Fallback to direct calculation if cache not ready
     server_state = get_server_state()
     uptime_seconds = 0.0
     if server_state.get("started_at"):

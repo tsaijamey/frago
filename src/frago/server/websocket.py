@@ -123,6 +123,13 @@ class MessageType:
     INIT_STEP_COMPLETE = "init_step_complete"
     INIT_ERROR = "init_error"
 
+    # Data push events (for cache updates)
+    DATA_INITIAL = "data_initial"       # Full data on connect
+    DATA_TASKS = "data_tasks"           # Tasks list updated
+    DATA_DASHBOARD = "data_dashboard"   # Dashboard updated
+    DATA_RECIPES = "data_recipes"       # Recipes updated
+    DATA_SKILLS = "data_skills"         # Skills updated
+
 
 def create_message(
     msg_type: str,

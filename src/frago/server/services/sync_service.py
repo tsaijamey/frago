@@ -26,6 +26,15 @@ class SyncService:
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._last_result: Optional[Dict[str, Any]] = None
+        self._cache_service: Optional[Any] = None
+
+    def set_cache_service(self, cache_service: Any) -> None:
+        """Set the cache service for triggering refreshes.
+
+        Args:
+            cache_service: CacheService instance
+        """
+        self._cache_service = cache_service
 
     @classmethod
     def get_instance(cls) -> "SyncService":
@@ -76,11 +85,21 @@ class SyncService:
                 )
                 self._last_result = result
 
-                if result.get("synced", 0) > 0 or result.get("updated", 0) > 0:
+                # Check if there are changes
+                has_changes = result.get("synced", 0) > 0 or result.get("updated", 0) > 0
+
+                if has_changes:
                     logger.info(
                         f"Session sync: synced={result.get('synced', 0)}, "
                         f"updated={result.get('updated', 0)}"
                     )
+
+                    # Refresh cache and broadcast updates
+                    if self._cache_service is not None:
+                        try:
+                            await self._cache_service.refresh_tasks(broadcast=True)
+                        except Exception as e:
+                            logger.warning(f"Failed to refresh cache: {e}")
 
             except Exception as e:
                 logger.warning(f"Session sync failed: {e}")

@@ -15,6 +15,7 @@ from frago.server.models import (
     RecipeRunRequest,
     TaskItemResponse,
 )
+from frago.server.services.cache_service import CacheService
 from frago.server.services.recipe_service import RecipeService
 
 router = APIRouter()
@@ -25,8 +26,14 @@ async def list_recipes() -> List[RecipeItemResponse]:
     """List all available recipes.
 
     Returns a list of all recipes from both atomic and workflow categories.
+    Uses cache for fast response when available.
     """
-    recipes = RecipeService.get_recipes()
+    # Use cache if available
+    cache = CacheService.get_instance()
+    if cache.is_initialized():
+        recipes = await cache.get_recipes()
+    else:
+        recipes = RecipeService.get_recipes()
 
     return [
         RecipeItemResponse(

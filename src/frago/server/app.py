@@ -32,6 +32,7 @@ from frago.server.routes import (
     viewer_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
+from frago.server.services.cache_service import CacheService
 from frago.server.services.sync_service import SyncService
 
 
@@ -40,11 +41,17 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager.
 
     Handles startup and shutdown events:
-    - Start background session sync on startup
-    - Stop sync service on shutdown
+    - Initialize cache with preloaded data
+    - Start background session sync
+    - Stop services on shutdown
     """
-    # Startup
+    # Startup: Initialize cache first (preload all data)
+    cache_service = CacheService.get_instance()
+    await cache_service.initialize()
+
+    # Start sync service and link to cache
     sync_service = SyncService.get_instance()
+    sync_service.set_cache_service(cache_service)
     await sync_service.start()
 
     yield
@@ -171,6 +178,7 @@ def create_app(
         - Task status updates
         - Session sync events
         - Log streaming
+        - Initial data push on connect
         """
         await manager.connect(websocket)
         try:
@@ -182,6 +190,15 @@ def create_app(
                     {"message": "Connected to Frago Web Service"},
                 ),
             )
+
+            # Push initial data immediately if cache is ready
+            cache_service = CacheService.get_instance()
+            if cache_service.is_initialized():
+                initial_data = await cache_service.get_initial_data()
+                await manager.send_personal(
+                    websocket,
+                    create_message(MessageType.DATA_INITIAL, initial_data),
+                )
 
             # Keep connection alive and handle incoming messages
             while True:
