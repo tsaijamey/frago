@@ -25,6 +25,7 @@ def server_group(ctx: click.Context, debug: bool) -> None:
         frago server              # Start in background
         frago server --debug      # Start in foreground with logs
         frago server stop         # Stop the running server
+        frago server restart      # Restart the server
         frago server status       # Check server status
 
     \b
@@ -93,6 +94,7 @@ def _run_foreground() -> None:
         auto_open=False,  # Don't auto-open browser in debug mode
         auto_port=False,  # Don't find alternative port
         log_level="debug",
+        reload=False,  # No reload for server command
     )
 
 
@@ -102,6 +104,27 @@ def stop() -> None:
     from frago.server.daemon import stop_daemon
 
     success, message = stop_daemon()
+    click.echo(message)
+
+    if not success:
+        raise SystemExit(1)
+
+
+@server_group.command("restart")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force restart even if graceful shutdown fails",
+)
+def restart(force: bool) -> None:
+    """Restart the Frago web service.
+
+    Stops the running server and starts a new instance.
+    If the server is not running, starts it.
+    """
+    from frago.server.daemon import restart_daemon
+
+    success, message = restart_daemon(force=force)
     click.echo(message)
 
     if not success:

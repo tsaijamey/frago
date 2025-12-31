@@ -314,6 +314,34 @@ def stop_daemon() -> Tuple[bool, str]:
         return False, f"Failed to stop server: {e}"
 
 
+def restart_daemon(force: bool = False) -> Tuple[bool, str]:
+    """Restart the Frago server daemon.
+
+    Stops the running server (if any) and starts a new instance.
+
+    Args:
+        force: Force restart even if graceful shutdown fails
+
+    Returns:
+        Tuple of (success, message)
+    """
+    running, pid = is_server_running()
+
+    # If server is running, stop it first
+    if running:
+        success, stop_msg = stop_daemon()
+        if not success and not force:
+            return False, f"Failed to stop server: {stop_msg}"
+
+    # Start the server
+    success, start_msg = start_daemon()
+
+    if running:
+        return success, f"Server restarted. {start_msg}"
+    else:
+        return success, f"Server was not running. {start_msg}"
+
+
 def get_server_status() -> dict:
     """Get detailed server status information.
 

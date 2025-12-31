@@ -57,6 +57,7 @@ def run_server(
     auto_open: bool = True,
     auto_port: bool = True,
     log_level: str = "info",
+    reload: bool = True,
 ) -> None:
     """Start the Uvicorn server.
 
@@ -66,6 +67,7 @@ def run_server(
         auto_open: Whether to auto-open browser
         auto_port: Whether to find available port if specified is in use
         log_level: Uvicorn log level
+        reload: Enable auto-reload on code changes (dev mode only)
 
     Raises:
         RuntimeError: If no available port found
@@ -80,10 +82,6 @@ def run_server(
     started_at = datetime.now(timezone.utc).isoformat()
     set_server_state(host, port, started_at)
 
-    # Import here to avoid circular import
-    from frago.server.app import create_app
-    app = create_app()
-
     # Get server URL
     url = get_server_url(host, port)
 
@@ -92,26 +90,41 @@ def run_server(
     print(f"  ─────────────────────────────────")
     print(f"  Local:   {url}")
     print(f"  API:     {url}/api/docs")
+    if reload:
+        print(f"  Reload:  enabled")
     print(f"\n  Press Ctrl+C to stop\n")
 
     # Open browser if requested
     if auto_open:
         open_browser(url)
 
-    # Configure and run Uvicorn
-    config = uvicorn.Config(
-        app=app,
-        host=host,
-        port=port,
-        log_level=log_level,
-        access_log=log_level == "debug",
-        # Bind to localhost only for security
-        # Users can use a reverse proxy for external access
-    )
+    # Configure Uvicorn
+    # Note: reload requires app as import string, not instance
+    if reload:
+        config = uvicorn.Config(
+            app="frago.server.app:create_app",
+            factory=True,
+            host=host,
+            port=port,
+            log_level=log_level,
+            access_log=log_level == "debug",
+            reload=True,
+            reload_dirs=["src/frago"],
+        )
+    else:
+        from frago.server.app import create_app
+        app = create_app()
+        config = uvicorn.Config(
+            app=app,
+            host=host,
+            port=port,
+            log_level=log_level,
+            access_log=log_level == "debug",
+        )
 
     server = uvicorn.Server(config)
 
-    # Handle graceful shutdown
+    # Handle graceful shutdown with child process cleanup
     def signal_handler(signum, frame):
         logger.info("Shutting down server...")
         server.should_exit = True
@@ -124,7 +137,41 @@ def run_server(
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     finally:
+        # Clean up child processes (important for reload mode)
+        _cleanup_child_processes()
         logger.info("Server shutdown complete")
+
+
+def _cleanup_child_processes() -> None:
+    """Terminate all child processes to release ports."""
+    import os
+
+    import psutil
+
+    try:
+        current = psutil.Process(os.getpid())
+        children = current.children(recursive=True)
+
+        # Terminate children
+        for child in children:
+            try:
+                if child.is_running():
+                    child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        # Wait and force kill if needed
+        gone, alive = psutil.wait_procs(children, timeout=2)
+        for child in alive:
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        if children:
+            logger.info(f"Cleaned up {len(children)} child process(es)")
+    except Exception as e:
+        logger.warning(f"Error cleaning up child processes: {e}")
 
 
 def run_daemon_server() -> None:
@@ -155,6 +202,7 @@ def run_daemon_server() -> None:
         auto_open=False,  # Don't open browser in daemon mode
         auto_port=False,  # Fixed port, no auto-find
         log_level="info",
+        reload=False,  # No reload in daemon mode
     )
 
 
