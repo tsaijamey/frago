@@ -8,6 +8,38 @@
 
 [简体中文](https://github.com/tsaijamey/Frago/blob/main/README.zh-CN.md)
 
+---
+
+## Manifesto
+
+> AI should free people from repetitive labor, not become a new instrument of extraction.
+
+**Three beliefs that guide frago:**
+
+### 1. Delivery over Dialogue
+
+Chatting with AI produces nothing. The ICQ era of AI — endless conversation, zero delivery — wastes your time and money.
+
+frago exists for *results*: recipes that run, scripts that execute, data that's extracted. If AI can't hand you a deliverable, it hasn't done its job.
+
+### 2. Your Tools, Your Control
+
+We reject the narrative that you must wait for some company to build AGI before automation serves you.
+
+frago is open source. Your recipes, your skills, your Git repo. You accumulate capability, not subscription fees. The tools you build are *yours* — portable, version-controlled, independent.
+
+### 3. Against Token Exploitation
+
+Many "AI products" are token vending machines wrapped in pretty UIs. You pay per conversation, per generation, per retry — and get nothing persistent in return.
+
+frago attacks this directly:
+- First exploration: ~150k tokens
+- Every run after: ~2k tokens (98.7% saved)
+
+The savings compound. The recipes stay. Your time returns to family, hobbies, creation — not to feeding another revenue stream.
+
+---
+
 ### Recent Updates
 
 | Version | Highlights |
