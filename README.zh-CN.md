@@ -44,11 +44,11 @@ frago 直接攻击这个问题：
 
 | 版本 | 主要变化 |
 |------|----------|
+| **v0.24.0** | 社区 Recipe 基建；`recipe install/uninstall/update/search/share` 命令 |
+| **v0.23.0** | WebSocket 实时同步；YouTube Recipe（下载、字幕、转录） |
 | **v0.22.0** | 跨平台开机自启；`frago autostart` 命令；集成到 init 流程 |
 | **v0.21.0** | 国际化支持；AI 标题生成尊重用户语言偏好 |
 | **v0.20.0** | AI 标题生成；交互式控制台 UI；模型覆盖设置 |
-| **v0.19.0** | 增强设置；多设备同步；后台会话同步 |
-| **v0.18.0** | 会话名称提取；仪表板活动概览 |
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
@@ -437,16 +437,16 @@ frago deploy               # 从你的仓库获取最新资源
 
 ## 项目状态
 
-📍 **当前阶段**：Web 服务架构完成，AI 驱动功能增强
+📍 **当前阶段**：社区 Recipe 生态完成，完整的 Recipe 管理体系
 
-**最新功能（v0.17.0 - v0.22.0）**：
+**最新功能（v0.17.0 - v0.24.0）**：
 
+- ✅ 社区 Recipe - `recipe install/uninstall/update/search/share` 支持社区贡献
+- ✅ WebSocket 实时同步 - 服务端推送更新，减少轮询
+- ✅ YouTube Recipe - 下载视频、提取字幕和转录文本
 - ✅ 跨平台开机自启 - `frago autostart` 管理服务器开机启动（macOS/Linux/Windows）
 - ✅ 国际化支持 - UI 国际化，尊重用户语言偏好
 - ✅ Web 服务模式 - `frago server` 启动浏览器端 GUI（端口 8093）
-- ✅ AI 标题生成 - Claude Haiku 自动生成会话标题
-- ✅ 交互式控制台 - 从 Web UI 执行 Claude Code 任务
-- ✅ 多设备同步 - 通过 Web 服务跨设备同步会话
 
 **核心基建**：
 
