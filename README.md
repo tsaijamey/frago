@@ -44,11 +44,11 @@ The savings compound. The recipes stay. Your time returns to family, hobbies, cr
 
 | Version | Highlights |
 |---------|------------|
+| **v0.24.0** | Community recipes infrastructure; `recipe install/uninstall/update/search/share` commands |
+| **v0.23.0** | WebSocket real-time sync; YouTube recipes (download, subtitles, transcript) |
 | **v0.22.0** | Cross-platform autostart; `frago autostart` command; integrated into init workflow |
 | **v0.21.0** | i18n support; user language preference for AI title generation |
 | **v0.20.0** | AI title generation; interactive console UI; model override settings |
-| **v0.19.0** | Enhanced settings; multi-device sync; background session sync |
-| **v0.18.0** | Session name extraction; dashboard activity overview |
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
@@ -448,16 +448,16 @@ Your personal, non-frago Claude commands and skills are never touched.
 
 ## Project Status
 
-📍 **Current Stage**: Web service architecture complete with AI-powered features
+📍 **Current Stage**: Community recipes ecosystem with complete recipe management
 
-**Latest Features (v0.17.0 - v0.22.0)**:
+**Latest Features (v0.17.0 - v0.24.0)**:
 
+- ✅ Community recipes - `recipe install/uninstall/update/search/share` for community contributions
+- ✅ WebSocket real-time sync - Server push updates, reduced polling
+- ✅ YouTube recipes - Download videos, extract subtitles and transcripts
 - ✅ Cross-platform autostart - `frago autostart` manages server boot startup (macOS/Linux/Windows)
 - ✅ i18n support - UI internationalization with user language preferences
 - ✅ Web service mode - `frago server` launches browser-based GUI on port 8093
-- ✅ AI title generation - Claude Haiku auto-generates session titles
-- ✅ Interactive console - Execute Claude Code tasks from web UI
-- ✅ Multi-device sync - Sync sessions across devices via web service
 
 **Core Infrastructure**:
 
