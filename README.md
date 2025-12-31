@@ -56,6 +56,14 @@ Multi-runtime automation infrastructure designed for AI agents, providing persis
 
 ---
 
+### Writings
+
+Personal thoughts on AI automation, Agent design, and lessons learned.
+
+→ **[Read the Writings](writings/README.md)**
+
+---
+
 ## Why frago
 
 When facing prompts, AI can only "talk" but not "do"—it "talks once" but never "follows through from start to finish." Think of ChatGPT in 2023. So people designed Agents. Agents call tools through standardized interfaces.
