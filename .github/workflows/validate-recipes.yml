@@ -1,0 +1,53 @@
+name: Validate Community Recipes
+
+on:
+  pull_request:
+    paths:
+      - 'community-recipes/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Find changed recipes
+        id: changed
+        run: |
+          # Get list of changed files in community-recipes/recipes/
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.sha }} | grep '^community-recipes/recipes/' || true)
+
+          # Extract unique recipe directory names
+          RECIPES=""
+          for file in $CHANGED_FILES; do
+            # Extract recipe name (third path component)
+            RECIPE=$(echo "$file" | cut -d'/' -f3)
+            if [ -n "$RECIPE" ] && [ -d "community-recipes/recipes/$RECIPE" ]; then
+              if [[ ! " $RECIPES " =~ " $RECIPE " ]]; then
+                RECIPES="$RECIPES $RECIPE"
+              fi
+            fi
+          done
+
+          echo "recipes=$RECIPES" >> $GITHUB_OUTPUT
+          echo "Found changed recipes: $RECIPES"
+
+      - name: Validate recipes
+        if: steps.changed.outputs.recipes != ''
+        run: |
+          python .github/scripts/validate_recipe.py ${{ steps.changed.outputs.recipes }}
+
+      - name: No recipes to validate
+        if: steps.changed.outputs.recipes == ''
+        run: |
+          echo "No recipe directories found in changed files"
