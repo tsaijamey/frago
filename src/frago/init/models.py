@@ -60,6 +60,9 @@ class Config(BaseModel):
     # Multi-device sync configuration
     sync_repo_url: Optional[str] = None  # User's private repo URL (for sync)
 
+    # Community recipe repository
+    community_repo: str = "tsaijamey/frago"  # GitHub repo for community recipes
+
     # Resource installation status
     resources_installed: bool = False
     resources_version: Optional[str] = None

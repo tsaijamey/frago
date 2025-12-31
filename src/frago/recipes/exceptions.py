@@ -56,3 +56,25 @@ class MetadataParseError(RecipeError):
         self.reason = reason
         message = f"Metadata file parsing failed: {file_path}\nReason: {reason}"
         super().__init__(message)
+
+
+class RecipeInstallError(RecipeError):
+    """Recipe installation failed exception"""
+    def __init__(self, recipe_name: str, source: str, reason: str):
+        self.recipe_name = recipe_name
+        self.source = source
+        self.reason = reason
+        message = f"Failed to install recipe '{recipe_name}' from {source}: {reason}"
+        super().__init__(message)
+
+
+class RecipeAlreadyExistsError(RecipeError):
+    """Recipe already exists exception"""
+    def __init__(self, recipe_name: str, existing_path: str):
+        self.recipe_name = recipe_name
+        self.existing_path = existing_path
+        message = (
+            f"Recipe '{recipe_name}' already exists at {existing_path}\n"
+            "Use --force to overwrite"
+        )
+        super().__init__(message)
