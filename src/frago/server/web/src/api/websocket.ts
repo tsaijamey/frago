@@ -29,6 +29,13 @@ export const MessageType = {
   // Recipe events
   RECIPE_STARTED: 'recipe_started',
   RECIPE_COMPLETED: 'recipe_completed',
+
+  // Data push events (for cache updates)
+  DATA_INITIAL: 'data_initial',
+  DATA_TASKS: 'data_tasks',
+  DATA_DASHBOARD: 'data_dashboard',
+  DATA_RECIPES: 'data_recipes',
+  DATA_SKILLS: 'data_skills',
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];

@@ -63,6 +63,10 @@ interface AppState {
   isLoading: boolean;
   toasts: Toast[];
 
+  // Data sync state (for WebSocket updates)
+  dataVersion: number;
+  dataInitialized: boolean;
+
   // Actions
   switchPage: (page: PageType, id?: string) => void;
   toggleSidebar: () => void;
@@ -79,6 +83,17 @@ interface AppState {
   updateConfig: (config: Partial<UserConfig>) => Promise<void>;
   showToast: (message: string, type: ToastType) => void;
   dismissToast: (id: string) => void;
+
+  // Data sync actions (for WebSocket push)
+  setTasks: (tasks: TaskItem[]) => void;
+  setRecipes: (recipes: RecipeItem[]) => void;
+  setSkills: (skills: SkillItem[]) => void;
+  setDataFromPush: (data: {
+    version?: number;
+    tasks?: { tasks: TaskItem[]; total: number };
+    recipes?: RecipeItem[];
+    skills?: SkillItem[];
+  }) => void;
 }
 
 // Generate unique ID
@@ -122,6 +137,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   systemStatus: null,
   isLoading: false,
   toasts: [],
+  dataVersion: 0,
+  dataInitialized: false,
 
   // Page switching
   switchPage: (page, id) => {
@@ -333,5 +350,47 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       toasts: state.toasts.filter((t) => t.id !== id),
     }));
+  },
+
+  // Data sync actions (for WebSocket push)
+  setTasks: (tasks) => {
+    set({ tasks });
+  },
+
+  setRecipes: (recipes) => {
+    set({ recipes });
+  },
+
+  setSkills: (skills) => {
+    set({ skills });
+  },
+
+  setDataFromPush: (data) => {
+    const currentVersion = get().dataVersion;
+    const newVersion = data.version ?? currentVersion + 1;
+
+    // Ignore older versions
+    if (newVersion < currentVersion) {
+      console.log('[DataSync] Ignoring older data version', newVersion, '<', currentVersion);
+      return;
+    }
+
+    const updates: Partial<AppState> = {
+      dataVersion: newVersion,
+      dataInitialized: true,
+    };
+
+    if (data.tasks) {
+      updates.tasks = data.tasks.tasks;
+    }
+    if (data.recipes) {
+      updates.recipes = data.recipes;
+    }
+    if (data.skills) {
+      updates.skills = data.skills;
+    }
+
+    console.log('[DataSync] Applying pushed data, version:', newVersion);
+    set(updates);
   },
 }));

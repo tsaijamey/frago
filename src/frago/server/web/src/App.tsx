@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isApiReady, getApiMode, waitForApi } from '@/api';
 import { getInitStatus } from '@/api/client';
+import { useDataSync } from '@/hooks/useDataSync';
 
 // Layout - New admin panel layout with sidebar
 import MainLayout from '@/components/layout/MainLayout';
@@ -28,6 +29,9 @@ function App() {
   const { currentPage, loadConfig, toasts } = useAppStore();
   const [apiReady, setApiReady] = useState(isApiReady());
   const [showInitWizard, setShowInitWizard] = useState(false);
+
+  // Subscribe to WebSocket data push for real-time updates
+  useDataSync();
 
   useEffect(() => {
     const initApi = async () => {

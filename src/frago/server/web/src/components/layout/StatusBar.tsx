@@ -9,10 +9,10 @@ export default function StatusBar() {
     // Initial load
     loadSystemStatus();
 
-    // Periodic update
+    // Periodic update (every 15 seconds)
     const interval = setInterval(() => {
       loadSystemStatus();
-    }, 5000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [loadSystemStatus]);

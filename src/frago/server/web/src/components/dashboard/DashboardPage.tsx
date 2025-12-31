@@ -175,8 +175,8 @@ export default function DashboardPage() {
     };
 
     fetchData();
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchData, 30000);
+    // Refresh every 60 seconds (reduced from 30s since WebSocket provides real-time updates)
+    const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
   }, []);
 
