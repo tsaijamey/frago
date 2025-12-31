@@ -172,4 +172,4 @@ If you discover a security vulnerability in a community recipe:
 
 ---
 
-*Last updated: 2024-12*
+*Last updated: 2025-12*
