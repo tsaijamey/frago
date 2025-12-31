@@ -16,6 +16,7 @@ from frago.server.models import (
     TaskSummaryResponse,
     ToolUsageStatResponse,
 )
+from frago.server.services.cache_service import CacheService
 from frago.server.services.task_service import TaskService
 
 router = APIRouter()
@@ -41,9 +42,24 @@ async def list_tasks(
     """
     from datetime import datetime, timezone
 
-    result = TaskService.get_tasks(
-        status=status, limit=limit, offset=offset, generate_titles=generate_titles
-    )
+    # Use cache for default queries (no filter, no title generation)
+    cache = CacheService.get_instance()
+    if status is None and not generate_titles and cache.is_initialized():
+        cached = await cache.get_tasks()
+        if cached:
+            # Apply pagination to cached result
+            all_tasks = cached.get("tasks", [])
+            paginated = all_tasks[offset:offset + limit]
+            result = {"tasks": paginated, "total": cached.get("total", len(all_tasks))}
+        else:
+            result = TaskService.get_tasks(
+                status=status, limit=limit, offset=offset, generate_titles=generate_titles
+            )
+    else:
+        # Filtered or title generation requests bypass cache
+        result = TaskService.get_tasks(
+            status=status, limit=limit, offset=offset, generate_titles=generate_titles
+        )
 
     tasks = []
     for t in result.get("tasks", []):
