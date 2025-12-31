@@ -5,9 +5,11 @@ import { usePolling } from './usePolling';
 /**
  * Tasks Hook
  *
- * Provides task list polling and task detail loading
+ * Provides task list polling and task detail loading.
+ * Note: Primary data updates come via WebSocket (useDataSync).
+ * Polling is kept as a fallback with reduced frequency (30s).
  */
-export function useTasks(pollingInterval: number = 3000) {
+export function useTasks(pollingInterval: number = 30000) {
   const {
     tasks,
     taskDetail,
@@ -15,10 +17,11 @@ export function useTasks(pollingInterval: number = 3000) {
     loadTasks,
     openTaskDetail,
     currentPage,
+    dataInitialized,
   } = useAppStore();
 
-  // Enable polling only on the task list page
-  const enabled = currentPage === 'tasks';
+  // Enable polling only on the task list page, and reduce frequency if data is already synced
+  const enabled = currentPage === 'tasks' && !dataInitialized;
 
   const { trigger: refresh } = usePolling(loadTasks, pollingInterval, enabled);
 
