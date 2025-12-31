@@ -1,7 +1,7 @@
 import { RefObject } from 'react';
 import { Terminal } from 'lucide-react';
 import MessageItem from './MessageItem';
-import type { ConsoleMessage } from './ConsolePage';
+import type { ConsoleMessage } from '@/types/console';
 
 interface MessageListProps {
   messages: ConsoleMessage[];

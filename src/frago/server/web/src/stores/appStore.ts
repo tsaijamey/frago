@@ -14,6 +14,7 @@ import type {
   Theme,
   Language,
 } from '@/types/pywebview';
+import type { ConsoleMessage } from '@/types/console';
 import * as api from '@/api';
 
 // Page type - Updated for new admin panel layout
@@ -67,6 +68,12 @@ interface AppState {
   dataVersion: number;
   dataInitialized: boolean;
 
+  // Console state (persisted across navigation)
+  consoleSessionId: string | null;
+  consoleMessages: ConsoleMessage[];
+  consoleIsRunning: boolean;
+  consoleScrollPosition: number;
+
   // Actions
   switchPage: (page: PageType, id?: string) => void;
   toggleSidebar: () => void;
@@ -94,6 +101,16 @@ interface AppState {
     recipes?: RecipeItem[];
     skills?: SkillItem[];
   }) => void;
+
+  // Console actions
+  setConsoleSessionId: (id: string | null) => void;
+  addConsoleMessage: (message: ConsoleMessage) => void;
+  updateLastConsoleMessage: (update: Partial<ConsoleMessage>) => void;
+  updateConsoleMessageByToolCallId: (toolCallId: string, update: Partial<ConsoleMessage>) => void;
+  setConsoleMessages: (messages: ConsoleMessage[]) => void;
+  setConsoleIsRunning: (running: boolean) => void;
+  setConsoleScrollPosition: (position: number) => void;
+  clearConsole: () => void;
 }
 
 // Generate unique ID
@@ -139,6 +156,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
   dataVersion: 0,
   dataInitialized: false,
+
+  // Console initial state
+  consoleSessionId: null,
+  consoleMessages: [],
+  consoleIsRunning: false,
+  consoleScrollPosition: 0,
 
   // Page switching
   switchPage: (page, id) => {
@@ -392,5 +415,56 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     console.log('[DataSync] Applying pushed data, version:', newVersion);
     set(updates);
+  },
+
+  // Console actions
+  setConsoleSessionId: (id) => {
+    set({ consoleSessionId: id });
+  },
+
+  addConsoleMessage: (message) => {
+    set((state) => ({
+      consoleMessages: [...state.consoleMessages, message],
+    }));
+  },
+
+  updateLastConsoleMessage: (update) => {
+    set((state) => {
+      const messages = state.consoleMessages;
+      if (messages.length === 0) return state;
+      const last = messages[messages.length - 1];
+      return {
+        consoleMessages: [...messages.slice(0, -1), { ...last, ...update }],
+      };
+    });
+  },
+
+  updateConsoleMessageByToolCallId: (toolCallId, update) => {
+    set((state) => ({
+      consoleMessages: state.consoleMessages.map((msg) =>
+        msg.tool_call_id === toolCallId ? { ...msg, ...update } : msg
+      ),
+    }));
+  },
+
+  setConsoleMessages: (messages) => {
+    set({ consoleMessages: messages });
+  },
+
+  setConsoleIsRunning: (running) => {
+    set({ consoleIsRunning: running });
+  },
+
+  setConsoleScrollPosition: (position) => {
+    set({ consoleScrollPosition: position });
+  },
+
+  clearConsole: () => {
+    set({
+      consoleSessionId: null,
+      consoleMessages: [],
+      consoleIsRunning: false,
+      consoleScrollPosition: 0,
+    });
   },
 }));

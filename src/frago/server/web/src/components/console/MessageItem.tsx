@@ -1,4 +1,4 @@
-import type { ConsoleMessage } from './ConsolePage';
+import type { ConsoleMessage } from '@/types/console';
 import BashContent from '../tasks/content/BashContent';
 import JsonContent from '../tasks/content/JsonContent';
 

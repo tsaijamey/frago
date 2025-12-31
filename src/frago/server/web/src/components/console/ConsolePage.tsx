@@ -1,36 +1,61 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import type { ConsoleMessage } from '@/types/console';
 import ConsoleControls from './ConsoleControls';
 import MessageList from './MessageList';
 import ConsoleInput from './ConsoleInput';
 
-export interface ConsoleMessage {
-  type: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'system';
-  content: string;
-  timestamp: string;
-  tool_name?: string;
-  tool_call_id?: string;
-  metadata?: Record<string, any>;
-  done?: boolean; // for streaming assistant messages
-}
-
 export default function ConsolePage() {
   const { t } = useTranslation();
-  const { showToast } = useAppStore();
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ConsoleMessage[]>([]);
+  const {
+    showToast,
+    // Console state from global store
+    consoleSessionId,
+    consoleMessages,
+    consoleIsRunning,
+    consoleScrollPosition,
+    // Console actions
+    setConsoleSessionId,
+    addConsoleMessage,
+    updateLastConsoleMessage,
+    updateConsoleMessageByToolCallId,
+    setConsoleIsRunning,
+    setConsoleScrollPosition,
+    clearConsole,
+  } = useAppStore();
+
+  // Local state for input (no need to persist draft)
   const [inputValue, setInputValue] = useState('');
-  const [isRunning, setIsRunning] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Restore scroll position on mount
+  useEffect(() => {
+    if (consoleScrollPosition > 0 && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = consoleScrollPosition;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
+
+  // Save scroll position on unmount
+  useEffect(() => {
+    return () => {
+      const container = scrollContainerRef.current;
+      if (container) {
+        setConsoleScrollPosition(container.scrollTop);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on unmount
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [consoleMessages]);
 
   // WebSocket connection
   useEffect(() => {
@@ -70,80 +95,79 @@ export default function ConsolePage() {
   // Use ref to track sessionId for WebSocket handler (avoids stale closure)
   const sessionIdRef = useRef<string | null>(null);
   useEffect(() => {
-    sessionIdRef.current = sessionId;
-  }, [sessionId]);
+    sessionIdRef.current = consoleSessionId;
+  }, [consoleSessionId]);
 
-  const handleWebSocketMessage = (data: any) => {
+  // Memoize the WebSocket message handler to use latest store actions
+  const handleWebSocketMessage = useCallback((data: Record<string, unknown>) => {
     // Only handle messages for current session (or accept if no session yet)
     const currentSessionId = sessionIdRef.current;
-    if (data.session_id && currentSessionId && data.session_id !== currentSessionId) return;
+    const sessionId = data.session_id as string | undefined;
+    if (sessionId && currentSessionId && sessionId !== currentSessionId) return;
 
     // If we receive a message with session_id and we don't have one, capture it
-    if (data.session_id && !currentSessionId) {
-      setSessionId(data.session_id);
+    if (sessionId && !currentSessionId) {
+      setConsoleSessionId(sessionId);
     }
+
+    const messages = useAppStore.getState().consoleMessages;
 
     switch (data.type) {
       case 'console_user_message':
         // User message already added locally
         break;
 
-      case 'console_assistant_thinking':
+      case 'console_assistant_thinking': {
         // Streaming assistant response
-        setMessages(prev => {
-          const last = prev[prev.length - 1];
-          if (last?.type === 'assistant' && !last.done) {
-            // Update existing streaming message
-            return [...prev.slice(0, -1), {
-              ...last,
-              content: last.content + data.content,
-              done: data.done
-            }];
-          } else if (!data.done) {
-            // Start new streaming message
-            return [...prev, {
-              type: 'assistant',
-              content: data.content,
-              timestamp: new Date().toISOString(),
-              done: false
-            }];
-          }
-          return prev;
-        });
+        const last = messages[messages.length - 1];
+        if (last?.type === 'assistant' && !last.done) {
+          // Update existing streaming message
+          updateLastConsoleMessage({
+            content: last.content + (data.content as string),
+            done: data.done as boolean,
+          });
+        } else if (!data.done) {
+          // Start new streaming message
+          addConsoleMessage({
+            type: 'assistant',
+            content: data.content as string,
+            timestamp: new Date().toISOString(),
+            done: false,
+          });
+        }
         break;
+      }
 
       case 'console_tool_executing':
         // Tool is executing
-        setMessages(prev => [...prev, {
+        addConsoleMessage({
           type: 'tool_call',
           content: JSON.stringify(data.parameters, null, 2),
           timestamp: new Date().toISOString(),
-          tool_name: data.tool_name,
-          tool_call_id: data.tool_call_id,
-          metadata: { status: 'executing' }
-        }]);
+          tool_name: data.tool_name as string,
+          tool_call_id: data.tool_call_id as string,
+          metadata: { status: 'executing' },
+        });
         break;
 
       case 'console_tool_result':
         // Tool result received
-        setMessages(prev => prev.map(msg =>
-          msg.type === 'tool_call' && msg.tool_call_id === data.tool_call_id
-            ? {
-                ...msg,
-                type: 'tool_result',
-                metadata: { ...msg.metadata, status: data.success ? 'success' : 'error', result: data.content }
-              }
-            : msg
-        ));
+        updateConsoleMessageByToolCallId(data.tool_call_id as string, {
+          type: 'tool_result',
+          metadata: {
+            status: data.success ? 'success' : 'error',
+            result: data.content,
+          },
+        });
         break;
 
       case 'console_session_status':
         if (data.status === 'completed') {
-          setIsRunning(false);
+          setConsoleIsRunning(false);
         }
         break;
     }
-  };
+  }, [setConsoleSessionId, addConsoleMessage, updateLastConsoleMessage, updateConsoleMessageByToolCallId, setConsoleIsRunning]);
 
   const handleSend = async () => {
     if (!inputValue.trim()) return;
@@ -151,23 +175,23 @@ export default function ConsolePage() {
     const userMessage: ConsoleMessage = {
       type: 'user',
       content: inputValue,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
 
     // Add user message immediately
-    setMessages(prev => [...prev, userMessage]);
+    addConsoleMessage(userMessage);
     setInputValue('');
 
     try {
-      if (!sessionId) {
+      if (!consoleSessionId) {
         // Start new session
         const response = await fetch('/api/console/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: inputValue,
-            auto_approve: true
-          })
+            auto_approve: true,
+          }),
         });
 
         if (!response.ok) {
@@ -175,15 +199,15 @@ export default function ConsolePage() {
         }
 
         const data = await response.json();
-        setSessionId(data.session_id);
-        setIsRunning(true);
+        setConsoleSessionId(data.session_id);
+        setConsoleIsRunning(true);
         showToast('Console session started', 'success');
       } else {
         // Continue existing session
-        const response = await fetch(`/api/console/${sessionId}/message`, {
+        const response = await fetch(`/api/console/${consoleSessionId}/message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: inputValue })
+          body: JSON.stringify({ message: inputValue }),
         });
 
         if (!response.ok) {
@@ -197,19 +221,19 @@ export default function ConsolePage() {
   };
 
   const handleStop = async () => {
-    if (!sessionId) return;
+    if (!consoleSessionId) return;
 
     try {
-      const response = await fetch(`/api/console/${sessionId}/stop`, {
-        method: 'POST'
+      const response = await fetch(`/api/console/${consoleSessionId}/stop`, {
+        method: 'POST',
       });
 
       if (!response.ok) {
         throw new Error('Failed to stop session');
       }
 
-      setIsRunning(false);
-      setSessionId(null); // Reset session ID after stop
+      setConsoleIsRunning(false);
+      setConsoleSessionId(null); // Reset session ID after stop
       showToast('Session stopped', 'success');
     } catch (error) {
       console.error('Failed to stop session:', error);
@@ -218,9 +242,7 @@ export default function ConsolePage() {
   };
 
   const handleNewSession = () => {
-    setSessionId(null);
-    setMessages([]);
-    setIsRunning(false);
+    clearConsole();
     setInputValue('');
   };
 
@@ -229,16 +251,16 @@ export default function ConsolePage() {
       {/* Controls */}
       <div className="shrink-0">
         <ConsoleControls
-          sessionId={sessionId}
-          isRunning={isRunning}
+          sessionId={consoleSessionId}
+          isRunning={consoleIsRunning}
           onNewSession={handleNewSession}
           onStop={handleStop}
         />
       </div>
 
       {/* Message area */}
-      <div className="flex-1 min-h-0 card overflow-hidden flex flex-col">
-        {!sessionId && messages.length === 0 && (
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 card overflow-hidden flex flex-col overflow-y-auto">
+        {!consoleSessionId && consoleMessages.length === 0 && (
           <div className="p-scaled-4 flex flex-col gap-scaled-4">
             {/* Purpose tip */}
             <div className="flex gap-scaled-3 p-scaled-3 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-color)]">
@@ -260,7 +282,7 @@ export default function ConsolePage() {
             </div>
           </div>
         )}
-        <MessageList messages={messages} messagesEndRef={messagesEndRef} />
+        <MessageList messages={consoleMessages} messagesEndRef={messagesEndRef} />
       </div>
 
       {/* Input area */}
@@ -269,8 +291,8 @@ export default function ConsolePage() {
           value={inputValue}
           onChange={setInputValue}
           onSend={handleSend}
-          disabled={isRunning && messages[messages.length - 1]?.type === 'assistant' && !messages[messages.length - 1]?.done}
-          placeholder={sessionId ? t('console.continueConversation') : t('console.startConversation')}
+          disabled={consoleIsRunning && consoleMessages[consoleMessages.length - 1]?.type === 'assistant' && !consoleMessages[consoleMessages.length - 1]?.done}
+          placeholder={consoleSessionId ? t('console.continueConversation') : t('console.startConversation')}
         />
       </div>
     </div>
