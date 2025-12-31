@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "0.23.0"
+version = "0.24.0"
 description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
 requires-python = ">=3.9,<3.14"
