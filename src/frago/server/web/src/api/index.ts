@@ -37,6 +37,8 @@ import type {
   ListReposResponse,
   SelectRepoResponse,
   TutorialResponse,
+  CommunityRecipeItem,
+  CommunityRecipeInstallResponse,
 } from '@/types/pywebview';
 
 // ============================================================
@@ -821,4 +823,56 @@ export async function getDashboard(): Promise<DashboardData> {
     throw new Error('Dashboard API not available in pywebview mode');
   }
   return httpApi.getDashboard();
+}
+
+// ============================================================
+// Community Recipes API
+// ============================================================
+
+export async function getCommunityRecipes(): Promise<CommunityRecipeItem[]> {
+  if (isPywebviewMode()) {
+    // pywebview mode - not supported
+    return [];
+  }
+
+  const recipes = await httpApi.getCommunityRecipes();
+  return recipes.map((r) => ({
+    name: r.name,
+    url: r.url,
+    description: r.description,
+    version: r.version,
+    type: r.type,
+    runtime: r.runtime,
+    tags: r.tags,
+    installed: r.installed,
+    installed_version: r.installed_version,
+    has_update: r.has_update,
+  }));
+}
+
+export async function installCommunityRecipe(
+  name: string,
+  force: boolean = false
+): Promise<CommunityRecipeInstallResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Community recipes not supported in pywebview mode',
+    };
+  }
+
+  return httpApi.installCommunityRecipe(name, force);
+}
+
+export async function updateCommunityRecipe(
+  name: string
+): Promise<CommunityRecipeInstallResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Community recipes not supported in pywebview mode',
+    };
+  }
+
+  return httpApi.updateCommunityRecipe(name);
 }

@@ -13,6 +13,7 @@ import type {
   SystemStatus,
   Theme,
   Language,
+  CommunityRecipeItem,
 } from '@/types/pywebview';
 import type { ConsoleMessage } from '@/types/console';
 import * as api from '@/api';
@@ -57,6 +58,7 @@ interface AppState {
   tasks: TaskItem[];
   taskDetail: TaskDetail | null;
   recipes: RecipeItem[];
+  communityRecipes: CommunityRecipeItem[];
   skills: SkillItem[];
   systemStatus: SystemStatus | null;
 
@@ -94,11 +96,14 @@ interface AppState {
   // Data sync actions (for WebSocket push)
   setTasks: (tasks: TaskItem[]) => void;
   setRecipes: (recipes: RecipeItem[]) => void;
+  setCommunityRecipes: (recipes: CommunityRecipeItem[]) => void;
   setSkills: (skills: SkillItem[]) => void;
+  loadCommunityRecipes: () => Promise<void>;
   setDataFromPush: (data: {
     version?: number;
     tasks?: { tasks: TaskItem[]; total: number };
     recipes?: RecipeItem[];
+    communityRecipes?: CommunityRecipeItem[];
     skills?: SkillItem[];
   }) => void;
 
@@ -150,6 +155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tasks: [],
   taskDetail: null,
   recipes: [],
+  communityRecipes: [],
   skills: [],
   systemStatus: null,
   isLoading: false,
@@ -384,8 +390,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ recipes });
   },
 
+  setCommunityRecipes: (communityRecipes) => {
+    set({ communityRecipes });
+  },
+
   setSkills: (skills) => {
     set({ skills });
+  },
+
+  loadCommunityRecipes: async () => {
+    try {
+      const communityRecipes = await api.getCommunityRecipes();
+      set({ communityRecipes });
+    } catch (error) {
+      console.error('Failed to load community recipes:', error);
+    }
   },
 
   setDataFromPush: (data) => {
@@ -408,6 +427,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     if (data.recipes) {
       updates.recipes = data.recipes;
+    }
+    if (data.communityRecipes) {
+      updates.communityRecipes = data.communityRecipes;
     }
     if (data.skills) {
       updates.skills = data.skills;

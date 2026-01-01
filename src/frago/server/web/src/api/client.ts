@@ -748,3 +748,69 @@ export async function markInitComplete(): Promise<InitCompleteResult> {
 export async function resetInitStatus(): Promise<InitCompleteResult> {
   return fetchApi<InitCompleteResult>('/init/reset', { method: 'POST' });
 }
+
+// ============================================================
+// Community Recipes API
+// ============================================================
+
+export interface CommunityRecipeItem {
+  name: string;
+  url: string;
+  description: string | null;
+  version: string | null;
+  type: 'atomic' | 'workflow';
+  runtime: string | null;
+  tags: string[];
+  installed: boolean;
+  installed_version: string | null;
+  has_update: boolean;
+}
+
+export interface CommunityRecipeInstallResponse {
+  status: 'ok' | 'error';
+  recipe_name?: string;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Get all community recipes with installation status.
+ */
+export async function getCommunityRecipes(): Promise<CommunityRecipeItem[]> {
+  return fetchApi<CommunityRecipeItem[]>('/community-recipes');
+}
+
+/**
+ * Get a specific community recipe by name.
+ */
+export async function getCommunityRecipe(name: string): Promise<CommunityRecipeItem> {
+  return fetchApi<CommunityRecipeItem>(`/community-recipes/${encodeURIComponent(name)}`);
+}
+
+/**
+ * Install a community recipe.
+ */
+export async function installCommunityRecipe(
+  name: string,
+  force: boolean = false
+): Promise<CommunityRecipeInstallResponse> {
+  return fetchApi<CommunityRecipeInstallResponse>(
+    `/community-recipes/${encodeURIComponent(name)}/install`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    }
+  );
+}
+
+/**
+ * Update an installed community recipe.
+ */
+export async function updateCommunityRecipe(
+  name: string
+): Promise<CommunityRecipeInstallResponse> {
+  return fetchApi<CommunityRecipeInstallResponse>(
+    `/community-recipes/${encodeURIComponent(name)}/update`,
+    { method: 'POST' }
+  );
+}

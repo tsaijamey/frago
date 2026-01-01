@@ -9,7 +9,7 @@ import { useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { MessageType, type WebSocketMessage } from '@/api/websocket';
 import { useAppStore } from '@/stores/appStore';
-import type { TaskItem, RecipeItem, SkillItem } from '@/types/pywebview';
+import type { TaskItem, RecipeItem, SkillItem, CommunityRecipeItem } from '@/types/pywebview';
 
 /**
  * Raw task data from WebSocket (matches backend TaskService format)
@@ -50,6 +50,22 @@ interface RawSkillData {
   description?: string | null;
   icon?: string | null;
   file_path?: string;
+}
+
+/**
+ * Raw community recipe data from WebSocket
+ */
+interface RawCommunityRecipeData {
+  name: string;
+  url: string;
+  description?: string | null;
+  version?: string | null;
+  type?: string;
+  runtime?: string | null;
+  tags?: string[];
+  installed?: boolean;
+  installed_version?: string | null;
+  has_update?: boolean;
 }
 
 /**
@@ -103,6 +119,24 @@ function transformSkillData(raw: RawSkillData): SkillItem {
 }
 
 /**
+ * Transform raw community recipe data from WebSocket to frontend format.
+ */
+function transformCommunityRecipeData(raw: RawCommunityRecipeData): CommunityRecipeItem {
+  return {
+    name: raw.name,
+    url: raw.url,
+    description: raw.description ?? null,
+    version: raw.version ?? null,
+    type: (raw.type ?? 'atomic') as CommunityRecipeItem['type'],
+    runtime: raw.runtime ?? null,
+    tags: raw.tags ?? [],
+    installed: raw.installed ?? false,
+    installed_version: raw.installed_version ?? null,
+    has_update: raw.has_update ?? false,
+  };
+}
+
+/**
  * Hook for handling WebSocket data synchronization.
  *
  * This hook:
@@ -115,6 +149,7 @@ export function useDataSync() {
   const setTasks = useAppStore((state) => state.setTasks);
   const setRecipes = useAppStore((state) => state.setRecipes);
   const setSkills = useAppStore((state) => state.setSkills);
+  const setCommunityRecipes = useAppStore((state) => state.setCommunityRecipes);
 
   const handleMessage = useCallback(
     (message: WebSocketMessage) => {
@@ -126,6 +161,7 @@ export function useDataSync() {
             tasks?: { tasks: RawTaskData[]; total: number };
             recipes?: RawRecipeData[];
             skills?: RawSkillData[];
+            community_recipes?: RawCommunityRecipeData[];
           };
           console.log('[useDataSync] Received initial data, version:', data?.version);
           if (data) {
@@ -143,11 +179,16 @@ export function useDataSync() {
               ? data.skills.map(transformSkillData)
               : undefined;
 
+            const transformedCommunityRecipes = data.community_recipes
+              ? data.community_recipes.map(transformCommunityRecipeData)
+              : undefined;
+
             setDataFromPush({
               version: data.version,
               tasks: transformedTasks,
               recipes: transformedRecipes,
               skills: transformedSkills,
+              communityRecipes: transformedCommunityRecipes,
             });
           }
           break;
@@ -209,9 +250,23 @@ export function useDataSync() {
           }
           break;
         }
+
+        case MessageType.DATA_COMMUNITY_RECIPES: {
+          // Community recipes updated
+          const data = message.data as {
+            data?: RawCommunityRecipeData[];
+            error?: string | null;
+          };
+          console.log('[useDataSync] Received community recipes update');
+          if (data?.data) {
+            const transformedRecipes = data.data.map(transformCommunityRecipeData);
+            setCommunityRecipes(transformedRecipes);
+          }
+          break;
+        }
       }
     },
-    [setDataFromPush, setTasks, setRecipes, setSkills]
+    [setDataFromPush, setTasks, setRecipes, setSkills, setCommunityRecipes]
   );
 
   // Subscribe to data push messages
@@ -222,6 +277,7 @@ export function useDataSync() {
       MessageType.DATA_DASHBOARD,
       MessageType.DATA_RECIPES,
       MessageType.DATA_SKILLS,
+      MessageType.DATA_COMMUNITY_RECIPES,
     ],
     onMessage: handleMessage,
   });

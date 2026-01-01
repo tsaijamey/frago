@@ -108,7 +108,19 @@
     "failedToExecute": "Failed to execute recipe",
     "failedToLoad": "Failed to load recipe details",
     "showInFileManager": "Show in file manager",
-    "unableToOpenPath": "Unable to open path"
+    "unableToOpenPath": "Unable to open path",
+    "localRecipes": "Local Recipes",
+    "communityRecipes": "Community Recipes",
+    "noCommunityRecipes": "No Community Recipes",
+    "noCommunityRecipesDescription": "Unable to fetch community recipes",
+    "searchCommunity": "Search community recipes...",
+    "install": "Install",
+    "update": "Update",
+    "installed": "Installed",
+    "installSuccess": "Successfully installed {{name}}",
+    "installFailed": "Failed to install recipe",
+    "updateSuccess": "Successfully updated {{name}}",
+    "updateFailed": "Failed to update recipe"
   },
   "skills": {
     "title": "Skills",

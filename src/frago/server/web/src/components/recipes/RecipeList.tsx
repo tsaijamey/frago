@@ -2,6 +2,8 @@ import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import EmptyState from '@/components/ui/EmptyState';
+import RecipeTabs from './RecipeTabs';
+import CommunityRecipeList from './CommunityRecipeList';
 import type { RecipeItem } from '@/types/pywebview';
 import { Package, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -115,14 +117,19 @@ function CollapsibleSection({
 
 export default function RecipeList() {
   const { t } = useTranslation();
-  const { recipes, loadRecipes, switchPage } = useAppStore();
+  const { recipes, loadRecipes, communityRecipes, loadCommunityRecipes, switchPage } = useAppStore();
   const [search, setSearch] = useState('');
   const [atomicExpanded, setAtomicExpanded] = useState(true);
   const [workflowExpanded, setWorkflowExpanded] = useState(true);
+  const [activeTab, setActiveTab] = useState<'local' | 'community'>('local');
 
   useEffect(() => {
     loadRecipes();
   }, [loadRecipes]);
+
+  useEffect(() => {
+    loadCommunityRecipes();
+  }, [loadCommunityRecipes]);
 
   // Filter and group recipes
   const { atomicRecipes, workflowRecipes } = useMemo(() => {
@@ -141,87 +148,103 @@ export default function RecipeList() {
     };
   }, [recipes, search]);
 
-  if (recipes.length === 0) {
-    return (
-      <EmptyState
-        Icon={Package}
-        title={t('recipes.noRecipes')}
-        description={t('recipes.noRecipesDescription')}
-      />
-    );
-  }
-
   const noResults = atomicRecipes.length === 0 && workflowRecipes.length === 0;
 
   return (
     <div className="flex flex-col h-full">
-      {/* Search box */}
-      <div className="search-box">
-        <Search size={16} className="search-icon" />
-        <input
-          type="text"
-          className="search-input"
-          placeholder={t('recipes.searchByNameOrTag')}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label={t('recipes.searchPlaceholder')}
-        />
-        {search && (
-          <button
-            type="button"
-            className="search-clear"
-            onClick={() => setSearch('')}
-            aria-label="Clear search"
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
+      {/* Tab Navigation */}
+      <RecipeTabs
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        localCount={recipes.length}
+        communityCount={communityRecipes.length}
+      />
 
-      {/* Recipe list */}
-      {noResults ? (
-        <div className="flex-1 flex items-center justify-center text-[var(--text-muted)]">
-          {t('recipes.noResults')}
-        </div>
+      {/* Community Tab Content */}
+      {activeTab === 'community' ? (
+        <CommunityRecipeList />
       ) : (
-        <div className="page-scroll">
-          {workflowRecipes.length > 0 && (
-            <CollapsibleSection
-              title={t('recipes.workflow')}
-              count={workflowRecipes.length}
-              expanded={workflowExpanded}
-              onToggle={() => setWorkflowExpanded(!workflowExpanded)}
-              colorClass="text-[var(--accent-success)]"
-              tip={t('recipes.workflowTip')}
-            >
-              {workflowRecipes.map((recipe) => (
-                <RecipeCard
-                  key={recipe.name}
-                  recipe={recipe}
-                  onClick={() => switchPage('recipe_detail', recipe.name)}
+        <>
+          {/* Local Tab Content */}
+          {recipes.length === 0 ? (
+            <EmptyState
+              Icon={Package}
+              title={t('recipes.noRecipes')}
+              description={t('recipes.noRecipesDescription')}
+            />
+          ) : (
+            <>
+              {/* Search box */}
+              <div className="search-box">
+                <Search size={16} className="search-icon" />
+                <input
+                  type="text"
+                  className="search-input"
+                  placeholder={t('recipes.searchByNameOrTag')}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  aria-label={t('recipes.searchPlaceholder')}
                 />
-              ))}
-            </CollapsibleSection>
+                {search && (
+                  <button
+                    type="button"
+                    className="search-clear"
+                    onClick={() => setSearch('')}
+                    aria-label="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+
+              {/* Recipe list */}
+              {noResults ? (
+                <div className="flex-1 flex items-center justify-center text-[var(--text-muted)]">
+                  {t('recipes.noResults')}
+                </div>
+              ) : (
+                <div className="page-scroll">
+                  {workflowRecipes.length > 0 && (
+                    <CollapsibleSection
+                      title={t('recipes.workflow')}
+                      count={workflowRecipes.length}
+                      expanded={workflowExpanded}
+                      onToggle={() => setWorkflowExpanded(!workflowExpanded)}
+                      colorClass="text-[var(--accent-success)]"
+                      tip={t('recipes.workflowTip')}
+                    >
+                      {workflowRecipes.map((recipe) => (
+                        <RecipeCard
+                          key={recipe.name}
+                          recipe={recipe}
+                          onClick={() => switchPage('recipe_detail', recipe.name)}
+                        />
+                      ))}
+                    </CollapsibleSection>
+                  )}
+                  {atomicRecipes.length > 0 && (
+                    <CollapsibleSection
+                      title={t('recipes.atomic')}
+                      count={atomicRecipes.length}
+                      expanded={atomicExpanded}
+                      onToggle={() => setAtomicExpanded(!atomicExpanded)}
+                      colorClass="text-[var(--accent-warning)]"
+                      tip={t('recipes.atomicTip')}
+                    >
+                      {atomicRecipes.map((recipe) => (
+                        <RecipeCard
+                          key={recipe.name}
+                          recipe={recipe}
+                          onClick={() => switchPage('recipe_detail', recipe.name)}
+                        />
+                      ))}
+                    </CollapsibleSection>
+                  )}
+                </div>
+              )}
+            </>
           )}
-          {atomicRecipes.length > 0 && (
-            <CollapsibleSection
-              title={t('recipes.atomic')}
-              count={atomicRecipes.length}
-              expanded={atomicExpanded}
-              onToggle={() => setAtomicExpanded(!atomicExpanded)}
-              colorClass="text-[var(--accent-warning)]"
-              tip={t('recipes.atomicTip')}
-            >
-              {atomicRecipes.map((recipe) => (
-                <RecipeCard
-                  key={recipe.name}
-                  recipe={recipe}
-                  onClick={() => switchPage('recipe_detail', recipe.name)}
-                />
-              ))}
-            </CollapsibleSection>
-          )}
-        </div>
+        </>
       )}
     </div>
   );

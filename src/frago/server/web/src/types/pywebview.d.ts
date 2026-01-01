@@ -143,6 +143,30 @@ export interface RecipeDetail extends RecipeItem {
   source_code?: string;
 }
 
+// ============================================================
+// Community Recipe Types
+// ============================================================
+
+export interface CommunityRecipeItem {
+  name: string;
+  url: string;
+  description: string | null;
+  version: string | null;
+  type: 'atomic' | 'workflow';
+  runtime: string | null;
+  tags: string[];
+  installed: boolean;
+  installed_version: string | null;
+  has_update: boolean;
+}
+
+export interface CommunityRecipeInstallResponse {
+  status: 'ok' | 'error';
+  recipe_name?: string;
+  message?: string;
+  error?: string;
+}
+
 export interface SkillItem {
   name: string;
   description: string | null;
