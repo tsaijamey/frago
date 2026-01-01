@@ -14,6 +14,9 @@ from frago.server.models import (
     RecipeOutputSchema,
     RecipeRunRequest,
     TaskItemResponse,
+    CommunityRecipeItemResponse,
+    CommunityRecipeInstallRequest,
+    CommunityRecipeInstallResponse,
 )
 from frago.server.services.cache_service import CacheService
 from frago.server.services.recipe_service import RecipeService
@@ -158,4 +161,166 @@ async def run_recipe(name: str, request: RecipeRunRequest = None) -> TaskItemRes
         started_at=datetime.now(timezone.utc),
         completed_at=datetime.now(timezone.utc),
         duration_ms=result.get("duration_ms"),
+    )
+
+
+# ============================================================
+# Community Recipe Endpoints
+# ============================================================
+
+
+@router.get("/community-recipes", response_model=List[CommunityRecipeItemResponse])
+async def list_community_recipes() -> List[CommunityRecipeItemResponse]:
+    """List all community recipes with installation status.
+
+    Returns:
+        List of community recipes with installed/update status
+    """
+    import asyncio
+    from frago.server.services.community_recipe_service import CommunityRecipeService
+
+    service = CommunityRecipeService.get_instance()
+    recipes = await service.get_recipes()
+
+    return [
+        CommunityRecipeItemResponse(
+            name=r.get("name", ""),
+            url=r.get("url", ""),
+            description=r.get("description"),
+            version=r.get("version"),
+            type=r.get("type", "atomic"),
+            runtime=r.get("runtime"),
+            tags=r.get("tags", []),
+            installed=r.get("installed", False),
+            installed_version=r.get("installed_version"),
+            has_update=r.get("has_update", False),
+        )
+        for r in recipes
+    ]
+
+
+@router.get(
+    "/community-recipes/{name}",
+    response_model=CommunityRecipeItemResponse
+)
+async def get_community_recipe(name: str) -> CommunityRecipeItemResponse:
+    """Get specific community recipe details.
+
+    Args:
+        name: Recipe name
+
+    Returns:
+        Community recipe details
+
+    Raises:
+        HTTPException: 404 if recipe not found
+    """
+    from frago.server.services.community_recipe_service import CommunityRecipeService
+
+    service = CommunityRecipeService.get_instance()
+    recipes = await service.get_recipes()
+
+    for recipe in recipes:
+        if recipe.get("name") == name:
+            return CommunityRecipeItemResponse(
+                name=recipe.get("name", ""),
+                url=recipe.get("url", ""),
+                description=recipe.get("description"),
+                version=recipe.get("version"),
+                type=recipe.get("type", "atomic"),
+                runtime=recipe.get("runtime"),
+                tags=recipe.get("tags", []),
+                installed=recipe.get("installed", False),
+                installed_version=recipe.get("installed_version"),
+                has_update=recipe.get("has_update", False),
+            )
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"Community recipe '{name}' not found"
+    )
+
+
+@router.post(
+    "/community-recipes/{name}/install",
+    response_model=CommunityRecipeInstallResponse
+)
+async def install_community_recipe(
+    name: str,
+    request: CommunityRecipeInstallRequest = None
+) -> CommunityRecipeInstallResponse:
+    """Install a community recipe.
+
+    Args:
+        name: Recipe name to install
+        request: Optional install options (force overwrite)
+
+    Returns:
+        Installation result
+    """
+    import asyncio
+    from frago.server.services.community_recipe_service import CommunityRecipeService
+
+    service = CommunityRecipeService.get_instance()
+    force = request.force if request else False
+
+    # Run in thread pool (blocking I/O)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: service.install_recipe(name, force)
+    )
+
+    # Trigger local recipe cache refresh after install
+    cache = CacheService.get_instance()
+    await cache.refresh_recipes(broadcast=True)
+
+    # Trigger community recipes refresh to update install status
+    await service._do_refresh()
+
+    return CommunityRecipeInstallResponse(
+        status=result.get("status", "error"),
+        recipe_name=result.get("recipe_name"),
+        message=result.get("message"),
+        error=result.get("error"),
+    )
+
+
+@router.post(
+    "/community-recipes/{name}/update",
+    response_model=CommunityRecipeInstallResponse
+)
+async def update_community_recipe(name: str) -> CommunityRecipeInstallResponse:
+    """Update an installed community recipe.
+
+    Args:
+        name: Recipe name to update
+
+    Returns:
+        Update result
+    """
+    import asyncio
+    from frago.server.services.community_recipe_service import CommunityRecipeService
+
+    service = CommunityRecipeService.get_instance()
+
+    # Run in thread pool (blocking I/O)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: service.update_recipe(name)
+    )
+
+    # Trigger local recipe cache refresh after update
+    cache = CacheService.get_instance()
+    await cache.refresh_recipes(broadcast=True)
+
+    # Trigger community recipes refresh to update status
+    await service._do_refresh()
+
+    return CommunityRecipeInstallResponse(
+        status=result.get("status", "error"),
+        recipe_name=result.get("recipe_name"),
+        message=result.get("message"),
+        error=result.get("error"),
     )

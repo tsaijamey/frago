@@ -203,10 +203,15 @@ async def get_dashboard():
     from frago.server.services.recipe_service import RecipeService
     from frago.server.services.skill_service import SkillService
     from frago.session.storage import list_sessions
+    from frago.recipes.installer import RecipeInstaller
 
     try:
         recipes = RecipeService.get_recipes()
         recipe_count = len(recipes) if recipes else 0
+        # Add installed community recipes
+        installer = RecipeInstaller()
+        community_installed = installer.list_installed()
+        recipe_count += len(community_installed)
     except Exception:
         recipe_count = 0
 

@@ -27,6 +27,7 @@ class CacheService:
         self._dashboard_cache: Optional[Dict[str, Any]] = None
         self._recipes_cache: Optional[List[Dict[str, Any]]] = None
         self._skills_cache: Optional[List[Dict[str, Any]]] = None
+        self._community_recipes_cache: Optional[List[Dict[str, Any]]] = None
 
         self._version: int = 0
         self._initialized: bool = False
@@ -239,7 +240,10 @@ class CacheService:
                 },
                 "resource_counts": {
                     "tasks": len(all_sessions),
-                    "recipes": len(self._recipes_cache) if self._recipes_cache else 0,
+                    "recipes": (
+                        (len(self._recipes_cache) if self._recipes_cache else 0)
+                        + len([r for r in (self._community_recipes_cache or []) if r.get("installed")])
+                    ),
                     "skills": len(self._skills_cache) if self._skills_cache else 0,
                 },
             }
@@ -295,6 +299,26 @@ class CacheService:
             return []
         return self._skills_cache
 
+    async def get_community_recipes(self) -> List[Dict[str, Any]]:
+        """Get cached community recipes.
+
+        Returns:
+            List of community recipe dictionaries.
+        """
+        if self._community_recipes_cache is None:
+            return []
+        return self._community_recipes_cache
+
+    def set_community_recipes(self, recipes: List[Dict[str, Any]]) -> None:
+        """Update community recipes cache.
+
+        Called by CommunityRecipeService when new data is fetched.
+
+        Args:
+            recipes: List of community recipe dictionaries.
+        """
+        self._community_recipes_cache = recipes
+
     async def get_initial_data(self) -> Dict[str, Any]:
         """Get all cached data for initial WebSocket connection.
 
@@ -307,6 +331,7 @@ class CacheService:
             "dashboard": await self.get_dashboard(),
             "recipes": await self.get_recipes(),
             "skills": await self.get_skills(),
+            "community_recipes": await self.get_community_recipes(),
         }
 
     async def refresh_tasks(self, broadcast: bool = True) -> None:

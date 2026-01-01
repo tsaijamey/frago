@@ -129,6 +129,7 @@ class MessageType:
     DATA_DASHBOARD = "data_dashboard"   # Dashboard updated
     DATA_RECIPES = "data_recipes"       # Recipes updated
     DATA_SKILLS = "data_skills"         # Skills updated
+    DATA_COMMUNITY_RECIPES = "data_community_recipes"  # Community recipes updated
 
 
 def create_message(

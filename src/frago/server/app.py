@@ -34,6 +34,7 @@ from frago.server.routes import (
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.cache_service import CacheService
 from frago.server.services.sync_service import SyncService
+from frago.server.services.community_recipe_service import CommunityRecipeService
 
 
 @asynccontextmanager
@@ -43,6 +44,7 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown events:
     - Initialize cache with preloaded data
     - Start background session sync
+    - Start community recipe refresh service
     - Stop services on shutdown
     """
     # Startup: Initialize cache first (preload all data)
@@ -54,9 +56,15 @@ async def lifespan(app: FastAPI):
     sync_service.set_cache_service(cache_service)
     await sync_service.start()
 
+    # Start community recipe service (60s refresh interval)
+    community_service = CommunityRecipeService.get_instance()
+    community_service.set_cache_service(cache_service)
+    await community_service.start()
+
     yield
 
     # Shutdown
+    await community_service.stop()
     await sync_service.stop()
 
 

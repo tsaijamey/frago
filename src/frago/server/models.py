@@ -461,3 +461,38 @@ class InitErrorPayload(BaseModel):
     step: str
     error: str
     details: Optional[str] = None
+
+
+# ============================================================
+# Community Recipe Models
+# ============================================================
+
+
+class CommunityRecipeItemResponse(BaseModel):
+    """Response for community recipe list endpoints"""
+
+    name: str
+    url: str
+    description: Optional[str] = None
+    version: Optional[str] = None
+    type: str = "atomic"  # atomic | workflow
+    runtime: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    installed: bool = False
+    installed_version: Optional[str] = None
+    has_update: bool = False
+
+
+class CommunityRecipeInstallRequest(BaseModel):
+    """Request body for POST /api/community-recipes/{name}/install"""
+
+    force: bool = Field(default=False, description="Force overwrite if exists")
+
+
+class CommunityRecipeInstallResponse(BaseModel):
+    """Response for community recipe install/update operations"""
+
+    status: str  # ok | error
+    recipe_name: Optional[str] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
