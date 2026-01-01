@@ -1,5 +1,6 @@
 """Linux systemd user service autostart management."""
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -69,6 +70,17 @@ class LinuxAutostartManager(AutostartManager):
         # If systemctl --user works at all, we're good
         return result.returncode in (0, 1, 3)  # 0=running, 1=some failed, 3=inactive
 
+    def _is_linger_enabled(self) -> bool:
+        """Check if lingering is enabled for current user.
+
+        Lingering allows user services to run at boot without requiring login.
+        """
+        username = os.environ.get("USER", "")
+        if not username:
+            return False
+        linger_file = Path("/var/lib/systemd/linger") / username
+        return linger_file.exists()
+
     def enable(self) -> tuple[bool, str]:
         """Enable autostart by creating and enabling systemd user service."""
         try:
@@ -100,6 +112,20 @@ class LinuxAutostartManager(AutostartManager):
             if result.returncode != 0:
                 return False, f"Failed to enable service: {result.stderr}"
 
+            # Enable lingering to allow service start at boot without login
+            if not self._is_linger_enabled():
+                linger_result = subprocess.run(
+                    ["loginctl", "enable-linger"],
+                    capture_output=True,
+                    text=True,
+                )
+                if linger_result.returncode != 0:
+                    # Non-fatal: service is enabled but won't start at boot
+                    return True, (
+                        f"Autostart enabled ({self.platform_name}). "
+                        f"Warning: lingering not enabled, service will only start after login."
+                    )
+
             return True, f"Autostart enabled ({self.platform_name})"
 
         except PermissionError:
@@ -110,7 +136,11 @@ class LinuxAutostartManager(AutostartManager):
             return False, f"Failed to enable autostart: {e}"
 
     def disable(self) -> tuple[bool, str]:
-        """Disable autostart by disabling and removing systemd user service."""
+        """Disable autostart by disabling and removing systemd user service.
+
+        Note: We intentionally do NOT disable lingering here, as other user
+        services may depend on it. Lingering is a user-wide setting.
+        """
         try:
             if not self.config_path.exists():
                 return True, "Autostart was not enabled"
