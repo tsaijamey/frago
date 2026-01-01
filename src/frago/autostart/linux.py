@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from textwrap import dedent
 
@@ -40,9 +41,33 @@ class LinuxAutostartManager(AutostartManager):
                 return str(path)
         return "frago"  # Hope it's in PATH at login
 
-    def _generate_service(self) -> str:
-        """Generate the systemd service file content."""
+    def _get_python_path(self) -> str:
+        """Get the Python interpreter path that can run frago.
+
+        Returns the Python from the same environment where frago is installed.
+        """
         frago_path = self._get_frago_path()
+
+        # If frago is in a venv, use that venv's Python
+        frago_bin_dir = Path(frago_path).parent
+        possible_pythons = [
+            frago_bin_dir / "python3",
+            frago_bin_dir / "python",
+        ]
+        for python_path in possible_pythons:
+            if python_path.exists():
+                return str(python_path)
+
+        # Fallback to current Python
+        return sys.executable
+
+    def _generate_service(self) -> str:
+        """Generate the systemd service file content.
+
+        Uses Python to run the server runner module directly, allowing systemd
+        to manage the process lifecycle properly.
+        """
+        python_path = self._get_python_path()
         env_path = self._collect_environment_path()
 
         return dedent(f"""\
@@ -53,8 +78,9 @@ class LinuxAutostartManager(AutostartManager):
             [Service]
             Type=exec
             Environment=PATH={env_path}
-            ExecStart={frago_path} server start
-            Restart=no
+            ExecStart={python_path} -m frago.server.runner --daemon
+            Restart=on-failure
+            RestartSec=5
 
             [Install]
             WantedBy=default.target
