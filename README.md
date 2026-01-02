@@ -10,6 +10,17 @@
 
 **Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
 
+### Quick Start
+
+```bash
+uv tool install frago-cli   # Install frago
+frago init                   # Initialize environment
+frago server start           # Start web service
+# Open http://127.0.0.1:8093 in your browser
+```
+
+> New to `uv` or setting up a fresh system? See the [Installation Guide](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) for prerequisites.
+
 ---
 
 ## Manifesto
@@ -192,94 +203,6 @@ The above workflow relies on frago's underlying capabilities:
 Architecture Comparison:
 Playwright:  Python → Node.js relay → CDP → Chrome  (~100MB)
 frago:       Python → CDP → Chrome                  (~2MB)
-```
-
----
-
-## Quick Start
-
-### Installation
-
-```bash
-# 1. Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh  # macOS/Linux
-# Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# 2. Install frago
-uv tool install frago-cli
-
-# Windows with Python 3.14+: use --python 3.13
-# uv tool install frago-cli --python 3.13
-
-# 3. Initialize environment
-frago init
-```
-
-> **Note**: See [Installation Guide](docs/installation.md) for OS-specific prerequisites. Windows users with Python 3.14+ must use `--python 3.13` due to GUI backend compatibility.
-
-### What `frago init` Does
-
-The init command sets up your environment in one step:
-
-- **Checks dependencies**: Node.js ≥20.0.0, Claude Code CLI
-- **Auto-installs missing deps**: Node.js via nvm, Claude Code via npm
-- **Configures authentication**: Default (Claude Code built-in) or custom API endpoint (DeepSeek, Aliyun, Kimi, MiniMax)
-- **Installs resources**: Slash commands to `~/.claude/commands/`, example recipes to `~/.frago/recipes/`
-
-```bash
-# View current config and resources
-frago init --show-config
-
-# Reset and re-initialize
-frago init --reset
-```
-
-See [Installation Guide](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) for details
-
-### Basic Usage
-
-After installation, enter Claude Code and use slash commands:
-
-```bash
-# Explore and research
-/frago.run Search for Python jobs on Upwork and analyze skill requirements
-
-# Solidify recipes
-/frago.recipe
-
-# Validate recipes
-/frago.test upwork_search_jobs
-
-# Quick execution (next time)
-/frago.exec job-hunting Search for remote Python jobs
-```
-
-See the "How to Use" section above for detailed workflow.
-
-### Command Line Tools (Human Direct Use)
-
-frago also provides CLI tools for debugging or script integration:
-
-```bash
-# Web service (browser-based GUI)
-frago server start      # Start background server on port 8093
-frago server stop       # Stop background server
-frago server status     # Check server status
-# Then open http://127.0.0.1:8093 in your browser
-
-# Browser operations
-frago chrome navigate https://example.com
-frago chrome click 'button[type="submit"]'
-frago chrome screenshot output.png
-
-# Recipe management
-frago recipe list
-frago recipe info <recipe_name>
-frago recipe run <recipe_name> --params '{...}'
-
-# Run instance management
-frago run list
-frago run info <run_id>
 ```
 
 ---

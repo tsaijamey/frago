@@ -10,6 +10,17 @@
 
 **文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
 
+### 快速开始
+
+```bash
+uv tool install frago-cli   # 安装 frago
+frago init                   # 初始化环境
+frago server start           # 启动 Web 服务
+# 在浏览器中打开 http://127.0.0.1:8093
+```
+
+> 不熟悉 `uv` 或在全新系统上安装？请查看[安装指南](docs/installation.zh-CN.md)了解前置条件。
+
 ---
 
 ## 我们的信条
@@ -192,91 +203,6 @@ Agent 会：
 架构对比：
 Playwright:  Python → Node.js 中继 → CDP → Chrome  (~100MB)
 frago:       Python → CDP → Chrome                  (~2MB)
-```
-
----
-
-## 快速开始
-
-### 安装
-
-```bash
-# 1. 安装 uv（如果还没装）
-curl -LsSf https://astral.sh/uv/install.sh | sh  # macOS/Linux
-# Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# 2. 安装 frago
-uv tool install frago-cli
-
-# 3. 初始化环境
-frago init
-```
-
-> **注意**：各操作系统的前提条件请看 [安装指南](docs/installation.zh-CN.md)。
-
-### `frago init` 做了什么
-
-init 命令一步完成环境配置：
-
-- **检查依赖**：Node.js ≥20.0.0、Claude Code CLI
-- **自动安装缺失依赖**：Node.js 通过 nvm、Claude Code 通过 npm
-- **配置认证**：默认（Claude Code 内置）或自定义 API 端点（DeepSeek、阿里云、Kimi、MiniMax）
-- **安装资源**：Slash 命令到 `~/.claude/commands/`、示例 Recipe 到 `~/.frago/recipes/`
-
-```bash
-# 查看当前配置和资源
-frago init --show-config
-
-# 重置并重新初始化
-frago init --reset
-```
-
-详见 [安装指南](docs/installation.zh-CN.md)
-
-### 基础使用
-
-安装完成后，进入 Claude Code，使用 slash commands：
-
-```bash
-# 探索研究
-/frago.run 在 Upwork 上搜索 Python 职位并分析技能要求
-
-# 固化配方
-/frago.recipe
-
-# 验证配方
-/frago.test upwork_search_jobs
-
-# 快速执行（下次）
-/frago.exec job-hunting 搜索远程 Python 职位
-```
-
-详细流程见上方「如何使用」章节。
-
-### 命令行工具（人类直接使用）
-
-frago 也提供命令行工具，供调试或脚本集成：
-
-```bash
-# Web 服务（浏览器端 GUI）
-frago server start      # 启动后台服务（端口 8093）
-frago server stop       # 停止后台服务
-frago server status     # 检查服务状态
-# 然后在浏览器中打开 http://127.0.0.1:8093
-
-# 浏览器操作
-frago chrome navigate https://example.com
-frago chrome click 'button[type="submit"]'
-frago chrome screenshot output.png
-
-# Recipe 管理
-frago recipe list
-frago recipe info <recipe_name>
-frago recipe run <recipe_name> --params '{...}'
-
-# Run 实例管理
-frago run list
-frago run info <run_id>
 ```
 
 ---
