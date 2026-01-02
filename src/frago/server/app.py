@@ -30,6 +30,7 @@ from frago.server.routes import (
     console_router,
     init_router,
     viewer_router,
+    files_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.cache_service import CacheService
@@ -176,6 +177,7 @@ def create_app(
 
     # Viewer routes for content preview (not under /api)
     app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
+    app.include_router(files_router, prefix="/api", tags=["files"])
 
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")
