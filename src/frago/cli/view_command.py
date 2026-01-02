@@ -51,6 +51,10 @@ def view(
       - PDF (.pdf) - rendered with PDF.js
       - JSON (.json) - formatted and syntax highlighted
       - Code files - syntax highlighted with highlight.js
+      - Video (.mp4, .webm, .mov) - HTML5 video player
+      - Image (.png, .jpg, .gif, .svg) - image viewer with zoom
+      - Audio (.mp3, .wav, .ogg) - HTML5 audio player
+      - 3D models (.gltf, .glb) - three.js viewer with OrbitControls
 
     \b
     Examples:
@@ -58,6 +62,8 @@ def view(
       frago view report.pdf          # View PDF
       frago view config.json         # View formatted JSON
       frago view slides.html         # View reveal.js slides
+      frago view video.mp4           # Play video
+      frago view model.glb           # View 3D model
       cat script.py | frago view --stdin  # Read from stdin
     """
     # Determine content source

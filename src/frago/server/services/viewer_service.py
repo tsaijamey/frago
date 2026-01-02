@@ -18,6 +18,12 @@ RESOURCES_DIR = VIEWER_DIR / "resources"
 # Content expiration (24 hours in seconds)
 CONTENT_MAX_AGE = 24 * 60 * 60
 
+# Media type extensions
+VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac"}
+THREE_EXTENSIONS = {".gltf", ".glb"}
+
 
 def get_package_resources_path() -> Path:
     """Get path to viewer resources in the package."""
@@ -37,7 +43,7 @@ class ViewerService:
     def ensure_resources() -> None:
         """Copy viewer resources from package if not present or outdated.
 
-        Resources include: reveal.js, highlight.js, pdfjs, mermaid
+        Resources include: reveal.js, highlight.js, pdfjs, mermaid, three.js
         """
         ViewerService.ensure_directories()
 
@@ -46,7 +52,7 @@ class ViewerService:
             return
 
         # Resource directories to copy
-        resource_dirs = ["reveal", "highlight", "pdfjs", "mermaid"]
+        resource_dirs = ["reveal", "highlight", "pdfjs", "mermaid", "three"]
 
         for res_dir in resource_dirs:
             src = package_resources / res_dir
@@ -109,32 +115,50 @@ class ViewerService:
             content_str = content
             title = title or "frago view"
 
+        # Detect content type early for binary file handling
+        content_type = ViewerService._get_content_type(file_path)
+        is_binary = content_type in {"video", "image", "audio", "3d", "pdf"}
+
         # Generate content ID
-        content_id = ViewerService.generate_content_id(
-            content_str if not is_file else file_path.read_text(encoding="utf-8", errors="replace"),
-            file_path,
-        )
+        if is_file and is_binary:
+            # For binary files, use file path and mtime for hash
+            content_id = ViewerService.generate_content_id(
+                str(file_path.stat().st_mtime),
+                file_path,
+            )
+        else:
+            content_id = ViewerService.generate_content_id(
+                content_str if not is_file else file_path.read_text(encoding="utf-8", errors="replace"),
+                file_path,
+            )
 
         # Create content directory
         content_dir = CONTENT_DIR / content_id
         content_dir.mkdir(parents=True, exist_ok=True)
 
-        # Detect mode and content type
+        # Handle media types
+        if content_type in {"video", "image", "audio", "3d"}:
+            html_content = ViewerService._render_media_html(
+                file_path, content_type, title, content_dir
+            )
+            (content_dir / "index.html").write_text(html_content, encoding="utf-8")
+            return content_id
+
+        # Detect mode for non-media content
         detected_mode = ViewerService._detect_mode(file_path, content_str) if mode == "auto" else mode
-        content_type = ViewerService._get_content_type(file_path)
 
         # Generate HTML
         if detected_mode == "present":
-            html = ViewerService._render_present_html(
+            html_content = ViewerService._render_present_html(
                 file_path, content_str, is_file, content_type, theme, title
             )
         else:
-            html = ViewerService._render_doc_html(
+            html_content = ViewerService._render_doc_html(
                 file_path, content_str, is_file, content_type, theme, title
             )
 
         # Write index.html
-        (content_dir / "index.html").write_text(html, encoding="utf-8")
+        (content_dir / "index.html").write_text(html_content, encoding="utf-8")
 
         # Copy source file if PDF
         if file_path and file_path.suffix.lower() == ".pdf":
@@ -179,6 +203,14 @@ class ViewerService:
                 return "html"
             if ext == ".json":
                 return "json"
+            if ext in VIDEO_EXTENSIONS:
+                return "video"
+            if ext in IMAGE_EXTENSIONS:
+                return "image"
+            if ext in AUDIO_EXTENSIONS:
+                return "audio"
+            if ext in THREE_EXTENSIONS:
+                return "3d"
             return "code"
         return "markdown"
 
@@ -233,6 +265,42 @@ class ViewerService:
             title=title,
             resources_base="/viewer/resources",
         )
+
+    @staticmethod
+    def _render_media_html(
+        file_path: Path,
+        content_type: str,
+        title: str,
+        content_dir: Path,
+    ) -> str:
+        """Render media content (video, image, audio, 3D).
+
+        Copies source file to content directory and generates appropriate HTML.
+        """
+        from frago.viewer.modes.media import (
+            render_video,
+            render_image,
+            render_audio,
+            render_3d,
+        )
+
+        # Copy source file to content directory
+        source_filename = f"source{file_path.suffix.lower()}"
+        shutil.copy(file_path, content_dir / source_filename)
+
+        resources_base = "/viewer/resources"
+
+        if content_type == "video":
+            return render_video(title, source_filename, resources_base)
+        elif content_type == "image":
+            return render_image(title, source_filename)
+        elif content_type == "audio":
+            return render_audio(title, source_filename)
+        elif content_type == "3d":
+            return render_3d(title, source_filename, resources_base)
+        else:
+            # Fallback - should not happen
+            return f"<html><body><p>Unsupported media type: {content_type}</p></body></html>"
 
     @staticmethod
     def cleanup_old_content(max_age_seconds: int = CONTENT_MAX_AGE) -> int:
