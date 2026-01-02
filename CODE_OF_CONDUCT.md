@@ -1,45 +1,43 @@
-# 行为准则
+# Code of Conduct
 
-## 我们的承诺
+## Our Pledge
 
-作为成员、贡献者和领导者,我们承诺让社区中的每个人都能享有无骚扰的参与体验,无论其年龄、体型、可见或不可见的残疾、种族、性别特征、性别认同和表达、经验水平、教育程度、社会经济地位、国籍、个人外貌、种族、宗教或性取向如何。
+As members, contributors, and leaders, we pledge to make participation in our community a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion, or sexual identity and orientation.
 
-## 我们的准则
+## Our Standards
 
-有助于营造积极环境的行为示例:
+Examples of behavior that contributes to a positive environment:
 
-* 使用欢迎和包容的语言
-* 尊重不同的观点和经验
-* 优雅地接受建设性批评
-* 关注对社区最有利的事情
-* 对其他社区成员表现出同理心
+* Using welcoming and inclusive language
+* Being respectful of differing viewpoints and experiences
+* Gracefully accepting constructive criticism
+* Focusing on what is best for the community
+* Showing empathy towards other community members
 
-不可接受的行为示例:
+Examples of unacceptable behavior:
 
-* 使用性化的语言或图像,以及性关注或性挑逗
-* 挑衅、侮辱或贬损性评论,以及人身或政治攻击
-* 公开或私下骚扰
-* 未经明确许可发布他人的私人信息
-* 其他可以合理地被认为不适当的行为
+* The use of sexualized language or imagery and unwelcome sexual attention or advances
+* Trolling, insulting or derogatory comments, and personal or political attacks
+* Public or private harassment
+* Publishing others' private information without explicit permission
+* Other conduct which could reasonably be considered inappropriate
 
-## 执行责任
+## Enforcement Responsibilities
 
-社区领导者负责阐明和执行我们可接受行为的准则,并将针对他们认为不适当、具有威胁性、冒犯性或有害的任何行为采取适当且公正的纠正措施。
+Community leaders are responsible for clarifying and enforcing our standards of acceptable behavior and will take appropriate and fair corrective action in response to any behavior that they deem inappropriate, threatening, offensive, or harmful.
 
-## 适用范围
+## Scope
 
-本行为准则适用于所有社区空间,也适用于个人在公共空间正式代表社区的情况。
+This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces.
 
-## 执行
+## Enforcement
 
-可以通过 GitHub Issues 向负责执行的社区领导者报告辱骂、骚扰或其他不可接受的行为。
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement via GitHub Issues.
 
-所有投诉都将得到及时和公正的审查和调查。
+All complaints will be reviewed and investigated promptly and fairly.
 
-## 来源
+## Attribution
 
-本行为准则改编自 [Contributor Covenant][homepage] 2.0 版本,
-可在以下网址获取:
-https://www.contributor-covenant.org/version/2/0/code_of_conduct.html。
+This Code of Conduct is adapted from the [Contributor Covenant][homepage], version 2.0, available at https://www.contributor-covenant.org/version/2/0/code_of_conduct.html.
 
 [homepage]: https://www.contributor-covenant.org
