@@ -77,6 +77,12 @@ const SettingsIcon = () => (
   </svg>
 );
 
+const WorkspaceIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
 const CollapseIcon = ({ collapsed }: { collapsed: boolean }) => (
   <svg
     width="16"
@@ -100,6 +106,7 @@ const menuItems: MenuItem[] = [
   { id: 'tasks', labelKey: 'sidebar.tasks', icon: <TasksIcon /> },
   { id: 'recipes', labelKey: 'sidebar.recipes', icon: <RecipesIcon /> },
   { id: 'skills', labelKey: 'sidebar.skills', icon: <SkillsIcon /> },
+  { id: 'workspace', labelKey: 'sidebar.workspace', icon: <WorkspaceIcon /> },
   { id: 'sync', labelKey: 'sidebar.sync', icon: <SyncIcon /> },
   { id: 'secrets', labelKey: 'sidebar.secrets', icon: <SecretsIcon /> },
   { id: 'settings', labelKey: 'sidebar.settings', icon: <SettingsIcon /> },
@@ -133,6 +140,7 @@ export default function Sidebar() {
     if (currentPage === pageId) return true;
     if (pageId === 'tasks' && currentPage === 'task_detail') return true;
     if (pageId === 'recipes' && currentPage === 'recipe_detail') return true;
+    if (pageId === 'workspace' && currentPage === 'project_detail') return true;
     return false;
   };
 

@@ -876,3 +876,62 @@ export async function updateCommunityRecipe(
 
   return httpApi.updateCommunityRecipe(name);
 }
+
+// ============================================================
+// Project Files API
+// ============================================================
+
+export type {
+  ProjectInfo,
+  ProjectDetail,
+  FileInfo,
+  FileOperationResponse,
+} from './client';
+
+export async function getProjects(): Promise<httpApi.ProjectInfo[]> {
+  if (isPywebviewMode()) {
+    return [];
+  }
+  return httpApi.getProjects();
+}
+
+export async function getProject(runId: string): Promise<httpApi.ProjectDetail | null> {
+  if (isPywebviewMode()) {
+    return null;
+  }
+  return httpApi.getProject(runId);
+}
+
+export async function getProjectFiles(
+  runId: string,
+  path: string = ''
+): Promise<httpApi.FileInfo[]> {
+  if (isPywebviewMode()) {
+    return [];
+  }
+  return httpApi.getProjectFiles(runId, path);
+}
+
+export function getFileDownloadUrl(runId: string, filePath: string): string {
+  return httpApi.getFileDownloadUrl(runId, filePath);
+}
+
+export async function openProjectInFileManager(
+  runId: string,
+  path: string = ''
+): Promise<httpApi.FileOperationResponse> {
+  if (isPywebviewMode()) {
+    return { success: false, message: 'Not supported in pywebview mode' };
+  }
+  return httpApi.openProjectInFileManager(runId, path);
+}
+
+export async function viewProjectFile(
+  runId: string,
+  path: string
+): Promise<httpApi.FileOperationResponse> {
+  if (isPywebviewMode()) {
+    return { success: false, message: 'Not supported in pywebview mode' };
+  }
+  return httpApi.viewProjectFile(runId, path);
+}

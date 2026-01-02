@@ -5,6 +5,7 @@
     "tasks": "任务",
     "recipes": "配方",
     "skills": "技能",
+    "workspace": "工作区",
     "sync": "同步",
     "secrets": "密钥",
     "settings": "设置",
@@ -127,6 +128,22 @@
     "noSkills": "暂无技能",
     "noSkillsDescription": "未找到技能",
     "createSkillHint": "在 .claude/skills/ 目录下创建技能文件"
+  },
+  "workspace": {
+    "title": "工作区",
+    "projects": "项目",
+    "noProjects": "暂无项目",
+    "selectProject": "选择项目以浏览文件",
+    "openInFileManager": "在文件管理器中打开",
+    "emptyDirectory": "此目录为空",
+    "directory": "目录",
+    "view": "查看",
+    "download": "下载"
+  },
+  "time": {
+    "today": "今天",
+    "yesterday": "昨天",
+    "daysAgo": "{{count}} 天前"
   },
   "console": {
     "title": "控制台",

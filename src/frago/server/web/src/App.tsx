@@ -18,6 +18,7 @@ import SyncPage from '@/components/sync/SyncPage';
 import SecretsPage from '@/components/secrets/SecretsPage';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ConsolePage from '@/components/console/ConsolePage';
+import { WorkspacePage } from '@/components/workspace';
 
 // UI
 import Toast from '@/components/ui/Toast';
@@ -119,6 +120,9 @@ function App() {
         return <SettingsPage onOpenInitWizard={handleOpenWizard} />;
       case 'console':
         return <ConsolePage />;
+      case 'workspace':
+      case 'project_detail':
+        return <WorkspacePage />;
       default:
         return <TaskList />;
     }

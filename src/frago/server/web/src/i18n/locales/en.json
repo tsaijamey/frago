@@ -5,6 +5,7 @@
     "tasks": "Tasks",
     "recipes": "Recipes",
     "skills": "Skills",
+    "workspace": "Workspace",
     "sync": "Sync",
     "secrets": "Secrets",
     "settings": "Settings",
@@ -127,6 +128,22 @@
     "noSkills": "No Skills",
     "noSkillsDescription": "No skills found",
     "createSkillHint": "Create skill files in .claude/skills/ directory"
+  },
+  "workspace": {
+    "title": "Workspace",
+    "projects": "projects",
+    "noProjects": "No projects found",
+    "selectProject": "Select a project to browse files",
+    "openInFileManager": "Open in file manager",
+    "emptyDirectory": "This directory is empty",
+    "directory": "Directory",
+    "view": "View",
+    "download": "Download"
+  },
+  "time": {
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "daysAgo": "{{count}} days ago"
   },
   "console": {
     "title": "Console",

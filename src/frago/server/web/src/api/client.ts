@@ -814,3 +814,114 @@ export async function updateCommunityRecipe(
     { method: 'POST' }
   );
 }
+
+// ============================================================================
+// Project Files API
+// ============================================================================
+
+/**
+ * Project info from the API.
+ */
+export interface ProjectInfo {
+  run_id: string;
+  theme_description: string;
+  created_at: string;
+  last_accessed: string;
+  status: string;
+}
+
+/**
+ * Detailed project info.
+ */
+export interface ProjectDetail extends ProjectInfo {
+  file_count: number;
+  total_size: number;
+  subdirectories: string[];
+}
+
+/**
+ * File info from the API.
+ */
+export interface FileInfo {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  size: number;
+  modified: string;
+  mime_type: string | null;
+}
+
+/**
+ * Response for open/view operations.
+ */
+export interface FileOperationResponse {
+  success: boolean;
+  message: string;
+  url?: string;
+}
+
+/**
+ * Get list of all projects.
+ */
+export async function getProjects(): Promise<ProjectInfo[]> {
+  return fetchApi<ProjectInfo[]>('/projects');
+}
+
+/**
+ * Get project details.
+ */
+export async function getProject(runId: string): Promise<ProjectDetail> {
+  return fetchApi<ProjectDetail>(`/projects/${encodeURIComponent(runId)}`);
+}
+
+/**
+ * List files in a project directory.
+ */
+export async function getProjectFiles(
+  runId: string,
+  path: string = ''
+): Promise<FileInfo[]> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  const query = params.toString();
+  return fetchApi<FileInfo[]>(
+    `/projects/${encodeURIComponent(runId)}/files${query ? `?${query}` : ''}`
+  );
+}
+
+/**
+ * Get file download URL.
+ */
+export function getFileDownloadUrl(runId: string, filePath: string): string {
+  return `${API_BASE_URL}/api/projects/${encodeURIComponent(runId)}/files/${encodeURIComponent(filePath)}`;
+}
+
+/**
+ * Open project or file in system file manager.
+ */
+export async function openProjectInFileManager(
+  runId: string,
+  path: string = ''
+): Promise<FileOperationResponse> {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  const query = params.toString();
+  return fetchApi<FileOperationResponse>(
+    `/projects/${encodeURIComponent(runId)}/open${query ? `?${query}` : ''}`,
+    { method: 'POST' }
+  );
+}
+
+/**
+ * Open file in frago view.
+ */
+export async function viewProjectFile(
+  runId: string,
+  path: string
+): Promise<FileOperationResponse> {
+  const params = new URLSearchParams({ path });
+  return fetchApi<FileOperationResponse>(
+    `/projects/${encodeURIComponent(runId)}/view?${params.toString()}`,
+    { method: 'POST' }
+  );
+}

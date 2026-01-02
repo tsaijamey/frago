@@ -29,7 +29,9 @@ export type PageType =
   | 'sync'
   | 'secrets'
   | 'settings'
-  | 'console';
+  | 'console'
+  | 'workspace'
+  | 'project_detail';
 
 // Sidebar storage key for localStorage
 const SIDEBAR_COLLAPSED_KEY = 'frago-sidebar-collapsed';
@@ -49,6 +51,7 @@ interface AppState {
   currentPage: PageType;
   currentTaskId: string | null;
   currentRecipeName: string | null;
+  currentProjectId: string | null;
 
   // Sidebar state
   sidebarCollapsed: boolean;
@@ -150,6 +153,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentPage: 'tasks',
   currentTaskId: null,
   currentRecipeName: null,
+  currentProjectId: null,
   sidebarCollapsed: getInitialSidebarCollapsed(),
   config: null,
   tasks: [],
@@ -175,6 +179,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentPage: page,
       currentTaskId: page === 'task_detail' ? id ?? null : null,
       currentRecipeName: page === 'recipe_detail' ? id ?? null : null,
+      currentProjectId: page === 'project_detail' ? id ?? null : null,
       taskDetail: page !== 'task_detail' ? null : get().taskDetail,
     });
   },
