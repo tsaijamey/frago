@@ -8,6 +8,8 @@
 
 [简体中文](https://github.com/tsaijamey/Frago/blob/main/README.zh-CN.md)
 
+**Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
+
 ---
 
 ## Manifesto
@@ -51,8 +53,6 @@ The savings compound. The recipes stay. Your time returns to family, hobbies, cr
 | **v0.21.0** | i18n support; user language preference for AI title generation |
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
-
-**Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
 
 ---
 

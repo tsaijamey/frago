@@ -8,6 +8,8 @@
 
 [English](README.md)
 
+**文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
+
 ---
 
 ## 我们的信条
@@ -51,8 +53,6 @@ frago 直接攻击这个问题：
 | **v0.21.0** | 国际化支持；AI 标题生成尊重用户语言偏好 |
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
-
-**文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
 
 ---
 
