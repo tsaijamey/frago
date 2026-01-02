@@ -44,11 +44,11 @@ frago 直接攻击这个问题：
 
 | 版本 | 主要变化 |
 |------|----------|
+| **v0.26.0** | 工作区文件浏览器；`frago view` 媒体支持（视频、图片、音频、3D 模型） |
 | **v0.24.0** | 社区 Recipe 基建；`recipe install/uninstall/update/search/share` 命令 |
 | **v0.23.0** | WebSocket 实时同步；YouTube Recipe（下载、字幕、转录） |
 | **v0.22.0** | 跨平台开机自启；`frago autostart` 命令；集成到 init 流程 |
 | **v0.21.0** | 国际化支持；AI 标题生成尊重用户语言偏好 |
-| **v0.20.0** | AI 标题生成；交互式控制台 UI；模型覆盖设置 |
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
@@ -437,10 +437,12 @@ frago deploy               # 从你的仓库获取最新资源
 
 ## 项目状态
 
-📍 **当前阶段**：社区 Recipe 生态完成，完整的 Recipe 管理体系
+📍 **当前阶段**：完整的工作区与媒体预览支持
 
-**最新功能（v0.17.0 - v0.24.0）**：
+**最新功能（v0.17.0 - v0.26.0）**：
 
+- ✅ 工作区文件浏览器 - 在 Web UI 中浏览 run instance 目录
+- ✅ 媒体查看器 - `frago view` 支持视频、图片、音频、3D 模型（glTF/GLB）
 - ✅ 社区 Recipe - `recipe install/uninstall/update/search/share` 支持社区贡献
 - ✅ WebSocket 实时同步 - 服务端推送更新，减少轮询
 - ✅ YouTube Recipe - 下载视频、提取字幕和转录文本
