@@ -433,6 +433,12 @@ frago deploy               # 从你的仓库获取最新资源
 - **[开发指南](docs/development.md)** - 项目结构、开发规范、测试方法
 - **[项目进展](docs/roadmap.md)** - 已完成功能、待办事项、版本规划
 
+### 随笔
+
+关于 AI 自动化、Agent 设计和经验教训的个人思考。
+
+→ **[阅读随笔](writings/README.md)**
+
 ---
 
 ## 项目状态

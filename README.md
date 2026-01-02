@@ -56,14 +56,6 @@ Multi-runtime automation infrastructure designed for AI agents, providing persis
 
 ---
 
-### Writings
-
-Personal thoughts on AI automation, Agent design, and lessons learned.
-
-→ **[Read the Writings](writings/README.md)**
-
----
-
 ## Why frago
 
 When facing prompts, AI can only "talk" but not "do"—it "talks once" but never "follows through from start to finish." Think of ChatGPT in 2023. So people designed Agents. Agents call tools through standardized interfaces.
@@ -443,6 +435,12 @@ Your personal, non-frago Claude commands and skills are never touched.
 - **[Recipe System](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md)** - AI-First design, metadata-driven, Workflow orchestration
 - **[Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)** - Project structure, development standards, testing methods
 - **[Roadmap](https://github.com/tsaijamey/Frago/blob/main/docs/roadmap.md)** - Completed features, todos, version planning
+
+### Writings
+
+Personal thoughts on AI automation, Agent design, and lessons learned.
+
+→ **[Read the Writings](writings/README.md)**
 
 ---
 
