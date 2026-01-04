@@ -50,6 +50,23 @@ class CommunityRecipeService:
         """
         self._cache_service = cache_service
 
+    async def initialize(self) -> None:
+        """Initialize by performing first fetch.
+
+        This ensures community recipes are available before
+        the initial data push to clients.
+        """
+        if self._cache is not None:
+            logger.debug("Community recipes already initialized")
+            return
+
+        try:
+            await self._do_refresh()
+            logger.info(f"Community recipes initialized, count={len(self._cache or [])}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize community recipes: {e}")
+            self._last_fetch_error = str(e)
+
     async def start(self) -> None:
         """Start background refresh task."""
         if self._task is not None and not self._task.done():
@@ -129,6 +146,11 @@ class CommunityRecipeService:
             logger.warning(f"Failed to fetch community recipes: {e}")
             self._last_fetch_error = str(e)
             return self._cache or []
+
+        # If API returns empty (possibly rate limited), preserve existing cache
+        if not raw_recipes and self._cache:
+            logger.debug("API returned empty, preserving existing cache")
+            return self._cache
 
         # Get installed recipes to check status
         installed = {r.name: r for r in installer.list_installed()}

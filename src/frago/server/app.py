@@ -57,9 +57,10 @@ async def lifespan(app: FastAPI):
     sync_service.set_cache_service(cache_service)
     await sync_service.start()
 
-    # Start community recipe service (60s refresh interval)
+    # Initialize and start community recipe service (60s refresh interval)
     community_service = CommunityRecipeService.get_instance()
     community_service.set_cache_service(cache_service)
+    await community_service.initialize()  # Fetch first to populate initial data
     await community_service.start()
 
     yield
