@@ -121,7 +121,15 @@
     "installSuccess": "Successfully installed {{name}}",
     "installFailed": "Failed to install recipe",
     "updateSuccess": "Successfully updated {{name}}",
-    "updateFailed": "Failed to update recipe"
+    "updateFailed": "Failed to update recipe",
+    "ghNotInstalled": "GitHub CLI Not Installed",
+    "ghNotInstalledDesc": "Install GitHub CLI to access community recipes without API rate limits.",
+    "ghNotAuthenticated": "GitHub CLI Not Authenticated",
+    "ghNotAuthenticatedDesc": "Log in to GitHub CLI to avoid API rate limits when browsing community recipes.",
+    "installGhCli": "Install GitHub CLI",
+    "loginToGitHub": "Log in to GitHub",
+    "ghLoginStarted": "Login window opened, please complete authentication",
+    "ghLoginFailed": "Failed to start GitHub login"
   },
   "skills": {
     "title": "Skills",
@@ -378,7 +386,8 @@
     "info": "Info",
     "retry": "Retry",
     "refresh": "Refresh",
-    "note": "Note"
+    "note": "Note",
+    "checking": "Checking..."
   },
   "errors": {
     "loadFailed": "Failed to load",

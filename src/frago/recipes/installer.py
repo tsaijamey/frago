@@ -132,15 +132,40 @@ class RecipeInstaller:
         self.manifest.save(self.manifest_path)
 
     def _get_headers(self) -> dict[str, str]:
-        """Get HTTP headers, including GitHub token if available"""
+        """Get HTTP headers, including GitHub token if available.
+
+        Token lookup order:
+        1. GITHUB_TOKEN environment variable
+        2. gh auth token (from gh CLI)
+        """
         import os
+        import subprocess
+
         headers = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "frago-recipe-installer",
         }
+
+        # Try environment variable first
         token = os.environ.get("GITHUB_TOKEN")
+
+        # Fall back to gh CLI token
+        if not token:
+            try:
+                result = subprocess.run(
+                    ["gh", "auth", "token"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    token = result.stdout.strip()
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                pass
+
         if token:
             headers["Authorization"] = f"token {token}"
+
         return headers
 
     def install(
@@ -477,9 +502,11 @@ class RecipeInstaller:
             )
             if response.status_code == 404:
                 return []  # Directory doesn't exist yet
+            if response.status_code == 403:
+                raise RuntimeError("GitHub API rate limit exceeded")
             response.raise_for_status()
-        except requests.RequestException:
-            return []
+        except requests.RequestException as e:
+            raise RuntimeError(f"GitHub API request failed: {e}") from e
 
         contents = response.json()
         results = []

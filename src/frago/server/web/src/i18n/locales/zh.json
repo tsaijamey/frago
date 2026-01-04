@@ -121,7 +121,15 @@
     "installSuccess": "成功安装 {{name}}",
     "installFailed": "安装配方失败",
     "updateSuccess": "成功更新 {{name}}",
-    "updateFailed": "更新配方失败"
+    "updateFailed": "更新配方失败",
+    "ghNotInstalled": "未安装 GitHub CLI",
+    "ghNotInstalledDesc": "安装 GitHub CLI 以避免 API 请求限制。",
+    "ghNotAuthenticated": "GitHub CLI 未登录",
+    "ghNotAuthenticatedDesc": "登录 GitHub CLI 以避免浏览社区配方时的 API 请求限制。",
+    "installGhCli": "安装 GitHub CLI",
+    "loginToGitHub": "登录 GitHub",
+    "ghLoginStarted": "登录窗口已打开，请完成认证",
+    "ghLoginFailed": "启动 GitHub 登录失败"
   },
   "skills": {
     "title": "技能",
@@ -378,7 +386,8 @@
     "info": "信息",
     "retry": "重试",
     "refresh": "刷新",
-    "note": "注意"
+    "note": "注意",
+    "checking": "检查中..."
   },
   "errors": {
     "loadFailed": "加载失败",
