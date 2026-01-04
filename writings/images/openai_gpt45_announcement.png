@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "data": {
+    "screenshot_path": "/home/yammi/.frago/projects/20260104-screenshot-kevinma-dev-zh-tweet-about-dev-workflow/screenshots/openai_gpt45_announcement.png",
+    "bounds": {
+      "x": 158.5,
+      "y": 107,
+      "width": 598,
+      "height": 482
+    }
+  },
+  "stderr": "",
+  "error": null,
+  "execution_time": 7.1491498947143555,
+  "recipe_name": "x_screenshot_tweet_element",
+  "runtime": "python"
+}
