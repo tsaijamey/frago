@@ -88,27 +88,62 @@ def is_frago_process(proc: psutil.Process) -> bool:
         return False
 
 
+def find_frago_process_on_port() -> Optional[int]:
+    """Find a Frago server process listening on the server port.
+
+    Checks network connections for a process on SERVER_PORT that
+    matches frago command line patterns.
+
+    Returns:
+        PID if found, None otherwise
+    """
+    try:
+        for conn in psutil.net_connections(kind="inet"):
+            if (
+                hasattr(conn, "laddr")
+                and conn.laddr
+                and conn.laddr.port == SERVER_PORT
+                and conn.status == "LISTEN"
+                and conn.pid
+            ):
+                try:
+                    proc = psutil.Process(conn.pid)
+                    if is_frago_process(proc):
+                        return conn.pid
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+    except psutil.AccessDenied:
+        # macOS requires root to enumerate all network connections
+        pass
+    return None
+
+
 def is_server_running() -> Tuple[bool, Optional[int]]:
     """Check if the Frago server is currently running.
 
-    Uses PID file and process validation to determine status.
+    Uses PID file first, then falls back to port scanning for processes
+    started via systemd or other external methods.
 
     Returns:
         Tuple of (is_running, pid). pid is None if not running.
     """
+    # First, check PID file
     pid = read_pid()
-    if pid is None:
-        return False, None
+    if pid is not None:
+        try:
+            proc = psutil.Process(pid)
+            if proc.is_running() and is_frago_process(proc):
+                return True, pid
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+        # Stale PID file - clean up
+        clear_pid()
 
-    try:
-        proc = psutil.Process(pid)
-        if proc.is_running() and is_frago_process(proc):
-            return True, pid
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-        pass
+    # Fallback: check for frago process on the port (e.g., systemd-started)
+    port_pid = find_frago_process_on_port()
+    if port_pid is not None:
+        return True, port_pid
 
-    # Stale PID file - clean up
-    clear_pid()
     return False, None
 
 
