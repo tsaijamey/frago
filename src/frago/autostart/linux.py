@@ -5,7 +5,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from textwrap import dedent
 
 from .base import AutostartManager
 
@@ -61,6 +60,34 @@ class LinuxAutostartManager(AutostartManager):
         # Fallback to current Python
         return sys.executable
 
+    def _collect_proxy_environment(self) -> list[str]:
+        """Collect proxy environment variables from current environment.
+
+        Systemd services don't inherit user shell configurations (.bashrc, .zshrc).
+        This captures proxy settings at enable-time so the service can access
+        networks that require proxy (e.g., Claude API behind corporate proxy).
+
+        Returns:
+            List of Environment= lines for systemd service file
+        """
+        proxy_vars = [
+            "http_proxy",
+            "https_proxy",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "no_proxy",
+            "NO_PROXY",
+        ]
+
+        env_lines = []
+        for var in proxy_vars:
+            value = os.environ.get(var)
+            if value:
+                # systemd Environment= format: VAR=value (no quotes needed for simple values)
+                env_lines.append(f"Environment={var}={value}")
+
+        return env_lines
+
     def _generate_service(self) -> str:
         """Generate the systemd service file content.
 
@@ -69,22 +96,32 @@ class LinuxAutostartManager(AutostartManager):
         """
         python_path = self._get_python_path()
         env_path = self._collect_environment_path()
+        proxy_env_lines = self._collect_proxy_environment()
 
-        return dedent(f"""\
-            [Unit]
-            Description=Frago AI Automation Server
-            After=network.target
+        # Build service file lines
+        lines = [
+            "[Unit]",
+            "Description=Frago AI Automation Server",
+            "After=network.target",
+            "",
+            "[Service]",
+            "Type=exec",
+            f"Environment=PATH={env_path}",
+        ]
 
-            [Service]
-            Type=exec
-            Environment=PATH={env_path}
-            ExecStart={python_path} -m frago.server.runner --daemon
-            Restart=on-failure
-            RestartSec=5
+        # Add proxy environment variables
+        lines.extend(proxy_env_lines)
 
-            [Install]
-            WantedBy=default.target
-        """)
+        lines.extend([
+            f"ExecStart={python_path} -m frago.server.runner --daemon",
+            "Restart=on-failure",
+            "RestartSec=5",
+            "",
+            "[Install]",
+            "WantedBy=default.target",
+        ])
+
+        return "\n".join(lines) + "\n"
 
     def _check_systemd_available(self) -> bool:
         """Check if systemd user services are available."""
