@@ -36,6 +36,9 @@ export type PageType =
 // Sidebar storage key for localStorage
 const SIDEBAR_COLLAPSED_KEY = 'frago-sidebar-collapsed';
 
+// Console session storage key for localStorage
+const CONSOLE_SESSION_KEY = 'frago_console_session_id';
+
 // Toast type
 export type ToastType = 'info' | 'success' | 'warning' | 'error';
 
@@ -447,6 +450,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Console actions
   setConsoleSessionId: (id) => {
     set({ consoleSessionId: id });
+    try {
+      if (id) {
+        localStorage.setItem(CONSOLE_SESSION_KEY, id);
+      } else {
+        localStorage.removeItem(CONSOLE_SESSION_KEY);
+      }
+    } catch {
+      // localStorage not available
+    }
   },
 
   addConsoleMessage: (message) => {
@@ -493,5 +505,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       consoleIsRunning: false,
       consoleScrollPosition: 0,
     });
+    try {
+      localStorage.removeItem(CONSOLE_SESSION_KEY);
+    } catch {
+      // localStorage not available
+    }
   },
 }));

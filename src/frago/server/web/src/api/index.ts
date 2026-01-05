@@ -935,3 +935,18 @@ export async function viewProjectFile(
   }
   return httpApi.viewProjectFile(runId, path);
 }
+
+// ============================================================
+// Console API
+// ============================================================
+
+export type { ConsoleHistoryResponse } from './client';
+
+export async function getConsoleHistory(
+  sessionId: string,
+  limit: number = 100,
+  offset: number = 0
+): Promise<httpApi.ConsoleHistoryResponse> {
+  // Console is only available in HTTP mode
+  return httpApi.getConsoleHistory(sessionId, limit, offset);
+}
