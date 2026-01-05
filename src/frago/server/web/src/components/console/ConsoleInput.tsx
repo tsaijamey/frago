@@ -1,4 +1,5 @@
 import { Send } from 'lucide-react';
+import { modKey } from '../../hooks/usePlatform';
 
 interface ConsoleInputProps {
   value: string;
@@ -25,30 +26,28 @@ export default function ConsoleInput({
   };
 
   return (
-    <div className="card">
-      <div className="flex gap-scaled-3 items-end">
+    <div>
+      <div className="task-input-wrapper">
         <textarea
-          className="flex-1 resize-none bg-transparent border-none outline-none text-[var(--text-primary)] placeholder-[var(--text-muted)] font-sans text-scaled-base p-0"
+          className="task-input"
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          rows={3}
           aria-label="Message input"
         />
         <button
           type="button"
-          className="btn btn-primary flex items-center gap-scaled-2 shrink-0"
+          className={`task-input-btn ${value.trim() ? 'visible' : ''}`}
           onClick={onSend}
           disabled={disabled || !value.trim()}
         >
-          <Send className="icon-scaled-sm" />
-          Send
+          <Send className="icon-scaled-md" />
         </button>
       </div>
       <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
-        Ctrl+Enter to send
+        {modKey}+Enter to send
       </div>
     </div>
   );
