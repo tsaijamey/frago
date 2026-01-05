@@ -57,11 +57,11 @@ The savings compound. The recipes stay. Your time returns to family, hobbies, cr
 
 | Version | Highlights |
 |---------|------------|
+| **v0.28.0** | Redesigned recipe tabs; unified console send button; enhanced UI hover states |
+| **v0.27.0** | GitHub CLI authentication for community recipes; console session persistence |
 | **v0.26.0** | Workspace file browser; `frago view` media support (video, image, audio, 3D models) |
 | **v0.24.0** | Community recipes infrastructure; `recipe install/uninstall/update/search/share` commands |
 | **v0.23.0** | WebSocket real-time sync; YouTube recipes (download, subtitles, transcript) |
-| **v0.22.0** | Cross-platform autostart; `frago autostart` command; integrated into init workflow |
-| **v0.21.0** | i18n support; user language preference for AI title generation |
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
@@ -107,7 +107,7 @@ frago integrates with Claude Code through four slash commands, forming a complet
 /frago.recipe  Solidify experience into reusable recipes
 /frago.test    Validate recipes (while context is fresh)
      ↓
-/frago.exec    Execute quickly with skill guidance
+/frago.do      Execute quickly with skill guidance
 ```
 
 ### Step 1: Explore and Research
@@ -175,7 +175,7 @@ Validation failed? Fix it on the spot, no need to re-explore. This is why recipe
 Next time you have a similar need, type:
 
 ```
-/frago.exec video-production Create a short video about AI
+/frago.do video-production Create a short video about AI
 ```
 
 The Agent will:
@@ -258,7 +258,7 @@ When done:
 Recipe auto-generated. Next time:
 
 ```
-/frago.exec Scrape similar website
+/frago.do Scrape similar website
 ```
 
 **You don't need to enter any platform, don't need to look at any flowchart.**
