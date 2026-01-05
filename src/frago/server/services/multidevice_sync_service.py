@@ -231,7 +231,11 @@ class MultiDeviceSyncService:
         try:
             from frago.tools.sync_repo import sync
 
-            result = sync()
+            # Load configured repo URL from config
+            config = load_config()
+            repo_url = config.sync_repo_url if config else None
+
+            result = sync(repo_url=repo_url)
 
             with cls._sync_lock:
                 cls._sync_result = {
