@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { getConsoleHistory } from '@/api';
 import type { ConsoleMessage } from '@/types/console';
 import ConsoleControls from './ConsoleControls';
 import MessageList from './MessageList';
@@ -23,6 +24,7 @@ export default function ConsolePage() {
     updateConsoleMessageByToolCallId,
     setConsoleIsRunning,
     setConsoleScrollPosition,
+    setConsoleMessages,
     clearConsole,
   } = useAppStore();
 
@@ -51,6 +53,70 @@ export default function ConsolePage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run on unmount
+
+  // Restore session from localStorage on initial load (after page refresh)
+  useEffect(() => {
+    const restoreSession = async () => {
+      // Skip if we already have a session in memory
+      if (useAppStore.getState().consoleSessionId) return;
+
+      try {
+        const storedSessionId = localStorage.getItem('frago_console_session_id');
+        if (!storedSessionId) return;
+
+        // Validate session still exists on backend
+        const response = await fetch(`/api/console/${storedSessionId}/info`);
+        if (response.ok) {
+          const info = await response.json();
+          // Backend returns { running: boolean, ... } not status string
+          setConsoleSessionId(storedSessionId);
+          setConsoleIsRunning(info.running === true);
+          // Fetch history - messages from history are always complete
+          const history = await getConsoleHistory(storedSessionId);
+          if (history.messages) {
+            const messagesWithDone = history.messages.map(msg => ({
+              ...msg,
+              done: true, // Messages from history are always complete
+            })) as ConsoleMessage[];
+            setConsoleMessages(messagesWithDone);
+          }
+        } else {
+          // Session not found, clear localStorage
+          localStorage.removeItem('frago_console_session_id');
+        }
+      } catch {
+        localStorage.removeItem('frago_console_session_id');
+      }
+    };
+    restoreSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on initial mount
+
+  // Recover messages when returning to console with existing session (after tab switch)
+  // Always fetch from backend since it's the source of truth for messages received while away
+  useEffect(() => {
+    const recoverMessages = async () => {
+      const sessionId = useAppStore.getState().consoleSessionId;
+      if (sessionId) {
+        try {
+          const history = await getConsoleHistory(sessionId);
+          if (history.messages && history.messages.length > 0) {
+            // Replace with backend data - it has messages received while page was unmounted
+            // Messages from history are always complete
+            const messagesWithDone = history.messages.map(msg => ({
+              ...msg,
+              done: true,
+            })) as ConsoleMessage[];
+            setConsoleMessages(messagesWithDone);
+          }
+        } catch (error) {
+          console.error('Failed to recover console history:', error);
+        }
+      }
+    };
+    recoverMessages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
