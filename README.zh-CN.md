@@ -57,11 +57,11 @@ frago 直接攻击这个问题：
 
 | 版本 | 主要变化 |
 |------|----------|
+| **v0.28.0** | Recipe 标签页重设计；Console 发送按钮样式统一；UI 悬停效果增强 |
+| **v0.27.0** | GitHub CLI 认证支持社区 Recipe；Console 会话持久化 |
 | **v0.26.0** | 工作区文件浏览器；`frago view` 媒体支持（视频、图片、音频、3D 模型） |
 | **v0.24.0** | 社区 Recipe 基建；`recipe install/uninstall/update/search/share` 命令 |
 | **v0.23.0** | WebSocket 实时同步；YouTube Recipe（下载、字幕、转录） |
-| **v0.22.0** | 跨平台开机自启；`frago autostart` 命令；集成到 init 流程 |
-| **v0.21.0** | 国际化支持；AI 标题生成尊重用户语言偏好 |
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
@@ -107,7 +107,7 @@ frago 结合 Claude Code，通过四个 slash command 构建完整的"探索 →
 /frago.recipe  将经验固化为可复用的配方
 /frago.test    验证配方（趁上下文还在）
      ↓
-/frago.exec    通过 skill 指导，快速执行
+/frago.do      通过 skill 指导，快速执行
 ```
 
 ### 第一步：探索研究
@@ -175,7 +175,7 @@ use_cases:
 下次遇到同类需求，输入：
 
 ```
-/frago.exec video-production 制作一个关于 AI 的短视频
+/frago.do video-production 制作一个关于 AI 的短视频
 ```
 
 Agent 会：
@@ -258,7 +258,7 @@ Dify、Coze、n8n 是**工作流编排工具**。
 配方自动生成。下次：
 
 ```
-/frago.exec 抓取类似网站
+/frago.do 抓取类似网站
 ```
 
 **你不需要进入任何平台，不需要看任何流程图。**
