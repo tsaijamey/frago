@@ -84,7 +84,7 @@ export function WorkspacePage() {
       {/* Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Project List - Left Panel */}
-        <div className="w-80 border-r border-border overflow-y-auto">
+        <div className="w-[480px] border-r border-border overflow-y-auto">
           <ProjectList
             projects={projects}
             loading={loading}

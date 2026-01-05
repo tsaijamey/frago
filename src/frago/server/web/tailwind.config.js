@@ -14,6 +14,8 @@ export default {
         'bg-tertiary': 'var(--bg-tertiary)',
         'bg-card': 'var(--bg-card)',
         'bg-subtle': 'var(--bg-subtle)',
+        'bg-hover': 'var(--bg-hover)',
+        'bg-elevated': 'var(--bg-elevated)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
         'text-muted': 'var(--text-muted)',

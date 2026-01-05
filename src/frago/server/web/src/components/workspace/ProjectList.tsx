@@ -110,10 +110,10 @@ function ProjectItem({
   return (
     <div
       className={`
-        group p-3 rounded-lg cursor-pointer transition-colors
+        group p-3 rounded-lg cursor-pointer transition-all duration-200
         ${isSelected
-          ? 'bg-primary/10 border border-primary/30'
-          : 'hover:bg-muted border border-transparent'
+          ? 'bg-[var(--bg-elevated)] border border-[var(--border-primary)]'
+          : 'hover:bg-[var(--bg-hover)] border border-transparent hover:border-[var(--border-color)]'
         }
       `}
       onClick={onSelect}
