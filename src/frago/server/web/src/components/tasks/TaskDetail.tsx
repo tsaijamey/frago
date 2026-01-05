@@ -5,6 +5,7 @@ import { getTaskDetail, continueAgentTask } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { Send, MessageSquarePlus, ChevronDown, ChevronRight } from 'lucide-react';
+import { modKey } from '@/hooks/usePlatform';
 
 // Format date time
 function formatDateTime(isoString: string): string {
@@ -239,7 +240,7 @@ export default function TaskDetail() {
               </button>
             </div>
             <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
-              {t('tasks.ctrlEnterToSend')} ·
+              {modKey}+Enter to send ·
               <button
                 className="text-[var(--accent-primary)] hover:underline ml-scaled-1"
                 onClick={() => setShowContinue(false)}
