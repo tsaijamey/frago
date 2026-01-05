@@ -22,29 +22,31 @@ export default function RecipeTabs({
   const { t } = useTranslation();
 
   return (
-    <div className="flex border-b border-[var(--border-color)] mb-4">
-      <button
-        type="button"
-        className={`px-4 py-2 text-sm font-medium transition-colors ${
-          activeTab === 'local'
-            ? 'text-[var(--accent-primary)] border-b-2 border-[var(--accent-primary)]'
-            : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-        }`}
-        onClick={() => onTabChange('local')}
-      >
-        {t('recipes.localRecipes')} ({localCount})
-      </button>
-      <button
-        type="button"
-        className={`px-4 py-2 text-sm font-medium transition-colors ${
-          activeTab === 'community'
-            ? 'text-[var(--accent-primary)] border-b-2 border-[var(--accent-primary)]'
-            : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-        }`}
-        onClick={() => onTabChange('community')}
-      >
-        {t('recipes.communityRecipes')} ({communityCount})
-      </button>
+    <div className="flex justify-center mt-4 mb-4">
+      <div className="inline-flex rounded-full bg-[var(--bg-tertiary)] p-1">
+        <button
+          type="button"
+          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
+            activeTab === 'local'
+              ? 'bg-[var(--accent-primary)] text-[var(--text-on-accent)] shadow-sm'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          }`}
+          onClick={() => onTabChange('local')}
+        >
+          {t('recipes.localRecipes')} ({localCount})
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-1.5 text-sm font-medium rounded-full transition-all ${
+            activeTab === 'community'
+              ? 'bg-[var(--accent-primary)] text-[var(--text-on-accent)] shadow-sm'
+              : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+          }`}
+          onClick={() => onTabChange('community')}
+        >
+          {t('recipes.communityRecipes')} ({communityCount})
+        </button>
+      </div>
     </div>
   );
 }
