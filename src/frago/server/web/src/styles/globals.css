@@ -11,13 +11,15 @@
 /* === CSS Variables - Dark Theme (Default) === */
 /* Based on Next.js-inspired design language from FRONTEND_STYLE_GUIDE.md */
 :root {
-  /* Background color scale - Next.js Dark */
+  /* Background color scale - Enhanced differentiation */
   --bg-primary: #000000;
-  --bg-secondary: #0A0A0A;
-  --bg-tertiary: #1A1A1A;
-  --bg-card: #0A0A0A;
-  --bg-base: #0A0A0A;
-  --bg-subtle: #1A1A1A;
+  --bg-secondary: #0D0D0D;
+  --bg-tertiary: #171717;
+  --bg-card: #0D0D0D;
+  --bg-base: #0D0D0D;
+  --bg-subtle: #1F1F1F;
+  --bg-hover: #1F1F1F;
+  --bg-elevated: #262626;
 
   /* Text color scale */
   --text-primary: #FFFFFF;
@@ -34,9 +36,9 @@
   --accent-warning: #d29922;
   --accent-error: #f85149;
 
-  /* Border colors */
-  --border-color: #1A1A1A;
-  --border-muted: #0A0A0A;
+  /* Border colors - Enhanced visibility */
+  --border-color: #262626;
+  --border-muted: #171717;
   --border-primary: #EDEDED;
   --shadow-color: rgba(0, 0, 0, 0.6);
 
@@ -102,6 +104,8 @@
   --bg-card: #FFFFFF;
   --bg-base: #FFFFFF;
   --bg-subtle: #E5E5E5;
+  --bg-hover: #F0F0F0;
+  --bg-elevated: #E8E8E8;
 
   --text-primary: #0A0A0A;
   --text-secondary: #666666;
@@ -376,13 +380,14 @@ a:not(.btn):not(.nav-tab):hover {
 }
 
 .sidebar-menu-item:hover {
-  background: var(--bg-tertiary);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
 .sidebar-menu-item.active {
-  background: var(--bg-tertiary);
+  background: var(--bg-elevated);
   color: var(--text-primary);
+  box-shadow: inset 3px 0 0 var(--accent-primary);
 }
 
 .sidebar-menu-icon {
@@ -586,6 +591,13 @@ a:not(.btn):not(.nav-tab):hover {
   background: var(--bg-tertiary);
   border-radius: 8px;
   cursor: pointer;
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
+}
+
+.dashboard-activity-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-color);
 }
 
 .dashboard-activity-dot {
@@ -804,11 +816,15 @@ a:not(.btn):not(.nav-tab):hover {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: var(--spacing-md);
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast),
+              background var(--transition-fast),
+              box-shadow var(--transition-fast);
 }
 
 .card:hover {
   border-color: var(--accent-primary);
+  background: var(--bg-hover);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 /* === Button Base === */
@@ -970,7 +986,8 @@ a:not(.btn):not(.nav-tab):hover {
 
 .task-card-v2:hover {
   border-color: var(--accent-primary);
-  background: var(--bg-tertiary);
+  background: var(--bg-hover);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .task-card-v2:hover .task-arrow {
