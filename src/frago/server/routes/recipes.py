@@ -324,3 +324,43 @@ async def update_community_recipe(name: str) -> CommunityRecipeInstallResponse:
         message=result.get("message"),
         error=result.get("error"),
     )
+
+
+@router.post(
+    "/community-recipes/{name}/uninstall",
+    response_model=CommunityRecipeInstallResponse
+)
+async def uninstall_community_recipe(name: str) -> CommunityRecipeInstallResponse:
+    """Uninstall an installed community recipe.
+
+    Args:
+        name: Recipe name to uninstall
+
+    Returns:
+        Uninstall result
+    """
+    import asyncio
+    from frago.server.services.community_recipe_service import CommunityRecipeService
+
+    service = CommunityRecipeService.get_instance()
+
+    # Run in thread pool (blocking I/O)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: service.uninstall_recipe(name)
+    )
+
+    # Trigger local recipe cache refresh after uninstall
+    cache = CacheService.get_instance()
+    await cache.refresh_recipes(broadcast=True)
+
+    # Trigger community recipes refresh to update status
+    await service._do_refresh()
+
+    return CommunityRecipeInstallResponse(
+        status=result.get("status", "error"),
+        recipe_name=result.get("recipe_name"),
+        message=result.get("message"),
+        error=result.get("error"),
+    )

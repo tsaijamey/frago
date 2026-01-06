@@ -872,6 +872,24 @@ a:not(.btn):not(.nav-tab):hover {
   color: var(--text-primary);
 }
 
+.btn-warning {
+  background: var(--accent-warning);
+  color: white;
+}
+
+.btn-warning:hover {
+  filter: brightness(1.1);
+}
+
+.btn-danger {
+  background: var(--accent-error);
+  color: white;
+}
+
+.btn-danger:hover {
+  filter: brightness(1.1);
+}
+
 
 /* === Empty State === */
 .empty-state {

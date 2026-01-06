@@ -815,6 +815,18 @@ export async function updateCommunityRecipe(
   );
 }
 
+/**
+ * Uninstall an installed community recipe.
+ */
+export async function uninstallCommunityRecipe(
+  name: string
+): Promise<CommunityRecipeInstallResponse> {
+  return fetchApi<CommunityRecipeInstallResponse>(
+    `/community-recipes/${encodeURIComponent(name)}/uninstall`,
+    { method: 'POST' }
+  );
+}
+
 // ============================================================================
 // Project Files API
 // ============================================================================

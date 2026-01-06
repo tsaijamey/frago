@@ -5,13 +5,14 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import { Check, Download, RefreshCw, ExternalLink } from 'lucide-react';
+import { Download, RefreshCw, ExternalLink, Trash2 } from 'lucide-react';
 import type { CommunityRecipeItem } from '@/types/pywebview';
 
 interface CommunityRecipeCardProps {
   recipe: CommunityRecipeItem;
   onInstall: (name: string, force: boolean) => Promise<void>;
   onUpdate: (name: string) => Promise<void>;
+  onUninstall: (name: string) => Promise<void>;
   isInstalling: boolean;
 }
 
@@ -19,6 +20,7 @@ export default function CommunityRecipeCard({
   recipe,
   onInstall,
   onUpdate,
+  onUninstall,
   isInstalling,
 }: CommunityRecipeCardProps) {
   const { t } = useTranslation();
@@ -74,10 +76,19 @@ export default function CommunityRecipeCard({
                 <span>{t('recipes.update')}</span>
               </button>
             ) : (
-              <span className="inline-flex items-center gap-1 text-xs text-[var(--accent-success)] px-2 py-1 bg-[var(--status-completed-bg)] rounded">
-                <Check size={14} />
-                {t('recipes.installed')}
-              </span>
+              <button
+                type="button"
+                className="btn btn-sm btn-danger flex items-center gap-1"
+                onClick={() => onUninstall(recipe.name)}
+                disabled={isInstalling}
+              >
+                {isInstalling ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Trash2 size={14} />
+                )}
+                <span>{t('recipes.uninstall')}</span>
+              </button>
             )
           ) : (
             <button
