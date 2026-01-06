@@ -73,7 +73,10 @@
     "assistant": "Assistant",
     "tool": "Tool",
     "result": "Result",
-    "system": "System"
+    "system": "System",
+    "generateTitle": "Generate AI Title",
+    "titleGenerated": "Title generated successfully",
+    "titleGenerationFailed": "Failed to generate title"
   },
   "recipes": {
     "title": "Recipes",

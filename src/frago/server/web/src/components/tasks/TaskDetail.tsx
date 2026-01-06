@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { getTaskDetail, continueAgentTask } from '@/api';
+import { getTaskDetail, continueAgentTask, generateTaskTitle } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import { Send, MessageSquarePlus, ChevronDown, ChevronRight } from 'lucide-react';
+import { Send, MessageSquarePlus, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 import { modKey } from '@/hooks/usePlatform';
 
 // Format date time
@@ -41,8 +41,33 @@ export default function TaskDetail() {
   // Collapse state
   const [infoCollapsed, setInfoCollapsed] = useState(false);
 
+  // Title generation state
+  const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+
   // Whether can continue conversation (only completed and error status)
   const canContinue = taskDetail?.status === 'completed' || taskDetail?.status === 'error';
+
+  // Generate AI title for the task
+  const handleGenerateTitle = async () => {
+    if (!taskDetail || isGeneratingTitle) return;
+
+    setIsGeneratingTitle(true);
+    try {
+      const result = await generateTaskTitle(taskDetail.session_id);
+      if (result.status === 'ok' && result.title) {
+        // Update the task detail with new title
+        setTaskDetail({ ...taskDetail, name: result.title });
+        showToast(t('tasks.titleGenerated'), 'success');
+      } else {
+        showToast(result.error || t('tasks.titleGenerationFailed'), 'error');
+      }
+    } catch (error) {
+      console.error('Failed to generate title:', error);
+      showToast(t('tasks.titleGenerationFailed'), 'error');
+    } finally {
+      setIsGeneratingTitle(false);
+    }
+  };
 
   // Auto refresh detail (running status 3 seconds, other status 10 seconds)
   useEffect(() => {
@@ -155,6 +180,24 @@ export default function TaskDetail() {
               <h2 className="text-scaled-lg font-medium text-[var(--text-primary)] truncate">
                 {taskDetail.name}
               </h2>
+              {/* Generate AI title button */}
+              <button
+                type="button"
+                className="btn btn-ghost p-1 shrink-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleGenerateTitle();
+                }}
+                disabled={isGeneratingTitle}
+                title={t('tasks.generateTitle')}
+                aria-label={t('tasks.generateTitle')}
+              >
+                {isGeneratingTitle ? (
+                  <LoadingSpinner size="sm" />
+                ) : (
+                  <Sparkles className="icon-scaled-md text-[var(--text-muted)] hover:text-[var(--accent-primary)]" />
+                )}
+              </button>
               {/* Show status summary when collapsed */}
               {infoCollapsed && (
                 <span className={`status-${taskDetail.status} text-scaled-sm ml-scaled-2 shrink-0`}>

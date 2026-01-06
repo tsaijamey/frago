@@ -181,7 +181,6 @@ export interface UserConfig {
   confirm_on_exit: boolean;
   auto_scroll_output: boolean;
   max_history_items: number;
-  ai_title_enabled: boolean;
   shortcuts: Record<string, string>;
 }
 
