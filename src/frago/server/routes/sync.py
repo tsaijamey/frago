@@ -9,6 +9,7 @@ from typing import List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from frago.server.services.cache_service import CacheService
 from frago.server.services.multidevice_sync_service import MultiDeviceSyncService
 
 router = APIRouter()
@@ -186,8 +187,16 @@ async def get_sync_status() -> SyncResponse:
     """Get the status of the current or last sync operation.
 
     Returns "running" if sync is in progress, or the final result.
+    Triggers cache refresh for recipes and skills after successful sync.
     """
     result = MultiDeviceSyncService.get_sync_result()
+
+    # Refresh recipes and skills cache after successful sync
+    if result.get("needs_refresh"):
+        cache = CacheService.get_instance()
+        await cache.refresh_recipes(broadcast=True)
+        await cache.refresh_skills(broadcast=True)
+        MultiDeviceSyncService.clear_refresh_flag()
 
     return SyncResponse(
         status=result.get("status", "idle"),
