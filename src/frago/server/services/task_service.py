@@ -235,6 +235,8 @@ class TaskService:
             if not session_id:
                 return None
 
+            from frago.session.title_manager import get_title_manager
+
             # Read session metadata
             session = read_metadata(session_id, AgentType.CLAUDE)
             if not session:
@@ -249,9 +251,12 @@ class TaskService:
             # Read summary
             summary = read_summary(session_id, AgentType.CLAUDE)
 
+            # Get title manager for AI titles
+            title_manager = get_title_manager()
+
             # Build task detail
             return TaskService._build_task_detail(
-                session, steps, summary, steps_result
+                session, steps, summary, steps_result, title_manager
             )
 
         except Exception as e:
@@ -264,6 +269,7 @@ class TaskService:
         steps: List[Any],
         summary: Optional[Any],
         steps_result: Dict[str, Any],
+        title_manager=None,
     ) -> Dict[str, Any]:
         """Build task detail dictionary from session data.
 
@@ -272,12 +278,19 @@ class TaskService:
             steps: List of step records.
             summary: Session summary or None.
             steps_result: Pagination info for steps.
+            title_manager: Optional TitleManager instance for AI title lookup.
 
         Returns:
             Task detail dictionary.
         """
-        # Get basic info
-        name = getattr(session, "name", None) or f"Session {session.session_id[:8]}"
+        # Get session name: prefer AI title, then session name, then fallback
+        name = None
+        if title_manager:
+            name = title_manager.get_title(session.session_id)
+        if not name:
+            name = getattr(session, "name", None)
+        if not name:
+            name = f"Session {session.session_id[:8]}"
         status = getattr(session, "status", None)
         status_str = status.value if status else "running"
 
