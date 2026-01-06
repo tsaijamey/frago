@@ -108,7 +108,7 @@ class CacheService:
         """
         try:
             from frago.server.services.task_service import TaskService
-            return TaskService.get_tasks(limit=100, offset=0, generate_titles=False)
+            return TaskService.get_tasks(limit=100, offset=0)
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
             return {"tasks": [], "total": 0}
