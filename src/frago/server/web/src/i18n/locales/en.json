@@ -74,7 +74,7 @@
     "tool": "Tool",
     "result": "Result",
     "system": "System",
-    "generateTitle": "Generate AI Title",
+    "generateTitle": "Generate task title using haiku model",
     "titleGenerated": "Title generated successfully",
     "titleGenerationFailed": "Failed to generate title"
   },
