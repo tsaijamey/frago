@@ -268,6 +268,39 @@ class CommunityRecipeService:
                 "error": str(e),
             }
 
+    def uninstall_recipe(self, name: str) -> Dict[str, Any]:
+        """Uninstall an installed community recipe.
+
+        Args:
+            name: Recipe name to uninstall
+
+        Returns:
+            Result dictionary with status, recipe_name, message, error
+        """
+        from frago.recipes.installer import RecipeInstaller
+
+        try:
+            installer = RecipeInstaller()
+            success = installer.uninstall(name)
+            if success:
+                # Invalidate cache
+                self._cache = None
+                return {
+                    "status": "ok",
+                    "recipe_name": name,
+                    "message": f"Successfully uninstalled {name}",
+                }
+            return {
+                "status": "error",
+                "error": f"Recipe {name} not found",
+            }
+        except Exception as e:
+            logger.error(f"Failed to uninstall community recipe {name}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+            }
+
     def get_last_error(self) -> Optional[str]:
         """Get the last fetch error if any.
 

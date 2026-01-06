@@ -877,6 +877,19 @@ export async function updateCommunityRecipe(
   return httpApi.updateCommunityRecipe(name);
 }
 
+export async function uninstallCommunityRecipe(
+  name: string
+): Promise<CommunityRecipeInstallResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Community recipes not supported in pywebview mode',
+    };
+  }
+
+  return httpApi.uninstallCommunityRecipe(name);
+}
+
 // ============================================================
 // Project Files API
 // ============================================================

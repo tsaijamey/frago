@@ -119,6 +119,26 @@ export default function CommunityRecipeList() {
     }
   };
 
+  // Handle uninstall
+  const handleUninstall = async (name: string) => {
+    setInstallingRecipe(name);
+    try {
+      const result = await api.uninstallCommunityRecipe(name);
+      if (result.status === 'ok') {
+        showToast(t('recipes.uninstallSuccess', { name }), 'success');
+        // Refresh the list to update status
+        await loadCommunityRecipes();
+      } else {
+        showToast(result.error || t('recipes.uninstallFailed'), 'error');
+      }
+    } catch (err) {
+      console.error('Failed to uninstall recipe:', err);
+      showToast(t('recipes.uninstallFailed'), 'error');
+    } finally {
+      setInstallingRecipe(null);
+    }
+  };
+
   // Empty state
   if (communityRecipes.length === 0) {
     return (
@@ -224,6 +244,7 @@ export default function CommunityRecipeList() {
                 recipe={recipe}
                 onInstall={handleInstall}
                 onUpdate={handleUpdate}
+                onUninstall={handleUninstall}
                 isInstalling={installingRecipe === recipe.name}
               />
             ))}
