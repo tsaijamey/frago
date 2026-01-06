@@ -23,6 +23,7 @@ class MultiDeviceSyncService:
     _sync_lock = threading.Lock()
     _sync_running = False
     _sync_result: Optional[Dict[str, Any]] = None
+    _needs_cache_refresh = False
 
     @classmethod
     def create_sync_repo(
@@ -252,6 +253,9 @@ class MultiDeviceSyncService:
                 }
                 if not result.success and result.errors:
                     cls._sync_result["error"] = "; ".join(result.errors)
+                # Mark that cache refresh is needed after successful sync
+                if result.success:
+                    cls._needs_cache_refresh = True
 
         except Exception as e:
             logger.error("Sync failed: %s", e)
@@ -301,16 +305,24 @@ class MultiDeviceSyncService:
         """Get the result of the current or last sync operation.
 
         Returns:
-            Dictionary with sync status and result
+            Dictionary with sync status and result, including needs_refresh flag
         """
         with cls._sync_lock:
             if cls._sync_running:
                 return {"status": "running"}
 
             if cls._sync_result is not None:
-                return cls._sync_result
+                result = cls._sync_result.copy()
+                result["needs_refresh"] = cls._needs_cache_refresh
+                return result
 
             return {"status": "idle", "message": "No sync has been run"}
+
+    @classmethod
+    def clear_refresh_flag(cls) -> None:
+        """Clear the cache refresh flag after refresh has been triggered."""
+        with cls._sync_lock:
+            cls._needs_cache_refresh = False
 
     @classmethod
     async def sync_now(cls) -> Dict[str, Any]:
