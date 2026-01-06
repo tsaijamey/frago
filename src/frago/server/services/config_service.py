@@ -26,7 +26,6 @@ class UserConfig:
     confirm_on_exit: bool = True
     auto_scroll_output: bool = True
     max_history_items: int = 100
-    ai_title_enabled: bool = False  # Enable AI title generation using haiku model
     shortcuts: Dict[str, str] = field(
         default_factory=lambda: {
             "send": "Ctrl+Enter",
@@ -97,7 +96,6 @@ class ConfigService:
                 confirm_on_exit=data.get("confirm_on_exit", True),
                 auto_scroll_output=data.get("auto_scroll_output", True),
                 max_history_items=data.get("max_history_items", 100),
-                ai_title_enabled=data.get("ai_title_enabled", False),
                 shortcuts=data.get(
                     "shortcuts",
                     {

@@ -27,7 +27,6 @@ async def list_tasks(
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(50, ge=1, le=100, description="Maximum tasks to return"),
     offset: int = Query(0, ge=0, description="Number of tasks to skip"),
-    generate_titles: bool = Query(False, description="Generate AI titles for sessions"),
 ) -> TaskListResponse:
     """List all tasks with optional filtering.
 
@@ -35,16 +34,15 @@ async def list_tasks(
         status: Filter by status (running, completed, error, cancelled)
         limit: Maximum number of tasks to return
         offset: Number of tasks to skip for pagination
-        generate_titles: If True, generate AI titles using haiku model
 
     Returns:
         List of tasks with total count
     """
     from datetime import datetime, timezone
 
-    # Use cache for default queries (no filter, no title generation)
+    # Use cache for default queries (no filter)
     cache = CacheService.get_instance()
-    if status is None and not generate_titles and cache.is_initialized():
+    if status is None and cache.is_initialized():
         cached = await cache.get_tasks()
         if cached:
             # Apply pagination to cached result
@@ -53,12 +51,12 @@ async def list_tasks(
             result = {"tasks": paginated, "total": cached.get("total", len(all_tasks))}
         else:
             result = TaskService.get_tasks(
-                status=status, limit=limit, offset=offset, generate_titles=generate_titles
+                status=status, limit=limit, offset=offset
             )
     else:
-        # Filtered or title generation requests bypass cache
+        # Filtered requests bypass cache
         result = TaskService.get_tasks(
-            status=status, limit=limit, offset=offset, generate_titles=generate_titles
+            status=status, limit=limit, offset=offset
         )
 
     tasks = []
@@ -186,6 +184,33 @@ async def get_task(task_id: str) -> TaskDetailResponse:
         has_more_steps=task.get("has_more_steps", False),
         summary=summary,
     )
+
+
+@router.post("/tasks/{task_id}/generate-title")
+async def generate_task_title(task_id: str) -> dict:
+    """Generate AI title for a single task.
+
+    Uses haiku model via Claude Code CLI to generate a concise title
+    based on the session content.
+
+    Args:
+        task_id: Task/session identifier.
+
+    Returns:
+        Dictionary with status and title on success, or error message.
+
+    Raises:
+        HTTPException: 404 if task not found.
+    """
+    # Verify task exists
+    task = TaskService.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+    title = TaskService.generate_title_for_task(task_id)
+    if title:
+        return {"status": "ok", "title": title}
+    return {"status": "error", "error": "Failed to generate title"}
 
 
 @router.get("/tasks/{task_id}/steps", response_model=TaskStepsResponse)

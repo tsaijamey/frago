@@ -86,7 +86,6 @@ export function isApiReady(): boolean {
 export async function getTasks(options?: {
   limit?: number;
   status?: TaskStatus;
-  generateTitles?: boolean;
 }): Promise<TaskItem[]> {
   if (isPywebviewMode()) {
     return pywebviewApi.getTasks(options?.limit, options?.status);
@@ -96,7 +95,6 @@ export async function getTasks(options?: {
   const response = await httpApi.getTasks({
     limit: options?.limit,
     status: options?.status ?? undefined,
-    generateTitles: options?.generateTitles,
   });
 
   // Map HTTP response to pywebview format
@@ -162,6 +160,23 @@ export async function getTaskDetail(
         }
       : null,
   };
+}
+
+export interface GenerateTitleResponse {
+  status: 'ok' | 'error';
+  title?: string;
+  error?: string;
+}
+
+export async function generateTaskTitle(
+  sessionId: string
+): Promise<GenerateTitleResponse> {
+  if (isPywebviewMode()) {
+    // Not supported in pywebview mode
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+
+  return httpApi.generateTaskTitle(sessionId);
 }
 
 export async function getTaskSteps(
@@ -372,7 +387,6 @@ export async function getConfig(): Promise<UserConfig> {
     confirm_on_exit: config.confirm_on_exit,
     auto_scroll_output: config.auto_scroll_output,
     max_history_items: config.max_history_items,
-    ai_title_enabled: config.ai_title_enabled,
     shortcuts: config.shortcuts,
   };
 }
@@ -395,7 +409,6 @@ export async function updateConfig(
         confirm_on_exit: updated.confirm_on_exit,
         auto_scroll_output: updated.auto_scroll_output,
         max_history_items: updated.max_history_items,
-        ai_title_enabled: updated.ai_title_enabled,
         shortcuts: updated.shortcuts,
       },
     };

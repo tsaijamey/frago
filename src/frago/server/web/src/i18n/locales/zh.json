@@ -73,7 +73,10 @@
     "assistant": "助手",
     "tool": "工具",
     "result": "结果",
-    "system": "系统"
+    "system": "系统",
+    "generateTitle": "生成 AI 标题",
+    "titleGenerated": "标题生成成功",
+    "titleGenerationFailed": "生成标题失败"
   },
   "recipes": {
     "title": "配方",
