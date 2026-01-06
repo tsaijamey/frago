@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { getTaskDetail, continueAgentTask, generateTaskTitle } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import { Send, MessageSquarePlus, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
+import { Send, MessageSquarePlus, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 import { modKey } from '@/hooks/usePlatform';
 
 // Format date time
@@ -195,7 +195,7 @@ export default function TaskDetail() {
                 {isGeneratingTitle ? (
                   <LoadingSpinner size="sm" />
                 ) : (
-                  <Sparkles className="icon-scaled-md text-[var(--text-muted)] hover:text-[var(--accent-primary)]" />
+                  <Zap className="icon-scaled-md text-[var(--text-muted)] hover:text-[var(--accent-primary)]" />
                 )}
               </button>
               {/* Show status summary when collapsed */}
