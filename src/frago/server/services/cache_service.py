@@ -28,6 +28,13 @@ class CacheService:
         self._recipes_cache: Optional[List[Dict[str, Any]]] = None
         self._skills_cache: Optional[List[Dict[str, Any]]] = None
         self._community_recipes_cache: Optional[List[Dict[str, Any]]] = None
+        self._projects_cache: Optional[List[Dict[str, Any]]] = None
+
+        # On-demand loaded caches (lazy loading for Windows performance)
+        self._config_cache: Optional[Dict[str, Any]] = None
+        self._env_vars_cache: Optional[Dict[str, Any]] = None
+        self._recipe_env_cache: Optional[List[Dict[str, Any]]] = None
+        self._gh_status_cache: Optional[Dict[str, Any]] = None
 
         self._version: int = 0
         self._initialized: bool = False
@@ -71,9 +78,15 @@ class CacheService:
             tasks_future = loop.run_in_executor(None, self._load_tasks)
             recipes_future = loop.run_in_executor(None, self._load_recipes)
             skills_future = loop.run_in_executor(None, self._load_skills)
+            projects_future = loop.run_in_executor(None, self._load_projects)
 
-            self._tasks_cache, self._recipes_cache, self._skills_cache = await asyncio.gather(
-                tasks_future, recipes_future, skills_future
+            (
+                self._tasks_cache,
+                self._recipes_cache,
+                self._skills_cache,
+                self._projects_cache,
+            ) = await asyncio.gather(
+                tasks_future, recipes_future, skills_future, projects_future
             )
 
             # Compute dashboard from loaded data
@@ -89,7 +102,8 @@ class CacheService:
             f"Cache initialized in {duration:.2f}s: "
             f"tasks={self._tasks_cache.get('total', 0) if self._tasks_cache else 0}, "
             f"recipes={len(self._recipes_cache) if self._recipes_cache else 0}, "
-            f"skills={len(self._skills_cache) if self._skills_cache else 0}"
+            f"skills={len(self._skills_cache) if self._skills_cache else 0}, "
+            f"projects={len(self._projects_cache) if self._projects_cache else 0}"
         )
 
     def is_initialized(self) -> bool:
@@ -138,6 +152,75 @@ class CacheService:
         except Exception as e:
             logger.error(f"Failed to load skills: {e}")
             return []
+
+    def _load_projects(self) -> List[Dict[str, Any]]:
+        """Load projects (runs in thread pool).
+
+        Returns:
+            List of project dictionaries.
+        """
+        try:
+            from dataclasses import asdict
+            from frago.server.services.file_service import FileService
+            projects = FileService.list_projects()
+            return [asdict(p) for p in projects]
+        except Exception as e:
+            logger.error(f"Failed to load projects: {e}")
+            return []
+
+    # On-demand loading methods for lazy-loaded caches
+
+    def _load_config(self) -> Dict[str, Any]:
+        """Load main config (runs in thread pool).
+
+        Returns:
+            Config dictionary.
+        """
+        try:
+            from frago.server.services.main_config_service import MainConfigService
+            return MainConfigService.get_config()
+        except Exception as e:
+            logger.error(f"Failed to load config: {e}")
+            return {}
+
+    def _load_env_vars(self) -> Dict[str, Any]:
+        """Load environment variables (runs in thread pool).
+
+        Returns:
+            Environment variables dictionary.
+        """
+        try:
+            from frago.server.services.env_service import EnvService
+            return EnvService.get_env_vars()
+        except Exception as e:
+            logger.error(f"Failed to load env vars: {e}")
+            return {"vars": {}, "file_exists": False}
+
+    def _load_recipe_env_requirements(self) -> List[Dict[str, Any]]:
+        """Load recipe environment requirements (runs in thread pool).
+
+        Returns:
+            List of recipe environment requirement dictionaries.
+        """
+        try:
+            from frago.server.services.env_service import EnvService
+            return EnvService.get_recipe_env_requirements()
+        except Exception as e:
+            logger.error(f"Failed to load recipe env requirements: {e}")
+            return []
+
+    def _load_gh_status(self) -> Dict[str, Any]:
+        """Load GitHub CLI status (runs in thread pool).
+
+        Returns:
+            GitHub CLI status dictionary.
+        """
+        try:
+            from frago.server.services.github_service import GitHubService
+            return GitHubService.check_gh_cli()
+        except Exception as e:
+            logger.error(f"Failed to load gh status: {e}")
+            return {"installed": False, "authenticated": False, "username": None}
 
     def _compute_dashboard(self) -> Dict[str, Any]:
         """Compute dashboard data from cached data.
@@ -299,6 +382,16 @@ class CacheService:
             return []
         return self._skills_cache
 
+    async def get_projects(self) -> List[Dict[str, Any]]:
+        """Get cached projects.
+
+        Returns:
+            List of project dictionaries.
+        """
+        if not self._initialized or self._projects_cache is None:
+            return []
+        return self._projects_cache
+
     async def get_community_recipes(self) -> List[Dict[str, Any]]:
         """Get cached community recipes.
 
@@ -308,6 +401,54 @@ class CacheService:
         if self._community_recipes_cache is None:
             return []
         return self._community_recipes_cache
+
+    # On-demand getters (lazy loading for Windows performance)
+
+    async def get_config(self) -> Dict[str, Any]:
+        """Get config, loading on first access.
+
+        Returns:
+            Config dictionary.
+        """
+        if self._config_cache is None:
+            loop = asyncio.get_event_loop()
+            self._config_cache = await loop.run_in_executor(None, self._load_config)
+        return self._config_cache
+
+    async def get_env_vars(self) -> Dict[str, Any]:
+        """Get environment variables, loading on first access.
+
+        Returns:
+            Environment variables dictionary.
+        """
+        if self._env_vars_cache is None:
+            loop = asyncio.get_event_loop()
+            self._env_vars_cache = await loop.run_in_executor(None, self._load_env_vars)
+        return self._env_vars_cache
+
+    async def get_recipe_env_requirements(self) -> List[Dict[str, Any]]:
+        """Get recipe environment requirements, loading on first access.
+
+        Returns:
+            List of recipe environment requirement dictionaries.
+        """
+        if self._recipe_env_cache is None:
+            loop = asyncio.get_event_loop()
+            self._recipe_env_cache = await loop.run_in_executor(
+                None, self._load_recipe_env_requirements
+            )
+        return self._recipe_env_cache
+
+    async def get_gh_status(self) -> Dict[str, Any]:
+        """Get GitHub CLI status, loading on first access.
+
+        Returns:
+            GitHub CLI status dictionary.
+        """
+        if self._gh_status_cache is None:
+            loop = asyncio.get_event_loop()
+            self._gh_status_cache = await loop.run_in_executor(None, self._load_gh_status)
+        return self._gh_status_cache
 
     def set_community_recipes(self, recipes: List[Dict[str, Any]]) -> None:
         """Update community recipes cache.
@@ -332,6 +473,7 @@ class CacheService:
             "recipes": await self.get_recipes(),
             "skills": await self.get_skills(),
             "community_recipes": await self.get_community_recipes(),
+            "projects": await self.get_projects(),
         }
 
     async def refresh_tasks(self, broadcast: bool = True) -> None:
@@ -386,6 +528,82 @@ class CacheService:
 
         logger.debug(f"Skills cache refreshed, version={self._version}")
 
+    async def refresh_projects(self, broadcast: bool = True) -> None:
+        """Refresh project cache and optionally broadcast update.
+
+        Args:
+            broadcast: If True, broadcast update via WebSocket.
+        """
+        async with self._get_async_lock():
+            loop = asyncio.get_event_loop()
+            self._projects_cache = await loop.run_in_executor(None, self._load_projects)
+            self._version += 1
+
+        if broadcast:
+            await self._broadcast_update("data_projects", self._projects_cache)
+
+        logger.debug(f"Projects cache refreshed, version={self._version}")
+
+    # Refresh methods for on-demand caches
+
+    async def refresh_config(self, broadcast: bool = True) -> None:
+        """Refresh config cache and optionally broadcast update.
+
+        Args:
+            broadcast: If True, broadcast update via WebSocket.
+        """
+        loop = asyncio.get_event_loop()
+        self._config_cache = await loop.run_in_executor(None, self._load_config)
+
+        if broadcast:
+            await self._broadcast_update("data_config", self._config_cache)
+
+        logger.debug("Config cache refreshed")
+
+    async def refresh_env_vars(self, broadcast: bool = True) -> None:
+        """Refresh env vars cache and optionally broadcast update.
+
+        Args:
+            broadcast: If True, broadcast update via WebSocket.
+        """
+        loop = asyncio.get_event_loop()
+        self._env_vars_cache = await loop.run_in_executor(None, self._load_env_vars)
+
+        if broadcast:
+            await self._broadcast_update("data_env_vars", self._env_vars_cache)
+
+        logger.debug("Env vars cache refreshed")
+
+    async def refresh_recipe_env_requirements(self, broadcast: bool = True) -> None:
+        """Refresh recipe env requirements cache and optionally broadcast update.
+
+        Args:
+            broadcast: If True, broadcast update via WebSocket.
+        """
+        loop = asyncio.get_event_loop()
+        self._recipe_env_cache = await loop.run_in_executor(
+            None, self._load_recipe_env_requirements
+        )
+
+        if broadcast:
+            await self._broadcast_update("data_recipe_env", self._recipe_env_cache)
+
+        logger.debug("Recipe env requirements cache refreshed")
+
+    async def refresh_gh_status(self, broadcast: bool = True) -> None:
+        """Refresh GitHub CLI status cache and optionally broadcast update.
+
+        Args:
+            broadcast: If True, broadcast update via WebSocket.
+        """
+        loop = asyncio.get_event_loop()
+        self._gh_status_cache = await loop.run_in_executor(None, self._load_gh_status)
+
+        if broadcast:
+            await self._broadcast_update("data_gh_status", self._gh_status_cache)
+
+        logger.debug("GitHub CLI status cache refreshed")
+
     async def refresh_all(self, broadcast: bool = True) -> None:
         """Refresh all caches.
 
@@ -395,6 +613,7 @@ class CacheService:
         await self.refresh_tasks(broadcast=False)
         await self.refresh_recipes(broadcast=False)
         await self.refresh_skills(broadcast=False)
+        await self.refresh_projects(broadcast=False)
 
         if broadcast:
             await self._broadcast_update("data_initial", await self.get_initial_data())
