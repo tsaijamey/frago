@@ -37,9 +37,15 @@ export function WorkspacePage() {
   }
 
   async function handleRefresh() {
-    setRefreshing(true);
-    await loadProjects();
-    setRefreshing(false);
+    try {
+      setRefreshing(true);
+      const data = await api.refreshProjects();
+      setProjects(data);
+    } catch (error) {
+      showToast('Failed to refresh projects', 'error');
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   function handleSelectProject(runId: string) {

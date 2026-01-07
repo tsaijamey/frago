@@ -921,6 +921,13 @@ export async function getProjects(): Promise<httpApi.ProjectInfo[]> {
   return httpApi.getProjects();
 }
 
+export async function refreshProjects(): Promise<httpApi.ProjectInfo[]> {
+  if (isPywebviewMode()) {
+    return [];
+  }
+  return httpApi.refreshProjects();
+}
+
 export async function getProject(runId: string): Promise<httpApi.ProjectDetail | null> {
   if (isPywebviewMode()) {
     return null;
