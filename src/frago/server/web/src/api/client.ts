@@ -899,6 +899,13 @@ export async function getProjects(): Promise<ProjectInfo[]> {
 }
 
 /**
+ * Refresh projects cache and get updated list.
+ */
+export async function refreshProjects(): Promise<ProjectInfo[]> {
+  return fetchApi<ProjectInfo[]>('/projects/refresh', { method: 'POST' });
+}
+
+/**
  * Get project details.
  */
 export async function getProject(runId: string): Promise<ProjectDetail> {
