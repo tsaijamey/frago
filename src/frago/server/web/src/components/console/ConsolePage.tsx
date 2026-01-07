@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getConsoleHistory } from '@/api';
+import { recordDirectoriesFromText } from '@/utils/recentDirectories';
 import type { ConsoleMessage } from '@/types/console';
 import ConsoleControls from './ConsoleControls';
 import MessageList from './MessageList';
@@ -237,6 +238,9 @@ export default function ConsolePage() {
 
   const handleSend = async () => {
     if (!inputValue.trim()) return;
+
+    // Record directories from the input
+    recordDirectoriesFromText(inputValue);
 
     const userMessage: ConsoleMessage = {
       type: 'user',

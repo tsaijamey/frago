@@ -4,6 +4,8 @@ import { useAppStore } from '@/stores/appStore';
 import { getTaskDetail, continueAgentTask, generateTaskTitle } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import DirectoryAutocomplete from '@/components/ui/DirectoryAutocomplete';
+import { recordDirectoriesFromText } from '@/utils/recentDirectories';
 import { Send, MessageSquarePlus, ChevronDown, ChevronRight, Zap } from 'lucide-react';
 import { modKey } from '@/hooks/usePlatform';
 
@@ -99,6 +101,9 @@ export default function TaskDetail() {
   const handleContinueSubmit = async () => {
     const trimmed = continuePrompt.trim();
     if (!trimmed || isSubmitting || !taskDetail) return;
+
+    // Record directories from the prompt
+    recordDirectoriesFromText(trimmed);
 
     setIsSubmitting(true);
     try {
@@ -261,7 +266,12 @@ export default function TaskDetail() {
         {/* Continue input area */}
         {showContinue && (
           <div className="card">
-            <div className="task-input-wrapper">
+            <div className="task-input-wrapper relative">
+              <DirectoryAutocomplete
+                value={continuePrompt}
+                onChange={setContinuePrompt}
+                textareaRef={textareaRef}
+              />
               <textarea
                 ref={textareaRef}
                 className="task-input"
@@ -269,8 +279,10 @@ export default function TaskDetail() {
                 value={continuePrompt}
                 onChange={(e) => setContinuePrompt(e.target.value)}
                 onKeyDown={handleContinueKeyDown}
+                aria-label="Continue conversation input"
               />
               <button
+                type="button"
                 className={`task-input-btn ${continuePrompt.trim() ? 'visible' : ''}`}
                 onClick={handleContinueSubmit}
                 disabled={isSubmitting || !continuePrompt.trim()}

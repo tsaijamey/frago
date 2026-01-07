@@ -76,6 +76,29 @@ class SystemService:
             }
 
     @staticmethod
+    def get_directories() -> Dict[str, Any]:
+        """Get system default directories.
+
+        Returns:
+            Dictionary with:
+            - home: User home directory path
+            - cwd: Current working directory (if accessible)
+        """
+        from pathlib import Path
+
+        home = str(Path.home())
+        cwd = None
+        try:
+            cwd = str(Path.cwd())
+        except Exception:
+            pass
+
+        return {
+            "home": home,
+            "cwd": cwd,
+        }
+
+    @staticmethod
     def get_info(
         host: str = "127.0.0.1",
         port: int = 8080,

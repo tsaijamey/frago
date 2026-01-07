@@ -283,6 +283,13 @@ class ServerInfoResponse(BaseModel):
     started_at: datetime
 
 
+class SystemDirectoriesResponse(BaseModel):
+    """Response for GET /api/system/directories"""
+
+    home: str  # User home directory
+    cwd: Optional[str] = None  # Current working directory (optional)
+
+
 class SkillItemResponse(BaseModel):
     """Response for skill list endpoint"""
 

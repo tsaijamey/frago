@@ -1369,6 +1369,54 @@ a:not(.btn):not(.nav-tab):hover {
   border-width: 2px;
 }
 
+/* === Directory Autocomplete === */
+.directory-autocomplete {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.directory-autocomplete-item {
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.directory-autocomplete-item:hover,
+.directory-autocomplete-item.selected {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.directory-autocomplete-item .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.directory-autocomplete-empty {
+  padding: var(--spacing-md);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
 /* === Text Utilities === */
 .text-scaled-xs { font-size: var(--font-size-xs) !important; }
 .text-scaled-sm { font-size: var(--font-size-sm) !important; }
