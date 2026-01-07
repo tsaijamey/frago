@@ -5,6 +5,7 @@ Provides safe access to run instance directories in ~/.frago/projects/.
 
 import json
 import mimetypes
+import os
 import platform
 import subprocess
 from dataclasses import dataclass
@@ -52,6 +53,8 @@ class FileService:
     def list_projects() -> List[ProjectInfo]:
         """List all run instances.
 
+        Uses os.scandir() for better Windows performance.
+
         Returns:
             List of ProjectInfo objects sorted by last_accessed (newest first)
         """
@@ -59,39 +62,28 @@ class FileService:
             return []
 
         projects = []
-        for project_dir in PROJECTS_DIR.iterdir():
-            if not project_dir.is_dir():
-                continue
+        # Use os.scandir() instead of iterdir() for better Windows performance
+        # DirEntry.is_dir() uses cached attributes from directory enumeration
+        with os.scandir(PROJECTS_DIR) as entries:
+            for entry in entries:
+                if not entry.is_dir():
+                    continue
 
-            metadata_file = project_dir / ".metadata.json"
-            if metadata_file.exists():
+                metadata_file = Path(entry.path) / ".metadata.json"
+                if not metadata_file.exists():
+                    continue  # Skip directories without .metadata.json
+
                 try:
-                    metadata = json.loads(metadata_file.read_text())
+                    metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
                     projects.append(ProjectInfo(
-                        run_id=metadata.get("run_id", project_dir.name),
+                        run_id=metadata.get("run_id", entry.name),
                         theme_description=metadata.get("theme_description", ""),
                         created_at=metadata.get("created_at", ""),
                         last_accessed=metadata.get("last_accessed", ""),
                         status=metadata.get("status", "active"),
                     ))
-                except (json.JSONDecodeError, OSError):
-                    # Fallback for projects without valid metadata
-                    projects.append(ProjectInfo(
-                        run_id=project_dir.name,
-                        theme_description="",
-                        created_at="",
-                        last_accessed="",
-                        status="unknown",
-                    ))
-            else:
-                # Project without metadata
-                projects.append(ProjectInfo(
-                    run_id=project_dir.name,
-                    theme_description="",
-                    created_at="",
-                    last_accessed="",
-                    status="unknown",
-                ))
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                    continue  # Skip directories with invalid .metadata.json
 
         # Sort by last_accessed (newest first)
         projects.sort(key=lambda p: p.last_accessed, reverse=True)
@@ -100,6 +92,8 @@ class FileService:
     @staticmethod
     def get_project(run_id: str) -> Optional[ProjectDetail]:
         """Get detailed project information.
+
+        Uses os.scandir() and os.walk() for better Windows performance.
 
         Args:
             run_id: Project identifier
@@ -116,28 +110,40 @@ class FileService:
         metadata = {}
         if metadata_file.exists():
             try:
-                metadata = json.loads(metadata_file.read_text())
-            except (json.JSONDecodeError, OSError):
+                metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
                 pass
 
-        # Count files and size
+        # Get subdirectories list (fast operation)
+        subdirectories = []
+        with os.scandir(project_dir) as entries:
+            for entry in entries:
+                if entry.name.startswith("."):
+                    continue
+                if entry.is_dir():
+                    subdirectories.append(entry.name)
+
+        # Count files and size using os.walk() + scandir() for optimal performance
         file_count = 0
         total_size = 0
-        subdirectories = []
+        for dirpath, dirnames, _ in os.walk(project_dir):
+            # Skip hidden directories
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
 
-        for item in project_dir.iterdir():
-            if item.name.startswith("."):
-                continue
-            if item.is_dir():
-                subdirectories.append(item.name)
-                # Count files in subdirectory
-                for f in item.rglob("*"):
-                    if f.is_file():
-                        file_count += 1
-                        total_size += f.stat().st_size
-            elif item.is_file():
-                file_count += 1
-                total_size += item.stat().st_size
+            try:
+                with os.scandir(dirpath) as entries:
+                    for entry in entries:
+                        if entry.name.startswith("."):
+                            continue
+                        if entry.is_file():
+                            file_count += 1
+                            try:
+                                # DirEntry.stat() is cached on Windows
+                                total_size += entry.stat().st_size
+                            except OSError:
+                                pass
+            except OSError:
+                pass
 
         return ProjectDetail(
             run_id=metadata.get("run_id", run_id),
@@ -154,6 +160,8 @@ class FileService:
     def list_files(run_id: str, subpath: str = "") -> List[FileInfo]:
         """List files and directories in a project path.
 
+        Uses os.scandir() for better Windows performance.
+
         Args:
             run_id: Project identifier
             subpath: Relative path within project (empty for root)
@@ -169,32 +177,41 @@ class FileService:
             return []
 
         files = []
-        for item in target_path.iterdir():
-            # Skip hidden files
-            if item.name.startswith("."):
-                continue
+        # Use os.scandir() for better Windows performance
+        # DirEntry.stat() is cached on Windows
+        with os.scandir(target_path) as entries:
+            for entry in entries:
+                # Skip hidden files
+                if entry.name.startswith("."):
+                    continue
 
-            rel_path = str(Path(subpath) / item.name) if subpath else item.name
+                rel_path = (Path(subpath) / entry.name).as_posix() if subpath else entry.name
 
-            if item.is_dir():
-                files.append(FileInfo(
-                    name=item.name,
-                    path=rel_path,
-                    is_directory=True,
-                    size=0,
-                    modified=datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
-                    mime_type=None,
-                ))
-            else:
-                mime_type, _ = mimetypes.guess_type(item.name)
-                files.append(FileInfo(
-                    name=item.name,
-                    path=rel_path,
-                    is_directory=False,
-                    size=item.stat().st_size,
-                    modified=datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
-                    mime_type=mime_type,
-                ))
+                try:
+                    # Get stat once - cached on Windows via DirEntry
+                    stat_result = entry.stat()
+                except OSError:
+                    continue  # Skip files we cannot stat
+
+                if entry.is_dir():
+                    files.append(FileInfo(
+                        name=entry.name,
+                        path=rel_path,
+                        is_directory=True,
+                        size=0,
+                        modified=datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+                        mime_type=None,
+                    ))
+                else:
+                    mime_type, _ = mimetypes.guess_type(entry.name)
+                    files.append(FileInfo(
+                        name=entry.name,
+                        path=rel_path,
+                        is_directory=False,
+                        size=stat_result.st_size,
+                        modified=datetime.fromtimestamp(stat_result.st_mtime).isoformat(),
+                        mime_type=mime_type,
+                    ))
 
         # Sort: directories first, then by name
         files.sort(key=lambda f: (not f.is_directory, f.name.lower()))
