@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from frago.server.services.cache_service import CacheService
 from frago.server.services.env_service import EnvService
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
@@ -115,8 +116,12 @@ class VSCodeStatusResponse(BaseModel):
 
 @router.get("/settings/gh-cli", response_model=GhCliStatusResponse)
 async def check_gh_cli() -> GhCliStatusResponse:
-    """Check GitHub CLI installation and authentication status."""
-    status = GitHubService.check_gh_cli()
+    """Check GitHub CLI installation and authentication status.
+
+    Uses cache for improved performance on Windows.
+    """
+    cache = CacheService.get_instance()
+    status = await cache.get_gh_status()
 
     return GhCliStatusResponse(
         installed=status.get("installed", False),
@@ -143,10 +148,14 @@ async def gh_auth_login() -> ApiResponse:
 
 @router.get("/settings/main-config", response_model=MainConfigResponse)
 async def get_main_config() -> MainConfigResponse:
-    """Get main configuration."""
+    """Get main configuration.
+
+    Uses cache for improved performance on Windows.
+    """
     from frago.init.configurator import PRESET_ENDPOINTS
 
-    config = MainConfigService.get_config()
+    cache = CacheService.get_instance()
+    config = await cache.get_config()
 
     # Build api_endpoint response if exists
     api_endpoint = None
@@ -195,6 +204,10 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
 
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
+
+    # Refresh cache after update
+    cache = CacheService.get_instance()
+    await cache.refresh_config(broadcast=True)
 
     # Get the config field from the result
     config = result.get("config", result)
@@ -283,8 +296,12 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
 
 @router.get("/settings/env-vars", response_model=EnvVarsResponse)
 async def get_env_vars() -> EnvVarsResponse:
-    """Get environment variables from .env file."""
-    result = EnvService.get_env_vars()
+    """Get environment variables from .env file.
+
+    Uses cache for improved performance on Windows.
+    """
+    cache = CacheService.get_instance()
+    result = await cache.get_env_vars()
 
     return EnvVarsResponse(
         vars=result.get("vars", {}),
@@ -300,6 +317,10 @@ async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
 
+    # Refresh cache after update
+    cache = CacheService.get_instance()
+    await cache.refresh_env_vars(broadcast=True)
+
     return EnvVarsResponse(
         vars=result.get("vars", {}),
         file_exists=result.get("file_exists", True),
@@ -308,8 +329,12 @@ async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
 
 @router.get("/settings/recipe-env-requirements", response_model=List[RecipeEnvRequirement])
 async def get_recipe_env_requirements() -> List[RecipeEnvRequirement]:
-    """Get environment variable requirements from recipes."""
-    requirements = EnvService.get_recipe_env_requirements()
+    """Get environment variable requirements from recipes.
+
+    Uses cache for improved performance on Windows.
+    """
+    cache = CacheService.get_instance()
+    requirements = await cache.get_recipe_env_requirements()
 
     return [
         RecipeEnvRequirement(
