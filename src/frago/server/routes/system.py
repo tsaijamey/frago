@@ -5,7 +5,7 @@ Provides endpoints for server health checks and information.
 
 from fastapi import APIRouter
 
-from frago.server.models import SystemStatusResponse, ServerInfoResponse
+from frago.server.models import SystemStatusResponse, ServerInfoResponse, SystemDirectoriesResponse
 from frago.server.services.system_service import SystemService
 from frago.server.utils import get_server_info
 
@@ -52,4 +52,19 @@ async def get_info() -> ServerInfoResponse:
         host=info.get("host", "127.0.0.1"),
         port=info.get("port", 8080),
         started_at=datetime.fromisoformat(info.get("started_at", datetime.now(timezone.utc).isoformat())),
+    )
+
+
+@router.get("/system/directories", response_model=SystemDirectoriesResponse)
+async def get_directories() -> SystemDirectoriesResponse:
+    """Get system default directories.
+
+    Returns user home directory and current working directory.
+    Used as fallback when no recent directories exist.
+    """
+    dirs = SystemService.get_directories()
+
+    return SystemDirectoriesResponse(
+        home=dirs.get("home", ""),
+        cwd=dirs.get("cwd"),
     )

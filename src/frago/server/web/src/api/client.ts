@@ -153,6 +153,15 @@ export async function getServerInfo(): Promise<ServerInfo> {
   return fetchApi<ServerInfo>('/info');
 }
 
+export interface SystemDirectories {
+  home: string;
+  cwd: string | null;
+}
+
+export async function getSystemDirectories(): Promise<SystemDirectories> {
+  return fetchApi<SystemDirectories>('/system/directories');
+}
+
 // ============================================================
 // Recipes API
 // ============================================================

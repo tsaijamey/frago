@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { Send } from 'lucide-react';
 import { modKey } from '../../hooks/usePlatform';
+import DirectoryAutocomplete from '../ui/DirectoryAutocomplete';
 
 interface ConsoleInputProps {
   value: string;
@@ -16,6 +18,8 @@ export default function ConsoleInput({
   disabled = false,
   placeholder = 'Type your message...'
 }: ConsoleInputProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -27,8 +31,14 @@ export default function ConsoleInput({
 
   return (
     <div>
-      <div className="task-input-wrapper">
+      <div className="task-input-wrapper relative">
+        <DirectoryAutocomplete
+          value={value}
+          onChange={onChange}
+          textareaRef={textareaRef}
+        />
         <textarea
+          ref={textareaRef}
           className="task-input"
           placeholder={placeholder}
           value={value}
