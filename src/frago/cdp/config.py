@@ -4,8 +4,8 @@ CDP configuration management
 Manages Chrome DevTools Protocol connection configuration and parameters.
 """
 
+import fnmatch
 import os
-import re
 from typing import Optional
 from urllib.parse import urlparse
 from pydantic import BaseModel, Field, model_validator
@@ -84,10 +84,13 @@ class CDPConfig(BaseModel):
         # Check NO_PROXY environment variable
         no_proxy_env = os.environ.get('NO_PROXY') or os.environ.get('no_proxy')
         if no_proxy_env:
-            # Check if current CDP host is in NO_PROXY list
+            # Check if current CDP host matches any pattern in NO_PROXY list
+            # Supports exact match, wildcard '*', and glob patterns like '127.*'
             no_proxy_hosts = [h.strip() for h in no_proxy_env.split(',')]
-            if self.host in no_proxy_hosts or '*' in no_proxy_hosts:
-                self.no_proxy = True
+            for pattern in no_proxy_hosts:
+                if pattern == '*' or self.host == pattern or fnmatch.fnmatch(self.host, pattern):
+                    self.no_proxy = True
+                    break
 
         return self
 

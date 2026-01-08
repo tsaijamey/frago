@@ -126,9 +126,11 @@ class CDPSession(CDPClient):
         import requests
         try:
             # Get list of all targets
+            # Disable proxy when no_proxy is set to avoid connection issues
             response = requests.get(
                 f"{self.config.http_url}/json/list",
-                timeout=self.config.connect_timeout
+                timeout=self.config.connect_timeout,
+                proxies={} if self.config.no_proxy else None
             )
             response.raise_for_status()
             targets = response.json()
@@ -156,7 +158,8 @@ class CDPSession(CDPClient):
             # If no page available, use browser endpoint
             response = requests.get(
                 f"{self.config.http_url}/json/version",
-                timeout=self.config.connect_timeout
+                timeout=self.config.connect_timeout,
+                proxies={} if self.config.no_proxy else None
             )
             response.raise_for_status()
             version_info = response.json()
