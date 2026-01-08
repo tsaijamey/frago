@@ -36,26 +36,35 @@ export default function SyncSettings() {
 
   useEffect(() => {
     loadConfig();
-    checkGhStatus();
+    // Delay gh status check to avoid blocking initial render
+    const timer = setTimeout(() => {
+      checkGhStatus();
+    }, 100);
+    return () => clearTimeout(timer);
   }, []);
+
+  const checkRepoVisibility = async () => {
+    try {
+      const result = await checkSyncRepoVisibility();
+      if (result.status === 'ok') {
+        setIsPublicRepo(result.is_public || false);
+        setVisibilityChecked(true);
+      }
+    } catch (err) {
+      console.error('Failed to check repository visibility:', err);
+    }
+  };
 
   const loadConfig = async () => {
     try {
       setLoading(true);
       const config = await getMainConfig();
-      setSyncRepoUrl(config.sync_repo_url || null);
+      const repoUrl = config.sync_repo_url || null;
+      setSyncRepoUrl(repoUrl);
 
-      // If repository is configured, check visibility
-      if (config.sync_repo_url) {
-        try {
-          const visibilityResult = await checkSyncRepoVisibility();
-          if (visibilityResult.status === 'ok') {
-            setIsPublicRepo(visibilityResult.is_public || false);
-            setVisibilityChecked(true);
-          }
-        } catch (err) {
-          console.error('Failed to check repository visibility:', err);
-        }
+      // Check visibility in background (non-blocking)
+      if (repoUrl) {
+        checkRepoVisibility();
       }
     } catch (err) {
       console.error('Failed to load configuration:', err);
@@ -154,7 +163,7 @@ export default function SyncSettings() {
           {ghStatusLoading && !ghStatus ? (
             <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
               <Loader2 size={14} className="animate-spin" />
-              Checking...
+              Checking GitHub CLI installation and authentication...
             </div>
           ) : ghStatus ? (
             <div className="space-y-1 text-sm">
