@@ -245,39 +245,64 @@ def start_daemon() -> Tuple[bool, str]:
     # Prepare log file
     log_file = get_log_file()
 
-    # Build command to run the server
-    # Use python -m to run the runner module directly
-    cmd = [
-        sys.executable,
-        "-m",
-        "frago.server.runner",
-        "--daemon",
-    ]
-
     try:
         # Platform-specific subprocess creation
         if platform.system() == "Windows":
+            # Windows: use pythonw.exe to avoid console window
+            # Try multiple locations: venv Scripts, base Python install, shutil.which
+            import shutil
+
+            pythonw_candidates = [
+                Path(sys.executable).parent / "pythonw.exe",  # Same dir as python.exe
+                Path(sys.base_exec_prefix) / "pythonw.exe",   # Base Python install
+            ]
+            # Also try finding pythonw in PATH
+            pythonw_in_path = shutil.which("pythonw")
+            if pythonw_in_path:
+                pythonw_candidates.append(Path(pythonw_in_path))
+
+            executable = sys.executable  # Fallback to python.exe
+            for pythonw in pythonw_candidates:
+                if pythonw.exists():
+                    executable = str(pythonw)
+                    break
+
+            cmd = [executable, "-m", "frago.server.runner", "--daemon"]
+
             # Windows: use CREATE_NO_WINDOW and DETACHED_PROCESS
             CREATE_NO_WINDOW = 0x08000000
             DETACHED_PROCESS = 0x00000008
-            with open(log_file, "a") as log_f:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                    creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-                    close_fds=True,
-                )
+
+            # STARTUPINFO ensures subprocess is completely hidden
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            # Open log file and keep it open (don't use 'with' block)
+            # subprocess will inherit the handle
+            log_f = open(log_file, "a")
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,  # Critical: close stdin to avoid console
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+                startupinfo=startupinfo,
+            )
+            # Close our handle - subprocess has its own copy
+            log_f.close()
         else:
             # Unix: use start_new_session to detach from terminal
-            with open(log_file, "a") as log_f:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    close_fds=True,
-                )
+            cmd = [sys.executable, "-m", "frago.server.runner", "--daemon"]
+            log_f = open(log_file, "a")
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            log_f.close()
 
         # Write PID file
         write_pid(proc.pid)

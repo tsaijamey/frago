@@ -39,22 +39,41 @@ class WindowsAutostartManager(AutostartManager):
         return "frago"  # Hope it's in PATH at login
 
     def _build_command(self) -> str:
-        """Build the autostart command with proper PATH setup."""
+        """Build the autostart command for completely invisible startup.
+
+        Uses pythonw.exe directly to avoid any console window.
+        """
+        # Find pythonw.exe for windowless execution
+        pythonw_candidates = [
+            Path(sys.executable).parent / "pythonw.exe",
+            Path(sys.base_exec_prefix) / "pythonw.exe",
+        ]
+        pythonw_path = None
+        for candidate in pythonw_candidates:
+            if candidate.exists():
+                pythonw_path = str(candidate)
+                break
+
+        if pythonw_path:
+            # Use pythonw.exe directly - no console window at all
+            if " " in pythonw_path:
+                return f'"{pythonw_path}" -m frago.cli.main server start'
+            return f"{pythonw_path} -m frago.cli.main server start"
+
+        # Fallback: use frago command with PowerShell hidden
         frago_path = self._get_frago_path()
-        # Quote path if it contains spaces
         if " " in frago_path:
-            frago_cmd = f'"{frago_path}"'
+            frago_cmd = f"'{frago_path}'"
         else:
             frago_cmd = frago_path
 
-        # Collect extra paths that may not be in system PATH
         extra_paths = self._collect_environment_path()
         if extra_paths:
-            # Use cmd /c to set PATH before running frago
-            # %PATH% preserves existing PATH, extra_paths adds node/claude locations
-            return f'cmd /c "set PATH={extra_paths};%PATH% && {frago_cmd} server start"'
+            ps_cmd = f"$env:PATH='{extra_paths};'+$env:PATH; & {frago_cmd} server start"
         else:
-            return f"{frago_cmd} server start"
+            ps_cmd = f"& {frago_cmd} server start"
+
+        return f'powershell -WindowStyle Hidden -Command "{ps_cmd}"'
 
     def enable(self) -> tuple[bool, str]:
         """Enable autostart by adding Registry Run key."""
