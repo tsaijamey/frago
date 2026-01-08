@@ -66,12 +66,20 @@ class FileService:
         # DirEntry.is_dir() uses cached attributes from directory enumeration
         with os.scandir(PROJECTS_DIR) as entries:
             for entry in entries:
-                if not entry.is_dir():
-                    continue
+                # Windows: entry.is_dir() may raise OSError for symlinks/junctions
+                try:
+                    if not entry.is_dir():
+                        continue
+                except OSError:
+                    continue  # Skip entries that cannot be checked
 
                 metadata_file = Path(entry.path) / ".metadata.json"
-                if not metadata_file.exists():
-                    continue  # Skip directories without .metadata.json
+                # Windows: exists() may raise OSError for permission/encoding issues
+                try:
+                    if not metadata_file.exists():
+                        continue  # Skip directories without .metadata.json
+                except OSError:
+                    continue  # Skip directories with inaccessible metadata
 
                 try:
                     metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
