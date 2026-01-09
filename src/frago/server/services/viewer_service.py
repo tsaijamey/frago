@@ -201,7 +201,7 @@ class ViewerService:
                 return "markdown"
             if ext in {".html", ".htm"}:
                 return "html"
-            if ext == ".json":
+            if ext in {".json", ".jsonl"}:
                 return "json"
             if ext in VIDEO_EXTENSIONS:
                 return "video"
