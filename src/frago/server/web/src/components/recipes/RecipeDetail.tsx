@@ -46,6 +46,9 @@ export default function RecipeDetail() {
   const [recipe, setRecipe] = useState<RecipeDetailType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
+  const [formValues, setFormValues] = useState<Record<string, unknown>>({});
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [isInteractiveMode, setIsInteractiveMode] = useState(false);
 
   useEffect(() => {
     if (!currentRecipeName) return;
@@ -60,14 +63,155 @@ export default function RecipeDetail() {
       .finally(() => setIsLoading(false));
   }, [currentRecipeName, showToast, t]);
 
+  // Initialize form values and interactive mode from recipe
+  useEffect(() => {
+    if (recipe) {
+      // Set interactive mode based on tags
+      const hasInteractiveTag = recipe.tags?.includes('interactive') ?? false;
+      setIsInteractiveMode(hasInteractiveTag);
+
+      // Initialize form values from defaults
+      if (recipe.inputs) {
+        const initialValues: Record<string, unknown> = {};
+        Object.entries(recipe.inputs).forEach(([name, input]) => {
+          if (input.default !== undefined) {
+            // For array/object types, stringify the default value for textarea display
+            if (input.type === 'array' || input.type === 'object') {
+              initialValues[name] = typeof input.default === 'string'
+                ? input.default
+                : JSON.stringify(input.default, null, 2);
+            } else {
+              initialValues[name] = input.default;
+            }
+          } else {
+            // Set empty defaults based on type
+            initialValues[name] = input.type === 'boolean' ? false : '';
+          }
+        });
+        setFormValues(initialValues);
+        setValidationErrors({});
+      }
+    }
+  }, [recipe]);
+
+  // Validate parameters before running
+  const validateParameters = (): boolean => {
+    if (!recipe?.inputs) return true;
+
+    const errors: Record<string, string> = {};
+
+    Object.entries(recipe.inputs).forEach(([name, input]) => {
+      const value = formValues[name];
+
+      // Required check
+      if (input.required) {
+        if (value === undefined || value === null || value === '') {
+          errors[name] = t('recipes.validation.required');
+          return;
+        }
+      }
+
+      // Skip validation for empty optional fields
+      if (value === undefined || value === null || value === '') {
+        return;
+      }
+
+      // Type-specific validation
+      if (input.type === 'number') {
+        if (isNaN(Number(value))) {
+          errors[name] = t('recipes.validation.invalidNumber');
+        }
+      } else if (input.type === 'array' || input.type === 'object') {
+        try {
+          const parsed = JSON.parse(String(value));
+          if (input.type === 'array' && !Array.isArray(parsed)) {
+            errors[name] = t('recipes.validation.mustBeArray');
+          }
+          if (input.type === 'object' && (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null)) {
+            errors[name] = t('recipes.validation.mustBeObject');
+          }
+        } catch {
+          errors[name] = t('recipes.validation.invalidJson');
+        }
+      }
+    });
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Prepare parameters with proper type conversion
+  const prepareParameters = (): Record<string, unknown> => {
+    if (!recipe?.inputs) return {};
+
+    const params: Record<string, unknown> = {};
+
+    Object.entries(recipe.inputs).forEach(([name, input]) => {
+      const value = formValues[name];
+
+      // Skip empty optional values
+      if ((value === undefined || value === null || value === '') && !input.required) {
+        return;
+      }
+
+      // Convert to proper type
+      switch (input.type) {
+        case 'number':
+          params[name] = Number(value);
+          break;
+        case 'boolean':
+          params[name] = Boolean(value);
+          break;
+        case 'array':
+        case 'object':
+          params[name] = JSON.parse(String(value));
+          break;
+        default:
+          params[name] = value;
+      }
+    });
+
+    return params;
+  };
+
+  // Handle field value change
+  const handleFieldChange = (name: string, value: unknown) => {
+    setFormValues(prev => ({ ...prev, [name]: value }));
+    // Clear validation error when user modifies the field
+    if (validationErrors[name]) {
+      setValidationErrors(prev => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+    }
+  };
+
   const handleRun = async () => {
     if (!currentRecipeName || isRunning) return;
 
+    // Validate if recipe has parameters
+    const hasInputs = recipe?.inputs && Object.keys(recipe.inputs).length > 0;
+    if (hasInputs && !validateParameters()) {
+      showToast(t('recipes.validation.fixErrors'), 'error');
+      return;
+    }
+
+    // Prepare params with type conversion
+    const params = prepareParameters();
+
     setIsRunning(true);
     try {
-      const result = await runRecipe(currentRecipeName);
+      const result = await runRecipe(
+        currentRecipeName,
+        Object.keys(params).length > 0 ? params : undefined,
+        isInteractiveMode
+      );
       if (result.status === 'ok') {
-        showToast(t('recipes.executedSuccess'), 'success');
+        showToast(
+          isInteractiveMode ? t('recipes.startedAsync') : t('recipes.executedSuccess'),
+          'success'
+        );
       } else {
         showToast(result.error || t('recipes.executionFailed'), 'error');
       }
@@ -132,14 +276,41 @@ export default function RecipeDetail() {
                 </p>
               )}
             </div>
-            <button
-              type="button"
-              className="btn btn-primary shrink-0"
-              onClick={handleRun}
-              disabled={isRunning}
-            >
-              {isRunning ? <LoadingSpinner size="sm" /> : t('recipes.run')}
-            </button>
+            <div className="flex items-center gap-3 shrink-0">
+              {/* Interactive mode switch */}
+              <label className="flex items-center gap-2 cursor-pointer" title={t('recipes.interactiveModeHint')}>
+                <span className={`text-xs transition-colors ${isInteractiveMode ? 'text-[var(--accent-primary)]' : 'text-[var(--text-muted)]'}`}>
+                  {t('recipes.interactiveMode')}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isInteractiveMode}
+                  aria-label={t('recipes.interactiveMode')}
+                  onClick={() => setIsInteractiveMode(!isInteractiveMode)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors border-2
+                    ${isInteractiveMode
+                      ? 'bg-[var(--accent-primary)] border-[var(--accent-primary)]'
+                      : 'bg-transparent border-[var(--border-color)]'}`}
+                >
+                  <span
+                    className="inline-block h-3 w-3 rounded-full transition-all duration-200 shadow-sm"
+                    style={{
+                      backgroundColor: isInteractiveMode ? 'var(--bg-base)' : 'var(--text-muted)',
+                      transform: isInteractiveMode ? 'translateX(1rem)' : 'translateX(0.125rem)',
+                    }}
+                  />
+                </button>
+              </label>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleRun}
+                disabled={isRunning}
+              >
+                {isRunning ? <LoadingSpinner size="sm" /> : t('recipes.run')}
+              </button>
+            </div>
           </div>
 
           {/* Metadata grid */}
@@ -230,37 +401,102 @@ export default function RecipeDetail() {
             title={t('recipes.parameters')}
             icon={<Settings size={16} className="text-[var(--accent-primary)]" />}
           >
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--border-color)]">
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.name')}</th>
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.type')}</th>
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.required')}</th>
-                    <th className="text-left py-2 pr-4 text-[var(--text-muted)] font-medium">{t('recipes.default')}</th>
-                    <th className="text-left py-2 text-[var(--text-muted)] font-medium">{t('recipes.description')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(recipe.inputs!).map(([name, input]) => (
-                    <tr key={name} className="border-b border-[var(--border-color)] last:border-0">
-                      <td className="py-2 pr-4 font-mono text-[var(--accent-primary)]">{name}</td>
-                      <td className="py-2 pr-4 text-[var(--text-secondary)]">{input.type}</td>
-                      <td className="py-2 pr-4">
-                        {input.required ? (
-                          <span className="text-[var(--accent-error)]">{t('recipes.yes')}</span>
-                        ) : (
-                          <span className="text-[var(--text-muted)]">{t('recipes.no')}</span>
+            <div className="space-y-4">
+              {Object.entries(recipe.inputs!).map(([name, input]) => {
+                const error = validationErrors[name];
+                const inputId = `param-${name}`;
+                const errorId = `${inputId}-error`;
+
+                return (
+                  <div key={name} className="flex flex-col gap-2">
+                    {/* Label row */}
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor={inputId}
+                        className="font-mono text-sm text-[var(--accent-primary)]"
+                      >
+                        {name}
+                        {input.required && (
+                          <span className="text-[var(--accent-error)] ml-0.5">*</span>
                         )}
-                      </td>
-                      <td className="py-2 pr-4 font-mono text-xs text-[var(--text-muted)]">
-                        {input.default !== undefined ? String(input.default) : '-'}
-                      </td>
-                      <td className="py-2 text-[var(--text-secondary)]">{input.description || '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </label>
+                      <span className="text-xs text-[var(--text-muted)]">({input.type})</span>
+                    </div>
+
+                    {/* Input field based on type */}
+                    {input.type === 'boolean' ? (
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          id={inputId}
+                          type="checkbox"
+                          checked={Boolean(formValues[name])}
+                          onChange={(e) => handleFieldChange(name, e.target.checked)}
+                          className="w-4 h-4 rounded border-[var(--border-color)] text-[var(--accent-primary)] focus:ring-[var(--accent-primary)]"
+                          aria-describedby={error ? errorId : undefined}
+                        />
+                        <span className="text-sm text-[var(--text-secondary)]">
+                          {formValues[name] ? t('recipes.yes') : t('recipes.no')}
+                        </span>
+                      </label>
+                    ) : input.type === 'array' || input.type === 'object' ? (
+                      <textarea
+                        id={inputId}
+                        value={String(formValues[name] ?? '')}
+                        onChange={(e) => handleFieldChange(name, e.target.value)}
+                        placeholder={input.type === 'array'
+                          ? t('recipes.enterJsonArray')
+                          : t('recipes.enterJsonObject')
+                        }
+                        rows={3}
+                        className={`w-full px-3 py-2 bg-[var(--bg-base)] border rounded-md text-sm font-mono
+                          text-[var(--text-primary)] placeholder-[var(--text-muted)]
+                          focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]
+                          ${error ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}
+                        aria-describedby={error ? errorId : undefined}
+                        aria-invalid={error ? 'true' : undefined}
+                      />
+                    ) : input.type === 'number' ? (
+                      <input
+                        id={inputId}
+                        type="number"
+                        value={formValues[name] !== undefined && formValues[name] !== '' ? String(formValues[name]) : ''}
+                        onChange={(e) => handleFieldChange(name, e.target.value)}
+                        placeholder={t('recipes.enterValue')}
+                        className={`w-full px-3 py-2 bg-[var(--bg-base)] border rounded-md text-sm
+                          text-[var(--text-primary)] placeholder-[var(--text-muted)]
+                          focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]
+                          ${error ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}
+                        aria-describedby={error ? errorId : undefined}
+                        aria-invalid={error ? 'true' : undefined}
+                      />
+                    ) : (
+                      <input
+                        id={inputId}
+                        type="text"
+                        value={String(formValues[name] ?? '')}
+                        onChange={(e) => handleFieldChange(name, e.target.value)}
+                        placeholder={t('recipes.enterValue')}
+                        className={`w-full px-3 py-2 bg-[var(--bg-base)] border rounded-md text-sm
+                          text-[var(--text-primary)] placeholder-[var(--text-muted)]
+                          focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]
+                          ${error ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}
+                        aria-describedby={error ? errorId : undefined}
+                        aria-invalid={error ? 'true' : undefined}
+                      />
+                    )}
+
+                    {/* Description */}
+                    {input.description && (
+                      <p className="text-xs text-[var(--text-secondary)]">{input.description}</p>
+                    )}
+
+                    {/* Error message */}
+                    {error && (
+                      <p id={errorId} className="text-xs text-[var(--accent-error)]">{error}</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CollapsibleSection>
         )}

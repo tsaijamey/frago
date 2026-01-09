@@ -306,17 +306,18 @@ export async function getRecipeDetail(name: string): Promise<RecipeDetail> {
 
 export async function runRecipe(
   name: string,
-  params?: Record<string, unknown>
+  params?: Record<string, unknown>,
+  async_exec?: boolean
 ): Promise<RecipeRunResponse> {
   if (isPywebviewMode()) {
     return pywebviewApi.runRecipe(name, params);
   }
 
   try {
-    await httpApi.runRecipe(name, params);
+    await httpApi.runRecipe(name, params, undefined, async_exec);
     return {
       status: 'ok',
-      output: 'Recipe started',
+      output: async_exec ? 'Recipe started in background' : 'Recipe completed',
       error: null,
     };
   } catch (error) {

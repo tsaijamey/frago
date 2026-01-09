@@ -24,6 +24,9 @@ class RecipeRunRequest(BaseModel):
     timeout: Optional[int] = Field(
         default=None, ge=1, le=3600, description="Timeout in seconds (1-3600)"
     )
+    async_exec: Optional[bool] = Field(
+        default=False, description="Run recipe asynchronously (for interactive recipes)"
+    )
 
 
 class AgentStartRequest(BaseModel):

@@ -135,7 +135,21 @@
     "installGhCli": "安装 GitHub CLI",
     "loginToGitHub": "登录 GitHub",
     "ghLoginStarted": "登录窗口已打开，请完成认证",
-    "ghLoginFailed": "启动 GitHub 登录失败"
+    "ghLoginFailed": "启动 GitHub 登录失败",
+    "validation": {
+      "required": "此字段为必填项",
+      "invalidNumber": "必须是有效数字",
+      "invalidJson": "JSON 格式无效",
+      "mustBeArray": "必须是 JSON 数组",
+      "mustBeObject": "必须是 JSON 对象",
+      "fixErrors": "请修复验证错误后再运行"
+    },
+    "enterValue": "输入值...",
+    "enterJsonArray": "输入 JSON 数组，例如 [\"a\", \"b\"]",
+    "enterJsonObject": "输入 JSON 对象，例如 {\"key\": \"value\"}",
+    "interactiveMode": "交互式",
+    "interactiveModeHint": "用于启动 UI 或持续运行的配方。配方将在后台启动。",
+    "startedAsync": "配方已在后台启动"
   },
   "skills": {
     "title": "技能",
