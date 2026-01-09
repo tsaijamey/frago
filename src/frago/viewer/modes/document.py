@@ -18,6 +18,7 @@ def get_language_from_extension(ext: str) -> str:
         ".html": "html",
         ".htm": "html",
         ".json": "json",
+        ".jsonl": "json",
         ".yaml": "yaml",
         ".yml": "yaml",
         ".toml": "toml",
@@ -151,6 +152,32 @@ def render_document(
     if content_type == "pdf":
         return _render_pdf_page(title, theme, resources_base)
 
+    # Add viewer controls for code content (json/code)
+    show_wrap_toggle = content_type in ("json", "code")
+    viewer_controls = ""
+    wrap_toggle_script = ""
+    if show_wrap_toggle:
+        viewer_controls = '''
+    <div class="viewer-controls">
+        <button id="wrap-toggle" class="active" type="button" title="Toggle word wrap" aria-label="Toggle word wrap">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-4"/>
+                <polyline points="13 16 16 19 13 22"/>
+            </svg>
+            Wrap
+        </button>
+    </div>'''
+        wrap_toggle_script = '''
+        // Word wrap toggle
+        const wrapToggle = document.getElementById('wrap-toggle');
+        const codeContent = document.querySelector('.code-content');
+        if (wrapToggle && codeContent) {
+            wrapToggle.addEventListener('click', () => {
+                codeContent.classList.toggle('no-wrap');
+                wrapToggle.classList.toggle('active');
+            });
+        }'''
+
     return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -252,22 +279,62 @@ def render_document(
             text-align: center;
             margin: 16px 0;
         }}
-        /* Code content styles */
+        /* Code content styles - default: wrap enabled */
         .code-content pre {{
             background-color: #161b22;
             padding: 16px;
             border-radius: 6px;
             overflow-x: auto;
             margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
         }}
         .code-content code {{
             font-family: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
             font-size: 14px;
             line-height: 1.5;
         }}
+        /* No-wrap mode */
+        .code-content.no-wrap pre {{
+            white-space: pre;
+            word-break: normal;
+        }}
+        /* Viewer controls - floating toggle button */
+        .viewer-controls {{
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            gap: 8px;
+            z-index: 100;
+        }}
+        .viewer-controls button {{
+            background: rgba(48, 54, 61, 0.9);
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 6px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background-color 0.15s, border-color 0.15s;
+        }}
+        .viewer-controls button:hover {{
+            background: rgba(48, 54, 61, 1);
+        }}
+        .viewer-controls button.active {{
+            background: #238636;
+            border-color: #238636;
+        }}
+        .viewer-controls button svg {{
+            width: 14px;
+            height: 14px;
+        }}
     </style>
 </head>
-<body>
+<body>{viewer_controls}
     {body_content}
     <script src="{resources_base}/highlight/highlight.min.js"></script>
     <script src="{resources_base}/mermaid/mermaid.min.js"></script>
@@ -279,7 +346,7 @@ def render_document(
             startOnLoad: true,
             theme: 'dark',
             securityLevel: 'loose'
-        }});
+        }});{wrap_toggle_script}
     </script>
 </body>
 </html>'''
