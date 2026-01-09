@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import get_utf8_env, run_subprocess
+from frago.server.services.base import get_utf8_env, prepare_command_for_windows, run_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,7 @@ class RecipeService:
         name: str,
         params: Optional[Dict[str, Any]] = None,
         timeout: int = 300,
+        async_exec: bool = False,
     ) -> Dict[str, Any]:
         """Execute a recipe.
 
@@ -159,10 +160,12 @@ class RecipeService:
             name: Recipe name.
             params: Optional parameters.
             timeout: Timeout in seconds (default 300).
+            async_exec: If True, start recipe in background and return immediately.
 
         Returns:
             Result dictionary with status, output, and optionally error.
         """
+        import subprocess
         import time
 
         start_time = time.time()
@@ -172,6 +175,23 @@ class RecipeService:
             if params:
                 cmd.extend(["--params", json.dumps(params)])
 
+            if async_exec:
+                # Start process in background without waiting
+                # Need to pass environment and avoid suppressing output for interactive recipes
+                subprocess.Popen(
+                    prepare_command_for_windows(cmd),
+                    env=get_utf8_env(),
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return {
+                    "status": "ok",
+                    "output": "Recipe started in background",
+                    "error": None,
+                    "duration_ms": 0,
+                }
+
+            # Synchronous execution
             result = run_subprocess(cmd, timeout=timeout)
 
             duration_ms = int((time.time() - start_time) * 1000)

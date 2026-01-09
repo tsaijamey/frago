@@ -135,7 +135,21 @@
     "installGhCli": "Install GitHub CLI",
     "loginToGitHub": "Log in to GitHub",
     "ghLoginStarted": "Login window opened, please complete authentication",
-    "ghLoginFailed": "Failed to start GitHub login"
+    "ghLoginFailed": "Failed to start GitHub login",
+    "validation": {
+      "required": "This field is required",
+      "invalidNumber": "Must be a valid number",
+      "invalidJson": "Invalid JSON format",
+      "mustBeArray": "Must be a JSON array",
+      "mustBeObject": "Must be a JSON object",
+      "fixErrors": "Please fix validation errors before running"
+    },
+    "enterValue": "Enter value...",
+    "enterJsonArray": "Enter JSON array, e.g. [\"a\", \"b\"]",
+    "enterJsonObject": "Enter JSON object, e.g. {\"key\": \"value\"}",
+    "interactiveMode": "Interactive",
+    "interactiveModeHint": "Enable for recipes that launch a UI or run continuously. The recipe will start in the background.",
+    "startedAsync": "Recipe started in background"
   },
   "skills": {
     "title": "Skills",

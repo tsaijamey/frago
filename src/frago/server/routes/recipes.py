@@ -144,8 +144,9 @@ async def run_recipe(name: str, request: RecipeRunRequest = None) -> TaskItemRes
     # Execute recipe
     params = request.params if request else None
     timeout = request.timeout if request else 300
+    async_exec = request.async_exec if request else False
 
-    result = RecipeService.run_recipe(name, params, timeout)
+    result = RecipeService.run_recipe(name, params, timeout, async_exec)
 
     # Check for error
     if result.get("status") == "error":

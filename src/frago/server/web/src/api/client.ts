@@ -177,11 +177,12 @@ export async function getRecipe(name: string): Promise<RecipeItem> {
 export async function runRecipe(
   name: string,
   params?: Record<string, unknown>,
-  timeout?: number
+  timeout?: number,
+  async_exec?: boolean
 ): Promise<TaskItem> {
   return fetchApi<TaskItem>(`/recipes/${encodeURIComponent(name)}/run`, {
     method: 'POST',
-    body: JSON.stringify({ params, timeout }),
+    body: JSON.stringify({ params, timeout, async_exec }),
   });
 }
 
