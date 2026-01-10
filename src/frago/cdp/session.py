@@ -55,6 +55,9 @@ class CDPSession(CDPClient):
         self._visual_effects = None
         self._target = None
 
+        # Auto viewport border indicator
+        self.auto_viewport_border = True
+
     def connect(self) -> None:
         """Establish WebSocket connection
 
@@ -670,13 +673,31 @@ class CDPSession(CDPClient):
             }})();
         """)
 
+    def viewport_border(self, color: str = "255, 180, 0", duration: float = 3.0) -> None:
+        """
+        Display a breathing gradient border around the viewport to indicate automation control.
+
+        Args:
+            color: RGB color values (e.g., "255, 180, 0" for yellow)
+            duration: Breathing animation cycle duration in seconds
+        """
+        self.visual_effects.viewport_border(color=color, duration=duration)
+
+    def clear_viewport_border(self) -> None:
+        """Remove the viewport border indicator."""
+        self.visual_effects.clear_viewport_border()
+
     def wait_for_selector(self, selector: str, timeout: Optional[float] = None) -> None:
         """Wait for element matching selector"""
         self.page.wait_for_selector(selector, timeout=timeout)
 
     def wait_for_load(self, timeout: float = 30) -> bool:
         """Wait for page to finish loading"""
-        return self.page.wait_for_load(timeout=timeout)
+        result = self.page.wait_for_load(timeout=timeout)
+        # Auto-inject viewport border after page load if enabled
+        if self.auto_viewport_border:
+            self.viewport_border()
+        return result
 
     # Lazy-loaded property accessors for command classes
     @property

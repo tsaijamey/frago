@@ -248,14 +248,68 @@ class ChromeLauncher:
 
             ws = websocket.create_connection(ws_url)
 
+            # Inject stealth script
             message = {
                 "id": 1,
                 "method": "Page.addScriptToEvaluateOnNewDocument",
                 "params": {"source": stealth_script},
             }
-
             ws.send(json.dumps(message))
             ws.recv()
+
+            # Inject viewport border script
+            viewport_border_script = """
+            (function() {
+                function showViewportBorder() {
+                    if (!document.body) {
+                        setTimeout(showViewportBorder, 50);
+                        return;
+                    }
+                    if (document.getElementById('__frago_viewport_border__')) return;
+
+                    var style = document.createElement('style');
+                    style.id = '__frago_border_style__';
+                    style.textContent = '\\
+                        @keyframes __frago_breathe__ {\\
+                            0%, 100% {\\
+                                box-shadow:\\
+                                    inset 0 0 15px 5px rgba(255, 180, 0, 0.6),\\
+                                    inset 0 0 35px 12px rgba(255, 180, 0, 0.35),\\
+                                    inset 0 0 55px 20px rgba(255, 180, 0, 0.15);\\
+                            }\\
+                            50% {\\
+                                box-shadow:\\
+                                    inset 0 0 25px 10px rgba(255, 180, 0, 0.75),\\
+                                    inset 0 0 50px 20px rgba(255, 180, 0, 0.45),\\
+                                    inset 0 0 80px 35px rgba(255, 180, 0, 0.2);\\
+                            }\\
+                        }\\
+                    ';
+                    (document.head || document.body).appendChild(style);
+
+                    var border = document.createElement('div');
+                    border.id = '__frago_viewport_border__';
+                    border.style.cssText = '\\
+                        position: fixed;\\
+                        top: 0; left: 0; right: 0; bottom: 0;\\
+                        pointer-events: none;\\
+                        z-index: 2147483647;\\
+                        box-sizing: border-box;\\
+                        animation: __frago_breathe__ 3s ease-in-out infinite;\\
+                    ';
+                    document.body.appendChild(border);
+                }
+                showViewportBorder();
+            })();
+            """
+            message = {
+                "id": 2,
+                "method": "Page.addScriptToEvaluateOnNewDocument",
+                "params": {"source": viewport_border_script},
+            }
+            ws.send(json.dumps(message))
+            ws.recv()
+
             ws.close()
 
             return True
