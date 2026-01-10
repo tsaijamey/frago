@@ -147,5 +147,80 @@ class VisualEffectsCommands:
             document.querySelectorAll('.frago-annotation').forEach(el => el.remove());
         })();
         """
-        
+
+        self.session.send_command("Runtime.evaluate", {"expression": script})
+
+    def viewport_border(
+        self,
+        color: str = "255, 180, 0",
+        duration: float = 3.0,
+    ) -> None:
+        """
+        Display a breathing gradient border around the viewport to indicate automation control.
+
+        Args:
+            color: RGB color values (e.g., "255, 180, 0" for yellow)
+            duration: Breathing animation cycle duration in seconds
+        """
+        self.logger.info("Showing viewport border indicator")
+
+        script = f"""
+        (() => {{
+            // Clean up existing elements
+            const existing = document.getElementById('__frago_viewport_border__');
+            if (existing) existing.remove();
+            const existingStyle = document.getElementById('__frago_border_style__');
+            if (existingStyle) existingStyle.remove();
+
+            // Add animation style
+            const style = document.createElement('style');
+            style.id = '__frago_border_style__';
+            style.textContent = `
+                @keyframes __frago_breathe__ {{
+                    0%, 100% {{
+                        box-shadow:
+                            inset 0 0 15px 5px rgba({color}, 0.6),
+                            inset 0 0 35px 12px rgba({color}, 0.35),
+                            inset 0 0 55px 20px rgba({color}, 0.15);
+                    }}
+                    50% {{
+                        box-shadow:
+                            inset 0 0 25px 10px rgba({color}, 0.75),
+                            inset 0 0 50px 20px rgba({color}, 0.45),
+                            inset 0 0 80px 35px rgba({color}, 0.2);
+                    }}
+                }}
+            `;
+            document.head.appendChild(style);
+
+            // Create border element
+            const border = document.createElement('div');
+            border.id = '__frago_viewport_border__';
+            border.style.cssText = `
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                pointer-events: none;
+                z-index: 2147483647;
+                box-sizing: border-box;
+                animation: __frago_breathe__ {duration}s ease-in-out infinite;
+            `;
+            document.body.appendChild(border);
+        }})()
+        """
+
+        self.session.send_command("Runtime.evaluate", {"expression": script})
+
+    def clear_viewport_border(self) -> None:
+        """Remove the viewport border indicator."""
+        self.logger.info("Clearing viewport border indicator")
+
+        script = """
+        (() => {
+            const border = document.getElementById('__frago_viewport_border__');
+            if (border) border.remove();
+            const style = document.getElementById('__frago_border_style__');
+            if (style) style.remove();
+        })()
+        """
+
         self.session.send_command("Runtime.evaluate", {"expression": script})
