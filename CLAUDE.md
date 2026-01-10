@@ -63,6 +63,24 @@ def write_docs(content):
     assert user_friendly(content), "Based on 'can users easily understand this'"
 ```
 
+## Development Environment
+
+```python
+# --- CLI Testing ---
+# PROHIBITED: using system-installed `frago` during development
+# System package may not reflect local code changes
+
+# WRONG
+subprocess.run(["frago", "chrome", "navigate", url])
+
+# CORRECT: always use uv run for local development
+subprocess.run(["uv", "run", "frago", "chrome", "navigate", url])
+
+# In terminal:
+# WRONG:   frago chrome start
+# CORRECT: uv run frago chrome start
+```
+
 ## Cross-Platform Development
 
 ```python
