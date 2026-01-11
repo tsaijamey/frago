@@ -14,8 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.compat import prepare_command_for_windows
-from frago.server.services.base import get_utf8_env
+from frago.server.services.base import get_claude_command, run_subprocess_interactive
 from frago.server.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -82,8 +81,8 @@ class ConsoleSession:
         self.messages.append(user_msg)
 
         # Build command with bidirectional stream-json
-        cmd = [
-            "claude",
+        # Use get_claude_command() to avoid .CMD file flash on Windows
+        cmd = get_claude_command() + [
             "-p",
             "-",
             "--input-format",
@@ -108,16 +107,7 @@ class ConsoleSession:
         # Start subprocess
         try:
             logger.info(f"Starting Claude CLI with command: {cmd} in {self.project_path}")
-            self.process = subprocess.Popen(
-                prepare_command_for_windows(cmd),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                env=get_utf8_env(),
-                cwd=self.project_path,
-            )
+            self.process = run_subprocess_interactive(cmd, cwd=self.project_path)
 
             # Send prompt via stdin using stream-json format
             if self.process.stdin:
@@ -182,8 +172,8 @@ class ConsoleSession:
         )
 
         # Build command with --resume to continue the session
-        cmd = [
-            "claude",
+        # Use get_claude_command() to avoid .CMD file flash on Windows
+        cmd = get_claude_command() + [
             "-p",
             "-",
             "--resume",
@@ -203,16 +193,7 @@ class ConsoleSession:
         logger.info(f"Resuming Claude session {self._claude_session_id[:8]}...")
 
         # Start new process with --resume
-        self.process = subprocess.Popen(
-            prepare_command_for_windows(cmd),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            env=get_utf8_env(),
-            cwd=self.project_path,
-        )
+        self.process = run_subprocess_interactive(cmd, cwd=self.project_path)
 
         # Send message using correct format
         user_message_event = json.dumps({

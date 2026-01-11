@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import get_utf8_env, prepare_command_for_windows, run_subprocess
+from frago.server.services.base import run_subprocess, run_subprocess_background
 
 logger = logging.getLogger(__name__)
 
@@ -177,13 +177,7 @@ class RecipeService:
 
             if async_exec:
                 # Start process in background without waiting
-                # Need to pass environment and avoid suppressing output for interactive recipes
-                subprocess.Popen(
-                    prepare_command_for_windows(cmd),
-                    env=get_utf8_env(),
-                    stdin=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
+                run_subprocess_background(cmd)
                 return {
                     "status": "ok",
                     "output": "Recipe started in background",

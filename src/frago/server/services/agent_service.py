@@ -11,8 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from frago.compat import prepare_command_for_windows
-from frago.server.services.base import get_utf8_env
+from frago.server.services.base import get_utf8_env, run_subprocess_background
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +65,10 @@ class AgentService:
 
             # Start process in background
             with open(log_file, "w", encoding="utf-8") as f:
-                subprocess.Popen(
-                    prepare_command_for_windows(cmd),
+                run_subprocess_background(
+                    cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    env=get_utf8_env(),
                 )
 
             title = prompt[:50] + "..." if len(prompt) > 50 else prompt
@@ -135,21 +132,20 @@ class AgentService:
             prompt_file.write_text(prompt, encoding="utf-8")
 
             # Start process in background
+            cmd = [
+                frago_path,
+                "agent",
+                "--resume",
+                session_id,
+                "--yes",
+                "--prompt-file",
+                str(prompt_file),
+            ]
             with open(log_file, "w", encoding="utf-8") as f:
-                subprocess.Popen(
-                    prepare_command_for_windows([
-                        frago_path,
-                        "agent",
-                        "--resume",
-                        session_id,
-                        "--yes",
-                        "--prompt-file",
-                        str(prompt_file),
-                    ]),
+                run_subprocess_background(
+                    cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    env=get_utf8_env(),
                 )
 
             title = prompt[:50] + "..." if len(prompt) > 50 else prompt
