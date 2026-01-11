@@ -9,6 +9,7 @@ import click
 from frago.recipes import RecipeRegistry, RecipeRunner, OutputHandler
 from frago.recipes.exceptions import RecipeError, MetadataParseError, RecipeValidationError
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
+from frago.tools.sync_repo import _ensure_git_user_config
 from .agent_friendly import AgentFriendlyGroup
 
 
@@ -1008,6 +1009,15 @@ def share_recipe(name: str, yes: bool, output_format: str):
                 elif item.is_dir():
                     shutil.copytree(item, target_dir / item.name)
                     echo_item("→", f"{name}/{item.name}/")
+
+            # Ensure git user is configured before commit
+            success, error = _ensure_git_user_config(repo_path)
+            if not success:
+                if output_format == 'json':
+                    click.echo(json.dumps({"success": False, "error": error, "code": "git_config_failed"}))
+                else:
+                    click.echo(f"Error: {error}", err=True)
+                sys.exit(1)
 
             # Commit
             run_cmd(["git", "-C", str(repo_path), "add", "."])

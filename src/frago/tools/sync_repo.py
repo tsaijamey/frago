@@ -94,6 +94,60 @@ def _is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def _ensure_git_user_config(repo_dir: Path) -> tuple[bool, str]:
+    """Ensure git user.name and user.email are configured.
+
+    If not configured, fetch from gh CLI and set locally.
+
+    Args:
+        repo_dir: Git repository directory
+
+    Returns:
+        (success, error_message) tuple
+    """
+    # Check if already configured (local or global)
+    name_result = _run_git(["config", "user.name"], repo_dir, check=False)
+    email_result = _run_git(["config", "user.email"], repo_dir, check=False)
+
+    if name_result.returncode == 0 and email_result.returncode == 0:
+        if name_result.stdout.strip() and email_result.stdout.strip():
+            return True, ""
+
+    # Fetch from gh api user
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login,.email"],
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            timeout=10,
+            **_get_subprocess_kwargs(),
+        )
+        if result.returncode != 0:
+            return False, "Failed to get user info from gh CLI. Run 'gh auth login' first."
+
+        lines = result.stdout.strip().split('\n')
+        if len(lines) < 2:
+            return False, "Failed to parse user info from gh CLI"
+
+        username = lines[0].strip()
+        email = lines[1].strip()
+
+        # Handle null/empty email (GitHub privacy setting)
+        if not email or email == "null":
+            email = f"{username}@users.noreply.github.com"
+
+        # Set local git config (not global)
+        _run_git(["config", "user.name", username], repo_dir)
+        _run_git(["config", "user.email", email], repo_dir)
+
+        return True, ""
+    except FileNotFoundError:
+        return False, "gh CLI not found. Please install GitHub CLI first."
+    except subprocess.TimeoutExpired:
+        return False, "gh CLI timed out"
+
+
 def _has_uncommitted_changes(repo_dir: Path) -> bool:
     """Check if there are uncommitted changes"""
     result = _run_git(["status", "--porcelain"], repo_dir, check=False)
@@ -682,6 +736,12 @@ def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: boo
 
     if dry_run:
         return True
+
+    # Ensure git user is configured before commit
+    success, error = _ensure_git_user_config(FRAGO_HOME)
+    if not success:
+        result.errors.append(error)
+        return False
 
     # git add
     _run_git(["add", "."], FRAGO_HOME)
