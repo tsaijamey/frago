@@ -231,6 +231,11 @@ export default function ConsolePage() {
       case 'console_session_status':
         if (data.status === 'completed') {
           setConsoleIsRunning(false);
+          // Ensure last message is marked as done
+          const lastMsg = useAppStore.getState().consoleMessages.slice(-1)[0];
+          if (lastMsg && lastMsg.type === 'assistant' && !lastMsg.done) {
+            updateLastConsoleMessage({ done: true });
+          }
         }
         break;
     }
