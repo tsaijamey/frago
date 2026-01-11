@@ -186,6 +186,21 @@ def modify_resources():
     edit("~/.claude/*")
     edit("~/.frago/*")
     run("frago dev pack")
+
+# --- Recipe Execution ---
+# PROHIBITED: running recipe scripts directly with python/uv run python
+# Recipe scripts depend on frago's environment setup (env vars, working dir, etc.)
+
+# WRONG
+subprocess.run(["python", "~/.frago/recipes/atomic/.../recipe.py", params])
+subprocess.run(["uv", "run", "python", "recipe.py", params])
+
+# CORRECT: always use frago recipe run
+subprocess.run(["uv", "run", "frago", "recipe", "run", recipe_name, "--params", params])
+
+# In terminal:
+# WRONG:   uv run python ~/.frago/recipes/.../recipe.py '{...}'
+# CORRECT: uv run frago recipe run recipe_name --params '{...}'
 ```
 
 ## Frontend Development
