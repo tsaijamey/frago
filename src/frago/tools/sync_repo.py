@@ -157,10 +157,10 @@ logs/
 """
 
     if not gitignore_path.exists():
-        gitignore_path.write_text(gitignore_content)
+        gitignore_path.write_text(gitignore_content, encoding="utf-8")
     else:
         # Check existing content, append if missing key rules
-        existing = gitignore_path.read_text()
+        existing = gitignore_path.read_text(encoding="utf-8")
         needed_rules = [
             # Runtime data
             "sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env",
@@ -173,7 +173,7 @@ logs/
         ]
         missing = [rule for rule in needed_rules if rule not in existing]
         if missing:
-            with open(gitignore_path, "a") as f:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
                 f.write("\n# Auto-added by frago sync\n")
                 for rule in missing:
                     f.write(f"{rule}\n")
