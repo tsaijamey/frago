@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import run_subprocess, run_subprocess_background
+from frago.server.services.base import run_subprocess_background
 
 logger = logging.getLogger(__name__)
 
@@ -40,31 +40,31 @@ class RecipeService:
 
     @classmethod
     def _load_recipes(cls) -> List[Dict[str, Any]]:
-        """Load recipes from frago recipe list command.
+        """Load recipes directly from RecipeRegistry.
+
+        Uses Python module directly instead of CLI to avoid cmd.exe flash on Windows.
 
         Returns:
             List of recipe dictionaries.
         """
         recipes = []
         try:
-            result = run_subprocess(
-                ["frago", "recipe", "list", "--format", "json"],
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                data = json.loads(result.stdout)
-                for item in data:
-                    recipes.append({
-                        "name": item.get("name", ""),
-                        "description": item.get("description"),
-                        "category": item.get("type", "atomic"),
-                        "tags": item.get("tags", []),
-                        "path": item.get("path"),
-                        "source": item.get("source"),
-                        "runtime": item.get("runtime"),
-                    })
+            from frago.recipes.registry import RecipeRegistry
+
+            registry = RecipeRegistry()
+            registry.scan()
+            for recipe in registry.list_all():
+                recipes.append({
+                    "name": recipe.metadata.name,
+                    "description": recipe.metadata.description,
+                    "category": recipe.metadata.type,
+                    "tags": recipe.metadata.tags or [],
+                    "path": str(recipe.script_path) if recipe.script_path else None,
+                    "source": recipe.source,
+                    "runtime": recipe.metadata.runtime,
+                })
         except Exception as e:
-            logger.warning("Failed to load recipes from command: %s", e)
+            logger.warning("Failed to load recipes from registry: %s", e)
 
         # Fallback to filesystem if no recipes loaded
         if not recipes:

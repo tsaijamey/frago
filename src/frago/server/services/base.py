@@ -58,6 +58,37 @@ def get_claude_command() -> List[str]:
     return [str(node_exe), str(cli_js)]
 
 
+def get_gh_command() -> List[str]:
+    """Get the command to run gh CLI without console window flash on Windows.
+
+    On Windows, gh might be installed as a .CMD file which causes console window flash.
+    This function returns the direct executable path to avoid that.
+
+    Returns:
+        Command list to execute gh CLI
+    """
+    if platform.system() != "Windows":
+        return ["gh"]
+
+    gh_path = shutil.which("gh")
+    if not gh_path:
+        return ["gh"]
+
+    gh_path_obj = Path(gh_path)
+
+    # If it's a .cmd file, look for gh.exe in the same directory
+    if gh_path_obj.suffix.lower() == ".cmd":
+        gh_exe = gh_path_obj.with_suffix(".exe")
+        if gh_exe.exists():
+            return [str(gh_exe)]
+        # Try parent directory (common for scoop installs)
+        gh_exe = gh_path_obj.parent / "gh.exe"
+        if gh_exe.exists():
+            return [str(gh_exe)]
+
+    return [str(gh_path_obj)]
+
+
 def get_utf8_env() -> Dict[str, str]:
     """Get environment variables with UTF-8 encoding for Windows compatibility.
 

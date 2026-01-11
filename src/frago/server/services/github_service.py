@@ -9,7 +9,7 @@ import re
 import subprocess
 from typing import Any, Dict
 
-from frago.server.services.base import run_subprocess
+from frago.server.services.base import get_gh_command, run_subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class GitHubService:
 
         # Check if gh is installed
         try:
-            version_result = run_subprocess(["gh", "--version"], timeout=5)
+            version_result = run_subprocess(get_gh_command() + ["--version"], timeout=5)
             if version_result.returncode == 0:
                 result["installed"] = True
                 # Parse version number (format: "gh version 2.40.1 (2023-12-13)")
@@ -54,7 +54,7 @@ class GitHubService:
         # Check login status
         if result["installed"]:
             try:
-                auth_result = run_subprocess(["gh", "auth", "status"], timeout=5)
+                auth_result = run_subprocess(get_gh_command() + ["auth", "status"], timeout=5)
                 # gh auth status returns 0 if logged in
                 if auth_result.returncode == 0:
                     result["authenticated"] = True

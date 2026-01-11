@@ -139,7 +139,10 @@ class RecipeInstaller:
         2. gh auth token (from gh CLI)
         """
         import os
+        import platform
+        import shutil
         import subprocess
+        from pathlib import Path
 
         headers = {
             "Accept": "application/vnd.github.v3+json",
@@ -152,11 +155,40 @@ class RecipeInstaller:
         # Fall back to gh CLI token
         if not token:
             try:
+                # Get gh command - use direct exe path on Windows to avoid cmd flash
+                gh_cmd = ["gh"]
+                if platform.system() == "Windows":
+                    gh_path = shutil.which("gh")
+                    if gh_path:
+                        gh_path_obj = Path(gh_path)
+                        if gh_path_obj.suffix.lower() == ".cmd":
+                            gh_exe = gh_path_obj.with_suffix(".exe")
+                            if gh_exe.exists():
+                                gh_cmd = [str(gh_exe)]
+                            else:
+                                gh_exe = gh_path_obj.parent / "gh.exe"
+                                if gh_exe.exists():
+                                    gh_cmd = [str(gh_exe)]
+                        else:
+                            gh_cmd = [str(gh_path_obj)]
+
+                run_kwargs: dict = {
+                    "capture_output": True,
+                    "text": True,
+                    "timeout": 5,
+                }
+                # Windows: prevent cmd.exe window flash
+                if platform.system() == "Windows":
+                    CREATE_NO_WINDOW = 0x08000000
+                    run_kwargs["creationflags"] = CREATE_NO_WINDOW
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    run_kwargs["startupinfo"] = startupinfo
+
                 result = subprocess.run(
-                    ["gh", "auth", "token"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
+                    gh_cmd + ["auth", "token"],
+                    **run_kwargs,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     token = result.stdout.strip()
