@@ -200,7 +200,7 @@ def show_cmd(
     click.echo(f"Session ID: {session.session_id}")
     click.echo("=" * 60)
 
-    click.echo(f"\n📋 Basic Information")
+    click.echo(f"\n[i] Basic Information")
     click.echo(f"  Agent type: {session.agent_type.value}")
     click.echo(f"  Project path: {session.project_path}")
     click.echo(f"  Status: {_get_status_display(session.status)}")

@@ -814,7 +814,8 @@ def share_recipe(name: str, yes: bool, output_format: str):
             capture_output=capture,
             text=True,
             check=check,
-            encoding='utf-8'
+            encoding='utf-8',
+            errors='replace'
         )
 
     def echo_step(step: int, total: int, message: str, status: str = ""):

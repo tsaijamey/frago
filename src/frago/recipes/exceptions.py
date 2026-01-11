@@ -35,7 +35,7 @@ class RecipeExecutionError(RecipeError):
         self.stderr = stderr
         message = f"Recipe '{recipe_name}' execution failed (exit code: {exit_code})"
         if stderr:
-            message += f"\nError: {stderr[:200]}"
+            message += f"\nError: {stderr[:2000]}"
         super().__init__(message)
 
 

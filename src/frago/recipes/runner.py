@@ -190,6 +190,7 @@ class RecipeRunner:
                     capture_output=True,
                     text=True,
                     encoding='utf-8',
+                errors='replace',
                     timeout=30,
                     check=False,
                     env=env
@@ -222,6 +223,7 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
+                errors='replace',
                 timeout=None,  # No timeout limit
                 check=False,
                 env=env
@@ -318,6 +320,7 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
+                errors='replace',
                 timeout=None,  # No timeout limit
                 check=False,
                 env=env
@@ -404,6 +407,7 @@ class RecipeRunner:
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
+                errors='replace',
                 timeout=None,  # No timeout limit
                 check=False,
                 env=env

@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 import click
 import yaml
 
+from frago.compat import SYMBOLS
 from frago.tools.sync import CommandSync, RecipeSync, SkillSync
 
 
@@ -96,9 +97,9 @@ def dev_pack(
     from user directory to src/frago/resources/ for packaging and distribution.
 
     Source directories:
-      ~/.claude/commands/frago.*.md  → src/frago/resources/commands/
-      ~/.claude/skills/frago-*       → src/frago/resources/skills/
-      ~/.frago/recipes/              → src/frago/resources/recipes/
+      ~/.claude/commands/frago.*.md  -> src/frago/resources/commands/
+      ~/.claude/skills/frago-*       -> src/frago/resources/skills/
+      ~/.frago/recipes/              -> src/frago/resources/recipes/
 
     \b
     Examples:
@@ -118,7 +119,7 @@ def dev_pack(
             click.echo("[!]  Ignoring manifest, syncing all resources\n")
         else:
             manifest = load_manifest()
-            click.echo(f"📋 Manifest file: {MANIFEST_FILE.name}\n")
+            click.echo(f"{SYMBOLS["clipboard"]} Manifest file: {MANIFEST_FILE.name}\n")
 
         # Determine sync scope
         sync_commands = not recipes_only and not skills_only
@@ -171,7 +172,7 @@ def _sync_commands(
         click.echo(f"Commands source directory not found: {syncer.source_dir}", err=True)
         return
 
-    click.echo("📦 Commands Sync")
+    click.echo(f"{SYMBOLS["package"]} Commands Sync")
 
     if not allowed_patterns:
         click.echo("  No commands configured in manifest, skipping")
@@ -218,14 +219,14 @@ def _sync_commands(
 
     # Display results
     if created:
-        click.echo(f"  [OK] {action_word}Created {len(created)} commands:")
+        click.echo(f"  {SYMBOLS["check"]} {action_word}Created {len(created)} commands:")
         for r in created:
-            click.echo(f"    + {r['source_name']} → {r['target_name']}")
+            click.echo(f"    + {r['source_name']} -> {r['target_name']}")
 
     if updated:
-        click.echo(f"  [OK] {action_word}Updated {len(updated)} commands:")
+        click.echo(f"  {SYMBOLS["check"]} {action_word}Updated {len(updated)} commands:")
         for r in updated:
-            click.echo(f"    ~ {r['source_name']} → {r['target_name']}")
+            click.echo(f"    ~ {r['source_name']} -> {r['target_name']}")
 
     if skipped and verbose:
         click.echo(f"  - Skipped {len(skipped)} unchanged commands:")
@@ -298,7 +299,7 @@ def _sync_frago_subdir(
                 frago_target,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
-        click.echo(f"  [OK] {action_word} frago/ subdirectory")
+        click.echo(f"  {SYMBOLS["check"]} {action_word} frago/ subdirectory")
     else:
         if verbose:
             click.echo("  - frago/ subdirectory unchanged")
@@ -322,7 +323,7 @@ def _sync_skills(
         click.echo(f"Skills source directory not found: {syncer.source_dir}", err=True)
         return
 
-    click.echo("📦 Skills Sync")
+    click.echo(f"{SYMBOLS["package"]} Skills Sync")
 
     if not allowed_patterns:
         click.echo("  No skills configured in manifest, skipping")
@@ -415,18 +416,18 @@ def _sync_skills(
 
     # Display results
     if created:
-        click.echo(f"  [OK] {action_word}Created {len(created)} Skills:")
+        click.echo(f"  {SYMBOLS["check"]} {action_word}Created {len(created)} Skills:")
         for r in created:
             click.echo(f"    + {r['skill_name']}")
             if verbose:
-                click.echo(f"      → {r['target_dir']}")
+                click.echo(f"      -> {r['target_dir']}")
 
     if updated:
-        click.echo(f"  [OK] {action_word}Updated {len(updated)} Skills:")
+        click.echo(f"  {SYMBOLS["check"]} {action_word}Updated {len(updated)} Skills:")
         for r in updated:
             click.echo(f"    ~ {r['skill_name']}")
             if verbose:
-                click.echo(f"      → {r['target_dir']}")
+                click.echo(f"      -> {r['target_dir']}")
 
     if skipped and verbose:
         click.echo(f"  - Skipped {len(skipped)} unchanged Skills:")
@@ -463,7 +464,7 @@ def _sync_recipes(
         click.echo(f"Recipes source directory not found: {syncer.source_dir}", err=True)
         return
 
-    click.echo("📦 Recipes Sync")
+    click.echo(f"{SYMBOLS["package"]} Recipes Sync")
 
     if not allowed_patterns:
         click.echo("  No recipes configured in manifest, skipping")
@@ -558,18 +559,18 @@ def _sync_recipes(
 
     # Display results
     if created:
-        click.echo(f"  [OK] {action_word}Created {len(created)} Recipes:")
+        click.echo(f"  {SYMBOLS["check"]} {action_word}Created {len(created)} Recipes:")
         for r in created:
             click.echo(f"    + {r['recipe_name']}")
             if verbose:
-                click.echo(f"      → {r['target_dir']}")
+                click.echo(f"      -> {r['target_dir']}")
 
     if updated:
-        click.echo(f"  [OK] {action_word}Updated {len(updated)} Recipes:")
+        click.echo(f"  {SYMBOLS["check"]} {action_word}Updated {len(updated)} Recipes:")
         for r in updated:
             click.echo(f"    ~ {r['recipe_name']}")
             if verbose:
-                click.echo(f"      → {r['target_dir']}")
+                click.echo(f"      -> {r['target_dir']}")
 
     if skipped and verbose:
         click.echo(f"  - Skipped {len(skipped)} unchanged Recipes:")
