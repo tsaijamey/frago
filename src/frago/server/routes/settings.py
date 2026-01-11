@@ -382,7 +382,17 @@ async def open_path(request: OpenPathRequest) -> ApiResponse:
                 parent = os.path.dirname(path)
                 subprocess.run(["xdg-open", parent], check=True)
             elif system == "Windows":
-                subprocess.run(["explorer", "/select,", path], check=True)
+                # Prevent cmd.exe window flash
+                CREATE_NO_WINDOW = 0x08000000
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                subprocess.run(
+                    ["explorer", "/select,", path],
+                    check=True,
+                    creationflags=CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                )
             else:
                 return ApiResponse(status="error", error=f"Unsupported platform: {system}")
         else:
@@ -492,7 +502,16 @@ async def open_in_vscode() -> ApiResponse:
             subprocess.Popen(["open", "-a", vscode_path, settings_path])
         else:
             # Linux/Windows: use the 'code' command directly
-            subprocess.Popen([vscode_path, settings_path])
+            popen_kwargs: dict = {}
+            if platform.system() == "Windows":
+                # Prevent cmd.exe window flash
+                CREATE_NO_WINDOW = 0x08000000
+                popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                popen_kwargs["startupinfo"] = startupinfo
+            subprocess.Popen([vscode_path, settings_path], **popen_kwargs)
 
         return ApiResponse(status="ok", message="Opened in VSCode")
     except Exception as e:

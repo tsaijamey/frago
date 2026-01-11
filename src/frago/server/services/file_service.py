@@ -265,7 +265,16 @@ class FileService:
             elif system == "Darwin":
                 subprocess.Popen(["open", str(target_path)])
             elif system == "Windows":
-                subprocess.Popen(["explorer", str(target_path)])
+                # Prevent cmd.exe window flash
+                CREATE_NO_WINDOW = 0x08000000
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                subprocess.Popen(
+                    ["explorer", str(target_path)],
+                    creationflags=CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                )
             else:
                 return False
             return True

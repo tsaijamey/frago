@@ -8,6 +8,7 @@ Titles are stored in ~/.frago/sessions.json, separate from session metadata.
 import hashlib
 import json
 import logging
+import platform
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -221,13 +222,25 @@ Title:'''
                 "--output-format", "json",
             ]
 
+            popen_kwargs: dict = {
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "encoding": "utf-8",
+            }
+            # Windows: prevent cmd.exe window flash
+            if platform.system() == "Windows":
+                CREATE_NO_WINDOW = 0x08000000
+                popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                popen_kwargs["startupinfo"] = startupinfo
+
             process = subprocess.Popen(
                 prepare_command_for_windows(cmd),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8"
+                **popen_kwargs,
             )
 
             stdout, stderr = process.communicate(

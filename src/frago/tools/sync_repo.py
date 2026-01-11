@@ -7,12 +7,13 @@ Supports idempotency checks with ~/.claude/ to ensure resources are not lost.
 
 import filecmp
 import os
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import click
 
@@ -62,6 +63,19 @@ class FileConflict:
     remote_mtime: datetime
 
 
+def _get_subprocess_kwargs() -> Dict[str, Any]:
+    """Get subprocess kwargs with Windows hidden window support."""
+    kwargs: Dict[str, Any] = {}
+    if platform.system() == "Windows":
+        CREATE_NO_WINDOW = 0x08000000
+        kwargs["creationflags"] = CREATE_NO_WINDOW
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        kwargs["startupinfo"] = startupinfo
+    return kwargs
+
+
 def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
     """Execute git command"""
     return subprocess.run(
@@ -71,6 +85,7 @@ def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Compl
         text=True,
         encoding='utf-8',
         check=check,
+        **_get_subprocess_kwargs(),
     )
 
 
@@ -252,6 +267,7 @@ def _check_repo_visibility(repo_url: str) -> Optional[str]:
             text=True,
             encoding='utf-8',
             timeout=10,
+            **_get_subprocess_kwargs(),
         )
         if result.returncode == 0:
             visibility = result.stdout.strip().lower()
@@ -464,6 +480,7 @@ def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             encoding='utf-8',
+            **_get_subprocess_kwargs(),
         )
 
         if result.returncode == 0:
@@ -824,6 +841,7 @@ def sync(
                     ["gh", "auth", "setup-git"],
                     capture_output=True,
                     timeout=10,
+                    **_get_subprocess_kwargs(),
                 )
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass  # gh not installed or timeout, ignore
