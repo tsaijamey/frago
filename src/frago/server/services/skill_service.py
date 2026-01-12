@@ -5,7 +5,7 @@ Provides functionality to list and load skills from ~/.claude/skills/ directory.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import frontmatter
 
@@ -13,29 +13,23 @@ logger = logging.getLogger(__name__)
 
 
 class SkillService:
-    """Service for skill management operations."""
+    """Service for skill management operations.
 
-    # Cache for loaded skills
-    _cache: Optional[List[Dict[str, Any]]] = None
+    Note: This service always loads fresh from filesystem.
+    For cached access via WebSocket updates, use CacheService.get_skills().
+    """
 
-    @classmethod
-    def get_skills(cls, force_reload: bool = False) -> List[Dict[str, Any]]:
+    @staticmethod
+    def get_skills(force_reload: bool = False) -> List[Dict[str, Any]]:
         """Get list of available skills.
 
         Args:
-            force_reload: If True, bypass cache and reload from filesystem.
+            force_reload: Ignored. Always loads fresh. Use CacheService for caching.
 
         Returns:
             List of skill dictionaries with name, description, file_path.
         """
-        if cls._cache is None or force_reload:
-            cls._cache = cls._load_skills()
-        return cls._cache
-
-    @classmethod
-    def clear_cache(cls) -> None:
-        """Clear the skill cache."""
-        cls._cache = None
+        return SkillService._load_skills()
 
     @staticmethod
     def _load_skills() -> List[Dict[str, Any]]:

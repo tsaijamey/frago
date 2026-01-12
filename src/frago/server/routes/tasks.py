@@ -191,7 +191,7 @@ async def generate_task_title(task_id: str) -> dict:
     """Generate AI title for a single task.
 
     Uses haiku model via Claude Code CLI to generate a concise title
-    based on the session content.
+    based on the session content. Runs asynchronously to avoid blocking.
 
     Args:
         task_id: Task/session identifier.
@@ -207,7 +207,7 @@ async def generate_task_title(task_id: str) -> dict:
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
-    title = TaskService.generate_title_for_task(task_id)
+    title = await TaskService.generate_title_for_task_async(task_id)
     if title:
         return {"status": "ok", "title": title}
     return {"status": "error", "error": "Failed to generate title"}

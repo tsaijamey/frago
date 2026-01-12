@@ -5,6 +5,7 @@ Manages AI-generated session titles using Claude Code CLI with haiku model.
 Titles are stored in ~/.frago/sessions.json, separate from session metadata.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -144,6 +145,68 @@ class TitleManager:
         if title:
             data.setdefault("titles", {})[session_id] = {
                 "title": title[:100],  # Max 100 chars
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "model": "haiku",
+                "content_hash": content_hash
+            }
+            self._save_sessions_json()
+            logger.info(f"Generated title for session {session_id[:8]}: {title[:50]}")
+
+        return title
+
+    async def generate_title_if_needed_async(
+        self,
+        session_id: str,
+        agent_type: AgentType = AgentType.CLAUDE,
+        force: bool = False
+    ) -> Optional[str]:
+        """Async version of generate_title_if_needed.
+
+        Runs the blocking subprocess call in a thread pool executor.
+        Use this in async contexts (e.g., FastAPI routes) to avoid blocking.
+
+        Args:
+            session_id: Session ID
+            agent_type: Agent type
+            force: Force regenerate even if exists
+
+        Returns:
+            Generated title or None on failure
+        """
+        data = self._load_sessions_json()
+
+        # Check if already generated (fast sync check)
+        if not force and session_id in data.get("titles", {}):
+            return data["titles"][session_id].get("title")
+
+        # Get session content (fast sync operation)
+        content = self._get_session_content(session_id, agent_type)
+        if not content or len(content.strip()) < 50:
+            logger.debug(f"Insufficient content for title generation: {session_id}")
+            return None
+
+        # Calculate content hash
+        content_hash = self._hash_content(content[:5000])
+
+        # Check if content unchanged (skip regeneration)
+        if session_id in data.get("titles", {}):
+            existing = data["titles"][session_id]
+            if existing.get("content_hash") == content_hash and not force:
+                return existing.get("title")
+
+        # Run blocking subprocess call in executor
+        loop = asyncio.get_event_loop()
+        title = await loop.run_in_executor(
+            None,
+            self._call_haiku_for_title,
+            content[:5000]
+        )
+
+        if title:
+            # Reload data in case it changed during async operation
+            data = self._load_sessions_json()
+            data.setdefault("titles", {})[session_id] = {
+                "title": title[:100],
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "model": "haiku",
                 "content_hash": content_hash
