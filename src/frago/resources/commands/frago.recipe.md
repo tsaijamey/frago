@@ -13,6 +13,7 @@ LOAD_BEFORE_START: use Task tool (subagent_type=Explore) to parallel read:
 ~/.claude/commands/frago/rules/SCREENSHOT_RULES.md
 ~/.claude/commands/frago/guides/SELECTOR_PRIORITY.md
 ~/.claude/commands/frago/guides/RECIPE_FIELDS.md
+~/.claude/commands/frago/guides/INTERACTIVE_RECIPE_GUIDE.md (if user needs interactive UI)
 ~/.claude/commands/frago/scripts/recipe_workflow.sh
 ~/.claude/commands/frago/scripts/common_commands.sh
 </ref_docs>
@@ -33,6 +34,19 @@ Workflow:
     use: orchestrate multiple recipes
     runtime: python
     dir: ~/.frago/recipes/workflows/
+
+Interactive (special Workflow):
+    use: user collaboration via web UI
+    runtime: python
+    dir: ~/.frago/recipes/workflows/<name>/
+    structure:
+        recipe.md (tags must include "interactive")
+        recipe.py (launcher + viewer setup)
+        assets/
+            index.html
+            app.js
+            style.css
+    SEE: ~/.claude/commands/frago/guides/INTERACTIVE_RECIPE_GUIDE.md
 </types>
 
 if START:
@@ -67,6 +81,8 @@ if EXPLORED:
         system op (file, clipboard) => Atomic
         calls multiple recipes => Workflow
         batch processing => Workflow
+        user decisions needed mid-process => Interactive Workflow
+        media annotation, creative review => Interactive Workflow
 
 if READY:
     use GENERATE_FILES:
@@ -86,19 +102,31 @@ if READY:
                 recipe.py (script)
                 examples/ (optional)
 
+        Interactive Workflow:
+            ~/.frago/recipes/workflows/<name>/
+                recipe.md (metadata, tags: [interactive])
+                recipe.py (launcher: scan dir, setup viewer, open browser)
+                assets/
+                    index.html (entry point)
+                    app.js (state, API calls, event handlers)
+                    style.css
+
     use VALIDATE:
         run `frago recipe validate <dir>`
 
 <env_vars>
 if recipe needs env vars (API keys, secrets):
     1. declare in recipe.md frontmatter:
-       ```yaml
+       ```
+       # recipe.md
+       ---
        env:
          API_KEY:
            required: true
            description: "API key for service X"
          TIMEOUT:
            default: "30"
+       ---
        ```
     2. add actual values to ~/.frago/.env (auto-loaded by frago recipe run)
 </env_vars>

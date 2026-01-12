@@ -36,9 +36,9 @@ frago recipe validate <path> --format json
 
 Recipes can declare required environment variables, which will be automatically loaded from `~/.frago/.env` at runtime.
 
-### env Field Structure
+### env Field Structure (in recipe.md frontmatter)
 
-```yaml
+```
 env:
   VAR_NAME:
     required: true          # Whether required (default false)
@@ -46,9 +46,9 @@ env:
     description: "Variable description"  # Description
 ```
 
-### Example
+### Example (in recipe.md frontmatter)
 
-```yaml
+```
 env:
   OPENAI_API_KEY:
     required: true
@@ -168,7 +168,7 @@ Errors:
 
 ## Complete recipe.md Template
 
-```yaml
+```markdown
 ---
 name: platform_action_object
 type: atomic
@@ -212,3 +212,5 @@ env:
 ## Notes
 ## Update History
 ```
+
+**Note**: Recipe metadata is stored in `recipe.md` files using YAML frontmatter (content between `---` markers), NOT in separate `.yaml` files.
