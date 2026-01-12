@@ -348,6 +348,13 @@ class ChromeLauncher:
             "--disable-dev-shm-usage",
         ]
 
+        # Disable sandbox in Docker or when running as root (Linux only)
+        # Root user without sandbox causes Chrome to refuse to start
+        if os.environ.get("FRAGO_NO_SANDBOX") or (
+            self.system == "Linux" and os.geteuid() == 0
+        ):
+            cmd.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+
         # Set User-Agent based on system
         if self.system == "Darwin":
             user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
