@@ -370,6 +370,29 @@ def read_summary(
 # Session List Queries
 # ============================================================
 
+# Threshold for switching to streaming pagination (100KB)
+_STREAMING_THRESHOLD_BYTES = 100 * 1024
+
+
+def _count_jsonl_lines(file_path: Path) -> int:
+    """Count non-empty lines in JSONL file without loading into memory.
+
+    Args:
+        file_path: Path to JSONL file
+
+    Returns:
+        Number of non-empty lines
+    """
+    count = 0
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    count += 1
+    except Exception:
+        pass
+    return count
+
 
 def read_steps_paginated(
     session_id: str,
@@ -378,7 +401,10 @@ def read_steps_paginated(
     offset: int = 0,
     from_end: bool = False,
 ) -> Dict[str, Any]:
-    """Read session steps with pagination
+    """Read session steps with pagination.
+
+    For small files (<100KB), loads entire file (fast enough).
+    For large files, uses streaming to avoid O(file_size) memory usage.
 
     Args:
         session_id: Session ID
@@ -394,32 +420,88 @@ def read_steps_paginated(
     limit = max(1, min(10000, limit))
     offset = max(0, offset)
 
-    all_steps = read_steps(session_id, agent_type)
-    total = len(all_steps)
+    session_dir = get_session_dir(session_id, agent_type)
+    steps_path = session_dir / "steps.jsonl"
+
+    if not steps_path.exists():
+        return {
+            "steps": [],
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "has_more": False,
+        }
+
+    # Check file size to decide strategy
+    try:
+        file_size = steps_path.stat().st_size
+    except OSError:
+        file_size = 0
+
+    # Small files: use in-memory loading (fast enough, simpler)
+    if file_size < _STREAMING_THRESHOLD_BYTES:
+        all_steps = read_steps(session_id, agent_type)
+        total = len(all_steps)
+
+        if from_end:
+            start = max(0, total - offset - limit)
+            end = total - offset
+            steps = all_steps[start:end]
+            steps.reverse()
+            return {
+                "steps": steps,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": start > 0,
+            }
+        else:
+            return {
+                "steps": all_steps[offset : offset + limit],
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < total,
+            }
+
+    # Large files: streaming pagination
+    total = _count_jsonl_lines(steps_path)
 
     if from_end:
-        # Read from end: offset=0 gets the latest `limit` steps
-        # Steps are returned in reverse order (newest first)
-        start = max(0, total - offset - limit)
-        end = total - offset
-        steps = all_steps[start:end]
-        steps.reverse()  # Newest first
-        return {
-            "steps": steps,
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "has_more": start > 0,
-        }
+        # Calculate range from end
+        start_line = max(0, total - offset - limit)
+        end_line = total - offset
     else:
-        # Original logic: read from beginning
-        return {
-            "steps": all_steps[offset : offset + limit],
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "has_more": offset + limit < total,
-        }
+        start_line = offset
+        end_line = min(offset + limit, total)
+
+    steps: List[SessionStep] = []
+    try:
+        with open(steps_path, "r", encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= end_line:
+                    break
+                if i >= start_line:
+                    line = line.strip()
+                    if line:
+                        data = json.loads(line)
+                        steps.append(SessionStep.model_validate(data))
+    except Exception as e:
+        logger.warning(f"Failed to read steps with streaming pagination: {e}")
+
+    if from_end:
+        steps.reverse()
+        has_more = start_line > 0
+    else:
+        has_more = end_line < total
+
+    return {
+        "steps": steps,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": has_more,
+    }
 
 
 def count_sessions(
