@@ -89,6 +89,27 @@ def get_gh_command() -> List[str]:
     return [str(gh_path_obj)]
 
 
+def resolve_command_path(cmd: List[str]) -> List[str]:
+    """Resolve command to full path on all platforms.
+
+    Ensures subprocess can find the executable regardless of PATH inheritance issues.
+
+    Args:
+        cmd: Command and arguments as list
+
+    Returns:
+        Command list with first element resolved to full path if found
+    """
+    if not cmd:
+        return cmd
+
+    executable = shutil.which(cmd[0])
+    if executable:
+        return [executable] + cmd[1:]
+
+    return cmd
+
+
 def get_utf8_env() -> Dict[str, str]:
     """Get environment variables with UTF-8 encoding for Windows compatibility.
 
@@ -146,7 +167,7 @@ def run_subprocess(
         **get_windows_subprocess_kwargs(),
     }
 
-    return subprocess.run(prepare_command_for_windows(cmd), **kwargs)
+    return subprocess.run(resolve_command_path(cmd), **kwargs)
 
 
 def run_subprocess_background(
@@ -191,7 +212,7 @@ def run_subprocess_background(
         # Unix: use start_new_session to detach from terminal
         kwargs["start_new_session"] = start_new_session
 
-    return subprocess.Popen(prepare_command_for_windows(cmd), **kwargs)
+    return subprocess.Popen(resolve_command_path(cmd), **kwargs)
 
 
 def run_subprocess_interactive(
@@ -227,4 +248,4 @@ def run_subprocess_interactive(
         **get_windows_subprocess_kwargs(),
     }
 
-    return subprocess.Popen(prepare_command_for_windows(cmd), **kwargs)
+    return subprocess.Popen(resolve_command_path(cmd), **kwargs)
