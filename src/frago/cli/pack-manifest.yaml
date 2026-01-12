@@ -4,7 +4,7 @@
 
 commands:
   - frago.run.md
-  - frago.do.md
+  - frago.agent.md
   - frago.recipe.md
   - frago.skill.md
   - frago.test.md

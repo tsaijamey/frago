@@ -269,7 +269,7 @@ def _build_agent_prompt(user_prompt: str) -> str:
 
     # Extract key command descriptions
     command_descriptions = []
-    key_commands = ["/frago.run", "/frago.do", "/frago.recipe", "/frago.test"]
+    key_commands = ["/frago.run", "/frago.recipe", "/frago.test"]
 
     for cmd in key_commands:
         if cmd in commands:
@@ -289,8 +289,7 @@ You are an intelligent automation agent. Choose the appropriate execution mode b
 ## Execution Strategy
 
 Use Slash Commands to invoke appropriate skills based on user intent:
-- **Explore/Research/Learn** → /frago.run
-- **Execute/Complete/Do** → /frago.do
+- **Execute/Complete/Explore/Research** → /frago.run
 - **Create Recipe/Automation** → /frago.recipe
 - **Test/Verify Recipe** → /frago.test
 If the task is simple and clear, you can also use other tools directly without invoking the above Slash Commands.{lang_section}
@@ -403,8 +402,7 @@ def agent(
     Intelligent Agent: Automatically choose execution mode based on user intent
 
     agent determines which mode to use based on task intent:
-    - Explore/Research → /frago.run
-    - Execute Task → /frago.do
+    - Execute/Explore/Research → /frago.run
     - Create Recipe → /frago.recipe
     - Test Recipe → /frago.test
 
