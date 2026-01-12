@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from frago.compat import get_windows_subprocess_kwargs
+
 
 PROJECTS_DIR = Path.home() / ".frago" / "projects"
 
@@ -265,15 +267,9 @@ class FileService:
             elif system == "Darwin":
                 subprocess.Popen(["open", str(target_path)])
             elif system == "Windows":
-                # Prevent cmd.exe window flash
-                CREATE_NO_WINDOW = 0x08000000
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
                 subprocess.Popen(
                     ["explorer", str(target_path)],
-                    creationflags=CREATE_NO_WINDOW,
-                    startupinfo=startupinfo,
+                    **get_windows_subprocess_kwargs(),
                 )
             else:
                 return False

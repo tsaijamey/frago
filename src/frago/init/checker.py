@@ -10,7 +10,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
-from frago.compat import prepare_command_for_windows as _prepare_command_for_windows
+from frago.compat import get_windows_subprocess_kwargs, prepare_command_for_windows as _prepare_command_for_windows
 from frago.init.models import DependencyCheckResult
 
 
@@ -20,22 +20,13 @@ def _get_subprocess_kwargs() -> Dict[str, Any]:
     Returns:
         Dictionary of kwargs for subprocess.run to prevent cmd.exe flash on Windows.
     """
-    kwargs: Dict[str, Any] = {
+    return {
         "capture_output": True,
         "text": True,
         "encoding": "utf-8",
         "timeout": 5,
+        **get_windows_subprocess_kwargs(),
     }
-
-    if platform.system() == "Windows":
-        CREATE_NO_WINDOW = 0x08000000
-        kwargs["creationflags"] = CREATE_NO_WINDOW
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startupinfo
-
-    return kwargs
 
 
 # Default version requirements

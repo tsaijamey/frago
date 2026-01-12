@@ -66,3 +66,43 @@ def prepare_command_for_windows(cmd: List[str]) -> List[str]:
         return [executable] + cmd[1:]
 
     return cmd
+
+
+def get_windows_subprocess_kwargs(detach: bool = False) -> dict:
+    """Get Windows-specific subprocess kwargs to hide console window.
+
+    On Windows, subprocess calls to .CMD files or console applications
+    can flash a console window. This function returns kwargs that prevent
+    the window from appearing.
+
+    Args:
+        detach: If True, also detach process from parent (for daemons/background tasks)
+
+    Returns:
+        dict with creationflags and startupinfo for subprocess calls.
+        Empty dict on non-Windows platforms.
+
+    Example:
+        subprocess.run(cmd, **get_windows_subprocess_kwargs())
+        subprocess.Popen(cmd, **get_windows_subprocess_kwargs(detach=True))
+    """
+    if platform.system() != "Windows":
+        return {}
+
+    import subprocess
+
+    CREATE_NO_WINDOW = 0x08000000
+    kwargs: dict = {}
+
+    if detach:
+        DETACHED_PROCESS = 0x00000008
+        kwargs["creationflags"] = CREATE_NO_WINDOW | DETACHED_PROCESS
+    else:
+        kwargs["creationflags"] = CREATE_NO_WINDOW
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    kwargs["startupinfo"] = startupinfo
+
+    return kwargs

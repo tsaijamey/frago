@@ -15,9 +15,40 @@ from typing import Optional, Tuple
 
 import psutil
 
-# Fixed port for Frago server
-SERVER_PORT = 8093
-SERVER_HOST = "127.0.0.1"
+from frago.compat import get_windows_subprocess_kwargs
+
+# Default server configuration
+DEFAULT_SERVER_PORT = 8093
+DEFAULT_SERVER_HOST = "127.0.0.1"
+
+
+def get_server_port() -> int:
+    """Get the server port from environment or default.
+
+    Priority: FRAGO_SERVER_PORT env var > default (8093)
+    """
+    port_str = os.environ.get("FRAGO_SERVER_PORT")
+    if port_str:
+        try:
+            port = int(port_str)
+            if 1 <= port <= 65535:
+                return port
+        except ValueError:
+            pass
+    return DEFAULT_SERVER_PORT
+
+
+def get_server_host() -> str:
+    """Get the server host from environment or default.
+
+    Priority: FRAGO_SERVER_HOST env var > default (127.0.0.1)
+    """
+    return os.environ.get("FRAGO_SERVER_HOST", DEFAULT_SERVER_HOST)
+
+
+# Runtime server configuration (for backward compatibility)
+SERVER_PORT = get_server_port()
+SERVER_HOST = get_server_host()
 
 # PID and log file paths
 FRAGO_DIR = Path.home() / ".frago"
@@ -68,6 +99,31 @@ def clear_pid() -> None:
     """Remove the PID file."""
     pid_file = get_pid_file()
     pid_file.unlink(missing_ok=True)
+
+
+def cleanup_stale_pid() -> bool:
+    """Proactively clean stale PID file on startup.
+
+    Checks if the PID file points to a valid frago process.
+    If not (process died, wrong process, etc.), removes the stale file.
+
+    Returns:
+        True if a stale PID was cleaned up, False otherwise
+    """
+    pid = read_pid()
+    if pid is None:
+        return False
+
+    try:
+        proc = psutil.Process(pid)
+        if proc.is_running() and is_frago_process(proc):
+            return False  # Process is valid, nothing to clean
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        pass
+
+    # Stale PID - clean up
+    clear_pid()
+    return True
 
 
 def is_frago_process(proc: psutil.Process) -> bool:
@@ -232,6 +288,9 @@ def start_daemon() -> Tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
+    # Proactively clean up stale PID file from crashed processes
+    cleanup_stale_pid()
+
     # Check if already running
     running, existing_pid = is_server_running()
     if running:
@@ -269,15 +328,6 @@ def start_daemon() -> Tuple[bool, str]:
 
             cmd = [executable, "-m", "frago.server.runner", "--daemon"]
 
-            # Windows: use CREATE_NO_WINDOW and DETACHED_PROCESS
-            CREATE_NO_WINDOW = 0x08000000
-            DETACHED_PROCESS = 0x00000008
-
-            # STARTUPINFO ensures subprocess is completely hidden
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-
             # Open log file and keep it open (don't use 'with' block)
             # subprocess will inherit the handle
             log_f = open(log_file, "a")
@@ -286,8 +336,7 @@ def start_daemon() -> Tuple[bool, str]:
                 stdin=subprocess.DEVNULL,  # Critical: close stdin to avoid console
                 stdout=log_f,
                 stderr=subprocess.STDOUT,
-                creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-                startupinfo=startupinfo,
+                **get_windows_subprocess_kwargs(detach=True),
             )
             # Close our handle - subprocess has its own copy
             log_f.close()

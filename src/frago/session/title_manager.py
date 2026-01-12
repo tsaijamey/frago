@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from frago.compat import prepare_command_for_windows
+from frago.compat import get_windows_subprocess_kwargs, prepare_command_for_windows
 from frago.session.models import AgentType
 
 logger = logging.getLogger(__name__)
@@ -228,15 +228,8 @@ Title:'''
                 "stderr": subprocess.PIPE,
                 "text": True,
                 "encoding": "utf-8",
+                **get_windows_subprocess_kwargs(),
             }
-            # Windows: prevent cmd.exe window flash
-            if platform.system() == "Windows":
-                CREATE_NO_WINDOW = 0x08000000
-                popen_kwargs["creationflags"] = CREATE_NO_WINDOW
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-                popen_kwargs["startupinfo"] = startupinfo
 
             process = subprocess.Popen(
                 prepare_command_for_windows(cmd),

@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.compat import prepare_command_for_windows
+from frago.compat import get_windows_subprocess_kwargs, prepare_command_for_windows
 
 logger = logging.getLogger(__name__)
 
@@ -143,16 +143,8 @@ def run_subprocess(
         "timeout": timeout,
         "check": check,
         "cwd": cwd,
+        **get_windows_subprocess_kwargs(),
     }
-
-    if platform.system() == "Windows":
-        # Windows: use CREATE_NO_WINDOW and STARTUPINFO to hide console
-        CREATE_NO_WINDOW = 0x08000000
-        kwargs["creationflags"] = CREATE_NO_WINDOW
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startupinfo
 
     return subprocess.run(prepare_command_for_windows(cmd), **kwargs)
 
@@ -192,18 +184,10 @@ def run_subprocess_background(
         "stdin": stdin,
         "cwd": cwd,
         "env": env,
+        **get_windows_subprocess_kwargs(),
     }
 
-    if platform.system() == "Windows":
-        # Windows: use CREATE_NO_WINDOW and STARTUPINFO to completely hide console
-        CREATE_NO_WINDOW = 0x08000000
-        kwargs["creationflags"] = CREATE_NO_WINDOW
-        # STARTUPINFO prevents even brief window flash when executing .CMD files
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startupinfo
-    else:
+    if platform.system() != "Windows":
         # Unix: use start_new_session to detach from terminal
         kwargs["start_new_session"] = start_new_session
 
@@ -240,16 +224,7 @@ def run_subprocess_interactive(
         "bufsize": 1,
         "cwd": cwd,
         "env": env,
+        **get_windows_subprocess_kwargs(),
     }
-
-    if platform.system() == "Windows":
-        # Windows: use CREATE_NO_WINDOW and STARTUPINFO to completely hide console
-        CREATE_NO_WINDOW = 0x08000000
-        kwargs["creationflags"] = CREATE_NO_WINDOW
-        # STARTUPINFO prevents even brief window flash when executing .CMD files
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startupinfo
 
     return subprocess.Popen(prepare_command_for_windows(cmd), **kwargs)

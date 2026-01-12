@@ -8,7 +8,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+import platform
+import subprocess
+
 import requests
+
+from frago.compat import get_windows_subprocess_kwargs
 
 from .exceptions import RecipeAlreadyExistsError, RecipeInstallError
 from .metadata import parse_metadata_file, validate_metadata
@@ -176,15 +181,8 @@ class RecipeInstaller:
                     "capture_output": True,
                     "text": True,
                     "timeout": 5,
+                    **get_windows_subprocess_kwargs(),
                 }
-                # Windows: prevent cmd.exe window flash
-                if platform.system() == "Windows":
-                    CREATE_NO_WINDOW = 0x08000000
-                    run_kwargs["creationflags"] = CREATE_NO_WINDOW
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
-                    run_kwargs["startupinfo"] = startupinfo
 
                 result = subprocess.run(
                     gh_cmd + ["auth", "token"],

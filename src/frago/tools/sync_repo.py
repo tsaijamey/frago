@@ -17,6 +17,8 @@ from typing import Any, Dict, Optional
 
 import click
 
+from frago.compat import get_windows_subprocess_kwargs
+
 # System-level directories
 FRAGO_HOME = Path.home() / ".frago"
 CLAUDE_HOME = Path.home() / ".claude"
@@ -65,15 +67,7 @@ class FileConflict:
 
 def _get_subprocess_kwargs() -> Dict[str, Any]:
     """Get subprocess kwargs with Windows hidden window support."""
-    kwargs: Dict[str, Any] = {}
-    if platform.system() == "Windows":
-        CREATE_NO_WINDOW = 0x08000000
-        kwargs["creationflags"] = CREATE_NO_WINDOW
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startupinfo
-    return kwargs
+    return get_windows_subprocess_kwargs()
 
 
 def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:

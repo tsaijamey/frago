@@ -9,9 +9,11 @@ from typing import Optional, Tuple
 
 import psutil
 
-# Fixed port configuration (014-server-background-redesign)
-SERVER_PORT = 8093
-SERVER_HOST = "127.0.0.1"
+from frago.server.daemon import get_server_host, get_server_port
+
+# Server configuration (uses environment variables if set)
+SERVER_PORT = get_server_port()
+SERVER_HOST = get_server_host()
 
 # Global server state (shared across modules)
 _server_started_at: Optional[str] = None
