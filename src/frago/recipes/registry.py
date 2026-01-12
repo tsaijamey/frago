@@ -1,4 +1,5 @@
 """Recipe registry"""
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,32 @@ from .metadata import RecipeMetadata, parse_metadata_file, validate_metadata
 
 # Source priority order (highest to lowest)
 SOURCE_PRIORITY = ['User', 'Community', 'Official']
+
+# Module-level singleton for RecipeRegistry
+_registry_instance: Optional["RecipeRegistry"] = None
+_registry_lock = threading.Lock()
+
+
+def get_registry() -> "RecipeRegistry":
+    """Get or create singleton RecipeRegistry.
+
+    This function provides a cached registry instance that avoids
+    re-scanning the filesystem on every call.
+    """
+    global _registry_instance
+    if _registry_instance is None:
+        with _registry_lock:
+            if _registry_instance is None:
+                _registry_instance = RecipeRegistry()
+                _registry_instance.scan()
+    return _registry_instance
+
+
+def invalidate_registry() -> None:
+    """Force re-scan on next access by clearing the singleton."""
+    global _registry_instance
+    with _registry_lock:
+        _registry_instance = None
 
 
 @dataclass
@@ -43,6 +70,8 @@ class RecipeRegistry:
         self.search_paths: list[Path] = []
         # Nested dictionary: {recipe_name: {source: Recipe}}
         self.recipes: dict[str, dict[str, Recipe]] = {}
+        # Track modification times for cache invalidation
+        self._last_scan_mtimes: dict[Path, float] = {}
         self._setup_search_paths()
 
     def _setup_search_paths(self) -> None:
@@ -67,11 +96,38 @@ class RecipeRegistry:
             # Official resources not available
             pass
 
+    def needs_rescan(self) -> bool:
+        """Check if any recipe directory was modified since last scan.
+
+        Returns:
+            True if any search path has been modified and needs re-scanning.
+        """
+        for path in self.search_paths:
+            if not path.exists():
+                continue
+            try:
+                current_mtime = path.stat().st_mtime
+                if path not in self._last_scan_mtimes:
+                    return True
+                if current_mtime > self._last_scan_mtimes[path]:
+                    return True
+            except OSError:
+                # Path became inaccessible, trigger rescan
+                return True
+        return False
+
     def scan(self) -> None:
         """Scan all search_paths, parse metadata and build index"""
         self.recipes.clear()
+        self._last_scan_mtimes.clear()
 
         for search_path in self.search_paths:
+            # Record mtime before scanning
+            if search_path.exists():
+                try:
+                    self._last_scan_mtimes[search_path] = search_path.stat().st_mtime
+                except OSError:
+                    pass
             source = self._get_source_label(search_path)
             self._scan_directory(search_path, source)
 

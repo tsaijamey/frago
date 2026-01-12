@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import run_subprocess_background
+from frago.server.services.base import run_subprocess, run_subprocess_background
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +43,21 @@ class RecipeService:
         """Load recipes directly from RecipeRegistry.
 
         Uses Python module directly instead of CLI to avoid cmd.exe flash on Windows.
+        Uses singleton registry with mtime-based cache invalidation.
 
         Returns:
             List of recipe dictionaries.
         """
         recipes = []
         try:
-            from frago.recipes.registry import RecipeRegistry
+            from frago.recipes.registry import get_registry, invalidate_registry
 
-            registry = RecipeRegistry()
-            registry.scan()
+            registry = get_registry()
+            # Check if registry needs refresh due to file changes
+            if registry.needs_rescan():
+                invalidate_registry()
+                registry = get_registry()
+
             for recipe in registry.list_all():
                 recipes.append({
                     "name": recipe.metadata.name,
