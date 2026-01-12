@@ -2,12 +2,14 @@
 
 Provides general filesystem access for recipes and static HTML+JS:
 - GET /api/file: Read file content
-- POST /api/file: Write file content
+- POST /api/file: Write file content (supports base64 encoding for binary files)
 - GET /api/files: List directory contents
 """
 
+import base64
 import mimetypes
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -21,6 +23,7 @@ class WriteFileRequest(BaseModel):
     """Request body for writing file content."""
 
     content: str
+    encoding: Optional[str] = None  # None for text, "base64" for binary
 
 
 @router.get("/file")
@@ -64,7 +67,7 @@ async def write_file(
 
     Args:
         path: Absolute path to the file
-        request: Request body containing file content
+        request: Request body containing file content and optional encoding
 
     Returns:
         Status and written file path
@@ -75,7 +78,17 @@ async def write_file(
         raise HTTPException(status_code=400, detail="Path must be absolute")
 
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(request.content, encoding="utf-8")
+
+    if request.encoding == "base64":
+        # Decode base64 and write as binary
+        try:
+            binary_data = base64.b64decode(request.content)
+            file_path.write_bytes(binary_data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid base64 data: {e}")
+    else:
+        # Write as text (default behavior)
+        file_path.write_text(request.content, encoding="utf-8")
 
     return {"status": "ok", "path": str(file_path)}
 
