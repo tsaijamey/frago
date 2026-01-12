@@ -119,8 +119,8 @@ async def get_recipe(name: str) -> RecipeDetailResponse:
     )
 
 
-@router.post("/recipes/{name}/run", response_model=TaskItemResponse)
-async def run_recipe(name: str, request: RecipeRunRequest = None) -> TaskItemResponse:
+@router.post("/recipes/{name}/run")
+async def run_recipe(name: str, request: RecipeRunRequest = None):
     """Execute a recipe.
 
     Args:
@@ -128,13 +128,12 @@ async def run_recipe(name: str, request: RecipeRunRequest = None) -> TaskItemRes
         request: Optional execution parameters
 
     Returns:
-        Started task information
+        Recipe output (JSON parsed if valid) or task information
 
     Raises:
         HTTPException: 404 if recipe not found
     """
-    import uuid
-    from datetime import datetime, timezone
+    import json
 
     # Verify recipe exists
     recipe = RecipeService.get_recipe(name)
@@ -152,17 +151,21 @@ async def run_recipe(name: str, request: RecipeRunRequest = None) -> TaskItemRes
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error"))
 
-    # Return task information
-    return TaskItemResponse(
-        id=str(uuid.uuid4()),
-        title=f"Recipe: {name}",
-        status="completed" if result.get("status") == "ok" else "error",
-        project_path=None,
-        agent_type="recipe",
-        started_at=datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc),
-        duration_ms=result.get("duration_ms"),
-    )
+    # Try to parse recipe output as JSON and return directly
+    # This allows recipes to return structured data (like generated_files)
+    output = result.get("output")
+    if output:
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: return raw output or success status
+    return {
+        "success": True,
+        "output": output,
+        "duration_ms": result.get("duration_ms"),
+    }
 
 
 # ============================================================
