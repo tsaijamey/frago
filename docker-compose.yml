@@ -1,0 +1,31 @@
+services:
+  frago:
+    build: .
+    image: frago:latest
+    volumes:
+      - ~/.frago:/home/frago/.frago
+    environment:
+      - FRAGO_NO_SANDBOX=1
+
+  frago-chrome:
+    build: .
+    image: frago:latest
+    volumes:
+      - ~/.frago:/home/frago/.frago
+    ports:
+      - "9222:9222"
+    environment:
+      - FRAGO_NO_SANDBOX=1
+    command: ["chrome", "start", "--headless"]
+    tty: true
+
+  frago-server:
+    build: .
+    image: frago:latest
+    volumes:
+      - ~/.frago:/home/frago/.frago
+    ports:
+      - "8080:8080"
+    environment:
+      - FRAGO_NO_SANDBOX=1
+    command: ["server", "start", "--host", "0.0.0.0", "--port", "8080"]
