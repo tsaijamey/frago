@@ -16,9 +16,22 @@ const resources = {
   zh: { translation: zh },
 };
 
+// Get initial language from localStorage to prevent FOUC (Flash of Unstyled Content)
+function getInitialLanguage(): string {
+  try {
+    const stored = localStorage.getItem('language');
+    if (stored === 'en' || stored === 'zh') {
+      return stored;
+    }
+  } catch {
+    // localStorage not available
+  }
+  return 'en';
+}
+
 i18n.use(initReactI18next).init({
   resources,
-  lng: 'en', // Default language
+  lng: getInitialLanguage(),
   fallbackLng: 'en',
   interpolation: {
     escapeValue: false, // React already escapes values

@@ -229,6 +229,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLanguage: (language) => {
     console.log('[Language] setLanguage called with:', language);
     i18n.changeLanguage(language);
+    // Save to localStorage for FOUC prevention on next load
+    try {
+      localStorage.setItem('language', language);
+    } catch {
+      // localStorage not available
+    }
     const config = get().config;
     if (config) {
       set({ config: { ...config, language } });
@@ -277,11 +283,38 @@ export const useAppStore = create<AppState>((set, get) => ({
         applyTheme(config.theme);
       }
 
-      // Sync i18n language with config
-      const language = config.language || 'en';
-      if (i18n.language !== language) {
-        console.log('[Config] Syncing i18n language:', language);
-        i18n.changeLanguage(language);
+      // Sync language with localStorage (same pattern as theme)
+      let savedLanguage: Language | null = null;
+      try {
+        const stored = localStorage.getItem('language');
+        if (stored === 'en' || stored === 'zh') {
+          savedLanguage = stored;
+        }
+      } catch {
+        // localStorage not available
+      }
+
+      if (savedLanguage) {
+        // localStorage has value, use it as authoritative
+        if (savedLanguage !== config.language) {
+          console.log('[Config] Syncing localStorage language to backend:', savedLanguage);
+          api.updateConfig({ language: savedLanguage }).catch((err) => {
+            console.error('[Config] Failed to sync language to backend:', err);
+          });
+        }
+        // Language already applied during i18n init, no need to changeLanguage again
+      } else {
+        // No localStorage value, use backend config and save to localStorage
+        const language = config.language || 'en';
+        if (i18n.language !== language) {
+          console.log('[Config] Syncing i18n language:', language);
+          i18n.changeLanguage(language);
+        }
+        try {
+          localStorage.setItem('language', language);
+        } catch {
+          // localStorage not available
+        }
       }
     } catch (error) {
       console.error('[Config] Failed to load config:', error);
