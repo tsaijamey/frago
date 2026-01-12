@@ -590,12 +590,21 @@ def _get_run_screenshots_dir() -> Path:
     default=30,
     help='Page load timeout in seconds, default 30'
 )
+@click.option(
+    '--no-border',
+    is_flag=True,
+    default=False,
+    help='Disable viewport border indicator (for interactive UIs)'
+)
 @click.pass_context
 @print_usage
-def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float = 30):
+def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float = 30, no_border: bool = False):
     """Navigate to URL and get page features after loading"""
     try:
         with create_session(ctx) as session:
+            # Disable viewport border if requested
+            if no_border:
+                session.auto_viewport_border = False
             # 1. Navigate
             session.navigate(url)
             _print_msg("success", f"Navigated to {url}", "navigation", {"url": url})
@@ -614,6 +623,7 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float 
 
     except CDPError as e:
         _print_msg("error", f"Navigation failed: {e}", "navigation", {"url": url, "error": str(e)})
+        sys.exit(1)
 
 
 @click.command('click')
@@ -914,9 +924,10 @@ def status(ctx):
                 _print_msg("success", f"WebKit-Version: {chrome_status.get('WebKit-Version', 'unknown')}")
             else:
                 _print_msg("error", "CDP connection failed")
-                return
+                sys.exit(1)
     except CDPError as e:
         _print_msg("error", f"Status check failed: {e}")
+        sys.exit(1)
 
 
 @click.command('scroll')
