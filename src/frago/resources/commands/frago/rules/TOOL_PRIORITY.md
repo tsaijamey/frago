@@ -1,6 +1,6 @@
 # Tool Priority
 
-Applies to: `/frago.run`, `/frago.do`
+Applies to: `/frago.run`
 
 ## Priority Order
 

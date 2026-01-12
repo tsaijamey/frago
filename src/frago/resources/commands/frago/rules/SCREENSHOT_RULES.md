@@ -1,6 +1,6 @@
 # Screenshot Usage Rules (Mandatory Enforcement)
 
-Applies to: `/frago.run`, `/frago.do`, `/frago.recipe`, `/frago.test`
+Applies to: `/frago.run`, `/frago.recipe`, `/frago.test`
 
 ## ⛔ Core Prohibition (Task Fails If Violated)
 

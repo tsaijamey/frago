@@ -1,6 +1,6 @@
 # Workspace and Directory Management
 
-Applies to: `/frago.run`, `/frago.do`
+Applies to: `/frago.run`
 
 ## I. projects Directory
 

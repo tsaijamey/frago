@@ -1,6 +1,6 @@
 # Logging System Guide
 
-Applies to: `/frago.run`, `/frago.do`
+Applies to: `/frago.run`
 
 ## I. Automatic Logging vs Manual Logging
 

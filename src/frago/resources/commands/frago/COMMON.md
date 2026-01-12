@@ -18,10 +18,9 @@ uv tool install frago-cli
 
 | Command | Purpose | Documentation |
 |------|------|------|
-| `/frago.run` | Exploration & research (before Recipe creation) | [frago.dev.run.md](../frago.dev.run.md) |
-| `/frago.do` | One-time task execution | [frago.dev.do.md](../frago.dev.do.md) |
-| `/frago.recipe` | Recipe creation/update | [frago.dev.recipe.md](../frago.dev.recipe.md) |
-| `/frago.test` | Recipe testing & validation | [frago.dev.test.md](../frago.dev.test.md) |
+| `/frago.run` | Task execution & exploration | [frago.run.md](../frago.run.md) |
+| `/frago.recipe` | Recipe creation/update | [frago.recipe.md](../frago.recipe.md) |
+| `/frago.test` | Recipe testing & validation | [frago.test.md](../frago.test.md) |
 | `frago view` | Content viewer (presentations/docs) | See "Content Viewing" section below |
 
 ---
@@ -48,6 +47,8 @@ Detailed usage guides and best practices.
 |------|---------|------|
 | [LOGGING_GUIDE.md](guides/LOGGING_GUIDE.md) | run, do | Logging system (auto/manual, 6 execution_methods) |
 | [SELECTOR_PRIORITY.md](guides/SELECTOR_PRIORITY.md) | recipe | Selector priority (ARIA > ID > class) |
+| [RECIPE_FIELDS.md](guides/RECIPE_FIELDS.md) | recipe, test | Recipe metadata fields specification |
+| [INTERACTIVE_RECIPE_GUIDE.md](guides/INTERACTIVE_RECIPE_GUIDE.md) | recipe | Web UI recipes: viewer hosting, API patterns, state management |
 
 ---
 

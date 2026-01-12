@@ -1,6 +1,6 @@
 # Execution Principles
 
-Applies to: `/frago.run`, `/frago.do`
+Applies to: `/frago.run`
 
 ## Core Principles
 

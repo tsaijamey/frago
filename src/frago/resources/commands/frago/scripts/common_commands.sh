@@ -1,6 +1,6 @@
 #!/bin/bash
 # frago Common Command Quick Reference
-# Applies to: /frago.run, /frago.do, /frago.recipe, /frago.test
+# Applies to: /frago.run, /frago.recipe, /frago.test
 
 # === Chrome Management (Execute First) ===
 # Check CDP connection status
