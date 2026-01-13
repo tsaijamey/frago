@@ -1,7 +1,9 @@
 """Recipe installation and management module"""
 import json
+import logging
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -12,6 +14,8 @@ import platform
 import subprocess
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 from frago.compat import get_windows_subprocess_kwargs
 
@@ -197,6 +201,104 @@ class RecipeInstaller:
             headers["Authorization"] = f"token {token}"
 
         return headers
+
+    def _get_rate_limit_manager(self):
+        """Get rate limit manager instance (lazy import to avoid circular deps)."""
+        try:
+            from frago.server.services.github_rate_limit import GitHubRateLimitManager
+            return GitHubRateLimitManager.get_instance()
+        except ImportError:
+            return None
+
+    def _request_with_retry(
+        self,
+        url: str,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+    ) -> requests.Response:
+        """Make request with exponential backoff retry.
+
+        Args:
+            url: URL to request
+            max_retries: Maximum retry attempts
+            base_delay: Base delay in seconds for backoff
+
+        Returns:
+            Response object
+
+        Raises:
+            requests.RequestException: If all retries fail
+        """
+        rate_manager = self._get_rate_limit_manager()
+        last_error: Optional[Exception] = None
+
+        for attempt in range(max_retries):
+            try:
+                # Pre-request delay based on rate limit state
+                if rate_manager:
+                    delay = rate_manager.get_recommended_delay()
+                    if delay > 0.1:  # Only sleep for meaningful delays
+                        logger.debug(f"Rate limit delay: {delay:.1f}s before request")
+                        time.sleep(min(delay, 60))  # Cap at 60s
+
+                response = requests.get(
+                    url,
+                    headers=self._get_headers(),
+                    timeout=self.REQUEST_TIMEOUT
+                )
+
+                # Update rate limit state from response
+                if rate_manager:
+                    rate_manager.update_from_headers(dict(response.headers))
+
+                if response.status_code == 200:
+                    return response
+                elif response.status_code == 403:
+                    if rate_manager:
+                        rate_manager.record_error(is_rate_limit=True)
+                    # Check if we should retry
+                    if attempt < max_retries - 1 and rate_manager:
+                        wait_time = rate_manager.get_recommended_delay()
+                        if wait_time > 0:
+                            logger.info(
+                                f"Rate limited, waiting {wait_time:.0f}s before retry "
+                                f"(attempt {attempt + 1}/{max_retries})"
+                            )
+                            time.sleep(min(wait_time, 60))
+                            continue
+                    return response  # Return 403 for caller to handle
+                elif response.status_code >= 500:
+                    if rate_manager:
+                        rate_manager.record_error(is_rate_limit=False)
+                    # Server error, retry with backoff
+                    if attempt < max_retries - 1:
+                        backoff = base_delay * (2 ** attempt)
+                        logger.warning(
+                            f"Server error {response.status_code}, "
+                            f"retrying in {backoff:.1f}s"
+                        )
+                        time.sleep(backoff)
+                        continue
+
+                return response
+
+            except requests.RequestException as e:
+                last_error = e
+                if rate_manager:
+                    rate_manager.record_error(is_rate_limit=False)
+                if attempt < max_retries - 1:
+                    backoff = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Request failed, retrying in {backoff:.1f}s: {e}"
+                    )
+                    time.sleep(backoff)
+                else:
+                    raise
+
+        # Should not reach here, but just in case
+        if last_error:
+            raise last_error
+        raise requests.RequestException("Max retries exceeded")
 
     def install(
         self,
@@ -518,6 +620,13 @@ class RecipeInstaller:
         Returns:
             List of recipe info dictionaries
         """
+        rate_manager = self._get_rate_limit_manager()
+
+        # Check if we should skip due to rate limits
+        if rate_manager and rate_manager.should_skip_refresh():
+            logger.warning("Skipping community search due to rate limit")
+            return []
+
         # Fetch community recipes directory listing
         api_url = (
             f"{self.GITHUB_API_BASE}/repos/{self.COMMUNITY_REPO}"
@@ -525,11 +634,7 @@ class RecipeInstaller:
         )
 
         try:
-            response = requests.get(
-                api_url,
-                headers=self._get_headers(),
-                timeout=self.REQUEST_TIMEOUT
-            )
+            response = self._request_with_retry(api_url)
             if response.status_code == 404:
                 return []  # Directory doesn't exist yet
             if response.status_code == 403:
@@ -570,11 +675,8 @@ class RecipeInstaller:
             }
 
             try:
-                meta_response = requests.get(
-                    metadata_url,
-                    headers=self._get_headers(),
-                    timeout=self.REQUEST_TIMEOUT
-                )
+                # Use retry mechanism for metadata requests
+                meta_response = self._request_with_retry(metadata_url, max_retries=2)
                 if meta_response.status_code == 200:
                     import base64
                     content = base64.b64decode(

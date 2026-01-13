@@ -96,20 +96,43 @@ class CommunityRecipeService:
         self._task = None
         logger.info("Community recipe refresh stopped")
 
+    def _get_rate_limit_manager(self):
+        """Get rate limit manager instance (lazy import)."""
+        try:
+            from frago.server.services.github_rate_limit import GitHubRateLimitManager
+            return GitHubRateLimitManager.get_instance()
+        except ImportError:
+            return None
+
     async def _refresh_loop(self) -> None:
-        """Background refresh loop."""
+        """Background refresh loop with adaptive interval."""
         while not self._stop_event.is_set():
-            try:
-                await self._do_refresh()
-            except Exception as e:
-                logger.warning(f"Community recipe refresh failed: {e}")
-                self._last_fetch_error = str(e)
+            rate_manager = self._get_rate_limit_manager()
+
+            # Skip refresh if rate limited
+            if rate_manager and rate_manager.should_skip_refresh():
+                logger.info("Skipping community refresh due to rate limits")
+            else:
+                try:
+                    await self._do_refresh()
+                except Exception as e:
+                    logger.warning(f"Community recipe refresh failed: {e}")
+                    self._last_fetch_error = str(e)
+
+            # Calculate adaptive interval based on rate limit state
+            interval = COMMUNITY_REFRESH_INTERVAL_SECONDS
+            if rate_manager:
+                interval = rate_manager.get_adaptive_interval(
+                    COMMUNITY_REFRESH_INTERVAL_SECONDS
+                )
+                if interval != COMMUNITY_REFRESH_INTERVAL_SECONDS:
+                    logger.debug(f"Using adaptive refresh interval: {interval:.0f}s")
 
             # Wait for next refresh interval or stop event
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
-                    timeout=COMMUNITY_REFRESH_INTERVAL_SECONDS,
+                    timeout=interval,
                 )
                 # If wait completes without timeout, stop was requested
                 break
