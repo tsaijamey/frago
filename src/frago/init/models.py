@@ -63,6 +63,11 @@ class Config(BaseModel):
     # Community recipe repository
     community_repo: str = "tsaijamey/frago"  # GitHub repo for community recipes
 
+    # Official resource sync (from GitHub repo)
+    official_resource_sync_enabled: bool = False
+    official_resource_last_sync: Optional[datetime] = None
+    official_resource_last_commit: Optional[str] = None  # For detecting updates
+
     # Resource installation status
     resources_installed: bool = False
     resources_version: Optional[str] = None

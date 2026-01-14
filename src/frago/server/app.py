@@ -45,13 +45,32 @@ async def lifespan(app: FastAPI):
 
     Handles startup and shutdown events:
     - Initialize cache with preloaded data
+    - Auto-sync official resources if enabled
     - Start background session sync
     - Start community recipe refresh service
     - Stop services on shutdown
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     # Startup: Initialize cache first (preload all data)
     cache_service = CacheService.get_instance()
     await cache_service.initialize()
+
+    # Auto-sync official resources if enabled
+    try:
+        from frago.init.config_manager import load_config
+        from frago.server.services.official_resource_sync_service import (
+            OfficialResourceSyncService,
+        )
+
+        config = load_config()
+        if config.official_resource_sync_enabled:
+            logger.info("Auto-syncing official resources from GitHub...")
+            OfficialResourceSyncService.start_sync()
+    except Exception as e:
+        logger.warning("Failed to auto-sync official resources: %s", e)
 
     # Start sync service and link to cache
     sync_service = SyncService.get_instance()

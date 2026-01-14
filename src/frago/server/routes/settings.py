@@ -505,3 +505,109 @@ async def open_in_vscode() -> ApiResponse:
         return ApiResponse(status="ok", message="Opened in VSCode")
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
+
+
+# ============================================================
+# Official Resource Sync Endpoints
+# ============================================================
+
+
+class OfficialSyncStatusResponse(BaseModel):
+    """Official resource sync status response"""
+    enabled: bool
+    last_sync: Optional[str] = None
+    last_commit: Optional[str] = None
+    repo: str
+    branch: str
+
+
+class OfficialSyncResultResponse(BaseModel):
+    """Official resource sync result response"""
+    status: str  # "ok", "running", "idle", "error", "partial"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    commit: Optional[str] = None
+    commands: Optional[Dict] = None
+    skills: Optional[Dict] = None
+    error: Optional[str] = None
+    message: Optional[str] = None
+
+
+class OfficialSyncEnableRequest(BaseModel):
+    """Request to enable/disable official resource sync"""
+    enabled: bool
+
+
+@router.get("/settings/official-resource-sync/status", response_model=OfficialSyncStatusResponse)
+async def get_official_sync_status() -> OfficialSyncStatusResponse:
+    """Get official resource sync configuration and status."""
+    from frago.server.services.official_resource_sync_service import OfficialResourceSyncService
+
+    status = OfficialResourceSyncService.get_sync_status()
+
+    return OfficialSyncStatusResponse(
+        enabled=status.get("enabled", False),
+        last_sync=status.get("last_sync"),
+        last_commit=status.get("last_commit"),
+        repo=status.get("repo", ""),
+        branch=status.get("branch", "main"),
+    )
+
+
+@router.post("/settings/official-resource-sync/run", response_model=OfficialSyncResultResponse)
+async def run_official_sync() -> OfficialSyncResultResponse:
+    """Start official resource sync from GitHub.
+
+    Initiates sync in background and returns immediately.
+    Use GET /settings/official-resource-sync/result to poll for completion.
+    """
+    from frago.server.services.official_resource_sync_service import OfficialResourceSyncService
+
+    result = OfficialResourceSyncService.start_sync()
+
+    return OfficialSyncResultResponse(
+        status=result.get("status", "error"),
+        message=result.get("message"),
+        error=result.get("error"),
+    )
+
+
+@router.get("/settings/official-resource-sync/result", response_model=OfficialSyncResultResponse)
+async def get_official_sync_result() -> OfficialSyncResultResponse:
+    """Get the result of the current or last official sync operation.
+
+    Returns "running" if sync is in progress, or the final result.
+    """
+    from frago.server.services.official_resource_sync_service import OfficialResourceSyncService
+
+    result = OfficialResourceSyncService.get_sync_result()
+
+    # Refresh cache after successful sync
+    if result.get("status") == "ok":
+        cache = CacheService.get_instance()
+        await cache.refresh_skills(broadcast=True)
+
+    return OfficialSyncResultResponse(
+        status=result.get("status", "idle"),
+        started_at=result.get("started_at"),
+        completed_at=result.get("completed_at"),
+        commit=result.get("commit"),
+        commands=result.get("commands"),
+        skills=result.get("skills"),
+        error=result.get("error"),
+    )
+
+
+@router.put("/settings/official-resource-sync/enable", response_model=ApiResponse)
+async def set_official_sync_enabled(request: OfficialSyncEnableRequest) -> ApiResponse:
+    """Enable or disable auto-sync on startup."""
+    from frago.server.services.official_resource_sync_service import OfficialResourceSyncService
+
+    result = OfficialResourceSyncService.set_sync_enabled(request.enabled)
+
+    if result.get("status") == "ok":
+        return ApiResponse(
+            status="ok",
+            message=f"Official resource sync {'enabled' if request.enabled else 'disabled'}",
+        )
+    return ApiResponse(status="error", error=result.get("error", "Failed to update setting"))
