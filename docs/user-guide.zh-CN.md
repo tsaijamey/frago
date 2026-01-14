@@ -39,7 +39,7 @@ frago 适用于各类浏览器自动化和数据采集任务：
 
 ## 环境要求
 
-- **Python**：3.9+（核心功能必需）
+- **Python**：3.13+（核心功能必需）
 - **Chrome 浏览器**：用于 chrome-js Recipe 执行
 - **操作系统**：macOS、Linux、Windows
 - **包管理器**：`uv`（推荐）或 `pip`

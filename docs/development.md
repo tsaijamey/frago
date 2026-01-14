@@ -138,7 +138,7 @@ All CDP functionality accessed through unified CLI interface (`uv run frago <com
 - **Task Management**: Run command system (context persistence, JSONL logs)
 - **Session Monitoring**: watchdog + incremental JSONL parsing
 - **GUI Framework**: pywebview (cross-platform WebView)
-- **Script Orchestration**: Python 3.9+ (Recipe system + CDP tool layer)
+- **Script Orchestration**: Python 3.13+ (Recipe system + CDP tool layer)
 
 ## Development Standards
 

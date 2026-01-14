@@ -81,7 +81,7 @@ Recipe documentation body...
 ```python
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.13"
 # dependencies = []
 # ///
 """

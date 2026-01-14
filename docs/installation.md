@@ -62,11 +62,7 @@ uv tool install frago-cli
 
 That's it. One command.
 
-> **Windows Users**: If you have Python 3.14+ installed, you must specify Python 3.13:
-> ```powershell
-> uv tool install frago-cli --python 3.13
-> ```
-> This is because the GUI backend (pywebview) uses pythonnet which doesn't support Python 3.14 yet.
+> **Note**: Requires Python 3.13+.
 
 <details>
 <summary>Still want to use pip? (Not recommended)</summary>
@@ -213,7 +209,7 @@ uv sync --all-extras --dev
 
 ## System Requirements
 
-- **Python**: 3.9 - 3.13
+- **Python**: 3.13+
 - **Operating System**: macOS, Linux, Windows
 - **Chrome Browser**: For CDP browser automation
 
@@ -227,7 +223,7 @@ Before installing frago on Linux, ensure your system meets the following require
 
 | Dependency | Purpose | Required |
 |------------|---------|----------|
-| **Python 3.9+** | frago runtime | Yes |
+| **Python 3.13+** | frago runtime | Yes |
 | **Node.js 20+** | Claude Code dependency | Yes (for Claude Code integration) |
 | **Chrome Browser** | CDP browser automation | Yes (for CDP features) |
 | **curl or wget** | Download installation scripts (nvm) | Yes (for auto-install) |
@@ -300,7 +296,7 @@ paru -S google-chrome
 Before installing frago, verify:
 
 ```bash
-# Python 3.9+ installed
+# Python 3.13+ installed
 python3 --version
 
 # Chrome installed (for CDP features)
@@ -354,7 +350,7 @@ Chrome is typically pre-installed or available from [google.com/chrome](https://
 Before installing frago, verify:
 
 ```bash
-# Python 3.9+ installed (macOS 12+ includes Python 3)
+# Python 3.13+ installed
 python3 --version
 
 # Xcode Command Line Tools installed
@@ -396,7 +392,7 @@ winget install Python.Python.3.13
 # IMPORTANT: Check "Add Python to PATH" during installation!
 ```
 
-> **Important**: Use Python 3.9 - 3.13. Python 3.14+ is NOT supported on Windows due to pywebview/pythonnet compatibility issues.
+> **Note**: Python 3.13+ is required.
 
 ### Install Node.js (Required Before frago init)
 
@@ -435,17 +431,14 @@ For GUI features, WebView2 Runtime is required:
 winget install Microsoft.EdgeWebView2Runtime
 ```
 
-> **Python Version Requirement**: GUI mode requires Python 3.13 or earlier. If using Python 3.14+, install with:
-> ```powershell
-> uv tool install frago-cli --python 3.13
-> ```
+> **Note**: GUI mode requires Python 3.13+.
 
 ### Pre-Installation Checklist
 
 Before installing frago, verify in PowerShell:
 
 ```powershell
-# Python 3.9+ installed
+# Python 3.13+ installed
 python --version
 
 # Node.js 20+ installed (REQUIRED before frago init)

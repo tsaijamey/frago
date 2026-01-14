@@ -60,11 +60,7 @@ uv tool install frago-cli
 
 就这一行，完事。
 
-> **Windows 用户**：如果你安装了 Python 3.14+，必须指定 Python 3.13：
-> ```powershell
-> uv tool install frago-cli --python 3.13
-> ```
-> 这是因为 GUI 后端 (pywebview) 使用的 pythonnet 还不支持 Python 3.14。
+> **注意**：需要 Python 3.13+。
 
 <details>
 <summary>非要用 pip？（不推荐）</summary>
@@ -211,7 +207,7 @@ uv sync --all-extras --dev
 
 ## 系统要求
 
-- **Python**: 3.9 - 3.13
+- **Python**: 3.13+
 - **操作系统**: macOS, Linux, Windows
 - **Chrome 浏览器**: 用于 CDP 浏览器自动化
 
@@ -225,7 +221,7 @@ uv sync --all-extras --dev
 
 | 依赖 | 用途 | 是否必须 |
 |------|------|----------|
-| **Python 3.9+** | frago 运行时 | 是 |
+| **Python 3.13+** | frago 运行时 | 是 |
 | **Node.js 20+** | Claude Code 依赖 | 是（使用 Claude Code 集成时） |
 | **Chrome 浏览器** | CDP 浏览器自动化 | 是（使用 CDP 功能时） |
 | **curl 或 wget** | 下载安装脚本（nvm） | 是（自动安装时） |
@@ -298,7 +294,7 @@ paru -S google-chrome
 安装 frago 之前，请验证：
 
 ```bash
-# Python 3.9+ 已安装
+# Python 3.13+ 已安装
 python3 --version
 
 # Chrome 已安装（用于 CDP 功能）
@@ -352,7 +348,7 @@ Chrome 通常已预装或可从 [google.com/chrome](https://www.google.com/chrom
 安装 frago 之前，请验证：
 
 ```bash
-# Python 3.9+ 已安装（macOS 12+ 自带 Python 3）
+# Python 3.13+ 已安装
 python3 --version
 
 # Xcode 命令行工具已安装
@@ -394,7 +390,7 @@ winget install Python.Python.3.13
 # 重要：安装时勾选 "Add Python to PATH"！
 ```
 
-> **重要**：请使用 Python 3.9 - 3.13。由于 pywebview/pythonnet 兼容性问题，Windows 上暂不支持 Python 3.14+。
+> **注意**：需要 Python 3.13+。
 
 ### 安装 Node.js（frago init 之前必须安装）
 
@@ -433,17 +429,14 @@ GUI 功能需要 WebView2 Runtime：
 winget install Microsoft.EdgeWebView2Runtime
 ```
 
-> **Python 版本要求**：GUI 模式需要 Python 3.13 或更早版本。如果使用 Python 3.14+，请这样安装：
-> ```powershell
-> uv tool install frago-cli --python 3.13
-> ```
+> **注意**：GUI 模式需要 Python 3.13+。
 
 ### 安装前检查清单
 
 安装 frago 之前，在 PowerShell 中验证：
 
 ```powershell
-# Python 3.9+ 已安装
+# Python 3.13+ 已安装
 python --version
 
 # Node.js 20+ 已安装（frago init 之前必须安装）

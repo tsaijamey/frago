@@ -49,7 +49,7 @@ frago is suitable for various browser automation and data collection tasks:
 
 ## Environment Requirements
 
-- **Python**: 3.9+ (required for core functionality)
+- **Python**: 3.13+ (required for core functionality)
 - **Chrome Browser**: For chrome-js Recipe execution
 - **Operating System**: macOS, Linux, Windows
 - **Package Manager**: `uv` (recommended) or `pip`

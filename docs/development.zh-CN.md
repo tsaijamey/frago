@@ -142,7 +142,7 @@ src/frago/cdp/commands/
 - **任务管理**：Run命令系统（持久化上下文、JSONL日志）
 - **会话监控**：watchdog文件系统监控 + JSONL增量解析
 - **GUI框架**：pywebview（跨平台桌面应用）
-- **脚本编排**：Python 3.9+（Recipe系统 + CDP工具层）
+- **脚本编排**：Python 3.13+（Recipe系统 + CDP工具层）
 
 ## 开发规范
 

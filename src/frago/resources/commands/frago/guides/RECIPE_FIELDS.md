@@ -91,7 +91,7 @@ Add at the top of `recipe.py` file (no shebang needed):
 
 ```python
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.13"
 # dependencies = ["package1", "package2>=1.0"]
 # ///
 ```
@@ -100,7 +100,7 @@ Add at the top of `recipe.py` file (no shebang needed):
 
 ```python
 # /// script
-# requires-python = ">=3.9"
+# requires-python = ">=3.13"
 # dependencies = ["edge-tts", "httpx>=0.24"]
 # ///
 """

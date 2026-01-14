@@ -3,7 +3,7 @@ name = "frago-cli"
 version = "0.33.4"
 description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
 readme = "README.md"
-requires-python = ">=3.9,<3.14"
+requires-python = ">=3.13"
 license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Jamey Tsai", email = "caijia@frago.ai"}
@@ -14,10 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -118,7 +114,7 @@ addopts = [
 ]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py313"
 line-length = 100
 select = [
     "E",   # pycodestyle errors
@@ -141,7 +137,7 @@ ignore = [
 known-first-party = ["frago"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -155,7 +151,7 @@ follow_imports = "normal"
 ignore_missing_imports = true
 
 [tool.black]
-target-version = ["py39", "py310", "py311", "py312", "py313"]
+target-version = ["py313"]
 line-length = 100
 include = '\.pyi?$'
 extend-exclude = '''

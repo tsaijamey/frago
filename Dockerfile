@@ -9,7 +9,7 @@
 #   docker run --rm frago chrome start --headless
 #   docker run --rm -v ~/.frago:/home/frago/.frago frago recipe list
 
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive \
