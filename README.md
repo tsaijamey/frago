@@ -8,6 +8,17 @@
 
 [简体中文](https://github.com/tsaijamey/Frago/blob/main/README.zh-CN.md)
 
+> **Heard of [Anthropic Cowork](https://claude.com/blog/cowork-research-preview)?** frago does the same — and more.
+
+|  | **Cowork** | **frago** |
+|--|------------|-----------|
+| **Foundation** | Claude Agent SDK | **Claude Code** (Anthropic's flagship) |
+| **Muscle Memory** | None | **Recipe system** (98.7% token savings) |
+| **Platform** | macOS only | **Windows / macOS / Linux** |
+| **Price** | $20/month subscription | **Free & self-hosted** |
+| **Interface** | Desktop app | **Web UI + CLI + Slash Commands** |
+| **Data** | Anthropic cloud | **100% local, you own everything** |
+
 **Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
 
 ### Quick Start
@@ -45,9 +56,13 @@ frago is open source. Your recipes, your skills, your Git repo. You accumulate c
 
 Many "AI products" are token vending machines wrapped in pretty UIs. You pay per conversation, per generation, per retry — and get nothing persistent in return.
 
-frago attacks this directly:
-- First exploration: ~150k tokens
-- Every run after: ~2k tokens (98.7% saved)
+frago attacks this directly through its four-system architecture:
+
+| System | First Encounter | Subsequent Use | Token Savings |
+|--------|-----------------|----------------|---------------|
+| **No Run/Recipe** | AI explores (150k tokens) | AI explores again (150k tokens) | 0% |
+| **Run Only** | AI explores + logs (155k tokens) | Review Run logs (10k tokens) | 93.5% |
+| **Run + Recipe** | AI explores + creates Recipe (160k tokens) | Execute Recipe (2k tokens) | **98.7%** |
 
 The savings compound. The recipes stay. Your time returns to family, hobbies, creation — not to feeding another revenue stream.
 
