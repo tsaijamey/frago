@@ -231,6 +231,15 @@ subprocess.run(["uv", "run", "frago", "recipe", "run", recipe_name, "--params", 
 <button type="submit">Submit</button>
 ```
 
+## User Interaction Conventions
+
+```python
+# "Open" means visual preview, not Read tool
+if user_says("打开", "open"):
+    run("uv run frago view <file>")  # Browser preview
+    # NOT: Read tool to dump content
+```
+
 ## Documentation Index
 
 ```python
