@@ -41,7 +41,7 @@ if HEADLESS (no GUI):
 
 ### 2. frago Commands Come Second
 
-- **Universal across agents**: Can be used in run/do/recipe/test
+- **Universal across agents**: Can be used in run/recipe/test
 - **Auto logging**: CDP commands automatically logged to execution.jsonl
 - **Unified interface**: Consistent `frago <command>` format
 

@@ -113,6 +113,47 @@ if READY:
 
     use VALIDATE:
         run `frago recipe validate <dir>`
+        run `frago recipe validate <dir> --format json`
+        if FAIL => fix structure first, DO NOT proceed
+
+if VALIDATED:
+    use TEST (MANDATORY):
+        1. CHECK_ENV:
+            run `frago status`
+            run `frago chrome exec-js "window.location.href" --return-value`
+            run `frago chrome get-title`
+            if PAGE_NOT_MATCH => prompt user to navigate
+
+        2. EXECUTE:
+            run `frago recipe run <name> --output-file /tmp/test_result.json`
+
+        3. VERIFY_DATA:
+            strictly validate output, not just "no error"
+            check: format matches spec, key fields non-empty
+
+        4. REPORT:
+            PASS:
+                ## PASS: <recipe_name>
+                **Returned data**: <json>
+                **Validation**:
+                - [x] format matches spec
+                - [x] key fields non-empty
+
+            WARN:
+                ## WARN: <recipe_name>
+                **Returned**: "" or null
+                **Expected**: <from spec>
+                **Analysis**: script ran but extracted nothing, likely selector failure
+                => FIX before completing
+
+            FAIL:
+                ## FAIL: <recipe_name>
+                **Error**: <error log>
+                **Cause**: selector invalid / page wrong
+                => FIX before completing
+
+        PRINCIPLE: runs without error ≠ correct
+        Recipe creation is NOT complete until TEST passes
 
 <env_vars>
 if recipe needs env vars (API keys, secrets):

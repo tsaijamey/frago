@@ -16,12 +16,12 @@ OUTPUT: JSON only (no other output allowed)
     KEYWORDS: execute, complete, do, research, explore, find, collect, apply, download, submit
 
 /frago.recipe
-    USE: create reusable automation recipes
+    USE: create reusable automation recipes (includes mandatory test before completion)
     KEYWORDS: create recipe, write recipe, automation script
 
 /frago.test
-    USE: test and validate existing recipes
-    KEYWORDS: test, validate, check recipe
+    USE: re-test existing recipes (standalone entry for already-created recipes)
+    KEYWORDS: test, validate, check recipe, retest
 </commands>
 
 <rules>

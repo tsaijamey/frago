@@ -6,6 +6,7 @@ description: "Test and validate existing frago recipe scripts"
 
 <info>
 Test and validate existing recipes.
+NOTE: Test is also MANDATORY step in /frago.recipe creation flow.
 </info>
 
 <ref_docs>

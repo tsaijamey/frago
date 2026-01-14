@@ -19,6 +19,8 @@ LOAD_BEFORE_START: use Task tool (subagent_type=Explore) to parallel read:
 ~/.claude/commands/frago/guides/LOGGING_GUIDE.md
 ~/.claude/commands/frago/guides/SELECTOR_PRIORITY.md
 ~/.claude/commands/frago/guides/RECIPE_FIELDS.md
+~/.claude/commands/frago/scripts/run_workflow.sh
+~/.claude/commands/frago/scripts/common_commands.sh
 </ref_docs>
 
 <role>
