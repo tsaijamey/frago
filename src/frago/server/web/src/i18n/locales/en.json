@@ -309,6 +309,20 @@
       "title": "About",
       "version": "Version",
       "checkUpdate": "Check for Updates"
+    },
+    "officialSync": {
+      "title": "Official Resource Sync",
+      "warning": "Warning",
+      "warningText": "When enabled, local frago commands and skills will be overwritten by the official version. Your custom modifications will be lost.",
+      "autoSync": "Auto-sync on startup",
+      "autoSyncDesc": "Automatically sync resources when frago server starts",
+      "lastSync": "Last synced",
+      "syncNow": "Sync Now",
+      "syncing": "Syncing...",
+      "syncComplete": "Sync completed",
+      "syncFailed": "Sync failed",
+      "timeout": "Sync timeout",
+      "filesSynced": "files synced"
     }
   },
   "init": {

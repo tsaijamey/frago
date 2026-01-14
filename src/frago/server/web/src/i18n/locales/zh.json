@@ -309,6 +309,20 @@
       "title": "关于",
       "version": "版本",
       "checkUpdate": "检查更新"
+    },
+    "officialSync": {
+      "title": "官方资源同步",
+      "warning": "警告",
+      "warningText": "启用后，本地的 frago 命令和技能将被官方版本覆盖。您自行修改的内容将会丢失。",
+      "autoSync": "启动时自动同步",
+      "autoSyncDesc": "frago 服务启动时自动同步资源",
+      "lastSync": "上次同步",
+      "syncNow": "立即同步",
+      "syncing": "同步中...",
+      "syncComplete": "同步完成",
+      "syncFailed": "同步失败",
+      "timeout": "同步超时",
+      "filesSynced": "个文件已同步"
     }
   },
   "init": {

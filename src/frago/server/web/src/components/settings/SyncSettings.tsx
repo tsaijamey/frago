@@ -4,13 +4,28 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getMainConfig, runFirstSync, getSyncResult, checkSyncRepoVisibility, checkGhCli } from '@/api';
-import { Github, RefreshCw, AlertTriangle, Check, X, Loader2, AlertCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import {
+  getMainConfig,
+  runFirstSync,
+  getSyncResult,
+  checkSyncRepoVisibility,
+  checkGhCli,
+  getOfficialSyncStatus,
+  runOfficialSync,
+  getOfficialSyncResult,
+  setOfficialSyncEnabled,
+} from '@/api';
+import { Github, RefreshCw, AlertTriangle, Check, X, Loader2, AlertCircle, Download } from 'lucide-react';
 import GitHubWizard from './GitHubWizard';
 
 import type { GhCliStatus } from '@/types/pywebview';
+import type { OfficialSyncStatus, OfficialSyncResult } from '@/api/client';
 
 export default function SyncSettings() {
+  const { t } = useTranslation();
+
+  // Multi-device sync state
   const [syncRepoUrl, setSyncRepoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
@@ -21,6 +36,12 @@ export default function SyncSettings() {
   const [visibilityChecked, setVisibilityChecked] = useState(false);
   const [ghStatus, setGhStatus] = useState<GhCliStatus | null>(null);
   const [ghStatusLoading, setGhStatusLoading] = useState(false);
+
+  // Official resource sync state
+  const [officialStatus, setOfficialStatus] = useState<OfficialSyncStatus | null>(null);
+  const [officialSyncing, setOfficialSyncing] = useState(false);
+  const [officialResult, setOfficialResult] = useState<OfficialSyncResult | null>(null);
+  const [officialError, setOfficialError] = useState<string | null>(null);
 
   const checkGhStatus = async () => {
     try {
@@ -34,8 +55,78 @@ export default function SyncSettings() {
     }
   };
 
+  // Load official sync status
+  const loadOfficialStatus = async () => {
+    try {
+      const status = await getOfficialSyncStatus();
+      setOfficialStatus(status);
+    } catch (err) {
+      console.error('Failed to load official sync status:', err);
+    }
+  };
+
+  // Handle official resource sync
+  const handleOfficialSync = async () => {
+    try {
+      setOfficialSyncing(true);
+      setOfficialError(null);
+      setOfficialResult(null);
+
+      const startResult = await runOfficialSync();
+      if (startResult.status === 'error') {
+        setOfficialError(startResult.error || t('settings.officialSync.syncFailed'));
+        setOfficialSyncing(false);
+        return;
+      }
+
+      // Poll for results
+      const pollInterval = setInterval(async () => {
+        const result = await getOfficialSyncResult();
+
+        if (result.status === 'running') {
+          return;
+        }
+
+        clearInterval(pollInterval);
+        setOfficialSyncing(false);
+        setOfficialResult(result);
+
+        if (result.status === 'error' || result.status === 'partial') {
+          setOfficialError(result.error || null);
+        }
+
+        // Reload status to get updated last_sync time
+        loadOfficialStatus();
+      }, 1000);
+
+      // Timeout protection (2 minutes)
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (officialSyncing) {
+          setOfficialSyncing(false);
+          setOfficialError(t('settings.officialSync.timeout'));
+        }
+      }, 120000);
+
+    } catch (err) {
+      setOfficialError(err instanceof Error ? err.message : t('settings.officialSync.syncFailed'));
+      setOfficialSyncing(false);
+    }
+  };
+
+  // Handle toggle auto-sync
+  const handleToggleAutoSync = async (enabled: boolean) => {
+    try {
+      await setOfficialSyncEnabled(enabled);
+      setOfficialStatus((prev) => prev ? { ...prev, enabled } : null);
+    } catch (err) {
+      console.error('Failed to toggle auto-sync:', err);
+    }
+  };
+
   useEffect(() => {
     loadConfig();
+    loadOfficialStatus();
     // Delay gh status check to avoid blocking initial render
     const timer = setTimeout(() => {
       checkGhStatus();
@@ -305,6 +396,110 @@ export default function SyncSettings() {
               Start GitHub Sync Setup
             </button>
           </>
+        )}
+      </div>
+
+      {/* Official Resource Sync Card */}
+      <div className="card">
+        <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
+          {t('settings.officialSync.title')}
+        </h2>
+
+        {/* Warning Banner */}
+        <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+            <div>
+              <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
+                {t('settings.officialSync.warning')}
+              </h3>
+              <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                {t('settings.officialSync.warningText')}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Auto-sync Toggle */}
+        <div className="flex items-center justify-between mb-4 p-3 bg-[var(--bg-subtle)] rounded-md">
+          <div>
+            <label className="text-sm font-medium text-[var(--text-primary)]">
+              {t('settings.officialSync.autoSync')}
+            </label>
+            <p className="text-xs text-[var(--text-muted)]">
+              {t('settings.officialSync.autoSyncDesc')}
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={officialStatus?.enabled || false}
+              onChange={(e) => handleToggleAutoSync(e.target.checked)}
+              aria-label={t('settings.officialSync.autoSync')}
+            />
+            <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)]"></div>
+          </label>
+        </div>
+
+        {/* Source Info */}
+        {officialStatus && (
+          <div className="mb-4 text-sm text-[var(--text-secondary)]">
+            <div className="flex items-center gap-2 mb-1">
+              <Github size={14} className="text-[var(--text-muted)]" />
+              <span className="font-mono">{officialStatus.repo} ({officialStatus.branch})</span>
+            </div>
+            {officialStatus.last_sync && (
+              <p className="text-xs text-[var(--text-muted)]">
+                {t('settings.officialSync.lastSync')}: {new Date(officialStatus.last_sync).toLocaleString()}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Sync Button */}
+        <button
+          onClick={handleOfficialSync}
+          disabled={officialSyncing}
+          className="btn btn-primary flex items-center gap-2"
+        >
+          {officialSyncing ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <Download size={16} />
+          )}
+          {officialSyncing ? t('settings.officialSync.syncing') : t('settings.officialSync.syncNow')}
+        </button>
+
+        {/* Sync Result */}
+        {officialResult && officialResult.status !== 'idle' && (
+          <div className="mt-4 p-3 bg-black/5 dark:bg-white/5 rounded-md">
+            <div className="text-sm">
+              {officialResult.status === 'ok' && (
+                <div className="flex items-center gap-2 text-green-600 dark:text-green-400 mb-2">
+                  <Check size={14} />
+                  <span>{t('settings.officialSync.syncComplete')}</span>
+                </div>
+              )}
+              {officialResult.commands && (
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Commands: {officialResult.commands.files_synced} {t('settings.officialSync.filesSynced')}
+                </p>
+              )}
+              {officialResult.skills && (
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Skills: {officialResult.skills.files_synced} {t('settings.officialSync.filesSynced')}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Sync Error */}
+        {officialError && (
+          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+            <p className="text-sm text-red-700 dark:text-red-400">{officialError}</p>
+          </div>
         )}
       </div>
     </div>

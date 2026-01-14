@@ -984,3 +984,54 @@ export async function getConsoleHistory(
   // Console is only available in HTTP mode
   return httpApi.getConsoleHistory(sessionId, limit, offset);
 }
+
+// ============================================================
+// Official Resource Sync API
+// ============================================================
+
+export type {
+  OfficialSyncStatus,
+  OfficialSyncResult,
+  OfficialSyncResourceResult,
+} from './client';
+
+export async function getOfficialSyncStatus(): Promise<httpApi.OfficialSyncStatus> {
+  // Official sync is only available in HTTP mode
+  if (isPywebviewMode()) {
+    return {
+      enabled: false,
+      last_sync: null,
+      last_commit: null,
+      repo: '',
+      branch: 'main',
+    };
+  }
+  return httpApi.getOfficialSyncStatus();
+}
+
+export async function runOfficialSync(): Promise<httpApi.OfficialSyncResult> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Official sync not supported in pywebview mode',
+    };
+  }
+  return httpApi.runOfficialSync();
+}
+
+export async function getOfficialSyncResult(): Promise<httpApi.OfficialSyncResult> {
+  if (isPywebviewMode()) {
+    return { status: 'idle' };
+  }
+  return httpApi.getOfficialSyncResult();
+}
+
+export async function setOfficialSyncEnabled(enabled: boolean): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Official sync not supported in pywebview mode',
+    };
+  }
+  return httpApi.setOfficialSyncEnabled(enabled);
+}

@@ -964,3 +964,67 @@ export async function viewProjectFile(
     { method: 'POST' }
   );
 }
+
+// ============================================================
+// Official Resource Sync API
+// ============================================================
+
+export interface OfficialSyncStatus {
+  enabled: boolean;
+  last_sync: string | null;
+  last_commit: string | null;
+  repo: string;
+  branch: string;
+}
+
+export interface OfficialSyncResourceResult {
+  type: string;
+  files_synced: number;
+  dirs_synced: number;
+  items: string[];
+  error?: string;
+}
+
+export interface OfficialSyncResult {
+  status: 'ok' | 'running' | 'idle' | 'error' | 'partial';
+  started_at?: string;
+  completed_at?: string;
+  commit?: string;
+  commands?: OfficialSyncResourceResult;
+  skills?: OfficialSyncResourceResult;
+  error?: string;
+  message?: string;
+}
+
+/**
+ * Get official resource sync status and configuration.
+ */
+export async function getOfficialSyncStatus(): Promise<OfficialSyncStatus> {
+  return fetchApi<OfficialSyncStatus>('/settings/official-resource-sync/status');
+}
+
+/**
+ * Start official resource sync from GitHub.
+ */
+export async function runOfficialSync(): Promise<OfficialSyncResult> {
+  return fetchApi<OfficialSyncResult>('/settings/official-resource-sync/run', {
+    method: 'POST',
+  });
+}
+
+/**
+ * Get the result of the current or last official sync operation.
+ */
+export async function getOfficialSyncResult(): Promise<OfficialSyncResult> {
+  return fetchApi<OfficialSyncResult>('/settings/official-resource-sync/result');
+}
+
+/**
+ * Enable or disable auto-sync on startup.
+ */
+export async function setOfficialSyncEnabled(enabled: boolean): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/official-resource-sync/enable', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  });
+}
