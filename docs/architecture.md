@@ -4,100 +4,15 @@
 
 ## System Architecture
 
+### frago CLI Usage Flow
+
+![frago CLI Usage Flow](images/frago-cli-workflow.jpg)
+
+### Recipe Three-Level Priority System
+
+![Recipe Priority System](images/frago-recipe-priority.jpg)
+
 ```
-frago Usage Flow Architecture
-==============================
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                        User Entry (Claude Code)                      │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                ┌─────────────────┼─────────────────┐
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌─────────┐       ┌─────────┐      ┌─────────┐
-         │/frago  │       │/frago  │      │  Direct │
-         │  .run   │       │ .recipe │      │CLI Cmds │
-         └─────────┘       └─────────┘      └─────────┘
-                │                 │                 │
-                │                 │                 │
-                ▼                 ▼                 ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                       AI Task Analysis Layer                           │
-│  - Understand user intent                                              │
-│  - Discover/create Run instances                                       │
-│  - Select appropriate Recipes                                          │
-│  - Orchestrate execution plans                                         │
-└───────────────────────────────────────────────────────────────────────┘
-                                  │
-                ┌─────────────────┼─────────────────┐
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌──────────┐      ┌──────────┐     ┌──────────┐
-         │ Recipe   │      │   CDP    │     │ Python/  │
-         │Dispatch  │      │Commands  │     │  Shell   │
-         │(chrome-js│      │(navigate,│     │  Scripts │
-         │/python/  │      │ click,   │     │          │
-         │ shell)   │      │screenshot│     │          │
-         └──────────┘      └──────────┘     └──────────┘
-                │                 │                 │
-                └─────────────────┼─────────────────┘
-                                  │
-                                  ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                     Execution Engine (Multi-Runtime)                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │
-│  │ Chrome CDP  │  │   Python    │  │    Shell    │                   │
-│  │  WebSocket  │  │   Runtime   │  │   Runtime   │                   │
-│  └─────────────┘  └─────────────┘  └─────────────┘                   │
-└───────────────────────────────────────────────────────────────────────┘
-                                  │
-                ┌─────────────────┼─────────────────┐
-                │                 │                 │
-                ▼                 ▼                 ▼
-         ┌──────────┐      ┌──────────┐     ┌──────────┐
-         │  JSONL   │      │  Output  │     │   Run    │
-         │Structured│      │  Files   │     │ Context  │
-         │   Logs   │      │(JSON/MD/ │     │Persistence│
-         │          │      │  TXT)    │     │          │
-         └──────────┘      └──────────┘     └──────────┘
-                │                 │                 │
-                └─────────────────┼─────────────────┘
-                                  │
-                                  ▼
-┌───────────────────────────────────────────────────────────────────────┐
-│                           Final Output                                 │
-│  - Task execution report                                               │
-│  - Structured data files                                               │
-│  - Auditable complete logs                                             │
-│  - Reusable Run instances                                              │
-└───────────────────────────────────────────────────────────────────────┘
-
-
-Recipe Three-Level Priority System:
-====================================
-
-┌─────────────────────────────────────┐
-│  Project (.frago/recipes/)         │  ← Highest priority
-│  - Project-specific Recipes         │
-│  - Team shared                      │
-└─────────────────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────┐
-│  User (~/.frago/recipes/)          │  ← Medium priority
-│  - User personal Recipes            │
-│  - Reusable across projects         │
-└─────────────────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────┐
-│  Example (examples/)                │  ← Lowest priority
-│  - Official examples                │
-│  - Can copy to User or Project      │
-└─────────────────────────────────────┘
-
-
 Data Flow Examples:
 ===================
 
@@ -140,6 +55,7 @@ Developer → frago chrome navigate https://...
 | **Use Cases** | Quality assurance, regression testing | Data collection, automation scripts, AI-assisted tasks |
 
 **Key Differences**:
+
 - ✅ **Persistent browser sessions** - Playwright launches new browser per test, frago connects to running Chrome instance
 - ✅ **Recipe metadata-driven** - Reusable automation scripts with three-level priority management
 - ✅ **Zero relay layer** - Direct WebSocket to CDP, no Node.js relay, lower latency
@@ -161,6 +77,7 @@ Developer → frago chrome navigate https://...
 | **Typical Use Cases** | Auto-fill forms, data scraping | Reusable data collection, batch task processing, workflow automation |
 
 **Core Differences**:
+
 - 💡 **Token Efficiency Theory Support** - Follows [Anthropic's Code Execution with MCP](https://www.anthropic.com/engineering/code-execution-with-mcp) design philosophy: Let AI generate code to call tools rather than full reasoning for every operation. Cases show token consumption can be reduced from 150k to 2k (**98.7% reduction**)
 - 📦 **Recipe System** - Solidifies high-frequency operations as executable code (Chrome JS/Python/Shell), AI only responsible for orchestration scheduling, avoiding repeated DOM operation reasoning
 - 🔄 **Multi-Runtime Support** - Chrome JS, Python, Shell three runtimes can be combined, data processing completed in code rather than repeatedly through AI context
@@ -196,6 +113,7 @@ Developer → frago chrome navigate https://...
 ### Recipe System: AI's Accelerator
 
 **Design Philosophy**:
+
 - ❌ **Not** replacing AI autonomous decision-making
 - ✅ **Is** avoiding AI repeatedly reasoning same DOM operations
 
@@ -228,6 +146,7 @@ frago chrome exec-js examples/atomic/chrome/youtube_extract_video_transcript.js
 ```
 
 **Difference from Browser Use**:
+
 - Browser Use: Every task needs LLM reasoning ($$$)
 - frago: AI decision-making (storyboard design) + Recipe acceleration (repeated operations)
 
@@ -262,6 +181,7 @@ outputs:
 ```
 
 **Metadata Field Explanation**:
+
 - **Required fields**: `name`, `type`, `runtime`, `version`, `inputs`, `outputs`
 - **AI-understandable fields** (for discovering and selecting Recipes):
   - `description`: Short function description (<200 chars), helps AI understand purpose
@@ -270,16 +190,19 @@ outputs:
   - `output_targets`: Supported output methods (stdout/file/clipboard), lets AI choose correct output option
 
 **Three-Level Lookup Path (Priority)**:
+
 1. Project-level: `.frago/recipes/` (current working directory)
 2. User-level: `~/.frago/recipes/` (user home directory)
 3. Example-level: `examples/` (repository root)
 
 **Three Runtime Support**:
+
 - `chrome-js`: Execute JavaScript via `frago chrome exec-js`
 - `python`: Execute via Python interpreter
 - `shell`: Execute script via Shell
 
 **Three Output Targets**:
+
 - `stdout`: Print to console
 - `file`: Save to file (`--output-file`)
 - `clipboard`: Copy to clipboard (`--output-clipboard`)
@@ -328,12 +251,14 @@ uv run frago recipe run youtube_extract_video_transcript \
 ```
 
 **Design Principles**:
+
 - All metadata designed for AI comprehensibility (semantic descriptions > technical details)
 - JSON format output for easy AI parsing and processing
 - Error messages structured for AI to understand failure reasons and take action
 - Output targets explicitly declared so AI chooses correct command options
 
 **Relationship with Human Users**:
+
 - Human users: Create and maintain Recipes (via `/frago.recipe` command)
 - AI Agent: Discover and use Recipes (via `recipe list/run` commands)
 - Recipe system is the bridge connecting both
@@ -344,33 +269,7 @@ The Run system provides persistent context management and structured execution l
 
 ### Core Components
 
-```
-┌─────────────────────────────────────────────────────────┐
-│              Run Instance Management                     │
-│  - Topic-based task organization                        │
-│  - RapidFuzz fuzzy matching for discovery               │
-│  - Lifecycle: init → execute → log → archive            │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│           Persistent Context Storage                     │
-│  projects/<run_id>/                                      │
-│  ├── logs/execution.jsonl    (structured logs)          │
-│  ├── screenshots/            (timestamped images)       │
-│  ├── scripts/                (validated scripts)        │
-│  └── outputs/                (result files)             │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│              JSONL Log Structure                         │
-│  - 100% programmatically parseable                      │
-│  - Each line is valid JSON                              │
-│  - Supports auditing and analysis                       │
-│  - Enables AI context recovery                          │
-└─────────────────────────────────────────────────────────┘
-```
+![Run Instance Management](images/frago-run-management.jpg)
 
 ### Run Instance Lifecycle
 
@@ -495,32 +394,7 @@ The Session system provides real-time monitoring and persistence of AI agent exe
 
 ### Core Components
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                Session Monitor                           │
-│  - watchdog-based file system monitoring                │
-│  - Incremental JSONL parsing                            │
-│  - Timestamp-based session association                  │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│           Claude Code Session Source                     │
-│  ~/.claude/projects/{project-path}/{session-id}.jsonl   │
-│  - User messages and assistant responses                │
-│  - Tool calls and results                               │
-│  - Timestamps and metadata                              │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│              frago Session Storage                       │
-│  ~/.frago/sessions/{agent_type}/{session_id}/           │
-│  ├── metadata.json   (session metadata)                 │
-│  ├── steps.jsonl     (parsed execution steps)           │
-│  └── summary.json    (session summary)                  │
-└─────────────────────────────────────────────────────────┘
-```
+![Session Monitoring](images/frago-session-monitoring.jpg)
 
 ### Session Association Logic
 
@@ -592,33 +466,7 @@ The Web Service system provides a browser-based GUI through FastAPI backend and 
 
 ### Technology Stack
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Browser Interface                     │
-│  - React 18 + TypeScript                                │
-│  - Zustand (state management)                           │
-│  - Tailwind CSS (styling)                               │
-│  - GitHub Dark color scheme                             │
-└──────────────────┬──────────────────────────────────────┘
-                   │ HTTP / WebSocket
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│                  FastAPI Backend                         │
-│  - RESTful API endpoints                                │
-│  - WebSocket for real-time updates                      │
-│  - Uvicorn ASGI server                                  │
-│  - Background daemon mode                               │
-└──────────────────┬──────────────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Core Services                           │
-│  - Session sync service                                 │
-│  - Recipe management                                    │
-│  - Config management                                    │
-│  - AI title generation (Claude Haiku)                   │
-└─────────────────────────────────────────────────────────┘
-```
+![Web Service Architecture](images/frago-web-architecture.jpg)
 
 ### Server Commands
 
@@ -686,35 +534,7 @@ useEffect(() => {
 
 How Run System, Recipe System, Session System, and Native CDP work together:
 
-```
-User Task: "Find Python jobs on Upwork and analyze requirements"
-│
-├─ Session System (Agent Memory)
-│  ├─ Monitors: ~/.claude/projects/... (watchdog)
-│  ├─ Parses: Claude Code JSONL in real-time
-│  └─ Persists: ~/.frago/sessions/claude/{session}/
-│
-├─ Run System (Working Memory)
-│  ├─ Creates: upwork-python-jobs-abc123
-│  ├─ Logs: All operations to JSONL
-│  └─ Persists: Screenshots, scripts, outputs
-│
-├─ Recipe System (Muscle Memory)
-│  ├─ Discovers: upwork_search_jobs (atomic)
-│  ├─ Discovers: upwork_extract_job_details (atomic)
-│  └─ Executes: Recipes with validated selectors
-│
-└─ Native CDP (Execution Engine)
-   ├─ Commands: navigate, click, exec-js, screenshot
-   ├─ Direct WebSocket: Python → Chrome
-   └─ Fast: No Node.js relay overhead
-
-Result:
-├─ jobs.json (structured data)
-├─ execution.jsonl (Run audit trail)
-├─ steps.jsonl (Session execution steps)
-└─ screenshots/ (visual evidence)
-```
+![Four Systems Integration](images/frago-systems-integration.jpg)
 
 ### Token Efficiency through Four Systems
 

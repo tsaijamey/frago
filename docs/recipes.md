@@ -736,21 +736,7 @@ uv run frago recipe run openai_chat --params '{"prompt": "Hello"}'
 
 Environment variables are resolved in the following priority (high to low):
 
-```
-┌─────────────────────────────────────────┐
-│ 1. CLI --env parameter (highest)        │
-├─────────────────────────────────────────┤
-│ 2. Workflow context (cross-Recipe)      │
-├─────────────────────────────────────────┤
-│ 3. Project .frago/.env (current project)│
-├─────────────────────────────────────────┤
-│ 4. User ~/.frago/.env (all projects)    │
-├─────────────────────────────────────────┤
-│ 5. System environment (os.environ)      │
-├─────────────────────────────────────────┤
-│ 6. Recipe defaults (metadata.env)       │
-└─────────────────────────────────────────┘
-```
+![Environment Variable Priority](images/frago-env-priority.jpg)
 
 ### Using Environment Variables in Scripts
 
