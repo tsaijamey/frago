@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
@@ -57,11 +57,11 @@ The savings compound. The recipes stay. Your time returns to family, hobbies, cr
 
 | Version | Highlights |
 |---------|------------|
-| **v0.28.0** | Redesigned recipe tabs; unified console send button; enhanced UI hover states |
-| **v0.27.0** | GitHub CLI authentication for community recipes; console session persistence |
-| **v0.26.0** | Workspace file browser; `frago view` media support (video, image, audio, 3D models) |
-| **v0.24.0** | Community recipes infrastructure; `recipe install/uninstall/update/search/share` commands |
-| **v0.23.0** | WebSocket real-time sync; YouTube recipes (download, subtitles, transcript) |
+| **v0.33.0** | Full Windows support; viewport border indicator; word wrap toggle for code viewer |
+| **v0.32.0** | Parameter form input for recipe execution; @ directory autocomplete |
+| **v0.31.0** | Per-task title generation; cache service optimization |
+| **v0.30.0** | Community recipe uninstall button; improved UI hover states |
+| **v0.29.0** | Unified console send button; platform-specific shortcuts |
 
 Multi-runtime automation infrastructure designed for AI agents, providing persistent context management and reusable Recipe system.
 
@@ -99,15 +99,14 @@ Agents are smart enough, but not yet resourceful. frago teaches them to remember
 
 ## How to Use
 
-frago integrates with Claude Code through four slash commands, forming a complete "explore → solidify → execute" loop.
+frago integrates with Claude Code through three slash commands, forming a complete "explore → solidify → validate" loop.
 
 ```
 /frago.run     Explore and research, accumulate experience
      ↓
 /frago.recipe  Solidify experience into reusable recipes
-/frago.test    Validate recipes (while context is fresh)
      ↓
-/frago.do      Execute quickly with skill guidance
+/frago.test    Validate recipes (while context is fresh)
 ```
 
 ### Step 1: Explore and Research
@@ -170,20 +169,7 @@ While the session context is still fresh, test immediately:
 
 Validation failed? Fix it on the spot, no need to re-explore. This is why recipe and test should be parallel—debugging costs more after context is lost.
 
-### Step 4: Quick Execution
-
-Next time you have a similar need, type:
-
-```
-/frago.do video-production Create a short video about AI
-```
-
-The Agent will:
-- Load the specified skill (video-production)
-- Follow the methodology in the skill to invoke relevant recipes
-- Complete the task quickly, no repeated exploration
-
-**This is the value of the "skeleton"**: 5 minutes to explore the first time, seconds to execute thereafter.
+**This is the value of the "skeleton"**: 5 minutes to explore the first time, seconds to execute thereafter with validated recipes.
 
 ---
 
@@ -255,11 +241,7 @@ When done:
 /frago.recipe
 ```
 
-Recipe auto-generated. Next time:
-
-```
-/frago.do Scrape similar website
-```
+Recipe auto-generated, ready to reuse for similar tasks.
 
 **You don't need to enter any platform, don't need to look at any flowchart.**
 
@@ -275,74 +257,46 @@ Of course, if you need scheduled triggers, visual monitoring, team collaboration
 
 ---
 
-## Resource Management
-
-### Why Resource Sync Commands
+## Resource Sync
 
 frago is open-source—anyone can install it via PyPI. But the **skeleton** is universal, while the **brain** is personal.
 
-Each person has:
-- Their own application scenarios
-- Personalized knowledge (skills)
-- Custom automation scripts (recipes)
+Your personalized resources (skills and recipes) shouldn't live in the public package. They belong to you. frago provides `frago sync` to keep your resources consistent across different machines.
 
-These personalized resources shouldn't live in the public package. They belong to you.
-
-frago's philosophy: **cross-environment consistency**. Your resources should be available wherever you work—different machines, fresh installations, or new projects. The tool comes from PyPI; your brain comes from your private repository.
-
-frago doesn't provide community-level cloud sync services (yet). Instead, it gives you commands to manage sync with your own Git repository.
-
-### Resource Flow Overview
+### How It Works
 
 ```
-┌─────────────┐   publish   ┌─────────────┐    sync    ┌─────────────┐
-│   Project   │ ──────────→ │   System    │ ─────────→ │   Remote    │
-│  .claude/   │             │ ~/.claude/  │            │  Git Repo   │
-│  examples/  │             │ ~/.frago/   │            │             │
-└─────────────┘             └─────────────┘            └─────────────┘
-       ↑                          │                          │
-       │       dev-load           │         deploy           │
-       └──────────────────────────┴──────────────────────────┘
+┌─────────────┐              ┌─────────────┐
+│   Local     │  ◄─── sync ──►  │   Remote    │
+│ ~/.claude/  │              │  Git Repo   │
+│ ~/.frago/   │              │             │
+└─────────────┘              └─────────────┘
 ```
 
-### Commands
+The `sync` command is bidirectional:
+1. Fetch updates from your remote repository
+2. Merge with local changes
+3. Push modifications back to remote
 
-| Command | Direction | Purpose |
-|---------|-----------|---------|
-| `publish` | Project → System | Push project resources to system directories |
-| `sync` | System → Remote | Push system resources to your private Git repo |
-| `deploy` | Remote → System | Pull from your private repo to system directories |
-| `dev-load` | System → Project | Load system resources into current project (dev only) |
+### Usage
 
-### Typical Workflows
-
-**Developer Flow** (local changes → cloud):
+**First-time setup**:
 ```bash
-# After editing recipes in your project
-frago publish              # Project → System
-frago sync                 # System → Remote Git
+frago sync --set-repo https://github.com/you/my-frago-resources.git
 ```
 
-**New Machine Flow** (cloud → local):
+**Daily usage**:
 ```bash
-# First time setup on a new machine
-frago sync --set-repo git@github.com:you/my-frago-resources.git
-frago deploy               # Remote Git → System
-frago dev-load             # System → Project (if developing frago)
-```
-
-**Regular User** (just uses frago):
-```bash
-frago deploy               # Get latest resources from your repo
-# Resources are now in ~/.claude/ and ~/.frago/, ready to use
+frago sync              # Bidirectional sync
+frago sync --dry-run    # Preview changes without syncing
+frago sync --no-push    # Only fetch, don't push local changes
 ```
 
 ### What Gets Synced
 
-Only frago-specific resources are synced:
-- `frago.*.md` commands (not your other Claude commands)
-- `frago-*` skills (not your other skills)
-- All recipes in `~/.frago/recipes/`
+Only frago-specific resources:
+- `~/.claude/skills/frago-*` (frago skills)
+- `~/.frago/recipes/` (all recipes)
 
 Your personal, non-frago Claude commands and skills are never touched.
 
@@ -369,16 +323,23 @@ Personal thoughts on AI automation, Agent design, and lessons learned.
 
 ## Project Status
 
-📍 **Current Stage**: Full-featured workspace with media preview support
+📍 **Current Stage**: Full cross-platform support with enhanced UI
 
-**Latest Features (v0.17.0 - v0.26.0)**:
+**Latest Features (v0.27.0 - v0.33.0)**:
+
+- ✅ Full Windows support - Comprehensive compatibility fixes and optimizations
+- ✅ Recipe parameter forms - Interactive input for recipe execution
+- ✅ Directory autocomplete - @ trigger for path input fields
+- ✅ Viewport indicator - Visual border for automation control
+- ✅ Code viewer enhancements - Word wrap toggle, improved rendering
+
+**Earlier Features (v0.17.0 - v0.26.0)**:
 
 - ✅ Workspace file browser - Browse run instance directories in Web UI
 - ✅ Media viewer - `frago view` supports video, image, audio, 3D models (glTF/GLB)
 - ✅ Community recipes - `recipe install/uninstall/update/search/share` for community contributions
 - ✅ WebSocket real-time sync - Server push updates, reduced polling
-- ✅ YouTube recipes - Download videos, extract subtitles and transcripts
-- ✅ Cross-platform autostart - `frago autostart` manages server boot startup (macOS/Linux/Windows)
+- ✅ Cross-platform autostart - `frago autostart` manages server boot startup
 - ✅ i18n support - UI internationalization with user language preferences
 - ✅ Web service mode - `frago server` launches browser-based GUI on port 8093
 

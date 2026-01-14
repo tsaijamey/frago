@@ -4,7 +4,7 @@
 
 ## Project Status
 
-📍 **Current Phase**: Web service architecture complete with AI-powered features (v0.20.0)
+📍 **Current Phase**: Full cross-platform support with enhanced UI (v0.33.0)
 
 **Completed**:
 - ✅ Native CDP protocol layer (~3,763 lines of Python)
@@ -17,6 +17,11 @@
 - ✅ Agent session monitoring (Claude Code session parsing and persistence)
 - ✅ AI title generation (Claude Haiku model)
 - ✅ Interactive Claude Code console UI
+- ✅ Cross-platform autostart (macOS/Linux/Windows)
+- ✅ Full i18n support for web interface
+- ✅ Community recipes infrastructure with install/update/search
+- ✅ Workspace file browser with media preview
+- ✅ Full Windows compatibility
 
 **Technical Highlights**:
 - 🏆 Native CDP (no Playwright/Selenium dependencies, ~2MB)
@@ -25,6 +30,7 @@
 - 🏆 Run System (AI's working memory with persistent context)
 - 🏆 Web Service Architecture (FastAPI backend + React frontend on port 8093)
 - 🏆 AI Title Generation (automatic session naming with Claude Haiku)
+- 🏆 Docker support for containerized deployment
 
 ---
 
@@ -677,7 +683,7 @@ First official release, core infrastructure complete.
 - Multi-device sync in web service mode
 - Background session sync service
 
-### v0.20.0 (Released - Current)
+### v0.20.0 (Released)
 
 **Milestone**: AI & Console Enhancements (Feature 015)
 
@@ -694,6 +700,121 @@ First official release, core infrastructure complete.
 3. **Model Override Settings**
    - Configure default_model, sonnet_model, haiku_model
    - VSCode settings integration
+
+### v0.21.0 (Released)
+
+**Milestone**: Cross-Platform Autostart
+
+**Major Changes**:
+- Cross-platform autostart for frago server (macOS/Linux/Windows)
+- Systemd, launchd, and Windows Task Scheduler support
+
+### v0.22.0 (Released)
+
+**Milestone**: Internationalization
+
+**Major Changes**:
+- Full i18n support for all web interface components
+- Translation keys for all pages
+- Interactive autostart configuration menu
+
+### v0.23.0 (Released)
+
+**Milestone**: Community Recipes
+
+**Major Changes**:
+- Community recipes infrastructure with CI validation
+- Recipe install/uninstall/update/search/share commands
+- YouTube recipes (download videos, extract subtitles)
+- WebSocket real-time sync
+
+### v0.24.0 (Released)
+
+**Milestone**: Community Recipes UI
+
+**Major Changes**:
+- Community recipes tab with install/update UI
+- Community recipes backend with 60s refresh
+- Linux boot-time startup with lingering
+
+### v0.25.0 (Released)
+
+**Milestone**: Workspace & Media
+
+**Major Changes**:
+- Workspace page for browsing project files
+- File browser API for project workspace
+- Media viewer support (video, image, audio, 3D models)
+
+### v0.26.0 (Released)
+
+**Milestone**: GitHub Authentication
+
+**Major Changes**:
+- GitHub CLI authentication for community recipes
+- Improved community recipe loading
+
+### v0.27.0 (Released)
+
+**Milestone**: UI Redesign
+
+**Major Changes**:
+- Redesigned recipe tabs as centered pill-shaped switcher
+- Console session persistence and message recovery
+- Proxy environment capture for systemd service
+
+### v0.28.0 (Released)
+
+**Milestone**: Title Generation UX
+
+**Major Changes**:
+- Per-task title generation button
+- Improved title generation icon and tooltip
+- Cache service optimization
+
+### v0.29.0 (Released)
+
+**Milestone**: Performance & Autocomplete
+
+**Major Changes**:
+- @ directory autocomplete for input fields
+- Sync page loading optimization
+- File operations optimization with os.scandir()
+- Extended cache service with projects
+
+### v0.30.0 (Released)
+
+**Milestone**: Recipe Parameters
+
+**Major Changes**:
+- Parameter form input for recipe execution
+- Workspace file access API
+- Windows background startup fixes
+- NO_PROXY wildcard pattern support
+
+### v0.31.0 (Released)
+
+**Milestone**: Code Viewer
+
+**Major Changes**:
+- Word wrap toggle for code/json content
+
+### v0.32.0 (Released)
+
+**Milestone**: Automation Indicator
+
+**Major Changes**:
+- Viewport border indicator for automation control
+
+### v0.33.0 (Released - Current)
+
+**Milestone**: Docker & Windows
+
+**Major Changes**:
+- Docker support for frago server
+- Full Windows compatibility fixes
+- GitHub rate limit management
+- Base64 encoding for file uploads
 
 ### v1.0.0 (Long-term Goal)
 

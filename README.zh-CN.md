@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
 [![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
@@ -57,11 +57,11 @@ frago 直接攻击这个问题：
 
 | 版本 | 主要变化 |
 |------|----------|
-| **v0.28.0** | Recipe 标签页重设计；Console 发送按钮样式统一；UI 悬停效果增强 |
-| **v0.27.0** | GitHub CLI 认证支持社区 Recipe；Console 会话持久化 |
-| **v0.26.0** | 工作区文件浏览器；`frago view` 媒体支持（视频、图片、音频、3D 模型） |
-| **v0.24.0** | 社区 Recipe 基建；`recipe install/uninstall/update/search/share` 命令 |
-| **v0.23.0** | WebSocket 实时同步；YouTube Recipe（下载、字幕、转录） |
+| **v0.33.0** | 全面支持 Windows；视口边框指示器；代码查看器自动换行 |
+| **v0.32.0** | Recipe 参数表单输入；@ 路径自动补全 |
+| **v0.31.0** | 单任务标题生成；缓存服务优化 |
+| **v0.30.0** | 社区 Recipe 卸载按钮；UI 悬停效果增强 |
+| **v0.29.0** | Console 发送按钮样式统一；平台特定快捷键 |
 
 为 AI agent 设计的多运行时自动化基建，提供持久化上下文管理和可复用的 Recipe 系统。
 
@@ -99,15 +99,14 @@ Agent 已经足够聪明，但还不够机灵。frago 让它记住如何做事�
 
 ## 如何使用
 
-frago 结合 Claude Code，通过四个 slash command 构建完整的"探索 → 固化 → 执行"闭环。
+frago 结合 Claude Code，通过三个 slash command 构建完整的"探索 → 固化 → 验证"闭环。
 
 ```
 /frago.run     探索研究，积累经验
      ↓
 /frago.recipe  将经验固化为可复用的配方
-/frago.test    验证配方（趁上下文还在）
      ↓
-/frago.do      通过 skill 指导，快速执行
+/frago.test    验证配方（趁上下文还在）
 ```
 
 ### 第一步：探索研究
@@ -170,20 +169,7 @@ use_cases:
 
 验证失败？当场调整，不用重新探索。这就是为什么 recipe 和 test 要并行——上下文丢失后再调试成本更高。
 
-### 第四步：快速执行
-
-下次遇到同类需求，输入：
-
-```
-/frago.do video-production 制作一个关于 AI 的短视频
-```
-
-Agent 会：
-- 加载指定的 skill（video-production）
-- 根据 skill 中的方法论指导，调用相关的 recipes
-- 快速完成任务，不再重复探索
-
-**这就是"骨骼"的价值**：第一次花 5 分钟探索，之后只需几秒钟执行。
+**这就是"骨骼"的价值**：第一次花 5 分钟探索，之后只需几秒钟用已验证的配方执行。
 
 ---
 
@@ -255,11 +241,7 @@ Dify、Coze、n8n 是**工作流编排工具**。
 /frago.recipe
 ```
 
-配方自动生成。下次：
-
-```
-/frago.do 抓取类似网站
-```
+配方自动生成，下次遇到类似任务直接复用。
 
 **你不需要进入任何平台，不需要看任何流程图。**
 
@@ -275,74 +257,46 @@ Dify、Coze、n8n 是**工作流编排工具**。
 
 ---
 
-## 资源管理
-
-### 为什么需要资源同步命令
+## 资源同步
 
 frago 是开源项目——任何人都可以通过 PyPI 安装。但**骨骼**是通用的，**大脑**是私人的。
 
-每个人都有：
-- 自己的应用场景
-- 个性化知识（skills）
-- 自定义自动化脚本（recipes）
+你的个性化资源（skills 和 recipes）不应该存在于公开包中，它们属于你自己。frago 提供 `frago sync` 让你的资源在不同机器之间保持一致。
 
-这些个性化资源不应该存在于公开包中，它们属于你自己。
-
-frago 的理念：**跨环境一致**。无论你在哪台机器、全新安装还是新项目，你的资源都应该随时可用。工具来自 PyPI；大脑来自你的私有仓库。
-
-frago 暂时不提供社区级的云同步服务。取而代之的是，提供一套命令让你用自己的 Git 仓库管理同步。
-
-### 资源流向概览
+### 工作原理
 
 ```
-┌─────────────┐   publish   ┌─────────────┐    sync    ┌─────────────┐
-│   项目目录   │ ──────────→ │   系统目录   │ ─────────→ │   远程仓库   │
-│  .claude/   │             │ ~/.claude/  │            │  Git Repo   │
-│  examples/  │             │ ~/.frago/   │            │             │
-└─────────────┘             └─────────────┘            └─────────────┘
-       ↑                          │                          │
-       │       dev-load           │         deploy           │
-       └──────────────────────────┴──────────────────────────┘
+┌─────────────┐              ┌─────────────┐
+│   本地目录   │  ◄─── sync ──►  │   远程仓库   │
+│ ~/.claude/  │              │  Git Repo   │
+│ ~/.frago/   │              │             │
+└─────────────┘              └─────────────┘
 ```
 
-### 命令一览
+`sync` 命令是双向的：
+1. 从远程仓库拉取更新
+2. 与本地改动合并
+3. 将修改推送回远程
 
-| 命令 | 方向 | 用途 |
-|------|------|------|
-| `publish` | 项目 → 系统 | 将项目资源发布到系统目录 |
-| `sync` | 系统 → 远程 | 将系统资源同步到你的私有 Git 仓库 |
-| `deploy` | 远程 → 系统 | 从私有仓库拉取到系统目录 |
-| `dev-load` | 系统 → 项目 | 将系统资源加载到当前项目（仅开发用） |
+### 使用方法
 
-### 典型工作流
-
-**开发者流程**（本地改动 → 云端）：
+**首次配置**：
 ```bash
-# 在项目中编辑完 recipes 后
-frago publish              # 项目 → 系统
-frago sync                 # 系统 → 远程 Git
+frago sync --set-repo https://github.com/you/my-frago-resources.git
 ```
 
-**新设备流程**（云端 → 本地）：
+**日常使用**：
 ```bash
-# 在新机器上首次配置
-frago sync --set-repo git@github.com:you/my-frago-resources.git
-frago deploy               # 远程 Git → 系统
-frago dev-load             # 系统 → 项目（如果你在开发 frago）
-```
-
-**普通用户**（只使用 frago）：
-```bash
-frago deploy               # 从你的仓库获取最新资源
-# 资源现在在 ~/.claude/ 和 ~/.frago/，可以直接使用
+frago sync              # 双向同步
+frago sync --dry-run    # 预览变更，不实际同步
+frago sync --no-push    # 只拉取，不推送本地改动
 ```
 
 ### 同步范围
 
 只同步 frago 专属资源：
-- `frago.*.md` 命令（不动你的其他 Claude 命令）
-- `frago-*` skills（不动你的其他 skills）
-- `~/.frago/recipes/` 下的所有配方
+- `~/.claude/skills/frago-*`（frago skills）
+- `~/.frago/recipes/`（所有配方）
 
 你的个人非 frago 的 Claude 命令和 skills 永远不会被触及。
 
@@ -369,16 +323,23 @@ frago deploy               # 从你的仓库获取最新资源
 
 ## 项目状态
 
-📍 **当前阶段**：完整的工作区与媒体预览支持
+📍 **当前阶段**：全平台支持与增强型 UI
 
-**最新功能（v0.17.0 - v0.26.0）**：
+**最新功能（v0.27.0 - v0.33.0）**：
+
+- ✅ 全面支持 Windows - 全面的兼容性修复和优化
+- ✅ Recipe 参数表单 - 交互式输入执行参数
+- ✅ 路径自动补全 - @ 触发输入框路径提示
+- ✅ 视口指示器 - 自动化控制的可视边框
+- ✅ 代码查看器增强 - 自动换行开关，渲染优化
+
+**早期功能（v0.17.0 - v0.26.0）**：
 
 - ✅ 工作区文件浏览器 - 在 Web UI 中浏览 run instance 目录
 - ✅ 媒体查看器 - `frago view` 支持视频、图片、音频、3D 模型（glTF/GLB）
 - ✅ 社区 Recipe - `recipe install/uninstall/update/search/share` 支持社区贡献
 - ✅ WebSocket 实时同步 - 服务端推送更新，减少轮询
-- ✅ YouTube Recipe - 下载视频、提取字幕和转录文本
-- ✅ 跨平台开机自启 - `frago autostart` 管理服务器开机启动（macOS/Linux/Windows）
+- ✅ 跨平台开机自启 - `frago autostart` 管理服务器开机启动
 - ✅ 国际化支持 - UI 国际化，尊重用户语言偏好
 - ✅ Web 服务模式 - `frago server` 启动浏览器端 GUI（端口 8093）
 
