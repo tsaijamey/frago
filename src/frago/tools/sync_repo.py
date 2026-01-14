@@ -6,6 +6,7 @@ Supports idempotency checks with ~/.claude/ to ensure resources are not lost.
 """
 
 import filecmp
+import json
 import os
 import platform
 import shutil
@@ -30,6 +31,10 @@ FRAGO_RECIPES_DIR = FRAGO_HOME / "recipes"
 
 # ~/.claude/ runtime directory
 CLAUDE_SKILLS_DIR = CLAUDE_HOME / "skills"
+
+# Metadata file for tracking skill mtimes (stored in repo, synced across devices)
+SKILLS_METADATA_FILE = FRAGO_CLAUDE_DIR / "skills_metadata.json"
+SKILLS_METADATA_VERSION = 1
 
 
 @dataclass
@@ -186,6 +191,9 @@ config.json
 __pycache__/
 *.pyc
 *.bak
+*.bak.*
+server.pid
+gui_history.jsonl
 
 # Video files
 *.mp4
@@ -230,9 +238,9 @@ logs/
             # Commands directory (managed by frago itself)
             ".claude/commands/",
             # System files
-            ".DS_Store", "__pycache__/",
+            ".DS_Store", "__pycache__/", "server.pid", "gui_history.jsonl",
             # Large file types
-            "*.mp4", "*.wav", "*.log", "logs/",
+            "*.mp4", "*.wav", "*.log", "logs/", "*.pdf", "*.psd", "*.ai",
         ]
         missing = [rule for rule in needed_rules if rule not in existing]
         if missing:
@@ -251,22 +259,40 @@ def _untrack_ignored_paths(repo_dir: Path) -> None:
     Fixes issue where .tmp, .claude/commands, .DS_Store etc. are already tracked on existing devices.
     """
     # Path patterns that need to be untracked
-    paths_to_untrack = ["projects/.tmp/", ".claude/commands/", ".DS_Store", "**/.DS_Store"]
+    paths_to_untrack = [
+        # Directories
+        "projects/.tmp/", ".claude/commands/",
+        # System files
+        ".DS_Store", "**/.DS_Store", "*.pyc", "*.bak", "*.bak.*", "*.log",
+        # Video files
+        "*.mp4", "*.avi", "*.mov", "*.mkv", "*.wmv", "*.flv", "*.webm",
+        # Audio files
+        "*.wav", "*.mp3", "*.aac", "*.flac", "*.ogg", "*.m4a",
+        # Archives and large files
+        "*.zip", "*.tar", "*.tar.gz", "*.rar", "*.7z", "*.pdf", "*.psd", "*.ai",
+    ]
 
     for path_pattern in paths_to_untrack:
-        # Check if this path is tracked
+        # For glob patterns like *.pdf, also match in subdirectories
+        patterns = [path_pattern]
+        if path_pattern.startswith("*."):
+            patterns.append(f"**/{path_pattern}")
+
+        # Check if any files matching the pattern are tracked
         result = _run_git(
-            ["ls-files", "--", path_pattern],
+            ["ls-files", "-z", "--"] + patterns,
             repo_dir,
             check=False
         )
         if result.returncode == 0 and result.stdout.strip():
-            # Files are tracked, execute git rm --cached
-            _run_git(
-                ["rm", "-r", "--cached", "--quiet", path_pattern],
-                repo_dir,
-                check=False
-            )
+            # Files are tracked, untrack them one by one (handles special chars in filenames)
+            tracked_files = [f for f in result.stdout.split('\0') if f]
+            for tracked_file in tracked_files:
+                _run_git(
+                    ["rm", "--cached", "--quiet", "--", tracked_file],
+                    repo_dir,
+                    check=False
+                )
 
 
 def _parse_repo_owner_name(repo_url: str) -> tuple[Optional[str], Optional[str]]:
@@ -652,14 +678,223 @@ def _is_source_newer(src: Path, target: Path) -> bool:
     return False
 
 
+def _get_git_commit_time(repo_dir: Path, rel_path: str) -> float:
+    """Get the git commit time (author date) for a file/directory
+
+    Args:
+        repo_dir: Git repository root directory
+        rel_path: Relative path from repo root
+
+    Returns:
+        Unix timestamp of last commit, or 0.0 if not tracked
+    """
+    result = _run_git(["log", "-1", "--format=%at", "--", rel_path], repo_dir, check=False)
+    if result.returncode == 0 and result.stdout.strip():
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _is_repo_newer_than_local(repo_dir: Path, repo_rel_path: str, local_path: Path) -> bool:
+    """Check if repo version is newer than local version
+
+    Compares git commit time (repo) vs file mtime (local).
+    This is more reliable than comparing mtimes, since git pull
+    sets mtime to checkout time, not original commit time.
+
+    Args:
+        repo_dir: Git repository root
+        repo_rel_path: Relative path in repo
+        local_path: Local file/directory path
+
+    Returns:
+        True if repo version is newer, or local doesn't exist
+    """
+    if not local_path.exists():
+        return True
+
+    repo_commit_time = _get_git_commit_time(repo_dir, repo_rel_path)
+    if repo_commit_time == 0.0:
+        # Not tracked in git, fall back to mtime comparison
+        repo_path = repo_dir / repo_rel_path
+        if repo_path.is_dir():
+            return _get_dir_latest_mtime(repo_path) > _get_dir_latest_mtime(local_path)
+        return False
+
+    if local_path.is_dir():
+        local_mtime = _get_dir_latest_mtime(local_path)
+    else:
+        local_mtime = _get_file_mtime(local_path)
+
+    return repo_commit_time > local_mtime
+
+
+# =============================================================================
+# Skills Metadata Management
+# =============================================================================
+
+
+def _load_skills_metadata() -> Dict[str, Any]:
+    """Load skills metadata from JSON file
+
+    Returns a dict with structure:
+    {
+        "version": 1,
+        "skills": {
+            "skill-name": {"mtime": 1234567890.0},
+            ...
+        }
+    }
+
+    Error handling:
+    - File not exists: return empty structure
+    - JSON parse error: log warning, return empty structure
+    - Version mismatch: migrate or return empty structure
+    """
+    empty_metadata = {"version": SKILLS_METADATA_VERSION, "skills": {}}
+
+    if not SKILLS_METADATA_FILE.exists():
+        return empty_metadata
+
+    try:
+        content = SKILLS_METADATA_FILE.read_text(encoding="utf-8")
+        metadata = json.loads(content)
+
+        # Validate structure
+        if not isinstance(metadata, dict):
+            click.echo(f"Warning: Invalid metadata format, recreating", err=True)
+            return empty_metadata
+
+        # Check version
+        version = metadata.get("version", 0)
+        if version != SKILLS_METADATA_VERSION:
+            # Future: implement migration logic here
+            click.echo(f"Warning: Metadata version mismatch ({version} != {SKILLS_METADATA_VERSION}), recreating", err=True)
+            return empty_metadata
+
+        # Ensure skills dict exists
+        if "skills" not in metadata or not isinstance(metadata["skills"], dict):
+            metadata["skills"] = {}
+
+        return metadata
+
+    except json.JSONDecodeError as e:
+        click.echo(f"Warning: Failed to parse metadata file: {e}, recreating", err=True)
+        return empty_metadata
+    except Exception as e:
+        click.echo(f"Warning: Failed to load metadata file: {e}, recreating", err=True)
+        return empty_metadata
+
+
+def _save_skills_metadata(metadata: Dict[str, Any]) -> bool:
+    """Save skills metadata to JSON file
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    try:
+        # Ensure parent directory exists
+        SKILLS_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # Ensure version is set
+        metadata["version"] = SKILLS_METADATA_VERSION
+
+        content = json.dumps(metadata, indent=2, ensure_ascii=False)
+        SKILLS_METADATA_FILE.write_text(content, encoding="utf-8")
+        return True
+
+    except Exception as e:
+        click.echo(f"Warning: Failed to save metadata file: {e}", err=True)
+        return False
+
+
+def _update_skill_metadata(metadata: Dict[str, Any], skill_name: str, mtime: float) -> None:
+    """Update a single skill's metadata
+
+    Args:
+        metadata: The metadata dict to update (modified in place)
+        skill_name: Name of the skill
+        mtime: The modification time to record
+    """
+    if "skills" not in metadata:
+        metadata["skills"] = {}
+    metadata["skills"][skill_name] = {"mtime": mtime}
+
+
+def _remove_skill_metadata(metadata: Dict[str, Any], skill_name: str) -> None:
+    """Remove a skill from metadata
+
+    Args:
+        metadata: The metadata dict to update (modified in place)
+        skill_name: Name of the skill to remove
+    """
+    if "skills" in metadata and skill_name in metadata["skills"]:
+        del metadata["skills"][skill_name]
+
+
+def _get_skill_metadata_mtime(metadata: Dict[str, Any], skill_name: str) -> Optional[float]:
+    """Get a skill's mtime from metadata
+
+    Returns:
+        The recorded mtime, or None if not found
+    """
+    skills = metadata.get("skills", {})
+    skill_data = skills.get(skill_name, {})
+    return skill_data.get("mtime")
+
+
+def _is_metadata_newer_than_local(metadata: Dict[str, Any], skill_name: str, local_path: Path) -> bool:
+    """Check if metadata mtime is newer than local file mtime
+
+    This is used to determine if the repo version should overwrite local.
+    The metadata records the actual mtime when a skill was synced,
+    which is more reliable than git commit time or file checkout time.
+
+    Args:
+        metadata: The loaded metadata dict
+        skill_name: Name of the skill
+        local_path: Local skill directory path
+
+    Returns:
+        True if metadata mtime > local mtime (should overwrite)
+        False if metadata mtime <= local mtime (keep local)
+        False if metadata has no record for this skill (conservative: don't overwrite)
+    """
+    metadata_mtime = _get_skill_metadata_mtime(metadata, skill_name)
+
+    # If no metadata record, be conservative and don't overwrite local
+    if metadata_mtime is None:
+        return False
+
+    # If local doesn't exist, allow sync
+    if not local_path.exists():
+        return True
+
+    # Compare metadata mtime with local mtime
+    if local_path.is_dir():
+        local_mtime = _get_dir_latest_mtime(local_path)
+    else:
+        local_mtime = _get_file_mtime(local_path)
+
+    return metadata_mtime > local_mtime
+
+
 def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
     """
     Sync changes from ~/.claude/ to ~/.frago/.claude/
 
     Check ~/.claude/skills/frago-*
     Only copy when version in ~/.claude/ is newer than ~/.frago/.claude/
+    Also detect deletions: remove from repo if deleted locally
+    Records mtime metadata for cross-device sync comparison.
     """
-    # Sync skills
+    # Load existing metadata
+    metadata = _load_skills_metadata()
+    metadata_changed = False
+
+    # Sync skills - copy new/updated
     if CLAUDE_SKILLS_DIR.exists():
         FRAGO_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -670,6 +905,7 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
                 continue
 
             target_skill_dir = FRAGO_SKILLS_DIR / skill_dir.name
+            local_mtime = _get_dir_latest_mtime(skill_dir)
 
             # Only copy when content differs and source directory is newer
             if not _dir_files_identical(skill_dir, target_skill_dir) and _is_source_newer(skill_dir, target_skill_dir):
@@ -679,10 +915,51 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.copytree(
                         skill_dir, target_skill_dir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
                     )
+                    # Record mtime in metadata
+                    _update_skill_metadata(metadata, skill_dir.name, local_mtime)
+                    metadata_changed = True
                 # Collect change information
                 file_path = f".claude/skills/{skill_dir.name}"
                 change = _get_file_change_info(FRAGO_HOME, file_path)
                 result.local_changes.append(change)
+            else:
+                # Even if not syncing, ensure metadata is up-to-date for existing skills
+                existing_mtime = _get_skill_metadata_mtime(metadata, skill_dir.name)
+                if existing_mtime is None or abs(existing_mtime - local_mtime) > 1.0:
+                    if not dry_run:
+                        _update_skill_metadata(metadata, skill_dir.name, local_mtime)
+                        metadata_changed = True
+
+    # Sync skills - detect deletions (repo has but local doesn't)
+    if FRAGO_SKILLS_DIR.exists() and CLAUDE_SKILLS_DIR.exists():
+        local_skills = {d.name for d in CLAUDE_SKILLS_DIR.iterdir() if d.is_dir() and d.name.startswith("frago-")}
+
+        for repo_skill_dir in list(FRAGO_SKILLS_DIR.iterdir()):
+            if not repo_skill_dir.is_dir():
+                continue
+            if not repo_skill_dir.name.startswith("frago-"):
+                continue
+
+            # If repo has skill but local doesn't, delete from repo
+            if repo_skill_dir.name not in local_skills:
+                if not dry_run:
+                    shutil.rmtree(repo_skill_dir)
+                    # Remove from metadata
+                    _remove_skill_metadata(metadata, repo_skill_dir.name)
+                    metadata_changed = True
+                # Record deletion
+                result.local_changes.append(
+                    FileChange(
+                        type="Skill",
+                        name=repo_skill_dir.name,
+                        operation="Deleted",
+                        timestamp=None,
+                    )
+                )
+
+    # Save metadata if changed
+    if metadata_changed and not dry_run:
+        _save_skills_metadata(metadata)
 
     # Display table immediately
     if result.local_changes:
@@ -693,8 +970,16 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
     """
     Sync content from ~/.frago/.claude/ to ~/.claude/
 
-    After fetching updates from repository, deploy resources to Claude Code runtime directory
+    After fetching updates from repository, deploy resources to Claude Code runtime directory.
+    Uses metadata mtime comparison to avoid overwriting local changes with stale remote versions.
+
+    The metadata file (skills_metadata.json) records the actual mtime when each skill was synced,
+    which is more reliable than git commit time (which reflects commit time, not file mtime)
+    or file checkout time (which reflects pull time, not original mtime).
     """
+    # Load metadata for comparison
+    metadata = _load_skills_metadata()
+
     # Sync skills
     if FRAGO_SKILLS_DIR.exists():
         CLAUDE_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -707,7 +992,10 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
 
             target_skill_dir = CLAUDE_SKILLS_DIR / skill_dir.name
 
-            if not _dir_files_identical(skill_dir, target_skill_dir):
+            # Only copy when content differs AND metadata mtime is newer than local mtime
+            if not _dir_files_identical(skill_dir, target_skill_dir) and _is_metadata_newer_than_local(
+                metadata, skill_dir.name, target_skill_dir
+            ):
                 if not dry_run:
                     if target_skill_dir.exists():
                         shutil.rmtree(target_skill_dir)
@@ -968,6 +1256,14 @@ def sync(
             result.errors.append("Resource conflicts detected, please resolve manually and sync again")
             # Return without marking as failed, let user see conflict info
             return result
+
+        # 2b. Re-run untrack after rebase (remote may have tracked files that should be ignored)
+        if not dry_run:
+            _untrack_ignored_paths(FRAGO_HOME)
+            # Commit if there are changes from untracking
+            if _has_uncommitted_changes(FRAGO_HOME):
+                _run_git(["add", "."], FRAGO_HOME, check=False)
+                _run_git(["commit", "-m", "chore: untrack ignored files after sync"], FRAGO_HOME, check=False)
 
         # 3. Update local Claude Code
         click.echo("Updating Claude Code resources...")
