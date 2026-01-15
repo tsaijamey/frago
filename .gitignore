@@ -17,6 +17,7 @@ build/
 # ====================
 # Testing
 # ====================
+tests/*
 tests/results/
 tests/*.log
 coverage/
