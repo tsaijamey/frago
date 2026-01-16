@@ -68,29 +68,147 @@ def prepare_command_for_windows(cmd: List[str]) -> List[str]:
     return cmd
 
 
+def _search_node_version_dirs(base_dir: str, subpath: str, executable: str) -> Optional[str]:
+    """Search for executable in Node version manager directories.
+
+    Args:
+        base_dir: Base directory containing version subdirectories
+        subpath: Path within each version directory (e.g., "bin", "installation/bin")
+        executable: Name of the executable to find
+
+    Returns:
+        Full path to executable if found, None otherwise
+    """
+    if not os.path.isdir(base_dir):
+        return None
+    try:
+        for version in os.listdir(base_dir):
+            if version.startswith("."):
+                continue
+            candidate = os.path.join(base_dir, version, subpath, executable)
+            if os.path.isfile(candidate):
+                return candidate
+    except OSError:
+        pass
+    return None
+
+
 def find_claude_cli() -> Optional[str]:
     """Find claude CLI executable path.
 
     Returns full path to claude executable, or None if not found.
-    On Windows, searches common npm global install locations if not in PATH.
+    Searches common npm global install locations if not in PATH,
+    including Node version managers (nvm, fnm, volta, asdf) and pnpm.
     """
     # Try PATH first
     path = shutil.which("claude")
     if path:
         return path
 
-    # Windows: try common npm global locations
+    home = os.path.expanduser("~")
+
+    # Windows: try common npm global locations and Node version managers
     if platform.system() == "Windows":
         appdata = os.environ.get("APPDATA", "")
         localappdata = os.environ.get("LOCALAPPDATA", "")
 
         candidates = [
+            # Standard npm global paths
             os.path.join(appdata, "npm", "claude.cmd"),
             os.path.join(localappdata, "npm", "claude.cmd"),
+            # pnpm global path
+            os.path.join(localappdata, "pnpm", "claude.cmd"),
         ]
+
+        # Check environment variable hints for pnpm
+        pnpm_home = os.environ.get("PNPM_HOME", "")
+        if pnpm_home:
+            candidates.append(os.path.join(pnpm_home, "claude.cmd"))
+
         for candidate in candidates:
             if os.path.isfile(candidate):
                 return candidate
+
+        # fnm: search in node-versions directory
+        fnm_dir = os.environ.get("FNM_DIR", os.path.join(appdata, "fnm"))
+        result = _search_node_version_dirs(
+            os.path.join(fnm_dir, "node-versions"), "installation", "claude.cmd"
+        )
+        if result:
+            return result
+
+        # nvm-windows: search in nvm directory
+        nvm_home = os.environ.get("NVM_HOME", os.path.join(appdata, "nvm"))
+        if os.path.isdir(nvm_home):
+            try:
+                for version in os.listdir(nvm_home):
+                    if version.startswith(".") or not version.startswith("v"):
+                        continue
+                    candidate = os.path.join(nvm_home, version, "claude.cmd")
+                    if os.path.isfile(candidate):
+                        return candidate
+            except OSError:
+                pass
+
+        # volta: search in tools/image/node directory
+        volta_home = os.environ.get("VOLTA_HOME", os.path.join(localappdata, "Volta"))
+        volta_node_dir = os.path.join(volta_home, "tools", "image", "node")
+        result = _search_node_version_dirs(volta_node_dir, "", "claude.cmd")
+        if result:
+            return result
+
+    # macOS/Linux: try common npm global locations and Node version managers
+    else:
+        candidates = [
+            # Standard system paths
+            "/usr/local/bin/claude",
+            "/usr/bin/claude",
+            # Homebrew paths (macOS)
+            "/opt/homebrew/bin/claude",  # Apple Silicon
+            # pnpm global path
+            os.path.join(home, ".local", "share", "pnpm", "claude"),
+        ]
+
+        # Check environment variable hints for pnpm
+        pnpm_home = os.environ.get("PNPM_HOME", "")
+        if pnpm_home:
+            candidates.append(os.path.join(pnpm_home, "claude"))
+
+        # volta shim (takes priority as it's a shim that handles version switching)
+        volta_home = os.environ.get("VOLTA_HOME", os.path.join(home, ".volta"))
+        candidates.append(os.path.join(volta_home, "bin", "claude"))
+
+        # asdf shim
+        asdf_dir = os.environ.get("ASDF_DATA_DIR", os.path.join(home, ".asdf"))
+        candidates.append(os.path.join(asdf_dir, "shims", "claude"))
+
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+
+        # nvm: search in versions/node directory
+        nvm_dir = os.environ.get("NVM_DIR", os.path.join(home, ".nvm"))
+        result = _search_node_version_dirs(
+            os.path.join(nvm_dir, "versions", "node"), "bin", "claude"
+        )
+        if result:
+            return result
+
+        # fnm: search in node-versions directory
+        fnm_dir = os.environ.get("FNM_DIR", os.path.join(home, ".fnm"))
+        result = _search_node_version_dirs(
+            os.path.join(fnm_dir, "node-versions"), "installation/bin", "claude"
+        )
+        if result:
+            return result
+
+        # n: search in n/versions/node directory
+        n_prefix = os.environ.get("N_PREFIX", "/usr/local")
+        result = _search_node_version_dirs(
+            os.path.join(n_prefix, "n", "versions", "node"), "bin", "claude"
+        )
+        if result:
+            return result
 
     return None
 
