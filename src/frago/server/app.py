@@ -239,6 +239,15 @@ def create_app(
                     create_message(MessageType.DATA_INITIAL, initial_data),
                 )
 
+            # Push version info if available
+            version_service = VersionCheckService.get_instance()
+            version_info = await version_service.get_version_info()
+            if version_info:
+                await manager.send_personal(
+                    websocket,
+                    create_message(MessageType.DATA_VERSION, {"data": version_info}),
+                )
+
             # Keep connection alive and handle incoming messages
             while True:
                 data = await websocket.receive_text()

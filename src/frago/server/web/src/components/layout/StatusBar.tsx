@@ -3,7 +3,7 @@ import { useAppStore } from '@/stores/appStore';
 import ConnectionStatus from '@/components/ui/ConnectionStatus';
 
 export default function StatusBar() {
-  const { systemStatus, loadSystemStatus, config } = useAppStore();
+  const { systemStatus, loadSystemStatus, config, versionInfo } = useAppStore();
 
   useEffect(() => {
     // Initial load
@@ -39,6 +39,12 @@ export default function StatusBar() {
           Chrome: {systemStatus?.chrome_connected ? 'Ready' : 'Off'}
         </span>
       </div>
+      {/* Version display */}
+      {versionInfo?.current_version && (
+        <span className="text-xs text-[var(--text-muted)]">
+          v{versionInfo.current_version}
+        </span>
+      )}
     </div>
   );
 }
