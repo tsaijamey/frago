@@ -30,12 +30,13 @@ from .view_command import view
 from .serve_command import serve
 from .server_command import server_group
 from .autostart_command import autostart_group
+from .start_command import start
 from .agent_friendly import AgentFriendlyGroup
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["chrome", "recipe", "skill", "run", "view", "server", "serve"]),
+    ("Daily Use", ["start", "chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
     ("Environment", ["init", "status", "sync", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
@@ -291,6 +292,7 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
 
 
 # Register top-level commands
+cli.add_command(start)  # User-friendly entry point: starts server + opens browser
 cli.add_command(init)  # New environment init command
 cli.add_command(init_dirs, name="init-dirs")  # Legacy directory init command
 cli.add_command(status)  # CDP connection status (kept at top level for quick checks)
