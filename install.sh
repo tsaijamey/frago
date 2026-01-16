@@ -226,6 +226,8 @@ launch_frago() {
     printf "  ${DIM}Starting frago server and opening browser...${RESET}\n"
     echo ""
 
+    # Use restart to ensure new version is running (handles both fresh start and upgrade)
+    frago server restart >/dev/null 2>&1 || true
     frago start
 }
 

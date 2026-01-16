@@ -203,6 +203,8 @@ function Start-Frago {
     Write-Host "Starting frago server and opening browser..." -ForegroundColor DarkGray
     Write-Host ""
 
+    # Use restart to ensure new version is running (handles both fresh start and upgrade)
+    try { & frago server restart *>$null } catch { }
     & frago start
 }
 
