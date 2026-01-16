@@ -4,9 +4,62 @@ Provides a simple 'frago start' command that launches the server
 and opens the browser for immediate access to the Web UI.
 """
 
+import platform
+import subprocess
 import webbrowser
 
 import click
+
+
+def open_browser(url: str) -> bool:
+    """Open URL in default browser with cross-platform support.
+
+    On Windows, webbrowser.open() can fail silently in some contexts.
+    This function provides fallback mechanisms.
+
+    Returns:
+        True if browser was opened successfully, False otherwise.
+    """
+    system = platform.system()
+
+    if system == "Windows":
+        # On Windows, use start command which is more reliable
+        try:
+            subprocess.run(
+                ["cmd", "/c", "start", "", url],
+                check=True,
+                capture_output=True,
+            )
+            return True
+        except subprocess.SubprocessError:
+            pass
+
+        # Fallback to webbrowser
+        try:
+            return webbrowser.open(url)
+        except Exception:
+            return False
+
+    elif system == "Darwin":
+        # macOS: use open command
+        try:
+            subprocess.run(["open", url], check=True, capture_output=True)
+            return True
+        except subprocess.SubprocessError:
+            return webbrowser.open(url)
+
+    else:
+        # Linux and others: try xdg-open first, then webbrowser
+        try:
+            subprocess.run(
+                ["xdg-open", url],
+                check=True,
+                capture_output=True,
+                start_new_session=True,
+            )
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return webbrowser.open(url)
 
 
 @click.command("start")
@@ -74,7 +127,8 @@ def start(no_browser: bool, debug: bool) -> None:
 
             if not no_browser:
                 click.echo("Opening browser...")
-                webbrowser.open(url)
+                if not open_browser(url):
+                    click.echo(f"  Could not open browser. Visit: {url}")
         else:
             success, message = start_daemon()
             click.echo(message)
@@ -84,6 +138,7 @@ def start(no_browser: bool, debug: bool) -> None:
                 import time
 
                 time.sleep(0.5)
-                webbrowser.open(url)
+                if not open_browser(url):
+                    click.echo(f"  Could not open browser. Visit: {url}")
             elif not success:
                 raise SystemExit(1)
