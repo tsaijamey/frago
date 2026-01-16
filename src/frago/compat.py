@@ -3,7 +3,7 @@ import os
 import platform
 import shutil
 import sys
-from typing import List
+from typing import List, Optional
 
 
 def _supports_unicode() -> bool:
@@ -66,6 +66,33 @@ def prepare_command_for_windows(cmd: List[str]) -> List[str]:
         return [executable] + cmd[1:]
 
     return cmd
+
+
+def find_claude_cli() -> Optional[str]:
+    """Find claude CLI executable path.
+
+    Returns full path to claude executable, or None if not found.
+    On Windows, searches common npm global install locations if not in PATH.
+    """
+    # Try PATH first
+    path = shutil.which("claude")
+    if path:
+        return path
+
+    # Windows: try common npm global locations
+    if platform.system() == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+
+        candidates = [
+            os.path.join(appdata, "npm", "claude.cmd"),
+            os.path.join(localappdata, "npm", "claude.cmd"),
+        ]
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+
+    return None
 
 
 def get_windows_subprocess_kwargs(detach: bool = False) -> dict:

@@ -207,10 +207,10 @@ async def generate_task_title(task_id: str) -> dict:
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
 
-    title = await TaskService.generate_title_for_task_async(task_id)
+    title, error = await TaskService.generate_title_for_task_async(task_id)
     if title:
         return {"status": "ok", "title": title}
-    return {"status": "error", "error": "Failed to generate title"}
+    return {"status": "error", "error": error or "Failed to generate title"}
 
 
 @router.get("/tasks/{task_id}/steps", response_model=TaskStepsResponse)

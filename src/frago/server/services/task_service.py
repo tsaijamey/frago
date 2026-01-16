@@ -364,7 +364,9 @@ class TaskService:
         }
 
     @staticmethod
-    def generate_title_for_task(session_id: str, force: bool = True) -> Optional[str]:
+    def generate_title_for_task(
+        session_id: str, force: bool = True
+    ) -> tuple[Optional[str], Optional[str]]:
         """Generate AI title for a single task.
 
         Args:
@@ -372,20 +374,21 @@ class TaskService:
             force: If True, regenerate even if title exists.
 
         Returns:
-            Generated title or None on failure.
+            Tuple of (title, error_message). On success, error is None.
         """
         try:
             from frago.session.title_manager import get_title_manager
 
             title_manager = get_title_manager()
-            title = title_manager.generate_title_if_needed(session_id, force=force)
-            return title
+            return title_manager.generate_title_if_needed(session_id, force=force)
         except Exception as e:
             logger.error("Failed to generate title for task %s: %s", session_id, e)
-            return None
+            return None, f"Internal error: {e}"
 
     @staticmethod
-    async def generate_title_for_task_async(session_id: str, force: bool = True) -> Optional[str]:
+    async def generate_title_for_task_async(
+        session_id: str, force: bool = True
+    ) -> tuple[Optional[str], Optional[str]]:
         """Async version of generate_title_for_task.
 
         Runs title generation in a thread pool to avoid blocking the event loop.
@@ -395,17 +398,16 @@ class TaskService:
             force: If True, regenerate even if title exists.
 
         Returns:
-            Generated title or None on failure.
+            Tuple of (title, error_message). On success, error is None.
         """
         try:
             from frago.session.title_manager import get_title_manager
 
             title_manager = get_title_manager()
-            title = await title_manager.generate_title_if_needed_async(session_id, force=force)
-            return title
+            return await title_manager.generate_title_if_needed_async(session_id, force=force)
         except Exception as e:
             logger.error("Failed to generate title for task %s: %s", session_id, e)
-            return None
+            return None, f"Internal error: {e}"
 
     @staticmethod
     def get_task_steps(

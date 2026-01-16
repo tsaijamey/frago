@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from frago.compat import get_windows_subprocess_kwargs, prepare_command_for_windows
+from frago.compat import find_claude_cli, get_windows_subprocess_kwargs
 from frago.session.models import AgentType
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ class TitleManager:
         session_id: str,
         agent_type: AgentType = AgentType.CLAUDE,
         force: bool = False
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], Optional[str]]:
         """Generate title for session if not already generated.
 
         Uses haiku model via Claude Code CLI.
@@ -116,19 +116,19 @@ class TitleManager:
             force: Force regenerate even if exists
 
         Returns:
-            Generated title or None on failure
+            Tuple of (title, error_message). On success, error is None.
         """
         data = self._load_sessions_json()
 
         # Check if already generated
         if not force and session_id in data.get("titles", {}):
-            return data["titles"][session_id].get("title")
+            return data["titles"][session_id].get("title"), None
 
         # Get session content
         content = self._get_session_content(session_id, agent_type)
         if not content or len(content.strip()) < 50:
             logger.debug(f"Insufficient content for title generation: {session_id}")
-            return None
+            return None, "Insufficient content for title generation"
 
         # Calculate content hash
         content_hash = self._hash_content(content[:5000])
@@ -137,10 +137,10 @@ class TitleManager:
         if session_id in data.get("titles", {}):
             existing = data["titles"][session_id]
             if existing.get("content_hash") == content_hash and not force:
-                return existing.get("title")
+                return existing.get("title"), None
 
         # Generate title using Claude CLI with haiku
-        title = self._call_haiku_for_title(content[:5000])
+        title, error = self._call_haiku_for_title(content[:5000])
 
         if title:
             data.setdefault("titles", {})[session_id] = {
@@ -152,14 +152,14 @@ class TitleManager:
             self._save_sessions_json()
             logger.info(f"Generated title for session {session_id[:8]}: {title[:50]}")
 
-        return title
+        return title, error
 
     async def generate_title_if_needed_async(
         self,
         session_id: str,
         agent_type: AgentType = AgentType.CLAUDE,
         force: bool = False
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], Optional[str]]:
         """Async version of generate_title_if_needed.
 
         Runs the blocking subprocess call in a thread pool executor.
@@ -171,19 +171,19 @@ class TitleManager:
             force: Force regenerate even if exists
 
         Returns:
-            Generated title or None on failure
+            Tuple of (title, error_message). On success, error is None.
         """
         data = self._load_sessions_json()
 
         # Check if already generated (fast sync check)
         if not force and session_id in data.get("titles", {}):
-            return data["titles"][session_id].get("title")
+            return data["titles"][session_id].get("title"), None
 
         # Get session content (fast sync operation)
         content = self._get_session_content(session_id, agent_type)
         if not content or len(content.strip()) < 50:
             logger.debug(f"Insufficient content for title generation: {session_id}")
-            return None
+            return None, "Insufficient content for title generation"
 
         # Calculate content hash
         content_hash = self._hash_content(content[:5000])
@@ -192,11 +192,11 @@ class TitleManager:
         if session_id in data.get("titles", {}):
             existing = data["titles"][session_id]
             if existing.get("content_hash") == content_hash and not force:
-                return existing.get("title")
+                return existing.get("title"), None
 
         # Run blocking subprocess call in executor
         loop = asyncio.get_event_loop()
-        title = await loop.run_in_executor(
+        title, error = await loop.run_in_executor(
             None,
             self._call_haiku_for_title,
             content[:5000]
@@ -214,7 +214,7 @@ class TitleManager:
             self._save_sessions_json()
             logger.info(f"Generated title for session {session_id[:8]}: {title[:50]}")
 
-        return title
+        return title, error
 
     def _get_session_content(
         self,
@@ -252,15 +252,26 @@ class TitleManager:
         """Generate hash of content for change detection."""
         return hashlib.sha256(content.encode()).hexdigest()[:12]
 
-    def _call_haiku_for_title(self, content: str) -> Optional[str]:
+    def _call_haiku_for_title(self, content: str) -> tuple[Optional[str], Optional[str]]:
         """Call Claude CLI with haiku model to generate title.
 
         Args:
             content: Session content (first 5000 chars)
 
         Returns:
-            Generated title or None on failure
+            Tuple of (title, error_message). On success, error is None.
+            On failure, title is None and error contains a descriptive message.
         """
+        # Find claude CLI executable
+        claude_path = find_claude_cli()
+        if not claude_path:
+            error_msg = (
+                "Claude CLI not found. Please ensure claude is installed and in PATH. "
+                "On Windows, check that npm global bin directory is in PATH."
+            )
+            logger.warning(f"Title generation error: {error_msg}")
+            return None, error_msg
+
         # Get user's language preference for AI output
         from frago.server.services.config_service import ConfigService
 
@@ -280,7 +291,7 @@ Title:'''
 
         try:
             cmd = [
-                "claude", "-p", "-",
+                claude_path, "-p", "-",
                 "--model", "haiku",
                 "--output-format", "json",
             ]
@@ -295,7 +306,7 @@ Title:'''
             }
 
             process = subprocess.Popen(
-                prepare_command_for_windows(cmd),
+                cmd,
                 **popen_kwargs,
             )
 
@@ -318,21 +329,28 @@ Title:'''
                         title = result.get("result", "").strip()
                         # Clean up title (remove quotes if present)
                         title = title.strip('"\'')
-                        return title[:100] if title else None
+                        return (title[:100], None) if title else (None, "Empty title returned")
                 except json.JSONDecodeError:
                     # Try to extract from raw text
-                    return stdout.strip()[:100] if stdout.strip() else None
+                    title = stdout.strip()[:100] if stdout.strip() else None
+                    return (title, None) if title else (None, "Failed to parse response")
 
-            logger.warning(f"Title generation failed: {stderr[:200] if stderr else 'no error'}")
-            return None
+            error_msg = f"Claude CLI returned error: {stderr[:200] if stderr else 'unknown error'}"
+            logger.warning(f"Title generation failed: {error_msg}")
+            return None, error_msg
 
         except subprocess.TimeoutExpired:
             logger.warning("Title generation timed out")
             process.kill()
-            return None
+            return None, "Title generation timed out (60s)"
+        except FileNotFoundError as e:
+            error_msg = f"Claude CLI not found at '{claude_path}': {e}"
+            logger.warning(f"Title generation error: {error_msg}")
+            return None, error_msg
         except Exception as e:
-            logger.warning(f"Title generation error: {e}")
-            return None
+            error_msg = f"Title generation error: {e}"
+            logger.warning(error_msg)
+            return None, error_msg
 
     def is_excluded_session(self, session_id: str) -> bool:
         """Check if session is in excluded list (e.g., title generation sessions)."""
