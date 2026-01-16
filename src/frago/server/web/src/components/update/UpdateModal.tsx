@@ -5,8 +5,10 @@
  * Displays progress bar, status messages, and handles reconnection.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
 interface UpdateModalProps {
   isOpen: boolean;
@@ -14,22 +16,37 @@ interface UpdateModalProps {
 }
 
 export default function UpdateModal({ isOpen, onClose }: UpdateModalProps) {
+  const { t } = useTranslation();
   const updateStatus = useAppStore((state) => state.updateStatus);
   const versionInfo = useAppStore((state) => state.versionInfo);
   const showToast = useAppStore((state) => state.showToast);
   const setUpdateStatus = useAppStore((state) => state.setUpdateStatus);
   const [reconnecting, setReconnecting] = useState(false);
+  const wasDisconnectedRef = useRef(false);
 
-  // Handle successful update completion after reconnect
+  // Use WebSocket hook to monitor connection
+  const { isConnected } = useWebSocket();
+
+  // Handle WebSocket reconnection after server restart
   useEffect(() => {
-    if (reconnecting && updateStatus === null) {
-      // WebSocket reconnected, update likely completed
-      showToast(`Updated to version ${versionInfo?.latest_version || 'latest'}`, 'success');
-      setReconnecting(false);
-      setUpdateStatus(null);
-      onClose();
+    if (reconnecting) {
+      if (!isConnected) {
+        // Track that we were disconnected during update
+        wasDisconnectedRef.current = true;
+      } else if (wasDisconnectedRef.current && isConnected) {
+        // Reconnected after being disconnected - update complete
+        console.log('[UpdateModal] Reconnected after update, reloading page...');
+        showToast(t('update.updatedTo', { version: versionInfo?.latest_version || 'latest' }), 'success');
+        setReconnecting(false);
+        setUpdateStatus(null);
+        wasDisconnectedRef.current = false;
+        // Reload page to ensure fresh state
+        setTimeout(() => {
+          window.location.reload();
+        }, 500);
+      }
     }
-  }, [reconnecting, updateStatus, versionInfo, showToast, setUpdateStatus, onClose]);
+  }, [reconnecting, isConnected, versionInfo, showToast, setUpdateStatus, t]);
 
   // Handle restarting state - server will disconnect
   useEffect(() => {
@@ -41,9 +58,9 @@ export default function UpdateModal({ isOpen, onClose }: UpdateModalProps) {
   // Handle error state
   useEffect(() => {
     if (updateStatus?.status === 'error') {
-      showToast(`Update failed: ${updateStatus.error || 'Unknown error'}`, 'error');
+      showToast(`${t('update.failed')}: ${updateStatus.error || t('update.error')}`, 'error');
     }
-  }, [updateStatus?.status, updateStatus?.error, showToast]);
+  }, [updateStatus?.status, updateStatus?.error, showToast, t]);
 
   if (!isOpen) {
     return null;
@@ -51,20 +68,20 @@ export default function UpdateModal({ isOpen, onClose }: UpdateModalProps) {
 
   const status = updateStatus?.status || 'updating';
   const progress = updateStatus?.progress || 0;
-  const message = updateStatus?.message || 'Preparing update...';
+  const message = updateStatus?.message || t('update.preparing');
 
   // Determine display text based on status
-  let title = 'Updating frago...';
+  let title = t('update.updating');
   let statusMessage = message;
 
   if (status === 'restarting' || reconnecting) {
-    title = 'Restarting server...';
+    title = t('update.restarting');
     statusMessage = reconnecting
-      ? 'Reconnecting to server...'
-      : 'Update complete, restarting server...';
+      ? t('update.reconnecting')
+      : t('update.complete');
   } else if (status === 'error') {
-    title = 'Update failed';
-    statusMessage = updateStatus?.error || 'An error occurred during update';
+    title = t('update.failed');
+    statusMessage = updateStatus?.error || t('update.error');
   }
 
   const canClose = status === 'error' || status === 'idle';
@@ -83,7 +100,7 @@ export default function UpdateModal({ isOpen, onClose }: UpdateModalProps) {
               />
             </div>
             <span className="update-modal-progress-text">
-              {reconnecting ? 'Reconnecting...' : `${progress}%`}
+              {reconnecting ? t('update.reconnectingProgress') : `${progress}%`}
             </span>
           </div>
         )}
@@ -92,7 +109,7 @@ export default function UpdateModal({ isOpen, onClose }: UpdateModalProps) {
 
         {reconnecting && (
           <p className="update-modal-hint">
-            The page will automatically reload when the server is ready.
+            {t('update.autoReload')}
           </p>
         )}
 
@@ -103,7 +120,7 @@ export default function UpdateModal({ isOpen, onClose }: UpdateModalProps) {
               className="update-modal-close-btn"
               onClick={onClose}
             >
-              Close
+              {t('update.close')}
             </button>
           </div>
         )}

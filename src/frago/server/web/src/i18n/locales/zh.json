@@ -434,5 +434,18 @@
     "apiKeyEmpty": "API 密钥不能为空",
     "customEndpointRequired": "自定义端点需要 API 地址",
     "customEndpointModelRequired": "自定义端点需要主模型名称"
+  },
+  "update": {
+    "updating": "正在更新 frago...",
+    "restarting": "正在重启服务器...",
+    "failed": "更新失败",
+    "preparing": "准备更新...",
+    "reconnecting": "正在重连服务器...",
+    "complete": "更新完成，正在重启服务器...",
+    "error": "更新过程中发生错误",
+    "reconnectingProgress": "重连中...",
+    "autoReload": "服务器就绪后页面将自动刷新。",
+    "close": "关闭",
+    "updatedTo": "已更新到版本 {{version}}"
   }
 }

@@ -434,5 +434,18 @@
     "apiKeyEmpty": "API Key cannot be empty",
     "customEndpointRequired": "Custom endpoint requires API URL",
     "customEndpointModelRequired": "Custom endpoint requires a main model name"
+  },
+  "update": {
+    "updating": "Updating frago...",
+    "restarting": "Restarting server...",
+    "failed": "Update failed",
+    "preparing": "Preparing update...",
+    "reconnecting": "Reconnecting to server...",
+    "complete": "Update complete, restarting server...",
+    "error": "An error occurred during update",
+    "reconnectingProgress": "Reconnecting...",
+    "autoReload": "The page will automatically reload when the server is ready.",
+    "close": "Close",
+    "updatedTo": "Updated to version {{version}}"
   }
 }
