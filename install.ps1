@@ -195,17 +195,46 @@ function Show-NextSteps {
     Write-Host ""
 }
 
+function Wait-ForServer {
+    # Wait for server to be ready (max 30 seconds)
+    $url = "http://127.0.0.1:8093/api/status"
+    $maxAttempts = 30
+
+    for ($attempt = 0; $attempt -lt $maxAttempts; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            if ($response.StatusCode -eq 200) {
+                return $true
+            }
+        } catch {
+            # Server not ready yet
+        }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
 function Start-Frago {
     Write-Section "Launching"
 
     Update-SessionPath
     Write-Host "  " -NoNewline
-    Write-Host "Starting frago server and opening browser..." -ForegroundColor DarkGray
-    Write-Host ""
+    Write-Host "Starting frago server..." -ForegroundColor DarkGray
 
     # Use restart to ensure new version is running (handles both fresh start and upgrade)
-    try { & frago server restart *>$null } catch { }
-    & frago start
+    try { & frago server restart *>$null } catch {
+        try { & frago server start *>$null } catch { }
+    }
+
+    # Wait for server to be ready before opening browser
+    if (Wait-ForServer) {
+        Write-Host "  " -NoNewline
+        Write-Host "Opening browser..." -ForegroundColor DarkGray
+        Write-Host ""
+        Start-Process "http://127.0.0.1:8093"
+    } else {
+        Write-Host " ~ Server did not start in time. Run 'frago start' manually." -ForegroundColor Yellow
+    }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
