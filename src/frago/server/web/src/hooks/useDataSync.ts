@@ -9,7 +9,7 @@ import { useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { MessageType, type WebSocketMessage } from '@/api/websocket';
 import { useAppStore } from '@/stores/appStore';
-import type { TaskItem, RecipeItem, SkillItem, CommunityRecipeItem } from '@/types/pywebview';
+import type { TaskItem, RecipeItem, SkillItem, CommunityRecipeItem, VersionInfo, UpdateStatus } from '@/types/pywebview';
 
 /**
  * Raw task data from WebSocket (matches backend TaskService format)
@@ -150,6 +150,8 @@ export function useDataSync() {
   const setRecipes = useAppStore((state) => state.setRecipes);
   const setSkills = useAppStore((state) => state.setSkills);
   const setCommunityRecipes = useAppStore((state) => state.setCommunityRecipes);
+  const setVersionInfo = useAppStore((state) => state.setVersionInfo);
+  const setUpdateStatus = useAppStore((state) => state.setUpdateStatus);
 
   const handleMessage = useCallback(
     (message: WebSocketMessage) => {
@@ -264,9 +266,32 @@ export function useDataSync() {
           }
           break;
         }
+
+        case MessageType.DATA_VERSION: {
+          // Version info updated
+          const data = message.data as {
+            data?: VersionInfo;
+            error?: string | null;
+          };
+          console.log('[useDataSync] Received version info update');
+          if (data?.data) {
+            setVersionInfo(data.data);
+          }
+          break;
+        }
+
+        case MessageType.DATA_UPDATE_STATUS: {
+          // Self-update status updated
+          const data = message.data as UpdateStatus | undefined;
+          console.log('[useDataSync] Received update status:', data?.status);
+          if (data) {
+            setUpdateStatus(data);
+          }
+          break;
+        }
       }
     },
-    [setDataFromPush, setTasks, setRecipes, setSkills, setCommunityRecipes]
+    [setDataFromPush, setTasks, setRecipes, setSkills, setCommunityRecipes, setVersionInfo, setUpdateStatus]
   );
 
   // Subscribe to data push messages
@@ -278,6 +303,8 @@ export function useDataSync() {
       MessageType.DATA_RECIPES,
       MessageType.DATA_SKILLS,
       MessageType.DATA_COMMUNITY_RECIPES,
+      MessageType.DATA_VERSION,
+      MessageType.DATA_UPDATE_STATUS,
     ],
     onMessage: handleMessage,
   });

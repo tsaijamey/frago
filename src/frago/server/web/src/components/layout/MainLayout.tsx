@@ -10,6 +10,7 @@
 import { ReactNode } from 'react';
 import Sidebar from './Sidebar';
 import StatusBar from './StatusBar';
+import VersionBanner from './VersionBanner';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -17,19 +18,24 @@ interface MainLayoutProps {
 
 export default function MainLayout({ children }: MainLayoutProps) {
   return (
-    <div className="main-layout">
-      {/* Sidebar */}
-      <Sidebar />
+    <div className="main-layout-wrapper">
+      {/* Version Update Banner */}
+      <VersionBanner />
 
-      {/* Content Area */}
-      <div className="content-area">
-        {/* Main Content */}
-        <main className="main-content">
-          {children}
-        </main>
+      <div className="main-layout">
+        {/* Sidebar */}
+        <Sidebar />
 
-        {/* Status Bar */}
-        <StatusBar />
+        {/* Content Area */}
+        <div className="content-area">
+          {/* Main Content */}
+          <main className="main-content">
+            {children}
+          </main>
+
+          {/* Status Bar */}
+          <StatusBar />
+        </div>
       </div>
     </div>
   );

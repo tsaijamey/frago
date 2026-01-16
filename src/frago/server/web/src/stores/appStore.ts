@@ -14,6 +14,8 @@ import type {
   Theme,
   Language,
   CommunityRecipeItem,
+  VersionInfo,
+  UpdateStatus,
 } from '@/types/pywebview';
 import type { ConsoleMessage } from '@/types/console';
 import * as api from '@/api';
@@ -76,6 +78,12 @@ interface AppState {
   dataVersion: number;
   dataInitialized: boolean;
 
+  // Version info (for update banner)
+  versionInfo: VersionInfo | null;
+
+  // Self-update status
+  updateStatus: UpdateStatus | null;
+
   // Console state (persisted across navigation)
   consoleSessionId: string | null;
   consoleMessages: ConsoleMessage[];
@@ -105,6 +113,8 @@ interface AppState {
   setCommunityRecipes: (recipes: CommunityRecipeItem[]) => void;
   setSkills: (skills: SkillItem[]) => void;
   loadCommunityRecipes: () => Promise<void>;
+  setVersionInfo: (info: VersionInfo) => void;
+  setUpdateStatus: (status: UpdateStatus | null) => void;
   setDataFromPush: (data: {
     version?: number;
     tasks?: { tasks: TaskItem[]; total: number };
@@ -169,6 +179,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
   dataVersion: 0,
   dataInitialized: false,
+
+  // Version info initial state
+  versionInfo: null,
+
+  // Update status initial state
+  updateStatus: null,
 
   // Console initial state
   consoleSessionId: null,
@@ -435,6 +451,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSkills: (skills) => {
     set({ skills });
+  },
+
+  setVersionInfo: (versionInfo) => {
+    set({ versionInfo });
+  },
+
+  setUpdateStatus: (updateStatus) => {
+    set({ updateStatus });
   },
 
   loadCommunityRecipes: async () => {

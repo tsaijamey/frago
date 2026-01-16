@@ -37,6 +37,8 @@ export const MessageType = {
   DATA_RECIPES: 'data_recipes',
   DATA_SKILLS: 'data_skills',
   DATA_COMMUNITY_RECIPES: 'data_community_recipes',
+  DATA_VERSION: 'data_version',
+  DATA_UPDATE_STATUS: 'data_update_status',
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];

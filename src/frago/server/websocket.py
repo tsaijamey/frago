@@ -130,6 +130,8 @@ class MessageType:
     DATA_RECIPES = "data_recipes"       # Recipes updated
     DATA_SKILLS = "data_skills"         # Skills updated
     DATA_COMMUNITY_RECIPES = "data_community_recipes"  # Community recipes updated
+    DATA_VERSION = "data_version"       # Version info updated
+    DATA_UPDATE_STATUS = "data_update_status"  # Self-update status
 
 
 def create_message(

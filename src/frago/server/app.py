@@ -37,6 +37,7 @@ from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.cache_service import CacheService
 from frago.server.services.sync_service import SyncService
 from frago.server.services.community_recipe_service import CommunityRecipeService
+from frago.server.services.version_service import VersionCheckService
 
 
 @asynccontextmanager
@@ -83,9 +84,15 @@ async def lifespan(app: FastAPI):
     await community_service.initialize()  # Fetch first to populate initial data
     await community_service.start()
 
+    # Initialize and start version check service (1h refresh interval)
+    version_service = VersionCheckService.get_instance()
+    await version_service.initialize()
+    await version_service.start()
+
     yield
 
     # Shutdown
+    await version_service.stop()
     await community_service.stop()
     await sync_service.stop()
 

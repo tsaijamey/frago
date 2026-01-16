@@ -255,6 +255,23 @@ export interface GhCliStatus {
   username?: string;
 }
 
+export interface VersionInfo {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+  checked_at: string | null;
+  error: string | null;
+}
+
+export type UpdateStatusType = 'idle' | 'updating' | 'restarting' | 'completed' | 'error';
+
+export interface UpdateStatus {
+  status: UpdateStatusType;
+  progress: number;
+  message: string;
+  error: string | null;
+}
+
 export interface MainConfigUpdateResponse {
   status: 'ok' | 'error';
   config?: MainConfig;

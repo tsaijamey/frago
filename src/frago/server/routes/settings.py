@@ -17,6 +17,8 @@ from frago.server.services.cache_service import CacheService
 from frago.server.services.env_service import EnvService
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
+from frago.server.services.update_service import UpdateService
+from frago.server.services.version_service import VersionCheckService
 
 router = APIRouter()
 
@@ -108,6 +110,23 @@ class ApiResponse(BaseModel):
 class VSCodeStatusResponse(BaseModel):
     """VSCode installation status response"""
     available: bool  # True only if VSCode installed AND settings.json exists
+
+
+class VersionInfoResponse(BaseModel):
+    """Version information response"""
+    current_version: str
+    latest_version: Optional[str] = None
+    update_available: bool = False
+    checked_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class UpdateStatusResponse(BaseModel):
+    """Self-update status response"""
+    status: str  # idle, updating, restarting, completed, error
+    progress: int = 0
+    message: str = ""
+    error: Optional[str] = None
 
 
 # ============================================================
@@ -611,3 +630,71 @@ async def set_official_sync_enabled(request: OfficialSyncEnableRequest) -> ApiRe
             message=f"Official resource sync {'enabled' if request.enabled else 'disabled'}",
         )
     return ApiResponse(status="error", error=result.get("error", "Failed to update setting"))
+
+
+# ============================================================
+# Version Check Endpoints
+# ============================================================
+
+
+@router.get("/settings/version", response_model=VersionInfoResponse)
+async def get_version_info() -> VersionInfoResponse:
+    """Get current and latest version information.
+
+    Returns cached version data from VersionCheckService.
+    The service checks PyPI every hour in background.
+    """
+    service = VersionCheckService.get_instance()
+    info = await service.get_version_info()
+
+    return VersionInfoResponse(
+        current_version=info.get("current_version", "0.0.0"),
+        latest_version=info.get("latest_version"),
+        update_available=info.get("update_available", False),
+        checked_at=info.get("checked_at"),
+        error=info.get("error"),
+    )
+
+
+# ============================================================
+# Self-Update Endpoints
+# ============================================================
+
+
+@router.post("/settings/self-update", response_model=UpdateStatusResponse)
+async def start_self_update() -> UpdateStatusResponse:
+    """Start self-update process.
+
+    Initiates `uv tool upgrade frago-cli` and restarts the server.
+    Progress is broadcast via WebSocket (data_update_status).
+    """
+    service = UpdateService.get_instance()
+    result = await service.start_update()
+
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error"))
+
+    status = service.get_status()
+    return UpdateStatusResponse(
+        status=status["status"],
+        progress=status["progress"],
+        message=status["message"],
+        error=status["error"],
+    )
+
+
+@router.get("/settings/self-update/status", response_model=UpdateStatusResponse)
+async def get_update_status() -> UpdateStatusResponse:
+    """Get current self-update status.
+
+    Returns the current status of any ongoing update operation.
+    """
+    service = UpdateService.get_instance()
+    status = service.get_status()
+
+    return UpdateStatusResponse(
+        status=status["status"],
+        progress=status["progress"],
+        message=status["message"],
+        error=status["error"],
+    )
