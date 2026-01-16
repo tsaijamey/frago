@@ -52,9 +52,9 @@ function Remove-LockedDirectory {
     # Third attempt: remove files one by one, skip locked ones
     Write-Warn "  Some files locked, removing what we can..."
     Get-ChildItem $Path -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-        Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item $_.FullName -Force -Recurse -Confirm:$false -ErrorAction SilentlyContinue
     }
-    Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $Path -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
 
     if (Test-Path $Path) {
         Write-Err "  Could not fully remove $Path (files locked)"

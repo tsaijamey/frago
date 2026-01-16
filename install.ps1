@@ -113,7 +113,13 @@ function Install-Uv {
     Write-Step "Installing uv..."
 
     try {
-        $installScript = (Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing).Content
+        $response = Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing
+        # Handle both string and byte array responses (varies by PowerShell version)
+        $installScript = if ($response.Content -is [byte[]]) {
+            [System.Text.Encoding]::UTF8.GetString($response.Content)
+        } else {
+            $response.Content
+        }
         Invoke-Expression $installScript *>$null
         Update-SessionPath
 
