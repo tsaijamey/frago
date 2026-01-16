@@ -1,11 +1,13 @@
 /**
  * GitHub Star Button Component
  *
- * Displays a star icon that allows users to star/unstar the frago repository.
+ * Displays a star icon that allows users to star the frago repository.
+ * Hidden after user has starred (we don't want to encourage unstar).
+ *
  * States:
  * - Not configured: Gray star with tooltip
- * - Not starred: Outline star
- * - Starred: Filled golden star
+ * - Not starred: Outline star, clickable
+ * - Starred: Hidden (component returns null)
  * - Loading: Spinning animation
  */
 
@@ -24,6 +26,11 @@ export default function StarButton() {
     checkGitHubStar();
   }, [checkGitHubStar]);
 
+  // Hide button if user has already starred
+  if (isStarred === true) {
+    return null;
+  }
+
   const handleClick = () => {
     if (!ghConfigured || isLoading) return;
     toggleGitHubStar();
@@ -33,14 +40,13 @@ export default function StarButton() {
   const getTooltip = () => {
     if (!ghConfigured) return t('sidebar.star.notConfigured');
     if (isLoading) return t('sidebar.star.loading');
-    return isStarred ? t('sidebar.star.unstar') : t('sidebar.star.star');
+    return t('sidebar.star.star');
   };
 
   const buttonClasses = [
     'sidebar-footer-btn',
     'star-btn',
     !ghConfigured ? 'disabled' : '',
-    isStarred ? 'starred' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -57,11 +63,7 @@ export default function StarButton() {
       {isLoading ? (
         <Loader2 size={16} className="animate-spin" />
       ) : (
-        <Star
-          size={16}
-          fill={isStarred ? 'currentColor' : 'none'}
-          className={isStarred ? 'star-filled' : ''}
-        />
+        <Star size={16} />
       )}
     </button>
   );

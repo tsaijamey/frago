@@ -619,27 +619,6 @@ a:not(.btn):not(.nav-tab):hover {
   color: var(--text-muted);
 }
 
-.sidebar-footer-btn.star-btn.starred {
-  color: #fbbf24;
-}
-
-.sidebar-footer-btn.star-btn.starred:hover {
-  color: #f59e0b;
-}
-
-.sidebar-footer-btn.star-btn .star-filled {
-  filter: drop-shadow(0 0 2px rgba(251, 191, 36, 0.5));
-}
-
-/* Light theme adjustments for star button */
-[data-theme='light'] .sidebar-footer-btn.star-btn.starred {
-  color: #d97706;
-}
-
-[data-theme='light'] .sidebar-footer-btn.star-btn.starred:hover {
-  color: #b45309;
-}
-
 .collapse-icon {
   transition: transform 0.2s ease;
 }

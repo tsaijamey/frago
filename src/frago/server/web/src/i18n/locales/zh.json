@@ -19,7 +19,6 @@
     },
     "star": {
       "star": "在 GitHub 上 Star frago",
-      "unstar": "取消 Star frago",
       "notConfigured": "GitHub CLI 未配置",
       "loading": "加载中..."
     }
