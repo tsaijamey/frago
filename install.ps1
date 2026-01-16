@@ -96,7 +96,20 @@ function Get-CommandVersion {
 }
 
 function Update-SessionPath {
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    # Get paths from registry
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+
+    # Split all paths into arrays
+    $currentPaths = $env:Path -split ';' | Where-Object { $_ }
+    $registryPaths = ($machinePath + ";" + $userPath) -split ';' | Where-Object { $_ }
+
+    # Add new registry paths that don't exist in current session
+    $newPaths = $registryPaths | Where-Object { $_ -notin $currentPaths }
+
+    if ($newPaths) {
+        $env:Path = ($newPaths -join ';') + ";" + $env:Path
+    }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
