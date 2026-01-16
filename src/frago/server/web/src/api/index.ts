@@ -1035,3 +1035,33 @@ export async function setOfficialSyncEnabled(enabled: boolean): Promise<ApiRespo
   }
   return httpApi.setOfficialSyncEnabled(enabled);
 }
+
+// ============================================================
+// Self-Update API
+// ============================================================
+
+export type { UpdateStatus } from './client';
+
+export async function startSelfUpdate(): Promise<httpApi.UpdateStatus> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      progress: 0,
+      message: 'Self-update not supported in pywebview mode',
+      error: 'Not supported',
+    };
+  }
+  return httpApi.startSelfUpdate();
+}
+
+export async function getSelfUpdateStatus(): Promise<httpApi.UpdateStatus> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'idle',
+      progress: 0,
+      message: '',
+      error: null,
+    };
+  }
+  return httpApi.getSelfUpdateStatus();
+}

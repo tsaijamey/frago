@@ -1028,3 +1028,29 @@ export async function setOfficialSyncEnabled(enabled: boolean): Promise<ApiRespo
     body: JSON.stringify({ enabled }),
   });
 }
+
+// ============================================================
+// Self-Update API
+// ============================================================
+
+export interface UpdateStatus {
+  status: 'idle' | 'updating' | 'restarting' | 'completed' | 'error';
+  progress: number;
+  message: string;
+  error: string | null;
+}
+
+/**
+ * Start self-update process.
+ * Initiates `uv tool upgrade frago-cli` and restarts the server.
+ */
+export async function startSelfUpdate(): Promise<UpdateStatus> {
+  return fetchApi<UpdateStatus>('/settings/self-update', { method: 'POST' });
+}
+
+/**
+ * Get current self-update status.
+ */
+export async function getSelfUpdateStatus(): Promise<UpdateStatus> {
+  return fetchApi<UpdateStatus>('/settings/self-update/status');
+}
