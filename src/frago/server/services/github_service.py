@@ -171,3 +171,98 @@ class GitHubService:
             }
         except Exception as e:
             return {"status": "error", "error": f"Unable to open terminal window: {e}"}
+
+    # Repository to star
+    FRAGO_REPO = "tsaijamey/frago"
+
+    @staticmethod
+    def check_starred() -> Dict[str, Any]:
+        """Check if user has starred the frago repository.
+
+        Returns:
+            Dictionary with:
+            - status: 'ok' or 'error'
+            - is_starred: True/False/None (None if not authenticated)
+            - gh_configured: Whether gh CLI is authenticated
+            - error: Error message if any
+        """
+        # First check if gh is authenticated
+        cli_status = GitHubService.check_gh_cli()
+        if not cli_status["authenticated"]:
+            return {
+                "status": "ok",
+                "is_starred": None,
+                "gh_configured": False,
+            }
+
+        # Check if starred using gh api
+        # Returns 204 if starred, 404 if not starred
+        try:
+            result = run_subprocess(
+                get_gh_command() + ["api", f"/user/starred/{GitHubService.FRAGO_REPO}"],
+                timeout=10,
+            )
+            # gh api returns 0 for 204 (starred), non-zero for 404 (not starred)
+            is_starred = result.returncode == 0
+            return {
+                "status": "ok",
+                "is_starred": is_starred,
+                "gh_configured": True,
+            }
+        except subprocess.TimeoutExpired:
+            logger.debug("gh api starred check timed out")
+            return {
+                "status": "error",
+                "error": "Request timed out",
+                "gh_configured": True,
+            }
+        except Exception as e:
+            logger.warning("Failed to check starred status: %s", e)
+            return {
+                "status": "error",
+                "error": str(e),
+                "gh_configured": True,
+            }
+
+    @staticmethod
+    def toggle_star(star: bool) -> Dict[str, Any]:
+        """Star or unstar the frago repository.
+
+        Args:
+            star: True to star, False to unstar
+
+        Returns:
+            Dictionary with:
+            - status: 'ok' or 'error'
+            - is_starred: Current star status after operation
+            - error: Error message if any
+        """
+        method = "PUT" if star else "DELETE"
+        try:
+            result = run_subprocess(
+                get_gh_command() + ["api", "-X", method, f"/user/starred/{GitHubService.FRAGO_REPO}"],
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return {
+                    "status": "ok",
+                    "is_starred": star,
+                }
+            else:
+                return {
+                    "status": "error",
+                    "is_starred": not star,
+                    "error": result.stderr or "Failed to update star status",
+                }
+        except subprocess.TimeoutExpired:
+            logger.debug("gh api star toggle timed out")
+            return {
+                "status": "error",
+                "error": "Request timed out",
+            }
+        except Exception as e:
+            logger.warning("Failed to toggle star: %s", e)
+            return {
+                "status": "error",
+                "error": str(e),
+            }

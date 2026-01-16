@@ -1054,3 +1054,37 @@ export async function startSelfUpdate(): Promise<UpdateStatus> {
 export async function getSelfUpdateStatus(): Promise<UpdateStatus> {
   return fetchApi<UpdateStatus>('/settings/self-update/status');
 }
+
+// ============================================================
+// GitHub Star API
+// ============================================================
+
+export interface StarredStatus {
+  status: 'ok' | 'error';
+  is_starred: boolean | null;
+  gh_configured: boolean;
+  error?: string;
+}
+
+export interface StarResult {
+  status: 'ok' | 'error';
+  is_starred: boolean | null;
+  error?: string;
+}
+
+/**
+ * Check if user has starred the frago repository.
+ */
+export async function checkGitHubStarred(): Promise<StarredStatus> {
+  return fetchApi<StarredStatus>('/sync/github/starred');
+}
+
+/**
+ * Star or unstar the frago repository.
+ */
+export async function toggleGitHubStar(star: boolean): Promise<StarResult> {
+  return fetchApi<StarResult>('/sync/github/star', {
+    method: 'POST',
+    body: JSON.stringify({ star }),
+  });
+}

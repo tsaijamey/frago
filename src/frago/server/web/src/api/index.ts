@@ -1065,3 +1065,31 @@ export async function getSelfUpdateStatus(): Promise<httpApi.UpdateStatus> {
   }
   return httpApi.getSelfUpdateStatus();
 }
+
+// ============================================================
+// GitHub Star API
+// ============================================================
+
+export type { StarredStatus, StarResult } from './client';
+
+export async function checkGitHubStarred(): Promise<httpApi.StarredStatus> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'ok',
+      is_starred: null,
+      gh_configured: false,
+    };
+  }
+  return httpApi.checkGitHubStarred();
+}
+
+export async function toggleGitHubStar(star: boolean): Promise<httpApi.StarResult> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      is_starred: null,
+      error: 'Not supported in pywebview mode',
+    };
+  }
+  return httpApi.toggleGitHubStar(star);
+}

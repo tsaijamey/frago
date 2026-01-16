@@ -90,6 +90,13 @@ interface AppState {
   consoleIsRunning: boolean;
   consoleScrollPosition: number;
 
+  // GitHub Star state
+  githubStarStatus: {
+    isStarred: boolean | null;
+    ghConfigured: boolean;
+    isLoading: boolean;
+  };
+
   // Actions
   switchPage: (page: PageType, id?: string) => void;
   toggleSidebar: () => void;
@@ -132,6 +139,10 @@ interface AppState {
   setConsoleIsRunning: (running: boolean) => void;
   setConsoleScrollPosition: (position: number) => void;
   clearConsole: () => void;
+
+  // GitHub Star actions
+  checkGitHubStar: () => Promise<void>;
+  toggleGitHubStar: () => Promise<void>;
 }
 
 // Generate unique ID
@@ -191,6 +202,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   consoleMessages: [],
   consoleIsRunning: false,
   consoleScrollPosition: 0,
+
+  // GitHub Star initial state
+  githubStarStatus: {
+    isStarred: null,
+    ghConfigured: false,
+    isLoading: false,
+  },
 
   // Page switching
   switchPage: (page, id) => {
@@ -564,6 +582,56 @@ export const useAppStore = create<AppState>((set, get) => ({
       localStorage.removeItem(CONSOLE_SESSION_KEY);
     } catch {
       // localStorage not available
+    }
+  },
+
+  // GitHub Star actions
+  checkGitHubStar: async () => {
+    set((state) => ({
+      githubStarStatus: { ...state.githubStarStatus, isLoading: true },
+    }));
+    try {
+      const result = await api.checkGitHubStarred();
+      set({
+        githubStarStatus: {
+          isStarred: result.is_starred,
+          ghConfigured: result.gh_configured,
+          isLoading: false,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to check GitHub star status:', error);
+      set((state) => ({
+        githubStarStatus: { ...state.githubStarStatus, isLoading: false },
+      }));
+    }
+  },
+
+  toggleGitHubStar: async () => {
+    const current = get().githubStarStatus;
+    if (current.isLoading || !current.ghConfigured) return;
+
+    const newStarred = !current.isStarred;
+    // Optimistic update
+    set({
+      githubStarStatus: { ...current, isStarred: newStarred, isLoading: true },
+    });
+
+    try {
+      const result = await api.toggleGitHubStar(newStarred);
+      set({
+        githubStarStatus: {
+          ...current,
+          isStarred: result.is_starred ?? newStarred,
+          isLoading: false,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to toggle GitHub star:', error);
+      // Revert on error
+      set({
+        githubStarStatus: { ...current, isLoading: false },
+      });
     }
   },
 }));

@@ -11,6 +11,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, type PageType } from '@/stores/appStore';
 import { Sun, Moon } from 'lucide-react';
+import StarButton from '@/components/ui/StarButton';
 
 // Menu item configuration
 interface MenuItem {
@@ -174,8 +175,9 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Footer: Theme Toggle + Collapse Button */}
+      {/* Footer: Star + Theme Toggle + Collapse Button */}
       <div className="sidebar-footer">
+        <StarButton />
         <button
           type="button"
           onClick={() => setTheme(config?.theme === 'dark' ? 'light' : 'dark')}

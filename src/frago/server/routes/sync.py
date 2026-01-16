@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from frago.server.services.cache_service import CacheService
+from frago.server.services.github_service import GitHubService
 from frago.server.services.multidevice_sync_service import MultiDeviceSyncService
 
 router = APIRouter()
@@ -210,4 +211,60 @@ async def get_sync_status() -> SyncResponse:
         conflicts=result.get("conflicts"),
         warnings=result.get("warnings"),
         is_public_repo=result.get("is_public_repo"),
+    )
+
+
+# ============================================================
+# GitHub Star Endpoints
+# ============================================================
+
+
+class StarredStatusResponse(BaseModel):
+    """Response for checking starred status"""
+    status: str
+    is_starred: Optional[bool] = None
+    gh_configured: bool = False
+    error: Optional[str] = None
+
+
+class StarRequest(BaseModel):
+    """Request to star/unstar the repository"""
+    star: bool
+
+
+class StarResponse(BaseModel):
+    """Response for star/unstar operation"""
+    status: str
+    is_starred: Optional[bool] = None
+    error: Optional[str] = None
+
+
+@router.get("/sync/github/starred", response_model=StarredStatusResponse)
+async def check_github_starred() -> StarredStatusResponse:
+    """Check if user has starred the frago repository.
+
+    Returns the current star status and whether gh CLI is configured.
+    """
+    result = GitHubService.check_starred()
+
+    return StarredStatusResponse(
+        status=result.get("status", "error"),
+        is_starred=result.get("is_starred"),
+        gh_configured=result.get("gh_configured", False),
+        error=result.get("error"),
+    )
+
+
+@router.post("/sync/github/star", response_model=StarResponse)
+async def toggle_github_star(request: StarRequest) -> StarResponse:
+    """Star or unstar the frago repository.
+
+    Set star=true to star, star=false to unstar.
+    """
+    result = GitHubService.toggle_star(request.star)
+
+    return StarResponse(
+        status=result.get("status", "error"),
+        is_starred=result.get("is_starred"),
+        error=result.get("error"),
     )

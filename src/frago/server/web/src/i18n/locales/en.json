@@ -16,6 +16,12 @@
     "collapse": {
       "expand": "Expand sidebar",
       "collapse": "Collapse sidebar"
+    },
+    "star": {
+      "star": "Star frago on GitHub",
+      "unstar": "Unstar frago on GitHub",
+      "notConfigured": "GitHub CLI not configured",
+      "loading": "Loading..."
     }
   },
   "dashboard": {
