@@ -220,13 +220,21 @@ print_next_steps() {
 }
 
 wait_for_server() {
-    # Wait for server to be ready (max 30 seconds)
-    local url="http://127.0.0.1:8093/api/status"
+    # Wait for server to accept connections (max 30 seconds)
     local max_attempts=30
     local attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
-        if curl -s "$url" >/dev/null 2>&1; then
+        # Try to connect to the port
+        if (echo >/dev/tcp/127.0.0.1/8093) 2>/dev/null; then
+            # Port is open, wait a bit more for HTTP to be fully ready
+            sleep 2
+            return 0
+        elif command_exists nc && nc -z 127.0.0.1 8093 2>/dev/null; then
+            sleep 2
+            return 0
+        elif curl -s --connect-timeout 1 "http://127.0.0.1:8093/" >/dev/null 2>&1; then
+            sleep 2
             return 0
         fi
         sleep 1
@@ -241,8 +249,11 @@ launch_frago() {
     export PATH="$HOME/.local/bin:$PATH"
     printf "  ${DIM}Starting frago server...${RESET}\n"
 
-    # Use restart to ensure new version is running (handles both fresh start and upgrade)
-    frago server restart >/dev/null 2>&1 || frago server start >/dev/null 2>&1 || true
+    # Stop any existing server first, then start fresh
+    # (restart can fail due to process termination issues)
+    frago server stop >/dev/null 2>&1 || true
+    sleep 2  # Give port time to be released
+    frago server start >/dev/null 2>&1 || true
 
     # Wait for server to be ready before opening browser
     if wait_for_server; then

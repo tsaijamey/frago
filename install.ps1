@@ -196,16 +196,17 @@ function Show-NextSteps {
 }
 
 function Wait-ForServer {
-    # Wait for server to be ready (max 30 seconds)
-    $url = "http://127.0.0.1:8093/api/status"
+    # Wait for server to accept connections (max 30 seconds)
     $maxAttempts = 30
 
     for ($attempt = 0; $attempt -lt $maxAttempts; $attempt++) {
         try {
-            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-            if ($response.StatusCode -eq 200) {
-                return $true
-            }
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            $tcp.Connect("127.0.0.1", 8093)
+            $tcp.Close()
+            # Port is open, wait a bit more for HTTP to be fully ready
+            Start-Sleep -Seconds 2
+            return $true
         } catch {
             # Server not ready yet
         }
@@ -221,10 +222,11 @@ function Start-Frago {
     Write-Host "  " -NoNewline
     Write-Host "Starting frago server..." -ForegroundColor DarkGray
 
-    # Use restart to ensure new version is running (handles both fresh start and upgrade)
-    try { & frago server restart *>$null } catch {
-        try { & frago server start *>$null } catch { }
-    }
+    # Stop any existing server first, then start fresh
+    # (restart can fail on Windows due to process termination issues)
+    & frago server stop *>$null
+    Start-Sleep -Seconds 2  # Give port time to be released
+    & frago server start *>$null
 
     # Wait for server to be ready before opening browser
     if (Wait-ForServer) {
