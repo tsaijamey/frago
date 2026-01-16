@@ -170,12 +170,17 @@ def _ensure_gitignore(repo_dir: Path) -> None:
     gitignore_path = repo_dir / ".gitignore"
     gitignore_content = """# Runtime data (not synced)
 sessions/
+sessions.json
 chrome_profile/
 current_run
 projects/.tmp/
 
 # Commands directory (managed by frago itself, not synced)
 .claude/commands/
+
+# Local metadata (device-specific, not synced)
+.claude/skills_metadata.json
+.claude/settings.local.json
 
 # Config files (contain sensitive information)
 config.json
@@ -234,9 +239,11 @@ logs/
         existing = gitignore_path.read_text(encoding="utf-8")
         needed_rules = [
             # Runtime data
-            "sessions/", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env",
+            "sessions/", "sessions.json", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env",
             # Commands directory (managed by frago itself)
             ".claude/commands/",
+            # Local metadata (device-specific)
+            ".claude/skills_metadata.json", ".claude/settings.local.json",
             # System files
             ".DS_Store", "__pycache__/", "server.pid", "gui_history.jsonl",
             # Large file types
