@@ -12,6 +12,7 @@ This package contains FastAPI routers for different API domains:
 - sync: Multi-device sync via GitHub
 - init: Web-based initialization (dependency check, resource install)
 - viewer: Content preview file serving
+- guide: Tutorial and FAQ content
 """
 
 from frago.server.routes.system import router as system_router
@@ -28,6 +29,7 @@ from frago.server.routes.init import router as init_router
 from frago.server.routes.viewer import router as viewer_router
 from frago.server.routes.files import router as files_router
 from frago.server.routes.workspace import router as workspace_router
+from frago.server.routes.guide import router as guide_router
 
 __all__ = [
     "system_router",
@@ -44,4 +46,5 @@ __all__ = [
     "viewer_router",
     "files_router",
     "workspace_router",
+    "guide_router",
 ]

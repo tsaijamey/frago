@@ -32,6 +32,7 @@ from frago.server.routes import (
     viewer_router,
     files_router,
     workspace_router,
+    guide_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.cache_service import CacheService
@@ -202,6 +203,7 @@ def create_app(
     app.include_router(sync_router, prefix="/api", tags=["sync"])
     app.include_router(console_router, prefix="/api", tags=["console"])
     app.include_router(init_router, prefix="/api", tags=["init"])
+    app.include_router(guide_router, prefix="/api", tags=["guide"])
 
     # Viewer routes for content preview (not under /api)
     app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
