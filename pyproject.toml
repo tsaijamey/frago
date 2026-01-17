@@ -79,6 +79,7 @@ include = [
     "src/frago/**/*.py",
     "src/frago/**/*.md",
     "src/frago/**/*.js",
+    "src/frago/**/*.json",
     "src/frago/**/*.yaml",
     "src/frago/**/*.yml",
     "src/frago/**/*.sh",

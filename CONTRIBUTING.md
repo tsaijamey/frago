@@ -36,9 +36,6 @@ cd frago
 
 # Install with uv in development mode
 uv pip install -e .
-
-# Or use the dev command to sync resources
-frago dev pack
 ```
 
 ### Testing
