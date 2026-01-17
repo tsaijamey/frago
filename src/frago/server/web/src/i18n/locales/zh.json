@@ -166,7 +166,7 @@
   "guide": {
     "title": "使用指南",
     "pageDesc": "frago 使用教程和常见问题",
-    "errorHint": "请检查 guide_source/ 目录是否存在",
+    "errorHint": "请重新安装 frago 或检查 ~/.frago/guide/ 目录",
     "noContent": "暂无教程内容"
   },
   "workspace": {

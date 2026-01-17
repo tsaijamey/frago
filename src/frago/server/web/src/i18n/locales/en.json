@@ -166,7 +166,7 @@
   "guide": {
     "title": "Guide",
     "pageDesc": "Tutorials and FAQs for using frago",
-    "errorHint": "Please check guide_source/ directory exists",
+    "errorHint": "Please reinstall frago or check ~/.frago/guide/ directory",
     "noContent": "No guide content available"
   },
   "workspace": {
