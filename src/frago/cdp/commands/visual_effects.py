@@ -179,7 +179,7 @@ class VisualEffectsCommands:
             // Add automation indicator label
             const label = document.createElement('div');
             label.id = '__frago_auto_label__';
-            label.innerHTML = '<span style="margin-right: 6px;">&#9881;</span>Automated by frago';
+            label.innerHTML = '<span style="margin-right: 6px;">&#9881;</span>Controlled by frago';
             label.style.cssText = `
                 position: fixed;
                 top: 12px;
