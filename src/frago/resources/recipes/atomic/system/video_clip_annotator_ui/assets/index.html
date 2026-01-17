@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Easy Clip</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <h1>Easy Clip</h1>
+      <div class="header-actions">
+        <button id="btn-save" class="btn btn-secondary">Save Project</button>
+        <button id="btn-export" class="btn btn-primary">Export Video</button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Left Panel: Media List -->
+      <aside class="panel panel-left">
+        <div class="panel-header">
+          <h2>Media Files</h2>
+          <span class="badge" id="media-count">0</span>
+        </div>
+        <div class="panel-content">
+          <ul id="media-list" class="media-list"></ul>
+        </div>
+      </aside>
+
+      <!-- Center: Player & TTS -->
+      <section class="panel panel-center">
+        <!-- Video Player -->
+        <div class="player-container">
+          <video id="video-player" controls></video>
+          <div class="player-overlay" id="player-overlay">
+            <span>Select a media file to preview</span>
+          </div>
+        </div>
+
+        <!-- Waveform -->
+        <div class="waveform-container">
+          <canvas id="waveform-canvas"></canvas>
+          <div class="waveform-overlay">
+            <div class="playhead" id="playhead"></div>
+            <div class="markers" id="markers-overlay"></div>
+          </div>
+        </div>
+
+        <!-- Marker Controls -->
+        <div class="marker-controls">
+          <button id="btn-mark-start" class="btn btn-small">Mark Start [I]</button>
+          <span id="marker-preview">--:-- ~ --:--</span>
+          <button id="btn-mark-end" class="btn btn-small">Mark End [O]</button>
+          <button id="btn-add-marker" class="btn btn-small btn-accent" disabled>Add Marker</button>
+        </div>
+
+        <!-- TTS Section (replaces Timeline) -->
+        <div class="tts-container">
+          <div class="tts-header">
+            <h3>Narration TTS</h3>
+          </div>
+          <div class="tts-content">
+            <div class="tts-input-area">
+              <textarea id="tts-text" placeholder="Enter narration text...
+
+Supports emotion markers:
+[#excited]Great news!
+[#calm]Let me explain...
+[#sad]Unfortunately..."></textarea>
+              <div class="tts-options">
+                <select id="tts-emotion">
+                  <option value="">Default</option>
+                  <option value="excited">Excited</option>
+                  <option value="calm">Calm</option>
+                  <option value="sad">Sad</option>
+                  <option value="serious">Serious</option>
+                  <option value="friendly">Friendly</option>
+                </select>
+                <button id="btn-generate-tts" class="btn btn-accent">Generate TTS</button>
+              </div>
+            </div>
+            <div class="tts-clips-area">
+              <div class="tts-clips-header">Generated Clips</div>
+              <ul id="tts-list" class="tts-list">
+                <li class="empty-state">No narration clips yet</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Clip Markers Only -->
+      <aside class="panel panel-right">
+        <div class="panel-header">
+          <h2>Clip Markers</h2>
+          <span class="badge" id="marker-count">0</span>
+        </div>
+        <div class="panel-subheader">
+          <span>Drag to reorder</span>
+        </div>
+        <div class="panel-content">
+          <ul id="clip-markers" class="marker-list sortable">
+            <li class="empty-state">No markers yet. Select a media file and mark clips.</li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Status Bar -->
+    <footer class="status-bar">
+      <span id="status-message">Ready</span>
+      <span id="status-duration">Total: 00:00</span>
+    </footer>
+  </div>
+
+  <!-- Modal for export progress -->
+  <div id="modal-export" class="modal hidden">
+    <div class="modal-content">
+      <h3>Exporting Video</h3>
+      <div class="progress-bar">
+        <div class="progress-fill" id="export-progress"></div>
+      </div>
+      <p id="export-status">Preparing...</p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
