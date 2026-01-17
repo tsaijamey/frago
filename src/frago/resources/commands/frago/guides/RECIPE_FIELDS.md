@@ -32,6 +32,64 @@ frago recipe validate <path> --format json
 | `env` | dict | Environment variable definition (see below) |
 | `system_packages` | bool | Whether to use system Python |
 
+## Flow Field (Workflow Required)
+
+Workflow recipes MUST include a `flow` field describing execution steps and data flow.
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `flow` | list | Yes (workflow) | List of execution steps |
+| `flow[].step` | number | Yes | Step number (1-based, sequential) |
+| `flow[].action` | string | Yes | Action name (snake_case) |
+| `flow[].description` | string | Yes | What this step does |
+| `flow[].recipe` | string | No | Recipe called (if any, must be in dependencies) |
+| `flow[].inputs` | list | No | Input sources |
+| `flow[].outputs` | list | No | Output definitions |
+
+### Input Source Format
+
+- `params.<name>` - From recipe input parameters
+- `step.<n>.<output>` - From previous step output
+- `env.<var>` - From environment variable
+
+### Output Definition
+
+```yaml
+outputs:
+  - name: "output_name"
+    type: "string"  # string, number, boolean, list, object
+```
+
+### Flow Field Example
+
+```yaml
+flow:
+  - step: 1
+    action: "validate_input"
+    description: "Verify input directory exists"
+    inputs:
+      - source: "params.dir"
+
+  - step: 2
+    action: "scan_files"
+    description: "Scan directory for media files"
+    inputs:
+      - source: "params.dir"
+    outputs:
+      - name: "files"
+        type: "list"
+
+  - step: 3
+    action: "process_files"
+    description: "Process files using dependent recipe"
+    recipe: "file_processor"
+    inputs:
+      - source: "step.2.files"
+    outputs:
+      - name: "result"
+        type: "object"
+```
+
 ## Environment Variables (env) Field Specification
 
 Recipes can declare required environment variables, which will be automatically loaded from `~/.frago/.env` at runtime.
@@ -130,6 +188,7 @@ import sys
 4. **Script files** - Check if corresponding script (recipe.js/py/sh) exists and is non-empty based on runtime
 5. **Syntax check** - Python scripts undergo syntax checking
 6. **Dependency check** - workflow type checks if depended recipes are registered
+7. **Flow check** - workflow type checks flow field exists with valid structure
 
 ## Validation Output Examples
 

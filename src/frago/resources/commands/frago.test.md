@@ -110,7 +110,23 @@ run `frago recipe run <name> --output-file result.json`
 </commands>
 
 <test_layers>
-STRUCTURE: `frago recipe validate` => fields, format, script exists
+STRUCTURE: `frago recipe validate` => fields, format, script exists, flow valid (workflow)
 FUNCTION: `frago recipe run` => actual execution
 DATA: manual inspection => output matches expectation
+FLOW: verify flow steps match code logic (workflow only)
 </test_layers>
+
+<flow_verification>
+if WORKFLOW:
+    use VERIFY_FLOW:
+        1. read recipe.md flow field
+        2. read recipe.py code
+        3. verify step count matches major code blocks
+        4. verify recipe calls in code match flow[].recipe entries
+        5. verify data flow makes sense (inputs/outputs chain)
+
+    REPORT_FLOW:
+        - [x] flow steps match code structure
+        - [x] all dependencies appear in flow
+        - [x] input/output chain is logical
+</flow_verification>

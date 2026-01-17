@@ -34,6 +34,7 @@ Workflow:
     use: orchestrate multiple recipes
     runtime: python
     dir: ~/.frago/recipes/workflows/
+    REQUIRED: flow field describing execution steps (see <flow_design>)
 
 Interactive (special Workflow):
     use: user collaboration via web UI
@@ -171,6 +172,49 @@ if recipe needs env vars (API keys, secrets):
        ```
     2. add actual values to ~/.frago/.env (auto-loaded by frago recipe run)
 </env_vars>
+
+<flow_design>
+WORKFLOW recipes MUST include a flow field describing execution steps:
+
+```yaml
+flow:
+  - step: 1
+    action: "action_name"
+    description: "What this step does"
+    recipe: "dependent_recipe"  # optional, if calling another recipe
+    inputs:
+      - source: "params.input_name"
+      - source: "step.1.output_name"
+    outputs:
+      - name: "output_name"
+        type: "string"  # string, number, boolean, list, object
+```
+
+RULES:
+  - step numbers must be sequential starting from 1
+  - each step with recipe must reference a dependency
+  - inputs can reference: params.<name>, step.<n>.<output>, env.<var>
+  - outputs define data available to subsequent steps
+
+SPECIAL STEPS:
+  - if workflow calls agent (frago agent, Claude API), use action: "call_agent"
+  - agent steps are dynamic at runtime, flow only marks "agent is called here"
+  - example:
+    ```yaml
+    - step: 3
+      action: "call_agent"
+      description: "Use Claude agent to analyze data"
+      inputs:
+        - source: "step.2.data"
+      outputs:
+        - name: "analysis_result"
+          type: "object"
+    ```
+
+VALIDATION:
+  - `frago recipe validate` checks flow field exists and has valid structure
+  - recipe references in flow must exist in dependencies list
+</flow_design>
 
 <forbidden>
 ❌ chmod +x on recipe scripts
