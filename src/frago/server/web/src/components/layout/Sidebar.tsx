@@ -84,6 +84,13 @@ const WorkspaceIcon = () => (
   </svg>
 );
 
+const GuideIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+  </svg>
+);
+
 const CollapseIcon = ({ collapsed }: { collapsed: boolean }) => (
   <svg
     width="16"
@@ -107,6 +114,7 @@ const menuItems: MenuItem[] = [
   { id: 'tasks', labelKey: 'sidebar.tasks', icon: <TasksIcon /> },
   { id: 'recipes', labelKey: 'sidebar.recipes', icon: <RecipesIcon /> },
   { id: 'skills', labelKey: 'sidebar.skills', icon: <SkillsIcon /> },
+  { id: 'guide', labelKey: 'sidebar.guide', icon: <GuideIcon /> },
   { id: 'workspace', labelKey: 'sidebar.workspace', icon: <WorkspaceIcon /> },
   { id: 'sync', labelKey: 'sidebar.sync', icon: <SyncIcon /> },
   { id: 'secrets', labelKey: 'sidebar.secrets', icon: <SecretsIcon /> },

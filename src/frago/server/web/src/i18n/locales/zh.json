@@ -5,6 +5,7 @@
     "tasks": "任务",
     "recipes": "配方",
     "skills": "技能",
+    "guide": "使用指南",
     "workspace": "工作区",
     "sync": "同步",
     "secrets": "密钥",
@@ -161,6 +162,12 @@
     "noSkills": "暂无技能",
     "noSkillsDescription": "未找到技能",
     "createSkillHint": "在 .claude/skills/ 目录下创建技能文件"
+  },
+  "guide": {
+    "title": "使用指南",
+    "pageDesc": "frago 使用教程和常见问题",
+    "errorHint": "请检查 guide_source/ 目录是否存在",
+    "noContent": "暂无教程内容"
   },
   "workspace": {
     "title": "工作区",

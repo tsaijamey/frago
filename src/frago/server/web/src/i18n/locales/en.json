@@ -5,6 +5,7 @@
     "tasks": "Tasks",
     "recipes": "Recipes",
     "skills": "Skills",
+    "guide": "Guide",
     "workspace": "Workspace",
     "sync": "Sync",
     "secrets": "Secrets",
@@ -161,6 +162,12 @@
     "noSkills": "No Skills",
     "noSkillsDescription": "No skills found",
     "createSkillHint": "Create skill files in .claude/skills/ directory"
+  },
+  "guide": {
+    "title": "Guide",
+    "pageDesc": "Tutorials and FAQs for using frago",
+    "errorHint": "Please check guide_source/ directory exists",
+    "noContent": "No guide content available"
   },
   "workspace": {
     "title": "Workspace",
