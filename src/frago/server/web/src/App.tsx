@@ -19,6 +19,7 @@ import SecretsPage from '@/components/secrets/SecretsPage';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ConsolePage from '@/components/console/ConsolePage';
 import { WorkspacePage } from '@/components/workspace';
+import { GuidePage } from '@/components/guide';
 
 // UI
 import Toast from '@/components/ui/Toast';
@@ -112,6 +113,8 @@ function App() {
         return <RecipeDetail />;
       case 'skills':
         return <SkillList />;
+      case 'guide':
+        return <GuidePage />;
       case 'sync':
         return <SyncPage />;
       case 'secrets':

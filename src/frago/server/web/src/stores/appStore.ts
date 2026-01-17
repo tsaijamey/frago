@@ -28,6 +28,7 @@ export type PageType =
   | 'recipes'
   | 'recipe_detail'
   | 'skills'
+  | 'guide'
   | 'sync'
   | 'secrets'
   | 'settings'
