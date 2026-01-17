@@ -673,13 +673,13 @@ class CDPSession(CDPClient):
             }})();
         """)
 
-    def viewport_border(self, color: str = "255, 180, 0", duration: float = 3.0) -> None:
+    def viewport_border(self, color: str = "147, 51, 234", duration: float = 4.0) -> None:
         """
-        Display a breathing gradient border around the viewport to indicate automation control.
+        Display an animated wavy border around the viewport to indicate automation control.
 
         Args:
-            color: RGB color values (e.g., "255, 180, 0" for yellow)
-            duration: Breathing animation cycle duration in seconds
+            color: RGB color values (e.g., "147, 51, 234" for purple)
+            duration: Wave animation cycle duration in seconds
         """
         self.visual_effects.viewport_border(color=color, duration=duration)
 

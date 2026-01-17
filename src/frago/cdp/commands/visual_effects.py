@@ -171,55 +171,161 @@ class VisualEffectsCommands:
             if (existing) existing.remove();
             const existingStyle = document.getElementById('__frago_border_style__');
             if (existingStyle) existingStyle.remove();
-            const existingSvg = document.getElementById('__frago_svg_defs__');
-            if (existingSvg) existingSvg.remove();
 
-            // Create SVG with wave filter
+            const W = window.innerWidth;
+            const H = window.innerHeight;
+            const THICKNESS = 45;
+            const WAVE_AMP = 35;
+            const WAVE_LEN = 180;
+            const EXTRA_LEN = WAVE_LEN * 2;  // Extra length for seamless loop
+
+            // Seeded random
+            let seed = 12345;
+            function random() {{
+                seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+                return seed / 0x7fffffff;
+            }}
+
+            // Generate fixed wavy edge (longer than needed for animation)
+            function generateWavyEdge(length, seedVal) {{
+                seed = seedVal;
+                const totalLen = length + EXTRA_LEN;
+                const steps = Math.ceil(totalLen / WAVE_LEN);
+                const points = [];
+
+                for (let i = 0; i <= steps; i++) {{
+                    const ampVariance = 0.5 + random() * 0.8;
+                    const posVariance = 0.3 + random() * 0.4;
+                    points.push({{
+                        pos: (i + posVariance) * WAVE_LEN,
+                        amp: (i % 2 === 0 ? 1 : -1) * WAVE_AMP * ampVariance
+                    }});
+                }}
+                return points;
+            }}
+
+            // Pre-generate wave data for each edge
+            const topWave = generateWavyEdge(W, 11111);
+            const rightWave = generateWavyEdge(H, 22222);
+            const bottomWave = generateWavyEdge(W, 33333);
+            const leftWave = generateWavyEdge(H, 44444);
+
             const svgNS = 'http://www.w3.org/2000/svg';
             const svg = document.createElementNS(svgNS, 'svg');
-            svg.id = '__frago_svg_defs__';
-            svg.style.cssText = 'position: absolute; width: 0; height: 0; overflow: hidden;';
-            svg.innerHTML = `
-                <defs>
-                    <filter id="__frago_wave_filter__" x="-20%" y="-20%" width="140%" height="140%">
-                        <feTurbulence type="turbulence" baseFrequency="0.015" numOctaves="2" seed="1" result="turbulence">
-                            <animate attributeName="baseFrequency" values="0.015;0.02;0.015" dur="{duration}s" repeatCount="indefinite"/>
-                        </feTurbulence>
-                        <feDisplacementMap in="SourceGraphic" in2="turbulence" scale="8" xChannelSelector="R" yChannelSelector="G"/>
-                    </filter>
-                </defs>
+            svg.id = '__frago_viewport_border__';
+            svg.setAttribute('width', W);
+            svg.setAttribute('height', H);
+            svg.style.cssText = `position: fixed; top: 0; left: 0; pointer-events: none; z-index: 2147483647; opacity: 0.75;`;
+
+            const defs = document.createElementNS(svgNS, 'defs');
+            defs.innerHTML = `
+                <linearGradient id="__frago_grad_top__" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:rgb({color});stop-opacity:0.85"/>
+                    <stop offset="100%" style="stop-color:rgb({color});stop-opacity:0"/>
+                </linearGradient>
+                <linearGradient id="__frago_grad_bottom__" x1="0%" y1="100%" x2="0%" y2="0%">
+                    <stop offset="0%" style="stop-color:rgb({color});stop-opacity:0.85"/>
+                    <stop offset="100%" style="stop-color:rgb({color});stop-opacity:0"/>
+                </linearGradient>
+                <linearGradient id="__frago_grad_left__" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" style="stop-color:rgb({color});stop-opacity:0.85"/>
+                    <stop offset="100%" style="stop-color:rgb({color});stop-opacity:0"/>
+                </linearGradient>
+                <linearGradient id="__frago_grad_right__" x1="100%" y1="0%" x2="0%" y2="0%">
+                    <stop offset="0%" style="stop-color:rgb({color});stop-opacity:0.85"/>
+                    <stop offset="100%" style="stop-color:rgb({color});stop-opacity:0"/>
+                </linearGradient>
+                <filter id="__frago_blur__" x="-50%" y="-50%" width="200%" height="200%">
+                    <feGaussianBlur stdDeviation="8"/>
+                </filter>
             `;
+            svg.appendChild(defs);
+
+            const topEl = document.createElementNS(svgNS, 'path');
+            topEl.setAttribute('fill', 'url(#__frago_grad_top__)');
+            topEl.setAttribute('filter', 'url(#__frago_blur__)');
+            svg.appendChild(topEl);
+
+            const rightEl = document.createElementNS(svgNS, 'path');
+            rightEl.setAttribute('fill', 'url(#__frago_grad_right__)');
+            rightEl.setAttribute('filter', 'url(#__frago_blur__)');
+            svg.appendChild(rightEl);
+
+            const bottomEl = document.createElementNS(svgNS, 'path');
+            bottomEl.setAttribute('fill', 'url(#__frago_grad_bottom__)');
+            bottomEl.setAttribute('filter', 'url(#__frago_blur__)');
+            svg.appendChild(bottomEl);
+
+            const leftEl = document.createElementNS(svgNS, 'path');
+            leftEl.setAttribute('fill', 'url(#__frago_grad_left__)');
+            leftEl.setAttribute('filter', 'url(#__frago_blur__)');
+            svg.appendChild(leftEl);
+
             document.body.appendChild(svg);
 
-            // Add animation style
-            const style = document.createElement('style');
-            style.id = '__frago_border_style__';
-            style.textContent = `
-                @keyframes __frago_opacity__ {{
-                    0%, 100% {{ opacity: 0.35; }}
-                    50% {{ opacity: 0.5; }}
-                }}
-                @keyframes __frago_wave_shift__ {{
-                    0% {{ background-position: 0 0, 100% 0, 100% 100%, 0 100%; }}
-                    100% {{ background-position: 200px 0, 100% 200px, -200px 100%, 0 -200px; }}
-                }}
-            `;
-            document.head.appendChild(style);
+            // Build path from wave data with offset
+            function buildPath(wave, length, offset, horizontal, reverse, basePos, outward) {{
+                let d = '';
+                const startOffset = offset % EXTRA_LEN;
 
-            // Create border element with wavy edges
-            const border = document.createElement('div');
-            border.id = '__frago_viewport_border__';
-            border.style.cssText = `
-                position: fixed;
-                top: 0; left: 0; right: 0; bottom: 0;
-                pointer-events: none;
-                z-index: 2147483647;
-                box-sizing: border-box;
-                border: 6px solid rgb({color});
-                filter: url(#__frago_wave_filter__);
-                animation: __frago_opacity__ {duration}s ease-in-out infinite;
-            `;
-            document.body.appendChild(border);
+                for (let i = 0; i < wave.length - 1; i++) {{
+                    let p1 = wave[i].pos - startOffset;
+                    let p2 = wave[i + 1].pos - startOffset;
+                    const amp = wave[i].amp * outward;
+
+                    if (reverse) {{
+                        p1 = length - p1;
+                        p2 = length - p2;
+                    }}
+
+                    if (p2 < 0 || p1 > length) continue;
+
+                    const cp = (p1 + p2) / 2;
+                    let x1, y1, cx, cy, x2, y2;
+
+                    if (horizontal) {{
+                        x1 = Math.max(0, Math.min(length, p1));
+                        x2 = Math.max(0, Math.min(length, p2));
+                        y1 = y2 = basePos;
+                        cx = cp; cy = basePos + amp;
+                    }} else {{
+                        y1 = Math.max(0, Math.min(length, p1));
+                        y2 = Math.max(0, Math.min(length, p2));
+                        x1 = x2 = basePos;
+                        cy = cp; cx = basePos + amp;
+                    }}
+
+                    if (d === '') d = `M ${{x1}} ${{y1}}`;
+                    d += ` Q ${{cx}} ${{cy}} ${{x2}} ${{y2}}`;
+                }}
+                return d;
+            }}
+
+            const cycleDuration = {duration} * 1000;
+            let startTime = performance.now();
+
+            function animate(timestamp) {{
+                const elapsed = timestamp - startTime;
+                const offset = (elapsed / cycleDuration) * EXTRA_LEN;
+
+                // Clockwise: top(L→R), right(T→B), bottom(R→L), left(B→T)
+                const topPath = buildPath(topWave, W, offset, true, false, THICKNESS, -1);
+                topEl.setAttribute('d', topPath + ` L ${{W}} 0 L 0 0 Z`);
+
+                const rightPath = buildPath(rightWave, H, offset, false, false, W - THICKNESS, 1);
+                rightEl.setAttribute('d', rightPath + ` L ${{W}} ${{H}} L ${{W}} 0 Z`);
+
+                const bottomPath = buildPath(bottomWave, W, offset, true, true, H - THICKNESS, 1);
+                bottomEl.setAttribute('d', bottomPath + ` L 0 ${{H}} L ${{W}} ${{H}} Z`);
+
+                const leftPath = buildPath(leftWave, H, offset, false, true, THICKNESS, -1);
+                leftEl.setAttribute('d', leftPath + ` L 0 0 L 0 ${{H}} Z`);
+
+                if (document.getElementById('__frago_viewport_border__')) {{
+                    requestAnimationFrame(animate);
+                }}
+            }}
+            requestAnimationFrame(animate);
         }})()
         """
 
