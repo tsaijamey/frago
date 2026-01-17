@@ -19,7 +19,6 @@ from .init_command import init  # New environment init command
 from .recipe_commands import recipe_group
 from .skill_commands import skill_group
 from .run_commands import run_group
-from .dev_commands import dev_group
 from .usegit_commands import usegit_group
 from .sync_command import sync_cmd  # Sync command
 from .chrome_commands import chrome_group
@@ -300,7 +299,6 @@ cli.add_command(sync_cmd, name="sync")  # Resource sync command
 cli.add_command(update)  # Self-update command
 
 # Command groups
-cli.add_command(dev_group)  # Developer command group: dev pack
 cli.add_command(usegit_group)  # Git sync command group: use-git sync (deprecated, use sync)
 cli.add_command(chrome_group)  # Chrome CDP command group
 
