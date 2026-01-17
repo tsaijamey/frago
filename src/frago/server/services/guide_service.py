@@ -22,7 +22,6 @@ class GuideService:
         Priority:
         1. User directory: ~/.frago/guide/
         2. Package resources: src/frago/resources/guide/
-        3. Development source: guide_source/ (for development)
 
         Returns:
             Path to guide directory
@@ -40,21 +39,6 @@ class GuideService:
             if pkg_guide.exists() and (pkg_guide / "meta.json").exists():
                 return pkg_guide
         except (ImportError, AttributeError):
-            pass
-
-        # Fallback to development source (relative to project root)
-        try:
-            # Try to find guide_source from current working directory
-            cwd = Path.cwd()
-            dev_guide = cwd / "guide_source"
-            if dev_guide.exists() and (dev_guide / "meta.json").exists():
-                return dev_guide
-
-            # Try parent directory (in case we're in src/)
-            parent_guide = cwd.parent / "guide_source"
-            if parent_guide.exists() and (parent_guide / "meta.json").exists():
-                return parent_guide
-        except Exception:
             pass
 
         # If nothing found, return user directory path (will be created)
@@ -78,7 +62,7 @@ class GuideService:
         if not meta_file.exists():
             raise FileNotFoundError(
                 f"Guide metadata not found at {meta_file}. "
-                "Please run 'frago init' or check guide_source/ directory."
+                "Please reinstall frago or check ~/.frago/guide/ directory."
             )
 
         return json.loads(meta_file.read_text(encoding="utf-8"))
