@@ -105,7 +105,7 @@
     "output": "输出",
     "useCases": "使用场景",
     "parameters": "参数",
-    "dependencies": "依赖项",
+    "dependencies": "包含的其他配方",
     "sourceCode": "源代码",
     "name": "名称",
     "required": "必填",
@@ -155,7 +155,14 @@
     "enterJsonObject": "输入 JSON 对象，例如 {\"key\": \"value\"}",
     "interactiveMode": "交互式",
     "interactiveModeHint": "用于启动 UI 或持续运行的配方。配方将在后台启动。",
-    "startedAsync": "配方已在后台启动"
+    "startedAsync": "配方已在后台启动",
+    "requiredToRun": "运行必填",
+    "envVars": "所需密钥",
+    "configured": "已配置",
+    "notConfigured": "未配置",
+    "manageSecrets": "去配置",
+    "missingEnvVars": "{{count}} 个必填密钥未配置",
+    "usedBy": "来自"
   },
   "skills": {
     "title": "技能",

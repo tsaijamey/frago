@@ -105,7 +105,7 @@
     "output": "Output",
     "useCases": "Use Cases",
     "parameters": "Parameters",
-    "dependencies": "Dependencies",
+    "dependencies": "Included Recipes",
     "sourceCode": "Source Code",
     "name": "Name",
     "required": "Required",
@@ -155,7 +155,14 @@
     "enterJsonObject": "Enter JSON object, e.g. {\"key\": \"value\"}",
     "interactiveMode": "Interactive",
     "interactiveModeHint": "Enable for recipes that launch a UI or run continuously. The recipe will start in the background.",
-    "startedAsync": "Recipe started in background"
+    "startedAsync": "Recipe started in background",
+    "requiredToRun": "Required to run",
+    "envVars": "Required Credentials",
+    "configured": "Configured",
+    "notConfigured": "Not configured",
+    "manageSecrets": "Configure",
+    "missingEnvVars": "{{count}} required credential(s) not configured",
+    "usedBy": "From"
   },
   "skills": {
     "title": "Skills",
