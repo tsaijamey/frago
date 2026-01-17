@@ -154,6 +154,46 @@ function Install-Uv {
     }
 }
 
+function Build-Project {
+    # Get the script directory
+    $ScriptDir = Split-Path -Parent $MyInvocation.ScriptName
+    if (-not $ScriptDir) {
+        $ScriptDir = $PSScriptRoot
+    }
+    if (-not $ScriptDir) {
+        $ScriptDir = Get-Location
+    }
+    $WebDir = Join-Path $ScriptDir "src\frago\server\web"
+
+    # Check for pnpm
+    if (-not (Test-Command "pnpm")) {
+        Write-Err "pnpm not found. Please install pnpm first:"
+        Write-Info "npm install -g pnpm"
+        exit 1
+    }
+
+    # Build web frontend
+    Write-Step "Building web frontend..."
+    Push-Location $WebDir
+    try {
+        & pnpm install --frozen-lockfile *>$null
+        & pnpm build *>$null
+        Write-Done "Web frontend built"
+    } finally {
+        Pop-Location
+    }
+
+    # Build Python package
+    Write-Step "Building Python package..."
+    Push-Location $ScriptDir
+    try {
+        & uv build *>$null
+        Write-Done "Python package built"
+    } finally {
+        Pop-Location
+    }
+}
+
 function Install-Frago {
     Update-SessionPath
 
@@ -172,7 +212,7 @@ function Install-Frago {
 
     if (-not $WheelFile) {
         Write-Err "No wheel file found in $DistDir"
-        Write-Info "Run 'uv build' first to create the distribution"
+        Write-Info "Build failed or was not run"
         exit 1
     }
 
@@ -273,6 +313,11 @@ function Main {
 
     Write-Section "Dependencies"
     Install-Uv
+
+    Write-Section "Building"
+    Build-Project
+
+    Write-Section "Installing"
     Install-Frago
 
     Show-NextSteps

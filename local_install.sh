@@ -174,6 +174,29 @@ install_uv() {
     fi
 }
 
+build_project() {
+    # Get the script directory
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    WEB_DIR="$SCRIPT_DIR/src/frago/server/web"
+
+    # Check for pnpm
+    if ! command_exists pnpm; then
+        print_error "pnpm not found. Please install pnpm first:"
+        print_info "npm install -g pnpm"
+        exit 1
+    fi
+
+    # Build web frontend
+    print_step "Building web frontend..."
+    (cd "$WEB_DIR" && pnpm install --frozen-lockfile >/dev/null 2>&1 && pnpm build >/dev/null 2>&1)
+    print_done "Web frontend built"
+
+    # Build Python package
+    print_step "Building Python package..."
+    (cd "$SCRIPT_DIR" && uv build >/dev/null 2>&1)
+    print_done "Python package built"
+}
+
 install_frago() {
     export PATH="$HOME/.local/bin:$PATH"
 
@@ -186,7 +209,7 @@ install_frago() {
 
     if [ -z "$WHEEL_FILE" ]; then
         print_error "No wheel file found in $DIST_DIR"
-        print_info "Run 'uv build' first to create the distribution"
+        print_info "Build failed or was not run"
         exit 1
     fi
 
@@ -304,6 +327,11 @@ main() {
 
     print_section "Dependencies"
     install_uv
+
+    print_section "Building"
+    build_project
+
+    print_section "Installing"
     install_frago
 
     print_next_steps
