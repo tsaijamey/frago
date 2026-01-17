@@ -1,0 +1,124 @@
+{
+  "version": "0.38.1",
+  "last_updated": "2026-01-17T11:50:00Z",
+  "languages": ["en", "zh-CN"],
+  "categories": [
+    {
+      "id": "getting-started",
+      "title": {
+        "en": "Getting Started",
+        "zh-CN": "开始使用"
+      },
+      "description": {
+        "en": "First steps with frago",
+        "zh-CN": "frago的第一步"
+      },
+      "order": 1,
+      "icon": "rocket"
+    },
+    {
+      "id": "interface",
+      "title": {
+        "en": "Interface FAQ",
+        "zh-CN": "界面功能FAQ"
+      },
+      "description": {
+        "en": "Common questions about the interface",
+        "zh-CN": "界面相关的常见问题"
+      },
+      "order": 2,
+      "icon": "layout"
+    },
+    {
+      "id": "config",
+      "title": {
+        "en": "Configuration",
+        "zh-CN": "配置相关"
+      },
+      "description": {
+        "en": "Configure frago settings",
+        "zh-CN": "配置frago设置"
+      },
+      "order": 3,
+      "icon": "settings"
+    },
+    {
+      "id": "usage",
+      "title": {
+        "en": "Usage Tips",
+        "zh-CN": "使用技巧"
+      },
+      "description": {
+        "en": "Tips for better usage",
+        "zh-CN": "更好地使用frago的技巧"
+      },
+      "order": 4,
+      "icon": "lightbulb"
+    },
+    {
+      "id": "troubleshooting",
+      "title": {
+        "en": "Troubleshooting",
+        "zh-CN": "故障排查"
+      },
+      "description": {
+        "en": "Solve common issues",
+        "zh-CN": "解决常见问题"
+      },
+      "order": 5,
+      "icon": "alert-circle"
+    }
+  ],
+  "chapters": [
+    {
+      "id": "getting-started",
+      "category": "getting-started",
+      "order": 1,
+      "files": {
+        "en": "en/01-getting-started.md",
+        "zh-CN": "zh-CN/01-getting-started.md"
+      },
+      "question_count": 4
+    },
+    {
+      "id": "interface-faq",
+      "category": "interface",
+      "order": 2,
+      "files": {
+        "en": "en/02-interface-faq.md",
+        "zh-CN": "zh-CN/02-interface-faq.md"
+      },
+      "question_count": 6
+    },
+    {
+      "id": "configuration",
+      "category": "config",
+      "order": 3,
+      "files": {
+        "en": "en/03-configuration.md",
+        "zh-CN": "zh-CN/03-configuration.md"
+      },
+      "question_count": 6
+    },
+    {
+      "id": "usage-tips",
+      "category": "usage",
+      "order": 4,
+      "files": {
+        "en": "en/04-usage-tips.md",
+        "zh-CN": "zh-CN/04-usage-tips.md"
+      },
+      "question_count": 1
+    },
+    {
+      "id": "troubleshooting",
+      "category": "troubleshooting",
+      "order": 5,
+      "files": {
+        "en": "en/05-troubleshooting.md",
+        "zh-CN": "zh-CN/05-troubleshooting.md"
+      },
+      "question_count": 3
+    }
+  ]
+}
