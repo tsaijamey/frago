@@ -26,6 +26,7 @@ class RecipeMetadata:
     env: dict[str, dict[str, Any]] = field(default_factory=dict)  # Environment variable definitions
     system_packages: bool = False  # Use system Python (for scripts depending on system packages like dbus)
     warnings: list[dict[str, str]] = field(default_factory=list)  # Security warnings for UI display
+    flow: list[dict[str, Any]] = field(default_factory=list)  # Workflow execution flow
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
@@ -82,6 +83,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             env=data.get('env', {}),
             system_packages=data.get('system_packages', False),
             warnings=data.get('warnings', []),
+            flow=data.get('flow', []),
         )
     except KeyError as e:
         raise MetadataParseError(str(path), f"Missing required field: {e}")

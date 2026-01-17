@@ -154,6 +154,7 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
                 "outputs": recipe.metadata.outputs,
                 "dependencies": recipe.metadata.dependencies,
                 "env": recipe.metadata.env,
+                "flow": recipe.metadata.flow,
                 "examples": examples,
             }
             click.echo(json.dumps(output, ensure_ascii=False, indent=2))
@@ -462,6 +463,31 @@ def validate_recipe(path: str, output_format: str):
         for dep in metadata.dependencies:
             if dep not in registry.recipes:
                 errors.append(f"Dependent recipe does not exist: {dep}")
+
+    # 6. Check flow field (if workflow)
+    if metadata and metadata.type == 'workflow':
+        if not metadata.flow:
+            errors.append("Workflow recipes must include a 'flow' field describing execution steps")
+        else:
+            seen_steps = set()
+            for i, step in enumerate(metadata.flow):
+                step_num = step.get('step')
+                if step_num is None:
+                    errors.append(f"Flow step {i+1}: missing 'step' number")
+                elif step_num in seen_steps:
+                    errors.append(f"Flow step {step_num}: duplicate step number")
+                else:
+                    seen_steps.add(step_num)
+
+                if not step.get('action'):
+                    errors.append(f"Flow step {step_num or i+1}: missing 'action'")
+                if not step.get('description'):
+                    errors.append(f"Flow step {step_num or i+1}: missing 'description'")
+
+                # Verify recipe references exist in dependencies
+                if step.get('recipe'):
+                    if not metadata.dependencies or step['recipe'] not in metadata.dependencies:
+                        errors.append(f"Flow step {step_num}: recipe '{step['recipe']}' not in dependencies")
 
     # Output results
     is_valid = len(errors) == 0
