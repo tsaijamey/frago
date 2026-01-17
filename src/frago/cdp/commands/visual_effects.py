@@ -152,15 +152,15 @@ class VisualEffectsCommands:
 
     def viewport_border(
         self,
-        color: str = "255, 180, 0",
-        duration: float = 3.0,
+        color: str = "147, 51, 234",
+        duration: float = 4.0,
     ) -> None:
         """
-        Display a breathing gradient border around the viewport to indicate automation control.
+        Display an animated wavy border around the viewport to indicate automation control.
 
         Args:
-            color: RGB color values (e.g., "255, 180, 0" for yellow)
-            duration: Breathing animation cycle duration in seconds
+            color: RGB color values (e.g., "147, 51, 234" for purple)
+            duration: Wave animation cycle duration in seconds
         """
         self.logger.info("Showing viewport border indicator")
 
@@ -171,29 +171,42 @@ class VisualEffectsCommands:
             if (existing) existing.remove();
             const existingStyle = document.getElementById('__frago_border_style__');
             if (existingStyle) existingStyle.remove();
+            const existingSvg = document.getElementById('__frago_svg_defs__');
+            if (existingSvg) existingSvg.remove();
+
+            // Create SVG with wave filter
+            const svgNS = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(svgNS, 'svg');
+            svg.id = '__frago_svg_defs__';
+            svg.style.cssText = 'position: absolute; width: 0; height: 0; overflow: hidden;';
+            svg.innerHTML = `
+                <defs>
+                    <filter id="__frago_wave_filter__" x="-20%" y="-20%" width="140%" height="140%">
+                        <feTurbulence type="turbulence" baseFrequency="0.015" numOctaves="2" seed="1" result="turbulence">
+                            <animate attributeName="baseFrequency" values="0.015;0.02;0.015" dur="{duration}s" repeatCount="indefinite"/>
+                        </feTurbulence>
+                        <feDisplacementMap in="SourceGraphic" in2="turbulence" scale="8" xChannelSelector="R" yChannelSelector="G"/>
+                    </filter>
+                </defs>
+            `;
+            document.body.appendChild(svg);
 
             // Add animation style
             const style = document.createElement('style');
             style.id = '__frago_border_style__';
             style.textContent = `
-                @keyframes __frago_breathe__ {{
-                    0%, 100% {{
-                        box-shadow:
-                            inset 0 0 15px 5px rgba({color}, 0.6),
-                            inset 0 0 35px 12px rgba({color}, 0.35),
-                            inset 0 0 55px 20px rgba({color}, 0.15);
-                    }}
-                    50% {{
-                        box-shadow:
-                            inset 0 0 25px 10px rgba({color}, 0.75),
-                            inset 0 0 50px 20px rgba({color}, 0.45),
-                            inset 0 0 80px 35px rgba({color}, 0.2);
-                    }}
+                @keyframes __frago_opacity__ {{
+                    0%, 100% {{ opacity: 0.35; }}
+                    50% {{ opacity: 0.5; }}
+                }}
+                @keyframes __frago_wave_shift__ {{
+                    0% {{ background-position: 0 0, 100% 0, 100% 100%, 0 100%; }}
+                    100% {{ background-position: 200px 0, 100% 200px, -200px 100%, 0 -200px; }}
                 }}
             `;
             document.head.appendChild(style);
 
-            // Create border element
+            // Create border element with wavy edges
             const border = document.createElement('div');
             border.id = '__frago_viewport_border__';
             border.style.cssText = `
@@ -202,7 +215,9 @@ class VisualEffectsCommands:
                 pointer-events: none;
                 z-index: 2147483647;
                 box-sizing: border-box;
-                animation: __frago_breathe__ {duration}s ease-in-out infinite;
+                border: 6px solid rgb({color});
+                filter: url(#__frago_wave_filter__);
+                animation: __frago_opacity__ {duration}s ease-in-out infinite;
             `;
             document.body.appendChild(border);
         }})()
@@ -220,6 +235,8 @@ class VisualEffectsCommands:
             if (border) border.remove();
             const style = document.getElementById('__frago_border_style__');
             if (style) style.remove();
+            const svg = document.getElementById('__frago_svg_defs__');
+            if (svg) svg.remove();
         })()
         """
 
