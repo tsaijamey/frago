@@ -256,7 +256,7 @@ export default function GuidePage() {
                       onClick={() => setSelectedChapter(chapter.id)}
                       className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${
                         selectedChapter === chapter.id
-                          ? 'bg-[var(--accent-primary)] text-white'
+                          ? 'bg-[var(--accent-primary)] text-[var(--text-on-accent)]'
                           : 'text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]'
                       }`}
                     >
@@ -396,24 +396,33 @@ export default function GuidePage() {
                       </a>
                     );
                   },
-                  // Style code blocks
-                  code({ inline, className, children, ...props }) {
-                    if (inline) {
+                  // Style code blocks (pre > code)
+                  pre({ children }) {
+                    return (
+                      <pre className="bg-[var(--bg-tertiary)] p-4 rounded-lg overflow-x-auto mb-4">
+                        {children}
+                      </pre>
+                    );
+                  },
+                  // Style inline code
+                  code({ className, children, ...props }) {
+                    // If className contains 'language-', it's a code block (handled by pre)
+                    const isCodeBlock = className?.includes('language-');
+                    if (isCodeBlock) {
                       return (
-                        <code
-                          className="px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--accent-primary)] font-mono text-sm"
-                          {...props}
-                        >
+                        <code className={className} {...props}>
                           {children}
                         </code>
                       );
                     }
+                    // Inline code
                     return (
-                      <pre className="bg-[var(--bg-tertiary)] p-4 rounded-lg overflow-x-auto mb-4">
-                        <code className={className} {...props}>
-                          {children}
-                        </code>
-                      </pre>
+                      <code
+                        className="px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--accent-primary)] font-mono text-sm"
+                        {...props}
+                      >
+                        {children}
+                      </code>
                     );
                   },
                   // Style blockquotes
