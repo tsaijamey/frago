@@ -126,6 +126,15 @@ export interface RecipeOutput {
   description?: string;
 }
 
+export interface RecipeFlowStep {
+  step: number;
+  action: string;
+  description: string;
+  recipe?: string;
+  inputs?: Array<{ source: string }>;
+  outputs?: Array<{ name: string; type: string }>;
+}
+
 export interface RecipeDetail extends RecipeItem {
   metadata_content: string | null;
   recipe_dir: string | null;
@@ -141,6 +150,7 @@ export interface RecipeDetail extends RecipeItem {
   dependencies?: string[];
   env?: Record<string, unknown>;
   source_code?: string;
+  flow?: RecipeFlowStep[];
 }
 
 // ============================================================

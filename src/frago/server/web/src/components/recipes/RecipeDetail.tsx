@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getRecipeDetail, runRecipe, openPath, getRecipeEnvRequirements } from '@/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import { ExternalLink, ChevronDown, ChevronRight, Lightbulb, Settings, Link2, Code, Key } from 'lucide-react';
+import { ExternalLink, ChevronDown, ChevronRight, Lightbulb, Settings, Link2, Code, Key, GitBranch, ArrowRight, Check, X } from 'lucide-react';
 import type { RecipeDetail as RecipeDetailType, RecipeEnvRequirement } from '@/types/pywebview';
 
 interface CollapsibleSectionProps {
@@ -274,6 +274,7 @@ export default function RecipeDetail() {
   const hasDependencies = recipe.dependencies && recipe.dependencies.length > 0;
   const hasEnvRequirements = envRequirements.length > 0;
   const hasMissingEnvVars = envRequirements.some(req => !req.configured);
+  const hasFlow = recipe.flow && recipe.flow.length > 0;
 
   return (
     <div className="flex flex-col gap-4 h-full overflow-hidden p-4">
@@ -564,7 +565,14 @@ export default function RecipeDetail() {
                     }`}
                   >
                     <div className="flex-1 min-w-0">
-                      <code className="text-sm font-mono text-[var(--text-primary)]">{req.var_name}</code>
+                      <div className="flex items-center gap-2">
+                        <code className="text-sm font-mono text-[var(--text-primary)]">{req.var_name}</code>
+                        {req.required && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)]">
+                            {t('recipes.required')}
+                          </span>
+                        )}
+                      </div>
                       {req.description && (
                         <p className="text-xs text-[var(--text-muted)] mt-1 truncate">{req.description}</p>
                       )}
@@ -574,20 +582,11 @@ export default function RecipeDetail() {
                         </p>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 ml-3 shrink-0">
-                      {req.required && (
-                        <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)]">
-                          {t('recipes.required')}
-                        </span>
-                      )}
+                    <div className="ml-3 shrink-0">
                       {req.configured ? (
-                        <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-success)]/20 text-[var(--accent-success)]">
-                          {t('recipes.configured')}
-                        </span>
+                        <Check size={18} className="text-[var(--accent-success)]" />
                       ) : (
-                        <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)]">
-                          {t('recipes.notConfigured')}
-                        </span>
+                        <X size={18} className="text-[var(--accent-error)]" />
                       )}
                     </div>
                   </div>
@@ -612,6 +611,65 @@ export default function RecipeDetail() {
                 </li>
               ))}
             </ul>
+          </CollapsibleSection>
+        )}
+
+        {/* Execution Flow - for workflows only */}
+        {hasFlow && (
+          <CollapsibleSection
+            title={t('recipes.executionFlow')}
+            icon={<GitBranch size={16} className="text-[var(--accent-primary)]" />}
+          >
+            <div className="space-y-3">
+              {recipe.flow!.map((step, index) => (
+                <div key={step.step} className="flex items-start gap-3">
+                  {/* Step number circle */}
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-[var(--text-primary)] text-[var(--bg-base)] flex items-center justify-center text-sm font-medium">
+                    {step.step}
+                  </div>
+
+                  {/* Step content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-sm text-[var(--text-primary)] font-medium">
+                        {step.action}
+                      </span>
+                      {step.recipe && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-success)]/20 text-[var(--accent-success)]">
+                          {t('recipes.callsRecipe')}: {step.recipe}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-[var(--text-secondary)] mt-1">
+                      {step.description}
+                    </p>
+
+                    {/* Inputs and outputs */}
+                    {(step.inputs?.length || step.outputs?.length) && (
+                      <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                        {step.inputs?.map((input, i) => (
+                          <span key={i} className="px-2 py-0.5 rounded bg-[var(--bg-subtle)] text-[var(--text-muted)]">
+                            ← {input.source}
+                          </span>
+                        ))}
+                        {step.outputs?.map((output, i) => (
+                          <span key={i} className="px-2 py-0.5 rounded bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]">
+                            → {output.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Arrow to next step */}
+                  {index < recipe.flow!.length - 1 && (
+                    <div className="flex-shrink-0 self-center text-[var(--text-muted)]">
+                      <ArrowRight size={16} className="rotate-90" />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </CollapsibleSection>
         )}
 

@@ -162,7 +162,10 @@
     "notConfigured": "Not configured",
     "manageSecrets": "Configure",
     "missingEnvVars": "{{count}} required credential(s) not configured",
-    "usedBy": "From"
+    "usedBy": "From",
+    "executionFlow": "Execution Flow",
+    "step": "Step",
+    "callsRecipe": "Calls"
   },
   "skills": {
     "title": "Skills",

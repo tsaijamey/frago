@@ -162,7 +162,10 @@
     "notConfigured": "未配置",
     "manageSecrets": "去配置",
     "missingEnvVars": "{{count}} 个必填密钥未配置",
-    "usedBy": "来自"
+    "usedBy": "来自",
+    "executionFlow": "执行流程",
+    "step": "步骤",
+    "callsRecipe": "调用"
   },
   "skills": {
     "title": "技能",

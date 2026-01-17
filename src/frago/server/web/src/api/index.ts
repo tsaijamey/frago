@@ -301,6 +301,7 @@ export async function getRecipeDetail(name: string): Promise<RecipeDetail> {
     dependencies: recipe.dependencies as string[] | undefined,
     env: recipe.env as Record<string, unknown> | undefined,
     source_code: recipe.source_code as string | undefined,
+    flow: recipe.flow as RecipeDetail['flow'],
   };
 }
 
