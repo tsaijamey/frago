@@ -44,6 +44,56 @@ dependencies:
   - video_clip_annotator_ui
   - volcengine_tts_with_emotion
   - video_merge_clips
+flow:
+  - step: 1
+    action: "validate_directory"
+    description: "Verify input directory exists and is a directory"
+    inputs:
+      - source: "params.dir"
+  - step: 2
+    action: "scan_media_files"
+    description: "Scan directory for video/audio files"
+    inputs:
+      - source: "params.dir"
+    outputs:
+      - name: "media_files"
+        type: "list"
+      - name: "media_count"
+        type: "number"
+  - step: 3
+    action: "generate_content_id"
+    description: "Generate unique content ID from directory path"
+    inputs:
+      - source: "params.dir"
+    outputs:
+      - name: "content_id"
+        type: "string"
+  - step: 4
+    action: "setup_viewer_content"
+    description: "Copy UI assets and generate config.json"
+    recipe: "video_clip_annotator_ui"
+    inputs:
+      - source: "step.3.content_id"
+      - source: "params.dir"
+      - source: "step.2.media_files"
+    outputs:
+      - name: "content_dir"
+        type: "string"
+  - step: 5
+    action: "ensure_subdirectories"
+    description: "Create tts/, output/, temp/ subdirectories"
+    inputs:
+      - source: "params.dir"
+  - step: 6
+    action: "open_browser"
+    description: "Navigate Chrome to Web UI"
+    inputs:
+      - source: "step.3.content_id"
+    outputs:
+      - name: "url"
+        type: "string"
+      - name: "browser_opened"
+        type: "boolean"
 ---
 
 # video_clip_annotator
