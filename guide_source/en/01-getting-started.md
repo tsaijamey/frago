@@ -17,21 +17,21 @@ tags:
 
 **A**: Here's the recommended way to get started:
 
-1. **Check out the available tools** → Click "Recipes" in the left sidebar
-   - Browse pre-built automation scripts
-   - Examples: "Extract YouTube subtitles", "Scrape Upwork jobs"
-   - Click on one to see what it does, try running it
+1. **Explore available recipes** → Click "Recipes" in the left sidebar
+   - Switch to "Community" tab to browse community recipes
+   - Recipes are standardized automation task definitions, e.g., "Extract YouTube subtitles"
+   - Find an interesting recipe and click to see what it does
 
 2. **Let AI help you** → Click "Console" in the left sidebar
    - Type what you want to do in the input box
    - Example: "Extract content from this webpage"
    - AI will execute automatically and show you the results
 
-3. **View execution history** → Click "Tasks" in the left sidebar
-   - See what AI has done for you
-   - Click to view detailed logs
+3. **Run deterministic tasks** → Click "Tasks" in the left sidebar
+   - Execute existing Recipes
+   - Run automation tasks that don't need route adjustments
 
-**💡 Tip**: Beginners should start with Recipes to experience frago's capabilities.
+**💡 Tip**: Beginners should start with community recipes to experience frago's capabilities.
 
 ---
 
@@ -49,14 +49,14 @@ tags:
   - No waiting for confirmation, AI executes directly
   - ⚠️ Warning: All operations are executed automatically
 
-- **Tasks**: Execution history and task management
-  - Shows all Session records
-  - View execution details, logs, tool calls
-  - Start new tasks (input box at bottom)
+- **Tasks**: Deterministic task execution
+  - Run existing Recipes or standardized tasks
+  - For tasks that don't require mid-course adjustments
+  - Input a prompt or select a recipe to execute
 
-- **Recipes**: Automation script library
-  - Browse local and community Recipes
-  - View parameters, use cases, examples
+- **Recipes**: Recipe management center
+  - Browse local and community recipes
+  - View recipe parameters, use cases, examples
   - One-click execution with parameter input
 
 - **Skills**: Methodology documents (advanced)
@@ -126,7 +126,7 @@ tags:
 - frago Web UI works independently without Claude Code CLI
 - Web UI provides visual interface and Recipe management
 - Console mode for rapid development and testing
-- Tasks mode for complete execution history
+- Tasks mode for running deterministic automation tasks
 
 **How to use together** (optional):
 ```bash

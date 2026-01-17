@@ -17,24 +17,18 @@ tags:
 
 ## Q: What's the difference between Console and Tasks? Which should I use?
 
-**A**: Console is a dedicated environment for Recipe development (auto-approves all operations), while Tasks is for normal task execution (requires manual approval, shows execution history).
-
-This is frago's most confusing concept. Let's compare them:
+**A**: Console is a dedicated environment for Recipe development, while Tasks is for deterministic task execution. Both auto-approve all operations.
 
 | Feature | Console | Tasks |
 |---------|---------|-------|
-| **Purpose** | Develop and test Recipes | Execute normal tasks |
-| **Approval Mode** | Auto-approve (all tool calls execute directly) | Interactive approval (requires manual confirmation)* |
-| **Session Display** | Current development session | All historical sessions |
-| **Use Cases** | Explore webpages, debug Recipes, quick experiments | Execute known tasks, view history |
-| **Security** | ⚠️ Lower (auto-execution) | ✅ Higher (manual control) |
-
-> *Note: Interactive approval in Tasks requires using Claude Code CLI. Tasks started from Web UI also auto-approve.
+| **Purpose** | Develop and test Recipes | Execute deterministic tasks |
+| **Session Display** | Current development session | All task list |
+| **Use Cases** | Explore webpages, debug Recipes, quick experiments | Run existing Recipes, execute standardized tasks |
 
 **Usage Recommendations**:
 
 - **Use Console for development**: When you want AI to explore how to complete a task (e.g., "help me figure out how to extract data from this webpage")
-- **Use Tasks for viewing**: When you want to view previously executed task history, or when starting tasks via CLI
+- **Use Tasks for execution**: When you want to run an existing Recipe or execute tasks that don't need mid-course adjustments
 
 **Important Note**:
 ⚠️ Console auto-executes all operations (file modifications, command execution, etc.). Be careful when using it on sensitive projects. For full manual control, use `claude -p "your task"` from the command line.
@@ -45,7 +39,7 @@ This is frago's most confusing concept. Let's compare them:
 
 ## Q: What does Recipe mean?
 
-**A**: A Recipe is a reusable automation script that includes complete task descriptions, parameter definitions, and execution logic. Think of it as a "saved cooking recipe."
+**A**: A Recipe is a standardized automation task defined by frago, including complete task descriptions, parameter definitions, and execution logic. Think of it as a "saved cooking recipe."
 
 **Why is it called Recipe?**
 
@@ -137,18 +131,18 @@ Workspace lets you browse these files directly in the Web UI without opening a f
 
 ## Q: What's the difference between Skills and Recipes?
 
-**A**: Recipes are executable automation scripts (code), while Skills are methodology documents that guide Claude's work (text). Beginners can ignore Skills initially.
+**A**: Recipes are executable standardized recipes (code), while Skills are methodology documents that guide Claude's work (text). Beginners can ignore Skills initially.
 
 **Simple Analogy**:
 
-- **Recipe**: Step-by-step cooking script that machines can execute directly
+- **Recipe**: Standardized cooking steps that machines can execute directly
 - **Skill**: Cooking tips and insights that teach chefs how to think
 
 **Detailed Comparison**:
 
 | Feature | Recipe | Skill |
 |---------|--------|-------|
-| **Nature** | Python/Shell script | Markdown document |
+| **Nature** | Standardized recipe definition | Markdown document |
 | **Execution** | Can run directly | Not executable, read-only |
 | **Purpose** | Automate repetitive tasks | Guide AI's decision-making process |
 | **Example** | screenshot_tab.py | frago-chrome-navigation.md |
