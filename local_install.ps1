@@ -160,38 +160,6 @@ function Install-Uv {
     }
 }
 
-function Build-Project {
-    $WebDir = Join-Path $script:ScriptDirectory "src\frago\server\web"
-
-    # Check for pnpm
-    if (-not (Test-Command "pnpm")) {
-        Write-Err "pnpm not found. Please install pnpm first:"
-        Write-Info "npm install -g pnpm"
-        exit 1
-    }
-
-    # Build web frontend
-    Write-Step "Building web frontend..."
-    Push-Location $WebDir
-    try {
-        & pnpm install --frozen-lockfile *>$null
-        & pnpm build *>$null
-        Write-Done "Web frontend built"
-    } finally {
-        Pop-Location
-    }
-
-    # Build Python package
-    Write-Step "Building Python package..."
-    Push-Location $script:ScriptDirectory
-    try {
-        & uv build *>$null
-        Write-Done "Python package built"
-    } finally {
-        Pop-Location
-    }
-}
-
 function Install-Frago {
     Update-SessionPath
     $DistDir = Join-Path $script:ScriptDirectory "dist"
@@ -302,9 +270,6 @@ function Main {
 
     Write-Section "Dependencies"
     Install-Uv
-
-    Write-Section "Building"
-    Build-Project
 
     Write-Section "Installing"
     Install-Frago
