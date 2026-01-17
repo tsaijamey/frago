@@ -7,6 +7,12 @@
 
 $ErrorActionPreference = "Stop"
 
+# Capture script directory at top level (required for functions)
+$script:ScriptDirectory = $PSScriptRoot
+if (-not $script:ScriptDirectory) {
+    $script:ScriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Color and Style Functions
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -155,15 +161,7 @@ function Install-Uv {
 }
 
 function Build-Project {
-    # Get the script directory
-    $ScriptDir = Split-Path -Parent $MyInvocation.ScriptName
-    if (-not $ScriptDir) {
-        $ScriptDir = $PSScriptRoot
-    }
-    if (-not $ScriptDir) {
-        $ScriptDir = Get-Location
-    }
-    $WebDir = Join-Path $ScriptDir "src\frago\server\web"
+    $WebDir = Join-Path $script:ScriptDirectory "src\frago\server\web"
 
     # Check for pnpm
     if (-not (Test-Command "pnpm")) {
@@ -185,7 +183,7 @@ function Build-Project {
 
     # Build Python package
     Write-Step "Building Python package..."
-    Push-Location $ScriptDir
+    Push-Location $script:ScriptDirectory
     try {
         & uv build *>$null
         Write-Done "Python package built"
@@ -196,16 +194,7 @@ function Build-Project {
 
 function Install-Frago {
     Update-SessionPath
-
-    # Get the script directory (where dist/ should be)
-    $ScriptDir = Split-Path -Parent $MyInvocation.ScriptName
-    if (-not $ScriptDir) {
-        $ScriptDir = $PSScriptRoot
-    }
-    if (-not $ScriptDir) {
-        $ScriptDir = Get-Location
-    }
-    $DistDir = Join-Path $ScriptDir "dist"
+    $DistDir = Join-Path $script:ScriptDirectory "dist"
 
     # Find the wheel file
     $WheelFile = Get-ChildItem -Path $DistDir -Filter "frago_cli-*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
