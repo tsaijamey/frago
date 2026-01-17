@@ -164,8 +164,8 @@ function Install-Frago {
     Update-SessionPath
     $DistDir = Join-Path $script:ScriptDirectory "dist"
 
-    # Find the wheel file
-    $WheelFile = Get-ChildItem -Path $DistDir -Filter "frago_cli-*.whl" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Find the newest wheel file
+    $WheelFile = Get-ChildItem -Path $DistDir -Filter "frago_cli-*.whl" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 
     if (-not $WheelFile) {
         Write-Err "No wheel file found in $DistDir"
