@@ -1088,3 +1088,102 @@ export async function toggleGitHubStar(star: boolean): Promise<StarResult> {
     body: JSON.stringify({ star }),
   });
 }
+
+// ============================================================
+// Guide API
+// ============================================================
+
+export interface GuideCategory {
+  id: string;
+  title: {
+    en: string;
+    'zh-CN': string;
+  };
+  description: {
+    en: string;
+    'zh-CN': string;
+  };
+  order: number;
+  icon: string;
+}
+
+export interface GuideChapter {
+  id: string;
+  category: string;
+  order: number;
+  files: {
+    en: string;
+    'zh-CN': string;
+  };
+  question_count: number;
+}
+
+export interface GuideMeta {
+  version: string;
+  last_updated: string;
+  languages: string[];
+  categories: GuideCategory[];
+  chapters: GuideChapter[];
+}
+
+export interface GuideTocItem {
+  level: number;
+  title: string;
+  anchor: string;
+}
+
+export interface GuideContent {
+  id: string;
+  title: string;
+  category: string;
+  content: string;
+  metadata: {
+    version: string;
+    last_updated: string;
+    tags: string[];
+    order: number;
+  };
+  toc: GuideTocItem[];
+}
+
+export interface GuideSearchMatch {
+  question: string;
+  snippet: string;
+  anchor: string;
+}
+
+export interface GuideSearchResult {
+  chapter_id: string;
+  chapter_title: string;
+  matches: GuideSearchMatch[];
+}
+
+export interface GuideSearchResponse {
+  query: string;
+  total: number;
+  results: GuideSearchResult[];
+}
+
+/**
+ * Get guide metadata including categories and chapters.
+ */
+export async function getGuideMeta(lang: string = 'en'): Promise<GuideMeta> {
+  const params = new URLSearchParams({ lang });
+  return fetchApi<GuideMeta>(`/guide/meta?${params.toString()}`);
+}
+
+/**
+ * Get chapter content by language and chapter ID.
+ */
+export async function getGuideContent(lang: string, chapterId: string): Promise<GuideContent> {
+  const params = new URLSearchParams({ lang, chapter: chapterId });
+  return fetchApi<GuideContent>(`/guide/content?${params.toString()}`);
+}
+
+/**
+ * Search guide content.
+ */
+export async function searchGuide(query: string, lang: string = 'en'): Promise<GuideSearchResponse> {
+  const params = new URLSearchParams({ q: query, lang });
+  return fetchApi<GuideSearchResponse>(`/guide/search?${params.toString()}`);
+}

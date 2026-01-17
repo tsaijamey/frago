@@ -1093,3 +1093,56 @@ export async function toggleGitHubStar(star: boolean): Promise<httpApi.StarResul
   }
   return httpApi.toggleGitHubStar(star);
 }
+
+// ============================================================
+// Guide API
+// ============================================================
+
+export type {
+  GuideMeta,
+  GuideCategory,
+  GuideChapter,
+  GuideContent,
+  GuideTocItem,
+  GuideSearchResponse,
+  GuideSearchResult,
+  GuideSearchMatch,
+} from './client';
+
+export async function getGuideMeta(lang: string = 'en'): Promise<httpApi.GuideMeta> {
+  if (isPywebviewMode()) {
+    // Return empty meta in pywebview mode
+    return {
+      version: '0.0.0',
+      last_updated: '',
+      languages: [],
+      categories: [],
+      chapters: [],
+    };
+  }
+  return httpApi.getGuideMeta(lang);
+}
+
+export async function getGuideContent(
+  lang: string,
+  chapterId: string
+): Promise<httpApi.GuideContent | null> {
+  if (isPywebviewMode()) {
+    return null;
+  }
+  return httpApi.getGuideContent(lang, chapterId);
+}
+
+export async function searchGuide(
+  query: string,
+  lang: string = 'en'
+): Promise<httpApi.GuideSearchResponse> {
+  if (isPywebviewMode()) {
+    return {
+      query,
+      total: 0,
+      results: [],
+    };
+  }
+  return httpApi.searchGuide(query, lang);
+}
