@@ -12,6 +12,7 @@ from frago.server.models import (
     RecipeDetailResponse,
     RecipeInputSchema,
     RecipeOutputSchema,
+    RecipeFlowStep,
     RecipeRunRequest,
     TaskItemResponse,
     CommunityRecipeItemResponse,
@@ -95,6 +96,21 @@ async def get_recipe(name: str) -> RecipeDetailResponse:
                     description=v.get("description"),
                 )
 
+    # Parse flow (for workflows)
+    flow = []
+    raw_flow = recipe.get("flow", [])
+    if isinstance(raw_flow, list):
+        for step in raw_flow:
+            if isinstance(step, dict):
+                flow.append(RecipeFlowStep(
+                    step=step.get("step", 0),
+                    action=step.get("action", ""),
+                    description=step.get("description", ""),
+                    recipe=step.get("recipe"),
+                    inputs=step.get("inputs", []),
+                    outputs=step.get("outputs", []),
+                ))
+
     return RecipeDetailResponse(
         name=recipe.get("name", name),
         description=recipe.get("description"),
@@ -116,6 +132,7 @@ async def get_recipe(name: str) -> RecipeDetailResponse:
         dependencies=recipe.get("dependencies", []),
         env=recipe.get("env", {}),
         source_code=recipe.get("source_code"),
+        flow=flow,
     )
 
 

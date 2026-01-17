@@ -110,6 +110,17 @@ class RecipeOutputSchema(BaseModel):
     description: Optional[str] = None
 
 
+class RecipeFlowStep(BaseModel):
+    """Recipe workflow step definition"""
+
+    step: int
+    action: str
+    description: str
+    recipe: Optional[str] = None
+    inputs: List[Dict[str, str]] = Field(default_factory=list)
+    outputs: List[Dict[str, str]] = Field(default_factory=list)
+
+
 class RecipeDetailResponse(BaseModel):
     """Response for recipe detail endpoint with rich metadata"""
 
@@ -133,6 +144,7 @@ class RecipeDetailResponse(BaseModel):
     dependencies: List[str] = Field(default_factory=list)
     env: Dict[str, Any] = Field(default_factory=dict)
     source_code: Optional[str] = None
+    flow: List[RecipeFlowStep] = Field(default_factory=list)
 
 
 class TaskItemResponse(BaseModel):
