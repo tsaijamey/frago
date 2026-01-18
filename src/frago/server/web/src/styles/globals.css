@@ -1121,31 +1121,38 @@ a:not(.btn):not(.nav-tab):hover {
 .toast {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-xl);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   color: var(--text-primary);
-  font-size: var(--font-size-base);
-  box-shadow: 0 4px 12px var(--shadow-color);
-  animation: slideIn 0.2s ease;
+  font-size: var(--font-size-lg);
+  font-weight: 500;
+  box-shadow: 0 8px 24px var(--shadow-color);
+  animation: slideIn 0.3s ease;
+  min-width: 300px;
+  cursor: pointer;
 }
 
 .toast-success {
-  border-left: 3px solid var(--accent-success);
+  border-left: 6px solid var(--accent-success);
+  background: color-mix(in srgb, var(--accent-success) 10%, var(--bg-tertiary));
 }
 
 .toast-error {
-  border-left: 3px solid var(--accent-error);
+  border-left: 6px solid var(--accent-error);
+  background: color-mix(in srgb, var(--accent-error) 10%, var(--bg-tertiary));
 }
 
 .toast-warning {
-  border-left: 3px solid var(--accent-warning);
+  border-left: 6px solid var(--accent-warning);
+  background: color-mix(in srgb, var(--accent-warning) 10%, var(--bg-tertiary));
 }
 
 .toast-info {
-  border-left: 3px solid var(--accent-primary);
+  border-left: 6px solid var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
 }
 
 @keyframes slideIn {
