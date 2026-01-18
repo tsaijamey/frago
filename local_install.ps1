@@ -90,6 +90,18 @@ function Write-Err {
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
+function Exit-VirtualEnv {
+    # Exit any active virtual environment to ensure we use uv tool installed frago
+    if ($env:VIRTUAL_ENV) {
+        Write-Info "Exiting virtual environment: $env:VIRTUAL_ENV"
+        # Remove virtual environment paths from PATH (filter by actual VIRTUAL_ENV value)
+        $venvPattern = [regex]::Escape($env:VIRTUAL_ENV)
+        $env:Path = ($env:Path -split ';' | Where-Object { $_ -and $_ -notmatch "^$venvPattern" }) -join ';'
+        # Remove VIRTUAL_ENV variable
+        Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-Command {
     param([string]$Command)
     return [bool](Get-Command $Command -ErrorAction SilentlyContinue)
@@ -263,6 +275,9 @@ function Start-Frago {
 
 function Main {
     Write-Banner
+
+    # Exit virtual environment first to avoid PATH conflicts
+    Exit-VirtualEnv
 
     Write-Section "Environment"
     $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }

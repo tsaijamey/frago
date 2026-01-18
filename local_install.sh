@@ -103,6 +103,17 @@ print_done() {
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
+exit_virtualenv() {
+    # Exit any active virtual environment to ensure we use uv tool installed frago
+    if [ -n "$VIRTUAL_ENV" ]; then
+        print_info "Exiting virtual environment: $VIRTUAL_ENV"
+        # Remove virtual environment paths from PATH (filter by actual VIRTUAL_ENV value)
+        PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$VIRTUAL_ENV" | tr '\n' ':' | sed 's/:$//')
+        export PATH
+        unset VIRTUAL_ENV
+    fi
+}
+
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
@@ -320,6 +331,9 @@ launch_frago() {
 
 main() {
     print_banner
+
+    # Exit virtual environment first to avoid PATH conflicts
+    exit_virtualenv
 
     print_section "Environment"
     detect_platform
