@@ -1108,12 +1108,14 @@ a:not(.btn):not(.nav-tab):hover {
 /* === Toast === */
 .toast-container {
   position: fixed;
-  bottom: calc(var(--status-height) + var(--bottom-nav-height) + var(--spacing-md));
-  right: var(--spacing-md);
+  top: var(--spacing-md);
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
   z-index: 1000;
+  max-width: calc(100vw - 2 * var(--spacing-md));
 }
 
 .toast {
@@ -1148,11 +1150,11 @@ a:not(.btn):not(.nav-tab):hover {
 
 @keyframes slideIn {
   from {
-    transform: translateX(100%);
+    transform: translateY(-100%);
     opacity: 0;
   }
   to {
-    transform: translateX(0);
+    transform: translateY(0);
     opacity: 1;
   }
 }
