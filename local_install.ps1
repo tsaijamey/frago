@@ -179,14 +179,14 @@ function Install-Frago {
         $version = Get-CommandVersion "frago"
         Write-Step "Upgrading frago from local..."
 
-        & uv tool install $WheelFile.FullName --force *>$null
+        & uv tool install $WheelFile.FullName --force --reinstall *>$null
 
         Update-SessionPath
         $newVersion = Get-CommandVersion "frago"
         Write-Done "frago $newVersion"
     } else {
         Write-Step "Installing frago from local..."
-        & uv tool install $WheelFile.FullName *>$null
+        & uv tool install $WheelFile.FullName --reinstall *>$null
         Update-SessionPath
 
         if (Test-Command "frago") {
