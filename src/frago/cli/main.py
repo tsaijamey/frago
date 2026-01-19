@@ -31,12 +31,14 @@ from .server_command import server_group
 from .autostart_command import autostart_group
 from .start_command import start
 from .agent_friendly import AgentFriendlyGroup
+from .cloud_commands import login_cmd, logout_cmd, whoami_cmd, config_group, market_group, install_group
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
+    ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "sync", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
@@ -329,6 +331,14 @@ cli.add_command(server_group)
 
 # Autostart command group - manage server autostart on boot
 cli.add_command(autostart_group)
+
+# Cloud commands - frago Cloud authentication, config, and market
+cli.add_command(login_cmd, name="login")
+cli.add_command(logout_cmd, name="logout")
+cli.add_command(whoami_cmd, name="whoami")
+cli.add_command(config_group, name="config")
+cli.add_command(market_group, name="market")
+cli.add_command(install_group, name="install")
 
 
 def main():
