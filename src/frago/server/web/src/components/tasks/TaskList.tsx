@@ -3,10 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { useTasks } from '@/hooks/useTasks';
 import { startAgentTask } from '@/api';
 import TaskCard from './TaskCard';
-import EmptyState from '@/components/ui/EmptyState';
+import WelcomeScreen from './WelcomeScreen';
 import DirectoryAutocomplete from '@/components/ui/DirectoryAutocomplete';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
-import { Send, ClipboardList } from 'lucide-react';
+import { Send } from 'lucide-react';
 
 export default function TaskList() {
   const { t } = useTranslation();
@@ -41,58 +41,64 @@ export default function TaskList() {
     }
   };
 
+  const handleExampleClick = (examplePrompt: string) => {
+    setPrompt(examplePrompt);
+    textareaRef.current?.focus();
+  };
+
+  const inputArea = (
+    <div className="task-input-wrapper relative">
+      <DirectoryAutocomplete
+        value={prompt}
+        onChange={setPrompt}
+        textareaRef={textareaRef}
+      />
+      <textarea
+        ref={textareaRef}
+        className="task-input"
+        placeholder={t('tasks.inputPlaceholder')}
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        onKeyDown={handleKeyDown}
+        aria-label="Task prompt input"
+      />
+      <button
+        type="button"
+        className={`task-input-btn ${prompt.trim() ? 'visible' : ''}`}
+        onClick={handleSubmit}
+        disabled={isSubmitting || !prompt.trim()}
+      >
+        {isSubmitting ? (
+          <div className="spinner" />
+        ) : (
+          <Send size={16} />
+        )}
+      </button>
+    </div>
+  );
+
+  if (tasks.length === 0) {
+    return (
+      <div className="flex flex-col h-full">
+        <WelcomeScreen onExampleClick={handleExampleClick}>
+          {inputArea}
+        </WelcomeScreen>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
-      {/* Task List */}
-      {tasks.length === 0 ? (
-        <EmptyState
-          Icon={ClipboardList}
-          title={t('tasks.noTasks')}
-          description={t('tasks.noTasksDescription')}
-        />
-      ) : (
-        <div className="page-scroll flex flex-col gap-2">
-          {tasks.map((task) => (
-            <TaskCard
-              key={task.session_id}
-              task={task}
-              onClick={() => viewDetail(task.session_id)}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Input Area - Fixed at Bottom */}
-      <div className="task-input-area">
-        <div className="task-input-wrapper relative">
-          <DirectoryAutocomplete
-            value={prompt}
-            onChange={setPrompt}
-            textareaRef={textareaRef}
+      <div className="page-scroll flex flex-col gap-2">
+        {tasks.map((task) => (
+          <TaskCard
+            key={task.session_id}
+            task={task}
+            onClick={() => viewDetail(task.session_id)}
           />
-          <textarea
-            ref={textareaRef}
-            className="task-input"
-            placeholder={t('tasks.inputPlaceholder')}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={handleKeyDown}
-            aria-label="Task prompt input"
-          />
-          <button
-            type="button"
-            className={`task-input-btn ${prompt.trim() ? 'visible' : ''}`}
-            onClick={handleSubmit}
-            disabled={isSubmitting || !prompt.trim()}
-          >
-            {isSubmitting ? (
-              <div className="spinner" />
-            ) : (
-              <Send size={16} />
-            )}
-          </button>
-        </div>
+        ))}
       </div>
+      <div className="task-input-area">{inputArea}</div>
     </div>
   );
 }

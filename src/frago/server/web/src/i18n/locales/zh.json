@@ -49,6 +49,41 @@
     "noTasks": "暂无任务",
     "noTasksDescription": "输入任务描述以开始您的第一个任务",
     "inputPlaceholder": "描述您想要执行的任务...",
+    "welcomeHeadline": "今天你想完成什么？",
+    "welcomeSubheadline": "描述任务，让 AI 帮你处理",
+    "tryExamples": "试试这些示例",
+    "examples": {
+      "webResearch": {
+        "title": "网页调研",
+        "description": "从网上调研主题",
+        "prompt": "调研 [主题] 并总结要点"
+      },
+      "codeReview": {
+        "title": "代码审查",
+        "description": "审查和改进代码",
+        "prompt": "审查 @[目录] 中的代码并提出改进建议"
+      },
+      "fileOrganize": {
+        "title": "文件整理",
+        "description": "按类型整理文件",
+        "prompt": "按类型整理 @[目录] 中的文件"
+      },
+      "dataExtract": {
+        "title": "数据提取",
+        "description": "从网站提取数据",
+        "prompt": "从 [网站] 提取数据并保存为 CSV"
+      },
+      "workflow": {
+        "title": "工作流自动化",
+        "description": "创建自动化配方",
+        "prompt": "创建一个配方来自动化 [任务]"
+      },
+      "docGenerate": {
+        "title": "文档生成",
+        "description": "生成文档",
+        "prompt": "为 @[目录] 中的项目生成文档"
+      }
+    },
     "aiTitleToggle": "使用 haiku 生成可读标题",
     "status": {
       "running": "运行中",

@@ -49,6 +49,41 @@
     "noTasks": "No Tasks",
     "noTasksDescription": "Enter a task description to start your first task",
     "inputPlaceholder": "Describe the task you want to execute...",
+    "welcomeHeadline": "What will you accomplish today?",
+    "welcomeSubheadline": "Describe a task and let AI handle the rest",
+    "tryExamples": "Try one of these examples",
+    "examples": {
+      "webResearch": {
+        "title": "Web Research",
+        "description": "Research topics from the web",
+        "prompt": "Research [topic] and summarize the key findings"
+      },
+      "codeReview": {
+        "title": "Code Review",
+        "description": "Review and improve code",
+        "prompt": "Review the code in @[directory] and suggest improvements"
+      },
+      "fileOrganize": {
+        "title": "File Organization",
+        "description": "Organize files by type",
+        "prompt": "Organize files in @[directory] by type"
+      },
+      "dataExtract": {
+        "title": "Data Extraction",
+        "description": "Extract data from websites",
+        "prompt": "Extract data from [website] and save to CSV"
+      },
+      "workflow": {
+        "title": "Workflow Automation",
+        "description": "Create automation recipes",
+        "prompt": "Create a recipe to automate [task]"
+      },
+      "docGenerate": {
+        "title": "Document Generation",
+        "description": "Generate documentation",
+        "prompt": "Generate documentation for the project at @[directory]"
+      }
+    },
     "aiTitleToggle": "Use haiku to generate readable titles",
     "status": {
       "running": "Running",
