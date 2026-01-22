@@ -24,6 +24,7 @@ from frago.session.models import (
 from frago.session.parser import IncrementalParser, record_to_step
 from frago.session.storage import (
     append_step,
+    delete_session,
     get_session_dir,
     read_metadata,
     write_metadata,
@@ -38,6 +39,9 @@ CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # Inactivity timeout (used to determine if session has ended)
 INACTIVITY_TIMEOUT_MINUTES = 1
 
+# Legacy step type values that need migration
+_LEGACY_STEP_TYPES = {"user_message", "assistant_message", "system_event"}
+
 
 @dataclass
 class SyncResult:
@@ -47,6 +51,43 @@ class SyncResult:
     updated: int = 0  # Number of updated sessions
     skipped: int = 0  # Number of skipped sessions (already exists with no changes)
     errors: List[str] = field(default_factory=list)  # Error messages
+
+
+def _has_legacy_step_types(session_id: str) -> bool:
+    """Check if session has legacy step type values that need migration.
+
+    Legacy values: user_message, assistant_message, system_event
+    New values: user, assistant, system
+
+    Args:
+        session_id: Session ID to check
+
+    Returns:
+        True if legacy types found, False otherwise
+    """
+    session_dir = get_session_dir(session_id, AgentType.CLAUDE)
+    steps_file = session_dir / "steps.jsonl"
+
+    if not steps_file.exists():
+        return False
+
+    try:
+        with open(steps_file, "r", encoding="utf-8") as f:
+            # Only check first 10 lines for efficiency
+            for i, line in enumerate(f):
+                if i >= 10:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                step_type = data.get("type", "")
+                if step_type in _LEGACY_STEP_TYPES:
+                    return True
+    except Exception as e:
+        logger.debug(f"Error checking legacy types for {session_id}: {e}")
+
+    return False
 
 
 def encode_project_path(project_path: str) -> str:
@@ -286,6 +327,13 @@ def sync_session(
 
     # Check if already exists
     existing = read_metadata(session_id, AgentType.CLAUDE)
+
+    # Check for legacy step types and migrate by deleting old data
+    if existing and _has_legacy_step_types(session_id):
+        logger.info(f"Detected legacy step types in {session_id}, deleting for re-sync")
+        delete_session(session_id, AgentType.CLAUDE)
+        existing = None  # Force full re-sync
+
     if existing and not force:
         # Check if source file has updates (supports resumed conversation scenario)
         file_mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)

@@ -198,7 +198,7 @@ class TaskService:
                             if not line.strip():
                                 continue
                             step = json.loads(line)
-                            if step.get("type") == "assistant_message":
+                            if step.get("type") in ("assistant", "assistant_message"):
                                 has_assistant = True
                                 break
                 except Exception:

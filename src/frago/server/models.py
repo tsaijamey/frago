@@ -164,12 +164,21 @@ class TaskItemResponse(BaseModel):
 
 
 class TaskStepResponse(BaseModel):
-    """Response for task step"""
+    """Response for task step
+
+    Message types match ConsoleMessage for consistency:
+    - user: User input message
+    - assistant: Assistant response message
+    - tool_call: Tool call request
+    - tool_result: Tool execution result
+    - system: System event
+    """
 
     timestamp: datetime
-    type: str  # user, assistant, tool
+    type: str  # user, assistant, tool_call, tool_result, system
     content: str
     tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
     tool_result: Optional[str] = None
 
 

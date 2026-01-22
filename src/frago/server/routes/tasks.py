@@ -128,6 +128,7 @@ async def get_task(task_id: str) -> TaskDetailResponse:
                 type=s.get("type", "assistant"),
                 content=s.get("content", ""),
                 tool_name=s.get("tool_name"),
+                tool_call_id=s.get("tool_call_id"),
                 tool_result=s.get("tool_result"),
             )
         )
@@ -255,6 +256,7 @@ async def get_task_steps(
                 type=s.get("type", "assistant"),
                 content=s.get("content", ""),
                 tool_name=s.get("tool_name"),
+                tool_call_id=s.get("tool_call_id"),
                 tool_result=s.get("tool_result"),
             )
         )

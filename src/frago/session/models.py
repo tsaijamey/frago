@@ -36,13 +36,16 @@ class SessionStatus(str, Enum):
 
 
 class StepType(str, Enum):
-    """Session step type"""
+    """Session step type
 
-    USER_MESSAGE = "user_message"  # User input message
-    ASSISTANT_MESSAGE = "assistant_message"  # Assistant response message
+    Values match ConsoleMessage types for consistency across Task Detail and Console pages.
+    """
+
+    USER_MESSAGE = "user"  # User input message
+    ASSISTANT_MESSAGE = "assistant"  # Assistant response message
     TOOL_CALL = "tool_call"  # Tool call request
     TOOL_RESULT = "tool_result"  # Tool execution result
-    SYSTEM_EVENT = "system_event"  # System event (error, retry, etc.)
+    SYSTEM_EVENT = "system"  # System event (error, retry, etc.)
 
 
 class ToolCallStatus(str, Enum):
