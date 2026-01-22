@@ -18,7 +18,7 @@ export default function StepContent({ step }: StepContentProps) {
   const { type, content, tool_name } = step;
 
   // Assistant messages use Markdown rendering
-  if (type === 'assistant_message') {
+  if (type === 'assistant') {
     return (
       <CollapsibleContent content={content} maxLines={10} maxChars={500}>
         <MarkdownContent content={content} />

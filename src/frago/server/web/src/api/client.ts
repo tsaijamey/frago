@@ -82,9 +82,10 @@ export interface TaskItem {
 
 export interface TaskStep {
   timestamp: string;
-  type: string;
+  type: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'system';
   content: string;
   tool_name: string | null;
+  tool_call_id: string | null;
   tool_result: string | null;
 }
 

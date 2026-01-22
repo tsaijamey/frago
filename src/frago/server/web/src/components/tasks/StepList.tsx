@@ -8,17 +8,17 @@ interface StepListProps {
   steps: TaskStep[];
 }
 
-// Step type configuration (corresponds to backend StepType enum)
+// Step type configuration (matches ConsoleMessage types for consistency)
 const stepTypeConfig: Record<StepType, { Icon: LucideIcon; labelKey: string; colorClass: string }> = {
-  user_message: { Icon: User, labelKey: 'tasks.user', colorClass: 'text-[var(--accent-primary)]' },
-  assistant_message: { Icon: Bot, labelKey: 'tasks.assistant', colorClass: 'text-[var(--accent-success)]' },
+  user: { Icon: User, labelKey: 'tasks.user', colorClass: 'text-[var(--accent-primary)]' },
+  assistant: { Icon: Bot, labelKey: 'tasks.assistant', colorClass: 'text-[var(--accent-success)]' },
   tool_call: { Icon: Wrench, labelKey: 'tasks.tool', colorClass: 'text-[var(--accent-warning)]' },
   tool_result: { Icon: ArrowRight, labelKey: 'tasks.result', colorClass: 'text-[var(--accent-warning)]' },
-  system_event: { Icon: Settings, labelKey: 'tasks.system', colorClass: 'text-[var(--accent-info)]' },
+  system: { Icon: Settings, labelKey: 'tasks.system', colorClass: 'text-[var(--accent-info)]' },
 };
 
 function getStepConfig(type: StepType) {
-  return stepTypeConfig[type] || stepTypeConfig.system_event;
+  return stepTypeConfig[type] || stepTypeConfig.system;
 }
 
 // Format timestamp to +8 timezone
@@ -32,8 +32,8 @@ function formatTimestamp(isoString: string): string {
   });
 }
 
-// Filterable types (corresponds to backend StepType enum)
-const filterableTypes: StepType[] = ['user_message', 'assistant_message', 'tool_call', 'tool_result', 'system_event'];
+// Filterable types (matches ConsoleMessage types for consistency)
+const filterableTypes: StepType[] = ['user', 'assistant', 'tool_call', 'tool_result', 'system'];
 
 // Render batch size
 const RENDER_BATCH_SIZE = 50;

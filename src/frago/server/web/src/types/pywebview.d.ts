@@ -12,11 +12,11 @@
 export type TaskStatus = 'running' | 'completed' | 'error' | 'cancelled';
 
 export type StepType =
-  | 'user_message'
-  | 'assistant_message'
+  | 'user'
+  | 'assistant'
   | 'tool_call'
   | 'tool_result'
-  | 'system_event';
+  | 'system';
 
 export type RecipeCategory = 'atomic' | 'workflow';
 
