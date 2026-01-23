@@ -2,15 +2,17 @@
  * Collapsible Sidebar Component
  *
  * Professional dark-themed admin panel sidebar with:
- * - 5 menu items: Dashboard, Tasks, Recipes, Skills, Settings
- * - Collapse/expand functionality with localStorage persistence
+ * - Floating panel effect with rounded corners
+ * - Section headers (MAIN, SETTINGS)
+ * - Collapse/expand toggle in header
+ * - Tooltip on hover in collapsed state
  * - Responsive breakpoints for narrow viewports
  */
 
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, type PageType } from '@/stores/appStore';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon, ChevronLeft, ChevronRight } from 'lucide-react';
 import StarButton from '@/components/ui/StarButton';
 
 // Menu item configuration
@@ -92,24 +94,17 @@ const GuideIcon = () => (
   </svg>
 );
 
-const CollapseIcon = ({ collapsed }: { collapsed: boolean }) => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`collapse-icon ${collapsed ? 'collapsed' : ''}`}
-  >
-    <polyline points="15 18 9 12 15 6" />
+// Logo icon (simplified frago logo)
+const LogoIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2L2 7l10 5 10-5-10-5z" />
+    <path d="M2 17l10 5 10-5" />
+    <path d="M2 12l10 5 10-5" />
   </svg>
 );
 
-// Menu items configuration
-const menuItems: MenuItem[] = [
+// Menu items configuration - MAIN section
+const mainMenuItems: MenuItem[] = [
   { id: 'dashboard', labelKey: 'sidebar.dashboard', icon: <DashboardIcon /> },
   { id: 'newTask', labelKey: 'sidebar.newTask', icon: <NewTaskIcon /> },
   { id: 'tasks', labelKey: 'sidebar.tasks', icon: <TasksIcon /> },
@@ -119,6 +114,10 @@ const menuItems: MenuItem[] = [
   { id: 'workspace', labelKey: 'sidebar.workspace', icon: <WorkspaceIcon /> },
   { id: 'sync', labelKey: 'sidebar.sync', icon: <SyncIcon /> },
   { id: 'secrets', labelKey: 'sidebar.secrets', icon: <SecretsIcon /> },
+];
+
+// Menu items configuration - SETTINGS section
+const settingsMenuItems: MenuItem[] = [
   { id: 'settings', labelKey: 'sidebar.settings', icon: <SettingsIcon /> },
 ];
 
@@ -154,37 +153,73 @@ export default function Sidebar() {
     return false;
   };
 
+  // Render a menu item with tooltip support
+  const renderMenuItem = (item: MenuItem) => {
+    const active = isActive(item.id);
+    const label = t(item.labelKey);
+    return (
+      <button
+        type="button"
+        key={item.id}
+        onClick={() => switchPage(item.id)}
+        className={`sidebar-menu-item ${active ? 'active' : ''}`}
+      >
+        <span className="sidebar-menu-icon">{item.icon}</span>
+        {!sidebarCollapsed && (
+          <span className="sidebar-menu-label">{label}</span>
+        )}
+        {sidebarCollapsed && (
+          <span className="sidebar-tooltip">{label}</span>
+        )}
+      </button>
+    );
+  };
+
   return (
     <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-      {/* Logo / Header */}
+      {/* Logo / Header with Collapse Toggle */}
       <div className="sidebar-header">
-        <div className="sidebar-logo">F</div>
-        {!sidebarCollapsed && <span className="sidebar-title">frago</span>}
+        <div className="sidebar-header-left">
+          <span className="sidebar-logo-icon">
+            <LogoIcon />
+          </span>
+          {!sidebarCollapsed && <span className="sidebar-title">frago</span>}
+        </div>
+        {!sidebarCollapsed && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title={t('sidebar.collapse.collapse')}
+            className="sidebar-header-toggle"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
+        {sidebarCollapsed && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title={t('sidebar.collapse.expand')}
+            className="sidebar-header-toggle"
+            style={{ position: 'absolute', right: 8 }}
+          >
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
 
       {/* Navigation Menu */}
       <nav className="sidebar-nav">
-        {menuItems.map((item) => {
-          const active = isActive(item.id);
-          const label = t(item.labelKey);
-          return (
-            <button
-              type="button"
-              key={item.id}
-              onClick={() => switchPage(item.id)}
-              title={sidebarCollapsed ? label : undefined}
-              className={`sidebar-menu-item ${active ? 'active' : ''}`}
-            >
-              <span className="sidebar-menu-icon">{item.icon}</span>
-              {!sidebarCollapsed && (
-                <span className="sidebar-menu-label">{label}</span>
-              )}
-            </button>
-          );
-        })}
+        {/* MAIN Section */}
+        <div className="sidebar-section-header">{t('sidebar.sections.main')}</div>
+        {mainMenuItems.map(renderMenuItem)}
+
+        {/* SETTINGS Section */}
+        <div className="sidebar-section-header">{t('sidebar.sections.settings')}</div>
+        {settingsMenuItems.map(renderMenuItem)}
       </nav>
 
-      {/* Footer: Star + Theme Toggle + Collapse Button */}
+      {/* Footer: Star + Theme Toggle */}
       <div className="sidebar-footer">
         <StarButton />
         <button
@@ -194,14 +229,6 @@ export default function Sidebar() {
           className="sidebar-footer-btn"
         >
           {config?.theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          title={sidebarCollapsed ? t('sidebar.collapse.expand') : t('sidebar.collapse.collapse')}
-          className="sidebar-footer-btn"
-        >
-          <CollapseIcon collapsed={sidebarCollapsed} />
         </button>
       </div>
     </aside>

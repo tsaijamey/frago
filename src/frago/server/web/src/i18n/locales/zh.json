@@ -10,6 +10,10 @@
     "sync": "同步",
     "secrets": "密钥",
     "settings": "设置",
+    "sections": {
+      "main": "主菜单",
+      "settings": "设置"
+    },
     "theme": {
       "switchToLight": "切换到浅色模式",
       "switchToDark": "切换到深色模式"
