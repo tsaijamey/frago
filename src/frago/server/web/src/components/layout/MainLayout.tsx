@@ -2,14 +2,12 @@
  * MainLayout Component
  *
  * Main layout wrapper that combines:
- * - Collapsible left sidebar for navigation
+ * - Collapsible left sidebar for navigation (includes system status)
  * - Content area for page rendering
- * - Status bar at the bottom
  */
 
 import { ReactNode } from 'react';
 import Sidebar from './Sidebar';
-import StatusBar from './StatusBar';
 import VersionBanner from './VersionBanner';
 
 interface MainLayoutProps {
@@ -32,9 +30,6 @@ export default function MainLayout({ children }: MainLayoutProps) {
           <main className="main-content">
             {children}
           </main>
-
-          {/* Status Bar */}
-          <StatusBar />
         </div>
       </div>
     </div>

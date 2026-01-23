@@ -14,6 +14,10 @@
       "main": "主菜单",
       "settings": "设置"
     },
+    "more": {
+      "label": "更多",
+      "toggle": "切换更多菜单"
+    },
     "theme": {
       "switchToLight": "切换到浅色模式",
       "switchToDark": "切换到深色模式"
@@ -27,6 +31,10 @@
       "notConfigured": "GitHub CLI 未配置",
       "loading": "加载中..."
     }
+  },
+  "status": {
+    "connected": "已连接",
+    "disconnected": "已断开"
   },
   "dashboard": {
     "title": "仪表盘",

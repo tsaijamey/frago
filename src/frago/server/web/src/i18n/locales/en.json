@@ -14,6 +14,10 @@
       "main": "MAIN",
       "settings": "SETTINGS"
     },
+    "more": {
+      "label": "More",
+      "toggle": "Toggle more menu"
+    },
     "theme": {
       "switchToLight": "Switch to light mode",
       "switchToDark": "Switch to dark mode"
@@ -27,6 +31,10 @@
       "notConfigured": "GitHub CLI not configured",
       "loading": "Loading..."
     }
+  },
+  "status": {
+    "connected": "Connected",
+    "disconnected": "Disconnected"
   },
   "dashboard": {
     "title": "Dashboard",
