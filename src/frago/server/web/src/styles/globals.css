@@ -23,7 +23,7 @@
 
   /* Sidebar specific colors (dark mode) */
   --page-bg: #000000;
-  --sidebar-bg: #161A23;
+  --sidebar-bg: #0D0D0D;
   --sidebar-item-selected-bg: #2D2F39;
   --sidebar-item-selected-text: #FFFFFF;
   --sidebar-item-unselected-text: rgba(255, 255, 255, 0.5);
@@ -223,14 +223,14 @@ body {
 }
 
 /* === Link Styles === */
-a:not(.btn):not(.nav-tab) {
+a:not(.btn):not(.nav-tab):not(.sidebar-github-link) {
   color: var(--text-link);
   text-decoration: none;
   text-underline-offset: 4px;
   transition: text-decoration var(--transition-normal);
 }
 
-a:not(.btn):not(.nav-tab):hover {
+a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   text-decoration: underline;
 }
 
@@ -510,7 +510,7 @@ a:not(.btn):not(.nav-tab):hover {
 
 .sidebar-header {
   padding: 16px 20px;
-  border-bottom: 1px solid var(--sidebar-tab-selected-bg);
+  border-bottom: 1px solid var(--sidebar-item-selected-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -560,7 +560,7 @@ a:not(.btn):not(.nav-tab):hover {
   background: transparent;
   border: none;
   border-radius: 8px;
-  color: var(--sidebar-text-unselected);
+  color: var(--sidebar-item-unselected-text);
   cursor: pointer;
   transition: all 0.15s ease;
   width: 100%;
@@ -572,13 +572,13 @@ a:not(.btn):not(.nav-tab):hover {
 }
 
 .sidebar-menu-item:hover {
-  background: var(--sidebar-tab-selected-bg);
-  color: var(--sidebar-text-selected);
+  background: var(--sidebar-item-selected-bg);
+  color: var(--sidebar-item-selected-text);
 }
 
 .sidebar-menu-item.active {
-  background: var(--sidebar-tab-selected-bg);
-  color: var(--sidebar-text-selected);
+  background: var(--sidebar-item-selected-bg);
+  color: var(--sidebar-item-selected-text);
 }
 
 .sidebar-menu-icon {
@@ -598,12 +598,12 @@ a:not(.btn):not(.nav-tab):hover {
 /* New Task button special style (no highlight) */
 .sidebar-menu-item.sidebar-new-task {
   background: transparent !important;
-  color: var(--sidebar-text-unselected) !important;
+  color: var(--sidebar-item-unselected-text) !important;
 }
 
 .sidebar-menu-item.sidebar-new-task:hover {
-  background: var(--sidebar-tab-selected-bg) !important;
-  color: var(--sidebar-text-selected) !important;
+  background: var(--sidebar-item-selected-bg) !important;
+  color: var(--sidebar-item-selected-text) !important;
 }
 
 /* More toggle button */
@@ -615,7 +615,7 @@ a:not(.btn):not(.nav-tab):hover {
   background: transparent;
   border: none;
   border-radius: 8px;
-  color: var(--sidebar-text-unselected);
+  color: var(--sidebar-item-unselected-text);
   cursor: pointer;
   transition: all 0.15s ease;
   width: 100%;
@@ -628,8 +628,8 @@ a:not(.btn):not(.nav-tab):hover {
 }
 
 .sidebar-more-toggle:hover {
-  background: var(--sidebar-tab-selected-bg);
-  color: var(--sidebar-text-selected);
+  background: var(--sidebar-item-selected-bg);
+  color: var(--sidebar-item-selected-text);
 }
 
 .sidebar-more-icon {
@@ -648,19 +648,19 @@ a:not(.btn):not(.nav-tab):hover {
   flex-direction: column;
   gap: 2px;
   padding-left: 8px;
-  border-left: 1px solid var(--sidebar-tab-selected-bg);
+  border-left: 1px solid var(--sidebar-item-selected-bg);
   margin-left: 22px;
 }
 
 /* Sidebar Status Section */
 .sidebar-status {
   padding: 12px 16px;
-  border-top: 1px solid var(--sidebar-tab-selected-bg);
+  border-top: 1px solid var(--sidebar-item-selected-bg);
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: var(--font-size-xs);
-  color: var(--sidebar-text-unselected);
+  color: var(--sidebar-item-unselected-text);
 }
 
 .sidebar.collapsed .sidebar-status {
@@ -702,14 +702,14 @@ a:not(.btn):not(.nav-tab):hover {
 .sidebar-status-bar {
   flex: 1;
   height: 4px;
-  background: var(--sidebar-tab-selected-bg);
+  background: var(--sidebar-item-selected-bg);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .sidebar-status-bar-fill {
   height: 100%;
-  background: var(--sidebar-text-unselected);
+  background: var(--sidebar-item-unselected-text);
   border-radius: 2px;
   transition: width 0.3s ease;
 }
@@ -732,13 +732,13 @@ a:not(.btn):not(.nav-tab):hover {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--sidebar-text-unselected);
-  color: var(--sidebar-bg);
+  background: var(--text-primary);
+  color: var(--bg-primary);
   transition: background 0.15s ease;
 }
 
 .sidebar-github-link:hover {
-  background: var(--sidebar-text-selected);
+  background: var(--sidebar-item-selected-text);
 }
 
 .sidebar-github-link svg {
@@ -752,7 +752,7 @@ a:not(.btn):not(.nav-tab):hover {
   justify-content: space-around;
   gap: 4px;
   padding: 12px 8px;
-  border-top: 1px solid var(--sidebar-tab-selected-bg);
+  border-top: 1px solid var(--sidebar-item-selected-bg);
 }
 
 .sidebar.collapsed .sidebar-footer {
@@ -769,14 +769,14 @@ a:not(.btn):not(.nav-tab):hover {
   background: transparent;
   border: none;
   border-radius: 6px;
-  color: var(--sidebar-text-unselected);
+  color: var(--sidebar-item-unselected-text);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .sidebar-footer-btn:hover {
-  background: var(--sidebar-tab-selected-bg);
-  color: var(--sidebar-text-selected);
+  background: var(--sidebar-item-selected-bg);
+  color: var(--sidebar-item-selected-text);
 }
 
 /* Star button specific styles */
@@ -796,8 +796,8 @@ a:not(.btn):not(.nav-tab):hover {
 
 /* Active state for footer tool buttons */
 .sidebar-footer-btn.active {
-  color: var(--sidebar-text-selected);
-  background: var(--sidebar-tab-selected-bg);
+  color: var(--sidebar-item-selected-text);
+  background: var(--sidebar-item-selected-bg);
 }
 
 /* Footer icon wrapper */
@@ -815,7 +815,7 @@ a:not(.btn):not(.nav-tab):hover {
 /* Star menu item styles */
 .sidebar-menu-item.star-menu-item {
   margin-top: auto;
-  border-top: 1px solid var(--sidebar-tab-selected-bg);
+  border-top: 1px solid var(--sidebar-item-selected-bg);
   padding-top: 12px;
   margin-top: var(--spacing-sm);
 }
@@ -827,7 +827,7 @@ a:not(.btn):not(.nav-tab):hover {
 
 .sidebar-menu-item.star-menu-item.disabled:hover {
   background: transparent;
-  color: var(--sidebar-text-unselected);
+  color: var(--sidebar-item-unselected-text);
 }
 
 .collapse-icon {
