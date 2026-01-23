@@ -1457,6 +1457,17 @@ def init(force: bool):
     help='Void mode: window moved off-screen (does not affect current desktop)'
 )
 @click.option(
+    '--app',
+    'app_mode',
+    is_flag=True,
+    help='App mode: borderless window (requires --app-url)'
+)
+@click.option(
+    '--app-url',
+    type=str,
+    help='Initial URL for app mode'
+)
+@click.option(
     '--port',
     type=int,
     default=9222,
@@ -1475,6 +1486,16 @@ def init(force: bool):
     help='Window height, default 960'
 )
 @click.option(
+    '--window-x',
+    type=int,
+    help='Window X position (app mode only)'
+)
+@click.option(
+    '--window-y',
+    type=int,
+    help='Window Y position (app mode only)'
+)
+@click.option(
     '--profile-dir',
     type=click.Path(),
     help='Chrome user data directory (default ~/.frago/chrome_profile)'
@@ -1490,7 +1511,8 @@ def init(force: bool):
     help='Keep running after launch until Ctrl+C'
 )
 @print_usage
-def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
+def chrome_start(headless: bool, void: bool, app_mode: bool, app_url: str,
+                 port: int, width: int, height: int, window_x: int, window_y: int,
                  profile_dir: str, no_kill: bool, keep_alive: bool):
     """
     Launch Chrome browser (with CDP debugging support)
@@ -1500,22 +1522,35 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
       default    - Normal window mode
       --headless - Run without UI
       --void     - Window hidden off-screen
+      --app      - App mode: borderless window (requires --app-url)
 
     \b
     Examples:
-      frago chrome                    # Normal launch
-      frago chrome --headless         # Headless mode
-      frago chrome --void             # Void mode
-      frago chrome --port 9333        # Use different port
-      frago chrome --keep-alive       # Keep running after launch
+      frago chrome                              # Normal launch
+      frago chrome --headless                   # Headless mode
+      frago chrome --void                       # Void mode
+      frago chrome --app --app-url https://...  # App mode
+      frago chrome --port 9333                  # Use different port
+      frago chrome --keep-alive                 # Keep running after launch
     """
     from ..cdp.commands.chrome import ChromeLauncher
     from pathlib import Path
 
-    # headless and void are mutually exclusive
-    if headless and void:
-        click.echo("Warning: --headless and --void cannot be used together, will use --headless mode")
-        void = False
+    # Mode exclusivity check
+    mode_count = sum([headless, void, app_mode])
+    if mode_count > 1:
+        click.echo("Error: --headless, --void, and --app are mutually exclusive", err=True)
+        return
+
+    # App mode requires URL
+    if app_mode and not app_url:
+        click.echo("Error: --app mode requires --app-url to be specified", err=True)
+        click.echo("Example: frago chrome start --app --app-url http://localhost:8093/viewer/...", err=True)
+        return
+
+    # Window position only used for app mode
+    if (window_x is not None or window_y is not None) and not app_mode:
+        click.echo("Warning: --window-x and --window-y are only used in --app mode", err=True)
 
     profile_path = Path(profile_dir) if profile_dir else None
 
@@ -1525,9 +1560,13 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
     launcher = ChromeLauncher(
         headless=headless,
         void=void,
+        app_mode=app_mode,
+        app_url=app_url,
         port=port,
         width=width,
         height=height,
+        window_x=window_x,
+        window_y=window_y,
         profile_dir=profile_path,
         use_port_suffix=use_port_suffix,
     )
@@ -1541,7 +1580,14 @@ def chrome_start(headless: bool, void: bool, port: int, width: int, height: int,
     click.echo(f"Chrome path: {launcher.chrome_path}")
     click.echo(f"Profile directory: {launcher.profile_dir}")
     click.echo(f"CDP port: {port}")
-    click.echo(f"Mode: {'headless' if headless else 'void' if void else 'normal window'}")
+
+    mode_str = 'app' if app_mode else 'headless' if headless else 'void' if void else 'normal window'
+    click.echo(f"Mode: {mode_str}")
+
+    if app_mode:
+        click.echo(f"App URL: {app_url}")
+        if window_x is not None and window_y is not None:
+            click.echo(f"Window position: ({window_x}, {window_y})")
 
     # Launch Chrome
     if launcher.launch(kill_existing=not no_kill):

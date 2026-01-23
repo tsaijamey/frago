@@ -26,9 +26,13 @@ class ChromeLauncher:
         self,
         headless: bool = False,
         void: bool = False,
+        app_mode: bool = False,
+        app_url: Optional[str] = None,
         port: int = 9222,
         width: int = 1280,
         height: int = 960,
+        window_x: Optional[int] = None,
+        window_y: Optional[int] = None,
         profile_dir: Optional[Path] = None,
         use_port_suffix: bool = False,
     ):
@@ -37,9 +41,21 @@ class ChromeLauncher:
         self.debugging_port = port
         self.width = width
         self.height = height
+        self.window_x = window_x
+        self.window_y = window_y
         self.headless = headless
         self.void = void
+        self.app_mode = app_mode
+        self.app_url = app_url
         self.chrome_process: Optional[subprocess.Popen] = None
+
+        # Validate app mode parameters
+        if self.app_mode and not self.app_url:
+            raise ValueError("app_mode requires app_url to be specified")
+
+        # Validate mode exclusivity
+        if self.app_mode and (self.headless or self.void):
+            raise ValueError("app_mode cannot be used with headless or void mode")
 
         # Profile directory: use specified one first, otherwise use default location
         if profile_dir:
@@ -343,10 +359,17 @@ class ChromeLauncher:
             f"--user-data-dir={str(self.profile_dir)}",
             f"--remote-debugging-port={self.debugging_port}",
             "--remote-allow-origins=*",
-            # Stealth anti-detection arguments
-            "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
+            # Disable first-run experience
+            "--no-first-run",
+            "--no-default-browser-check",
         ]
+
+        # Stealth anti-detection arguments (only for automation, not for app mode)
+        # App mode is typically used for local UI (e.g., interactive recipes),
+        # which doesn't need webdriver detection evasion
+        if not self.app_mode:
+            cmd.append("--disable-blink-features=AutomationControlled")
 
         # Disable sandbox in Docker or when running as root (Linux only)
         # Root user without sandbox causes Chrome to refuse to start
@@ -365,8 +388,16 @@ class ChromeLauncher:
 
         cmd.append(f"--user-agent={user_agent}")
 
+        # App mode (borderless window)
+        if self.app_mode:
+            cmd.append(f"--app={self.app_url}")
+            cmd.append(f"--window-size={self.width},{self.height}")
+
+            if self.window_x is not None and self.window_y is not None:
+                cmd.append(f"--window-position={self.window_x},{self.window_y}")
+
         # Headless mode
-        if self.headless:
+        elif self.headless:
             cmd.extend(
                 [
                     "--headless=new",
