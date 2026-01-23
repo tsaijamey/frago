@@ -606,52 +606,6 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--sidebar-item-selected-text) !important;
 }
 
-/* More toggle button */
-.sidebar-more-toggle {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  color: var(--sidebar-item-unselected-text);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  width: 100%;
-  margin-top: var(--spacing-sm);
-}
-
-.sidebar.collapsed .sidebar-more-toggle {
-  padding: 10px 12px;
-  justify-content: center;
-}
-
-.sidebar-more-toggle:hover {
-  background: var(--sidebar-item-selected-bg);
-  color: var(--sidebar-item-selected-text);
-}
-
-.sidebar-more-icon {
-  flex-shrink: 0;
-}
-
-.sidebar-more-label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.sidebar-more-content {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-left: 8px;
-  border-left: 1px solid var(--sidebar-item-selected-bg);
-  margin-left: 22px;
-}
-
 /* Sidebar Status Section */
 .sidebar-status {
   padding: 12px 16px;

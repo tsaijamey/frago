@@ -2,17 +2,15 @@
  * Collapsible Sidebar Component
  *
  * Professional dark-themed admin panel sidebar with:
- * - Primary items (Tasks, Recipes) always visible
- * - Secondary items under collapsible "More" section
+ * - All navigation items always visible
  * - Collapse/expand functionality with localStorage persistence
  * - Responsive breakpoints for narrow viewports
- * - T039-T042: Simplified navigation with visited section tracking
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, type PageType } from '@/stores/appStore';
-import { Sun, Moon, ChevronDown, ChevronRight, Wifi, WifiOff, Github } from 'lucide-react';
+import { Sun, Moon, Wifi, WifiOff, Github } from 'lucide-react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { getApiMode } from '@/api';
 import StarButton from '@/components/ui/StarButton';
@@ -24,14 +22,6 @@ interface MenuItem {
   labelKey: string; // Translation key for the label
   icon: JSX.Element;
 }
-
-// Navigation preferences stored in localStorage
-interface NavPreferences {
-  moreExpanded: boolean;
-  visitedSections: PageType[];
-}
-
-const NAV_PREFS_KEY = 'frago-nav-preferences';
 
 // Icons for menu items (inline SVG for simplicity)
 const DashboardIcon = () => (
@@ -117,15 +107,10 @@ const NewTaskIcon = () => (
   </svg>
 );
 
-// T039: Primary menu items (always visible)
-const primaryMenuItems: MenuItem[] = [
+// All menu items (always visible)
+const menuItems: MenuItem[] = [
   { id: 'tasks', labelKey: 'sidebar.tasks', icon: <TasksIcon /> },
   { id: 'recipes', labelKey: 'sidebar.recipes', icon: <RecipesIcon /> },
-];
-
-// T039: Secondary menu items (under "More" section)
-// Note: Console removed - functionality merged into Task Detail with real-time streaming
-const secondaryMenuItems: MenuItem[] = [
   { id: 'dashboard', labelKey: 'sidebar.dashboard', icon: <DashboardIcon /> },
   { id: 'skills', labelKey: 'sidebar.skills', icon: <SkillsIcon /> },
 ];
@@ -141,38 +126,11 @@ const footerToolItems: MenuItem[] = [
 // Responsive breakpoint for auto-collapse
 const NARROW_VIEWPORT_WIDTH = 768;
 
-// T041: Load navigation preferences from localStorage
-function loadNavPreferences(): NavPreferences {
-  try {
-    const stored = localStorage.getItem(NAV_PREFS_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return { moreExpanded: false, visitedSections: [] };
-}
-
-// T041: Save navigation preferences to localStorage
-function saveNavPreferences(prefs: NavPreferences): void {
-  try {
-    localStorage.setItem(NAV_PREFS_KEY, JSON.stringify(prefs));
-  } catch {
-    // Ignore storage errors
-  }
-}
-
 export default function Sidebar() {
   const { t } = useTranslation();
   const { currentPage, sidebarCollapsed, switchPage, toggleSidebar, setSidebarCollapsed, config, setTheme, systemStatus, loadSystemStatus, versionInfo } = useAppStore();
   const { isConnected } = useWebSocket({ autoConnect: true });
   const apiMode = getApiMode();
-
-  // T040, T041: More section state with localStorage persistence
-  const [moreExpanded, setMoreExpanded] = useState(() => loadNavPreferences().moreExpanded);
-  // T042: Track visited advanced sections
-  const [visitedSections, setVisitedSections] = useState<PageType[]>(() => loadNavPreferences().visitedSections);
 
   // Handle responsive behavior - auto-collapse on narrow viewports
   useEffect(() => {
@@ -190,10 +148,14 @@ export default function Sidebar() {
     return () => window.removeEventListener('resize', handleResize);
   }, [setSidebarCollapsed]);
 
-  // T041: Persist navigation preferences when they change
+  // Clean up legacy navigation preferences
   useEffect(() => {
-    saveNavPreferences({ moreExpanded, visitedSections });
-  }, [moreExpanded, visitedSections]);
+    try {
+      localStorage.removeItem('frago-nav-preferences');
+    } catch {
+      // Ignore cleanup errors
+    }
+  }, []);
 
   // Load system status periodically
   useEffect(() => {
@@ -211,39 +173,14 @@ export default function Sidebar() {
     return false;
   };
 
-  // T042: Track when user visits an advanced section
   const handleNavClick = useCallback((pageId: PageType) => {
-    // Track visit for secondary items (not footer items - they stay in footer)
-    const isSecondary = secondaryMenuItems.some(item => item.id === pageId);
-    if (isSecondary && !visitedSections.includes(pageId)) {
-      setVisitedSections(prev => [...prev, pageId]);
-    }
     switchPage(pageId);
-  }, [visitedSections, switchPage]);
+  }, [switchPage]);
 
   // Check if a footer tool item is active
   const isFooterItemActive = (pageId: PageType): boolean => {
     return isActive(pageId);
   };
-
-  // T040: Toggle More section
-  const handleToggleMore = () => {
-    setMoreExpanded(prev => !prev);
-  };
-
-  // T042: Check if secondary item should be "promoted" (always visible because visited)
-  const isPromotedItem = (pageId: PageType): boolean => {
-    return visitedSections.includes(pageId);
-  };
-
-  // T042: Get items to show in "promoted" section (visited secondary items)
-  const promotedItems = secondaryMenuItems.filter(item => isPromotedItem(item.id));
-  // Items remaining in More section (not visited)
-  const moreItems = secondaryMenuItems.filter(item => !isPromotedItem(item.id));
-
-  // Check if any secondary item is currently active (to auto-expand More)
-  const secondaryItemActive = secondaryMenuItems.some(item => isActive(item.id));
-  const effectiveMoreExpanded = moreExpanded || (secondaryItemActive && !visitedSections.includes(currentPage as PageType));
 
   // Render a menu item button
   const renderMenuItem = (item: MenuItem) => {
@@ -291,40 +228,8 @@ export default function Sidebar() {
           )}
         </button>
 
-        {/* T039: Primary Items (always visible) */}
-        {primaryMenuItems.map(renderMenuItem)}
-
-        {/* T042: Promoted Items (visited secondary items, always visible) */}
-        {promotedItems.map(renderMenuItem)}
-
-        {/* T040: More Section (collapsible) */}
-        {moreItems.length > 0 && (
-          <>
-            {/* More Toggle Button */}
-            <button
-              type="button"
-              onClick={handleToggleMore}
-              className="sidebar-more-toggle"
-              aria-expanded={effectiveMoreExpanded ? true : false}
-              aria-label={t('sidebar.more.toggle')}
-              title={sidebarCollapsed ? t('sidebar.more.label') : undefined}
-            >
-              <span className="sidebar-more-icon">
-                {effectiveMoreExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              </span>
-              {!sidebarCollapsed && (
-                <span className="sidebar-more-label">{t('sidebar.more.label')}</span>
-              )}
-            </button>
-
-            {/* More Items (collapsible) */}
-            {effectiveMoreExpanded && (
-              <div className="sidebar-more-content">
-                {moreItems.map(renderMenuItem)}
-              </div>
-            )}
-          </>
-        )}
+        {/* All menu items */}
+        {menuItems.map(renderMenuItem)}
 
         {/* StarButton as last menu item */}
         <StarButton asMenuItem sidebarCollapsed={sidebarCollapsed} />
