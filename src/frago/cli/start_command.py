@@ -4,11 +4,42 @@ Provides a simple 'frago start' command that launches the server
 and opens the browser for immediate access to the Web UI.
 """
 
+import logging
 import platform
 import subprocess
+import time
 import webbrowser
 
 import click
+
+logger = logging.getLogger(__name__)
+
+
+def wait_for_server(url: str, timeout: int = 10) -> bool:
+    """Wait for server to be ready by checking status endpoint.
+
+    Args:
+        url: Base URL of the server
+        timeout: Maximum seconds to wait
+
+    Returns:
+        True if server is ready, False if timeout
+    """
+    import requests
+
+    status_url = f"{url}/api/status"
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        try:
+            response = requests.get(status_url, timeout=1)
+            if response.status_code == 200:
+                return True
+        except (requests.RequestException, ConnectionError):
+            pass
+        time.sleep(0.3)
+
+    return False
 
 
 def open_browser(url: str) -> bool:
@@ -60,6 +91,52 @@ def open_browser(url: str) -> bool:
             return True
         except (subprocess.SubprocessError, FileNotFoundError):
             return webbrowser.open(url)
+
+
+def launch_chrome_app_mode(url: str) -> bool:
+    """Launch URL in Chrome app mode (borderless window).
+
+    This provides a native desktop app experience with:
+    - Borderless window (no browser UI chrome)
+    - Fixed window size (1280x960)
+    - Auto-centered on screen
+    - Window controls (minimize, maximize, close)
+
+    Falls back to default browser if Chrome is not available or fails to launch.
+
+    Args:
+        url: URL to open in app mode
+
+    Returns:
+        True if Chrome app mode was launched successfully, False if fallback was used
+    """
+    try:
+        from frago.cdp.commands.chrome import ChromeLauncher
+
+        launcher = ChromeLauncher(
+            app_mode=True,
+            app_url=url,
+            width=1280,
+            height=960,
+        )
+
+        # Launch Chrome without killing existing instances
+        # This allows users to have multiple frago windows open
+        if launcher.launch(kill_existing=False):
+            return True
+        else:
+            # Chrome found but CDP failed to start
+            logger.warning("Chrome app mode failed to initialize, using default browser")
+            return open_browser(url)
+
+    except ImportError as e:
+        # ChromeLauncher module not available (should not happen)
+        logger.warning(f"ChromeLauncher not available: {e}")
+        return open_browser(url)
+    except Exception as e:
+        # Chrome not found or other launch error
+        logger.warning(f"Failed to launch Chrome app mode: {e}")
+        return open_browser(url)
 
 
 @click.command("start")
@@ -126,19 +203,23 @@ def start(no_browser: bool, debug: bool) -> None:
             click.echo(f"  URL: {url}")
 
             if not no_browser:
-                click.echo("Opening browser...")
-                if not open_browser(url):
-                    click.echo(f"  Could not open browser. Visit: {url}")
+                click.echo("Opening in app mode...")
+                if not launch_chrome_app_mode(url):
+                    click.echo(f"  Opened in default browser: {url}")
         else:
             success, message = start_daemon()
             click.echo(message)
 
             if success and not no_browser:
-                # Give server a moment to start before opening browser
-                import time
-
-                time.sleep(0.5)
-                if not open_browser(url):
-                    click.echo(f"  Could not open browser. Visit: {url}")
+                # Wait for server to be ready
+                click.echo("Waiting for server to start...")
+                if wait_for_server(url, timeout=10):
+                    click.echo("Opening in app mode...")
+                    if not launch_chrome_app_mode(url):
+                        click.echo(f"  Opened in default browser: {url}")
+                else:
+                    click.echo("Warning: Server did not respond in time, opening anyway...")
+                    if not launch_chrome_app_mode(url):
+                        click.echo(f"  Opened in default browser: {url}")
             elif not success:
                 raise SystemExit(1)
