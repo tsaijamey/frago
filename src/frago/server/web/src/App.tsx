@@ -25,12 +25,12 @@ import { GuidePage } from '@/components/guide';
 import Toast from '@/components/ui/Toast';
 
 // Init wizard
-import { InitWizardModal } from '@/components/init';
+import { InitWizardPage } from '@/components/init';
 
 function App() {
   const { currentPage, loadConfig, toasts } = useAppStore();
   const [apiReady, setApiReady] = useState(isApiReady());
-  const [showInitWizard, setShowInitWizard] = useState(false);
+  const [initCompleted, setInitCompleted] = useState<boolean | null>(null);
 
   // Subscribe to WebSocket data push for real-time updates
   useDataSync();
@@ -50,11 +50,11 @@ function App() {
           // Check init status after API is ready
           try {
             const initStatus = await getInitStatus();
-            if (!initStatus.init_completed) {
-              setShowInitWizard(true);
-            }
+            setInitCompleted(initStatus.init_completed);
           } catch (err) {
             console.warn('Failed to check init status:', err);
+            // If check fails, assume completed to avoid blocking
+            setInitCompleted(true);
           }
         } catch (error) {
           console.error('Failed to connect to web service:', error);
@@ -84,12 +84,7 @@ function App() {
 
   // Handle init wizard completion
   const handleInitComplete = () => {
-    setShowInitWizard(false);
-  };
-
-  // Allow opening wizard from settings
-  const handleOpenWizard = () => {
-    setShowInitWizard(true);
+    setInitCompleted(true);
   };
 
   // Debug info
@@ -120,7 +115,7 @@ function App() {
       case 'secrets':
         return <SecretsPage />;
       case 'settings':
-        return <SettingsPage onOpenInitWizard={handleOpenWizard} />;
+        return <SettingsPage />;
       case 'newTask':
         return <NewTaskPage />;
       case 'workspace':
@@ -131,16 +126,20 @@ function App() {
     }
   };
 
+  // Show init wizard page if not completed
+  if (initCompleted === false) {
+    return <InitWizardPage onComplete={handleInitComplete} />;
+  }
+
+  // Show loading while checking init status
+  if (initCompleted === null) {
+    return null; // Loading handled by index.html
+  }
+
+  // Show main app if init completed
   return (
     <>
       <MainLayout>{renderPage()}</MainLayout>
-
-      {/* Init wizard modal */}
-      <InitWizardModal
-        isOpen={showInitWizard}
-        onClose={() => setShowInitWizard(false)}
-        onComplete={handleInitComplete}
-      />
 
       {/* Toast container */}
       {toasts.length > 0 && (
