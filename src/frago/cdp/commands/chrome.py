@@ -27,6 +27,7 @@ class ChromeLauncher:
         headless: bool = False,
         void: bool = False,
         app_mode: bool = False,
+        kiosk_mode: bool = False,
         app_url: Optional[str] = None,
         port: int = 9222,
         width: int = 1280,
@@ -46,16 +47,20 @@ class ChromeLauncher:
         self.headless = headless
         self.void = void
         self.app_mode = app_mode
+        self.kiosk_mode = kiosk_mode
         self.app_url = app_url
         self.chrome_process: Optional[subprocess.Popen] = None
 
-        # Validate app mode parameters
-        if self.app_mode and not self.app_url:
-            raise ValueError("app_mode requires app_url to be specified")
+        # Validate app/kiosk mode parameters
+        if (self.app_mode or self.kiosk_mode) and not self.app_url:
+            raise ValueError("app_mode/kiosk_mode requires app_url to be specified")
 
         # Validate mode exclusivity
-        if self.app_mode and (self.headless or self.void):
-            raise ValueError("app_mode cannot be used with headless or void mode")
+        if self.app_mode and self.kiosk_mode:
+            raise ValueError("app_mode and kiosk_mode cannot be used together")
+
+        if (self.app_mode or self.kiosk_mode) and (self.headless or self.void):
+            raise ValueError("app_mode/kiosk_mode cannot be used with headless or void mode")
 
         # Profile directory: use specified one first, otherwise use default location
         if profile_dir:
@@ -157,41 +162,77 @@ class ChromeLauncher:
 
     def _init_profile_dir(self) -> None:
         """Initialize Chrome profile directory"""
-        if self.profile_dir.exists():
-            return
+        profile_exists = self.profile_dir.exists()
 
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        if not profile_exists:
+            self.profile_dir.mkdir(parents=True, exist_ok=True)
 
-        # Find system default profile
-        system_profile = self._get_system_profile_dir()
-        if not system_profile:
-            return
+            # Find system default profile
+            system_profile = self._get_system_profile_dir()
+            if system_profile:
+                # Only copy necessary files and directories
+                items_to_copy = [
+                    "Default/Bookmarks",
+                    "Default/Preferences",
+                    "Default/Extensions",
+                    "Default/Cookies",
+                    "Default/History",
+                    "Default/Favicons",
+                    "Local State",
+                ]
 
-        # Only copy necessary files and directories
-        items_to_copy = [
-            "Default/Bookmarks",
-            "Default/Preferences",
-            "Default/Extensions",
-            "Default/Cookies",
-            "Default/History",
-            "Default/Favicons",
-            "Local State",
-        ]
+                for item in items_to_copy:
+                    src = system_profile / item
+                    dst = self.profile_dir / item
 
-        for item in items_to_copy:
-            src = system_profile / item
-            dst = self.profile_dir / item
+                    try:
+                        if src.exists():
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            if src.is_dir():
+                                shutil.copytree(src, dst, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(src, dst)
+                    except Exception:
+                        # Non-critical file copy failure doesn't interrupt execution
+                        pass
 
+        # Set Chrome preferences to disable translate (works on both new and existing profiles)
+        self._set_chrome_preferences()
+
+    def _set_chrome_preferences(self) -> None:
+        """Set Chrome preferences to disable translate and other UI prompts"""
+        import json
+
+        prefs_file = self.profile_dir / "Default" / "Preferences"
+        prefs_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Load existing preferences if file exists
+        if prefs_file.exists():
             try:
-                if src.exists():
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    if src.is_dir():
-                        shutil.copytree(src, dst, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(src, dst)
+                with open(prefs_file, "r", encoding="utf-8") as f:
+                    prefs = json.load(f)
             except Exception:
-                # Non-critical file copy failure doesn't interrupt execution
-                pass
+                prefs = {}
+        else:
+            prefs = {}
+
+        # Set preferences to disable translate
+        if "translate" not in prefs:
+            prefs["translate"] = {}
+        prefs["translate"]["enabled"] = False
+
+        # Disable other prompts/infobars for cleaner UI
+        if "profile" not in prefs:
+            prefs["profile"] = {}
+        prefs["profile"]["password_manager_enabled"] = False  # Disable "Save password?" prompt
+
+        # Write preferences back
+        try:
+            with open(prefs_file, "w", encoding="utf-8") as f:
+                json.dump(prefs, f, indent=2)
+        except Exception:
+            # Non-critical, Chrome will use defaults
+            pass
 
     def kill_existing_chrome(self) -> int:
         """Close existing Chrome CDP instances, return number of processes closed"""
@@ -363,12 +404,19 @@ class ChromeLauncher:
             # Disable first-run experience
             "--no-first-run",
             "--no-default-browser-check",
+            # Disable translate prompts and infobars for cleaner UI
+            "--disable-translate",
+            "--disable-features=Translate,TranslateUI",
+            # Disable all infobars (banners/prompts at the top)
+            "--disable-infobars",
+            # Set language to avoid auto-detection
+            "--lang=zh-CN",
         ]
 
-        # Stealth anti-detection arguments (only for automation, not for app mode)
-        # App mode is typically used for local UI (e.g., interactive recipes),
+        # Stealth anti-detection arguments (only for automation, not for app/kiosk mode)
+        # App/kiosk mode is typically used for local UI (e.g., interactive recipes),
         # which doesn't need webdriver detection evasion
-        if not self.app_mode:
+        if not self.app_mode and not self.kiosk_mode:
             cmd.append("--disable-blink-features=AutomationControlled")
 
         # Disable sandbox in Docker or when running as root (Linux only)
@@ -388,8 +436,13 @@ class ChromeLauncher:
 
         cmd.append(f"--user-agent={user_agent}")
 
+        # Kiosk mode (fullscreen, no browser UI)
+        if self.kiosk_mode:
+            cmd.append(f"--kiosk")
+            cmd.append(self.app_url)
+
         # App mode (borderless window)
-        if self.app_mode:
+        elif self.app_mode:
             cmd.append(f"--app={self.app_url}")
             cmd.append(f"--window-size={self.width},{self.height}")
 
