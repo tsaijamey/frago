@@ -345,8 +345,8 @@ export default function Sidebar() {
             )}
           </div>
         )}
-        {/* CPU/Memory (if enabled and not collapsed) */}
-        {config?.show_system_status && systemStatus && !sidebarCollapsed && (
+        {/* CPU/Memory progress bars (always show when data available and not collapsed) */}
+        {systemStatus && !sidebarCollapsed && (
           <>
             <div className="sidebar-status-item sidebar-status-bar-item">
               <span className="sidebar-status-label">CPU</span>
