@@ -1,15 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Info } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getConsoleHistory } from '@/api';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
 import type { ConsoleMessage } from '@/types/console';
-import ConsoleControls from './ConsoleControls';
+import NewTaskControls from './NewTaskControls';
 import MessageList from './MessageList';
-import ConsoleInput from './ConsoleInput';
+import NewTaskInput from './NewTaskInput';
 
-export default function ConsolePage() {
+export default function NewTaskPage() {
   const { t } = useTranslation();
   const {
     showToast,
@@ -325,7 +324,7 @@ export default function ConsolePage() {
     <div className="flex flex-col h-full overflow-hidden gap-4 p-scaled-4">
       {/* Controls */}
       <div className="shrink-0">
-        <ConsoleControls
+        <NewTaskControls
           sessionId={consoleSessionId}
           isRunning={consoleIsRunning}
           onNewSession={handleNewSession}
@@ -335,34 +334,12 @@ export default function ConsolePage() {
 
       {/* Message area */}
       <div ref={scrollContainerRef} className="flex-1 min-h-0 card overflow-hidden flex flex-col overflow-y-auto">
-        {!consoleSessionId && consoleMessages.length === 0 && (
-          <div className="p-scaled-4 flex flex-col gap-scaled-4">
-            {/* Purpose tip */}
-            <div className="flex gap-scaled-3 p-scaled-3 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-color)]">
-              <Info className="icon-scaled-base text-[var(--accent-primary)] shrink-0 mt-0.5" />
-              <div className="text-scaled-sm text-[var(--text-secondary)]">
-                <p className="font-medium text-[var(--text-primary)] mb-1">{t('console.devConsoleTitle')}</p>
-                <p>{t('console.devConsoleDesc')}</p>
-              </div>
-            </div>
-
-            {/* Warning tip */}
-            <div className="flex gap-scaled-3 p-scaled-3 rounded-lg bg-[color-mix(in_srgb,var(--accent-warning)_10%,transparent)] border border-[color-mix(in_srgb,var(--accent-warning)_30%,var(--border-color))]">
-              <AlertTriangle className="icon-scaled-base text-[var(--accent-warning)] shrink-0 mt-0.5" />
-              <div className="text-scaled-sm text-[var(--text-secondary)]">
-                <p className="font-medium text-[var(--accent-warning)] mb-1">{t('console.autoApproveWarningTitle')}</p>
-                <p className="mb-2">{t('console.autoApproveWarningDesc')}</p>
-                <p>{t('console.interactiveMode')} <code className="inline px-scaled-2 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-primary)] font-mono text-scaled-xs">claude</code></p>
-              </div>
-            </div>
-          </div>
-        )}
         <MessageList messages={consoleMessages} messagesEndRef={messagesEndRef} />
       </div>
 
       {/* Input area */}
       <div className="shrink-0">
-        <ConsoleInput
+        <NewTaskInput
           value={inputValue}
           onChange={setInputValue}
           onSend={handleSend}

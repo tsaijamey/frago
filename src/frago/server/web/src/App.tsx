@@ -17,7 +17,7 @@ import SkillList from '@/components/skills/SkillList';
 import SyncPage from '@/components/sync/SyncPage';
 import SecretsPage from '@/components/secrets/SecretsPage';
 import SettingsPage from '@/components/settings/SettingsPage';
-import ConsolePage from '@/components/console/ConsolePage';
+import NewTaskPage from '@/components/newTask/NewTaskPage';
 import { WorkspacePage } from '@/components/workspace';
 import { GuidePage } from '@/components/guide';
 
@@ -98,7 +98,7 @@ function App() {
   }, [apiReady]);
 
   // Render content based on current page
-  // Default page is 'tasks' per spec (set in appStore)
+  // Default page is 'newTask' (set in appStore)
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
@@ -121,8 +121,8 @@ function App() {
         return <SecretsPage />;
       case 'settings':
         return <SettingsPage onOpenInitWizard={handleOpenWizard} />;
-      case 'console':
-        return <ConsolePage />;
+      case 'newTask':
+        return <NewTaskPage />;
       case 'workspace':
       case 'project_detail':
         return <WorkspacePage />;

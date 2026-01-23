@@ -2158,3 +2158,42 @@ a:not(.btn):not(.nav-tab):hover {
   color: var(--text-muted);
   line-height: 1.4;
 }
+
+/* === Approval Toggle (Capsule Button) === */
+.approval-toggle {
+  display: inline-flex;
+  border-radius: 9999px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  padding: 2px;
+}
+
+.approval-toggle-option {
+  padding: 6px 16px;
+  border-radius: 9999px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.approval-toggle-option:hover:not(.disabled):not(.active) {
+  color: var(--text-secondary);
+}
+
+.approval-toggle-option.active {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+.approval-toggle-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mt-scaled-6 {
+  margin-top: 24px !important;
+}

@@ -3,7 +3,7 @@ import { Send } from 'lucide-react';
 import { modKey } from '../../hooks/usePlatform';
 import DirectoryAutocomplete from '../ui/DirectoryAutocomplete';
 
-interface ConsoleInputProps {
+interface NewTaskInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
@@ -11,13 +11,13 @@ interface ConsoleInputProps {
   placeholder?: string;
 }
 
-export default function ConsoleInput({
+export default function NewTaskInput({
   value,
   onChange,
   onSend,
   disabled = false,
   placeholder = 'Type your message...'
-}: ConsoleInputProps) {
+}: NewTaskInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

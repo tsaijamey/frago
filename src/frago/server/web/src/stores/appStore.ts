@@ -32,7 +32,7 @@ export type PageType =
   | 'sync'
   | 'secrets'
   | 'settings'
-  | 'console'
+  | 'newTask'
   | 'workspace'
   | 'project_detail';
 
@@ -174,8 +174,8 @@ function getInitialSidebarCollapsed(): boolean {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Initial state - default to 'tasks' page per spec
-  currentPage: 'tasks',
+  // Initial state - default to 'newTask' page
+  currentPage: 'newTask',
   currentTaskId: null,
   currentRecipeName: null,
   currentProjectId: null,

@@ -52,10 +52,11 @@ const SkillsIcon = () => (
   </svg>
 );
 
-const ConsoleIcon = () => (
+const NewTaskIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="4 17 10 11 4 5" />
-    <line x1="12" y1="19" x2="20" y2="19" />
+    <circle cx="12" cy="12" r="10" />
+    <line x1="12" y1="8" x2="12" y2="16" />
+    <line x1="8" y1="12" x2="16" y2="12" />
   </svg>
 );
 
@@ -110,7 +111,7 @@ const CollapseIcon = ({ collapsed }: { collapsed: boolean }) => (
 // Menu items configuration
 const menuItems: MenuItem[] = [
   { id: 'dashboard', labelKey: 'sidebar.dashboard', icon: <DashboardIcon /> },
-  { id: 'console', labelKey: 'sidebar.console', icon: <ConsoleIcon /> },
+  { id: 'newTask', labelKey: 'sidebar.newTask', icon: <NewTaskIcon /> },
   { id: 'tasks', labelKey: 'sidebar.tasks', icon: <TasksIcon /> },
   { id: 'recipes', labelKey: 'sidebar.recipes', icon: <RecipesIcon /> },
   { id: 'skills', labelKey: 'sidebar.skills', icon: <SkillsIcon /> },

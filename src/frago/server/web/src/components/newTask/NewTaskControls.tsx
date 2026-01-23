@@ -1,19 +1,19 @@
 import { useTranslation } from 'react-i18next';
 import { PlusCircle, Square } from 'lucide-react';
 
-interface ConsoleControlsProps {
+interface NewTaskControlsProps {
   sessionId: string | null;
   isRunning: boolean;
   onNewSession: () => void;
   onStop: () => void;
 }
 
-export default function ConsoleControls({
+export default function NewTaskControls({
   sessionId,
   isRunning,
   onNewSession,
   onStop
-}: ConsoleControlsProps) {
+}: NewTaskControlsProps) {
   const { t } = useTranslation();
 
   return (
@@ -27,25 +27,8 @@ export default function ConsoleControls({
           </span>
         </div>
 
-        {/* Right group: Auto-approve reminder + Action Buttons */}
-        <div className="flex items-center gap-scaled-4">
-          {/* Auto-approve indicator - reminds user before action */}
-          <div className="flex items-center gap-scaled-2 opacity-60">
-            <input
-              id="auto-approve"
-              type="checkbox"
-              className="w-4 h-4 cursor-not-allowed"
-              checked
-              disabled
-              aria-label={t('console.autoApprove')}
-            />
-            <label htmlFor="auto-approve" className="text-scaled-sm text-[var(--text-muted)] cursor-not-allowed">
-              {t('console.autoApprove')}
-            </label>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-scaled-2">
+        {/* Right group: Action Buttons */}
+        <div className="flex items-center gap-scaled-2">
           {isRunning ? (
             <button
               type="button"
@@ -66,7 +49,6 @@ export default function ConsoleControls({
               {t('console.newSession')}
             </button>
           )}
-          </div>
         </div>
       </div>
     </div>
