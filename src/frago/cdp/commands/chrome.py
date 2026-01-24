@@ -330,15 +330,15 @@ class ChromeLauncher:
                         @keyframes __frago_breathe__ {\\
                             0%, 100% {\\
                                 box-shadow:\\
-                                    inset 0 0 15px 5px rgba(255, 180, 0, 0.6),\\
-                                    inset 0 0 35px 12px rgba(255, 180, 0, 0.35),\\
-                                    inset 0 0 55px 20px rgba(255, 180, 0, 0.15);\\
+                                    inset 0 0 20px 8px rgba(80, 200, 120, 0.6),\\
+                                    inset 0 0 40px 15px rgba(80, 200, 120, 0.3),\\
+                                    inset 0 0 60px 25px rgba(80, 200, 120, 0.1);\\
                             }\\
                             50% {\\
                                 box-shadow:\\
-                                    inset 0 0 25px 10px rgba(255, 180, 0, 0.75),\\
-                                    inset 0 0 50px 20px rgba(255, 180, 0, 0.45),\\
-                                    inset 0 0 80px 35px rgba(255, 180, 0, 0.2);\\
+                                    inset 0 0 30px 12px rgba(80, 200, 120, 0.8),\\
+                                    inset 0 0 60px 25px rgba(80, 200, 120, 0.5),\\
+                                    inset 0 0 90px 40px rgba(80, 200, 120, 0.2);\\
                             }\\
                         }\\
                     ';
@@ -481,9 +481,101 @@ class ChromeLauncher:
         if self.wait_for_cdp():
             # Inject stealth scripts
             self.inject_stealth_scripts()
+
+            # Force window size for app mode (Chrome ignores --window-size for remembered windows)
+            if self.app_mode:
+                self._set_window_bounds()
+
             return True
 
         return False
+
+    def _set_window_bounds(self) -> bool:
+        """Set window bounds via CDP to enforce size for app mode windows.
+
+        Chrome remembers previous window positions for app mode and ignores
+        --window-size parameter. This method uses CDP to force the correct size.
+        """
+        try:
+            import json
+            import websocket
+
+            # Get browser websocket URL
+            response = requests.get(
+                f"http://localhost:{self.debugging_port}/json/version", timeout=2
+            )
+            if response.status_code != 200:
+                return False
+
+            ws_url = response.json().get("webSocketDebuggerUrl")
+            if not ws_url:
+                return False
+
+            ws = websocket.create_connection(ws_url, timeout=5)
+
+            # Get target list to find the window
+            targets_response = requests.get(
+                f"http://localhost:{self.debugging_port}/json", timeout=2
+            )
+            if targets_response.status_code != 200 or not targets_response.json():
+                ws.close()
+                return False
+
+            target_id = targets_response.json()[0].get("id")
+            if not target_id:
+                ws.close()
+                return False
+
+            # Get window ID for target
+            ws.send(json.dumps({
+                "id": 1,
+                "method": "Browser.getWindowForTarget",
+                "params": {"targetId": target_id}
+            }))
+            result = json.loads(ws.recv())
+            window_id = result.get("result", {}).get("windowId")
+
+            if not window_id:
+                ws.close()
+                return False
+
+            # Calculate centered position
+            # Try to get screen size, fallback to not specifying position
+            screen_width, screen_height = 1920, 1080  # defaults
+            try:
+                import tkinter as tk
+                root = tk.Tk()
+                root.withdraw()
+                screen_width = root.winfo_screenwidth()
+                screen_height = root.winfo_screenheight()
+                root.destroy()
+            except Exception:
+                pass
+
+            left = (screen_width - self.width) // 2
+            top = (screen_height - self.height) // 2
+
+            # Set window bounds
+            ws.send(json.dumps({
+                "id": 2,
+                "method": "Browser.setWindowBounds",
+                "params": {
+                    "windowId": window_id,
+                    "bounds": {
+                        "left": left,
+                        "top": top,
+                        "width": self.width,
+                        "height": self.height,
+                        "windowState": "normal"
+                    }
+                }
+            }))
+            ws.recv()
+            ws.close()
+            return True
+
+        except Exception:
+            return False
 
     def stop(self) -> None:
         """Stop Chrome process"""

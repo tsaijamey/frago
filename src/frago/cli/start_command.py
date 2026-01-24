@@ -93,12 +93,36 @@ def open_browser(url: str) -> bool:
             return webbrowser.open(url)
 
 
+def get_screen_size() -> tuple[int, int]:
+    """Get primary screen dimensions.
+
+    Returns:
+        Tuple of (width, height) in pixels. Defaults to (1920, 1080) if detection fails.
+    """
+    try:
+        # Try tkinter (cross-platform, stdlib)
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        width = root.winfo_screenwidth()
+        height = root.winfo_screenheight()
+        root.destroy()
+        return (width, height)
+    except Exception:
+        pass
+
+    # Fallback to common resolution
+    return (1920, 1080)
+
+
 def launch_chrome_app_mode(url: str) -> bool:
     """Launch URL in Chrome app mode (borderless window).
 
     This provides a native desktop app experience with:
     - Borderless window (no browser UI chrome)
-    - Fixed window size (1280x960)
+    - Window width capped at 1000px
+    - Window height capped at 80% of screen height
     - Auto-centered on screen
     - Window controls (minimize, maximize, close)
 
@@ -113,11 +137,16 @@ def launch_chrome_app_mode(url: str) -> bool:
     try:
         from frago.cdp.commands.chrome import ChromeLauncher
 
+        # Calculate window size based on screen dimensions
+        screen_width, screen_height = get_screen_size()
+        window_width = min(1000, screen_width)
+        window_height = int(screen_height * 0.8)
+
         launcher = ChromeLauncher(
             app_mode=True,
             app_url=url,
-            width=1280,
-            height=960,
+            width=window_width,
+            height=window_height,
         )
 
         # Launch Chrome without killing existing instances
