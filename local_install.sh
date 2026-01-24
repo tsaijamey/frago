@@ -309,17 +309,9 @@ launch_frago() {
 
     # Wait for server to be ready before opening browser
     if wait_for_server; then
-        printf "  ${DIM}Opening browser...${RESET}\n"
+        printf "  ${DIM}Opening in app mode...${RESET}\n"
         echo ""
-        frago start --no-browser >/dev/null 2>&1 || true  # Ensure server is tracked
-        # Open browser directly since server is ready
-        if command_exists xdg-open; then
-            xdg-open "http://127.0.0.1:8093" >/dev/null 2>&1 &
-        elif command_exists open; then
-            open "http://127.0.0.1:8093"
-        else
-            printf "  ${CYAN}Open in browser: http://127.0.0.1:8093${RESET}\n"
-        fi
+        frago start 2>/dev/null || printf "  ${CYAN}Open in browser: http://127.0.0.1:8093${RESET}\n"
     else
         print_warning "Server did not start in time. Run 'frago start' manually."
     fi
