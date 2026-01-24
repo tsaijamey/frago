@@ -100,7 +100,7 @@ export function AuthStep({
             type="checkbox"
             checked={acknowledged}
             onChange={(e) => setAcknowledged(e.target.checked)}
-            className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-blue-500"
+            className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-green-600 focus:ring-green-500"
           />
           <span className="text-sm text-gray-400">
             {t('init.skipAuthCheckbox')}
@@ -139,7 +139,7 @@ export function AuthStep({
             type="button"
             onClick={onComplete}
             disabled={!authConfigured && !acknowledged}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {t('init.continue')}
             <ArrowRight className="w-4 h-4" />

@@ -1,5 +1,8 @@
 /**
- * DependencyStep - Check and install Node.js and Claude Code
+ * DependencyStep - Check and install Claude Code
+ *
+ * Simplified to only verify Claude Code installation.
+ * Node.js check has been removed as it's a transitive dependency.
  */
 
 import { useState } from 'react';
@@ -81,7 +84,7 @@ function DependencyCard({ dep, onInstall, installing, t }: DependencyCardProps) 
             type="button"
             onClick={handleInstall}
             disabled={installing}
-            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+            className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
           >
             {installing ? (
               <>
@@ -140,14 +143,10 @@ export function DependencyStep({
 }: DependencyStepProps) {
   const { t } = useTranslation();
   const [checking, setChecking] = useState(false);
-  const [installingNode, setInstallingNode] = useState(false);
   const [installingClaude, setInstallingClaude] = useState(false);
 
-  const nodeOk =
-    initStatus.node.installed && initStatus.node.version_sufficient;
   const claudeOk =
     initStatus.claude_code.installed && initStatus.claude_code.version_sufficient;
-  const allOk = nodeOk && claudeOk;
 
   const handleRefreshCheck = async () => {
     setChecking(true);
@@ -156,20 +155,6 @@ export function DependencyStep({
       onRefresh();
     } finally {
       setChecking(false);
-    }
-  };
-
-  const handleInstallNode = async () => {
-    setInstallingNode(true);
-    try {
-      const result = await installDependency('node');
-      if (result.status === 'ok') {
-        onRefresh();
-      } else {
-        throw new Error(result.message);
-      }
-    } finally {
-      setInstallingNode(false);
     }
   };
 
@@ -191,22 +176,16 @@ export function DependencyStep({
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h3 className="text-lg font-semibold text-white mb-2">
-          {t('init.systemDeps')}
+        <h3 className="text-lg font-semibold text-white mb-2 font-mono">
+          {t('init.claudeCheck')}
         </h3>
-        <p className="text-gray-400">
-          {t('init.systemDepsDesc')}
+        <p className="text-gray-400 font-mono text-sm">
+          {t('init.claudeCheckDesc')}
         </p>
       </div>
 
-      {/* Dependency cards */}
+      {/* Claude Code card only */}
       <div className="space-y-3">
-        <DependencyCard
-          dep={initStatus.node}
-          onInstall={handleInstallNode}
-          installing={installingNode}
-          t={t}
-        />
         <DependencyCard
           dep={initStatus.claude_code}
           onInstall={handleInstallClaude}
@@ -220,7 +199,7 @@ export function DependencyStep({
         type="button"
         onClick={handleRefreshCheck}
         disabled={checking}
-        className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300"
+        className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 font-mono"
       >
         <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} />
         {checking ? t('init.checking') : t('init.refreshStatus')}
@@ -231,7 +210,7 @@ export function DependencyStep({
         <button
           type="button"
           onClick={onSkip}
-          className="text-gray-400 hover:text-gray-300 text-sm"
+          className="text-gray-400 hover:text-gray-300 text-sm font-mono"
         >
           {t('init.skipForNow')}
         </button>
@@ -239,8 +218,8 @@ export function DependencyStep({
         <button
           type="button"
           onClick={onComplete}
-          disabled={!allOk}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          disabled={!claudeOk}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-mono"
         >
           {t('init.continue')}
           <ArrowRight className="w-4 h-4" />
@@ -248,7 +227,7 @@ export function DependencyStep({
       </div>
 
       {/* Warning if skipping */}
-      {!allOk && (
+      {!claudeOk && (
         <p className="text-sm text-yellow-400 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" />
           {t('init.skipWarning')}

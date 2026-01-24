@@ -102,17 +102,25 @@ export function ResourceStep({
           <div className="flex items-center gap-2 text-gray-400">
             <Package className="w-4 h-4" />
             <span className="text-sm">
-              {initStatus.resources_info?.commands?.installed || 0} {t('init.commands')}
+              {resourcesInstalled
+                ? initStatus.resources_info?.commands?.installed || 0
+                : initStatus.resources_info?.commands?.available || 0} {t('init.commands')}
             </span>
           </div>
           <div className="flex items-center gap-2 text-gray-400">
             <Zap className="w-4 h-4" />
-            <span className="text-sm">{t('skills.title')}</span>
+            <span className="text-sm">
+              {resourcesInstalled
+                ? initStatus.resources_info?.skills?.installed || 0
+                : initStatus.resources_info?.skills?.available || 0} {t('skills.title')}
+            </span>
           </div>
           <div className="flex items-center gap-2 text-gray-400">
             <BookOpen className="w-4 h-4" />
             <span className="text-sm">
-              {initStatus.resources_info?.recipes?.installed || 0} {t('recipes.title')}
+              {resourcesInstalled
+                ? initStatus.resources_info?.recipes?.installed || 0
+                : initStatus.resources_info?.recipes?.available || 0} {t('recipes.title')}
             </span>
           </div>
         </div>
@@ -125,7 +133,7 @@ export function ResourceStep({
             type="checkbox"
             checked={forceUpdate}
             onChange={(e) => setForceUpdate(e.target.checked)}
-            className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-blue-500"
+            className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-green-600 focus:ring-green-500"
           />
           <span className="text-sm text-gray-400">
             {t('init.forceUpdate')}
@@ -138,7 +146,7 @@ export function ResourceStep({
         type="button"
         onClick={handleInstall}
         disabled={installing}
-        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors w-full justify-center"
+        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors w-full justify-center"
       >
         {installing ? (
           <>
@@ -249,7 +257,7 @@ export function ResourceStep({
             type="button"
             onClick={onComplete}
             disabled={!resourcesInstalled && !installResult}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {t('init.continue')}
             <ArrowRight className="w-4 h-4" />

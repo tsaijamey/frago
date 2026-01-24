@@ -356,7 +356,7 @@ def _handle_reset() -> None:
 
 def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
     """
-    Check and install dependencies
+    Check and install dependencies (Claude Code only)
 
     Args:
         non_interactive: Non-interactive mode
@@ -367,19 +367,22 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
     with spinner_context("Checking dependencies", "Resolved dependencies") as reporter:
         results = parallel_dependency_check()
 
-    # Display check results
+    # Display check results - only show Claude Code, ignore Node.js
     reporter = ProgressReporter()
-    for name, result in results.items():
-        if result.installed:
-            version = result.version or "unknown"
-            reporter.item_added(name, version)
+    claude_result = results.get("claude-code")
+    if claude_result:
+        if claude_result.installed:
+            version = claude_result.version or "unknown"
+            reporter.item_added("claude-code", version)
         else:
-            reporter.item_error(name, "not found")
+            reporter.item_error("claude-code", "not found")
 
     click.echo()
 
-    # Get missing dependencies
-    missing = get_missing_dependencies(results)
+    # Get missing dependencies - only consider Claude Code
+    missing = []
+    if claude_result and claude_result.needs_install():
+        missing.append("claude-code")
 
     if missing:
         _handle_missing_dependencies(results, missing, non_interactive)

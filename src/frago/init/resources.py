@@ -432,6 +432,34 @@ def count_installed_recipes(target_dir: Optional[Path] = None) -> int:
     return len(list(target_dir.rglob("*.md")))
 
 
+def _count_available_package_resources(resource_type: str) -> int:
+    """
+    Count available resources in the package
+
+    Args:
+        resource_type: Resource type ("commands", "skills", "recipes")
+
+    Returns:
+        Number of available resources in the package
+    """
+    try:
+        source_dir = get_package_resources_path(resource_type)
+        if not source_dir.exists():
+            return 0
+
+        if resource_type == "commands":
+            return len(list(source_dir.glob("frago.*.md")))
+        elif resource_type == "skills":
+            # Count directories with SKILL.md
+            return len([d for d in source_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()])
+        elif resource_type == "recipes":
+            # Count recipe.md files
+            return len(list(source_dir.rglob("recipe.md")))
+        return 0
+    except Exception:
+        return 0
+
+
 def get_resources_status() -> dict:
     """
     Get installed resources status information
@@ -439,14 +467,16 @@ def get_resources_status() -> dict:
     Returns:
         Dictionary containing resource status:
         {
-            "commands": {"installed": int, "path": str, "files": list},
-            "recipes": {"installed": int, "path": str},
+            "commands": {"installed": int, "available": int, "path": str, "files": list},
+            "skills": {"installed": int, "available": int, "path": str},
+            "recipes": {"installed": int, "available": int, "path": str},
             "frago_version": str,
         }
     """
     from frago import __version__
 
     commands_path = get_target_path("commands")
+    skills_path = get_target_path("skills")
     recipes_path = get_target_path("recipes")
 
     # Get list of installed command files
@@ -454,14 +484,26 @@ def get_resources_status() -> dict:
     if commands_path.exists():
         command_files = [f.name for f in commands_path.glob("frago.*.md")]
 
+    # Count installed skills
+    installed_skills = 0
+    if skills_path.exists():
+        installed_skills = len([d for d in skills_path.iterdir() if d.is_dir() and (d / "SKILL.md").exists()])
+
     return {
         "commands": {
             "installed": len(command_files),
+            "available": _count_available_package_resources("commands"),
             "path": str(commands_path),
             "files": command_files,
         },
+        "skills": {
+            "installed": installed_skills,
+            "available": _count_available_package_resources("skills"),
+            "path": str(skills_path),
+        },
         "recipes": {
             "installed": count_installed_recipes(),
+            "available": _count_available_package_resources("recipes"),
             "path": str(recipes_path),
         },
         "frago_version": __version__,

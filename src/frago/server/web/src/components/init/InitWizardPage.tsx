@@ -2,52 +2,67 @@
  * InitWizardPage - Full-screen standalone initialization wizard
  *
  * This is a complete page (not a modal) that guides users through initial setup.
- * Replaces the modal-based wizard for a cleaner, more focused experience.
  *
  * Steps:
- * 1. Dependencies - Check/install Node.js and Claude Code
- * 2. Resources - Install commands, skills, recipes
- * 3. Auth - Configure authentication (optional)
- * 4. Complete - Finish initialization
+ * 1. Core - Select core type (Claude Code vs OpenCode)
+ * 2. Client - Check/install the corresponding client (claude or opencode)
+ * 3. Auth - Select authentication method (Official or Custom API)
+ * 4. Resources - Install commands, skills, recipes
+ * 5. Complete - Finish initialization
  */
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle, Circle, Loader2 } from 'lucide-react';
+import { CoreSelectionStep } from './CoreSelectionStep';
 import { DependencyStep } from './DependencyStep';
+import { AuthMethodStep } from './AuthMethodStep';
 import { ResourceStep } from './ResourceStep';
-import { AuthStep } from './AuthStep';
 import { CompleteStep } from './CompleteStep';
 import type { InitStatus } from '../../api/client';
-import { getInitStatus } from '../../api/client';
+import { getInitStatus, updateAuth } from '../../api/client';
 
-type WizardStep = 'dependencies' | 'resources' | 'auth' | 'complete';
+type WizardStep = 'core' | 'client' | 'auth' | 'resources' | 'complete';
+type CoreType = 'claude-code' | 'opencode' | null;
 
 interface InitWizardPageProps {
   onComplete: () => void;
 }
 
-const STEPS: { id: WizardStep; labelKey: string }[] = [
-  { id: 'dependencies', labelKey: 'settings.init.dependencies' },
-  { id: 'resources', labelKey: 'settings.init.resources' },
-  { id: 'auth', labelKey: 'settings.init.auth' },
-  { id: 'complete', labelKey: 'settings.init.complete' },
-];
-
 export function InitWizardPage({ onComplete }: InitWizardPageProps) {
   const { t } = useTranslation();
-  const [currentStep, setCurrentStep] = useState<WizardStep>('dependencies');
+  const [currentStep, setCurrentStep] = useState<WizardStep>('core');
   const [initStatus, setInitStatus] = useState<InitStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [coreType, setCoreType] = useState<CoreType>(null);
 
   // Track step completion status
   const [stepsCompleted, setStepsCompleted] = useState({
-    dependencies: false,
-    resources: false,
+    core: false,
+    client: false,
     auth: false,
+    resources: false,
     complete: false,
   });
+
+  // Dynamic step configuration based on core type
+  const getStepLabel = (stepId: WizardStep): string => {
+    if (stepId === 'client') {
+      // Show "Claude" or "OpenCode" based on selection
+      return coreType === 'opencode' ? 'OpenCode' : 'Claude';
+    }
+    const labelKeys: Record<WizardStep, string> = {
+      core: 'settings.init.core',
+      client: 'settings.init.claude',
+      auth: 'settings.init.auth',
+      resources: 'settings.init.resources',
+      complete: 'settings.init.complete',
+    };
+    return t(labelKeys[stepId]);
+  };
+
+  const STEPS: WizardStep[] = ['core', 'client', 'auth', 'resources', 'complete'];
 
   // Load init status on mount
   useEffect(() => {
@@ -61,26 +76,26 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
       const status = await getInitStatus();
       setInitStatus(status);
 
-      // Update step completion based on status
-      const depsSatisfied =
-        status.node.installed &&
-        status.node.version_sufficient &&
+      // Check if Claude Code is installed (for auto-advancing)
+      const claudeSatisfied =
         status.claude_code.installed &&
         status.claude_code.version_sufficient;
 
+      // Check if auth is already configured
+      const authConfigured = status.auth_configured;
+
       setStepsCompleted((prev) => ({
         ...prev,
-        dependencies: depsSatisfied,
+        client: claudeSatisfied,
+        auth: authConfigured,
         resources: status.resources_installed,
-        auth: status.auth_configured,
       }));
 
-      // Auto-advance to first incomplete step
-      if (depsSatisfied && !status.resources_installed) {
-        setCurrentStep('resources');
-      } else if (depsSatisfied && status.resources_installed && !status.auth_configured) {
-        setCurrentStep('auth');
-      } else if (depsSatisfied && status.resources_installed) {
+      // Auto-advance logic based on current state
+      // If everything is configured, go to complete
+      if (authConfigured && claudeSatisfied && status.resources_installed) {
+        setCoreType('claude-code'); // Assume claude-code if already configured
+        setStepsCompleted(prev => ({ ...prev, core: true }));
         setCurrentStep('complete');
       }
     } catch (err) {
@@ -94,23 +109,50 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
     setStepsCompleted((prev) => ({ ...prev, [step]: true }));
 
     // Auto-advance to next step
-    const stepIndex = STEPS.findIndex((s) => s.id === step);
+    const stepIndex = STEPS.indexOf(step);
     if (stepIndex < STEPS.length - 1) {
-      setCurrentStep(STEPS[stepIndex + 1].id);
+      setCurrentStep(STEPS[stepIndex + 1]);
     }
   };
 
+  const handleCoreSelectionComplete = (selectedCoreType: 'claude-code' | 'opencode') => {
+    setCoreType(selectedCoreType);
+    handleStepComplete('core');
+  };
+
+  const handleAuthMethodComplete = async (authMethod: 'official' | 'custom', endpointType?: string) => {
+    // Save the auth configuration
+    try {
+      if (authMethod === 'official') {
+        await updateAuth({ auth_method: 'official' });
+      } else if (authMethod === 'custom' && endpointType) {
+        await updateAuth({
+          auth_method: 'custom',
+          api_endpoint: {
+            type: endpointType,
+            api_key: '', // Empty - will be configured in Settings
+          },
+        });
+      }
+    } catch (err) {
+      console.error('Failed to save auth configuration:', err);
+      // Continue anyway - user can configure later
+    }
+
+    handleStepComplete('auth');
+  };
+
   const handleSkip = () => {
-    const stepIndex = STEPS.findIndex((s) => s.id === currentStep);
+    const stepIndex = STEPS.indexOf(currentStep);
     if (stepIndex < STEPS.length - 1) {
-      setCurrentStep(STEPS[stepIndex + 1].id);
+      setCurrentStep(STEPS[stepIndex + 1]);
     }
   };
 
   const handleBack = () => {
-    const stepIndex = STEPS.findIndex((s) => s.id === currentStep);
+    const stepIndex = STEPS.indexOf(currentStep);
     if (stepIndex > 0) {
-      setCurrentStep(STEPS[stepIndex - 1].id);
+      setCurrentStep(STEPS[stepIndex - 1]);
     }
   };
 
@@ -119,117 +161,126 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">{t('init.welcome')}</h1>
-          <p className="text-gray-400">{t('init.setupGuide')}</p>
-        </div>
+    <div className="min-h-screen bg-[#0C0C0C] flex flex-col">
+      {/* Header */}
+      <div className="px-8 py-6 border-b border-gray-800">
+        <h1 className="text-2xl font-bold text-white font-mono">{t('init.welcome')}</h1>
+        <p className="text-gray-400 mt-1 font-mono text-sm">{t('init.setupGuide')}</p>
+      </div>
 
-        {/* Main wizard card */}
-        <div className="bg-gray-900 rounded-xl shadow-2xl overflow-hidden">
-          {/* Step indicators */}
-          <div className="px-8 py-6 border-b border-gray-800">
-            <div className="flex items-center justify-between max-w-2xl mx-auto">
-              {STEPS.map((step, index) => {
-                const isActive = step.id === currentStep;
-                const isCompleted = stepsCompleted[step.id];
-                const isPast = STEPS.findIndex((s) => s.id === currentStep) > index;
+      {/* Step indicators */}
+      <div className="px-8 py-4 border-b border-gray-800">
+        <div className="flex items-center justify-center max-w-3xl mx-auto">
+          {STEPS.map((step, index) => {
+            const isActive = step === currentStep;
+            const isCompleted = stepsCompleted[step];
+            const isPast = STEPS.indexOf(currentStep) > index;
 
-                return (
-                  <div key={step.id} className="flex items-center flex-1">
-                    {/* Step indicator */}
-                    <button
-                      type="button"
-                      onClick={() => setCurrentStep(step.id)}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors whitespace-nowrap ${
-                        isActive
-                          ? 'bg-blue-600 text-white'
-                          : isCompleted || isPast
-                            ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                            : 'bg-gray-800 text-gray-500'
-                      }`}
-                    >
-                      {isCompleted ? (
-                        <CheckCircle className="w-4 h-4 text-green-400" />
-                      ) : (
-                        <Circle className="w-4 h-4" />
-                      )}
-                      <span className="text-sm font-medium">{t(step.labelKey)}</span>
-                    </button>
-
-                    {/* Connector line */}
-                    {index < STEPS.length - 1 && (
-                      <div
-                        className={`flex-1 h-0.5 mx-3 ${
-                          isPast || isCompleted ? 'bg-blue-600' : 'bg-gray-700'
-                        }`}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="p-8 min-h-[500px]">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-20">
-                <Loader2 className="w-12 h-12 text-blue-500 animate-spin mb-4" />
-                <p className="text-gray-400">{t('init.loadingStatus')}</p>
-              </div>
-            ) : error ? (
-              <div className="text-center py-20">
-                <p className="text-red-400 mb-4 text-lg">{error}</p>
+            return (
+              <div key={step} className="flex items-center">
+                {/* Step indicator */}
                 <button
                   type="button"
-                  onClick={loadInitStatus}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  onClick={() => {
+                    // Only allow going back to completed steps
+                    if (isCompleted || isPast) {
+                      setCurrentStep(step);
+                    }
+                  }}
+                  disabled={!isCompleted && !isPast && !isActive}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors font-mono ${
+                    isActive
+                      ? 'bg-green-600 text-white'
+                      : isCompleted || isPast
+                        ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 cursor-pointer'
+                        : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                  }`}
                 >
-                  {t('init.retry')}
+                  {isCompleted ? (
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                  ) : (
+                    <Circle className="w-4 h-4" />
+                  )}
+                  <span className="text-sm font-medium">
+                    {getStepLabel(step)}
+                  </span>
                 </button>
-              </div>
-            ) : initStatus ? (
-              <div className="max-w-2xl mx-auto">
-                {currentStep === 'dependencies' && (
-                  <DependencyStep
-                    initStatus={initStatus}
-                    onComplete={() => handleStepComplete('dependencies')}
-                    onSkip={handleSkip}
-                    onRefresh={loadInitStatus}
-                  />
-                )}
-                {currentStep === 'resources' && (
-                  <ResourceStep
-                    initStatus={initStatus}
-                    onComplete={() => handleStepComplete('resources')}
-                    onSkip={handleSkip}
-                    onBack={handleBack}
-                    onRefresh={loadInitStatus}
-                  />
-                )}
-                {currentStep === 'auth' && (
-                  <AuthStep
-                    initStatus={initStatus}
-                    onComplete={() => handleStepComplete('auth')}
-                    onSkip={handleSkip}
-                    onBack={handleBack}
-                  />
-                )}
-                {currentStep === 'complete' && (
-                  <CompleteStep
-                    initStatus={initStatus}
-                    stepsCompleted={stepsCompleted}
-                    onComplete={handleComplete}
-                    onBack={handleBack}
+
+                {/* Connector line */}
+                {index < STEPS.length - 1 && (
+                  <div
+                    className={`w-8 h-0.5 mx-2 ${
+                      isPast || isCompleted ? 'bg-green-600' : 'bg-gray-700'
+                    }`}
                   />
                 )}
               </div>
-            ) : null}
-          </div>
+            );
+          })}
         </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-8">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 text-green-500 animate-spin mb-4" />
+            <p className="text-gray-400 font-mono">{t('init.loadingStatus')}</p>
+          </div>
+        ) : error ? (
+          <div className="text-center py-12 max-w-2xl mx-auto">
+            <p className="text-red-400 mb-4 font-mono">{error}</p>
+            <button
+              type="button"
+              onClick={loadInitStatus}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-mono"
+            >
+              {t('init.retry')}
+            </button>
+          </div>
+        ) : initStatus ? (
+          <div className="max-w-2xl mx-auto">
+            {currentStep === 'core' && (
+              <CoreSelectionStep
+                onComplete={handleCoreSelectionComplete}
+                onSkip={handleSkip}
+              />
+            )}
+            {currentStep === 'client' && (
+              <DependencyStep
+                initStatus={initStatus}
+                onComplete={() => handleStepComplete('client')}
+                onSkip={handleSkip}
+                onRefresh={loadInitStatus}
+              />
+            )}
+            {currentStep === 'auth' && coreType && (
+              <AuthMethodStep
+                coreType={coreType}
+                onComplete={handleAuthMethodComplete}
+                onBack={handleBack}
+                onSkip={handleSkip}
+              />
+            )}
+            {currentStep === 'resources' && (
+              <ResourceStep
+                initStatus={initStatus}
+                onComplete={() => handleStepComplete('resources')}
+                onSkip={handleSkip}
+                onBack={handleBack}
+                onRefresh={loadInitStatus}
+              />
+            )}
+            {currentStep === 'complete' && (
+              <CompleteStep
+                initStatus={initStatus}
+                stepsCompleted={stepsCompleted}
+                onComplete={handleComplete}
+                onBack={handleBack}
+              />
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
   );

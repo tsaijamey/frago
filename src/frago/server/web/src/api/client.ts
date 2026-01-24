@@ -676,8 +676,9 @@ export interface InitStatus {
   auth_configured: boolean;
   auth_method: string | null;
   resources_info: {
-    commands?: { installed: number; path: string; files: string[] };
-    recipes?: { installed: number; path: string };
+    commands?: { installed: number; available: number; path: string; files: string[] };
+    skills?: { installed: number; available: number; path: string };
+    recipes?: { installed: number; available: number; path: string };
     frago_version?: string;
   };
 }

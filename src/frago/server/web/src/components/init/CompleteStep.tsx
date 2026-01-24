@@ -18,9 +18,10 @@ import { markInitComplete } from '../../api/client';
 interface CompleteStepProps {
   initStatus: InitStatus;
   stepsCompleted: {
-    dependencies: boolean;
-    resources: boolean;
+    core: boolean;
+    client: boolean;
     auth: boolean;
+    resources: boolean;
     complete: boolean;
   };
   onComplete: () => void;
@@ -38,9 +39,10 @@ export function CompleteStep({
   const [error, setError] = useState<string | null>(null);
 
   const allStepsComplete =
-    stepsCompleted.dependencies &&
-    stepsCompleted.resources &&
-    stepsCompleted.auth;
+    stepsCompleted.core &&
+    stepsCompleted.client &&
+    stepsCompleted.auth &&
+    stepsCompleted.resources;
 
   const handleComplete = async () => {
     setCompleting(true);
@@ -76,39 +78,37 @@ export function CompleteStep({
       </div>
 
       {/* Setup summary */}
-      <div className="bg-gray-800 rounded-lg p-4 space-y-3">
+      <div className="bg-gray-800 rounded-lg p-4 space-y-3 font-mono">
         <h4 className="font-medium text-white mb-3">{t('init.compSummary')}</h4>
 
-        {/* Dependencies */}
+        {/* Core Selection */}
         <div className="flex items-center gap-3">
-          {stepsCompleted.dependencies ? (
+          {stepsCompleted.core ? (
             <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
           ) : (
             <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           )}
           <div>
-            <span className="text-white">{t('settings.init.dependencies')}</span>
+            <span className="text-white">{t('settings.init.core')}</span>
             <span className="text-gray-400 text-sm ml-2">
-              {stepsCompleted.dependencies
-                ? `Node.js ${initStatus.node.version}, Claude Code ${initStatus.claude_code.version}`
-                : t('init.notFullyConfigured')}
+              {stepsCompleted.core ? 'Claude Code' : t('init.notFullyConfigured')}
             </span>
           </div>
         </div>
 
-        {/* Resources */}
+        {/* Client */}
         <div className="flex items-center gap-3">
-          {stepsCompleted.resources ? (
+          {stepsCompleted.client ? (
             <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
           ) : (
             <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
           )}
           <div>
-            <span className="text-white">{t('settings.init.resources')}</span>
+            <span className="text-white">{t('settings.init.claude')}</span>
             <span className="text-gray-400 text-sm ml-2">
-              {stepsCompleted.resources
-                ? `v${initStatus.resources_version || initStatus.current_frago_version}`
-                : t('init.notInstalled')}
+              {stepsCompleted.client
+                ? `v${initStatus.claude_code.version}`
+                : t('init.notFullyConfigured')}
             </span>
           </div>
         </div>
@@ -128,6 +128,23 @@ export function CompleteStep({
                   ? t('init.officialUserManaged')
                   : t('init.customEndpoint')
                 : t('init.configureInSettings')}
+            </span>
+          </div>
+        </div>
+
+        {/* Resources */}
+        <div className="flex items-center gap-3">
+          {stepsCompleted.resources ? (
+            <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0" />
+          ) : (
+            <XCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
+          )}
+          <div>
+            <span className="text-white">{t('settings.init.resources')}</span>
+            <span className="text-gray-400 text-sm ml-2">
+              {stepsCompleted.resources
+                ? `v${initStatus.resources_version || initStatus.current_frago_version}`
+                : t('init.notInstalled')}
             </span>
           </div>
         </div>

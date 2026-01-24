@@ -155,10 +155,9 @@ class InitService:
             "install_guide": _get_claude_code_install_guide(),
         }
 
-        # All satisfied if both are installed with sufficient versions
+        # All satisfied if Claude Code is installed with sufficient version
+        # Node.js check has been removed - it's a transitive dependency
         all_satisfied = (
-            node_status.get("installed", False) and
-            node_status.get("version_sufficient", False) and
             claude_code_status.get("installed", False) and
             claude_code_status.get("version_sufficient", False)
         )
