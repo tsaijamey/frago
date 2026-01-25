@@ -21,6 +21,8 @@ export default function GeneralSettings() {
   const [endpointType, setEndpointType] = useState<'deepseek' | 'aliyun' | 'kimi' | 'minimax' | 'custom'>('deepseek');
   const [endpointUrl, setEndpointUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [maskedApiKey, setMaskedApiKey] = useState('');  // Masked API key from server
+  const [apiKeyModified, setApiKeyModified] = useState(false);  // Track if user modified API key
   const [defaultModel, setDefaultModel] = useState('');
   const [sonnetModel, setSonnetModel] = useState('');
   const [haikuModel, setHaikuModel] = useState('');
@@ -44,10 +46,18 @@ export default function GeneralSettings() {
       if (data.api_endpoint) {
         setEndpointType(data.api_endpoint.type);
         setEndpointUrl(data.api_endpoint.url || '');
-        setApiKey(data.api_endpoint.api_key);
+        // API key from server is masked (e.g., "sk-1****xyz")
+        setMaskedApiKey(data.api_endpoint.api_key || '');
+        setApiKey('');  // Clear input field - user must enter new key to change
+        setApiKeyModified(false);
         setDefaultModel(data.api_endpoint.default_model || '');
         setSonnetModel(data.api_endpoint.sonnet_model || '');
         setHaikuModel(data.api_endpoint.haiku_model || '');
+      } else {
+        // Reset all fields when no api_endpoint
+        setMaskedApiKey('');
+        setApiKey('');
+        setApiKeyModified(false);
       }
 
       // Check VSCode availability (requires VSCode + ~/.claude/settings.json)
@@ -93,6 +103,8 @@ export default function GeneralSettings() {
     setEndpointType('deepseek');
     setEndpointUrl('');
     setApiKey('');
+    setMaskedApiKey('');
+    setApiKeyModified(false);
     setDefaultModel('');
     setSonnetModel('');
     setHaikuModel('');
@@ -104,10 +116,15 @@ export default function GeneralSettings() {
 
     // Validation
     if (authMethod === 'custom') {
-      if (!apiKey.trim()) {
+      // API key required only if: no existing config AND user hasn't entered one
+      const hasExistingApiKey = !!maskedApiKey;
+      const userEnteredApiKey = apiKeyModified && apiKey.trim();
+
+      if (!hasExistingApiKey && !userEnteredApiKey) {
         setError(t('errors.apiKeyEmpty'));
         return;
       }
+
       if (endpointType === 'custom') {
         if (!endpointUrl.trim()) {
           setError(t('errors.customEndpointRequired'));
@@ -129,24 +146,42 @@ export default function GeneralSettings() {
       if (authMethod === 'custom') {
         authData.api_endpoint = {
           type: endpointType,
-          api_key: apiKey,
+          // Only include api_key if user modified it
+          ...(apiKeyModified && apiKey.trim() ? { api_key: apiKey.trim() } : {}),
           ...(endpointType === 'custom' && { url: endpointUrl }),
           // Include model overrides (for all types, including presets)
           ...(defaultModel.trim() && { default_model: defaultModel.trim() }),
           ...(sonnetModel.trim() && { sonnet_model: sonnetModel.trim() }),
           ...(haikuModel.trim() && { haiku_model: haikuModel.trim() })
         };
+
+        // If no api_key provided but we have existing config, this is an update without key change
+        // Backend should preserve existing key - but we need to signal it's a valid update
+        if (!authData.api_endpoint.api_key && !maskedApiKey) {
+          setError(t('errors.apiKeyEmpty'));
+          setSaving(false);
+          return;
+        }
       }
 
       const result = await updateAuthMethod(authData);
-      if (result.status === 'ok' && result.config) {
-        setConfig(result.config);
-        // Update local state (API key will be masked)
-        if (result.config.api_endpoint) {
-          setApiKey(result.config.api_endpoint.api_key);
-          setDefaultModel(result.config.api_endpoint.default_model || '');
-          setSonnetModel(result.config.api_endpoint.sonnet_model || '');
-          setHaikuModel(result.config.api_endpoint.haiku_model || '');
+      if (result.status === 'ok') {
+        // Reload config to get updated state
+        const updatedConfig = await getMainConfig();
+        setConfig(updatedConfig);
+
+        // Update local state
+        if (updatedConfig.api_endpoint) {
+          setMaskedApiKey(updatedConfig.api_endpoint.api_key || '');
+          setApiKey('');  // Clear input
+          setApiKeyModified(false);
+          setDefaultModel(updatedConfig.api_endpoint.default_model || '');
+          setSonnetModel(updatedConfig.api_endpoint.sonnet_model || '');
+          setHaikuModel(updatedConfig.api_endpoint.haiku_model || '');
+        } else {
+          setMaskedApiKey('');
+          setApiKey('');
+          setApiKeyModified(false);
         }
         setError(null);
 
@@ -295,14 +330,20 @@ export default function GeneralSettings() {
               <div>
                 <label htmlFor="api-key" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                   {t('settings.general.apiKey')}
+                  {maskedApiKey && !apiKeyModified && (
+                    <span className="ml-2 text-[var(--text-muted)]">({t('settings.general.configured')})</span>
+                  )}
                 </label>
                 <div className="flex gap-2">
                   <input
                     id="api-key"
                     type={showApiKey ? "text" : "password"}
                     value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={t('settings.general.enterApiKey')}
+                    onChange={(e) => {
+                      setApiKey(e.target.value);
+                      setApiKeyModified(true);
+                    }}
+                    placeholder={maskedApiKey || t('settings.general.enterApiKey')}
                     className="flex-1 px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
                   />
                   <button
@@ -314,9 +355,14 @@ export default function GeneralSettings() {
                     {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
-                {apiKey && !showApiKey && (
+                {apiKeyModified && apiKey && !showApiKey && (
                   <p className="mt-1 text-xs text-[var(--text-muted)] font-mono">
                     {maskApiKey(apiKey)}
+                  </p>
+                )}
+                {!apiKeyModified && maskedApiKey && (
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">
+                    {t('settings.general.leaveEmptyToKeep')}
                   </p>
                 )}
               </div>

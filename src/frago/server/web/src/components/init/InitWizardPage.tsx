@@ -120,7 +120,11 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
     handleStepComplete('core');
   };
 
-  const handleAuthMethodComplete = async (authMethod: 'official' | 'custom', endpointType?: string) => {
+  const handleAuthMethodComplete = async (
+    authMethod: 'official' | 'custom',
+    endpointType?: string,
+    apiConfig?: { apiKey: string; url?: string; defaultModel?: string }
+  ) => {
     // Save the auth configuration
     try {
       if (authMethod === 'official') {
@@ -130,7 +134,9 @@ export function InitWizardPage({ onComplete }: InitWizardPageProps) {
           auth_method: 'custom',
           api_endpoint: {
             type: endpointType,
-            api_key: '', // Empty - will be configured in Settings
+            api_key: apiConfig?.apiKey || '',
+            ...(endpointType === 'custom' && apiConfig?.url ? { url: apiConfig.url } : {}),
+            ...(endpointType === 'custom' && apiConfig?.defaultModel ? { default_model: apiConfig.defaultModel } : {}),
           },
         });
       }

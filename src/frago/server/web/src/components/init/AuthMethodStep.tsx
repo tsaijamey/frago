@@ -15,6 +15,8 @@ import {
   Server,
   Key,
   ChevronRight,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 // Preset API endpoints matching backend configurator.py PRESET_ENDPOINTS
@@ -54,9 +56,15 @@ const PRESET_ENDPOINTS = [
 type AuthMethod = 'official' | 'custom' | null;
 type EndpointType = string | null;
 
+interface ApiConfig {
+  apiKey: string;
+  url?: string;
+  defaultModel?: string;
+}
+
 interface AuthMethodStepProps {
   coreType: 'claude-code' | 'opencode';
-  onComplete: (authMethod: 'official' | 'custom', endpointType?: string) => void;
+  onComplete: (authMethod: 'official' | 'custom', endpointType?: string, apiConfig?: ApiConfig) => void;
   onBack: () => void;
   onSkip: () => void;
 }
@@ -65,6 +73,13 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
   const { t } = useTranslation();
   const [authMethod, setAuthMethod] = useState<AuthMethod>(null);
   const [endpointType, setEndpointType] = useState<EndpointType>(null);
+
+  // API key configuration state
+  const [apiKey, setApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [customUrl, setCustomUrl] = useState('');
+  const [defaultModel, setDefaultModel] = useState('');
+  const [configLater, setConfigLater] = useState(false);
 
   // For OpenCode, only custom API is available
   const showOfficialOption = coreType === 'claude-code';
@@ -78,19 +93,37 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
 
   const handleEndpointSelect = (endpoint: string) => {
     setEndpointType(endpoint);
+    // Reset API config when switching endpoints
+    setApiKey('');
+    setCustomUrl('');
+    setDefaultModel('');
+    setConfigLater(false);
   };
 
   const handleContinue = () => {
     if (authMethod === 'official') {
       onComplete('official');
     } else if (authMethod === 'custom' && endpointType) {
-      onComplete('custom', endpointType);
+      const apiConfig: ApiConfig | undefined = configLater
+        ? undefined
+        : {
+            apiKey: apiKey.trim(),
+            url: endpointType === 'custom' ? customUrl.trim() : undefined,
+            defaultModel: endpointType === 'custom' ? defaultModel.trim() : undefined,
+          };
+      onComplete('custom', endpointType, apiConfig);
     }
   };
 
   const canContinue =
     authMethod === 'official' ||
-    (authMethod === 'custom' && endpointType);
+    (authMethod === 'custom' && endpointType && (
+      configLater ||
+      (apiKey.trim() && (
+        endpointType !== 'custom' ||
+        (customUrl.trim() && defaultModel.trim())
+      ))
+    ));
 
   return (
     <div className="space-y-6">
@@ -211,12 +244,91 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
             ))}
           </div>
 
-          {/* API Key note */}
-          <div className="p-3 bg-gray-900/50 rounded font-mono text-sm">
-            <p className="text-gray-400">
-              {t('init.authMethod.apiKeyNote')}
-            </p>
-          </div>
+          {/* API Key Configuration Form */}
+          {endpointType && (
+            <div className="p-4 bg-gray-900/50 rounded-lg border border-gray-700 space-y-4">
+              <h5 className="text-white font-medium font-mono text-sm">
+                {t('init.authMethod.apiKeyConfig')}
+              </h5>
+
+              {/* API Key Input */}
+              <div className="space-y-2">
+                <label htmlFor="api-key" className="text-gray-400 text-sm font-mono">
+                  API Key
+                </label>
+                <div className="relative">
+                  <input
+                    id="api-key"
+                    type={showApiKey ? 'text' : 'password'}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={t('init.authMethod.enterApiKey')}
+                    disabled={configLater}
+                    className="w-full px-3 py-2 pr-16 bg-gray-800 border border-gray-600 rounded text-white font-mono text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300 px-2 py-1 text-xs font-mono"
+                  >
+                    {showApiKey ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom endpoint specific fields */}
+              {endpointType === 'custom' && (
+                <>
+                  <div className="space-y-2">
+                    <label htmlFor="api-url" className="text-gray-400 text-sm font-mono">
+                      {t('init.authMethod.apiUrl')} *
+                    </label>
+                    <input
+                      id="api-url"
+                      type="text"
+                      value={customUrl}
+                      onChange={(e) => setCustomUrl(e.target.value)}
+                      placeholder={t('init.authMethod.enterApiUrl')}
+                      disabled={configLater}
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white font-mono text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="default-model" className="text-gray-400 text-sm font-mono">
+                      {t('init.authMethod.defaultModel')} *
+                    </label>
+                    <input
+                      id="default-model"
+                      type="text"
+                      value={defaultModel}
+                      onChange={(e) => setDefaultModel(e.target.value)}
+                      placeholder={t('init.authMethod.enterDefaultModel')}
+                      disabled={configLater}
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white font-mono text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* Configure later checkbox */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={configLater}
+                  onChange={(e) => setConfigLater(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
+                />
+                <span className="text-gray-400 text-sm font-mono">
+                  {t('init.authMethod.configLater')}
+                </span>
+              </label>
+            </div>
+          )}
         </div>
       )}
 
