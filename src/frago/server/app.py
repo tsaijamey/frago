@@ -39,6 +39,7 @@ from frago.server.services.cache_service import CacheService
 from frago.server.services.sync_service import SyncService
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.version_service import VersionCheckService
+from frago.server.state import StateManager
 
 
 @asynccontextmanager
@@ -56,7 +57,11 @@ async def lifespan(app: FastAPI):
 
     logger = logging.getLogger(__name__)
 
-    # Startup: Initialize cache first (preload all data)
+    # Startup: Initialize state manager (unified state)
+    state_manager = StateManager.get_instance()
+    await state_manager.initialize()
+
+    # Initialize cache service (for backward compatibility during migration)
     cache_service = CacheService.get_instance()
     await cache_service.initialize()
 
@@ -232,10 +237,10 @@ def create_app(
                 ),
             )
 
-            # Push initial data immediately if cache is ready
-            cache_service = CacheService.get_instance()
-            if cache_service.is_initialized():
-                initial_data = await cache_service.get_initial_data()
+            # Push initial data immediately if state is ready
+            state_manager = StateManager.get_instance()
+            if state_manager.is_initialized():
+                initial_data = state_manager.get_initial_data()
                 await manager.send_personal(
                     websocket,
                     create_message(MessageType.DATA_INITIAL, initial_data),

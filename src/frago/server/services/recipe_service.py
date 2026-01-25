@@ -14,29 +14,23 @@ logger = logging.getLogger(__name__)
 
 
 class RecipeService:
-    """Service for recipe management operations."""
+    """Service for recipe management operations.
 
-    # Cache for loaded recipes
-    _cache: Optional[List[Dict[str, Any]]] = None
+    Note: This service always loads fresh from storage.
+    For cached access, use StateManager.get_recipes().
+    """
 
     @classmethod
     def get_recipes(cls, force_reload: bool = False) -> List[Dict[str, Any]]:
         """Get list of available recipes.
 
         Args:
-            force_reload: If True, bypass cache and reload.
+            force_reload: Ignored. Always loads fresh. Use StateManager for caching.
 
         Returns:
             List of recipe dictionaries.
         """
-        if cls._cache is None or force_reload:
-            cls._cache = cls._load_recipes()
-        return cls._cache
-
-    @classmethod
-    def clear_cache(cls) -> None:
-        """Clear the recipe cache."""
-        cls._cache = None
+        return cls._load_recipes()
 
     @classmethod
     def _load_recipes(cls) -> List[Dict[str, Any]]:

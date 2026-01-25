@@ -47,6 +47,8 @@ class CommunityRecipeService:
 
         Args:
             cache_service: CacheService instance
+
+        Note: Deprecated. Use StateManager for unified state management.
         """
         self._cache_service = cache_service
 
@@ -204,8 +206,18 @@ class CommunityRecipeService:
         return result
 
     async def _broadcast_update(self) -> None:
-        """Broadcast community recipes update via WebSocket and update cache."""
-        # Update CacheService for dashboard stats
+        """Broadcast community recipes update via WebSocket and update state."""
+        # Update StateManager (primary)
+        try:
+            from frago.server.state import StateManager
+
+            state_manager = StateManager.get_instance()
+            if state_manager.is_initialized():
+                state_manager.set_community_recipes(self._cache or [])
+        except Exception as e:
+            logger.warning(f"Failed to update StateManager: {e}")
+
+        # Update CacheService for backward compatibility
         if self._cache_service is not None:
             self._cache_service.set_community_recipes(self._cache or [])
 
