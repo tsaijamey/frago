@@ -65,6 +65,14 @@ PRESET_ENDPOINTS = {
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 CLAUDE_JSON_PATH = Path.home() / ".claude.json"
 
+# URL patterns for inferring endpoint type
+ENDPOINT_URL_PATTERNS = {
+    "deepseek": "api.deepseek.com",
+    "aliyun": "dashscope.aliyuncs.com",
+    "kimi": "api.moonshot.cn",
+    "minimax": "api.minimaxi.com",
+}
+
 # ~/.claude.json minimal configuration (to skip official login flow)
 # Reference: https://github.com/anthropics/claude-code/issues/441
 CLAUDE_JSON_MINIMAL = {
@@ -249,6 +257,136 @@ def delete_claude_settings() -> bool:
         return True
     except Exception:
         return False
+
+
+def clear_api_env_from_settings() -> bool:
+    """
+    Clear API-related env vars from ~/.claude/settings.json
+
+    Called when user switches from custom to official mode.
+    Removes ANTHROPIC_* and related env vars while preserving other settings.
+
+    Returns:
+        True if successful, False if error
+    """
+    settings = load_claude_settings()
+    if not settings:
+        return True
+
+    env = settings.get("env", {})
+    if not env:
+        return True
+
+    # Keys to remove
+    api_keys_to_remove = [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "API_TIMEOUT_MS",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    ]
+
+    modified = False
+    for key in api_keys_to_remove:
+        if key in env:
+            del env[key]
+            modified = True
+
+    if not modified:
+        return True
+
+    # If env is now empty, remove it entirely
+    if not env:
+        del settings["env"]
+    else:
+        settings["env"] = env
+
+    # Write back (overwrite, not merge)
+    try:
+        CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+
+def _mask_api_key(api_key: str) -> str:
+    """
+    Mask API key for display
+
+    Args:
+        api_key: Raw API key
+
+    Returns:
+        Masked API key (e.g., "sk-1****xyz")
+    """
+    if not api_key:
+        return ""
+    if len(api_key) <= 8:
+        return "*" * len(api_key)
+    return api_key[:4] + "****" + api_key[-4:]
+
+
+def _infer_endpoint_type_from_url(base_url: str) -> str:
+    """
+    Infer endpoint type from URL pattern
+
+    Args:
+        base_url: ANTHROPIC_BASE_URL value
+
+    Returns:
+        Endpoint type: deepseek, aliyun, kimi, minimax, or custom
+    """
+    if not base_url:
+        return "custom"
+
+    for ep_type, pattern in ENDPOINT_URL_PATTERNS.items():
+        if pattern in base_url:
+            return ep_type
+    return "custom"
+
+
+def parse_api_config_from_claude_settings() -> Optional[dict]:
+    """
+    Parse API configuration from ~/.claude/settings.json
+
+    Returns:
+        Dict with API config for frontend display, or None if not configured
+        Keys: type, url, api_key (masked), default_model, sonnet_model, haiku_model
+    """
+    settings = load_claude_settings()
+    env = settings.get("env", {})
+    api_key = env.get("ANTHROPIC_API_KEY", "")
+
+    if not api_key:
+        return None
+
+    base_url = env.get("ANTHROPIC_BASE_URL", "")
+    endpoint_type = _infer_endpoint_type_from_url(base_url)
+
+    return {
+        "type": endpoint_type,
+        "url": base_url if endpoint_type == "custom" else None,
+        "api_key": _mask_api_key(api_key),
+        "default_model": env.get("ANTHROPIC_MODEL"),
+        "sonnet_model": env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+        "haiku_model": env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+    }
+
+
+def get_auth_method_from_settings() -> str:
+    """
+    Determine auth_method from ~/.claude/settings.json
+
+    Returns:
+        "custom" if ANTHROPIC_API_KEY is set, "official" otherwise
+    """
+    settings = load_claude_settings()
+    env = settings.get("env", {})
+    return "custom" if env.get("ANTHROPIC_API_KEY") else "official"
 
 
 def check_claude_json_exists() -> bool:
@@ -504,27 +642,15 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         click.echo(f"\n[ERROR] Failed to write config: {e}")
         click.echo("   Please check ~/.claude/ directory permissions")
 
-    # Create APIEndpoint object for frago configuration
-    if endpoint_type == "custom":
-        api_endpoint = APIEndpoint(
-            type="custom",
-            api_key=api_key,
-            url=custom_url,
-            sonnet_model=sonnet_model,
-            haiku_model=haiku_model,
-        )
-    else:
-        # Preset endpoint type
-        api_endpoint = APIEndpoint(type=endpoint_type, api_key=api_key, url=None)
-
-    # Update frago configuration
+    # Update frago configuration (only auth_method, NOT api_endpoint)
+    # API config is stored in settings.json only, not in config.json
     if existing_config:
         data = existing_config.model_dump()
         data["auth_method"] = "custom"
-        data["api_endpoint"] = api_endpoint
+        data["api_endpoint"] = None  # API config stored in settings.json only
         return Config(**data)
     else:
-        return Config(auth_method="custom", api_endpoint=api_endpoint)
+        return Config(auth_method="custom")
 
 
 def display_config_summary(config: Config) -> str:
@@ -549,7 +675,9 @@ def display_config_summary(config: Config) -> str:
     if config.auth_method == "official":
         items.append(("Authentication", "User configured"))
     else:
-        endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
+        # Read endpoint type from settings.json (source of truth)
+        api_config = parse_api_config_from_claude_settings()
+        endpoint_type = api_config.get("type", "custom") if api_config else "custom"
         items.append(("Authentication", f"Frago managed ({endpoint_type})"))
 
     # Initialization status
@@ -676,10 +804,12 @@ def format_final_summary(config: Config) -> str:
         lines.append("   - Method: User configured")
     else:
         lines.append("   - Method: Frago configured API endpoint")
-        if config.api_endpoint:
-            lines.append(f"   - Endpoint: {config.api_endpoint.type}")
-            if config.api_endpoint.url:
-                lines.append(f"   - URL: {config.api_endpoint.url}")
+        # Read API config from settings.json (source of truth)
+        api_config = parse_api_config_from_claude_settings()
+        if api_config:
+            lines.append(f"   - Endpoint: {api_config.get('type', 'custom')}")
+            if api_config.get("url"):
+                lines.append(f"   - URL: {api_config['url']}")
             lines.append("   - API Key: ****configured****")
 
     # CCR status

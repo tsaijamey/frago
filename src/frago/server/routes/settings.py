@@ -67,7 +67,7 @@ class MainConfigUpdateRequest(BaseModel):
 class APIEndpointRequest(BaseModel):
     """API endpoint configuration"""
     type: str  # deepseek, aliyun, kimi, minimax, custom
-    api_key: str
+    api_key: Optional[str] = None  # Optional - if not provided, existing key is preserved
     url: Optional[str] = None  # Only for custom type
     default_model: Optional[str] = None  # Override for ANTHROPIC_MODEL
     sonnet_model: Optional[str] = None   # Override for ANTHROPIC_DEFAULT_SONNET_MODEL
@@ -170,29 +170,37 @@ async def gh_auth_login() -> ApiResponse:
 async def get_main_config() -> MainConfigResponse:
     """Get main configuration.
 
-    Uses cache for improved performance on Windows.
+    API config is read from ~/.claude/settings.json (source of truth).
+    Other config is read from ~/.frago/config.json via cache.
     """
-    from frago.init.configurator import PRESET_ENDPOINTS
+    from frago.init.configurator import (
+        PRESET_ENDPOINTS,
+        parse_api_config_from_claude_settings,
+        get_auth_method_from_settings,
+    )
 
     cache = CacheService.get_instance()
     config = await cache.get_config()
 
-    # Build api_endpoint response if exists
+    # Get actual auth_method from settings.json (source of truth)
+    actual_auth_method = get_auth_method_from_settings()
+
+    # Build api_endpoint response from settings.json
     api_endpoint = None
-    if config.get("api_endpoint"):
-        ep = config["api_endpoint"]
-        ep_type = ep.get("type", "custom")
+    api_config = parse_api_config_from_claude_settings()
+    if api_config:
+        ep_type = api_config.get("type", "custom")
 
         # Get preset defaults if available
         preset = PRESET_ENDPOINTS.get(ep_type, {})
-        default_model = ep.get("default_model") or preset.get("ANTHROPIC_MODEL")
-        sonnet_model = ep.get("sonnet_model") or preset.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
-        haiku_model = ep.get("haiku_model") or preset.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+        default_model = api_config.get("default_model") or preset.get("ANTHROPIC_MODEL")
+        sonnet_model = api_config.get("sonnet_model") or preset.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+        haiku_model = api_config.get("haiku_model") or preset.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
 
         api_endpoint = APIEndpointResponse(
             type=ep_type,
-            url=ep.get("url"),
-            api_key=ep.get("api_key", ""),
+            url=api_config.get("url"),
+            api_key=api_config.get("api_key", ""),  # Already masked
             default_model=default_model,
             sonnet_model=sonnet_model,
             haiku_model=haiku_model,
@@ -200,7 +208,7 @@ async def get_main_config() -> MainConfigResponse:
 
     return MainConfigResponse(
         working_directory=config.get("working_directory_display", "~/.frago"),
-        auth_method=config.get("auth_method", "official"),
+        auth_method=actual_auth_method,
         api_endpoint=api_endpoint,
         sync_repo=config.get("sync_repo_url"),
         resources_installed=config.get("resources_installed", True),
@@ -244,16 +252,19 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
     """Update authentication method and API endpoint.
 
     When auth_method is 'custom', creates ~/.claude/settings.json with the API config.
-    When auth_method is 'official', deletes ~/.claude/settings.json.
+    API config is ONLY stored in settings.json, NOT in config.json.
+    When auth_method is 'official', clears API env vars from settings.json.
+
+    If api_key is not provided but an existing config exists, the existing API key is preserved.
     """
     from frago.init.config_manager import load_config, save_config
     from frago.init.configurator import (
         build_claude_env_config,
         save_claude_settings,
-        delete_claude_settings,
+        clear_api_env_from_settings,
         ensure_claude_json_for_custom_auth,
+        load_claude_settings,
     )
-    from frago.init.models import APIEndpoint
 
     try:
         # Load existing config
@@ -265,10 +276,21 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
 
             endpoint = request.api_endpoint
 
+            # Get API key: use provided one, or preserve existing from settings.json
+            api_key = endpoint.api_key
+            if not api_key:
+                # Try to get existing API key from settings.json
+                existing_settings = load_claude_settings()
+                existing_api_key = existing_settings.get("env", {}).get("ANTHROPIC_API_KEY")
+                if existing_api_key:
+                    api_key = existing_api_key
+                else:
+                    return ApiResponse(status="error", error="API key required for new custom auth configuration")
+
             # Build env config for Claude Code
             env_config = build_claude_env_config(
                 endpoint_type=endpoint.type,
-                api_key=endpoint.api_key,
+                api_key=api_key,
                 custom_url=endpoint.url if endpoint.type == "custom" else None,
                 default_model=endpoint.default_model,
                 sonnet_model=endpoint.sonnet_model,
@@ -278,23 +300,16 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
             # Ensure ~/.claude.json exists (to skip official login)
             ensure_claude_json_for_custom_auth()
 
-            # Save to ~/.claude/settings.json
+            # Save to ~/.claude/settings.json (source of truth for API config)
             save_claude_settings({"env": env_config})
 
-            # Update frago config
+            # Update frago config (only auth_method, NOT api_endpoint)
             config.auth_method = "custom"
-            config.api_endpoint = APIEndpoint(
-                type=endpoint.type,
-                api_key=endpoint.api_key,
-                url=endpoint.url,
-                default_model=endpoint.default_model,
-                sonnet_model=endpoint.sonnet_model,
-                haiku_model=endpoint.haiku_model,
-            )
+            config.api_endpoint = None  # API config stored in settings.json only
 
         else:  # official
-            # Delete ~/.claude/settings.json
-            delete_claude_settings()
+            # Clear API env vars from ~/.claude/settings.json (preserve other settings)
+            clear_api_env_from_settings()
 
             # Update frago config
             config.auth_method = "official"
@@ -302,6 +317,10 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
 
         # Save frago config
         save_config(config)
+
+        # Refresh cache after update
+        cache = CacheService.get_instance()
+        await cache.refresh_config(broadcast=True)
 
         return ApiResponse(status="ok", message="Authentication updated")
 

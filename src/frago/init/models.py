@@ -80,11 +80,15 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_auth_consistency(self) -> "Config":
-        """Validate authentication configuration consistency (mutual exclusivity constraint)"""
-        if self.auth_method == "custom" and not self.api_endpoint:
-            raise ValueError("Custom auth requires api_endpoint")
+        """Validate authentication configuration consistency
+
+        Rules:
+        - official mode cannot have api_endpoint in config.json
+        - custom mode does not require api_endpoint (API config stored in ~/.claude/settings.json)
+        """
         if self.auth_method == "official" and self.api_endpoint:
             raise ValueError("Official auth cannot have api_endpoint")
+        # Note: custom mode no longer requires api_endpoint since it's stored in settings.json
         return self
 
     class ConfigDict:
