@@ -2,18 +2,19 @@
 
 Provides system overview data including:
 - Server status and uptime
-- Activity overview (6-hour statistics and hourly distribution)
+- Activity overview (12-hour statistics and hourly distribution)
 - Resource counts (tasks, recipes, skills)
+
+Uses StateManager for unified state access.
 """
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from frago.server.services.cache_service import CacheService
+from frago.server.state import StateManager
 from frago.server.utils import get_server_state
 from frago.session.models import SessionStatus
 
@@ -22,6 +23,7 @@ router = APIRouter()
 
 class ServerInfo(BaseModel):
     """Server status information."""
+
     running: bool
     uptime_seconds: float
     started_at: Optional[str] = None
@@ -29,7 +31,8 @@ class ServerInfo(BaseModel):
 
 class HourlyActivity(BaseModel):
     """Activity data for a single hour bucket."""
-    hour: str  # ISO format hour start, e.g., "2025-12-24T14:00:00"
+
+    hour: str  # ISO format hour start
     session_count: int
     tool_call_count: int
     completed_count: int
@@ -37,6 +40,7 @@ class HourlyActivity(BaseModel):
 
 class ActivityStats(BaseModel):
     """Aggregated activity statistics for past 12 hours."""
+
     total_sessions: int
     completed_sessions: int
     running_sessions: int
@@ -47,12 +51,14 @@ class ActivityStats(BaseModel):
 
 class ActivityOverview(BaseModel):
     """Complete activity overview for dashboard."""
+
     hourly_distribution: list[HourlyActivity]
     stats: ActivityStats
 
 
 class ResourceCounts(BaseModel):
     """Resource statistics."""
+
     tasks: int
     recipes: int
     skills: int
@@ -60,6 +66,7 @@ class ResourceCounts(BaseModel):
 
 class DashboardData(BaseModel):
     """Complete dashboard data response."""
+
     server: ServerInfo
     activity_overview: ActivityOverview
     resource_counts: ResourceCounts
@@ -150,41 +157,37 @@ async def get_dashboard():
     """Get dashboard overview data.
 
     Returns server status, activity overview, and resource counts.
-    Uses cache for fast response when available.
+    Uses StateManager for unified state access.
     """
-    # Use cache if available
-    cache = CacheService.get_instance()
-    if cache.is_initialized():
-        cached = await cache.get_dashboard()
-        if cached:
-            # Convert cached dict to response models
-            server = cached.get("server", {})
-            activity = cached.get("activity_overview", {})
-            resources = cached.get("resource_counts", {})
+    state_manager = StateManager.get_instance()
 
-            hourly_dist = [
-                HourlyActivity(**h)
-                for h in activity.get("hourly_distribution", [])
-            ]
+    # Use StateManager if initialized
+    if state_manager.is_initialized():
+        dashboard = state_manager.get_dashboard()
 
-            return DashboardData(
-                server=ServerInfo(
-                    running=server.get("running", True),
-                    uptime_seconds=server.get("uptime_seconds", 0),
-                    started_at=server.get("started_at"),
-                ),
-                activity_overview=ActivityOverview(
-                    hourly_distribution=hourly_dist,
-                    stats=ActivityStats(**activity.get("stats", {})),
-                ),
-                resource_counts=ResourceCounts(
-                    tasks=resources.get("tasks", 0),
-                    recipes=resources.get("recipes", 0),
-                    skills=resources.get("skills", 0),
-                ),
-            )
+        hourly_dist = [
+            HourlyActivity(**h)
+            for h in dashboard.activity_overview.get("hourly_distribution", [])
+        ]
 
-    # Fallback to direct calculation if cache not ready
+        return DashboardData(
+            server=ServerInfo(
+                running=dashboard.server.running,
+                uptime_seconds=dashboard.server.uptime_seconds,
+                started_at=dashboard.server.started_at,
+            ),
+            activity_overview=ActivityOverview(
+                hourly_distribution=hourly_dist,
+                stats=ActivityStats(**dashboard.activity_overview.get("stats", {})),
+            ),
+            resource_counts=ResourceCounts(
+                tasks=dashboard.resource_counts.tasks,
+                recipes=dashboard.resource_counts.recipes,
+                skills=dashboard.resource_counts.skills,
+            ),
+        )
+
+    # Fallback to direct calculation if state not ready
     server_state = get_server_state()
     uptime_seconds = 0.0
     if server_state.get("started_at"):
@@ -200,10 +203,10 @@ async def get_dashboard():
     activity_overview = calculate_activity_overview()
 
     # Get resource counts using services
+    from frago.recipes.installer import RecipeInstaller
     from frago.server.services.recipe_service import RecipeService
     from frago.server.services.skill_service import SkillService
     from frago.session.storage import list_sessions
-    from frago.recipes.installer import RecipeInstaller
 
     try:
         recipes = RecipeService.get_recipes()

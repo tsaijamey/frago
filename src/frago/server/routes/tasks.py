@@ -1,8 +1,10 @@
 """Task API endpoints.
 
 Provides endpoints for listing and viewing tasks/sessions.
+Uses StateManager for unified state access.
 """
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -16,10 +18,74 @@ from frago.server.models import (
     TaskSummaryResponse,
     ToolUsageStatResponse,
 )
-from frago.server.services.cache_service import CacheService
+from frago.server.state import StateManager
 from frago.server.services.task_service import TaskService
 
 router = APIRouter()
+
+
+def _task_item_to_response(task) -> TaskItemResponse:
+    """Convert TaskItem to TaskItemResponse."""
+    return TaskItemResponse(
+        id=task.id,
+        title=task.title,
+        status=task.status,
+        project_path=task.project_path,
+        agent_type=task.agent_type,
+        started_at=task.started_at or datetime.now(timezone.utc),
+        completed_at=task.completed_at,
+        duration_ms=task.duration_ms,
+        step_count=task.step_count,
+        tool_call_count=task.tool_call_count,
+        source=task.source,
+    )
+
+
+def _task_detail_to_response(detail) -> TaskDetailResponse:
+    """Convert TaskDetail to TaskDetailResponse."""
+    steps = [
+        TaskStepResponse(
+            timestamp=s.timestamp,
+            type=s.type,
+            content=s.content,
+            tool_name=s.tool_name,
+            tool_call_id=s.tool_call_id,
+            tool_result=s.tool_result,
+        )
+        for s in detail.steps
+    ]
+
+    summary = None
+    if detail.summary:
+        summary = TaskSummaryResponse(
+            total_duration_ms=detail.summary.total_duration_ms,
+            user_message_count=detail.summary.user_message_count,
+            assistant_message_count=detail.summary.assistant_message_count,
+            tool_call_count=detail.summary.tool_call_count,
+            tool_success_count=detail.summary.tool_success_count,
+            tool_error_count=detail.summary.tool_error_count,
+            most_used_tools=[
+                ToolUsageStatResponse(name=t.name, count=t.count)
+                for t in detail.summary.most_used_tools
+            ],
+        )
+
+    return TaskDetailResponse(
+        id=detail.id,
+        title=detail.title,
+        status=detail.status,
+        project_path=detail.project_path,
+        started_at=detail.started_at,
+        completed_at=detail.completed_at,
+        duration_ms=detail.duration_ms,
+        step_count=detail.step_count,
+        tool_call_count=detail.tool_call_count,
+        steps=steps,
+        steps_total=detail.steps_total,
+        steps_offset=detail.steps_offset,
+        has_more_steps=detail.has_more_steps,
+        summary=summary,
+    )
 
 
 @router.get("/tasks", response_model=TaskListResponse)
@@ -38,26 +104,21 @@ async def list_tasks(
     Returns:
         List of tasks with total count
     """
-    from datetime import datetime, timezone
+    state_manager = StateManager.get_instance()
 
-    # Use cache for default queries (no filter)
-    cache = CacheService.get_instance()
-    if status is None and cache.is_initialized():
-        cached = await cache.get_tasks()
-        if cached:
-            # Apply pagination to cached result
-            all_tasks = cached.get("tasks", [])
-            paginated = all_tasks[offset:offset + limit]
-            result = {"tasks": paginated, "total": cached.get("total", len(all_tasks))}
-        else:
-            result = TaskService.get_tasks(
-                status=status, limit=limit, offset=offset
-            )
-    else:
-        # Filtered requests bypass cache
-        result = TaskService.get_tasks(
-            status=status, limit=limit, offset=offset
-        )
+    # Use StateManager for default queries (no filter)
+    if status is None and state_manager.is_initialized():
+        all_tasks = state_manager.get_tasks()
+        total = state_manager.get_tasks_total()
+
+        # Apply pagination
+        paginated = all_tasks[offset : offset + limit]
+        tasks = [_task_item_to_response(t) for t in paginated]
+
+        return TaskListResponse(tasks=tasks, total=total)
+
+    # Filtered requests: query storage directly and convert
+    result = TaskService.get_tasks(status=status, limit=limit, offset=offset)
 
     tasks = []
     for t in result.get("tasks", []):
@@ -97,6 +158,8 @@ async def list_tasks(
 async def get_task(task_id: str) -> TaskDetailResponse:
     """Get task details by ID.
 
+    Uses StateManager for cached access with automatic loading.
+
     Args:
         task_id: Task identifier
 
@@ -106,8 +169,15 @@ async def get_task(task_id: str) -> TaskDetailResponse:
     Raises:
         HTTPException: 404 if task not found
     """
-    from datetime import datetime, timezone
+    state_manager = StateManager.get_instance()
 
+    # Use StateManager (with caching)
+    if state_manager.is_initialized():
+        detail = state_manager.get_task_detail(task_id)
+        if detail:
+            return _task_detail_to_response(detail)
+
+    # Fallback to direct TaskService call
     task = TaskService.get_task(task_id)
 
     if task is None:
@@ -137,16 +207,13 @@ async def get_task(task_id: str) -> TaskDetailResponse:
     summary = None
     if task.get("summary"):
         s = task["summary"]
-        # most_used_tools can be ToolUsageStats objects (from storage) or dicts
         most_used_tools = []
         for t in s.get("most_used_tools", []):
             if hasattr(t, "tool_name"):
-                # It's a ToolUsageStats object
                 most_used_tools.append(
                     ToolUsageStatResponse(name=t.tool_name, count=t.count)
                 )
             else:
-                # It's a dict
                 most_used_tools.append(
                     ToolUsageStatResponse(name=t.get("name", ""), count=t.get("count", 0))
                 )
@@ -233,8 +300,6 @@ async def get_task_steps(
     Raises:
         HTTPException: 404 if task not found
     """
-    from datetime import datetime, timezone
-
     # Verify task exists
     task = TaskService.get_task(task_id)
     if task is None:

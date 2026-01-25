@@ -19,6 +19,7 @@ from frago.server.models import (
     CommunityRecipeInstallRequest,
     CommunityRecipeInstallResponse,
 )
+from frago.server.state import StateManager
 from frago.server.services.cache_service import CacheService
 from frago.server.services.recipe_service import RecipeService
 
@@ -30,15 +31,29 @@ async def list_recipes() -> List[RecipeItemResponse]:
     """List all available recipes.
 
     Returns a list of all recipes from both atomic and workflow categories.
-    Uses cache for fast response when available.
+    Uses StateManager for unified state access.
     """
-    # Use cache if available
-    cache = CacheService.get_instance()
-    if cache.is_initialized():
-        recipes = await cache.get_recipes()
-    else:
-        recipes = RecipeService.get_recipes()
+    state_manager = StateManager.get_instance()
 
+    # Use StateManager if initialized
+    if state_manager.is_initialized():
+        recipes = state_manager.get_recipes()
+        return [
+            RecipeItemResponse(
+                name=r.name,
+                description=r.description,
+                category=r.category,
+                icon=r.icon,
+                tags=r.tags,
+                path=r.path,
+                source=r.source,
+                runtime=r.runtime,
+            )
+            for r in recipes
+        ]
+
+    # Fallback to direct service call
+    recipes = RecipeService.get_recipes()
     return [
         RecipeItemResponse(
             name=r.get("name", ""),
@@ -293,8 +308,8 @@ async def install_community_recipe(
     )
 
     # Trigger local recipe cache refresh after install
-    cache = CacheService.get_instance()
-    await cache.refresh_recipes(broadcast=True)
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_recipes(broadcast=True)
 
     # Trigger community recipes refresh to update install status
     await service._do_refresh()
@@ -333,8 +348,8 @@ async def update_community_recipe(name: str) -> CommunityRecipeInstallResponse:
     )
 
     # Trigger local recipe cache refresh after update
-    cache = CacheService.get_instance()
-    await cache.refresh_recipes(broadcast=True)
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_recipes(broadcast=True)
 
     # Trigger community recipes refresh to update status
     await service._do_refresh()
@@ -373,8 +388,8 @@ async def uninstall_community_recipe(name: str) -> CommunityRecipeInstallRespons
     )
 
     # Trigger local recipe cache refresh after uninstall
-    cache = CacheService.get_instance()
-    await cache.refresh_recipes(broadcast=True)
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_recipes(broadcast=True)
 
     # Trigger community recipes refresh to update status
     await service._do_refresh()
