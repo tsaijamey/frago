@@ -121,6 +121,8 @@
     "filter": "Filter",
     "noSteps": "No steps",
     "scrollToLoadMore": "Scroll to load more...",
+    "scrollUpToLoadMore": "Scroll up to load more...",
+    "loadingOlder": "Loading older messages...",
     "showMore": "Show more",
     "user": "User",
     "assistant": "Assistant",
@@ -129,7 +131,9 @@
     "system": "System",
     "generateTitle": "Generate task title using haiku model",
     "titleGenerated": "Title generated successfully",
-    "titleGenerationFailed": "Failed to generate title"
+    "titleGenerationFailed": "Failed to generate title",
+    "showDetails": "Details",
+    "taskDetails": "Task Details"
   },
   "recipes": {
     "title": "Recipes",

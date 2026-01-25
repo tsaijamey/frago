@@ -1,11 +1,16 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TaskStep, StepType } from '@/types/pywebview';
-import { User, Bot, Wrench, ArrowRight, Settings, type LucideIcon } from 'lucide-react';
+import { User, Bot, Wrench, ArrowRight, Settings, Loader2, type LucideIcon } from 'lucide-react';
 import { StepContent, PairedToolStep } from './content';
+import { getTaskSteps } from '@/api';
 
 interface StepListProps {
-  steps: TaskStep[];
+  sessionId: string;
+  initialSteps: TaskStep[];
+  totalSteps: number;
+  hasMore: boolean;
+  isRunning: boolean;
 }
 
 // Step type configuration (matches ConsoleMessage types for consistency)
@@ -35,8 +40,8 @@ function formatTimestamp(isoString: string): string {
 // Filterable types (matches ConsoleMessage types for consistency)
 const filterableTypes: StepType[] = ['user', 'assistant', 'tool_call', 'tool_result', 'system'];
 
-// Render batch size
-const RENDER_BATCH_SIZE = 50;
+// Pagination settings
+const PAGE_SIZE = 100;
 
 // Types for paired/unpaired steps
 type PairedStep = { type: 'paired'; call: TaskStep; result: TaskStep; key: string };
@@ -101,12 +106,40 @@ function pairToolSteps(steps: TaskStep[]): DisplayStep[] {
   return result;
 }
 
-export default function StepList({ steps }: StepListProps) {
+export default function StepList({ sessionId, initialSteps, totalSteps: _totalSteps, hasMore: initialHasMore, isRunning }: StepListProps) {
   const { t } = useTranslation();
   // Empty set means show all, non-empty means only show selected types
   const [activeFilters, setActiveFilters] = useState<Set<StepType>>(new Set());
-  const [renderCount, setRenderCount] = useState(RENDER_BATCH_SIZE);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Pagination state - load older messages on scroll up
+  const [steps, setSteps] = useState<TaskStep[]>(initialSteps);
+  const [hasMoreOlder, setHasMoreOlder] = useState(initialHasMore);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [loadedOffset, setLoadedOffset] = useState(initialSteps.length);
+
+  // Track if user is at bottom for auto-scroll
+  const [isAtBottom, setIsAtBottom] = useState(true);
+
+  // Update steps when initialSteps changes (e.g., from polling)
+  useEffect(() => {
+    // Check if new steps arrived (compare by length or last step timestamp)
+    if (initialSteps.length > steps.length) {
+      // Append new steps only (don't replace existing)
+      const newSteps = initialSteps.slice(steps.length);
+      if (newSteps.length > 0) {
+        setSteps(prev => [...prev, ...newSteps]);
+      }
+    } else if (initialSteps.length === steps.length && initialSteps.length > 0) {
+      // Same length, check if last step is different (content updated)
+      const lastInitial = initialSteps[initialSteps.length - 1];
+      const lastCurrent = steps[steps.length - 1];
+      if (lastInitial.content !== lastCurrent.content) {
+        // Update the last step
+        setSteps(prev => [...prev.slice(0, -1), lastInitial]);
+      }
+    }
+  }, [initialSteps, steps.length]);
 
   const toggleFilter = (type: StepType) => {
     setActiveFilters(prev => {
@@ -118,8 +151,6 @@ export default function StepList({ steps }: StepListProps) {
       }
       return next;
     });
-    // Reset render count
-    setRenderCount(RENDER_BATCH_SIZE);
   };
 
   // Empty set shows all, otherwise only show selected types
@@ -130,50 +161,79 @@ export default function StepList({ steps }: StepListProps) {
   // Pair tool calls with their results
   const displaySteps = useMemo(() => pairToolSteps(filteredSteps), [filteredSteps]);
 
-  // Only render first N items
-  const renderedSteps = displaySteps.slice(0, renderCount);
-  const hasMore = renderCount < displaySteps.length;
+  // Load older steps when scrolling near top
+  const loadOlderSteps = useCallback(async () => {
+    if (isLoadingOlder || !hasMoreOlder) return;
 
-  // Load more when scrolling to bottom
+    setIsLoadingOlder(true);
+    try {
+      const result = await getTaskSteps(sessionId, loadedOffset, PAGE_SIZE);
+      if (result.steps.length > 0) {
+        // Save scroll position before prepending
+        const el = scrollRef.current;
+        const prevScrollHeight = el?.scrollHeight ?? 0;
+        const prevScrollTop = el?.scrollTop ?? 0;
+
+        // Prepend older steps
+        setSteps(prev => [...result.steps, ...prev]);
+        setLoadedOffset(prev => prev + result.steps.length);
+        setHasMoreOlder(result.has_more);
+
+        // Restore scroll position after React updates the DOM
+        requestAnimationFrame(() => {
+          if (el) {
+            const newScrollHeight = el.scrollHeight;
+            el.scrollTop = newScrollHeight - prevScrollHeight + prevScrollTop;
+          }
+        });
+      } else {
+        setHasMoreOlder(false);
+      }
+    } catch (error) {
+      console.error('Failed to load older steps:', error);
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  }, [sessionId, loadedOffset, isLoadingOlder, hasMoreOlder]);
+
+  // Handle scroll events
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    // Load more when 100px from bottom
-    if (scrollHeight - scrollTop - clientHeight < 100) {
-      setRenderCount(prev => {
-        if (prev >= displaySteps.length) return prev;
-        return Math.min(prev + RENDER_BATCH_SIZE, displaySteps.length);
-      });
+    // Check if at bottom (within 50px threshold)
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    setIsAtBottom(atBottom);
+
+    // Load older when near top (within 100px)
+    if (el.scrollTop < 100 && hasMoreOlder && !isLoadingOlder) {
+      loadOlderSteps();
     }
-  }, [displaySteps.length]);
+  }, [hasMoreOlder, isLoadingOlder, loadOlderSteps]);
 
   // Listen to scroll
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
 
-    const onScroll = () => handleScroll();
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => el.removeEventListener('scroll', handleScroll);
   }, [handleScroll]);
 
-  // Check if content is insufficient to scroll, if so load all directly
+  // Scroll to bottom on initial mount
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-
-    // If content height is less than container height, means cannot scroll, load all directly
-    if (el.scrollHeight <= el.clientHeight && renderCount < displaySteps.length) {
-      setRenderCount(displaySteps.length);
+    if (el) {
+      el.scrollTop = el.scrollHeight;
     }
-  }, [renderCount, displaySteps.length]);
+  }, []); // Only on mount
 
-  // Reset render count when filter conditions change
+  // Auto-scroll when running and user is at bottom
   useEffect(() => {
-    setRenderCount(RENDER_BATCH_SIZE);
-  }, [activeFilters]);
+    if (isRunning && isAtBottom && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [steps, isRunning, isAtBottom]);
 
   if (steps.length === 0) {
     return (
@@ -214,8 +274,22 @@ export default function StepList({ steps }: StepListProps) {
 
       {/* Step list - internal scrolling */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
+        {/* Loading older indicator */}
+        {hasMoreOlder && (
+          <div className="text-center py-scaled-2 text-scaled-xs text-[var(--text-muted)]">
+            {isLoadingOlder ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="icon-scaled-sm animate-spin" />
+                {t('tasks.loadingOlder')}
+              </span>
+            ) : (
+              <span>{t('tasks.scrollUpToLoadMore')}</span>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-col gap-scaled-2">
-          {renderedSteps.map((displayStep) => {
+          {displaySteps.map((displayStep) => {
             if (displayStep.type === 'paired') {
               // Render paired tool call and result
               return (
@@ -256,11 +330,6 @@ export default function StepList({ steps }: StepListProps) {
             );
           })}
         </div>
-        {hasMore && (
-          <div className="text-center py-scaled-2 text-scaled-xs text-[var(--text-muted)]">
-            {t('tasks.scrollToLoadMore')}
-          </div>
-        )}
       </div>
     </div>
   );

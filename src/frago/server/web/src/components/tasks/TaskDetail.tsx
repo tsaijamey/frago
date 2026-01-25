@@ -5,8 +5,9 @@ import { getTaskDetail, continueAgentTask, generateTaskTitle } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import DirectoryAutocomplete from '@/components/ui/DirectoryAutocomplete';
+import Modal from '@/components/ui/Modal';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
-import { Send, MessageSquarePlus, ChevronDown, ChevronRight, Zap } from 'lucide-react';
+import { Send, Info, Zap } from 'lucide-react';
 import { modKey } from '@/hooks/usePlatform';
 
 // Format date time
@@ -35,13 +36,12 @@ export default function TaskDetail() {
   const { taskDetail, isLoading, switchPage, setTaskDetail, showToast } = useAppStore();
 
   // Continue feature state
-  const [showContinue, setShowContinue] = useState(false);
   const [continuePrompt, setContinuePrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Collapse state
-  const [infoCollapsed, setInfoCollapsed] = useState(false);
+  // Details modal state
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   // Title generation state
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
@@ -90,12 +90,12 @@ export default function TaskDetail() {
     return () => clearInterval(interval);
   }, [taskDetail?.session_id, taskDetail?.status, setTaskDetail]);
 
-  // Auto focus when input expands
+  // Auto focus when page loads and can continue
   useEffect(() => {
-    if (showContinue && textareaRef.current) {
+    if (canContinue && textareaRef.current) {
       textareaRef.current.focus();
     }
-  }, [showContinue]);
+  }, [canContinue]);
 
   // Continue conversation submit
   const handleContinueSubmit = async () => {
@@ -110,7 +110,6 @@ export default function TaskDetail() {
       const result = await continueAgentTask(taskDetail.session_id, trimmed);
       if (result.status === 'ok') {
         setContinuePrompt('');
-        setShowContinue(false);
         showToast('Continue conversation request sent', 'success');
         // Refresh detail to get new status
         const updated = await getTaskDetail(taskDetail.session_id);
@@ -169,19 +168,11 @@ export default function TaskDetail() {
           ← {t('tasks.backToTaskList')}
         </button>
 
-        {/* Task info card - collapsible */}
+        {/* Task info card */}
         <div className="card">
-          {/* Title row - click to collapse */}
-          <div
-            className="flex justify-between items-center cursor-pointer select-none"
-            onClick={() => setInfoCollapsed(!infoCollapsed)}
-          >
+          {/* Title row */}
+          <div className="flex justify-between items-center">
             <div className="flex items-center gap-scaled-2 flex-1 min-w-0">
-              {infoCollapsed ? (
-                <ChevronRight className="icon-scaled-md text-[var(--text-muted)] shrink-0" />
-              ) : (
-                <ChevronDown className="icon-scaled-md text-[var(--text-muted)] shrink-0" />
-              )}
               <h2 className="text-scaled-lg font-medium text-[var(--text-primary)] truncate">
                 {taskDetail.name}
               </h2>
@@ -189,10 +180,7 @@ export default function TaskDetail() {
               <button
                 type="button"
                 className="btn btn-ghost p-1 shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleGenerateTitle();
-                }}
+                onClick={handleGenerateTitle}
                 disabled={isGeneratingTitle}
                 title={t('tasks.generateTitle')}
                 aria-label={t('tasks.generateTitle')}
@@ -203,26 +191,7 @@ export default function TaskDetail() {
                   <Zap className="icon-scaled-md text-[var(--text-muted)] hover:text-[var(--accent-primary)]" />
                 )}
               </button>
-              {/* Show status summary when collapsed */}
-              {infoCollapsed && (
-                <span className={`status-${taskDetail.status} text-scaled-sm ml-scaled-2 shrink-0`}>
-                  {taskDetail.status}
-                </span>
-              )}
             </div>
-            {/* Continue button - placed on the right of title */}
-            {canContinue && !showContinue && (
-              <button
-                className="btn btn-primary flex items-center gap-scaled-2 ml-scaled-4 shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowContinue(true);
-                }}
-              >
-                <MessageSquarePlus className="icon-scaled-md" />
-                {t('tasks.continueConversation')}
-              </button>
-            )}
             {/* Running status hint */}
             {taskDetail.status === 'running' && (
               <div className="flex items-center gap-scaled-2 text-scaled-sm text-[var(--accent-warning)] ml-scaled-4 shrink-0">
@@ -230,96 +199,100 @@ export default function TaskDetail() {
                 {t('tasks.status.running')}
               </div>
             )}
+            {/* Details button */}
+            <button
+              type="button"
+              className="btn btn-ghost flex items-center gap-scaled-2 ml-scaled-4 shrink-0"
+              onClick={() => setShowDetailsModal(true)}
+            >
+              <Info className="icon-scaled-md" />
+              {t('tasks.showDetails')}
+            </button>
           </div>
-
-          {/* Details - collapsible */}
-          {!infoCollapsed && (
-            <div className="space-y-2 text-scaled-sm mt-scaled-4">
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">{t('tasks.statusLabel')}</span>
-                <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">{t('tasks.startTime')}</span>
-                <span>{formatDateTime(taskDetail.started_at)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">{t('tasks.duration')}</span>
-                <span>{formatDuration(taskDetail.duration_ms)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">{t('tasks.stepCount')}</span>
-                <span>{taskDetail.step_count}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)]">{t('tasks.toolCalls')}</span>
-                <span>{taskDetail.tool_call_count}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--text-muted)] shrink-0">{t('tasks.projectPath')}</span>
-                <span className="font-mono text-scaled-xs text-right break-all ml-scaled-4">{taskDetail.project_path}</span>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Continue input area */}
-        {showContinue && (
-          <div className="card">
-            <div className="task-input-wrapper relative">
-              <DirectoryAutocomplete
-                value={continuePrompt}
-                onChange={setContinuePrompt}
-                textareaRef={textareaRef}
-              />
-              <textarea
-                ref={textareaRef}
-                className="task-input"
-                placeholder={t('tasks.enterContinueContent')}
-                value={continuePrompt}
-                onChange={(e) => setContinuePrompt(e.target.value)}
-                onKeyDown={handleContinueKeyDown}
-                aria-label="Continue conversation input"
-              />
-              <button
-                type="button"
-                className={`task-input-btn ${continuePrompt.trim() ? 'visible' : ''}`}
-                onClick={handleContinueSubmit}
-                disabled={isSubmitting || !continuePrompt.trim()}
-              >
-                {isSubmitting ? (
-                  <div className="spinner" />
-                ) : (
-                  <Send className="icon-scaled-md" />
-                )}
-              </button>
-            </div>
-            <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
-              {modKey}+Enter to send ·
-              <button
-                className="text-[var(--accent-primary)] hover:underline ml-scaled-1"
-                onClick={() => setShowContinue(false)}
-              >
-                {t('common.cancel')}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Step list area - takes remaining space, scrolls internally */}
       <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between mb-scaled-3 shrink-0">
-          <h3 className="font-medium text-[var(--accent-primary)]">
-            {t('tasks.executionSteps')}
-          </h3>
-        </div>
-
         {/* StepList takes remaining space */}
         <div className="flex-1 min-h-0">
-          <StepList steps={taskDetail.steps} />
+          <StepList
+            sessionId={taskDetail.session_id}
+            initialSteps={taskDetail.steps}
+            totalSteps={taskDetail.steps_total}
+            hasMore={taskDetail.has_more_steps}
+            isRunning={taskDetail.status === 'running'}
+          />
         </div>
       </div>
+
+      {/* Continue input area - at the very bottom */}
+      {canContinue && (
+        <div className="card shrink-0">
+          <div className="task-input-wrapper relative">
+            <DirectoryAutocomplete
+              value={continuePrompt}
+              onChange={setContinuePrompt}
+              textareaRef={textareaRef}
+            />
+            <textarea
+              ref={textareaRef}
+              className="task-input"
+              placeholder={t('tasks.enterContinueContent')}
+              value={continuePrompt}
+              onChange={(e) => setContinuePrompt(e.target.value)}
+              onKeyDown={handleContinueKeyDown}
+              aria-label="Continue conversation input"
+            />
+            <button
+              type="button"
+              className={`task-input-btn ${continuePrompt.trim() ? 'visible' : ''}`}
+              onClick={handleContinueSubmit}
+              disabled={isSubmitting || !continuePrompt.trim()}
+            >
+              {isSubmitting ? (
+                <div className="spinner" />
+              ) : (
+                <Send className="icon-scaled-md" />
+              )}
+            </button>
+          </div>
+          <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
+            {modKey}+Enter to send
+          </div>
+        </div>
+      )}
+
+      {/* Task details modal */}
+      <Modal
+        isOpen={showDetailsModal}
+        onClose={() => setShowDetailsModal(false)}
+        title={t('tasks.taskDetails')}
+      >
+        <div className="space-y-3 text-scaled-sm">
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">{t('tasks.statusLabel')}</span>
+            <span className={`status-${taskDetail.status}`}>{taskDetail.status}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">{t('tasks.startTime')}</span>
+            <span>{formatDateTime(taskDetail.started_at)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">{t('tasks.duration')}</span>
+            <span>{formatDuration(taskDetail.duration_ms)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">{t('tasks.stepCount')}</span>
+            <span>{taskDetail.step_count}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[var(--text-muted)]">{t('tasks.toolCalls')}</span>
+            <span>{taskDetail.tool_call_count}</span>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

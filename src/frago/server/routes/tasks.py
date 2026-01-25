@@ -217,7 +217,7 @@ async def generate_task_title(task_id: str) -> dict:
 @router.get("/tasks/{task_id}/steps", response_model=TaskStepsResponse)
 async def get_task_steps(
     task_id: str,
-    limit: int = Query(50, ge=1, le=200, description="Maximum steps to return"),
+    limit: int = Query(100, ge=1, le=200, description="Maximum steps to return"),
     offset: int = Query(0, ge=0, description="Number of steps to skip"),
 ) -> TaskStepsResponse:
     """Get task steps with pagination.
