@@ -152,21 +152,40 @@ def render_document(
     if content_type == "pdf":
         return _render_pdf_page(title, theme, resources_base)
 
-    # Add viewer controls for code content (json/code)
+    # Add viewer controls for code content (json/code) and markdown
     show_wrap_toggle = content_type in ("json", "code")
-    viewer_controls = ""
-    wrap_toggle_script = ""
+    show_wechat_copy = content_type == "markdown"
+
+    # Build viewer controls dynamically
+    control_buttons = []
     if show_wrap_toggle:
-        viewer_controls = '''
-    <div class="viewer-controls">
+        control_buttons.append('''
         <button id="wrap-toggle" class="active" type="button" title="Toggle word wrap" aria-label="Toggle word wrap">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-4"/>
                 <polyline points="13 16 16 19 13 22"/>
             </svg>
             Wrap
-        </button>
+        </button>''')
+
+    if show_wechat_copy:
+        control_buttons.append('''
+        <button id="wechat-copy" type="button" title="复制公众号格式" aria-label="Copy for WeChat">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span class="btn-text">复制公众号格式</span>
+        </button>''')
+
+    viewer_controls = ""
+    if control_buttons:
+        viewer_controls = f'''
+    <div class="viewer-controls">{"".join(control_buttons)}
     </div>'''
+
+    wrap_toggle_script = ""
+    if show_wrap_toggle:
         wrap_toggle_script = '''
         // Word wrap toggle
         const wrapToggle = document.getElementById('wrap-toggle');
@@ -176,6 +195,140 @@ def render_document(
                 codeContent.classList.toggle('no-wrap');
                 wrapToggle.classList.toggle('active');
             });
+        }'''
+
+    wechat_copy_script = ""
+    if show_wechat_copy:
+        wechat_copy_script = '''
+        // WeChat copy functionality - optimized for light background
+        function showToast(message, type) {
+            const existing = document.querySelector('.copy-toast');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = 'copy-toast ' + type;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            requestAnimationFrame(() => toast.classList.add('show'));
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // WeChat-friendly styles (light theme for white background)
+        const wechatStyles = {
+            article: 'color: #333; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.8;',
+            h1: 'color: #1a1a1a; font-size: 24px; font-weight: 600; margin: 24px 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #eee;',
+            h2: 'color: #1a1a1a; font-size: 20px; font-weight: 600; margin: 20px 0 12px 0; padding-bottom: 6px; border-bottom: 1px solid #eee;',
+            h3: 'color: #1a1a1a; font-size: 18px; font-weight: 600; margin: 16px 0 10px 0;',
+            h4: 'color: #1a1a1a; font-size: 16px; font-weight: 600; margin: 14px 0 8px 0;',
+            p: 'color: #333; margin: 0 0 16px 0; text-align: justify;',
+            a: 'color: #576b95; text-decoration: none;',
+            strong: 'color: #1a1a1a; font-weight: 600;',
+            em: 'font-style: italic;',
+            code: 'background-color: #f6f8fa; color: #d14; padding: 2px 6px; border-radius: 4px; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 14px;',
+            pre: 'background-color: #f6f8fa; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 16px 0;',
+            'pre code': 'background-color: transparent; color: #333; padding: 0; font-family: Consolas, Monaco, "Courier New", monospace; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;',
+            blockquote: 'border-left: 4px solid #ddd; padding-left: 16px; color: #666; margin: 16px 0; font-style: italic;',
+            ul: 'padding-left: 24px; margin: 0 0 16px 0;',
+            ol: 'padding-left: 24px; margin: 0 0 16px 0;',
+            li: 'color: #333; margin: 4px 0; line-height: 1.8;',
+            table: 'border-collapse: collapse; width: 100%; margin: 16px 0;',
+            th: 'background-color: #f6f8fa; border: 1px solid #ddd; padding: 10px 12px; text-align: left; font-weight: 600;',
+            td: 'border: 1px solid #ddd; padding: 10px 12px;',
+            hr: 'border: none; border-top: 1px solid #eee; margin: 24px 0;',
+            img: 'max-width: 100%; height: auto;'
+        };
+
+        function processForWeChat(element) {
+            const clone = element.cloneNode(true);
+
+            // Apply styles to root
+            clone.setAttribute('style', wechatStyles.article);
+
+            // Process all elements
+            const tagMap = {
+                'H1': 'h1', 'H2': 'h2', 'H3': 'h3', 'H4': 'h4', 'H5': 'h4', 'H6': 'h4',
+                'P': 'p', 'A': 'a', 'STRONG': 'strong', 'B': 'strong',
+                'EM': 'em', 'I': 'em', 'CODE': 'code', 'PRE': 'pre',
+                'BLOCKQUOTE': 'blockquote', 'UL': 'ul', 'OL': 'ol', 'LI': 'li',
+                'TABLE': 'table', 'TH': 'th', 'TD': 'td', 'HR': 'hr', 'IMG': 'img'
+            };
+
+            clone.querySelectorAll('*').forEach(el => {
+                const tag = el.tagName;
+                const styleKey = tagMap[tag];
+
+                // Special handling for code inside pre
+                if (tag === 'CODE' && el.parentElement && el.parentElement.tagName === 'PRE') {
+                    el.setAttribute('style', wechatStyles['pre code']);
+                } else if (styleKey && wechatStyles[styleKey]) {
+                    el.setAttribute('style', wechatStyles[styleKey]);
+                }
+
+                // Remove class and data-* attributes
+                el.removeAttribute('class');
+                [...el.attributes].forEach(attr => {
+                    if (attr.name.startsWith('data-')) {
+                        el.removeAttribute(attr.name);
+                    }
+                });
+            });
+
+            // Handle mermaid diagrams - convert to placeholder text
+            clone.querySelectorAll('.mermaid, pre.mermaid').forEach(el => {
+                const placeholder = document.createElement('p');
+                placeholder.setAttribute('style', 'color: #666; font-style: italic; text-align: center; padding: 20px; background: #f9f9f9; border-radius: 8px;');
+                placeholder.textContent = '[图表请在公众号中重新绘制]';
+                el.parentNode.replaceChild(placeholder, el);
+            });
+
+            return clone;
+        }
+
+        async function copyForWeChat() {
+            const btn = document.getElementById('wechat-copy');
+            const article = document.querySelector('.markdown-body');
+            if (!btn || !article) return;
+
+            btn.classList.add('loading');
+
+            try {
+                const processed = processForWeChat(article);
+                const html = processed.outerHTML;
+                const text = article.textContent || '';
+
+                if (navigator.clipboard && window.ClipboardItem) {
+                    await navigator.clipboard.write([
+                        new ClipboardItem({
+                            'text/html': new Blob([html], { type: 'text/html' }),
+                            'text/plain': new Blob([text], { type: 'text/plain' })
+                        })
+                    ]);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+
+                showToast('已复制到剪贴板，可直接粘贴到公众号编辑器', 'success');
+            } catch (err) {
+                console.error('Copy failed:', err);
+                showToast('复制失败: ' + err.message, 'error');
+            } finally {
+                btn.classList.remove('loading');
+            }
+        }
+
+        const wechatBtn = document.getElementById('wechat-copy');
+        if (wechatBtn) {
+            wechatBtn.addEventListener('click', copyForWeChat);
         }'''
 
     return f'''<!DOCTYPE html>
@@ -332,6 +485,39 @@ def render_document(
             width: 14px;
             height: 14px;
         }}
+        /* Button loading state */
+        .viewer-controls button.loading {{
+            opacity: 0.7;
+            cursor: wait;
+        }}
+        /* Toast notification */
+        .copy-toast {{
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 1000;
+            opacity: 0;
+            transition: all 0.3s ease;
+            pointer-events: none;
+            max-width: 90vw;
+            text-align: center;
+        }}
+        .copy-toast.show {{
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }}
+        .copy-toast.success {{
+            background: #238636;
+        }}
+        .copy-toast.error {{
+            background: #da3633;
+        }}
     </style>
 </head>
 <body>{viewer_controls}
@@ -346,7 +532,7 @@ def render_document(
             startOnLoad: true,
             theme: 'dark',
             securityLevel: 'loose'
-        }});{wrap_toggle_script}
+        }});{wrap_toggle_script}{wechat_copy_script}
     </script>
 </body>
 </html>'''
