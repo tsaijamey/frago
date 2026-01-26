@@ -5,6 +5,7 @@ import { getRecipeDetail, runRecipe, openPath, getRecipeEnvRequirements } from '
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { ExternalLink, ChevronDown, ChevronRight, Lightbulb, Settings, Link2, Code, Key, GitBranch, ArrowRight, Check, X } from 'lucide-react';
 import type { RecipeDetail as RecipeDetailType, RecipeEnvRequirement } from '@/types/pywebview';
+import RecipeSecretsModal from './RecipeSecretsModal';
 
 interface CollapsibleSectionProps {
   title: string;
@@ -51,6 +52,7 @@ export default function RecipeDetail() {
   const [isInteractiveMode, setIsInteractiveMode] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(true);
   const [envRequirements, setEnvRequirements] = useState<RecipeEnvRequirement[]>([]);
+  const [showSecretsModal, setShowSecretsModal] = useState(false);
 
   useEffect(() => {
     if (!currentRecipeName) return;
@@ -114,6 +116,22 @@ export default function RecipeDetail() {
         console.error('Failed to load env requirements:', err);
       });
   }, [recipe]);
+
+  // Refresh env requirements after secrets are saved
+  const refreshEnvRequirements = async () => {
+    if (!recipe) return;
+    try {
+      const allReqs = await getRecipeEnvRequirements();
+      const relevantRecipes = new Set([recipe.name, ...(recipe.dependencies ?? [])]);
+      const filtered = allReqs.filter(req => {
+        const reqRecipes = req.recipe_name.split(',').map(r => r.trim());
+        return reqRecipes.some(r => relevantRecipes.has(r));
+      });
+      setEnvRequirements(filtered);
+    } catch (err) {
+      console.error('Failed to refresh env requirements:', err);
+    }
+  };
 
   // Validate parameters before running
   const validateParameters = (): boolean => {
@@ -549,7 +567,7 @@ export default function RecipeDetail() {
               <button
                 type="button"
                 className="btn btn-ghost btn-sm gap-1"
-                onClick={() => switchPage('secrets')}
+                onClick={() => setShowSecretsModal(true)}
               >
                 <Key size={12} />
                 {t('recipes.manageSecrets')}
@@ -705,6 +723,18 @@ export default function RecipeDetail() {
           </CollapsibleSection>
         )}
       </div>
+
+      {/* Secrets Configuration Modal */}
+      <RecipeSecretsModal
+        isOpen={showSecretsModal}
+        onClose={() => setShowSecretsModal(false)}
+        requirements={envRequirements}
+        onSaved={() => {
+          refreshEnvRequirements();
+          setShowSecretsModal(false);
+          showToast(t('recipes.secretSaved'), 'success');
+        }}
+      />
     </div>
   );
 }

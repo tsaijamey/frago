@@ -216,7 +216,14 @@
     "usedBy": "From",
     "executionFlow": "Execution Flow",
     "step": "Step",
-    "callsRecipe": "Calls"
+    "callsRecipe": "Calls",
+    "secretsModalTitle": "Configure Required Credentials",
+    "secretsModalDesc": "Enter the credentials required by this recipe",
+    "allConfigured": "All credentials configured",
+    "secretSaved": "Credentials saved successfully",
+    "secretSaveFailed": "Failed to save credentials",
+    "secretsValidationError": "Required fields not filled: {{fields}}",
+    "secretsNoChanges": "No changes to save"
   },
   "skills": {
     "title": "Skills",

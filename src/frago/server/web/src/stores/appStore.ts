@@ -30,7 +30,6 @@ export type PageType =
   | 'skills'
   | 'guide'
   | 'sync'
-  | 'secrets'
   | 'settings'
   | 'newTask'
   | 'workspace'

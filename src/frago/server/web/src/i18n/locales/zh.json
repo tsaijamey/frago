@@ -216,7 +216,14 @@
     "usedBy": "来自",
     "executionFlow": "执行流程",
     "step": "步骤",
-    "callsRecipe": "调用"
+    "callsRecipe": "调用",
+    "secretsModalTitle": "配置所需密钥",
+    "secretsModalDesc": "请为此配方填写所需的凭据信息",
+    "allConfigured": "所有密钥已配置",
+    "secretSaved": "密钥保存成功",
+    "secretSaveFailed": "密钥保存失败",
+    "secretsValidationError": "以下必填密钥未填写: {{fields}}",
+    "secretsNoChanges": "没有需要保存的更改"
   },
   "skills": {
     "title": "技能",
