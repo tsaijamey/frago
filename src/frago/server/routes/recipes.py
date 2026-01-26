@@ -20,7 +20,6 @@ from frago.server.models import (
     CommunityRecipeInstallResponse,
 )
 from frago.server.state import StateManager
-from frago.server.services.cache_service import CacheService
 from frago.server.services.recipe_service import RecipeService
 
 router = APIRouter()

@@ -16,7 +16,7 @@ class SkillService:
     """Service for skill management operations.
 
     Note: This service always loads fresh from filesystem.
-    For cached access via WebSocket updates, use CacheService.get_skills().
+    For cached access via WebSocket updates, use StateManager.get_skills().
     """
 
     @staticmethod
@@ -24,7 +24,7 @@ class SkillService:
         """Get list of available skills.
 
         Args:
-            force_reload: Ignored. Always loads fresh. Use CacheService for caching.
+            force_reload: Ignored. Always loads fresh. Use StateManager for caching.
 
         Returns:
             List of skill dictionaries with name, description, file_path.

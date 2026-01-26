@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from frago.server.services.cache_service import CacheService
+from frago.server.state import StateManager
 from frago.server.services.file_service import FileService
 from frago.server.services.viewer_service import ViewerService
 
@@ -64,8 +64,11 @@ async def list_projects():
     Returns a list of all projects sorted by last accessed time (newest first).
     Uses cached data for fast response.
     """
-    cache = CacheService.get_instance()
-    return await cache.get_projects()
+    from dataclasses import asdict
+
+    state_manager = StateManager.get_instance()
+    projects = state_manager.get_projects()
+    return [asdict(p) for p in projects]
 
 
 @router.post("/projects/refresh", response_model=List[ProjectInfoResponse])
@@ -74,9 +77,12 @@ async def refresh_projects():
 
     Forces a reload of project data from disk.
     """
-    cache = CacheService.get_instance()
-    await cache.refresh_projects(broadcast=True)
-    return await cache.get_projects()
+    from dataclasses import asdict
+
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_projects(broadcast=True)
+    projects = state_manager.get_projects()
+    return [asdict(p) for p in projects]
 
 
 @router.get("/projects/{run_id}", response_model=ProjectDetailResponse)

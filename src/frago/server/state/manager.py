@@ -303,6 +303,46 @@ class StateManager:
             logger.error(f"Failed to load projects: {e}")
             return []
 
+    def _load_config(self) -> Dict[str, Any]:
+        """Load main config from storage."""
+        try:
+            from frago.server.services.main_config_service import MainConfigService
+
+            return MainConfigService.get_config()
+        except Exception as e:
+            logger.error(f"Failed to load config: {e}")
+            return {}
+
+    def _load_env_vars(self) -> Dict[str, Any]:
+        """Load environment variables from storage."""
+        try:
+            from frago.server.services.env_service import EnvService
+
+            return EnvService.get_env_vars()
+        except Exception as e:
+            logger.error(f"Failed to load env vars: {e}")
+            return {"vars": {}, "file_exists": False}
+
+    def _load_recipe_env_requirements(self) -> List[Dict[str, Any]]:
+        """Load recipe environment requirements from storage."""
+        try:
+            from frago.server.services.env_service import EnvService
+
+            return EnvService.get_recipe_env_requirements()
+        except Exception as e:
+            logger.error(f"Failed to load recipe env requirements: {e}")
+            return []
+
+    def _load_gh_status(self) -> Dict[str, Any]:
+        """Load GitHub CLI status."""
+        try:
+            from frago.server.services.github_service import GitHubService
+
+            return GitHubService.check_gh_cli()
+        except Exception as e:
+            logger.error(f"Failed to load gh status: {e}")
+            return {"installed": False, "authenticated": False, "username": None}
+
     def _compute_dashboard(self) -> DashboardData:
         """Compute dashboard data from current state."""
         try:
@@ -466,9 +506,32 @@ class StateManager:
         """Get dashboard data."""
         return self._state.dashboard
 
-    def get_config(self) -> UserConfig:
-        """Get user config."""
-        return self._state.config
+    def get_config(self) -> Dict[str, Any]:
+        """Get user config, loading on first access."""
+        if not self._state.config or self._state.config == UserConfig():
+            self._state.config = self._load_config()  # type: ignore
+        # Return as dict for API compatibility
+        if isinstance(self._state.config, dict):
+            return self._state.config
+        return {}
+
+    def get_env_vars(self) -> Dict[str, Any]:
+        """Get environment variables, loading on first access."""
+        if not self._state.env_vars:
+            self._state.env_vars = self._load_env_vars()
+        return self._state.env_vars
+
+    def get_recipe_env_requirements(self) -> List[Dict[str, Any]]:
+        """Get recipe environment requirements, loading on first access."""
+        if not self._state.recipe_env_requirements:
+            self._state.recipe_env_requirements = self._load_recipe_env_requirements()
+        return self._state.recipe_env_requirements
+
+    def get_gh_status(self) -> Dict[str, Any]:
+        """Get GitHub CLI status, loading on first access."""
+        if not self._state.gh_status:
+            self._state.gh_status = self._load_gh_status()
+        return self._state.gh_status
 
     # ============================================================
     # Data Refresh (public)
@@ -560,6 +623,52 @@ class StateManager:
 
         if broadcast:
             await self._broadcast("all", self.get_initial_data())
+
+    async def refresh_config(self, broadcast: bool = True) -> None:
+        """Refresh config data."""
+        loop = asyncio.get_event_loop()
+        self._state.config = await loop.run_in_executor(None, self._load_config)  # type: ignore
+        self._state.version += 1
+
+        if broadcast:
+            await self._broadcast_raw("data_config", self._state.config)
+
+        logger.debug("Config refreshed")
+
+    async def refresh_env_vars(self, broadcast: bool = True) -> None:
+        """Refresh environment variables."""
+        loop = asyncio.get_event_loop()
+        self._state.env_vars = await loop.run_in_executor(None, self._load_env_vars)
+        self._state.version += 1
+
+        if broadcast:
+            await self._broadcast_raw("data_env_vars", self._state.env_vars)
+
+        logger.debug("Env vars refreshed")
+
+    async def refresh_recipe_env_requirements(self, broadcast: bool = True) -> None:
+        """Refresh recipe environment requirements."""
+        loop = asyncio.get_event_loop()
+        self._state.recipe_env_requirements = await loop.run_in_executor(
+            None, self._load_recipe_env_requirements
+        )
+        self._state.version += 1
+
+        if broadcast:
+            await self._broadcast_raw("data_recipe_env", self._state.recipe_env_requirements)
+
+        logger.debug("Recipe env requirements refreshed")
+
+    async def refresh_gh_status(self, broadcast: bool = True) -> None:
+        """Refresh GitHub CLI status."""
+        loop = asyncio.get_event_loop()
+        self._state.gh_status = await loop.run_in_executor(None, self._load_gh_status)
+        self._state.version += 1
+
+        if broadcast:
+            await self._broadcast_raw("data_gh_status", self._state.gh_status)
+
+        logger.debug("GitHub CLI status refreshed")
 
     def set_community_recipes(self, recipes: List[Dict[str, Any]]) -> None:
         """Update community recipes from external service."""
@@ -733,6 +842,17 @@ class StateManager:
             logger.debug(f"Broadcast {data_type} to {manager.connection_count} clients")
         except Exception as e:
             logger.warning(f"Failed to broadcast {data_type}: {e}")
+
+    async def _broadcast_raw(self, msg_type: str, data: Any) -> None:
+        """Broadcast raw data to WebSocket clients (for dict data)."""
+        try:
+            from frago.server.websocket import create_message, manager
+
+            message = create_message(msg_type, {"version": self._state.version, "data": data})
+            await manager.broadcast(message)
+            logger.debug(f"Broadcast {msg_type} to {manager.connection_count} clients")
+        except Exception as e:
+            logger.warning(f"Failed to broadcast {msg_type}: {e}")
 
         # Notify local subscribers
         for callback in self._subscribers:

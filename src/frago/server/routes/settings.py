@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from frago.compat import get_windows_subprocess_kwargs
-from frago.server.services.cache_service import CacheService
+from frago.server.state import StateManager
 from frago.server.services.env_service import EnvService
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
@@ -140,8 +140,8 @@ async def check_gh_cli() -> GhCliStatusResponse:
 
     Uses cache for improved performance on Windows.
     """
-    cache = CacheService.get_instance()
-    status = await cache.get_gh_status()
+    state_manager = StateManager.get_instance()
+    status = state_manager.get_gh_status()
 
     return GhCliStatusResponse(
         installed=status.get("installed", False),
@@ -179,8 +179,8 @@ async def get_main_config() -> MainConfigResponse:
         get_auth_method_from_settings,
     )
 
-    cache = CacheService.get_instance()
-    config = await cache.get_config()
+    state_manager = StateManager.get_instance()
+    config = state_manager.get_config()
 
     # Get actual auth_method from settings.json (source of truth)
     actual_auth_method = get_auth_method_from_settings()
@@ -234,8 +234,8 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
         raise HTTPException(status_code=400, detail=result["error"])
 
     # Refresh cache after update
-    cache = CacheService.get_instance()
-    await cache.refresh_config(broadcast=True)
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
 
     # Get the config field from the result
     config = result.get("config", result)
@@ -319,8 +319,8 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
         save_config(config)
 
         # Refresh cache after update
-        cache = CacheService.get_instance()
-        await cache.refresh_config(broadcast=True)
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_config(broadcast=True)
 
         return ApiResponse(status="ok", message="Authentication updated")
 
@@ -339,8 +339,8 @@ async def get_env_vars() -> EnvVarsResponse:
 
     Uses cache for improved performance on Windows.
     """
-    cache = CacheService.get_instance()
-    result = await cache.get_env_vars()
+    state_manager = StateManager.get_instance()
+    result = state_manager.get_env_vars()
 
     return EnvVarsResponse(
         vars=result.get("vars", {}),
@@ -357,8 +357,8 @@ async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
         raise HTTPException(status_code=400, detail=result["error"])
 
     # Refresh cache after update
-    cache = CacheService.get_instance()
-    await cache.refresh_env_vars(broadcast=True)
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_env_vars(broadcast=True)
 
     return EnvVarsResponse(
         vars=result.get("vars", {}),
@@ -372,8 +372,8 @@ async def get_recipe_env_requirements() -> List[RecipeEnvRequirement]:
 
     Uses cache for improved performance on Windows.
     """
-    cache = CacheService.get_instance()
-    requirements = await cache.get_recipe_env_requirements()
+    state_manager = StateManager.get_instance()
+    requirements = state_manager.get_recipe_env_requirements()
 
     return [
         RecipeEnvRequirement(
@@ -622,8 +622,8 @@ async def get_official_sync_result() -> OfficialSyncResultResponse:
 
     # Refresh cache after successful sync
     if result.get("status") == "ok":
-        cache = CacheService.get_instance()
-        await cache.refresh_skills(broadcast=True)
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_skills(broadcast=True)
 
     return OfficialSyncResultResponse(
         status=result.get("status", "idle"),

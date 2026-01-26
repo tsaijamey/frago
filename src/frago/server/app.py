@@ -35,7 +35,6 @@ from frago.server.routes import (
     guide_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
-from frago.server.services.cache_service import CacheService
 from frago.server.services.sync_service import SyncService
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.version_service import VersionCheckService
@@ -61,10 +60,6 @@ async def lifespan(app: FastAPI):
     state_manager = StateManager.get_instance()
     await state_manager.initialize()
 
-    # Initialize cache service (for backward compatibility during migration)
-    cache_service = CacheService.get_instance()
-    await cache_service.initialize()
-
     # Auto-sync official resources if enabled
     try:
         from frago.init.config_manager import load_config
@@ -79,14 +74,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to auto-sync official resources: %s", e)
 
-    # Start sync service and link to cache
+    # Start sync service
     sync_service = SyncService.get_instance()
-    sync_service.set_cache_service(cache_service)
     await sync_service.start()
 
     # Initialize and start community recipe service (60s refresh interval)
     community_service = CommunityRecipeService.get_instance()
-    community_service.set_cache_service(cache_service)
     await community_service.initialize()  # Fetch first to populate initial data
     await community_service.start()
 

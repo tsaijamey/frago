@@ -27,7 +27,6 @@ class CommunityRecipeService:
         self._last_fetch_error: Optional[str] = None
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
-        self._cache_service: Optional[Any] = None
 
     @classmethod
     def get_instance(cls) -> "CommunityRecipeService":
@@ -41,16 +40,6 @@ class CommunityRecipeService:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
-
-    def set_cache_service(self, cache_service: Any) -> None:
-        """Link to CacheService for broadcasting updates.
-
-        Args:
-            cache_service: CacheService instance
-
-        Note: Deprecated. Use StateManager for unified state management.
-        """
-        self._cache_service = cache_service
 
     async def initialize(self) -> None:
         """Initialize by performing first fetch.
@@ -207,7 +196,7 @@ class CommunityRecipeService:
 
     async def _broadcast_update(self) -> None:
         """Broadcast community recipes update via WebSocket and update state."""
-        # Update StateManager (primary)
+        # Update StateManager
         try:
             from frago.server.state import StateManager
 
@@ -216,10 +205,6 @@ class CommunityRecipeService:
                 state_manager.set_community_recipes(self._cache or [])
         except Exception as e:
             logger.warning(f"Failed to update StateManager: {e}")
-
-        # Update CacheService for backward compatibility
-        if self._cache_service is not None:
-            self._cache_service.set_community_recipes(self._cache or [])
 
         try:
             from frago.server.websocket import manager, create_message

@@ -9,7 +9,7 @@ from typing import List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from frago.server.services.cache_service import CacheService
+from frago.server.state import StateManager
 from frago.server.services.github_service import GitHubService
 from frago.server.services.multidevice_sync_service import MultiDeviceSyncService
 
@@ -194,9 +194,9 @@ async def get_sync_status() -> SyncResponse:
 
     # Refresh recipes and skills cache after successful sync
     if result.get("needs_refresh"):
-        cache = CacheService.get_instance()
-        await cache.refresh_recipes(broadcast=True)
-        await cache.refresh_skills(broadcast=True)
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_recipes(broadcast=True)
+        await state_manager.refresh_skills(broadcast=True)
         MultiDeviceSyncService.clear_refresh_flag()
 
     return SyncResponse(

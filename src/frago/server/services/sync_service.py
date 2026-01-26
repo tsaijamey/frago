@@ -30,20 +30,11 @@ class SyncService:
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._last_result: Optional[Dict[str, Any]] = None
-        self._cache_service: Optional[Any] = None
 
         # Debounce state
         self._pending_refresh: bool = False
         self._last_refresh_time: float = 0.0
         self._debounce_task: Optional[asyncio.Task] = None
-
-    def set_cache_service(self, cache_service: Any) -> None:
-        """Set the cache service for triggering refreshes.
-
-        Args:
-            cache_service: CacheService instance
-        """
-        self._cache_service = cache_service
 
     @classmethod
     def get_instance(cls) -> "SyncService":
@@ -172,12 +163,15 @@ class SyncService:
         self._pending_refresh = False
         self._last_refresh_time = time.monotonic()
 
-        if self._cache_service is not None:
-            try:
-                logger.debug("Executing debounced cache refresh")
-                await self._cache_service.refresh_tasks(broadcast=True)
-            except Exception as e:
-                logger.warning(f"Debounced refresh failed: {e}")
+        try:
+            from frago.server.state import StateManager
+
+            state_manager = StateManager.get_instance()
+            if state_manager.is_initialized():
+                logger.debug("Executing debounced state refresh")
+                await state_manager.refresh_tasks(broadcast=True)
+        except Exception as e:
+            logger.warning(f"Debounced refresh failed: {e}")
 
     @staticmethod
     def sync_now() -> Dict[str, Any]:
