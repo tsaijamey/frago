@@ -28,7 +28,7 @@ export default function Modal({ isOpen, onClose, title, children, footer }: Moda
   // Render to document.body using portal
   return createPortal(
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1100]"
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[1100]"
       onClick={(e) => {
         // Close on backdrop click
         if (e.target === e.currentTarget) onClose();
