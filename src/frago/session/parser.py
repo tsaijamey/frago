@@ -169,10 +169,20 @@ class IncrementalParser:
             return None
 
         # Skip metadata record types (these are not core conversation data, no need to track)
-        METADATA_TYPES = {"file-history-snapshot", "queue-operation", "summary"}
+        METADATA_TYPES = {"file-history-snapshot", "summary"}
         if record_type in METADATA_TYPES:
             logger.debug(f"Skipping metadata record: {record_type}")
             return None
+
+        # Handle queue-operation as user message (queued input from CLI)
+        if record_type == "queue-operation":
+            queued_content = data.get("content")
+            if queued_content and data.get("operation") == "enqueue":
+                # Convert to user-like record for processing
+                record_type = "user"
+            else:
+                logger.debug(f"Skipping queue-operation without content")
+                return None
 
         if not uuid:
             # When uuid is missing, try to use other identifiers (for unknown new record types)
@@ -207,6 +217,12 @@ class IncrementalParser:
         # Cache session_id
         if session_id and not self._session_id:
             self._session_id = session_id
+
+        # Handle queue-operation content (direct content field, not in message)
+        if data.get("type") == "queue-operation" and data.get("content"):
+            record.content_text = data.get("content")
+            record.role = "user"
+            return record
 
         # Extract additional information based on type
         message = data.get("message", {})
@@ -300,8 +316,11 @@ def record_to_step(
                 )
                 tool_records.append(tool_record)
         else:
+            # Skip empty assistant messages (no content and no tool calls)
+            if not record.content_text:
+                return None, []
             step_type = StepType.ASSISTANT_MESSAGE
-            content = truncate_content(record.content_text or "(empty response)")
+            content = truncate_content(record.content_text)
 
     elif record.record_type == "system":
         step_type = StepType.SYSTEM_EVENT
