@@ -161,46 +161,46 @@ class ChromeLauncher:
         return None
 
     def _init_profile_dir(self) -> None:
-        """Initialize Chrome profile directory"""
-        profile_exists = self.profile_dir.exists()
+        """Initialize Chrome profile directory by syncing from system profile"""
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
 
-        if not profile_exists:
-            self.profile_dir.mkdir(parents=True, exist_ok=True)
+        # Always sync from system profile on each launch
+        system_profile = self._get_system_profile_dir()
+        if system_profile:
+            items_to_copy = [
+                "Default/Bookmarks",
+                "Default/Preferences",
+                "Default/Extensions",
+                "Default/Local Extension Settings",
+                "Default/Cookies",
+                "Default/History",
+                "Default/Favicons",
+                "Local State",
+            ]
 
-            # Find system default profile
-            system_profile = self._get_system_profile_dir()
-            if system_profile:
-                # Only copy necessary files and directories
-                items_to_copy = [
-                    "Default/Bookmarks",
-                    "Default/Preferences",
-                    "Default/Extensions",
-                    "Default/Cookies",
-                    "Default/History",
-                    "Default/Favicons",
-                    "Local State",
-                ]
+            for item in items_to_copy:
+                src = system_profile / item
+                dst = self.profile_dir / item
 
-                for item in items_to_copy:
-                    src = system_profile / item
-                    dst = self.profile_dir / item
+                try:
+                    if src.exists():
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        if src.is_dir():
+                            # Remove old directory and copy fresh to ensure full sync
+                            if dst.exists():
+                                shutil.rmtree(dst)
+                            shutil.copytree(src, dst)
+                        else:
+                            shutil.copy2(src, dst)
+                except Exception:
+                    # Non-critical file copy failure doesn't interrupt execution
+                    pass
 
-                    try:
-                        if src.exists():
-                            dst.parent.mkdir(parents=True, exist_ok=True)
-                            if src.is_dir():
-                                shutil.copytree(src, dst, dirs_exist_ok=True)
-                            else:
-                                shutil.copy2(src, dst)
-                    except Exception:
-                        # Non-critical file copy failure doesn't interrupt execution
-                        pass
-
-        # Set Chrome preferences to disable translate (works on both new and existing profiles)
+        # Set Chrome preferences to disable various UI prompts
         self._set_chrome_preferences()
 
     def _set_chrome_preferences(self) -> None:
-        """Set Chrome preferences to disable translate and other UI prompts"""
+        """Set Chrome preferences to disable various UI prompts"""
         import json
 
         prefs_file = self.profile_dir / "Default" / "Preferences"
@@ -216,15 +216,29 @@ class ChromeLauncher:
         else:
             prefs = {}
 
-        # Set preferences to disable translate
+        # Disable translate
         if "translate" not in prefs:
             prefs["translate"] = {}
         prefs["translate"]["enabled"] = False
 
-        # Disable other prompts/infobars for cleaner UI
+        # Disable password manager prompt
         if "profile" not in prefs:
             prefs["profile"] = {}
-        prefs["profile"]["password_manager_enabled"] = False  # Disable "Save password?" prompt
+        prefs["profile"]["password_manager_enabled"] = False
+
+        # Mark exit as clean to prevent "Restore pages?" prompt
+        prefs["profile"]["exit_type"] = "Normal"
+        prefs["profile"]["exited_cleanly"] = True
+
+        # Disable session restore prompt ("Chrome didn't shut down correctly")
+        if "session" not in prefs:
+            prefs["session"] = {}
+        prefs["session"]["restore_on_startup"] = 4  # 4 = open specific pages (empty)
+
+        # Disable "Make Chrome your default browser" prompt
+        if "browser" not in prefs:
+            prefs["browser"] = {}
+        prefs["browser"]["check_default_browser"] = False
 
         # Write preferences back
         try:
