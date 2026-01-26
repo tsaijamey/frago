@@ -137,6 +137,7 @@ export async function getTaskDetail(
     tool_call_count: task.tool_call_count ?? task.summary?.tool_call_count ?? 0,
     user_message_count: task.summary?.user_message_count ?? 0,
     assistant_message_count: task.summary?.assistant_message_count ?? 0,
+    // Backend returns steps in reverse order (newest first), reverse to chronological order
     steps: task.steps.map((s, i) => ({
       step_id: i,
       type: s.type as TaskDetail['steps'][0]['type'],
@@ -145,7 +146,7 @@ export async function getTaskDetail(
       tool_name: s.tool_name,
       tool_call_id: s.tool_call_id ?? undefined,
       tool_status: null,
-    })),
+    })).reverse(),
     steps_total: task.steps_total ?? task.steps.length,
     steps_offset: task.steps_offset ?? 0,
     has_more_steps: task.has_more_steps ?? false,
@@ -192,6 +193,7 @@ export async function getTaskSteps(
   const response = await httpApi.getTaskSteps(sessionId, { offset, limit });
 
   return {
+    // Backend returns steps in reverse order (newest first), reverse to chronological order
     steps: response.steps.map((s, i) => ({
       step_id: i + (offset ?? 0),
       type: s.type as TaskStepsResponse['steps'][0]['type'],
@@ -200,7 +202,7 @@ export async function getTaskSteps(
       tool_name: s.tool_name,
       tool_call_id: s.tool_call_id ?? undefined,
       tool_status: null,
-    })),
+    })).reverse(),
     total: response.total,
     offset: offset ?? 0,
     has_more: response.has_more,

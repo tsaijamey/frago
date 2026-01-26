@@ -2,8 +2,10 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TaskStep, StepType } from '@/types/pywebview';
 import { User, Bot, Wrench, ArrowRight, Settings, Loader2, type LucideIcon } from 'lucide-react';
-import { StepContent, PairedToolStep } from './content';
+import { PairedToolStep } from './content';
 import { getTaskSteps } from '@/api';
+import { MessageCard } from '@/components/shared';
+import { taskStepToUnifiedMessage } from '@/types/message';
 
 interface StepListProps {
   sessionId: string;
@@ -24,17 +26,6 @@ const stepTypeConfig: Record<StepType, { Icon: LucideIcon; labelKey: string; col
 
 function getStepConfig(type: StepType) {
   return stepTypeConfig[type] || stepTypeConfig.system;
-}
-
-// Format timestamp to +8 timezone
-function formatTimestamp(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleString('en-US', {
-    timeZone: 'Asia/Shanghai',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
 }
 
 // Filterable types (matches ConsoleMessage types for consistency)
@@ -301,32 +292,15 @@ export default function StepList({ sessionId, initialSteps, totalSteps: _totalSt
               );
             }
 
-            // Render single step
+            // Render single step using unified MessageCard
             const step = displayStep.step;
-            const { Icon, labelKey, colorClass } = getStepConfig(step.type);
-            const label = t(labelKey);
+            const unifiedMessage = taskStepToUnifiedMessage(step);
             return (
-              <div key={displayStep.key} className="step-item-new">
-                {/* First line: Icon + Type name + Timestamp */}
-                <div className="flex items-center justify-between mb-scaled-1">
-                  <div className="flex items-center gap-scaled-2">
-                    <Icon className="icon-scaled-sm" />
-                    <span className={`text-scaled-xs font-medium ${colorClass}`}>{label}</span>
-                    {step.tool_name && (
-                      <code className="text-scaled-xs px-scaled-2 py-0.5 bg-[var(--bg-secondary)] rounded font-mono">
-                        {step.tool_name}
-                      </code>
-                    )}
-                  </div>
-                  <span className="text-scaled-xs text-[var(--text-muted)]">
-                    {formatTimestamp(step.timestamp)}
-                  </span>
-                </div>
-                {/* Second line: Message content */}
-                <div className="text-scaled-sm text-[var(--text-secondary)] break-words pl-scaled-5">
-                  <StepContent step={step} />
-                </div>
-              </div>
+              <MessageCard
+                key={displayStep.key}
+                message={unifiedMessage}
+                showTypingIndicator={false}
+              />
             );
           })}
         </div>

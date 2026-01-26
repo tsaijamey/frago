@@ -1,11 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Sparkles } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getConsoleHistory } from '@/api';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
 import type { ConsoleMessage } from '@/types/console';
+import { toUnifiedMessage } from '@/types/message';
 import NewTaskControls from './NewTaskControls';
-import MessageList from './MessageList';
+import { MessageList } from '@/components/shared';
 import NewTaskInput from './NewTaskInput';
 
 export default function NewTaskPage() {
@@ -320,6 +322,40 @@ export default function NewTaskPage() {
     setInputValue('');
   };
 
+  // Convert ConsoleMessage[] to UnifiedMessage[]
+  const unifiedMessages = useMemo(
+    () => consoleMessages.map((msg, index) => toUnifiedMessage(msg, index)),
+    [consoleMessages]
+  );
+
+  // Welcome screen for empty state
+  const welcomeScreen = (
+    <div className="welcome-screen">
+      <div className="welcome-header">
+        <div className="welcome-icon">
+          <Sparkles size={32} />
+        </div>
+        <h1 className="welcome-headline">{t('console.welcomeHeadline')}</h1>
+        <p className="welcome-subheadline">{t('console.welcomeSubheadline')}</p>
+      </div>
+
+      {/* Capsule toggle button */}
+      <div className="approval-toggle mt-scaled-6">
+        <button type="button" className="approval-toggle-option active">
+          {t('console.autoApprove')}
+        </button>
+        <button
+          type="button"
+          className="approval-toggle-option disabled"
+          title={t('console.manualApproveDisabledHint')}
+          disabled
+        >
+          {t('console.manualApprove')}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden gap-4 p-scaled-4">
       {/* Controls */}
@@ -334,7 +370,12 @@ export default function NewTaskPage() {
 
       {/* Message area */}
       <div ref={scrollContainerRef} className="flex-1 min-h-0 card overflow-hidden flex flex-col overflow-y-auto">
-        <MessageList messages={consoleMessages} messagesEndRef={messagesEndRef} />
+        <MessageList
+          messages={unifiedMessages}
+          messagesEndRef={messagesEndRef}
+          emptyState={welcomeScreen}
+          gap="space-y-4"
+        />
       </div>
 
       {/* Input area */}
