@@ -243,7 +243,12 @@ def get_available_slash_commands() -> dict:
 
 def _build_agent_prompt(user_prompt: str) -> str:
     """
-    Build agent execution prompt
+    Build agent execution prompt.
+
+    .. deprecated::
+        This function is deprecated. The prompt injection logic should be
+        handled by the /frago.agent skill defined in frago.agent.md.
+        This function is kept for backward compatibility only.
 
     Constructs a prompt that includes available slash command descriptions
     and the user's task, letting the agent determine which mode to use.
@@ -511,10 +516,11 @@ def agent(
         if not passthrough:
             click.echo(f"\n[Execute] {prompt_text}")
 
-        # Build prompt with available command descriptions, let agent determine and execute
-        execution_prompt = _build_agent_prompt(prompt_text)
+        # Use /frago.agent slash command to let Claude handle intent routing
+        # The frago.agent skill will analyze intent and invoke appropriate sub-commands
+        execution_prompt = f"/frago.agent {prompt_text}"
 
-        # Display built prompt (skip in passthrough mode)
+        # Display prompt (skip in passthrough mode)
         if not passthrough:
             click.echo(f"\n[Prompt] Agent prompt:")
             click.echo("-" * 40)
