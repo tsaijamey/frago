@@ -66,8 +66,9 @@ async def list_projects():
     """
     from dataclasses import asdict
 
-    state_manager = StateManager.get_instance()
-    projects = state_manager.get_projects()
+    from frago.server.services.file_service import FileService
+
+    projects = FileService.list_projects()
     return [asdict(p) for p in projects]
 
 
@@ -79,9 +80,9 @@ async def refresh_projects():
     """
     from dataclasses import asdict
 
-    state_manager = StateManager.get_instance()
-    await state_manager.refresh_projects(broadcast=True)
-    projects = state_manager.get_projects()
+    from frago.server.services.file_service import FileService
+
+    projects = FileService.list_projects()
     return [asdict(p) for p in projects]
 
 

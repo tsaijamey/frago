@@ -286,16 +286,28 @@ class StateManager:
     def _load_projects(self) -> List[Project]:
         """Load projects from storage."""
         try:
+            from datetime import datetime
+            from pathlib import Path
+
             from frago.server.services.file_service import FileService
 
+            projects_dir = Path.home() / ".frago" / "projects"
             raw_projects = FileService.list_projects()
             projects = []
             for p in raw_projects:
+                # Parse last_accessed from ISO format string to datetime
+                last_accessed = None
+                if p.last_accessed:
+                    try:
+                        last_accessed = datetime.fromisoformat(p.last_accessed)
+                    except (ValueError, TypeError):
+                        pass
+
                 projects.append(
                     Project(
-                        path=p.path,
-                        name=p.name,
-                        last_accessed=p.last_accessed if hasattr(p, "last_accessed") else None,
+                        path=str(projects_dir / p.run_id),
+                        name=p.theme_description or p.run_id,
+                        last_accessed=last_accessed,
                     )
                 )
             return projects
