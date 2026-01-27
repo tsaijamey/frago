@@ -226,6 +226,33 @@ DOCS = {
 # Read as needed
 ```
 
+## Dev Task Verification
+
+```python
+# --- Dev Task Verification ---
+# Triggered by Stop hook when frontend/web files modified
+
+DEV_FILE_PATTERNS = [".tsx", ".jsx", ".vue", ".css", ".scss"]
+WEB_KEYWORDS = ["frontend", "backend", "server", "api", "component", "page"]
+
+def on_task_complete(transcript):
+    if involves_dev_files(transcript) or matches_web_keywords(transcript):
+        verify_deployment()
+
+def verify_deployment():
+    # 1. Build
+    run("pnpm build")  # or project-specific command
+
+    # 2. Restart service
+    restart_backend_server()
+
+    # 3. Browser verification via CDP
+    open_browser(target_url)
+    assert no_console_errors()
+    assert network_requests_ok()
+    assert visual_rendering_correct()
+```
+
 ## Active Technologies
 - Python 3.13+ (existing project requirement) + FastAPI, Uvicorn (new), existing React/TypeScript frontend (013-change-gui-into-web-service)
 - N/A (uses existing session storage in `~/.frago/sessions/`) (013-change-gui-into-web-service)
