@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import get_claude_command, run_subprocess_interactive
+from frago.server.services.base import run_subprocess_interactive
 from frago.server.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class ConsoleMessage:
 
 
 class ConsoleSession:
-    """Manages a single interactive console session with Claude CLI."""
+    """Manages a single interactive console session with frago agent."""
 
     def __init__(
         self, session_id: str, project_path: Optional[str] = None, auto_approve: bool = True
@@ -70,8 +70,21 @@ class ConsoleSession:
         self._claude_session_id: Optional[str] = None  # Claude CLI's internal session ID
         self._current_tool_input_json = ""  # Buffer for streaming tool input
 
+    def _get_frago_agent_command(self) -> List[str]:
+        """Get frago agent command for subprocess.
+
+        Uses 'uv run frago agent' in development environment,
+        falls back to 'frago agent' in production.
+
+        Returns:
+            Command list for frago agent
+        """
+        if shutil.which("uv"):
+            return ["uv", "run", "frago", "agent"]
+        return ["frago", "agent"]
+
     async def start(self, initial_prompt: str) -> None:
-        """Start Claude CLI process with initial prompt.
+        """Start frago agent process with initial prompt.
 
         Args:
             initial_prompt: The first message to send to Claude
@@ -80,50 +93,32 @@ class ConsoleSession:
         user_msg = ConsoleMessage("user", initial_prompt)
         self.messages.append(user_msg)
 
-        # Build command with bidirectional stream-json
-        # Use get_claude_command() to avoid .CMD file flash on Windows
-        cmd = get_claude_command() + [
-            "-p",
-            "-",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--replay-user-messages",
+        # Build frago agent command with passthrough mode for Web UI
+        cmd = self._get_frago_agent_command() + [
+            "--passthrough",      # Enable raw stream-json passthrough
+            "--yes",              # Skip permission confirmation prompt
+            "--source", "web",    # Mark session source as web
+            "--no-monitor",       # Web UI handles its own session tracking
         ]
 
-        # Auto-approve mode (MVP)
-        if self.auto_approve:
-            cmd.append("--dangerously-skip-permissions")
+        # Permission mode
+        if not self.auto_approve:
+            cmd.append("--ask")
 
-        # Prepare prompt file (Windows-safe)
+        # Prepare prompt file (Windows-safe: avoid command line argument truncation)
         log_dir = Path.home() / ".frago" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         prompt_file = log_dir / f"console-{self.session_id[:8]}.txt"
         prompt_file.write_text(initial_prompt, encoding="utf-8")
+        cmd.extend(["--prompt-file", str(prompt_file)])
 
         # Start subprocess
         try:
-            logger.info(f"Starting Claude CLI with command: {cmd} in {self.project_path}")
+            logger.info(f"Starting frago agent with command: {cmd} in {self.project_path}")
             self.process = run_subprocess_interactive(cmd, cwd=self.project_path)
 
-            # Send prompt via stdin using stream-json format
+            # frago agent reads prompt from --prompt-file, just close stdin
             if self.process.stdin:
-                logger.info(f"Sending prompt to Claude CLI: {initial_prompt[:50]}...")
-                # Correct stream-json input format (from claude-runner documentation):
-                # {"type": "user", "message": {"role": "user", "content": "..."}}
-                user_message_event = json.dumps({
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": initial_prompt
-                    }
-                }) + "\n"
-                self.process.stdin.write(user_message_event)
-                self.process.stdin.flush()
-                # Close stdin to signal end of input (required for output flush)
                 self.process.stdin.close()
 
             self._running = True
@@ -138,7 +133,7 @@ class ConsoleSession:
             raise
 
     async def send_message(self, message: str) -> None:
-        """Send a message to the running Claude session.
+        """Send a message to the running frago agent session.
 
         Uses --resume to continue the Claude session since stdin is closed after each message.
 
@@ -171,41 +166,34 @@ class ConsoleSession:
             }
         )
 
-        # Build command with --resume to continue the session
-        # Use get_claude_command() to avoid .CMD file flash on Windows
-        cmd = get_claude_command() + [
-            "-p",
-            "-",
-            "--resume",
-            self._claude_session_id,
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--replay-user-messages",
+        # Build frago agent command with --resume to continue the session
+        cmd = self._get_frago_agent_command() + [
+            "--resume", self._claude_session_id,
+            "--passthrough",      # Enable raw stream-json passthrough
+            "--yes",              # Skip permission confirmation prompt
+            "--source", "web",    # Mark session source as web
+            "--no-monitor",       # Web UI handles its own session tracking
         ]
 
-        if self.auto_approve:
-            cmd.append("--dangerously-skip-permissions")
+        # Permission mode
+        if not self.auto_approve:
+            cmd.append("--ask")
 
-        logger.info(f"Resuming Claude session {self._claude_session_id[:8]}...")
+        # Prepare prompt file (Windows-safe)
+        log_dir = Path.home() / ".frago" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = log_dir / f"console-{self.session_id[:8]}-resume.txt"
+        prompt_file.write_text(message, encoding="utf-8")
+        cmd.extend(["--prompt-file", str(prompt_file)])
+
+        logger.info(f"Resuming Claude session {self._claude_session_id[:8]} via frago agent...")
 
         # Start new process with --resume
         self.process = run_subprocess_interactive(cmd, cwd=self.project_path)
 
-        # Send message using correct format
-        user_message_event = json.dumps({
-            "type": "user",
-            "message": {
-                "role": "user",
-                "content": message
-            }
-        }) + "\n"
-        self.process.stdin.write(user_message_event)
-        self.process.stdin.flush()
-        self.process.stdin.close()
+        # frago agent reads prompt from --prompt-file, just close stdin
+        if self.process.stdin:
+            self.process.stdin.close()
 
         self._running = True
 

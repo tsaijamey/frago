@@ -382,6 +382,11 @@ If the task is simple and clear, you can also use other tools directly without i
     default="terminal",
     help="Session source (terminal or web) for tracking origin"
 )
+@click.option(
+    "--passthrough",
+    is_flag=True,
+    help="Pass through raw stream-json output (for Web UI or machine consumption)"
+)
 def agent(
     prompt: tuple,
     prompt_file,
@@ -396,7 +401,8 @@ def agent(
     no_monitor: bool,
     yes: bool,
     resume: Optional[str],
-    source: str
+    source: str,
+    passthrough: bool,
 ):
     """
     Intelligent Agent: Automatically choose execution mode based on user intent
@@ -437,19 +443,21 @@ def agent(
         click.echo("Please install Claude Code first: https://claude.ai/code", err=True)
         sys.exit(1)
 
-    click.echo(f"[OK] Claude CLI: {claude_path}")
+    if not passthrough:
+        click.echo(f"[OK] Claude CLI: {claude_path}")
 
     # Step 2: Load frago configuration
     frago_config = load_frago_config()
-    if frago_config:
-        auth_method = frago_config.get("auth_method", "official")
-        if auth_method == "official":
-            click.echo("[OK] Authentication: Claude CLI native")
+    if not passthrough:
+        if frago_config:
+            auth_method = frago_config.get("auth_method", "official")
+            if auth_method == "official":
+                click.echo("[OK] Authentication: Claude CLI native")
+            else:
+                click.echo("[OK] Authentication: Custom API endpoint")
         else:
-            click.echo("[OK] Authentication: Custom API endpoint")
-    else:
-        click.echo("[!] Frago config not found, using Claude CLI default authentication")
-        click.echo("  Tip: Run 'frago init' to initialize configuration")
+            click.echo("[!] Frago config not found, using Claude CLI default authentication")
+            click.echo("  Tip: Run 'frago init' to initialize configuration")
 
     # Step 3: Determine whether to use CCR
     env = os.environ.copy()
@@ -468,13 +476,16 @@ def agent(
         env["DISABLE_TELEMETRY"] = "true"
 
         if not ccr_info.get("is_running"):
-            click.echo("Starting CCR service...")
+            if not passthrough:
+                click.echo("Starting CCR service...")
             subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True, env=env)
 
-        click.echo(f"[OK] Using CCR: http://{host}:{port}")
+        if not passthrough:
+            click.echo(f"[OK] Using CCR: http://{host}:{port}")
 
     # Step 4: Permission confirmation (--yes skips confirmation)
-    if not ask and not dry_run and not yes:
+    # In passthrough mode, skip confirmation (Web UI handles this)
+    if not ask and not dry_run and not yes and not passthrough:
         click.echo()
         click.echo("[!] Will run in --dangerously-skip-permissions mode")
         click.echo("  Claude will skip all permission confirmations and execute any operation directly")
@@ -489,22 +500,26 @@ def agent(
     # =========================================================================
 
     if resume:
-        click.echo(f"\n[Resume] Continue in session {resume[:8]}...: {prompt_text}")
+        if not passthrough:
+            click.echo(f"\n[Resume] Continue in session {resume[:8]}...: {prompt_text}")
         execution_prompt = prompt_text
     elif direct:
-        click.echo(f"\n[Direct] Execute directly: {prompt_text}")
+        if not passthrough:
+            click.echo(f"\n[Direct] Execute directly: {prompt_text}")
         execution_prompt = prompt_text
     else:
-        click.echo(f"\n[Execute] {prompt_text}")
+        if not passthrough:
+            click.echo(f"\n[Execute] {prompt_text}")
 
         # Build prompt with available command descriptions, let agent determine and execute
         execution_prompt = _build_agent_prompt(prompt_text)
 
-        # Display built prompt
-        click.echo(f"\n[Prompt] Agent prompt:")
-        click.echo("-" * 40)
-        click.echo(execution_prompt)
-        click.echo("-" * 40)
+        # Display built prompt (skip in passthrough mode)
+        if not passthrough:
+            click.echo(f"\n[Prompt] Agent prompt:")
+            click.echo("-" * 40)
+            click.echo(execution_prompt)
+            click.echo("-" * 40)
 
         if dry_run:
             click.echo("[Dry Run] Skip actual execution")
@@ -515,6 +530,14 @@ def agent(
     # Use "-p -" to read prompt from stdin, avoid Windows command line argument truncation of newlines
     cmd = ["claude", "-p", "-", "--output-format", "stream-json", "--verbose"]
 
+    # In passthrough mode, enable bidirectional stream-json for Web UI
+    if passthrough:
+        cmd.extend([
+            "--input-format", "stream-json",
+            "--include-partial-messages",
+            "--replay-user-messages",
+        ])
+
     if resume:
         cmd.extend(["--resume", resume])
 
@@ -524,11 +547,13 @@ def agent(
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
 
-    click.echo("-" * 60)
+    if not passthrough:
+        click.echo("-" * 60)
 
     # Start session monitoring (if not disabled)
+    # In passthrough mode, Web UI handles its own session tracking
     monitor = None
-    monitor_enabled = not no_monitor and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
+    monitor_enabled = not no_monitor and not passthrough and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
 
     if monitor_enabled:
         try:
@@ -574,57 +599,76 @@ def agent(
         )
 
         # Pass prompt via stdin (avoid Windows command line argument truncation of multi-line text)
-        process.stdin.write(execution_prompt)
+        if passthrough:
+            # In passthrough mode, send prompt as stream-json format
+            input_event = json.dumps({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": execution_prompt
+                }
+            })
+            process.stdin.write(input_event + "\n")
+        else:
+            process.stdin.write(execution_prompt)
         process.stdin.close()
 
-        # Parse stream-json format and display in real-time
-        for line in iter(process.stdout.readline, ""):
-            line = line.strip()
-            if not line:
-                continue
+        if passthrough:
+            # Passthrough mode: output raw stream-json directly
+            for line in iter(process.stdout.readline, ""):
+                if line.strip():
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+        else:
+            # Normal mode: Parse stream-json format and display in real-time
+            for line in iter(process.stdout.readline, ""):
+                line = line.strip()
+                if not line:
+                    continue
 
-            # Parse stream-json and display key information
-            try:
-                event = json.loads(line)
-                event_type = event.get("type", "")
+                # Parse stream-json and display key information
+                try:
+                    event = json.loads(line)
+                    event_type = event.get("type", "")
 
-                if event_type == "assistant":
-                    message = event.get("message", {})
-                    content = message.get("content", [])
-                    for block in content:
-                        block_type = block.get("type")
-                        if block_type == "text":
-                            text = block.get("text", "")
-                            if text:
-                                click.echo(text)
-                        elif block_type == "tool_use":
-                            tool_name = block.get("name", "unknown")
-                            tool_input = block.get("input", {})
-                            if tool_name == "Bash":
-                                cmd_str = tool_input.get("command", "")
-                                desc = tool_input.get("description", "")
-                                click.echo(f"[Bash] {desc or cmd_str[:50]}")
-                            else:
-                                click.echo(f"[{tool_name}]")
-            except json.JSONDecodeError:
-                # Non-JSON lines output directly
-                if not quiet:
-                    click.echo(line)
+                    if event_type == "assistant":
+                        message = event.get("message", {})
+                        content = message.get("content", [])
+                        for block in content:
+                            block_type = block.get("type")
+                            if block_type == "text":
+                                text = block.get("text", "")
+                                if text:
+                                    click.echo(text)
+                            elif block_type == "tool_use":
+                                tool_name = block.get("name", "unknown")
+                                tool_input = block.get("input", {})
+                                if tool_name == "Bash":
+                                    cmd_str = tool_input.get("command", "")
+                                    desc = tool_input.get("description", "")
+                                    click.echo(f"[Bash] {desc or cmd_str[:50]}")
+                                else:
+                                    click.echo(f"[{tool_name}]")
+                except json.JSONDecodeError:
+                    # Non-JSON lines output directly
+                    if not quiet:
+                        click.echo(line)
 
         # Read stderr
         stderr_output = process.stderr.read()
-        if stderr_output:
+        if stderr_output and not passthrough:
             click.echo(f"\n[stderr] {stderr_output}", err=True)
 
         process.wait(timeout=timeout)
 
-        click.echo("\n" + "-" * 60)
+        if not passthrough:
+            click.echo("\n" + "-" * 60)
 
-        if process.returncode == 0:
-            click.echo("[OK] Execution completed")
-        else:
-            # Non-zero exit code doesn't force exit, Claude CLI will adaptively handle tool errors
-            click.echo(f"[!] Execution finished (exit code: {process.returncode})")
+            if process.returncode == 0:
+                click.echo("[OK] Execution completed")
+            else:
+                # Non-zero exit code doesn't force exit, Claude CLI will adaptively handle tool errors
+                click.echo(f"[!] Execution finished (exit code: {process.returncode})")
 
     except subprocess.TimeoutExpired:
         process.kill()
