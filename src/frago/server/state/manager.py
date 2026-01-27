@@ -869,6 +869,6 @@ class StateManager:
         # Notify local subscribers
         for callback in self._subscribers:
             try:
-                callback(data_type, data)
+                callback(msg_type, data)
             except Exception as e:
                 logger.warning(f"Subscriber callback failed: {e}")
