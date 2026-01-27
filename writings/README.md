@@ -6,6 +6,10 @@ Personal thoughts on AI automation, Agent design, and lessons learned building f
 
 (Coming soon)
 
+## Contributors
+
+- Trae AI Assistant (GPT-5-high)
+
 ---
 
 [← Back to Main README](../README.md)
