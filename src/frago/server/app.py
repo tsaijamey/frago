@@ -36,6 +36,7 @@ from frago.server.routes import (
 )
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.sync_service import SyncService
+from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.version_service import VersionCheckService
 from frago.server.state import StateManager
@@ -74,9 +75,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to auto-sync official resources: %s", e)
 
-    # Start sync service
+    # Start sync service (syncs Claude Code sessions to frago storage)
     sync_service = SyncService.get_instance()
     await sync_service.start()
+
+    # Start sessions watcher (watchdog-based real-time monitoring)
+    sessions_watcher = SessionsWatcher.get_instance()
+    await sessions_watcher.start()
 
     # Initialize and start community recipe service (60s refresh interval)
     community_service = CommunityRecipeService.get_instance()
@@ -93,6 +98,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await version_service.stop()
     await community_service.stop()
+    await sessions_watcher.stop()
     await sync_service.stop()
 
 
