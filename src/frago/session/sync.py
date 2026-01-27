@@ -415,15 +415,25 @@ def sync_session(
 
     session.step_count = step_id
 
-    # Write metadata
-    write_metadata(session)
+    # Determine if there are actual changes
+    is_new_session = existing is None
+    has_new_steps = new_steps > 0
+    status_changed = existing and existing.status != status
 
-    # If completed, generate summary
-    if status == SessionStatus.COMPLETED:
-        write_summary(session_id, AgentType.CLAUDE)
+    # Only write metadata if there are changes
+    if is_new_session or has_new_steps or status_changed:
+        write_metadata(session)
 
-    logger.info(f"Synced session: {session_id} (steps={step_id}, status={status.value})")
-    return session_id
+        # If completed, generate summary
+        if status == SessionStatus.COMPLETED:
+            write_summary(session_id, AgentType.CLAUDE)
+
+        logger.info(f"Synced session: {session_id} (steps={step_id}, new={new_steps}, status={status.value})")
+        return session_id
+
+    # No changes, skip
+    logger.debug(f"No changes for session: {session_id}")
+    return None
 
 
 def sync_project_sessions(
@@ -475,10 +485,12 @@ def sync_project_sessions(
             logger.warning(error_msg)
             result.errors.append(error_msg)
 
-    logger.info(
-        f"Sync complete: synced={result.synced}, updated={result.updated}, "
-        f"skipped={result.skipped}, errors={len(result.errors)}"
-    )
+    # Only log if there are actual changes or errors
+    if result.synced > 0 or result.updated > 0 or result.errors:
+        logger.info(
+            f"Sync complete: synced={result.synced}, updated={result.updated}, "
+            f"skipped={result.skipped}, errors={len(result.errors)}"
+        )
     return result
 
 
