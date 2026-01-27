@@ -152,14 +152,11 @@ class TaskService:
     def _should_display(session) -> bool:
         """Determine if session should be displayed in task list.
 
-        Display criteria (any of):
-        1. Running task
-        2. Step count >= 10
-        3. Step count >= 5
+        Display criteria:
+        - Has assistant messages (real user interaction)
 
         Exclusion criteria:
-        1. Step count < 5 and completed
-        2. No assistant messages and step count < 10
+        - No assistant messages (system/background session)
 
         Args:
             session: Session metadata object.
@@ -172,46 +169,27 @@ class TaskService:
         from frago.session.storage import get_session_dir
 
         status = getattr(session, "status", None)
-        step_count = getattr(session, "step_count", 0)
 
         # Always display running tasks
         if status == SessionStatus.RUNNING:
             return True
 
-        # Display if step count >= 10
-        if step_count >= 10:
-            return True
+        # Check for assistant messages to filter out system sessions
+        session_dir = get_session_dir(session.session_id, session.agent_type)
+        steps_file = session_dir / "steps.jsonl"
+        if steps_file.exists():
+            try:
+                with open(steps_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        step = json.loads(line)
+                        if step.get("type") in ("assistant", "assistant_message"):
+                            return True  # Has assistant message, display
+            except Exception:
+                pass
 
-        # Don't display if step count < 5 and completed
-        if step_count < 5 and status == SessionStatus.COMPLETED:
-            return False
-
-        # Check for assistant messages if step_count < 10
-        if step_count < 10:
-            session_dir = get_session_dir(session.session_id, session.agent_type)
-            steps_file = session_dir / "steps.jsonl"
-            if steps_file.exists():
-                has_assistant = False
-                try:
-                    with open(steps_file, "r", encoding="utf-8") as f:
-                        for line in f:
-                            if not line.strip():
-                                continue
-                            step = json.loads(line)
-                            if step.get("type") in ("assistant", "assistant_message"):
-                                has_assistant = True
-                                break
-                except Exception:
-                    pass
-
-                # No assistant messages → system session, don't display
-                if not has_assistant:
-                    return False
-
-        # Display if step count >= 5
-        if step_count >= 5:
-            return True
-
+        # No assistant messages → system session, don't display
         return False
 
     @staticmethod
