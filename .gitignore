@@ -84,8 +84,7 @@ tmp/
 # ====================
 # assets/ 是构建产物，需要打包到 wheel
 src/frago/gui_deprecated/assets_legacy/
-src/frago/gui_deprecated/frontend/node_modules/
-src/frago/server/web/node_modules/
+node_modules/
 
 # ====================
 # Internal Development (not for public)
