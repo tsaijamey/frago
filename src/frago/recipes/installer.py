@@ -491,6 +491,7 @@ class RecipeInstaller:
                 try:
                     file_response = requests.get(
                         item["download_url"],
+                        headers=self._get_headers(),
                         timeout=self.REQUEST_TIMEOUT
                     )
                     file_response.raise_for_status()

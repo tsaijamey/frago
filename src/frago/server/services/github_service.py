@@ -266,3 +266,60 @@ class GitHubService:
                 "status": "error",
                 "error": str(e),
             }
+
+    # Cached token to avoid repeated subprocess calls
+    _cached_token: str | None = None
+    _token_checked: bool = False
+
+    @classmethod
+    def get_auth_token(cls) -> str | None:
+        """Get GitHub auth token from gh CLI.
+
+        Returns:
+            Token string or None if not authenticated.
+        """
+        # Return cached result if already checked
+        if cls._token_checked:
+            return cls._cached_token
+
+        cls._token_checked = True
+
+        try:
+            result = run_subprocess(
+                get_gh_command() + ["auth", "token"],
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                cls._cached_token = result.stdout.strip()
+                logger.debug("GitHub token obtained from gh CLI")
+                return cls._cached_token
+        except subprocess.TimeoutExpired:
+            logger.debug("gh auth token timed out")
+        except FileNotFoundError:
+            logger.debug("gh CLI not found")
+        except Exception as e:
+            logger.debug("Failed to get gh token: %s", e)
+
+        return None
+
+    @classmethod
+    def clear_token_cache(cls) -> None:
+        """Clear cached token (call after auth state changes)."""
+        cls._cached_token = None
+        cls._token_checked = False
+
+    @classmethod
+    def get_auth_headers(cls) -> Dict[str, str]:
+        """Get HTTP headers with GitHub authentication if available.
+
+        Returns:
+            Headers dict with Authorization if token available.
+        """
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "frago",
+        }
+        token = cls.get_auth_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+        return headers

@@ -59,8 +59,11 @@ class OfficialResourceSyncService:
     @classmethod
     def _fetch_directory_contents(cls, path: str) -> List[Dict[str, Any]]:
         """Fetch directory contents from GitHub API."""
+        from frago.server.services.github_service import GitHubService
+
         url = cls.get_github_api_url(path)
-        response = requests.get(url, timeout=cls.REQUEST_TIMEOUT)
+        headers = GitHubService.get_auth_headers()
+        response = requests.get(url, headers=headers, timeout=cls.REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
