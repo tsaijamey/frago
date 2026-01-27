@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Sparkles } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getConsoleHistory } from '@/api';
+import { getWebSocketClient } from '@/api/websocket';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
 import type { ConsoleMessage } from '@/types/console';
 import { toUnifiedMessage } from '@/types/message';
@@ -15,11 +16,13 @@ export default function NewTaskPage() {
   const {
     showToast,
     // Console state from global store
+    consoleInternalId,
     consoleSessionId,
     consoleMessages,
     consoleIsRunning,
     consoleScrollPosition,
     // Console actions
+    setConsoleInternalId,
     setConsoleSessionId,
     addConsoleMessage,
     updateLastConsoleMessage,
@@ -35,7 +38,6 @@ export default function NewTaskPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
 
   // Restore scroll position on mount
   useEffect(() => {
@@ -60,21 +62,25 @@ export default function NewTaskPage() {
   useEffect(() => {
     const restoreSession = async () => {
       // Skip if we already have a session in memory
-      if (useAppStore.getState().consoleSessionId) return;
+      if (useAppStore.getState().consoleInternalId) return;
 
       try {
+        const storedInternalId = localStorage.getItem('frago_console_internal_id');
         const storedSessionId = localStorage.getItem('frago_console_session_id');
-        if (!storedSessionId) return;
+        if (!storedInternalId) return;
 
-        // Validate session still exists on backend
-        const response = await fetch(`/api/console/${storedSessionId}/info`);
+        // Validate session still exists on backend using internal_id
+        const response = await fetch(`/api/console/${storedInternalId}/info`);
         if (response.ok) {
           const info = await response.json();
-          // Backend returns { running: boolean, ... } not status string
-          setConsoleSessionId(storedSessionId);
+          // Restore both IDs
+          setConsoleInternalId(storedInternalId);
+          if (storedSessionId) {
+            setConsoleSessionId(storedSessionId);
+          }
           setConsoleIsRunning(info.running === true);
-          // Fetch history - messages from history are always complete
-          const history = await getConsoleHistory(storedSessionId);
+          // Fetch history using internal_id
+          const history = await getConsoleHistory(storedInternalId);
           if (history.messages) {
             const messagesWithDone = history.messages.map(msg => ({
               ...msg,
@@ -84,9 +90,11 @@ export default function NewTaskPage() {
           }
         } else {
           // Session not found, clear localStorage
+          localStorage.removeItem('frago_console_internal_id');
           localStorage.removeItem('frago_console_session_id');
         }
       } catch {
+        localStorage.removeItem('frago_console_internal_id');
         localStorage.removeItem('frago_console_session_id');
       }
     };
@@ -98,10 +106,10 @@ export default function NewTaskPage() {
   // Always fetch from backend since it's the source of truth for messages received while away
   useEffect(() => {
     const recoverMessages = async () => {
-      const sessionId = useAppStore.getState().consoleSessionId;
-      if (sessionId) {
+      const internalId = useAppStore.getState().consoleInternalId;
+      if (internalId) {
         try {
-          const history = await getConsoleHistory(sessionId);
+          const history = await getConsoleHistory(internalId);
           if (history.messages && history.messages.length > 0) {
             // Replace with backend data - it has messages received while page was unmounted
             // Messages from history are always complete
@@ -125,58 +133,20 @@ export default function NewTaskPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [consoleMessages]);
 
-  // WebSocket connection
+  // Use ref to track internalId for WebSocket handler (avoids stale closure)
+  const internalIdRef = useRef<string | null>(null);
   useEffect(() => {
-    // Connect to WebSocket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        handleWebSocketMessage(data);
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, []);
-
-  // Use ref to track sessionId for WebSocket handler (avoids stale closure)
-  const sessionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    sessionIdRef.current = consoleSessionId;
-  }, [consoleSessionId]);
+    internalIdRef.current = consoleInternalId;
+  }, [consoleInternalId]);
 
   // Memoize the WebSocket message handler to use latest store actions
   const handleWebSocketMessage = useCallback((data: Record<string, unknown>) => {
-    // Only handle messages for current session (or accept if no session yet)
-    const currentSessionId = sessionIdRef.current;
-    const sessionId = data.session_id as string | undefined;
-    if (sessionId && currentSessionId && sessionId !== currentSessionId) return;
+    // Filter messages by internal_id (for console events)
+    const currentInternalId = internalIdRef.current;
+    const msgInternalId = data.internal_id as string | undefined;
 
-    // If we receive a message with session_id and we don't have one, capture it
-    if (sessionId && !currentSessionId) {
-      setConsoleSessionId(sessionId);
-    }
+    // Skip if message has internal_id that doesn't match ours
+    if (msgInternalId && currentInternalId && msgInternalId !== currentInternalId) return;
 
     const messages = useAppStore.getState().consoleMessages;
 
@@ -239,8 +209,36 @@ export default function NewTaskPage() {
           }
         }
         break;
+
+      case 'console_session_id_resolved': {
+        // Backend resolved the real Claude session ID
+        // Match by internal_id and set the real session_id for display
+        const internalId = data.internal_id as string;
+        const realSessionId = data.session_id as string;
+        if (internalId === currentInternalId && realSessionId) {
+          setConsoleSessionId(realSessionId);
+          // Also update localStorage for session recovery
+          localStorage.setItem('frago_console_session_id', realSessionId);
+        }
+        break;
+      }
     }
   }, [setConsoleSessionId, addConsoleMessage, updateLastConsoleMessage, updateConsoleMessageByToolCallId, setConsoleIsRunning]);
+
+  // Subscribe to WebSocket messages using global client
+  useEffect(() => {
+    const client = getWebSocketClient();
+
+    // Subscribe to all messages and filter console-related ones
+    const unsubscribe = client.on('*', (message) => {
+      handleWebSocketMessage(message as unknown as Record<string, unknown>);
+    });
+
+    return () => {
+      // Only unsubscribe, don't close the connection
+      unsubscribe();
+    };
+  }, [handleWebSocketMessage]);
 
   const handleSend = async () => {
     if (!inputValue.trim()) return;
@@ -259,7 +257,7 @@ export default function NewTaskPage() {
     setInputValue('');
 
     try {
-      if (!consoleSessionId) {
+      if (!consoleInternalId) {
         // Start new session
         const response = await fetch('/api/console/start', {
           method: 'POST',
@@ -275,12 +273,13 @@ export default function NewTaskPage() {
         }
 
         const data = await response.json();
-        setConsoleSessionId(data.session_id);
+        // Store internal_id for API calls; real session_id comes via WebSocket
+        setConsoleInternalId(data.internal_id);
         setConsoleIsRunning(true);
         showToast('Console session started', 'success');
       } else {
-        // Continue existing session
-        const response = await fetch(`/api/console/${consoleSessionId}/message`, {
+        // Continue existing session using internal_id
+        const response = await fetch(`/api/console/${consoleInternalId}/message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: inputValue }),
@@ -297,10 +296,10 @@ export default function NewTaskPage() {
   };
 
   const handleStop = async () => {
-    if (!consoleSessionId) return;
+    if (!consoleInternalId) return;
 
     try {
-      const response = await fetch(`/api/console/${consoleSessionId}/stop`, {
+      const response = await fetch(`/api/console/${consoleInternalId}/stop`, {
         method: 'POST',
       });
 
@@ -309,7 +308,8 @@ export default function NewTaskPage() {
       }
 
       setConsoleIsRunning(false);
-      setConsoleSessionId(null); // Reset session ID after stop
+      setConsoleInternalId(null);
+      setConsoleSessionId(null);
       showToast('Session stopped', 'success');
     } catch (error) {
       console.error('Failed to stop session:', error);
@@ -385,7 +385,7 @@ export default function NewTaskPage() {
           onChange={setInputValue}
           onSend={handleSend}
           disabled={consoleIsRunning && consoleMessages[consoleMessages.length - 1]?.type === 'assistant' && !consoleMessages[consoleMessages.length - 1]?.done}
-          placeholder={consoleSessionId ? t('console.continueConversation') : t('console.startConversation')}
+          placeholder={consoleInternalId ? t('console.continueConversation') : t('console.startConversation')}
         />
       </div>
     </div>

@@ -42,6 +42,7 @@ async def start_console(request: ConsoleStartRequest) -> ConsoleStartResponse:
 
         return ConsoleStartResponse(
             session_id=result["session_id"],
+            internal_id=result["internal_id"],
             status=result["status"],
             project_path=result["project_path"],
             auto_approve=result["auto_approve"],

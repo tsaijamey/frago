@@ -98,7 +98,8 @@ class ConsoleSession:
             "--passthrough",      # Enable raw stream-json passthrough
             "--yes",              # Skip permission confirmation prompt
             "--source", "web",    # Mark session source as web
-            "--no-monitor",       # Web UI handles its own session tracking
+            # Note: SessionMonitor is needed to sync sessions to ~/.frago/sessions/
+            # so watchdog can detect changes and update tasks list
         ]
 
         # Permission mode
@@ -282,6 +283,15 @@ class ConsoleSession:
         if event_type == "system" and event.get("subtype") == "init":
             self._claude_session_id = event.get("session_id")
             logger.info(f"Claude session ID: {self._claude_session_id}")
+
+            # Broadcast the real Claude session ID to frontend
+            await manager.broadcast(
+                {
+                    "type": "console_session_id_resolved",
+                    "internal_id": self.session_id,  # Internal ID for session management
+                    "session_id": self._claude_session_id,  # Real Claude session ID
+                }
+            )
             return
 
         # Unwrap stream_event wrapper
@@ -459,16 +469,20 @@ class ConsoleService:
         Returns:
             Session info dictionary
         """
-        session_id = str(uuid.uuid4())
-        session = ConsoleSession(session_id, project_path, auto_approve)
+        # Use a temporary internal ID for session management
+        # The real Claude session ID will be sent via WebSocket once available
+        internal_id = str(uuid.uuid4())
+        session = ConsoleSession(internal_id, project_path, auto_approve)
 
         try:
             await session.start(initial_prompt)
-            self._sessions[session_id] = session
+            self._sessions[internal_id] = session
 
             return {
-                "session_id": session_id,
-                "status": "running",
+                # Return null - real session_id comes via WebSocket console_session_id_resolved
+                "session_id": None,
+                "internal_id": internal_id,  # For internal tracking only
+                "status": "starting",
                 "project_path": session.project_path,
                 "auto_approve": auto_approve,
             }

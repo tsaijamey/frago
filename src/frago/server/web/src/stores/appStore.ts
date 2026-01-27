@@ -38,7 +38,8 @@ export type PageType =
 // Sidebar storage key for localStorage
 const SIDEBAR_COLLAPSED_KEY = 'frago-sidebar-collapsed';
 
-// Console session storage key for localStorage
+// Console session storage keys for localStorage
+const CONSOLE_INTERNAL_ID_KEY = 'frago_console_internal_id';
 const CONSOLE_SESSION_KEY = 'frago_console_session_id';
 
 // Toast type
@@ -85,7 +86,8 @@ interface AppState {
   updateStatus: UpdateStatus | null;
 
   // Console state (persisted across navigation)
-  consoleSessionId: string | null;
+  consoleInternalId: string | null;  // Internal ID for API calls
+  consoleSessionId: string | null;   // Real Claude session ID for display
   consoleMessages: ConsoleMessage[];
   consoleIsRunning: boolean;
   consoleScrollPosition: number;
@@ -131,6 +133,7 @@ interface AppState {
   }) => void;
 
   // Console actions
+  setConsoleInternalId: (id: string | null) => void;
   setConsoleSessionId: (id: string | null) => void;
   addConsoleMessage: (message: ConsoleMessage) => void;
   updateLastConsoleMessage: (update: Partial<ConsoleMessage>) => void;
@@ -198,6 +201,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateStatus: null,
 
   // Console initial state
+  consoleInternalId: null,
   consoleSessionId: null,
   consoleMessages: [],
   consoleIsRunning: false,
@@ -521,6 +525,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Console actions
+  setConsoleInternalId: (id) => {
+    set({ consoleInternalId: id });
+    try {
+      if (id) {
+        localStorage.setItem(CONSOLE_INTERNAL_ID_KEY, id);
+      } else {
+        localStorage.removeItem(CONSOLE_INTERNAL_ID_KEY);
+      }
+    } catch {
+      // localStorage not available
+    }
+  },
   setConsoleSessionId: (id) => {
     set({ consoleSessionId: id });
     try {
@@ -573,12 +589,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   clearConsole: () => {
     set({
+      consoleInternalId: null,
       consoleSessionId: null,
       consoleMessages: [],
       consoleIsRunning: false,
       consoleScrollPosition: 0,
     });
     try {
+      localStorage.removeItem(CONSOLE_INTERNAL_ID_KEY);
       localStorage.removeItem(CONSOLE_SESSION_KEY);
     } catch {
       // localStorage not available

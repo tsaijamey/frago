@@ -249,8 +249,9 @@ class ConsoleMessageResponse(BaseModel):
 class ConsoleStartResponse(BaseModel):
     """Response for POST /api/console/start"""
 
-    session_id: str
-    status: str  # running
+    session_id: Optional[str] = None  # Real Claude session ID, comes later via WebSocket
+    internal_id: str  # Internal ID for API calls
+    status: str  # starting, running
     project_path: str
     auto_approve: bool
 
