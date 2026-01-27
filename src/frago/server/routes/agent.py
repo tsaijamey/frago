@@ -3,6 +3,7 @@
 Provides endpoints for starting and continuing agent tasks.
 """
 
+import asyncio
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
@@ -11,6 +12,24 @@ from frago.server.models import AgentContinueRequest, AgentStartRequest, TaskIte
 from frago.server.services.agent_service import AgentService
 
 router = APIRouter()
+
+
+async def _delayed_refresh() -> None:
+    """Trigger state refresh after a short delay.
+
+    Gives Claude Code time to create the session file before refreshing.
+    """
+    await asyncio.sleep(1.0)
+    try:
+        from frago.server.services.sync_service import SyncService
+        from frago.server.state import StateManager
+
+        SyncService.sync_now()
+        state_manager = StateManager.get_instance()
+        if state_manager.is_initialized():
+            await state_manager.refresh_tasks(broadcast=True)
+    except Exception:
+        pass  # Best effort, don't fail the request
 
 
 @router.post("/agent", response_model=TaskItemResponse)
@@ -43,6 +62,9 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
         started_at = datetime.fromisoformat(started_at)
     elif started_at is None:
         started_at = datetime.now(timezone.utc)
+
+    # Schedule delayed refresh to update task list
+    asyncio.create_task(_delayed_refresh())
 
     return TaskItemResponse(
         id=result.get("id", ""),
@@ -80,5 +102,8 @@ async def continue_agent(session_id: str, request: AgentContinueRequest) -> Dict
 
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error"))
+
+    # Schedule delayed refresh to update task list
+    asyncio.create_task(_delayed_refresh())
 
     return result
