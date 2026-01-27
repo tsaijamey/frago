@@ -557,9 +557,10 @@ def agent(
         click.echo("-" * 60)
 
     # Start session monitoring (if not disabled)
-    # In passthrough mode, Web UI handles its own session tracking
+    # Note: Even in passthrough mode, monitor is needed to sync sessions to ~/.frago/sessions/
+    # so watchdog can detect changes and update tasks list
     monitor = None
-    monitor_enabled = not no_monitor and not passthrough and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
+    monitor_enabled = not no_monitor and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
 
     if monitor_enabled:
         try:
