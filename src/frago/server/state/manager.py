@@ -830,20 +830,18 @@ class StateManager:
         try:
             from frago.server.websocket import create_message, manager
 
-            # Convert dataclass to dict if needed
-            if hasattr(data, "__dataclass_fields__"):
-                if data_type == "tasks":
-                    payload = {"tasks": self._tasks_to_dict(), "total": self._state.tasks_total}
-                elif data_type == "dashboard":
-                    payload = self._dashboard_to_dict()
-                elif data_type == "recipes":
-                    payload = self._recipes_to_dict()
-                elif data_type == "skills":
-                    payload = self._skills_to_dict()
-                elif data_type == "projects":
-                    payload = self._projects_to_dict()
-                else:
-                    payload = data
+            # Convert data to dict based on data_type
+            # Note: data may be a list of dataclasses, not a dataclass itself
+            if data_type == "tasks":
+                payload = {"tasks": self._tasks_to_dict(), "total": self._state.tasks_total}
+            elif data_type == "dashboard":
+                payload = self._dashboard_to_dict()
+            elif data_type == "recipes":
+                payload = self._recipes_to_dict()
+            elif data_type == "skills":
+                payload = self._skills_to_dict()
+            elif data_type == "projects":
+                payload = self._projects_to_dict()
             else:
                 payload = data
 
