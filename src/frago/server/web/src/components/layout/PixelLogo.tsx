@@ -1,7 +1,7 @@
 /**
  * PixelLogo Component
  *
- * Pixel-block style lowercase "frago" logo.
+ * Logo.png icon + Pixel-block style lowercase "frago" logo.
  * - Dark mode: pure white
  * - Light mode: pure black
  * - True lowercase letters with ascenders/descenders
@@ -10,6 +10,7 @@
 interface PixelLogoProps {
   height?: number;
   className?: string;
+  showIcon?: boolean; // Whether to show logo.png icon
 }
 
 // Letter definition with vertical offset for baseline alignment
@@ -19,7 +20,7 @@ interface LetterDef {
   gapAfter?: number; // Custom gap after this letter (default: letterGap)
 }
 
-export default function PixelLogo({ height = 36, className = '' }: PixelLogoProps) {
+export default function PixelLogo({ height = 36, className = '', showIcon = true }: PixelLogoProps) {
   // Lowercase letters using single-pixel strokes for visual consistency
   // Each pixel is independent - no adjacent blocks that create "shadow" effect
   // Total grid height is 9 to accommodate ascenders (f) and descenders (g)
@@ -112,12 +113,12 @@ export default function PixelLogo({ height = 36, className = '' }: PixelLogoProp
   // Add padding to accommodate scaled blocks that extend beyond original boundaries
   const padding = blockOffset;
 
-  return (
+  const svgElement = (
     <svg
       width={totalWidth + padding * 2}
       height={height + padding * 2}
       viewBox={`${-padding} ${-padding} ${totalWidth + padding * 2} ${height + padding * 2}`}
-      className={`pixel-logo ${className}`}
+      className="pixel-logo"
       aria-label="frago logo"
       role="img"
     >
@@ -144,5 +145,21 @@ export default function PixelLogo({ height = 36, className = '' }: PixelLogoProp
         );
       })}
     </svg>
+  );
+
+  if (!showIcon) {
+    return <div className={className}>{svgElement}</div>;
+  }
+
+  return (
+    <div className={`flex items-center gap-2 ${className}`}>
+      <img
+        src="/icons/logo.png"
+        alt="frago icon"
+        style={{ height: height + padding * 2 }}
+        className="object-contain"
+      />
+      {svgElement}
+    </div>
   );
 }

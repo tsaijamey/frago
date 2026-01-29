@@ -279,6 +279,14 @@ def create_app(
             StaticFiles(directory=str(frontend_path / "assets") if (frontend_path / "assets").exists() else str(frontend_path)),
             name="assets",
         )
+        # Mount icons directory
+        icons_path = frontend_path / "icons"
+        if icons_path.exists():
+            app.mount(
+                "/icons",
+                StaticFiles(directory=str(icons_path)),
+                name="icons",
+            )
 
     # SPA fallback: serve index.html for all non-API routes
     @app.get("/{full_path:path}")
