@@ -9,45 +9,44 @@
 @tailwind utilities;
 
 /* === CSS Variables - Dark Theme (Default) === */
-/* Based on Next.js-inspired design language from FRONTEND_STYLE_GUIDE.md */
+/* Based on Slate color palette from design */
 :root {
-  /* Background color scale - Enhanced differentiation */
-  --bg-primary: #000000;
-  --bg-secondary: #0D0D0D;
-  --bg-tertiary: #171717;
-  --bg-card: #0D0D0D;
-  --bg-base: #0D0D0D;
-  --bg-subtle: #1F1F1F;
-  --bg-hover: #1F1F1F;
-  --bg-elevated: #262626;
+  /* Background color scale - Slate blue-gray */
+  --bg-primary: #0A0F1C;
+  --bg-secondary: #0F172A;
+  --bg-tertiary: #1E293B;
+  --bg-card: #1E293B;
+  --bg-base: #0F172A;
+  --bg-subtle: #0F172A;
+  --bg-hover: #1E293B;
+  --bg-elevated: #334155;
 
   /* Sidebar specific colors (dark mode) */
-  --page-bg: #000000;
-  --sidebar-bg: #0D0D0D;
-  --sidebar-item-selected-bg: #2D2F39;
+  --page-bg: #0A0F1C;
+  --sidebar-bg: #0F172A;
+  --sidebar-item-selected-bg: #1E293B;
   --sidebar-item-selected-text: #FFFFFF;
   --sidebar-item-unselected-text: rgba(255, 255, 255, 0.5);
-  --sidebar-section-text: rgba(255, 255, 255, 0.4);
+  --sidebar-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
   /* Text color scale */
   --text-primary: #FFFFFF;
-  --text-secondary: #ADADAD;
-  --text-muted: #888888;
-  --text-link: #EDEDED;
-  --text-on-accent: #0A0A0A;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --text-link: #009933;
+  --text-on-accent: #0A0F1C;
 
-  /* Accent colors - High contrast monochrome */
-  --accent-primary: #EDEDED;
-  --accent-secondary: #FFFFFF;
-  --accent-muted: #888888;
-  --accent-success: #3fb950;
-  --accent-warning: #d29922;
-  --accent-error: #f85149;
+  /* Accent colors - Green primary */
+  --accent-primary: #009933;
+  --accent-primary-10: rgba(0, 153, 51, 0.1);
+  --accent-primary-20: rgba(0, 153, 51, 0.2);
+  --accent-success: #22C55E;
+  --accent-warning: #F59E0B;
+  --accent-error: #EF4444;
 
-  /* Border colors - Enhanced visibility */
-  --border-color: #262626;
-  --border-muted: #171717;
-  --border-primary: #EDEDED;
+  /* Border colors */
+  --border-color: #334155;
+  --border-primary: #009933;
   --shadow-color: rgba(0, 0, 0, 0.6);
 
   /* Status badge backgrounds */
@@ -104,47 +103,46 @@
 }
 
 /* === Light Theme === */
-/* Black & white minimal style with black accent */
+/* Slate light palette from design */
 [data-theme='light'] {
   --bg-primary: #FFFFFF;
-  --bg-secondary: #FAFAFA;
-  --bg-tertiary: #F5F5F5;
-  --bg-card: #FFFFFF;
+  --bg-secondary: #F8FAFC;
+  --bg-tertiary: #F1F5F9;
+  --bg-card: #F8FAFC;
   --bg-base: #FFFFFF;
-  --bg-subtle: #E5E5E5;
-  --bg-hover: #F0F0F0;
-  --bg-elevated: #E8E8E8;
+  --bg-subtle: #F1F5F9;
+  --bg-hover: #E2E8F0;
+  --bg-elevated: #E2E8F0;
 
   /* Sidebar specific colors (light mode) */
-  --page-bg: #D8D8D8;
+  --page-bg: #E2E8F0;
   --sidebar-bg: #FFFFFF;
-  --sidebar-item-selected-bg: #F6F6F6;
-  --sidebar-item-selected-text: #000000;
-  --sidebar-item-unselected-text: #757575;
-  --sidebar-section-text: #9E9E9E;
+  --sidebar-item-selected-bg: #F1F5F9;
+  --sidebar-item-selected-text: #0F172A;
+  --sidebar-item-unselected-text: #64748B;
+  --sidebar-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 
-  --text-primary: #0A0A0A;
-  --text-secondary: #666666;
-  --text-muted: #888888;
-  --text-link: #0A0A0A;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #64748B;
+  --text-link: #007A2A;
   --text-on-accent: #FFFFFF;
 
-  --accent-primary: #0A0A0A;
-  --accent-secondary: #000000;
-  --accent-muted: #888888;
-  --accent-success: #1a7f37;
-  --accent-warning: #9a6700;
-  --accent-error: #cf222e;
+  --accent-primary: #007A2A;
+  --accent-primary-10: rgba(0, 122, 42, 0.1);
+  --accent-primary-20: rgba(0, 122, 42, 0.2);
+  --accent-success: #16A34A;
+  --accent-warning: #CA8A04;
+  --accent-error: #DC2626;
 
-  --border-color: #E5E5E5;
-  --border-muted: #EBEBEB;
-  --border-primary: #0A0A0A;
-  --shadow-color: rgba(0, 0, 0, 0.1);
+  --border-color: #E2E8F0;
+  --border-primary: #007A2A;
+  --shadow-color: rgba(0, 0, 0, 0.08);
 
   /* Status badge backgrounds */
-  --status-running-bg: rgba(154, 103, 0, 0.12);
-  --status-completed-bg: rgba(26, 127, 55, 0.12);
-  --status-error-bg: rgba(207, 34, 46, 0.12);
+  --status-running-bg: rgba(202, 138, 4, 0.12);
+  --status-completed-bg: rgba(22, 163, 74, 0.12);
+  --status-error-bg: rgba(220, 38, 38, 0.12);
 }
 
 /* Light theme task input overrides */
@@ -1205,7 +1203,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .btn-primary:hover {
-  background: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-primary) 85%, white);
 }
 
 .btn-secondary {
@@ -1716,7 +1714,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .task-input-btn:hover {
-  background: var(--accent-secondary);
+  background: color-mix(in srgb, var(--accent-primary) 85%, white);
 }
 
 .task-input-btn:disabled {
@@ -1903,7 +1901,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .markdown-content a:hover {
-  color: var(--accent-secondary);
+  color: color-mix(in srgb, var(--accent-primary) 85%, white);
 }
 
 .markdown-content hr {
@@ -1996,7 +1994,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .collapsible-toggle:hover {
-  color: var(--accent-secondary);
+  color: color-mix(in srgb, var(--accent-primary) 85%, white);
 }
 
 /* Icon size in collapsible toggle */

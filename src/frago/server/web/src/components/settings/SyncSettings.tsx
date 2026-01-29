@@ -232,40 +232,40 @@ export default function SyncSettings() {
   return (
     <div className="space-y-4">
       <div className="card">
-        <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
-          Multi-Device Sync
-        </h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+            Multi-Device Sync
+          </h2>
+          <button
+            onClick={checkGhStatus}
+            disabled={ghStatusLoading}
+            className="text-xs text-[var(--accent-primary)] hover:underline disabled:opacity-50"
+          >
+            {ghStatusLoading ? 'Checking...' : 'Refresh'}
+          </button>
+        </div>
 
         {/* GitHub CLI Status Detection */}
-        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-blue-900 dark:text-blue-200">
-              GitHub CLI Status
-            </h3>
-            <button
-              onClick={checkGhStatus}
-              disabled={ghStatusLoading}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50"
-            >
-              {ghStatusLoading ? 'Checking...' : 'Refresh'}
-            </button>
-          </div>
+        <div className="mb-4 p-3 bg-[var(--bg-subtle)] rounded-lg">
+          <h3 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-3">
+            GitHub CLI Status
+          </h3>
 
           {ghStatusLoading && !ghStatus ? (
-            <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+            <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
               <Loader2 size={14} className="animate-spin" />
               Checking GitHub CLI installation and authentication...
             </div>
           ) : ghStatus ? (
-            <div className="space-y-1 text-sm">
+            <div className="space-y-2 text-sm">
               {/* gh installation status */}
-              <div className={`flex items-center gap-2 ${
-                ghStatus.installed
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-red-600 dark:text-red-400'
-              }`}>
-                {ghStatus.installed ? <Check size={14} /> : <X size={14} />}
-                <span>
+              <div className="flex items-center gap-2">
+                {ghStatus.installed ? (
+                  <Check size={14} className="text-[var(--accent-success)] flex-shrink-0" />
+                ) : (
+                  <X size={14} className="text-[var(--accent-error)] flex-shrink-0" />
+                )}
+                <span className="text-[var(--text-primary)]">
                   {ghStatus.installed
                     ? `gh CLI installed (v${ghStatus.version})`
                     : 'gh CLI not installed'}
@@ -274,13 +274,13 @@ export default function SyncSettings() {
 
               {/* Login status (only shown when installed) */}
               {ghStatus.installed && (
-                <div className={`flex items-center gap-2 ${
-                  ghStatus.authenticated
-                    ? 'text-green-600 dark:text-green-400'
-                    : 'text-yellow-600 dark:text-yellow-400'
-                }`}>
-                  {ghStatus.authenticated ? <Check size={14} /> : <AlertCircle size={14} />}
-                  <span>
+                <div className="flex items-center gap-2">
+                  {ghStatus.authenticated ? (
+                    <Check size={14} className="text-[var(--accent-success)] flex-shrink-0" />
+                  ) : (
+                    <AlertCircle size={14} className="text-[var(--accent-warning)] flex-shrink-0" />
+                  )}
+                  <span className="text-[var(--text-primary)]">
                     {ghStatus.authenticated
                       ? `Logged in to GitHub (@${ghStatus.username})`
                       : 'Not logged in to GitHub'}
@@ -290,26 +290,26 @@ export default function SyncSettings() {
 
               {/* Action hints */}
               {!ghStatus.installed && (
-                <p className="mt-2 text-blue-700 dark:text-blue-300">
+                <p className="mt-2 text-[var(--text-secondary)]">
                   Please install GitHub CLI first:
                   <a
                     href="https://cli.github.com/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="ml-1 underline"
+                    className="ml-1 underline text-[var(--accent-primary)]"
                   >
                     https://cli.github.com/
                   </a>
                 </p>
               )}
               {ghStatus.installed && !ghStatus.authenticated && (
-                <p className="mt-2 text-blue-700 dark:text-blue-300">
+                <p className="mt-2 text-[var(--text-secondary)]">
                   Click "Start Setup" button below to log in to GitHub
                 </p>
               )}
             </div>
           ) : (
-            <p className="text-sm text-blue-700 dark:text-blue-300">
+            <p className="text-sm text-[var(--text-secondary)]">
               First-time setup requires installing GitHub CLI (gh) and logging in to your GitHub account. The wizard will guide you through the process.
             </p>
           )}
@@ -401,27 +401,12 @@ export default function SyncSettings() {
 
       {/* Official Resource Sync Card */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-[var(--accent-primary)] mb-4">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-4">
           {t('settings.officialSync.title')}
         </h2>
 
-        {/* Warning Banner */}
-        <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-          <div className="flex items-start gap-2">
-            <AlertTriangle size={16} className="text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
-            <div>
-              <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
-                {t('settings.officialSync.warning')}
-              </h3>
-              <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                {t('settings.officialSync.warningText')}
-              </p>
-            </div>
-          </div>
-        </div>
-
         {/* Auto-sync Toggle */}
-        <div className="flex items-center justify-between mb-4 p-3 bg-[var(--bg-subtle)] rounded-md">
+        <div className="flex items-center justify-between mb-4 py-3 border-b border-[var(--border-color)]">
           <div>
             <label className="text-sm font-medium text-[var(--text-primary)]">
               {t('settings.officialSync.autoSync')}
@@ -438,7 +423,7 @@ export default function SyncSettings() {
               onChange={(e) => handleToggleAutoSync(e.target.checked)}
               aria-label={t('settings.officialSync.autoSync')}
             />
-            <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)]"></div>
+            <div className="w-11 h-6 bg-[var(--bg-elevated)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--text-muted)] after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)] peer-checked:after:bg-[var(--text-on-accent)]"></div>
           </label>
         </div>
 
