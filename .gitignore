@@ -92,3 +92,8 @@ node_modules/
 pre-publish-checklist.md
 STEALTH_MODE.md
 test_stealth.html
+
+# ====================
+# Design Files (local only)
+# ====================
+pencil-files/
