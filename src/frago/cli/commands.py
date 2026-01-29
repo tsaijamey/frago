@@ -1447,6 +1447,11 @@ def init(force: bool):
 
 @click.command('chrome')
 @click.option(
+    '--browser', '-b',
+    type=click.Choice(['chrome', 'edge', 'chromium'], case_sensitive=False),
+    help='Browser to use (auto-detect if not specified)'
+)
+@click.option(
     '--headless',
     is_flag=True,
     help='Headless mode: run without window'
@@ -1511,11 +1516,18 @@ def init(force: bool):
     help='Keep running after launch until Ctrl+C'
 )
 @print_usage
-def chrome_start(headless: bool, void: bool, app_mode: bool, app_url: str,
+def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_url: str,
                  port: int, width: int, height: int, window_x: int, window_y: int,
                  profile_dir: str, no_kill: bool, keep_alive: bool):
     """
-    Launch Chrome browser (with CDP debugging support)
+    Launch browser with CDP debugging support (Chrome, Edge, or Chromium)
+
+    \b
+    Browser selection (--browser/-b):
+      chrome   - Google Chrome (default if available)
+      edge     - Microsoft Edge
+      chromium - Chromium browser
+      (auto)   - Auto-detect: Chrome > Edge > Chromium
 
     \b
     Mode descriptions:
@@ -1526,7 +1538,9 @@ def chrome_start(headless: bool, void: bool, app_mode: bool, app_url: str,
 
     \b
     Examples:
-      frago chrome                              # Normal launch
+      frago chrome                              # Auto-detect browser
+      frago chrome --browser edge               # Use Edge browser
+      frago chrome -b chromium                  # Use Chromium
       frago chrome --headless                   # Headless mode
       frago chrome --void                       # Void mode
       frago chrome --app --app-url https://...  # App mode
@@ -1569,15 +1583,19 @@ def chrome_start(headless: bool, void: bool, app_mode: bool, app_url: str,
         window_y=window_y,
         profile_dir=profile_path,
         use_port_suffix=use_port_suffix,
+        browser=browser,
     )
 
-    # Check if Chrome exists
-    if not launcher.chrome_path:
-        click.echo("Error: Chrome browser not found", err=True)
-        click.echo("Please install Google Chrome or Chromium browser", err=True)
+    # Check if browser exists
+    if not launcher.browser_path:
+        if browser:
+            click.echo(f"Error: {browser.title()} browser not found", err=True)
+        else:
+            click.echo("Error: No supported browser found (Chrome, Edge, or Chromium)", err=True)
+        click.echo("Please install Google Chrome, Microsoft Edge, or Chromium browser", err=True)
         return
 
-    click.echo(f"Chrome path: {launcher.chrome_path}")
+    click.echo(f"Browser: {launcher.browser_type.value.title()} ({launcher.browser_path})")
     click.echo(f"Profile directory: {launcher.profile_dir}")
     click.echo(f"CDP port: {port}")
 
@@ -1589,22 +1607,22 @@ def chrome_start(headless: bool, void: bool, app_mode: bool, app_url: str,
         if window_x is not None and window_y is not None:
             click.echo(f"Window position: ({window_x}, {window_y})")
 
-    # Launch Chrome
+    # Launch browser
     if launcher.launch(kill_existing=not no_kill):
-        click.echo(f"\n[OK] Chrome launched, CDP listening on port: {port}")
+        click.echo(f"\n[OK] Browser launched, CDP listening on port: {port}")
 
         # Get and display status
         status_info = launcher.get_status()
         if status_info.get("running"):
-            click.echo(f"Browser: {status_info.get('browser', 'unknown')}")
+            click.echo(f"Version: {status_info.get('browser', 'unknown')}")
 
         if keep_alive:
-            click.echo("\nPress Ctrl+C to stop Chrome...")
+            click.echo("\nPress Ctrl+C to stop browser...")
 
             import signal
 
             def signal_handler(_signum, _frame):
-                click.echo("\nClosing Chrome...")
+                click.echo("\nClosing browser...")
                 launcher.stop()
                 sys.exit(0)
 
@@ -1616,14 +1634,14 @@ def chrome_start(headless: bool, void: bool, app_mode: bool, app_url: str,
                     # Periodically check status
                     st = launcher.get_status()
                     if not st.get("running"):
-                        click.echo("Chrome process has exited")
+                        click.echo("Browser process has exited")
                         break
             except KeyboardInterrupt:
                 pass
             finally:
                 launcher.stop()
     else:
-        click.echo("[X] Failed to launch Chrome", err=True)
+        click.echo("[X] Failed to launch browser", err=True)
 
 
 @click.command('chrome-stop')

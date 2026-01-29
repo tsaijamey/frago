@@ -1,7 +1,9 @@
-"""chrome command group - Chrome CDP browser automation
+"""chrome command group - Chromium-based browser CDP automation
+
+Supports Chrome, Edge, and Chromium browsers via Chrome DevTools Protocol.
 
 Includes:
-  - Lifecycle: start, stop, status
+  - Lifecycle: start, stop, status, detect
   - Tab management: list-tabs, switch-tab
   - Page operations: navigate, scroll, scroll-to, zoom, wait
   - Element interaction: click, exec-js, get-title, get-content
@@ -36,6 +38,53 @@ from .commands import (
 from .agent_friendly import AgentFriendlyGroup
 
 
+@click.command('detect')
+def detect_browsers():
+    """
+    Detect available browsers on the system
+
+    Shows which Chromium-based browsers are installed and their paths.
+    Supports Chrome, Edge, and Chromium.
+
+    \b
+    Examples:
+      frago chrome detect
+    """
+    from ..cdp.commands.chrome import detect_available_browsers, BrowserType
+
+    browsers = detect_available_browsers()
+
+    click.echo("Available browsers:")
+    click.echo()
+
+    found_any = False
+    for browser_type in [BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM]:
+        path = browsers.get(browser_type)
+        name = browser_type.value.title()
+
+        if path:
+            click.echo(f"  {name:10} ✓  {path}")
+            found_any = True
+        else:
+            click.echo(f"  {name:10} ✗  not found")
+
+    click.echo()
+
+    if found_any:
+        # Show which would be selected by default
+        default_type = None
+        for bt in [BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM]:
+            if browsers.get(bt):
+                default_type = bt
+                break
+
+        if default_type:
+            click.echo(f"Default: {default_type.value} (first available)")
+    else:
+        click.echo("No supported browsers found.")
+        click.echo("Please install Chrome, Edge, or Chromium.")
+
+
 @click.group(name="chrome", cls=AgentFriendlyGroup)
 def chrome_group():
     """
@@ -65,6 +114,7 @@ def chrome_group():
 chrome_group.add_command(chrome_start, name="start")
 chrome_group.add_command(chrome_stop, name="stop")
 chrome_group.add_command(status, name="status")
+chrome_group.add_command(detect_browsers, name="detect")
 
 # Tab management
 chrome_group.add_command(list_tabs, name="list-tabs")

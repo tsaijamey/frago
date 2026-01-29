@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Chrome CDP Launcher - Chrome browser launch management
+Chrome CDP Launcher - Chromium-based browser launch management
 
-Provides Chrome browser launch, stop, and management functionality, supports headless and void modes.
+Provides browser launch, stop, and management functionality for Chrome, Edge, and Chromium.
+Supports headless and void modes.
 """
 
 import os
@@ -12,6 +13,7 @@ import time
 import signal
 import platform
 import shutil
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -19,8 +21,194 @@ import psutil
 import requests
 
 
+class BrowserType(Enum):
+    """Supported browser types (all Chromium-based for CDP compatibility)"""
+    CHROME = "chrome"
+    EDGE = "edge"
+    CHROMIUM = "chromium"
+
+
+# Commands to try with shutil.which (highest priority)
+BROWSER_COMMANDS: dict[BrowserType, list[str]] = {
+    BrowserType.CHROME: ["google-chrome", "google-chrome-stable", "chrome"],
+    BrowserType.EDGE: ["microsoft-edge", "microsoft-edge-stable", "msedge"],
+    BrowserType.CHROMIUM: ["chromium", "chromium-browser"],
+}
+
+# Platform-specific default paths (fallback)
+PLATFORM_PATHS: dict[str, dict[BrowserType, list[str]]] = {
+    "Darwin": {  # macOS
+        BrowserType.CHROME: [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ],
+        BrowserType.EDGE: [
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ],
+        BrowserType.CHROMIUM: [
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ],
+    },
+    "Linux": {
+        BrowserType.CHROME: [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+        ],
+        BrowserType.EDGE: [
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/microsoft-edge-stable",
+            "/opt/microsoft/msedge/msedge",
+        ],
+        BrowserType.CHROMIUM: [
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+            "/snap/bin/chromium",
+        ],
+    },
+    "Windows": {
+        BrowserType.CHROME: [
+            "${LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe",
+            "${PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe",
+            "${PROGRAMFILES(X86)}\\Google\\Chrome\\Application\\chrome.exe",
+        ],
+        BrowserType.EDGE: [
+            "${PROGRAMFILES(X86)}\\Microsoft\\Edge\\Application\\msedge.exe",
+            "${PROGRAMFILES}\\Microsoft\\Edge\\Application\\msedge.exe",
+            "${LOCALAPPDATA}\\Microsoft\\Edge\\Application\\msedge.exe",
+        ],
+        BrowserType.CHROMIUM: [
+            "${LOCALAPPDATA}\\Chromium\\Application\\chrome.exe",
+        ],
+    },
+}
+
+# Windows registry paths for browser detection
+REGISTRY_PATHS: dict[BrowserType, list[tuple[int, str]]] = {
+    # Values are (HKEY constant, subkey path)
+    # HKEY_LOCAL_MACHINE = 0x80000002, HKEY_CURRENT_USER = 0x80000001
+    BrowserType.CHROME: [
+        (0x80000002, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+        (0x80000001, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+    ],
+    BrowserType.EDGE: [
+        (0x80000002, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"),
+        (0x80000001, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe"),
+    ],
+    BrowserType.CHROMIUM: [],  # Chromium typically doesn't register in App Paths
+}
+
+# System profile directories (for syncing bookmarks, extensions, etc.)
+SYSTEM_PROFILE_DIRS: dict[str, dict[BrowserType, list[str]]] = {
+    "Darwin": {
+        BrowserType.CHROME: ["~/Library/Application Support/Google/Chrome"],
+        BrowserType.EDGE: ["~/Library/Application Support/Microsoft Edge"],
+        BrowserType.CHROMIUM: ["~/Library/Application Support/Chromium"],
+    },
+    "Linux": {
+        BrowserType.CHROME: ["~/.config/google-chrome"],
+        BrowserType.EDGE: ["~/.config/microsoft-edge"],
+        BrowserType.CHROMIUM: ["~/.config/chromium"],
+    },
+    "Windows": {
+        BrowserType.CHROME: ["${LOCALAPPDATA}\\Google\\Chrome\\User Data"],
+        BrowserType.EDGE: ["${LOCALAPPDATA}\\Microsoft\\Edge\\User Data"],
+        BrowserType.CHROMIUM: ["${LOCALAPPDATA}\\Chromium\\User Data"],
+    },
+}
+
+# frago profile directory names
+FRAGO_PROFILE_NAMES: dict[BrowserType, str] = {
+    BrowserType.CHROME: "chrome_profile",
+    BrowserType.EDGE: "edge_profile",
+    BrowserType.CHROMIUM: "chromium_profile",
+}
+
+
+def _find_browser_from_registry(browser_type: BrowserType) -> Optional[str]:
+    """Query Windows registry for browser installation path"""
+    if platform.system() != "Windows":
+        return None
+
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    for hkey, subkey in REGISTRY_PATHS.get(browser_type, []):
+        try:
+            with winreg.OpenKey(hkey, subkey) as key:
+                path, _ = winreg.QueryValueEx(key, "")  # Default value
+                if path and os.path.exists(path):
+                    return path
+        except (FileNotFoundError, OSError, PermissionError):
+            continue
+
+    return None
+
+
+def find_browser(browser_type: BrowserType, system: Optional[str] = None) -> Optional[str]:
+    """
+    Find browser executable using three-layer detection strategy:
+    1. shutil.which - User's PATH (highest priority, respects custom installations)
+    2. Platform default paths - Standard installation locations
+    3. Windows registry - For non-standard installations (Windows only)
+
+    Args:
+        browser_type: The type of browser to find
+        system: Operating system name (defaults to platform.system())
+
+    Returns:
+        Path to browser executable, or None if not found
+    """
+    if system is None:
+        system = platform.system()
+
+    # Layer 1: PATH environment variable (respects user customization)
+    for cmd in BROWSER_COMMANDS.get(browser_type, []):
+        if path := shutil.which(cmd):
+            return path
+
+    # Layer 2: Platform default paths
+    for path in PLATFORM_PATHS.get(system, {}).get(browser_type, []):
+        expanded = os.path.expandvars(path)
+        if os.path.exists(expanded):
+            return expanded
+
+    # Layer 3: Windows registry query (last resort for non-standard installations)
+    if system == "Windows":
+        if path := _find_browser_from_registry(browser_type):
+            return path
+
+    return None
+
+
+def detect_available_browsers(system: Optional[str] = None) -> dict[BrowserType, Optional[str]]:
+    """
+    Detect all available browsers on the system.
+
+    Returns:
+        Dictionary mapping BrowserType to executable path (or None if not found)
+    """
+    return {
+        browser_type: find_browser(browser_type, system)
+        for browser_type in BrowserType
+    }
+
+
+def get_default_browser(system: Optional[str] = None) -> tuple[Optional[BrowserType], Optional[str]]:
+    """
+    Get the default browser (first available in priority order: Chrome > Edge > Chromium).
+
+    Returns:
+        Tuple of (BrowserType, path) or (None, None) if no browser found
+    """
+    for browser_type in [BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM]:
+        if path := find_browser(browser_type, system):
+            return browser_type, path
+    return None, None
+
+
 class ChromeLauncher:
-    """Chrome CDP launcher"""
+    """Chromium-based browser CDP launcher (supports Chrome, Edge, Chromium)"""
 
     def __init__(
         self,
@@ -36,9 +224,13 @@ class ChromeLauncher:
         window_y: Optional[int] = None,
         profile_dir: Optional[Path] = None,
         use_port_suffix: bool = False,
+        browser: Optional[str] = None,
     ):
         self.system = platform.system()
-        self.chrome_path = self._find_chrome()
+
+        # Determine browser type and path
+        self.browser_type, self.browser_path = self._resolve_browser(browser)
+
         self.debugging_port = port
         self.width = width
         self.height = height
@@ -49,7 +241,7 @@ class ChromeLauncher:
         self.app_mode = app_mode
         self.kiosk_mode = kiosk_mode
         self.app_url = app_url
-        self.chrome_process: Optional[subprocess.Popen] = None
+        self.browser_process: Optional[subprocess.Popen] = None
 
         # Validate app/kiosk mode parameters
         if (self.app_mode or self.kiosk_mode) and not self.app_url:
@@ -65,98 +257,74 @@ class ChromeLauncher:
         # Profile directory: use specified one first, otherwise use default location
         if profile_dir:
             self.profile_dir = Path(profile_dir)
-        elif use_port_suffix:
-            # For non-default ports, use directory name with port number to avoid conflicts
-            self.profile_dir = Path.home() / ".frago" / f"chrome_profile_{port}"
         else:
-            # Default use ~/.frago/chrome_profile
-            self.profile_dir = Path.home() / ".frago" / "chrome_profile"
+            profile_name = FRAGO_PROFILE_NAMES.get(self.browser_type, "chrome_profile")
+            if use_port_suffix:
+                # For non-default ports, use directory name with port number to avoid conflicts
+                self.profile_dir = Path.home() / ".frago" / f"{profile_name}_{port}"
+            else:
+                # Default use ~/.frago/<browser>_profile
+                self.profile_dir = Path.home() / ".frago" / profile_name
 
+    def _resolve_browser(self, browser: Optional[str]) -> tuple[BrowserType, Optional[str]]:
+        """
+        Resolve browser type and path based on user preference.
+
+        Args:
+            browser: User-specified browser name (chrome/edge/chromium) or None for auto-detect
+
+        Returns:
+            Tuple of (BrowserType, path)
+        """
+        if browser:
+            # User specified a browser
+            try:
+                browser_type = BrowserType(browser.lower())
+            except ValueError:
+                # Invalid browser name, fall back to auto-detect
+                return get_default_browser(self.system)
+
+            path = find_browser(browser_type, self.system)
+            return browser_type, path
+        else:
+            # Auto-detect: try Chrome > Edge > Chromium
+            return get_default_browser(self.system)
+
+    # Keep chrome_path as alias for backward compatibility
+    @property
+    def chrome_path(self) -> Optional[str]:
+        return self.browser_path
+
+    @chrome_path.setter
+    def chrome_path(self, value: Optional[str]) -> None:
+        self.browser_path = value
+
+    # Keep chrome_process as alias for backward compatibility
+    @property
+    def chrome_process(self) -> Optional[subprocess.Popen]:
+        return self.browser_process
+
+    @chrome_process.setter
+    def chrome_process(self, value: Optional[subprocess.Popen]) -> None:
+        self.browser_process = value
+
+    # _find_chrome is deprecated, use find_browser() module function instead
     def _find_chrome(self) -> Optional[str]:
-        """Cross-platform Chrome browser finder"""
-        if self.system == "Darwin":  # macOS
-            possible_paths = [
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            ]
-        elif self.system == "Linux":
-            possible_paths = [
-                "/usr/bin/google-chrome",
-                "/usr/bin/google-chrome-stable",
-                "/usr/bin/chromium-browser",
-                "/usr/bin/chromium",
-                "/snap/bin/chromium",
-                shutil.which("google-chrome"),
-                shutil.which("google-chrome-stable"),
-                shutil.which("chromium-browser"),
-                shutil.which("chromium"),
-            ]
-        elif self.system == "Windows":
-            # Common Chrome installation paths on Windows
-            local_app_data = os.environ.get("LOCALAPPDATA")
-            program_files = os.environ.get("PROGRAMFILES") or "C:\\Program Files"
-            program_files_x86 = os.environ.get("PROGRAMFILES(X86)") or "C:\\Program Files (x86)"
-
-            possible_paths = []
-
-            # User installation (most common) - only when LOCALAPPDATA exists
-            if local_app_data:
-                possible_paths.append(
-                    os.path.join(local_app_data, "Google", "Chrome", "Application", "chrome.exe")
-                )
-                possible_paths.append(
-                    os.path.join(local_app_data, "Chromium", "Application", "chrome.exe")
-                )
-
-            # System installation
-            possible_paths.extend([
-                os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"),
-                os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"),
-            ])
-
-            # Find via PATH
-            possible_paths.extend([
-                shutil.which("chrome"),
-                shutil.which("chrome.exe"),
-            ])
-        else:
-            return None
-
-        for path in filter(None, possible_paths):
-            if os.path.exists(path):
-                return path
-
-        return None
+        """Deprecated: use find_browser() instead"""
+        _, path = get_default_browser(self.system)
+        return path
 
     def _get_system_profile_dir(self) -> Optional[Path]:
-        """Get system default Chrome user data directory"""
-        home = Path.home()
+        """Get system default browser user data directory based on browser type"""
+        # Get profile paths for current browser type
+        profile_paths = SYSTEM_PROFILE_DIRS.get(self.system, {}).get(self.browser_type, [])
 
-        if self.system == "Darwin":  # macOS
-            possible_dirs = [
-                home / "Library/Application Support/Google/Chrome",
-                home / "Library/Application Support/Chromium",
-            ]
-        elif self.system == "Linux":
-            possible_dirs = [
-                home / ".config/google-chrome",
-                home / ".config/chromium",
-            ]
-        elif self.system == "Windows":
-            local_app_data = os.environ.get("LOCALAPPDATA", "")
-            if local_app_data:
-                possible_dirs = [
-                    Path(local_app_data) / "Google" / "Chrome" / "User Data",
-                    Path(local_app_data) / "Chromium" / "User Data",
-                ]
-            else:
-                return None
-        else:
-            return None
-
-        for dir_path in possible_dirs:
-            if dir_path.exists():
-                return dir_path
+        for path_str in profile_paths:
+            # Expand ~ and environment variables
+            expanded = os.path.expandvars(os.path.expanduser(path_str))
+            path = Path(expanded)
+            if path.exists():
+                return path
 
         return None
 
@@ -249,8 +417,11 @@ class ChromeLauncher:
             pass
 
     def kill_existing_chrome(self) -> int:
-        """Close existing Chrome CDP instances, return number of processes closed"""
+        """Close existing Chromium-based browser CDP instances, return number of processes closed"""
         killed_count = 0
+        # Match any Chromium-based browser process names
+        browser_names = {"chrome", "chromium", "msedge", "edge", "microsoft-edge"}
+
         for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
                 cmdline = proc.info.get("cmdline", [])
@@ -258,12 +429,15 @@ class ChromeLauncher:
                     continue
 
                 cmdline_str = " ".join(cmdline)
-                is_chrome = "chrome" in proc.info.get("name", "").lower()
+                proc_name = proc.info.get("name", "").lower()
+
+                # Check if this is a Chromium-based browser
+                is_browser = any(name in proc_name for name in browser_names)
                 has_cdp_port = (
                     f"--remote-debugging-port={self.debugging_port}" in cmdline_str
                 )
 
-                if is_chrome and has_cdp_port:
+                if is_browser and has_cdp_port:
                     proc.terminate()
                     proc.wait(timeout=3)
                     killed_count += 1
