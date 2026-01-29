@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from frago.server.state import StateManager
-from frago.server.services.github_service import GitHubService
+from frago.server.services.github_service import DEFAULT_SYNC_REPO_NAME, GitHubService
 from frago.server.services.multidevice_sync_service import MultiDeviceSyncService
 
 router = APIRouter()
@@ -267,4 +267,163 @@ async def toggle_github_star(request: StarRequest) -> StarResponse:
         status=result.get("status", "error"),
         is_starred=result.get("is_starred"),
         error=result.get("error"),
+    )
+
+
+# ============================================================
+# Web Login Endpoints (New Wizard Flow)
+# ============================================================
+
+
+class WebLoginResponse(BaseModel):
+    """Web login response with device code"""
+    status: str
+    code: Optional[str] = None
+    url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class AuthStatusResponse(BaseModel):
+    """Authentication status response"""
+    status: str
+    completed: bool = False
+    authenticated: bool = False
+    username: Optional[str] = None
+    error: Optional[str] = None
+
+
+class SetupRepoResponse(BaseModel):
+    """Setup repository response"""
+    status: str
+    repo_url: Optional[str] = None
+    username: Optional[str] = None
+    created: Optional[bool] = None
+    sync_success: Optional[bool] = None
+    local_changes: Optional[int] = None
+    remote_updates: Optional[int] = None
+    pushed_to_remote: Optional[bool] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+    warnings: Optional[List[str]] = None
+    needs_refresh: Optional[bool] = None
+
+
+class CheckRepoResponse(BaseModel):
+    """Check repository existence response"""
+    status: str
+    exists: Optional[bool] = None
+    repo_url: Optional[str] = None
+    is_private: Optional[bool] = None
+    username: Optional[str] = None
+    default_repo_name: str = DEFAULT_SYNC_REPO_NAME
+    error: Optional[str] = None
+
+
+@router.post("/sync/auth-login-web", response_model=WebLoginResponse)
+async def start_web_login() -> WebLoginResponse:
+    """Start web-based GitHub authentication.
+
+    Initiates `gh auth login --web` and returns the device code
+    for display in the web UI. The browser will be opened automatically.
+    """
+    result = GitHubService.auth_login_web()
+
+    return WebLoginResponse(
+        status=result.get("status", "error"),
+        code=result.get("code"),
+        url=result.get("url"),
+        error=result.get("error"),
+    )
+
+
+@router.get("/sync/auth-status", response_model=AuthStatusResponse)
+async def check_auth_status() -> AuthStatusResponse:
+    """Check if the web login process has completed.
+
+    Poll this endpoint to detect when user completes GitHub authorization.
+    """
+    result = GitHubService.check_auth_login_complete()
+
+    return AuthStatusResponse(
+        status=result.get("status", "error"),
+        completed=result.get("completed", False),
+        authenticated=result.get("authenticated", False),
+        username=result.get("username"),
+        error=result.get("error"),
+    )
+
+
+@router.post("/sync/auth-cancel")
+async def cancel_web_login() -> dict:
+    """Cancel any ongoing web login process."""
+    result = GitHubService.cancel_auth_login()
+    return result
+
+
+@router.get("/sync/check-repo", response_model=CheckRepoResponse)
+async def check_sync_repo() -> CheckRepoResponse:
+    """Check if the default sync repository exists.
+
+    Returns whether frago-working-dir repository exists for the current user.
+    """
+    result = MultiDeviceSyncService.check_repo_exists()
+
+    return CheckRepoResponse(
+        status=result.get("status", "error"),
+        exists=result.get("exists"),
+        repo_url=result.get("repo_url"),
+        is_private=result.get("is_private"),
+        username=result.get("username"),
+        default_repo_name=DEFAULT_SYNC_REPO_NAME,
+        error=result.get("error"),
+    )
+
+
+@router.post("/sync/setup-repo", response_model=SetupRepoResponse)
+async def setup_sync_repo() -> SetupRepoResponse:
+    """Start automatic repository setup.
+
+    This will:
+    1. Check if frago-working-dir exists
+    2. Create it as private if not
+    3. Run first sync
+    """
+    result = MultiDeviceSyncService.setup_sync_repo()
+
+    return SetupRepoResponse(
+        status=result.get("status", "error"),
+        message=result.get("message"),
+        error=result.get("error"),
+    )
+
+
+@router.get("/sync/setup-status", response_model=SetupRepoResponse)
+async def get_setup_status() -> SetupRepoResponse:
+    """Get the status of the repository setup operation.
+
+    Poll this endpoint to track setup progress.
+    Triggers cache refresh for recipes and skills after successful setup.
+    """
+    result = MultiDeviceSyncService.get_setup_result()
+
+    # Refresh recipes and skills cache after successful setup
+    if result.get("needs_refresh"):
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_recipes(broadcast=True)
+        await state_manager.refresh_skills(broadcast=True)
+        MultiDeviceSyncService.clear_refresh_flag()
+
+    return SetupRepoResponse(
+        status=result.get("status", "idle"),
+        repo_url=result.get("repo_url"),
+        username=result.get("username"),
+        created=result.get("created"),
+        sync_success=result.get("sync_success"),
+        local_changes=result.get("local_changes"),
+        remote_updates=result.get("remote_updates"),
+        pushed_to_remote=result.get("pushed_to_remote"),
+        message=result.get("message"),
+        error=result.get("error"),
+        warnings=result.get("warnings"),
+        needs_refresh=result.get("needs_refresh"),
     )

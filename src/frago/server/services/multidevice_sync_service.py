@@ -5,13 +5,15 @@ using a GitHub repository.
 """
 
 import asyncio
+import json
 import logging
 import re
 import threading
 from typing import Any, Dict, List, Optional
 
 from frago.init.config_manager import load_config, save_config
-from frago.server.services.base import run_subprocess
+from frago.server.services.base import get_gh_command, run_subprocess
+from frago.server.services.github_service import DEFAULT_SYNC_REPO_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -343,3 +345,249 @@ class MultiDeviceSyncService:
             if result.get("status") != "running":
                 return result
             await asyncio.sleep(0.5)
+
+    # Setup state management
+    _setup_lock = threading.Lock()
+    _setup_running = False
+    _setup_result: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def setup_sync_repo(cls) -> Dict[str, Any]:
+        """Start automatic setup of the frago-working-dir repository.
+
+        This method:
+        1. Gets the current GitHub username
+        2. Checks if frago-working-dir repo exists
+        3. Creates it as private if it doesn't exist
+        4. Saves the repo URL to config
+        5. Starts first sync
+
+        Returns:
+            Dictionary with status indicating setup started or error
+        """
+        with cls._setup_lock:
+            if cls._setup_running:
+                return {"status": "error", "error": "Setup already in progress"}
+
+            cls._setup_running = True
+            cls._setup_result = None
+
+        # Start setup in background thread
+        thread = threading.Thread(target=cls._do_setup, daemon=True)
+        thread.start()
+
+        return {"status": "ok", "message": "Setup started"}
+
+    @classmethod
+    def _do_setup(cls) -> None:
+        """Execute repository setup (runs in background thread)."""
+        try:
+            # Step 1: Get current username
+            user_result = run_subprocess(
+                get_gh_command() + ["api", "user", "--jq", ".login"],
+                timeout=10,
+            )
+            if user_result.returncode != 0:
+                with cls._setup_lock:
+                    cls._setup_result = {
+                        "status": "error",
+                        "error": "Failed to get GitHub username. Please ensure you're logged in.",
+                    }
+                return
+
+            username = user_result.stdout.strip()
+            repo_full_name = f"{username}/{DEFAULT_SYNC_REPO_NAME}"
+
+            # Step 2: Check if repository exists
+            check_result = run_subprocess(
+                get_gh_command() + ["repo", "view", repo_full_name, "--json", "url", "-q", ".url"],
+                timeout=10,
+            )
+
+            repo_url = None
+            repo_created = False
+
+            if check_result.returncode == 0:
+                # Repository exists
+                repo_url = check_result.stdout.strip()
+                logger.info("Found existing repository: %s", repo_url)
+            else:
+                # Step 3: Create private repository
+                logger.info("Creating repository: %s", DEFAULT_SYNC_REPO_NAME)
+                create_result = run_subprocess(
+                    get_gh_command() + [
+                        "repo", "create", DEFAULT_SYNC_REPO_NAME,
+                        "--private",
+                        "--description", "frago resources sync repository",
+                    ],
+                    timeout=30,
+                )
+
+                if create_result.returncode != 0:
+                    error_msg = create_result.stderr or create_result.stdout or "Unknown error"
+                    with cls._setup_lock:
+                        cls._setup_result = {
+                            "status": "error",
+                            "error": f"Failed to create repository: {error_msg.strip()}",
+                        }
+                    return
+
+                # Get the created repo URL
+                repo_created = True
+                # Try to extract URL from output or query again
+                url_match = re.search(r"https://github\.com/[^\s]+", create_result.stdout)
+                if url_match:
+                    repo_url = url_match.group(0)
+                else:
+                    # Query for the URL
+                    view_result = run_subprocess(
+                        get_gh_command() + ["repo", "view", repo_full_name, "--json", "url", "-q", ".url"],
+                        timeout=10,
+                    )
+                    if view_result.returncode == 0:
+                        repo_url = view_result.stdout.strip()
+                    else:
+                        repo_url = f"https://github.com/{repo_full_name}"
+
+            if not repo_url:
+                with cls._setup_lock:
+                    cls._setup_result = {
+                        "status": "error",
+                        "error": "Failed to get repository URL",
+                    }
+                return
+
+            # Step 4: Save to config
+            config = load_config()
+            config.sync_repo_url = repo_url
+            save_config(config)
+
+            # Step 5: Start first sync
+            with cls._setup_lock:
+                cls._setup_result = {
+                    "status": "syncing",
+                    "repo_url": repo_url,
+                    "username": username,
+                    "created": repo_created,
+                    "message": "Repository configured, starting sync...",
+                }
+
+            # Run sync
+            from frago.tools.sync_repo import sync
+
+            sync_result = sync(repo_url=repo_url)
+
+            with cls._setup_lock:
+                cls._setup_result = {
+                    "status": "ok" if sync_result.success else "error",
+                    "repo_url": repo_url,
+                    "username": username,
+                    "created": repo_created,
+                    "sync_success": sync_result.success,
+                    "local_changes": len(sync_result.local_changes),
+                    "remote_updates": len(sync_result.remote_updates),
+                    "pushed_to_remote": sync_result.pushed_to_remote,
+                }
+                if not sync_result.success and sync_result.errors:
+                    cls._setup_result["error"] = "; ".join(sync_result.errors)
+                if sync_result.warnings:
+                    cls._setup_result["warnings"] = sync_result.warnings
+
+                # Mark that cache refresh is needed
+                if sync_result.success:
+                    cls._needs_cache_refresh = True
+
+        except Exception as e:
+            logger.error("Setup failed: %s", e)
+            with cls._setup_lock:
+                cls._setup_result = {"status": "error", "error": str(e)}
+        finally:
+            with cls._setup_lock:
+                cls._setup_running = False
+
+    @classmethod
+    def get_setup_result(cls) -> Dict[str, Any]:
+        """Get the result of the current or last setup operation.
+
+        Returns:
+            Dictionary with setup status and result
+        """
+        with cls._setup_lock:
+            if cls._setup_running:
+                if cls._setup_result and cls._setup_result.get("status") == "syncing":
+                    return cls._setup_result.copy()
+                return {"status": "running", "message": "Setup in progress..."}
+
+            if cls._setup_result is not None:
+                result = cls._setup_result.copy()
+                result["needs_refresh"] = cls._needs_cache_refresh
+                return result
+
+            return {"status": "idle", "message": "No setup has been run"}
+
+    @classmethod
+    def check_repo_exists(cls, repo_name: str = DEFAULT_SYNC_REPO_NAME) -> Dict[str, Any]:
+        """Check if the sync repository exists for the current user.
+
+        Args:
+            repo_name: Repository name to check
+
+        Returns:
+            Dictionary with:
+            - status: 'ok' or 'error'
+            - exists: Whether the repository exists
+            - repo_url: Repository URL if exists
+            - username: Current GitHub username
+            - error: Error message if any
+        """
+        try:
+            # Get current username
+            user_result = run_subprocess(
+                get_gh_command() + ["api", "user", "--jq", ".login"],
+                timeout=10,
+            )
+            if user_result.returncode != 0:
+                return {
+                    "status": "error",
+                    "error": "Failed to get GitHub username",
+                }
+
+            username = user_result.stdout.strip()
+            repo_full_name = f"{username}/{repo_name}"
+
+            # Check if repository exists
+            check_result = run_subprocess(
+                get_gh_command() + ["repo", "view", repo_full_name, "--json", "url,isPrivate"],
+                timeout=10,
+            )
+
+            if check_result.returncode == 0:
+                try:
+                    repo_info = json.loads(check_result.stdout)
+                    return {
+                        "status": "ok",
+                        "exists": True,
+                        "repo_url": repo_info.get("url"),
+                        "is_private": repo_info.get("isPrivate", True),
+                        "username": username,
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "status": "ok",
+                        "exists": True,
+                        "repo_url": f"https://github.com/{repo_full_name}",
+                        "username": username,
+                    }
+            else:
+                return {
+                    "status": "ok",
+                    "exists": False,
+                    "username": username,
+                }
+
+        except Exception as e:
+            logger.error("Failed to check repo: %s", e)
+            return {
+                "status": "error",
+                "error": str(e),
+            }

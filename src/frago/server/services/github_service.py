@@ -7,11 +7,15 @@ import logging
 import platform
 import re
 import subprocess
-from typing import Any, Dict
+import threading
+from typing import Any, Dict, Optional
 
 from frago.server.services.base import get_gh_command, run_subprocess
 
 logger = logging.getLogger(__name__)
+
+# Default sync repository name
+DEFAULT_SYNC_REPO_NAME = "frago-working-dir"
 
 
 class GitHubService:
@@ -323,3 +327,288 @@ class GitHubService:
         if token:
             headers["Authorization"] = f"token {token}"
         return headers
+
+    # Web login state management
+    _login_process: Optional[subprocess.Popen] = None
+    _login_code: Optional[str] = None
+    _login_url: Optional[str] = None
+    _login_lock = threading.Lock()
+
+    @classmethod
+    def auth_login_web(cls) -> Dict[str, Any]:
+        """Start web-based GitHub authentication and capture the device code.
+
+        Executes `gh auth login --web --git-protocol https` and captures
+        the one-time code from stdout for display in the web UI.
+
+        The output format is:
+        "First copy your one-time code: XXXX-XXXX"
+        "Open this URL to continue in your web browser: https://github.com/login/device"
+
+        Returns:
+            Dictionary with:
+            - status: 'ok' or 'error'
+            - code: The one-time device code (e.g., "2741-EE59")
+            - url: The GitHub device login URL
+            - error: Error message if any
+        """
+        with cls._login_lock:
+            # Terminate any existing login process
+            if cls._login_process is not None:
+                try:
+                    if cls._login_process.poll() is None:
+                        cls._login_process.terminate()
+                        cls._login_process.wait(timeout=2)
+                except Exception:
+                    pass
+                cls._login_process = None
+                cls._login_code = None
+                cls._login_url = None
+
+        try:
+            # Start gh auth login in web mode
+            # Note: We need to read output line by line to capture the code
+            # before the process blocks waiting for user to complete auth
+            process = subprocess.Popen(
+                get_gh_command() + ["auth", "login", "--web", "--git-protocol", "https"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr into stdout
+                text=True,
+                bufsize=1,  # Line buffered
+            )
+
+            code = None
+            url = None
+            output_lines = []
+
+            # Read output until we find both code and URL, or process ends
+            # The gh CLI outputs the code and URL before blocking for auth
+            import select
+            import time
+
+            start_time = time.time()
+            timeout = 30  # seconds
+
+            while time.time() - start_time < timeout:
+                # Check if there's data to read (non-blocking on Unix)
+                if process.stdout is None:
+                    break
+
+                line = process.stdout.readline()
+                if not line:
+                    # Check if process has ended
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                    continue
+
+                output_lines.append(line)
+                logger.debug("gh auth output: %s", line.strip())
+
+                # Parse one-time code
+                code_match = re.search(
+                    r"one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})",
+                    line,
+                    re.IGNORECASE,
+                )
+                if code_match:
+                    code = code_match.group(1).upper()
+
+                # Parse URL
+                url_match = re.search(
+                    r"(https://github\.com/login/device)",
+                    line,
+                )
+                if url_match:
+                    url = url_match.group(1)
+
+                # If we have both, we're done reading
+                if code and url:
+                    break
+
+            if not code:
+                # Process might have failed
+                remaining = process.stdout.read() if process.stdout else ""
+                output_lines.append(remaining)
+                full_output = "".join(output_lines)
+                logger.warning("Failed to capture device code. Output: %s", full_output)
+
+                # Check if there's an error
+                if process.poll() is not None and process.returncode != 0:
+                    return {
+                        "status": "error",
+                        "error": f"gh auth login failed: {full_output.strip()}",
+                    }
+
+                return {
+                    "status": "error",
+                    "error": "Failed to capture device code from gh CLI",
+                }
+
+            # Store state for later status checks
+            with cls._login_lock:
+                cls._login_process = process
+                cls._login_code = code
+                cls._login_url = url or "https://github.com/login/device"
+
+            # Clear token cache since auth state is changing
+            cls.clear_token_cache()
+
+            # Manually open browser since subprocess may not trigger it
+            import webbrowser
+            try:
+                webbrowser.open(cls._login_url)
+                logger.info("Opened browser for GitHub device login: %s", cls._login_url)
+            except Exception as e:
+                logger.warning("Failed to open browser: %s", e)
+
+            return {
+                "status": "ok",
+                "code": code,
+                "url": cls._login_url,
+            }
+
+        except FileNotFoundError:
+            return {
+                "status": "error",
+                "error": "gh CLI not found. Please install GitHub CLI first.",
+            }
+        except Exception as e:
+            logger.error("Failed to start web login: %s", e)
+            return {
+                "status": "error",
+                "error": str(e),
+            }
+
+    @classmethod
+    def check_auth_login_complete(cls) -> Dict[str, Any]:
+        """Check if the web login process has completed.
+
+        Returns:
+            Dictionary with:
+            - status: 'ok' or 'error'
+            - completed: Whether the login process has finished
+            - authenticated: Whether user is now authenticated
+            - username: GitHub username if authenticated
+            - error: Error message if login failed
+        """
+        with cls._login_lock:
+            if cls._login_process is None:
+                # No login in progress, check current auth status
+                cli_status = cls.check_gh_cli()
+                return {
+                    "status": "ok",
+                    "completed": True,
+                    "authenticated": cli_status.get("authenticated", False),
+                    "username": cli_status.get("username"),
+                }
+
+            # Check if process has completed
+            returncode = cls._login_process.poll()
+
+            if returncode is None:
+                # Still running, waiting for user to complete auth in browser
+                return {
+                    "status": "ok",
+                    "completed": False,
+                    "authenticated": False,
+                    "username": None,
+                }
+
+            # Process completed
+            process = cls._login_process
+            cls._login_process = None
+            cls._login_code = None
+            cls._login_url = None
+
+        # Clear token cache
+        cls.clear_token_cache()
+
+        if returncode == 0:
+            # Login successful, get user info
+            cli_status = cls.check_gh_cli()
+            return {
+                "status": "ok",
+                "completed": True,
+                "authenticated": cli_status.get("authenticated", False),
+                "username": cli_status.get("username"),
+            }
+        else:
+            # Login failed or was cancelled
+            # Try to get error message
+            error_msg = "Login was cancelled or failed"
+            try:
+                if process.stdout:
+                    remaining = process.stdout.read()
+                    if remaining:
+                        error_msg = remaining.strip()
+            except Exception:
+                pass
+
+            return {
+                "status": "error",
+                "completed": True,
+                "authenticated": False,
+                "username": None,
+                "error": error_msg,
+            }
+
+    @classmethod
+    def cancel_auth_login(cls) -> Dict[str, Any]:
+        """Cancel any ongoing web login process.
+
+        Returns:
+            Dictionary with status.
+        """
+        with cls._login_lock:
+            if cls._login_process is not None:
+                try:
+                    if cls._login_process.poll() is None:
+                        cls._login_process.terminate()
+                        cls._login_process.wait(timeout=2)
+                except Exception as e:
+                    logger.warning("Error terminating login process: %s", e)
+                finally:
+                    cls._login_process = None
+                    cls._login_code = None
+                    cls._login_url = None
+
+        return {"status": "ok"}
+
+    @classmethod
+    def get_current_user(cls) -> Dict[str, Any]:
+        """Get the currently authenticated GitHub username.
+
+        Returns:
+            Dictionary with:
+            - status: 'ok' or 'error'
+            - username: GitHub username or None
+            - error: Error message if any
+        """
+        try:
+            result = run_subprocess(
+                get_gh_command() + ["api", "user", "--jq", ".login"],
+                timeout=10,
+            )
+            if result.returncode == 0:
+                username = result.stdout.strip()
+                return {
+                    "status": "ok",
+                    "username": username,
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": result.stderr or "Failed to get username",
+                }
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "error",
+                "error": "Request timed out",
+            }
+        except Exception as e:
+            logger.error("Failed to get current user: %s", e)
+            return {
+                "status": "error",
+                "error": str(e),
+            }

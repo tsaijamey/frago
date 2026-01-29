@@ -138,9 +138,11 @@ class UpdateStatusResponse(BaseModel):
 async def check_gh_cli() -> GhCliStatusResponse:
     """Check GitHub CLI installation and authentication status.
 
-    Uses cache for improved performance on Windows.
+    Always refreshes the status to ensure accuracy.
     """
     state_manager = StateManager.get_instance()
+    # Always refresh to get current status (user may have logged in/out externally)
+    await state_manager.refresh_gh_status(broadcast=False)
     status = state_manager.get_gh_status()
 
     return GhCliStatusResponse(
