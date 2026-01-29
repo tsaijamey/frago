@@ -3,7 +3,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
-[![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
+[![Browser](https://img.shields.io/badge/requires-Chrome%20%7C%20Edge-green)](https://github.com/tsaijamey/Frago/blob/main/docs/browser-support.md)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
 [简体中文](https://github.com/tsaijamey/Frago/blob/main/README.zh-CN.md)
@@ -19,7 +19,7 @@
 | **Interface** | Desktop app | **Web UI + CLI + Slash Commands** |
 | **Data** | Anthropic cloud | **100% local, you own everything** |
 
-**Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
+**Docs**: [Key Concepts](https://github.com/tsaijamey/Frago/blob/main/docs/concepts.md) · [Installation](https://github.com/tsaijamey/Frago/blob/main/docs/installation.md) · [User Guide](https://github.com/tsaijamey/Frago/blob/main/docs/user-guide.md) · [Browser Support](https://github.com/tsaijamey/Frago/blob/main/docs/browser-support.md) · [Recipes](https://github.com/tsaijamey/Frago/blob/main/docs/recipes.md) · [Architecture](https://github.com/tsaijamey/Frago/blob/main/docs/architecture.md) · [Use Cases](https://github.com/tsaijamey/Frago/blob/main/docs/use-cases.md) · [Development](https://github.com/tsaijamey/Frago/blob/main/docs/development.md)
 
 ### Quick Start
 

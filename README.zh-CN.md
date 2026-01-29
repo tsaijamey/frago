@@ -3,7 +3,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://github.com/tsaijamey/Frago)
-[![Chrome](https://img.shields.io/badge/requires-Chrome-green)](https://www.google.com/chrome/)
+[![Browser](https://img.shields.io/badge/requires-Chrome%20%7C%20Edge-green)](docs/browser-support.zh-CN.md)
 [![Claude Code](https://img.shields.io/badge/powered%20by-Claude%20Code-purple)](https://claude.ai/code)
 
 [English](README.md)
@@ -19,7 +19,7 @@
 | **界面** | 桌面应用 | **Web UI + CLI + Slash Commands** |
 | **数据** | Anthropic 云端 | **100% 本地，数据完全自主** |
 
-**文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
+**文档**: [关键概念](docs/concepts.zh-CN.md) · [安装指南](docs/installation.zh-CN.md) · [使用指南](docs/user-guide.zh-CN.md) · [浏览器支持](docs/browser-support.zh-CN.md) · [Recipe 系统](docs/recipes.zh-CN.md) · [技术架构](docs/architecture.zh-CN.md) · [使用场景](docs/use-cases.zh-CN.md) · [开发指南](docs/development.zh-CN.md)
 
 ### 快速开始
 
