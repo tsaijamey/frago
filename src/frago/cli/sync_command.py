@@ -6,7 +6,12 @@ from typing import Optional
 import click
 
 from frago.init.config_manager import load_config, save_config
-from frago.tools.sync_repo import SyncResult, sync
+from frago.tools.sync_repo import (
+    SyncResult,
+    sync,
+    _resolve_conflict_keep_local,
+    _resolve_conflict_keep_remote,
+)
 
 
 def _format_result(result: SyncResult, dry_run: bool) -> None:
@@ -82,11 +87,29 @@ def _get_configured_repo_url() -> Optional[str]:
     type=str,
     help="Set repository URL",
 )
+@click.option(
+    "--keep-local",
+    type=str,
+    help="Resolve conflict by keeping local version of specified file",
+)
+@click.option(
+    "--keep-remote",
+    type=str,
+    help="Resolve conflict by using remote version of specified file",
+)
+@click.option(
+    "--resolved",
+    type=str,
+    help="Mark conflict as manually resolved for specified file",
+)
 def sync_cmd(
     dry_run: bool,
     no_push: bool,
     message: Optional[str],
     set_repo: Optional[str],
+    keep_local: Optional[str],
+    keep_remote: Optional[str],
+    resolved: Optional[str],
 ):
     """
     Synchronize local resources to your repository
@@ -112,9 +135,16 @@ def sync_cmd(
       frago sync --no-push    # Only fetch updates, do not push
 
     \b
+    Conflict resolution:
+      frago sync --keep-local <file>   # Keep your local version
+      frago sync --keep-remote <file>  # Use remote version
+      frago sync --resolved <file>     # After manual merge
+
+    \b
     Synced content:
       ~/.claude/skills/frago-*        # Skills
       ~/.frago/recipes/               # Recipes
+      ~/.frago/projects/              # Projects (metadata, scripts, outputs)
 
     \b
     Authentication:
@@ -122,6 +152,35 @@ def sync_cmd(
       Please run `gh auth login` to authenticate with GitHub first.
     """
     try:
+        # Handle conflict resolution options
+        if keep_local:
+            if _resolve_conflict_keep_local(keep_local):
+                click.echo(f"[OK] Conflict resolved: kept local version of {keep_local}")
+                click.echo("Run 'frago sync' to continue syncing")
+            else:
+                click.echo(f"[X] Failed to resolve conflict for {keep_local}", err=True)
+                sys.exit(1)
+            return
+
+        if keep_remote:
+            if _resolve_conflict_keep_remote(keep_remote):
+                click.echo(f"[OK] Conflict resolved: using remote version of {keep_remote}")
+                click.echo("Run 'frago sync' to continue syncing")
+            else:
+                click.echo(f"[X] Failed to resolve conflict for {keep_remote}", err=True)
+                sys.exit(1)
+            return
+
+        if resolved:
+            # Just clean up backup files
+            if _resolve_conflict_keep_local(resolved):
+                click.echo(f"[OK] Conflict marked as resolved: {resolved}")
+                click.echo("Run 'frago sync' to continue syncing")
+            else:
+                click.echo(f"[X] Failed to mark conflict as resolved for {resolved}", err=True)
+                sys.exit(1)
+            return
+
         # Handle --set-repo
         if set_repo:
             config = load_config()

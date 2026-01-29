@@ -6,15 +6,18 @@ Supports idempotency checks with ~/.claude/ to ensure resources are not lost.
 """
 
 import filecmp
+import hashlib
 import json
 import os
 import platform
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import click
 
@@ -36,12 +39,51 @@ CLAUDE_SKILLS_DIR = CLAUDE_HOME / "skills"
 SKILLS_METADATA_FILE = FRAGO_CLAUDE_DIR / "skills_metadata.json"
 SKILLS_METADATA_VERSION = 1
 
+# New sync metadata file using content hash (more reliable than mtime)
+SYNC_METADATA_FILE = FRAGO_CLAUDE_DIR / "sync_metadata.json"
+SYNC_METADATA_VERSION = 1
+
+# Default max file size for sync (5MB)
+DEFAULT_SYNC_MAX_FILE_SIZE_MB = 5
+
+# File extensions to always exclude from sync (in addition to .gitignore)
+SYNC_EXCLUDED_EXTENSIONS = {
+    # Video
+    ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm",
+    # Audio
+    ".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a",
+    # Archives
+    ".zip", ".tar", ".gz", ".rar", ".7z",
+    # Large binary formats
+    ".pdf", ".psd", ".ai",
+    # Compiled/cache
+    ".pyc", ".pyo", ".so", ".dll", ".exe",
+}
+
+# Projects subdirectories to exclude from sync
+PROJECTS_EXCLUDED_SUBDIRS = {"screenshots", "logs", ".tmp"}
+
+
+class SyncDirection(Enum):
+    """Sync direction for a file"""
+    NONE = "none"  # No sync needed
+    LOCAL_TO_REPO = "local_to_repo"  # Local is newer
+    REPO_TO_LOCAL = "repo_to_local"  # Repo is newer
+    CONFLICT = "conflict"  # Both sides changed
+
+
+class ChangeType(Enum):
+    """Type of change detected"""
+    ADDED = "A"
+    MODIFIED = "M"
+    DELETED = "D"
+
 
 @dataclass
 class FileChange:
     """File change information"""
 
-    type: str  # "Command", "Skill", "Recipe", "Other"
+    type: str  # "Command", "Skill", "Recipe", "Project", "Other"
     name: str
     operation: str  # "Modified", "Added", "Deleted"
     timestamp: Optional[datetime] = None
@@ -59,11 +101,22 @@ class SyncResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)  # Warning messages
     is_public_repo: bool = False  # Whether it's a public repository
+    skipped_large_files: list[str] = field(default_factory=list)  # Files skipped due to size
+
+
+@dataclass
+class ConflictInfo:
+    """Detailed conflict information"""
+    file_path: str
+    local_change: ChangeType
+    remote_change: ChangeType
+    local_backup: Optional[str] = None  # Path to .LOCAL backup
+    remote_backup: Optional[str] = None  # Path to .REMOTE backup
 
 
 @dataclass
 class FileConflict:
-    """File conflict information"""
+    """File conflict information (legacy)"""
 
     file_path: str
     local_mtime: datetime
@@ -172,8 +225,11 @@ def _ensure_gitignore(repo_dir: Path) -> None:
 sessions/
 sessions.json
 chrome_profile/
+edge_profile/
 current_run
 projects/.tmp/
+projects/*/screenshots/
+projects/*/logs/
 
 # Commands directory (managed by frago itself, not synced)
 .claude/commands/
@@ -181,9 +237,11 @@ projects/.tmp/
 # Local metadata (device-specific, not synced)
 .claude/skills_metadata.json
 .claude/settings.local.json
+.device_id
 
-# Config files (contain sensitive information)
+# Config files (contain sensitive information or device-specific)
 config.json
+gui_config.json
 
 # Environment variable files (sensitive information)
 .env
@@ -198,7 +256,12 @@ __pycache__/
 *.bak
 *.bak.*
 server.pid
+server.log
 gui_history.jsonl
+
+# Conflict backup files (temporary)
+*.LOCAL
+*.REMOTE
 
 # Video files
 *.mp4
@@ -239,13 +302,19 @@ logs/
         existing = gitignore_path.read_text(encoding="utf-8")
         needed_rules = [
             # Runtime data
-            "sessions/", "sessions.json", "chrome_profile/", "current_run", "config.json", "projects/.tmp/", ".env",
+            "sessions/", "sessions.json", "chrome_profile/", "edge_profile/",
+            "current_run", "config.json", "projects/.tmp/", ".env",
+            "projects/*/screenshots/", "projects/*/logs/",
             # Commands directory (managed by frago itself)
             ".claude/commands/",
             # Local metadata (device-specific)
-            ".claude/skills_metadata.json", ".claude/settings.local.json",
+            ".claude/skills_metadata.json", ".claude/settings.local.json", ".device_id",
+            # Device-specific config
+            "gui_config.json",
             # System files
-            ".DS_Store", "__pycache__/", "server.pid", "gui_history.jsonl",
+            ".DS_Store", "__pycache__/", "server.pid", "server.log", "gui_history.jsonl",
+            # Conflict backups
+            "*.LOCAL", "*.REMOTE",
             # Large file types
             "*.mp4", "*.wav", "*.log", "logs/", "*.pdf", "*.psd", "*.ai",
         ]
@@ -888,6 +957,231 @@ def _is_metadata_newer_than_local(metadata: Dict[str, Any], skill_name: str, loc
     return metadata_mtime > local_mtime
 
 
+# =============================================================================
+# Content Hash Based Sync Metadata (New - More Reliable)
+# =============================================================================
+
+
+def _get_device_id() -> str:
+    """Get or create a unique device ID for this machine.
+
+    Stored in ~/.frago/.device_id (not synced via .gitignore)
+    """
+    device_id_file = FRAGO_HOME / ".device_id"
+    if device_id_file.exists():
+        return device_id_file.read_text(encoding="utf-8").strip()
+
+    # Generate new device ID
+    device_id = str(uuid.uuid4())[:8]
+    device_id_file.write_text(device_id, encoding="utf-8")
+    return device_id
+
+
+def _compute_content_hash(path: Path) -> Optional[str]:
+    """Compute content hash for a file or directory using Git blob algorithm.
+
+    For files: SHA1 of "blob {size}\0{content}"
+    For directories: SHA1 of sorted "{rel_path}:{file_hash}" lines
+
+    Returns:
+        Hex digest string, or None if path doesn't exist
+    """
+    if not path.exists():
+        return None
+
+    if path.is_file():
+        content = path.read_bytes()
+        header = f"blob {len(content)}\0".encode()
+        return hashlib.sha1(header + content).hexdigest()
+
+    elif path.is_dir():
+        hashes = []
+        for file in sorted(path.rglob("*")):
+            if file.is_file():
+                # Skip cache and temp files
+                if "__pycache__" in str(file) or file.suffix in {".pyc", ".pyo"}:
+                    continue
+                rel_path = file.relative_to(path)
+                file_hash = _compute_content_hash(file)
+                if file_hash:
+                    hashes.append(f"{rel_path}:{file_hash}")
+        if not hashes:
+            return None
+        return hashlib.sha1("\n".join(hashes).encode()).hexdigest()
+
+    return None
+
+
+def _load_sync_metadata() -> Dict[str, Any]:
+    """Load sync metadata from JSON file.
+
+    Structure:
+    {
+        "version": 1,
+        "entries": {
+            "skills/frago-xxx": {
+                "content_hash": "abc123...",
+                "synced_at": "2024-01-15T10:30:00Z",
+                "synced_by": "device-A"
+            },
+            "projects/20251124-xxx/.metadata.json": {...}
+        }
+    }
+    """
+    empty_metadata = {"version": SYNC_METADATA_VERSION, "entries": {}}
+
+    if not SYNC_METADATA_FILE.exists():
+        return empty_metadata
+
+    try:
+        content = SYNC_METADATA_FILE.read_text(encoding="utf-8")
+        metadata = json.loads(content)
+
+        if not isinstance(metadata, dict):
+            return empty_metadata
+
+        version = metadata.get("version", 0)
+        if version != SYNC_METADATA_VERSION:
+            return empty_metadata
+
+        if "entries" not in metadata or not isinstance(metadata["entries"], dict):
+            metadata["entries"] = {}
+
+        return metadata
+
+    except (json.JSONDecodeError, Exception):
+        return empty_metadata
+
+
+def _save_sync_metadata(metadata: Dict[str, Any]) -> bool:
+    """Save sync metadata to JSON file."""
+    try:
+        SYNC_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        metadata["version"] = SYNC_METADATA_VERSION
+        content = json.dumps(metadata, indent=2, ensure_ascii=False)
+        SYNC_METADATA_FILE.write_text(content, encoding="utf-8")
+        return True
+    except Exception as e:
+        click.echo(f"Warning: Failed to save sync metadata: {e}", err=True)
+        return False
+
+
+def _get_sync_entry(metadata: Dict[str, Any], rel_path: str) -> Optional[Dict[str, Any]]:
+    """Get sync entry for a path."""
+    return metadata.get("entries", {}).get(rel_path)
+
+
+def _update_sync_entry(metadata: Dict[str, Any], rel_path: str, content_hash: str) -> None:
+    """Update sync entry for a path."""
+    if "entries" not in metadata:
+        metadata["entries"] = {}
+
+    metadata["entries"][rel_path] = {
+        "content_hash": content_hash,
+        "synced_at": datetime.now(timezone.utc).isoformat(),
+        "synced_by": _get_device_id(),
+    }
+
+
+def _remove_sync_entry(metadata: Dict[str, Any], rel_path: str) -> None:
+    """Remove sync entry for a path."""
+    if "entries" in metadata and rel_path in metadata["entries"]:
+        del metadata["entries"][rel_path]
+
+
+def _determine_sync_direction(
+    local_path: Path,
+    repo_path: Path,
+    recorded_hash: Optional[str],
+) -> SyncDirection:
+    """Determine sync direction based on content hashes.
+
+    Compares local hash, repo hash, and recorded hash to determine
+    which version is newer or if there's a conflict.
+
+    Returns:
+        SyncDirection indicating what action to take
+    """
+    local_hash = _compute_content_hash(local_path)
+    repo_hash = _compute_content_hash(repo_path)
+
+    # Case 1: Both sides identical
+    if local_hash == repo_hash:
+        return SyncDirection.NONE
+
+    # Case 2: Local exists, repo doesn't
+    if local_hash and not repo_hash:
+        return SyncDirection.LOCAL_TO_REPO
+
+    # Case 3: Repo exists, local doesn't
+    if repo_hash and not local_hash:
+        return SyncDirection.REPO_TO_LOCAL
+
+    # Case 4: Both exist but differ - check recorded hash
+    if recorded_hash is None:
+        # First sync, prefer local (user's current work)
+        return SyncDirection.LOCAL_TO_REPO
+
+    # Case 5: Local changed (differs from record), repo unchanged (matches record)
+    if repo_hash == recorded_hash and local_hash != recorded_hash:
+        return SyncDirection.LOCAL_TO_REPO
+
+    # Case 6: Repo changed (differs from record), local unchanged (matches record)
+    if local_hash == recorded_hash and repo_hash != recorded_hash:
+        return SyncDirection.REPO_TO_LOCAL
+
+    # Case 7: Both changed (both differ from record) = CONFLICT
+    if local_hash != recorded_hash and repo_hash != recorded_hash:
+        return SyncDirection.CONFLICT
+
+    return SyncDirection.NONE
+
+
+# =============================================================================
+# File Size and Type Filtering
+# =============================================================================
+
+
+def _should_sync_file(path: Path, max_size_mb: float = DEFAULT_SYNC_MAX_FILE_SIZE_MB) -> bool:
+    """Check if a file should be synced based on size and type.
+
+    Args:
+        path: File path to check
+        max_size_mb: Maximum file size in MB (default 5MB)
+
+    Returns:
+        True if file should be synced, False otherwise
+    """
+    if not path.is_file():
+        return False
+
+    # Check extension
+    if path.suffix.lower() in SYNC_EXCLUDED_EXTENSIONS:
+        return False
+
+    # Check size
+    try:
+        size_bytes = path.stat().st_size
+        if size_bytes > max_size_mb * 1024 * 1024:
+            return False
+    except OSError:
+        return False
+
+    return True
+
+
+def _should_sync_project_subdir(subdir_name: str) -> bool:
+    """Check if a project subdirectory should be synced.
+
+    Args:
+        subdir_name: Name of the subdirectory
+
+    Returns:
+        True if should be synced, False if excluded
+    """
+    return subdir_name not in PROJECTS_EXCLUDED_SUBDIRS
+
+
 def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
     """
     Sync changes from ~/.claude/ to ~/.frago/.claude/
@@ -1042,9 +1336,158 @@ def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: boo
     return True
 
 
+# =============================================================================
+# Conflict Pre-detection and Resolution
+# =============================================================================
+
+
+def _detect_potential_conflicts(current_branch: str) -> List[ConflictInfo]:
+    """Detect potential conflicts before rebase by analyzing change sets.
+
+    Compares local changes (HEAD vs merge-base) with remote changes (origin vs merge-base)
+    to predict which files will conflict during rebase.
+
+    Returns:
+        List of ConflictInfo for files that will likely conflict
+    """
+    conflicts: List[ConflictInfo] = []
+
+    # Get merge base
+    merge_base_result = _run_git(
+        ["merge-base", "HEAD", f"origin/{current_branch}"],
+        FRAGO_HOME,
+        check=False
+    )
+    if merge_base_result.returncode != 0:
+        return conflicts
+
+    merge_base = merge_base_result.stdout.strip()
+
+    # Get local changes since merge base
+    local_diff = _run_git(
+        ["diff", "--name-status", f"{merge_base}..HEAD"],
+        FRAGO_HOME,
+        check=False
+    )
+    local_changes: Dict[str, ChangeType] = {}
+    for line in local_diff.stdout.strip().split("\n"):
+        if line:
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                change_type = ChangeType(parts[0][0])  # First char: A, M, D
+                file_path = parts[1]
+                local_changes[file_path] = change_type
+
+    # Get remote changes since merge base
+    remote_diff = _run_git(
+        ["diff", "--name-status", f"{merge_base}..origin/{current_branch}"],
+        FRAGO_HOME,
+        check=False
+    )
+    remote_changes: Dict[str, ChangeType] = {}
+    for line in remote_diff.stdout.strip().split("\n"):
+        if line:
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                change_type = ChangeType(parts[0][0])
+                file_path = parts[1]
+                remote_changes[file_path] = change_type
+
+    # Find overlapping files
+    overlapping_files = set(local_changes.keys()) & set(remote_changes.keys())
+
+    for file_path in overlapping_files:
+        local_type = local_changes[file_path]
+        remote_type = remote_changes[file_path]
+
+        # Both modified = likely conflict
+        # One deleted + one modified = conflict
+        if (local_type == ChangeType.MODIFIED and remote_type == ChangeType.MODIFIED) or \
+           (local_type == ChangeType.DELETED and remote_type == ChangeType.MODIFIED) or \
+           (local_type == ChangeType.MODIFIED and remote_type == ChangeType.DELETED):
+            conflicts.append(ConflictInfo(
+                file_path=file_path,
+                local_change=local_type,
+                remote_change=remote_type,
+            ))
+
+    return conflicts
+
+
+def _save_conflict_backups(conflicts: List[ConflictInfo], current_branch: str) -> None:
+    """Save backup copies of conflicting files for user reference.
+
+    Creates .LOCAL and .REMOTE files next to the conflicting file.
+    """
+    for conflict in conflicts:
+        file_path = FRAGO_HOME / conflict.file_path
+
+        # Save local version
+        if conflict.local_change != ChangeType.DELETED and file_path.exists():
+            local_backup = file_path.parent / f"{file_path.name}.LOCAL"
+            shutil.copy2(file_path, local_backup)
+            conflict.local_backup = str(local_backup)
+
+        # Save remote version
+        if conflict.remote_change != ChangeType.DELETED:
+            try:
+                remote_content = _run_git(
+                    ["show", f"origin/{current_branch}:{conflict.file_path}"],
+                    FRAGO_HOME,
+                    check=True
+                )
+                remote_backup = file_path.parent / f"{file_path.name}.REMOTE"
+                remote_backup.write_text(remote_content.stdout, encoding="utf-8")
+                conflict.remote_backup = str(remote_backup)
+            except subprocess.CalledProcessError:
+                pass  # Remote file might not exist
+
+
+def _resolve_conflict_keep_local(file_path: str) -> bool:
+    """Resolve conflict by keeping local version.
+
+    Removes .LOCAL and .REMOTE backup files if they exist.
+    """
+    path = FRAGO_HOME / file_path
+    local_backup = path.parent / f"{path.name}.LOCAL"
+    remote_backup = path.parent / f"{path.name}.REMOTE"
+
+    # Remove backups
+    if local_backup.exists():
+        local_backup.unlink()
+    if remote_backup.exists():
+        remote_backup.unlink()
+
+    return True
+
+
+def _resolve_conflict_keep_remote(file_path: str) -> bool:
+    """Resolve conflict by keeping remote version.
+
+    Copies .REMOTE to the original file and cleans up backups.
+    """
+    path = FRAGO_HOME / file_path
+    remote_backup = path.parent / f"{path.name}.REMOTE"
+    local_backup = path.parent / f"{path.name}.LOCAL"
+
+    if not remote_backup.exists():
+        click.echo(f"Error: Remote backup not found: {remote_backup}", err=True)
+        return False
+
+    # Copy remote to original
+    shutil.copy2(remote_backup, path)
+
+    # Remove backups
+    if local_backup.exists():
+        local_backup.unlink()
+    remote_backup.unlink()
+
+    return True
+
+
 def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
     """
-    Pull remote updates
+    Pull remote updates with conflict pre-detection.
 
     Returns:
         Whether there are conflicts
@@ -1075,6 +1518,16 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
     if remote_branch_result.returncode != 0:
         return False
 
+    # Pre-detect potential conflicts
+    potential_conflicts = _detect_potential_conflicts(current_branch)
+    if potential_conflicts:
+        click.echo(f"Warning: {len(potential_conflicts)} potential conflict(s) detected:")
+        for c in potential_conflicts:
+            click.echo(f"  - {c.file_path} (local: {c.local_change.name}, remote: {c.remote_change.name})")
+
+        # Save backups before rebase
+        _save_conflict_backups(potential_conflicts, current_branch)
+
     # Save current HEAD for later comparison
     old_head_result = _run_git(["rev-parse", "HEAD"], FRAGO_HOME, check=False)
     old_head = old_head_result.stdout.strip() if old_head_result.returncode == 0 else None
@@ -1088,6 +1541,20 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
 
         # Get conflict files
         result.conflicts = _get_changed_files(FRAGO_HOME)
+
+        # Provide helpful message with resolution options
+        if result.conflicts:
+            click.echo("\nConflict resolution options:")
+            click.echo("  frago sync --keep-local <file>   # Keep your local version")
+            click.echo("  frago sync --keep-remote <file>  # Use remote version")
+            click.echo("  frago sync --resolved <file>     # After manual merge")
+            click.echo("\nBackup files created:")
+            for conflict in potential_conflicts:
+                if conflict.local_backup:
+                    click.echo(f"  {conflict.local_backup}")
+                if conflict.remote_backup:
+                    click.echo(f"  {conflict.remote_backup}")
+
         return True
 
     # Get new HEAD

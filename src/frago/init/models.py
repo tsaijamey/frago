@@ -59,6 +59,7 @@ class Config(BaseModel):
 
     # Multi-device sync configuration
     sync_repo_url: Optional[str] = None  # User's private repo URL (for sync)
+    sync_max_file_size_mb: float = 5.0  # Max file size to sync (MB), default 5MB
 
     # Community recipe repository
     community_repo: str = "tsaijamey/frago"  # GitHub repo for community recipes
