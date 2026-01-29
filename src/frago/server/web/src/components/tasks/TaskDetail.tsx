@@ -7,7 +7,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import DirectoryAutocomplete from '@/components/ui/DirectoryAutocomplete';
 import Modal from '@/components/ui/Modal';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
-import { Send, Info, Zap } from 'lucide-react';
+import { Send, Info, Zap, ArrowLeft, RefreshCw } from 'lucide-react';
 import { modKey } from '@/hooks/usePlatform';
 
 // Format date time
@@ -157,79 +157,73 @@ export default function TaskDetail() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden gap-4 p-scaled-4">
-      {/* Fixed header area */}
-      <div className="shrink-0 flex flex-col gap-4">
-        {/* Back button */}
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 flex items-center gap-4 px-6 py-5">
+        {/* Back button - icon only */}
         <button
-          className="btn btn-ghost self-start"
+          type="button"
+          className="w-9 h-9 flex items-center justify-center rounded-lg bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] transition-colors shrink-0"
           onClick={() => switchPage('tasks')}
+          aria-label={t('tasks.backToTaskList')}
         >
-          ← {t('tasks.backToTaskList')}
+          <ArrowLeft className="w-[18px] h-[18px]" />
         </button>
 
-        {/* Task info card */}
-        <div className="card">
-          {/* Title row */}
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-scaled-2 flex-1 min-w-0">
-              <h2 className="text-scaled-lg font-medium text-[var(--text-primary)] truncate">
-                {taskDetail.name}
-              </h2>
-              {/* Generate AI title button */}
-              <button
-                type="button"
-                className="btn btn-ghost p-1 shrink-0"
-                onClick={handleGenerateTitle}
-                disabled={isGeneratingTitle}
-                title={t('tasks.generateTitle')}
-                aria-label={t('tasks.generateTitle')}
-              >
-                {isGeneratingTitle ? (
-                  <LoadingSpinner size="sm" />
-                ) : (
-                  <Zap className="icon-scaled-md text-[var(--text-muted)] hover:text-[var(--accent-primary)]" />
-                )}
-              </button>
-            </div>
-            {/* Running status hint */}
-            {taskDetail.status === 'running' && (
-              <div className="flex items-center gap-scaled-2 text-scaled-sm text-[var(--accent-warning)] ml-scaled-4 shrink-0">
-                <LoadingSpinner size="sm" />
-                {t('tasks.status.running')}
-              </div>
-            )}
-            {/* Details button */}
-            <button
-              type="button"
-              className="btn btn-ghost flex items-center gap-scaled-2 ml-scaled-4 shrink-0"
-              onClick={() => setShowDetailsModal(true)}
-            >
-              <Info className="icon-scaled-md" />
-              {t('tasks.showDetails')}
-            </button>
-          </div>
-        </div>
+        {/* Title */}
+        <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate flex-1 min-w-0">
+          {taskDetail.name}
+        </h2>
 
+        {/* Generate AI title button */}
+        <button
+          type="button"
+          className="text-[var(--text-muted)] hover:text-[var(--accent-primary)] transition-colors shrink-0"
+          onClick={handleGenerateTitle}
+          disabled={isGeneratingTitle}
+          title={t('tasks.generateTitle')}
+          aria-label={t('tasks.generateTitle')}
+        >
+          {isGeneratingTitle ? (
+            <LoadingSpinner size="sm" />
+          ) : (
+            <Zap className="w-4 h-4" />
+          )}
+        </button>
+
+        {/* Sync indicator (running status) */}
+        {taskDetail.status === 'running' && (
+          <RefreshCw className="w-4 h-4 text-[var(--text-muted)] animate-spin shrink-0" />
+        )}
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Details button - pill style */}
+        <button
+          type="button"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] text-[13px] font-medium transition-colors shrink-0"
+          onClick={() => setShowDetailsModal(true)}
+        >
+          <Info className="w-3.5 h-3.5" />
+          {t('tasks.showDetails')}
+        </button>
       </div>
 
-      {/* Step list area - takes remaining space, scrolls internally */}
-      <div className="card flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* StepList takes remaining space */}
-        <div className="flex-1 min-h-0">
-          <StepList
-            sessionId={taskDetail.session_id}
-            initialSteps={taskDetail.steps}
-            totalSteps={taskDetail.steps_total}
-            hasMore={taskDetail.has_more_steps}
-            isRunning={taskDetail.status === 'running'}
-          />
-        </div>
+      {/* Content area - message list */}
+      <div className="flex-1 min-h-0 overflow-hidden px-6">
+        <StepList
+          sessionId={taskDetail.session_id}
+          initialSteps={taskDetail.steps}
+          totalSteps={taskDetail.steps_total}
+          hasMore={taskDetail.has_more_steps}
+          isRunning={taskDetail.status === 'running'}
+        />
       </div>
 
-      {/* Continue input area - at the very bottom */}
+      {/* Input area - at the very bottom */}
       {canContinue && (
-        <div className="card shrink-0">
+        <div className="shrink-0 px-6 pt-4 pb-6">
           <div className="task-input-wrapper relative">
             <DirectoryAutocomplete
               value={continuePrompt}
@@ -254,11 +248,11 @@ export default function TaskDetail() {
               {isSubmitting ? (
                 <div className="spinner" />
               ) : (
-                <Send className="icon-scaled-md" />
+                <Send className="w-4 h-4" />
               )}
             </button>
           </div>
-          <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
+          <div className="text-xs text-[var(--text-muted)] mt-2">
             {modKey}+Enter to send
           </div>
         </div>

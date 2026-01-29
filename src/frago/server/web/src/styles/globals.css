@@ -1179,6 +1179,16 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+/* === Message Card (Chat bubble style) === */
+.message-card {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-card);
+  border-radius: 12px;
+  align-items: flex-start;
+}
+
 /* === Button Base === */
 .btn {
   display: inline-flex;

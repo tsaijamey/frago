@@ -29,7 +29,8 @@ function getStepConfig(type: StepType) {
 }
 
 // Filterable types (matches ConsoleMessage types for consistency)
-const filterableTypes: StepType[] = ['user', 'assistant', 'tool_call', 'tool_result', 'system'];
+// Note: 'system' type removed as backend no longer sends system messages
+const filterableTypes: StepType[] = ['user', 'assistant', 'tool_call', 'tool_result'];
 
 // Pagination settings
 const PAGE_SIZE = 100;
@@ -236,31 +237,32 @@ export default function StepList({ sessionId, initialSteps, totalSteps: _totalSt
 
   return (
     <div className="flex flex-col h-full">
-      {/* Filter bar - wrapping layout */}
-      <div className="flex flex-wrap items-center gap-1 pb-scaled-2 border-b border-[var(--border-primary)] mb-scaled-2 shrink-0">
-        <span className="text-scaled-xs text-[var(--text-muted)]">{t('tasks.filter')}:</span>
+      {/* Filter bar - pill style buttons */}
+      <div className="flex flex-wrap items-center gap-2 py-3 shrink-0">
+        <span className="text-[13px] font-medium text-[var(--text-muted)]">{t('tasks.filter')}:</span>
         {filterableTypes.map(type => {
-          const { Icon, labelKey, colorClass } = getStepConfig(type);
+          const { Icon, labelKey } = getStepConfig(type);
           const label = t(labelKey);
           const isActive = activeFilters.has(type);
           const showAsActive = activeFilters.size === 0 || isActive;
           return (
             <button
               key={type}
+              type="button"
               onClick={() => toggleFilter(type)}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded text-scaled-xs transition-opacity ${
-                showAsActive ? 'opacity-100' : 'opacity-40'
-              } hover:opacity-100`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] font-medium transition-all ${
+                showAsActive
+                  ? 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
+                  : 'bg-transparent text-[var(--text-muted)] opacity-50 hover:opacity-100 hover:bg-[var(--bg-tertiary)]'
+              }`}
               title={label}
             >
-              <Icon className="icon-scaled-sm" />
-              <span className={showAsActive ? colorClass : 'text-[var(--text-muted)]'}>{label}</span>
+              <Icon className="w-3.5 h-3.5" />
+              <span>{label}</span>
             </button>
           );
         })}
-        <span className="text-scaled-xs text-[var(--text-muted)] ml-auto">
-          {filteredSteps.length}
-        </span>
+        <div className="flex-1" />
       </div>
 
       {/* Step list - internal scrolling */}
@@ -279,7 +281,7 @@ export default function StepList({ sessionId, initialSteps, totalSteps: _totalSt
           </div>
         )}
 
-        <div className="flex flex-col gap-scaled-2">
+        <div className="flex flex-col gap-4 pb-4 pr-2">
           {displaySteps.map((displayStep) => {
             if (displayStep.type === 'paired') {
               // Render paired tool call and result
