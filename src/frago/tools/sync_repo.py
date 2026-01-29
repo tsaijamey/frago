@@ -605,10 +605,14 @@ def _safe_copy_tree(src: Path, dst: Path) -> None:
 
 def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
     """
-    Clone or initialize repository
+    Initialize git repository in existing ~/.frago/ directory and fetch remote.
 
-    If remote repository exists, clone to ~/.frago/
-    If remote repository is empty or doesn't exist, initialize local repository
+    SAFE APPROACH: Never delete existing files. Instead:
+    1. Initialize git in existing directory (preserves all files)
+    2. Add remote
+    3. Fetch and merge remote content (if any)
+
+    This ensures NO DATA LOSS even if user has local recipes, skills, projects, etc.
 
     Returns:
         (success, message)
@@ -616,74 +620,95 @@ def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
     if _is_git_repo(FRAGO_HOME):
         return True, "Repository already exists"
 
-    # Try to clone to temporary directory
-    temp_dir = FRAGO_HOME.parent / ".frago_clone_temp"
-    # Runtime directories/files to preserve (excluding projects, as it will be synced)
-    runtime_items = ["sessions", "chrome_profile", "config.json", "current_run"]
-
     try:
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
+        # Ensure ~/.frago/ exists
+        FRAGO_HOME.mkdir(parents=True, exist_ok=True)
 
-        result = subprocess.run(
-            ["git", "clone", repo_url, str(temp_dir)],
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            **_get_subprocess_kwargs(),
+        # Initialize git in existing directory (preserves all existing files)
+        _run_git(["init"], FRAGO_HOME)
+
+        # Create .gitignore first to exclude runtime files
+        _ensure_gitignore(FRAGO_HOME)
+
+        # Add remote
+        _run_git(["remote", "add", "origin", repo_url], FRAGO_HOME, check=False)
+
+        # Try to fetch from remote
+        fetch_result = _run_git(["fetch", "origin"], FRAGO_HOME, check=False)
+
+        if fetch_result.returncode != 0:
+            # Remote might be empty or not exist yet - that's OK
+            return True, "Initialized local repository (remote is empty or unreachable)"
+
+        # Check if remote has any branches
+        remote_branch_result = _run_git(
+            ["rev-parse", "--verify", "origin/main"],
+            FRAGO_HOME,
+            check=False
         )
 
-        if result.returncode == 0:
-            # Clone successful, move content to ~/.frago/
-            # Preserve existing runtime directories
-            preserved = {}
+        if remote_branch_result.returncode != 0:
+            # Try master branch as fallback
+            remote_branch_result = _run_git(
+                ["rev-parse", "--verify", "origin/master"],
+                FRAGO_HOME,
+                check=False
+            )
 
-            for item in runtime_items:
-                src = FRAGO_HOME / item
-                if src.exists():
-                    preserved[item] = temp_dir.parent / f".frago_preserve_{item}"
-                    if src.is_file():
-                        shutil.copy2(src, preserved[item])
-                    elif src.is_dir():
-                        _safe_copy_tree(src, preserved[item])
+        if remote_branch_result.returncode != 0:
+            # Remote has no branches (empty repo)
+            return True, "Initialized local repository (remote repository is empty)"
 
-            # Move cloned content
-            if FRAGO_HOME.exists():
-                shutil.rmtree(FRAGO_HOME)
-            shutil.move(str(temp_dir), str(FRAGO_HOME))
+        # Remote has content - determine branch name
+        branch_name = "main"
+        main_check = _run_git(["rev-parse", "--verify", "origin/main"], FRAGO_HOME, check=False)
+        if main_check.returncode != 0:
+            branch_name = "master"
 
-            # Restore runtime directories
-            for item, preserved_path in preserved.items():
-                target = FRAGO_HOME / item
-                if preserved_path.exists():
-                    if preserved_path.is_file():
-                        shutil.copy2(preserved_path, target)
-                        preserved_path.unlink()
-                    elif preserved_path.is_dir():
-                        if target.exists():
-                            shutil.rmtree(target)
-                        shutil.move(str(preserved_path), str(target))
+        # Check if we have any local commits
+        local_commits = _run_git(["rev-list", "--count", "HEAD"], FRAGO_HOME, check=False)
+        has_local_commits = local_commits.returncode == 0 and local_commits.stdout.strip() != "0"
 
-            _ensure_gitignore(FRAGO_HOME)
-            return True, "Fetched resources from your repository"
+        if not has_local_commits:
+            # No local commits - safe to checkout remote branch
+            # First, add all existing files to preserve them
+            _run_git(["add", "."], FRAGO_HOME, check=False)
+
+            # Check if there are files to commit
+            status_result = _run_git(["status", "--porcelain"], FRAGO_HOME, check=False)
+            if status_result.stdout.strip():
+                # Ensure git user is configured
+                success, error = _ensure_git_user_config(FRAGO_HOME)
+                if not success:
+                    return False, error
+
+                # Commit local files first
+                _run_git(
+                    ["commit", "-m", "chore: preserve local files before sync"],
+                    FRAGO_HOME,
+                    check=False
+                )
+
+            # Now merge remote (with allow-unrelated-histories for first sync)
+            merge_result = _run_git(
+                ["merge", f"origin/{branch_name}", "--allow-unrelated-histories", "-m", "chore: merge remote repository"],
+                FRAGO_HOME,
+                check=False
+            )
+
+            if merge_result.returncode != 0:
+                # Merge conflict - abort and let user handle it
+                _run_git(["merge", "--abort"], FRAGO_HOME, check=False)
+                return True, "Initialized repository. Remote has content but merge needs manual resolution."
+
+            return True, "Fetched and merged resources from your repository"
         else:
-            # Clone failed, possibly empty repository, initialize local
-            _init_git_repo(FRAGO_HOME, repo_url)
-            return True, "Initialized local repository (your repository is empty or doesn't exist)"
+            # Has local commits - just set up tracking
+            _run_git(["branch", f"--set-upstream-to=origin/{branch_name}"], FRAGO_HOME, check=False)
+            return True, "Repository initialized with existing local commits"
 
     except Exception as e:
         return False, f"Initialization failed: {e}"
-    finally:
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
-        # Clean up potentially leftover preserve directories
-        for item in runtime_items:
-            preserve_path = FRAGO_HOME.parent / f".frago_preserve_{item}"
-            if preserve_path.exists():
-                if preserve_path.is_dir():
-                    shutil.rmtree(preserve_path)
-                else:
-                    preserve_path.unlink()
 
 
 def _files_are_identical(file1: Path, file2: Path) -> bool:
