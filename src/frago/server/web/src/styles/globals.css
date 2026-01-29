@@ -43,6 +43,9 @@
   --accent-success: #22C55E;
   --accent-warning: #F59E0B;
   --accent-error: #EF4444;
+  --accent-info: #60A5FA;
+  --accent-info-bg: #1E3A5F;
+  --accent-info-text: #93C5FD;
 
   /* Border colors */
   --border-color: #334155;
@@ -134,6 +137,9 @@
   --accent-success: #16A34A;
   --accent-warning: #CA8A04;
   --accent-error: #DC2626;
+  --accent-info: #2563EB;
+  --accent-info-bg: #DBEAFE;
+  --accent-info-text: #1E40AF;
 
   --border-color: #E2E8F0;
   --border-primary: #007A2A;

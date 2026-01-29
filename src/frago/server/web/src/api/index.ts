@@ -1151,3 +1151,73 @@ export async function searchGuide(
   }
   return httpApi.searchGuide(query, lang);
 }
+
+// ============================================================
+// New Wizard Flow API (Web Login + Auto Setup)
+// ============================================================
+
+export type {
+  WebLoginResponse,
+  AuthStatusResponse,
+  CheckRepoResponse,
+  SetupRepoResponse,
+} from './client';
+
+export async function startWebLogin(): Promise<httpApi.WebLoginResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Web login not supported in pywebview mode',
+    };
+  }
+  return httpApi.startWebLogin();
+}
+
+export async function checkAuthStatus(): Promise<httpApi.AuthStatusResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      completed: true,
+      authenticated: false,
+      error: 'Not supported in pywebview mode',
+    };
+  }
+  return httpApi.checkAuthStatus();
+}
+
+export async function cancelWebLogin(): Promise<{ status: string }> {
+  if (isPywebviewMode()) {
+    return { status: 'ok' };
+  }
+  return httpApi.cancelWebLogin();
+}
+
+export async function checkSyncRepo(): Promise<httpApi.CheckRepoResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      default_repo_name: 'frago-working-dir',
+      error: 'Not supported in pywebview mode',
+    };
+  }
+  return httpApi.checkSyncRepo();
+}
+
+export async function setupSyncRepo(): Promise<httpApi.SetupRepoResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'error',
+      error: 'Not supported in pywebview mode',
+    };
+  }
+  return httpApi.setupSyncRepo();
+}
+
+export async function getSetupStatus(): Promise<httpApi.SetupRepoResponse> {
+  if (isPywebviewMode()) {
+    return {
+      status: 'idle',
+    };
+  }
+  return httpApi.getSetupStatus();
+}

@@ -1189,3 +1189,93 @@ export async function searchGuide(query: string, lang: string = 'en'): Promise<G
   const params = new URLSearchParams({ q: query, lang });
   return fetchApi<GuideSearchResponse>(`/guide/search?${params.toString()}`);
 }
+
+// ============================================================
+// New Wizard Flow API (Web Login + Auto Setup)
+// ============================================================
+
+export interface WebLoginResponse {
+  status: 'ok' | 'error';
+  code?: string;
+  url?: string;
+  error?: string;
+}
+
+export interface AuthStatusResponse {
+  status: 'ok' | 'error';
+  completed: boolean;
+  authenticated: boolean;
+  username?: string | null;
+  error?: string;
+}
+
+export interface CheckRepoResponse {
+  status: 'ok' | 'error';
+  exists?: boolean;
+  repo_url?: string | null;
+  is_private?: boolean;
+  username?: string | null;
+  default_repo_name: string;
+  error?: string;
+}
+
+export interface SetupRepoResponse {
+  status: 'ok' | 'running' | 'syncing' | 'idle' | 'error';
+  repo_url?: string | null;
+  username?: string | null;
+  created?: boolean;
+  sync_success?: boolean;
+  local_changes?: number;
+  remote_updates?: number;
+  pushed_to_remote?: boolean;
+  message?: string | null;
+  error?: string | null;
+  warnings?: string[];
+  needs_refresh?: boolean;
+}
+
+/**
+ * Start web-based GitHub authentication.
+ * Returns the device code to display in the UI.
+ */
+export async function startWebLogin(): Promise<WebLoginResponse> {
+  return fetchApi<WebLoginResponse>('/sync/auth-login-web', { method: 'POST' });
+}
+
+/**
+ * Check if the web login process has completed.
+ * Poll this to detect when user completes authorization.
+ */
+export async function checkAuthStatus(): Promise<AuthStatusResponse> {
+  return fetchApi<AuthStatusResponse>('/sync/auth-status');
+}
+
+/**
+ * Cancel any ongoing web login process.
+ */
+export async function cancelWebLogin(): Promise<{ status: string }> {
+  return fetchApi<{ status: string }>('/sync/auth-cancel', { method: 'POST' });
+}
+
+/**
+ * Check if the default sync repository (frago-working-dir) exists.
+ */
+export async function checkSyncRepo(): Promise<CheckRepoResponse> {
+  return fetchApi<CheckRepoResponse>('/sync/check-repo');
+}
+
+/**
+ * Start automatic repository setup.
+ * Creates frago-working-dir if needed and runs first sync.
+ */
+export async function setupSyncRepo(): Promise<SetupRepoResponse> {
+  return fetchApi<SetupRepoResponse>('/sync/setup-repo', { method: 'POST' });
+}
+
+/**
+ * Get the status of the repository setup operation.
+ * Poll this to track setup progress.
+ */
+export async function getSetupStatus(): Promise<SetupRepoResponse> {
+  return fetchApi<SetupRepoResponse>('/sync/setup-status');
+}
