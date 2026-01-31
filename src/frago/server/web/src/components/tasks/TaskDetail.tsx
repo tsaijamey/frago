@@ -171,7 +171,7 @@ export default function TaskDetail() {
         </button>
 
         {/* Title */}
-        <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate flex-1 min-w-0">
+        <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate max-w-[50%]">
           {taskDetail.name}
         </h2>
 
