@@ -192,9 +192,10 @@ async def get_sync_status() -> SyncResponse:
     """
     result = MultiDeviceSyncService.get_sync_result()
 
-    # Refresh recipes and skills cache after successful sync
+    # Refresh caches after successful sync
     if result.get("needs_refresh"):
         state_manager = StateManager.get_instance()
+        await state_manager.refresh_config(broadcast=True)
         await state_manager.refresh_recipes(broadcast=True)
         await state_manager.refresh_skills(broadcast=True)
         MultiDeviceSyncService.clear_refresh_flag()
@@ -406,9 +407,10 @@ async def get_setup_status() -> SetupRepoResponse:
     """
     result = MultiDeviceSyncService.get_setup_result()
 
-    # Refresh recipes and skills cache after successful setup
+    # Refresh caches after successful setup
     if result.get("needs_refresh"):
         state_manager = StateManager.get_instance()
+        await state_manager.refresh_config(broadcast=True)
         await state_manager.refresh_recipes(broadcast=True)
         await state_manager.refresh_skills(broadcast=True)
         MultiDeviceSyncService.clear_refresh_flag()

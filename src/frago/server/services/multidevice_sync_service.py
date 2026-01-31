@@ -327,10 +327,13 @@ class MultiDeviceSyncService:
             cls._needs_cache_refresh = False
 
     @classmethod
-    async def sync_now(cls) -> Dict[str, Any]:
+    async def sync_now(cls, auto_refresh: bool = True) -> Dict[str, Any]:
         """Execute sync synchronously and return result.
 
         This is a blocking operation that waits for sync to complete.
+
+        Args:
+            auto_refresh: If True, automatically refresh caches after successful sync
 
         Returns:
             Dictionary with sync result
@@ -343,8 +346,27 @@ class MultiDeviceSyncService:
         while True:
             result = cls.get_sync_result()
             if result.get("status") != "running":
+                # Auto-refresh caches if enabled and sync was successful
+                if auto_refresh and result.get("needs_refresh"):
+                    await cls._refresh_caches()
+                    cls.clear_refresh_flag()
                 return result
             await asyncio.sleep(0.5)
+
+    @classmethod
+    async def _refresh_caches(cls) -> None:
+        """Refresh state caches after successful sync."""
+        try:
+            from frago.server.state import StateManager
+
+            state_manager = StateManager.get_instance()
+            if state_manager.is_initialized():
+                await state_manager.refresh_config(broadcast=True)
+                await state_manager.refresh_recipes(broadcast=True)
+                await state_manager.refresh_skills(broadcast=True)
+                logger.info("Caches refreshed after sync")
+        except Exception as e:
+            logger.warning("Failed to refresh caches after sync: %s", e)
 
     # Setup state management
     _setup_lock = threading.Lock()

@@ -39,6 +39,7 @@ from frago.server.services.sync_service import SyncService
 from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.version_service import VersionCheckService
+from frago.server.services.github_sync_scheduler import GitHubSyncScheduler
 from frago.server.state import StateManager
 
 
@@ -93,9 +94,14 @@ async def lifespan(app: FastAPI):
     await version_service.initialize()
     await version_service.start()
 
+    # Start GitHub sync scheduler (5min interval, only if configured)
+    github_sync_scheduler = GitHubSyncScheduler.get_instance()
+    await github_sync_scheduler.start()
+
     yield
 
     # Shutdown
+    await github_sync_scheduler.stop()
     await version_service.stop()
     await community_service.stop()
     await sessions_watcher.stop()
