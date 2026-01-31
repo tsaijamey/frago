@@ -227,25 +227,44 @@ VALIDATION:
 </forbidden>
 
 <output_requirements>
-Recipe scripts MUST output detailed progress for Agent/Bash visibility:
+CRITICAL: Framework parses recipe output to determine success/failure.
 
-✅ MUST output:
-    step start/complete markers
-    element counts, data counts
-    error context (selector, URL, params)
-    final result summary
+stdout vs stderr:
+    stdout => MUST be valid JSON (framework parses this)
+    stderr => progress logs, debug info (displayed to user)
+
+✅ MUST:
+    - Output valid JSON to stdout (even if using output_file param)
+    - Output progress/logs to stderr: print("...", file=sys.stderr)
+    - Include status in JSON: {"status": "success", ...} or {"error": "..."}
 
 ❌ AVOID:
-    silent execution (no output)
-    JSON-only without progress
-    vague errors (just "failed")
+    - Mixing progress text with JSON in stdout (breaks parsing)
+    - Silent execution (no stderr output)
+    - Writing to file without stdout JSON (framework gets empty response)
 
-output pattern:
+output_file pattern:
+    When recipe accepts output_file param and writes results to file,
+    STILL output status JSON to stdout:
+    ```python
+    if output_file:
+        with open(output_file, "w") as f:
+            json.dump(results, f)
+        # REQUIRED: output status to stdout for framework
+        print(json.dumps({"status": "success", "output_file": output_file, "count": len(results)}))
+    else:
+        print(json.dumps(results))
+    ```
+
+stderr progress pattern:
     [step1] finding target...
     [step1] ✓ found 15 items
     [step2] extracting...
     [step2] ✓ extracted 15 records
-    [result] {"success": true, "count": 15, ...}
+    [done] completed
+
+stdout JSON (final line):
+    {"status": "success", "count": 15, ...}
 </output_requirements>
 
 <commands>
