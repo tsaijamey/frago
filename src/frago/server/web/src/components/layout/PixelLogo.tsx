@@ -154,7 +154,7 @@ export default function PixelLogo({ height = 36, className = '', showIcon = true
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <img
-        src="/icons/logo.png"
+        src="/icons/logo-64.png"
         alt="frago icon"
         style={{ height: height + padding * 2 }}
         className="object-contain"
