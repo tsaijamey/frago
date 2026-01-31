@@ -56,7 +56,7 @@ export default function NewTaskInput({
           <Send className="icon-scaled-md" />
         </button>
       </div>
-      <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-2">
+      <div className="text-scaled-xs text-[var(--text-muted)] mt-scaled-3 text-center">
         {modKey}+Enter to send
       </div>
     </div>

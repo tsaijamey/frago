@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Sparkles } from 'lucide-react';
+import { Compass, Bot, FileCode, Play } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getConsoleHistory } from '@/api';
 import { getWebSocketClient } from '@/api/websocket';
@@ -17,7 +17,6 @@ export default function NewTaskPage() {
     showToast,
     // Console state from global store
     consoleInternalId,
-    consoleSessionId,
     consoleMessages,
     consoleIsRunning,
     consoleScrollPosition,
@@ -328,13 +327,24 @@ export default function NewTaskPage() {
     [consoleMessages]
   );
 
+  // Quick action handlers - prefill input with prompt template
+  const quickActions = [
+    { icon: Compass, label: t('console.quickActions.explore'), prompt: t('console.quickActions.explorePrompt') },
+    { icon: Bot, label: t('console.quickActions.automate'), prompt: t('console.quickActions.automatePrompt') },
+    { icon: FileCode, label: t('console.quickActions.createRecipe'), prompt: t('console.quickActions.createRecipePrompt') },
+    { icon: Play, label: t('console.quickActions.testRecipe'), prompt: t('console.quickActions.testRecipePrompt') },
+  ];
+
+  const handleQuickAction = (prompt: string) => {
+    setInputValue(prompt);
+  };
+
   // Welcome screen for empty state
   const welcomeScreen = (
     <div className="welcome-screen">
       <div className="welcome-header">
-        <div className="welcome-icon">
-          <Sparkles size={32} />
-        </div>
+        {/* Logo */}
+        <img src="/icons/logo-128.png" alt="frago" className="welcome-logo-img" />
         <h1 className="welcome-headline">{t('console.welcomeHeadline')}</h1>
         <p className="welcome-subheadline">{t('console.welcomeSubheadline')}</p>
       </div>
@@ -353,6 +363,33 @@ export default function NewTaskPage() {
           {t('console.manualApprove')}
         </button>
       </div>
+
+      {/* Input area - inside welcome screen */}
+      <div className="welcome-input-section">
+        <NewTaskInput
+          value={inputValue}
+          onChange={setInputValue}
+          onSend={handleSend}
+          disabled={consoleIsRunning}
+          placeholder={t('console.startConversation')}
+        />
+      </div>
+
+      {/* Quick Actions */}
+      <div className="quick-actions">
+        {quickActions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            className="quick-action-btn"
+            onClick={() => handleQuickAction(action.prompt)}
+            title={action.prompt}
+          >
+            <action.icon className="quick-action-icon" />
+            <span>{action.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 
@@ -361,33 +398,39 @@ export default function NewTaskPage() {
       {/* Controls */}
       <div className="shrink-0">
         <NewTaskControls
-          sessionId={consoleSessionId}
           isRunning={consoleIsRunning}
           onNewSession={handleNewSession}
           onStop={handleStop}
         />
       </div>
 
-      {/* Message area */}
-      <div ref={scrollContainerRef} className="flex-1 min-h-0 card overflow-hidden flex flex-col overflow-y-auto">
-        <MessageList
-          messages={unifiedMessages}
-          messagesEndRef={messagesEndRef}
-          emptyState={welcomeScreen}
-          gap="space-y-4"
-        />
-      </div>
+      {/* Message area or Welcome screen */}
+      {consoleMessages.length === 0 ? (
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          {welcomeScreen}
+        </div>
+      ) : (
+        <>
+          <div ref={scrollContainerRef} className="flex-1 min-h-0 card overflow-hidden flex flex-col overflow-y-auto">
+            <MessageList
+              messages={unifiedMessages}
+              messagesEndRef={messagesEndRef}
+              gap="space-y-4"
+            />
+          </div>
 
-      {/* Input area */}
-      <div className="shrink-0">
-        <NewTaskInput
-          value={inputValue}
-          onChange={setInputValue}
-          onSend={handleSend}
-          disabled={consoleIsRunning && consoleMessages[consoleMessages.length - 1]?.type === 'assistant' && !consoleMessages[consoleMessages.length - 1]?.done}
-          placeholder={consoleInternalId ? t('console.continueConversation') : t('console.startConversation')}
-        />
-      </div>
+          {/* Input area - at bottom when has messages */}
+          <div className="shrink-0">
+            <NewTaskInput
+              value={inputValue}
+              onChange={setInputValue}
+              onSend={handleSend}
+              disabled={consoleIsRunning && consoleMessages[consoleMessages.length - 1]?.type === 'assistant' && !consoleMessages[consoleMessages.length - 1]?.done}
+              placeholder={t('console.continueConversation')}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

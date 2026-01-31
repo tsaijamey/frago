@@ -268,15 +268,25 @@
     "noActiveSession": "无活动会话",
     "session": "会话",
     "newSession": "新会话",
-    "welcomeHeadline": "配方开发控制台",
-    "welcomeSubheadline": "开始对话以创建和测试 frago 配方",
+    "welcomeHeadline": "frago",
+    "welcomeSubheadline": "Teach once, run forever",
     "devConsoleTitle": "配方开发控制台",
     "devConsoleDesc": "此控制台专为创建和测试 Frago 配方设计。Claude 将自动执行任务，无需对每个工具调用进行手动批准。",
     "autoApproveWarningTitle": "自动批准始终启用",
     "autoApproveWarningDesc": "所有工具调用（文件操作、shell 命令等）都将直接执行，无需确认。在敏感项目上请谨慎使用。",
     "interactiveMode": "如需手动批准的交互模式，请直接使用 Claude Code：",
     "startConversation": "开始新对话...",
-    "continueConversation": "继续对话..."
+    "continueConversation": "继续对话...",
+    "quickActions": {
+      "explore": "探索",
+      "automate": "自动化",
+      "createRecipe": "创建配方",
+      "testRecipe": "测试配方",
+      "explorePrompt": "帮我探索 ",
+      "automatePrompt": "帮我自动化 ",
+      "createRecipePrompt": "帮我创建一个配方来 ",
+      "testRecipePrompt": "帮我测试配方 "
+    }
   },
   "sync": {
     "title": "同步",

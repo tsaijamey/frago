@@ -268,15 +268,25 @@
     "noActiveSession": "No active session",
     "session": "Session",
     "newSession": "New Session",
-    "welcomeHeadline": "Recipe Development Console",
-    "welcomeSubheadline": "Start a conversation to create and test frago recipes",
+    "welcomeHeadline": "frago",
+    "welcomeSubheadline": "Teach once, run forever",
     "devConsoleTitle": "Recipe Development Console",
     "devConsoleDesc": "This console is designed for creating and testing Frago recipes. Claude will execute tasks automatically without requiring manual approval for each tool call.",
     "autoApproveWarningTitle": "Auto-approve is always enabled",
     "autoApproveWarningDesc": "All tool calls (file operations, shell commands, etc.) will be executed without confirmation. Use with caution on sensitive projects.",
     "interactiveMode": "For interactive mode with manual approval, use Claude Code directly:",
     "startConversation": "Start a new conversation...",
-    "continueConversation": "Continue conversation..."
+    "continueConversation": "Continue conversation...",
+    "quickActions": {
+      "explore": "Explore",
+      "automate": "Automate",
+      "createRecipe": "Create Recipe",
+      "testRecipe": "Test Recipe",
+      "explorePrompt": "Help me explore ",
+      "automatePrompt": "Help me automate ",
+      "createRecipePrompt": "Help me create a Recipe to ",
+      "testRecipePrompt": "Help me test Recipe "
+    }
   },
   "sync": {
     "title": "Sync",

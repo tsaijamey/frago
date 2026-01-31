@@ -1826,6 +1826,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .mt-scaled-1 { margin-top: 4px !important; }
 .mt-scaled-2 { margin-top: 8px !important; }
+.mt-scaled-3 { margin-top: 12px !important; }
 .mt-scaled-4 { margin-top: 16px !important; }
 
 .ml-scaled-1 { margin-left: 4px !important; }
@@ -2234,6 +2235,16 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--accent-primary);
 }
 
+/* Logo image for welcome screen */
+.welcome-logo-img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto var(--spacing-md) auto;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .welcome-headline {
   font-size: 1.75rem;
   font-weight: var(--font-weight-bold);
@@ -2380,4 +2391,77 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 
 .mt-scaled-6 {
   margin-top: 24px !important;
+}
+
+/* Welcome screen input section */
+.welcome-input-section {
+  width: 100%;
+  max-width: 600px;
+  margin-top: var(--spacing-xl);
+}
+
+/* === Quick Actions (Welcome Screen) === */
+.quick-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-xl); /* 32px - mainContent gap in design */
+}
+
+.quick-action-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 10px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.quick-action-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.quick-action-btn:active {
+  transform: scale(0.98);
+}
+
+.quick-action-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* === Header Button (Ghost button with border for controls) === */
+.header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.header-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.header-btn:active {
+  transform: scale(0.98);
 }
