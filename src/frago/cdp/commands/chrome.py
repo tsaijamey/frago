@@ -335,33 +335,54 @@ class ChromeLauncher:
         # Always sync from system profile on each launch
         system_profile = self._get_system_profile_dir()
         if system_profile:
-            items_to_copy = [
-                "Default/Bookmarks",
-                "Default/Preferences",
-                "Default/Extensions",
-                "Default/Local Extension Settings",
-                "Default/Cookies",
-                "Default/History",
-                "Default/Favicons",
-                "Local State",
-            ]
-
-            for item in items_to_copy:
-                src = system_profile / item
-                dst = self.profile_dir / item
-
+            # Copy Local State file
+            local_state_src = system_profile / "Local State"
+            local_state_dst = self.profile_dir / "Local State"
+            if local_state_src.exists():
                 try:
-                    if src.exists():
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        if src.is_dir():
-                            # Remove old directory and copy fresh to ensure full sync
-                            if dst.exists():
-                                shutil.rmtree(dst)
-                            shutil.copytree(src, dst)
-                        else:
-                            shutil.copy2(src, dst)
+                    shutil.copy2(local_state_src, local_state_dst)
                 except Exception:
-                    # Non-critical file copy failure doesn't interrupt execution
+                    pass
+
+            # Copy entire Default directory (excluding cache directories)
+            # This preserves Google account login state and all user data
+            default_src = system_profile / "Default"
+            default_dst = self.profile_dir / "Default"
+
+            # Directories to exclude (cache, logs, locks)
+            exclude_dirs = {
+                "Cache",
+                "Code Cache",
+                "GPUCache",
+                "DawnGraphiteCache",
+                "DawnWebGPUCache",
+                "Service Worker",  # Can be large and regenerates
+                "File System",  # Can be large
+                "blob_storage",  # Can be large
+            }
+            exclude_files = {
+                "LOCK",
+                "LOG",
+                "LOG.old",
+            }
+
+            def ignore_patterns(directory: str, files: list[str]) -> list[str]:
+                """Return list of files/dirs to ignore during copy"""
+                ignored = []
+                for f in files:
+                    if f in exclude_dirs or f in exclude_files:
+                        ignored.append(f)
+                    elif f.endswith(".log") or f.endswith(".lock"):
+                        ignored.append(f)
+                return ignored
+
+            if default_src.exists():
+                try:
+                    if default_dst.exists():
+                        shutil.rmtree(default_dst)
+                    shutil.copytree(default_src, default_dst, ignore=ignore_patterns)
+                except Exception:
+                    # Non-critical: continue with existing profile or empty one
                     pass
 
         # Set Chrome preferences to disable various UI prompts
