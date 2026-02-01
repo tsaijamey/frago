@@ -32,11 +32,12 @@ from .autostart_command import autostart_group
 from .start_command import start
 from .agent_friendly import AgentFriendlyGroup
 from .cloud_commands import login_cmd, logout_cmd, whoami_cmd, config_group, market_group, install_group
+from .client_commands import client_group
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "chrome", "recipe", "skill", "run", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "sync", "update", "autostart"]),
@@ -328,6 +329,9 @@ cli.add_command(serve)
 
 # Server command group - background web service management
 cli.add_command(server_group)
+
+# Client command group - desktop client management
+cli.add_command(client_group)
 
 # Autostart command group - manage server autostart on boot
 cli.add_command(autostart_group)
