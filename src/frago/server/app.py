@@ -122,10 +122,10 @@ def get_frontend_path() -> Path:
     if assets_dir.exists() and (assets_dir / "index.html").exists():
         return assets_dir
 
-    # Fall back to frontend build output
-    frontend_dist = server_dir / "web" / "dist"
-    if frontend_dist.exists():
-        return frontend_dist
+    # Fall back to client build output (development mode)
+    client_dist = server_dir.parent / "client" / "dist"
+    if client_dist.exists():
+        return client_dist
 
     # Return assets dir even if it doesn't exist (will be created during build)
     return assets_dir
@@ -325,7 +325,7 @@ def create_app(
                 <h1>Frontend assets not found</h1>
                 <p>Please build the frontend first:</p>
                 <pre style="background: #333; padding: 1rem; border-radius: 4px;">
-cd src/frago/server/web
+cd src/frago/client
 pnpm install
 pnpm build
                 </pre>

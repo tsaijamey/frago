@@ -36,7 +36,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../assets',
+    outDir: '../server/assets',
     emptyOutDir: true,
     sourcemap: false,
     // Disable module preload to avoid CORS issues under file:// protocol
