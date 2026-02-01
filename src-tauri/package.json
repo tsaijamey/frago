@@ -1,0 +1,14 @@
+{
+  "name": "frago-tauri",
+  "version": "0.39.0",
+  "description": "frago Desktop Client (Tauri)",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "build": "tauri build",
+    "dev": "tauri dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

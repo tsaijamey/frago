@@ -87,6 +87,13 @@ src/frago/gui_deprecated/assets_legacy/
 node_modules/
 
 # ====================
+# Tauri Build
+# ====================
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/gen/
+
+# ====================
 # Internal Development (not for public)
 # ====================
 pre-publish-checklist.md

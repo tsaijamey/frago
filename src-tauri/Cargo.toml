@@ -1,0 +1,24 @@
+[package]
+name = "frago"
+version = "0.39.0"
+description = "frago Desktop Client"
+authors = ["Jamey Tsai <caijia@frago.ai>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/tsaijamey/frago"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
