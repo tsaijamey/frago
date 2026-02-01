@@ -1,0 +1,174 @@
+name: Build Desktop Client
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g., v0.39.0)'
+        required: false
+        default: ''
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+
+          # macOS Intel
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin'
+
+          # Linux x86_64
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ''
+
+          # Windows x86_64
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install macOS target (if cross-compiling)
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: |
+          cd src/frago/client
+          pnpm install
+
+      - name: Build frontend
+        run: |
+          cd src/frago/client
+          pnpm build
+
+      - name: Install Tauri CLI
+        run: |
+          cd src-tauri
+          pnpm install
+
+      - name: Build Tauri application
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          args: ${{ matrix.args }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frago-${{ matrix.target }}
+          path: |
+            src-tauri/target/*/release/bundle/**/*.dmg
+            src-tauri/target/*/release/bundle/**/*.app
+            src-tauri/target/*/release/bundle/**/*.AppImage
+            src-tauri/target/*/release/bundle/**/*.deb
+            src-tauri/target/*/release/bundle/**/*.msi
+            src-tauri/target/*/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.app
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: error
+
+  release:
+    needs: build-tauri
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Package macOS aarch64
+        run: |
+          cd artifacts/frago-aarch64-apple-darwin
+          # Find and tar the .app bundle
+          find . -name "*.app" -type d | head -1 | xargs -I {} tar -czf "frago_${{ steps.version.outputs.version }}_aarch64-apple-darwin.tar.gz" -C $(dirname {}) $(basename {})
+          mv *.tar.gz ../
+
+      - name: Package macOS x86_64
+        run: |
+          cd artifacts/frago-x86_64-apple-darwin
+          find . -name "*.app" -type d | head -1 | xargs -I {} tar -czf "frago_${{ steps.version.outputs.version }}_x86_64-apple-darwin.tar.gz" -C $(dirname {}) $(basename {})
+          mv *.tar.gz ../
+
+      - name: Package Linux
+        run: |
+          cd artifacts/frago-x86_64-unknown-linux-gnu
+          # Rename AppImage
+          find . -name "*.AppImage" -exec mv {} "frago_${{ steps.version.outputs.version }}_x86_64-unknown-linux-gnu.AppImage" \;
+          mv *.AppImage ../
+
+      - name: Package Windows
+        run: |
+          cd artifacts/frago-x86_64-pc-windows-msvc
+          # Find and zip the .exe
+          find . -name "*.exe" | head -1 | xargs -I {} zip -j "frago_${{ steps.version.outputs.version }}_x86_64-pc-windows-msvc.zip" {}
+          mv *.zip ../
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: frago v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.AppImage
+            artifacts/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
