@@ -18,18 +18,9 @@ frago solves this with **Recipe system**: validated automation scripts that run 
 
 | | **Cowork** | **OpenClaw** | **frago** |
 |--|------------|--------------|-----------|
-| **Best for** | Non-tech file management | Multi-channel messaging | Reusable automation + Claude Code |
-| **Memory** | None (fresh each session) | Context across conversations | **Recipe system** (validated scripts) |
-| **Reliability** | AI explores each time | Varies by task | **Deterministic** (Recipe = guaranteed) |
-| **Platform** | macOS (Windows planned) | Any OS | Windows / macOS / Linux |
-| **Price** | $20-200/mo subscription | Free + API costs | **Free & self-hosted** |
-| **Foundation** | Claude Agent SDK | Pi agent + multi-channel | **Claude Code** (Anthropic flagship) |
-| **Data** | Anthropic cloud | Local-first | **100% local** |
-
-**Choose based on your needs:**
-- **Cowork** — Great UX for organizing files, ideal for non-developers
-- **OpenClaw** — Powerful multi-channel inbox (WhatsApp, Telegram, Slack...)
-- **frago** — Deterministic automation with Claude Code integration
+| **Best for** | Daily tasks | Cross-platform assistant | Reusable automation |
+| **Workflow** | Chat → AI explores | Chat → AI explores | Explore → Agent auto-solidifies → Deterministic execution |
+| **Foundation** | Claude Agent SDK | Custom | Claude Code |
 
 ## Quick Start
 

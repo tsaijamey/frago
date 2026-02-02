@@ -18,18 +18,9 @@ frago 用 **Recipe 系统** 解决这个问题：经过验证的自动化脚本�
 
 | | **Cowork** | **OpenClaw** | **frago** |
 |--|------------|--------------|-----------|
-| **最适合** | 非技术用户的文件管理 | 多渠道消息自动化 | 可复用自动化 + Claude Code |
-| **记忆** | 无（每次会话都是新的） | 跨对话上下文 | **Recipe 系统**（经验证的脚本） |
-| **可靠性** | AI 每次都在探索 | 因任务而异 | **确定性**（Recipe = 有保障） |
-| **平台** | macOS（计划支持 Windows） | 任意操作系统 | Windows / macOS / Linux |
-| **价格** | $20-200/月订阅 | 免费 + API 成本 | **免费 & 自托管** |
-| **技术底盘** | Claude Agent SDK | Pi agent + 多渠道 | **Claude Code**（Anthropic 旗舰） |
-| **数据** | Anthropic 云端 | 本地优先 | **100% 本地** |
-
-**根据你的需求选择：**
-- **Cowork** — 优秀的用户体验，适合整理文件，非开发者友好
-- **OpenClaw** — 强大的多渠道收件箱（WhatsApp、Telegram、Slack...）
-- **frago** — 确定性的浏览器自动化，深度集成 Claude Code
+| **场景** | 日常任务 | 跨平台助手 | 可复用自动化 |
+| **流程** | 对话 → AI 探索 | 对话 → AI 探索 | 探索 → Agent 自动固化 → 确定性执行 |
+| **底盘** | Claude Agent SDK | 自研 | Claude Code |
 
 ## 快速开始
 
