@@ -223,7 +223,11 @@
     "secretSaved": "Credentials saved successfully",
     "secretSaveFailed": "Failed to save credentials",
     "secretsValidationError": "Required fields not filled: {{fields}}",
-    "secretsNoChanges": "No changes to save"
+    "secretsNoChanges": "No changes to save",
+    "leaveEmptyToKeep": "Leave empty to keep existing value",
+    "configuredHint": "This variable is already configured. Leave empty to keep, or enter a new value to update.",
+    "show": "Show",
+    "hide": "Hide"
   },
   "skills": {
     "title": "Skills",

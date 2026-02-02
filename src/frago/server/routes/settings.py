@@ -361,6 +361,7 @@ async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
     # Refresh cache after update
     state_manager = StateManager.get_instance()
     await state_manager.refresh_env_vars(broadcast=True)
+    await state_manager.refresh_recipe_env_requirements(broadcast=True)
 
     return EnvVarsResponse(
         vars=result.get("vars", {}),

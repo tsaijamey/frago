@@ -223,7 +223,11 @@
     "secretSaved": "密钥保存成功",
     "secretSaveFailed": "密钥保存失败",
     "secretsValidationError": "以下必填密钥未填写: {{fields}}",
-    "secretsNoChanges": "没有需要保存的更改"
+    "secretsNoChanges": "没有需要保存的更改",
+    "leaveEmptyToKeep": "留空以保持现有值",
+    "configuredHint": "此变量已配置。留空以保持现有值，或输入新值以覆盖。",
+    "show": "显示",
+    "hide": "隐藏"
   },
   "skills": {
     "title": "技能",

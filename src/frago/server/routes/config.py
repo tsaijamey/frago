@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from frago.server.models import ConfigUpdateRequest, UserConfigResponse
 from frago.server.services.config_service import ConfigService, ConfigValidationError
+from frago.server.state import StateManager
 
 router = APIRouter()
 
@@ -74,6 +75,10 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
         result = ConfigService.update_config(updates)
     except ConfigValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Refresh cache after update
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
 
     return UserConfigResponse(
         theme=result.get("theme", "dark"),

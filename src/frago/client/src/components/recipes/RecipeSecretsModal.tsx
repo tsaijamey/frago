@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { updateEnvVars } from '@/api';
 import type { RecipeEnvRequirement } from '@/types/pywebview';
-import { Check, AlertCircle } from 'lucide-react';
+import { Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 
 interface RecipeSecretsModalProps {
@@ -27,24 +27,23 @@ export default function RecipeSecretsModal({
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modifiedFields, setModifiedFields] = useState<Set<string>>(new Set());
+  const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set());
 
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
       setFormValues({});
+      setModifiedFields(new Set());
+      setVisibleFields(new Set());
       setError(null);
     }
   }, [isOpen]);
 
-  // Separate configured and unconfigured requirements
-  const unconfiguredReqs = requirements.filter(req => !req.configured);
-  const configuredReqs = requirements.filter(req => req.configured);
-  const allConfigured = unconfiguredReqs.length === 0;
-
   const handleSave = async () => {
-    // Validate required fields
-    const missingRequired = unconfiguredReqs.filter(
-      req => req.required && !formValues[req.var_name]?.trim()
+    // Validate required fields (only unconfigured ones)
+    const missingRequired = requirements.filter(
+      req => req.required && !req.configured && !formValues[req.var_name]?.trim()
     );
 
     if (missingRequired.length > 0) {
@@ -54,16 +53,17 @@ export default function RecipeSecretsModal({
       return;
     }
 
-    // Filter out empty values
+    // Only save fields that were modified and have values
     const updates: Record<string, string> = {};
     for (const [key, value] of Object.entries(formValues)) {
-      if (value.trim()) {
+      if (modifiedFields.has(key) && value.trim()) {
         updates[key] = value.trim();
       }
     }
 
+    // Allow saving empty updates (user may just want to confirm config)
     if (Object.keys(updates).length === 0) {
-      setError(t('recipes.secretsNoChanges'));
+      onSaved();  // Refresh and close
       return;
     }
 
@@ -90,20 +90,14 @@ export default function RecipeSecretsModal({
       onClose={onClose}
       title={t('recipes.secretsModalTitle')}
       footer={
-        allConfigured ? (
-          <button onClick={onClose} className="btn btn-primary flex-1">
-            {t('common.close')}
+        <>
+          <button onClick={onClose} className="btn btn-ghost flex-1" disabled={saving}>
+            {t('common.cancel')}
           </button>
-        ) : (
-          <>
-            <button onClick={onClose} className="btn btn-ghost flex-1" disabled={saving}>
-              {t('common.cancel')}
-            </button>
-            <button onClick={handleSave} className="btn btn-primary flex-1" disabled={saving}>
-              {saving ? t('common.loading') : t('common.save')}
-            </button>
-          </>
-        )
+          <button onClick={handleSave} className="btn btn-primary flex-1" disabled={saving}>
+            {saving ? t('common.loading') : t('common.save')}
+          </button>
+        </>
       }
     >
       <div className="space-y-4">
@@ -120,24 +114,18 @@ export default function RecipeSecretsModal({
           </div>
         )}
 
-        {/* All configured message */}
-        {allConfigured && (
-          <div className="flex items-center gap-2 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
-            <Check size={20} className="text-green-600 dark:text-green-400" />
-            <span className="text-sm text-green-700 dark:text-green-400 font-medium">
-              {t('recipes.allConfigured')}
-            </span>
-          </div>
-        )}
+        {/* All credentials - unified editable form */}
+        <div className="space-y-3">
+          {requirements.map((req) => {
+            const isVisible = visibleFields.has(req.var_name);
+            const inputId = `secret-${req.var_name}`;
 
-        {/* Unconfigured secrets - with input fields */}
-        {unconfiguredReqs.length > 0 && (
-          <div className="space-y-3">
-            {unconfiguredReqs.map((req) => (
+            return (
               <div
                 key={req.var_name}
                 className="p-3 bg-[var(--bg-subtle)] rounded-md border border-[var(--border-color)]"
               >
+                {/* Header: variable name + status badges */}
                 <div className="flex items-center gap-2 mb-2">
                   <code className="text-sm font-mono font-medium text-[var(--text-primary)]">
                     {req.var_name}
@@ -147,52 +135,60 @@ export default function RecipeSecretsModal({
                       {t('recipes.required')}
                     </span>
                   )}
+                  {req.configured && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-success)]/20 text-[var(--accent-success)] flex items-center gap-1">
+                      <Check size={12} />
+                      {t('recipes.configured')}
+                    </span>
+                  )}
                 </div>
+
+                {/* Description */}
                 {req.description && (
                   <p className="text-xs text-[var(--text-muted)] mb-2">{req.description}</p>
                 )}
-                <input
-                  type="text"
-                  value={formValues[req.var_name] || ''}
-                  onChange={(e) => setFormValues(prev => ({
-                    ...prev,
-                    [req.var_name]: e.target.value
-                  }))}
-                  placeholder={t('recipes.enterValue')}
-                  className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono text-sm"
-                  aria-label={req.var_name}
-                />
-              </div>
-            ))}
-          </div>
-        )}
 
-        {/* Configured secrets - read-only display */}
-        {configuredReqs.length > 0 && (
-          <div className="space-y-2">
-            {unconfiguredReqs.length > 0 && (
-              <h4 className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wide">
-                {t('recipes.configured')}
-              </h4>
-            )}
-            {configuredReqs.map((req) => (
-              <div
-                key={req.var_name}
-                className="flex items-center justify-between p-3 bg-[var(--bg-subtle)] rounded-md"
-              >
-                <div className="flex-1 min-w-0">
-                  <code className="text-sm font-mono text-[var(--text-primary)]">
-                    {req.var_name}
-                  </code>
-                  {req.description && (
-                    <p className="text-xs text-[var(--text-muted)] mt-1 truncate">{req.description}</p>
-                  )}
+                {/* Input field with show/hide toggle */}
+                <div className="flex gap-2">
+                  <input
+                    id={inputId}
+                    type={isVisible ? "text" : "password"}
+                    value={formValues[req.var_name] || ''}
+                    onChange={(e) => {
+                      setFormValues(prev => ({ ...prev, [req.var_name]: e.target.value }));
+                      setModifiedFields(prev => new Set(prev).add(req.var_name));
+                    }}
+                    placeholder={
+                      req.configured
+                        ? t('recipes.leaveEmptyToKeep')
+                        : t('recipes.enterValue')
+                    }
+                    className="flex-1 px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder:text-[var(--text-muted)] placeholder:opacity-40 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono text-sm"
+                    aria-label={req.var_name}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisibleFields(prev => {
+                        const next = new Set(prev);
+                        if (next.has(req.var_name)) {
+                          next.delete(req.var_name);
+                        } else {
+                          next.add(req.var_name);
+                        }
+                        return next;
+                      });
+                    }}
+                    className="btn btn-ghost btn-sm p-2"
+                    title={isVisible ? t('recipes.hide') : t('recipes.show')}
+                  >
+                    {isVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
                 </div>
-                <Check size={18} className="text-[var(--accent-success)] ml-3 flex-shrink-0" />
               </div>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
     </Modal>
   );
