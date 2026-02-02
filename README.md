@@ -1,6 +1,6 @@
 # frago
 
-**AI Agent 的骨架框架** — 让 AI 记住如何完成任务，而不是每次从头探索。
+**Skeleton framework for AI Agents** — Let AI remember how to complete tasks, instead of exploring from scratch every time.
 
 [简体中文](README.zh-CN.md)
 
