@@ -10,7 +10,29 @@
 | **Node.js** | 20+ | Claude Code 集成 |
 | **Chrome** | 最新版 | CDP 浏览器自动化 |
 
-## 安装
+## 快速安装（推荐）
+
+一键安装并启动：
+
+```bash
+# macOS/Linux
+curl -fsSL https://frago.ai/install.sh | sh
+
+# Windows
+powershell -c "irm https://frago.ai/install.ps1 | iex"
+```
+
+自动完成：
+- 安装 uv 和 frago
+- 启动 Web 服务
+- 在浏览器中打开 http://127.0.0.1:8093
+
+---
+
+<details>
+<summary><b>手动安装（高级）</b></summary>
+
+如果你希望逐步控制安装过程：
 
 ```bash
 # 1. 安装 uv（包管理器）
@@ -25,8 +47,11 @@ frago init
 
 # 4. 启动 Web 服务
 frago server start
-# 打开 http://127.0.0.1:8093
 ```
+
+然后在浏览器中打开 http://127.0.0.1:8093
+
+</details>
 
 ## 验证
 

@@ -10,7 +10,29 @@
 | **Node.js** | 20+ | Claude Code integration |
 | **Chrome** | Latest | CDP browser automation |
 
-## Install
+## Quick Install (Recommended)
+
+One command to install and launch:
+
+```bash
+# macOS/Linux
+curl -fsSL https://frago.ai/install.sh | sh
+
+# Windows
+powershell -c "irm https://frago.ai/install.ps1 | iex"
+```
+
+This automatically:
+- Installs uv and frago
+- Starts the web service
+- Opens your browser to http://127.0.0.1:8093
+
+---
+
+<details>
+<summary><b>Manual Installation (Advanced)</b></summary>
+
+If you prefer step-by-step control:
 
 ```bash
 # 1. Install uv (package manager)
@@ -25,8 +47,11 @@ frago init
 
 # 4. Start web service
 frago server start
-# Open http://127.0.0.1:8093
 ```
+
+Then open http://127.0.0.1:8093
+
+</details>
 
 ## Verify
 
