@@ -71,12 +71,15 @@ frago recipe run <name> --timeout 300
 
 ### Built-in Recipes
 
-| Name | Function |
-|------|----------|
-| `test_inspect_tab` | Current tab diagnostics |
-| `youtube_extract_video_transcript` | Extract YouTube subtitles |
-| `upwork_extract_job_details_as_markdown` | Extract Upwork jobs |
-| `x_extract_tweet_with_comments` | Extract X/Twitter posts |
+| Name | Function | Type |
+|------|----------|------|
+| `x_extract_tweet_with_comments` | Extract X/Twitter posts with comments | chrome |
+| `youtube_download_video_ytdlp` | Download YouTube videos using yt-dlp | system |
+| `bilibili_download_video` | Download Bilibili videos | system |
+| `arxiv_search_papers` | Search papers on arXiv | system |
+| `volcengine_tts_with_emotion` | Text-to-speech with emotion support | system |
+
+> See full list with `frago recipe list`
 
 ## Run System
 

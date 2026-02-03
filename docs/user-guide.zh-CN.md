@@ -71,12 +71,15 @@ frago recipe run <name> --timeout 300
 
 ### 内置 Recipe
 
-| 名称 | 功能 |
-|------|------|
-| `test_inspect_tab` | 当前标签页诊断 |
-| `youtube_extract_video_transcript` | 提取 YouTube 字幕 |
-| `upwork_extract_job_details_as_markdown` | 提取 Upwork 职位 |
-| `x_extract_tweet_with_comments` | 提取 X/Twitter 帖子 |
+| 名称 | 功能 | 类型 |
+|------|------|------|
+| `x_extract_tweet_with_comments` | 提取 X/Twitter 帖子及评论 | chrome |
+| `youtube_download_video_ytdlp` | 使用 yt-dlp 下载 YouTube 视频 | system |
+| `bilibili_download_video` | 下载 B站视频 | system |
+| `arxiv_search_papers` | 在 arXiv 搜索论文 | system |
+| `volcengine_tts_with_emotion` | 带情感支持的文字转语音 | system |
+
+> 使用 `frago recipe list` 查看完整列表
 
 ## Run 系统
 
