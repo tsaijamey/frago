@@ -577,6 +577,51 @@ def _get_run_screenshots_dir() -> Path:
     return screenshots_dir
 
 
+# =============================================================================
+# Tab management helpers
+# =============================================================================
+
+def _get_current_target_id(session: CDPSession) -> Optional[str]:
+    """Extract target ID from the current WebSocket connection URL."""
+    if session.ws and hasattr(session.ws, 'url'):
+        # ws URL format: ws://host:port/devtools/page/TARGET_ID
+        parts = session.ws.url.rstrip('/').split('/')
+        if parts:
+            return parts[-1]
+    return None
+
+
+def _route_tab_for_navigate(ctx, session: CDPSession, url: str) -> Optional[str]:
+    """Use TabManager to route to the correct tab for a URL.
+
+    Returns target_id to use, or None if routing is not applicable.
+    """
+    try:
+        from ..cdp.tab_manager import TabManager
+        tab_mgr = TabManager(
+            host=ctx.obj['HOST'],
+            port=ctx.obj['PORT'],
+        )
+        tab_mgr.reconcile()
+        target_id = tab_mgr.get_or_create_tab(url, session)
+        return target_id or None
+    except Exception:
+        return None
+
+
+def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
+    """Update last_activity timestamp for the currently connected tab."""
+    try:
+        from ..cdp.tab_manager import TabManager
+        tab_id = _get_current_target_id(session)
+        if tab_id:
+            tab_mgr = TabManager(host=host, port=port)
+            tab_mgr.touch_tab(tab_id)
+            tab_mgr._save_state()
+    except Exception:
+        pass
+
+
 @click.command('navigate')
 @click.argument('url')
 @click.option(
@@ -605,6 +650,17 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float 
             # Disable viewport border if requested
             if no_border:
                 session.auto_viewport_border = False
+
+            # Tab routing: reuse tab by origin or create new
+            if not ctx.obj.get('TARGET_ID'):
+                target_id = _route_tab_for_navigate(ctx, session, url)
+                if target_id:
+                    current_id = _get_current_target_id(session)
+                    if target_id != current_id:
+                        session.disconnect()
+                        session.config.target_id = target_id
+                        session.connect()
+
             # 1. Navigate
             session.navigate(url)
             _print_msg("success", f"Navigated to {url}", "navigation", {"url": url})
@@ -640,6 +696,7 @@ def click_element(ctx, selector: str, wait_timeout: int):
     """Click element by selector and get page features"""
     try:
         with create_session(ctx) as session:
+            _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.click(selector, wait_timeout=wait_timeout)
             _print_msg("success", f"Clicked element: {selector}", "interaction", {"selector": selector})
 
@@ -701,6 +758,7 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
             pass
 
         with create_session(ctx) as session:
+            _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.screenshot.capture(actual_output_file, full_page=full_page, quality=quality)
             _print_msg("success", f"Screenshot saved to: {actual_output_file}", "screenshot", {"file": actual_output_file, "full_page": full_page})
     except CDPError as e:
@@ -736,6 +794,7 @@ def execute_javascript(ctx, script: str, return_value: bool):
                 return
 
         with create_session(ctx) as session:
+            _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             result = session.evaluate(script, return_by_value=return_value)
             if return_value:
                 _print_msg("success", f"Execution result: {result}", "interaction", {"result": str(result)})
@@ -810,6 +869,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
 
     try:
         with create_session(ctx) as session:
+            _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             script = f"""
             (function() {{
                 var el = document.querySelector('{selector}');
@@ -945,6 +1005,7 @@ def scroll(ctx, distance: int):
     """
     try:
         with create_session(ctx) as session:
+            _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.scroll.scroll(distance)
             _print_msg("success", f"Scrolled {distance} pixels", "interaction", {"distance": distance})
 
@@ -1670,16 +1731,20 @@ def chrome_stop(port: int):
 
 
 @click.command('list-tabs')
+@click.option('--tracked', is_flag=True, default=False, help='Show tab tracking info (origin, last activity)')
+@click.option('--json', 'as_json', is_flag=True, default=False, help='Output as JSON for programmatic use')
 @click.pass_context
 @print_usage
-def list_tabs(ctx):
+def list_tabs(ctx, tracked: bool, as_json: bool):
     """
     List all open browser tabs
 
-    Shows each tab's ID, title and URL, for use with switch-tab command.
+    Shows each tab's ID, title and URL, for use with switch-tab and close-tab commands.
+    Use --tracked to see origin routing and activity information.
+    Use --json for machine-readable output.
     """
-    import requests
     import json
+    import requests
 
     config = ctx.obj or {}
     host = config.get('host', GLOBAL_OPTIONS['host'])
@@ -1692,21 +1757,64 @@ def list_tabs(ctx):
         pages = [t for t in targets if t.get('type') == 'page']
 
         if not pages:
-            click.echo("No open tabs found")
+            if as_json:
+                click.echo(json.dumps([]))
+            else:
+                click.echo("No open tabs found")
             return
 
-        # Output JSON format for easy program parsing
+        # Load tracking info if requested
+        tracking = {}
+        if tracked:
+            try:
+                from ..cdp.tab_manager import TabManager
+                tab_mgr = TabManager(host=host, port=port)
+                tab_mgr.reconcile()
+                tracking = {e.tab_id: e for e in tab_mgr.get_tracked_tabs()}
+            except Exception:
+                pass
+
         output = []
         for i, p in enumerate(pages):
+            tab_id = p.get('id', '')
+            title = p.get('title', 'No Title')
+            url = p.get('url', '')
+
             tab_info = {
                 "index": i,
-                "id": p.get('id'),
-                "title": p.get('title', 'No Title'),
-                "url": p.get('url', '')
+                "id": tab_id,
+                "title": title,
+                "url": url,
             }
+
+            if tracked and tab_id in tracking:
+                entry = tracking[tab_id]
+                tab_info["origin"] = entry.origin
+                tab_info["last_activity"] = entry.last_activity
+
             output.append(tab_info)
-            click.echo(f"{i}. [{p.get('id')[:8]}...] {p.get('title', 'No Title')[:50]}")
-            click.echo(f"   {p.get('url', '')}")
+
+        if as_json:
+            click.echo(json.dumps(output, ensure_ascii=False, indent=2))
+        else:
+            for item in output:
+                tab_id = item["id"]
+                display_title = item["title"][:50]
+
+                suffix = ""
+                if "origin" in item:
+                    origin_part = f" [{item['origin']}]" if item["origin"] else ""
+                    age = time.time() - item["last_activity"]
+                    if age < 60:
+                        age_part = f" (active {int(age)}s ago)"
+                    elif age < 3600:
+                        age_part = f" (active {int(age / 60)}m ago)"
+                    else:
+                        age_part = f" (active {int(age / 3600)}h ago)"
+                    suffix = f"{origin_part}{age_part}"
+
+                click.echo(f"{item['index']}. [{tab_id[:8]}...]{suffix} {display_title}")
+                click.echo(f"   {item['url']}")
 
     except Exception as e:
         click.echo(f"Failed to get tabs list: {e}", err=True)
@@ -1763,6 +1871,15 @@ def switch_tab(ctx, tab_id: str):
             click.echo(f"Switch failed: {result['error']}", err=True)
             return
 
+        # Update tab activity tracking
+        try:
+            from ..cdp.tab_manager import TabManager
+            tab_mgr = TabManager(host=host, port=port)
+            tab_mgr.touch_tab(target.get('id'))
+            tab_mgr._save_state()
+        except Exception:
+            pass
+
         _print_msg("success", f"Switched to tab: {target.get('title', 'Unknown')}", "tab_switch", {
             "tab_id": target.get('id'),
             "title": target.get('title'),
@@ -1771,3 +1888,67 @@ def switch_tab(ctx, tab_id: str):
 
     except Exception as e:
         click.echo(f"Failed to switch tab: {e}", err=True)
+
+
+@click.command('close-tab')
+@click.argument('tab_id')
+@click.pass_context
+@print_usage
+def close_tab(ctx, tab_id: str):
+    """
+    Close a browser tab by ID
+
+    TAB_ID can be the complete target ID or partial match (e.g., first 8 characters).
+    Use list-tabs command to view available tab IDs.
+    """
+    import requests
+
+    config = ctx.obj or {}
+    host = config.get('host', GLOBAL_OPTIONS['host'])
+    port = config.get('port', GLOBAL_OPTIONS['port'])
+
+    try:
+        # Find matching tab via HTTP (no session needed for listing)
+        response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
+        targets = response.json()
+
+        target = None
+        for t in targets:
+            if t.get('type') == 'page':
+                if t.get('id') == tab_id or t.get('id', '').startswith(tab_id):
+                    target = t
+                    break
+
+        if not target:
+            click.echo(f"No matching tab found: {tab_id}", err=True)
+            click.echo("Use list-tabs command to view available tabs")
+            return
+
+        full_id = target.get('id')
+
+        # Close via TargetCommands CDP command
+        with create_session(ctx) as session:
+            success = session.target.close_target(full_id)
+
+        if success:
+            # Remove from TabManager state (best-effort)
+            try:
+                from ..cdp.tab_manager import TabManager
+                tab_mgr = TabManager(host=host, port=port)
+                tab_mgr.untrack_tab(full_id)
+                tab_mgr._save_state()
+            except Exception:
+                pass
+
+            _print_msg("success", f"Closed tab: {target.get('title', 'Unknown')}", "tab_close", {
+                "tab_id": full_id,
+                "title": target.get('title'),
+                "url": target.get('url')
+            })
+        else:
+            click.echo(f"Failed to close tab: {full_id}", err=True)
+
+    except CDPError as e:
+        click.echo(f"Failed to close tab: {e}", err=True)
+    except Exception as e:
+        click.echo(f"Failed to close tab: {e}", err=True)

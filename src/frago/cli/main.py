@@ -50,7 +50,7 @@ EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "session"]
 # Chrome subcommand groups
 CHROME_SUBGROUPS = OrderedDict([
     ("Lifecycle", ["start", "stop", "status"]),
-    ("Tab Management", ["list-tabs", "switch-tab"]),
+    ("Tab Management", ["list-tabs", "switch-tab", "close-tab"]),
     ("Page Control", ["navigate", "scroll", "scroll-to", "zoom", "wait"]),
     ("Element Interaction", ["click", "exec-js", "get-title", "get-content"]),
     ("Visual Effects", ["screenshot", "highlight", "pointer", "spotlight", "annotate", "underline", "clear-effects"]),

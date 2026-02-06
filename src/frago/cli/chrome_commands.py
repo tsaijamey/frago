@@ -4,7 +4,7 @@ Supports Chrome, Edge, and Chromium browsers via Chrome DevTools Protocol.
 
 Includes:
   - Lifecycle: start, stop, status, detect
-  - Tab management: list-tabs, switch-tab
+  - Tab management: list-tabs, switch-tab, close-tab
   - Page operations: navigate, scroll, scroll-to, zoom, wait
   - Element interaction: click, exec-js, get-title, get-content
   - Visual effects: screenshot, highlight, pointer, spotlight, annotate, underline, clear-effects
@@ -34,6 +34,7 @@ from .commands import (
     chrome_stop,
     list_tabs,
     switch_tab,
+    close_tab,
 )
 from .agent_friendly import AgentFriendlyGroup
 
@@ -95,7 +96,7 @@ def chrome_group():
     \b
     Subcommand categories:
       Lifecycle:     start, stop, status
-      Tab management: list-tabs, switch-tab
+      Tab management: list-tabs, switch-tab, close-tab
       Page operations: navigate, scroll, scroll-to, zoom, wait
       Element interaction: click, exec-js, get-title, get-content
       Visual effects: screenshot, highlight, pointer, spotlight, ...
@@ -119,6 +120,7 @@ chrome_group.add_command(detect_browsers, name="detect")
 # Tab management
 chrome_group.add_command(list_tabs, name="list-tabs")
 chrome_group.add_command(switch_tab, name="switch-tab")
+chrome_group.add_command(close_tab, name="close-tab")
 
 # Page operations
 chrome_group.add_command(navigate, name="navigate")
