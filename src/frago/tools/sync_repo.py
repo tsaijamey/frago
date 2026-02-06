@@ -146,6 +146,48 @@ def _is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def get_sync_repo_url(auto_repair: bool = True) -> Optional[str]:
+    """Get sync repo URL from config, with git remote fallback.
+
+    If sync_repo_url is not set but ~/.frago/ has a git remote,
+    optionally auto-repairs config for future lookups.
+
+    Args:
+        auto_repair: If True, save detected remote URL to config
+
+    Returns:
+        Repository URL string or None
+    """
+    import logging
+
+    from frago.init.config_manager import load_config, update_config
+
+    logger = logging.getLogger(__name__)
+
+    config = load_config()
+    if config.sync_repo_url:
+        return config.sync_repo_url
+
+    # Fallback: detect from git remote
+    if not _is_git_repo(FRAGO_HOME):
+        return None
+
+    try:
+        result = _run_git(["remote", "get-url", "origin"], FRAGO_HOME, check=False)
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+
+        remote_url = result.stdout.strip()
+
+        if auto_repair:
+            update_config({"sync_repo_url": remote_url})
+            logger.info("Auto-detected sync_repo_url from git remote: %s", remote_url)
+
+        return remote_url
+    except Exception:
+        return None
+
+
 def _ensure_git_user_config(repo_dir: Path) -> tuple[bool, str]:
     """Ensure git user.name and user.email are configured.
 

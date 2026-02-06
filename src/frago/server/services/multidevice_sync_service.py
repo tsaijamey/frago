@@ -178,8 +178,9 @@ class MultiDeviceSyncService:
             Dictionary with status and is_public flag or error
         """
         try:
-            config = load_config()
-            repo_url = config.sync_repo_url
+            from frago.tools.sync_repo import get_sync_repo_url
+
+            repo_url = get_sync_repo_url()
 
             if not repo_url:
                 return {"status": "error", "error": "No sync repository configured"}
@@ -232,11 +233,10 @@ class MultiDeviceSyncService:
     def _do_sync(cls) -> None:
         """Execute sync operation (runs in background thread)."""
         try:
-            from frago.tools.sync_repo import sync
+            from frago.tools.sync_repo import get_sync_repo_url, sync
 
-            # Load configured repo URL from config
-            config = load_config()
-            repo_url = config.sync_repo_url if config else None
+            # Load configured repo URL (config + git remote fallback)
+            repo_url = get_sync_repo_url()
 
             result = sync(repo_url=repo_url)
 

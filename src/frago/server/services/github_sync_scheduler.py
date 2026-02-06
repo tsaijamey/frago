@@ -9,7 +9,6 @@ import logging
 import threading
 from typing import Any, Dict, Optional
 
-from frago.init.config_manager import load_config
 from frago.server.services.multidevice_sync_service import MultiDeviceSyncService
 
 logger = logging.getLogger(__name__)
@@ -48,11 +47,12 @@ class GitHubSyncScheduler:
         """Check if GitHub sync is configured.
 
         Returns:
-            True if sync_repo_url is set in config
+            True if sync_repo_url is set in config or detectable from git remote
         """
         try:
-            config = load_config()
-            return bool(config.sync_repo_url)
+            from frago.tools.sync_repo import get_sync_repo_url
+
+            return bool(get_sync_repo_url())
         except Exception:
             return False
 

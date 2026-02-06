@@ -8,6 +8,7 @@ import click
 from frago.init.config_manager import load_config, save_config
 from frago.tools.sync_repo import (
     SyncResult,
+    get_sync_repo_url,
     sync,
     _resolve_conflict_keep_local,
     _resolve_conflict_keep_remote,
@@ -61,8 +62,7 @@ def _format_result(result: SyncResult, dry_run: bool) -> None:
 
 def _get_configured_repo_url() -> Optional[str]:
     """Get the configured repository URL"""
-    config = load_config()
-    return config.sync_repo_url
+    return get_sync_repo_url()
 
 
 @click.command(name="sync")
