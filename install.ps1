@@ -77,6 +77,21 @@ function Write-Err {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GitHub Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+$script:GITHUB_OWNER = "tsaijamey"
+$script:GITHUB_REPO = "frago"
+$script:GITHUB_API_URL = "https://api.github.com/repos/$($script:GITHUB_OWNER)/$($script:GITHUB_REPO)/releases"
+
+# Download mirrors (tried in order, China-friendly first)
+$script:DOWNLOAD_MIRRORS = @(
+    "https://mirror.ghproxy.com/",
+    "https://ghproxy.net/",
+    ""  # Direct GitHub (fallback)
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -181,6 +196,160 @@ function Install-Frago {
     }
 }
 
+function Test-Node {
+    if (Test-Command "node") {
+        $version = Get-CommandVersion "node"
+        Write-Success "Node.js $version"
+    } else {
+        Write-Err "Node.js not found (required)"
+        Write-Info "Install from: https://nodejs.org/"
+        exit 1
+    }
+}
+
+function Get-LatestVersion {
+    # Try gh CLI first (if available)
+    if (Test-Command "gh") {
+        try {
+            $version = & gh release view --repo "$($script:GITHUB_OWNER)/$($script:GITHUB_REPO)" --json tagName -q '.tagName' 2>$null
+            if ($version) {
+                return $version -replace '^v', ''
+            }
+        } catch {}
+    }
+
+    # Fallback to GitHub API
+    try {
+        $response = Invoke-WebRequest -Uri "$($script:GITHUB_API_URL)/latest" -UseBasicParsing -TimeoutSec 10
+        $json = $response.Content | ConvertFrom-Json
+        return $json.tag_name -replace '^v', ''
+    } catch {
+        return $null
+    }
+}
+
+function Get-AssetName {
+    param([string]$Version)
+
+    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
+
+    if ($arch -eq "x64") {
+        return "frago_${Version}_x86_64-pc-windows-msvc.zip"
+    }
+
+    return $null
+}
+
+function Get-InstallDir {
+    $localAppData = $env:LOCALAPPDATA
+    if (-not $localAppData) {
+        $localAppData = Join-Path $env:USERPROFILE "AppData\Local"
+    }
+    return Join-Path $localAppData "Programs\frago"
+}
+
+function Download-WithMirrors {
+    param(
+        [string]$Url,
+        [string]$Destination
+    )
+
+    foreach ($mirror in $script:DOWNLOAD_MIRRORS) {
+        $fullUrl = "${mirror}${Url}"
+        try {
+            Invoke-WebRequest -Uri $fullUrl -OutFile $Destination -UseBasicParsing -TimeoutSec 60
+            return $true
+        } catch {
+            continue
+        }
+    }
+
+    return $false
+}
+
+function Install-DesktopClient {
+    Write-Step "Checking latest version..."
+
+    $version = Get-LatestVersion
+    if (-not $version) {
+        Write-Host " ~ Could not fetch version (skipping client download)" -ForegroundColor Yellow
+        return
+    }
+
+    $asset = Get-AssetName -Version $version
+    if (-not $asset) {
+        Write-Host " ~ No desktop client available for this architecture" -ForegroundColor Yellow
+        return
+    }
+
+    $installDir = Get-InstallDir
+    $downloadUrl = "https://github.com/$($script:GITHUB_OWNER)/$($script:GITHUB_REPO)/releases/download/v${version}/${asset}"
+
+    # Create temp directory for download
+    $tempDir = Join-Path $env:TEMP "frago_install_$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $archivePath = Join-Path $tempDir $asset
+
+    Write-Host "`r" -NoNewline
+    Write-Step "Downloading v$version..."
+
+    if (-not (Download-WithMirrors -Url $downloadUrl -Destination $archivePath)) {
+        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host " ~ Download failed (skipping client)" -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "`r" -NoNewline
+    Write-Step "Installing..."
+
+    try {
+        # Create install directory
+        if (-not (Test-Path $installDir)) {
+            New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+        }
+
+        # Extract zip
+        Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
+
+        # Find and move the exe
+        $exeFile = Get-ChildItem -Path $tempDir -Filter "*.exe" -Recurse | Select-Object -First 1
+        if ($exeFile) {
+            $destExe = Join-Path $installDir "frago.exe"
+            Copy-Item -Path $exeFile.FullName -Destination $destExe -Force
+
+            # Create Start Menu shortcut
+            $startMenuDir = [System.IO.Path]::Combine($env:APPDATA, "Microsoft\Windows\Start Menu\Programs")
+            $shortcutPath = Join-Path $startMenuDir "frago.lnk"
+
+            try {
+                $WshShell = New-Object -ComObject WScript.Shell
+                $Shortcut = $WshShell.CreateShortcut($shortcutPath)
+                $Shortcut.TargetPath = $destExe
+                $Shortcut.WorkingDirectory = $env:USERPROFILE
+                $Shortcut.Description = "AI-driven browser automation"
+                $Shortcut.Save()
+                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($WshShell) | Out-Null
+            } catch {}
+
+            Write-Done "Installed to $installDir"
+        } else {
+            Write-Host " ~ Could not find executable in archive" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host " ~ Installation failed: $_" -ForegroundColor Yellow
+    }
+
+    # Save installed version
+    $fragoHome = Join-Path $env:USERPROFILE ".frago"
+    if (-not (Test-Path $fragoHome)) {
+        New-Item -ItemType Directory -Path $fragoHome -Force | Out-Null
+    }
+    Set-Content -Path (Join-Path $fragoHome "client_version") -Value $version
+
+    # Cleanup
+    Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 function Show-NextSteps {
     Write-Section "Getting Started"
 
@@ -188,10 +357,13 @@ function Show-NextSteps {
     Write-Host "Commands:" -ForegroundColor DarkGray
     Write-Host "    " -NoNewline
     Write-Host "frago start" -ForegroundColor White -NoNewline
-    Write-Host "       Start frago and open Web UI"
+    Write-Host "         Start frago and open Web UI"
+    Write-Host "    " -NoNewline
+    Write-Host "frago client start" -ForegroundColor White -NoNewline
+    Write-Host "  Launch the desktop app"
     Write-Host "    " -NoNewline
     Write-Host "frago --help" -ForegroundColor White -NoNewline
-    Write-Host "      Show all available commands"
+    Write-Host "        Show all available commands"
     Write-Host ""
 }
 
@@ -252,7 +424,11 @@ function Main {
 
     Write-Section "Dependencies"
     Install-Uv
+    Test-Node
     Install-Frago
+
+    Write-Section "Desktop Client"
+    Install-DesktopClient
 
     Show-NextSteps
     Start-Frago

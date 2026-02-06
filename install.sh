@@ -136,6 +136,17 @@ detect_platform() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GitHub Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+GITHUB_OWNER="tsaijamey"
+GITHUB_REPO="frago"
+GITHUB_API_URL="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases"
+
+# Download mirrors (tried in order, China-friendly first)
+DOWNLOAD_MIRRORS="https://mirror.ghproxy.com/ https://ghproxy.net/ "
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Installation Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -194,6 +205,204 @@ install_frago() {
     fi
 }
 
+check_node() {
+    if command_exists node; then
+        version=$(get_version node)
+        print_success "Node.js $version"
+    else
+        print_error "Node.js not found (required)"
+        print_info "Install from: https://nodejs.org/ or use 'nvm install --lts'"
+        exit 1
+    fi
+}
+
+get_latest_version() {
+    # Try gh CLI first (if available)
+    if command_exists gh; then
+        version=$(gh release view --repo "${GITHUB_OWNER}/${GITHUB_REPO}" --json tagName -q '.tagName' 2>/dev/null | sed 's/^v//')
+        if [ -n "$version" ]; then
+            echo "$version"
+            return 0
+        fi
+    fi
+
+    # Fallback to GitHub API
+    if command_exists curl; then
+        version=$(curl -s "${GITHUB_API_URL}/latest" | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    elif command_exists wget; then
+        version=$(wget -qO- "${GITHUB_API_URL}/latest" | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    fi
+
+    if [ -n "$version" ]; then
+        echo "$version"
+        return 0
+    fi
+
+    return 1
+}
+
+get_asset_name() {
+    version="$1"
+    case "$PLATFORM-$ARCH" in
+        macOS-arm64)   echo "frago_${version}_aarch64-apple-darwin.tar.gz" ;;
+        macOS-x86_64)  echo "frago_${version}_x86_64-apple-darwin.tar.gz" ;;
+        Linux-x86_64)  echo "frago_${version}_x86_64-unknown-linux-gnu.AppImage" ;;
+        Linux-aarch64) echo "frago_${version}_aarch64-unknown-linux-gnu.AppImage" ;;
+        WSL-x86_64)    echo "frago_${version}_x86_64-unknown-linux-gnu.AppImage" ;;
+        WSL-aarch64)   echo "frago_${version}_aarch64-unknown-linux-gnu.AppImage" ;;
+        *)             echo "" ;;
+    esac
+}
+
+get_install_dir() {
+    case "$PLATFORM" in
+        macOS)
+            # Prefer system Applications, fallback to user Applications
+            if [ -w "/Applications" ]; then
+                echo "/Applications"
+            else
+                echo "$HOME/Applications"
+            fi
+            ;;
+        Linux|WSL)   echo "$HOME/.local/bin" ;;
+        *)           echo "$HOME/.frago/client" ;;
+    esac
+}
+
+download_with_mirrors() {
+    url="$1"
+    dest="$2"
+
+    # Try each mirror in order
+    for mirror in $DOWNLOAD_MIRRORS ""; do
+        full_url="${mirror}${url}"
+        if command_exists curl; then
+            if curl -fsSL --connect-timeout 10 -o "$dest" "$full_url" 2>/dev/null; then
+                return 0
+            fi
+        elif command_exists wget; then
+            if wget -q --timeout=10 -O "$dest" "$full_url" 2>/dev/null; then
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+create_linux_desktop_entry() {
+    app_path="$1"
+    desktop_dir="$HOME/.local/share/applications"
+    mkdir -p "$desktop_dir"
+
+    cat > "$desktop_dir/frago.desktop" << EOF
+[Desktop Entry]
+Name=frago
+Comment=AI-driven browser automation
+Exec=$app_path
+Icon=frago
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+StartupWMClass=frago
+EOF
+
+    # Update desktop database if available
+    command_exists update-desktop-database && update-desktop-database "$desktop_dir" 2>/dev/null || true
+}
+
+add_to_macos_dock() {
+    app_path="$1"
+
+    # Check if already in Dock
+    if defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "frago.app"; then
+        return 0
+    fi
+
+    # Add to Dock
+    defaults write com.apple.dock persistent-apps -array-add \
+        "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$app_path</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
+
+    # Restart Dock to apply changes
+    killall Dock 2>/dev/null || true
+}
+
+download_client() {
+    print_step "Checking latest version..."
+    VERSION=$(get_latest_version)
+
+    if [ -z "$VERSION" ]; then
+        print_warning "Could not fetch version (skipping client download)"
+        return 1
+    fi
+
+    ASSET=$(get_asset_name "$VERSION")
+    if [ -z "$ASSET" ]; then
+        print_warning "No desktop client available for $PLATFORM-$ARCH"
+        return 1
+    fi
+
+    INSTALL_DIR=$(get_install_dir)
+    mkdir -p "$INSTALL_DIR"
+
+    DOWNLOAD_URL="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${VERSION}/${ASSET}"
+
+    # Create temp directory for download
+    TEMP_DIR=$(mktemp -d)
+    ARCHIVE_PATH="$TEMP_DIR/$ASSET"
+
+    printf "\r"
+    print_step "Downloading v$VERSION..."
+
+    if ! download_with_mirrors "$DOWNLOAD_URL" "$ARCHIVE_PATH"; then
+        rm -rf "$TEMP_DIR"
+        print_warning "Download failed (skipping client)"
+        return 1
+    fi
+
+    printf "\r"
+    print_step "Installing..."
+
+    case "$PLATFORM" in
+        macOS)
+            # Extract tar.gz and move .app bundle
+            tar -xzf "$ARCHIVE_PATH" -C "$TEMP_DIR" 2>/dev/null
+            APP_PATH=$(find "$TEMP_DIR" -name "*.app" -type d | head -n1)
+            if [ -n "$APP_PATH" ]; then
+                rm -rf "$INSTALL_DIR/frago.app" 2>/dev/null
+                mv "$APP_PATH" "$INSTALL_DIR/frago.app"
+                # Fix executable permission and re-sign
+                chmod +x "$INSTALL_DIR/frago.app/Contents/MacOS/"* 2>/dev/null || true
+                xattr -cr "$INSTALL_DIR/frago.app" 2>/dev/null || true
+                codesign -fs - "$INSTALL_DIR/frago.app" 2>/dev/null || true
+                # Add to Dock
+                add_to_macos_dock "$INSTALL_DIR/frago.app"
+                print_done "Installed to $INSTALL_DIR/frago.app (added to Dock)"
+            else
+                print_warning "Could not find .app bundle"
+            fi
+            ;;
+        Linux|WSL)
+            # AppImage - just copy and make executable
+            DEST="$INSTALL_DIR/frago.AppImage"
+            mv "$ARCHIVE_PATH" "$DEST"
+            chmod +x "$DEST"
+            create_linux_desktop_entry "$DEST"
+            print_done "Installed to ~/.local/bin/frago.AppImage"
+            ;;
+        *)
+            print_warning "Unsupported platform for client install"
+            ;;
+    esac
+
+    # Save installed version
+    mkdir -p "$HOME/.frago"
+    echo "$VERSION" > "$HOME/.frago/client_version"
+
+    rm -rf "$TEMP_DIR"
+    return 0
+}
+
 print_next_steps() {
     print_section "Getting Started"
 
@@ -214,8 +423,9 @@ print_next_steps() {
 
     echo ""
     printf "  ${DIM}Commands:${RESET}\n"
-    printf "    ${BOLD}frago start${RESET}       Start frago and open Web UI\n"
-    printf "    ${BOLD}frago --help${RESET}      Show all available commands\n"
+    printf "    ${BOLD}frago start${RESET}         Start frago and open Web UI\n"
+    printf "    ${BOLD}frago client start${RESET}  Launch the desktop app\n"
+    printf "    ${BOLD}frago --help${RESET}        Show all available commands\n"
     echo ""
 }
 
@@ -286,7 +496,11 @@ main() {
 
     print_section "Dependencies"
     install_uv
+    check_node
     install_frago
+
+    print_section "Desktop Client"
+    download_client
 
     print_next_steps
     launch_frago

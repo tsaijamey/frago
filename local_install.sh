@@ -1,10 +1,11 @@
 #!/bin/sh
-# frago LOCAL installation script for Linux, macOS, and WSL
+# frago LOCAL installation script for development/testing
 #
-# Usage:
+# Usage (run from repository root):
 #   ./local_install.sh
 #
-# NOTE: This script installs from local dist/ directory instead of PyPI
+# This script builds frago from source instead of installing from PyPI.
+# Use install.sh for production installations.
 
 set -e
 
@@ -12,7 +13,9 @@ set -e
 # Color and Style Definitions
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Check if terminal supports colors
 if [ -t 1 ]; then
+    USE_COLOR=true
     RESET='\033[0m'
     BOLD='\033[1m'
     DIM='\033[2m'
@@ -21,76 +24,84 @@ if [ -t 1 ]; then
     YELLOW='\033[33m'
     RED='\033[31m'
 else
-    RESET='' BOLD='' DIM='' CYAN='' GREEN='' YELLOW='' RED=''
+    USE_COLOR=false
+    RESET=''
+    BOLD=''
+    DIM=''
+    CYAN=''
+    GREEN=''
+    YELLOW=''
+    RED=''
 fi
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Progress Display
-# ═══════════════════════════════════════════════════════════════════════════════
-
-TOTAL_STEPS=7
-CURRENT_STEP=0
-
-# Print step with dots padding, no newline
-# Usage: step "Task name"
-step() {
-    CURRENT_STEP=$((CURRENT_STEP + 1))
-    task="$1"
-    # Calculate padding (40 chars total for task + dots)
-    task_len=${#task}
-    dots_count=$((38 - task_len))
-    dots=$(printf '%*s' "$dots_count" '' | tr ' ' '.')
-    printf "${DIM}[%d/%d]${RESET} %s %s " "$CURRENT_STEP" "$TOTAL_STEPS" "$task" "$dots"
-}
-
-# Print success result
-ok() {
-    printf "${GREEN}%s${RESET}\n" "$1"
-}
-
-# Print error result and exit
-fail() {
-    printf "${RED}%s${RESET}\n" "$1"
-    exit 1
-}
-
-# Print warning result
-warn() {
-    printf "${YELLOW}%s${RESET}\n" "$1"
-}
-
-print_error() {
-    printf "${RED}✗ %s${RESET}\n" "$1" >&2
+# Gradient colors for banner (green for local build)
+print_gradient_line() {
+    line="$1"
+    index="$2"
+    if [ "$USE_COLOR" = true ]; then
+        case $index in
+            0) printf '\033[38;2;0;255;127m%s\033[0m\n' "$line" ;;
+            1) printf '\033[38;2;0;220;100m%s\033[0m\n' "$line" ;;
+            2) printf '\033[38;2;0;180;80m%s\033[0m\n' "$line" ;;
+            3) printf '\033[38;2;0;140;60m%s\033[0m\n' "$line" ;;
+            4) printf '\033[38;2;0;100;50m%s\033[0m\n' "$line" ;;
+            5) printf '\033[38;2;0;70;35m%s\033[0m\n' "$line" ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    else
+        printf '%s\n' "$line"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Banner
+# Output Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
 print_banner() {
-    printf '\n'
-    printf '\033[38;2;0;255;127m███████╗██████╗  █████╗  ██████╗  ██████╗ \033[0m\n'
-    printf '\033[38;2;0;220;100m██╔════╝██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗\033[0m\n'
-    printf '\033[38;2;0;180;80m█████╗  ██████╔╝███████║██║  ███╗██║   ██║\033[0m\n'
-    printf '\033[38;2;0;140;60m██╔══╝  ██╔══██╗██╔══██║██║   ██║██║   ██║\033[0m\n'
-    printf '\033[38;2;0;100;50m██║     ██║  ██║██║  ██║╚██████╔╝╚██████╔╝\033[0m\n'
-    printf '\033[38;2;0;70;35m╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ \033[0m\n'
-    printf '\n'
-    printf "${YELLOW}   [LOCAL INSTALL]${RESET}\n"
-    printf '\n'
+    echo ""
+    print_gradient_line '███████╗██████╗  █████╗  ██████╗  ██████╗ ' 0
+    print_gradient_line '██╔════╝██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗' 1
+    print_gradient_line '█████╗  ██████╔╝███████║██║  ███╗██║   ██║' 2
+    print_gradient_line '██╔══╝  ██╔══██╗██╔══██║██║   ██║██║   ██║' 3
+    print_gradient_line '██║     ██║  ██║██║  ██║╚██████╔╝╚██████╔╝' 4
+    print_gradient_line '╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ' 5
+    printf "${YELLOW}           [LOCAL BUILD]${RESET}\n"
+    echo ""
+}
+
+print_section() {
+    echo ""
+    printf "${CYAN}${BOLD}━━━ %s ━━━${RESET}\n" "$1"
+    echo ""
+}
+
+print_success() {
+    printf "${GREEN} + %s${RESET}\n" "$1"
+}
+
+print_info() {
+    printf "${DIM}   %s${RESET}\n" "$1"
+}
+
+print_warning() {
+    printf "${YELLOW} ~ %s${RESET}\n" "$1"
+}
+
+print_error() {
+    printf "${RED} ✗ %s${RESET}\n" "$1" >&2
+}
+
+print_step() {
+    printf "${CYAN}   %s${RESET}" "$1"
+}
+
+print_done() {
+    printf "\r${GREEN} + %s${RESET}\n" "$1"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
-
-exit_virtualenv() {
-    if [ -n "$VIRTUAL_ENV" ]; then
-        PATH=$(echo "$PATH" | tr ':' '\n' | grep -v "^$VIRTUAL_ENV" | tr '\n' ':' | sed 's/:$//')
-        export PATH
-        unset VIRTUAL_ENV
-    fi
-}
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -100,13 +111,7 @@ get_version() {
     "$1" --version 2>/dev/null | head -n1 || echo "unknown"
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Installation Steps
-# ═══════════════════════════════════════════════════════════════════════════════
-
-step_detect_platform() {
-    step "Detecting platform"
-
+detect_platform() {
     OS="$(uname -s)"
     ARCH="$(uname -m)"
 
@@ -122,290 +127,400 @@ step_detect_platform() {
             PLATFORM="macOS"
             ;;
         MINGW*|MSYS*|CYGWIN*)
-            fail "Use .\\local_install.ps1 for Windows"
+            print_error "This script is for Unix-like systems"
+            print_info "For Windows, use: .\\local_install.ps1"
+            exit 1
             ;;
         *)
-            fail "Unsupported: $OS"
+            print_error "Unsupported operating system: $OS"
+            exit 1
             ;;
     esac
-
-    ok "$PLATFORM ($ARCH)"
 }
 
-step_check_uv() {
-    step "Checking uv"
+# ═══════════════════════════════════════════════════════════════════════════════
+# GitHub Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
 
+GITHUB_OWNER="tsaijamey"
+GITHUB_REPO="frago"
+GITHUB_API_URL="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases"
+
+# Download mirrors (tried in order, China-friendly first)
+DOWNLOAD_MIRRORS="https://mirror.ghproxy.com/ https://ghproxy.net/ "
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Installation Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+install_uv() {
     if command_exists uv; then
-        ok "$(get_version uv)"
+        version=$(get_version uv)
+        print_success "uv $version"
         return 0
     fi
 
-    # Need to install uv
-    printf "${DIM}installing...${RESET} "
+    print_step "Installing uv..."
 
     if command_exists curl; then
         curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
     elif command_exists wget; then
         wget -qO- https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
     else
-        fail "curl/wget not found"
+        print_error "Neither curl nor wget found"
+        exit 1
     fi
 
+    # Source env to get uv in PATH
     [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
     if command_exists uv; then
-        ok "$(get_version uv)"
+        version=$(get_version uv)
+        print_done "uv $version"
     else
-        fail "install failed"
+        print_error "uv installation failed"
+        exit 1
     fi
 }
 
-step_build_frontend() {
-    step "Building UI"
-
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    WEB_DIR="$SCRIPT_DIR/src/frago/server/web"
-
-    if ! command_exists pnpm; then
-        fail "pnpm not found"
-    fi
-
-    if (cd "$WEB_DIR" && pnpm install --frozen-lockfile >/dev/null 2>&1 && pnpm build >/dev/null 2>&1); then
-        ok "done"
+check_node() {
+    if command_exists node; then
+        version=$(get_version node)
+        print_success "Node.js $version"
+        return 0
     else
-        fail "build failed"
+        print_error "Node.js not found (required for building frontend)"
+        print_info "Install from: https://nodejs.org/ or use 'nvm install --lts'"
+        exit 1
     fi
 }
 
-step_build_package() {
-    step "Packaging"
+check_pnpm() {
+    if command_exists pnpm; then
+        version=$(get_version pnpm)
+        print_success "pnpm $version"
+        return 0
+    fi
 
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    print_step "Installing pnpm..."
+    npm install -g pnpm >/dev/null 2>&1
 
-    if (cd "$SCRIPT_DIR" && uv build >/dev/null 2>&1); then
-        ok "done"
+    if command_exists pnpm; then
+        version=$(get_version pnpm)
+        print_done "pnpm $version"
     else
-        fail "build failed"
+        print_error "pnpm installation failed"
+        exit 1
     fi
 }
 
-step_install_frago() {
-    step "Installing frago"
+build_frontend() {
+    print_step "Building frontend..."
 
+    cd src/frago/client
+    pnpm install --frozen-lockfile >/dev/null 2>&1 || pnpm install >/dev/null 2>&1
+    pnpm build >/dev/null 2>&1
+    cd - >/dev/null
+
+    print_done "Frontend built"
+}
+
+install_frago_local() {
     export PATH="$HOME/.local/bin:$PATH"
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    WHEEL_FILE=$(find "$SCRIPT_DIR/dist" -name "frago_cli-*.whl" 2>/dev/null | head -n1)
 
-    if [ -z "$WHEEL_FILE" ]; then
-        fail "wheel not found"
+    print_step "Building frago from source..."
+
+    # Clean previous builds
+    rm -rf dist/ >/dev/null 2>&1 || true
+
+    # Build wheel
+    uv build >/dev/null 2>&1
+
+    # Find and install the wheel
+    WHEEL=$(find dist -name "*.whl" | head -n1)
+    if [ -z "$WHEEL" ]; then
+        print_error "Build failed - no wheel found"
+        exit 1
     fi
+
+    # Install with force to replace any existing version
+    uv tool install "$WHEEL" --force >/dev/null 2>&1
 
     if command_exists frago; then
-        uv tool install "$WHEEL_FILE" --force >/dev/null 2>&1
+        version=$(get_version frago)
+        print_done "frago $version (from source)"
     else
-        uv tool install "$WHEEL_FILE" >/dev/null 2>&1
-    fi
-
-    if command_exists frago; then
-        ok "$(get_version frago)"
-    else
-        fail "install failed"
+        print_error "frago installation failed"
+        exit 1
     fi
 }
 
-step_create_shortcut() {
-    step "Creating shortcut"
+get_latest_version() {
+    # Try gh CLI first (if available)
+    if command_exists gh; then
+        version=$(gh release view --repo "${GITHUB_OWNER}/${GITHUB_REPO}" --json tagName -q '.tagName' 2>/dev/null | sed 's/^v//')
+        if [ -n "$version" ]; then
+            echo "$version"
+            return 0
+        fi
+    fi
 
-    export PATH="$HOME/.local/bin:$PATH"
-    FRAGO_BIN=$(command -v frago)
-    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-    ICON_SRC="$SCRIPT_DIR/src/frago/server/assets/icons/logo.png"
+    # Fallback to GitHub API
+    if command_exists curl; then
+        version=$(curl -s "${GITHUB_API_URL}/latest" | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    elif command_exists wget; then
+        version=$(wget -qO- "${GITHUB_API_URL}/latest" | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    fi
 
+    if [ -n "$version" ]; then
+        echo "$version"
+        return 0
+    fi
+
+    return 1
+}
+
+get_asset_name() {
+    version="$1"
+    case "$PLATFORM-$ARCH" in
+        macOS-arm64)   echo "frago_${version}_aarch64-apple-darwin.tar.gz" ;;
+        macOS-x86_64)  echo "frago_${version}_x86_64-apple-darwin.tar.gz" ;;
+        Linux-x86_64)  echo "frago_${version}_x86_64-unknown-linux-gnu.AppImage" ;;
+        Linux-aarch64) echo "frago_${version}_aarch64-unknown-linux-gnu.AppImage" ;;
+        WSL-x86_64)    echo "frago_${version}_x86_64-unknown-linux-gnu.AppImage" ;;
+        WSL-aarch64)   echo "frago_${version}_aarch64-unknown-linux-gnu.AppImage" ;;
+        *)             echo "" ;;
+    esac
+}
+
+get_install_dir() {
     case "$PLATFORM" in
-        Linux|WSL)
-            # Install icons to hicolor theme (freedesktop.org standard)
-            ICON_BASE="$HOME/.local/share/icons/hicolor"
-            mkdir -p "$ICON_BASE/256x256/apps"
-            mkdir -p "$ICON_BASE/128x128/apps"
-            mkdir -p "$ICON_BASE/48x48/apps"
-
-            # Create index.theme if missing (required for gtk-update-icon-cache)
-            if [ ! -f "$ICON_BASE/index.theme" ]; then
-                cat > "$ICON_BASE/index.theme" << 'INDEXEOF'
-[Icon Theme]
-Name=Hicolor
-Comment=Fallback icon theme
-Hidden=true
-Directories=48x48/apps,128x128/apps,256x256/apps
-
-[48x48/apps]
-Size=48
-Context=Applications
-Type=Threshold
-
-[128x128/apps]
-Size=128
-Context=Applications
-Type=Threshold
-
-[256x256/apps]
-Size=256
-Context=Applications
-Type=Threshold
-INDEXEOF
-            fi
-
-            # Create different sizes (ImageMagick if available, otherwise copy original)
-            if command -v convert >/dev/null 2>&1; then
-                convert "$ICON_SRC" -resize 256x256 "$ICON_BASE/256x256/apps/frago.png" 2>/dev/null
-                convert "$ICON_SRC" -resize 128x128 "$ICON_BASE/128x128/apps/frago.png" 2>/dev/null
-                convert "$ICON_SRC" -resize 48x48 "$ICON_BASE/48x48/apps/frago.png" 2>/dev/null
+        macOS)
+            # Prefer system Applications, fallback to user Applications
+            if [ -w "/Applications" ]; then
+                echo "/Applications"
             else
-                cp "$ICON_SRC" "$ICON_BASE/256x256/apps/frago.png" 2>/dev/null
-                cp "$ICON_SRC" "$ICON_BASE/128x128/apps/frago.png" 2>/dev/null
-                cp "$ICON_SRC" "$ICON_BASE/48x48/apps/frago.png" 2>/dev/null
+                echo "$HOME/Applications"
             fi
+            ;;
+        Linux|WSL)   echo "$HOME/.local/bin" ;;
+        *)           echo "$HOME/.frago/client" ;;
+    esac
+}
 
-            # Also install to pixmaps as fallback
-            mkdir -p "$HOME/.local/share/pixmaps"
-            cp "$ICON_SRC" "$HOME/.local/share/pixmaps/frago.png" 2>/dev/null || true
+download_with_mirrors() {
+    url="$1"
+    dest="$2"
 
-            # Create .desktop file (use icon name, not path - per freedesktop spec)
-            DESKTOP_DIR="$HOME/.local/share/applications"
-            mkdir -p "$DESKTOP_DIR"
-            cat > "$DESKTOP_DIR/frago.desktop" << EOF
+    # Try each mirror in order
+    for mirror in $DOWNLOAD_MIRRORS ""; do
+        full_url="${mirror}${url}"
+        if command_exists curl; then
+            if curl -fsSL --connect-timeout 10 -o "$dest" "$full_url" 2>/dev/null; then
+                return 0
+            fi
+        elif command_exists wget; then
+            if wget -q --timeout=10 -O "$dest" "$full_url" 2>/dev/null; then
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+create_linux_desktop_entry() {
+    app_path="$1"
+    desktop_dir="$HOME/.local/share/applications"
+    mkdir -p "$desktop_dir"
+
+    cat > "$desktop_dir/frago.desktop" << EOF
 [Desktop Entry]
 Name=frago
-Comment=AI-powered automation framework
-Exec=$FRAGO_BIN start
+Comment=AI-driven browser automation
+Exec=$app_path
 Icon=frago
 Terminal=false
 Type=Application
 Categories=Development;Utility;
 StartupWMClass=frago
 EOF
-            # Update desktop database if available
-            command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DESKTOP_DIR" 2>/dev/null
-            command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache "$ICON_BASE" 2>/dev/null || true
-            ok "frago.desktop"
-            ;;
-        macOS)
-            # Create .app bundle for macOS
-            APP_DIR="$HOME/Applications/frago.app"
-            mkdir -p "$APP_DIR/Contents/MacOS"
-            mkdir -p "$APP_DIR/Contents/Resources"
 
-            # Copy icon (.icns for macOS native support)
-            ICNS_SRC="$SCRIPT_DIR/src/frago/server/assets/icons/frago.icns"
-            if [ -f "$ICNS_SRC" ]; then
-                cp "$ICNS_SRC" "$APP_DIR/Contents/Resources/frago.icns" 2>/dev/null || true
-                ICON_FILE="frago.icns"
-            else
-                cp "$ICON_SRC" "$APP_DIR/Contents/Resources/frago.png" 2>/dev/null || true
-                ICON_FILE="frago.png"
-            fi
-
-            cat > "$APP_DIR/Contents/MacOS/frago-launcher" << EOF
-#!/bin/bash
-export PATH="\$HOME/.local/bin:\$PATH"
-exec frago start
-EOF
-            chmod +x "$APP_DIR/Contents/MacOS/frago-launcher"
-            cat > "$APP_DIR/Contents/Info.plist" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>
-    <string>frago</string>
-    <key>CFBundleExecutable</key>
-    <string>frago-launcher</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.frago.app</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleIconFile</key>
-    <string>$ICON_FILE</string>
-</dict>
-</plist>
-EOF
-            ok "~/Applications/frago.app"
-            ;;
-        *)
-            warn "skipped"
-            ;;
-    esac
+    # Update desktop database if available
+    command_exists update-desktop-database && update-desktop-database "$desktop_dir" 2>/dev/null || true
 }
 
-step_launch() {
-    step "Launching"
+add_to_macos_dock() {
+    app_path="$1"
 
-    export PATH="$HOME/.local/bin:$PATH"
+    # Check if already in Dock
+    if defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q "frago.app"; then
+        return 0
+    fi
 
-    frago server stop >/dev/null 2>&1 || true
-    sleep 1
-    frago server start >/dev/null 2>&1 || true
+    # Add to Dock
+    defaults write com.apple.dock persistent-apps -array-add \
+        "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$app_path</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
 
-    # Quick check if server started
-    attempt=0
-    while [ $attempt -lt 10 ]; do
-        if curl -s --connect-timeout 1 "http://127.0.0.1:8093/" >/dev/null 2>&1; then
-            ok "done"
-            # Try to open browser in background
-            (sleep 1 && frago start >/dev/null 2>&1) &
+    # Restart Dock to apply changes
+    killall Dock 2>/dev/null || true
+}
+
+download_client() {
+    print_step "Checking latest version..."
+    VERSION=$(get_latest_version)
+
+    if [ -z "$VERSION" ]; then
+        print_warning "Could not fetch version (skipping client download)"
+        return 1
+    fi
+
+    ASSET=$(get_asset_name "$VERSION")
+    if [ -z "$ASSET" ]; then
+        print_warning "No desktop client available for $PLATFORM-$ARCH"
+        return 1
+    fi
+
+    INSTALL_DIR=$(get_install_dir)
+    mkdir -p "$INSTALL_DIR"
+
+    DOWNLOAD_URL="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${VERSION}/${ASSET}"
+
+    # Create temp directory for download
+    TEMP_DIR=$(mktemp -d)
+    ARCHIVE_PATH="$TEMP_DIR/$ASSET"
+
+    printf "\r"
+    print_step "Downloading v$VERSION..."
+
+    if ! download_with_mirrors "$DOWNLOAD_URL" "$ARCHIVE_PATH"; then
+        rm -rf "$TEMP_DIR"
+        print_warning "Download failed (skipping client)"
+        return 1
+    fi
+
+    printf "\r"
+    print_step "Installing..."
+
+    case "$PLATFORM" in
+        macOS)
+            # Extract tar.gz and move .app bundle
+            tar -xzf "$ARCHIVE_PATH" -C "$TEMP_DIR" 2>/dev/null
+            APP_PATH=$(find "$TEMP_DIR" -name "*.app" -type d | head -n1)
+            if [ -n "$APP_PATH" ]; then
+                rm -rf "$INSTALL_DIR/frago.app" 2>/dev/null
+                mv "$APP_PATH" "$INSTALL_DIR/frago.app"
+                # Fix executable permission and re-sign
+                chmod +x "$INSTALL_DIR/frago.app/Contents/MacOS/"* 2>/dev/null || true
+                xattr -cr "$INSTALL_DIR/frago.app" 2>/dev/null || true
+                codesign -fs - "$INSTALL_DIR/frago.app" 2>/dev/null || true
+                # Add to Dock
+                add_to_macos_dock "$INSTALL_DIR/frago.app"
+                print_done "Installed to $INSTALL_DIR/frago.app (added to Dock)"
+            else
+                print_warning "Could not find .app bundle"
+            fi
+            ;;
+        Linux|WSL)
+            # AppImage - just copy and make executable
+            DEST="$INSTALL_DIR/frago.AppImage"
+            mv "$ARCHIVE_PATH" "$DEST"
+            chmod +x "$DEST"
+            create_linux_desktop_entry "$DEST"
+            print_done "Installed to ~/.local/bin/frago.AppImage"
+            ;;
+        *)
+            print_warning "Unsupported platform for client install"
+            ;;
+    esac
+
+    # Save installed version
+    mkdir -p "$HOME/.frago"
+    echo "$VERSION" > "$HOME/.frago/client_version"
+
+    rm -rf "$TEMP_DIR"
+    return 0
+}
+
+print_next_steps() {
+    print_section "Getting Started"
+
+    printf "  ${DIM}To ensure frago is always available, add to your shell profile:${RESET}\n"
+    echo ""
+
+    case "$SHELL" in
+        */zsh)
+            printf "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc${RESET}\n"
+            ;;
+        */bash)
+            printf "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${RESET}\n"
+            ;;
+        *)
+            printf "    ${CYAN}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}\n"
+            ;;
+    esac
+
+    echo ""
+    printf "  ${DIM}Commands:${RESET}\n"
+    printf "    ${BOLD}frago start${RESET}         Start frago and open Web UI\n"
+    printf "    ${BOLD}frago client start${RESET}  Launch the desktop app\n"
+    printf "    ${BOLD}frago --help${RESET}        Show all available commands\n"
+    echo ""
+}
+
+wait_for_server() {
+    # Wait for server to accept connections (max 30 seconds)
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        # Try to connect to the port
+        if (echo >/dev/tcp/127.0.0.1/8093) 2>/dev/null; then
+            # Port is open, wait a bit more for HTTP to be fully ready
+            sleep 2
+            return 0
+        elif command_exists nc && nc -z 127.0.0.1 8093 2>/dev/null; then
+            sleep 2
+            return 0
+        elif curl -s --connect-timeout 1 "http://127.0.0.1:8093/" >/dev/null 2>&1; then
+            sleep 2
             return 0
         fi
         sleep 1
         attempt=$((attempt + 1))
     done
-
-    warn "manual start needed"
+    return 1
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Completion Message
-# ═══════════════════════════════════════════════════════════════════════════════
+launch_frago() {
+    print_section "Launching"
 
-print_complete() {
-    printf '\n'
-    printf "${GREEN}✓${RESET} ${BOLD}Installation complete!${RESET}\n"
-    printf '\n'
+    export PATH="$HOME/.local/bin:$PATH"
+    printf "  ${DIM}Starting frago server...${RESET}\n"
 
-    # How to open
-    printf "${DIM}  Open frago:${RESET}\n"
-    case "$PLATFORM" in
-        Linux)
-            printf "    • Search ${CYAN}frago${RESET} in your app launcher\n"
-            printf "    • Or run ${CYAN}frago start${RESET}\n"
-            ;;
-        macOS)
-            printf "    • Open ${CYAN}frago${RESET} from ~/Applications\n"
-            printf "    • Or run ${CYAN}frago start${RESET}\n"
-            ;;
-        *)
-            printf "    • Run ${CYAN}frago start${RESET}\n"
-            printf "    • Or open ${CYAN}http://127.0.0.1:8093${RESET}\n"
-            ;;
-    esac
-    printf '\n'
+    # Stop any existing server first, then start fresh
+    frago server stop >/dev/null 2>&1 || true
+    sleep 2  # Give port time to be released
+    frago server start >/dev/null 2>&1 || true
 
-    # Check if PATH needs updating
-    case ":$PATH:" in
-        *":$HOME/.local/bin:"*) ;;
-        *)
-            printf "${DIM}  Add to shell profile:${RESET}\n"
-            case "$SHELL" in
-                */zsh)  printf "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc${RESET}\n" ;;
-                */bash) printf "    ${CYAN}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc${RESET}\n" ;;
-                *)      printf "    ${CYAN}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}\n" ;;
-            esac
-            printf '\n'
-            ;;
-    esac
+    # Wait for server to be ready before opening browser
+    if wait_for_server; then
+        printf "  ${DIM}Opening browser...${RESET}\n"
+        echo ""
+        frago start --no-browser >/dev/null 2>&1 || true
+        # Open browser directly since server is ready
+        if command_exists xdg-open; then
+            xdg-open "http://127.0.0.1:8093" >/dev/null 2>&1 &
+        elif command_exists open; then
+            open "http://127.0.0.1:8093"
+        else
+            printf "  ${CYAN}Open in browser: http://127.0.0.1:8093${RESET}\n"
+        fi
+    else
+        print_warning "Server did not start in time. Run 'frago start' manually."
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -413,18 +528,32 @@ print_complete() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 main() {
+    # Ensure we're in the repository root
+    if [ ! -f "pyproject.toml" ] || [ ! -d "src/frago" ]; then
+        print_error "This script must be run from the frago repository root"
+        exit 1
+    fi
+
     print_banner
-    exit_virtualenv
 
-    step_detect_platform
-    step_check_uv
-    step_build_frontend
-    step_build_package
-    step_install_frago
-    step_create_shortcut
-    step_launch
+    print_section "Environment"
+    detect_platform
+    print_success "$PLATFORM ($ARCH)"
 
-    print_complete
+    print_section "Dependencies"
+    install_uv
+    check_node
+    check_pnpm
+
+    print_section "Build"
+    build_frontend
+    install_frago_local
+
+    print_section "Desktop Client"
+    download_client
+
+    print_next_steps
+    launch_frago
 }
 
 main "$@"

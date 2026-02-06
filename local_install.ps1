@@ -1,57 +1,27 @@
 # frago LOCAL installation script for Windows
 #
-# Usage:
+# Usage (run from repository root):
 #   .\local_install.ps1
 #
-# NOTE: This script installs from local dist/ directory instead of PyPI
+# This script builds frago from source instead of installing from PyPI.
+# Use install.ps1 for production installations.
 
 $ErrorActionPreference = "Stop"
 
-# Capture script directory at top level (required for functions)
-$script:ScriptDirectory = $PSScriptRoot
-if (-not $script:ScriptDirectory) {
-    $script:ScriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# Color and Style Definitions
+# Color and Style Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Check if Windows Terminal (supports true color)
 $UseAnsiColors = $env:WT_SESSION -or $env:TERM_PROGRAM
 
-# ANSI codes for styling
-if ($UseAnsiColors) {
-    $script:RESET = "`e[0m"
-    $script:BOLD = "`e[1m"
-    $script:DIM = "`e[2m"
-    $script:CYAN = "`e[36m"
-    $script:GREEN = "`e[32m"
-    $script:YELLOW = "`e[33m"
-    $script:RED = "`e[31m"
-} else {
-    $script:RESET = ""
-    $script:BOLD = ""
-    $script:DIM = ""
-    $script:CYAN = ""
-    $script:GREEN = ""
-    $script:YELLOW = ""
-    $script:RED = ""
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Progress Display
-# ═══════════════════════════════════════════════════════════════════════════════
-
-$script:TOTAL_STEPS = 7
-$script:CURRENT_STEP = 0
-
 function Write-GradientLine {
     param([string]$Text, [int]$Index)
 
     if ($UseAnsiColors) {
+        # Green gradient for local build
         $colors = @(
-            "`e[38;2;0;255;127m",    # spring green (bright)
+            "`e[38;2;0;255;127m",    # spring green
             "`e[38;2;0;220;100m",    # light green
             "`e[38;2;0;180;80m",     # medium green
             "`e[38;2;0;140;60m",     # green
@@ -61,7 +31,7 @@ function Write-GradientLine {
         $reset = "`e[0m"
         Write-Host "$($colors[$Index])$Text$reset"
     } else {
-        # Fallback: use PowerShell colors (green gradient approximation)
+        # Fallback: use PowerShell colors
         $psColors = @("Green", "Green", "DarkGreen", "DarkGreen", "DarkGreen", "DarkGreen")
         Write-Host $Text -ForegroundColor $psColors[$Index]
     }
@@ -75,77 +45,60 @@ function Write-Banner {
     Write-GradientLine '██╔══╝  ██╔══██╗██╔══██║██║   ██║██║   ██║' 3
     Write-GradientLine '██║     ██║  ██║██║  ██║╚██████╔╝╚██████╔╝' 4
     Write-GradientLine '╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ' 5
-    Write-Host ""
-    Write-Host "   [LOCAL INSTALL]" -ForegroundColor Yellow
+    Write-Host "           [LOCAL BUILD]" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# Print step with dots padding, no newline
+function Write-Section {
+    param([string]$Title)
+    Write-Host ""
+    Write-Host "━━━ $Title ━━━" -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host " + $Message" -ForegroundColor Green
+}
+
 function Write-Step {
-    param([string]$Task)
-    $script:CURRENT_STEP++
-    # Calculate padding (38 chars total for task + dots)
-    $taskLen = $Task.Length
-    $dotsCount = 38 - $taskLen
-    if ($dotsCount -lt 1) { $dotsCount = 1 }
-    $dots = "." * $dotsCount
-    if ($UseAnsiColors) {
-        Write-Host "$($script:DIM)[$($script:CURRENT_STEP)/$($script:TOTAL_STEPS)]$($script:RESET) $Task $dots " -NoNewline
-    } else {
-        Write-Host "[$($script:CURRENT_STEP)/$($script:TOTAL_STEPS)] $Task $dots " -ForegroundColor DarkGray -NoNewline
-    }
+    param([string]$Message)
+    Write-Host "   $Message" -ForegroundColor Cyan -NoNewline
 }
 
-# Print success result
-function Write-Ok {
+function Write-Done {
     param([string]$Message)
-    if ($UseAnsiColors) {
-        Write-Host "$($script:GREEN)$Message$($script:RESET)"
-    } else {
-        Write-Host $Message -ForegroundColor Green
-    }
+    Write-Host "`r + $Message" -ForegroundColor Green
 }
 
-# Print error result and exit
-function Write-Fail {
+function Write-Info {
     param([string]$Message)
-    if ($UseAnsiColors) {
-        Write-Host "$($script:RED)$Message$($script:RESET)"
-    } else {
-        Write-Host $Message -ForegroundColor Red
-    }
-    exit 1
-}
-
-# Print warning result
-function Write-Warn {
-    param([string]$Message)
-    if ($UseAnsiColors) {
-        Write-Host "$($script:YELLOW)$Message$($script:RESET)"
-    } else {
-        Write-Host $Message -ForegroundColor Yellow
-    }
+    Write-Host "   $Message" -ForegroundColor DarkGray
 }
 
 function Write-Err {
     param([string]$Message)
-    Write-Host " x $Message" -ForegroundColor Red
+    Write-Host " ✗ $Message" -ForegroundColor Red
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GitHub Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+$script:GITHUB_OWNER = "tsaijamey"
+$script:GITHUB_REPO = "frago"
+$script:GITHUB_API_URL = "https://api.github.com/repos/$($script:GITHUB_OWNER)/$($script:GITHUB_REPO)/releases"
+
+# Download mirrors (tried in order, China-friendly first)
+$script:DOWNLOAD_MIRRORS = @(
+    "https://mirror.ghproxy.com/",
+    "https://ghproxy.net/",
+    ""  # Direct GitHub (fallback)
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
-
-function Exit-VirtualEnv {
-    # Exit any active virtual environment to ensure we use uv tool installed frago
-    if ($env:VIRTUAL_ENV) {
-        # Remove virtual environment paths from PATH (filter by actual VIRTUAL_ENV value)
-        $venvPattern = [regex]::Escape($env:VIRTUAL_ENV)
-        $env:Path = ($env:Path -split ';' | Where-Object { $_ -and $_ -notmatch "^$venvPattern" }) -join ';'
-        # Remove VIRTUAL_ENV variable
-        Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
-    }
-}
 
 function Test-Command {
     param([string]$Command)
@@ -180,30 +133,17 @@ function Update-SessionPath {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Installation Steps
+# Installation Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-function Step-DetectPlatform {
-    Write-Step "Detecting platform"
-    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
-    Write-Ok "Windows ($arch)"
-}
-
-function Step-CheckUv {
-    Write-Step "Checking uv"
-
+function Install-Uv {
     if (Test-Command "uv") {
         $version = Get-CommandVersion "uv"
-        Write-Ok $version
+        Write-Success "uv $version"
         return
     }
 
-    # Need to install uv
-    if ($UseAnsiColors) {
-        Write-Host "$($script:DIM)installing...$($script:RESET) " -NoNewline
-    } else {
-        Write-Host "installing... " -ForegroundColor DarkGray -NoNewline
-    }
+    Write-Step "Installing uv..."
 
     try {
         $response = Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" -UseBasicParsing
@@ -218,144 +158,271 @@ function Step-CheckUv {
 
         if (Test-Command "uv") {
             $version = Get-CommandVersion "uv"
-            Write-Ok $version
+            Write-Done "uv $version"
         } else {
-            Write-Fail "install failed"
+            Write-Err "uv installation failed"
+            exit 1
         }
     }
     catch {
-        Write-Fail "install failed"
+        Write-Err "Failed to install uv: $_"
+        exit 1
     }
 }
 
-function Step-BuildFrontend {
-    Write-Step "Building UI"
+function Test-Node {
+    if (Test-Command "node") {
+        $version = Get-CommandVersion "node"
+        Write-Success "Node.js $version"
+        return $true
+    } else {
+        Write-Err "Node.js not found (required for building frontend)"
+        Write-Info "Install from: https://nodejs.org/"
+        exit 1
+    }
+}
 
-    $WebDir = Join-Path $script:ScriptDirectory "src\frago\server\web"
-
-    if (-not (Test-Command "pnpm")) {
-        Write-Fail "pnpm not found"
+function Test-Pnpm {
+    if (Test-Command "pnpm") {
+        $version = Get-CommandVersion "pnpm"
+        Write-Success "pnpm $version"
+        return
     }
 
+    Write-Step "Installing pnpm..."
+    & npm install -g pnpm *>$null
+    Update-SessionPath
+
+    if (Test-Command "pnpm") {
+        $version = Get-CommandVersion "pnpm"
+        Write-Done "pnpm $version"
+    } else {
+        Write-Err "pnpm installation failed"
+        exit 1
+    }
+}
+
+function Build-Frontend {
+    Write-Step "Building frontend..."
+
+    Push-Location "src/frago/client"
     try {
-        Push-Location $WebDir
-        & pnpm install --frozen-lockfile *>$null
+        & pnpm install --frozen-lockfile *>$null 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            & pnpm install *>$null
+        }
         & pnpm build *>$null
+        Write-Done "Frontend built"
+    } catch {
+        Write-Err "Frontend build failed: $_"
+        exit 1
+    } finally {
         Pop-Location
-        Write-Ok "done"
-    }
-    catch {
-        Pop-Location
-        Write-Fail "build failed"
     }
 }
 
-function Step-BuildPackage {
-    Write-Step "Packaging"
-
-    try {
-        Push-Location $script:ScriptDirectory
-        & uv build *>$null
-        Pop-Location
-        Write-Ok "done"
-    }
-    catch {
-        Pop-Location
-        Write-Fail "build failed"
-    }
-}
-
-function Step-InstallFrago {
-    Write-Step "Installing frago"
-
-    Update-SessionPath
-    $DistDir = Join-Path $script:ScriptDirectory "dist"
-
-    # Find the newest wheel file
-    $WheelFile = Get-ChildItem -Path $DistDir -Filter "frago_cli-*.whl" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-
-    if (-not $WheelFile) {
-        Write-Fail "wheel not found"
-    }
-
-    try {
-        if (Test-Command "frago") {
-            & uv tool install $WheelFile.FullName --force *>$null
-        } else {
-            & uv tool install $WheelFile.FullName *>$null
-        }
-
-        Update-SessionPath
-
-        if (Test-Command "frago") {
-            $version = Get-CommandVersion "frago"
-            Write-Ok $version
-        } else {
-            Write-Fail "install failed"
-        }
-    }
-    catch {
-        Write-Fail "install failed"
-    }
-}
-
-function Step-CreateShortcut {
-    Write-Step "Creating shortcut"
-
+function Install-FragoLocal {
     Update-SessionPath
 
+    Write-Step "Building frago from source..."
+
+    # Clean previous builds
+    Remove-Item -Path "dist" -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Build wheel
+    & uv build *>$null
+
+    # Find and install the wheel
+    $wheel = Get-ChildItem -Path "dist" -Filter "*.whl" | Select-Object -First 1
+    if (-not $wheel) {
+        Write-Err "Build failed - no wheel found"
+        exit 1
+    }
+
+    # Install with force to replace any existing version
+    & uv tool install $wheel.FullName --force *>$null
+    Update-SessionPath
+
+    if (Test-Command "frago") {
+        $version = Get-CommandVersion "frago"
+        Write-Done "frago $version (from source)"
+    } else {
+        Write-Err "frago installation failed"
+        exit 1
+    }
+}
+
+function Get-LatestVersion {
+    # Try gh CLI first (if available)
+    if (Test-Command "gh") {
+        try {
+            $version = & gh release view --repo "$($script:GITHUB_OWNER)/$($script:GITHUB_REPO)" --json tagName -q '.tagName' 2>$null
+            if ($version) {
+                return $version -replace '^v', ''
+            }
+        } catch {}
+    }
+
+    # Fallback to GitHub API
     try {
-        # Get frago executable path
-        $FragoBin = (Get-Command frago -ErrorAction SilentlyContinue).Source
-        if (-not $FragoBin) {
-            Write-Warn "skipped"
-            return
+        $response = Invoke-WebRequest -Uri "$($script:GITHUB_API_URL)/latest" -UseBasicParsing -TimeoutSec 10
+        $json = $response.Content | ConvertFrom-Json
+        return $json.tag_name -replace '^v', ''
+    } catch {
+        return $null
+    }
+}
+
+function Get-AssetName {
+    param([string]$Version)
+
+    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
+
+    if ($arch -eq "x64") {
+        return "frago_${Version}_x86_64-pc-windows-msvc.zip"
+    }
+
+    return $null
+}
+
+function Get-InstallDir {
+    $localAppData = $env:LOCALAPPDATA
+    if (-not $localAppData) {
+        $localAppData = Join-Path $env:USERPROFILE "AppData\Local"
+    }
+    return Join-Path $localAppData "Programs\frago"
+}
+
+function Download-WithMirrors {
+    param(
+        [string]$Url,
+        [string]$Destination
+    )
+
+    foreach ($mirror in $script:DOWNLOAD_MIRRORS) {
+        $fullUrl = "${mirror}${Url}"
+        try {
+            Invoke-WebRequest -Uri $fullUrl -OutFile $Destination -UseBasicParsing -TimeoutSec 60
+            return $true
+        } catch {
+            continue
+        }
+    }
+
+    return $false
+}
+
+function Install-DesktopClient {
+    Write-Step "Checking latest version..."
+
+    $version = Get-LatestVersion
+    if (-not $version) {
+        Write-Host " ~ Could not fetch version (skipping client download)" -ForegroundColor Yellow
+        return
+    }
+
+    $asset = Get-AssetName -Version $version
+    if (-not $asset) {
+        Write-Host " ~ No desktop client available for this architecture" -ForegroundColor Yellow
+        return
+    }
+
+    $installDir = Get-InstallDir
+    $downloadUrl = "https://github.com/$($script:GITHUB_OWNER)/$($script:GITHUB_REPO)/releases/download/v${version}/${asset}"
+
+    # Create temp directory for download
+    $tempDir = Join-Path $env:TEMP "frago_install_$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $archivePath = Join-Path $tempDir $asset
+
+    Write-Host "`r" -NoNewline
+    Write-Step "Downloading v$version..."
+
+    if (-not (Download-WithMirrors -Url $downloadUrl -Destination $archivePath)) {
+        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host " ~ Download failed (skipping client)" -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "`r" -NoNewline
+    Write-Step "Installing..."
+
+    try {
+        # Create install directory
+        if (-not (Test-Path $installDir)) {
+            New-Item -ItemType Directory -Path $installDir -Force | Out-Null
         }
 
-        # Icon source
-        $IconSrc = Join-Path $script:ScriptDirectory "src\frago\server\assets\icons\frago.ico"
-        $IconPng = Join-Path $script:ScriptDirectory "src\frago\server\assets\icons\frago.png"
+        # Extract zip
+        Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
 
-        # Windows Start Menu shortcut
-        $StartMenuDir = [System.IO.Path]::Combine($env:APPDATA, "Microsoft\Windows\Start Menu\Programs")
-        $ShortcutPath = Join-Path $StartMenuDir "frago.lnk"
+        # Find and move the exe
+        $exeFile = Get-ChildItem -Path $tempDir -Filter "*.exe" -Recurse | Select-Object -First 1
+        if ($exeFile) {
+            $destExe = Join-Path $installDir "frago.exe"
+            Copy-Item -Path $exeFile.FullName -Destination $destExe -Force
 
-        # Create shortcut using WScript.Shell COM object
-        $WshShell = New-Object -ComObject WScript.Shell
-        $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-        $Shortcut.TargetPath = $FragoBin
-        $Shortcut.Arguments = "start"
-        $Shortcut.WorkingDirectory = $env:USERPROFILE
-        $Shortcut.Description = "AI-powered automation framework"
+            # Create Start Menu shortcut
+            $startMenuDir = [System.IO.Path]::Combine($env:APPDATA, "Microsoft\Windows\Start Menu\Programs")
+            $shortcutPath = Join-Path $startMenuDir "frago.lnk"
 
-        # Set icon (prefer .ico, fallback to .png, then exe itself)
-        if (Test-Path $IconSrc) {
-            $Shortcut.IconLocation = $IconSrc
-        } elseif (Test-Path $IconPng) {
-            $Shortcut.IconLocation = $IconPng
+            try {
+                $WshShell = New-Object -ComObject WScript.Shell
+                $Shortcut = $WshShell.CreateShortcut($shortcutPath)
+                $Shortcut.TargetPath = $destExe
+                $Shortcut.WorkingDirectory = $env:USERPROFILE
+                $Shortcut.Description = "AI-driven browser automation"
+                $Shortcut.Save()
+                [System.Runtime.Interopservices.Marshal]::ReleaseComObject($WshShell) | Out-Null
+            } catch {}
+
+            Write-Done "Installed to $installDir"
         } else {
-            $Shortcut.IconLocation = "$FragoBin,0"
+            Write-Host " ~ Could not find executable in archive" -ForegroundColor Yellow
         }
-
-        $Shortcut.Save()
-        [System.Runtime.Interopservices.Marshal]::ReleaseComObject($WshShell) | Out-Null
-
-        Write-Ok "Start Menu"
+    } catch {
+        Write-Host " ~ Installation failed: $_" -ForegroundColor Yellow
     }
-    catch {
-        Write-Warn "skipped"
+
+    # Save installed version
+    $fragoHome = Join-Path $env:USERPROFILE ".frago"
+    if (-not (Test-Path $fragoHome)) {
+        New-Item -ItemType Directory -Path $fragoHome -Force | Out-Null
     }
+    Set-Content -Path (Join-Path $fragoHome "client_version") -Value $version
+
+    # Cleanup
+    Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+function Show-NextSteps {
+    Write-Section "Getting Started"
+
+    Write-Host "  " -NoNewline
+    Write-Host "Commands:" -ForegroundColor DarkGray
+    Write-Host "    " -NoNewline
+    Write-Host "frago start" -ForegroundColor White -NoNewline
+    Write-Host "         Start frago and open Web UI"
+    Write-Host "    " -NoNewline
+    Write-Host "frago client start" -ForegroundColor White -NoNewline
+    Write-Host "  Launch the desktop app"
+    Write-Host "    " -NoNewline
+    Write-Host "frago --help" -ForegroundColor White -NoNewline
+    Write-Host "        Show all available commands"
+    Write-Host ""
 }
 
 function Wait-ForServer {
-    # Wait for server to accept connections (max 10 seconds)
-    $maxAttempts = 10
+    # Wait for server to accept connections (max 30 seconds)
+    $maxAttempts = 30
 
     for ($attempt = 0; $attempt -lt $maxAttempts; $attempt++) {
         try {
             $tcp = New-Object System.Net.Sockets.TcpClient
             $tcp.Connect("127.0.0.1", 8093)
             $tcp.Close()
+            # Port is open, wait a bit more for HTTP to be fully ready
+            Start-Sleep -Seconds 2
             return $true
         } catch {
             # Server not ready yet
@@ -365,55 +432,27 @@ function Wait-ForServer {
     return $false
 }
 
-function Step-Launch {
-    Write-Step "Launching"
+function Start-Frago {
+    Write-Section "Launching"
 
     Update-SessionPath
+    Write-Host "  " -NoNewline
+    Write-Host "Starting frago server..." -ForegroundColor DarkGray
 
     # Stop any existing server first, then start fresh
     & frago server stop *>$null
-    Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 2  # Give port time to be released
     & frago server start *>$null
 
     # Wait for server to be ready before opening browser
     if (Wait-ForServer) {
-        Write-Ok "done"
-        # Open browser in background
-        Start-Sleep -Seconds 1
-        & frago start *>$null
+        Write-Host "  " -NoNewline
+        Write-Host "Opening browser..." -ForegroundColor DarkGray
+        Write-Host ""
+        Start-Process "http://127.0.0.1:8093"
     } else {
-        Write-Warn "manual start needed"
+        Write-Host " ~ Server did not start in time. Run 'frago start' manually." -ForegroundColor Yellow
     }
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Completion Message
-# ═══════════════════════════════════════════════════════════════════════════════
-
-function Write-Complete {
-    Write-Host ""
-    if ($UseAnsiColors) {
-        Write-Host "$($script:GREEN)v$($script:RESET) $($script:BOLD)Installation complete!$($script:RESET)"
-    } else {
-        Write-Host "v " -ForegroundColor Green -NoNewline
-        Write-Host "Installation complete!"
-    }
-    Write-Host ""
-
-    # How to open
-    if ($UseAnsiColors) {
-        Write-Host "  $($script:DIM)Open frago:$($script:RESET)"
-        Write-Host "    * Search $($script:CYAN)frago$($script:RESET) in Start Menu"
-        Write-Host "    * Or run $($script:CYAN)frago start$($script:RESET)"
-    } else {
-        Write-Host "  Open frago:" -ForegroundColor DarkGray
-        Write-Host "    * Search " -NoNewline
-        Write-Host "frago" -ForegroundColor Cyan -NoNewline
-        Write-Host " in Start Menu"
-        Write-Host "    * Or run " -NoNewline
-        Write-Host "frago start" -ForegroundColor Cyan
-    }
-    Write-Host ""
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -421,20 +460,32 @@ function Write-Complete {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 function Main {
+    # Ensure we're in the repository root
+    if (-not (Test-Path "pyproject.toml") -or -not (Test-Path "src/frago")) {
+        Write-Err "This script must be run from the frago repository root"
+        exit 1
+    }
+
     Write-Banner
 
-    # Exit virtual environment first to avoid PATH conflicts
-    Exit-VirtualEnv
+    Write-Section "Environment"
+    $arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
+    Write-Success "Windows ($arch)"
 
-    Step-DetectPlatform
-    Step-CheckUv
-    Step-BuildFrontend
-    Step-BuildPackage
-    Step-InstallFrago
-    Step-CreateShortcut
-    Step-Launch
+    Write-Section "Dependencies"
+    Install-Uv
+    Test-Node
+    Test-Pnpm
 
-    Write-Complete
+    Write-Section "Build"
+    Build-Frontend
+    Install-FragoLocal
+
+    Write-Section "Desktop Client"
+    Install-DesktopClient
+
+    Show-NextSteps
+    Start-Frago
 }
 
 Main
