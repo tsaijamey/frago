@@ -329,61 +329,66 @@ class ChromeLauncher:
         return None
 
     def _init_profile_dir(self) -> None:
-        """Initialize Chrome profile directory by syncing from system profile"""
+        """Initialize Chrome profile directory by syncing from system profile.
+
+        Only copies from system profile on first initialization (when Default/
+        directory doesn't exist yet). Subsequent launches preserve the frago
+        profile as-is, keeping login sessions and cookies intact.
+        """
         self.profile_dir.mkdir(parents=True, exist_ok=True)
 
-        # Always sync from system profile on each launch
-        system_profile = self._get_system_profile_dir()
-        if system_profile:
-            # Copy Local State file
-            local_state_src = system_profile / "Local State"
-            local_state_dst = self.profile_dir / "Local State"
-            if local_state_src.exists():
-                try:
-                    shutil.copy2(local_state_src, local_state_dst)
-                except Exception:
-                    pass
+        default_dst = self.profile_dir / "Default"
 
-            # Copy entire Default directory (excluding cache directories)
-            # This preserves Google account login state and all user data
-            default_src = system_profile / "Default"
-            default_dst = self.profile_dir / "Default"
+        # Only sync from system profile if frago profile hasn't been initialized yet
+        if not default_dst.exists():
+            system_profile = self._get_system_profile_dir()
+            if system_profile:
+                # Copy Local State file
+                local_state_src = system_profile / "Local State"
+                local_state_dst = self.profile_dir / "Local State"
+                if local_state_src.exists():
+                    try:
+                        shutil.copy2(local_state_src, local_state_dst)
+                    except Exception:
+                        pass
 
-            # Directories to exclude (cache, logs, locks)
-            exclude_dirs = {
-                "Cache",
-                "Code Cache",
-                "GPUCache",
-                "DawnGraphiteCache",
-                "DawnWebGPUCache",
-                "Service Worker",  # Can be large and regenerates
-                "File System",  # Can be large
-                "blob_storage",  # Can be large
-            }
-            exclude_files = {
-                "LOCK",
-                "LOG",
-                "LOG.old",
-            }
+                # Copy entire Default directory (excluding cache directories)
+                # This provides initial bookmarks, extensions, and settings
+                default_src = system_profile / "Default"
 
-            def ignore_patterns(directory: str, files: list[str]) -> list[str]:
-                """Return list of files/dirs to ignore during copy"""
-                ignored = []
-                for f in files:
-                    if f in exclude_dirs or f in exclude_files:
-                        ignored.append(f)
-                    elif f.endswith(".log") or f.endswith(".lock"):
-                        ignored.append(f)
-                return ignored
+                # Directories to exclude (cache, logs, locks)
+                exclude_dirs = {
+                    "Cache",
+                    "Code Cache",
+                    "GPUCache",
+                    "DawnGraphiteCache",
+                    "DawnWebGPUCache",
+                    "Service Worker",  # Can be large and regenerates
+                    "File System",  # Can be large
+                    "blob_storage",  # Can be large
+                }
+                exclude_files = {
+                    "LOCK",
+                    "LOG",
+                    "LOG.old",
+                }
 
-            if default_src.exists():
-                try:
-                    if default_dst.exists():
-                        shutil.rmtree(default_dst)
-                    shutil.copytree(default_src, default_dst, ignore=ignore_patterns)
-                except Exception:
-                    # Non-critical: continue with existing profile or empty one
-                    pass
+                def ignore_patterns(directory: str, files: list[str]) -> list[str]:
+                    """Return list of files/dirs to ignore during copy"""
+                    ignored = []
+                    for f in files:
+                        if f in exclude_dirs or f in exclude_files:
+                            ignored.append(f)
+                        elif f.endswith(".log") or f.endswith(".lock"):
+                            ignored.append(f)
+                    return ignored
+
+                if default_src.exists():
+                    try:
+                        shutil.copytree(default_src, default_dst, ignore=ignore_patterns)
+                    except Exception:
+                        # Non-critical: continue with empty profile
+                        pass
 
         # Set Chrome preferences to disable various UI prompts
         self._set_chrome_preferences()
