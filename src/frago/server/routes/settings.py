@@ -249,6 +249,65 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
     )
 
 
+async def _apply_custom_auth(
+    endpoint_type: str,
+    api_key: str,
+    url: Optional[str],
+    default_model: Optional[str],
+    sonnet_model: Optional[str],
+    haiku_model: Optional[str],
+) -> None:
+    """Apply custom API auth configuration.
+
+    Shared between update_auth endpoint and profile activation.
+    Writes to ~/.claude/settings.json and updates frago config.
+    """
+    from frago.init.config_manager import load_config, save_config
+    from frago.init.configurator import (
+        build_claude_env_config,
+        ensure_claude_json_for_custom_auth,
+        save_claude_settings,
+    )
+
+    env_config = build_claude_env_config(
+        endpoint_type=endpoint_type,
+        api_key=api_key,
+        custom_url=url if endpoint_type == "custom" else None,
+        default_model=default_model,
+        sonnet_model=sonnet_model,
+        haiku_model=haiku_model,
+    )
+    ensure_claude_json_for_custom_auth()
+    save_claude_settings({"env": env_config})
+
+    config = load_config()
+    config.auth_method = "custom"
+    config.api_endpoint = None
+    save_config(config)
+
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
+
+
+async def _apply_official_auth() -> None:
+    """Switch back to official auth.
+
+    Shared between update_auth endpoint and profile deactivation.
+    """
+    from frago.init.config_manager import load_config, save_config
+    from frago.init.configurator import clear_api_env_from_settings
+
+    clear_api_env_from_settings()
+
+    config = load_config()
+    config.auth_method = "official"
+    config.api_endpoint = None
+    save_config(config)
+
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
+
+
 @router.post("/settings/update-auth", response_model=ApiResponse)
 async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
     """Update authentication method and API endpoint.
@@ -259,19 +318,9 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
 
     If api_key is not provided but an existing config exists, the existing API key is preserved.
     """
-    from frago.init.config_manager import load_config, save_config
-    from frago.init.configurator import (
-        build_claude_env_config,
-        save_claude_settings,
-        clear_api_env_from_settings,
-        ensure_claude_json_for_custom_auth,
-        load_claude_settings,
-    )
+    from frago.init.configurator import load_claude_settings
 
     try:
-        # Load existing config
-        config = load_config()
-
         if request.auth_method == "custom":
             if not request.api_endpoint:
                 return ApiResponse(status="error", error="API endpoint required for custom auth")
@@ -281,7 +330,6 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
             # Get API key: use provided one, or preserve existing from settings.json
             api_key = endpoint.api_key
             if not api_key:
-                # Try to get existing API key from settings.json
                 existing_settings = load_claude_settings()
                 existing_api_key = existing_settings.get("env", {}).get("ANTHROPIC_API_KEY")
                 if existing_api_key:
@@ -289,40 +337,16 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
                 else:
                     return ApiResponse(status="error", error="API key required for new custom auth configuration")
 
-            # Build env config for Claude Code
-            env_config = build_claude_env_config(
+            await _apply_custom_auth(
                 endpoint_type=endpoint.type,
                 api_key=api_key,
-                custom_url=endpoint.url if endpoint.type == "custom" else None,
+                url=endpoint.url,
                 default_model=endpoint.default_model,
                 sonnet_model=endpoint.sonnet_model,
                 haiku_model=endpoint.haiku_model,
             )
-
-            # Ensure ~/.claude.json exists (to skip official login)
-            ensure_claude_json_for_custom_auth()
-
-            # Save to ~/.claude/settings.json (source of truth for API config)
-            save_claude_settings({"env": env_config})
-
-            # Update frago config (only auth_method, NOT api_endpoint)
-            config.auth_method = "custom"
-            config.api_endpoint = None  # API config stored in settings.json only
-
         else:  # official
-            # Clear API env vars from ~/.claude/settings.json (preserve other settings)
-            clear_api_env_from_settings()
-
-            # Update frago config
-            config.auth_method = "official"
-            config.api_endpoint = None
-
-        # Save frago config
-        save_config(config)
-
-        # Refresh cache after update
-        state_manager = StateManager.get_instance()
-        await state_manager.refresh_config(broadcast=True)
+            await _apply_official_auth()
 
         return ApiResponse(status="ok", message="Authentication updated")
 
@@ -720,3 +744,197 @@ async def get_update_status() -> UpdateStatusResponse:
         message=status["message"],
         error=status["error"],
     )
+
+
+# ============================================================
+# API Profile Management Endpoints
+# ============================================================
+
+
+class ProfileResponse(BaseModel):
+    """Single profile response (API key is always masked)"""
+    id: str
+    name: str
+    endpoint_type: str
+    api_key_masked: str
+    url: Optional[str] = None
+    default_model: Optional[str] = None
+    sonnet_model: Optional[str] = None
+    haiku_model: Optional[str] = None
+    is_active: bool = False
+    created_at: str
+    updated_at: str
+
+
+class ProfileListResponse(BaseModel):
+    """Profile list response"""
+    profiles: List[ProfileResponse]
+    active_profile_id: Optional[str] = None
+
+
+class CreateProfileRequest(BaseModel):
+    """Create profile request"""
+    name: str
+    endpoint_type: str
+    api_key: str
+    url: Optional[str] = None
+    default_model: Optional[str] = None
+    sonnet_model: Optional[str] = None
+    haiku_model: Optional[str] = None
+
+
+class UpdateProfileRequest(BaseModel):
+    """Update profile request"""
+    name: Optional[str] = None
+    endpoint_type: Optional[str] = None
+    api_key: Optional[str] = None  # None = keep existing
+    url: Optional[str] = None
+    default_model: Optional[str] = None
+    sonnet_model: Optional[str] = None
+    haiku_model: Optional[str] = None
+
+
+class SaveCurrentAsProfileRequest(BaseModel):
+    """Save current config as profile request"""
+    name: str
+
+
+def _profile_to_response(
+    profile: "APIProfile", active_id: Optional[str]
+) -> ProfileResponse:
+    """Convert APIProfile to ProfileResponse with masked API key."""
+    from frago.init.configurator import _mask_api_key
+
+    return ProfileResponse(
+        id=profile.id,
+        name=profile.name,
+        endpoint_type=profile.endpoint_type,
+        api_key_masked=_mask_api_key(profile.api_key),
+        url=profile.url,
+        default_model=profile.default_model,
+        sonnet_model=profile.sonnet_model,
+        haiku_model=profile.haiku_model,
+        is_active=profile.id == active_id,
+        created_at=profile.created_at.isoformat() if hasattr(profile.created_at, 'isoformat') else str(profile.created_at),
+        updated_at=profile.updated_at.isoformat() if hasattr(profile.updated_at, 'isoformat') else str(profile.updated_at),
+    )
+
+
+@router.get("/settings/profiles", response_model=ProfileListResponse)
+async def get_profiles() -> ProfileListResponse:
+    """Get all saved API profiles with masked API keys."""
+    from frago.init.profile_manager import load_profiles
+
+    store = load_profiles()
+    profiles = [
+        _profile_to_response(p, store.active_profile_id)
+        for p in store.profiles
+    ]
+
+    return ProfileListResponse(
+        profiles=profiles,
+        active_profile_id=store.active_profile_id,
+    )
+
+
+@router.post("/settings/profiles", response_model=ApiResponse)
+async def create_profile(request: CreateProfileRequest) -> ApiResponse:
+    """Create a new API profile."""
+    from frago.init.profile_manager import APIProfile, add_profile
+
+    try:
+        profile = APIProfile(
+            name=request.name,
+            endpoint_type=request.endpoint_type,
+            api_key=request.api_key,
+            url=request.url,
+            default_model=request.default_model,
+            sonnet_model=request.sonnet_model,
+            haiku_model=request.haiku_model,
+        )
+        add_profile(profile)
+        return ApiResponse(status="ok", message=f"Profile '{request.name}' created")
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
+@router.put("/settings/profiles/{profile_id}", response_model=ApiResponse)
+async def update_profile_endpoint(profile_id: str, request: UpdateProfileRequest) -> ApiResponse:
+    """Update an existing API profile."""
+    from frago.init.profile_manager import update_profile
+
+    try:
+        updates = {k: v for k, v in request.model_dump().items() if v is not None}
+        update_profile(profile_id, updates)
+        return ApiResponse(status="ok", message="Profile updated")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
+@router.delete("/settings/profiles/{profile_id}", response_model=ApiResponse)
+async def delete_profile_endpoint(profile_id: str) -> ApiResponse:
+    """Delete an API profile. If active, configuration is preserved."""
+    from frago.init.profile_manager import delete_profile
+
+    try:
+        delete_profile(profile_id)
+        return ApiResponse(status="ok", message="Profile deleted")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
+@router.post("/settings/profiles/{profile_id}/activate", response_model=ApiResponse)
+async def activate_profile_endpoint(profile_id: str) -> ApiResponse:
+    """Activate a profile: apply its credentials as the current auth config."""
+    from frago.init.profile_manager import activate_profile
+
+    try:
+        activate_profile(profile_id)
+
+        # Refresh cache after activation
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_config(broadcast=True)
+
+        return ApiResponse(status="ok", message="Profile activated")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
+@router.post("/settings/profiles/deactivate", response_model=ApiResponse)
+async def deactivate_profile_endpoint() -> ApiResponse:
+    """Deactivate current profile: switch back to official auth."""
+    from frago.init.profile_manager import deactivate_profile
+
+    try:
+        deactivate_profile()
+
+        # Refresh cache after deactivation
+        state_manager = StateManager.get_instance()
+        await state_manager.refresh_config(broadcast=True)
+
+        return ApiResponse(status="ok", message="Switched to official authentication")
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
+
+
+@router.post("/settings/profiles/from-current", response_model=ApiResponse)
+async def save_current_as_profile(request: SaveCurrentAsProfileRequest) -> ApiResponse:
+    """Save current ~/.claude/settings.json configuration as a new profile."""
+    from frago.init.profile_manager import create_profile_from_current
+
+    try:
+        profile = create_profile_from_current(request.name)
+        if not profile:
+            return ApiResponse(
+                status="error",
+                error="No custom API configuration found in current settings",
+            )
+        return ApiResponse(status="ok", message=f"Profile '{request.name}' saved")
+    except Exception as e:
+        return ApiResponse(status="error", error=str(e))
