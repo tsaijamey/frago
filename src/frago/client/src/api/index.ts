@@ -1221,3 +1221,63 @@ export async function getSetupStatus(): Promise<httpApi.SetupRepoResponse> {
   }
   return httpApi.getSetupStatus();
 }
+
+// ============================================================
+// API Profile Management
+// ============================================================
+
+export type {
+  ProfileItem,
+  ProfileListResponse,
+  CreateProfileRequest,
+  UpdateProfileRequest,
+} from './client';
+
+export async function getProfiles(): Promise<httpApi.ProfileListResponse> {
+  if (isPywebviewMode()) {
+    return { profiles: [], active_profile_id: null };
+  }
+  return httpApi.getProfiles();
+}
+
+export async function createProfile(data: httpApi.CreateProfileRequest): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.createProfile(data);
+}
+
+export async function updateProfile(id: string, data: httpApi.UpdateProfileRequest): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.updateProfile(id, data);
+}
+
+export async function deleteProfile(id: string): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.deleteProfile(id);
+}
+
+export async function activateProfile(id: string): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.activateProfile(id);
+}
+
+export async function deactivateProfile(): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.deactivateProfile();
+}
+
+export async function saveCurrentAsProfile(name: string): Promise<ApiResponse> {
+  if (isPywebviewMode()) {
+    return { status: 'error', error: 'Not supported in pywebview mode' };
+  }
+  return httpApi.saveCurrentAsProfile(name);
+}

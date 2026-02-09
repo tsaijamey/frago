@@ -1092,6 +1092,92 @@ export async function toggleGitHubStar(star: boolean): Promise<StarResult> {
 }
 
 // ============================================================
+// API Profile Management
+// ============================================================
+
+export interface ProfileItem {
+  id: string;
+  name: string;
+  endpoint_type: string;
+  api_key_masked: string;
+  url?: string | null;
+  default_model?: string | null;
+  sonnet_model?: string | null;
+  haiku_model?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProfileListResponse {
+  profiles: ProfileItem[];
+  active_profile_id: string | null;
+}
+
+export interface CreateProfileRequest {
+  name: string;
+  endpoint_type: string;
+  api_key: string;
+  url?: string;
+  default_model?: string;
+  sonnet_model?: string;
+  haiku_model?: string;
+}
+
+export interface UpdateProfileRequest {
+  name?: string;
+  endpoint_type?: string;
+  api_key?: string;
+  url?: string;
+  default_model?: string;
+  sonnet_model?: string;
+  haiku_model?: string;
+}
+
+export async function getProfiles(): Promise<ProfileListResponse> {
+  return fetchApi<ProfileListResponse>('/settings/profiles');
+}
+
+export async function createProfile(data: CreateProfileRequest): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/profiles', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateProfile(id: string, data: UpdateProfileRequest): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>(`/settings/profiles/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteProfile(id: string): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>(`/settings/profiles/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function activateProfile(id: string): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>(`/settings/profiles/${encodeURIComponent(id)}/activate`, {
+    method: 'POST',
+  });
+}
+
+export async function deactivateProfile(): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/profiles/deactivate', {
+    method: 'POST',
+  });
+}
+
+export async function saveCurrentAsProfile(name: string): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/profiles/from-current', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+// ============================================================
 // Guide API
 // ============================================================
 
