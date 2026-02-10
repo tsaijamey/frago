@@ -1,14 +1,14 @@
 [project]
 name = "frago-cli"
 version = "0.39.0"
-description = "Frago - AI-driven multi-runtime automation framework with Chrome CDP, Python, and Shell support"
+description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
 license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Jamey Tsai", email = "caijia@frago.ai"}
 ]
-keywords = ["cdp", "chrome", "devtools", "automation", "browser"]
+keywords = ["agent-os", "ai-agent", "automation", "cdp", "chrome", "recipe"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

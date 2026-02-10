@@ -99,7 +99,7 @@ projects/youtube-transcript-research/
 
 ## frago's Contribution
 
-frago didn't invent new concepts. Instead, it **links Claude Code's skill with frago's recipe** and provides a complete toolchain.
+frago is an agent OS — an operating system for AI agents. It provides the runtime, resource management, and interface layer that lets agents operate a computer on behalf of users. The concepts above (Recipe, Run, Session) are the core resources that frago manages, just as files, processes, and sockets are resources managed by a traditional OS.
 
 ### Linking Skill and Recipe
 
@@ -190,4 +190,4 @@ frago provides four slash commands that form a complete workflow loop:
 - **Recipe** (frago): Recipe, specific execution steps
 - **Run** (frago): Task instance, records exploration process
 - **Session** (frago): Agent session, real-time execution monitoring
-- **frago's contribution**: Links all concepts, provides explore → solidify → execute → monitor loop tools
+- **frago** (agent OS): Provides runtime, resource management, environment sync, and GUI — the operating system layer that makes all the above concepts work together
