@@ -682,7 +682,7 @@ def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
             # Remote might be empty or not exist yet - that's OK
             return True, "Initialized local repository (remote is empty or unreachable)"
 
-        # Check if remote has any branches
+        # Check if remote has main branch
         remote_branch_result = _run_git(
             ["rev-parse", "--verify", "origin/main"],
             FRAGO_HOME,
@@ -690,22 +690,10 @@ def _clone_or_init_repo(repo_url: str) -> tuple[bool, str]:
         )
 
         if remote_branch_result.returncode != 0:
-            # Try master branch as fallback
-            remote_branch_result = _run_git(
-                ["rev-parse", "--verify", "origin/master"],
-                FRAGO_HOME,
-                check=False
-            )
-
-        if remote_branch_result.returncode != 0:
-            # Remote has no branches (empty repo)
+            # Remote has no main branch (empty repo)
             return True, "Initialized local repository (remote repository is empty)"
 
-        # Remote has content - determine branch name
         branch_name = "main"
-        main_check = _run_git(["rev-parse", "--verify", "origin/main"], FRAGO_HOME, check=False)
-        if main_check.returncode != 0:
-            branch_name = "master"
 
         # Check if we have any local commits
         local_commits = _run_git(["rev-list", "--count", "HEAD"], FRAGO_HOME, check=False)
@@ -1574,13 +1562,10 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
         # Possibly new repository, no remote branch
         return False
 
-    # Check if remote branch exists
-    branch_result = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], FRAGO_HOME, check=False)
-    current_branch = branch_result.stdout.strip() or "main"
-
-    # Check if remote branch exists
+    # Check if remote main branch exists
+    current_branch = "main"
     remote_branch_result = _run_git(
-        ["rev-parse", "--verify", f"origin/{current_branch}"], FRAGO_HOME, check=False
+        ["rev-parse", "--verify", "origin/main"], FRAGO_HOME, check=False
     )
     if remote_branch_result.returncode != 0:
         return False
@@ -1673,13 +1658,9 @@ def _push_to_remote(result: SyncResult, dry_run: bool = False) -> bool:
     if not log_result.stdout.strip():
         return True
 
-    # Get current branch
-    branch_result = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], FRAGO_HOME, check=False)
-    current_branch = branch_result.stdout.strip() or "main"
-
-    # Push
+    # Push to main
     click.echo("Pushing to your repository...")
-    push_result = _run_git(["push", "-u", "origin", current_branch], FRAGO_HOME, check=False)
+    push_result = _run_git(["push", "-u", "origin", "main"], FRAGO_HOME, check=False)
 
     if push_result.returncode == 0:
         result.pushed_to_remote = True
