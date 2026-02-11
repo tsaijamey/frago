@@ -297,6 +297,7 @@ class SystemStatusResponse(BaseModel):
     chrome_connected: bool = False
     projects_count: int = 0
     tasks_running: int = 0
+    tab_count: int = 0
 
 
 class ServerInfoResponse(BaseModel):

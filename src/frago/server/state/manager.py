@@ -16,11 +16,11 @@ from typing import Any, Callable, Dict, List, Optional
 from frago.server.state.models import (
     CommunityRecipe,
     DashboardData,
+    DashboardStatus,
     Project,
     Recipe,
     ResourceCounts,
     ServerState,
-    ServerStatus,
     Skill,
     TaskDetail,
     TaskItem,
@@ -356,107 +356,27 @@ class StateManager:
             return {"installed": False, "authenticated": False, "username": None}
 
     def _compute_dashboard(self) -> DashboardData:
-        """Compute dashboard data from current state."""
+        """Compute dashboard data using the shared compute function."""
         try:
-            from frago.server.utils import get_server_state
-            from frago.session.models import SessionStatus
-            from frago.session.storage import list_sessions
+            from frago.server.routes.dashboard import compute_dashboard_data
 
-            # Server status
-            server_state = get_server_state()
-            uptime_seconds = 0.0
-            if server_state.get("started_at"):
-                try:
-                    started = datetime.fromisoformat(
-                        server_state["started_at"].replace("Z", "+00:00")
-                    )
-                    uptime_seconds = (datetime.now(timezone.utc) - started).total_seconds()
-                except (ValueError, AttributeError):
-                    pass
-
-            server_status = ServerStatus(
-                running=True,
-                uptime_seconds=uptime_seconds,
-                started_at=server_state.get("started_at"),
-            )
-
-            # Activity data
-            now = datetime.now(timezone.utc)
-            time_range_ago = now - timedelta(hours=12)
-
-            hourly_data: Dict[str, Dict] = {}
-            for i in range(12):
-                hour_start = now - timedelta(hours=11 - i)
-                hour_start = hour_start.replace(minute=0, second=0, microsecond=0)
-                hourly_data[hour_start.isoformat()] = {
-                    "session_count": 0,
-                    "tool_call_count": 0,
-                    "completed_count": 0,
-                }
-
-            try:
-                all_sessions = list_sessions(limit=1000)
-            except Exception:
-                all_sessions = []
-
-            def normalize_dt(dt: datetime) -> datetime:
-                if dt.tzinfo is None:
-                    return dt.replace(tzinfo=timezone.utc)
-                return dt.astimezone(timezone.utc)
-
-            recent_sessions = []
-            for s in all_sessions:
-                last_activity = normalize_dt(s.last_activity)
-                is_running = s.status == SessionStatus.RUNNING
-                if last_activity >= time_range_ago or is_running:
-                    recent_sessions.append(s)
-
-            stats = {
-                "total_sessions": len(recent_sessions),
-                "completed_sessions": sum(
-                    1 for s in recent_sessions if s.status == SessionStatus.COMPLETED
-                ),
-                "running_sessions": sum(
-                    1 for s in recent_sessions if s.status == SessionStatus.RUNNING
-                ),
-                "error_sessions": sum(
-                    1 for s in recent_sessions if s.status == SessionStatus.ERROR
-                ),
-                "total_tool_calls": sum(s.tool_call_count for s in recent_sessions),
-                "total_steps": sum(s.step_count for s in recent_sessions),
-            }
-
-            for session in recent_sessions:
-                last_activity = normalize_dt(session.last_activity)
-                session_hour = last_activity.replace(minute=0, second=0, microsecond=0)
-                hour_key = session_hour.isoformat()
-                if hour_key in hourly_data:
-                    hourly_data[hour_key]["session_count"] += 1
-                    hourly_data[hour_key]["tool_call_count"] += session.tool_call_count
-                    if session.status == SessionStatus.COMPLETED:
-                        hourly_data[hour_key]["completed_count"] += 1
-
-            hourly_distribution = [
-                {"hour": hour, **data} for hour, data in sorted(hourly_data.items())
-            ]
-
-            # Resource counts
-            installed_community = len(
-                [r for r in self._state.community_recipes if r.installed]
-            )
-            resource_counts = ResourceCounts(
-                tasks=len(all_sessions),
-                recipes=len(self._state.recipes) + installed_community,
-                skills=len(self._state.skills),
-            )
+            pydantic_data = compute_dashboard_data()
 
             return DashboardData(
-                server=server_status,
-                activity_overview={
-                    "hourly_distribution": hourly_distribution,
-                    "stats": stats,
-                },
-                resource_counts=resource_counts,
+                running_tasks=[t.model_dump() for t in pydantic_data.running_tasks],
+                recent_tasks=[t.model_dump() for t in pydantic_data.recent_tasks],
+                quick_recipes=[r.model_dump() for r in pydantic_data.quick_recipes],
+                resource_counts=ResourceCounts(
+                    tasks=pydantic_data.resource_counts.tasks,
+                    recipes=pydantic_data.resource_counts.recipes,
+                    skills=pydantic_data.resource_counts.skills,
+                ),
+                system_status=DashboardStatus(
+                    chrome_connected=pydantic_data.system_status.chrome_connected,
+                    tab_count=pydantic_data.system_status.tab_count,
+                    error_count=pydantic_data.system_status.error_count,
+                    last_synced_at=pydantic_data.system_status.last_synced_at,
+                ),
             )
         except Exception as e:
             logger.error(f"Failed to compute dashboard: {e}")
@@ -739,16 +659,19 @@ class StateManager:
         """Convert dashboard to dict for API response."""
         d = self._state.dashboard
         return {
-            "server": {
-                "running": d.server.running,
-                "uptime_seconds": d.server.uptime_seconds,
-                "started_at": d.server.started_at,
-            },
-            "activity_overview": d.activity_overview,
+            "running_tasks": d.running_tasks,
+            "recent_tasks": d.recent_tasks,
+            "quick_recipes": d.quick_recipes,
             "resource_counts": {
                 "tasks": d.resource_counts.tasks,
                 "recipes": d.resource_counts.recipes,
                 "skills": d.resource_counts.skills,
+            },
+            "system_status": {
+                "chrome_connected": d.system_status.chrome_connected,
+                "tab_count": d.system_status.tab_count,
+                "error_count": d.system_status.error_count,
+                "last_synced_at": d.system_status.last_synced_at,
             },
         }
 

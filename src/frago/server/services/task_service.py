@@ -388,6 +388,34 @@ class TaskService:
             return None, f"Internal error: {e}"
 
     @staticmethod
+    def extract_error_summary(session_id: str) -> Optional[str]:
+        """Extract error summary from the last few steps of a failed task.
+
+        Reads the last 3 steps and looks for error-related content.
+
+        Args:
+            session_id: Session identifier.
+
+        Returns:
+            Error summary string (max 100 chars), or None if no error found.
+        """
+        try:
+            from frago.session.models import AgentType
+            from frago.session.storage import read_steps_paginated
+
+            result = read_steps_paginated(
+                session_id, AgentType.CLAUDE, limit=3, offset=0, from_end=True
+            )
+            steps = result.get("steps", [])
+            for step in steps:
+                content = getattr(step, "content_summary", "") or ""
+                if any(kw in content.lower() for kw in ["error", "failed", "exception", "timeout"]):
+                    return content[:100]
+        except Exception as e:
+            logger.debug("Failed to extract error summary for %s: %s", session_id, e)
+        return None
+
+    @staticmethod
     def get_task_steps(
         session_id: str,
         limit: int = 50,

@@ -153,28 +153,6 @@ class Project:
 
 
 @dataclass
-class HourlyActivity:
-    """Hourly activity data point."""
-
-    hour: str  # ISO format
-    session_count: int = 0
-    tool_call_count: int = 0
-    completed_count: int = 0
-
-
-@dataclass
-class ActivityStats:
-    """Activity statistics."""
-
-    total_sessions: int = 0
-    completed_sessions: int = 0
-    running_sessions: int = 0
-    error_sessions: int = 0
-    total_tool_calls: int = 0
-    total_steps: int = 0
-
-
-@dataclass
 class ResourceCounts:
     """Resource counts for dashboard."""
 
@@ -184,21 +162,24 @@ class ResourceCounts:
 
 
 @dataclass
-class ServerStatus:
-    """Server status for dashboard."""
+class DashboardStatus:
+    """System status for dashboard footer."""
 
-    running: bool = True
-    uptime_seconds: float = 0.0
-    started_at: Optional[str] = None
+    chrome_connected: bool = False
+    tab_count: int = 0
+    error_count: int = 0
+    last_synced_at: Optional[str] = None
 
 
 @dataclass
 class DashboardData:
-    """Dashboard overview data."""
+    """Dashboard overview data (workbench model)."""
 
-    server: ServerStatus = field(default_factory=ServerStatus)
-    activity_overview: Dict[str, Any] = field(default_factory=dict)
+    running_tasks: List[Dict[str, Any]] = field(default_factory=list)
+    recent_tasks: List[Dict[str, Any]] = field(default_factory=list)
+    quick_recipes: List[Dict[str, Any]] = field(default_factory=list)
     resource_counts: ResourceCounts = field(default_factory=ResourceCounts)
+    system_status: DashboardStatus = field(default_factory=DashboardStatus)
 
 
 # ============================================================

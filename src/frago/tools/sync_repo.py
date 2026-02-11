@@ -1121,6 +1121,21 @@ def _save_sync_metadata(metadata: Dict[str, Any]) -> bool:
         return False
 
 
+def get_last_synced_at() -> Optional[str]:
+    """Get the most recent synced_at timestamp from sync metadata.
+
+    Returns:
+        ISO format timestamp string, or None if never synced.
+    """
+    metadata = _load_sync_metadata()
+    timestamps = [
+        entry.get("synced_at")
+        for entry in metadata.get("entries", {}).values()
+        if entry.get("synced_at")
+    ]
+    return max(timestamps) if timestamps else None
+
+
 def _get_sync_entry(metadata: Dict[str, Any], rel_path: str) -> Optional[Dict[str, Any]]:
     """Get sync entry for a path."""
     return metadata.get("entries", {}).get(rel_path)

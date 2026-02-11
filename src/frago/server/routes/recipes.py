@@ -182,6 +182,13 @@ async def run_recipe(name: str, request: RecipeRunRequest = None):
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error"))
 
+    # Record usage for dashboard Quick Recipes
+    try:
+        from frago.recipes.usage_tracker import record_usage
+        record_usage(name)
+    except Exception:
+        pass  # Usage tracking failure must not break recipe execution
+
     # Try to parse recipe output as JSON and return directly
     # This allows recipes to return structured data (like generated_files)
     output = result.get("output")

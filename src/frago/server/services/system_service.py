@@ -55,6 +55,15 @@ class SystemService:
             memory = psutil.virtual_memory()
             memory_percent = memory.percent
 
+            # Get tab count from TabManager
+            tab_count = 0
+            try:
+                from frago.cdp.tab_manager import TabManager
+                tm = TabManager()
+                tab_count = len(tm._state)
+            except Exception:
+                pass
+
             return {
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory_percent,
@@ -62,6 +71,7 @@ class SystemService:
                 "chrome_connected": chrome_connected,
                 "projects_count": 0,  # TODO: implement project counting
                 "tasks_running": tasks_running,
+                "tab_count": tab_count,
             }
 
         except Exception as e:
@@ -73,6 +83,7 @@ class SystemService:
                 "chrome_connected": False,
                 "projects_count": 0,
                 "tasks_running": 0,
+                "tab_count": 0,
             }
 
     @staticmethod

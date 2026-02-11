@@ -28,6 +28,7 @@ async def get_status() -> SystemStatusResponse:
         chrome_connected=status.get("chrome_connected", False),
         projects_count=status.get("projects_count", 0),
         tasks_running=status.get("tasks_running", 0),
+        tab_count=status.get("tab_count", 0),
     )
 
 
