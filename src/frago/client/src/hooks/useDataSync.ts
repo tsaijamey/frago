@@ -10,6 +10,7 @@ import { useWebSocket } from './useWebSocket';
 import { MessageType, type WebSocketMessage } from '@/api/websocket';
 import { useAppStore } from '@/stores/appStore';
 import type { TaskItem, RecipeItem, SkillItem, CommunityRecipeItem, VersionInfo, UpdateStatus } from '@/types/pywebview';
+import type { DashboardData } from '@/api/client';
 
 /**
  * Raw task data from WebSocket (matches backend TaskService format)
@@ -150,6 +151,7 @@ export function useDataSync() {
   const setRecipes = useAppStore((state) => state.setRecipes);
   const setSkills = useAppStore((state) => state.setSkills);
   const setCommunityRecipes = useAppStore((state) => state.setCommunityRecipes);
+  const setDashboard = useAppStore((state) => state.setDashboard);
   const setVersionInfo = useAppStore((state) => state.setVersionInfo);
   const setUpdateStatus = useAppStore((state) => state.setUpdateStatus);
 
@@ -219,9 +221,14 @@ export function useDataSync() {
         }
 
         case MessageType.DATA_DASHBOARD: {
-          // Dashboard updated - we don't store dashboard in appStore currently
-          // Could be extended to store dashboard data if needed
+          const data = message.data as {
+            version?: number;
+            data?: DashboardData;
+          };
           console.log('[useDataSync] Received dashboard update');
+          if (data?.data) {
+            setDashboard(data.data);
+          }
           break;
         }
 
@@ -291,7 +298,7 @@ export function useDataSync() {
         }
       }
     },
-    [setDataFromPush, setTasks, setRecipes, setSkills, setCommunityRecipes, setVersionInfo, setUpdateStatus]
+    [setDataFromPush, setTasks, setRecipes, setSkills, setCommunityRecipes, setDashboard, setVersionInfo, setUpdateStatus]
   );
 
   // Subscribe to data push messages

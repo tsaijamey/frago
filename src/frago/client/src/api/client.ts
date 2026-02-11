@@ -441,39 +441,52 @@ export async function openConfigInVSCode(): Promise<ApiResponse> {
 // Dashboard API
 // ============================================================
 
-export interface HourlyActivity {
-  hour: string;
-  session_count: number;
-  tool_call_count: number;
-  completed_count: number;
+export interface RunningTaskSummary {
+  id: string;
+  name: string | null;
+  project_path: string;
+  started_at: string;
+  elapsed_seconds: number;
+  current_step: string | null;
+  step_count: number;
 }
 
-export interface ActivityStats {
-  total_sessions: number;
-  completed_sessions: number;
-  running_sessions: number;
-  error_sessions: number;
-  total_tool_calls: number;
-  total_steps: number;
+export interface RecentTaskSummary {
+  id: string;
+  name: string | null;
+  status: string;
+  duration_ms: number | null;
+  ended_at: string | null;
+  error_summary: string | null;
 }
 
-export interface ActivityOverview {
-  hourly_distribution: HourlyActivity[];
-  stats: ActivityStats;
+export interface QuickRecipeItem {
+  name: string;
+  description: string | null;
+  runtime: string | null;
+  run_count: number;
+  last_used: string | null;
+}
+
+export interface DashboardResourceCounts {
+  tasks: number;
+  recipes: number;
+  skills: number;
+}
+
+export interface DashboardStatus {
+  chrome_connected: boolean;
+  tab_count: number;
+  error_count: number;
+  last_synced_at: string | null;
 }
 
 export interface DashboardData {
-  server: {
-    running: boolean;
-    uptime_seconds: number;
-    started_at: string | null;
-  };
-  activity_overview: ActivityOverview;
-  resource_counts: {
-    tasks: number;
-    recipes: number;
-    skills: number;
-  };
+  running_tasks: RunningTaskSummary[];
+  recent_tasks: RecentTaskSummary[];
+  quick_recipes: QuickRecipeItem[];
+  resource_counts: DashboardResourceCounts;
+  system_status: DashboardStatus;
 }
 
 export async function getDashboard(): Promise<DashboardData> {

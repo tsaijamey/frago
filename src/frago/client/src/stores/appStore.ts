@@ -17,6 +17,7 @@ import type {
   VersionInfo,
   UpdateStatus,
 } from '@/types/pywebview';
+import type { DashboardData } from '@/api/client';
 import type { ConsoleMessage } from '@/types/console';
 import * as api from '@/api';
 
@@ -70,6 +71,7 @@ interface AppState {
   communityRecipes: CommunityRecipeItem[];
   skills: SkillItem[];
   systemStatus: SystemStatus | null;
+  dashboard: DashboardData | null;
 
   // UI state
   isLoading: boolean;
@@ -121,6 +123,7 @@ interface AppState {
   setRecipes: (recipes: RecipeItem[]) => void;
   setCommunityRecipes: (recipes: CommunityRecipeItem[]) => void;
   setSkills: (skills: SkillItem[]) => void;
+  setDashboard: (dashboard: DashboardData) => void;
   loadCommunityRecipes: () => Promise<void>;
   setVersionInfo: (info: VersionInfo) => void;
   setUpdateStatus: (status: UpdateStatus | null) => void;
@@ -189,6 +192,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   communityRecipes: [],
   skills: [],
   systemStatus: null,
+  dashboard: null,
   isLoading: false,
   toasts: [],
   dataVersion: 0,
@@ -473,6 +477,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSkills: (skills) => {
     set({ skills });
+  },
+
+  setDashboard: (dashboard) => {
+    set({ dashboard });
   },
 
   setVersionInfo: (versionInfo) => {

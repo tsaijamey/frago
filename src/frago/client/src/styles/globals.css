@@ -1007,90 +1007,71 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   grid-column: 1 / -1;
 }
 
-/* Activity Overview Line Chart */
-.activity-chart-container {
-  width: 100%;
-  margin-bottom: 24px;
+/* Dashboard Quick Actions */
+.dashboard-quick-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.activity-line-chart {
-  display: block;
-  width: 100%;
-  height: auto;
+.dashboard-quick-run-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  transition: all var(--transition-fast);
 }
 
-.chart-grid-line {
-  stroke: var(--border-color);
-  stroke-width: 1;
-  stroke-dasharray: 4 4;
+.dashboard-quick-run-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
 }
 
-.chart-axis-line {
-  stroke: var(--text-muted);
-  stroke-width: 1;
-}
-
-.chart-line {
-  stroke: var(--accent-primary);
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.chart-area {
-  fill: var(--accent-primary);
-  opacity: 0.15;
-}
-
-.chart-point {
-  fill: var(--accent-primary);
-  stroke: var(--bg-primary);
-  stroke-width: 2;
-  transition: r 0.2s ease;
-}
-
-.chart-point:hover {
-  r: 6;
-}
-
-.chart-axis-label {
-  fill: var(--text-muted);
-  font-size: 11px;
-  font-family: inherit;
-}
-
-.chart-axis-title {
-  fill: var(--text-secondary);
-  font-size: 12px;
-  font-family: inherit;
-}
-
-/* Activity Stats Grid */
-.activity-stats-grid {
+/* Dashboard Two-Column Layout */
+.dashboard-two-col {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
 
-.activity-stat {
+@media (max-width: 768px) {
+  .dashboard-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dashboard Status Bar */
+.dashboard-status-bar {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 16px 12px;
-  background: var(--bg-tertiary);
+  gap: 20px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: 12px;
-}
-
-.activity-stat-value {
-  font-size: var(--font-size-xl);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.activity-stat-label {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.dashboard-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Spinning animation for loader icon */
+@keyframes spinning {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spinning 1.5s linear infinite;
 }
 
 .dashboard-action-btn {

@@ -802,42 +802,16 @@ export async function openConfigInVSCode(): Promise<ApiResponse> {
 // Dashboard API
 // ============================================================
 
-export interface HourlyActivity {
-  hour: string;
-  session_count: number;
-  tool_call_count: number;
-  completed_count: number;
-}
+export type {
+  RunningTaskSummary,
+  RecentTaskSummary,
+  QuickRecipeItem,
+  DashboardResourceCounts,
+  DashboardStatus,
+  DashboardData,
+} from './client';
 
-export interface ActivityStats {
-  total_sessions: number;
-  completed_sessions: number;
-  running_sessions: number;
-  error_sessions: number;
-  total_tool_calls: number;
-  total_steps: number;
-}
-
-export interface ActivityOverview {
-  hourly_distribution: HourlyActivity[];
-  stats: ActivityStats;
-}
-
-export interface DashboardData {
-  server: {
-    running: boolean;
-    uptime_seconds: number;
-    started_at: string | null;
-  };
-  activity_overview: ActivityOverview;
-  resource_counts: {
-    tasks: number;
-    recipes: number;
-    skills: number;
-  };
-}
-
-export async function getDashboard(): Promise<DashboardData> {
+export async function getDashboard(): Promise<httpApi.DashboardData> {
   if (isPywebviewMode()) {
     throw new Error('Dashboard API not available in pywebview mode');
   }
