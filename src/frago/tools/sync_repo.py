@@ -146,6 +146,21 @@ def _is_git_repo(path: Path) -> bool:
     return (path / ".git").exists()
 
 
+def _ensure_remote_url(expected_url: str) -> None:
+    """Ensure origin remote points to the expected URL.
+
+    If origin exists but points elsewhere, update it.
+    If origin doesn't exist, add it.
+    """
+    current = _run_git(["remote", "get-url", "origin"], FRAGO_HOME, check=False)
+    if current.returncode != 0:
+        _run_git(["remote", "add", "origin", expected_url], FRAGO_HOME, check=False)
+    elif current.stdout.strip() != expected_url:
+        old_url = current.stdout.strip()
+        _run_git(["remote", "set-url", "origin", expected_url], FRAGO_HOME, check=False)
+        click.echo(f"Updated remote URL: {old_url} → {expected_url}")
+
+
 def get_sync_repo_url(auto_repair: bool = True) -> Optional[str]:
     """Get sync repo URL from config, with git remote fallback.
 
@@ -304,6 +319,9 @@ gui_history.jsonl
 # Conflict backup files (temporary)
 *.LOCAL
 *.REMOTE
+*.sync-backup
+*.sync-backup.local
+*.sync-backup.remote
 
 # Video files
 *.mp4
@@ -1484,6 +1502,231 @@ def _detect_potential_conflicts(current_branch: str) -> List[ConflictInfo]:
     return conflicts
 
 
+# --- Unrelated histories detection and resolution ---
+
+
+def _has_common_ancestor(current_branch: str = "main") -> bool:
+    """Check if local HEAD and remote branch share a common ancestor.
+
+    Returns False when histories are completely unrelated (e.g., repo recreated,
+    --set-repo pointed to a different repo, or independent device initialization).
+    """
+    result = _run_git(
+        ["merge-base", "HEAD", f"origin/{current_branch}"],
+        FRAGO_HOME,
+        check=False,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _auto_resolve_merge_conflicts(result: SyncResult) -> bool:
+    """Resolve merge conflicts: try agent merge first, fall back to newer-commit-wins.
+
+    For each conflicting file:
+    1. Extract both versions (local HEAD vs remote MERGE_HEAD)
+    2. Try agent-based semantic merge
+    3. If agent unavailable, compare commit timestamps and keep newer
+    4. Back up the losing version as <file>.sync-backup
+    5. Stage the resolution
+
+    Returns:
+        True if all conflicts resolved successfully
+    """
+    conflicts_result = _run_git(
+        ["diff", "--name-only", "--diff-filter=U"],
+        FRAGO_HOME, check=False
+    )
+    if not conflicts_result.stdout.strip():
+        return True
+
+    conflict_files = conflicts_result.stdout.strip().split("\n")
+    resolved_count = 0
+
+    # Try to get agent resolver (non-blocking, graceful failure)
+    agent_resolver = _get_agent_resolver()
+
+    for file_path in conflict_files:
+        if not file_path.strip():
+            continue
+
+        # Extract both versions
+        local_content = _get_file_content_at_ref("HEAD", file_path)
+        remote_content = _get_file_content_at_ref("MERGE_HEAD", file_path)
+
+        resolved = False
+        strategy_used = ""
+
+        # Tier 1: Agent merge
+        if agent_resolver and local_content and remote_content:
+            merged = agent_resolver.merge_conflict(
+                file_path=file_path,
+                local_content=local_content,
+                remote_content=remote_content,
+            )
+            if merged is not None:
+                full_path = FRAGO_HOME / file_path
+                full_path.write_text(merged, encoding="utf-8")
+                _save_version_backup(file_path, "HEAD", suffix=".sync-backup.local")
+                _save_version_backup(file_path, "MERGE_HEAD", suffix=".sync-backup.remote")
+                resolved = True
+                strategy_used = "agent merge"
+
+        # Tier 2: Newer-commit-wins fallback
+        if not resolved:
+            local_time = _get_file_commit_time("HEAD", file_path)
+            remote_time = _get_file_commit_time("MERGE_HEAD", file_path)
+
+            if local_time >= remote_time:
+                winner = "local"
+                _save_version_backup(file_path, "MERGE_HEAD", suffix=".sync-backup")
+                _run_git(["checkout", "--ours", "--", file_path], FRAGO_HOME, check=False)
+            else:
+                winner = "remote"
+                _save_version_backup(file_path, "HEAD", suffix=".sync-backup")
+                _run_git(["checkout", "--theirs", "--", file_path], FRAGO_HOME, check=False)
+
+            strategy_used = f"newer commit wins → kept {winner}"
+
+        _run_git(["add", "--", file_path], FRAGO_HOME, check=False)
+        resolved_count += 1
+
+        result.warnings.append(
+            f"Conflict resolved ({strategy_used}): {file_path}"
+        )
+
+    return resolved_count == len(conflict_files)
+
+
+def _get_file_content_at_ref(ref: str, file_path: str) -> Optional[str]:
+    """Get file content at a specific git ref. Returns None for binary files."""
+    show_result = _run_git(
+        ["show", f"{ref}:{file_path}"],
+        FRAGO_HOME, check=False
+    )
+    if show_result.returncode != 0:
+        return None
+    try:
+        show_result.stdout.encode("utf-8")
+        return show_result.stdout
+    except UnicodeEncodeError:
+        return None
+
+
+def _get_agent_resolver() -> Optional[Any]:
+    """Try to obtain an agent-based conflict resolver.
+
+    Returns None if agent runtime is unavailable (server not running,
+    no API profile, etc.). Sync must not depend on agent availability.
+    """
+    try:
+        from frago.tools.sync_conflict_agent import SyncConflictResolver
+        return SyncConflictResolver.try_create()
+    except Exception:
+        return None
+
+
+def _get_file_commit_time(ref: str, file_path: str) -> float:
+    """Get the author timestamp of the last commit that touched file_path on given ref."""
+    log_result = _run_git(
+        ["log", "-1", "--format=%at", ref, "--", file_path],
+        FRAGO_HOME, check=False
+    )
+    if log_result.returncode == 0 and log_result.stdout.strip():
+        try:
+            return float(log_result.stdout.strip())
+        except ValueError:
+            pass
+    return 0.0
+
+
+def _save_version_backup(file_path: str, ref: str, suffix: str) -> Optional[Path]:
+    """Save a specific ref's version of a file as a backup."""
+    show_result = _run_git(
+        ["show", f"{ref}:{file_path}"],
+        FRAGO_HOME, check=False
+    )
+    if show_result.returncode != 0:
+        return None
+
+    backup_path = FRAGO_HOME / f"{file_path}{suffix}"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        backup_path.write_text(show_result.stdout, encoding="utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return None
+    return backup_path
+
+
+def _merge_unrelated_histories(result: SyncResult, current_branch: str = "main") -> bool:
+    """Merge remote branch into local when histories are unrelated.
+
+    This occurs when:
+    - Remote repo was recreated (deleted + new repo with same name)
+    - --set-repo pointed to a different repository
+    - Two devices initialized independently against an empty remote
+
+    Strategy: merge with --allow-unrelated-histories, resolve conflicts via
+    agent merge (primary) or newer-commit-wins (fallback).
+
+    Returns:
+        Whether merge succeeded (True) or has unresolvable issues (False)
+    """
+    click.echo(
+        "Detected unrelated histories between local and remote. "
+        "This usually means the remote repository was recreated "
+        "or you switched to a different repository."
+    )
+    click.echo("Merging both histories to preserve all resources...")
+
+    merge_result = _run_git(
+        ["merge", f"origin/{current_branch}", "--allow-unrelated-histories",
+         "-m", "sync: merge unrelated histories from multi-device sync"],
+        FRAGO_HOME, check=False
+    )
+
+    if merge_result.returncode == 0:
+        click.echo("Merge completed successfully — no file conflicts.")
+        diff_result = _run_git(
+            ["diff", "--name-status", "HEAD~1..HEAD"],
+            FRAGO_HOME, check=False
+        )
+        for line in diff_result.stdout.strip().split("\n"):
+            if line:
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    change = _get_file_change_info(FRAGO_HOME, parts[1])
+                    result.remote_updates.append(change)
+
+        if result.remote_updates:
+            click.echo(_format_table(result.remote_updates, "Merged from Remote"))
+        return True
+
+    # Merge stopped due to conflicts — attempt resolution (agent → fallback)
+    click.echo("File conflicts detected during merge. Resolving...")
+
+    if _auto_resolve_merge_conflicts(result):
+        _run_git(
+            ["commit", "--no-edit"],
+            FRAGO_HOME, check=False
+        )
+        click.echo("All conflicts resolved (backups created).")
+
+        if result.warnings:
+            click.echo("\nResolution details:")
+            for w in result.warnings:
+                if "Conflict resolved" in w:
+                    click.echo(f"  {w}")
+        return True
+
+    # Auto-resolution failed — abort and report
+    _run_git(["merge", "--abort"], FRAGO_HOME, check=False)
+    result.errors.append(
+        "Could not auto-resolve all merge conflicts. "
+        "Please run 'frago sync' manually to review."
+    )
+    return False
+
+
 def _save_conflict_backups(conflicts: List[ConflictInfo], current_branch: str) -> None:
     """Save backup copies of conflicting files for user reference.
 
@@ -1585,6 +1828,12 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
     if remote_branch_result.returncode != 0:
         return False
 
+    # Check for unrelated histories BEFORE attempting rebase
+    if not _has_common_ancestor(current_branch):
+        merge_ok = _merge_unrelated_histories(result, current_branch)
+        return not merge_ok  # return True (has_conflicts) if merge failed
+
+    # --- Normal path: shared history exists, proceed with rebase ---
     # Pre-detect potential conflicts
     potential_conflicts = _detect_potential_conflicts(current_branch)
     if potential_conflicts:
@@ -1736,6 +1985,10 @@ def sync(
                 result.errors.append(msg)
                 return result
             click.echo(msg)
+
+        # Ensure git remote matches configured URL (handles --set-repo to a different repo)
+        if repo_url:
+            _ensure_remote_url(repo_url)
 
         # Ensure .gitignore exists
         _ensure_gitignore(FRAGO_HOME)
