@@ -40,8 +40,10 @@ SKILLS_METADATA_FILE = FRAGO_CLAUDE_DIR / "skills_metadata.json"
 SKILLS_METADATA_VERSION = 1
 
 # New sync metadata file using content hash (more reliable than mtime)
+# NOTE: metadata file location moves to workspaces/__system__/ after migration,
+# but we keep this constant for backward compatibility during transition
 SYNC_METADATA_FILE = FRAGO_CLAUDE_DIR / "sync_metadata.json"
-SYNC_METADATA_VERSION = 1
+SYNC_METADATA_VERSION = 2
 
 # Default max file size for sync (5MB)
 DEFAULT_SYNC_MAX_FILE_SIZE_MB = 5
@@ -102,6 +104,8 @@ class SyncResult:
     warnings: list[str] = field(default_factory=list)  # Warning messages
     is_public_repo: bool = False  # Whether it's a public repository
     skipped_large_files: list[str] = field(default_factory=list)  # Files skipped due to size
+    # Raw workspace change data: list of (status, file_path) from git diff
+    _raw_workspace_diffs: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -295,6 +299,7 @@ projects/*/logs/
 .claude/skills_metadata.json
 .claude/settings.local.json
 .device_id
+.workspace_migrated
 
 # Config files (contain sensitive information or device-specific)
 config.json
@@ -368,7 +373,7 @@ logs/
             # Commands directory (managed by frago itself)
             ".claude/commands/",
             # Local metadata (device-specific)
-            ".claude/skills_metadata.json", ".claude/settings.local.json", ".device_id",
+            ".claude/skills_metadata.json", ".claude/settings.local.json", ".device_id", ".workspace_migrated",
             # Device-specific config
             "gui_config.json",
             # System files
@@ -530,8 +535,34 @@ def _classify_file(file_path: str) -> tuple[str, str]:
     """
     path_obj = Path(file_path)
 
-    if file_path.startswith(".claude/skills/"):
-        # Skills are directories: .claude/skills/frago-xxx/... -> frago-xxx
+    if file_path.startswith("workspaces/__system__/skills/"):
+        # Workspace skills: workspaces/__system__/skills/xxx/... -> xxx
+        parts = path_obj.parts
+        if len(parts) >= 4:
+            return ("Skill", parts[3])
+        return ("Skill", path_obj.name)
+    elif file_path.startswith("workspaces/__system__/commands/"):
+        parts = path_obj.parts
+        if len(parts) >= 4:
+            return ("Command", parts[3])
+        return ("Command", path_obj.name)
+    elif file_path.startswith("workspaces/__system__/"):
+        # Other system resources (CLAUDE.md, memories/)
+        parts = path_obj.parts
+        if len(parts) >= 3:
+            return ("System", parts[2])
+        return ("System", path_obj.name)
+    elif file_path.startswith("workspaces/"):
+        # Project workspace resources
+        parts = path_obj.parts
+        if len(parts) >= 2:
+            workspace_name = parts[1]
+            canonical = workspace_name.replace("__", "/")
+            resource = "/".join(parts[2:]) if len(parts) > 2 else ""
+            return ("Project", f"{canonical}: {resource}" if resource else canonical)
+        return ("Project", path_obj.name)
+    elif file_path.startswith(".claude/skills/"):
+        # Legacy: .claude/skills/frago-xxx/... -> frago-xxx
         parts = path_obj.parts
         if len(parts) >= 3:
             return ("Skill", parts[2])
@@ -1889,9 +1920,13 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
             if line:
                 parts = line.split("\t")
                 if len(parts) >= 2:
+                    status = parts[0]
                     file_path = parts[1]
                     change = _get_file_change_info(FRAGO_HOME, file_path)
                     result.remote_updates.append(change)
+                    # Capture workspace-specific changes for deployment
+                    if file_path.startswith("workspaces/"):
+                        result._raw_workspace_diffs.append((status, file_path))
 
         # Display table immediately
         if result.remote_updates:
@@ -2030,9 +2065,38 @@ def sync(
                 result.warnings.append(warning_msg)
                 click.echo(f"⚠️  {warning_msg}")
 
-        # 1. Safety check - Sync changes from ~/.claude/ to ~/.frago/.claude/
-        click.echo("Checking local resource changes...")
-        _sync_claude_to_frago(result, dry_run)
+        # 0b. One-time migration: ~/.frago/.claude/ → workspaces/__system__/
+        if not dry_run:
+            from frago.tools.workspace import migrate_legacy_claude_dir
+            if migrate_legacy_claude_dir():
+                click.echo("Migrated legacy resources to workspaces/__system__/")
+
+        # 1. Collect workspace resources (replaces legacy _sync_claude_to_frago)
+        click.echo("Collecting workspace resources...")
+        from frago.init.config_manager import load_config
+        try:
+            config = load_config()
+            scan_roots = config.workspace_scan_roots
+            exclude_patterns = config.workspace_exclude_patterns
+        except Exception:
+            scan_roots = []
+            exclude_patterns = ["node_modules", ".venv", "__pycache__", ".git"]
+
+        if scan_roots:
+            from frago.tools.workspace import collect_workspaces
+            collect_result = collect_workspaces(scan_roots, exclude_patterns)
+            if collect_result.projects_collected:
+                click.echo(f"  Collected {len(collect_result.projects_collected)} project(s)")
+            if collect_result.unidentified:
+                for p in collect_result.unidentified:
+                    click.echo(f"  ⚠ Unidentified project (no git remote): {p}")
+        else:
+            click.echo("  No scan roots configured, collecting global resources only...")
+            from frago.tools.workspace import collect_workspaces
+            collect_workspaces([], exclude_patterns)
+
+        # NOTE: _sync_claude_to_frago (legacy frago-* skill sync) removed.
+        # Workspace collect now handles ALL skills via workspaces/__system__/skills/.
 
         # 1b. Save local changes
         if result.local_changes or _has_uncommitted_changes(FRAGO_HOME):
@@ -2055,9 +2119,49 @@ def sync(
                 _run_git(["add", "."], FRAGO_HOME, check=False)
                 _run_git(["commit", "-m", "chore: untrack ignored files after sync"], FRAGO_HOME, check=False)
 
-        # 3. Update local Claude Code
-        click.echo("Updating Claude Code resources...")
-        _sync_frago_to_claude(result, dry_run)
+        # 3. Detect workspace changes and deploy
+        if result._raw_workspace_diffs and not dry_run:
+            from frago.tools.deployment_agent import (
+                DeploymentAgent,
+                execute_deployment,
+                format_deployment_table,
+            )
+            from frago.tools.os_message import OSMessage, push_os_message
+            from frago.tools.workspace import detect_workspace_changes
+
+            ws_changes = detect_workspace_changes(result._raw_workspace_diffs)
+            if ws_changes.has_changes:
+                click.echo("Deploying workspace updates...")
+                agent = DeploymentAgent(scan_roots, exclude_patterns)
+                plan = agent.analyze(ws_changes)
+
+                if plan.has_actionable:
+                    deploy_msgs = execute_deployment(plan)
+                    for msg in deploy_msgs:
+                        click.echo(f"  {msg}")
+
+                if plan.has_pending:
+                    plan.save()
+                    click.echo("  Some resources need manual confirmation. Run 'frago workspace pending'.")
+
+                # Show deployment table
+                table = format_deployment_table(plan)
+                if table:
+                    click.echo(table)
+
+                # Push OS message (fire-and-forget)
+                push_os_message(OSMessage(
+                    type="workspace-deploy",
+                    title="Workspace sync update",
+                    content={
+                        "actions": plan.to_table_data(),
+                    },
+                    actions=["confirm", "skip"],
+                ))
+        elif not dry_run:
+            # No workspace changes from remote — still deploy system resources
+            # for backward compat (handles first-time setup)
+            _sync_frago_to_claude(result, dry_run)
 
         # 4. Push to your repository
         if not no_push:

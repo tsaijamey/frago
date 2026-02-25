@@ -141,10 +141,13 @@ def sync_cmd(
       frago sync --resolved <file>     # After manual merge
 
     \b
-    Synced content:
-      ~/.claude/skills/frago-*        # Skills
+    Synced content (via workspace):
+      ~/.claude/CLAUDE.md             # Global agent instructions
+      ~/.claude/commands/             # Slash commands
+      ~/.claude/skills/               # All skills
+      ~/.claude/projects/*/memory/    # Project memories
+      <project>/.claude/              # Project-level agent config
       ~/.frago/recipes/               # Recipes
-      ~/.frago/projects/              # Projects (metadata, scripts, outputs)
 
     \b
     Authentication:

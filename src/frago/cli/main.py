@@ -33,6 +33,7 @@ from .start_command import start
 from .agent_friendly import AgentFriendlyGroup
 from .cloud_commands import login_cmd, logout_cmd, whoami_cmd, config_group, market_group, install_group
 from .client_commands import client_group
+from .workspace_commands import workspace_group
 
 
 # Command group definitions (by user role)
@@ -40,7 +41,7 @@ COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
-    ("Environment", ["init", "status", "sync", "update", "autostart"]),
+    ("Environment", ["init", "status", "sync", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
 
@@ -335,6 +336,9 @@ cli.add_command(client_group)
 
 # Autostart command group - manage server autostart on boot
 cli.add_command(autostart_group)
+
+# Workspace command group - agent resource management
+cli.add_command(workspace_group)
 
 # Cloud commands - frago Cloud authentication, config, and market
 cli.add_command(login_cmd, name="login")
