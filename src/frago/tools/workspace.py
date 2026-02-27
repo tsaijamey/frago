@@ -159,14 +159,19 @@ def _discover_projects(
     scan_roots: list[str],
     exclude_patterns: list[str],
 ) -> list[ProjectInfo]:
-    """Discover projects by scanning configured root directories.
+    """Discover projects by scanning root directories.
+
+    If scan_roots is empty, auto-detect common development directories
+    under $HOME (repos, projects, work, src, dev, code, etc.).
 
     Only checks one level deep under each scan root.
     A directory is considered a project if it has .claude/ or .git/.
     """
+    effective_roots = scan_roots if scan_roots else _auto_detect_scan_roots()
+
     projects: dict[str, ProjectInfo] = {}
 
-    for root_str in scan_roots:
+    for root_str in effective_roots:
         root = Path(root_str).expanduser()
         if not root.exists() or not root.is_dir():
             continue
@@ -182,6 +187,33 @@ def _discover_projects(
             logger.warning("Permission denied scanning: %s", root)
 
     return list(projects.values())
+
+
+def _auto_detect_scan_roots() -> list[str]:
+    """Auto-detect common development directories under $HOME.
+
+    Scans well-known directory names that developers typically use.
+    Returns only directories that actually exist.
+    """
+    home = Path.home()
+    candidates = [
+        "repos", "Repos",
+        "projects", "Projects",
+        "work", "Work",
+        "src", "dev", "code",
+        "workspace", "Workspace",
+        "github", "GitHub",
+    ]
+    roots = []
+    for name in candidates:
+        path = home / name
+        if path.is_dir():
+            roots.append(str(path))
+
+    if not roots:
+        logger.debug("No common dev directories found, skipping auto-detect")
+
+    return roots
 
 
 def _is_excluded(path: Path, exclude_patterns: list[str]) -> bool:

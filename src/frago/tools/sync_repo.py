@@ -2118,18 +2118,13 @@ def sync(
             scan_roots = []
             exclude_patterns = ["node_modules", ".venv", "__pycache__", ".git"]
 
-        if scan_roots:
-            from frago.tools.workspace import collect_workspaces
-            collect_result = collect_workspaces(scan_roots, exclude_patterns)
-            if collect_result.projects_collected:
-                click.echo(f"  Collected {len(collect_result.projects_collected)} project(s)")
-            if collect_result.unidentified:
-                for p in collect_result.unidentified:
-                    click.echo(f"  ⚠ Unidentified project (no git remote): {p}")
-        else:
-            click.echo("  No scan roots configured, collecting global resources only...")
-            from frago.tools.workspace import collect_workspaces
-            collect_workspaces([], exclude_patterns)
+        from frago.tools.workspace import collect_workspaces
+        collect_result = collect_workspaces(scan_roots, exclude_patterns)
+        if collect_result.projects_collected:
+            click.echo(f"  Collected {len(collect_result.projects_collected)} project(s)")
+        if collect_result.unidentified:
+            for p in collect_result.unidentified:
+                click.echo(f"  ⚠ Unidentified project (no git remote): {p}")
 
         # NOTE: _sync_claude_to_frago (legacy frago-* skill sync) removed.
         # Workspace collect now handles ALL skills via workspaces/__system__/skills/.
