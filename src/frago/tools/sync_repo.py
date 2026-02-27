@@ -79,6 +79,8 @@ class ChangeType(Enum):
     ADDED = "A"
     MODIFIED = "M"
     DELETED = "D"
+    RENAMED = "R"
+    COPIED = "C"
 
 
 @dataclass
@@ -1883,26 +1885,60 @@ def _pull_remote_updates(result: SyncResult, dry_run: bool = False) -> bool:
     rebase_result = _run_git(["rebase", f"origin/{current_branch}"], FRAGO_HOME, check=False)
 
     if rebase_result.returncode != 0:
-        # There are conflicts
+        # Rebase failed — abort and fall back to merge with auto-resolve
         _run_git(["rebase", "--abort"], FRAGO_HOME, check=False)
+        # Ensure we're back on the local branch after abort
+        _run_git(["checkout", current_branch], FRAGO_HOME, check=False)
+        click.echo("Rebase failed due to conflicts, falling back to merge...")
 
-        # Get conflict files
-        result.conflicts = _get_changed_files(FRAGO_HOME)
+        merge_result = _run_git(
+            ["merge", "--no-ff", f"origin/{current_branch}",
+             "-m", "sync: merge remote updates (rebase fallback)"],
+            FRAGO_HOME, check=False
+        )
 
-        # Provide helpful message with resolution options
-        if result.conflicts:
-            click.echo("\nConflict resolution options:")
-            click.echo("  frago sync --keep-local <file>   # Keep your local version")
-            click.echo("  frago sync --keep-remote <file>  # Use remote version")
-            click.echo("  frago sync --resolved <file>     # After manual merge")
-            click.echo("\nBackup files created:")
-            for conflict in potential_conflicts:
-                if conflict.local_backup:
-                    click.echo(f"  {conflict.local_backup}")
-                if conflict.remote_backup:
-                    click.echo(f"  {conflict.remote_backup}")
+        if merge_result.returncode == 0:
+            # Merge succeeded without conflicts
+            click.echo("Merge completed successfully.")
+        else:
+            # Merge has conflicts — auto-resolve same as unrelated histories path
+            click.echo("Merge conflicts detected. Auto-resolving...")
+            if _auto_resolve_merge_conflicts(result):
+                _run_git(
+                    ["commit", "--no-edit"],
+                    FRAGO_HOME, check=False
+                )
+                click.echo("All conflicts resolved (backups created).")
+                if result.warnings:
+                    click.echo("\nResolution details:")
+                    for w in result.warnings:
+                        if "Conflict resolved" in w:
+                            click.echo(f"  {w}")
+            else:
+                # Auto-resolution failed — abort and let user handle
+                _run_git(["merge", "--abort"], FRAGO_HOME, check=False)
+                result.conflicts = _get_changed_files(FRAGO_HOME)
+                if result.conflicts:
+                    click.echo("\nConflict resolution options:")
+                    click.echo("  frago sync --keep-local <file>   # Keep your local version")
+                    click.echo("  frago sync --keep-remote <file>  # Use remote version")
+                    click.echo("  frago sync --resolved <file>     # After manual merge")
+                return True
 
-        return True
+        # Merge path succeeded — collect diff info for deployment
+        diff_result = _run_git(
+            ["diff", "--name-status", f"{old_head}..HEAD"],
+            FRAGO_HOME, check=False
+        )
+        for line in diff_result.stdout.strip().split("\n"):
+            if line:
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    change = _get_file_change_info(FRAGO_HOME, parts[1])
+                    result.remote_updates.append(change)
+                    if parts[1].startswith("workspaces/"):
+                        result._raw_workspace_diffs.append((parts[0], parts[1]))
+        return False
 
     # Get new HEAD
     new_head_result = _run_git(["rev-parse", "HEAD"], FRAGO_HOME, check=False)
