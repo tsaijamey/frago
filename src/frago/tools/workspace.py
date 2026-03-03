@@ -262,11 +262,18 @@ def _sync_dir(
     src: Path,
     dst: Path,
     exclude_names: Optional[set[str]] = None,
+    delete_extra: bool = True,
 ) -> bool:
     """Sync a directory tree. Returns True if anything changed.
 
     Resolves symlinks to copy actual content.
     Handles exclude_names to skip specific files/dirs at the top level.
+
+    Args:
+        delete_extra: If True (default), remove dst entries not in src (mirror).
+            If False, keep dst entries not in src (additive merge).
+            Use False when collecting to workspace — other devices may have
+            added files that don't exist locally.
     """
     if not src.exists() or not src.is_dir():
         return False
@@ -291,11 +298,11 @@ def _sync_dir(
             if _sync_file(real_item, dst / name):
                 changed = True
         elif real_item.is_dir():
-            if _sync_dir(real_item, dst / name):
+            if _sync_dir(real_item, dst / name, delete_extra=delete_extra):
                 changed = True
 
     # Remove entries in dst that no longer exist in src
-    if dst.exists():
+    if delete_extra and dst.exists():
         for item in dst.iterdir():
             if item.name not in src_names:
                 if exclude_names and item.name in exclude_names:
@@ -330,29 +337,39 @@ def _is_file_git_tracked(project_path: Path, rel_path: str) -> bool:
 
 
 def _collect_system_workspace(collected_memory_dirs: set[str]) -> bool:
-    """Collect ~/.claude/ global resources → workspaces/__system__/.
+    """Collect ~/.claude/ global resources ↔ workspaces/__system__/ (bidirectional).
 
-    Resources collected:
+    Resources synced:
       - CLAUDE.md (global agent instructions)
       - commands/ (slash commands)
       - skills/ (all skills, not just frago-*)
       - memories/ (Claude Code memories not mapped to any project)
+
+    Forward: local → workspace (additive merge)
+    Reverse: workspace → local (backfill from other devices)
 
     Returns True if anything changed.
     """
     target = SYSTEM_WORKSPACE
     changed = False
 
-    # CLAUDE.md
+    # CLAUDE.md — forward
     if _sync_file(CLAUDE_HOME / "CLAUDE.md", target / "CLAUDE.md"):
         changed = True
-
-    # commands/ (slash commands, including subdirectories)
-    if _sync_dir(CLAUDE_HOME / "commands", target / "commands"):
+    # CLAUDE.md — reverse (backfill if workspace has it but local doesn't)
+    if _sync_file(target / "CLAUDE.md", CLAUDE_HOME / "CLAUDE.md"):
         changed = True
 
-    # skills/ (ALL skills, not just frago-*)
-    if _sync_dir(CLAUDE_HOME / "skills", target / "skills"):
+    # commands/ — bidirectional
+    if _sync_dir(CLAUDE_HOME / "commands", target / "commands", delete_extra=False):
+        changed = True
+    if _sync_dir(target / "commands", CLAUDE_HOME / "commands", delete_extra=False):
+        changed = True
+
+    # skills/ — bidirectional
+    if _sync_dir(CLAUDE_HOME / "skills", target / "skills", delete_extra=False):
+        changed = True
+    if _sync_dir(target / "skills", CLAUDE_HOME / "skills", delete_extra=False):
         changed = True
 
     # Unmapped memories
@@ -389,7 +406,7 @@ def _collect_unmapped_memories(
 
         # Generate readable name
         readable_name = _encoded_to_readable_name(encoded_dir.name)
-        if _sync_dir(memory_src, target / readable_name):
+        if _sync_dir(memory_src, target / readable_name, delete_extra=False):
             changed = True
 
     return changed
@@ -433,7 +450,11 @@ def _collect_project_workspace(
     project: ProjectInfo,
     canonical_id: str,
 ) -> Optional[str]:
-    """Collect project .claude/ → workspaces/<canonical-id>/.
+    """Collect project .claude/ → workspaces/<canonical-id>/ (bidirectional).
+
+    1. Local → workspace: additive merge (don't delete workspace extras)
+    2. Workspace → local: backfill files that exist in workspace but not locally
+       (contributed by other devices)
 
     Returns the encoded memory directory name if project memory was found,
     None otherwise.
@@ -443,22 +464,28 @@ def _collect_project_workspace(
 
     # Project .claude/ contents (excluding device-specific files)
     src_claude = project.path / ".claude"
-    if src_claude.exists():
-        exclude = set(PROJECT_CLAUDE_EXCLUDE)
+    exclude = set(PROJECT_CLAUDE_EXCLUDE)
 
-        # Conditionally exclude: if tracked by project git, project git manages it
+    # Conditionally exclude: if tracked by project git, project git manages it
+    if src_claude.exists():
         if _is_file_git_tracked(project.path, ".claude/settings.json"):
             exclude.add("settings.json")
         if _is_file_git_tracked(project.path, ".claude/.mcp.json"):
             exclude.add(".mcp.json")
 
-        _sync_dir(src_claude, target / ".claude", exclude_names=exclude)
+        # Forward: local → workspace (additive, keep workspace extras)
+        _sync_dir(src_claude, target / ".claude", exclude_names=exclude, delete_extra=False)
+
+    # Reverse: workspace → local (backfill only, don't delete local extras)
+    workspace_claude = target / ".claude"
+    if workspace_claude.exists():
+        _sync_dir(workspace_claude, src_claude, exclude_names=exclude, delete_extra=False)
 
     # Project memory from Claude Code
     encoded_path = _encode_project_path(project.path)
     memory_src = CLAUDE_HOME / "projects" / encoded_path / "memory"
     if memory_src.exists():
-        _sync_dir(memory_src, target / ".project-memory")
+        _sync_dir(memory_src, target / ".project-memory", delete_extra=False)
         return encoded_path
 
     return None
