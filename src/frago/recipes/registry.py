@@ -99,21 +99,30 @@ class RecipeRegistry:
     def needs_rescan(self) -> bool:
         """Check if any recipe directory was modified since last scan.
 
+        Checks both top-level search paths and their subdirectories
+        (atomic/chrome, atomic/system, workflows) where recipes actually live.
+
         Returns:
-            True if any search path has been modified and needs re-scanning.
+            True if any directory has been modified and needs re-scanning.
         """
         for path in self.search_paths:
             if not path.exists():
                 continue
-            try:
-                current_mtime = path.stat().st_mtime
-                if path not in self._last_scan_mtimes:
+            # Check the top-level path and all recipe subdirectories
+            dirs_to_check = [path]
+            for subdir in ['atomic/chrome', 'atomic/system', 'workflows']:
+                sub = path / subdir
+                if sub.exists():
+                    dirs_to_check.append(sub)
+            for d in dirs_to_check:
+                try:
+                    current_mtime = d.stat().st_mtime
+                    if d not in self._last_scan_mtimes:
+                        return True
+                    if current_mtime > self._last_scan_mtimes[d]:
+                        return True
+                except OSError:
                     return True
-                if current_mtime > self._last_scan_mtimes[path]:
-                    return True
-            except OSError:
-                # Path became inaccessible, trigger rescan
-                return True
         return False
 
     def scan(self) -> None:
@@ -122,12 +131,19 @@ class RecipeRegistry:
         self._last_scan_mtimes.clear()
 
         for search_path in self.search_paths:
-            # Record mtime before scanning
+            # Record mtime for top-level path and subdirectories
             if search_path.exists():
                 try:
                     self._last_scan_mtimes[search_path] = search_path.stat().st_mtime
                 except OSError:
                     pass
+                for subdir in ['atomic/chrome', 'atomic/system', 'workflows']:
+                    sub = search_path / subdir
+                    if sub.exists():
+                        try:
+                            self._last_scan_mtimes[sub] = sub.stat().st_mtime
+                        except OSError:
+                            pass
             source = self._get_source_label(search_path)
             self._scan_directory(search_path, source)
 

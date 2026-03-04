@@ -30,12 +30,22 @@ async def list_recipes() -> List[RecipeItemResponse]:
     """List all available recipes.
 
     Returns a list of all recipes from both atomic and workflow categories.
-    Uses StateManager for unified state access.
+    Checks registry for disk changes on each request to pick up new recipes.
     """
     state_manager = StateManager.get_instance()
 
-    # Use StateManager if initialized
     if state_manager.is_initialized():
+        # Check if recipe directories changed since last StateManager load
+        try:
+            from frago.recipes.registry import get_registry
+            registry = get_registry()
+            if registry.needs_rescan():
+                from frago.recipes.registry import invalidate_registry
+                invalidate_registry()
+                await state_manager.refresh_recipes(broadcast=True)
+        except Exception:
+            pass
+
         recipes = state_manager.get_recipes()
         return [
             RecipeItemResponse(
