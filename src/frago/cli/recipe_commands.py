@@ -347,7 +347,15 @@ def run_recipe(
             click.echo(stderr_output, err=True)
             click.echo("--- End Logs ---", err=True)
 
-        # Handle output
+        # Execution summary to stderr (human-readable, doesn't pollute stdout)
+        click.echo(
+            f"[recipe] {result.get('recipe_name', name)} | "
+            f"{'OK' if result.get('success') else 'FAIL'} | "
+            f"{result.get('execution_time', 0):.1f}s",
+            err=True
+        )
+
+        # Handle output (stdout/file/clipboard now only contain recipe data)
         if output_target == 'stdout':
             OutputHandler.handle(result, 'stdout')
         elif output_target == 'file':
@@ -362,11 +370,14 @@ def run_recipe(
         # If execution fails, return non-zero exit code
         if not result.get('success'):
             click.echo("Recipe execution failed", err=True)
+            sys.exit(1)
 
     except RecipeError as e:
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 @recipe_group.command('validate')

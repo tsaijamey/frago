@@ -199,19 +199,10 @@ async def run_recipe(name: str, request: RecipeRunRequest = None):
     except Exception:
         pass  # Usage tracking failure must not break recipe execution
 
-    # Try to parse recipe output as JSON and return directly
-    # This allows recipes to return structured data (like generated_files)
-    output = result.get("output")
-    if output:
-        try:
-            return json.loads(output)
-        except json.JSONDecodeError:
-            pass
-
-    # Fallback: return raw output or success status
+    # RecipeService now returns structured dict directly (no json.loads needed)
     return {
         "success": True,
-        "output": output,
+        "data": result.get("data"),
         "duration_ms": result.get("duration_ms"),
     }
 

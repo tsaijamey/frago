@@ -153,7 +153,7 @@ class RecipeService:
         timeout: int = 300,
         async_exec: bool = False,
     ) -> Dict[str, Any]:
-        """Execute a recipe.
+        """Execute a recipe by directly calling RecipeRunner.
 
         Args:
             name: Recipe name.
@@ -162,49 +162,40 @@ class RecipeService:
             async_exec: If True, start recipe in background and return immediately.
 
         Returns:
-            Result dictionary with status, output, and optionally error.
+            Result dictionary with status, data, and optionally error.
         """
-        import subprocess
         import time
+
+        if async_exec:
+            # Background execution still needs subprocess for process isolation
+            cmd = ["frago", "recipe", "run", name]
+            if params:
+                cmd.extend(["--params", json.dumps(params)])
+            run_subprocess_background(cmd)
+            return {
+                "status": "ok",
+                "data": "Recipe started in background",
+                "error": None,
+                "duration_ms": 0,
+            }
 
         start_time = time.time()
 
         try:
-            cmd = ["frago", "recipe", "run", name]
-            if params:
-                cmd.extend(["--params", json.dumps(params)])
+            from frago.recipes.runner import RecipeRunner
 
-            if async_exec:
-                # Start process in background without waiting
-                run_subprocess_background(cmd)
-                return {
-                    "status": "ok",
-                    "output": "Recipe started in background",
-                    "error": None,
-                    "duration_ms": 0,
-                }
-
-            # Synchronous execution
-            result = run_subprocess(cmd, timeout=timeout)
+            runner = RecipeRunner()
+            result = runner.run(name, params or {})
+            # result is {"success", "data", "stderr", "error", "execution_time", ...}
 
             duration_ms = int((time.time() - start_time) * 1000)
 
-            if result.returncode == 0:
-                output = result.stdout.strip()
-                return {
-                    "status": "ok",
-                    "output": output,
-                    "error": None,
-                    "duration_ms": duration_ms,
-                }
-            else:
-                error = result.stderr.strip() or "Recipe execution failed"
-                return {
-                    "status": "error",
-                    "output": None,
-                    "error": error,
-                    "duration_ms": duration_ms,
-                }
+            return {
+                "status": "ok" if result.get("success") else "error",
+                "data": result.get("data"),
+                "error": result.get("error"),
+                "duration_ms": duration_ms,
+            }
 
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
@@ -214,7 +205,7 @@ class RecipeService:
             logger.error("Recipe execution failed: %s", e)
             return {
                 "status": "error",
-                "output": None,
+                "data": None,
                 "error": error_msg,
                 "duration_ms": duration_ms,
             }

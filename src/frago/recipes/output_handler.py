@@ -34,13 +34,18 @@ class OutputHandler:
 
     @staticmethod
     def _to_stdout(data: dict[str, Any]) -> None:
-        """Output to standard output"""
-        json_str = json.dumps(data, ensure_ascii=False, indent=2)
-        print(json_str)
+        """Output recipe data to standard output (only the recipe's actual result)"""
+        recipe_data = data.get("data")
+        if recipe_data is not None:
+            if isinstance(recipe_data, str):
+                print(recipe_data)
+            else:
+                print(json.dumps(recipe_data, ensure_ascii=False, indent=2))
+        # data is None in failure scenarios — error already went to stderr
 
     @staticmethod
     def _to_file(data: dict[str, Any], options: dict[str, Any]) -> None:
-        """Output to file"""
+        """Output recipe data to file (only the recipe's actual result)"""
         if 'path' not in options:
             raise ValueError("file output target requires 'path' option")
 
@@ -49,8 +54,9 @@ class OutputHandler:
         # Create parent directory (if needed)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write to file
-        json_str = json.dumps(data, ensure_ascii=False, indent=2)
+        # Write only the recipe's actual result
+        recipe_data = data.get("data", data)
+        json_str = json.dumps(recipe_data, ensure_ascii=False, indent=2)
         try:
             file_path.write_text(json_str, encoding='utf-8')
         except Exception as e:
@@ -58,7 +64,7 @@ class OutputHandler:
 
     @staticmethod
     def _to_clipboard(data: dict[str, Any]) -> None:
-        """Output to clipboard"""
+        """Output recipe data to clipboard (only the recipe's actual result)"""
         try:
             import pyperclip
         except ImportError:
@@ -70,7 +76,8 @@ class OutputHandler:
                 "  uv tool install 'frago-cli[clipboard]'  # for uv users"
             )
 
-        json_str = json.dumps(data, ensure_ascii=False)
+        recipe_data = data.get("data", data)
+        json_str = json.dumps(recipe_data, ensure_ascii=False)
         try:
             pyperclip.copy(json_str)
         except Exception as e:
