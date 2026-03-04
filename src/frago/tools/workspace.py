@@ -249,7 +249,10 @@ def _sync_file(src: Path, dst: Path) -> bool:
 
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    if dst.exists() and dst.is_file():
+    # Remove broken symlinks before writing
+    if dst.is_symlink():
+        dst.unlink()
+    elif dst.exists() and dst.is_file():
         # Compare content
         if src.read_bytes() == dst.read_bytes():
             return False
@@ -279,6 +282,10 @@ def _sync_dir(
         return False
 
     changed = False
+
+    # Remove broken symlink before creating directory
+    if dst.is_symlink():
+        dst.unlink()
     dst.mkdir(parents=True, exist_ok=True)
 
     # Track what exists in source (for deletion detection)
