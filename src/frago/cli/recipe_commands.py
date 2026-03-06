@@ -348,8 +348,10 @@ def run_recipe(
             click.echo("--- End Logs ---", err=True)
 
         # Execution summary to stderr (human-readable, doesn't pollute stdout)
+        exec_id = result.get('execution_id', '')
         click.echo(
             f"[recipe] {result.get('recipe_name', name)} | "
+            f"{exec_id + ' | ' if exec_id else ''}"
             f"{'OK' if result.get('success') else 'FAIL'} | "
             f"{result.get('execution_time', 0):.1f}s",
             err=True
@@ -377,6 +379,127 @@ def run_recipe(
         sys.exit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@recipe_group.command(name='executions')
+@click.option(
+    '--recipe',
+    'recipe_name',
+    type=str,
+    default=None,
+    help='Filter by recipe name'
+)
+@click.option(
+    '--limit',
+    type=int,
+    default=20,
+    help='Max results (default 20)'
+)
+@click.option(
+    '--status',
+    type=click.Choice(['pending', 'running', 'succeeded', 'failed', 'timeout', 'cancelled'], case_sensitive=False),
+    default=None,
+    help='Filter by status'
+)
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['table', 'json'], case_sensitive=False),
+    default='table',
+    help='Output format'
+)
+def list_executions(recipe_name: Optional[str], limit: int, status: Optional[str], output_format: str):
+    """List recent recipe executions"""
+    from frago.recipes.execution import ExecutionStatus
+    from frago.recipes.execution_store import ExecutionStore
+
+    store = ExecutionStore()
+    status_filter = ExecutionStatus(status) if status else None
+    executions = store.list_recent(recipe_name=recipe_name, limit=limit, status=status_filter)
+
+    if output_format == 'json':
+        output = [e.to_dict() for e in executions]
+        click.echo(json.dumps(output, ensure_ascii=False, indent=2))
+    else:
+        if not executions:
+            click.echo("No executions found")
+            return
+
+        click.echo(f"{'ID':<20} {'RECIPE':<25} {'STATUS':<12} {'DURATION':<10} {'CREATED'}")
+        click.echo("─" * 90)
+        for e in executions:
+            duration = f"{e.duration_ms}ms" if e.duration_ms is not None else "-"
+            created = e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "-"
+            click.echo(f"{e.id:<20} {e.recipe_name:<25} {e.status.value:<12} {duration:<10} {created}")
+
+
+@recipe_group.command(name='execution')
+@click.argument('execution_id')
+@click.option(
+    '--format',
+    'output_format',
+    type=click.Choice(['text', 'json'], case_sensitive=False),
+    default='text',
+    help='Output format'
+)
+def show_execution(execution_id: str, output_format: str):
+    """Show details of a specific execution"""
+    from frago.recipes.execution_store import ExecutionStore
+
+    store = ExecutionStore()
+    execution = store.get(execution_id)
+
+    if execution is None:
+        click.echo(f"Error: Execution '{execution_id}' not found", err=True)
+        sys.exit(1)
+
+    if output_format == 'json':
+        click.echo(json.dumps(execution.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        click.echo(f"Execution: {execution.id}")
+        click.echo("=" * 50)
+        click.echo(f"Recipe:     {execution.recipe_name}")
+        click.echo(f"Status:     {execution.status.value}")
+        click.echo(f"Runtime:    {execution.runtime or '-'}")
+        click.echo(f"Source:     {execution.source or '-'}")
+        click.echo(f"Created:    {execution.created_at}")
+        click.echo(f"Started:    {execution.started_at or '-'}")
+        click.echo(f"Completed:  {execution.completed_at or '-'}")
+        click.echo(f"Duration:   {execution.duration_ms}ms" if execution.duration_ms is not None else "Duration:   -")
+        click.echo(f"Exit code:  {execution.exit_code}" if execution.exit_code is not None else "Exit code:  -")
+        if execution.timeout_seconds:
+            click.echo(f"Timeout:    {execution.timeout_seconds}s")
+        if execution.params:
+            click.echo()
+            click.echo("Parameters")
+            click.echo("─" * 50)
+            click.echo(json.dumps(execution.params, ensure_ascii=False, indent=2))
+        if execution.data:
+            click.echo()
+            click.echo("Data")
+            click.echo("─" * 50)
+            click.echo(json.dumps(execution.data, ensure_ascii=False, indent=2))
+        if execution.error:
+            click.echo()
+            click.echo("Error")
+            click.echo("─" * 50)
+            click.echo(json.dumps(execution.error, ensure_ascii=False, indent=2))
+
+
+@recipe_group.command(name='cancel')
+@click.argument('execution_id')
+def cancel_execution(execution_id: str):
+    """Cancel a running execution"""
+    from frago.recipes.runner import RecipeRunner
+
+    runner = RecipeRunner()
+    cancelled = runner.cancel(execution_id)
+
+    if cancelled:
+        click.echo(f"Cancelled: {execution_id}", err=True)
+    else:
+        click.echo(f"Error: Execution '{execution_id}' not found or already finished", err=True)
         sys.exit(1)
 
 
