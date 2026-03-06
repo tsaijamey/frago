@@ -8,6 +8,8 @@ from .exceptions import (
     RecipeNotFoundError,
     RecipeValidationError,
 )
+from .execution import Execution, ExecutionStatus
+from .execution_store import ExecutionStore
 from .metadata import (
     RecipeMetadata,
     parse_metadata_file,
@@ -29,6 +31,10 @@ __all__ = [
     'RecipeExecutionError',
     'RecipeValidationError',
     'MetadataParseError',
+    # Execution
+    'Execution',
+    'ExecutionStatus',
+    'ExecutionStore',
     # Metadata
     'RecipeMetadata',
     'parse_metadata_file',
