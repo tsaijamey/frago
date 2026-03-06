@@ -7,13 +7,12 @@ Can be run as a module for daemon mode:
     python -m frago.server.runner --daemon
 """
 
+import contextlib
 import logging
 import signal
-import sys
 import threading
 import webbrowser
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import uvicorn
 
@@ -79,20 +78,20 @@ def run_server(
         logger.info(f"Using port {port}")
 
     # Update global server state
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     set_server_state(host, port, started_at)
 
     # Get server URL
     url = get_server_url(host, port)
 
     # Print startup message
-    print(f"\n  Frago Web Service")
-    print(f"  ─────────────────────────────────")
+    print("\n  Frago Web Service")
+    print("  ─────────────────────────────────")
     print(f"  Local:   {url}")
     print(f"  API:     {url}/api/docs")
     if reload:
-        print(f"  Reload:  enabled")
-    print(f"\n  Press Ctrl+C to stop\n")
+        print("  Reload:  enabled")
+    print("\n  Press Ctrl+C to stop\n")
 
     # Open browser if requested
     if auto_open:
@@ -125,7 +124,7 @@ def run_server(
     server = uvicorn.Server(config)
 
     # Handle graceful shutdown with child process cleanup
-    def signal_handler(signum, frame):
+    def signal_handler(_signum, _frame):
         logger.info("Shutting down server...")
         server.should_exit = True
 
@@ -163,10 +162,8 @@ def _cleanup_child_processes() -> None:
         # Wait and force kill if needed
         gone, alive = psutil.wait_procs(children, timeout=2)
         for child in alive:
-            try:
+            with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 child.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
 
         if children:
             logger.info(f"Cleaned up {len(children)} child process(es)")
@@ -186,11 +183,17 @@ def run_daemon_server() -> None:
     log_file = Path.home() / ".frago" / "server.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    from logging.handlers import RotatingFileHandler
+
     logging.basicConfig(
         level=logging.INFO,
         format="[%(asctime)s] %(levelname)s: %(message)s",
         handlers=[
-            logging.FileHandler(str(log_file), mode="a"),
+            RotatingFileHandler(
+                str(log_file), mode="a",
+                maxBytes=5 * 1024 * 1024,  # 5MB per file
+                backupCount=3,             # keep server.log.1 ~ .3
+            ),
         ],
     )
 

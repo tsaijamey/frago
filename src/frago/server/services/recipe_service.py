@@ -220,6 +220,7 @@ class RecipeService:
                 "data": result.get("data"),
                 "error": result.get("error"),
                 "duration_ms": duration_ms,
+                "execution_id": result.get("execution_id"),
             }
 
         except Exception as e:
@@ -234,3 +235,48 @@ class RecipeService:
                 "error": error_msg,
                 "duration_ms": duration_ms,
             }
+
+    @staticmethod
+    def get_execution(execution_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single execution by ID."""
+        from frago.recipes.execution_store import ExecutionStore
+
+        store = ExecutionStore()
+        execution = store.get(execution_id)
+        if execution:
+            return execution.to_dict()
+        return None
+
+    @staticmethod
+    def cancel_execution(execution_id: str) -> dict[str, Any]:
+        """Cancel a running execution.
+
+        Returns:
+            Dict with status and message.
+        """
+        from frago.recipes.runner import RecipeRunner
+
+        runner = RecipeRunner()
+        cancelled = runner.cancel(execution_id)
+        if cancelled:
+            return {"status": "ok", "message": f"Execution {execution_id} cancelled"}
+        return {"status": "error", "message": f"Execution {execution_id} not found or already finished"}
+
+    @staticmethod
+    def list_executions(
+        recipe_name: Optional[str] = None,
+        limit: int = 20,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List recent executions."""
+        from frago.recipes.execution import ExecutionStatus
+        from frago.recipes.execution_store import ExecutionStore
+
+        store = ExecutionStore()
+        status_filter = ExecutionStatus(status) if status else None
+        executions = store.list_recent(
+            recipe_name=recipe_name,
+            limit=limit,
+            status=status_filter,
+        )
+        return [e.to_dict() for e in executions]

@@ -210,7 +210,72 @@ async def run_recipe(name: str, request: RecipeRunRequest = None):
         "success": True,
         "data": result.get("data"),
         "duration_ms": result.get("duration_ms"),
+        "execution_id": result.get("execution_id"),
     }
+
+
+# ============================================================
+# Execution Endpoints
+# ============================================================
+
+
+@router.get("/executions")
+async def list_executions(
+    recipe_name: str = None,
+    limit: int = 20,
+    status: str = None,
+):
+    """List recent execution records.
+
+    Args:
+        recipe_name: Filter by recipe name
+        limit: Max results (default 20)
+        status: Filter by status (pending/running/succeeded/failed/timeout/cancelled)
+
+    Returns:
+        List of execution records
+    """
+    executions = RecipeService.list_executions(
+        recipe_name=recipe_name,
+        limit=limit,
+        status=status,
+    )
+    return executions
+
+
+@router.post("/executions/{execution_id}/cancel")
+async def cancel_execution(execution_id: str):
+    """Cancel a running execution.
+
+    Args:
+        execution_id: Execution ID
+
+    Returns:
+        Cancel result with status and message
+    """
+    result = RecipeService.cancel_execution(execution_id)
+    if result["status"] == "error":
+        raise HTTPException(status_code=404, detail=result["message"])
+    return result
+
+
+@router.get("/executions/{execution_id}")
+async def get_execution(execution_id: str):
+    """Get a single execution by ID.
+
+    Args:
+        execution_id: Execution ID
+
+    Returns:
+        Execution record
+
+    Raises:
+        HTTPException: 404 if not found
+    """
+    execution = RecipeService.get_execution(execution_id)
+    if execution is None:
+        raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
+    return execution
 
 
 # ============================================================
