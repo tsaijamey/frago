@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import run_subprocess, run_subprocess_background
+from frago.server.services.base import run_subprocess_background
 
 logger = logging.getLogger(__name__)
 
@@ -118,25 +118,47 @@ class RecipeService:
         Returns:
             Recipe dictionary or None if not found.
         """
-        # Try to get detailed info via frago recipe info command
         try:
-            result = run_subprocess(
-                ["frago", "recipe", "info", name, "--format", "json"],
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                data = json.loads(result.stdout)
-                # Read source code if script_path exists
-                script_path = data.get("script_path")
-                if script_path:
-                    try:
-                        data["source_code"] = Path(script_path).read_text(encoding="utf-8")
-                    except Exception as e:
-                        logger.warning("Failed to read recipe source code: %s", e)
-                        data["source_code"] = None
-                return data
+            from frago.recipes.registry import get_registry, invalidate_registry
+
+            registry = get_registry()
+            if registry.needs_rescan():
+                invalidate_registry()
+                registry = get_registry()
+            recipe = registry.find(name)
+
+            m = recipe.metadata
+            data = {
+                "name": m.name,
+                "type": m.type,
+                "runtime": m.runtime,
+                "version": m.version,
+                "source": recipe.source,
+                "base_dir": str(recipe.base_dir) if recipe.base_dir else None,
+                "script_path": str(recipe.script_path),
+                "metadata_path": str(recipe.metadata_path),
+                "description": m.description,
+                "use_cases": m.use_cases,
+                "tags": m.tags,
+                "output_targets": m.output_targets,
+                "inputs": m.inputs,
+                "outputs": m.outputs,
+                "dependencies": m.dependencies,
+                "env": m.env,
+                "flow": m.flow,
+            }
+
+            # Read source code if script_path exists
+            if recipe.script_path:
+                try:
+                    data["source_code"] = Path(recipe.script_path).read_text(encoding="utf-8")
+                except Exception as e:
+                    logger.warning("Failed to read recipe source code: %s", e)
+                    data["source_code"] = None
+
+            return data
         except Exception as e:
-            logger.warning("Failed to get recipe info from command: %s", e)
+            logger.warning("Failed to get recipe from registry: %s", e)
 
         # Fallback to list lookup
         recipes = cls.get_recipes()
@@ -154,6 +176,9 @@ class RecipeService:
         async_exec: bool = False,
     ) -> Dict[str, Any]:
         """Execute a recipe by directly calling RecipeRunner.
+
+        This is a synchronous blocking method. Callers in async context
+        MUST use asyncio.to_thread() to avoid blocking the event loop.
 
         Args:
             name: Recipe name.

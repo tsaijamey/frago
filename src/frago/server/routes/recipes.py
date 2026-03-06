@@ -182,11 +182,17 @@ async def run_recipe(name: str, request: RecipeRunRequest = None):
         raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
 
     # Execute recipe
+    import asyncio
+
     params = request.params if request else None
     timeout = request.timeout if request else 300
     async_exec = request.async_exec if request else False
 
-    result = RecipeService.run_recipe(name, params, timeout, async_exec)
+    # Run in thread pool to avoid blocking the event loop
+    # (RecipeRunner.run() calls subprocess.run() which is synchronous)
+    result = await asyncio.to_thread(
+        RecipeService.run_recipe, name, params, timeout, async_exec
+    )
 
     # Check for error
     if result.get("status") == "error":
