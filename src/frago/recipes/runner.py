@@ -58,6 +58,7 @@ class RecipeRunner:
         workflow_context: WorkflowContext | None = None,
         source: str | None = None,
         timeout: int | None = None,
+        step_index: int | None = None,
     ) -> dict[str, Any]:
         """
         Execute the specified Recipe
@@ -113,6 +114,7 @@ class RecipeRunner:
             source=source,
             timeout_seconds=timeout,
             workflow_id=getattr(workflow_context, 'execution_id', None) if workflow_context else None,
+            step_index=step_index,
         )
 
         # Transition to RUNNING

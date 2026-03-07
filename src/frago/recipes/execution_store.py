@@ -143,6 +143,29 @@ class ExecutionStore:
                     executions.append(ex)
         return executions
 
+    def list_by_workflow(self, workflow_id: str) -> list[Execution]:
+        """List all executions belonging to a workflow, ordered by step_index.
+
+        Args:
+            workflow_id: The parent workflow execution ID.
+
+        Returns:
+            List of Execution objects sorted by step_index (nulls last).
+        """
+        index = self._load_index()
+        executions = []
+        for entry in index:
+            if entry.get("workflow_id") != workflow_id:
+                continue
+            file_path = self._file_path_from_entry(entry)
+            if file_path and file_path.exists():
+                ex = self._load_execution_file(file_path)
+                if ex:
+                    executions.append(ex)
+        # Sort by step_index (None sorts last)
+        executions.sort(key=lambda e: (e.step_index is None, e.step_index or 0))
+        return executions
+
     def cleanup(self, _max_age_days: int = 30, max_count: int = 1000) -> int:
         """Remove old execution records. Returns count of removed entries."""
         index = self._load_index()
@@ -254,6 +277,7 @@ class ExecutionStore:
             "recipe_name": execution.recipe_name,
             "status": execution.status.value,
             "created_at": execution.created_at.isoformat(),
+            "workflow_id": execution.workflow_id,
         }
 
         # Update existing or prepend

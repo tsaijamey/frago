@@ -263,6 +263,15 @@ class RecipeService:
         return {"status": "error", "message": f"Execution {execution_id} not found or already finished"}
 
     @staticmethod
+    def list_workflow_executions(workflow_id: str) -> list[dict[str, Any]]:
+        """List all executions belonging to a workflow."""
+        from frago.recipes.execution_store import ExecutionStore
+
+        store = ExecutionStore()
+        executions = store.list_by_workflow(workflow_id)
+        return [e.to_dict() for e in executions]
+
+    @staticmethod
     def list_executions(
         recipe_name: Optional[str] = None,
         limit: int = 20,

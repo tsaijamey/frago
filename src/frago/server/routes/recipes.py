@@ -224,6 +224,7 @@ async def list_executions(
     recipe_name: str = None,
     limit: int = 20,
     status: str = None,
+    workflow_id: str = None,
 ):
     """List recent execution records.
 
@@ -231,10 +232,13 @@ async def list_executions(
         recipe_name: Filter by recipe name
         limit: Max results (default 20)
         status: Filter by status (pending/running/succeeded/failed/timeout/cancelled)
+        workflow_id: Filter by parent workflow execution ID
 
     Returns:
         List of execution records
     """
+    if workflow_id:
+        return RecipeService.list_workflow_executions(workflow_id)
     executions = RecipeService.list_executions(
         recipe_name=recipe_name,
         limit=limit,

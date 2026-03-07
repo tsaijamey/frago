@@ -403,20 +403,30 @@ def run_recipe(
     help='Filter by status'
 )
 @click.option(
+    '--workflow',
+    'workflow_id',
+    type=str,
+    default=None,
+    help='Filter by parent workflow execution ID'
+)
+@click.option(
     '--format',
     'output_format',
     type=click.Choice(['table', 'json'], case_sensitive=False),
     default='table',
     help='Output format'
 )
-def list_executions(recipe_name: Optional[str], limit: int, status: Optional[str], output_format: str):
+def list_executions(recipe_name: Optional[str], limit: int, status: Optional[str], workflow_id: Optional[str], output_format: str):
     """List recent recipe executions"""
     from frago.recipes.execution import ExecutionStatus
     from frago.recipes.execution_store import ExecutionStore
 
     store = ExecutionStore()
-    status_filter = ExecutionStatus(status) if status else None
-    executions = store.list_recent(recipe_name=recipe_name, limit=limit, status=status_filter)
+    if workflow_id:
+        executions = store.list_by_workflow(workflow_id)
+    else:
+        status_filter = ExecutionStatus(status) if status else None
+        executions = store.list_recent(recipe_name=recipe_name, limit=limit, status=status_filter)
 
     if output_format == 'json':
         output = [e.to_dict() for e in executions]
@@ -470,6 +480,10 @@ def show_execution(execution_id: str, output_format: str):
         click.echo(f"Exit code:  {execution.exit_code}" if execution.exit_code is not None else "Exit code:  -")
         if execution.timeout_seconds:
             click.echo(f"Timeout:    {execution.timeout_seconds}s")
+        if execution.workflow_id:
+            click.echo(f"Workflow:   {execution.workflow_id}")
+        if execution.step_index is not None:
+            click.echo(f"Step:       {execution.step_index}")
         if execution.params:
             click.echo()
             click.echo("Parameters")
