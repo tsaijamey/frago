@@ -52,6 +52,7 @@ export default function NewTaskInput({
           className={`task-input-btn ${value.trim() ? 'visible' : ''}`}
           onClick={onSend}
           disabled={disabled || !value.trim()}
+          aria-label="Send message"
         >
           <Send className="icon-scaled-md" />
         </button>
