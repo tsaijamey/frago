@@ -16,6 +16,32 @@ from frago.server.services.base import get_utf8_env, run_subprocess_background
 logger = logging.getLogger(__name__)
 
 
+def _resolve_project_path(session_id: str) -> str:
+    """Resolve project_path from session metadata for correct cwd.
+
+    Lookup order:
+    1. metadata.json project_path (if directory exists)
+    2. Decode from source_file path
+    3. Fallback to Path.home()
+    """
+    from frago.session.storage import read_metadata
+    from frago.session.sync import decode_project_path
+
+    session = read_metadata(session_id)
+    if session:
+        if session.project_path and Path(session.project_path).is_dir():
+            return session.project_path
+
+        if session.source_file:
+            # source_file: ~/.claude/projects/-home-yammi/xxx.jsonl
+            encoded_dir = Path(session.source_file).parent.name
+            decoded = decode_project_path(encoded_dir)
+            if Path(decoded).is_dir():
+                return decoded
+
+    return str(Path.home())
+
+
 class AgentService:
     """Service for agent task execution."""
 
@@ -60,15 +86,15 @@ class AgentService:
             # Build command
             # Pass --source web to mark this session as created from web interface
             cmd = [frago_path, "agent", "--yes", "--source", "web", "--prompt-file", str(prompt_file)]
-            if project_path:
-                cmd.extend(["--project", project_path])
 
-            # Start process in background
+            # Start process in background with correct cwd
+            cwd = project_path or str(Path.home())
             with open(log_file, "w", encoding="utf-8") as f:
                 run_subprocess_background(
                     cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
+                    cwd=cwd,
                 )
 
             title = prompt[:50] + "..." if len(prompt) > 50 else prompt
@@ -141,11 +167,13 @@ class AgentService:
                 "--prompt-file",
                 str(prompt_file),
             ]
+            cwd = _resolve_project_path(session_id)
             with open(log_file, "w", encoding="utf-8") as f:
                 run_subprocess_background(
                     cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
+                    cwd=cwd,
                 )
 
             title = prompt[:50] + "..." if len(prompt) > 50 else prompt
