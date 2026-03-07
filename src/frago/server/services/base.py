@@ -119,6 +119,8 @@ def get_utf8_env() -> Dict[str, str]:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    # Remove CLAUDECODE to prevent nested session detection when launching claude CLI
+    env.pop("CLAUDECODE", None)
     return env
 
 
