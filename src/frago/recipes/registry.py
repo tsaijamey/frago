@@ -97,29 +97,40 @@ class RecipeRegistry:
             pass
 
     def needs_rescan(self) -> bool:
-        """Check if any recipe directory was modified since last scan.
+        """Check if any recipe directory or metadata file was modified since last scan.
 
-        Checks both top-level search paths and their subdirectories
-        (atomic/chrome, atomic/system, workflows) where recipes actually live.
+        Checks top-level search paths, category subdirectories, individual recipe
+        directories, AND recipe.md files. On Linux, editing a file's content updates
+        the file's mtime but NOT the parent directory's mtime, so we must track
+        recipe.md files directly to detect in-place edits.
 
         Returns:
-            True if any directory has been modified and needs re-scanning.
+            True if any path has been modified and needs re-scanning.
         """
         for path in self.search_paths:
             if not path.exists():
                 continue
-            # Check the top-level path and all recipe subdirectories
-            dirs_to_check = [path]
+            paths_to_check = [path]
             for subdir in ['atomic/chrome', 'atomic/system', 'workflows']:
                 sub = path / subdir
                 if sub.exists():
-                    dirs_to_check.append(sub)
-            for d in dirs_to_check:
-                try:
-                    current_mtime = d.stat().st_mtime
-                    if d not in self._last_scan_mtimes:
+                    paths_to_check.append(sub)
+                    try:
+                        for recipe_dir in sub.iterdir():
+                            if recipe_dir.is_dir():
+                                paths_to_check.append(recipe_dir)
+                                # Track recipe.md file itself
+                                metadata_file = recipe_dir / 'recipe.md'
+                                if metadata_file.exists():
+                                    paths_to_check.append(metadata_file)
+                    except OSError:
                         return True
-                    if current_mtime > self._last_scan_mtimes[d]:
+            for p in paths_to_check:
+                try:
+                    current_mtime = p.stat().st_mtime
+                    if p not in self._last_scan_mtimes:
+                        return True
+                    if current_mtime > self._last_scan_mtimes[p]:
                         return True
                 except OSError:
                     return True
@@ -131,7 +142,7 @@ class RecipeRegistry:
         self._last_scan_mtimes.clear()
 
         for search_path in self.search_paths:
-            # Record mtime for top-level path and subdirectories
+            # Record mtime for top-level path, subdirectories, and recipe dirs
             if search_path.exists():
                 try:
                     self._last_scan_mtimes[search_path] = search_path.stat().st_mtime
@@ -142,6 +153,19 @@ class RecipeRegistry:
                     if sub.exists():
                         try:
                             self._last_scan_mtimes[sub] = sub.stat().st_mtime
+                        except OSError:
+                            pass
+                        # Record mtime for each recipe directory
+                        # NOTE: recipe.md file mtime is recorded in _register_recipe()
+                        # only on successful parse. Failed parses leave no mtime record,
+                        # so needs_rescan() will trigger a re-scan next time.
+                        try:
+                            for recipe_dir in sub.iterdir():
+                                if recipe_dir.is_dir():
+                                    try:
+                                        self._last_scan_mtimes[recipe_dir] = recipe_dir.stat().st_mtime
+                                    except OSError:
+                                        pass
                         except OSError:
                             pass
             source = self._get_source_label(search_path)
@@ -206,8 +230,17 @@ class RecipeRegistry:
             # Store by source (same-name recipes under the same source still override)
             self.recipes[metadata.name][source] = recipe
 
+            # Record recipe.md mtime only after successful registration.
+            # If parse/validation failed, we intentionally skip this so that
+            # needs_rescan() detects the unrecorded file and triggers re-scan.
+            try:
+                self._last_scan_mtimes[metadata_path] = metadata_path.stat().st_mtime
+            except OSError:
+                pass
+
         except Exception:
-            # Parse or validation failed, skip this Recipe (silently)
+            # Parse or validation failed, skip this Recipe.
+            # recipe.md mtime is NOT recorded, so next needs_rescan() will retry.
             pass
 
     def _find_script_file(self, recipe_dir: Path, runtime: str) -> Optional[Path]:
