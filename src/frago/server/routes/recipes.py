@@ -37,10 +37,9 @@ async def list_recipes() -> List[RecipeItemResponse]:
     if state_manager.is_initialized():
         # Check if recipe directories changed since last StateManager load
         try:
-            from frago.recipes.registry import get_registry
+            from frago.recipes.registry import get_registry, invalidate_registry
             registry = get_registry()
             if registry.needs_rescan():
-                from frago.recipes.registry import invalidate_registry
                 invalidate_registry()
                 await state_manager.refresh_recipes(broadcast=True)
         except Exception:
