@@ -8,8 +8,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import run_subprocess_background
-
 logger = logging.getLogger(__name__)
 
 
@@ -173,36 +171,21 @@ class RecipeService:
         name: str,
         params: Optional[Dict[str, Any]] = None,
         timeout: int = 300,
-        async_exec: bool = False,
     ) -> Dict[str, Any]:
-        """Execute a recipe by directly calling RecipeRunner.
+        """Execute a recipe synchronously.
 
-        This is a synchronous blocking method. Callers in async context
+        This is a blocking method. Callers in async context
         MUST use asyncio.to_thread() to avoid blocking the event loop.
 
         Args:
             name: Recipe name.
             params: Optional parameters.
             timeout: Timeout in seconds (default 300).
-            async_exec: If True, start recipe in background and return immediately.
 
         Returns:
             Result dictionary with status, data, and optionally error.
         """
         import time
-
-        if async_exec:
-            # Background execution still needs subprocess for process isolation
-            cmd = ["frago", "recipe", "run", name]
-            if params:
-                cmd.extend(["--params", json.dumps(params)])
-            run_subprocess_background(cmd)
-            return {
-                "status": "ok",
-                "data": "Recipe started in background",
-                "error": None,
-                "duration_ms": 0,
-            }
 
         start_time = time.time()
 
@@ -211,7 +194,6 @@ class RecipeService:
 
             runner = RecipeRunner()
             result = runner.run(name, params or {})
-            # result is {"success", "data", "stderr", "error", "execution_time", ...}
 
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -235,6 +217,29 @@ class RecipeService:
                 "error": error_msg,
                 "duration_ms": duration_ms,
             }
+
+    @staticmethod
+    def run_recipe_async(
+        name: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: int = 300,
+    ) -> str:
+        """Execute a recipe asynchronously, return execution_id.
+
+        Validates parameters synchronously, then submits to background thread pool.
+
+        Args:
+            name: Recipe name.
+            params: Optional parameters.
+            timeout: Timeout in seconds (default 300).
+
+        Returns:
+            execution_id for polling via GET /api/executions/{id}.
+        """
+        from frago.recipes.runner import RecipeRunner
+
+        runner = RecipeRunner()
+        return runner.run_async(name, params, timeout=timeout)
 
     @staticmethod
     def get_execution(execution_id: str) -> Optional[Dict[str, Any]]:

@@ -162,7 +162,7 @@ async def get_recipe(name: str) -> RecipeDetailResponse:
 
 @router.post("/recipes/{name}/run")
 async def run_recipe(name: str, request: RecipeRunRequest = None):
-    """Execute a recipe.
+    """Execute a recipe synchronously.
 
     Args:
         name: Recipe name
@@ -174,27 +174,21 @@ async def run_recipe(name: str, request: RecipeRunRequest = None):
     Raises:
         HTTPException: 404 if recipe not found
     """
-    import json
-
     # Verify recipe exists
     recipe = RecipeService.get_recipe(name)
     if recipe is None:
         raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
 
-    # Execute recipe
     import asyncio
 
     params = request.params if request else None
     timeout = request.timeout if request else 300
-    async_exec = request.async_exec if request else False
 
     # Run in thread pool to avoid blocking the event loop
-    # (RecipeRunner.run() calls subprocess.run() which is synchronous)
     result = await asyncio.to_thread(
-        RecipeService.run_recipe, name, params, timeout, async_exec
+        RecipeService.run_recipe, name, params, timeout
     )
 
-    # Check for error
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error"))
 
@@ -203,14 +197,55 @@ async def run_recipe(name: str, request: RecipeRunRequest = None):
         from frago.recipes.usage_tracker import record_usage
         record_usage(name)
     except Exception:
-        pass  # Usage tracking failure must not break recipe execution
+        pass
 
-    # RecipeService now returns structured dict directly (no json.loads needed)
     return {
         "success": True,
         "data": result.get("data"),
         "duration_ms": result.get("duration_ms"),
         "execution_id": result.get("execution_id"),
+    }
+
+
+@router.post("/recipes/{name}/run-async")
+async def run_recipe_async(name: str, request: RecipeRunRequest = None):
+    """Execute a recipe asynchronously, return execution_id immediately.
+
+    Client polls GET /api/executions/{id} for status updates.
+
+    Args:
+        name: Recipe name
+        request: Optional execution parameters
+
+    Returns:
+        execution_id, status, and poll URL
+
+    Raises:
+        HTTPException: 404 if recipe not found, 400 on validation error
+    """
+    recipe = RecipeService.get_recipe(name)
+    if recipe is None:
+        raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
+
+    params = request.params if request else None
+    timeout = request.timeout if request else 300
+
+    try:
+        execution_id = RecipeService.run_recipe_async(name, params, timeout)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Record usage
+    try:
+        from frago.recipes.usage_tracker import record_usage
+        record_usage(name)
+    except Exception:
+        pass
+
+    return {
+        "execution_id": execution_id,
+        "status": "pending",
+        "poll_url": f"/api/executions/{execution_id}",
     }
 
 

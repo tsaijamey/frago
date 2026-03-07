@@ -136,6 +136,12 @@ def run_server(
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     finally:
+        # Shut down background recipe executor (don't wait for running recipes)
+        try:
+            from frago.recipes.background import shutdown_executor
+            shutdown_executor(wait=False)
+        except Exception:
+            pass
         # Clean up child processes (important for reload mode)
         _cleanup_child_processes()
         logger.info("Server shutdown complete")
