@@ -286,6 +286,11 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
     default=300,
     help='Execution timeout (seconds)'
 )
+@click.option(
+    '--async', 'async_exec',
+    is_flag=True,
+    help='Run in background, print execution_id'
+)
 def run_recipe(
     name: str,
     source: Optional[str],
@@ -294,7 +299,8 @@ def run_recipe(
     env_vars: tuple,
     output_file: Optional[str],
     output_clipboard: bool,
-    timeout: int
+    timeout: int,
+    async_exec: bool,
 ):
     """Execute specified recipe"""
     try:
@@ -317,6 +323,19 @@ def run_recipe(
                 sys.exit(2)
             key, value = env_var.split('=', 1)
             env_overrides[key] = value
+
+        # Async execution: submit to background, print execution_id, return
+        if async_exec:
+            runner = RecipeRunner()
+            execution_id = runner.run_async(
+                name,
+                params_dict,
+                source=source,
+                timeout=timeout,
+            )
+            click.echo(execution_id)
+            click.echo(f"Started: {execution_id}", err=True)
+            return
 
         # Determine output target
         if output_clipboard:
