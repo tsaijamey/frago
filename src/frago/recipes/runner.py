@@ -117,8 +117,91 @@ class RecipeRunner:
             step_index=step_index,
         )
 
+        return self._run_with_execution(
+            execution_id=execution.id,
+            name=name,
+            recipe=recipe,
+            params=params,
+            resolved_env=resolved_env,
+            timeout=timeout,
+        )
+
+    def run_async(
+        self,
+        name: str,
+        params: dict[str, Any] | None = None,
+        source: str | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """Execute recipe asynchronously, return execution_id immediately.
+
+        Validates parameters synchronously (fail fast), then submits
+        execution to the background thread pool.
+
+        Args:
+            name: Recipe name.
+            params: Input parameters.
+            source: Recipe source filter.
+            timeout: Timeout in seconds (default 300 for async).
+
+        Returns:
+            execution_id for status polling / cancellation.
+        """
+        from .background import get_executor
+
+        params = params or {}
+
+        # Fail fast: find/validate/resolve before submitting to background
+        recipe = self.registry.find(name, source=source)
+        self._validate_params(recipe.metadata, params)
+        resolved_env = self.env_loader.resolve_for_recipe(
+            env_definitions=recipe.metadata.env,
+            cli_overrides=None,
+            workflow_context=None,
+        )
+
+        # Pre-register Execution (PENDING state)
+        execution = self.store.create(
+            recipe_name=name,
+            params=params,
+            source=source,
+            timeout_seconds=timeout,
+        )
+
+        def _run_in_background():
+            try:
+                self._run_with_execution(
+                    execution_id=execution.id,
+                    name=name,
+                    recipe=recipe,
+                    params=params,
+                    resolved_env=resolved_env,
+                    timeout=timeout,
+                )
+            except Exception:
+                logger.exception("Background recipe execution failed: %s", name)
+
+        executor = get_executor()
+        executor.submit(_run_in_background)
+
+        return execution.id
+
+    def _run_with_execution(
+        self,
+        execution_id: str,
+        name: str,
+        recipe: Any,
+        params: dict[str, Any],
+        resolved_env: dict[str, str],
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
+        """Core execution logic after find/validate/resolve/create.
+
+        Handles: transition(RUNNING) -> subprocess execution -> complete(terminal).
+        Called by both run() (sync) and run_async() (background thread).
+        """
         # Transition to RUNNING
-        self.store.transition(execution.id, ExecutionStatus.RUNNING)
+        self.store.transition(execution_id, ExecutionStatus.RUNNING)
 
         # Record start time
         start_time = time.time()
@@ -129,13 +212,13 @@ class RecipeRunner:
 
             # Execute Recipe based on runtime type
             if recipe.metadata.runtime == 'chrome-js':
-                result_data = self._run_chrome_js(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution.id)
+                result_data = self._run_chrome_js(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id)
             elif recipe.metadata.runtime == 'python':
                 # Check if system Python is needed (for scripts that depend on system packages like dbus)
                 use_system_python = getattr(recipe.metadata, 'system_packages', False)
-                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python, timeout=effective_timeout, execution_id=execution.id)
+                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python, timeout=effective_timeout, execution_id=execution_id)
             elif recipe.metadata.runtime == 'shell':
-                result_data = self._run_shell(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution.id)
+                result_data = self._run_shell(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id)
             else:
                 raise RecipeExecutionError(
                     recipe_name=name,
@@ -149,7 +232,7 @@ class RecipeRunner:
 
             # Complete Execution
             self.store.complete(
-                execution.id,
+                execution_id,
                 status=ExecutionStatus.SUCCEEDED,
                 data=result_data.get("data"),
                 duration_ms=int(execution_time * 1000),
@@ -164,7 +247,7 @@ class RecipeRunner:
                 "stderr": result_data.get("stderr", ""),
                 "error": None,
                 "execution_time": execution_time,
-                "execution_id": execution.id,
+                "execution_id": execution_id,
                 "recipe_name": name,
                 "runtime": recipe.metadata.runtime
             }
@@ -175,7 +258,7 @@ class RecipeRunner:
                       if "timeout" in str(e).lower()
                       else ExecutionStatus.FAILED)
             self.store.complete(
-                execution.id,
+                execution_id,
                 status=status,
                 error={"code": "EXECUTION_ERROR", "message": str(e)},
                 exit_code=getattr(e, 'exit_code', 1),
@@ -187,7 +270,7 @@ class RecipeRunner:
             # Convert other exceptions to RecipeExecutionError
             execution_time = time.time() - start_time
             self.store.complete(
-                execution.id,
+                execution_id,
                 status=ExecutionStatus.FAILED,
                 error={"code": "EXECUTION_ERROR", "message": str(e)},
                 exit_code=-1,
