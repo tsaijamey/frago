@@ -179,11 +179,21 @@ export async function runRecipe(
   name: string,
   params?: Record<string, unknown>,
   timeout?: number,
-  async_exec?: boolean
 ): Promise<TaskItem> {
   return fetchApi<TaskItem>(`/recipes/${encodeURIComponent(name)}/run`, {
     method: 'POST',
-    body: JSON.stringify({ params, timeout, async_exec }),
+    body: JSON.stringify({ params, timeout }),
+  });
+}
+
+export async function runRecipeAsync(
+  name: string,
+  params?: Record<string, unknown>,
+  timeout?: number,
+): Promise<{ execution_id: string; status: string; poll_url: string }> {
+  return fetchApi(`/recipes/${encodeURIComponent(name)}/run-async`, {
+    method: 'POST',
+    body: JSON.stringify({ params, timeout }),
   });
 }
 
