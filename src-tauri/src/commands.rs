@@ -316,6 +316,13 @@ pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
 
     let frago = resolve_frago_path();
 
+    // Stop any existing daemon that might hold the port
+    let _ = Command::new(&frago)
+        .args(["server", "stop"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
     // Log server output to a file for debugging
     let log_dir = home_dir().join(".frago");
     let _ = std::fs::create_dir_all(&log_dir);
