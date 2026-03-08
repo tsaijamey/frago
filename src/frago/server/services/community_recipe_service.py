@@ -51,6 +51,13 @@ class CommunityRecipeService:
             logger.debug("Community recipes already initialized")
             return
 
+        # Skip if rate limited — never block server startup
+        rate_manager = self._get_rate_limit_manager()
+        if rate_manager and rate_manager.should_skip_refresh():
+            logger.info("Skipping community refresh due to rate limits")
+            self._cache = []
+            return
+
         try:
             await self._do_refresh()
             logger.info(f"Community recipes initialized, count={len(self._cache or [])}")
