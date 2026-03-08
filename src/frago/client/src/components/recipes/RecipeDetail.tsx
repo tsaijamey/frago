@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { getRecipeDetail, runRecipe, openPath, getRecipeEnvRequirements } from '@/api';
+import { getRecipeDetail, runRecipe, runRecipeAsync, openPath, getRecipeEnvRequirements } from '@/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { ExternalLink, ChevronDown, ChevronRight, Lightbulb, Settings, Link2, Code, Key, GitBranch, ArrowRight, Check, X } from 'lucide-react';
 import type { RecipeDetail as RecipeDetailType, RecipeEnvRequirement } from '@/types/pywebview';
@@ -250,18 +250,17 @@ export default function RecipeDetail() {
 
     setIsRunning(true);
     try {
-      const result = await runRecipe(
-        currentRecipeName,
-        Object.keys(params).length > 0 ? params : undefined,
-        isInteractiveMode
-      );
-      if (result.status === 'ok') {
-        showToast(
-          isInteractiveMode ? t('recipes.startedAsync') : t('recipes.executedSuccess'),
-          'success'
-        );
+      const recipeParams = Object.keys(params).length > 0 ? params : undefined;
+      if (isInteractiveMode) {
+        await runRecipeAsync(currentRecipeName, recipeParams);
+        showToast(t('recipes.startedAsync'), 'success');
       } else {
-        showToast(result.error || t('recipes.executionFailed'), 'error');
+        const result = await runRecipe(currentRecipeName, recipeParams);
+        if (result.status === 'ok') {
+          showToast(t('recipes.executedSuccess'), 'success');
+        } else {
+          showToast(result.error || t('recipes.executionFailed'), 'error');
+        }
       }
     } catch (err) {
       console.error('Failed to run recipe:', err);
@@ -336,7 +335,7 @@ export default function RecipeDetail() {
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={isInteractiveMode}
+                  aria-checked={isInteractiveMode ? "true" : "false"}
                   aria-label={t('recipes.interactiveMode')}
                   onClick={() => setIsInteractiveMode(!isInteractiveMode)}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors border-2
@@ -345,11 +344,10 @@ export default function RecipeDetail() {
                       : 'bg-transparent border-[var(--border-color)]'}`}
                 >
                   <span
-                    className="inline-block h-3 w-3 rounded-full transition-all duration-200 shadow-sm"
-                    style={{
-                      backgroundColor: isInteractiveMode ? 'var(--bg-base)' : 'var(--text-muted)',
-                      transform: isInteractiveMode ? 'translateX(1rem)' : 'translateX(0.125rem)',
-                    }}
+                    className={`inline-block h-3 w-3 rounded-full transition-all duration-200 shadow-sm
+                      ${isInteractiveMode
+                        ? 'bg-[var(--bg-base)] translate-x-4'
+                        : 'bg-[var(--text-muted)] translate-x-0.5'}`}
                   />
                 </button>
               </label>
@@ -502,7 +500,7 @@ export default function RecipeDetail() {
                               focus:outline-none focus:ring-2 focus:ring-[var(--accent-warning)]
                               ${error ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}
                             aria-describedby={error ? errorId : undefined}
-                            aria-invalid={error ? 'true' : undefined}
+                            aria-invalid={error ? 'true' : 'false'}
                           />
                         ) : input.type === 'number' ? (
                           <input
@@ -516,7 +514,7 @@ export default function RecipeDetail() {
                               focus:outline-none focus:ring-2 focus:ring-[var(--accent-warning)]
                               ${error ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}
                             aria-describedby={error ? errorId : undefined}
-                            aria-invalid={error ? 'true' : undefined}
+                            aria-invalid={error ? 'true' : 'false'}
                           />
                         ) : (
                           <input
@@ -530,7 +528,7 @@ export default function RecipeDetail() {
                               focus:outline-none focus:ring-2 focus:ring-[var(--accent-warning)]
                               ${error ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}
                             aria-describedby={error ? errorId : undefined}
-                            aria-invalid={error ? 'true' : undefined}
+                            aria-invalid={error ? 'true' : 'false'}
                           />
                         )}
 
