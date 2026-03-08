@@ -165,13 +165,13 @@ jobs:
 
             ### macOS 首次打开
 
-            macOS 会阻止未签名的应用。打开方式：
+            macOS 会阻止未签名的应用。安装后需要在终端执行一次：
 
-            1. 双击 `.dmg`，将 frago 拖入 Applications
-            2. 在 Applications 中**右键点击** frago → **打开**
-            3. 弹窗中点击 **打开**
+            ```
+            xattr -cr /Applications/frago.app
+            ```
 
-            之后就可以正常双击启动了。
+            然后就可以正常双击启动了。
           files: |
             release-assets/*
         env:
