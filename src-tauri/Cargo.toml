@@ -1,6 +1,6 @@
 [package]
 name = "frago"
-version = "0.44.1"
+version = "0.44.2"
 description = "frago Desktop Client"
 authors = ["Jamey Tsai <caijia@frago.ai>"]
 license = "AGPL-3.0-or-later"
