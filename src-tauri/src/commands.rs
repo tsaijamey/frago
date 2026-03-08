@@ -269,9 +269,10 @@ pub async fn install_frago(
     let uv = resolve_uv_path();
     let uv_str = uv.to_string_lossy().to_string();
 
+    let default_version = env!("CARGO_PKG_VERSION").to_string();
     let pkg = match &version {
         Some(v) => format!("frago-cli=={v}"),
-        None => "frago-cli".into(),
+        None => format!("frago-cli=={default_version}"),
     };
 
     run_with_streaming(&app, "install_frago", &uv_str, &["tool", "install", &pkg])?;
