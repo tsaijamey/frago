@@ -134,32 +134,17 @@ jobs:
         id: version
         run: echo "version=${{ steps.tag.outputs.tag }}" | sed 's/version=v/version=/' >> $GITHUB_OUTPUT
 
-      - name: Package macOS aarch64
+      - name: Collect release assets
         run: |
-          cd artifacts/frago-aarch64-apple-darwin
-          # Find and tar the .app bundle
-          find . -name "*.app" -type d | head -1 | xargs -I {} tar -czf "frago_${{ steps.version.outputs.version }}_aarch64-apple-darwin.tar.gz" -C $(dirname {}) $(basename {})
-          mv *.tar.gz ../
-
-      - name: Package macOS x86_64
-        run: |
-          cd artifacts/frago-x86_64-apple-darwin
-          find . -name "*.app" -type d | head -1 | xargs -I {} tar -czf "frago_${{ steps.version.outputs.version }}_x86_64-apple-darwin.tar.gz" -C $(dirname {}) $(basename {})
-          mv *.tar.gz ../
-
-      - name: Package Linux
-        run: |
-          cd artifacts/frago-x86_64-unknown-linux-gnu
-          # Rename AppImage
-          find . -name "*.AppImage" -exec mv {} "frago_${{ steps.version.outputs.version }}_x86_64-unknown-linux-gnu.AppImage" \;
-          mv *.AppImage ../
-
-      - name: Package Windows
-        run: |
-          cd artifacts/frago-x86_64-pc-windows-msvc
-          # Find and zip the .exe
-          find . -name "*.exe" | head -1 | xargs -I {} zip -j "frago_${{ steps.version.outputs.version }}_x86_64-pc-windows-msvc.zip" {}
-          mv *.zip ../
+          mkdir -p release-assets
+          # macOS DMGs (already named by Tauri)
+          find artifacts/frago-aarch64-apple-darwin -name "*.dmg" -exec cp {} release-assets/ \;
+          find artifacts/frago-x86_64-apple-darwin -name "*.dmg" -exec cp {} release-assets/ \;
+          # Linux AppImage
+          find artifacts/frago-x86_64-unknown-linux-gnu -name "*.AppImage" -exec cp {} release-assets/ \;
+          # Windows MSI + exe
+          find artifacts/frago-x86_64-pc-windows-msvc -name "*.msi" -exec cp {} release-assets/ \;
+          ls -la release-assets/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -168,9 +153,26 @@ jobs:
           name: frago v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
+          body: |
+            ## Install
+
+            | Platform | File |
+            |----------|------|
+            | macOS Apple Silicon | `.dmg` (aarch64) |
+            | macOS Intel | `.dmg` (x86_64) |
+            | Linux | `.AppImage` |
+            | Windows | `.msi` |
+
+            ### macOS 首次打开
+
+            macOS 会阻止未签名的应用。打开方式：
+
+            1. 双击 `.dmg`，将 frago 拖入 Applications
+            2. 在 Applications 中**右键点击** frago → **打开**
+            3. 弹窗中点击 **打开**
+
+            之后就可以正常双击启动了。
           files: |
-            artifacts/*.tar.gz
-            artifacts/*.AppImage
-            artifacts/*.zip
+            release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
