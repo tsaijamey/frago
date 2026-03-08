@@ -54,7 +54,7 @@ def wait_for_process_exit(pid: int, timeout: float = 10.0) -> bool:
 
 
 def start_new_server() -> bool:
-    """Start a new frago server instance.
+    """Start a new frago server instance and write PID file.
 
     Returns:
         True if server started successfully
@@ -80,7 +80,7 @@ def start_new_server() -> bool:
                 # Windows-specific flags
                 CREATE_NO_WINDOW = 0x08000000
                 DETACHED_PROCESS = 0x00000008
-                subprocess.Popen(
+                proc = subprocess.Popen(
                     cmd,
                     stdin=subprocess.DEVNULL,
                     stdout=log_f,
@@ -88,7 +88,7 @@ def start_new_server() -> bool:
                     creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
                 )
             else:
-                subprocess.Popen(
+                proc = subprocess.Popen(
                     cmd,
                     stdin=subprocess.DEVNULL,
                     stdout=log_f,
@@ -96,7 +96,11 @@ def start_new_server() -> bool:
                     start_new_session=True,
                 )
 
-        print(f"[restarter] New server started")
+        # Write PID file so daemon.py can track the new server
+        pid_file = Path.home() / ".frago" / "server.pid"
+        pid_file.write_text(str(proc.pid))
+
+        print(f"[restarter] New server started (PID: {proc.pid})")
         return True
 
     except Exception as e:

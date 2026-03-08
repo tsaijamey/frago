@@ -362,11 +362,32 @@ def start_daemon() -> Tuple[bool, str]:
         return False, f"Failed to start server: {e}"
 
 
+def _get_self_and_ancestors() -> set:
+    """Get PIDs of the current process and all its ancestors.
+
+    Used to avoid killing the process that's calling stop_daemon()
+    (e.g., an agent task running 'frago server restart').
+    """
+    protected = set()
+    try:
+        current = psutil.Process(os.getpid())
+        protected.add(current.pid)
+        for ancestor in current.parents():
+            protected.add(ancestor.pid)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    return protected
+
+
 def stop_daemon() -> Tuple[bool, str]:
     """Stop the running Frago server daemon.
 
     Terminates the main process and all child processes to ensure
     complete cleanup and immediate port release.
+
+    Protects the calling process and its ancestors from being killed,
+    so that 'frago server restart' called from an agent task (which is
+    a child of the server) can safely complete.
 
     Returns:
         Tuple of (success, message)
@@ -378,8 +399,14 @@ def stop_daemon() -> Tuple[bool, str]:
     try:
         proc = psutil.Process(pid)
 
-        # Get all child processes before terminating parent
-        children = proc.children(recursive=True)
+        # Get all child processes before terminating parent,
+        # excluding the current process and its ancestors to avoid
+        # killing the caller (e.g., agent task running restart)
+        protected_pids = _get_self_and_ancestors()
+        children = [
+            child for child in proc.children(recursive=True)
+            if child.pid not in protected_pids
+        ]
 
         # Send SIGTERM for graceful shutdown
         if platform.system() == "Windows":
@@ -423,10 +450,71 @@ def stop_daemon() -> Tuple[bool, str]:
         return False, f"Failed to stop server: {e}"
 
 
+def _spawn_restarter_daemonized(server_pid: int) -> None:
+    """Spawn restarter.py fully detached from the process tree via double fork.
+
+    On Unix, uses double fork so the restarter is reparented to init/systemd,
+    making it invisible to psutil.children(recursive=True). This is critical
+    because the server's _cleanup_child_processes() kills all descendants on
+    shutdown — a simple start_new_session=True Popen does NOT change the PPID.
+
+    On Windows, uses DETACHED_PROCESS + CREATE_NO_WINDOW flags (no fork needed).
+    """
+    restarter_script = str(Path(__file__).parent / "restarter.py")
+    log_file = str(get_log_file())
+
+    if platform.system() == "Windows":
+        log_f = open(log_file, "a")
+        subprocess.Popen(
+            [sys.executable, restarter_script, str(server_pid)],
+            stdin=subprocess.DEVNULL,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            **get_windows_subprocess_kwargs(detach=True),
+        )
+        log_f.close()
+        return
+
+    # Unix: double fork to fully detach from process tree
+    first_child = os.fork()
+    if first_child > 0:
+        # Parent: wait for first child to exit (it exits immediately)
+        os.waitpid(first_child, 0)
+        return
+
+    # First child: create new session and fork again
+    os.setsid()
+    second_child = os.fork()
+    if second_child > 0:
+        # First child exits immediately, second child is reparented to init
+        os._exit(0)
+
+    # Second child (grandchild): this is the actual restarter process,
+    # now fully detached (PPID = 1/init, new session)
+    try:
+        # Redirect stdin/stdout/stderr
+        devnull = os.open(os.devnull, os.O_RDWR)
+        log_fd = os.open(log_file, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        os.dup2(devnull, 0)  # stdin
+        os.dup2(log_fd, 1)   # stdout
+        os.dup2(log_fd, 2)   # stderr
+        os.close(devnull)
+        os.close(log_fd)
+
+        os.execvp(sys.executable, [sys.executable, restarter_script, str(server_pid)])
+    except Exception:
+        os._exit(1)
+
+
 def restart_daemon(force: bool = False) -> Tuple[bool, str]:
     """Restart the Frago server daemon.
 
-    Stops the running server (if any) and starts a new instance.
+    Spawns restarter.py via double fork (fully detached from process tree),
+    then stops the server. The restarter waits for the old server to exit
+    and starts a new instance.
+
+    This avoids the problem where the server's shutdown handler kills all
+    descendant processes — including the caller and any child restarter.
 
     Args:
         force: Force restart even if graceful shutdown fails
@@ -436,19 +524,23 @@ def restart_daemon(force: bool = False) -> Tuple[bool, str]:
     """
     running, pid = is_server_running()
 
-    # If server is running, stop it first
-    if running:
-        success, stop_msg = stop_daemon()
-        if not success and not force:
-            return False, f"Failed to stop server: {stop_msg}"
-
-    # Start the server
-    success, start_msg = start_daemon()
-
-    if running:
-        return success, f"Server restarted. {start_msg}"
-    else:
+    if not running:
+        # Server not running, just start it
+        success, start_msg = start_daemon()
         return success, f"Server was not running. {start_msg}"
+
+    # Spawn restarter fully detached from the process tree
+    try:
+        _spawn_restarter_daemonized(pid)
+    except Exception as e:
+        return False, f"Failed to launch restarter: {e}"
+
+    # Now stop the server — the restarter will handle starting a new one
+    success, stop_msg = stop_daemon()
+    if not success and not force:
+        return False, f"Failed to stop server: {stop_msg}"
+
+    return True, f"Server restart initiated (old PID: {pid}). Restarter will start new instance."
 
 
 def get_server_status() -> dict:
