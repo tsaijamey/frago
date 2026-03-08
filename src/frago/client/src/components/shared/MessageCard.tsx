@@ -1,4 +1,4 @@
-import { Settings } from 'lucide-react';
+import { User, Bot, Wrench, Check, X, Settings } from 'lucide-react';
 import type { UnifiedMessage } from '@/types/message';
 import BashContent from '../tasks/content/BashContent';
 import JsonContent from '../tasks/content/JsonContent';
@@ -30,8 +30,8 @@ export default function MessageCard({ message, showTypingIndicator = true }: Mes
   if (message.type === 'user') {
     return (
       <div className="message-card">
-        <div className="w-8 h-8 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-[var(--bg-primary)] shrink-0 text-sm font-semibold">
-          U
+        <div className="w-8 h-8 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-[var(--bg-primary)] shrink-0">
+          <User className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
@@ -52,8 +52,8 @@ export default function MessageCard({ message, showTypingIndicator = true }: Mes
   if (message.type === 'assistant') {
     return (
       <div className="message-card">
-        <div className="w-8 h-8 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-[var(--bg-primary)] shrink-0 text-sm font-semibold">
-          F
+        <div className="w-8 h-8 rounded-full bg-[var(--accent-primary)] flex items-center justify-center text-[var(--bg-primary)] shrink-0">
+          <Bot className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
@@ -81,8 +81,8 @@ export default function MessageCard({ message, showTypingIndicator = true }: Mes
     const isExecuting = message.metadata?.status === 'executing';
     return (
       <div className="message-card">
-        <div className="w-8 h-8 rounded-full bg-[var(--accent-warning)] flex items-center justify-center text-[var(--bg-primary)] shrink-0 text-sm font-semibold">
-          {'\u{1F527}'}
+        <div className="w-8 h-8 rounded-full bg-[var(--accent-warning)] flex items-center justify-center text-[var(--bg-primary)] shrink-0">
+          <Wrench className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
@@ -116,11 +116,11 @@ export default function MessageCard({ message, showTypingIndicator = true }: Mes
     return (
       <div className="message-card">
         <div
-          className={`w-8 h-8 rounded-full flex items-center justify-center text-[var(--bg-primary)] shrink-0 text-sm font-semibold ${
+          className={`w-8 h-8 rounded-full flex items-center justify-center text-[var(--bg-primary)] shrink-0 ${
             isError ? 'bg-[var(--accent-error)]' : 'bg-[var(--accent-success)]'
           }`}
         >
-          {isError ? '\u2717' : '\u2713'}
+          {isError ? <X className="w-4 h-4" /> : <Check className="w-4 h-4" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
