@@ -182,6 +182,10 @@ pub async fn check_server() -> Result<bool, String> {
         .timeout(std::time::Duration::from_secs(2))
         .send()
         .await;
+    match &resp {
+        Ok(r) => eprintln!("[check_server] OK status={}", r.status()),
+        Err(e) => eprintln!("[check_server] Error: {e}"),
+    }
     Ok(resp.is_ok_and(|r| r.status().is_success()))
 }
 
@@ -298,6 +302,7 @@ pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
     }
 
     let frago = resolve_frago_path();
+    eprintln!("[start_server] resolved frago path: {:?}", frago);
 
     // Log server output to a file for debugging
     let log_dir = home_dir().join(".frago");
