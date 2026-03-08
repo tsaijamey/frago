@@ -43,6 +43,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@latest
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -64,12 +72,9 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Build Tauri application
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: src-tauri
-          args: ${{ matrix.args }}
+        run: |
+          cd src-tauri
+          tauri build ${{ matrix.args }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
