@@ -182,10 +182,6 @@ pub async fn check_server() -> Result<bool, String> {
         .timeout(std::time::Duration::from_secs(2))
         .send()
         .await;
-    match &resp {
-        Ok(r) => eprintln!("[check_server] OK status={}", r.status()),
-        Err(e) => eprintln!("[check_server] Error: {e}"),
-    }
     Ok(resp.is_ok_and(|r| r.status().is_success()))
 }
 
@@ -258,27 +254,44 @@ pub async fn install_frago(
     app: AppHandle,
     version: Option<String>,
 ) -> Result<InstallResult, String> {
-    // Already installed?
-    let check = check_frago().await?;
-    if check.installed {
-        return Ok(InstallResult {
-            success: true,
-            message: format!(
-                "frago-cli already installed ({})",
-                check.version.unwrap_or_default()
-            ),
-        });
-    }
-
     let uv = resolve_uv_path();
     let uv_str = uv.to_string_lossy().to_string();
 
     let default_version = env!("CARGO_PKG_VERSION").to_string();
-    let pkg = match &version {
-        Some(v) => format!("frago-cli=={v}"),
-        None => format!("frago-cli=={default_version}"),
-    };
+    let target_version = version.as_deref().unwrap_or(&default_version);
 
+    // Check if already installed with matching version
+    let check = check_frago().await?;
+    if check.installed {
+        let current = check.version.as_deref().unwrap_or("");
+        if current == target_version {
+            return Ok(InstallResult {
+                success: true,
+                message: format!("frago-cli already installed ({current})"),
+            });
+        }
+        // Version mismatch — upgrade via reinstall
+        let _ = app.emit(
+            BOOTSTRAP_LOG,
+            BootstrapLogEvent {
+                step: "install_frago".into(),
+                stream: "stdout".into(),
+                line: format!("Upgrading frago-cli {current} → {target_version}..."),
+            },
+        );
+        run_with_streaming(
+            &app,
+            "install_frago",
+            &uv_str,
+            &["tool", "install", "--force", &format!("frago-cli=={target_version}")],
+        )?;
+        return Ok(InstallResult {
+            success: true,
+            message: format!("frago-cli upgraded to {target_version}"),
+        });
+    }
+
+    let pkg = format!("frago-cli=={target_version}");
     run_with_streaming(&app, "install_frago", &uv_str, &["tool", "install", &pkg])?;
 
     Ok(InstallResult {
@@ -302,7 +315,6 @@ pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
     }
 
     let frago = resolve_frago_path();
-    eprintln!("[start_server] resolved frago path: {:?}", frago);
 
     // Log server output to a file for debugging
     let log_dir = home_dir().join(".frago");
@@ -312,9 +324,11 @@ pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
     let log_stderr = log_file.try_clone()
         .map_err(|e| format!("Failed to clone log file: {e}"))?;
 
-    // Spawn detached — server outlives client (Option B)
+    // Run server in foreground mode as a child process.
+    // Avoids the daemon double-fork which silently fails in .app bundles.
+    // Server lifecycle is tied to the Tauri app — exits when app closes.
     Command::new(&frago)
-        .arg("server")
+        .args(["server", "--debug"])
         .stdout(log_file)
         .stderr(log_stderr)
         .spawn()
