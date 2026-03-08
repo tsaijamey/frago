@@ -27,7 +27,6 @@ from frago.server.routes import (
     skills_router,
     settings_router,
     sync_router,
-    console_router,
     init_router,
     viewer_router,
     files_router,
@@ -211,7 +210,6 @@ def create_app(
     app.include_router(skills_router, prefix="/api", tags=["skills"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])
     app.include_router(sync_router, prefix="/api", tags=["sync"])
-    app.include_router(console_router, prefix="/api", tags=["console"])
     app.include_router(init_router, prefix="/api", tags=["init"])
     app.include_router(guide_router, prefix="/api", tags=["guide"])
 

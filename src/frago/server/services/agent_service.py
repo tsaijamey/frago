@@ -1,17 +1,24 @@
 """Agent task execution service.
 
 Provides functionality for starting and continuing agent tasks.
+Supports both detached (fire-and-forget) and attached (streaming) modes.
 """
 
+import asyncio
+import json
 import logging
 import shutil
 import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from frago.server.services.base import get_utf8_env, run_subprocess_background
+from frago.server.services.base import (
+    run_subprocess_background,
+    run_subprocess_interactive,
+)
+from frago.server.websocket import manager
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +49,292 @@ def _resolve_project_path(session_id: str) -> str:
     return str(Path.home())
 
 
+class AgentSession:
+    """Manages a single agent session with optional streaming support.
+
+    In attached mode, holds a process handle and reads stdout for real-time
+    streaming. The process itself is independent — if server restarts,
+    the process continues running (degrades to detached mode).
+    """
+
+    def __init__(self, internal_id: str, project_path: str):
+        self.internal_id = internal_id
+        self.project_path = project_path
+        self._process: Optional[subprocess.Popen] = None
+        self._reader_task: Optional[asyncio.Task] = None
+        self._attached = False
+        self._running = False
+        self._claude_session_id: Optional[str] = None
+        self._current_assistant_message = ""
+        self._current_tool_input_json = ""
+        self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
+
+    def _get_frago_agent_command(self) -> List[str]:
+        """Get frago agent command for subprocess."""
+        if shutil.which("uv"):
+            return ["uv", "run", "frago", "agent"]
+        return ["frago", "agent"]
+
+    async def start(self, prompt: str, resume_session_id: Optional[str] = None) -> None:
+        """Start agent process in attached mode.
+
+        Args:
+            prompt: The prompt to send to Claude
+            resume_session_id: If set, resume an existing Claude session
+        """
+        cmd = self._get_frago_agent_command() + [
+            "--passthrough",
+            "--yes",
+            "--source", "web",
+        ]
+
+        if resume_session_id:
+            cmd.extend(["--resume", resume_session_id, "--no-monitor"])
+
+        # Write prompt to temp file
+        log_dir = Path.home() / ".frago" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        prompt_file = log_dir / f"agent-attached-{self.internal_id[:8]}.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        cmd.extend(["--prompt-file", str(prompt_file)])
+
+        logger.info(f"Starting attached agent with command: {cmd} in {self.project_path}")
+        self._process = run_subprocess_interactive(cmd, cwd=self.project_path)
+
+        # Close stdin — prompt comes from --prompt-file
+        if self._process.stdin:
+            self._process.stdin.close()
+
+        self._attached = True
+        self._running = True
+        self._reader_task = asyncio.create_task(self._read_stream())
+
+        logger.info(
+            f"Attached agent session {self.internal_id[:8]} started (PID: {self._process.pid})"
+        )
+
+    async def send_message(self, message: str) -> None:
+        """Send a continuation message to the attached session.
+
+        Uses --resume to continue the Claude session.
+        """
+        if not self._claude_session_id:
+            raise RuntimeError("No Claude session to resume (session_id not captured)")
+
+        # Wait for current reader to finish
+        if self._reader_task:
+            try:
+                await asyncio.wait_for(self._reader_task, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                if self._reader_task and not self._reader_task.done():
+                    self._reader_task.cancel()
+
+        # Broadcast user message
+        await manager.broadcast({
+            "type": "agent_user_message",
+            "internal_id": self.internal_id,
+            "session_id": self._claude_session_id,
+            "content": message,
+        })
+
+        # Start new process with --resume
+        await self.start(message, resume_session_id=self._claude_session_id)
+
+    async def stop(self) -> None:
+        """Stop the attached session."""
+        self._running = False
+
+        if self._process:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+
+        if self._reader_task:
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
+
+        logger.info(f"Attached agent session {self.internal_id[:8]} stopped")
+
+    async def _read_stream(self) -> None:
+        """Read and parse stream-json output from Claude CLI."""
+        if not self._process or not self._process.stdout:
+            logger.error("No process or stdout available")
+            return
+
+        logger.info(f"Starting stream reader for attached session {self.internal_id[:8]}")
+        line_count = 0
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            while self._running and self._process:
+                line = await loop.run_in_executor(None, self._process.stdout.readline)
+
+                if not line:
+                    logger.info(f"Attached process ended (read {line_count} lines)")
+                    break
+
+                line_count += 1
+                line = line.strip()
+                if not line:
+                    continue
+
+                logger.debug(f"Read line {line_count}: {line[:100]}...")
+
+                try:
+                    event = json.loads(line)
+                    await self._handle_stream_event(event)
+                except json.JSONDecodeError:
+                    logger.warning(f"Non-JSON output: {line}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error reading stream: {e}", exc_info=True)
+        finally:
+            self._running = False
+            await manager.broadcast({
+                "type": "agent_session_status",
+                "internal_id": self.internal_id,
+                "session_id": self._claude_session_id,
+                "status": "completed",
+            })
+
+    async def _handle_stream_event(self, event: Dict[str, Any]) -> None:
+        """Parse and handle stream-json events from Claude CLI."""
+        event_type = event.get("type", "")
+
+        # Extract Claude session ID from system init event
+        if event_type == "system" and event.get("subtype") == "init":
+            self._claude_session_id = event.get("session_id")
+            logger.info(f"Claude session ID resolved: {self._claude_session_id}")
+
+            await manager.broadcast({
+                "type": "agent_session_resolved",
+                "internal_id": self.internal_id,
+                "session_id": self._claude_session_id,
+            })
+            return
+
+        # Unwrap stream_event wrapper
+        if event_type == "stream_event":
+            event = event.get("event", {})
+            event_type = event.get("type", "")
+
+        # Text streaming or tool input streaming
+        if event_type == "content_block_delta":
+            delta = event.get("delta", {})
+            delta_type = delta.get("type", "")
+
+            if delta_type == "text_delta":
+                text = delta.get("text", "")
+                self._current_assistant_message += text
+
+                await manager.broadcast({
+                    "type": "agent_text_delta",
+                    "internal_id": self.internal_id,
+                    "session_id": self._claude_session_id,
+                    "content": text,
+                    "done": False,
+                })
+
+            elif delta_type == "input_json_delta":
+                self._current_tool_input_json += delta.get("partial_json", "")
+
+        # Content block finished
+        elif event_type == "content_block_stop":
+            if self._current_assistant_message:
+                await manager.broadcast({
+                    "type": "agent_text_delta",
+                    "internal_id": self.internal_id,
+                    "session_id": self._claude_session_id,
+                    "content": "",
+                    "done": True,
+                })
+                self._current_assistant_message = ""
+
+            # Flush accumulated tool input
+            if self._current_tool_input_json and self._pending_tool_calls:
+                tool_call_id = list(self._pending_tool_calls.keys())[-1]
+                tool_call = self._pending_tool_calls[tool_call_id]
+
+                try:
+                    tool_input = json.loads(self._current_tool_input_json)
+                except json.JSONDecodeError:
+                    tool_input = {"raw": self._current_tool_input_json}
+
+                tool_call["input"] = tool_input
+
+                await manager.broadcast({
+                    "type": "agent_tool_executing",
+                    "internal_id": self.internal_id,
+                    "session_id": self._claude_session_id,
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_call["name"],
+                    "parameters": tool_input,
+                })
+
+                self._current_tool_input_json = ""
+
+        # Tool use detected
+        elif event_type == "content_block_start":
+            block = event.get("content_block", {})
+            if block.get("type") == "tool_use":
+                tool_call_id = block.get("id", "")
+                tool_name = block.get("name", "")
+
+                self._pending_tool_calls[tool_call_id] = {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "input": {},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                self._current_tool_input_json = ""
+
+        # Tool result
+        elif event_type == "message":
+            for content_block in event.get("content", []):
+                if content_block.get("type") == "tool_result":
+                    tool_use_id = content_block.get("tool_use_id", "")
+                    content = content_block.get("content", "")
+
+                    tool_call = self._pending_tool_calls.pop(tool_use_id, None)
+                    if tool_call:
+                        await manager.broadcast({
+                            "type": "agent_tool_result",
+                            "internal_id": self.internal_id,
+                            "session_id": self._claude_session_id,
+                            "tool_call_id": tool_use_id,
+                            "tool_name": tool_call["name"],
+                            "success": True,
+                            "content": str(content),
+                        })
+
+    @property
+    def is_attached(self) -> bool:
+        return self._attached
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def claude_session_id(self) -> Optional[str]:
+        return self._claude_session_id
+
+
 class AgentService:
-    """Service for agent task execution."""
+    """Service for agent task execution.
+
+    Supports both detached (fire-and-forget) and attached (streaming) modes.
+    """
+
+    # Attached sessions registry (in-memory, lost on server restart)
+    _attached_sessions: Dict[str, AgentSession] = {}
 
     @staticmethod
     def start_task(prompt: str, project_path: Optional[str] = None) -> Dict[str, Any]:
@@ -120,6 +411,107 @@ class AgentService:
                 "status": "error",
                 "error": f"Failed to start task: {str(e)}",
             }
+
+    @classmethod
+    async def start_task_attached(
+        cls, prompt: str, project_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Start agent task in attached mode with real-time streaming.
+
+        Args:
+            prompt: Task description/prompt.
+            project_path: Optional project path context.
+
+        Returns:
+            Dictionary with internal_id, status, and project_path.
+        """
+        if not prompt or not prompt.strip():
+            return {"status": "error", "error": "Task description cannot be empty"}
+
+        prompt = prompt.strip()
+        internal_id = str(uuid.uuid4())
+        cwd = project_path or str(Path.home())
+
+        session = AgentSession(internal_id, cwd)
+
+        try:
+            await session.start(prompt)
+            cls._attached_sessions[internal_id] = session
+
+            return {
+                "status": "ok",
+                "session_id": None,  # Real Claude session ID comes via WebSocket
+                "internal_id": internal_id,
+                "project_path": cwd,
+            }
+        except Exception as e:
+            logger.error("Failed to start attached agent task: %s", e)
+            return {"status": "error", "error": f"Failed to start task: {str(e)}"}
+
+    @classmethod
+    async def send_message_attached(cls, internal_id: str, message: str) -> Dict[str, Any]:
+        """Send a continuation message to an attached session.
+
+        Args:
+            internal_id: Internal session ID.
+            message: User message.
+
+        Returns:
+            Status dictionary.
+        """
+        session = cls._attached_sessions.get(internal_id)
+        if not session:
+            return {"status": "error", "error": f"Attached session {internal_id} not found"}
+
+        try:
+            await session.send_message(message)
+            return {"status": "ok"}
+        except Exception as e:
+            logger.error("Failed to send message to attached session: %s", e)
+            return {"status": "error", "error": str(e)}
+
+    @classmethod
+    async def stop_attached(cls, internal_id: str) -> Dict[str, Any]:
+        """Stop an attached session.
+
+        Args:
+            internal_id: Internal session ID.
+
+        Returns:
+            Status dictionary.
+        """
+        session = cls._attached_sessions.pop(internal_id, None)
+        if not session:
+            return {"status": "error", "error": f"Attached session {internal_id} not found"}
+
+        try:
+            await session.stop()
+            return {"status": "ok"}
+        except Exception as e:
+            logger.error("Failed to stop attached session: %s", e)
+            return {"status": "error", "error": str(e)}
+
+    @classmethod
+    def get_attached_session_info(cls, internal_id: str) -> Optional[Dict[str, Any]]:
+        """Get info about an attached session.
+
+        Args:
+            internal_id: Internal session ID.
+
+        Returns:
+            Session info dictionary or None if not found.
+        """
+        session = cls._attached_sessions.get(internal_id)
+        if not session:
+            return None
+
+        return {
+            "internal_id": session.internal_id,
+            "session_id": session.claude_session_id,
+            "project_path": session.project_path,
+            "attached": session.is_attached,
+            "running": session.is_running,
+        }
 
     @staticmethod
     def continue_task(session_id: str, prompt: str) -> Dict[str, Any]:

@@ -1,6 +1,7 @@
 """Agent API endpoints.
 
 Provides endpoints for starting and continuing agent tasks.
+Supports both detached (fire-and-forget) and attached (streaming) modes.
 """
 
 import asyncio
@@ -8,7 +9,13 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 
-from frago.server.models import AgentContinueRequest, AgentStartRequest, TaskItemResponse
+from frago.server.models import (
+    AgentAttachedStartRequest,
+    AgentAttachedStartResponse,
+    AgentContinueRequest,
+    AgentStartRequest,
+    TaskItemResponse,
+)
 from frago.server.services.agent_service import AgentService
 
 router = APIRouter()
@@ -107,3 +114,118 @@ async def continue_agent(session_id: str, request: AgentContinueRequest) -> Dict
     asyncio.create_task(_delayed_refresh())
 
     return result
+
+
+# ============================================================
+# Attached mode endpoints
+# ============================================================
+
+
+@router.post("/agent/attached", response_model=AgentAttachedStartResponse)
+async def start_agent_attached(
+    request: AgentAttachedStartRequest,
+) -> AgentAttachedStartResponse:
+    """Start an agent task in attached mode with real-time streaming.
+
+    The session streams events via WebSocket (agent_* event types).
+    The real Claude session ID is sent via agent_session_resolved event.
+
+    Args:
+        request: Agent task request with prompt and optional project path
+
+    Returns:
+        Attached session info with internal_id for tracking
+
+    Raises:
+        HTTPException: 500 if agent fails to start
+    """
+    result = await AgentService.start_task_attached(
+        prompt=request.prompt,
+        project_path=request.project_path,
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("error"))
+
+    # Schedule delayed refresh to update task list
+    asyncio.create_task(_delayed_refresh())
+
+    return AgentAttachedStartResponse(
+        session_id=result.get("session_id"),
+        internal_id=result["internal_id"],
+        status="starting",
+        project_path=result["project_path"],
+    )
+
+
+@router.post("/agent/attached/{internal_id}/message")
+async def send_message_attached(internal_id: str, request: AgentContinueRequest) -> Dict[str, Any]:
+    """Send a continuation message to an attached session.
+
+    Args:
+        internal_id: Internal session ID (from start_agent_attached response)
+        request: Request with continuation prompt
+
+    Returns:
+        Status dictionary
+
+    Raises:
+        HTTPException: 404 if session not found, 500 on failure
+    """
+    result = await AgentService.send_message_attached(internal_id, request.prompt)
+
+    if result.get("status") == "error":
+        error = result.get("error", "")
+        if "not found" in error:
+            raise HTTPException(status_code=404, detail=error)
+        raise HTTPException(status_code=500, detail=error)
+
+    # Schedule delayed refresh
+    asyncio.create_task(_delayed_refresh())
+
+    return result
+
+
+@router.post("/agent/attached/{internal_id}/stop")
+async def stop_agent_attached(internal_id: str) -> Dict[str, Any]:
+    """Stop an attached session.
+
+    Args:
+        internal_id: Internal session ID
+
+    Returns:
+        Status dictionary
+
+    Raises:
+        HTTPException: 404 if session not found
+    """
+    result = await AgentService.stop_attached(internal_id)
+
+    if result.get("status") == "error":
+        error = result.get("error", "")
+        if "not found" in error:
+            raise HTTPException(status_code=404, detail=error)
+        raise HTTPException(status_code=500, detail=error)
+
+    return result
+
+
+@router.get("/agent/attached/{internal_id}/info")
+async def get_attached_info(internal_id: str) -> Dict[str, Any]:
+    """Get info about an attached session.
+
+    Args:
+        internal_id: Internal session ID
+
+    Returns:
+        Session info
+
+    Raises:
+        HTTPException: 404 if session not found
+    """
+    info = AgentService.get_attached_session_info(internal_id)
+
+    if info is None:
+        raise HTTPException(status_code=404, detail=f"Attached session {internal_id} not found")
+
+    return info

@@ -41,22 +41,31 @@ class AgentContinueRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="Continuation prompt")
 
 
-class ConsoleStartRequest(BaseModel):
-    """Request body for POST /api/console/start"""
+class AgentAttachedStartRequest(BaseModel):
+    """Request body for POST /api/agent/attached"""
 
-    prompt: str = Field(..., min_length=1, description="Initial message to Claude")
+    prompt: str = Field(..., min_length=1, description="Agent task prompt")
     project_path: Optional[str] = Field(
-        default=None, description="Project path context"
-    )
-    auto_approve: bool = Field(
-        default=True, description="Auto-approve all tool calls (default: true)"
+        default=None, description="Project path context for the agent"
     )
 
 
-class ConsoleSendMessageRequest(BaseModel):
-    """Request body for POST /api/console/{session_id}/message"""
+class AgentAttachedStartResponse(BaseModel):
+    """Response for POST /api/agent/attached"""
 
-    message: str = Field(..., min_length=1, description="User message to send")
+    session_id: Optional[str] = None  # Real Claude session ID, comes later via WebSocket
+    internal_id: str  # Internal ID for API calls
+    status: str  # starting, running
+    project_path: str
+
+
+class AgentAttachResponse(BaseModel):
+    """Response for POST /api/agent/{session_id}/attach"""
+
+    status: str  # attached, not_found, already_attached
+    session_id: str
+    running: bool
+
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -230,45 +239,6 @@ class TaskStepsResponse(BaseModel):
     steps: List[TaskStepResponse]
     total: int
     has_more: bool
-
-
-class ConsoleMessageResponse(BaseModel):
-    """Response for console message item"""
-
-    type: str  # user, assistant, tool_call, tool_result
-    content: str
-    timestamp: str
-    tool_name: Optional[str] = None
-    tool_call_id: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ConsoleStartResponse(BaseModel):
-    """Response for POST /api/console/start"""
-
-    session_id: Optional[str] = None  # Real Claude session ID, comes later via WebSocket
-    internal_id: str  # Internal ID for API calls
-    status: str  # starting, running
-    project_path: str
-    auto_approve: bool
-
-
-class ConsoleHistoryResponse(BaseModel):
-    """Response for GET /api/console/{session_id}/history"""
-
-    messages: List[ConsoleMessageResponse]
-    total: int
-    has_more: bool
-
-
-class ConsoleSessionInfoResponse(BaseModel):
-    """Response for GET /api/console/{session_id}/info"""
-
-    session_id: str
-    project_path: str
-    auto_approve: bool
-    running: bool
-    message_count: int
 
 
 class UserConfigResponse(BaseModel):
