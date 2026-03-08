@@ -316,12 +316,26 @@ pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
 
     let frago = resolve_frago_path();
 
-    // Stop any existing daemon that might hold the port
-    let _ = Command::new(&frago)
-        .args(["server", "stop"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    // Kill anything holding port 8093 — more reliable than `frago server stop`
+    // which depends on PID files and matching frago versions
+    #[cfg(unix)]
+    {
+        let output = Command::new("lsof")
+            .args(["-ti", ":8093"])
+            .output();
+        if let Ok(o) = output {
+            let pids = String::from_utf8_lossy(&o.stdout);
+            for pid_str in pids.split_whitespace() {
+                if let Ok(pid) = pid_str.parse::<i32>() {
+                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                }
+            }
+            // Give processes a moment to release the port
+            if !pids.trim().is_empty() {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
+    }
 
     // Log server output to a file for debugging
     let log_dir = home_dir().join(".frago");

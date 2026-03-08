@@ -801,6 +801,7 @@ name = "frago"
 version = "0.44.3"
 dependencies = [
  "dirs",
+ "libc",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
