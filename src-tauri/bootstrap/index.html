@@ -232,9 +232,9 @@
       } else {
         await invoke('start_server');
         log('Waiting for server...');
-        const ready = await invoke('wait_for_server', { timeoutMs: 30000 });
+        const ready = await invoke('wait_for_server', { timeoutMs: 90000 });
         if (!ready) {
-          throw new Error('Server failed to start within 30s');
+          throw new Error('Server failed to start within 90s');
         }
       }
       setStep('step-server', 'done');
