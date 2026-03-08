@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import platform
 import subprocess
 from datetime import datetime, timezone
@@ -296,12 +297,17 @@ Title:'''
                 "--output-format", "json",
             ]
 
+            # Build env without CLAUDECODE to prevent nested session detection
+            env = os.environ.copy()
+            env.pop("CLAUDECODE", None)
+
             popen_kwargs: dict = {
                 "stdin": subprocess.PIPE,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
                 "text": True,
                 "encoding": "utf-8",
+                "env": env,
                 **get_windows_subprocess_kwargs(),
             }
 
