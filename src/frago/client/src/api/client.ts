@@ -286,6 +286,59 @@ export async function continueAgent(
 }
 
 // ============================================================
+// Agent Attached API (real-time streaming mode)
+// ============================================================
+
+export interface AgentAttachedStartResponse {
+  session_id: string | null;  // Real Claude session ID, comes later via WebSocket
+  internal_id: string;  // Internal ID for API calls
+  status: string;
+  project_path: string;
+}
+
+export interface AgentAttachedInfo {
+  internal_id: string;
+  session_id: string | null;
+  project_path: string;
+  attached: boolean;
+  running: boolean;
+}
+
+export async function startAgentAttached(
+  prompt: string,
+  projectPath?: string
+): Promise<AgentAttachedStartResponse> {
+  return fetchApi<AgentAttachedStartResponse>('/agent/attached', {
+    method: 'POST',
+    body: JSON.stringify({ prompt, project_path: projectPath }),
+  });
+}
+
+export async function sendAgentAttachedMessage(
+  internalId: string,
+  prompt: string
+): Promise<{ status: string }> {
+  return fetchApi<{ status: string }>(`/agent/attached/${internalId}/message`, {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+export async function stopAgentAttached(
+  internalId: string
+): Promise<{ status: string }> {
+  return fetchApi<{ status: string }>(`/agent/attached/${internalId}/stop`, {
+    method: 'POST',
+  });
+}
+
+export async function getAgentAttachedInfo(
+  internalId: string
+): Promise<AgentAttachedInfo> {
+  return fetchApi<AgentAttachedInfo>(`/agent/attached/${internalId}/info`);
+}
+
+// ============================================================
 // Config API
 // ============================================================
 
@@ -607,70 +660,6 @@ export async function runSync(): Promise<SyncResponse> {
 
 export async function getSyncStatus(): Promise<SyncResponse> {
   return fetchApi<SyncResponse>('/sync/status');
-}
-
-// ============================================================
-// Console API
-// ============================================================
-
-export interface ConsoleMessage {
-  type: string;
-  content: string;
-  timestamp: string;
-  tool_name?: string;
-  tool_call_id?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface ConsoleStartResponse {
-  session_id: string;
-  status: string;
-  project_path: string;
-  auto_approve: boolean;
-}
-
-export interface ConsoleHistoryResponse {
-  messages: ConsoleMessage[];
-  total: number;
-  has_more: boolean;
-}
-
-export async function startConsoleSession(
-  prompt: string,
-  projectPath?: string,
-  autoApprove: boolean = true
-): Promise<ConsoleStartResponse> {
-  return fetchApi<ConsoleStartResponse>('/console/start', {
-    method: 'POST',
-    body: JSON.stringify({
-      prompt,
-      project_path: projectPath,
-      auto_approve: autoApprove
-    })
-  });
-}
-
-export async function sendConsoleMessage(sessionId: string, message: string): Promise<{ status: string }> {
-  return fetchApi<{ status: string }>(`/console/${sessionId}/message`, {
-    method: 'POST',
-    body: JSON.stringify({ message })
-  });
-}
-
-export async function stopConsoleSession(sessionId: string): Promise<{ status: string }> {
-  return fetchApi<{ status: string }>(`/console/${sessionId}/stop`, {
-    method: 'POST'
-  });
-}
-
-export async function getConsoleHistory(
-  sessionId: string,
-  limit: number = 100,
-  offset: number = 0
-): Promise<ConsoleHistoryResponse> {
-  return fetchApi<ConsoleHistoryResponse>(
-    `/console/${sessionId}/history?limit=${limit}&offset=${offset}`
-  );
 }
 
 // ============================================================

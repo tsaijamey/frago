@@ -87,9 +87,12 @@ interface AppState {
   // Self-update status
   updateStatus: UpdateStatus | null;
 
-  // Console state (persisted across navigation)
-  consoleInternalId: string | null;  // Internal ID for API calls
-  consoleSessionId: string | null;   // Real Claude session ID for display
+  // Agent attached session state (for real-time streaming in TaskDetail)
+  agentAttachedId: string | null;  // Internal ID of attached session (null = detached/polling mode)
+
+  // Console state (legacy, to be removed)
+  consoleInternalId: string | null;
+  consoleSessionId: string | null;
   consoleMessages: ConsoleMessage[];
   consoleIsRunning: boolean;
   consoleScrollPosition: number;
@@ -135,7 +138,10 @@ interface AppState {
     skills?: SkillItem[];
   }) => void;
 
-  // Console actions
+  // Agent attached session actions
+  setAgentAttachedId: (id: string | null) => void;
+
+  // Console actions (legacy, to be removed)
   setConsoleInternalId: (id: string | null) => void;
   setConsoleSessionId: (id: string | null) => void;
   addConsoleMessage: (message: ConsoleMessage) => void;
@@ -204,7 +210,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Update status initial state
   updateStatus: null,
 
-  // Console initial state
+  // Agent attached session initial state
+  agentAttachedId: null,
+
+  // Console initial state (legacy)
   consoleInternalId: null,
   consoleSessionId: null,
   consoleMessages: [],
@@ -532,7 +541,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set(updates);
   },
 
-  // Console actions
+  // Agent attached session actions
+  setAgentAttachedId: (id) => {
+    set({ agentAttachedId: id });
+  },
+
+  // Console actions (legacy)
   setConsoleInternalId: (id) => {
     set({ consoleInternalId: id });
     try {

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Compass, Bot, FileCode, Play } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { getConsoleHistory } from '@/api';
 import { getWebSocketClient } from '@/api/websocket';
 import { recordDirectoriesFromText } from '@/utils/recentDirectories';
 import type { ConsoleMessage } from '@/types/console';
@@ -10,12 +9,13 @@ import { toUnifiedMessage } from '@/types/message';
 import NewTaskControls from './NewTaskControls';
 import { MessageList } from '@/components/shared';
 import NewTaskInput from './NewTaskInput';
+import * as httpApi from '@/api/client';
 
 export default function NewTaskPage() {
   const { t } = useTranslation();
   const {
     showToast,
-    // Console state from global store
+    // Console state from global store (used for in-page streaming before redirect)
     consoleInternalId,
     consoleMessages,
     consoleIsRunning,
@@ -28,8 +28,9 @@ export default function NewTaskPage() {
     updateConsoleMessageByToolCallId,
     setConsoleIsRunning,
     setConsoleScrollPosition,
-    setConsoleMessages,
     clearConsole,
+    // Agent attached session
+    setAgentAttachedId,
   } = useAppStore();
 
   // Local state for input (no need to persist draft)
@@ -65,28 +66,17 @@ export default function NewTaskPage() {
 
       try {
         const storedInternalId = localStorage.getItem('frago_console_internal_id');
-        const storedSessionId = localStorage.getItem('frago_console_session_id');
         if (!storedInternalId) return;
 
-        // Validate session still exists on backend using internal_id
-        const response = await fetch(`/api/console/${storedInternalId}/info`);
+        // Validate session still exists on backend (attached session)
+        const response = await fetch(`/api/agent/attached/${storedInternalId}/info`);
         if (response.ok) {
           const info = await response.json();
-          // Restore both IDs
           setConsoleInternalId(storedInternalId);
-          if (storedSessionId) {
-            setConsoleSessionId(storedSessionId);
+          if (info.session_id) {
+            setConsoleSessionId(info.session_id);
           }
           setConsoleIsRunning(info.running === true);
-          // Fetch history using internal_id
-          const history = await getConsoleHistory(storedInternalId);
-          if (history.messages) {
-            const messagesWithDone = history.messages.map(msg => ({
-              ...msg,
-              done: true, // Messages from history are always complete
-            })) as ConsoleMessage[];
-            setConsoleMessages(messagesWithDone);
-          }
         } else {
           // Session not found, clear localStorage
           localStorage.removeItem('frago_console_internal_id');
@@ -101,32 +91,6 @@ export default function NewTaskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run on initial mount
 
-  // Recover messages when returning to console with existing session (after tab switch)
-  // Always fetch from backend since it's the source of truth for messages received while away
-  useEffect(() => {
-    const recoverMessages = async () => {
-      const internalId = useAppStore.getState().consoleInternalId;
-      if (internalId) {
-        try {
-          const history = await getConsoleHistory(internalId);
-          if (history.messages && history.messages.length > 0) {
-            // Replace with backend data - it has messages received while page was unmounted
-            // Messages from history are always complete
-            const messagesWithDone = history.messages.map(msg => ({
-              ...msg,
-              done: true,
-            })) as ConsoleMessage[];
-            setConsoleMessages(messagesWithDone);
-          }
-        } catch (error) {
-          console.error('Failed to recover console history:', error);
-        }
-      }
-    };
-    recoverMessages();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run on mount
-
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -140,7 +104,7 @@ export default function NewTaskPage() {
 
   // Memoize the WebSocket message handler to use latest store actions
   const handleWebSocketMessage = useCallback((data: Record<string, unknown>) => {
-    // Filter messages by internal_id (for console events)
+    // Filter messages by internal_id
     const currentInternalId = internalIdRef.current;
     const msgInternalId = data.internal_id as string | undefined;
 
@@ -150,11 +114,11 @@ export default function NewTaskPage() {
     const messages = useAppStore.getState().consoleMessages;
 
     switch (data.type) {
-      case 'console_user_message':
+      case 'agent_user_message':
         // User message already added locally
         break;
 
-      case 'console_assistant_thinking': {
+      case 'agent_text_delta': {
         // Streaming assistant response
         const last = messages[messages.length - 1];
         if (last?.type === 'assistant' && !last.done) {
@@ -175,7 +139,7 @@ export default function NewTaskPage() {
         break;
       }
 
-      case 'console_tool_executing':
+      case 'agent_tool_executing':
         // Tool is executing
         addConsoleMessage({
           type: 'tool_call',
@@ -187,7 +151,7 @@ export default function NewTaskPage() {
         });
         break;
 
-      case 'console_tool_result':
+      case 'agent_tool_result':
         // Tool result received
         updateConsoleMessageByToolCallId(data.tool_call_id as string, {
           type: 'tool_result',
@@ -198,7 +162,7 @@ export default function NewTaskPage() {
         });
         break;
 
-      case 'console_session_status':
+      case 'agent_session_status':
         if (data.status === 'completed') {
           setConsoleIsRunning(false);
           // Ensure last message is marked as done
@@ -209,14 +173,12 @@ export default function NewTaskPage() {
         }
         break;
 
-      case 'console_session_id_resolved': {
+      case 'agent_session_resolved': {
         // Backend resolved the real Claude session ID
-        // Match by internal_id and set the real session_id for display
         const internalId = data.internal_id as string;
         const realSessionId = data.session_id as string;
         if (internalId === currentInternalId && realSessionId) {
           setConsoleSessionId(realSessionId);
-          // Also update localStorage for session recovery
           localStorage.setItem('frago_console_session_id', realSessionId);
         }
         break;
@@ -228,13 +190,12 @@ export default function NewTaskPage() {
   useEffect(() => {
     const client = getWebSocketClient();
 
-    // Subscribe to all messages and filter console-related ones
+    // Subscribe to all messages and filter agent-related ones
     const unsubscribe = client.on('*', (message) => {
       handleWebSocketMessage(message as unknown as Record<string, unknown>);
     });
 
     return () => {
-      // Only unsubscribe, don't close the connection
       unsubscribe();
     };
   }, [handleWebSocketMessage]);
@@ -257,36 +218,18 @@ export default function NewTaskPage() {
 
     try {
       if (!consoleInternalId) {
-        // Start new session
-        const response = await fetch('/api/console/start', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: inputValue,
-            auto_approve: true,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to start console session');
-        }
-
-        const data = await response.json();
+        // Start new attached session
+        const data = await httpApi.startAgentAttached(inputValue);
         // Store internal_id for API calls; real session_id comes via WebSocket
         setConsoleInternalId(data.internal_id);
         setConsoleIsRunning(true);
-        showToast('Console session started', 'success');
+        // Store the attached ID for TaskDetail to use
+        setAgentAttachedId(data.internal_id);
+        localStorage.setItem('frago_console_internal_id', data.internal_id);
+        showToast('Session started', 'success');
       } else {
         // Continue existing session using internal_id
-        const response = await fetch(`/api/console/${consoleInternalId}/message`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: inputValue }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to send message');
-        }
+        await httpApi.sendAgentAttachedMessage(consoleInternalId, inputValue);
       }
     } catch (error) {
       console.error('Failed to send message:', error);
@@ -298,17 +241,12 @@ export default function NewTaskPage() {
     if (!consoleInternalId) return;
 
     try {
-      const response = await fetch(`/api/console/${consoleInternalId}/stop`, {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to stop session');
-      }
+      await httpApi.stopAgentAttached(consoleInternalId);
 
       setConsoleIsRunning(false);
       setConsoleInternalId(null);
       setConsoleSessionId(null);
+      setAgentAttachedId(null);
       showToast('Session stopped', 'success');
     } catch (error) {
       console.error('Failed to stop session:', error);
@@ -318,6 +256,7 @@ export default function NewTaskPage() {
 
   const handleNewSession = () => {
     clearConsole();
+    setAgentAttachedId(null);
     setInputValue('');
   };
 
