@@ -15,9 +15,9 @@
 **本质**：可执行的自动化脚本，带有元数据描述。
 
 **存放位置**（三级优先级）：
-1. `.frago/recipes/` - 项目级（最高优先级）
-2. `~/.frago/recipes/` - 用户级
-3. `examples/` - 示例级
+1. `~/.frago/recipes/` - 用户级（最高优先级）
+2. `~/.frago/community-recipes/` - 社区级
+3. 内置 - 官方级
 
 **结构**：
 ```
@@ -53,10 +53,9 @@ use_cases:
 **结构**：
 ```
 projects/youtube-transcript-research/
-├── logs/execution.jsonl    # 结构化执行日志
-├── screenshots/            # 截图归档
+├── .metadata.json          # Run 元数据
 ├── scripts/                # 验证过的脚本
-└── outputs/                # 输出文件
+└── (logs/, screenshots/, outputs/ 按需创建)
 ```
 
 **特点**：
@@ -93,7 +92,7 @@ Claude Code 的 slash 命令机制，存放在 `.claude/commands/` 目录下。
 
 **本质**：快捷入口，触发特定的 AI 行为。
 
-**示例**：`/frago.run`、`/frago.recipe`、`/frago.exec`、`/frago.test`
+**示例**：`/frago.run`、`/frago.recipe`、`/frago.test`
 
 ---
 
@@ -126,20 +125,20 @@ uv run frago recipe run volcengine_tts_with_emotion \
 
 ### 探索 → 固化 → 执行 闭环
 
-frago 提供四个 slash command，形成完整的工作闭环：
+frago 提供三个 slash command 支持这一工作流：
 
 ```
 /frago.run     探索研究，积累经验（产出：Run 实例）
      ↓
-/frago.recipe  将经验固化为配方（产出：Recipe）
+/frago.recipe  将经验固化为配方（产出：Recipe，需手动触发）
 /frago.test    验证配方正确性（趁上下文还在）
-     ↓
-/frago.exec    通过 skill 指导，快速执行
 ```
 
 **核心价值**：
 - 第一次：AI 替你探索，记录过程
 - 之后：直接调用配方，不再重复探索
+
+> 注：固化步骤（`/frago.recipe`）目前需要手动调用，自动 Run → Recipe 转换为规划中功能。
 
 ---
 
@@ -149,7 +148,7 @@ frago 提供四个 slash command，形成完整的工作闭环：
 
 | | 工作流节点 | frago Recipe |
 |--|-----------|--------------|
-| 创建方式 | 手动拖拽/AI 辅助画图 | AI 探索后自动生成 |
+| 创建方式 | 手动拖拽/AI 辅助画图 | 探索后 AI 辅助创建 |
 | 产出物 | 流程图（需要维护） | 可执行脚本（直接运行） |
 | 调试方式 | 进平台、看图、改配置 | AI 自动处理 |
 
@@ -178,9 +177,8 @@ frago 提供四个 slash command，形成完整的工作闭环：
 
 **特点**：
 - 通过文件系统监控实时监控
-- 支持多种 Agent 类型（Claude、Cursor、Cline）
+- 架构上支持多种 Agent 类型（当前监控 Claude Code）
 - 支持 Agent 行为的事后分析
-- 与原始 Agent 会话存储解耦
 
 ---
 
@@ -190,4 +188,4 @@ frago 提供四个 slash command，形成完整的工作闭环：
 - **Recipe**（frago）：配方，具体怎么执行
 - **Run**（frago）：任务实例，记录探索过程
 - **Session**（frago）：Agent 会话，实时执行监控
-- **frago 的贡献**：将所有概念关联，提供探索→固化→执行→监控的闭环工具
+- **frago 的贡献**：将所有概念关联，提供探索→固化→执行→监控的工具链

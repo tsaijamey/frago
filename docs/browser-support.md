@@ -194,7 +194,7 @@ These commands add visual markers for debugging and demonstration purposes.
 frago chrome highlight "#target-element"
 
 # Add pointer indicator
-frago chrome pointer 100 200
+frago chrome pointer <selector>
 
 # Spotlight element (dim everything else)
 frago chrome spotlight "#focus-element"

@@ -13,7 +13,7 @@ frago chrome status
 
 # 交互
 frago chrome click <selector>
-frago chrome scroll <direction> <pixels>
+frago chrome scroll <distance>
 frago chrome wait <seconds>
 
 # JavaScript
@@ -23,7 +23,7 @@ frago chrome exec-js <expression> --return-value
 frago chrome screenshot <output_file>
 
 # 视觉效果
-frago chrome spotlight <selector> --duration 3
+frago chrome spotlight <selector> --life-time 3
 frago chrome highlight <selector> --color "#FF6B6B"
 frago chrome annotate <selector> "text" --position top
 ```
@@ -35,9 +35,9 @@ frago chrome annotate <selector> "text" --position top
 export HTTP_PROXY=http://proxy.example.com:8080
 export HTTPS_PROXY=http://proxy.example.com:8080
 
-# CLI 参数
-frago chrome navigate https://example.com --proxy-host proxy.example.com --proxy-port 8080
-frago chrome navigate https://example.com --no-proxy
+# CLI 参数（代理标志放在 chrome 子命令之前）
+frago --proxy-host proxy.example.com --proxy-port 8080 chrome navigate https://example.com
+frago --no-proxy chrome navigate https://example.com
 ```
 
 ## Recipe 管理
@@ -64,9 +64,9 @@ frago recipe run <name> --timeout 300
 ### Recipe 优先级
 
 ```
-1. Project (.frago/recipes/)     ← 最高（项目级）
-2. User (~/.frago/recipes/)      ← 中等（个人）
-3. Example (examples/)           ← 最低（官方示例）
+1. User (~/.frago/recipes/)              ← 最高（个人）
+2. Community (~/.frago/community-recipes/) ← 中等（社区）
+3. Official (built-in)                   ← 最低（官方内置）
 ```
 
 ### 内置 Recipe
@@ -186,4 +186,4 @@ curl http://localhost:9222/json/version
 
 ---
 
-**下一步**：[概念](concepts.zh-CN.md) · [架构](architecture.zh-CN.md) · [Recipe 系统](recipes.zh-CN.md)
+**下一步**：[概念](concepts.zh-CN.md) · [Recipe 系统](recipes.zh-CN.md)

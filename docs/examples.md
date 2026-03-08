@@ -330,7 +330,9 @@ uv run frago recipe run upwork_batch_extract \
 
 ---
 
-## Example 5: Complex Multi-Platform Task
+## Example 5: Complex Multi-Platform Task (Vision)
+
+> This example illustrates the intended workflow when the orchestration layer is complete. Currently, users need to manually choose between `/frago.run` (exploration) and `frago recipe run` (replay).
 
 **Goal**: Monitor iPhone 15 prices on Amazon and eBay, generate comparison report.
 
@@ -412,10 +414,10 @@ frago chrome exec-js 'document.title' --return-value
 frago chrome screenshot hackernews_page.png
 
 # Highlight specific element
-frago chrome highlight '.storylink' --color "#FF6B6B" --duration 3
+frago chrome highlight '.storylink' --color "#FF6B6B" --life-time 3
 
 # Spotlight effect (dim surroundings)
-frago chrome spotlight '.athing:first-child' --duration 5
+frago chrome spotlight '.athing:first-child' --life-time 5
 
 # Add annotation
 frago chrome annotate '.score' "Top story" --position top
@@ -446,12 +448,7 @@ frago chrome exec-js 'document.querySelector(".pagetop") !== null' \
 # List all Run instances
 uv run frago run list
 
-# AI auto-discovery (fuzzy matching)
-# User says: "Continue YouTube subtitle research"
-# AI executes:
-uv run frago run list --format json
-# AI finds: youtube-subtitle-research-abc123 (95% match)
-# AI resumes:
+# Resume a specific Run
 uv run frago run set-context youtube-subtitle-research-abc123
 ```
 
@@ -563,9 +560,6 @@ uv run frago recipe list
 
 # Check Recipe name (case-sensitive)
 uv run frago recipe info youtube_extract_video_transcript
-
-# If Recipe exists in examples/, copy to user-level
-uv run frago recipe copy youtube_extract_video_transcript
 ```
 
 ### Example: Screenshot Path Issues
@@ -586,9 +580,7 @@ frago chrome screenshot screenshot.png  # Auto-saved to Run's screenshots/
 
 ## Next Steps
 
-- **Learn core concepts**: Read [Use Cases](use-cases.md)
-- **Understand architecture**: Check [Architecture](architecture.md)
-- **Start developing**: Follow [Development Guide](development.md)
+- **Learn core concepts**: Read [Concepts](concepts.md)
 - **Create your own Recipes**: See [Recipe System Guide](recipes.md)
 
 ---

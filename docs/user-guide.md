@@ -13,7 +13,7 @@ frago chrome status
 
 # Interaction
 frago chrome click <selector>
-frago chrome scroll <direction> <pixels>
+frago chrome scroll <distance>
 frago chrome wait <seconds>
 
 # JavaScript
@@ -23,7 +23,7 @@ frago chrome exec-js <expression> --return-value
 frago chrome screenshot <output_file>
 
 # Visual effects
-frago chrome spotlight <selector> --duration 3
+frago chrome spotlight <selector> --life-time 3
 frago chrome highlight <selector> --color "#FF6B6B"
 frago chrome annotate <selector> "text" --position top
 ```
@@ -35,9 +35,9 @@ frago chrome annotate <selector> "text" --position top
 export HTTP_PROXY=http://proxy.example.com:8080
 export HTTPS_PROXY=http://proxy.example.com:8080
 
-# CLI parameters
-frago chrome navigate https://example.com --proxy-host proxy.example.com --proxy-port 8080
-frago chrome navigate https://example.com --no-proxy
+# CLI parameters (global flags, placed before subcommand)
+frago --proxy-host proxy.example.com --proxy-port 8080 chrome navigate https://example.com
+frago --no-proxy chrome navigate https://example.com
 ```
 
 ## Recipe Management
@@ -64,9 +64,9 @@ frago recipe run <name> --timeout 300
 ### Recipe Priority
 
 ```
-1. Project (.frago/recipes/)     ← Highest (project-specific)
-2. User (~/.frago/recipes/)      ← Medium (personal)
-3. Example (examples/)           ← Lowest (official)
+1. User (~/.frago/recipes/)              ← Highest (personal)
+2. Community (~/.frago/community-recipes/) ← Medium
+3. Official (built-in)                   ← Lowest
 ```
 
 ### Built-in Recipes
@@ -186,4 +186,4 @@ curl http://localhost:9222/json/version
 
 ---
 
-**Next**: [Concepts](concepts.md) · [Architecture](architecture.md) · [Recipes](recipes.md)
+**Next**: [Concepts](concepts.md) · [Recipes](recipes.md)

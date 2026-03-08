@@ -7,7 +7,7 @@
 **AI 核心能力**:
 1. 通过元数据发现和选择合适的 Recipe
 2. 根据任务需求选择输出去向（stdout/file/clipboard）
-3. 自动生成编排 Workflow Recipe
+3. 通过 `/frago.recipe` 生成编排 Workflow Recipe
 4. 理解结构化错误并采取应对策略
 
 ---
@@ -43,7 +43,7 @@ uv run frago recipe list --format json
     "tags": ["web-scraping", "youtube", "transcript"],
     "output_targets": ["stdout", "file"],
     "version": "1.2.0",
-    "source": "Example"
+    "source": "Official"
   },
   {
     "name": "upwork_extract_job_details_as_markdown",
@@ -57,7 +57,7 @@ uv run frago recipe list --format json
     "tags": ["web-scraping", "upwork"],
     "output_targets": ["stdout", "file"],
     "version": "1.0.0",
-    "source": "Example"
+    "source": "Official"
   }
 ]
 ```
@@ -436,73 +436,6 @@ uv run frago recipe run youtube_batch_extract \
       "https://www.youtube.com/watch?v=oHg5SJYRHA0"
     ]
   }'
-```
-
----
-
-## 项目级 Recipe（可选）
-
-### 场景：在特定项目中使用项目专属 Recipe
-
-#### 1. 在项目根目录创建 Recipe 目录
-
-```bash
-# 进入项目目录
-cd /path/to/your/project
-
-# 创建项目级 Recipe 目录
-mkdir -p .frago/recipes/workflows
-
-# 创建项目专属 Workflow
-cat > .frago/recipes/workflows/project_specific_task.py <<'EOF'
-#!/usr/bin/env python3
-import sys, json
-
-params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
-
-# 项目专属逻辑
-output = {"message": "This is a project-specific workflow"}
-print(json.dumps(output))
-EOF
-
-chmod +x .frago/recipes/workflows/project_specific_task.py
-```
-
-#### 2. 创建元数据文件
-
-```bash
-cat > .frago/recipes/workflows/project_specific_task.md <<'EOF'
----
-name: project_specific_task
-type: workflow
-runtime: python
-version: 1.0.0
-description: "项目专属自动化任务"
----
-
-# 项目专属任务
-
-仅在当前项目中使用的 Workflow。
-EOF
-```
-
-#### 3. 执行（自动优先使用项目级）
-
-```bash
-# 在项目目录执行
-uv run frago recipe run project_specific_task
-
-# 列出所有 Recipe（项目级会标注 [Project]）
-uv run frago recipe list
-```
-
-**输出**:
-```text
-SOURCE   TYPE      NAME                       RUNTIME  VERSION
-────────────────────────────────────────────────────────────────
-Project  workflow  project_specific_task      python   1.0.0
-User     atomic    clipboard_read             python   1.0.0
-Example  atomic    youtube_extract_video...   chrome-js 1.2.0
 ```
 
 ---
@@ -899,13 +832,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 #### 新方式
 
-1. **迁移脚本到新位置**:
-   ```bash
-   # 脚本已自动迁移到 examples/atomic/chrome/
-   uv run frago recipe copy upwork_extract_job_details_as_markdown
-   ```
-
-2. **使用新命令**:
+1. **使用新命令**:
    ```bash
    uv run frago recipe run upwork_extract_job_details_as_markdown \
      --params '{"url": "..."}'
@@ -917,7 +844,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 |------|-------------------|---------------------|
 | 参数传递 | 命令行参数 | JSON 格式（统一） |
 | 元数据 | 无 | YAML frontmatter |
-| 查找路径 | 固定路径 | 三级查找（项目/用户/示例） |
+| 查找路径 | 固定路径 | 三级查找（用户/社区/官方） |
 | 错误处理 | 原始输出 | 结构化 JSON 错误 |
 | 依赖管理 | 无 | 自动检查依赖 |
 | 编排能力 | 无 | 支持 Workflow |
@@ -950,10 +877,8 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 **解决**:
 ```bash
-# 复制依赖的示例 Recipe
-uv run frago recipe copy <dependency_name>
-
-# 或创建自定义的依赖 Recipe
+# 创建自定义的依赖 Recipe
+# 或确认依赖 Recipe 已安装在 ~/.frago/recipes/
 ```
 
 ### Recipe 执行超时
@@ -999,7 +924,7 @@ uv run frago recipe copy <dependency_name>
 1. **元数据驱动**: AI 通过语义字段理解 Recipe 能力，无需读取脚本代码
 2. **结构化输出**: 所有 CLI 命令支持 `--format json`，便于 AI 解析
 3. **输出形态声明**: Recipe 明确声明支持的输出去向，AI 可根据任务规划
-4. **AI 生成 Workflow**: `/frago.recipe` 命令让 AI 自动创建编排 Recipe
+4. **AI 生成 Workflow**: `/frago.recipe` 命令让 AI 创建编排 Recipe（需手动触发）
 5. **错误可理解**: 结构化错误让 AI 能分析失败原因并自动应对
 
 ### AI vs 人类使用对比
@@ -1011,15 +936,6 @@ uv run frago recipe copy <dependency_name>
 | **执行 Recipe** | Bash 工具调用，自动选择输出方式 | 手动敲命令，手动指定 --output-file |
 | **错误处理** | 解析 JSON 错误，自动应对策略 | 读取错误信息，手动排查 |
 | **编排任务** | 自动生成 Workflow Python 脚本 | 手动组合多个 Recipe |
-
----
-
-## 下一步
-
-- **阅读完整文档**: [spec.md](./spec.md)
-- **查看数据模型**: [data-model.md](./data-model.md)
-- **CLI 命令参考**: [contracts/cli-commands.md](./contracts/cli-commands.md)
-- **技术研究**: [research.md](./research.md)
 
 ---
 

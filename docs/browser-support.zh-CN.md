@@ -194,7 +194,7 @@ frago chrome switch-tab 0
 frago chrome highlight "#target-element"
 
 # 添加指针标记
-frago chrome pointer 100 200
+frago chrome pointer <selector>
 
 # 聚焦元素（其他区域变暗）
 frago chrome spotlight "#focus-element"

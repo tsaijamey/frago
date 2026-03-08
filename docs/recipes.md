@@ -9,7 +9,7 @@ This guide demonstrates how **Claude Code AI Agent** uses the new Recipe system.
 **AI Core Capabilities**:
 1. Discover and select appropriate Recipes through metadata
 2. Choose output destinations based on task requirements (stdout/file/clipboard)
-3. Automatically generate orchestrated Workflow Recipes
+3. Generate orchestrated Workflow Recipes via `/frago.recipe`
 4. Understand structured errors and adopt response strategies
 
 ---
@@ -45,7 +45,7 @@ uv run frago recipe list --format json
     "tags": ["web-scraping", "youtube", "transcript"],
     "output_targets": ["stdout", "file"],
     "version": "1.2.0",
-    "source": "Example"
+    "source": "Official"
   },
   {
     "name": "upwork_extract_job_details_as_markdown",
@@ -59,7 +59,7 @@ uv run frago recipe list --format json
     "tags": ["web-scraping", "upwork"],
     "output_targets": ["stdout", "file"],
     "version": "1.0.0",
-    "source": "Example"
+    "source": "Official"
   }
 ]
 ```
@@ -438,73 +438,6 @@ uv run frago recipe run youtube_batch_extract \
       "https://www.youtube.com/watch?v=oHg5SJYRHA0"
     ]
   }'
-```
-
----
-
-## Project-Level Recipes (Optional)
-
-### Scenario: Use Project-Specific Recipes in a Specific Project
-
-#### 1. Create Recipe Directory in Project Root
-
-```bash
-# Navigate to project directory
-cd /path/to/your/project
-
-# Create project-level Recipe directory
-mkdir -p .frago/recipes/workflows
-
-# Create project-specific Workflow
-cat > .frago/recipes/workflows/project_specific_task.py <<'EOF'
-#!/usr/bin/env python3
-import sys, json
-
-params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
-
-# Project-specific logic
-output = {"message": "This is a project-specific workflow"}
-print(json.dumps(output))
-EOF
-
-chmod +x .frago/recipes/workflows/project_specific_task.py
-```
-
-#### 2. Create Metadata File
-
-```bash
-cat > .frago/recipes/workflows/project_specific_task.md <<'EOF'
----
-name: project_specific_task
-type: workflow
-runtime: python
-version: 1.0.0
-description: "Project-specific automation task"
----
-
-# Project-Specific Task
-
-Workflow only used in current project.
-EOF
-```
-
-#### 3. Execute (Automatically Prioritizes Project-Level)
-
-```bash
-# Execute in project directory
-uv run frago recipe run project_specific_task
-
-# List all Recipes (project-level will be marked [Project])
-uv run frago recipe list
-```
-
-**Output**:
-```text
-SOURCE   TYPE      NAME                       RUNTIME  VERSION
-────────────────────────────────────────────────────────────────
-Project  workflow  project_specific_task      python   1.0.0
-User     atomic    clipboard_read             python   1.0.0
-Example  atomic    youtube_extract_video...   chrome-js 1.2.0
 ```
 
 ---
@@ -901,10 +834,9 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 #### New Method
 
-1. **Migrate script to new location**:
+1. **Move script to new location**:
    ```bash
-   # Script automatically migrated to examples/atomic/chrome/
-   uv run frago recipe copy upwork_extract_job_details_as_markdown
+   # Move to ~/.frago/recipes/atomic/chrome/<name>/recipe.js
    ```
 
 2. **Use new command**:
@@ -919,7 +851,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 |---------|----------------------|------------------------|
 | Parameter Passing | Command line arguments | JSON format (unified) |
 | Metadata | None | YAML frontmatter |
-| Search Path | Fixed path | Three-level lookup (project/user/example) |
+| Search Path | Fixed path | Three-level lookup (user/community/official) |
 | Error Handling | Raw output | Structured JSON errors |
 | Dependency Management | None | Automatic dependency checking |
 | Orchestration Capability | None | Workflow support |
@@ -952,10 +884,8 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 **Solution**:
 ```bash
-# Copy dependent example Recipe
-uv run frago recipe copy <dependency_name>
-
-# Or create custom dependent Recipe
+# Install from community or create the dependent Recipe manually
+uv run frago recipe list
 ```
 
 ### Recipe Execution Timeout
@@ -1001,7 +931,7 @@ uv run frago recipe copy <dependency_name>
 1. **Metadata-Driven**: AI understands Recipe capabilities through semantic fields without reading script code
 2. **Structured Output**: All CLI commands support `--format json` for AI parsing
 3. **Output Format Declaration**: Recipe explicitly declares supported output destinations, AI can plan based on task
-4. **AI Generates Workflow**: `/frago.recipe` command enables AI to automatically create orchestrated Recipes
+4. **AI Generates Workflow**: `/frago.recipe` command enables AI to create orchestrated Recipes (manually triggered)
 5. **Understandable Errors**: Structured errors allow AI to analyze failure reasons and automatically respond
 
 ### AI vs Human Usage Comparison
@@ -1013,15 +943,6 @@ uv run frago recipe copy <dependency_name>
 | **Execute Recipe** | Bash tool invocation, auto-select output method | Manually type command, manually specify --output-file |
 | **Error Handling** | Parse JSON error, automatic response strategy | Read error message, manually troubleshoot |
 | **Task Orchestration** | Auto-generate Workflow Python script | Manually combine multiple Recipes |
-
----
-
-## Next Steps
-
-- **Read complete documentation**: [spec.md](./spec.md)
-- **View data models**: [data-model.md](./data-model.md)
-- **CLI command reference**: [contracts/cli-commands.md](./contracts/cli-commands.md)
-- **Technical research**: [research.md](./research.md)
 
 ---
 

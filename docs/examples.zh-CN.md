@@ -49,14 +49,14 @@
     {
       "action": "spotlight",
       "selector": ".hero-section",
-      "duration": 3,
+      "life-time": 3,
       "wait": 1
     },
     {
       "action": "highlight",
       "selector": ".feature-card:nth-child(1)",
       "color": "#FF6B6B",
-      "duration": 2,
+      "life-time": 2,
       "wait": 1
     },
     {
@@ -332,7 +332,7 @@ frago chrome spotlight ".hero-section" 3
 sleep 3
 
 # 高亮特性卡片
-frago chrome highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --duration 2
+frago chrome highlight ".feature-card:nth-child(1)" --color "#FF6B6B" --life-time 2
 sleep 2
 
 # 滚动页面

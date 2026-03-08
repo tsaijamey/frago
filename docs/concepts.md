@@ -33,7 +33,7 @@ Claude Code's slash command mechanism, stored in the `.claude/commands/` directo
 
 **Essence**: Quick entry points that trigger specific AI behaviors.
 
-**Examples**: `/frago.run`, `/frago.recipe`, `/frago.exec`, `/frago.test`
+**Examples**: `/frago.run`, `/frago.recipe`, `/frago.test`
 
 ---
 
@@ -46,9 +46,9 @@ The following concepts are original designs from the frago project.
 **Essence**: Executable automation scripts with metadata descriptions.
 
 **Storage locations** (three-tier priority):
-1. `.frago/recipes/` - Project level (highest priority)
-2. `~/.frago/recipes/` - User level
-3. `examples/` - Example level
+1. `~/.frago/recipes/` - User level (highest priority)
+2. `~/.frago/community-recipes/` - Community level
+3. Built-in package resources - Official level
 
 **Structure**:
 ```
@@ -84,10 +84,9 @@ use_cases:
 **Structure**:
 ```
 projects/youtube-transcript-research/
-├── logs/execution.jsonl    # Structured execution logs
-├── screenshots/            # Screenshot archive
+├── .metadata.json          # Run metadata
 ├── scripts/                # Validated scripts
-└── outputs/                # Output files
+└── (logs/, screenshots/, outputs/ created as needed)
 ```
 
 **Characteristics**:
@@ -126,20 +125,20 @@ uv run frago recipe run volcengine_tts_with_emotion \
 
 ### Explore → Solidify → Execute Loop
 
-frago provides four slash commands that form a complete workflow loop:
+frago provides three slash commands that support this workflow:
 
 ```
 /frago.run     Explore and research, accumulate experience (Output: Run instance)
      ↓
-/frago.recipe  Solidify experience into recipes (Output: Recipe)
+/frago.recipe  Solidify experience into recipes (Output: Recipe, manually triggered)
 /frago.test    Validate recipe correctness (while context is fresh)
-     ↓
-/frago.exec    Execute quickly with skill guidance
 ```
 
 **Core value**:
 - First time: AI explores for you, records the process
 - After that: Directly call recipes, no repeated exploration
+
+> Note: The solidification step (`/frago.recipe`) currently requires manual invocation. Automatic Run → Recipe conversion is planned.
 
 ---
 
@@ -149,7 +148,7 @@ frago provides four slash commands that form a complete workflow loop:
 
 | | Workflow Nodes | frago Recipe |
 |--|----------------|--------------|
-| Creation method | Manual drag-drop / AI-assisted diagramming | Auto-generated after AI exploration |
+| Creation method | Manual drag-drop / AI-assisted diagramming | AI-assisted creation after exploration |
 | Output | Flowchart (needs maintenance) | Executable script (runs directly) |
 | Debugging | Enter platform, read diagram, modify config | AI handles automatically |
 
@@ -178,9 +177,8 @@ frago provides four slash commands that form a complete workflow loop:
 
 **Characteristics**:
 - Real-time monitoring via file system watching
-- Supports multiple agent types (Claude, Cursor, Cline)
+- Designed for multiple agent types (currently monitors Claude Code)
 - Enables post-hoc analysis of agent behavior
-- Decoupled from the original agent's session storage
 
 ---
 
