@@ -1,0 +1,338 @@
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Clone)]
+pub struct CheckResult {
+    pub installed: bool,
+    pub version: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct InstallResult {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct StartResult {
+    pub success: bool,
+    pub message: String,
+}
+
+// ---------------------------------------------------------------------------
+// Event streaming
+// ---------------------------------------------------------------------------
+
+const BOOTSTRAP_LOG: &str = "bootstrap-log";
+
+#[derive(Serialize, Clone)]
+struct BootstrapLogEvent {
+    step: String,
+    stream: String,
+    line: String,
+}
+
+/// Run a command and stream stdout/stderr lines as Tauri events.
+fn run_with_streaming(
+    app: &AppHandle,
+    step: &str,
+    cmd: &str,
+    args: &[&str],
+) -> Result<(), String> {
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{step} spawn failed: {e}"))?;
+
+    // Stream stdout
+    if let Some(stdout) = child.stdout.take() {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = app.emit(
+                BOOTSTRAP_LOG,
+                BootstrapLogEvent {
+                    step: step.into(),
+                    stream: "stdout".into(),
+                    line,
+                },
+            );
+        }
+    }
+
+    // Collect any remaining stderr
+    if let Some(stderr) = child.stderr.take() {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+            let _ = app.emit(
+                BOOTSTRAP_LOG,
+                BootstrapLogEvent {
+                    step: step.into(),
+                    stream: "stderr".into(),
+                    line,
+                },
+            );
+        }
+    }
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err(format!(
+            "{step} exited with code {}",
+            status.code().unwrap_or(-1)
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// PATH resolution — don't rely on shell PATH after fresh installs
+// ---------------------------------------------------------------------------
+
+fn home_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"))
+}
+
+fn resolve_uv_path() -> PathBuf {
+    // Try PATH first, then known install locations
+    let candidates = [
+        home_dir().join(".local/bin/uv"),
+        home_dir().join(".cargo/bin/uv"), // older uv installer
+    ];
+    which::which("uv")
+        .ok()
+        .or_else(|| candidates.iter().find(|p| p.exists()).cloned())
+        .unwrap_or_else(|| PathBuf::from("uv"))
+}
+
+fn resolve_frago_path() -> PathBuf {
+    let candidate = home_dir().join(".local/bin/frago");
+    which::which("frago")
+        .ok()
+        .or_else(|| candidate.exists().then_some(candidate))
+        .unwrap_or_else(|| PathBuf::from("frago"))
+}
+
+// ---------------------------------------------------------------------------
+// Commands — environment checks
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn check_uv() -> Result<CheckResult, String> {
+    let uv = resolve_uv_path();
+    let output = Command::new(&uv).arg("--version").output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let raw = String::from_utf8_lossy(&o.stdout);
+            // `uv 0.6.x` → extract version part
+            let version = raw.trim().strip_prefix("uv ").unwrap_or(raw.trim());
+            Ok(CheckResult {
+                installed: true,
+                version: Some(version.to_string()),
+            })
+        }
+        _ => Ok(CheckResult {
+            installed: false,
+            version: None,
+        }),
+    }
+}
+
+#[tauri::command]
+pub async fn check_frago() -> Result<CheckResult, String> {
+    let uv = resolve_uv_path();
+    let output = Command::new(&uv)
+        .args(["tool", "list"])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        if line.starts_with("frago-cli") || line.starts_with("frago ") {
+            // line looks like: "frago-cli v0.39.0"
+            let version = line
+                .split_whitespace()
+                .nth(1)
+                .map(|v| v.trim_start_matches('v').to_string());
+            return Ok(CheckResult {
+                installed: true,
+                version,
+            });
+        }
+    }
+    Ok(CheckResult {
+        installed: false,
+        version: None,
+    })
+}
+
+#[tauri::command]
+pub async fn check_server() -> Result<bool, String> {
+    let resp = reqwest::Client::new()
+        .get("http://127.0.0.1:8093/api/status")
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await;
+    Ok(resp.is_ok_and(|r| r.status().is_success()))
+}
+
+// ---------------------------------------------------------------------------
+// Commands — installation
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn install_uv(app: AppHandle) -> Result<InstallResult, String> {
+    // Already installed?
+    let check = check_uv().await?;
+    if check.installed {
+        return Ok(InstallResult {
+            success: true,
+            message: format!("uv already installed ({})", check.version.unwrap_or_default()),
+        });
+    }
+
+    #[cfg(unix)]
+    {
+        let script_path = std::env::temp_dir().join("uv-install.sh");
+        let script_str = script_path.to_string_lossy().to_string();
+
+        // Step 1: download install script
+        run_with_streaming(
+            &app,
+            "install_uv",
+            "curl",
+            &["-LsSf", "https://astral.sh/uv/install.sh", "-o", &script_str],
+        )?;
+
+        // Step 2: execute
+        run_with_streaming(&app, "install_uv", "sh", &[&script_str])?;
+    }
+
+    #[cfg(windows)]
+    {
+        let script_path = std::env::temp_dir().join("uv-install.ps1");
+        let script_str = script_path.to_string_lossy().to_string();
+
+        run_with_streaming(
+            &app,
+            "install_uv",
+            "powershell",
+            &[
+                "-Command",
+                &format!(
+                    "Invoke-WebRequest -Uri https://astral.sh/uv/install.ps1 -OutFile '{}'",
+                    script_str
+                ),
+            ],
+        )?;
+
+        run_with_streaming(
+            &app,
+            "install_uv",
+            "powershell",
+            &["-ExecutionPolicy", "Bypass", "-File", &script_str],
+        )?;
+    }
+
+    Ok(InstallResult {
+        success: true,
+        message: "uv installed successfully".into(),
+    })
+}
+
+#[tauri::command]
+pub async fn install_frago(
+    app: AppHandle,
+    version: Option<String>,
+) -> Result<InstallResult, String> {
+    // Already installed?
+    let check = check_frago().await?;
+    if check.installed {
+        return Ok(InstallResult {
+            success: true,
+            message: format!(
+                "frago-cli already installed ({})",
+                check.version.unwrap_or_default()
+            ),
+        });
+    }
+
+    let uv = resolve_uv_path();
+    let uv_str = uv.to_string_lossy().to_string();
+
+    let pkg = match &version {
+        Some(v) => format!("frago-cli=={v}"),
+        None => "frago-cli".into(),
+    };
+
+    run_with_streaming(&app, "install_frago", &uv_str, &["tool", "install", &pkg])?;
+
+    Ok(InstallResult {
+        success: true,
+        message: "frago-cli installed successfully".into(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Commands — server management
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
+    // Already running?
+    if check_server().await.unwrap_or(false) {
+        return Ok(StartResult {
+            success: true,
+            message: "Server already running".into(),
+        });
+    }
+
+    let frago = resolve_frago_path();
+
+    // Spawn detached — server outlives client (Option B)
+    Command::new(&frago)
+        .arg("server")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start server: {e}"))?;
+
+    let _ = app.emit(
+        BOOTSTRAP_LOG,
+        BootstrapLogEvent {
+            step: "start_server".into(),
+            stream: "stdout".into(),
+            line: "Server process spawned, waiting for ready...".into(),
+        },
+    );
+
+    Ok(StartResult {
+        success: true,
+        message: "Server process spawned".into(),
+    })
+}
+
+#[tauri::command]
+pub async fn wait_for_server(timeout_ms: u64) -> Result<bool, String> {
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+
+    loop {
+        if check_server().await.unwrap_or(false) {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}

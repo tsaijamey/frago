@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "identifier": "default",
+  "description": "Default capabilities for the frago desktop client",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "core:window:allow-set-size",
+    "core:window:allow-set-min-size",
+    "core:window:allow-center",
+    "core:window:allow-set-title"
+  ]
+}

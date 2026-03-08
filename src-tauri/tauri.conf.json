@@ -7,19 +7,21 @@
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
     "devUrl": "http://127.0.0.1:8093",
-    "frontendDist": "../src/frago/server/assets"
+    "frontendDist": "./bootstrap"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "frago",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600,
+        "width": 500,
+        "height": 400,
+        "minWidth": 400,
+        "minHeight": 300,
         "resizable": true,
         "fullscreen": false,
-        "url": "http://127.0.0.1:8093"
+        "center": true,
+        "url": "index.html"
       }
     ],
     "security": {

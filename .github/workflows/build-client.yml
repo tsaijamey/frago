@@ -43,16 +43,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 9
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -72,21 +62,6 @@ jobs:
       - name: Install macOS target (if cross-compiling)
         if: matrix.platform == 'macos-latest'
         run: rustup target add ${{ matrix.target }}
-
-      - name: Install frontend dependencies
-        run: |
-          cd src/frago/client
-          pnpm install
-
-      - name: Build frontend
-        run: |
-          cd src/frago/client
-          pnpm build
-
-      - name: Install Tauri CLI
-        run: |
-          cd src-tauri
-          pnpm install
 
       - name: Build Tauri application
         uses: tauri-apps/tauri-action@v0
