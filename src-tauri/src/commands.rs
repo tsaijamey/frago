@@ -299,11 +299,19 @@ pub async fn start_server(app: AppHandle) -> Result<StartResult, String> {
 
     let frago = resolve_frago_path();
 
+    // Log server output to a file for debugging
+    let log_dir = home_dir().join(".frago");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_file = std::fs::File::create(log_dir.join("server.log"))
+        .map_err(|e| format!("Failed to create log file: {e}"))?;
+    let log_stderr = log_file.try_clone()
+        .map_err(|e| format!("Failed to clone log file: {e}"))?;
+
     // Spawn detached — server outlives client (Option B)
     Command::new(&frago)
         .arg("server")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(log_file)
+        .stderr(log_stderr)
         .spawn()
         .map_err(|e| format!("Failed to start server: {e}"))?;
 
