@@ -163,7 +163,7 @@ class UpdateService:
             else:
                 uv_cmd = "uv"
 
-            cmd = [uv_cmd, "tool", "upgrade", "frago-cli"]
+            cmd = [uv_cmd, "tool", "install", "--reinstall", "frago-cli"]
             logger.info(f"Running upgrade command: {' '.join(cmd)}")
 
             result = subprocess.run(

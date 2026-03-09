@@ -90,13 +90,39 @@
     width: 100%;
     max-width: 360px;
     margin-top: 12px;
-    text-align: center;
+    text-align: left;
   }
 
-  .error-bar .msg {
-    font-size: 12px;
+  .error-bar .error-title {
+    font-size: 13px;
+    font-weight: 600;
     color: #ef4444;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+  }
+
+  .error-bar .error-hint {
+    font-size: 12px;
+    color: #a3a3a3;
+    margin-bottom: 10px;
+    line-height: 1.6;
+  }
+
+  .error-bar .error-hint li {
+    margin-left: 16px;
+    margin-bottom: 2px;
+  }
+
+  .error-bar .error-detail {
+    font-size: 11px;
+    color: #525252;
+    margin-bottom: 10px;
+    word-break: break-all;
+  }
+
+  .error-bar .error-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
   }
 
   .error-bar button {
@@ -110,6 +136,13 @@
   }
 
   .error-bar button:hover { background: #333; }
+
+  .error-bar button.primary {
+    background: #1d4ed8;
+    border-color: #2563eb;
+  }
+
+  .error-bar button.primary:hover { background: #2563eb; }
 </style>
 </head>
 <body>
@@ -135,8 +168,13 @@
 <div class="terminal" id="terminal"></div>
 
 <div class="error-bar" id="error-bar">
-  <div class="msg" id="error-msg"></div>
-  <button onclick="runBootstrap()">Retry</button>
+  <div class="error-title" id="error-title"></div>
+  <div class="error-hint" id="error-hint"></div>
+  <div class="error-detail" id="error-detail"></div>
+  <div class="error-actions">
+    <button class="primary" onclick="runBootstrap()">重试</button>
+    <button onclick="copyLog()">复制日志</button>
+  </div>
 </div>
 
 <script>
@@ -158,13 +196,208 @@
     el.querySelector('.icon').textContent = icons[state] || '\u2022';
   }
 
-  function showError(msg) {
-    $('error-msg').textContent = msg;
+  // Inspect both the error message AND terminal output for classification.
+  // Key insight: run_with_streaming() only returns "{step} exited with code N",
+  // while the actual error details (network, version, etc.) are in streamed
+  // stderr lines visible in the terminal but NOT in the error string.
+  function friendlyError(raw, failedStep) {
+    const msg = String(raw).toLowerCase();
+    const logs = terminal.textContent.toLowerCase();
+
+    // --- Network / connectivity (check logs too — curl/pip errors land there) ---
+    const networkPatterns = [
+      'could not resolve', 'connection refused', 'connection timed out',
+      'network is unreachable', 'ssl', 'certificate', 'urlopen error',
+      'connectionerror', 'temporary failure in name resolution',
+      'failed to connect', 'no route to host',
+    ];
+    const isNetwork = networkPatterns.some(p => msg.includes(p) || logs.includes(p));
+    if (isNetwork) {
+      return {
+        title: '网络连接失败',
+        hint: '<ul>' +
+          '<li>检查网络连接是否正常</li>' +
+          '<li>如使用代理，确认代理服务已开启</li>' +
+          '<li>尝试在终端执行 <code>curl -I https://pypi.org</code> 测试连通性</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- Permission errors (check both error msg and logs) ---
+    const permPatterns = ['permission denied', 'eacces', 'operation not permitted'];
+    const isPerm = permPatterns.some(p => msg.includes(p) || logs.includes(p));
+    if (isPerm) {
+      return {
+        title: '权限不足',
+        hint: '<ul>' +
+          '<li>检查 <code>~/.local/bin/</code> 目录的读写权限</li>' +
+          '<li>尝试在终端手动执行安装命令排查</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- Disk / filesystem errors ---
+    const diskPatterns = ['no space left', 'disk quota', 'read-only file system'];
+    const isDisk = diskPatterns.some(p => msg.includes(p) || logs.includes(p));
+    if (isDisk) {
+      return {
+        title: '磁盘空间不足',
+        hint: '<ul>' +
+          '<li>清理磁盘空间后重试</li>' +
+          '<li>检查 <code>~/.local/</code> 和 <code>/tmp/</code> 所在分区的可用空间</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- spawn / command not found ---
+    if (msg.includes('spawn failed') || msg.includes('not found') ||
+        msg.includes('no such file')) {
+      if (failedStep === 'step-uv') {
+        return {
+          title: '找不到 curl',
+          hint: '<ul>' +
+            '<li><code>curl</code> 未安装或不在 PATH 中</li>' +
+            '<li>macOS：运行 <code>xcode-select --install</code></li>' +
+            '<li>Linux：<code>sudo apt install curl</code> 或对应包管理器</li>' +
+            '</ul>',
+        };
+      }
+      if (failedStep === 'step-frago') {
+        return {
+          title: '找不到 uv',
+          hint: '<ul>' +
+            '<li><code>uv</code> 刚安装但未被识别，尝试重启应用</li>' +
+            '<li>或在终端确认 <code>~/.local/bin/uv</code> 存在</li>' +
+            '</ul>',
+        };
+      }
+      // step-server: frago binary missing
+      return {
+        title: '找不到 frago',
+        hint: '<ul>' +
+          '<li><code>frago</code> 未安装或路径异常</li>' +
+          '<li>尝试在终端运行 <code>uv tool install frago-cli</code></li>' +
+          '<li>如刚安装完毕，重启应用后再试</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- Log file creation failure (start_server specific) ---
+    if (msg.includes('failed to create log file') || msg.includes('failed to clone log file')) {
+      return {
+        title: '无法创建日志文件',
+        hint: '<ul>' +
+          '<li>检查 <code>~/.frago/</code> 目录是否存在且可写</li>' +
+          '<li>确认磁盘空间充足</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- Server start failures ---
+    if (failedStep === 'step-server') {
+      if (msg.includes('failed to start server')) {
+        // frago binary exists but can't execute (dylib missing, corrupted, arch mismatch)
+        return {
+          title: '服务进程启动失败',
+          hint: '<ul>' +
+            '<li>frago 可能安装不完整，尝试重新安装：<code>uv tool install --force frago-cli</code></li>' +
+            '<li>macOS 首次运行可能需要：<code>xattr -cr /Applications/frago.app</code></li>' +
+            '</ul>',
+        };
+      }
+      if (msg.includes('90s') || msg.includes('timeout') || msg.includes('within')) {
+        return {
+          title: '服务启动超时',
+          hint: '<ul>' +
+            '<li>查看日志：<code>~/.frago/server.log</code></li>' +
+            '<li>端口 8093 可能被占用，在终端执行 <code>lsof -i :8093</code> 检查</li>' +
+            '<li>如有残留进程，重启应用或手动 kill</li>' +
+            '</ul>',
+        };
+      }
+      return {
+        title: '服务启动失败',
+        hint: '<ul>' +
+          '<li>查看日志：<code>~/.frago/server.log</code></li>' +
+          '<li>尝试在终端执行 <code>frago server --debug</code> 查看详细错误</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- PyPI version not found (install_frago specific) ---
+    if (failedStep === 'step-frago' &&
+        (logs.includes('no matching version') || logs.includes('no matching distribution') ||
+         logs.includes('yanked') || logs.includes('not found'))) {
+      return {
+        title: '版本不可用',
+        hint: '<ul>' +
+          '<li>所需 frago-cli 版本可能尚未发布到 PyPI</li>' +
+          '<li>检查网络是否能访问 <code>pypi.org</code></li>' +
+          '<li>如反复出现，可能需要等待新版本发布</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- Generic exit code errors — context-aware by step ---
+    if (msg.includes('exited with code')) {
+      if (failedStep === 'step-uv') {
+        return {
+          title: 'uv 安装失败',
+          hint: '<ul>' +
+            '<li>最常见原因是网络问题，请检查连接后重试</li>' +
+            '<li>也可在终端手动安装：<code>curl -LsSf https://astral.sh/uv/install.sh | sh</code></li>' +
+            '</ul>',
+        };
+      }
+      if (failedStep === 'step-frago') {
+        return {
+          title: 'frago-cli 安装失败',
+          hint: '<ul>' +
+            '<li>查看上方日志获取详细信息</li>' +
+            '<li>常见原因：网络不稳定、PyPI 访问受限</li>' +
+            '<li>手动安装：<code>uv tool install frago-cli</code></li>' +
+            '</ul>',
+        };
+      }
+      return {
+        title: '安装过程出错',
+        hint: '<ul>' +
+          '<li>查看上方终端日志获取详细信息</li>' +
+          '<li>如反复失败，尝试在终端手动执行对应命令</li>' +
+          '</ul>',
+      };
+    }
+
+    // --- Fallback ---
+    return {
+      title: '环境初始化失败',
+      hint: '<ul>' +
+        '<li>查看上方终端日志获取详细信息</li>' +
+        '<li>尝试重启应用，或在终端手动执行 <code>frago server</code></li>' +
+        '</ul>',
+    };
+  }
+
+  function showError(rawMsg, failedStep) {
+    const { title, hint } = friendlyError(rawMsg, failedStep);
+    $('error-title').textContent = title;
+    $('error-hint').innerHTML = hint;
+    $('error-detail').textContent = String(rawMsg);
     $('error-bar').style.display = 'block';
   }
 
   function hideError() {
     $('error-bar').style.display = 'none';
+  }
+
+  function copyLog() {
+    const text = terminal.textContent + '\n\n' + $('error-detail').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('.error-actions button:last-child');
+      const orig = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -248,12 +481,16 @@
       const msg = typeof err === 'string' ? err : (err.message || String(err));
       log('ERROR: ' + msg);
 
-      // Mark current running step as error
+      // Find and mark the failed step
+      let failedStep = null;
       ['step-uv', 'step-frago', 'step-server'].forEach(id => {
-        if ($(id).classList.contains('running')) setStep(id, 'error');
+        if ($(id).classList.contains('running')) {
+          setStep(id, 'error');
+          failedStep = id;
+        }
       });
 
-      showError(msg);
+      showError(msg, failedStep);
     }
   }
 
