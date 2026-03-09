@@ -65,7 +65,8 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            rpm
 
       - name: Install macOS target (if cross-compiling)
         if: matrix.platform == 'macos-latest'
@@ -86,12 +87,14 @@ jobs:
             src-tauri/target/*/release/bundle/**/*.AppImage
             src-tauri/target/*/release/bundle/**/*.deb
             src-tauri/target/*/release/bundle/**/*.msi
+            src-tauri/target/*/release/bundle/**/*.rpm
             src-tauri/target/*/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.app
             src-tauri/target/release/bundle/**/*.AppImage
             src-tauri/target/release/bundle/**/*.deb
             src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.rpm
             src-tauri/target/release/bundle/**/*.exe
           if-no-files-found: error
 
@@ -137,12 +140,16 @@ jobs:
       - name: Collect release assets
         run: |
           mkdir -p release-assets
-          # macOS DMGs (already named by Tauri)
+          # macOS DMGs
           find artifacts/frago-aarch64-apple-darwin -name "*.dmg" -exec cp {} release-assets/ \;
           find artifacts/frago-x86_64-apple-darwin -name "*.dmg" -exec cp {} release-assets/ \;
-          # Linux AppImage
+          # Linux AppImage + deb + rpm
           find artifacts/frago-x86_64-unknown-linux-gnu -name "*.AppImage" -exec cp {} release-assets/ \;
-          # Windows MSI + exe
+          find artifacts/frago-x86_64-unknown-linux-gnu -name "*.deb" -exec cp {} release-assets/ \;
+          find artifacts/frago-x86_64-unknown-linux-gnu -name "*.rpm" -exec cp {} release-assets/ \;
+          # Make AppImage executable (preserved in release tarball)
+          chmod +x release-assets/*.AppImage 2>/dev/null || true
+          # Windows MSI
           find artifacts/frago-x86_64-pc-windows-msvc -name "*.msi" -exec cp {} release-assets/ \;
           ls -la release-assets/
 
@@ -156,12 +163,14 @@ jobs:
           body: |
             ## Install
 
-            | Platform | File |
-            |----------|------|
-            | macOS Apple Silicon | `.dmg` (aarch64) |
-            | macOS Intel | `.dmg` (x86_64) |
-            | Linux | `.AppImage` |
-            | Windows | `.msi` |
+            | Platform | File | Note |
+            |----------|------|------|
+            | macOS Apple Silicon | `.dmg` (aarch64) | |
+            | macOS Intel | `.dmg` (x86_64) | |
+            | Linux (Ubuntu/Debian) | `.deb` | `sudo dpkg -i frago_*.deb` |
+            | Linux (Fedora/RHEL) | `.rpm` | `sudo rpm -i frago_*.rpm` |
+            | Linux (通用) | `.AppImage` | 下载后需要 `chmod +x` |
+            | Windows | `.msi` | |
 
             ### macOS 首次打开
 
@@ -171,7 +180,12 @@ jobs:
             xattr -cr /Applications/frago.app
             ```
 
-            然后就可以正常双击启动了。
+            ### Linux AppImage
+
+            ```bash
+            chmod +x frago_*.AppImage
+            ./frago_*.AppImage
+            ```
           files: |
             release-assets/*
         env:
