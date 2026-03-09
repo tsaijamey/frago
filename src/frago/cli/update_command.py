@@ -60,17 +60,12 @@ def get_latest_version() -> Optional[str]:
     help="Only check for updates, do not perform update",
 )
 @click.option(
-    "--reinstall",
-    is_flag=True,
-    help="Force reinstall",
-)
-@click.option(
     "--repo",
     "from_repo",
     is_flag=True,
     help="Install latest version from GitHub repository (instead of PyPI)",
 )
-def update(check_only: bool, reinstall: bool, from_repo: bool):
+def update(check_only: bool, from_repo: bool):
     """
     Update frago to the latest version
 
@@ -81,7 +76,6 @@ def update(check_only: bool, reinstall: bool, from_repo: bool):
       frago update              # Update from PyPI
       frago update --repo       # Update from GitHub repository
       frago update --check      # Check if updates are available on PyPI
-      frago update --reinstall  # Force reinstall
     """
     current_version = get_current_version()
 
@@ -128,10 +122,10 @@ def update(check_only: bool, reinstall: bool, from_repo: bool):
             # Install from GitHub repository, needs --reinstall to overwrite existing installation
             cmd = ["uv", "tool", "install", "--reinstall", REPO_URL]
         else:
-            # Update from PyPI
-            cmd = ["uv", "tool", "upgrade", PACKAGE_NAME]
-            if reinstall:
-                cmd.append("--reinstall")
+            # Always use install --reinstall to pull from PyPI regardless of original install source.
+            # uv tool upgrade follows the original source (e.g. local wheel), which breaks when
+            # the wheel no longer exists (e.g. after Tauri installs a version, then the dist/ is cleaned).
+            cmd = ["uv", "tool", "install", "--reinstall", PACKAGE_NAME]
 
         # Execute directly, let output display to user
         result = subprocess.run(cmd)
