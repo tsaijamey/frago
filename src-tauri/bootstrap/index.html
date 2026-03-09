@@ -115,7 +115,7 @@
 <body>
 
 <h1>frago</h1>
-<p class="subtitle">Setting up your environment&hellip;</p>
+<p class="subtitle">Setting up your environment&hellip; <span id="app-version" style="color:#525252"></span></p>
 
 <div class="steps">
   <div class="step" id="step-uv">
@@ -256,6 +256,11 @@
       showError(msg);
     }
   }
+
+  // Show app version
+  window.__TAURI__.app.getVersion().then(v => {
+    $('app-version').textContent = 'v' + v;
+  });
 
   // Auto-start on load
   runBootstrap();

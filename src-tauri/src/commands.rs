@@ -177,12 +177,15 @@ pub async fn check_frago() -> Result<CheckResult, String> {
 
 #[tauri::command]
 pub async fn check_server() -> Result<bool, String> {
-    let resp = reqwest::Client::new()
-        .get("http://127.0.0.1:8093/api/status")
-        .timeout(std::time::Duration::from_secs(2))
-        .send()
-        .await;
-    Ok(resp.is_ok_and(|r| r.status().is_success()))
+    // Use raw TCP connect instead of reqwest HTTP — reqwest can fail
+    // inside macOS .app bundles due to network sandbox restrictions
+    use std::net::TcpStream;
+    let ok = TcpStream::connect_timeout(
+        &"127.0.0.1:8093".parse().unwrap(),
+        std::time::Duration::from_secs(2),
+    )
+    .is_ok();
+    Ok(ok)
 }
 
 // ---------------------------------------------------------------------------
