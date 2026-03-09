@@ -55,7 +55,7 @@ export default function VersionBanner() {
               New version <strong>{versionInfo?.latest_version}</strong> available
             </span>
             <code className="version-banner-command">
-              uv tool upgrade frago-cli
+              uv tool install --reinstall frago-cli
             </code>
           </div>
           <div className="version-banner-actions">
