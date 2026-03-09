@@ -71,8 +71,18 @@ class AgentSession:
 
     def _get_frago_agent_command(self) -> List[str]:
         """Get frago agent command for subprocess."""
+        import sys
+
+        # Prefer frago in the same venv as the running server (most reliable)
+        frago_in_venv = Path(sys.executable).parent / "frago"
+        if frago_in_venv.exists():
+            return [str(frago_in_venv), "agent"]
+
+        # Fall back to uv run (works in dev environments with uv in PATH)
         if shutil.which("uv"):
             return ["uv", "run", "frago", "agent"]
+
+        # Last resort: bare name (resolve_command_path will try shutil.which)
         return ["frago", "agent"]
 
     async def start(self, prompt: str, resume_session_id: Optional[str] = None) -> None:

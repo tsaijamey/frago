@@ -165,8 +165,18 @@ class RecipeInstaller:
         if not token:
             try:
                 # Get gh command - use direct exe path on Windows to avoid cmd flash
+                # On macOS .app bundles PATH is minimal, so try known locations
                 gh_cmd = ["gh"]
-                if platform.system() == "Windows":
+                if platform.system() == "Darwin":
+                    gh_candidates = [
+                        Path("/opt/homebrew/bin/gh"),
+                        Path("/usr/local/bin/gh"),
+                    ]
+                    for candidate in gh_candidates:
+                        if candidate.exists():
+                            gh_cmd = [str(candidate)]
+                            break
+                elif platform.system() == "Windows":
                     gh_path = shutil.which("gh")
                     if gh_path:
                         gh_path_obj = Path(gh_path)
