@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "0.44.6"
+version = "0.44.7"
 description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
