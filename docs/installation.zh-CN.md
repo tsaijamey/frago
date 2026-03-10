@@ -2,7 +2,28 @@
 
 [English](installation.md)
 
-## 环境要求
+## 桌面客户端（推荐）
+
+下载安装即可使用，无需命令行，无需配置环境：
+
+| 平台 | 下载 |
+|------|------|
+| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_aarch64.dmg) |
+| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64.dmg) |
+| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64_en-US.msi) |
+| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.deb) |
+| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest/download/frago-0.44.9-1.x86_64.rpm) |
+| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.AppImage) |
+
+> 所有下载见 [Releases 页面](https://github.com/tsaijamey/frago/releases/latest)
+
+---
+
+## CLI 安装（开发者）
+
+适合习惯命令行的开发者。
+
+### 环境要求
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
@@ -10,9 +31,7 @@
 | **Node.js** | 20+ | Claude Code 集成 |
 | **Chrome** | 最新版 | CDP 浏览器自动化 |
 
-## 快速安装（推荐）
-
-一键安装并启动：
+### 快速安装
 
 ```bash
 # macOS/Linux
@@ -27,12 +46,8 @@ powershell -c "irm https://frago.ai/install.ps1 | iex"
 - 启动 Web 服务
 - 在浏览器中打开 http://127.0.0.1:8093
 
----
-
 <details>
-<summary><b>手动安装（高级）</b></summary>
-
-如果你希望逐步控制安装过程：
+<summary><b>手动安装</b></summary>
 
 ```bash
 # 1. 安装 uv（包管理器）

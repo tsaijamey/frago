@@ -24,21 +24,37 @@ frago solves this with **Recipe system**: validated automation scripts that run 
 
 ## Quick Start
 
+### Desktop App (Recommended)
+
+Download and install — no terminal needed:
+
+| Platform | Download |
+|----------|----------|
+| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_aarch64.dmg) |
+| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64.dmg) |
+| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64_en-US.msi) |
+| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.deb) |
+| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest/download/frago-0.44.9-1.x86_64.rpm) |
+| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.AppImage) |
+
+> All downloads available on the [Releases page](https://github.com/tsaijamey/frago/releases/latest).
+
+### CLI Install (Advanced)
+
+<details>
+<summary>For developers who prefer the command line</summary>
+
 ```bash
 uv tool install frago-cli   # Install
 frago init                   # Initialize
 frago server start           # Start Web UI → http://127.0.0.1:8093
 ```
 
+**Requirements:** Python 3.13+, Node.js 20+, Chrome (latest)
+
 > New to `uv`? See [Installation Guide](docs/installation.md).
 
-## Requirements
-
-| Dependency | Version |
-|------------|---------|
-| Python | 3.13+ |
-| Node.js | 20+ |
-| Chrome | Latest |
+</details>
 
 ## How It Works
 

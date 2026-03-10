@@ -2,7 +2,28 @@
 
 [简体中文](installation.zh-CN.md)
 
-## Requirements
+## Desktop App (Recommended)
+
+Download and install — no terminal, no dependencies:
+
+| Platform | Download |
+|----------|----------|
+| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_aarch64.dmg) |
+| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64.dmg) |
+| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64_en-US.msi) |
+| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.deb) |
+| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest/download/frago-0.44.9-1.x86_64.rpm) |
+| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.AppImage) |
+
+> All downloads: [Releases page](https://github.com/tsaijamey/frago/releases/latest)
+
+---
+
+## CLI Install (Advanced)
+
+For developers who prefer the command line.
+
+### Requirements
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
@@ -10,9 +31,7 @@
 | **Node.js** | 20+ | Claude Code integration |
 | **Chrome** | Latest | CDP browser automation |
 
-## Quick Install (Recommended)
-
-One command to install and launch:
+### Quick Install
 
 ```bash
 # macOS/Linux
@@ -27,12 +46,8 @@ This automatically:
 - Starts the web service
 - Opens your browser to http://127.0.0.1:8093
 
----
-
 <details>
-<summary><b>Manual Installation (Advanced)</b></summary>
-
-If you prefer step-by-step control:
+<summary><b>Manual Installation</b></summary>
 
 ```bash
 # 1. Install uv (package manager)
