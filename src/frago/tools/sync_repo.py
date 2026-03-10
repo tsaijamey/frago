@@ -320,7 +320,7 @@ __pycache__/
 *.bak
 *.bak.*
 server.pid
-server.log
+server.log*
 gui_history.jsonl
 
 # Conflict backup files (temporary)
@@ -379,7 +379,7 @@ logs/
             # Device-specific config
             "gui_config.json",
             # System files
-            ".DS_Store", "__pycache__/", "server.pid", "server.log", "gui_history.jsonl",
+            ".DS_Store", "__pycache__/", "server.pid", "server.log*", "gui_history.jsonl",
             # Conflict backups
             "*.LOCAL", "*.REMOTE",
             # Large file types
