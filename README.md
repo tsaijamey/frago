@@ -1,126 +1,55 @@
 # frago
 
-**Skeleton framework for AI Agents** — Let AI remember how to complete tasks, instead of exploring from scratch every time.
+**An operating system for AI agents** — frago runs AI agents on your computer so you don't have to do repetitive work yourself.
+
+> frago is not affiliated with OpenClaw. frago predates OpenClaw by approximately one month.
 
 [简体中文](README.zh-CN.md)
 
 ## Why frago
 
-AI Agents are smart, but unpredictable. Ask the same task 10 times, you might get 10 different results — some work, some don't.
+**Easy to install, easy to set up.** The desktop app is ~2MB. After download, it automatically checks and installs everything it needs. Configure one AI model, and you're ready to go. No terminal, no environment setup, no dependencies to manage yourself.
 
-frago solves this with **Recipe system**: validated automation scripts that run deterministically. Once a Recipe works, it works every time.
+You spend hours every day on tasks a computer could do for you — filling spreadsheets, pulling data from websites, moving files around. AI agents can already do these things, but they're trapped behind terminals and command lines that most people can't use.
 
-**Predictable execution. That's what matters.**
+frago gives AI agents a place to run, and gives you a window to watch and control them. Describe what you need, and frago handles the rest.
 
-> Same philosophy as Anthropic's ["Code execution with MCP"](https://www.anthropic.com/engineering/code-execution-with-mcp): deterministic code beats repeated LLM exploration. frago uses Recipes instead of MCP.
+When AI figures out how to do something, frago saves the working steps so the same task can be done again with one click — no AI needed.
 
-## Comparison
+## Get Started
 
-| | **Cowork** | **OpenClaw** | **frago** |
-|--|------------|--------------|-----------|
-| **Best for** | Daily tasks | Cross-platform assistant | Reusable automation |
-| **Workflow** | Chat → AI explores | Chat → AI explores | Explore → Agent auto-solidifies → Deterministic execution |
-| **Foundation** | Claude Agent SDK | Custom | Claude Code |
-
-## Quick Start
-
-### Desktop App (Recommended)
-
-Download and install — no terminal needed:
+Download and install:
 
 | Platform | Download |
 |----------|----------|
-| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_aarch64.dmg) |
-| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64.dmg) |
-| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64_en-US.msi) |
-| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.deb) |
-| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest/download/frago-0.44.9-1.x86_64.rpm) |
-| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.AppImage) |
+| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
+| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
+| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest) |
+| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest) |
+| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest) |
+| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest) |
 
 > All downloads available on the [Releases page](https://github.com/tsaijamey/frago/releases/latest).
 
-### CLI Install (Advanced)
-
-<details>
-<summary>For developers who prefer the command line</summary>
-
-```bash
-uv tool install frago-cli   # Install
-frago init                   # Initialize
-frago server start           # Start Web UI → http://127.0.0.1:8093
-```
-
-**Requirements:** Python 3.13+, Node.js 20+, Chrome (latest)
-
-> New to `uv`? See [Installation Guide](docs/installation.md).
-
-</details>
-
 ## How It Works
 
-frago integrates with Claude Code through slash commands:
-
 ```
-/frago.run     Explore and research, accumulate experience
-     ↓
-/frago.recipe  Solidify experience into reusable recipes
-     ↓
-/frago.test    Validate recipes (while context is fresh)
+You describe the task
+    ↓
+AI does it for you
+    ↓
+Same task next time → one click, done
 ```
 
-### The Recipe Advantage
+Why does "one click" work? When AI completes a task, it saves the working steps as executable code. This code runs the same way every time — no AI needed, no randomness, no token cost. We call these saved procedures **Recipes**.
 
-```
-AI exploration:   Unpredictable — might succeed, might fail, might take wrong path
-                      ↓
-                  Once it works → save as Recipe
-                      ↓
-Recipe execution: Deterministic — validated script, guaranteed results
-```
-
-**Recipe = muscle memory. No thinking, just doing.**
-
-## Core Systems
-
-| System | Purpose |
-|--------|---------|
-| **Recipe** | Reusable automation scripts (chrome-js/python/shell) |
-| **Run** | Persistent task context with JSONL logs |
-| **CDP** | Native Chrome control (~2MB, no Node.js relay) |
-| **Web UI** | Browser-based GUI on port 8093 |
-
-## CLI Commands
-
-```bash
-# Recipe management
-frago recipe list              # List all recipes
-frago recipe run <name>        # Execute recipe
-
-# Browser control
-frago chrome navigate <url>
-frago chrome click <selector>
-frago chrome screenshot <file>
-
-# Server
-frago server start/stop/status
-```
+A Recipe is software that frago built for itself. Unlike prompts or instructions that still rely on AI interpretation each time, a Recipe is real code that runs deterministically. Recipes can also be reused across different tasks — an AI that knows how to log into a website can use that Recipe as a building block for any task that starts with logging in.
 
 ## Documentation
 
-- [Installation](docs/installation.md) — Setup and prerequisites
-- [User Guide](docs/user-guide.md) — Commands and usage
-- [Concepts](docs/concepts.md) — Run, Recipe, Skill relationships
-- [Architecture](docs/architecture.md) — Technical design
-- [Recipes](docs/recipes.md) — Recipe system deep dive
-
-## Resource Sync
-
-Keep your recipes synced across machines:
-
-```bash
-frago sync --set-repo git@github.com:you/my-resources.git
-frago sync  # Bidirectional sync
-```
+- [User Guide](docs/user-guide.md) — Getting started after install
+- [Concepts](docs/concepts.md) — How Recipes, Runs, and Skills work together
+- [Developer Docs](docs/developer.md) — CLI, architecture, and technical details
 
 ## License
 
