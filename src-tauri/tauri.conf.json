@@ -3,6 +3,7 @@
   "productName": "frago",
   "version": "0.44.9",
   "identifier": "com.frago.client",
+  "mainBinaryName": "frago-desktop",
   "build": {
     "beforeBuildCommand": "",
     "beforeDevCommand": "",
