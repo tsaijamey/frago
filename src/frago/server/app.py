@@ -97,14 +97,66 @@ async def lifespan(app: FastAPI):
     github_sync_scheduler = GitHubSyncScheduler.get_instance()
     await github_sync_scheduler.start()
 
+    # Initialize Primary Agent (PID 1 — always available, independent of features)
+    from frago.server.services.primary_agent_service import PrimaryAgentService
+
+    primary_agent = PrimaryAgentService.get_instance()
+    try:
+        await primary_agent.initialize()
+    except Exception as e:
+        logger.warning("Failed to initialize Primary Agent: %s", e)
+
+    # Start task ingestion scheduler (if enabled in config)
+    ingestion_scheduler = await _start_ingestion_scheduler(logger)
+
     yield
 
     # Shutdown
+    if ingestion_scheduler is not None:
+        await ingestion_scheduler.stop()
+    await primary_agent.stop()
     await github_sync_scheduler.stop()
     await version_service.stop()
     await community_service.stop()
     await sessions_watcher.stop()
     await sync_service.stop()
+
+
+async def _start_ingestion_scheduler(logger):
+    """Start the task ingestion scheduler if enabled in config."""
+    try:
+        import json as _json
+
+        config_file = Path.home() / ".frago" / "config.json"
+        if not config_file.exists():
+            return None
+        raw_config = _json.loads(config_file.read_text(encoding="utf-8"))
+        ingestion_config = raw_config.get("task_ingestion", {})
+        if not ingestion_config.get("enabled", False):
+            return None
+
+        from frago.server.services.ingestion.scheduler import (
+            ChannelConfig,
+            IngestionScheduler,
+        )
+        from frago.server.services.ingestion.store import TaskStore
+
+        channel_configs = [
+            ChannelConfig(**ch) for ch in ingestion_config.get("channels", [])
+        ]
+        if not channel_configs:
+            logger.info("No ingestion channels configured, skipping scheduler")
+            return None
+
+        scheduler = IngestionScheduler(
+            channels=channel_configs,
+            store=TaskStore(),
+        )
+        await scheduler.start()
+        return scheduler
+    except Exception as e:
+        logger.warning("Failed to start ingestion scheduler: %s", e)
+        return None
 
 
 def get_frontend_path() -> Path:
