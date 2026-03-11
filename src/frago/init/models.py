@@ -80,6 +80,12 @@ class Config(BaseModel):
     resources_version: Optional[str] = None
     last_resource_update: Optional[datetime] = None
 
+    # Task ingestion configuration
+    task_ingestion: Optional[dict] = None
+
+    # Primary Agent configuration
+    primary_agent: Optional[dict] = None
+
     # Metadata
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
