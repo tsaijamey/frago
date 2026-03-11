@@ -2,26 +2,26 @@
 
 [简体中文](installation.zh-CN.md)
 
-## Desktop App (Recommended)
+## Desktop App
 
-Download and install — no terminal, no dependencies:
+Download, install, and open from your app menu. That's it.
 
 | Platform | Download |
 |----------|----------|
-| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_aarch64.dmg) |
-| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64.dmg) |
-| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_x64_en-US.msi) |
-| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.deb) |
-| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest/download/frago-0.44.9-1.x86_64.rpm) |
-| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest/download/frago_0.44.9_amd64.AppImage) |
+| **macOS (Apple Silicon)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
+| **macOS (Intel)** | [.dmg](https://github.com/tsaijamey/frago/releases/latest) |
+| **Windows** | [.msi](https://github.com/tsaijamey/frago/releases/latest) |
+| **Linux (deb)** | [.deb](https://github.com/tsaijamey/frago/releases/latest) |
+| **Linux (rpm)** | [.rpm](https://github.com/tsaijamey/frago/releases/latest) |
+| **Linux (AppImage)** | [.AppImage](https://github.com/tsaijamey/frago/releases/latest) |
 
 > All downloads: [Releases page](https://github.com/tsaijamey/frago/releases/latest)
 
 ---
 
-## CLI Install (Advanced)
+## CLI
 
-For developers who prefer the command line.
+The command-line interface to frago — like a shell to an OS. Everything the desktop app can do, the CLI can do too, plus browser automation, Recipe development, and direct agent control. Requires Python 3.13+ to install.
 
 ### Requirements
 
@@ -29,7 +29,7 @@ For developers who prefer the command line.
 |------------|---------|---------|
 | **Python** | 3.13+ | Core runtime |
 | **Node.js** | 20+ | Claude Code integration |
-| **Chrome** | Latest | CDP browser automation |
+| **Chrome** | Latest | Browser automation |
 
 ### Quick Install
 
@@ -40,11 +40,6 @@ curl -fsSL https://frago.ai/install.sh | sh
 # Windows
 powershell -c "irm https://frago.ai/install.ps1 | iex"
 ```
-
-This automatically:
-- Installs uv and frago
-- Starts the web service
-- Opens your browser to http://127.0.0.1:8093
 
 <details>
 <summary><b>Manual Installation</b></summary>
@@ -60,22 +55,20 @@ uv tool install frago-cli
 # 3. Initialize
 frago init
 
-# 4. Start web service
+# 4. Start server
 frago server start
 ```
 
-Then open http://127.0.0.1:8093
-
 </details>
 
-## Verify
+### Verify
 
 ```bash
 frago --version
 frago recipe list
 ```
 
-## Upgrade / Uninstall
+### Upgrade / Uninstall
 
 ```bash
 uv tool upgrade frago-cli    # Upgrade
