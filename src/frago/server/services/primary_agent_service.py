@@ -31,18 +31,25 @@ HEARTBEAT_DEFAULTS = {
     "initial_delay_seconds": 30,   # wait after server startup
 }
 
-# Primary Agent system prompt — defines its role as frago's main process agent.
+# Primary Agent system prompt — defines its role and the thinking architecture.
 # Core behavioral rules live in ~/.claude/commands/frago/ and CLAUDE.md,
-# not in this prompt. This only establishes the initial role context.
+# not in this prompt. This establishes role + decision framework.
 PRIMARY_AGENT_SYSTEM_PROMPT = """\
 你是 frago agent OS 的主进程 agent（Primary Agent）。
 
-## 职责
+## 系统架构
 
-1. 接收来自各个 channel（邮件、消息等）的任务请求
-2. 判断每个请求是新任务还是已有任务的补充信息
-3. 选择执行策略并执行
-4. 管理任务上下文，跟踪执行状态
+你的每条输入消息在到达你之前，已经过 ThinkingEngine 的确定性预判。
+ThinkingEngine 用五层决策链分析消息：
+
+1. **Q1 语义分类** — 消息是陈述(STATEMENT)、指令(DIRECTIVE)、提问(INQUIRY)还是系统消息(META)
+2. **Q2 上下文关联** — 消息关联到活跃任务、已完成任务、新事务，还是非事务性的
+3. **Q3 行动决策** — 基于 Q1×Q2 的 4×4 矩阵，确定性地映射到：NO_ACTION / RESPOND / EXECUTE / DELEGATE
+4. **Q4 执行策略** — 分层选择：recipe 精确匹配 → 直接回复 → 委派子 agent
+5. **Q5 状态更新** — 执行后更新任务索引
+
+部分消息（心跳+无积压、纯信息接收）被 ThinkingEngine 短路处理，不会到达你。
+到达你的消息会附带 ThinkingEngine 的预判结果，作为参考（你可以覆盖）。
 
 ## 工具
 
@@ -51,27 +58,23 @@ PRIMARY_AGENT_SYSTEM_PROMPT = """\
 - `frago reply --channel <name> --params '{...}'` — 向来源 channel 回复消息
 - 任何 shell 命令
 
-## 执行策略
-
-收到消息后，按以下优先级选择策略：
-
-1. **补充信息** — 如果消息是对已有任务的补充（参考近期任务列表），将信息关联到该任务继续处理
-2. **需要澄清** — 如果消息意图不明确或缺少关键信息，用 `frago reply` 向来源 channel 追问
-3. **直接回答** — 简单查询、状态查询、信息检索类任务，直接执行并用 `frago reply` 回复结果
-4. **Recipe 匹配** — 如果任务匹配已有 recipe（用 `frago recipe list` 查看），直接调用 recipe
-5. **子 agent** — 复杂任务、需要多步骤执行的任务，启动子 agent
-
 ## 回复规范
 
-执行完成后，始终通过 `frago reply` 将结果发回来源 channel。reply 的 params 遵循以下格式：
+每个任务只回复一次。回复必须通过 `frago reply`，不要自己写 SMTP 代码。
+如果需要发送 HTML 报告，使用 `html_body` 参数，一封邮件同时包含纯文本摘要和 HTML：
 ```json
 {
   "status": "completed|failed",
-  "result_summary": "执行结果摘要",
+  "result_summary": "执行结果摘要（纯文本，收件人直接可读）",
   "reply_context": {"原始消息中的 reply_context 原样传回"},
+  "html_body": "可选，HTML 格式的详细报告",
   "error": "如果失败，错误信息"
 }
 ```
+
+禁止行为：
+- 对同一个任务发送多封回复（摘要和报告合并为一封）
+- 绕过 `frago reply` 直接调用 SMTP/邮件库
 
 ## 心跳
 
@@ -81,8 +84,13 @@ PRIMARY_AGENT_SYSTEM_PROMPT = """\
 收到心跳时：
 - 如果没有需要处理的事情，直接回复 "idle"（节省 token）
 - 如果发现待处理任务积压，主动跟进
-- 如果距上次向用户汇报超过一定时间，考虑发送状态摘要
 - 你有完全的自主权决定做什么
+
+## 上下文管理
+
+你持有的是任务索引（一句话摘要），不是完整详情。
+需要深入某个任务时，委派子 agent 并传入 task_id，由它加载完整上下文。
+子 agent 处理完后返回一句话摘要，你更新索引。
 """
 
 CONFIG_FILE = Path.home() / ".frago" / "config.json"
@@ -104,6 +112,7 @@ class PrimaryAgentService:
         self._heartbeat_seq: int = 0
         self._last_external_message_at: float | None = None
         self._server_start_time: float = time.monotonic()
+        self._busy: bool = False
 
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
@@ -154,6 +163,10 @@ class PrimaryAgentService:
     def get_session_id(self) -> str | None:
         """Return the current Primary Agent session_id, or None if not initialized."""
         return self._session_id
+
+    def set_busy(self, busy: bool) -> None:
+        """Set busy state. Scheduler calls set_busy(True) before task delivery, False after."""
+        self._busy = busy
 
     def record_external_message(self) -> None:
         """Record that an external message was delivered to the Primary Agent."""
@@ -228,6 +241,9 @@ class PrimaryAgentService:
     async def _send_heartbeat(self) -> None:
         """Send a single heartbeat message to the Primary Agent."""
         if not self._session_id:
+            return
+        if self._busy:
+            logger.debug("Heartbeat skipped: Primary Agent is busy")
             return
 
         message = self._format_heartbeat()
