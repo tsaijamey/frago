@@ -570,7 +570,10 @@ class AgentService:
                 str(prompt_file),
             ]
             cwd = _resolve_project_path(session_id)
-            with open(log_file, "w", encoding="utf-8") as f:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n{'='*60}\n")
+                f.write(f"[Resume] {prompt[:80]}...\n")
+                f.write(f"{'='*60}\n")
                 run_subprocess_background(
                     cmd,
                     stdout=f,
