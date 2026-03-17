@@ -10,6 +10,7 @@ Can be run as a module for daemon mode:
 import contextlib
 import logging
 import signal
+import sys
 import threading
 import webbrowser
 from datetime import UTC, datetime
@@ -71,6 +72,16 @@ def run_server(
     Raises:
         RuntimeError: If no available port found
     """
+    # Configure Python logging for non-daemon mode (debug)
+    # Daemon mode has its own file-based logging setup in start_daemon()
+    if not logging.root.handlers:
+        level = getattr(logging, log_level.upper(), logging.INFO)
+        logging.basicConfig(
+            level=level,
+            format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+            stream=sys.stderr,
+        )
+
     # Find available port if needed
     if auto_port and not is_port_available(port, host):
         logger.info(f"Port {port} is in use, finding available port...")

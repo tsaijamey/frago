@@ -235,6 +235,7 @@ class PrimaryAgentService:
 
         AgentService.continue_task(self._session_id, message)
         self._heartbeat_seq += 1
+        logger.debug("Heartbeat [%d] sent to session %s", self._heartbeat_seq, self._session_id[:8])
 
     def _format_heartbeat(self) -> str:
         """Build the heartbeat message with environment context."""

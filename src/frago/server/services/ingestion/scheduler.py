@@ -95,7 +95,7 @@ class IngestionScheduler:
         runner = RecipeRunner()
         result = await asyncio.to_thread(runner.run, ch.poll_recipe, params={})
         if not result.get("success"):
-            logger.debug(
+            logger.warning(
                 "Poll recipe %s returned failure: %s",
                 ch.poll_recipe,
                 result.get("error", "unknown"),
@@ -103,6 +103,10 @@ class IngestionScheduler:
             return
 
         messages = result.get("data", {}).get("messages", [])
+        if not messages:
+            logger.debug("Poll %s: no new messages", ch.poll_recipe)
+            return
+        logger.info("Poll %s: %d message(s) received", ch.poll_recipe, len(messages))
         for msg in messages:
             # Defensive: skip messages missing required fields
             if "id" not in msg or "prompt" not in msg:
@@ -114,6 +118,7 @@ class IngestionScheduler:
 
             msg_id = str(msg["id"])
             if self._store.exists(ch.name, msg_id):
+                logger.debug("Channel %s: message %s already processed, skipping", ch.name, msg_id)
                 continue
 
             task = IngestedTask(
@@ -227,6 +232,7 @@ class IngestionScheduler:
         )
         start = time.monotonic()
         last_size = -1
+        logger.info("Waiting for task completion (session=%s, timeout=%ds)", session_id[:8], timeout)
 
         while time.monotonic() - start < timeout:
             await asyncio.sleep(10)
@@ -234,11 +240,14 @@ class IngestionScheduler:
                 continue
             current_size = log_file.stat().st_size
             if current_size == last_size and last_size > 0:
+                elapsed = int(time.monotonic() - start)
+                logger.info("Task completed (session=%s, elapsed=%ds)", session_id[:8], elapsed)
                 content = log_file.read_text(encoding="utf-8", errors="replace")
                 summary = content[-2000:] if len(content) > 2000 else content
                 return {"status": "completed", "summary": summary}
             last_size = current_size
 
+        logger.warning("Task timed out (session=%s, timeout=%ds)", session_id[:8], timeout)
         return {"status": "timeout", "summary": f"任务执行超时（{timeout}秒）"}
 
     async def _notify(self, task: IngestedTask, ch: ChannelConfig) -> None:
