@@ -373,6 +373,64 @@ class RecipeRegistry:
             # Can add logging here, but to keep it simple, we just silently remove
             # print(f"Warning: Recipe '{recipe_name}' ({source}) has missing dependencies: {', '.join(missing_deps)}", file=sys.stderr)
 
+    def exact_match(self, text: str) -> str | None:
+        """Try to match input text against registered recipes.
+
+        Matching layers (in order):
+        1. Exact recipe name in text (e.g. "run poll-gmail")
+        2. use_cases keyword match
+        3. tags keyword match
+
+        Returns the recipe name if matched, None otherwise.
+        When multiple recipes match, selects by source priority (User > Community > Official).
+        """
+        text_lower = text.lower().strip()
+
+        # Layer 1: exact name match — check if any recipe name appears in text
+        for name in self.recipes:
+            if name.lower() in text_lower:
+                return name
+
+        # Layer 2: use_cases match — check if any use_case phrase appears in text
+        best_match: str | None = None
+        best_score = 0
+        for recipe_name, sources_dict in self.recipes.items():
+            # Pick highest-priority source version
+            recipe = None
+            for src in SOURCE_PRIORITY:
+                if src in sources_dict:
+                    recipe = sources_dict[src]
+                    break
+            if recipe is None:
+                continue
+
+            score = 0
+            for use_case in recipe.metadata.use_cases:
+                uc_lower = use_case.lower()
+                if uc_lower in text_lower or text_lower in uc_lower:
+                    score += 2
+                else:
+                    # Check individual words overlap
+                    uc_words = set(uc_lower.split())
+                    text_words = set(text_lower.split())
+                    overlap = uc_words & text_words
+                    if len(overlap) >= 2:
+                        score += 1
+
+            for tag in recipe.metadata.tags:
+                if tag.lower() in text_lower:
+                    score += 1
+
+            if score > best_score:
+                best_score = score
+                best_match = recipe_name
+
+        # Only return if we have a meaningful match (score >= 2)
+        if best_score >= 2:
+            return best_match
+
+        return None
+
     def find_all_sources(self, name: str) -> list[tuple[str, Path]]:
         """
         Find if same-name Recipe exists in all sources
