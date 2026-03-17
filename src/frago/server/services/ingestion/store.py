@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.ingestion.models import IngestedTask, TaskStatus
+from frago.server.services.ingestion.models import IngestedTask, TaskIndex, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,58 @@ class TaskStore:
                 items = [d for d in items if d["channel"] == channel]
             items.sort(key=lambda d: d.get("created_at", ""), reverse=True)
             return [self._deserialize(d) for d in items[:limit]]
+
+    def get_index(
+        self, *, active_limit: int = 20, completed_limit: int = 10
+    ) -> list[TaskIndex]:
+        """Return summary-level task index for Primary Agent context.
+
+        Returns active tasks (PENDING/EXECUTING) sorted by last_activity_at desc,
+        plus recently completed tasks. Keeps context size bounded.
+        """
+        with self._lock:
+            all_tasks = [self._deserialize(d) for d in self._tasks.values()]
+
+        active_statuses = {TaskStatus.PENDING, TaskStatus.EXECUTING}
+        terminal_statuses = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT}
+
+        active = [t for t in all_tasks if t.status in active_statuses]
+        completed = [t for t in all_tasks if t.status in terminal_statuses]
+
+        # Sort by most recent activity
+        def _activity_key(t: IngestedTask) -> str:
+            return (t.completed_at or t.created_at).isoformat()
+
+        active.sort(key=_activity_key, reverse=True)
+        completed.sort(key=_activity_key, reverse=True)
+
+        result: list[TaskIndex] = []
+        for t in active[:active_limit]:
+            result.append(self._to_index(t))
+        for t in completed[:completed_limit]:
+            result.append(self._to_index(t))
+        return result
+
+    @staticmethod
+    def _to_index(task: IngestedTask) -> TaskIndex:
+        """Convert IngestedTask to TaskIndex (summary level)."""
+        summary = task.prompt[:60]
+        if task.result_summary:
+            summary = task.result_summary[:60]
+
+        # Build reply_context_key from reply_context if available
+        reply_ctx = task.reply_context or {}
+        reply_key = reply_ctx.get("message_id") or reply_ctx.get("channel_message_id")
+
+        return TaskIndex(
+            task_id=task.id,
+            channel=task.channel,
+            one_line_summary=summary,
+            status=task.status,
+            created_at=task.created_at,
+            last_activity_at=task.completed_at or task.created_at,
+            reply_context_key=reply_key,
+        )
 
     # -- persistence --
 

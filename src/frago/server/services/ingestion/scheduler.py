@@ -15,8 +15,16 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from frago.server.services.ingestion.models import IngestedTask, TaskStatus
+from frago.server.services.ingestion.models import (
+    ActionType,
+    ContextBinding,
+    ExecutionStrategy,
+    IngestedTask,
+    TaskStatus,
+    ThinkingResult,
+)
 from frago.server.services.ingestion.store import TaskStore
+from frago.server.services.thinking import ThinkingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +46,11 @@ class IngestionScheduler:
         self,
         channels: list[ChannelConfig],
         store: TaskStore,
+        thinking_engine: ThinkingEngine | None = None,
     ) -> None:
         self._channels = channels
         self._store = store
+        self._thinking = thinking_engine or ThinkingEngine()
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -88,6 +98,20 @@ class IngestionScheduler:
             except asyncio.TimeoutError:
                 continue
 
+    def _sync_task_index(self, exclude_task_ids: set[str] | None = None) -> None:
+        """Refresh ThinkingEngine's task index from the store.
+
+        Args:
+            exclude_task_ids: Task IDs to exclude (e.g., current batch being processed).
+        """
+        try:
+            index = self._store.get_index()
+            if exclude_task_ids:
+                index = [t for t in index if t.task_id not in exclude_task_ids]
+            self._thinking.update_task_index(index)
+        except Exception:
+            logger.debug("Failed to sync task index", exc_info=True)
+
     async def _poll_channel(self, ch: ChannelConfig) -> None:
         """Call poll_recipe, parse return value per data contract."""
         from frago.recipes.runner import RecipeRunner
@@ -107,6 +131,9 @@ class IngestionScheduler:
             logger.debug("Poll %s: no new messages", ch.poll_recipe)
             return
         logger.info("Poll %s: %d message(s) received", ch.poll_recipe, len(messages))
+
+        # Collect all new tasks from this poll
+        new_tasks: list[IngestedTask] = []
         for msg in messages:
             # Defensive: skip messages missing required fields
             if "id" not in msg or "prompt" not in msg:
@@ -130,79 +157,205 @@ class IngestionScheduler:
             )
             logger.info("New task from %s: %s", ch.name, task.prompt[:80])
             self._store.add(task)
-            await self._deliver_to_primary(task, ch)
+            new_tasks.append(task)
 
-    async def _deliver_to_primary(
-        self, task: IngestedTask, ch: ChannelConfig
+        if not new_tasks:
+            return
+
+        # Batch deliver all new tasks in a single continue_task call
+        await self._deliver_batch_to_primary(new_tasks, ch)
+
+    async def _deliver_batch_to_primary(
+        self, tasks: list[IngestedTask], ch: ChannelConfig
     ) -> None:
-        """Deliver an ingested task to the Primary Agent for processing."""
-        try:
-            from frago.server.services.primary_agent_service import (
-                PrimaryAgentService,
+        """Deliver tasks to Primary Agent, with ThinkingEngine pre-processing.
+
+        Short-circuits:
+        - NO_ACTION → mark COMPLETED, skip LLM entirely
+        - REPLY_DIRECT → auto-reply via notify recipe, skip LLM
+        Other results → deliver to Primary Agent with ThinkingResult attached
+        """
+        from frago.server.services.primary_agent_service import (
+            PrimaryAgentService,
+        )
+
+        # Sync task index before processing, excluding current batch
+        # (they were just added as PENDING and shouldn't count as "pending backlog")
+        self._sync_task_index(exclude_task_ids={t.id for t in tasks})
+
+        # Phase 1: Run ThinkingEngine on each task, partition into short-circuit vs deliver
+        # (task, thinking_summary, thinking_result)
+        tasks_for_primary: list[tuple[IngestedTask, str, ThinkingResult]] = []
+        for task in tasks:
+            thinking_result = self._thinking.process(task.prompt, task)
+
+            # Short-circuit: NO_ACTION — pure info intake, no LLM needed
+            if thinking_result.action_type == ActionType.NO_ACTION:
+                logger.info(
+                    "ThinkingEngine short-circuit: %s × %s → NO_ACTION, skipped LLM (task=%s)",
+                    thinking_result.semantic_type.value,
+                    thinking_result.context_binding.value,
+                    task.id[:8],
+                )
+                self._store.update_status(
+                    task.id, TaskStatus.COMPLETED,
+                    result_summary=f"ThinkingEngine: {thinking_result.semantic_type.value} → NO_ACTION",
+                )
+                continue
+
+            # Short-circuit: REPLY_DIRECT — answer from task index, no LLM needed
+            if (
+                thinking_result.execution_plan
+                and thinking_result.execution_plan.strategy == ExecutionStrategy.REPLY_DIRECT
+            ):
+                reply_content = thinking_result.execution_plan.target
+                logger.info(
+                    "ThinkingEngine short-circuit: REPLY_DIRECT (task=%s) → %s",
+                    task.id[:8],
+                    reply_content[:60],
+                )
+                self._store.update_status(
+                    task.id, TaskStatus.COMPLETED,
+                    result_summary=reply_content,
+                )
+                # Send the direct reply via notify recipe
+                task_with_result = self._store.get(task.id)
+                if task_with_result:
+                    task_with_result.result_summary = reply_content
+                    await self._notify(task_with_result, ch)
+                continue
+
+            # Not short-circuited → deliver to Primary Agent with thinking summary
+            summary = (
+                f"[ThinkingEngine 预判: {thinking_result.semantic_type.value}"
+                f" × {thinking_result.context_binding.value}"
+                f" → {thinking_result.action_type.value}"
+            )
+            if thinking_result.execution_plan:
+                summary += f" ({thinking_result.execution_plan.strategy.value})"
+                if (
+                    thinking_result.execution_plan.strategy == ExecutionStrategy.RECIPE_EXACT
+                    and thinking_result.execution_plan.target
+                ):
+                    summary += f": {thinking_result.execution_plan.target}"
+            summary += "]"
+            tasks_for_primary.append((task, summary, thinking_result))
+
+        # Deliver remaining tasks to Primary Agent
+        if not tasks_for_primary:
+            return
+
+        primary = PrimaryAgentService.get_instance()
+        session_id = primary.get_session_id()
+        if not session_id:
+            for task, _, _ in tasks_for_primary:
+                self._store.update_status(
+                    task.id, TaskStatus.FAILED, error="Primary Agent session not available"
+                )
+        else:
+            await self._execute_batch_delivery(
+                [t for t, _, _ in tasks_for_primary], ch, primary, session_id,
+                thinking_summaries={t.id: s for t, s, _ in tasks_for_primary},
+                thinking_results={t.id: r for t, _, r in tasks_for_primary},
             )
 
-            primary = PrimaryAgentService.get_instance()
-            session_id = primary.get_session_id()
-            if not session_id:
-                raise RuntimeError("Primary Agent session not available")
+        # Notify only for FAILED/TIMEOUT — COMPLETED tasks are notified by Primary Agent via frago reply
+        for task, _, _ in tasks_for_primary:
+            updated = self._store.get(task.id)
+            if updated and updated.status in (TaskStatus.FAILED, TaskStatus.TIMEOUT):
+                await self._notify(updated, ch)
 
-            primary.record_external_message()
+    async def _execute_batch_delivery(
+        self,
+        tasks: list[IngestedTask],
+        ch: ChannelConfig,
+        primary: object,
+        session_id: str,
+        thinking_summaries: dict[str, str] | None = None,
+        thinking_results: dict[str, ThinkingResult] | None = None,
+    ) -> None:
+        """Execute the actual batch delivery to the Primary Agent."""
+        primary.record_external_message()
+        primary.set_busy(True)
+        thinking_summaries = thinking_summaries or {}
+        thinking_results = thinking_results or {}
 
-            # Build structured message with source context and recent tasks
-            recent_tasks = self._store.get_recent(channel=ch.name, limit=5)
-            message = self._format_primary_message(task, ch, recent_tasks)
+        try:
+            # Build combined message
+            message_parts = []
+            for task in tasks:
+                recent = self._store.get_recent(channel=ch.name, limit=5)
+                tr = thinking_results.get(task.id)
+                part = self._format_primary_message(task, ch, recent, tr)
+                # Attach ThinkingEngine pre-judgment if available
+                ts = thinking_summaries.get(task.id)
+                if ts:
+                    part = f"{ts}\n\n{part}"
+                message_parts.append(part)
 
-            # Deliver via continue_task (--resume on the primary session)
+            combined = "\n\n".join(message_parts)
+            if len(tasks) > 1:
+                combined = f"以下有 {len(tasks)} 条新消息，请依次处理：\n\n" + combined
+
+            # Single delivery
             from frago.server.services.agent_service import AgentService
 
-            result = AgentService.continue_task(session_id, message)
+            result = AgentService.continue_task(session_id, combined)
             if result.get("status") != "ok":
                 raise RuntimeError(
                     f"Primary Agent delivery failed: {result.get('error')}"
                 )
 
-            self._store.update_status(
-                task.id, TaskStatus.EXECUTING, session_id=session_id
-            )
+            for task in tasks:
+                self._store.update_status(
+                    task.id, TaskStatus.EXECUTING, session_id=session_id
+                )
             logger.info(
-                "Delivered task %s to Primary Agent (session=%s)",
-                task.id[:8],
+                "Delivered %d task(s) to Primary Agent (session=%s)",
+                len(tasks),
                 session_id[:8],
             )
 
-            # Wait for completion and notify
+            # Wait for completion
             completion = await self._wait_for_completion(
                 session_id, ch.task_timeout_seconds
             )
             final_status = (
                 TaskStatus.COMPLETED
                 if completion["status"] == "completed"
-                else TaskStatus.FAILED
+                else TaskStatus.TIMEOUT
             )
-            self._store.update_status(
-                task.id, final_status, result_summary=completion["summary"]
-            )
+            for task in tasks:
+                self._store.update_status(
+                    task.id, final_status, result_summary=completion["summary"]
+                )
 
         except Exception as e:
-            logger.exception("Failed to deliver task to Primary Agent: %s", task.id)
-            self._store.update_status(task.id, TaskStatus.FAILED, error=str(e))
+            logger.exception("Failed to deliver batch to Primary Agent")
+            for task in tasks:
+                self._store.update_status(task.id, TaskStatus.FAILED, error=str(e))
 
-        # Always attempt notification
-        updated_task = self._store.get(task.id)
-        if updated_task:
-            await self._notify(updated_task, ch)
+        finally:
+            primary.set_busy(False)
 
     @staticmethod
     def _format_primary_message(
         task: IngestedTask,
         ch: ChannelConfig,
         recent_tasks: list[IngestedTask],
+        thinking_result: ThinkingResult | None = None,
     ) -> str:
-        """Format a structured message for the Primary Agent."""
+        """Format a structured message for the Primary Agent.
+
+        Uses different templates based on context_binding:
+        - ACTIVE_TASK_SUPPLEMENT: "补充信息" — tell PA to append to existing task
+        - COMPLETED_TASK_FOLLOWUP: "后续跟进" — tell PA this follows a completed task
+        - NEW_AFFAIR / default: "新消息" — tell PA to handle as new task
+        """
         recent_summaries = []
         for rt in recent_tasks:
             if rt.id == task.id:
-                continue  # Skip the current task itself
+                continue
             recent_summaries.append(
                 f"  - [{rt.status.value}] {rt.prompt[:60]}"
             )
@@ -211,6 +364,35 @@ class IngestionScheduler:
         if recent_summaries:
             recent_section = (
                 "\n\n近期相关任务:\n" + "\n".join(recent_summaries)
+            )
+
+        binding = thinking_result.context_binding if thinking_result else ContextBinding.NEW_AFFAIR
+
+        if binding == ContextBinding.ACTIVE_TASK_SUPPLEMENT:
+            return (
+                f"--- 补充信息（关联已有任务）---\n"
+                f"来源 channel: {ch.name}\n"
+                f"消息 ID: {task.channel_message_id}\n"
+                f"回复上下文: {json.dumps(task.reply_context, ensure_ascii=False)}\n"
+                f"\n"
+                f"内容:\n{task.prompt}"
+                f"{recent_section}\n"
+                f"\n"
+                f"这是对已有任务的补充信息。将此信息纳入已有任务的上下文，不要重新执行任务。"
+                f"如果已有任务已完成且结果需要更新，可以补充回复；否则仅记录即可。"
+            )
+
+        if binding == ContextBinding.COMPLETED_TASK_FOLLOWUP:
+            return (
+                f"--- 后续跟进（已完成任务）---\n"
+                f"来源 channel: {ch.name}\n"
+                f"消息 ID: {task.channel_message_id}\n"
+                f"回复上下文: {json.dumps(task.reply_context, ensure_ascii=False)}\n"
+                f"\n"
+                f"内容:\n{task.prompt}"
+                f"{recent_section}\n"
+                f"\n"
+                f"这是对已完成任务的后续跟进。根据内容判断是否需要追加操作。"
             )
 
         return (
