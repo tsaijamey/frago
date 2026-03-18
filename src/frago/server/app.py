@@ -39,6 +39,7 @@ from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.version_service import VersionCheckService
 from frago.server.services.github_sync_scheduler import GitHubSyncScheduler
+from frago.server.services.recipe_scheduler_service import RecipeSchedulerService
 from frago.server.state import StateManager
 
 
@@ -97,6 +98,10 @@ async def lifespan(app: FastAPI):
     github_sync_scheduler = GitHubSyncScheduler.get_instance()
     await github_sync_scheduler.start()
 
+    # Start recipe scheduler (persistent scheduled recipe execution)
+    recipe_scheduler = RecipeSchedulerService.get_instance()
+    await recipe_scheduler.start()
+
     # Initialize Primary Agent (PID 1 — always available, independent of features)
     from frago.server.services.primary_agent_service import PrimaryAgentService
 
@@ -115,6 +120,7 @@ async def lifespan(app: FastAPI):
     if ingestion_scheduler is not None:
         await ingestion_scheduler.stop()
     await primary_agent.stop()
+    await recipe_scheduler.stop()
     await github_sync_scheduler.stop()
     await version_service.stop()
     await community_service.stop()

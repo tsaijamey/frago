@@ -401,6 +401,221 @@ def run_recipe(
         sys.exit(1)
 
 
+def _parse_interval(value: str) -> int:
+    """Parse interval string to seconds.
+
+    Supports: "30s", "10m", "2h", "1h30m", "600" (pure number = seconds).
+    Minimum: 10 seconds.
+    """
+    import re
+    value = value.strip()
+
+    # Pure number → seconds
+    if value.isdigit():
+        seconds = int(value)
+    else:
+        match = re.fullmatch(r'(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', value)
+        if not match or not any(match.groups()):
+            raise click.BadParameter(f"Invalid interval format: '{value}'. Use e.g. 30s, 10m, 2h, 1h30m")
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2) or 0)
+        secs = int(match.group(3) or 0)
+        seconds = hours * 3600 + minutes * 60 + secs
+
+    if seconds < 10:
+        raise click.BadParameter(f"Interval too short ({seconds}s). Minimum is 10 seconds.")
+    return seconds
+
+
+def _parse_datetime(value: str) -> 'datetime':
+    """Parse datetime string. Supports ISO 8601 and HH:MM."""
+    from datetime import datetime, timedelta
+
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            t = datetime.strptime(value, fmt).time()
+            today = datetime.now().replace(hour=t.hour, minute=t.minute, second=t.second, microsecond=0)
+            if today <= datetime.now():
+                today = today + timedelta(days=1)
+            return today
+        except ValueError:
+            continue
+
+    raise click.BadParameter(f"Cannot parse datetime: '{value}'. Use ISO 8601 or HH:MM format.")
+
+
+@recipe_group.command(name='schedule')
+@click.argument('name')
+@click.option('--interval', required=True, help='Run interval (e.g., 30s, 10m, 2h, 1h30m)')
+@click.option('--params', type=str, default='{}', help='Recipe parameters (JSON)')
+@click.option('--params-file', type=click.Path(exists=True), help='Read parameters from file')
+@click.option('--source', type=click.Choice(['user', 'community', 'official']), default=None, help='Recipe source')
+@click.option('--env', '-e', 'env_vars', multiple=True, help='Env override KEY=VALUE')
+@click.option('--start-at', 'start_at', help='Start time (ISO 8601 or HH:MM), default: now')
+@click.option('--stop-at', 'stop_at', help='Stop time (ISO 8601 or HH:MM), default: never')
+@click.option('--max-runs', type=int, help='Max number of runs, then exit')
+@click.option('--timeout', type=int, default=300, help='Per-execution timeout (seconds)')
+def schedule_recipe(
+    name: str,
+    interval: str,
+    params: str,
+    params_file: Optional[str],
+    source: Optional[str],
+    env_vars: tuple,
+    start_at: Optional[str],
+    stop_at: Optional[str],
+    max_runs: Optional[int],
+    timeout: int,
+):
+    """Run a recipe repeatedly at fixed intervals.
+
+    Runs in the foreground. Press Ctrl+C to stop.
+
+    Examples:
+
+        frago recipe schedule price_check --interval 10m
+
+        frago recipe schedule backup --interval 1h --stop-at "2026-03-19 08:00"
+
+        frago recipe schedule poll_api --interval 30s --max-runs 100
+    """
+    import signal
+    import time
+    from datetime import datetime
+
+    # Parse interval
+    interval_seconds = _parse_interval(interval)
+
+    # Parse params
+    if params_file:
+        with open(params_file, 'r', encoding='utf-8') as f:
+            params_dict = json.load(f)
+    else:
+        try:
+            params_dict = json.loads(params)
+        except json.JSONDecodeError as e:
+            click.echo(f"Error: Invalid parameter format\n{e}", err=True)
+            sys.exit(2)
+
+    # Parse env overrides
+    env_overrides: dict[str, str] = {}
+    for env_var in env_vars:
+        if '=' not in env_var:
+            click.echo(f"Error: Invalid env format: '{env_var}' (use KEY=VALUE)", err=True)
+            sys.exit(2)
+        key, value = env_var.split('=', 1)
+        env_overrides[key] = value
+
+    # Parse time bounds
+    start_dt = _parse_datetime(start_at) if start_at else None
+    stop_dt = _parse_datetime(stop_at) if stop_at else None
+
+    # Wait for start_at
+    if start_dt:
+        wait = (start_dt - datetime.now()).total_seconds()
+        if wait > 0:
+            click.echo(f"[schedule] waiting until {start_dt.isoformat()}", err=True)
+            time.sleep(wait)
+
+    # Schedule loop
+    runner = RecipeRunner()
+    run_count = 0
+    ok_count = 0
+    fail_count = 0
+    interrupted = False
+
+    def handle_sigint(sig, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    original_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, handle_sigint)
+
+    click.echo(
+        f"[schedule] {name} | interval={interval} | "
+        f"start={'now' if not start_dt else start_dt.isoformat()} | "
+        f"stop={'never' if not stop_dt else stop_dt.isoformat()}"
+        f"{f' | max_runs={max_runs}' if max_runs else ''}",
+        err=True
+    )
+
+    try:
+        while not interrupted:
+            # Check stop_at
+            if stop_dt and datetime.now() >= stop_dt:
+                click.echo(f"[schedule] stop time reached", err=True)
+                break
+
+            # Check max_runs
+            if max_runs and run_count >= max_runs:
+                click.echo(f"[schedule] max runs ({max_runs}) reached", err=True)
+                break
+
+            run_count += 1
+            click.echo(f"[schedule] #{run_count} started at {datetime.now().strftime('%H:%M:%S')}", err=True)
+
+            try:
+                result = runner.run(
+                    name,
+                    params_dict,
+                    env_overrides=env_overrides if env_overrides else None,
+                    source=source,
+                    timeout=timeout,
+                )
+                success = result.get('success', False)
+                if success:
+                    ok_count += 1
+                else:
+                    fail_count += 1
+
+                stderr_output = result.get('stderr', '')
+                if stderr_output:
+                    click.echo(stderr_output, err=True)
+
+                exec_id = result.get('execution_id', '')
+                click.echo(
+                    f"[recipe] {name} | {exec_id + ' | ' if exec_id else ''}"
+                    f"{'OK' if success else 'FAIL'} | "
+                    f"{result.get('execution_time', 0):.1f}s",
+                    err=True
+                )
+            except Exception as e:
+                fail_count += 1
+                click.echo(f"[schedule] #{run_count} error: {e}", err=True)
+
+            # Sleep until next run (interruptible, 1s granularity)
+            if not interrupted:
+                next_time = time.time() + interval_seconds
+                if stop_dt:
+                    stop_ts = stop_dt.timestamp()
+                    if next_time > stop_ts:
+                        remaining = stop_ts - time.time()
+                        if remaining > 0:
+                            click.echo(f"[schedule] final wait until stop time", err=True)
+                            while not interrupted and time.time() < stop_ts:
+                                time.sleep(min(1.0, stop_ts - time.time()))
+                        break
+
+                next_str = datetime.fromtimestamp(next_time).strftime('%H:%M:%S')
+                click.echo(f"[schedule] next run at {next_str}", err=True)
+                while not interrupted and time.time() < next_time:
+                    time.sleep(min(1.0, next_time - time.time()))
+    finally:
+        signal.signal(signal.SIGINT, original_handler)
+
+    click.echo(
+        f"[schedule] {'interrupted' if interrupted else 'completed'}, "
+        f"{run_count} runs ({ok_count} ok, {fail_count} failed)",
+        err=True
+    )
+
+
 @recipe_group.command(name='executions')
 @click.option(
     '--recipe',
@@ -1280,3 +1495,10 @@ def share_recipe(name: str, yes: bool, output_format: str):
             else:
                 click.echo(f"Error: Failed to create PR: {e.stderr or e}", err=True)
             sys.exit(1)
+
+
+# --- Background schedule management (persistent, server-side) ---
+
+from .schedule_commands import schedule_group as _schedule_bg_group
+
+recipe_group.add_command(_schedule_bg_group, name='schedules')
