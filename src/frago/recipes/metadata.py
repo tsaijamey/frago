@@ -25,6 +25,7 @@ class RecipeMetadata:
     tags: list[str] = field(default_factory=list)  # AI-understandable field
     env: dict[str, dict[str, Any]] = field(default_factory=dict)  # Environment variable definitions
     system_packages: bool = False  # Use system Python (for scripts depending on system packages like dbus)
+    no_proxy: bool = False  # Strip proxy env vars from subprocess (for domestic APIs like Feishu)
     warnings: list[dict[str, str]] = field(default_factory=list)  # Security warnings for UI display
     flow: list[dict[str, Any]] = field(default_factory=list)  # Workflow execution flow
 
@@ -82,6 +83,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             tags=data.get('tags', []),
             env=data.get('env', {}),
             system_packages=data.get('system_packages', False),
+            no_proxy=data.get('no_proxy', False),
             warnings=data.get('warnings', []),
             flow=data.get('flow', []),
         )

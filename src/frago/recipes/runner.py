@@ -206,6 +206,12 @@ class RecipeRunner:
         # Record start time
         start_time = time.time()
 
+        # Strip proxy env vars if recipe declares no_proxy: true
+        if getattr(recipe.metadata, 'no_proxy', False):
+            for proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                              "http_proxy", "https_proxy", "all_proxy"):
+                resolved_env.pop(proxy_key, None)
+
         try:
             # Resolve effective timeout (explicit > None = no limit for backward compat)
             effective_timeout = timeout
