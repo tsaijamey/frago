@@ -1,0 +1,24 @@
+{
+  "frago": {
+    "description": "frago is an agent OS. Three core systems: Run (task context), Recipe (reusable automation), Chrome CDP (browser control).",
+    "entry_point": "uv run frago --help"
+  },
+  "systems": {
+    "run": {
+      "description": "Persistent task context. Records logs, screenshots, outputs for a single exploration task.",
+      "explore_with": "uv run frago run --help"
+    },
+    "recipe": {
+      "description": "Metadata-driven reusable automation scripts. Three runtimes: chrome-js, python, shell.",
+      "explore_with": "uv run frago recipe --help",
+      "list_available": "uv run frago recipe list"
+    },
+    "chrome": {
+      "description": "CDP browser automation. 25+ commands for navigation, interaction, extraction, screenshots.",
+      "explore_with": "uv run frago chrome --help"
+    }
+  },
+  "conventions": {
+    "run_description": "Run description MUST be in English. It becomes the directory slug via python-slugify — Chinese characters convert to pinyin, producing unreadable names."
+  }
+}

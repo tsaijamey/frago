@@ -68,6 +68,8 @@ class AgentSession:
         self._current_assistant_message = ""
         self._current_tool_input_json = ""
         self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
+        # Optional callback for capturing complete assistant messages
+        self._on_assistant_message: Optional[Any] = None  # Callable[[str], None]
 
     def _get_frago_agent_command(self) -> List[str]:
         """Get frago agent command for subprocess."""
@@ -265,6 +267,12 @@ class AgentSession:
                     "content": "",
                     "done": True,
                 })
+                # Notify callback with complete assistant message
+                if self._on_assistant_message:
+                    try:
+                        self._on_assistant_message(self._current_assistant_message)
+                    except Exception:
+                        pass
                 self._current_assistant_message = ""
 
             # Flush accumulated tool input
@@ -347,7 +355,11 @@ class AgentService:
     _attached_sessions: Dict[str, AgentSession] = {}
 
     @staticmethod
-    def start_task(prompt: str, project_path: Optional[str] = None) -> Dict[str, Any]:
+    def start_task(
+        prompt: str,
+        project_path: Optional[str] = None,
+        env_extra: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """Start agent task.
 
         Executes `frago agent {prompt}` command in background.
@@ -356,6 +368,7 @@ class AgentService:
         Args:
             prompt: Task description/prompt.
             project_path: Optional project path context.
+            env_extra: Additional environment variables for the subprocess.
 
         Returns:
             Dictionary with status, task_id, and message or error.
@@ -390,12 +403,18 @@ class AgentService:
 
             # Start process in background with correct cwd
             cwd = project_path or str(Path.home())
+            env = None
+            if env_extra:
+                from frago.server.services.base import get_utf8_env
+                env = get_utf8_env()
+                env.update(env_extra)
             with open(log_file, "w", encoding="utf-8") as f:
-                run_subprocess_background(
+                process = run_subprocess_background(
                     cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
                     cwd=cwd,
+                    env=env,
                 )
 
             title = prompt[:50] + "..." if len(prompt) > 50 else prompt
@@ -403,6 +422,7 @@ class AgentService:
             return {
                 "status": "ok",
                 "id": task_id,
+                "pid": process.pid,
                 "title": title,
                 "project_path": project_path,
                 "agent_type": "claude",

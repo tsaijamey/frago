@@ -499,10 +499,16 @@ class ThinkingEngine:
         """Try to answer directly from task_index without LLM.
 
         Phase 1: Only handles explicit task status queries.
+        Only matches against the instruction part, not chat context.
         """
+        # Extract instruction part if prompt has [指令] section
+        instruction = text
+        if "[指令]" in text:
+            instruction = text.split("[指令]")[-1].strip()
+
         # Simple pattern: asking about task count/status
-        if re.search(r"(?:多少|几个).*(?:任务|task)", text, re.IGNORECASE) or \
-           re.search(r"(?:任务|task).*(?:多少|几个|状态)", text, re.IGNORECASE):
+        if re.search(r"(?:多少|几个).*(?:任务|task)", instruction, re.IGNORECASE) or \
+           re.search(r"(?:任务|task).*(?:多少|几个|状态)", instruction, re.IGNORECASE):
             active = [t for t in self._task_index if t.status in (TaskStatus.PENDING, TaskStatus.EXECUTING)]
             completed = [t for t in self._task_index if t.status == TaskStatus.COMPLETED]
             return (
