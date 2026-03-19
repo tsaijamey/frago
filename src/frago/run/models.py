@@ -88,11 +88,14 @@ class InsightEntry(BaseModel):
         return cls(**data)
 
 
+from .constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
+
+
 class RunInstance(BaseModel):
     """Run instance model (stored in .metadata.json)"""
 
     run_id: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9-]{1,100}$")
-    theme_description: str = Field(..., min_length=1, max_length=500)
+    theme_description: str = Field(..., min_length=1, max_length=THEME_DESC_MAX)
     created_at: datetime
     last_accessed: datetime
     status: RunStatus = RunStatus.ACTIVE
@@ -215,7 +218,7 @@ class CurrentRunContext(BaseModel):
 
     run_id: str = Field(..., min_length=1, max_length=100)
     last_accessed: datetime
-    theme_description: str = Field(..., min_length=1, max_length=500)
+    theme_description: str = Field(..., min_length=1, max_length=THEME_DESC_MAX)
     projects_dir: Optional[str] = Field(default=None, description="projects directory absolute path")
 
     @classmethod
