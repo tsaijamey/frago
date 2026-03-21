@@ -287,6 +287,8 @@ def _ensure_gitignore(repo_dir: Path) -> None:
     gitignore_content = """# Runtime data (not synced)
 sessions/
 sessions.json
+executions/
+ingested_tasks.json
 chrome_profile/
 edge_profile/
 current_run
@@ -302,10 +304,13 @@ projects/*/logs/
 .claude/settings.local.json
 .device_id
 .workspace_migrated
+.api_endpoint_migrated
+.cache/
 
 # Config files (contain sensitive information or device-specific)
 config.json
 gui_config.json
+profiles.json
 
 # Environment variable files (sensitive information)
 .env
@@ -369,19 +374,23 @@ logs/
         existing = gitignore_path.read_text(encoding="utf-8")
         needed_rules = [
             # Runtime data
-            "sessions/", "sessions.json", "chrome_profile/", "edge_profile/",
+            "sessions/", "sessions.json", "executions/", "ingested_tasks.json",
+            "chrome_profile/", "edge_profile/",
             "current_run", "config.json", "projects/.tmp/", ".env",
             "projects/*/screenshots/", "projects/*/logs/",
             # Commands directory (managed by frago itself)
             ".claude/commands/",
             # Local metadata (device-specific)
-            ".claude/skills_metadata.json", ".claude/settings.local.json", ".device_id", ".workspace_migrated",
+            ".claude/skills_metadata.json", ".claude/settings.local.json",
+            ".device_id", ".workspace_migrated", ".api_endpoint_migrated", ".cache/",
+            # Sensitive credentials
+            "profiles.json",
             # Device-specific config
             "gui_config.json",
             # System files
             ".DS_Store", "__pycache__/", "server.pid", "server.log*", "gui_history.jsonl",
             # Conflict backups
-            "*.LOCAL", "*.REMOTE",
+            "*.LOCAL", "*.REMOTE", "*.sync-backup",
             # Large file types
             "*.mp4", "*.wav", "*.log", "logs/", "*.pdf", "*.psd", "*.ai",
         ]
@@ -404,9 +413,17 @@ def _untrack_ignored_paths(repo_dir: Path) -> None:
     # Path patterns that need to be untracked
     paths_to_untrack = [
         # Directories
-        "projects/.tmp/", ".claude/commands/",
+        "projects/.tmp/", ".claude/commands/", "executions/", ".cache/",
+        # Runtime data files
+        "ingested_tasks.json",
+        # Device-specific metadata
+        ".api_endpoint_migrated",
+        # Sensitive credentials
+        "profiles.json",
         # System files
         ".DS_Store", "**/.DS_Store", "*.pyc", "*.bak", "*.bak.*", "*.log",
+        # Conflict backup files
+        "*.sync-backup", "*.LOCAL", "*.REMOTE",
         # Video files
         "*.mp4", "*.avi", "*.mov", "*.mkv", "*.wmv", "*.flv", "*.webm",
         # Audio files
