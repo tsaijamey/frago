@@ -38,7 +38,7 @@ class ChannelConfig:
     poll_recipe: str
     notify_recipe: str
     poll_interval_seconds: int = 120
-    task_timeout_seconds: int = 600
+    poll_timeout_seconds: int = 20
 
 
 class IngestionScheduler:
@@ -92,12 +92,12 @@ class IngestionScheduler:
             try:
                 await asyncio.wait_for(
                     self._poll_channel(ch, thinking),
-                    timeout=ch.task_timeout_seconds,
+                    timeout=ch.poll_timeout_seconds,
                 )
             except TimeoutError:
                 logger.error(
                     "Poll channel %s timed out after %ds",
-                    ch.name, ch.task_timeout_seconds,
+                    ch.name, ch.poll_timeout_seconds,
                 )
             except Exception:
                 logger.exception("Failed to poll channel: %s", ch.name)

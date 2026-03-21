@@ -41,8 +41,8 @@ HEARTBEAT_DEFAULTS = {
 ROTATION_TURN_THRESHOLD = 30
 ROTATION_TOKEN_THRESHOLD = 50000
 
-# Task timeout default (seconds)
-DEFAULT_TASK_TIMEOUT = 600
+# Task execution timeout (seconds)
+TASK_TIMEOUT_SECONDS = 900
 
 # Primary Agent system prompt — JSON output protocol for scheduler role.
 PRIMARY_AGENT_SYSTEM_PROMPT = """\
@@ -817,7 +817,7 @@ class PrimaryAgentService:
                 manager = RunManager(PROJECTS_DIR)
                 instance = manager.find_run(current_run_id)
                 age = (datetime.now() - instance.created_at).total_seconds()
-                if age > DEFAULT_TASK_TIMEOUT:
+                if age > TASK_TIMEOUT_SECONDS:
                     logger.warning("Run %s timed out (age=%ds)", current_run_id, int(age))
                     ctx_mgr.release_context()
 
@@ -883,7 +883,7 @@ class PrimaryAgentService:
             manager = RunManager(PROJECTS_DIR)
             instance = manager.find_run(run_id)
             age = (datetime.now() - instance.created_at).total_seconds()
-            return age > DEFAULT_TASK_TIMEOUT
+            return age > TASK_TIMEOUT_SECONDS
         except Exception:
             return False
 
