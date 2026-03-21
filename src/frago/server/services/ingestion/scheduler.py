@@ -14,7 +14,6 @@ The scheduler does NOT deliver messages to the PA session directly.
 """
 
 import asyncio
-import contextlib
 import logging
 import uuid
 from dataclasses import dataclass
@@ -26,7 +25,7 @@ from frago.server.services.ingestion.models import (
     TaskStatus,
 )
 from frago.server.services.ingestion.store import TaskStore
-from frago.server.services.thinking import ThinkingEngine
+from frago.server.services.thinking import BaseThinkingEngine, ThinkingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -48,67 +47,82 @@ class IngestionScheduler:
         self,
         channels: list[ChannelConfig],
         store: TaskStore,
-        thinking_engine: ThinkingEngine | None = None,
+        thinking_engine: BaseThinkingEngine | None = None,
     ) -> None:
         self._channels = channels
         self._store = store
-        self._thinking = thinking_engine or ThinkingEngine()
-        self._task: asyncio.Task | None = None
+        self._thinking_engine = thinking_engine  # For test injection; per-channel instances created in start()
+        self._channel_tasks: dict[str, asyncio.Task[None]] = {}
         self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
-        if self._task is not None and not self._task.done():
+        if self._channel_tasks:
             logger.warning("IngestionScheduler already running")
             return
         self._stop_event.clear()
-        self._task = asyncio.create_task(self._loop())
+        for ch in self._channels:
+            thinking = self._thinking_engine or ThinkingEngine()
+            task = asyncio.create_task(
+                self._channel_loop(ch, thinking),
+                name=f"ingestion-{ch.name}",
+            )
+            self._channel_tasks[ch.name] = task
         logger.info(
             "IngestionScheduler started (channels=%s)",
             [c.name for c in self._channels],
         )
 
     async def stop(self) -> None:
-        if self._task is None or self._task.done():
+        if not self._channel_tasks:
             return
         self._stop_event.set()
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
+        for task in self._channel_tasks.values():
+            task.cancel()
+        await asyncio.gather(
+            *self._channel_tasks.values(),
+            return_exceptions=True,
+        )
+        self._channel_tasks.clear()
         logger.info("IngestionScheduler stopped")
 
-    async def _loop(self) -> None:
-        # Startup delay to let other services initialize
-        await asyncio.sleep(5)
-
+    async def _channel_loop(self, ch: ChannelConfig, thinking: BaseThinkingEngine) -> None:
+        """Per-channel polling loop with its own interval."""
+        await asyncio.sleep(5)  # Startup delay
         while not self._stop_event.is_set():
-            for ch in self._channels:
-                try:
-                    await self._poll_channel(ch)
-                except Exception:
-                    logger.exception("Failed to poll channel: %s", ch.name)
-
-            # Use the minimum interval across channels
-            interval = min(c.poll_interval_seconds for c in self._channels)
             try:
                 await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=interval
+                    self._poll_channel(ch, thinking),
+                    timeout=ch.task_timeout_seconds,
+                )
+            except TimeoutError:
+                logger.error(
+                    "Poll channel %s timed out after %ds",
+                    ch.name, ch.task_timeout_seconds,
+                )
+            except Exception:
+                logger.exception("Failed to poll channel: %s", ch.name)
+            # Each channel sleeps its own interval
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=ch.poll_interval_seconds
                 )
                 break  # stop_event was set
             except TimeoutError:
                 continue
 
-    def _sync_task_index(self, exclude_task_ids: set[str] | None = None) -> None:
+    def _sync_task_index(
+        self, thinking: BaseThinkingEngine, exclude_task_ids: set[str] | None = None,
+    ) -> None:
         """Refresh ThinkingEngine's task index from the store."""
         try:
             index = self._store.get_index()
             if exclude_task_ids:
                 index = [t for t in index if t.task_id not in exclude_task_ids]
-            self._thinking.update_task_index(index)
+            thinking.update_task_index(index)
         except Exception:
             logger.debug("Failed to sync task index", exc_info=True)
 
-    async def _poll_channel(self, ch: ChannelConfig) -> None:
+    async def _poll_channel(self, ch: ChannelConfig, thinking: BaseThinkingEngine) -> None:
         """Call poll_recipe, parse return value, ingest new tasks."""
         from frago.recipes.runner import RecipeRunner
 
@@ -127,7 +141,7 @@ class IngestionScheduler:
 
         messages = result.get("data", {}).get("messages", [])
         if not messages:
-            logger.debug("Poll %s: no new messages", ch.poll_recipe)
+            logger.info("Poll %s: no new messages", ch.poll_recipe)
             return
         logger.info("Poll %s: %d message(s) received", ch.poll_recipe, len(messages))
 
@@ -160,8 +174,8 @@ class IngestionScheduler:
             new_task_ids.add(task.id)
 
             # ThinkingEngine short-circuit processing
-            self._sync_task_index(exclude_task_ids=new_task_ids)
-            thinking_result = self._thinking.process(task.prompt, task)
+            self._sync_task_index(thinking, exclude_task_ids=new_task_ids)
+            thinking_result = thinking.process(task.prompt, task)
 
             # Short-circuit: NO_ACTION — pure info intake, no LLM needed
             if thinking_result.action_type == ActionType.NO_ACTION:

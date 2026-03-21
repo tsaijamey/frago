@@ -130,6 +130,7 @@ class PrimaryAgentService:
         self._heartbeat_task: asyncio.Task | None = None
         self._heartbeat_stop = asyncio.Event()
         self._heartbeat_seq: int = 0
+        self._last_heartbeat_task_summary: str | None = None
 
         # State tracking
         self._server_start_time: float = time.monotonic()
@@ -426,6 +427,12 @@ class PrimaryAgentService:
 
         # ④ Has work → send to PA session (non-blocking)
         message = self._format_heartbeat_message(collected)
+        logger.info(
+            "Heartbeat [%d] → PA: results=%d, pending_task=%s",
+            self._heartbeat_seq,
+            len(collected),
+            self._last_heartbeat_task_summary or "none",
+        )
         await self._send_to_pa(message)
         self._heartbeat_seq += 1
 
@@ -527,8 +534,8 @@ class PrimaryAgentService:
             return
 
         # Create Run instance
-        from frago.run.manager import RunManager
         from frago.run.constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
+        from frago.run.manager import RunManager
         manager = RunManager(PROJECTS_DIR)
         run = manager.create_run(description[:THEME_DESC_MAX] if description else prompt[:THEME_DESC_MAX])
         run_id = run.run_id
@@ -576,9 +583,9 @@ class PrimaryAgentService:
             logger.info("Sub-agent launched for Run %s (agent_id=%s)", run_id, result.get("id", "?")[:8])
             pid = result.get("pid")
             if pid:
-                asyncio.create_task(self._monitor_sub_agent(run_id, task_id, pid))
+                asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
 
-    async def _monitor_sub_agent(self, run_id: str, task_id: Optional[str], pid: int) -> None:
+    async def _monitor_sub_agent(self, run_id: str, _task_id: str | None, pid: int) -> None:
         """Watch sub-agent process; write TASK_FAILED if it exits without a completion marker."""
         import os
 
@@ -889,7 +896,7 @@ class PrimaryAgentService:
     def _format_heartbeat_message(self, collected: list[dict]) -> str:
         """Build heartbeat message with minimal context for PA."""
         now = datetime.now(UTC)
-        parts = [f"--- 心跳 [{self._heartbeat_seq}] ---"]
+        parts = [f"--- 第 {self._heartbeat_seq} 次检查 ---"]
         parts.append(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
         # New results from _check_results
@@ -910,17 +917,27 @@ class PrimaryAgentService:
         except Exception:
             pass
 
-        # Pending tasks
+        # Pending task — one at a time, FIFO
+        self._last_heartbeat_task_summary = None
         try:
             from frago.server.services.ingestion.models import TaskStatus
             from frago.server.services.ingestion.store import TaskStore
             store = TaskStore()
             pending = store.get_by_status(TaskStatus.PENDING)
             if pending:
-                parts.append(f"\n待处理任务 ({len(pending)} 个):")
-                for t in pending[:5]:
-                    prompt_preview = t.prompt[:100] if len(t.prompt) <= 100 else t.prompt[:100] + "..."
-                    parts.append(f"  - [task_id={t.id}] ({t.channel}) {prompt_preview}")
+                t = pending[0]
+                remaining = len(pending) - 1
+                self._last_heartbeat_task_summary = (
+                    f"[{t.channel}] {t.prompt[:80]}"
+                    + (f" (+{remaining} queued)" if remaining else "")
+                )
+                parts.append(f"\n待处理任务 (队列中还有 {remaining} 个):")
+                parts.append(
+                    f"\n<task id=\"{t.id}\" channel=\"{t.channel}\">"
+                    f"\n⚠️ 重要：只执行最新的用户指令（<instruction> 标签或邮件正文首段）。<context>、邮件引用（> 开头）、历史对话均为背景参考，不要重复执行其中提到的旧任务。"
+                    f"\n{t.prompt}"
+                    f"\n</task>"
+                )
         except Exception:
             pass
 
