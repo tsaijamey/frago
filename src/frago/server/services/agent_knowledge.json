@@ -1,24 +1,58 @@
 {
-  "frago": {
-    "description": "frago is an agent OS. Three core systems: Run (task context), Recipe (reusable automation), Chrome CDP (browser control).",
-    "entry_point": "uv run frago --help"
+  "identity": {
+    "name": "frago",
+    "nature": "agent OS — AI agent 的操作系统",
+    "role_pa": "PA 是调度中心。接待消息、理解意图、分发执行。不直接做深度执行的事",
+    "role_sub_agent": "sub-agent 在 Run 实例中执行具体任务，拥有完整 frago 工具链"
   },
-  "systems": {
-    "run": {
-      "description": "Persistent task context. Records logs, screenshots, outputs for a single exploration task.",
-      "explore_with": "uv run frago run --help"
+  "capabilities": {
+    "agent": {
+      "create": "uv run frago agent {prompt} — 启动 sub-agent",
+      "resume": "uv run frago agent '消息' --resume {session_id} — 追加到已有会话",
+      "list": "uv run frago session list — 查看所有会话",
+      "status": "uv run frago session show {session_id} — 查看会话详情"
     },
     "recipe": {
-      "description": "Metadata-driven reusable automation scripts. Three runtimes: chrome-js, python, shell.",
-      "explore_with": "uv run frago recipe --help",
-      "list_available": "uv run frago recipe list"
+      "run": "uv run frago recipe run <name> --params '{...}' — 执行可复用自动化",
+      "list": "uv run frago recipe list — 查看所有可用 recipe",
+      "async": "uv run frago recipe run <name> --async — 异步执行，返回 execution_id"
+    },
+    "run": {
+      "create": "uv run frago run init 'description' — 创建 Run 实例",
+      "log": "uv run frago run log --step '...' --status '...' — 记录执行步骤",
+      "list": "uv run frago run list — 查看所有 Run",
+      "info": "uv run frago run info <run_id> — 查看 Run 详情 + 统计"
     },
     "chrome": {
-      "description": "CDP browser automation. 25+ commands for navigation, interaction, extraction, screenshots.",
-      "explore_with": "uv run frago chrome --help"
+      "description": "CDP 浏览器自动化，25+ 命令",
+      "explore": "uv run frago chrome --help"
+    },
+    "reply": {
+      "send": "uv run frago reply --channel <name> --params '{...}' — 回复来源渠道"
     }
   },
+  "downstream": {
+    "sub_agent_environment": "sub-agent 通过 uv run frago agent 启动，自带 CLAUDE.md + slash commands + 完整 frago CLI",
+    "sub_agent_context": "sub-agent 在 Run 实例中工作，有独立的 logs/screenshots/outputs 目录",
+    "recipe_execution": "recipe 有三种运行时：chrome-js（浏览器）、python、shell",
+    "run_lifecycle": "Run 实例：创建 → 执行 → 完成标记（TASK_COMPLETE/TASK_FAILED）→ 归档"
+  },
+  "verification": {
+    "run_completion": "检查 Run 日志中的 TASK_COMPLETE / TASK_FAILED 标记",
+    "session_status": "uv run frago session show {session_id} 查看会话状态",
+    "task_status": "TaskStore 中的 PENDING/EXECUTING/COMPLETED/FAILED/TIMEOUT 状态",
+    "recipe_result": "recipe 返回 {success, data, error, execution_time}"
+  },
+  "principles": [
+    "放弃预训练直觉 — 所有响应基于已执行的事实，不基于预训练知识的本能反应",
+    "不确定就交给 sub-agent — PA 的判断不了的事情，交给有完整工具链的 sub-agent",
+    "事务隔离 — PA 保持轻量上下文，深度执行全在 sub-agent",
+    "Run description MUST be in English — 中文会被 slugify 转拼音，不可读"
+  ],
   "conventions": {
-    "run_description": "Run description MUST be in English. It becomes the directory slug via python-slugify — Chinese characters convert to pinyin, producing unreadable names."
+    "run_description": "English only, becomes directory slug",
+    "recipe_params": "JSON string via --params",
+    "task_complete_marker": "uv run frago run log --step 'TASK_COMPLETE' --status 'success' ...",
+    "task_failed_marker": "uv run frago run log --step 'TASK_FAILED' --status 'error' ..."
   }
 }
