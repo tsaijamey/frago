@@ -118,11 +118,21 @@ class PrimaryAgentService:
         await self._start_heartbeat()
 
         # Recover PENDING tasks from TaskStore
+        await self._recover_pending_tasks()
+
+    async def _recover_pending_tasks(self) -> int:
+        """Scan TaskStore for PENDING tasks and re-enqueue them.
+
+        Called at initialize() and by heartbeat when PA is idle and queue is empty.
+        Returns the number of tasks recovered.
+        """
         try:
             from frago.server.services.ingestion.models import TaskStatus
             from frago.server.services.ingestion.store import TaskStore
             store = TaskStore()
             pending = store.get_by_status(TaskStatus.PENDING)
+            if not pending:
+                return 0
             for task in pending:
                 await self.enqueue_message({
                     "type": "user_message",
@@ -132,10 +142,11 @@ class PrimaryAgentService:
                     "prompt": task.prompt,
                     "reply_context": task.reply_context,
                 })
-            if pending:
-                logger.info("Recovered %d pending tasks into PA message queue", len(pending))
+            logger.info("Recovered %d pending tasks into PA message queue", len(pending))
+            return len(pending)
         except Exception:
             logger.debug("Failed to recover pending tasks", exc_info=True)
+            return 0
 
     async def stop(self) -> None:
         """Stop queue consumer, heartbeat, and PA session. Called during server shutdown."""
@@ -575,6 +586,15 @@ class PrimaryAgentService:
             except Exception:
                 logger.exception("Heartbeat: failed to create PA session")
 
+        # ③ Recover abandoned pending tasks when PA is idle and queue is empty
+        if not self._pa_waiting and self._message_queue.empty():
+            recovered = await self._recover_pending_tasks()
+            if recovered:
+                logger.info(
+                    "Heartbeat [%d]: recovered %d pending tasks",
+                    self._heartbeat_seq, recovered,
+                )
+
         self._heartbeat_seq += 1
 
     def _on_pa_message(self, text: str) -> None:
@@ -678,8 +698,13 @@ class PrimaryAgentService:
         from frago.run.context import ContextManager
         from frago.run.exceptions import ContextAlreadySetError
         ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-        if ctx_mgr.get_current_run_id():
-            logger.info("Run lock active, task %s stays pending", task_id)
+        current_run = ctx_mgr.get_current_run_id()
+        if current_run:
+            logger.info(
+                "Run lock active (held by %s), task %s stays PENDING — "
+                "will be retried by heartbeat",
+                current_run, task_id,
+            )
             return
 
         # Create Run instance
