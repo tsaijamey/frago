@@ -1,9 +1,10 @@
 """Persistent task store backed by a JSON file."""
 
+import contextlib
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,9 @@ from frago.server.services.ingestion.models import IngestedTask, TaskStatus
 logger = logging.getLogger(__name__)
 
 STORE_FILE = Path.home() / ".frago" / "ingested_tasks.json"
+ARCHIVE_DIR = Path.home() / ".frago" / "ingested_tasks"
+
+_TERMINAL_STATUSES = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.TIMEOUT.value}
 
 
 class TaskStore:
@@ -74,7 +78,7 @@ class TaskStore:
                     if error is not None:
                         data["error"] = error
                     if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
-                        data["completed_at"] = datetime.now(timezone.utc).isoformat()
+                        data["completed_at"] = datetime.now(UTC).isoformat()
                     self._save()
                     return
             logger.warning("Task not found for status update: %s", task_id)
@@ -109,6 +113,61 @@ class TaskStore:
         """Check if there are any PENDING tasks."""
         with self._lock:
             return any(d["status"] == TaskStatus.PENDING.value for d in self._tasks.values())
+
+    # -- rotation --
+
+    def rotate(self) -> int:
+        """Archive terminal tasks to date-named files, return count archived.
+
+        Safe to call at any time — only moves COMPLETED/FAILED/TIMEOUT tasks.
+        PENDING/EXECUTING tasks stay in the main file untouched.
+        """
+        with self._lock:
+            active: dict[str, dict[str, Any]] = {}
+            to_archive: dict[str, dict[str, dict[str, Any]]] = {}
+
+            for key, data in self._tasks.items():
+                if data["status"] in _TERMINAL_STATUSES:
+                    date_str = (data.get("completed_at") or data["created_at"])[:10]
+                    to_archive.setdefault(date_str, {})[key] = data
+                else:
+                    active[key] = data
+
+            if not to_archive:
+                return 0
+
+            ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+            for date_str, tasks in to_archive.items():
+                archive_path = ARCHIVE_DIR / f"{date_str}.json"
+                existing: dict[str, Any] = {}
+                if archive_path.exists():
+                    with contextlib.suppress(json.JSONDecodeError, OSError):
+                        existing = json.loads(archive_path.read_text(encoding="utf-8"))
+                existing.update(tasks)
+                try:
+                    archive_path.write_text(
+                        json.dumps(existing, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except OSError as e:
+                    logger.error("Failed to write archive %s: %s", archive_path, e)
+                    return 0
+
+            archived_count = sum(len(t) for t in to_archive.values())
+            self._tasks = active
+            self._save()
+            logger.info("Rotated %d task(s) to archive", archived_count)
+            return archived_count
+
+    def needs_rotation(self) -> bool:
+        """Check if there are terminal tasks with completed_at before today."""
+        today = datetime.now(UTC).date().isoformat()
+        with self._lock:
+            return any(
+                d["status"] in _TERMINAL_STATUSES
+                and (d.get("completed_at") or d["created_at"])[:10] < today
+                for d in self._tasks.values()
+            )
 
     # -- persistence --
 
