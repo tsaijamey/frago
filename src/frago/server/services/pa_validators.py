@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-VALID_PA_ACTIONS = {"reply", "run", "recipe", "update"}
+VALID_PA_ACTIONS = {"reply", "run", "resume", "recipe", "update"}
 
 VALID_QUEUE_MESSAGE_TYPES = {"user_message", "agent_notify", "agent_exit"}
 
@@ -19,6 +19,7 @@ VALID_QUEUE_MESSAGE_TYPES = {"user_message", "agent_notify", "agent_exit"}
 _PA_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "reply": ["task_id", "channel", "reply_params"],
     "run": ["prompt"],
+    "resume": ["run_id", "prompt"],
     "recipe": ["recipe_name"],
     "update": ["task_id"],
 }

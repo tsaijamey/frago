@@ -100,6 +100,10 @@ class PrimaryAgentService:
         # Maps session_id → list of messages to re-enqueue after process exits
         self._pending_resume_messages: dict[str, list[dict]] = {}
 
+        # Task IDs with pending run/resume dispatch (blocked by lock in current batch)
+        # Prevents _execute_reply from auto-completing tasks that still need execution
+        self._tasks_with_pending_dispatch: set[str] = set()
+
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
         if cls._instance is None:
@@ -245,16 +249,37 @@ class PrimaryAgentService:
         if self._rotation_count > 0:
             sections.append(f"这是第 {self._rotation_count + 1} 个 PA session（前一个因 rotation 退役）。")
 
-        # Active runs
+        # Active runs (enriched with associated task_id from TaskStore)
         try:
             from frago.run.manager import RunManager
             from frago.run.models import RunStatus
             manager = RunManager(PROJECTS_DIR)
             active_runs = manager.list_runs(status=RunStatus.ACTIVE)
             if active_runs:
-                lines = [f"活跃 Run ({len(active_runs)} 个):"]
+                # Build run_id → task info from TaskStore (any status)
+                run_task_map: dict[str, dict] = {}
+                try:
+                    from frago.server.services.ingestion.store import TaskStore
+                    store = TaskStore()
+                    for t in store.get_recent(limit=50):
+                        if t.session_id and t.session_id not in run_task_map:
+                            run_task_map[t.session_id] = {
+                                "task_id": t.id[:8],
+                                "prompt_summary": t.prompt[:80].replace("\n", " "),
+                            }
+                except Exception:
+                    pass
+                lines = [
+                    f"活跃 Run ({len(active_runs)} 个) — "
+                    "如果新任务是对某个 Run 的后续指令，用 resume（run_id 必须精确复制）:"
+                ]
                 for r in active_runs[:10]:
-                    lines.append(f"  - {r['run_id']}: {r['theme_description'][:60]}")
+                    rid = r["run_id"]
+                    lines.append(f"  - run_id: {rid}")
+                    lines.append(f"    desc: {r['theme_description'][:80]}")
+                    if rid in run_task_map:
+                        info = run_task_map[rid]
+                        lines.append(f"    来源 task: {info['task_id']} → {info['prompt_summary']}")
                 sections.append("\n".join(lines))
             else:
                 sections.append("活跃 Run: 0 个")
@@ -572,6 +597,9 @@ class PrimaryAgentService:
                 await self._handle_pa_output(self._pa_output_buffer.strip())
             self._pa_output_buffer = ""
 
+        # ① Check for stale run lock
+        await self._check_stale_run_lock()
+
         # ② Rotation check (0 tokens)
         if self._should_rotate():
             await self.rotate_session()
@@ -596,6 +624,95 @@ class PrimaryAgentService:
                 )
 
         self._heartbeat_seq += 1
+
+    async def _check_stale_run_lock(self) -> None:
+        """Check if the current run lock is stale and release it if so.
+
+        A lock is stale when:
+        1. The run has a completion marker (TASK_COMPLETE/TASK_FAILED) in its log
+           → sub-agent finished but lock was never released
+        2. No completion marker, but last_accessed is old AND the sub-agent
+           process is no longer running → abnormal exit without cleanup
+        """
+        try:
+            from frago.run.context import ContextManager
+            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
+            current_run_id = ctx_mgr.get_current_run_id()
+            if not current_run_id:
+                return
+
+            run_dir = PROJECTS_DIR / current_run_id
+            log_file = run_dir / "logs" / "execution.jsonl"
+
+            # Check for completion marker
+            has_completion = False
+            if log_file.exists():
+                try:
+                    lines = log_file.read_text(encoding="utf-8").splitlines()
+                    for line in reversed(lines[-20:]):
+                        if not line.strip():
+                            continue
+                        entry = json.loads(line)
+                        if entry.get("step") in ("TASK_COMPLETE", "TASK_FAILED"):
+                            has_completion = True
+                            break
+                except Exception:
+                    pass
+
+            if has_completion:
+                released = ctx_mgr.release_context()
+                logger.info(
+                    "Heartbeat [%d]: released stale run lock %s "
+                    "(completion marker found)",
+                    self._heartbeat_seq, released,
+                )
+                return
+
+            # No completion marker — check timeout + process liveness
+            lock_file = FRAGO_HOME / "current_run"
+            if not lock_file.exists():
+                return
+            lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
+            last_accessed_str = lock_data.get("last_accessed", "")
+            if not last_accessed_str:
+                return
+
+            from datetime import datetime
+            last_accessed = datetime.fromisoformat(last_accessed_str)
+            elapsed = (datetime.now() - last_accessed).total_seconds()
+            stale_threshold = 1800  # 30 minutes
+
+            if elapsed < stale_threshold:
+                return
+
+            # Check if any process is still working on this run
+            # by looking for processes with FRAGO_CURRENT_RUN in their env
+            run_still_alive = False
+            try:
+                for pid_dir in Path("/proc").iterdir():
+                    if not pid_dir.name.isdigit():
+                        continue
+                    try:
+                        environ = (pid_dir / "environ").read_bytes()
+                        if f"FRAGO_CURRENT_RUN={current_run_id}".encode() in environ:
+                            run_still_alive = True
+                            break
+                    except (PermissionError, FileNotFoundError, OSError):
+                        continue
+            except Exception:
+                # /proc scan failed — be conservative, don't release
+                return
+
+            if not run_still_alive:
+                released = ctx_mgr.release_context()
+                logger.info(
+                    "Heartbeat [%d]: released stale run lock %s "
+                    "(no completion, timed out after %ds, process gone)",
+                    self._heartbeat_seq, released, int(elapsed),
+                )
+
+        except Exception:
+            logger.debug("Stale run lock check failed", exc_info=True)
 
     def _on_pa_message(self, text: str) -> None:
         """Callback invoked by AgentSession when PA produces a complete text block."""
@@ -655,6 +772,10 @@ class PrimaryAgentService:
 
         logger.info("PA decision: %d action(s) → %s", len(decisions), [d.get("action") for d in decisions if isinstance(d, dict)])
 
+        # Track task_ids with pending run/resume (blocked by lock or queued)
+        # so that _execute_reply won't auto-complete them
+        self._tasks_with_pending_dispatch: set[str] = set()
+
         for d in decisions:
             if not isinstance(d, dict):
                 continue
@@ -665,7 +786,7 @@ class PrimaryAgentService:
                     logger.info("→ dispatch run (task=%s, desc=%s)", task_id, d.get("description", ""))
                     await self._dispatch_run(d)
                 elif action == "resume":
-                    logger.info("→ dispatch resume (session=%s)", d.get("session_id", "?")[:8])
+                    logger.info("→ dispatch resume (run=%s)", d.get("run_id", "?"))
                     await self._dispatch_resume(d)
                 elif action == "recipe":
                     logger.info("→ dispatch recipe (task=%s, recipe=%s)", task_id, d.get("recipe_name"))
@@ -705,6 +826,8 @@ class PrimaryAgentService:
                 "will be retried by heartbeat",
                 current_run, task_id,
             )
+            if task_id:
+                self._tasks_with_pending_dispatch.add(task_id)
             return
 
         # Create Run instance
@@ -762,16 +885,32 @@ class PrimaryAgentService:
     async def _dispatch_resume(self, decision: dict) -> None:
         """PA decided action:'resume' → append message to existing sub-agent session.
 
+        Accepts run_id (not session_id) — resolves to the Claude Code session
+        by scanning session directories for the FRAGO_CURRENT_RUN marker.
+
         If the target session is still running, the message is queued in
         _pending_resume_messages and will be re-enqueued when _monitor_sub_agent
         detects the process has exited.
         """
-        session_id = decision.get("session_id")
+        run_id = decision.get("run_id")
         prompt = decision.get("prompt", "")
         task_id = decision.get("task_id")
 
-        if not session_id or not prompt:
-            logger.warning("resume decision missing session_id or prompt, skipping")
+        if not run_id or not prompt:
+            logger.warning("resume decision missing run_id or prompt, skipping")
+            return
+
+        # Resolve run_id → Claude Code session_id
+        session_id = self._find_session_for_run(run_id)
+        if not session_id:
+            logger.warning(
+                "No session found for run %s, falling back to new run dispatch",
+                run_id,
+            )
+            # Fallback: dispatch as new run
+            decision["action"] = "run"
+            decision["description"] = decision.get("description", f"resume {run_id}")
+            await self._dispatch_run(decision)
             return
 
         # Check session status before resume
@@ -781,8 +920,8 @@ class PrimaryAgentService:
         metadata = read_metadata(session_id)
         if metadata and metadata.status == SessionStatus.RUNNING:
             logger.info(
-                "Session %s is running, queueing message for later delivery",
-                session_id[:8],
+                "Session %s (run=%s) is running, queueing message for later delivery",
+                session_id[:8], run_id,
             )
             pending = self._pending_resume_messages.setdefault(session_id, [])
             pending.append({
@@ -799,12 +938,49 @@ class PrimaryAgentService:
         result = AgentService.continue_task(session_id, prompt)
         if result.get("status") != "ok":
             logger.error(
-                "Failed to resume session %s: %s",
-                session_id[:8],
-                result.get("error"),
+                "Failed to resume session %s (run=%s): %s",
+                session_id[:8], run_id, result.get("error"),
             )
         else:
-            logger.info("Resumed session %s with new prompt", session_id[:8])
+            logger.info("Resumed session %s (run=%s) with new prompt", session_id[:8], run_id)
+
+    def _find_session_for_run(self, run_id: str) -> str | None:
+        """Find the Claude Code session_id associated with a Run.
+
+        Scans session directories for the FRAGO_CURRENT_RUN=<run_id> marker
+        in the first JSONL step. Returns the most recent match, or None.
+        """
+        import os
+
+        sessions_dir = Path.home() / ".frago" / "sessions" / "claude"
+        if not sessions_dir.exists():
+            return None
+
+        marker = f"FRAGO_CURRENT_RUN={run_id}"
+        candidates: list[tuple[float, str]] = []
+
+        for session_dir in sessions_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            steps_file = session_dir / "steps.jsonl"
+            if not steps_file.exists():
+                continue
+            try:
+                # Read only first few KB — marker is in the first step
+                with open(steps_file, encoding="utf-8") as f:
+                    head = f.read(8192)
+                if marker in head:
+                    mtime = os.path.getmtime(steps_file)
+                    candidates.append((mtime, session_dir.name))
+            except Exception:
+                continue
+
+        if not candidates:
+            return None
+
+        # Return most recently modified match
+        candidates.sort(reverse=True)
+        return candidates[0][1]
 
     async def _monitor_sub_agent(self, run_id: str, _task_id: str | None, pid: int) -> None:
         """Watch sub-agent process; enqueue agent_exit message when it exits."""
@@ -976,8 +1152,9 @@ class PrimaryAgentService:
             await asyncio.to_thread(runner.run, notify_recipe, params=reply_params)
             logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
 
-            # Mark task as completed after successful reply
-            if task_id:
+            # Mark task as completed after successful reply —
+            # but NOT if this task has a pending run/resume dispatch (blocked by lock)
+            if task_id and task_id not in self._tasks_with_pending_dispatch:
                 try:
                     from frago.server.services.ingestion.models import TaskStatus
                     from frago.server.services.ingestion.store import TaskStore
@@ -985,6 +1162,12 @@ class PrimaryAgentService:
                                              result_summary=reply_params.get("result_summary", "replied"))
                 except Exception:
                     logger.debug("Failed to mark task completed after reply", exc_info=True)
+            elif task_id:
+                logger.info(
+                    "Reply sent for task %s but NOT marking completed — "
+                    "task has pending run/resume dispatch",
+                    task_id[:8],
+                )
 
         except Exception:
             logger.exception("Failed to send reply for channel %s", channel)

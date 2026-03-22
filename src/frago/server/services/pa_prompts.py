@@ -32,6 +32,7 @@ PA_SYSTEM_PROMPT = """\
 [
   {"action": "reply", "task_id": "...", "channel": "...", "reply_params": {"text": "直接回复内容"}},
   {"action": "run", "task_id": "...", "description": "...", "prompt": "...", "related_runs": ["..."]},
+  {"action": "resume", "run_id": "...", "task_id": "...", "prompt": "追加给子 agent 的指令"},
   {"action": "recipe", "task_id": "...", "recipe_name": "...", "params": {}},
   {"action": "update", "task_id": "...", "result_summary": "...", "status": "completed"}
 ]
@@ -39,6 +40,7 @@ PA_SYSTEM_PROMPT = """\
 
 - `reply`: 直接回复来源 channel。reply_params.text 是发给用户的原文，自然表达，不要套模板
 - `run`: 创建 Run 实例并启动子 agent 执行需要多步操作的复杂任务
+- `resume`: 追加指令到已有 Run 的子 agent session。当用户的新消息是对正在执行或刚完成的 Run 的后续指令时使用，而非创建新 Run。**run_id 必须从活跃 Run 列表中精确复制，禁止自行构造**
 - `recipe`: 直接执行 recipe（无需 Run 的轻量操作）
 - `update`: 更新任务状态（status 可选: completed/failed）
 
@@ -62,6 +64,11 @@ PA_SYSTEM_PROMPT = """\
 - 你不确定该用 reply 还是 run → 用 run
 
 子 agent 在 Run 中拥有完整的 frago 工具链（浏览器、recipe、文件系统、代码执行），能力远超你作为调度器的纯文本输出。把实际工作交给子 agent。
+
+用 **resume** 的场景：
+- 用户的新消息明显是对某个活跃 Run 的后续指令（如"继续"、"改一下"、"再加个功能"）
+- 活跃 Run 列表中有一个 Run 正在做相关的事，新指令应该追加给它而非另起一个
+- 判断依据：看活跃 Run 的 description 和关联 task，如果新任务是同一个工作流的延续，用 resume
 
 用 **recipe** 的场景：
 - 任务恰好匹配已有 recipe 且不需要额外判断
