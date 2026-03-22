@@ -561,6 +561,25 @@ class AgentService:
 
         prompt = prompt.strip()
 
+        # Check session status — prevent concurrent writes to same JSONL
+        try:
+            from frago.session.models import SessionStatus
+            from frago.session.storage import read_metadata
+
+            metadata = read_metadata(session_id)
+            if metadata and metadata.status == SessionStatus.RUNNING:
+                logger.warning(
+                    "Refusing to resume running session %s", session_id[:8]
+                )
+                return {
+                    "status": "error",
+                    "error": f"Session {session_id[:8]} is currently running. "
+                    "Cannot resume a running session.",
+                }
+        except Exception as e:
+            # Non-fatal: log and proceed
+            logger.debug("Could not verify session status: %s", e)
+
         try:
             # Find frago executable
             frago_path = shutil.which("frago")

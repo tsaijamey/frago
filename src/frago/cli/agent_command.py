@@ -505,6 +505,30 @@ def agent(
     # =========================================================================
 
     if resume:
+        # Check session status before resume — prevent concurrent writes to same JSONL
+        try:
+            from frago.session.models import SessionStatus
+            from frago.session.storage import read_metadata
+
+            metadata = read_metadata(resume)
+            if metadata and metadata.status == SessionStatus.RUNNING:
+                click.echo(
+                    f"[Error] Session {resume[:8]} is currently running. "
+                    "Cannot resume a running session.",
+                    err=True,
+                )
+                click.echo(
+                    "Wait for the session to complete, or use a different session.",
+                    err=True,
+                )
+                raise SystemExit(1)
+        except SystemExit:
+            raise
+        except Exception as e:
+            # Non-fatal: if we can't check status, proceed with caution
+            if not passthrough:
+                click.echo(f"  [!] Could not verify session status: {e}", err=True)
+
         if not passthrough:
             click.echo(f"\n[Resume] Continue in session {resume[:8]}...: {prompt_text}")
         execution_prompt = prompt_text
