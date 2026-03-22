@@ -5,12 +5,13 @@ Adding a new channel requires zero code changes — just config + recipes.
 
 The scheduler's job is:
 1. Poll channels via recipes
-2. Run ThinkingEngine short-circuit (NO_ACTION, REPLY_DIRECT)
-3. Store remaining tasks as PENDING in TaskStore
+2. Deduplicate by (channel, channel_message_id)
+3. Store new tasks as PENDING in TaskStore
+4. Enqueue messages to the PA message queue for immediate processing
 
-Tasks are consumed by the Primary Agent's heartbeat loop, which checks
-TaskStore for pending tasks and dispatches them to Run instances.
-The scheduler does NOT deliver messages to the PA session directly.
+Tasks are consumed by the PA via the message queue consumer loop.
+The scheduler does NOT classify, filter, or short-circuit any messages.
+Every message reaches the PA.
 """
 
 import asyncio
@@ -18,14 +19,8 @@ import logging
 import uuid
 from dataclasses import dataclass
 
-from frago.server.services.ingestion.models import (
-    ActionType,
-    ExecutionStrategy,
-    IngestedTask,
-    TaskStatus,
-)
+from frago.server.services.ingestion.models import IngestedTask
 from frago.server.services.ingestion.store import TaskStore
-from frago.server.services.thinking import BaseThinkingEngine, ThinkingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +34,7 @@ class ChannelConfig:
     notify_recipe: str
     poll_interval_seconds: int = 120
     poll_timeout_seconds: int = 20
+    task_timeout_seconds: int = 600  # Used by PA for sub-agent timeout
 
 
 class IngestionScheduler:
@@ -47,13 +43,21 @@ class IngestionScheduler:
         self,
         channels: list[ChannelConfig],
         store: TaskStore,
-        thinking_engine: BaseThinkingEngine | None = None,
     ) -> None:
         self._channels = channels
         self._store = store
-        self._thinking_engine = thinking_engine  # For test injection; per-channel instances created in start()
         self._channel_tasks: dict[str, asyncio.Task[None]] = {}
         self._stop_event = asyncio.Event()
+        # Set by PrimaryAgentService after initialization
+        self._pa_enqueue: asyncio.coroutines | None = None
+
+    def set_pa_enqueue(self, enqueue_fn: object) -> None:
+        """Register the PA message queue enqueue function.
+
+        Called by PrimaryAgentService during server startup so the scheduler
+        can deliver messages to the PA queue without a circular import.
+        """
+        self._pa_enqueue = enqueue_fn
 
     async def start(self) -> None:
         if self._channel_tasks:
@@ -61,9 +65,8 @@ class IngestionScheduler:
             return
         self._stop_event.clear()
         for ch in self._channels:
-            thinking = self._thinking_engine or ThinkingEngine()
             task = asyncio.create_task(
-                self._channel_loop(ch, thinking),
+                self._channel_loop(ch),
                 name=f"ingestion-{ch.name}",
             )
             self._channel_tasks[ch.name] = task
@@ -85,13 +88,13 @@ class IngestionScheduler:
         self._channel_tasks.clear()
         logger.info("IngestionScheduler stopped")
 
-    async def _channel_loop(self, ch: ChannelConfig, thinking: BaseThinkingEngine) -> None:
+    async def _channel_loop(self, ch: ChannelConfig) -> None:
         """Per-channel polling loop with its own interval."""
         await asyncio.sleep(5)  # Startup delay
         while not self._stop_event.is_set():
             try:
                 await asyncio.wait_for(
-                    self._poll_channel(ch, thinking),
+                    self._poll_channel(ch),
                     timeout=ch.poll_timeout_seconds,
                 )
             except TimeoutError:
@@ -110,19 +113,7 @@ class IngestionScheduler:
             except TimeoutError:
                 continue
 
-    def _sync_task_index(
-        self, thinking: BaseThinkingEngine, exclude_task_ids: set[str] | None = None,
-    ) -> None:
-        """Refresh ThinkingEngine's task index from the store."""
-        try:
-            index = self._store.get_index()
-            if exclude_task_ids:
-                index = [t for t in index if t.task_id not in exclude_task_ids]
-            thinking.update_task_index(index)
-        except Exception:
-            logger.debug("Failed to sync task index", exc_info=True)
-
-    async def _poll_channel(self, ch: ChannelConfig, thinking: BaseThinkingEngine) -> None:
+    async def _poll_channel(self, ch: ChannelConfig) -> None:
         """Call poll_recipe, parse return value, ingest new tasks."""
         from frago.recipes.runner import RecipeRunner
 
@@ -145,9 +136,6 @@ class IngestionScheduler:
             return
         logger.info("Poll %s: %d message(s) received", ch.poll_recipe, len(messages))
 
-        # Sync task index before processing
-        new_task_ids: set[str] = set()
-
         for msg in messages:
             # Defensive: skip messages missing required fields
             if "id" not in msg or "prompt" not in msg:
@@ -169,59 +157,25 @@ class IngestionScheduler:
                 prompt=msg["prompt"],
                 reply_context=msg.get("reply_context", {}),
             )
-            logger.info("New task from %s: %s", ch.name, task.prompt[:80])
+            logger.info("New task from %s: %s", ch.name, task.prompt)
             self._store.add(task)
-            new_task_ids.add(task.id)
 
-            # ThinkingEngine short-circuit processing
-            self._sync_task_index(thinking, exclude_task_ids=new_task_ids)
-            thinking_result = thinking.process(task.prompt, task)
-
-            # Short-circuit: NO_ACTION — pure info intake, no LLM needed
-            if thinking_result.action_type == ActionType.NO_ACTION:
-                logger.info(
-                    "ThinkingEngine short-circuit: %s × %s → NO_ACTION (task=%s)",
-                    thinking_result.semantic_type.value,
-                    thinking_result.context_binding.value,
-                    task.id[:8],
-                )
-                self._store.update_status(
-                    task.id, TaskStatus.COMPLETED,
-                    result_summary=f"ThinkingEngine: {thinking_result.semantic_type.value} → NO_ACTION",
-                )
-                continue
-
-            # Short-circuit: REPLY_DIRECT — answer from task index, no LLM needed
-            if (
-                thinking_result.execution_plan
-                and thinking_result.execution_plan.strategy == ExecutionStrategy.REPLY_DIRECT
-            ):
-                reply_content = thinking_result.execution_plan.target
-                logger.info(
-                    "ThinkingEngine short-circuit: REPLY_DIRECT (task=%s) → %s",
-                    task.id[:8],
-                    reply_content[:60],
-                )
-                self._store.update_status(
-                    task.id, TaskStatus.COMPLETED,
-                    result_summary=reply_content,
-                )
-                # Send direct reply
-                task_with_result = self._store.get(task.id)
-                if task_with_result:
-                    task_with_result.result_summary = reply_content
-                    await self._notify(task_with_result, ch)
-                continue
-
-            # Not short-circuited → stays PENDING in TaskStore
-            # PA heartbeat will pick it up via _has_pending_tasks()
-            logger.info(
-                "Task %s stays PENDING for PA pickup (%s × %s → %s)",
-                task.id[:8],
-                thinking_result.semantic_type.value,
-                thinking_result.context_binding.value,
-                thinking_result.action_type.value,
-            )
+            # Enqueue to PA message queue for immediate processing
+            if self._pa_enqueue:
+                try:
+                    await self._pa_enqueue({
+                        "type": "user_message",
+                        "task_id": task.id,
+                        "channel": ch.name,
+                        "channel_message_id": msg_id,
+                        "prompt": task.prompt,
+                        "reply_context": task.reply_context,
+                    })
+                    logger.info("Task %s enqueued to PA", task.id[:8])
+                except Exception:
+                    logger.exception("Failed to enqueue task %s to PA", task.id[:8])
+            else:
+                logger.debug("Task %s stored as PENDING (no PA queue registered)", task.id[:8])
 
     async def _notify(self, task: IngestedTask, ch: ChannelConfig) -> None:
         """Call notify_recipe with contract-defined params."""
