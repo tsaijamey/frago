@@ -114,6 +114,10 @@ async def lifespan(app: FastAPI):
     # Start task ingestion scheduler (if enabled in config)
     ingestion_scheduler = await _start_ingestion_scheduler(logger)
 
+    # Wire ingestion scheduler → PA message queue
+    if ingestion_scheduler is not None:
+        ingestion_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
+
     yield
 
     # Shutdown
@@ -275,6 +279,9 @@ def create_app(
     app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
     app.include_router(files_router, prefix="/api", tags=["files"])
     app.include_router(workspace_router, prefix="/api", tags=["workspace"])
+
+    from frago.server.routes.pa import router as pa_router
+    app.include_router(pa_router, prefix="/api", tags=["pa"])
 
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")
