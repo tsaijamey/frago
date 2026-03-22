@@ -661,6 +661,7 @@ class PrimaryAgentService:
 
             if has_completion:
                 released = ctx_mgr.release_context()
+                self._archive_stale_run(current_run_id, reason="completion_marker")
                 logger.info(
                     "Heartbeat [%d]: released stale run lock %s "
                     "(completion marker found)",
@@ -705,6 +706,7 @@ class PrimaryAgentService:
 
             if not run_still_alive:
                 released = ctx_mgr.release_context()
+                self._archive_stale_run(current_run_id, reason="timeout")
                 logger.info(
                     "Heartbeat [%d]: released stale run lock %s "
                     "(no completion, timed out after %ds, process gone)",
@@ -982,6 +984,19 @@ class PrimaryAgentService:
         candidates.sort(reverse=True)
         return candidates[0][1]
 
+    def _archive_stale_run(self, run_id: str, reason: str) -> None:
+        """Archive a stale/completed run. Idempotent — safe to call multiple times."""
+        try:
+            from frago.run.manager import RunManager
+            from frago.run.models import RunStatus
+            manager = RunManager(PROJECTS_DIR)
+            run = manager.find_run(run_id)
+            if run.status == RunStatus.ACTIVE:
+                manager.archive_run(run_id)
+                logger.info("Archived run %s (reason=%s)", run_id, reason)
+        except Exception:
+            logger.debug("Failed to archive run %s", run_id, exc_info=True)
+
     async def _monitor_sub_agent(self, run_id: str, _task_id: str | None, pid: int) -> None:
         """Watch sub-agent process; enqueue agent_exit message when it exits."""
         import os
@@ -1013,6 +1028,22 @@ class PrimaryAgentService:
             "Run %s: sub-agent (PID %d) exited (has_completion=%s), enqueueing agent_exit",
             run_id, pid, has_completion,
         )
+
+        # Release context lock immediately — don't wait for heartbeat stale check
+        try:
+            from frago.run.context import ContextManager
+            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
+            current = ctx_mgr.get_current_run_id()
+            if current == run_id:
+                ctx_mgr.release_context()
+                logger.info("Run %s: context released by monitor", run_id)
+        except Exception:
+            logger.debug("Run %s: context release failed in monitor", run_id, exc_info=True)
+
+        # Archive run if completion marker found
+        if has_completion:
+            self._archive_stale_run(run_id, reason="completion_marker")
+
         await self.enqueue_message({
             "type": "agent_exit",
             "run_id": run_id,
