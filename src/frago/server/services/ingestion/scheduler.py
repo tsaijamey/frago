@@ -35,7 +35,6 @@ class ChannelConfig:
     notify_recipe: str
     poll_interval_seconds: int = 120
     poll_timeout_seconds: int = 20
-    task_timeout_seconds: int = 600  # Used by PA for sub-agent timeout
 
 
 class IngestionScheduler:

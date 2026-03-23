@@ -772,6 +772,30 @@ class PrimaryAgentService:
             logger.info("PA decision: [] (idle)")
             return
 
+        # Semantic dedup: if a task has run/resume/recipe, drop its update-completed
+        # PA sometimes emits run + update-completed for the same task in one batch,
+        # which would close the task before the sub-agent even starts.
+        tasks_with_execution = {
+            d.get("task_id") for d in decisions
+            if isinstance(d, dict) and d.get("action") in ("run", "resume", "recipe") and d.get("task_id")
+        }
+        if tasks_with_execution:
+            original_count = len(decisions)
+            decisions = [
+                d for d in decisions
+                if not (
+                    isinstance(d, dict)
+                    and d.get("action") == "update"
+                    and d.get("task_id") in tasks_with_execution
+                )
+            ]
+            dropped = original_count - len(decisions)
+            if dropped:
+                logger.info(
+                    "Dropped %d update action(s) for tasks with pending execution: %s",
+                    dropped, tasks_with_execution,
+                )
+
         logger.info("PA decision: %d action(s) → %s", len(decisions), [d.get("action") for d in decisions if isinstance(d, dict)])
 
         # Track task_ids with pending run/resume (blocked by lock or queued)
@@ -1180,6 +1204,7 @@ class PrimaryAgentService:
 
             from frago.recipes.runner import RecipeRunner
             runner = RecipeRunner()
+            logger.info("Reply params for %s: %s", notify_recipe, json.dumps(reply_params, ensure_ascii=False, default=str))
             await asyncio.to_thread(runner.run, notify_recipe, params=reply_params)
             logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
 
@@ -1189,8 +1214,11 @@ class PrimaryAgentService:
                 try:
                     from frago.server.services.ingestion.models import TaskStatus
                     from frago.server.services.ingestion.store import TaskStore
-                    TaskStore().update_status(task_id, TaskStatus.COMPLETED,
-                                             result_summary=reply_params.get("result_summary", "replied"))
+                    store = TaskStore()
+                    resolved_task = store.get(task_id)
+                    if resolved_task:
+                        store.update_status(resolved_task.id, TaskStatus.COMPLETED,
+                                            result_summary=reply_params.get("result_summary", "replied"))
                 except Exception:
                     logger.debug("Failed to mark task completed after reply", exc_info=True)
             elif task_id:
@@ -1223,7 +1251,7 @@ class PrimaryAgentService:
                     status = TaskStatus.COMPLETED
                 elif new_status == "failed":
                     status = TaskStatus.FAILED
-                store.update_status(task_id, status, result_summary=result_summary)
+                store.update_status(task.id, status, result_summary=result_summary)
         except Exception:
             logger.debug("Failed to update task %s", task_id, exc_info=True)
 

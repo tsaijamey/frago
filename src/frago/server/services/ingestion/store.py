@@ -68,19 +68,30 @@ class TaskStore:
         error: str | None = None,
     ) -> None:
         with self._lock:
+            target = None
+            # Exact match first
             for data in self._tasks.values():
                 if data["id"] == task_id:
-                    data["status"] = status.value
-                    if session_id is not None:
-                        data["session_id"] = session_id
-                    if result_summary is not None:
-                        data["result_summary"] = result_summary
-                    if error is not None:
-                        data["error"] = error
-                    if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
-                        data["completed_at"] = datetime.now(UTC).isoformat()
-                    self._save()
-                    return
+                    target = data
+                    break
+            # Prefix match (PA may truncate task_id to 8 chars)
+            if target is None and len(task_id) >= 8:
+                for data in self._tasks.values():
+                    if data["id"].startswith(task_id):
+                        target = data
+                        break
+            if target is not None:
+                target["status"] = status.value
+                if session_id is not None:
+                    target["session_id"] = session_id
+                if result_summary is not None:
+                    target["result_summary"] = result_summary
+                if error is not None:
+                    target["error"] = error
+                if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
+                    target["completed_at"] = datetime.now(UTC).isoformat()
+                self._save()
+                return
             logger.warning("Task not found for status update: %s", task_id)
 
     def get_by_status(self, status: TaskStatus) -> list[IngestedTask]:
@@ -93,9 +104,15 @@ class TaskStore:
 
     def get(self, task_id: str) -> IngestedTask | None:
         with self._lock:
+            # Exact match first
             for data in self._tasks.values():
                 if data["id"] == task_id:
                     return self._deserialize(data)
+            # Prefix match (PA may truncate task_id to 8 chars)
+            if len(task_id) >= 8:
+                for data in self._tasks.values():
+                    if data["id"].startswith(task_id):
+                        return self._deserialize(data)
             return None
 
     def get_recent(
