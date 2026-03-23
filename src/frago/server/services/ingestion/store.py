@@ -50,7 +50,18 @@ class TaskStore:
     def exists(self, channel: str, channel_message_id: str) -> bool:
         key = f"{channel}:{channel_message_id}"
         with self._lock:
-            return key in self._tasks
+            if key in self._tasks:
+                return True
+            # Check archived files — completed tasks still count as "seen"
+            if ARCHIVE_DIR.is_dir():
+                for archive_path in ARCHIVE_DIR.glob("*.json"):
+                    try:
+                        archived = json.loads(archive_path.read_text(encoding="utf-8"))
+                        if key in archived:
+                            return True
+                    except (json.JSONDecodeError, OSError):
+                        continue
+            return False
 
     def add(self, task: IngestedTask) -> None:
         key = f"{task.channel}:{task.channel_message_id}"

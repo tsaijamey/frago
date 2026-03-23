@@ -623,6 +623,9 @@ class PrimaryAgentService:
                     self._heartbeat_seq, recovered,
                 )
 
+        # ④ Finalize orphan executing tasks whose runs are already gone
+        self._finalize_orphan_tasks()
+
         self._heartbeat_seq += 1
 
     async def _check_stale_run_lock(self) -> None:
@@ -641,27 +644,14 @@ class PrimaryAgentService:
             if not current_run_id:
                 return
 
-            run_dir = PROJECTS_DIR / current_run_id
-            log_file = run_dir / "logs" / "execution.jsonl"
-
             # Check for completion marker
-            has_completion = False
-            if log_file.exists():
-                try:
-                    lines = log_file.read_text(encoding="utf-8").splitlines()
-                    for line in reversed(lines[-20:]):
-                        if not line.strip():
-                            continue
-                        entry = json.loads(line)
-                        if entry.get("step") in ("TASK_COMPLETE", "TASK_FAILED"):
-                            has_completion = True
-                            break
-                except Exception:
-                    pass
+            step, _summary = self._read_completion_info(current_run_id)
+            has_completion = step is not None
 
             if has_completion:
                 released = ctx_mgr.release_context()
                 self._archive_stale_run(current_run_id, reason="completion_marker")
+                self._finalize_task_status(None, current_run_id, reason="completion_marker")
                 logger.info(
                     "Heartbeat [%d]: released stale run lock %s "
                     "(completion marker found)",
@@ -707,6 +697,7 @@ class PrimaryAgentService:
             if not run_still_alive:
                 released = ctx_mgr.release_context()
                 self._archive_stale_run(current_run_id, reason="timeout")
+                self._finalize_task_status(None, current_run_id, reason="timeout")
                 logger.info(
                     "Heartbeat [%d]: released stale run lock %s "
                     "(no completion, timed out after %ds, process gone)",
@@ -1021,6 +1012,112 @@ class PrimaryAgentService:
         except Exception:
             logger.debug("Failed to archive run %s", run_id, exc_info=True)
 
+    @staticmethod
+    def _read_completion_info(run_id: str) -> tuple[str | None, str | None]:
+        """Read completion step and summary from run's execution.jsonl.
+
+        Returns (step, summary) where step is "TASK_COMPLETE" or "TASK_FAILED",
+        or (None, None) if no completion marker found.
+        """
+        log_file = PROJECTS_DIR / run_id / "logs" / "execution.jsonl"
+        try:
+            lines = log_file.read_text(encoding="utf-8").splitlines()
+            for line in reversed(lines[-20:]):
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                step = entry.get("step")
+                if step in ("TASK_COMPLETE", "TASK_FAILED"):
+                    summary = entry.get("data", {}).get("summary")
+                    return step, summary
+        except Exception:
+            pass
+        return None, None
+
+    def _finalize_task_status(self, task_id: str | None, run_id: str, reason: str) -> None:
+        """Update ingested task status based on run's completion info.
+
+        Called from _monitor_sub_agent (normal path) and _check_stale_run_lock (fallback).
+        If task_id is None, attempts to find the task by session_id == run_id.
+        """
+        try:
+            from frago.server.services.ingestion.models import TaskStatus
+            from frago.server.services.ingestion.store import TaskStore
+            store = TaskStore()
+
+            # Resolve task: by task_id or by session_id (== run_id)
+            task = store.get(task_id) if task_id else None
+            if not task:
+                executing = store.get_by_status(TaskStatus.EXECUTING)
+                for t in executing:
+                    if t.session_id == run_id:
+                        task = t
+                        break
+            if not task or task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
+                return  # not found or already terminal
+
+            step, summary = self._read_completion_info(run_id)
+            if step == "TASK_COMPLETE":
+                store.update_status(task.id, TaskStatus.COMPLETED, result_summary=summary)
+            elif step == "TASK_FAILED":
+                store.update_status(task.id, TaskStatus.FAILED, error=summary)
+            elif reason == "timeout":
+                store.update_status(task.id, TaskStatus.TIMEOUT, error="stale run lock timeout")
+            else:
+                # Agent exited without marker — treat as failed
+                store.update_status(task.id, TaskStatus.FAILED, error="sub-agent exited without completion marker")
+            logger.info("Finalized task %s status (reason=%s, step=%s)", task.id, reason, step)
+        except Exception:
+            logger.debug("Failed to finalize task %s status", task_id, exc_info=True)
+
+    def _finalize_orphan_tasks(self) -> None:
+        """Finalize executing tasks whose runs are already archived or missing.
+
+        Unlike _check_stale_run_lock (which only looks at current_run),
+        this scans all EXECUTING tasks in the store and checks whether
+        their associated run is still alive. Safe to call every heartbeat —
+        only touches tasks whose runs have definitively ended.
+        """
+        try:
+            from frago.run.manager import RunManager
+            from frago.run.models import RunStatus
+            from frago.server.services.ingestion.models import TaskStatus
+            from frago.server.services.ingestion.store import TaskStore
+
+            store = TaskStore()
+            executing = store.get_by_status(TaskStatus.EXECUTING)
+            if not executing:
+                return
+
+            manager = RunManager(PROJECTS_DIR)
+            for task in executing:
+                run_id = task.session_id
+                if not run_id:
+                    continue
+                # Check if run is still alive
+                try:
+                    run = manager.find_run(run_id)
+                    if run.status == RunStatus.ACTIVE:
+                        # Active run — but is the process actually running?
+                        # If it's not the current_run, no process is working on it
+                        from frago.run.context import ContextManager
+                        ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
+                        if ctx_mgr.get_current_run_id() == run_id:
+                            continue  # it's the current run, let stale lock handle it
+                        # Active but not current — orphaned, archive it first
+                        self._archive_stale_run(run_id, reason="orphan_active_not_current")
+                except Exception:
+                    pass  # run not found — treat as gone
+
+                # Run is archived or missing — finalize task
+                self._finalize_task_status(task.id, run_id, reason="orphan_cleanup")
+                logger.info(
+                    "Heartbeat [%d]: finalized orphan task %s (run=%s)",
+                    self._heartbeat_seq, task.id, run_id,
+                )
+        except Exception:
+            logger.debug("Orphan task cleanup failed", exc_info=True)
+
     async def _monitor_sub_agent(self, run_id: str, _task_id: str | None, pid: int) -> None:
         """Watch sub-agent process; enqueue agent_exit message when it exits."""
         import os
@@ -1034,19 +1131,8 @@ class PrimaryAgentService:
                 break
 
         # Check last N log entries for completion marker
-        log_file = PROJECTS_DIR / run_id / "logs" / "execution.jsonl"
-        has_completion = False
-        try:
-            lines = log_file.read_text(encoding="utf-8").splitlines()
-            for line in reversed(lines[-20:]):
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                if entry.get("step") in ("TASK_COMPLETE", "TASK_FAILED"):
-                    has_completion = True
-                    break
-        except Exception:
-            pass
+        step, _summary = self._read_completion_info(run_id)
+        has_completion = step is not None
 
         logger.info(
             "Run %s: sub-agent (PID %d) exited (has_completion=%s), enqueueing agent_exit",
@@ -1064,9 +1150,11 @@ class PrimaryAgentService:
         except Exception:
             logger.debug("Run %s: context release failed in monitor", run_id, exc_info=True)
 
-        # Archive run if completion marker found
+        # Archive run and finalize task status
+        reason = "completion_marker" if has_completion else "agent_exit_no_marker"
         if has_completion:
-            self._archive_stale_run(run_id, reason="completion_marker")
+            self._archive_stale_run(run_id, reason=reason)
+        self._finalize_task_status(_task_id, run_id, reason)
 
         await self.enqueue_message({
             "type": "agent_exit",
