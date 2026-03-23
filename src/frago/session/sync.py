@@ -470,6 +470,19 @@ def sync_project_sessions(
             session_id = jsonl_file.stem
             existing = read_metadata(session_id, AgentType.CLAUDE)
 
+            # Skip completed/error sessions early — they won't change
+            if existing and not force and existing.status != SessionStatus.RUNNING:
+                # Only re-check if the source file was modified after last sync
+                file_mtime = datetime.fromtimestamp(
+                    jsonl_file.stat().st_mtime, tz=timezone.utc
+                )
+                existing_last = existing.last_activity
+                if existing_last.tzinfo is None:
+                    existing_last = existing_last.replace(tzinfo=timezone.utc)
+                if file_mtime <= existing_last:
+                    result.skipped += 1
+                    continue
+
             # Sync session (sync_session will check file modification time to decide if update is needed)
             synced_id = sync_session(jsonl_file, project_path, force)
             if synced_id:

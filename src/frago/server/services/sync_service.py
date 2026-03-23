@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 # Debounce delay for refresh requests
 DEBOUNCE_DELAY_SECONDS = 2.0
 
-# Sync interval in seconds (same as deprecated GUI for fast session discovery)
-SYNC_INTERVAL_SECONDS = 5
+# Sync interval in seconds (30s is sufficient — file watcher handles real-time)
+SYNC_INTERVAL_SECONDS = 30
 
 
 class SyncService:
