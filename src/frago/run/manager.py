@@ -149,10 +149,8 @@ class RunManager:
                     {
                         "run_id": instance.run_id,
                         "status": instance.status.value,
-                        "created_at": instance.created_at.isoformat().replace("+00:00", "Z"),
-                        "last_accessed": instance.last_accessed.isoformat().replace(
-                            "+00:00", "Z"
-                        ),
+                        "created_at": instance.created_at.isoformat(),
+                        "last_accessed": instance.last_accessed.isoformat(),
                         "theme_description": instance.theme_description,
                         "log_count": log_count,
                         "screenshot_count": screenshot_count,

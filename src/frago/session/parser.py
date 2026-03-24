@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -199,9 +199,9 @@ class IncrementalParser:
             try:
                 timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             except ValueError:
-                timestamp = datetime.now(timezone.utc)
+                timestamp = datetime.now()
         else:
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now()
 
         record = ParsedRecord(
             uuid=uuid,

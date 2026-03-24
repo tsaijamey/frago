@@ -9,7 +9,7 @@ Provides terminal display formatting capabilities for session monitoring data, i
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, TextIO
 
 from frago.session.models import (
@@ -273,7 +273,7 @@ class JsonFormatter:
             event_type: Event type
             data: Event data
         """
-        event = {"type": event_type, "timestamp": datetime.now(timezone.utc).isoformat(), **data}
+        event = {"type": event_type, "timestamp": datetime.now().isoformat(), **data}
         print(json.dumps(event, ensure_ascii=False), file=self.output, flush=True)
 
     def emit_session_start(self, session: MonitoredSession) -> None:

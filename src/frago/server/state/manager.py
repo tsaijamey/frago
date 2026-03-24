@@ -10,7 +10,7 @@ Provides centralized state management with:
 import asyncio
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from frago.server.state.models import (
@@ -130,7 +130,7 @@ class StateManager:
             )
 
             self._state.version += 1
-            self._state.last_updated = datetime.now(timezone.utc)
+            self._state.last_updated = datetime.now()
             self._initialized = True
 
         duration = (datetime.now() - start_time).total_seconds()
@@ -188,7 +188,7 @@ class StateManager:
                 steps.append(
                     TaskStep(
                         timestamp=self._parse_datetime(s.get("timestamp"))
-                        or datetime.now(timezone.utc),
+                        or datetime.now(),
                         type=s.get("type", "assistant"),
                         content=s.get("content", ""),
                         tool_name=s.get("tool_name"),
@@ -483,7 +483,7 @@ class StateManager:
                 None, self._compute_dashboard
             )
             self._state.version += 1
-            self._state.last_updated = datetime.now(timezone.utc)
+            self._state.last_updated = datetime.now()
 
         if broadcast:
             await self._broadcast("tasks", self._state.tasks)
@@ -513,7 +513,7 @@ class StateManager:
             loop = asyncio.get_event_loop()
             self._state.recipes = await loop.run_in_executor(None, self._load_recipes)
             self._state.version += 1
-            self._state.last_updated = datetime.now(timezone.utc)
+            self._state.last_updated = datetime.now()
 
         if broadcast:
             await self._broadcast("recipes", self._state.recipes)
@@ -526,7 +526,7 @@ class StateManager:
             loop = asyncio.get_event_loop()
             self._state.skills = await loop.run_in_executor(None, self._load_skills)
             self._state.version += 1
-            self._state.last_updated = datetime.now(timezone.utc)
+            self._state.last_updated = datetime.now()
 
         if broadcast:
             await self._broadcast("skills", self._state.skills)
@@ -539,7 +539,7 @@ class StateManager:
             loop = asyncio.get_event_loop()
             self._state.projects = await loop.run_in_executor(None, self._load_projects)
             self._state.version += 1
-            self._state.last_updated = datetime.now(timezone.utc)
+            self._state.last_updated = datetime.now()
 
         if broadcast:
             await self._broadcast("projects", self._state.projects)

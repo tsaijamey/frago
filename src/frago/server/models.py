@@ -301,7 +301,7 @@ class WebSocketMessage(BaseModel):
 
     type: str  # session_sync, task_started, task_updated, task_completed, connection
     payload: Dict[str, Any]
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=datetime.now)
 
 
 class SessionSyncPayload(BaseModel):

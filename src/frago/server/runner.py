@@ -13,7 +13,7 @@ import signal
 import sys
 import threading
 import webbrowser
-from datetime import UTC, datetime
+from datetime import datetime
 
 import uvicorn
 
@@ -89,7 +89,7 @@ def run_server(
         logger.info(f"Using port {port}")
 
     # Update global server state
-    started_at = datetime.now(UTC).isoformat()
+    started_at = datetime.now().isoformat()
     set_server_state(host, port, started_at)
 
     # Get server URL

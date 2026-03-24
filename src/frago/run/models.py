@@ -125,8 +125,8 @@ class RunInstance(BaseModel):
         result = self.model_dump()
 
         # Ensure time fields are formatted correctly
-        result["created_at"] = self.created_at.isoformat().replace("+00:00", "Z")
-        result["last_accessed"] = self.last_accessed.isoformat().replace("+00:00", "Z")
+        result["created_at"] = self.created_at.isoformat()
+        result["last_accessed"] = self.last_accessed.isoformat()
         result["status"] = self.status.value
 
         return result
@@ -174,7 +174,7 @@ class LogEntry(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary (ISO 8601 timestamps)"""
         result = {
-            "timestamp": self.timestamp.isoformat().replace("+00:00", "Z"),
+            "timestamp": self.timestamp.isoformat(),
             "step": self.step,
             "status": self.status.value,
             "action_type": self.action_type.value,
@@ -209,7 +209,7 @@ class Screenshot(BaseModel):
             "sequence_number": self.sequence_number,
             "description": self.description,
             "file_path": self.file_path,
-            "timestamp": self.timestamp.isoformat().replace("+00:00", "Z"),
+            "timestamp": self.timestamp.isoformat(),
         }
 
 
@@ -234,7 +234,7 @@ class CurrentRunContext(BaseModel):
         """Convert to dictionary"""
         result = {
             "run_id": self.run_id,
-            "last_accessed": self.last_accessed.isoformat().replace("+00:00", "Z"),
+            "last_accessed": self.last_accessed.isoformat(),
             "theme_description": self.theme_description,
         }
         if self.projects_dir:

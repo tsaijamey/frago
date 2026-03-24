@@ -10,7 +10,7 @@ import logging
 import shutil
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -309,7 +309,7 @@ class AgentSession:
                     "id": tool_call_id,
                     "name": tool_name,
                     "input": {},
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now().isoformat(),
                 }
                 self._current_tool_input_json = ""
 
@@ -426,7 +426,7 @@ class AgentService:
                 "title": title,
                 "project_path": project_path,
                 "agent_type": "claude",
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.now().isoformat(),
                 "message": f"Task started: {title}",
             }
 

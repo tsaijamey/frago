@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -1216,7 +1216,7 @@ def _update_sync_entry(metadata: Dict[str, Any], rel_path: str, content_hash: st
 
     metadata["entries"][rel_path] = {
         "content_hash": content_hash,
-        "synced_at": datetime.now(timezone.utc).isoformat(),
+        "synced_at": datetime.now().isoformat(),
         "synced_by": _get_device_id(),
     }
 

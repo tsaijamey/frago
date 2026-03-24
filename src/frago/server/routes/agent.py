@@ -52,7 +52,7 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
     Raises:
         HTTPException: 500 if agent fails to start
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     result = AgentService.start_task(
         prompt=request.prompt,
@@ -68,7 +68,7 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
     if isinstance(started_at, str):
         started_at = datetime.fromisoformat(started_at)
     elif started_at is None:
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now()
 
     # Schedule delayed refresh to update task list
     asyncio.create_task(_delayed_refresh())

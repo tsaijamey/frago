@@ -14,7 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -590,7 +590,7 @@ def agent(
         try:
             from frago.session.monitor import SessionMonitor
 
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now()
             project_path = os.getcwd()
 
             from frago.session.models import SessionSource

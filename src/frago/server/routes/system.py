@@ -38,21 +38,21 @@ async def get_info() -> ServerInfoResponse:
 
     Returns server version, host, port, and start time.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     server_info = get_server_info()
 
     info = SystemService.get_info(
         host=server_info.get("host", "127.0.0.1"),
         port=server_info.get("port", 8080),
-        started_at=server_info.get("started_at", datetime.now(timezone.utc).isoformat()),
+        started_at=server_info.get("started_at", datetime.now().isoformat()),
     )
 
     return ServerInfoResponse(
         version=info.get("version", "0.0.0"),
         host=info.get("host", "127.0.0.1"),
         port=info.get("port", 8080),
-        started_at=datetime.fromisoformat(info.get("started_at", datetime.now(timezone.utc).isoformat())),
+        started_at=datetime.fromisoformat(info.get("started_at", datetime.now().isoformat())),
     )
 
 

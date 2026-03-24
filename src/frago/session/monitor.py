@@ -12,7 +12,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -188,8 +188,7 @@ class SessionMonitor:
             source: Session source (terminal/web) for tracking origin
         """
         self.project_path = os.path.abspath(project_path)
-        # Use UTC timezone to ensure consistency with timestamps parsed from JSONL
-        self.start_time = start_time or datetime.now(timezone.utc)
+        self.start_time = start_time or datetime.now()
         self.agent_type = agent_type
         self.json_mode = json_mode
         self.persist = persist
@@ -412,7 +411,7 @@ class SessionMonitor:
             project_path=self.project_path,
             source_file=file_path,
             started_at=self.start_time,
-            last_activity=datetime.now(timezone.utc),
+            last_activity=datetime.now(),
             source=self.source,
         )
 
@@ -436,8 +435,7 @@ class SessionMonitor:
         Args:
             record: Parsed record
         """
-        # Update last activity time (use UTC to ensure consistency with other timestamps)
-        self._session.last_activity = datetime.now(timezone.utc)
+        self._session.last_activity = datetime.now()
 
         # Convert to step
         self._step_id += 1
@@ -503,7 +501,7 @@ class SessionMonitor:
             return
 
         self._session.status = status
-        self._session.ended_at = datetime.now(timezone.utc)
+        self._session.ended_at = datetime.now()
 
         # Generate and save summary
         summary = None

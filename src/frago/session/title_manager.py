@@ -12,7 +12,7 @@ import logging
 import os
 import platform
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -146,7 +146,7 @@ class TitleManager:
         if title:
             data.setdefault("titles", {})[session_id] = {
                 "title": title[:100],  # Max 100 chars
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now().isoformat(),
                 "model": "haiku",
                 "content_hash": content_hash
             }
@@ -208,7 +208,7 @@ class TitleManager:
             data = self._load_sessions_json()
             data.setdefault("titles", {})[session_id] = {
                 "title": title[:100],
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now().isoformat(),
                 "model": "haiku",
                 "content_hash": content_hash
             }

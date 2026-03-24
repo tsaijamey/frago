@@ -1,7 +1,7 @@
 """Data structures for the task ingestion layer."""
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -23,7 +23,7 @@ class IngestedTask:
     channel_message_id: str
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: datetime.now())
 
     # Filled after execution starts
     session_id: str | None = None

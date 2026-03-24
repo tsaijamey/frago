@@ -10,7 +10,7 @@ Interface contract defined by 20260212-continuous-conversation.md spec.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class OSMessage:
     title: str               # Human-readable title
     content: dict[str, Any]  # Structured payload (table data, change lists, etc.)
     actions: list[str] = field(default_factory=list)  # Optional: ["confirm", "skip", "elaborate"]
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = field(default_factory=lambda: datetime.now())
 
     def to_dict(self) -> dict:
         return {

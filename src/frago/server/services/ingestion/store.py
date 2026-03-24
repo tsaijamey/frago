@@ -4,7 +4,7 @@ import contextlib
 import json
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +100,7 @@ class TaskStore:
                 if error is not None:
                     target["error"] = error
                 if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
-                    target["completed_at"] = datetime.now(UTC).isoformat()
+                    target["completed_at"] = datetime.now().isoformat()
                 self._save()
                 return
             logger.warning("Task not found for status update: %s", task_id)
@@ -189,7 +189,7 @@ class TaskStore:
 
     def needs_rotation(self) -> bool:
         """Check if there are terminal tasks with completed_at before today."""
-        today = datetime.now(UTC).date().isoformat()
+        today = datetime.now().date().isoformat()
         with self._lock:
             return any(
                 d["status"] in _TERMINAL_STATUSES

@@ -10,7 +10,7 @@ import logging
 import os
 import uuid as uuid_module
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -184,9 +184,9 @@ def infer_session_status(
             return SessionStatus.COMPLETED
 
     # Check last activity time
-    now = datetime.now(timezone.utc)
-    if last_activity.tzinfo is None:
-        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    now = datetime.now()
+    if last_activity.tzinfo is not None:
+        last_activity = last_activity.replace(tzinfo=None)
 
     delta = now - last_activity
     if delta > timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES):
@@ -336,10 +336,10 @@ def sync_session(
 
     if existing and not force:
         # Check if source file has updates (supports resumed conversation scenario)
-        file_mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=timezone.utc)
+        file_mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime)
         existing_last_activity = existing.last_activity
-        if existing_last_activity.tzinfo is None:
-            existing_last_activity = existing_last_activity.replace(tzinfo=timezone.utc)
+        if existing_last_activity.tzinfo is not None:
+            existing_last_activity = existing_last_activity.replace(tzinfo=None)
 
         # If file modification time is earlier than recorded last activity time, skip
         if file_mtime <= existing_last_activity:
@@ -348,7 +348,7 @@ def sync_session(
                 return None
 
     # Infer status
-    last_activity = parsed["last_timestamp"] or datetime.now(timezone.utc)
+    last_activity = parsed["last_timestamp"] or datetime.now()
     status = infer_session_status(parsed["records"], last_activity)
 
     # Extract session name from first user message (truncate to 100 chars)
@@ -376,7 +376,7 @@ def sync_session(
         project_path=project_path,
         name=session_name,
         source_file=str(jsonl_path),
-        started_at=parsed["first_timestamp"] or datetime.now(timezone.utc),
+        started_at=parsed["first_timestamp"] or datetime.now(),
         ended_at=last_activity if status != SessionStatus.RUNNING else None,
         status=status,
         step_count=0,  # Updated later
@@ -474,11 +474,11 @@ def sync_project_sessions(
             if existing and not force and existing.status != SessionStatus.RUNNING:
                 # Only re-check if the source file was modified after last sync
                 file_mtime = datetime.fromtimestamp(
-                    jsonl_file.stat().st_mtime, tz=timezone.utc
+                    jsonl_file.stat().st_mtime
                 )
                 existing_last = existing.last_activity
-                if existing_last.tzinfo is None:
-                    existing_last = existing_last.replace(tzinfo=timezone.utc)
+                if existing_last.tzinfo is not None:
+                    existing_last = existing_last.replace(tzinfo=None)
                 if file_mtime <= existing_last:
                     result.skipped += 1
                     continue

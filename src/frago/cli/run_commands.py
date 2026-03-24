@@ -43,7 +43,7 @@ def get_context_manager() -> ContextManager:
 
 def format_timestamp(dt: datetime) -> str:
     """Format timestamp to ISO 8601 format (with Z suffix)"""
-    return dt.isoformat().replace("+00:00", "Z")
+    return dt.isoformat()
 
 
 def output_json(data: Dict[str, Any]) -> None:

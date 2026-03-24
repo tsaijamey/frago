@@ -10,7 +10,7 @@ Provides graceful Ctrl+C interrupt handling and state recovery:
 import json
 import os
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 

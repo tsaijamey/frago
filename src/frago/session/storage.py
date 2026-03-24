@@ -611,12 +611,11 @@ def list_sessions(
             except Exception as e:
                 logger.warning(f"Failed to read session {session_dir.name}: {e}")
 
-    # Sort by last activity time descending (normalize to UTC timezone for comparison)
-    from datetime import timezone
+    # Sort by last activity time descending
     def get_sortable_time(s):
         t = s.last_activity
-        if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
+        if t.tzinfo is not None:
+            t = t.replace(tzinfo=None)
         return t
     sessions.sort(key=get_sortable_time, reverse=True)
 

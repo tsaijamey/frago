@@ -8,7 +8,7 @@ Provides WebSocket broadcast capability for:
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import WebSocket
@@ -152,7 +152,7 @@ def create_message(
     """
     message = {
         "type": msg_type,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now().isoformat(),
     }
 
     if task_id:

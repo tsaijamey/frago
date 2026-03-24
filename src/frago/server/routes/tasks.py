@@ -4,7 +4,7 @@ Provides endpoints for listing and viewing tasks/sessions.
 Uses StateManager for unified state access.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -32,7 +32,7 @@ def _task_item_to_response(task) -> TaskItemResponse:
         status=task.status,
         project_path=task.project_path,
         agent_type=task.agent_type,
-        started_at=task.started_at or datetime.now(timezone.utc),
+        started_at=task.started_at or datetime.now(),
         completed_at=task.completed_at,
         duration_ms=task.duration_ms,
         step_count=task.step_count,
@@ -126,7 +126,7 @@ async def list_tasks(
         if isinstance(started_at, str):
             started_at = datetime.fromisoformat(started_at)
         elif started_at is None:
-            started_at = datetime.now(timezone.utc)
+            started_at = datetime.now()
 
         completed_at = t.get("completed_at")
         if isinstance(completed_at, str):
@@ -190,7 +190,7 @@ async def get_task(task_id: str) -> TaskDetailResponse:
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
         elif timestamp is None:
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now()
 
         steps.append(
             TaskStepResponse(
@@ -313,7 +313,7 @@ async def get_task_steps(
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
         elif timestamp is None:
-            timestamp = datetime.now(timezone.utc)
+            timestamp = datetime.now()
 
         steps.append(
             TaskStepResponse(

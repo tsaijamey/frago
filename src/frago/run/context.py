@@ -144,9 +144,7 @@ class ContextManager:
         metadata_file = run_dir / ".metadata.json"
         if metadata_file.exists():
             metadata = json.loads(metadata_file.read_text())
-            metadata["last_accessed"] = context.last_accessed.isoformat().replace(
-                "+00:00", "Z"
-            )
+            metadata["last_accessed"] = context.last_accessed.isoformat()
             metadata_file.write_text(json.dumps(metadata, indent=2))
 
         return context

@@ -6,7 +6,7 @@ Used by the dashboard to show "Quick Recipes" sorted by recent usage.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -45,7 +45,7 @@ def record_usage(recipe_name: str) -> None:
     data = _load_usage()
     entry = data.get(recipe_name, {"run_count": 0, "last_used": None})
     entry["run_count"] = entry.get("run_count", 0) + 1
-    entry["last_used"] = datetime.now(timezone.utc).isoformat()
+    entry["last_used"] = datetime.now().isoformat()
     data[recipe_name] = entry
     _save_usage(data)
 

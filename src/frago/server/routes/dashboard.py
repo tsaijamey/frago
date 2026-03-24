@@ -8,7 +8,7 @@ Provides the redesigned dashboard data:
 - System status (Chrome, tabs, errors, sync)
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter
@@ -101,7 +101,7 @@ def compute_dashboard_data() -> DashboardData:
     from frago.session.storage import list_sessions
 
     logger = logging.getLogger(__name__)
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
 
     # ------- Running Tasks -------
     running_tasks: list[RunningTaskSummary] = []
@@ -125,8 +125,8 @@ def compute_dashboard_data() -> DashboardData:
             elapsed = 0.0
             started_at_str = ""
             if started_at:
-                if started_at.tzinfo is None:
-                    started_at = started_at.replace(tzinfo=timezone.utc)
+                if started_at.tzinfo is not None:
+                    started_at = started_at.replace(tzinfo=None)
                 elapsed = (now - started_at).total_seconds()
                 started_at_str = started_at.isoformat()
 
@@ -299,8 +299,8 @@ def compute_dashboard_data() -> DashboardData:
                 if session.status == SessionStatus.ERROR:
                     last_activity = session.last_activity
                     if last_activity:
-                        if last_activity.tzinfo is None:
-                            last_activity = last_activity.replace(tzinfo=timezone.utc)
+                        if last_activity.tzinfo is not None:
+                            last_activity = last_activity.replace(tzinfo=None)
                         if last_activity >= time_range_ago:
                             error_count += 1
         except Exception:

@@ -7,7 +7,7 @@ with WebSocket broadcast when updates are available.
 import asyncio
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import requests
@@ -84,7 +84,7 @@ class VersionCheckService:
                 "current_version": self._get_current_version(),
                 "latest_version": None,
                 "update_available": False,
-                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "checked_at": datetime.now().isoformat(),
                 "error": str(e),
             }
 
@@ -157,7 +157,7 @@ class VersionCheckService:
                     "current_version": current_version,
                     "latest_version": None,
                     "update_available": False,
-                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "checked_at": datetime.now().isoformat(),
                     "error": str(e),
                 }
             return
@@ -169,7 +169,7 @@ class VersionCheckService:
             "current_version": current_version,
             "latest_version": latest_version,
             "update_available": update_available,
-            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "checked_at": datetime.now().isoformat(),
             "error": None,
         }
 

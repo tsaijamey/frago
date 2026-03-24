@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -20,15 +20,15 @@ TICK_INTERVAL = 5
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now()
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
     dt = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
     return dt
 
 

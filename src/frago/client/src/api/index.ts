@@ -40,6 +40,7 @@ import type {
   CommunityRecipeItem,
   CommunityRecipeInstallResponse,
 } from '@/types/pywebview';
+import { localISOString } from '@/utils/time';
 
 // ============================================================
 // Mode Detection
@@ -509,8 +510,8 @@ export async function getMainConfig(): Promise<MainConfig> {
     resources_installed: config.resources_installed,
     resources_version: config.resources_version ?? undefined,
     init_completed: config.init_completed,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: localISOString(),
+    updated_at: localISOString(),
   };
 }
 
@@ -543,8 +544,8 @@ export async function updateMainConfig(
         sync_repo_url: config.sync_repo ?? undefined,
         working_directory_display: config.working_directory,
         resources_installed: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: localISOString(),
+        updated_at: localISOString(),
         init_completed: true,
       },
     };
@@ -597,8 +598,8 @@ export async function updateAuthMethod(
           sync_repo_url: config.sync_repo ?? undefined,
           working_directory_display: config.working_directory,
           resources_installed: config.resources_installed,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          created_at: localISOString(),
+          updated_at: localISOString(),
           init_completed: config.init_completed,
         },
       };

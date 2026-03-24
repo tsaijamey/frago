@@ -6,7 +6,7 @@ Uses a lightweight index.json for fast list queries.
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,7 @@ class ExecutionStore:
             raise ValueError(f"Execution not found: {execution_id}")
 
         execution.transition_to(status)
-        execution.completed_at = datetime.now(UTC)
+        execution.completed_at = datetime.now()
         execution.exit_code = exit_code
         execution.duration_ms = duration_ms
         if runtime is not None:

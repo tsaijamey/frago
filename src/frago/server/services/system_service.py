@@ -4,7 +4,7 @@ Provides functionality for checking system status and server information.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict
 
 import psutil
@@ -132,7 +132,7 @@ class SystemService:
             version = "0.0.0"
 
         if started_at is None:
-            started_at = datetime.now(timezone.utc).isoformat()
+            started_at = datetime.now().isoformat()
 
         return {
             "version": version,

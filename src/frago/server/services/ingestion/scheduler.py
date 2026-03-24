@@ -18,7 +18,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from frago.server.services.ingestion.models import IngestedTask
 from frago.server.services.ingestion.store import TaskStore
@@ -189,7 +189,7 @@ class IngestionScheduler:
             self._store.rotate()
 
         while not self._stop_event.is_set():
-            now = datetime.now(UTC)
+            now = datetime.now()
             tomorrow = (now + timedelta(days=1)).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )

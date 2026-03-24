@@ -10,6 +10,7 @@ import NewTaskControls from './NewTaskControls';
 import { MessageList } from '@/components/shared';
 import NewTaskInput from './NewTaskInput';
 import * as httpApi from '@/api/client';
+import { localISOString } from '@/utils/time';
 
 export default function NewTaskPage() {
   const { t } = useTranslation();
@@ -132,7 +133,7 @@ export default function NewTaskPage() {
           addConsoleMessage({
             type: 'assistant',
             content: data.content as string,
-            timestamp: new Date().toISOString(),
+            timestamp: localISOString(),
             done: false,
           });
         }
@@ -144,7 +145,7 @@ export default function NewTaskPage() {
         addConsoleMessage({
           type: 'tool_call',
           content: JSON.stringify(data.parameters, null, 2),
-          timestamp: new Date().toISOString(),
+          timestamp: localISOString(),
           tool_name: data.tool_name as string,
           tool_call_id: data.tool_call_id as string,
           metadata: { status: 'executing' },
@@ -209,7 +210,7 @@ export default function NewTaskPage() {
     const userMessage: ConsoleMessage = {
       type: 'user',
       content: inputValue,
-      timestamp: new Date().toISOString(),
+      timestamp: localISOString(),
     };
 
     // Add user message immediately

@@ -6,7 +6,7 @@ It has a unique ID, tracks state transitions, and stores results.
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -77,7 +77,7 @@ class Execution:
             raise InvalidTransitionError(self.status, new_status)
         self.status = new_status
         if new_status == ExecutionStatus.RUNNING:
-            self.started_at = datetime.now(UTC)
+            self.started_at = datetime.now()
 
     def is_terminal(self) -> bool:
         return len(VALID_TRANSITIONS.get(self.status, set())) == 0
@@ -149,7 +149,7 @@ class Execution:
             recipe_name=recipe_name,
             status=ExecutionStatus.PENDING,
             params=params,
-            created_at=datetime.now(UTC),
+            created_at=datetime.now(),
             source=source,
             timeout_seconds=timeout_seconds,
             workflow_id=workflow_id,

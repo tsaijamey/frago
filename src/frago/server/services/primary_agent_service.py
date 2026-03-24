@@ -20,7 +20,7 @@ import contextlib
 import json
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -145,6 +145,7 @@ class PrimaryAgentService:
                     "channel_message_id": task.channel_message_id,
                     "prompt": task.prompt,
                     "reply_context": task.reply_context,
+                    "_recovered": True,
                 })
             logger.info("Recovered %d pending tasks into PA message queue", len(pending))
             return len(pending)
@@ -243,7 +244,7 @@ class PrimaryAgentService:
     def _build_bootstrap_prompt(self) -> str:
         """Build bootstrap context from Run system + TaskStore."""
         sections = []
-        now = datetime.now(UTC)
+        now = datetime.now()
         sections.append(f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
         if self._rotation_count > 0:
@@ -375,8 +376,16 @@ class PrimaryAgentService:
                         continue
 
                 # Wait until PA is idle (initial session subprocess or previous message done)
+                # Timeout after 120s to avoid infinite hang if _running never clears
+                _wait_start = asyncio.get_event_loop().time()
                 while self._pa_session and self._pa_session.is_running:
-                    logger.debug("Queue consumer: waiting for PA subprocess to finish")
+                    if asyncio.get_event_loop().time() - _wait_start > 120:
+                        logger.warning(
+                            "Queue consumer: timed out waiting for PA subprocess "
+                            "(is_running stuck), forcing rotation"
+                        )
+                        await self.rotate_session()
+                        break
                     await asyncio.sleep(0.5)
 
                 # Pre-fetch Run info for agent_notify messages
@@ -448,7 +457,7 @@ class PrimaryAgentService:
 
     def _format_queue_messages(self, messages: list[dict]) -> str:
         """Format a batch of queued messages into a single text block for PA."""
-        now = datetime.now(UTC)
+        now = datetime.now()
         msg_parts: list[str] = []
         msg_parts.append(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
@@ -457,12 +466,18 @@ class PrimaryAgentService:
             msg_parts.append("")
 
             if msg_type == "user_message":
+                recovered_note = ""
+                if msg.get("_recovered"):
+                    recovered_note = (
+                        "\n⚠️ 这是一个重新投递的待处理任务——之前的处理结果未生效"
+                        "（可能因 session rotation 丢失）。你必须重新处理此任务。"
+                    )
                 msg_parts.append(PA_MESSAGE_TEMPLATE.format(
                     channel=msg.get("channel", "?"),
                     channel_message_id=msg.get("channel_message_id", "?"),
                     task_id=msg.get("task_id", ""),
                     prompt=msg.get("prompt", ""),
-                ))
+                ) + recovered_note)
 
             elif msg_type == "agent_notify":
                 summary_or_error = f"摘要: {msg.get('summary', '(无)')}"
@@ -578,6 +593,18 @@ class PrimaryAgentService:
         - Message consumption is NOT done here — that's _queue_consumer_loop's job
         """
         logger.info("Heartbeat [%d]: tick (waiting=%s)", self._heartbeat_seq, self._pa_waiting)
+
+        # ⓧ Ensure queue consumer is alive — auto-restart if dead
+        if self._queue_consumer_task is None or self._queue_consumer_task.done():
+            if self._queue_consumer_task and self._queue_consumer_task.done():
+                exc = self._queue_consumer_task.exception() if not self._queue_consumer_task.cancelled() else None
+                logger.error(
+                    "Queue consumer task died (exc=%s), restarting",
+                    exc,
+                )
+            self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
+            logger.info("Queue consumer task restarted by heartbeat [%d]", self._heartbeat_seq)
+
         if self._busy:
             logger.debug("Heartbeat skipped: PA is busy")
             return
