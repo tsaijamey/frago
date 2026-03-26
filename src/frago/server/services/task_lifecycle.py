@@ -245,16 +245,7 @@ class TaskLifecycle:
                 notify_recipe,
                 json.dumps(reply_params, ensure_ascii=False, default=str),
             )
-            import asyncio
-            # Run synchronously in thread since recipes are sync
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're in an async context — need to use to_thread
-                # But this method is called from async code, so we can't await here.
-                # The caller should handle the async execution.
-                runner.run(notify_recipe, params=reply_params)
-            else:
-                runner.run(notify_recipe, params=reply_params)
+            runner.run(notify_recipe, params=reply_params)
 
             logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
 
