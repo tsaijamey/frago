@@ -578,14 +578,15 @@ def list_sessions(
     if not base_dir.exists():
         return []
 
-    sessions = []
-
     # Determine agent directories to search
     if agent_type:
         agent_dirs = [base_dir / agent_type.value]
     else:
         agent_dirs = [d for d in base_dir.iterdir() if d.is_dir()]
 
+    # Phase 1: Collect (session_dir, mtime) pairs using metadata file mtime.
+    # This avoids reading and parsing every metadata.json upfront.
+    candidates: list[tuple[float, Path]] = []
     for agent_dir in agent_dirs:
         if not agent_dir.exists():
             continue
@@ -599,19 +600,34 @@ def list_sessions(
                 continue
 
             try:
-                with open(metadata_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                session = MonitoredSession.model_validate(data)
+                mtime = metadata_path.stat().st_mtime
+                candidates.append((mtime, session_dir))
+            except OSError:
+                continue
 
-                # Status filtering
-                if status and session.status != status:
-                    continue
+    # Phase 2: Sort by mtime descending and only parse the top N metadata files.
+    # With 1000+ sessions, this avoids reading all metadata.json files.
+    # Read more than `limit` to compensate for status filtering losses.
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    read_budget = limit * 5  # read at most 5x limit to find enough matches
 
-                sessions.append(session)
-            except Exception as e:
-                logger.warning(f"Failed to read session {session_dir.name}: {e}")
+    sessions = []
+    for _mtime, session_dir in candidates[:read_budget]:
+        metadata_path = session_dir / "metadata.json"
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            session = MonitoredSession.model_validate(data)
 
-    # Sort by last activity time descending
+            # Status filtering
+            if status and session.status != status:
+                continue
+
+            sessions.append(session)
+        except Exception as e:
+            logger.warning(f"Failed to read session {session_dir.name}: {e}")
+
+    # Sort by actual last_activity (more accurate than mtime)
     def get_sortable_time(s):
         t = s.last_activity
         if t.tzinfo is not None:

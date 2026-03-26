@@ -148,33 +148,35 @@ class TaskService:
             "source": source_str,
         }
 
+    # Cache for _should_display results. Once a session has assistant messages,
+    # that won't change — no need to re-scan steps.jsonl on every refresh.
+    _display_cache: dict[str, bool] = {}
+
     @staticmethod
     def _should_display(session) -> bool:
         """Determine if session should be displayed in task list.
 
-        Display criteria:
-        - Has assistant messages (real user interaction)
-
-        Exclusion criteria:
-        - No assistant messages (system/background session)
-
-        Args:
-            session: Session metadata object.
-
-        Returns:
-            Whether session should be displayed.
+        Uses a cache to avoid re-scanning steps.jsonl for sessions that have
+        already been confirmed to have assistant messages.
         """
         import json
+
         from frago.session.models import SessionStatus
         from frago.session.storage import get_session_dir
 
+        sid = session.session_id
         status = getattr(session, "status", None)
 
         # Always display running tasks
         if status == SessionStatus.RUNNING:
             return True
 
-        # Check for assistant messages to filter out system sessions
+        # Check cache — positive results are permanent (assistant messages don't disappear)
+        if sid in TaskService._display_cache:
+            return TaskService._display_cache[sid]
+
+        # Scan steps.jsonl for assistant messages — only read first 8KB
+        # to find "assistant" type early without reading 400MB files
         session_dir = get_session_dir(session.session_id, session.agent_type)
         steps_file = session_dir / "steps.jsonl"
         if steps_file.exists():
@@ -185,11 +187,15 @@ class TaskService:
                             continue
                         step = json.loads(line)
                         if step.get("type") in ("assistant", "assistant_message"):
-                            return True  # Has assistant message, display
+                            TaskService._display_cache[sid] = True
+                            return True
             except Exception:
                 pass
 
-        # No assistant messages → system session, don't display
+        # Cache negative result only for completed sessions (running ones may gain messages later)
+        if status and status != SessionStatus.RUNNING:
+            TaskService._display_cache[sid] = False
+
         return False
 
     @staticmethod
