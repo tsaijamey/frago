@@ -24,17 +24,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from frago.server.services.ingestion.models import TaskStatus
 from frago.server.services.pa_prompts import (
     PA_AGENT_EXIT_TEMPLATE,
     PA_AGENT_NOTIFY_TEMPLATE,
+    PA_DECISION_REVIEW_TEMPLATE,
     PA_MERGED_MESSAGES_TEMPLATE,
     PA_MESSAGE_TEMPLATE,
+    PA_REPLY_FAILED_TEMPLATE,
     SUB_AGENT_PROMPT_TEMPLATE,
 )
 from frago.server.services.pa_prompts import (
     PA_SYSTEM_PROMPT as PRIMARY_AGENT_SYSTEM_PROMPT,
 )
 from frago.server.services.pa_validators import validate_pa_output, validate_queue_message
+from frago.server.services.task_lifecycle import TaskLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +104,8 @@ class PrimaryAgentService:
         # Maps session_id → list of messages to re-enqueue after process exits
         self._pending_resume_messages: dict[str, list[dict]] = {}
 
-        # Task IDs with pending run/resume dispatch (blocked by lock in current batch)
-        # Prevents _execute_reply from auto-completing tasks that still need execution
-        self._tasks_with_pending_dispatch: set[str] = set()
+        # Task lifecycle coordinator — single point for all state transitions
+        self._lifecycle = TaskLifecycle()
 
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
@@ -121,7 +124,10 @@ class PrimaryAgentService:
 
         await self._start_heartbeat()
 
-        # Recover PENDING tasks from TaskStore
+        # Recover unacked messages from journal (covers all message types)
+        await self._recover_from_journal()
+
+        # Also recover PENDING tasks from TaskStore (belt and suspenders)
         await self._recover_pending_tasks()
 
     async def _recover_pending_tasks(self) -> int:
@@ -131,26 +137,35 @@ class PrimaryAgentService:
         Returns the number of tasks recovered.
         """
         try:
-            from frago.server.services.ingestion.models import TaskStatus
-            from frago.server.services.ingestion.store import TaskStore
-            store = TaskStore()
-            pending = store.get_by_status(TaskStatus.PENDING)
-            if not pending:
+            messages = self._lifecycle.recover_pending_tasks()
+            if not messages:
                 return 0
-            for task in pending:
-                await self.enqueue_message({
-                    "type": "user_message",
-                    "task_id": task.id,
-                    "channel": task.channel,
-                    "channel_message_id": task.channel_message_id,
-                    "prompt": task.prompt,
-                    "reply_context": task.reply_context,
-                    "_recovered": True,
-                })
-            logger.info("Recovered %d pending tasks into PA message queue", len(pending))
-            return len(pending)
+            for msg in messages:
+                await self.enqueue_message(msg)
+            logger.info("Recovered %d pending tasks into PA message queue", len(messages))
+            return len(messages)
         except Exception:
             logger.debug("Failed to recover pending tasks", exc_info=True)
+            return 0
+
+    async def _recover_from_journal(self) -> int:
+        """Recover unacked messages from MessageJournal and re-enqueue them.
+
+        Covers all message types: user_message, agent_notify, agent_exit.
+        Called at initialize() and after PA session rotation.
+        """
+        try:
+            unacked = self._lifecycle._journal.get_unacked()
+            if not unacked:
+                return 0
+            for entry in unacked:
+                payload = entry.get("payload", {})
+                if payload:
+                    await self.enqueue_message(payload)
+            logger.info("Recovered %d unacked messages from journal", len(unacked))
+            return len(unacked)
+        except Exception:
+            logger.debug("Failed to recover from journal", exc_info=True)
             return 0
 
     async def stop(self) -> None:
@@ -241,6 +256,10 @@ class PrimaryAgentService:
         self._rotation_count += 1
         self._consecutive_json_failures = 0
 
+        # Recover unacked messages from journal (covers agent_notify/agent_exit
+        # that were lost during rotation)
+        await self._recover_from_journal()
+
     def _build_bootstrap_prompt(self) -> str:
         """Build bootstrap context from Run system + TaskStore."""
         sections = []
@@ -293,6 +312,7 @@ class PrimaryAgentService:
             from frago.server.services.ingestion.store import TaskStore
             store = TaskStore()
             pending = store.get_by_status(TaskStatus.PENDING)
+            queued = store.get_by_status(TaskStatus.QUEUED)
             if pending:
                 lines = [f"待处理任务 ({len(pending)} 个):"]
                 for t in pending[:10]:
@@ -300,6 +320,11 @@ class PrimaryAgentService:
                 sections.append("\n".join(lines))
             else:
                 sections.append("待处理任务: 0 个")
+            if queued:
+                lines = [f"排队中任务 ({len(queued)} 个，等 run 锁释放后自动派发):"]
+                for t in queued[:10]:
+                    lines.append(f"  - [{t.id[:8]}] ({t.channel}) {t.prompt[:60]}")
+                sections.append("\n".join(lines))
 
             # Recent completed
             recent = store.get_recent(limit=10)
@@ -422,10 +447,16 @@ class PrimaryAgentService:
                         break
                     await asyncio.sleep(0.5)
 
-                # Pre-fetch Run info for agent_notify messages
+                # Pre-fetch Run info and resolve task_id for agent_notify messages
                 for msg in messages:
                     if msg.get("type") == "agent_notify":
                         msg["_run_info"] = await self._prefetch_run_info(msg.get("run_id"))
+                        # Resolve task_id from run_id so PA doesn't have to remember
+                        if not msg.get("task_id"):
+                            task = self._lifecycle.find_task_for_run(msg.get("run_id", ""))
+                            if task:
+                                msg["task_id"] = task.id
+                                msg["_channel"] = task.channel
 
                 # Merge into one text block
                 merged = self._format_queue_messages(messages)
@@ -530,8 +561,16 @@ class PrimaryAgentService:
                 if run_info.get("output_files"):
                     run_info_lines.append(f"outputs/ 目录文件: {', '.join(run_info['output_files'])}")
 
+                task_info_parts = []
+                if msg.get("task_id"):
+                    task_info_parts.append(f"关联任务: {msg['task_id']}")
+                if msg.get("_channel"):
+                    task_info_parts.append(f"来源频道: {msg['_channel']}")
+                task_info = "\n".join(task_info_parts)
+
                 msg_parts.append(PA_AGENT_NOTIFY_TEMPLATE.format(
                     run_id=msg.get("run_id", "?"),
+                    task_info=task_info,
                     summary_or_error=summary_or_error,
                     outputs_section=outputs_section,
                     run_info_section="\n".join(run_info_lines),
@@ -549,6 +588,14 @@ class PrimaryAgentService:
                     run_id=msg.get("run_id", "?"),
                     has_completion_marker=has_completion_str,
                     task_id=task_id_str,
+                ))
+
+            elif msg_type == "reply_failed":
+                msg_parts.append(PA_REPLY_FAILED_TEMPLATE.format(
+                    task_id=msg.get("task_id", "?"),
+                    channel=msg.get("channel", "?"),
+                    error=msg.get("error", "unknown"),
+                    reply_text=msg.get("reply_text", ""),
                 ))
 
             else:
@@ -684,89 +731,35 @@ class PrimaryAgentService:
                     self._heartbeat_seq, recovered,
                 )
 
-        # ④ Finalize orphan executing tasks whose runs are already gone
+        # ④ Try to dispatch QUEUED tasks (blocked by lock earlier, now lock may be free)
+        queued_results = self._lifecycle.try_dispatch_queued()
+        for qr in queued_results:
+            if qr.get("status") == "ok":
+                run_id = qr["run_id"]
+                task_id = qr["task_id"]
+                pid = qr.get("pid")
+                await self._broadcast_pa_event("pa_agent_launched", {
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "description": "(auto-dispatched from QUEUED)",
+                })
+                if pid:
+                    asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
+
+        # ⑤ Finalize orphan executing tasks whose runs are already gone
         self._finalize_orphan_tasks()
+
+        # ⑥ Compact journal (remove old acked entries)
+        if self._heartbeat_seq % 12 == 0:  # Every ~hour (12 * 5min)
+            self._lifecycle._journal.compact()
 
         self._heartbeat_seq += 1
 
     async def _check_stale_run_lock(self) -> None:
-        """Check if the current run lock is stale and release it if so.
-
-        A lock is stale when:
-        1. The run has a completion marker (TASK_COMPLETE/TASK_FAILED) in its log
-           → sub-agent finished but lock was never released
-        2. No completion marker, but last_accessed is old AND the sub-agent
-           process is no longer running → abnormal exit without cleanup
-        """
-        try:
-            from frago.run.context import ContextManager
-            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-            current_run_id = ctx_mgr.get_current_run_id()
-            if not current_run_id:
-                return
-
-            # Check for completion marker
-            step, _summary = self._read_completion_info(current_run_id)
-            has_completion = step is not None
-
-            if has_completion:
-                released = ctx_mgr.release_context()
-                self._archive_stale_run(current_run_id, reason="completion_marker")
-                self._finalize_task_status(None, current_run_id, reason="completion_marker")
-                logger.info(
-                    "Heartbeat [%d]: released stale run lock %s "
-                    "(completion marker found)",
-                    self._heartbeat_seq, released,
-                )
-                return
-
-            # No completion marker — check timeout + process liveness
-            lock_file = FRAGO_HOME / "current_run"
-            if not lock_file.exists():
-                return
-            lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
-            last_accessed_str = lock_data.get("last_accessed", "")
-            if not last_accessed_str:
-                return
-
-            from datetime import datetime
-            last_accessed = datetime.fromisoformat(last_accessed_str)
-            elapsed = (datetime.now() - last_accessed).total_seconds()
-            stale_threshold = 1800  # 30 minutes
-
-            if elapsed < stale_threshold:
-                return
-
-            # Check if any process is still working on this run
-            # by looking for processes with FRAGO_CURRENT_RUN in their env
-            run_still_alive = False
-            try:
-                for pid_dir in Path("/proc").iterdir():
-                    if not pid_dir.name.isdigit():
-                        continue
-                    try:
-                        environ = (pid_dir / "environ").read_bytes()
-                        if f"FRAGO_CURRENT_RUN={current_run_id}".encode() in environ:
-                            run_still_alive = True
-                            break
-                    except (PermissionError, FileNotFoundError, OSError):
-                        continue
-            except Exception:
-                # /proc scan failed — be conservative, don't release
-                return
-
-            if not run_still_alive:
-                released = ctx_mgr.release_context()
-                self._archive_stale_run(current_run_id, reason="timeout")
-                self._finalize_task_status(None, current_run_id, reason="timeout")
-                logger.info(
-                    "Heartbeat [%d]: released stale run lock %s "
-                    "(no completion, timed out after %ds, process gone)",
-                    self._heartbeat_seq, released, int(elapsed),
-                )
-
-        except Exception:
-            logger.debug("Stale run lock check failed", exc_info=True)
+        """Check if the current run lock is stale and release it if so."""
+        released = self._lifecycle.check_stale_run_lock()
+        if released:
+            logger.info("Heartbeat [%d]: stale run lock released by lifecycle", self._heartbeat_seq)
 
     def _on_pa_message(self, text: str) -> None:
         """Callback invoked by AgentSession when PA produces a complete text block."""
@@ -793,6 +786,31 @@ class PrimaryAgentService:
         except RuntimeError as e:
             logger.error("Failed to send to PA: %s", e)
             await self.rotate_session()
+
+    async def _send_and_wait_pa(self, message: str, timeout: float = 60.0) -> str | None:
+        """Send message to PA and wait for response. Returns output text or None on timeout."""
+        await self._send_to_pa(message)
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while self._pa_waiting:
+            if self._pa_session and not self._pa_session.is_running:
+                break
+            if asyncio.get_event_loop().time() > deadline:
+                logger.warning("_send_and_wait_pa: timed out after %.0fs", timeout)
+                self._pa_waiting = False
+                return None
+            await asyncio.sleep(0.5)
+
+        if self._pa_waiting:
+            self._pa_waiting = False
+            self._total_turns += 1
+            estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
+            self._accumulated_tokens += estimated_tokens
+            output = self._pa_output_buffer.strip()
+            self._pa_output_buffer = ""
+            return output if output else None
+
+        return None
 
     # -- PA output handling --
 
@@ -829,7 +847,7 @@ class PrimaryAgentService:
         # which would close the task before the sub-agent even starts.
         tasks_with_execution = {
             d.get("task_id") for d in decisions
-            if isinstance(d, dict) and d.get("action") in ("run", "resume", "recipe") and d.get("task_id")
+            if isinstance(d, dict) and d.get("action") in ("run", "resume") and d.get("task_id")
         }
         if tasks_with_execution:
             original_count = len(decisions)
@@ -850,9 +868,9 @@ class PrimaryAgentService:
 
         logger.info("PA decision: %d action(s) → %s", len(decisions), [d.get("action") for d in decisions if isinstance(d, dict)])
 
-        # Track task_ids with pending run/resume (blocked by lock or queued)
-        # so that _execute_reply won't auto-complete them
-        self._tasks_with_pending_dispatch: set[str] = set()
+        # Decision batch review: if ≥2 decisions, ask PA to self-review for conflicts
+        if len(decisions) >= 2:
+            decisions = await self._review_decisions(decisions)
 
         for d in decisions:
             if not isinstance(d, dict):
@@ -871,9 +889,6 @@ class PrimaryAgentService:
                 elif action == "resume":
                     logger.info("→ dispatch resume (run=%s)", d.get("run_id", "?"))
                     await self._dispatch_resume(d)
-                elif action == "recipe":
-                    logger.info("→ dispatch recipe (task=%s, recipe=%s)", task_id, d.get("recipe_name"))
-                    await self._dispatch_recipe(d)
                 elif action == "reply":
                     logger.info("→ reply (task=%s, channel=%s)", task_id, d.get("channel"))
                     await self._execute_reply(d)
@@ -885,90 +900,64 @@ class PrimaryAgentService:
             except Exception:
                 logger.exception("Failed to execute PA decision: %s", d)
 
+    async def _review_decisions(self, decisions: list[dict]) -> list[dict]:
+        """Ask PA to self-review a batch of ≥2 decisions for conflicts.
+
+        Returns the reviewed decisions, or the original if review fails.
+        """
+        decisions_json = json.dumps(decisions, ensure_ascii=False, indent=2)
+        review_prompt = PA_DECISION_REVIEW_TEMPLATE.format(
+            count=len(decisions),
+            decisions_json=decisions_json,
+        )
+
+        logger.info("Decision review: %d decisions, sending for review", len(decisions))
+        output = await self._send_and_wait_pa(review_prompt, timeout=30.0)
+
+        if not output:
+            logger.warning("Decision review: no response, using original decisions")
+            return decisions
+
+        result = validate_pa_output(output)
+        if not result.ok:
+            logger.warning("Decision review: invalid output (%s), using original decisions", result.error)
+            return decisions
+
+        reviewed = result.raw_data
+        if not reviewed:
+            logger.info("Decision review: PA returned [], using original decisions")
+            return decisions
+
+        logger.info(
+            "Decision review: %d → %d decisions",
+            len(decisions), len(reviewed),
+        )
+        return reviewed
+
     # -- Run dispatch --
 
     async def _dispatch_run(self, decision: dict) -> None:
-        """PA decided action:'run' → create Run instance → launch sub-agent."""
+        """PA decided action:'run' → delegate to lifecycle.dispatch."""
         task_id = decision.get("task_id")
-        description = decision.get("description", "")
-        prompt = decision.get("prompt", "")
-        related_runs = decision.get("related_runs", [])
 
-        if not prompt:
-            logger.warning("run decision missing prompt, skipping")
+        result = self._lifecycle.dispatch(task_id, decision)
+
+        if result["status"] == "blocked":
             return
 
-        # Check Run mutex
-        from frago.run.context import ContextManager
-        from frago.run.exceptions import ContextAlreadySetError
-        ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-        current_run = ctx_mgr.get_current_run_id()
-        if current_run:
-            logger.info(
-                "Run lock active (held by %s), task %s stays PENDING — "
-                "will be retried by heartbeat",
-                current_run, task_id,
-            )
-            if task_id:
-                self._tasks_with_pending_dispatch.add(task_id)
+        if result["status"] == "error":
             return
 
-        # Create Run instance
-        from frago.run.constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
-        from frago.run.manager import RunManager
-        manager = RunManager(PROJECTS_DIR)
-        run = manager.create_run(description[:THEME_DESC_MAX] if description else prompt[:THEME_DESC_MAX])
-        run_id = run.run_id
-        logger.info("Created Run %s for task %s", run_id, task_id)
-
-        # Set mutex
-        try:
-            ctx_mgr.set_current_run(run_id, run.theme_description)
-        except ContextAlreadySetError:
-            logger.warning("Run lock race condition, skipping dispatch")
-            return
-
-        # Update TaskStore
-        if task_id:
-            try:
-                from frago.server.services.ingestion.models import TaskStatus
-                from frago.server.services.ingestion.store import TaskStore
-                store = TaskStore()
-                store.update_status(
-                    task_id, TaskStatus.EXECUTING, session_id=run_id
-                )
-            except Exception:
-                logger.debug("Failed to update TaskStore for %s", task_id, exc_info=True)
-
-        # Build sub-agent prompt
-        agent_prompt = self._build_sub_agent_prompt(
-            task_id=task_id,
-            task_prompt=prompt,
-            run_id=run_id,
-            related_runs=related_runs,
-        )
-
-        # Launch sub-agent in Run context
-        from frago.server.services.agent_service import AgentService
-        result = AgentService.start_task(
-            prompt=agent_prompt,
-            project_path=str(Path.home()),
-            env_extra={"FRAGO_CURRENT_RUN": run_id},
-        )
-        if result.get("status") != "ok":
-            logger.error("Failed to start sub-agent: %s", result.get("error"))
-            # Release lock on failure
-            ctx_mgr.release_context()
-        else:
-            logger.info("Sub-agent launched for Run %s (agent_id=%s)", run_id, result.get("id", "?")[:8])
-            await self._broadcast_pa_event("pa_agent_launched", {
-                "run_id": run_id,
-                "task_id": task_id,
-                "description": decision.get("description", ""),
-            })
-            pid = result.get("pid")
-            if pid:
-                asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
+        # Success — broadcast and start monitor
+        run_id = result["run_id"]
+        await self._broadcast_pa_event("pa_agent_launched", {
+            "run_id": run_id,
+            "task_id": task_id,
+            "description": decision.get("description", ""),
+        })
+        pid = result.get("pid")
+        if pid:
+            asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
 
     async def _dispatch_resume(self, decision: dict) -> None:
         """PA decided action:'resume' → append message to existing sub-agent session.
@@ -1070,127 +1059,15 @@ class PrimaryAgentService:
         candidates.sort(reverse=True)
         return candidates[0][1]
 
-    def _archive_stale_run(self, run_id: str, reason: str) -> None:
-        """Archive a stale/completed run. Idempotent — safe to call multiple times."""
-        try:
-            from frago.run.manager import RunManager
-            from frago.run.models import RunStatus
-            manager = RunManager(PROJECTS_DIR)
-            run = manager.find_run(run_id)
-            if run.status == RunStatus.ACTIVE:
-                manager.archive_run(run_id)
-                logger.info("Archived run %s (reason=%s)", run_id, reason)
-        except Exception:
-            logger.debug("Failed to archive run %s", run_id, exc_info=True)
-
-    @staticmethod
-    def _read_completion_info(run_id: str) -> tuple[str | None, str | None]:
-        """Read completion step and summary from run's execution.jsonl.
-
-        Returns (step, summary) where step is "TASK_COMPLETE" or "TASK_FAILED",
-        or (None, None) if no completion marker found.
-        """
-        log_file = PROJECTS_DIR / run_id / "logs" / "execution.jsonl"
-        try:
-            lines = log_file.read_text(encoding="utf-8").splitlines()
-            for line in reversed(lines[-20:]):
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                step = entry.get("step")
-                if step in ("TASK_COMPLETE", "TASK_FAILED"):
-                    summary = entry.get("data", {}).get("summary")
-                    return step, summary
-        except Exception:
-            pass
-        return None, None
-
-    def _finalize_task_status(self, task_id: str | None, run_id: str, reason: str) -> None:
-        """Update ingested task status based on run's completion info.
-
-        Called from _monitor_sub_agent (normal path) and _check_stale_run_lock (fallback).
-        If task_id is None, attempts to find the task by session_id == run_id.
-        """
-        try:
-            from frago.server.services.ingestion.models import TaskStatus
-            from frago.server.services.ingestion.store import TaskStore
-            store = TaskStore()
-
-            # Resolve task: by task_id or by session_id (== run_id)
-            task = store.get(task_id) if task_id else None
-            if not task:
-                executing = store.get_by_status(TaskStatus.EXECUTING)
-                for t in executing:
-                    if t.session_id == run_id:
-                        task = t
-                        break
-            if not task or task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
-                return  # not found or already terminal
-
-            step, summary = self._read_completion_info(run_id)
-            if step == "TASK_COMPLETE":
-                store.update_status(task.id, TaskStatus.COMPLETED, result_summary=summary)
-            elif step == "TASK_FAILED":
-                store.update_status(task.id, TaskStatus.FAILED, error=summary)
-            elif reason == "timeout":
-                store.update_status(task.id, TaskStatus.TIMEOUT, error="stale run lock timeout")
-            else:
-                # Agent exited without marker — treat as failed
-                store.update_status(task.id, TaskStatus.FAILED, error="sub-agent exited without completion marker")
-            logger.info("Finalized task %s status (reason=%s, step=%s)", task.id, reason, step)
-        except Exception:
-            logger.debug("Failed to finalize task %s status", task_id, exc_info=True)
 
     def _finalize_orphan_tasks(self) -> None:
-        """Finalize executing tasks whose runs are already archived or missing.
-
-        Unlike _check_stale_run_lock (which only looks at current_run),
-        this scans all EXECUTING tasks in the store and checks whether
-        their associated run is still alive. Safe to call every heartbeat —
-        only touches tasks whose runs have definitively ended.
-        """
-        try:
-            from frago.run.manager import RunManager
-            from frago.run.models import RunStatus
-            from frago.server.services.ingestion.models import TaskStatus
-            from frago.server.services.ingestion.store import TaskStore
-
-            store = TaskStore()
-            executing = store.get_by_status(TaskStatus.EXECUTING)
-            if not executing:
-                return
-
-            manager = RunManager(PROJECTS_DIR)
-            for task in executing:
-                run_id = task.session_id
-                if not run_id:
-                    continue
-                # Check if run is still alive
-                try:
-                    run = manager.find_run(run_id)
-                    if run.status == RunStatus.ACTIVE:
-                        # Active run — but is the process actually running?
-                        # If it's not the current_run, no process is working on it
-                        from frago.run.context import ContextManager
-                        ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-                        if ctx_mgr.get_current_run_id() == run_id:
-                            continue  # it's the current run, let stale lock handle it
-                        # Active but not current — orphaned, archive it first
-                        self._archive_stale_run(run_id, reason="orphan_active_not_current")
-                except Exception:
-                    pass  # run not found — treat as gone
-
-                # Run is archived or missing — finalize task
-                self._finalize_task_status(task.id, run_id, reason="orphan_cleanup")
-                logger.info(
-                    "Heartbeat [%d]: finalized orphan task %s (run=%s)",
-                    self._heartbeat_seq, task.id, run_id,
-                )
-        except Exception:
-            logger.debug("Orphan task cleanup failed", exc_info=True)
+        """Finalize executing tasks whose runs are already archived or missing."""
+        count = self._lifecycle.finalize_orphan_tasks()
+        if count:
+            logger.info("Heartbeat [%d]: finalized %d orphan task(s)", self._heartbeat_seq, count)
 
     async def _monitor_sub_agent(self, run_id: str, _task_id: str | None, pid: int) -> None:
-        """Watch sub-agent process; enqueue agent_exit message when it exits."""
+        """Watch sub-agent process; finalize via lifecycle when it exits."""
         import os
 
         monitor_start = datetime.now()
@@ -1202,13 +1079,12 @@ class PrimaryAgentService:
             except (ProcessLookupError, PermissionError):
                 break
 
-        # Check last N log entries for completion marker
-        step, _summary = self._read_completion_info(run_id)
+        step, _summary = TaskLifecycle._read_completion_info(run_id)
         has_completion = step is not None
-
         duration_seconds = int((datetime.now() - monitor_start).total_seconds())
+
         logger.info(
-            "Run %s: sub-agent (PID %d) exited (has_completion=%s), enqueueing agent_exit",
+            "Run %s: sub-agent (PID %d) exited (has_completion=%s)",
             run_id, pid, has_completion,
         )
         await self._broadcast_pa_event("pa_agent_exited", {
@@ -1218,23 +1094,11 @@ class PrimaryAgentService:
             "duration_seconds": duration_seconds,
         })
 
-        # Release context lock immediately — don't wait for heartbeat stale check
-        try:
-            from frago.run.context import ContextManager
-            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-            current = ctx_mgr.get_current_run_id()
-            if current == run_id:
-                ctx_mgr.release_context()
-                logger.info("Run %s: context released by monitor", run_id)
-        except Exception:
-            logger.debug("Run %s: context release failed in monitor", run_id, exc_info=True)
+        # Delegate finalize (release lock + archive + update task + write journal)
+        self._lifecycle.finalize(_task_id, run_id,
+                                 reason="completion_marker" if has_completion else "agent_exit_no_marker")
 
-        # Archive run and finalize task status
-        reason = "completion_marker" if has_completion else "agent_exit_no_marker"
-        if has_completion:
-            self._archive_stale_run(run_id, reason=reason)
-        self._finalize_task_status(_task_id, run_id, reason)
-
+        # Enqueue agent_exit to PA message queue for PA awareness
         await self.enqueue_message({
             "type": "agent_exit",
             "run_id": run_id,
@@ -1281,59 +1145,11 @@ class PrimaryAgentService:
         for sid in flushed_sessions:
             del self._pending_resume_messages[sid]
 
-    async def _dispatch_recipe(self, decision: dict) -> None:
-        """PA decided action:'recipe' → execute recipe directly.
-
-        When task_id is present, enrich params with reply_context from TaskStore
-        so channel-specific recipes (e.g. feishu_send_message) can route to the
-        correct destination without PA needing to know addressing details.
-        """
-        recipe_name = decision.get("recipe_name")
-        params = decision.get("params", {})
-        task_id = decision.get("task_id")
-
-        if not recipe_name:
-            logger.warning("recipe decision missing recipe_name")
-            return
-
-        # Enrich params with reply_context from TaskStore (same pattern as _execute_reply)
-        if task_id and "reply_context" not in params:
-            try:
-                from frago.server.services.ingestion.store import TaskStore
-                store = TaskStore()
-                task = store.get(task_id)
-                if task and task.reply_context:
-                    params["reply_context"] = task.reply_context
-                    logger.debug("Enriched recipe params with reply_context for task %s", task_id[:8])
-            except Exception:
-                logger.debug("Failed to enrich recipe params from TaskStore", exc_info=True)
-
-        from frago.recipes.runner import RecipeRunner
-        runner = RecipeRunner()
-
-        try:
-            result = await asyncio.to_thread(runner.run, recipe_name, params=params)
-            logger.info("Recipe %s result: success=%s", recipe_name, result.get("success"))
-
-            if task_id:
-                try:
-                    from frago.server.services.ingestion.models import TaskStatus
-                    from frago.server.services.ingestion.store import TaskStore
-                    store = TaskStore()
-                    status = TaskStatus.COMPLETED if result.get("success") else TaskStatus.FAILED
-                    summary = str(result.get("data", "")) if result.get("success") else result.get("error", "")
-                    store.update_status(task_id, status, result_summary=summary)
-                except Exception:
-                    logger.debug("Failed to update TaskStore", exc_info=True)
-        except Exception:
-            logger.exception("Recipe %s execution failed", recipe_name)
-
     async def _execute_reply(self, decision: dict) -> None:
-        """PA decided action:'reply' → call notify recipe.
+        """PA decided action:'reply' → delegate to lifecycle.
 
-        Merges PA's reply_params with the full reply_context from TaskStore,
-        since PA only sees truncated task summaries and may not have complete
-        addressing info (to, subject, in_reply_to, chat_id, etc.).
+        Checks if task is QUEUED (pending dispatch blocked by lock) to avoid
+        auto-completing tasks that still need execution.
         """
         channel = decision.get("channel")
         reply_params = decision.get("reply_params", {})
@@ -1343,142 +1159,51 @@ class PrimaryAgentService:
             logger.warning("reply decision missing channel")
             return
 
-        # Enrich reply_params with full reply_context from TaskStore
+        # If this task is QUEUED (dispatch blocked by lock), don't complete it
+        effective_task_id = task_id
         if task_id:
-            try:
-                from frago.server.services.ingestion.store import TaskStore
-                store = TaskStore()
-                task = store.get(task_id)
-                if task and task.reply_context:
-                    # If PA provided direct text, send as-is (natural reply)
-                    if reply_params.get("text"):
-                        full_params = {
-                            "text": reply_params["text"],
-                            "reply_context": task.reply_context,
-                        }
-                    else:
-                        # Fallback to ingestion contract format
-                        full_params = {
-                            "status": reply_params.get("status", "completed"),
-                            "reply_context": task.reply_context,
-                        }
-                        if reply_params.get("result_summary"):
-                            full_params["result_summary"] = reply_params["result_summary"]
-                        if reply_params.get("error"):
-                            full_params["error"] = reply_params["error"]
-                    if reply_params.get("html_body"):
-                        full_params["html_body"] = reply_params["html_body"]
-                    reply_params = full_params
-            except Exception:
-                logger.debug("Failed to enrich reply_params from TaskStore", exc_info=True)
+            task = self._lifecycle.get_task(task_id)
+            if task and task.status == TaskStatus.QUEUED:
+                logger.info(
+                    "Reply for task %s — skipping completion (QUEUED for dispatch)",
+                    task_id[:8],
+                )
+                effective_task_id = None
 
-        # Mark task as EXECUTING before sending reply to prevent heartbeat
-        # from re-enqueuing this task while the notify recipe is running
-        if task_id:
-            try:
-                from frago.server.services.ingestion.models import TaskStatus
-                from frago.server.services.ingestion.store import TaskStore
-                store = TaskStore()
-                store.update_status(task_id, TaskStatus.EXECUTING,
-                                    result_summary="sending reply")
-            except Exception:
-                logger.debug("Failed to mark task EXECUTING before reply", exc_info=True)
+        result = await asyncio.to_thread(
+            self._lifecycle.reply, effective_task_id, channel, reply_params,
+        )
 
-        # Find the notify recipe for this channel
-        try:
-            raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            channels = raw.get("task_ingestion", {}).get("channels", [])
-            notify_recipe = None
-            for ch in channels:
-                if ch.get("name") == channel:
-                    notify_recipe = ch.get("notify_recipe")
-                    break
-
-            if not notify_recipe:
-                logger.warning("No notify_recipe configured for channel %s", channel)
-                return
-
-            from frago.recipes.runner import RecipeRunner
-            runner = RecipeRunner()
-            logger.info("Reply params for %s: %s", notify_recipe, json.dumps(reply_params, ensure_ascii=False, default=str))
-            await asyncio.to_thread(runner.run, notify_recipe, params=reply_params)
-            logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
+        if result["status"] == "ok":
             await self._broadcast_pa_event("pa_reply", {
                 "task_id": task_id or "",
                 "channel": channel or "",
                 "reply_text": (reply_params.get("result_summary") or "")[:200],
             })
-
-            # Mark task as completed after successful reply —
-            # but NOT if this task has a pending run/resume dispatch (blocked by lock)
-            if task_id and task_id not in self._tasks_with_pending_dispatch:
-                try:
-                    from frago.server.services.ingestion.models import TaskStatus
-                    from frago.server.services.ingestion.store import TaskStore
-                    store = TaskStore()
-                    resolved_task = store.get(task_id)
-                    if resolved_task:
-                        store.update_status(resolved_task.id, TaskStatus.COMPLETED,
-                                            result_summary=reply_params.get("result_summary", "replied"))
-                except Exception:
-                    logger.debug("Failed to mark task completed after reply", exc_info=True)
-            elif task_id:
-                logger.info(
-                    "Reply sent for task %s but NOT marking completed — "
-                    "task has pending run/resume dispatch",
-                    task_id[:8],
-                )
-
-        except Exception:
-            logger.exception("Failed to send reply for channel %s", channel)
-            # Rollback to PENDING so heartbeat can retry
-            if task_id:
-                try:
-                    from frago.server.services.ingestion.models import TaskStatus
-                    from frago.server.services.ingestion.store import TaskStore
-                    store = TaskStore()
-                    store.update_status(task_id, TaskStatus.PENDING,
-                                        result_summary="reply failed, pending retry")
-                except Exception:
-                    logger.debug("Failed to rollback task to PENDING after reply failure", exc_info=True)
+        elif result["status"] == "error" and task_id:
+            # Notify PA immediately so it knows the reply failed
+            await self.enqueue_message({
+                "type": "reply_failed",
+                "task_id": task_id,
+                "channel": channel,
+                "error": result.get("error", "unknown"),
+                "reply_text": reply_params.get("text", "")[:200],
+            })
 
     def _update_task(self, decision: dict) -> None:
-        """PA decided action:'update' → update task status and result_summary."""
+        """PA decided action:'update' → delegate to lifecycle."""
         task_id = decision.get("task_id")
-        result_summary = decision.get("result_summary")
-        new_status = decision.get("status")  # optional: "completed", "failed"
-
         if not task_id:
             return
-
-        try:
-            from frago.server.services.ingestion.models import TaskStatus
-            from frago.server.services.ingestion.store import TaskStore
-            store = TaskStore()
-            task = store.get(task_id)
-            if task:
-                status = task.status
-                if new_status == "completed":
-                    status = TaskStatus.COMPLETED
-                elif new_status == "failed":
-                    status = TaskStatus.FAILED
-                store.update_status(task.id, status, result_summary=result_summary)
-        except Exception:
-            logger.debug("Failed to update task %s", task_id, exc_info=True)
+        self._lifecycle.update_task(
+            task_id,
+            status_str=decision.get("status"),
+            result_summary=decision.get("result_summary"),
+        )
 
     def _find_task_for_run(self, run_id: str) -> Any:
         """Find the IngestedTask associated with a run_id."""
-        try:
-            from frago.server.services.ingestion.models import TaskStatus
-            from frago.server.services.ingestion.store import TaskStore
-            store = TaskStore()
-            executing = store.get_by_status(TaskStatus.EXECUTING)
-            for task in executing:
-                if task.session_id == run_id:
-                    return task
-        except Exception:
-            pass
-        return None
+        return self._lifecycle.find_task_for_run(run_id)
 
     # -- helpers --
 
@@ -1509,9 +1234,8 @@ class PrimaryAgentService:
         reply_context: dict = {}
         if task_id:
             try:
-                from frago.server.services.ingestion.store import TaskStore
-                store = TaskStore()
-                task = store.get(task_id)
+                lifecycle = TaskLifecycle()
+                task = lifecycle.get_task(task_id)
                 if task:
                     channel = task.channel
                     message_id = task.channel_message_id

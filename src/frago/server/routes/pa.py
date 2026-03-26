@@ -30,6 +30,7 @@ async def pa_notify(request: PANotifyRequest) -> dict:
     The message enters the PA message queue and will be delivered
     to PA in the next queue drain cycle.
     """
+    from frago.server.services.message_journal import MessageJournal
     from frago.server.services.primary_agent_service import PrimaryAgentService
 
     if not request.summary and not request.error:
@@ -52,6 +53,10 @@ async def pa_notify(request: PANotifyRequest) -> dict:
         msg["outputs"] = request.outputs
 
     try:
+        # Persist to journal first (survives server restart)
+        journal = MessageJournal()
+        journal.append(msg_type="agent_notify", task_id=None, payload=msg)
+
         await pa.enqueue_message(msg)
         logger.info("PA notify: run=%s enqueued", request.run_id[:8])
         return {"status": "ok", "run_id": request.run_id}

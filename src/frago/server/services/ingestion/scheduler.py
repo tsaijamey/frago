@@ -16,12 +16,12 @@ Every message reaches the PA.
 
 import asyncio
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from frago.server.services.ingestion.models import IngestedTask
 from frago.server.services.ingestion.store import TaskStore
+from frago.server.services.task_lifecycle import TaskLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class IngestionScheduler:
     ) -> None:
         self._channels = channels
         self._store = store
+        self._lifecycle = TaskLifecycle(task_store=store)
         self._channel_tasks: dict[str, asyncio.Task[None]] = {}
         self._rotation_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
@@ -141,46 +142,27 @@ class IngestionScheduler:
             return
         logger.info("Poll %s: %d message(s) received", ch.poll_recipe, len(messages))
 
-        for msg in messages:
-            # Defensive: skip messages missing required fields
-            if "id" not in msg or "prompt" not in msg:
-                logger.warning(
-                    "Channel %s: message missing required fields (id/prompt), skipping",
-                    ch.name,
-                )
-                continue
+        # Delegate dedup + store + journal to lifecycle
+        new_task_ids = self._lifecycle.ingest(ch.name, messages)
 
-            msg_id = str(msg["id"])
-            if self._store.exists(ch.name, msg_id):
-                logger.debug("Channel %s: message %s already processed, skipping", ch.name, msg_id)
-                continue
-
-            task = IngestedTask(
-                id=str(uuid.uuid4()),
-                channel=ch.name,
-                channel_message_id=msg_id,
-                prompt=msg["prompt"],
-                reply_context=msg.get("reply_context", {}),
-            )
-            logger.info("New task from %s: %s", ch.name, task.prompt)
-            self._store.add(task)
-
-            # Enqueue to PA message queue for immediate processing
-            if self._pa_enqueue:
+        # Enqueue to PA message queue for immediate processing
+        if self._pa_enqueue and new_task_ids:
+            for task_id in new_task_ids:
+                task = self._store.get(task_id)
+                if not task:
+                    continue
                 try:
                     await self._pa_enqueue({
                         "type": "user_message",
                         "task_id": task.id,
                         "channel": ch.name,
-                        "channel_message_id": msg_id,
+                        "channel_message_id": task.channel_message_id,
                         "prompt": task.prompt,
                         "reply_context": task.reply_context,
                     })
                     logger.info("Task %s enqueued to PA", task.id[:8])
                 except Exception:
                     logger.exception("Failed to enqueue task %s to PA", task.id[:8])
-            else:
-                logger.debug("Task %s stored as PENDING (no PA queue registered)", task.id[:8])
 
     async def _rotation_loop(self) -> None:
         """Archive terminal tasks daily at 0:00 UTC. Catch-up on startup."""

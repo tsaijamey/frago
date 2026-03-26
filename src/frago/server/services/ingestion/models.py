@@ -8,6 +8,7 @@ from typing import Any
 
 class TaskStatus(Enum):
     PENDING = "pending"
+    QUEUED = "queued"
     EXECUTING = "executing"
     COMPLETED = "completed"
     FAILED = "failed"
