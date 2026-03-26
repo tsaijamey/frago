@@ -164,9 +164,19 @@ def find_project_by_canonical_id(canonical_id: str) -> Optional[Path]:
     """Find a project's local path by its canonical ID (git remote URL).
 
     Searches auto-detected scan roots for a project whose git remote
-    matches the given canonical ID.
+    matches the given canonical ID. Returns the first match.
 
     Returns the project path, or None if not found on this device.
+    """
+    results = find_all_projects_by_canonical_id(canonical_id)
+    return results[0] if results else None
+
+
+def find_all_projects_by_canonical_id(canonical_id: str) -> list[Path]:
+    """Find ALL project paths matching a canonical ID.
+
+    Multiple local clones can share the same git remote URL.
+    Returns all matching paths (may be empty).
     """
     from frago.init.config_manager import load_config
     try:
@@ -178,11 +188,7 @@ def find_project_by_canonical_id(canonical_id: str) -> Optional[Path]:
         exclude_patterns = ["node_modules", ".venv", "__pycache__", ".git"]
 
     projects = _discover_projects(scan_roots, exclude_patterns)
-    for project in projects:
-        pid = get_canonical_id(project.path)
-        if pid == canonical_id:
-            return project.path
-    return None
+    return [p.path for p in projects if get_canonical_id(p.path) == canonical_id]
 
 
 # =============================================================================
