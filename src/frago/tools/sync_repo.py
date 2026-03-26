@@ -1276,8 +1276,6 @@ def _workspace_path_to_local(ws_rel_path: str) -> Optional[Path]:
         # rest starts with ".claude/..." for project resources
         return project_path / rest
 
-    return None
-
 
 def _cleanup_empty_parents(path: Path, stop_at: Path) -> None:
     """Remove empty parent directories up to (but not including) stop_at."""
@@ -1621,6 +1619,30 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.copytree(
                         skill_dir, target_skill_dir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
                     )
+
+    # Reverse cleanup: remove local skills that were deleted from workspace
+    # by another device (git pull already removed workspace copy).
+    # Only delete if metadata proves it was previously managed by workspace —
+    # otherwise it could be a user-created skill or a newly installed one.
+    if CLAUDE_SKILLS_DIR.exists():
+        workspace_skills = set()
+        if FRAGO_SKILLS_DIR.exists():
+            workspace_skills = {
+                d.name for d in FRAGO_SKILLS_DIR.iterdir()
+                if d.is_dir() and d.name.startswith("frago-")
+            }
+        for local_skill in CLAUDE_SKILLS_DIR.iterdir():
+            if not local_skill.is_dir() or not local_skill.name.startswith("frago-"):
+                continue
+            if local_skill.name not in workspace_skills:
+                # Check metadata: was this skill ever deployed from workspace?
+                meta_prefix = f"workspaces/__system__/skills/{local_skill.name}/"
+                was_from_workspace = any(
+                    k.startswith(meta_prefix)
+                    for k in sync_meta.get("entries", {})
+                )
+                if was_from_workspace and not dry_run:
+                    shutil.rmtree(local_skill)
 
 
 def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: bool = False) -> bool:
