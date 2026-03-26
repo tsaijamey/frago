@@ -151,40 +151,49 @@ class PrimaryAgentService:
     async def _recover_from_journal(self) -> int:
         """Recover unacked messages from MessageJournal and re-enqueue them.
 
-        Only re-enqueues messages whose associated task is still actionable
-        (PENDING or QUEUED). Messages for terminal tasks (COMPLETED/FAILED/TIMEOUT)
-        are stale — ack them silently instead of re-delivering to PA.
+        Filters out stale messages:
+        - Task already terminal (COMPLETED/FAILED/TIMEOUT) → ack and skip
+        - No task_id and older than 1 hour → ack and skip (orphaned notifications)
         """
         try:
             unacked = self._lifecycle._journal.get_unacked()
             if not unacked:
                 return 0
 
+            age_cutoff = (datetime.now() - __import__("datetime").timedelta(hours=1)).isoformat()
+
             recovered = 0
             stale = 0
             for entry in unacked:
                 payload = entry.get("payload", {})
                 if not payload:
+                    self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
+                    stale += 1
                     continue
 
                 task_id = entry.get("task_id") or payload.get("task_id")
 
-                # Check if the task is still actionable
+                # Filter 1: task already terminal
                 if task_id:
                     task = self._lifecycle.get_task(task_id)
                     if task and task.status in (
                         TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT,
                     ):
-                        # Task already terminal — this message is stale, ack and skip
                         self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
                         stale += 1
                         continue
+
+                # Filter 2: no task_id and older than 1 hour — orphaned notification
+                if not task_id and entry.get("created_at", "") < age_cutoff:
+                    self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
+                    stale += 1
+                    continue
 
                 await self.enqueue_message(payload)
                 recovered += 1
 
             if stale:
-                logger.info("Journal recovery: acked %d stale messages (task already terminal)", stale)
+                logger.info("Journal recovery: acked %d stale messages", stale)
             if recovered:
                 logger.info("Journal recovery: re-enqueued %d actionable messages", recovered)
             return recovered
