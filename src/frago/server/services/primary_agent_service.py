@@ -563,13 +563,16 @@ class PrimaryAgentService:
                     task_id=task_id_str,
                 ))
 
-            elif msg_type == "reply_failed":
-                msg_parts.append(PA_REPLY_FAILED_TEMPLATE.format(
-                    task_id=msg.get("task_id", "?"),
-                    channel=msg.get("channel", "?"),
-                    error=msg.get("error", "unknown"),
-                    reply_text=msg.get("reply_text", ""),
-                ))
+            elif msg_type in ("reply_failed", "task_failed"):
+                if msg.get("content"):
+                    msg_parts.append(msg["content"])
+                else:
+                    msg_parts.append(PA_REPLY_FAILED_TEMPLATE.format(
+                        task_id=msg.get("task_id", "?"),
+                        channel=msg.get("channel", "?"),
+                        error=msg.get("error", "unknown"),
+                        reply_text=msg.get("reply_text", ""),
+                    ))
 
             else:
                 msg_parts.append(f"[{msg_type}] {json.dumps(msg, ensure_ascii=False, default=str)}")
@@ -788,7 +791,7 @@ class PrimaryAgentService:
         result = validate_pa_output(output_text)
 
         if not result.ok:
-            logger.warning("PA output validation failed: %s (raw: %s)", result.error, output_text)
+            logger.warning("PA output validation failed: %s (raw: %r)", result.error, output_text)
             self._consecutive_json_failures += 1
 
             if self._consecutive_json_failures >= 2:
@@ -1149,15 +1152,11 @@ class PrimaryAgentService:
                 "channel": channel or "",
                 "reply_text": (reply_params.get("result_summary") or "")[:200],
             })
-        elif result["status"] == "error" and task_id:
+        elif result["status"] == "error":
             # Notify PA immediately so it knows the reply failed
-            await self.enqueue_message({
-                "type": "reply_failed",
-                "task_id": task_id,
-                "channel": channel,
-                "error": result.get("error", "unknown"),
-                "reply_text": reply_params.get("text", "")[:200],
-            })
+            pa_notify = result.get("pa_notify")
+            if pa_notify:
+                await self.enqueue_message(pa_notify)
 
     def _update_task(self, decision: dict) -> None:
         """PA decided action:'update' → delegate to lifecycle."""

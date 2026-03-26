@@ -105,6 +105,14 @@ class TaskStore:
                 return
             logger.warning("Task not found for status update: %s", task_id)
 
+    def update_retry_count(self, task_id: str, count: int) -> None:
+        with self._lock:
+            for data in self._tasks.values():
+                if data["id"] == task_id or (len(task_id) >= 8 and data["id"].startswith(task_id)):
+                    data["retry_count"] = count
+                    self._save()
+                    return
+
     def get_by_status(self, status: TaskStatus) -> list[IngestedTask]:
         with self._lock:
             return [

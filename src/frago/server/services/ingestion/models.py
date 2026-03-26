@@ -32,5 +32,8 @@ class IngestedTask:
     completed_at: datetime | None = None
     error: str | None = None
 
+    # Retry tracking — incremented each time reply() fails
+    retry_count: int = 0
+
     # Channel-specific context needed for reply (opaque to TaskStore/Scheduler)
     reply_context: dict[str, Any] = field(default_factory=dict)

@@ -248,11 +248,37 @@ class TaskLifecycle:
             logger.exception("Failed to send reply for channel %s", channel)
             error_msg = str(e)
             if task_id:
-                self._store.update_status(
-                    task_id, TaskStatus.FAILED,
-                    error=f"reply failed: {error_msg}",
-                )
-            return {"status": "error", "error": error_msg}
+                task = self._store.get(task_id)
+                retry_count = (task.retry_count + 1) if task else 1
+                if retry_count >= 2:
+                    # 2 consecutive failures → give up, PA will notify user
+                    self._store.update_status(
+                        task_id, TaskStatus.FAILED,
+                        error=f"reply failed {retry_count} times: {error_msg}",
+                    )
+                else:
+                    # Roll back to PENDING so PA can retry
+                    self._store.update_status(
+                        task_id, TaskStatus.PENDING,
+                        error=f"reply failed (attempt {retry_count}): {error_msg}",
+                    )
+                self._store.update_retry_count(task_id, retry_count)
+            # Build reply_failed notification for PA
+            from frago.server.services.pa_prompts import PA_REPLY_FAILED_TEMPLATE
+            reply_text = reply_params.get("text", "") if reply_params else ""
+            return {
+                "status": "error",
+                "error": error_msg,
+                "pa_notify": {
+                    "type": "reply_failed",
+                    "content": PA_REPLY_FAILED_TEMPLATE.format(
+                        task_id=task_id or "unknown",
+                        channel=channel,
+                        error=error_msg,
+                        reply_text=reply_text[:200],
+                    ),
+                },
+            }
 
     # -- finalize --
 
@@ -428,12 +454,18 @@ class TaskLifecycle:
         return False
 
     def recover_pending_tasks(self) -> list[dict]:
-        """Scan TaskStore for PENDING tasks and return them as queue messages.
+        """Scan TaskStore for PENDING and FAILED tasks, return as queue messages.
+
+        PENDING → re-enqueue as user_message for PA to decide.
+        FAILED → notify PA so it knows (PA will inform user after 2 failures).
 
         Does NOT enqueue — returns the messages for the caller to handle.
         """
+
         pending = self._store.get_by_status(TaskStatus.PENDING)
-        if not pending:
+        failed = self._store.get_by_status(TaskStatus.FAILED)
+
+        if not pending and not failed:
             return []
 
         messages = []
@@ -447,6 +479,26 @@ class TaskLifecycle:
                 "reply_context": task.reply_context,
                 "_recovered": True,
             })
+
+        for task in failed:
+            # Reset to PENDING so PA can re-dispatch
+            self._store.update_status(task.id, TaskStatus.PENDING)
+            # Use user_message type (valid queue message) with failure context prepended
+            failure_context = (
+                f"[恢复失败任务] task: {task.id} channel: {task.channel}\n"
+                f"上次错误: {task.error or 'unknown'}\n"
+                f"该任务已重置为 PENDING，请决定如何处理（重新 run 或 reply 告知用户）。\n\n"
+            )
+            messages.append({
+                "type": "user_message",
+                "task_id": task.id,
+                "channel": task.channel,
+                "channel_message_id": task.channel_message_id,
+                "prompt": failure_context + task.prompt,
+                "reply_context": task.reply_context,
+                "_recovered": True,
+            })
+
         return messages
 
     def try_dispatch_queued(self) -> list[dict[str, Any]]:
