@@ -134,6 +134,16 @@ class MessageType:
     DATA_VERSION = "data_version"       # Version info updated
     DATA_UPDATE_STATUS = "data_update_status"  # Self-update status
 
+    # PA event stream (real-time PA decision visibility for Timeline)
+    PA_INGESTION = "pa_ingestion"
+    PA_DECISION = "pa_decision"
+    PA_AGENT_LAUNCHED = "pa_agent_launched"
+    PA_AGENT_EXITED = "pa_agent_exited"
+    PA_REPLY = "pa_reply"
+
+    # Timeline aggregated event (humanized, ready for frontend rendering)
+    TIMELINE_EVENT = "timeline_event"
+
 
 def create_message(
     msg_type: str,

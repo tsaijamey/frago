@@ -334,6 +334,32 @@ class PrimaryAgentService:
 
         return "\n\n".join(sections)
 
+    # -- PA event broadcast --
+
+    async def _broadcast_pa_event(self, event_type: str, data: dict) -> None:
+        """Broadcast a PA event to all connected WebSocket clients.
+
+        Also persists the event to pa_events.jsonl for timeline history.
+        Pure side-effect for frontend visibility.
+        Failures are logged and swallowed — PA operation must not be affected.
+        """
+        try:
+            from frago.server.websocket import manager
+            await manager.broadcast({
+                "type": event_type,
+                "timestamp": datetime.now().isoformat(),
+                **data,
+            })
+        except Exception as e:
+            logger.debug("Failed to broadcast PA event %s: %s", event_type, e)
+
+        # Persist to JSONL for timeline history recovery
+        try:
+            from frago.server.services.timeline_service import append_pa_event
+            append_pa_event(event_type, data)
+        except Exception as e:
+            logger.debug("Failed to persist PA event %s: %s", event_type, e)
+
     # -- message queue --
 
     async def enqueue_message(self, msg: dict) -> None:
@@ -344,6 +370,14 @@ class PrimaryAgentService:
             return
         await self._message_queue.put(msg)
         logger.debug("Message enqueued: type=%s", msg.get("type", "unknown"))
+
+        # Broadcast ingestion event for frontend Timeline
+        if msg.get("type") == "user_message":
+            await self._broadcast_pa_event("pa_ingestion", {
+                "task_id": msg.get("task_id", ""),
+                "channel": msg.get("channel", ""),
+                "prompt": msg.get("prompt", ""),
+            })
 
     async def _queue_consumer_loop(self) -> None:
         """Consumer loop: drain queue, merge messages, send to PA."""
@@ -825,6 +859,11 @@ class PrimaryAgentService:
                 continue
             action = d.get("action")
             task_id = d.get("task_id", "?")[:8]
+            await self._broadcast_pa_event("pa_decision", {
+                "action": action or "",
+                "task_id": task_id,
+                "details": {k: v for k, v in d.items() if k not in ("action", "task_id")},
+            })
             try:
                 if action == "run":
                     logger.info("→ dispatch run (task=%s, desc=%s)", task_id, d.get("description", ""))
@@ -922,6 +961,11 @@ class PrimaryAgentService:
             ctx_mgr.release_context()
         else:
             logger.info("Sub-agent launched for Run %s (agent_id=%s)", run_id, result.get("id", "?")[:8])
+            await self._broadcast_pa_event("pa_agent_launched", {
+                "run_id": run_id,
+                "task_id": task_id,
+                "description": decision.get("description", ""),
+            })
             pid = result.get("pid")
             if pid:
                 asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
@@ -1149,6 +1193,7 @@ class PrimaryAgentService:
         """Watch sub-agent process; enqueue agent_exit message when it exits."""
         import os
 
+        monitor_start = datetime.now()
         # Poll until process exits
         while True:
             try:
@@ -1161,10 +1206,17 @@ class PrimaryAgentService:
         step, _summary = self._read_completion_info(run_id)
         has_completion = step is not None
 
+        duration_seconds = int((datetime.now() - monitor_start).total_seconds())
         logger.info(
             "Run %s: sub-agent (PID %d) exited (has_completion=%s), enqueueing agent_exit",
             run_id, pid, has_completion,
         )
+        await self._broadcast_pa_event("pa_agent_exited", {
+            "run_id": run_id,
+            "task_id": _task_id or "",
+            "has_completion": has_completion,
+            "duration_seconds": duration_seconds,
+        })
 
         # Release context lock immediately — don't wait for heartbeat stale check
         try:
@@ -1230,7 +1282,12 @@ class PrimaryAgentService:
             del self._pending_resume_messages[sid]
 
     async def _dispatch_recipe(self, decision: dict) -> None:
-        """PA decided action:'recipe' → execute recipe directly."""
+        """PA decided action:'recipe' → execute recipe directly.
+
+        When task_id is present, enrich params with reply_context from TaskStore
+        so channel-specific recipes (e.g. feishu_send_message) can route to the
+        correct destination without PA needing to know addressing details.
+        """
         recipe_name = decision.get("recipe_name")
         params = decision.get("params", {})
         task_id = decision.get("task_id")
@@ -1238,6 +1295,18 @@ class PrimaryAgentService:
         if not recipe_name:
             logger.warning("recipe decision missing recipe_name")
             return
+
+        # Enrich params with reply_context from TaskStore (same pattern as _execute_reply)
+        if task_id and "reply_context" not in params:
+            try:
+                from frago.server.services.ingestion.store import TaskStore
+                store = TaskStore()
+                task = store.get(task_id)
+                if task and task.reply_context:
+                    params["reply_context"] = task.reply_context
+                    logger.debug("Enriched recipe params with reply_context for task %s", task_id[:8])
+            except Exception:
+                logger.debug("Failed to enrich recipe params from TaskStore", exc_info=True)
 
         from frago.recipes.runner import RecipeRunner
         runner = RecipeRunner()
@@ -1303,6 +1372,18 @@ class PrimaryAgentService:
             except Exception:
                 logger.debug("Failed to enrich reply_params from TaskStore", exc_info=True)
 
+        # Mark task as EXECUTING before sending reply to prevent heartbeat
+        # from re-enqueuing this task while the notify recipe is running
+        if task_id:
+            try:
+                from frago.server.services.ingestion.models import TaskStatus
+                from frago.server.services.ingestion.store import TaskStore
+                store = TaskStore()
+                store.update_status(task_id, TaskStatus.EXECUTING,
+                                    result_summary="sending reply")
+            except Exception:
+                logger.debug("Failed to mark task EXECUTING before reply", exc_info=True)
+
         # Find the notify recipe for this channel
         try:
             raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -1322,6 +1403,11 @@ class PrimaryAgentService:
             logger.info("Reply params for %s: %s", notify_recipe, json.dumps(reply_params, ensure_ascii=False, default=str))
             await asyncio.to_thread(runner.run, notify_recipe, params=reply_params)
             logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
+            await self._broadcast_pa_event("pa_reply", {
+                "task_id": task_id or "",
+                "channel": channel or "",
+                "reply_text": (reply_params.get("result_summary") or "")[:200],
+            })
 
             # Mark task as completed after successful reply —
             # but NOT if this task has a pending run/resume dispatch (blocked by lock)
@@ -1345,6 +1431,16 @@ class PrimaryAgentService:
 
         except Exception:
             logger.exception("Failed to send reply for channel %s", channel)
+            # Rollback to PENDING so heartbeat can retry
+            if task_id:
+                try:
+                    from frago.server.services.ingestion.models import TaskStatus
+                    from frago.server.services.ingestion.store import TaskStore
+                    store = TaskStore()
+                    store.update_status(task_id, TaskStatus.PENDING,
+                                        result_summary="reply failed, pending retry")
+                except Exception:
+                    logger.debug("Failed to rollback task to PENDING after reply failure", exc_info=True)
 
     def _update_task(self, decision: dict) -> None:
         """PA decided action:'update' → update task status and result_summary."""
@@ -1407,9 +1503,10 @@ class PrimaryAgentService:
                 lines.append(f"  - {rid}")
             related_section = "\n" + "\n".join(lines) + "\n"
 
-        # Look up channel/message_id from TaskStore
+        # Look up channel/message_id/reply_context from TaskStore
         channel = "unknown"
         message_id = ""
+        reply_context: dict = {}
         if task_id:
             try:
                 from frago.server.services.ingestion.store import TaskStore
@@ -1418,6 +1515,8 @@ class PrimaryAgentService:
                 if task:
                     channel = task.channel
                     message_id = task.channel_message_id
+                    if task.reply_context:
+                        reply_context = task.reply_context
             except Exception:
                 pass
 
@@ -1430,11 +1529,21 @@ class PrimaryAgentService:
         except Exception:
             pass
 
+        # Build reply_context section so sub-agent knows where to send messages/images
+        reply_context_section = ""
+        if reply_context:
+            reply_context_section = (
+                "\n回复上下文（发送消息/图片时必须使用此 chat_id，禁止使用其他 chat_id）:\n"
+                + json.dumps(reply_context, ensure_ascii=False)
+                + "\n"
+            )
+
         return SUB_AGENT_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,
             run_id=run_id,
             channel=channel,
             message_id=message_id,
+            reply_context_section=reply_context_section,
             related_section=related_section,
             knowledge_section=knowledge_section,
         )

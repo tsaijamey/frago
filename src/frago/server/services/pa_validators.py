@@ -34,52 +34,58 @@ class ValidationResult:
     raw_data: Any = field(default=None, repr=False)
 
 
+def _parse_json_array(text: str) -> list | None:
+    """Parse a JSON array from text, tolerating all known PA output quirks.
+
+    Handles: markdown code blocks, natural language prefix/suffix,
+    real newlines in string values, trailing punctuation.
+    Returns parsed list or None.
+    """
+    cleaned = text.strip()
+
+    # Strip markdown code block wrappers
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        if len(lines) >= 3:
+            cleaned = "\n".join(lines[1:-1]).strip()
+
+    # Strategy 1: direct parse (covers clean output)
+    try:
+        data = json.loads(cleaned, strict=False)
+        if isinstance(data, list):
+            return data
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: find first '[' and last ']', try that substring
+    first_bracket = cleaned.find("[")
+    last_bracket = cleaned.rfind("]")
+    if first_bracket != -1 and last_bracket > first_bracket:
+        candidate = cleaned[first_bracket : last_bracket + 1]
+        try:
+            data = json.loads(candidate, strict=False)
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
 # --------------------------------------------------------------------------
 # [检查 PA 输出] [PA subprocess 返回后] [_handle_pa_output 入口]
-# PA 必须输出 JSON 数组，每个元素必须有 action 字段。
-# 校验失败 → 回传给 PA 要求重新输出（不是 rotate，给一次修正机会）。
 # --------------------------------------------------------------------------
 def validate_pa_output(text: str) -> ValidationResult:
     """Validate PA's JSON decision array output.
 
-    Steps:
-    1. Strip markdown code blocks (```json ... ```)
-    2. Parse JSON
-    3. Check it's a list
-    4. Check each element has "action" field
-    5. Check action is in VALID_PA_ACTIONS
-    6. Check required fields per action type
+    Parsing is intentionally lenient (tolerates prefix text, real newlines,
+    markdown wrappers). Validation of the parsed structure is strict.
     """
-    cleaned = text.strip()
-
-    # Strip markdown code block wrappers if present
-    if cleaned.startswith("```"):
-        lines = cleaned.split("\n")
-        if len(lines) >= 3:
-            # Remove first line (```json or ```) and last line (```)
-            cleaned = "\n".join(lines[1:-1]).strip()
-        else:
-            return ValidationResult(
-                ok=False,
-                error="Output looks like a markdown code block but has fewer than 3 lines.",
-                raw_data=text,
-            )
-
-    # Parse JSON
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as e:
+    data = _parse_json_array(text)
+    if data is None:
         return ValidationResult(
             ok=False,
-            error=f"JSON parse error: {e}",
-            raw_data=text,
-        )
-
-    # Must be a list
-    if not isinstance(data, list):
-        return ValidationResult(
-            ok=False,
-            error=f"Expected JSON array, got {type(data).__name__}.",
+            error=f"No valid JSON array found in output (len={len(text.strip())})",
             raw_data=text,
         )
 

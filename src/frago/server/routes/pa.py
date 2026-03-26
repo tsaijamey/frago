@@ -1,12 +1,13 @@
 """Primary Agent API endpoints.
 
 Provides the notification endpoint for sub-agents to report task completion
-to the PA via the message queue.
+to the PA via the message queue, and query endpoints for PA tasks.
 """
 
+import dataclasses
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -57,3 +58,28 @@ async def pa_notify(request: PANotifyRequest) -> dict:
     except Exception as e:
         logger.exception("Failed to enqueue PA notify for run=%s", request.run_id[:8])
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/pa/tasks")
+async def list_pa_tasks(
+    limit: int = Query(default=20, ge=1, le=100),
+    status: str = Query(default="all"),
+) -> dict:
+    """Return recent IngestedTask list for Timeline initial load."""
+    from frago.server.services.ingestion.models import TaskStatus
+    from frago.server.services.ingestion.store import TaskStore
+
+    store = TaskStore()
+    if status == "all":
+        tasks = store.get_recent(limit=limit)
+    else:
+        try:
+            tasks = store.get_by_status(TaskStatus(status))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from e
+    return {
+        "tasks": [
+            {k: v.value if hasattr(v, "value") else v for k, v in dataclasses.asdict(t).items()}
+            for t in tasks[:limit]
+        ],
+    }

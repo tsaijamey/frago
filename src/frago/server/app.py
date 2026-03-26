@@ -283,6 +283,9 @@ def create_app(
     from frago.server.routes.pa import router as pa_router
     app.include_router(pa_router, prefix="/api", tags=["pa"])
 
+    from frago.server.routes.timeline import router as timeline_router
+    app.include_router(timeline_router, prefix="/api", tags=["timeline"])
+
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

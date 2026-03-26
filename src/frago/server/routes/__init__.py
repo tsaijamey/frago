@@ -30,6 +30,7 @@ from frago.server.routes.files import router as files_router
 from frago.server.routes.workspace import router as workspace_router
 from frago.server.routes.guide import router as guide_router
 from frago.server.routes.pa import router as pa_router
+from frago.server.routes.timeline import router as timeline_router
 
 __all__ = [
     "system_router",
@@ -47,4 +48,5 @@ __all__ = [
     "workspace_router",
     "guide_router",
     "pa_router",
+    "timeline_router",
 ]
