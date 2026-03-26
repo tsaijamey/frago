@@ -151,19 +151,43 @@ class PrimaryAgentService:
     async def _recover_from_journal(self) -> int:
         """Recover unacked messages from MessageJournal and re-enqueue them.
 
-        Covers all message types: user_message, agent_notify, agent_exit.
-        Called at initialize() and after PA session rotation.
+        Only re-enqueues messages whose associated task is still actionable
+        (PENDING or QUEUED). Messages for terminal tasks (COMPLETED/FAILED/TIMEOUT)
+        are stale — ack them silently instead of re-delivering to PA.
         """
         try:
             unacked = self._lifecycle._journal.get_unacked()
             if not unacked:
                 return 0
+
+            recovered = 0
+            stale = 0
             for entry in unacked:
                 payload = entry.get("payload", {})
-                if payload:
-                    await self.enqueue_message(payload)
-            logger.info("Recovered %d unacked messages from journal", len(unacked))
-            return len(unacked)
+                if not payload:
+                    continue
+
+                task_id = entry.get("task_id") or payload.get("task_id")
+
+                # Check if the task is still actionable
+                if task_id:
+                    task = self._lifecycle.get_task(task_id)
+                    if task and task.status in (
+                        TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT,
+                    ):
+                        # Task already terminal — this message is stale, ack and skip
+                        self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
+                        stale += 1
+                        continue
+
+                await self.enqueue_message(payload)
+                recovered += 1
+
+            if stale:
+                logger.info("Journal recovery: acked %d stale messages (task already terminal)", stale)
+            if recovered:
+                logger.info("Journal recovery: re-enqueued %d actionable messages", recovered)
+            return recovered
         except Exception:
             logger.debug("Failed to recover from journal", exc_info=True)
             return 0
