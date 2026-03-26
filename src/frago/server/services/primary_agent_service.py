@@ -124,10 +124,7 @@ class PrimaryAgentService:
 
         await self._start_heartbeat()
 
-        # Recover unacked messages from journal (covers all message types)
-        await self._recover_from_journal()
-
-        # Also recover PENDING tasks from TaskStore (belt and suspenders)
+        # Recover PENDING tasks from TaskStore
         await self._recover_pending_tasks()
 
     async def _recover_pending_tasks(self) -> int:
@@ -146,59 +143,6 @@ class PrimaryAgentService:
             return len(messages)
         except Exception:
             logger.debug("Failed to recover pending tasks", exc_info=True)
-            return 0
-
-    async def _recover_from_journal(self) -> int:
-        """Recover unacked messages from MessageJournal and re-enqueue them.
-
-        Filters out stale messages:
-        - Task already terminal (COMPLETED/FAILED/TIMEOUT) → ack and skip
-        - No task_id and older than 1 hour → ack and skip (orphaned notifications)
-        """
-        try:
-            unacked = self._lifecycle._journal.get_unacked()
-            if not unacked:
-                return 0
-
-            age_cutoff = (datetime.now() - __import__("datetime").timedelta(hours=1)).isoformat()
-
-            recovered = 0
-            stale = 0
-            for entry in unacked:
-                payload = entry.get("payload", {})
-                if not payload:
-                    self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
-                    stale += 1
-                    continue
-
-                task_id = entry.get("task_id") or payload.get("task_id")
-
-                # Filter 1: task already terminal
-                if task_id:
-                    task = self._lifecycle.get_task(task_id)
-                    if task and task.status in (
-                        TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT,
-                    ):
-                        self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
-                        stale += 1
-                        continue
-
-                # Filter 2: no task_id and older than 1 hour — orphaned notification
-                if not task_id and entry.get("created_at", "") < age_cutoff:
-                    self._lifecycle._journal.ack_by_msg_id(entry.get("msg_id", ""))
-                    stale += 1
-                    continue
-
-                await self.enqueue_message(payload)
-                recovered += 1
-
-            if stale:
-                logger.info("Journal recovery: acked %d stale messages", stale)
-            if recovered:
-                logger.info("Journal recovery: re-enqueued %d actionable messages", recovered)
-            return recovered
-        except Exception:
-            logger.debug("Failed to recover from journal", exc_info=True)
             return 0
 
     async def stop(self) -> None:
@@ -288,10 +232,6 @@ class PrimaryAgentService:
         self._accumulated_tokens = 0
         self._rotation_count += 1
         self._consecutive_json_failures = 0
-
-        # Recover unacked messages from journal (covers agent_notify/agent_exit
-        # that were lost during rotation)
-        await self._recover_from_journal()
 
     def _build_bootstrap_prompt(self) -> str:
         """Build bootstrap context from Run system + TaskStore."""
@@ -781,10 +721,6 @@ class PrimaryAgentService:
 
         # ⑤ Finalize orphan executing tasks whose runs are already gone
         self._finalize_orphan_tasks()
-
-        # ⑥ Compact journal (remove old acked entries)
-        if self._heartbeat_seq % 12 == 0:  # Every ~hour (12 * 5min)
-            self._lifecycle._journal.compact()
 
         self._heartbeat_seq += 1
 

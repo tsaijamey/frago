@@ -1,10 +1,13 @@
 """Task Lifecycle — single coordination point for all task state transitions.
 
 TaskLifecycle does NOT store data. It orchestrates the sequence of operations
-across TaskStore, RunManager, ContextManager, and MessageJournal, with
-rollback on failure. All task state changes go through here.
+across TaskStore, RunManager, and ContextManager, with rollback on failure.
+All task state changes go through here.
 
 PA Service calls TaskLifecycle methods instead of directly manipulating stores.
+
+Recovery is based on TaskStore status: PENDING/QUEUED tasks are re-delivered
+to PA on server restart. No separate message journal needed.
 """
 
 import json
@@ -15,7 +18,6 @@ from typing import Any
 
 from frago.server.services.ingestion.models import IngestedTask, TaskStatus
 from frago.server.services.ingestion.store import TaskStore
-from frago.server.services.message_journal import MessageJournal
 
 logger = logging.getLogger(__name__)
 
@@ -33,19 +35,17 @@ class TaskLifecycle:
     def __init__(
         self,
         task_store: TaskStore | None = None,
-        journal: MessageJournal | None = None,
     ) -> None:
         self._store = task_store or TaskStore()
-        self._journal = journal or MessageJournal()
 
-    # -- Phase 1: thin wrappers that preserve existing behavior --
+    # -- ingestion --
 
     def ingest(
         self,
         channel: str,
         messages: list[dict],
     ) -> list[str]:
-        """Ingest messages from a channel: dedup → create PENDING → write journal.
+        """Ingest messages from a channel: dedup → create PENDING task.
 
         Returns list of new task_ids.
         """
@@ -70,30 +70,18 @@ class TaskLifecycle:
                 reply_context=msg.get("reply_context", {}),
             )
             self._store.add(task)
-
-            # Write to journal for persistent delivery
-            self._journal.append(
-                msg_type="user_message",
-                task_id=task.id,
-                payload={
-                    "type": "user_message",
-                    "task_id": task.id,
-                    "channel": channel,
-                    "channel_message_id": msg_id,
-                    "prompt": task.prompt,
-                    "reply_context": task.reply_context,
-                },
-            )
             new_task_ids.append(task.id)
             logger.info("Ingested task %s from %s", task.id[:8], channel)
 
         return new_task_ids
 
+    # -- dispatch --
+
     def dispatch(self, task_id: str, agent_params: dict) -> dict[str, Any]:
         """Dispatch a task as a sub-agent run.
 
         Steps: check lock → create run → set lock → update store → launch agent.
-        On lock conflict: mark QUEUED (Phase 2, for now stays PENDING).
+        On lock conflict: mark QUEUED.
         On failure: rollback to previous state.
 
         Returns {"status": "ok", "run_id": ..., "pid": ...} or {"status": "blocked"/"error", ...}.
@@ -168,10 +156,6 @@ class TaskLifecycle:
                 self._store.update_status(task_id, TaskStatus.PENDING)
             return {"status": "error", "error": result.get("error")}
 
-        # 6. Ack journal
-        if task_id:
-            self._journal.ack(task_id)
-
         logger.info("Sub-agent launched for Run %s (agent_id=%s)", run_id, result.get("id", "?")[:8])
         return {
             "status": "ok",
@@ -180,11 +164,13 @@ class TaskLifecycle:
             "agent_id": result.get("id"),
         }
 
+    # -- reply --
+
     def reply(self, task_id: str, channel: str, reply_params: dict) -> dict[str, Any]:
         """Execute a reply via notify recipe. Returns {"status": "ok"/"error"}.
 
         Steps: enrich params → mark EXECUTING → run recipe → mark COMPLETED.
-        On recipe failure: mark FAILED.
+        On recipe failure: mark FAILED + return error for PA notification.
         """
         # Enrich reply_params with reply_context from TaskStore
         if task_id:
@@ -249,13 +235,12 @@ class TaskLifecycle:
 
             logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
 
-            # Mark completed and ack journal
+            # Mark completed
             if task_id:
                 self._store.update_status(
                     task_id, TaskStatus.COMPLETED,
                     result_summary=reply_params.get("result_summary", "replied"),
                 )
-                self._journal.ack(task_id)
 
             return {"status": "ok"}
 
@@ -267,19 +252,9 @@ class TaskLifecycle:
                     task_id, TaskStatus.FAILED,
                     error=f"reply failed: {error_msg}",
                 )
-                # Write failure to journal so PA gets notified
-                self._journal.append(
-                    msg_type="reply_failed",
-                    task_id=task_id,
-                    payload={
-                        "type": "reply_failed",
-                        "task_id": task_id,
-                        "channel": channel,
-                        "error": error_msg,
-                        "reply_text": reply_params.get("text", "")[:200],
-                    },
-                )
             return {"status": "error", "error": error_msg}
+
+    # -- finalize --
 
     def finalize(
         self,
@@ -343,18 +318,7 @@ class TaskLifecycle:
             except Exception:
                 logger.debug("Failed to archive run %s", run_id, exc_info=True)
 
-        # 5. Write agent_exit to journal for PA notification
-        if task:
-            self._journal.append(
-                msg_type="agent_exit",
-                task_id=task.id if task else None,
-                payload={
-                    "type": "agent_exit",
-                    "run_id": run_id,
-                    "has_completion_marker": has_completion,
-                    "task_id": task.id if task else None,
-                },
-            )
+    # -- heartbeat helpers --
 
     def finalize_orphan_tasks(self) -> int:
         """Finalize EXECUTING tasks whose runs are archived or missing.
@@ -497,8 +461,6 @@ class TaskLifecycle:
 
         results = []
         for task in queued:
-            # We need the original dispatch params. Since we don't store them
-            # separately, re-dispatch with the task prompt as the prompt.
             result = self.dispatch(task.id, {
                 "prompt": task.prompt,
                 "description": task.prompt[:100],
