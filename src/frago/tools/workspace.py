@@ -150,6 +150,41 @@ def canonical_id_to_dirname(canonical_id: str) -> str:
     return canonical_id.replace("/", "__")
 
 
+def dirname_to_canonical_id(dirname: str) -> Optional[str]:
+    """Convert directory name back to canonical ID.
+
+    github.com__user__repo → github.com/user/repo
+    """
+    if "__" not in dirname:
+        return None
+    return dirname.replace("__", "/")
+
+
+def find_project_by_canonical_id(canonical_id: str) -> Optional[Path]:
+    """Find a project's local path by its canonical ID (git remote URL).
+
+    Searches auto-detected scan roots for a project whose git remote
+    matches the given canonical ID.
+
+    Returns the project path, or None if not found on this device.
+    """
+    from frago.init.config_manager import load_config
+    try:
+        config = load_config()
+        scan_roots = config.workspace_scan_roots
+        exclude_patterns = config.workspace_exclude_patterns
+    except Exception:
+        scan_roots = []
+        exclude_patterns = ["node_modules", ".venv", "__pycache__", ".git"]
+
+    projects = _discover_projects(scan_roots, exclude_patterns)
+    for project in projects:
+        pid = get_canonical_id(project.path)
+        if pid == canonical_id:
+            return project.path
+    return None
+
+
 # =============================================================================
 # Project Discovery
 # =============================================================================

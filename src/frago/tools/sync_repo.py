@@ -1227,6 +1227,170 @@ def _remove_sync_entry(metadata: Dict[str, Any], rel_path: str) -> None:
         del metadata["entries"][rel_path]
 
 
+# =============================================================================
+# Delete Detection — detect files deleted locally since last sync
+# =============================================================================
+
+
+def _workspace_path_to_local(ws_rel_path: str) -> Optional[Path]:
+    """Map a workspace relative path back to the local source path.
+
+    workspaces/__system__/skills/xxx/file.md  → ~/.claude/skills/xxx/file.md
+    workspaces/__system__/commands/yyy.md     → ~/.claude/commands/yyy.md
+    workspaces/__system__/CLAUDE.md           → ~/.claude/CLAUDE.md
+    workspaces/__system__/memories/...        → None (memories are collected, not source-of-truth)
+    workspaces/<project-dirname>/.claude/...  → <project_path>/.claude/...
+    workspaces/<project-dirname>/.project-memory/... → None (same as memories)
+    """
+    parts = ws_rel_path.split("/")
+    if len(parts) < 3:
+        return None
+
+    workspace = parts[1]
+    rest = "/".join(parts[2:])
+
+    if workspace == "__system__":
+        # Skip memories — they're collected from Claude Code's internal storage,
+        # not directly editable by the user
+        if rest.startswith("memories/"):
+            return None
+        return CLAUDE_HOME / rest
+    else:
+        # Project workspace: dirname is canonical_id with / replaced by __
+        # e.g. github.com__user__repo → need to find the actual project path
+        # Skip .project-memory (same as system memories)
+        if rest.startswith(".project-memory/"):
+            return None
+
+        # We need to discover the project path from the canonical ID
+        # The dirname encodes the canonical ID: github.com__user__repo
+        from frago.tools.workspace import dirname_to_canonical_id, find_project_by_canonical_id
+        canonical_id = dirname_to_canonical_id(workspace)
+        if not canonical_id:
+            return None
+
+        project_path = find_project_by_canonical_id(canonical_id)
+        if not project_path:
+            return None
+
+        # rest starts with ".claude/..." for project resources
+        return project_path / rest
+
+    return None
+
+
+def _cleanup_empty_parents(path: Path, stop_at: Path) -> None:
+    """Remove empty parent directories up to (but not including) stop_at."""
+    parent = path.parent
+    while parent != stop_at and parent.exists():
+        try:
+            if any(parent.iterdir()):
+                break  # Not empty
+            parent.rmdir()
+            parent = parent.parent
+        except (OSError, PermissionError):
+            break
+
+
+def _detect_local_deletions(result: SyncResult, dry_run: bool = False) -> None:
+    """Detect files deleted locally since last sync, propagate to workspace.
+
+    Compares sync_metadata entries against current local file state.
+    If a file was recorded in metadata but no longer exists locally,
+    and the workspace copy hasn't been updated by another device,
+    delete the workspace copy so the deletion propagates via git.
+    """
+    metadata = _load_sync_metadata()
+    entries = metadata.get("entries", {})
+    to_remove: list[str] = []
+    deleted_count = 0
+
+    for rel_path, entry in list(entries.items()):
+        if not rel_path.startswith("workspaces/"):
+            continue
+
+        # Resolve the local source path from workspace path
+        local_path = _workspace_path_to_local(rel_path)
+        if local_path is None:
+            continue
+
+        if local_path.exists():
+            continue  # Local file still there, no deletion
+
+        # Local file is gone — check workspace copy
+        ws_path = FRAGO_HOME / rel_path
+        if not ws_path.exists():
+            # Workspace copy also gone, just clean up metadata
+            to_remove.append(rel_path)
+            continue
+
+        ws_hash = _compute_content_hash(ws_path)
+        recorded_hash = entry.get("content_hash")
+
+        if ws_hash == recorded_hash:
+            # Workspace hasn't been updated by another device → user deleted locally
+            if not dry_run:
+                ws_path.unlink()
+                _cleanup_empty_parents(ws_path, FRAGO_HOME)
+            to_remove.append(rel_path)
+            deleted_count += 1
+
+            # Record as local change for display
+            file_type, name = _classify_file(rel_path)
+            result.local_changes.append(FileChange(
+                type=file_type,
+                name=name,
+                operation="Deleted",
+            ))
+        # else: workspace was updated by another device, keep new version
+
+    # Clean up metadata entries
+    if to_remove and not dry_run:
+        for rel_path in to_remove:
+            _remove_sync_entry(metadata, rel_path)
+        _save_sync_metadata(metadata)
+
+    if deleted_count > 0:
+        click.echo(f"  Detected {deleted_count} local deletion(s), propagating to workspace")
+
+
+def _update_workspace_metadata_snapshot() -> None:
+    """Record content hashes for all workspace files in sync_metadata.
+
+    This creates the baseline snapshot that _detect_local_deletions() uses
+    on the next sync cycle to detect files that were deleted locally.
+    """
+    from frago.tools.workspace import WORKSPACES_DIR
+
+    if not WORKSPACES_DIR.exists():
+        return
+
+    metadata = _load_sync_metadata()
+    updated = False
+
+    for ws_file in WORKSPACES_DIR.rglob("*"):
+        if not ws_file.is_file():
+            continue
+        # Skip cache/compiled files
+        if "__pycache__" in str(ws_file) or ws_file.suffix in {".pyc", ".pyo"}:
+            continue
+
+        rel_path = str(ws_file.relative_to(FRAGO_HOME))
+        content_hash = _compute_content_hash(ws_file)
+        if content_hash is None:
+            continue
+
+        existing = _get_sync_entry(metadata, rel_path)
+        if existing and existing.get("content_hash") == content_hash:
+            continue  # Already up to date
+
+        _update_sync_entry(metadata, rel_path, content_hash)
+        updated = True
+
+    if updated:
+        _save_sync_metadata(metadata)
+
+
 def _determine_sync_direction(
     local_path: Path,
     repo_path: Path,
@@ -1423,6 +1587,9 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
     if FRAGO_SKILLS_DIR.exists():
         CLAUDE_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Load sync metadata to detect locally-deleted skills
+        sync_meta = _load_sync_metadata()
+
         for skill_dir in FRAGO_SKILLS_DIR.iterdir():
             if not skill_dir.is_dir():
                 continue
@@ -1430,6 +1597,19 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
                 continue
 
             target_skill_dir = CLAUDE_SKILLS_DIR / skill_dir.name
+
+            # Skip deploying skills that the user has deleted locally.
+            # If metadata recorded this skill (it was deployed before) but the
+            # target no longer exists, the user deleted it — don't restore.
+            if not target_skill_dir.exists():
+                # Check if any metadata entry exists for this skill in workspace
+                meta_prefix = f"workspaces/__system__/skills/{skill_dir.name}/"
+                was_previously_synced = any(
+                    k.startswith(meta_prefix)
+                    for k in sync_meta.get("entries", {})
+                )
+                if was_previously_synced:
+                    continue  # User deleted this skill, respect that
 
             # Only copy when content differs AND metadata mtime is newer than local mtime
             if not _dir_files_identical(skill_dir, target_skill_dir) and _is_metadata_newer_than_local(
@@ -2124,6 +2304,10 @@ def sync(
             if migrate_legacy_claude_dir():
                 click.echo("Migrated legacy resources to workspaces/__system__/")
 
+        # 0c. Detect local deletions (before collect, so deletions propagate via git)
+        if not dry_run:
+            _detect_local_deletions(result, dry_run)
+
         # 1. Collect workspace resources (replaces legacy _sync_claude_to_frago)
         click.echo("Collecting workspace resources...")
         from frago.init.config_manager import load_config
@@ -2145,6 +2329,10 @@ def sync(
 
         # NOTE: _sync_claude_to_frago (legacy frago-* skill sync) removed.
         # Workspace collect now handles ALL skills via workspaces/__system__/skills/.
+
+        # 1a. Update metadata snapshot (baseline for next sync's deletion detection)
+        if not dry_run:
+            _update_workspace_metadata_snapshot()
 
         # 1b. Save local changes
         if result.local_changes or _has_uncommitted_changes(FRAGO_HOME):
