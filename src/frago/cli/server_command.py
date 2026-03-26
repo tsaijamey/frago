@@ -4,7 +4,25 @@ Provides commands to start, stop, and check status of the Frago
 web service running as a background daemon process.
 """
 
+import os
+
 import click
+
+
+def _guard_sub_agent(action: str) -> None:
+    """Block server stop/restart when called from a sub-agent.
+
+    Sub-agent processes inherit FRAGO_CURRENT_RUN env var.
+    Server shutdown kills all child processes (including the sub-agent itself),
+    causing the task to abort without completion markers.
+    """
+    run_id = os.environ.get("FRAGO_CURRENT_RUN")
+    if run_id:
+        raise click.ClickException(
+            f"sub-agent (Run {run_id}) 禁止 {action} server — "
+            "server shutdown 会杀掉自身进程。"
+            "如需重启，请通过 TASK_COMPLETE 回报 PA 调度执行。"
+        )
 
 
 @click.group("server", invoke_without_command=True)
@@ -101,6 +119,7 @@ def _run_foreground() -> None:
 @server_group.command("stop")
 def stop() -> None:
     """Stop the running Frago web service."""
+    _guard_sub_agent("stop")
     from frago.server.daemon import stop_daemon
 
     success, message = stop_daemon()
@@ -122,6 +141,7 @@ def restart(force: bool) -> None:
     Stops the running server and starts a new instance.
     If the server is not running, starts it.
     """
+    _guard_sub_agent("restart")
     from frago.server.daemon import restart_daemon
 
     success, message = restart_daemon(force=force)
