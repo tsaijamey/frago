@@ -24,10 +24,24 @@ if HEADLESS (no GUI):
     WebSearch => allowed as fallback
 ```
 
+## ⚠️ CRITICAL: Tab Creation Prohibition Rule
+
+**NEVER create tabs via `window.open`, `exec-js`, or raw CDP WebSocket.**
+
+```
+Opening any URL => MUST USE: frago chrome navigate <url>
+    ✅ frago chrome navigate "https://example.com"
+    ❌ exec-js "window.open('https://example.com')"
+    ❌ Raw CDP Target.createTarget via WebSocket
+```
+
+`frago chrome navigate` handles tab routing, group isolation, and logging automatically. Bypassing it breaks all of these.
+
 ## Scenario Comparison
 
 - **Search info**: ❌ `WebSearch` (crashes in desktop!) → ✅ `frago chrome navigate "https://google.com/search?q=..."`
 - **View webpage**: ❌ `Fetch` → ✅ `frago chrome navigate <url>` + `get-content`
+- **Open URL**: ❌ `window.open` / raw CDP → ✅ `frago chrome navigate <url>`
 - **Extract data**: ❌ Hand-write JS → ✅ Check `frago recipe list` first
 - **File operations**: ❌ Manual creation → ✅ Use Claude Code's Write/Edit tools
 
