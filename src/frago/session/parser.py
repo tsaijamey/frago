@@ -193,11 +193,16 @@ class IncrementalParser:
         if not session_id and not self._session_id:
             logger.warning("Record missing sessionId field, session association may fail")
 
-        # Parse timestamp (ensure UTC timezone is used)
+        # Parse timestamp (convert to naive local time per engineering.md convention)
         timestamp_str = data.get("timestamp")
         if timestamp_str:
             try:
-                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                # Convert aware datetime to naive local time
+                if parsed.tzinfo is not None:
+                    timestamp = parsed.astimezone().replace(tzinfo=None)
+                else:
+                    timestamp = parsed
             except ValueError:
                 timestamp = datetime.now()
         else:
