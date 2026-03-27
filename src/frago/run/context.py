@@ -160,6 +160,8 @@ class ContextManager:
     def release_context(self) -> Optional[str]:
         """Release current context (public method)
 
+        Also best-effort cleans up the corresponding tab group.
+
         Returns:
             released run_id, or None if no context exists
         """
@@ -171,7 +173,33 @@ class ContextManager:
             except json.JSONDecodeError:
                 pass
             self._clear_context()
+
+        # Best-effort: close the agent's tab group
+        if released_run_id:
+            self._cleanup_tab_group(released_run_id)
+
         return released_run_id
+
+    def _cleanup_tab_group(self, group_name: str) -> None:
+        """Best-effort cleanup of a tab group when releasing context."""
+        try:
+            from frago.cdp.tab_group_manager import TabGroupManager
+            from frago.cdp.session import CDPSession
+            from frago.cdp.config import CDPConfig
+
+            tgm = TabGroupManager()
+            group = tgm.get_group(group_name)
+            if not group:
+                return
+
+            session = CDPSession(CDPConfig())
+            session.connect()
+            try:
+                tgm.close_group(group_name, session)
+            finally:
+                session.disconnect()
+        except Exception:
+            pass  # Best-effort, don't break context release
 
     def get_current_run_id(self) -> Optional[str]:
         """Get current run_id (does not raise exceptions)

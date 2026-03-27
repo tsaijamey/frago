@@ -32,6 +32,7 @@ from frago.server.routes import (
     files_router,
     workspace_router,
     guide_router,
+    chrome_dashboard_router,
 )
 from frago.server.websocket import manager, MessageType, create_message
 from frago.server.services.sync_service import SyncService
@@ -277,6 +278,9 @@ def create_app(
 
     # Viewer routes for content preview (not under /api)
     app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
+
+    # Chrome landing page dashboard (not under /api)
+    app.include_router(chrome_dashboard_router, prefix="/chrome", tags=["chrome"])
     app.include_router(files_router, prefix="/api", tags=["files"])
     app.include_router(workspace_router, prefix="/api", tags=["workspace"])
 

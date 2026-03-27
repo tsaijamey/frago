@@ -528,7 +528,7 @@ class ChromeLauncher:
             ws.send(json.dumps(message))
             ws.recv()
 
-            # Inject viewport border script
+            # Inject viewport border script — static 2px border, no animation
             viewport_border_script = """
             (function() {
                 function showViewportBorder() {
@@ -538,26 +538,6 @@ class ChromeLauncher:
                     }
                     if (document.getElementById('__frago_viewport_border__')) return;
 
-                    var style = document.createElement('style');
-                    style.id = '__frago_border_style__';
-                    style.textContent = '\\
-                        @keyframes __frago_breathe__ {\\
-                            0%, 100% {\\
-                                box-shadow:\\
-                                    inset 0 0 20px 8px rgba(80, 200, 120, 0.6),\\
-                                    inset 0 0 40px 15px rgba(80, 200, 120, 0.3),\\
-                                    inset 0 0 60px 25px rgba(80, 200, 120, 0.1);\\
-                            }\\
-                            50% {\\
-                                box-shadow:\\
-                                    inset 0 0 30px 12px rgba(80, 200, 120, 0.8),\\
-                                    inset 0 0 60px 25px rgba(80, 200, 120, 0.5),\\
-                                    inset 0 0 90px 40px rgba(80, 200, 120, 0.2);\\
-                            }\\
-                        }\\
-                    ';
-                    (document.head || document.body).appendChild(style);
-
                     var border = document.createElement('div');
                     border.id = '__frago_viewport_border__';
                     border.style.cssText = '\\
@@ -566,9 +546,28 @@ class ChromeLauncher:
                         pointer-events: none;\\
                         z-index: 2147483647;\\
                         box-sizing: border-box;\\
-                        animation: __frago_breathe__ 3s ease-in-out infinite;\\
+                        border: 2px solid rgba(80, 200, 120, 0.6);\\
                     ';
                     document.body.appendChild(border);
+
+                    var label = document.createElement('div');
+                    label.id = '__frago_auto_label__';
+                    label.textContent = 'Controlled by frago';
+                    label.style.cssText = '\\
+                        position: fixed;\\
+                        top: 8px;\\
+                        left: 50%;\\
+                        transform: translateX(-50%);\\
+                        padding: 4px 12px;\\
+                        background: rgba(0,0,0,0.7);\\
+                        color: #fff;\\
+                        font-size: 12px;\\
+                        font-weight: 500;\\
+                        border-radius: 16px;\\
+                        pointer-events: none;\\
+                        z-index: 2147483647;\\
+                    ';
+                    document.body.appendChild(label);
                 }
                 showViewportBorder();
             })();
@@ -696,6 +695,10 @@ class ChromeLauncher:
             # Inject stealth scripts
             self.inject_stealth_scripts()
 
+            # Navigate first tab to landing page (not in app/kiosk mode)
+            if not self.app_mode and not self.kiosk_mode:
+                self._inject_landing_page()
+
             # Force window size for app mode (Chrome ignores --window-size for remembered windows)
             if self.app_mode:
                 self._set_window_bounds()
@@ -785,6 +788,79 @@ class ChromeLauncher:
                 }
             }))
             ws.recv()
+            ws.close()
+            return True
+
+        except Exception:
+            return False
+
+    # Server port for landing page URL (matches frago server default)
+    LANDING_PAGE_SERVER_PORT = 8093
+    LANDING_PAGE_URL = f"http://127.0.0.1:{LANDING_PAGE_SERVER_PORT}/chrome/dashboard"
+
+    def _inject_landing_page(self) -> bool:
+        """Create a dedicated landing page tab served by the frago server.
+
+        Opens ``http://127.0.0.1:8093/chrome/dashboard`` in a new tab.
+        The page polls ``/chrome/dashboard/state`` for live tab group updates.
+        """
+        try:
+            import json as _json
+            import websocket as _ws
+
+            # Check if frago server is running
+            try:
+                requests.get(self.LANDING_PAGE_URL, timeout=1)
+            except Exception:
+                return False  # Server not running, skip landing page
+
+            # Check if landing page already exists
+            response = requests.get(
+                f"http://localhost:{self.debugging_port}/json", timeout=2
+            )
+            targets = response.json()
+            for t in targets:
+                if t.get("type") == "page":
+                    url = t.get("url", "")
+                    title = t.get("title", "")
+                    if "/chrome/dashboard" in url or title == "frago":
+                        return True  # Already have a landing page
+
+            # Get a WS URL to issue Target.createTarget
+            ws_url = None
+            for t in targets:
+                if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                    ws_url = t["webSocketDebuggerUrl"]
+                    break
+
+            if not ws_url:
+                ver = requests.get(
+                    f"http://localhost:{self.debugging_port}/json/version", timeout=2
+                ).json()
+                ws_url = ver.get("webSocketDebuggerUrl")
+                if not ws_url:
+                    return False
+
+            ws = _ws.create_connection(ws_url, timeout=5)
+
+            # Create a new tab with the landing page
+            ws.send(_json.dumps({
+                "id": 100,
+                "method": "Target.createTarget",
+                "params": {"url": self.LANDING_PAGE_URL},
+            }))
+            result = _json.loads(ws.recv())
+            target_id = result.get("result", {}).get("targetId")
+
+            # Bring landing page tab to front
+            if target_id:
+                ws.send(_json.dumps({
+                    "id": 101,
+                    "method": "Target.activateTarget",
+                    "params": {"targetId": target_id},
+                }))
+                ws.recv()
+
             ws.close()
             return True
 

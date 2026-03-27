@@ -591,11 +591,32 @@ def _get_current_target_id(session: CDPSession) -> Optional[str]:
     return None
 
 
-def _route_tab_for_navigate(ctx, session: CDPSession, url: str) -> Optional[str]:
-    """Use TabManager to route to the correct tab for a URL.
+def _route_tab_for_navigate(
+    ctx, session: CDPSession, url: str, group: Optional[str] = None
+) -> Optional[str]:
+    """Route to the correct tab for a URL.
+
+    If a group context exists (explicit --group or FRAGO_CURRENT_RUN),
+    uses TabGroupManager for group-scoped routing.
+    Otherwise falls back to original TabManager.
 
     Returns target_id to use, or None if routing is not applicable.
     """
+    try:
+        from ..cdp.tab_group_manager import TabGroupManager
+
+        group_name = TabGroupManager.resolve_group_name(group)
+        if group_name:
+            tgm = TabGroupManager(
+                host=ctx.obj['HOST'],
+                port=ctx.obj['PORT'],
+            )
+            tgm.reconcile()
+            return tgm.get_or_create_tab(url, group_name, session) or None
+    except Exception:
+        pass
+
+    # Fallback: original TabManager (no group context)
     try:
         from ..cdp.tab_manager import TabManager
         tab_mgr = TabManager(
@@ -625,6 +646,12 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
 @click.command('navigate')
 @click.argument('url')
 @click.option(
+    '--group', '-g',
+    type=str,
+    default=None,
+    help='Tab group name for agent isolation (also reads FRAGO_CURRENT_RUN env)'
+)
+@click.option(
     '--wait-for',
     type=str,
     help='Wait for selector to appear before returning'
@@ -643,7 +670,7 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
 )
 @click.pass_context
 @print_usage
-def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float = 30, no_border: bool = False):
+def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str] = None, load_timeout: float = 30, no_border: bool = False):
     """Navigate to URL and get page features after loading"""
     try:
         with create_session(ctx) as session:
@@ -653,7 +680,7 @@ def navigate(ctx, url: str, wait_for: Optional[str] = None, load_timeout: float 
 
             # Tab routing: reuse tab by origin or create new
             if not ctx.obj.get('TARGET_ID'):
-                target_id = _route_tab_for_navigate(ctx, session, url)
+                target_id = _route_tab_for_navigate(ctx, session, url, group=group)
                 if target_id:
                     current_id = _get_current_target_id(session)
                     if target_id != current_id:
@@ -1728,6 +1755,161 @@ def chrome_stop(port: int):
         click.echo(f"[OK] Closed {killed} Chrome CDP process(es) (port {port})")
     else:
         click.echo(f"No Chrome CDP process found running on port {port}")
+
+
+# =============================================================================
+# Tab group commands
+# =============================================================================
+
+@click.command('groups')
+@click.option('--json', 'as_json', is_flag=True, default=False, help='Output as JSON')
+@click.pass_context
+@print_usage
+def tab_groups(ctx, as_json: bool):
+    """List all tab groups and their tab counts"""
+    import json as _json
+    from ..cdp.tab_group_manager import TabGroupManager
+
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
+    tgm = TabGroupManager(host=host, port=port)
+    tgm.reconcile()
+
+    groups = tgm.list_groups()
+    if as_json:
+        out = {
+            name: {
+                "tabs": len(g.tabs),
+                "created_at": g.created_at,
+                "agent_session": g.agent_session,
+            }
+            for name, g in groups.items()
+        }
+        click.echo(_json.dumps(out, indent=2))
+        return
+
+    if not groups:
+        click.echo("No active tab groups")
+        return
+
+    for name, g in groups.items():
+        click.echo(f"  {name}  ({len(g.tabs)} tabs)")
+
+
+@click.command('group-info')
+@click.argument('group_name')
+@click.pass_context
+@print_usage
+def tab_group_info(ctx, group_name: str):
+    """Show details of a tab group"""
+    from datetime import datetime
+    from ..cdp.tab_group_manager import TabGroupManager
+
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
+    tgm = TabGroupManager(host=host, port=port)
+    tgm.reconcile()
+
+    group = tgm.get_group(group_name)
+    if not group:
+        click.echo(f"Group '{group_name}' not found", err=True)
+        sys.exit(1)
+
+    created = datetime.fromtimestamp(group.created_at).strftime("%Y-%m-%d %H:%M:%S")
+    click.echo(f"Group: {group_name}")
+    click.echo(f"Agent session: {group.agent_session}")
+    click.echo(f"Created: {created}")
+    click.echo(f"Tabs ({len(group.tabs)}/{group.max_tabs}):")
+
+    for tab in sorted(group.tabs.values(), key=lambda t: t.last_activity, reverse=True):
+        title = tab.title or tab.url
+        click.echo(f"  [{tab.target_id[:8]}] {title}  ({tab.origin})")
+
+
+@click.command('group-close')
+@click.argument('group_name')
+@click.pass_context
+@print_usage
+def tab_group_close(ctx, group_name: str):
+    """Close a tab group and all its tabs"""
+    from ..cdp.tab_group_manager import TabGroupManager
+
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
+    tgm = TabGroupManager(host=host, port=port)
+
+    with create_session(ctx) as session:
+        if tgm.close_group(group_name, session):
+            click.echo(f"Closed group '{group_name}'")
+        else:
+            click.echo(f"Group '{group_name}' not found", err=True)
+            sys.exit(1)
+
+
+@click.command('group-cleanup')
+@click.pass_context
+@print_usage
+def tab_group_cleanup(ctx):
+    """Remove stale groups whose tabs no longer exist"""
+    from ..cdp.tab_group_manager import TabGroupManager
+
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
+    tgm = TabGroupManager(host=host, port=port)
+    count = tgm.cleanup_stale_groups()
+    click.echo(f"Cleaned up {count} stale group(s)")
+
+
+@click.command('reset')
+@click.pass_context
+@print_usage
+def chrome_reset(ctx):
+    """Close all tabs except the landing page
+
+    With FRAGO_CURRENT_RUN set: only closes that agent's group.
+    Without: closes all groups and ungrouped non-landing tabs.
+    """
+    import os as _os
+    import requests as _requests
+    from ..cdp.tab_group_manager import TabGroupManager
+
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
+    tgm = TabGroupManager(host=host, port=port)
+
+    agent_run = _os.environ.get("FRAGO_CURRENT_RUN")
+
+    with create_session(ctx) as session:
+        if agent_run:
+            # Only close the current agent's group
+            if tgm.close_group(agent_run, session):
+                click.echo(f"Reset: closed group '{agent_run}'")
+            else:
+                click.echo(f"No group '{agent_run}' to reset")
+        else:
+            # Close all groups
+            groups = list(tgm.list_groups().keys())
+            for name in groups:
+                tgm.close_group(name, session)
+
+            # Close ungrouped non-landing tabs
+            try:
+                resp = _requests.get(f"http://{host}:{port}/json/list", timeout=5)
+                for t in resp.json():
+                    if t.get("type") != "page":
+                        continue
+                    url = t.get("url", "")
+                    title = t.get("title", "")
+                    if "/chrome/dashboard" in url or url.startswith("data:text/html") or title == "frago":
+                        continue
+                    try:
+                        session.target.close_target(t["id"])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            click.echo(f"Reset: closed {len(groups)} group(s) and ungrouped tabs")
 
 
 @click.command('list-tabs')

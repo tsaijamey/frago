@@ -35,6 +35,11 @@ from .commands import (
     list_tabs,
     switch_tab,
     close_tab,
+    tab_groups,
+    tab_group_info,
+    tab_group_close,
+    tab_group_cleanup,
+    chrome_reset,
 )
 from .agent_friendly import AgentFriendlyGroup
 
@@ -134,6 +139,13 @@ chrome_group.add_command(click_element, name="click")
 chrome_group.add_command(execute_javascript, name="exec-js")
 chrome_group.add_command(get_title, name="get-title")
 chrome_group.add_command(get_content, name="get-content")
+
+# Tab groups
+chrome_group.add_command(tab_groups, name="groups")
+chrome_group.add_command(tab_group_info, name="group-info")
+chrome_group.add_command(tab_group_close, name="group-close")
+chrome_group.add_command(tab_group_cleanup, name="group-cleanup")
+chrome_group.add_command(chrome_reset, name="reset")
 
 # Visual effects
 chrome_group.add_command(screenshot, name="screenshot")

@@ -155,49 +155,25 @@ class VisualEffectsCommands:
         duration: float = 3.0,
     ) -> None:
         """
-        Display a breathing gradient border around the viewport.
+        Display a static border around the viewport to indicate automation control.
 
         Args:
             color: RGB color values (e.g., "80, 200, 120" for green)
-            duration: Breathing animation cycle duration in seconds
+            duration: Unused, kept for backward compatibility
         """
         self.logger.info("Showing viewport border indicator")
 
         script = f"""
         (() => {{
             const id = '__frago_viewport_border__';
-            const styleId = '__frago_border_style__';
 
             // Remove existing elements
             const existing = document.getElementById(id);
             if (existing) existing.remove();
-            const existingStyle = document.getElementById(styleId);
-            if (existingStyle) existingStyle.remove();
             const existingLabel = document.getElementById('__frago_auto_label__');
             if (existingLabel) existingLabel.remove();
 
-            // Add keyframes style
-            const style = document.createElement('style');
-            style.id = styleId;
-            style.textContent = `
-                @keyframes __frago_breathe__ {{
-                    0%, 100% {{
-                        box-shadow:
-                            inset 0 0 20px 8px rgba({color}, 0.6),
-                            inset 0 0 40px 15px rgba({color}, 0.3),
-                            inset 0 0 60px 25px rgba({color}, 0.1);
-                    }}
-                    50% {{
-                        box-shadow:
-                            inset 0 0 30px 12px rgba({color}, 0.8),
-                            inset 0 0 60px 25px rgba({color}, 0.5),
-                            inset 0 0 90px 40px rgba({color}, 0.2);
-                    }}
-                }}
-            `;
-            document.head.appendChild(style);
-
-            // Create border element
+            // Create border element — static 2px border, no animation
             const border = document.createElement('div');
             border.id = id;
             border.style.cssText = `
@@ -208,7 +184,8 @@ class VisualEffectsCommands:
                 height: 100%;
                 pointer-events: none;
                 z-index: 2147483647;
-                animation: __frago_breathe__ {duration}s ease-in-out infinite;
+                box-sizing: border-box;
+                border: 2px solid rgba({color}, 0.6);
             `;
             document.body.appendChild(border);
 
@@ -218,20 +195,18 @@ class VisualEffectsCommands:
             label.innerHTML = '<span style="margin-right: 6px;">&#9881;</span>Controlled by frago';
             label.style.cssText = `
                 position: fixed;
-                top: 12px;
+                top: 8px;
                 left: 50%;
                 transform: translateX(-50%);
-                padding: 6px 16px;
-                background: rgba(0, 0, 0, 0.75);
+                padding: 4px 12px;
+                background: rgba(0, 0, 0, 0.7);
                 color: #fff;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: 500;
-                border-radius: 20px;
+                border-radius: 16px;
                 pointer-events: none;
                 z-index: 2147483647;
-                backdrop-filter: blur(8px);
-                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
             `;
             document.body.appendChild(label);
         }})()
@@ -245,7 +220,7 @@ class VisualEffectsCommands:
 
         script = """
         (() => {
-            ['__frago_viewport_border__', '__frago_auto_label__', '__frago_border_style__'].forEach(id => {
+            ['__frago_viewport_border__', '__frago_auto_label__'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.remove();
             });

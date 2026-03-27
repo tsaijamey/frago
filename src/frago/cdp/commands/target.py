@@ -23,7 +23,13 @@ class TargetCommands:
         self.session = session
         self.logger = get_logger()
 
-    def create_target(self, url: str, width: Optional[int] = None, height: Optional[int] = None) -> str:
+    def create_target(
+        self,
+        url: str,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        background: bool = False,
+    ) -> str:
         """
         Create a new browser tab and navigate to URL
 
@@ -31,6 +37,7 @@ class TargetCommands:
             url: URL to open in new tab
             width: Optional viewport width
             height: Optional viewport height
+            background: If True, create tab in background (don't steal focus)
 
         Returns:
             str: Target ID of the new tab
@@ -42,6 +49,8 @@ class TargetCommands:
             params["width"] = width
         if height is not None:
             params["height"] = height
+        if background:
+            params["background"] = True
 
         result = self.session.send_command("Target.createTarget", params)
 

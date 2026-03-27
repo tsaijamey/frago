@@ -31,6 +31,7 @@ from frago.server.routes.workspace import router as workspace_router
 from frago.server.routes.guide import router as guide_router
 from frago.server.routes.pa import router as pa_router
 from frago.server.routes.timeline import router as timeline_router
+from frago.server.routes.chrome_dashboard import router as chrome_dashboard_router
 
 __all__ = [
     "system_router",
@@ -49,4 +50,5 @@ __all__ = [
     "guide_router",
     "pa_router",
     "timeline_router",
+    "chrome_dashboard_router",
 ]

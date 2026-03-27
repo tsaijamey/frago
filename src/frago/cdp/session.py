@@ -152,11 +152,25 @@ class CDPSession(CDPClient):
                 # Specified target not found
                 raise ConnectionError(f"Target not found: {self.config.target_id}")
 
-            # No target_id specified, find first available page
+            # No target_id specified, find first available page (skip landing page)
+            fallback_ws_url = None
             for target in targets:
-                if target.get('type') == 'page' and target.get('webSocketDebuggerUrl'):
-                    self.logger.debug(f"Using page: {target.get('title', 'Unknown')}")
-                    return target['webSocketDebuggerUrl']
+                if target.get('type') != 'page' or not target.get('webSocketDebuggerUrl'):
+                    continue
+                target_url = target.get('url', '')
+                target_title = target.get('title', '')
+                # Skip landing page — identified by dashboard URL, data: URI, or title "frago"
+                if '/chrome/dashboard' in target_url or target_url.startswith('data:text/html') or target_title == 'frago':
+                    if fallback_ws_url is None:
+                        fallback_ws_url = target['webSocketDebuggerUrl']
+                    continue
+                self.logger.debug(f"Using page: {target.get('title', 'Unknown')}")
+                return target['webSocketDebuggerUrl']
+
+            # All pages are landing pages — use it as fallback
+            if fallback_ws_url:
+                self.logger.debug("Only landing page available, using it as fallback")
+                return fallback_ws_url
 
             # If no page available, use browser endpoint
             response = requests.get(
