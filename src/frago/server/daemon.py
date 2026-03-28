@@ -4,6 +4,7 @@ Provides cross-platform background process spawning, PID file management,
 and server lifecycle control (start/stop/status).
 """
 
+import json
 import os
 import platform
 import signal
@@ -11,7 +12,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import psutil
 
@@ -541,6 +542,98 @@ def restart_daemon(force: bool = False) -> Tuple[bool, str]:
         return False, f"Failed to stop server: {stop_msg}"
 
     return True, f"Server restart initiated (old PID: {pid}). Restarter will start new instance."
+
+
+def check_active_tasks() -> dict[str, Any]:
+    """Check if there are active tasks that would be killed by server stop/restart.
+
+    Checks two layers:
+    1. ~/.frago/current_run — run lock means a sub-agent is active
+    2. ingested_tasks.json — EXECUTING tasks are in progress
+
+    Returns dict with keys: has_active, run_lock, executing_tasks, message.
+    """
+    from frago.server.services.ingestion.models import TaskStatus
+    from frago.server.services.ingestion.store import TaskStore
+
+    result: dict[str, Any] = {
+        "has_active": False,
+        "run_lock": None,
+        "executing_tasks": [],
+        "message": "",
+    }
+    reasons: list[str] = []
+
+    # 1. Check run lock
+    current_run_file = FRAGO_DIR / "current_run"
+    if current_run_file.exists():
+        try:
+            data = json.loads(current_run_file.read_text())
+            run_id = data.get("run_id")
+            if run_id:
+                result["run_lock"] = run_id
+                result["has_active"] = True
+                theme = data.get("theme_description", "")
+                desc = f"Run lock active: {run_id}"
+                if theme:
+                    desc += f" ({theme})"
+                reasons.append(desc)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 2. Check EXECUTING tasks
+    try:
+        store = TaskStore()
+        executing = store.get_by_status(TaskStatus.EXECUTING)
+        for task in executing:
+            result["executing_tasks"].append({
+                "id": task.id,
+                "channel": task.channel,
+            })
+        if executing:
+            result["has_active"] = True
+            reasons.append(f"{len(executing)} task(s) executing")
+    except Exception:
+        pass  # TaskStore unreadable should not block guard
+
+    if reasons:
+        result["message"] = "Active tasks detected:\n" + "\n".join(
+            f"  • {r}" for r in reasons
+        )
+
+    return result
+
+
+def force_cleanup_active_tasks(report: dict[str, Any]) -> None:
+    """Graceful cleanup before forced stop/restart.
+
+    1. Mark EXECUTING tasks as FAILED
+    2. Release run lock
+    """
+    from frago.run.context import ContextManager
+    from frago.server.services.ingestion.models import TaskStatus
+    from frago.server.services.ingestion.store import TaskStore
+
+    # 1. Mark EXECUTING tasks as FAILED
+    if report["executing_tasks"]:
+        try:
+            store = TaskStore()
+            for task_info in report["executing_tasks"]:
+                store.update_status(
+                    task_info["id"],
+                    TaskStatus.FAILED,
+                    error="server force stop/restart",
+                )
+        except Exception:
+            pass  # best-effort
+
+    # 2. Release run lock
+    if report["run_lock"]:
+        try:
+            ctx_mgr = ContextManager(FRAGO_DIR, FRAGO_DIR / "projects")
+            ctx_mgr.release_context()
+        except Exception:
+            pass  # best-effort
 
 
 def get_server_status() -> dict:

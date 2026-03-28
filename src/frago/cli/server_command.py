@@ -25,6 +25,26 @@ def _guard_sub_agent(action: str) -> None:
         )
 
 
+def _guard_active_tasks(force: bool, action: str) -> None:
+    """Block stop/restart when active tasks are running (unless --force)."""
+    from frago.server.daemon import check_active_tasks, force_cleanup_active_tasks
+
+    report = check_active_tasks()
+    if not report["has_active"]:
+        return
+
+    if not force:
+        click.echo(f"Cannot {action} server: active tasks are running.\n")
+        click.echo(report["message"])
+        click.echo(f"\nUse --force to {action} anyway (tasks will be marked FAILED).")
+        raise SystemExit(1)
+
+    # --force: cleanup before proceeding
+    click.echo(f"Force {action}: cleaning up active tasks...")
+    force_cleanup_active_tasks(report)
+    click.echo("Active tasks cleaned up.")
+
+
 @click.group("server", invoke_without_command=True)
 @click.option(
     "--debug",
@@ -117,9 +137,15 @@ def _run_foreground() -> None:
 
 
 @server_group.command("stop")
-def stop() -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force stop even if active tasks are running",
+)
+def stop(force: bool) -> None:
     """Stop the running Frago web service."""
     _guard_sub_agent("stop")
+    _guard_active_tasks(force, "stop")
     from frago.server.daemon import stop_daemon
 
     success, message = stop_daemon()
@@ -142,6 +168,7 @@ def restart(force: bool) -> None:
     If the server is not running, starts it.
     """
     _guard_sub_agent("restart")
+    _guard_active_tasks(force, "restart")
     from frago.server.daemon import restart_daemon
 
     success, message = restart_daemon(force=force)
