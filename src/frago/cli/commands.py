@@ -591,16 +591,43 @@ def _get_current_target_id(session: CDPSession) -> Optional[str]:
     return None
 
 
+def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) -> Optional[str]:
+    """Find which group a tab belongs to. Returns group name or None."""
+    try:
+        from ..cdp.tab_group_manager import TabGroupManager
+        tgm = TabGroupManager(host=host, port=port)
+        for name, group in tgm.list_groups().items():
+            if tab_id in group.tabs:
+                return name
+    except Exception:
+        pass
+    return None
+
+
+def _build_group_index(host: str = "127.0.0.1", port: int = 9222) -> dict[str, str]:
+    """Build tab_id → group_name mapping for all groups. Returns empty dict on failure."""
+    try:
+        from ..cdp.tab_group_manager import TabGroupManager
+        tgm = TabGroupManager(host=host, port=port)
+        index: dict[str, str] = {}
+        for name, group in tgm.list_groups().items():
+            for tid in group.tabs:
+                index[tid] = name
+        return index
+    except Exception:
+        return {}
+
+
 def _route_tab_for_navigate(
     ctx, session: CDPSession, url: str, group: Optional[str] = None
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """Route to the correct tab for a URL.
 
     If a group context exists (explicit --group or FRAGO_CURRENT_RUN),
     uses TabGroupManager for group-scoped routing.
     Otherwise falls back to original TabManager.
 
-    Returns target_id to use, or None if routing is not applicable.
+    Returns (target_id, resolved_group_name) tuple.
     """
     try:
         from ..cdp.tab_group_manager import TabGroupManager
@@ -612,7 +639,8 @@ def _route_tab_for_navigate(
                 port=ctx.obj['PORT'],
             )
             tgm.reconcile()
-            return tgm.get_or_create_tab(url, group_name, session) or None
+            tid = tgm.get_or_create_tab(url, group_name, session) or None
+            return tid, group_name
     except Exception:
         pass
 
@@ -625,9 +653,9 @@ def _route_tab_for_navigate(
         )
         tab_mgr.reconcile()
         target_id = tab_mgr.get_or_create_tab(url, session)
-        return target_id or None
+        return target_id or None, None
     except Exception:
-        return None
+        return None, None
 
 
 def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
@@ -679,8 +707,9 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
                 session.auto_viewport_border = False
 
             # Tab routing: reuse tab by origin or create new
+            resolved_group = None
             if not ctx.obj.get('TARGET_ID'):
-                target_id = _route_tab_for_navigate(ctx, session, url, group=group)
+                target_id, resolved_group = _route_tab_for_navigate(ctx, session, url, group=group)
                 if target_id:
                     current_id = _get_current_target_id(session)
                     if target_id != current_id:
@@ -691,6 +720,12 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
             # 1. Navigate
             session.navigate(url)
             _print_msg("success", f"Navigated to {url}", "navigation", {"url": url})
+
+            # Print group context
+            if resolved_group:
+                _print_msg("success", f"Tab group: {resolved_group}", "navigation", {"group": resolved_group})
+            else:
+                _print_msg("warning", "No group context — tab is unprotected from cleanup (use --group or set FRAGO_CURRENT_RUN)", "navigation")
 
             # 2. Wait for page load
             session.wait_for_load(timeout=load_timeout)
@@ -1878,6 +1913,7 @@ def chrome_reset(ctx):
     tgm = TabGroupManager(host=host, port=port)
 
     agent_run = _os.environ.get("FRAGO_CURRENT_RUN")
+    click.echo(f"Group context: {agent_run or '(none — global reset)'}")
 
     with create_session(ctx) as session:
         if agent_run:
@@ -1891,8 +1927,10 @@ def chrome_reset(ctx):
             groups = list(tgm.list_groups().keys())
             for name in groups:
                 tgm.close_group(name, session)
+                click.echo(f"  Closed group: {name}")
 
             # Close ungrouped non-landing tabs
+            ungrouped_closed = 0
             try:
                 resp = _requests.get(f"http://{host}:{port}/json/list", timeout=5)
                 for t in resp.json():
@@ -1904,12 +1942,13 @@ def chrome_reset(ctx):
                         continue
                     try:
                         session.target.close_target(t["id"])
+                        ungrouped_closed += 1
                     except Exception:
                         pass
             except Exception:
                 pass
 
-            click.echo(f"Reset: closed {len(groups)} group(s) and ungrouped tabs")
+            click.echo(f"Reset: closed {len(groups)} group(s) and {ungrouped_closed} ungrouped tab(s)")
 
 
 @click.command('list-tabs')
@@ -1956,6 +1995,9 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
             except Exception:
                 pass
 
+        # Load group membership
+        group_index = _build_group_index(host=host, port=port)
+
         output = []
         for i, p in enumerate(pages):
             tab_id = p.get('id', '')
@@ -1968,6 +2010,9 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
                 "title": title,
                 "url": url,
             }
+
+            if tab_id in group_index:
+                tab_info["group"] = group_index[tab_id]
 
             if tracked and tab_id in tracking:
                 entry = tracking[tab_id]
@@ -1984,6 +2029,9 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
                 display_title = item["title"][:50]
 
                 suffix = ""
+                group_part = ""
+                if "group" in item:
+                    group_part = f" group:{item['group']}"
                 if "origin" in item:
                     origin_part = f" [{item['origin']}]" if item["origin"] else ""
                     age = time.time() - item["last_activity"]
@@ -1995,7 +2043,7 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
                         age_part = f" (active {int(age / 3600)}h ago)"
                     suffix = f"{origin_part}{age_part}"
 
-                click.echo(f"{item['index']}. [{tab_id[:8]}...]{suffix} {display_title}")
+                click.echo(f"{item['index']}. [{tab_id[:8]}...]{group_part}{suffix} {display_title}")
                 click.echo(f"   {item['url']}")
 
     except Exception as e:
@@ -2054,18 +2102,22 @@ def switch_tab(ctx, tab_id: str):
             return
 
         # Update tab activity tracking
+        full_id = target.get('id')
         try:
             from ..cdp.tab_manager import TabManager
             tab_mgr = TabManager(host=host, port=port)
-            tab_mgr.touch_tab(target.get('id'))
+            tab_mgr.touch_tab(full_id)
             tab_mgr._save_state()
         except Exception:
             pass
 
-        _print_msg("success", f"Switched to tab: {target.get('title', 'Unknown')}", "tab_switch", {
-            "tab_id": target.get('id'),
+        tab_group = _lookup_tab_group(full_id, host=host, port=port)
+        group_info = f" (group: {tab_group})" if tab_group else ""
+        _print_msg("success", f"Switched to tab: {target.get('title', 'Unknown')}{group_info}", "tab_switch", {
+            "tab_id": full_id,
             "title": target.get('title'),
-            "url": target.get('url')
+            "url": target.get('url'),
+            "group": tab_group,
         })
 
     except Exception as e:
@@ -2108,6 +2160,9 @@ def close_tab(ctx, tab_id: str):
 
         full_id = target.get('id')
 
+        # Check group membership before closing
+        tab_group = _lookup_tab_group(full_id, host=host, port=port)
+
         # Close via TargetCommands CDP command
         with create_session(ctx) as session:
             success = session.target.close_target(full_id)
@@ -2122,10 +2177,24 @@ def close_tab(ctx, tab_id: str):
             except Exception:
                 pass
 
-            _print_msg("success", f"Closed tab: {target.get('title', 'Unknown')}", "tab_close", {
+            # Remove from TabGroupManager if it was grouped
+            if tab_group:
+                try:
+                    from ..cdp.tab_group_manager import TabGroupManager
+                    tgm = TabGroupManager(host=host, port=port)
+                    grp = tgm.get_group(tab_group)
+                    if grp and full_id in grp.tabs:
+                        del grp.tabs[full_id]
+                        tgm._save_state()
+                except Exception:
+                    pass
+
+            group_info = f" (removed from group: {tab_group})" if tab_group else ""
+            _print_msg("success", f"Closed tab: {target.get('title', 'Unknown')}{group_info}", "tab_close", {
                 "tab_id": full_id,
                 "title": target.get('title'),
-                "url": target.get('url')
+                "url": target.get('url'),
+                "group": tab_group,
             })
         else:
             click.echo(f"Failed to close tab: {full_id}", err=True)
