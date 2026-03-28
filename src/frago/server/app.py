@@ -103,6 +103,12 @@ async def lifespan(app: FastAPI):
     recipe_scheduler = RecipeSchedulerService.get_instance()
     await recipe_scheduler.start()
 
+    # Start tab cleanup service (periodic orphan tab reconciliation)
+    from frago.server.services.tab_cleanup_service import TabCleanupService
+
+    tab_cleanup = TabCleanupService.get_instance()
+    await tab_cleanup.start()
+
     # Initialize Primary Agent (PID 1 — always available, independent of features)
     from frago.server.services.primary_agent_service import PrimaryAgentService
 
@@ -124,6 +130,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if ingestion_scheduler is not None:
         await ingestion_scheduler.stop()
+    await tab_cleanup.stop()
     await primary_agent.stop()
     await recipe_scheduler.stop()
     await github_sync_scheduler.stop()
