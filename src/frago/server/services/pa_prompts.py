@@ -109,9 +109,8 @@ PA_HEARTBEAT_BOOTSTRAP_TEMPLATE = """\
 # 由 _format_queue_messages() 将多条消息用 PA_MERGED_MESSAGES_TEMPLATE 包裹。
 # --------------------------------------------------------------------------
 PA_MESSAGE_TEMPLATE = """\
-[用户消息] 来源: {channel} (msg_id: {channel_message_id})
-<task id="{task_id}" channel="{channel}">
-{prompt}
+<task id="{task_id}" channel="{channel}" msg_id="{channel_message_id}">
+{group_line}{prompt}
 </task>\
 """
 

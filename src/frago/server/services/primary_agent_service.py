@@ -510,11 +510,17 @@ class PrimaryAgentService:
                         "\n⚠️ 这是一个重新投递的待处理任务——之前的处理结果未生效"
                         "（可能因 session rotation 丢失）。你必须重新处理此任务。"
                     )
+                channel_name = msg.get("channel", "?")
+                reply_ctx = msg.get("reply_context") or {}
+                chat_name = reply_ctx.get("chat_name")
+                group_line = f"<group_name>{chat_name}</group_name>\n" if chat_name else ""
+
                 msg_parts.append(PA_MESSAGE_TEMPLATE.format(
-                    channel=msg.get("channel", "?"),
+                    channel=channel_name,
                     channel_message_id=msg.get("channel_message_id", "?"),
                     task_id=msg.get("task_id", ""),
                     prompt=msg.get("prompt", ""),
+                    group_line=group_line,
                 ) + recovered_note)
 
             elif msg_type == "agent_notify":
