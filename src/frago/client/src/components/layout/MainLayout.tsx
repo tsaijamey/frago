@@ -1,13 +1,13 @@
 /**
  * MainLayout Component
  *
- * Main layout wrapper that combines:
- * - Collapsible left sidebar for navigation (includes system status)
- * - Content area for page rendering
+ * New layout: TopBar + full-width content + floating BottomDock.
+ * No sidebar — navigation lives in the dock.
  */
 
 import { ReactNode } from 'react';
-import Sidebar from './Sidebar';
+import TopBar from './TopBar';
+import BottomDock from './BottomDock';
 import VersionBanner from './VersionBanner';
 
 interface MainLayoutProps {
@@ -20,18 +20,20 @@ export default function MainLayout({ children }: MainLayoutProps) {
       {/* Version Update Banner */}
       <VersionBanner />
 
-      <div className="main-layout">
-        {/* Sidebar */}
-        <Sidebar />
+      {/* Top status bar */}
+      <TopBar />
 
-        {/* Content Area */}
-        <div className="content-area">
-          {/* Main Content */}
+      <div className="main-layout main-layout--no-sidebar">
+        {/* Content Area — full width */}
+        <div className="content-area content-area--full">
           <main className="main-content">
             {children}
           </main>
         </div>
       </div>
+
+      {/* Floating bottom navigation */}
+      <BottomDock />
     </div>
   );
 }

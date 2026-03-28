@@ -9,53 +9,61 @@
 @tailwind utilities;
 
 /* === CSS Variables - Dark Theme (Default) === */
-/* Based on Slate color palette from design */
+/* Aligned to frago design prototype (.claude/desgin/styles.css) */
 :root {
-  /* Background color scale - Slate blue-gray */
-  --bg-primary: #0A0F1C;
-  --bg-secondary: #0F172A;
-  --bg-tertiary: #1E293B;
-  --bg-card: #1E293B;
-  --bg-base: #0F172A;
-  --bg-subtle: #0F172A;
-  --bg-hover: #1E293B;
-  --bg-elevated: #334155;
+  /* Background color scale — deep blue-gray */
+  --bg-primary: #0c0f14;
+  --bg-secondary: #111620;
+  --bg-tertiary: #1a2332;
+  --bg-card: #1a2332;
+  --bg-base: #0c0f14;
+  --bg-subtle: #111620;
+  --bg-hover: #1a2332;
+  --bg-elevated: #1a2332;
+  --bg-overlay: #0c0f14cc;
 
   /* Sidebar specific colors (dark mode) */
-  --page-bg: #0A0F1C;
-  --sidebar-bg: #0F172A;
-  --sidebar-item-selected-bg: #1E293B;
-  --sidebar-item-selected-text: #FFFFFF;
-  --sidebar-item-unselected-text: rgba(255, 255, 255, 0.5);
+  --page-bg: #0c0f14;
+  --sidebar-bg: #111620;
+  --sidebar-item-selected-bg: #1a2332;
+  --sidebar-item-selected-text: #cbd5e0;
+  --sidebar-item-unselected-text: rgba(203, 213, 224, 0.5);
   --sidebar-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
   /* Text color scale */
-  --text-primary: #FFFFFF;
-  --text-secondary: #94A3B8;
-  --text-muted: #64748B;
-  --text-link: #009933;
-  --text-on-accent: #0A0F1C;
+  --text-primary: #cbd5e0;
+  --text-secondary: #718096;
+  --text-muted: #4a5568;
+  --text-dim: #4a5568;
+  --text-link: #4ecdc4;
+  --text-on-accent: #0c0f14;
+  --text-white: #ffffff;
+  --text-blue: #5ba4cf;
+  --text-blue-dim: #5ba4cf88;
+  --text-yellow: #ecc94b;
 
-  /* Accent colors - Green primary */
-  --accent-primary: #009933;
-  --accent-primary-10: rgba(0, 153, 51, 0.1);
-  --accent-primary-20: rgba(0, 153, 51, 0.2);
-  --accent-success: #22C55E;
-  --accent-warning: #F59E0B;
+  /* Accent colors — teal primary (design: #4ecdc4) */
+  --accent-primary: #4ecdc4;
+  --accent-primary-10: rgba(78, 205, 196, 0.1);
+  --accent-primary-20: rgba(78, 205, 196, 0.2);
+  --accent-success: #4ecdc4;
+  --accent-warning: #ecc94b;
   --accent-error: #EF4444;
-  --accent-info: #60A5FA;
-  --accent-info-bg: #1E3A5F;
-  --accent-info-text: #93C5FD;
+  --accent-info: #5ba4cf;
+  --accent-info-bg: #1a2332;
+  --accent-info-text: #5ba4cf;
 
   /* Border colors */
-  --border-color: #334155;
-  --border-primary: #009933;
+  --border-color: rgba(78, 205, 196, 0.19);
+  --border-accent: rgba(78, 205, 196, 0.19);
+  --border-primary: #4ecdc4;
+  --border-dim: rgba(30, 42, 58, 0.19);
   --shadow-color: rgba(0, 0, 0, 0.6);
 
   /* Status badge backgrounds */
-  --status-running-bg: rgba(210, 153, 34, 0.15);
-  --status-completed-bg: rgba(63, 185, 80, 0.15);
-  --status-error-bg: rgba(248, 81, 73, 0.15);
+  --status-running-bg: rgba(236, 201, 75, 0.15);
+  --status-completed-bg: rgba(78, 205, 196, 0.15);
+  --status-error-bg: rgba(239, 68, 68, 0.15);
 
   /* Spacing system (8px grid, fixed values) */
   --spacing-xs: 4px;
@@ -106,7 +114,7 @@
 }
 
 /* === Light Theme === */
-/* Slate light palette from design */
+/* Teal accent on light backgrounds */
 [data-theme='light'] {
   --bg-primary: #FFFFFF;
   --bg-secondary: #F8FAFC;
@@ -116,6 +124,7 @@
   --bg-subtle: #F1F5F9;
   --bg-hover: #E2E8F0;
   --bg-elevated: #E2E8F0;
+  --bg-overlay: rgba(255, 255, 255, 0.8);
 
   /* Sidebar specific colors (light mode) */
   --page-bg: #E2E8F0;
@@ -128,12 +137,17 @@
   --text-primary: #0F172A;
   --text-secondary: #475569;
   --text-muted: #64748B;
-  --text-link: #007A2A;
+  --text-dim: #94A3B8;
+  --text-link: #2ba89e;
   --text-on-accent: #FFFFFF;
+  --text-white: #0F172A;
+  --text-blue: #2563EB;
+  --text-blue-dim: rgba(37, 99, 235, 0.5);
+  --text-yellow: #CA8A04;
 
-  --accent-primary: #007A2A;
-  --accent-primary-10: rgba(0, 122, 42, 0.1);
-  --accent-primary-20: rgba(0, 122, 42, 0.2);
+  --accent-primary: #2ba89e;
+  --accent-primary-10: rgba(43, 168, 158, 0.1);
+  --accent-primary-20: rgba(43, 168, 158, 0.2);
   --accent-success: #16A34A;
   --accent-warning: #CA8A04;
   --accent-error: #DC2626;
@@ -142,12 +156,14 @@
   --accent-info-text: #1E40AF;
 
   --border-color: #E2E8F0;
-  --border-primary: #007A2A;
+  --border-accent: rgba(43, 168, 158, 0.2);
+  --border-primary: #2ba89e;
+  --border-dim: rgba(226, 232, 240, 0.5);
   --shadow-color: rgba(0, 0, 0, 0.08);
 
   /* Status badge backgrounds */
   --status-running-bg: rgba(202, 138, 4, 0.12);
-  --status-completed-bg: rgba(22, 163, 74, 0.12);
+  --status-completed-bg: rgba(43, 168, 158, 0.12);
   --status-error-bg: rgba(220, 38, 38, 0.12);
 }
 
@@ -489,6 +505,125 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   flex-direction: column;
   background: transparent;
+}
+
+/* === New Layout: No Sidebar === */
+.main-layout--no-sidebar {
+  flex: 1;
+  overflow: hidden;
+}
+
+.content-area--full {
+  margin: 0;
+  border-radius: 0;
+  background: var(--bg-primary);
+}
+
+/* === TopBar === */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 32px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.topbar-logo {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent-primary);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.topbar-status {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.topbar-status--active {
+  color: var(--accent-primary);
+  font-weight: 500;
+}
+
+.topbar-time {
+  color: var(--text-muted);
+}
+
+/* === BottomDock === */
+.bottom-dock {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+}
+
+.dock-items {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 24px;
+  height: 56px;
+  background: rgba(26, 35, 50, 0.87);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+}
+
+.dock-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 56px;
+  height: 48px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dock-item:hover {
+  background: var(--accent-primary-10);
+}
+
+.dock-item--active {
+  background: var(--accent-primary-10);
+  color: var(--accent-primary);
+}
+
+.dock-item-icon {
+  display: flex;
+  align-items: center;
+  font-size: 18px;
+}
+
+.dock-item-label {
+  font-size: 8px;
+  font-weight: 500;
+}
+
+.dock-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color);
+  margin: 0 4px;
 }
 
 /* === Sidebar === */
