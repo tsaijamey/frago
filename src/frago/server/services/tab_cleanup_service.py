@@ -80,6 +80,7 @@ class TabCleanupService:
     def _do_cleanup(self) -> None:
         """Reconcile groups and close orphan tabs (runs in thread pool)."""
         from frago.cdp.tab_group_manager import TabGroupManager
+        from frago.cdp.tab_manager import TabManager
 
         port = DEFAULT_CDP_PORT
 
@@ -97,6 +98,13 @@ class TabCleanupService:
         for group in tgm.list_groups().values():
             grouped_ids.update(group.tabs.keys())
 
+        # Collect TabManager-tracked target_ids
+        tm = TabManager(port=port)
+        tm.reconcile()
+        managed_ids: set[str] = {
+            entry.tab_id for entry in tm.get_tracked_tabs()
+        }
+
         # Fetch live tabs and close orphans
         try:
             resp = requests.get(
@@ -113,12 +121,14 @@ class TabCleanupService:
             tid = t.get("id", "")
             url = t.get("url", "")
             title = t.get("title", "")
-            # Keep: landing page, grouped tabs, data URLs
+            # Keep: landing page, grouped tabs, managed tabs, data URLs
             if "/chrome/dashboard" in url or title == "frago":
                 continue
             if url.startswith("data:text/html"):
                 continue
             if tid in grouped_ids:
+                continue
+            if tid in managed_ids:
                 continue
             # Orphan — close it
             try:

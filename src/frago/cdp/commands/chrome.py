@@ -804,11 +804,12 @@ class ChromeLauncher:
         """Reconcile tab group state and close orphan tabs at startup.
 
         1. Remove stale group entries whose tabs no longer exist.
-        2. Close orphan tabs — tabs that are not the landing page and not
-           tracked by any group. These are leftover from a previous session.
+        2. Close orphan tabs — tabs that are not the landing page, not
+           tracked by any group, and not managed by TabManager.
         """
         try:
             from ..tab_group_manager import TabGroupManager
+            from ..tab_manager import TabManager
 
             tgm = TabGroupManager(port=self.debugging_port)
             tgm.reconcile()
@@ -817,6 +818,13 @@ class ChromeLauncher:
             grouped_ids: set[str] = set()
             for group in tgm.list_groups().values():
                 grouped_ids.update(group.tabs.keys())
+
+            # Collect TabManager-tracked target_ids
+            tm = TabManager(port=self.debugging_port)
+            tm.reconcile()
+            managed_ids: set[str] = {
+                entry.tab_id for entry in tm.get_tracked_tabs()
+            }
 
             # Fetch live tabs and close orphans
             resp = requests.get(
@@ -828,12 +836,14 @@ class ChromeLauncher:
                 tid = t.get("id", "")
                 url = t.get("url", "")
                 title = t.get("title", "")
-                # Keep: landing page, grouped tabs, data URLs
+                # Keep: landing page, grouped tabs, managed tabs, data URLs
                 if "/chrome/dashboard" in url or title == "frago":
                     continue
                 if url.startswith("data:text/html"):
                     continue
                 if tid in grouped_ids:
+                    continue
+                if tid in managed_ids:
                     continue
                 # Orphan — close it
                 try:
