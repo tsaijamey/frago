@@ -30,6 +30,13 @@ export const MessageType = {
   RECIPE_STARTED: 'recipe_started',
   RECIPE_COMPLETED: 'recipe_completed',
 
+  // PA events (Primary Agent lifecycle)
+  PA_INGESTION: 'pa_ingestion',
+  PA_DECISION: 'pa_decision',
+  PA_AGENT_LAUNCHED: 'pa_agent_launched',
+  PA_AGENT_EXITED: 'pa_agent_exited',
+  PA_REPLY: 'pa_reply',
+
   // Data push events (for cache updates)
   DATA_INITIAL: 'data_initial',
   DATA_TASKS: 'data_tasks',

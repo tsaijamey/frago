@@ -23,6 +23,7 @@ import * as api from '@/api';
 
 // Page type - Updated for new admin panel layout
 export type PageType =
+  | 'live'
   | 'dashboard'
   | 'tasks'
   | 'task_detail'
@@ -163,7 +164,9 @@ function generateId(): string {
 }
 
 // Apply theme to DOM and persist to localStorage for FOUC prevention
-function applyTheme(theme: Theme) {
+// Design spec only supports dark theme — force dark regardless of input
+function applyTheme(_theme: Theme) {
+  const theme: Theme = 'dark';
   document.documentElement.setAttribute('data-theme', theme);
   document.documentElement.style.colorScheme = theme;
   // Save to localStorage so index.html can read it before JS loads
@@ -185,8 +188,8 @@ function getInitialSidebarCollapsed(): boolean {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Initial state - default to 'newTask' page
-  currentPage: 'newTask',
+  // Initial state - default to 'live' timeline page
+  currentPage: 'live',
   currentTaskId: null,
   currentRecipeName: null,
   currentProjectId: null,

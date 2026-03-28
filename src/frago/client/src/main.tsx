@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './i18n'; // Initialize i18n before App
 import App from './App';
 import './styles/globals.css';
+import './styles/timeline.css';
 
 // Theme initialization is handled by inline script in index.html
 // which reads from localStorage before any CSS/JS loads.

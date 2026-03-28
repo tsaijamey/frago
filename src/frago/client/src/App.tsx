@@ -8,6 +8,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import MainLayout from '@/components/layout/MainLayout';
 
 // Pages
+import TimelinePage from '@/components/timeline/TimelinePage';
 import DashboardPage from '@/components/dashboard/DashboardPage';
 import TaskList from '@/components/tasks/TaskList';
 import TaskDetail from '@/components/tasks/TaskDetail';
@@ -92,9 +93,11 @@ function App() {
   }, [apiReady]);
 
   // Render content based on current page
-  // Default page is 'newTask' (set in appStore)
+  // Default page is 'live' (timeline, set in appStore)
   const renderPage = () => {
     switch (currentPage) {
+      case 'live':
+        return <TimelinePage />;
       case 'dashboard':
         return <DashboardPage />;
       case 'tasks':
@@ -119,7 +122,7 @@ function App() {
       case 'project_detail':
         return <WorkspacePage />;
       default:
-        return <TaskList />;
+        return <TimelinePage />;
     }
   };
 
