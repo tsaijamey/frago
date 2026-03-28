@@ -697,6 +697,8 @@ class ChromeLauncher:
 
             # Navigate first tab to landing page (not in app/kiosk mode)
             if not self.app_mode and not self.kiosk_mode:
+                # Reconcile stale tab groups before showing dashboard
+                self._reconcile_tab_groups()
                 self._inject_landing_page()
 
             # Force window size for app mode (Chrome ignores --window-size for remembered windows)
@@ -797,6 +799,52 @@ class ChromeLauncher:
     # Server port for landing page URL (matches frago server default)
     LANDING_PAGE_SERVER_PORT = 8093
     LANDING_PAGE_URL = f"http://127.0.0.1:{LANDING_PAGE_SERVER_PORT}/chrome/dashboard"
+
+    def _reconcile_tab_groups(self) -> None:
+        """Reconcile tab group state and close orphan tabs at startup.
+
+        1. Remove stale group entries whose tabs no longer exist.
+        2. Close orphan tabs — tabs that are not the landing page and not
+           tracked by any group. These are leftover from a previous session.
+        """
+        try:
+            from ..tab_group_manager import TabGroupManager
+
+            tgm = TabGroupManager(port=self.debugging_port)
+            tgm.reconcile()
+
+            # Collect all target_ids still tracked by groups
+            grouped_ids: set[str] = set()
+            for group in tgm.list_groups().values():
+                grouped_ids.update(group.tabs.keys())
+
+            # Fetch live tabs and close orphans
+            resp = requests.get(
+                f"http://localhost:{self.debugging_port}/json/list", timeout=5
+            )
+            for t in resp.json():
+                if t.get("type") != "page":
+                    continue
+                tid = t.get("id", "")
+                url = t.get("url", "")
+                title = t.get("title", "")
+                # Keep: landing page, grouped tabs, data URLs
+                if "/chrome/dashboard" in url or title == "frago":
+                    continue
+                if url.startswith("data:text/html"):
+                    continue
+                if tid in grouped_ids:
+                    continue
+                # Orphan — close it
+                try:
+                    requests.get(
+                        f"http://localhost:{self.debugging_port}/json/close/{tid}",
+                        timeout=2,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass  # Best-effort — don't block startup
 
     def _inject_landing_page(self) -> bool:
         """Create a dedicated landing page tab served by the frago server.
