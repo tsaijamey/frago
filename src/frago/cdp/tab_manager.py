@@ -208,10 +208,6 @@ class TabManager:
         existing = self.find_tab_by_origin(origin)
         if existing:
             existing.touch()
-            try:
-                session.target.activate_target(existing.tab_id)
-            except Exception:
-                pass
             self._save_state()
             return existing.tab_id
 
@@ -219,7 +215,7 @@ class TabManager:
         if len(self._state) >= MAX_TABS:
             self._evict_lru_tab(session)
 
-        target_id = session.target.create_target(url)
+        target_id = session.target.create_target(url, background=True)
         now = time.time()
         self._state[target_id] = TabEntry(
             tab_id=target_id,
