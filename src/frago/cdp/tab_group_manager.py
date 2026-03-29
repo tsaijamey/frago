@@ -265,6 +265,8 @@ class TabGroupManager:
 
         for name in empty_groups:
             del self._state[name]
+            self._deleted_groups.add(name)
+            self._dirty_groups.discard(name)
             changed = True
 
         if changed:
