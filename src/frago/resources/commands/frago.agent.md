@@ -14,6 +14,11 @@ Use the Skill tool to invoke these commands:
 - `/frago.recipe` - Create reusable browser automation recipes
 - `/frago.test` - Test and validate existing recipes
 
+## 开始前
+
+运行 `frago book` 了解 frago 的工具和约束。
+遇到不确定的操作方式，运行 `frago book <topic>` 查询。
+
 ## Execution Rules (MUST FOLLOW)
 
 | User Intent | Action |

@@ -10,17 +10,9 @@ Dual goals: complete user's task AND collect reusable insights for Recipe creati
 </info>
 
 <ref_docs>
-LOAD_BEFORE_START: use Task tool (subagent_type=Explore) to parallel read:
-~/.claude/commands/frago/rules/EXECUTION_PRINCIPLES.md
-~/.claude/commands/frago/rules/NAVIGATION_RULES.md
-~/.claude/commands/frago/rules/SCREENSHOT_RULES.md
-~/.claude/commands/frago/rules/TOOL_PRIORITY.md
-~/.claude/commands/frago/rules/WORKSPACE_RULES.md
-~/.claude/commands/frago/guides/LOGGING_GUIDE.md
-~/.claude/commands/frago/guides/SELECTOR_PRIORITY.md
-~/.claude/commands/frago/guides/RECIPE_FIELDS.md
-~/.claude/commands/frago/scripts/run_workflow.sh
-~/.claude/commands/frago/scripts/common_commands.sh
+LOAD_BEFORE_START:
+    run `frago book` to learn tools and constraints
+    run `frago book <topic>` for specific guidance when needed
 </ref_docs>
 
 <role>
