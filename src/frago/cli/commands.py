@@ -181,6 +181,7 @@ def print_usage(func):
 from ..cdp.config import CDPConfig
 from ..cdp.exceptions import CDPError
 from ..cdp.session import CDPSession
+from ..cdp.tab_group_manager import ChromeCommandError
 
 
 # =============================================================================
@@ -583,9 +584,10 @@ def _get_run_screenshots_dir() -> Path:
 
 def _get_current_target_id(session: CDPSession) -> Optional[str]:
     """Extract target ID from the current WebSocket connection URL."""
-    if session.ws and hasattr(session.ws, 'url'):
+    ws_url = getattr(session, '_ws_url', None)
+    if ws_url:
         # ws URL format: ws://host:port/devtools/page/TARGET_ID
-        parts = session.ws.url.rstrip('/').split('/')
+        parts = ws_url.rstrip('/').split('/')
         if parts:
             return parts[-1]
     return None
@@ -658,8 +660,62 @@ def _route_tab_for_navigate(
         return None, None
 
 
+def _handle_chrome_command_error(e: ChromeCommandError) -> None:
+    """Format and print a ChromeCommandError, then exit."""
+    import json as _json
+    error_output = {
+        "error": e.code,
+        "message": e.message,
+    }
+    if e.context:
+        error_output["context"] = e.context
+    click.echo(_json.dumps(error_output, ensure_ascii=False), err=True)
+    sys.exit(1)
+
+
+def _check_landing_page_protection(session: CDPSession, ctx=None) -> None:
+    """Block operations on the landing page tab and trigger lazy group cleanup.
+
+    Compares the session's current target_id against the landing page.
+    Raises ChromeCommandError with LANDING_PAGE_PROTECTED if matched.
+    Also runs expired group cleanup as a side effect (lazy scan).
+    """
+    # Lazy cleanup — runs on every protected command
+    if ctx:
+        _lazy_cleanup_expired_groups(session, ctx.obj['HOST'], ctx.obj['PORT'])
+
+    try:
+        current_id = _get_current_target_id(session)
+        if not current_id:
+            return
+        landing_id = session.get_landing_page_target_id()
+        if landing_id and current_id == landing_id:
+            raise ChromeCommandError(
+                code="LANDING_PAGE_PROTECTED",
+                message="landing page is protected and cannot be operated on",
+            )
+    except ChromeCommandError:
+        raise
+    except Exception:
+        pass  # Best-effort — don't block if detection fails
+
+
+def _lazy_cleanup_expired_groups(session: CDPSession, host: str, port: int) -> None:
+    """Lazily clean up groups that have been inactive for >30 minutes."""
+    try:
+        from ..cdp.tab_group_manager import TabGroupManager
+        tgm = TabGroupManager(host=host, port=port)
+        tgm.cleanup_expired_groups(session)
+    except Exception:
+        pass
+
+
 def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
-    """Update last_activity timestamp for the currently connected tab."""
+    """Update last_activity timestamp for the currently connected tab.
+
+    Also triggers lazy cleanup of expired groups.
+    """
+    _lazy_cleanup_expired_groups(session, host, port)
     try:
         from ..cdp.tab_manager import TabManager
         tab_id = _get_current_target_id(session)
@@ -702,6 +758,9 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
     """Navigate to URL and get page features after loading"""
     try:
         with create_session(ctx) as session:
+            # Lazy cleanup of expired groups
+            _lazy_cleanup_expired_groups(session, ctx.obj['HOST'], ctx.obj['PORT'])
+
             # Disable viewport border if requested
             if no_border:
                 session.auto_viewport_border = False
@@ -758,6 +817,7 @@ def click_element(ctx, selector: str, wait_timeout: int):
     """Click element by selector and get page features"""
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.click(selector, wait_timeout=wait_timeout)
             _print_msg("success", f"Clicked element: {selector}", "interaction", {"selector": selector})
@@ -768,6 +828,8 @@ def click_element(ctx, selector: str, wait_timeout: int):
             # Perception: get DOM features
             _do_perception(session, f"click-{selector}")
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Click failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
@@ -820,9 +882,12 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
             pass
 
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.screenshot.capture(actual_output_file, full_page=full_page, quality=quality)
             _print_msg("success", f"Screenshot saved to: {actual_output_file}", "screenshot", {"file": actual_output_file, "full_page": full_page})
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Screenshot failed: {e}", "screenshot", {"file": output_file, "error": str(e)})
 
@@ -856,6 +921,7 @@ def execute_javascript(ctx, script: str, return_value: bool):
                 return
 
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             result = session.evaluate(script, return_by_value=return_value)
             if return_value:
@@ -869,6 +935,8 @@ def execute_javascript(ctx, script: str, return_value: bool):
             # Perception: capture DOM features
             _do_perception(session, "exec-js")
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"JavaScript execution failed: {e}", "interaction", {"error": str(e)})
 
@@ -880,8 +948,11 @@ def get_title(ctx):
     """Get page title"""
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             title = session.get_title()
             _print_msg("success", f"Page title: {title}", "extraction", {"title": title})
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Failed to get title: {e}", "extraction", {"error": str(e)})
 
@@ -931,6 +1002,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
 
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             script = f"""
             (function() {{
@@ -1024,6 +1096,8 @@ def get_content(ctx, selector: str, desc: Optional[str]):
                 _print_msg("success", f"Content retrieved ({selector}), saved to: {saved_file}\n{formatted_output}", "extraction", log_data)
             else:
                 _print_msg("success", f"Content retrieved ({selector}):\n{formatted_output}", "extraction", log_data)
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Failed to get content: {e}", "extraction", {"selector": selector, "error": str(e)})
 
@@ -1067,6 +1141,7 @@ def scroll(ctx, distance: int):
     """
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.scroll.scroll(distance)
             _print_msg("success", f"Scrolled {distance} pixels", "interaction", {"distance": distance})
@@ -1077,6 +1152,8 @@ def scroll(ctx, distance: int):
             # Perception: capture DOM features
             _do_perception(session, f"scroll-{distance}px")
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Scroll failed: {e}", "interaction", {"distance": distance, "error": str(e)})
 
@@ -1115,6 +1192,7 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
 
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             if text:
                 # Find element by text content
                 js_code = f'''
@@ -1170,6 +1248,8 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
                 _print_msg("error", f"Element not found: {display_target}", "interaction", {"selector": selector, "text": text})
                 return
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Failed to scroll to element: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
@@ -1201,6 +1281,7 @@ def zoom(ctx, factor: float):
     """
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             session.zoom(factor)
             _print_msg("success", f"Page zoom set to: {factor}", "interaction", {"zoom_factor": factor})
 
@@ -1210,6 +1291,8 @@ def zoom(ctx, factor: float):
             # Perception: capture DOM features
             _do_perception(session, f"zoom-{factor}x")
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Zoom failed: {e}", "interaction", {"zoom_factor": factor, "error": str(e)})
 
@@ -1221,9 +1304,12 @@ def clear_effects(ctx):
     """Clear all visual effects"""
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             session.clear_effects()
             _print_msg("success", "Visual effects cleared", "interaction")
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Failed to clear effects: {e}", "interaction", {"error": str(e)})
 
@@ -1260,9 +1346,12 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             session.highlight(selector, color=color, border_width=width, lifetime=lifetime_ms)
             _print_msg("success", f"Highlighted element: {selector} (color: {color}, width: {width}px, duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "color": color, "width": width})
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Highlight failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
@@ -1287,9 +1376,12 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool):
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             session.pointer(selector, lifetime=lifetime_ms)
             _print_msg("success", f"Pointer shown: {selector} (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector})
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Failed to show pointer: {e}", "interaction", {"selector": selector, "error": str(e)})
 
@@ -1314,9 +1406,12 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool):
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             session.spotlight(selector, lifetime=lifetime_ms)
             _print_msg("success", f"Spotlight shown: {selector} (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector})
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Spotlight failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
@@ -1348,9 +1443,12 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             session.annotate(selector, text, position=position, lifetime=lifetime_ms)
             _print_msg("success", f"Annotation added: {text} ({selector}) (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "text": text, "position": position})
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Failed to add annotation: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
@@ -1489,6 +1587,7 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
 
     try:
         with create_session(ctx) as session:
+            _check_landing_page_protection(session, ctx)
             result = session.evaluate(js_code, return_by_value=True)
 
             if result == 'element not found':
@@ -1497,6 +1596,8 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
 
             _print_msg("success", f"Underlined element: {display_target} (color: {color}, width: {width}px, duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "text": text, "color": color, "width": width, "duration": duration})
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Underline failed: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 

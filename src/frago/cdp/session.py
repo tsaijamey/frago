@@ -58,6 +58,9 @@ class CDPSession(CDPClient):
         # Auto viewport border indicator
         self.auto_viewport_border = True
 
+        # WebSocket URL used for the current connection
+        self._ws_url: Optional[str] = None
+
     def connect(self) -> None:
         """Establish WebSocket connection
 
@@ -100,6 +103,7 @@ class CDPSession(CDPClient):
                 ws_url,
                 **ws_options
             )
+            self._ws_url = ws_url
 
             self._connected = True
             self._running = True
@@ -400,6 +404,31 @@ class CDPSession(CDPClient):
         except Exception as e:
             self.logger.warning(f"Health check failed: {e}")
             return False
+
+    # Landing page detection
+    def get_landing_page_target_id(self) -> Optional[str]:
+        """Identify the landing page tab by URL or title.
+
+        Returns target_id of the landing page, or None if not found.
+        """
+        import requests as _requests
+        try:
+            response = _requests.get(
+                f"{self.config.http_url}/json/list",
+                timeout=5,
+                proxies={} if self.config.no_proxy else None,
+            )
+            response.raise_for_status()
+            for target in response.json():
+                if target.get("type") != "page":
+                    continue
+                url = target.get("url", "")
+                title = target.get("title", "")
+                if "/chrome/dashboard" in url or title == "frago":
+                    return target.get("id")
+        except Exception:
+            pass
+        return None
 
     # CLI convenience methods
     def navigate(self, url: str) -> None:

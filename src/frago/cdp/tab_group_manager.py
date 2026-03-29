@@ -21,9 +21,31 @@ import websocket as _ws
 from .logger import get_logger
 from .tab_manager import TabManager
 
+class ChromeCommandError(Exception):
+    """Structured error for chrome command failures."""
+
+    def __init__(self, code: str, message: str, context: dict | None = None):
+        self.code = code
+        self.message = message
+        self.context = context or {}
+        super().__init__(f"{code}: {message}")
+
+
+# Error code definitions
+CHROME_ERRORS = {
+    "NO_GROUP": "no group context — set FRAGO_CURRENT_RUN or pass --group",
+    "BROWSER_NOT_RUNNING": "chrome is not running — start with: uv run frago chrome start",
+    "TAB_NOT_IN_GROUP": "target tab does not belong to current group",
+    "NAVIGATION_TIMEOUT": "page load timed out",
+    "LANDING_PAGE_PROTECTED": "landing page is protected, cannot be operated on",
+}
+
+
 STATE_FILE = Path.home() / ".frago" / "chrome" / "tab_groups.json"
+LOCK_FILE = Path.home() / ".frago" / "chrome" / "tab_groups.lock"
 SCHEMA_VERSION = "1.0"
 DEFAULT_MAX_TABS_PER_GROUP = 10
+GROUP_TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 
 
 @dataclass
@@ -48,8 +70,12 @@ class TabGroupState:
     title: str
     agent_session: str  # FRAGO_CURRENT_RUN value or group name
     created_at: float
+    last_activity: float = 0.0  # Group-level last activity timestamp
     tabs: dict[str, GroupTabEntry] = field(default_factory=dict)
     max_tabs: int = DEFAULT_MAX_TABS_PER_GROUP
+
+    def touch(self) -> None:
+        self.last_activity = time.time()
 
 
 class TabGroupManager:
@@ -66,6 +92,8 @@ class TabGroupManager:
         self.port = port
         self.logger = get_logger()
         self._state: dict[str, TabGroupState] = {}
+        self._dirty_groups: set[str] = set()  # Groups modified by this process
+        self._deleted_groups: set[str] = set()  # Groups explicitly deleted by this process
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -89,6 +117,7 @@ class TabGroupManager:
     def ensure_group(self, group_name: str) -> TabGroupState:
         """Ensure a group exists, creating it if necessary."""
         if group_name in self._state:
+            self._dirty_groups.add(group_name)
             return self._state[group_name]
 
         now = time.time()
@@ -96,8 +125,10 @@ class TabGroupManager:
             title=group_name,
             agent_session=group_name,
             created_at=now,
+            last_activity=now,
         )
         self._state[group_name] = group
+        self._dirty_groups.add(group_name)
         self._save_state()
         self.logger.info(f"Created group '{group_name}'")
         return group
@@ -122,6 +153,7 @@ class TabGroupManager:
             # Unroutable URL — use most recent tab in group
             tab = max(group.tabs.values(), key=lambda t: t.last_activity)
             tab.touch()
+            group.touch()
             self._save_state()
             return tab.target_id
 
@@ -131,6 +163,7 @@ class TabGroupManager:
             if candidates:
                 tab = max(candidates, key=lambda t: t.last_activity)
                 tab.touch()
+                group.touch()
                 self._save_state()
                 return tab.target_id
 
@@ -152,6 +185,7 @@ class TabGroupManager:
             last_activity=now,
             created_at=now,
         )
+        group.touch()
         self._save_state()
         return target_id
 
@@ -168,6 +202,9 @@ class TabGroupManager:
         group = self._state.pop(group_name, None)
         if not group:
             return False
+
+        self._deleted_groups.add(group_name)
+        self._dirty_groups.discard(group_name)
 
         tab_count = len(group.tabs)
         for target_id in list(group.tabs):
@@ -251,6 +288,27 @@ class TabGroupManager:
 
         return len(stale)
 
+    def cleanup_expired_groups(self, session) -> int:
+        """Close groups that have been inactive for longer than GROUP_TIMEOUT_SECONDS.
+
+        Called lazily during chrome command execution (no background thread needed).
+
+        Args:
+            session: CDPSession instance for closing tabs.
+
+        Returns:
+            Number of groups cleaned up.
+        """
+        now = time.time()
+        expired = [
+            name for name, group in self._state.items()
+            if group.last_activity > 0 and now - group.last_activity > GROUP_TIMEOUT_SECONDS
+        ]
+        for name in expired:
+            self.close_group(name, session)
+            self.logger.info(f"Expired group '{name}' (inactive > {GROUP_TIMEOUT_SECONDS}s)")
+        return len(expired)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -281,44 +339,103 @@ class TabGroupManager:
     # State persistence
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _flock(f, exclusive: bool = True) -> None:
+        """Acquire a file lock (cross-platform)."""
+        try:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        except ImportError:
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK if exclusive else msvcrt.LK_NBRLCK, 1)
+
+    @staticmethod
+    def _funlock(f) -> None:
+        """Release a file lock (cross-platform)."""
+        try:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_UN)
+        except ImportError:
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+
     def _load_state(self) -> None:
         if not STATE_FILE.exists():
             self._state = {}
             return
         try:
-            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            if data.get("port") != self.port:
-                self._state = {}
-                return
-            groups = data.get("groups", {})
-            self._state = {}
-            for name, gdata in groups.items():
-                tabs_raw = gdata.pop("tabs", {})
-                tabs = {tid: GroupTabEntry(**td) for tid, td in tabs_raw.items()}
-                self._state[name] = TabGroupState(tabs=tabs, **gdata)
+            self._state = self._read_disk_state()
         except Exception:
             self.logger.debug("Failed to load tab group state, starting fresh")
             self._state = {}
 
+    def _read_disk_state(self) -> dict[str, "TabGroupState"]:
+        """Read state file into a dict of TabGroupState (no lock — caller must hold lock if needed)."""
+        if not STATE_FILE.exists():
+            return {}
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        if data.get("port") != self.port:
+            return {}
+        result: dict[str, TabGroupState] = {}
+        for name, gdata in data.get("groups", {}).items():
+            tabs_raw = gdata.pop("tabs", {})
+            tabs = {tid: GroupTabEntry(**td) for tid, td in tabs_raw.items()}
+            result[name] = TabGroupState(tabs=tabs, **gdata)
+        return result
+
     def _save_state(self) -> None:
+        """Atomic read-merge-write under exclusive file lock.
+
+        Merges in-memory groups with disk state so concurrent writers
+        don't overwrite each other's groups.
+        """
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "schema_version": SCHEMA_VERSION,
-            "port": self.port,
-            "groups": {
-                name: {
-                    "title": g.title,
-                    "agent_session": g.agent_session,
-                    "created_at": g.created_at,
-                    "max_tabs": g.max_tabs,
-                    "tabs": {tid: asdict(t) for tid, t in g.tabs.items()},
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(LOCK_FILE, "a+") as lock:
+            self._flock(lock, exclusive=True)
+            try:
+                # Re-read latest disk state under lock
+                disk_state = self._read_disk_state()
+
+                # Merge strategy:
+                # - For groups this process modified (_dirty_groups): use our version
+                # - For groups this process deleted (_deleted_groups): remove them
+                # - For all other groups: keep disk version (another process may have updated)
+                merged = dict(disk_state)
+
+                # Apply our dirty groups (overwrite disk version)
+                for name in self._dirty_groups:
+                    if name in self._state:
+                        merged[name] = self._state[name]
+
+                # Remove groups we explicitly deleted
+                for name in self._deleted_groups:
+                    merged.pop(name, None)
+
+                self._state = merged
+
+                data = {
+                    "schema_version": SCHEMA_VERSION,
+                    "port": self.port,
+                    "groups": {
+                        name: {
+                            "title": g.title,
+                            "agent_session": g.agent_session,
+                            "created_at": g.created_at,
+                            "last_activity": g.last_activity,
+                            "max_tabs": g.max_tabs,
+                            "tabs": {tid: asdict(t) for tid, t in g.tabs.items()},
+                        }
+                        for name, g in self._state.items()
+                    },
                 }
-                for name, g in self._state.items()
-            },
-        }
-        STATE_FILE.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+                STATE_FILE.write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+            finally:
+                self._funlock(lock)
+
         self._push_to_landing_page(data)
 
     def _push_to_landing_page(self, data: dict) -> None:

@@ -631,6 +631,11 @@ class ChromeLauncher:
         # which doesn't need webdriver detection evasion
         if not self.app_mode and not self.kiosk_mode:
             cmd.append("--disable-blink-features=AutomationControlled")
+        # Wayland: force XWayland to ensure CDP Input.dispatchMouseEvent works
+        # Native Wayland Chrome ignores CDP mousePressed/mouseReleased (no DOM events generated)
+        if self.system == "Linux" and os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            cmd.append("--ozone-platform=x11")
+
 
         # Disable sandbox in Docker or when running as root (Linux only)
         # Root user without sandbox causes Chrome to refuse to start
@@ -673,9 +678,6 @@ class ChromeLauncher:
             )
         # Void mode: move window off screen
         elif self.void:
-            # Wayland doesn't support window position control, force use XWayland
-            if self.system == "Linux" and os.environ.get("XDG_SESSION_TYPE") == "wayland":
-                cmd.append("--ozone-platform=x11")
             cmd.append("--window-position=-32000,-32000")
 
         # Launch Chrome
@@ -695,11 +697,11 @@ class ChromeLauncher:
             # Inject stealth scripts
             self.inject_stealth_scripts()
 
-            # Navigate first tab to landing page (not in app/kiosk mode)
+            # Initialize tabs: clean slate for new session (not in app/kiosk mode)
             if not self.app_mode and not self.kiosk_mode:
-                # Reconcile stale tab groups before showing dashboard
+                self._initialize_tabs()
+                # Reconcile stale tab groups after cleanup
                 self._reconcile_tab_groups()
-                self._inject_landing_page()
 
             # Force window size for app mode (Chrome ignores --window-size for remembered windows)
             if self.app_mode:
@@ -799,6 +801,59 @@ class ChromeLauncher:
     # Server port for landing page URL (matches frago server default)
     LANDING_PAGE_SERVER_PORT = 8093
     LANDING_PAGE_URL = f"http://127.0.0.1:{LANDING_PAGE_SERVER_PORT}/chrome/dashboard"
+
+    def _initialize_tabs(self) -> None:
+        """Close all existing tabs except one and navigate it to the landing page.
+
+        Assumes a new task session is starting — gives a clean browser state.
+        After this method, only 1 tab remains with the landing page loaded.
+        """
+        try:
+            import json as _json
+            import websocket as _ws
+
+            resp = requests.get(
+                f"http://localhost:{self.debugging_port}/json/list", timeout=5
+            )
+            all_targets = resp.json()
+            page_tabs = [t for t in all_targets if t.get("type") == "page"]
+
+            if not page_tabs:
+                return
+
+            # Close all tabs except the first one
+            for tab in page_tabs[1:]:
+                try:
+                    requests.get(
+                        f"http://localhost:{self.debugging_port}/json/close/{tab['id']}",
+                        timeout=2,
+                    )
+                except Exception:
+                    pass
+
+            # Navigate the remaining tab to the landing page
+            kept_tab = page_tabs[0]
+            ws_url = kept_tab.get("webSocketDebuggerUrl")
+            if not ws_url:
+                return
+
+            # Check if frago server is running before navigating to dashboard
+            try:
+                requests.get(self.LANDING_PAGE_URL, timeout=1)
+            except Exception:
+                return  # Server not running, leave tab as-is
+
+            ws = _ws.create_connection(ws_url, timeout=5)
+            ws.send(_json.dumps({
+                "id": 1,
+                "method": "Page.navigate",
+                "params": {"url": self.LANDING_PAGE_URL},
+            }))
+            ws.recv()
+            ws.close()
+
+        except Exception:
+            pass  # Best-effort — don't block startup
 
     def _reconcile_tab_groups(self) -> None:
         """Reconcile tab group state and close orphan tabs at startup.
