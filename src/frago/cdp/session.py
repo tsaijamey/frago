@@ -436,33 +436,62 @@ class CDPSession(CDPClient):
         self.page.navigate(url)
 
     def click(self, selector: str, wait_timeout: int = 10) -> None:
-        """Click element matching selector"""
-        # Wait for element first
+        """JS-first click with automatic fallback to coordinate-based click.
+
+        1. Inject document capture-phase listener
+        2. Execute JS element.click()
+        3. Check if listener received the event
+        4. If not → fallback to dispatchMouseEvent via click_precise()
+        """
         self.page.wait_for_selector(selector, timeout=wait_timeout)
 
-        # Get element position and click
+        # JS click + capture-phase detection (single Runtime.evaluate call)
+        result = self.evaluate("""
+            (function(sel) {
+                var el = document.querySelector(sel);
+                if (!el) return 'not_found';
+                var reached = false;
+                document.addEventListener('click', function() { reached = true }, {capture: true, once: true});
+                el.scrollIntoView({block: 'center', behavior: 'instant'});
+                el.click();
+                return reached ? 'ok' : 'blocked';
+            })
+        """ + f"({json.dumps(selector)})", return_by_value=True)
+
+        if result == 'ok':
+            return
+        if result == 'not_found':
+            raise CDPError(f"Element not found: {selector}")
+        # 'blocked' → fallback to coordinate-based click
+        self.click_precise(selector, wait_timeout=0)  # already waited
+
+    def click_precise(self, selector: str, wait_timeout: int = 10) -> None:
+        """Coordinate-based click via getBoxModel + dispatchMouseEvent.
+
+        Use this for scenarios requiring pixel-level accuracy (canvas clicks, etc.).
+        Note: dispatchMouseEvent does NOT generate DOM events on Wayland Native Chrome.
+        """
+        if wait_timeout > 0:
+            self.page.wait_for_selector(selector, timeout=wait_timeout)
+
         result = self.dom.get_document()
-        # CDP return format: {"id": ..., "result": {"root": {...}}}
         node_id = result.get("result", {}).get("root", {}).get("nodeId")
 
         if not node_id:
             raise CDPError("Unable to get document node")
 
         query_result = self.dom.query_selector(node_id, selector)
-        # CDP return format: {"id": ..., "result": {"nodeId": ...}}
         element_node_id = query_result.get("result", {}).get("nodeId")
 
         if not element_node_id:
             raise CDPError(f"Element not found: {selector}")
 
         box_model = self.dom.get_box_model(element_node_id)
-        # CDP return format: {"id": ..., "result": {"model": {"content": [...]}}}
         content = box_model.get("result", {}).get("model", {}).get("content", [])
 
         if not content:
             raise CDPError(f"Cannot get element position: {selector}")
 
-        # Calculate element center
         x = (content[0] + content[2]) / 2
         y = (content[1] + content[5]) / 2
 

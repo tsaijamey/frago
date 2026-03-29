@@ -11,7 +11,17 @@ from ..logger import get_logger
 
 
 class InputCommands:
-    """Input commands class"""
+    """Input commands class — CDP Input domain wrappers.
+
+    Wayland Native Chrome compatibility:
+    - click() [dispatchMouseEvent]: NOT compatible — does not generate DOM events.
+      Use CDPSession.click() (JS-first) for element clicks; this method is only
+      called by CDPSession.click_precise() as a fallback or explicit override.
+    - type() [dispatchKeyEvent]: Compatible — keyboard events work normally.
+    - scroll() [dispatchMouseEvent mouseWheel]: Unverified — mouseWheel may behave
+      differently from mouseMoved/mousePressed. CDPSession.scroll() uses JS
+      window.scrollBy() as a platform-independent alternative.
+    """
 
     def __init__(self, session: CDPSession):
         """
@@ -25,7 +35,10 @@ class InputCommands:
 
     def click(self, x: int, y: int, button: str = "left") -> Dict[str, Any]:
         """
-        Click at specified coordinates
+        Click at specified coordinates via Input.dispatchMouseEvent.
+
+        Wayland Native: NOT compatible — dispatched mouse events do not generate
+        DOM events. Prefer CDPSession.click() (JS-first) for element interactions.
 
         Args:
             x: X coordinate
@@ -76,7 +89,9 @@ class InputCommands:
     
     def type(self, text: str) -> Dict[str, Any]:
         """
-        Type text
+        Type text via Input.dispatchKeyEvent.
+
+        Wayland Native: Compatible — keyboard events work normally.
 
         Args:
             text: Text to type
@@ -101,7 +116,10 @@ class InputCommands:
     
     def scroll(self, x: int, y: int, delta_x: int, delta_y: int) -> Dict[str, Any]:
         """
-        Scroll page
+        Scroll page via Input.dispatchMouseEvent (mouseWheel).
+
+        Wayland Native: Unverified — mouseWheel may not generate scroll events.
+        CDPSession.scroll() uses JS window.scrollBy() as a platform-independent alternative.
 
         Args:
             x: Starting X coordinate

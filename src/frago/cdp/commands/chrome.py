@@ -631,11 +631,6 @@ class ChromeLauncher:
         # which doesn't need webdriver detection evasion
         if not self.app_mode and not self.kiosk_mode:
             cmd.append("--disable-blink-features=AutomationControlled")
-        # Wayland: force XWayland to ensure CDP Input.dispatchMouseEvent works
-        # Native Wayland Chrome ignores CDP mousePressed/mouseReleased (no DOM events generated)
-        if self.system == "Linux" and os.environ.get("XDG_SESSION_TYPE") == "wayland":
-            cmd.append("--ozone-platform=x11")
-
 
         # Disable sandbox in Docker or when running as root (Linux only)
         # Root user without sandbox causes Chrome to refuse to start

@@ -811,15 +811,24 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
     default=10,
     help='Wait timeout for element to appear (seconds)'
 )
+@click.option(
+    '--precise',
+    is_flag=True,
+    default=False,
+    help='Use coordinate-based click (dispatchMouseEvent) instead of JS click'
+)
 @click.pass_context
 @print_usage
-def click_element(ctx, selector: str, wait_timeout: int):
+def click_element(ctx, selector: str, wait_timeout: int, precise: bool):
     """Click element by selector and get page features"""
     try:
         with create_session(ctx) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
-            session.click(selector, wait_timeout=wait_timeout)
+            if precise:
+                session.click_precise(selector, wait_timeout=wait_timeout)
+            else:
+                session.click(selector, wait_timeout=wait_timeout)
             _print_msg("success", f"Clicked element: {selector}", "interaction", {"selector": selector})
 
             # Brief wait for page response after click
