@@ -1,0 +1,45 @@
+# frago Knowledge Book — Topic Index
+# Categories: must (替代), better (偏好), available (效率)
+
+# 替代类 — 不遵守会出错
+- name: browser-search
+  category: must
+  brief: "搜索用 frago chrome navigate google，禁止 WebSearch"
+
+- name: browser-fetch
+  category: must
+  brief: "网页内容用 navigate + get-content，禁止 WebFetch"
+
+- name: tab-creation
+  category: must
+  brief: "打开 URL 用 frago chrome navigate，禁止 window.open / raw CDP"
+
+# 偏好类 — 有更好的方式
+- name: structured-data
+  category: better
+  brief: "结构化数据存取用 frago def，比手写 JSON 更规范"
+
+- name: run-workspace
+  category: better
+  brief: "任务产出物放 frago run workspace，不要散落在临时目录"
+
+# 效率类 — 你可能不知道有这个
+- name: chrome-click
+  category: available
+  brief: "JS-first + fallback，--precise 坐标级点击"
+
+- name: chrome-scroll
+  category: available
+  brief: "JS scrollBy 跨平台，不受 Wayland 限制"
+
+- name: selector-priority
+  category: available
+  brief: "aria-label > data-testid > id > class"
+
+- name: recipe-execution
+  category: available
+  brief: "frago recipe list/run 查询和执行已有 recipe"
+
+- name: visual-effects
+  category: available
+  brief: "highlight / pointer / spotlight / annotate 视觉辅助"

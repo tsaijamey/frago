@@ -35,11 +35,12 @@ from .cloud_commands import login_cmd, logout_cmd, whoami_cmd, config_group, mar
 from .client_commands import client_group
 from .workspace_commands import workspace_group
 from .reply_command import reply_cmd
+from .book_commands import book_command
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "sync", "workspace", "update", "autostart"]),
@@ -344,6 +345,9 @@ cli.add_command(workspace_group)
 
 # Reply command - send replies through ingestion channels
 cli.add_command(reply_cmd, name="reply")
+
+# Book command - built-in knowledge query
+cli.add_command(book_command)
 
 # Cloud commands - frago Cloud authentication, config, and market
 cli.add_command(login_cmd, name="login")
