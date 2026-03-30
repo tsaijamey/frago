@@ -301,6 +301,7 @@ projects/*/logs/
 
 # Local metadata (device-specific, not synced)
 .claude/skills_metadata.json
+.claude/sync_metadata.json
 .claude/settings.local.json
 .device_id
 .workspace_migrated
@@ -381,7 +382,7 @@ logs/
             # Commands directory (managed by frago itself)
             ".claude/commands/",
             # Local metadata (device-specific)
-            ".claude/skills_metadata.json", ".claude/settings.local.json",
+            ".claude/skills_metadata.json", ".claude/sync_metadata.json", ".claude/settings.local.json",
             ".device_id", ".workspace_migrated", ".api_endpoint_migrated", ".cache/",
             # Sensitive credentials
             "profiles.json",
