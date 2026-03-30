@@ -374,6 +374,11 @@ class SessionMonitor:
                     else:
                         continue
 
+                # After session is matched, only process records from the matched file
+                # This prevents cross-contamination when multiple sessions are active
+                if self._matched_file and file_path != self._matched_file:
+                    continue
+
                 # Process record
                 self._process_record(record)
 

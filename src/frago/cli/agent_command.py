@@ -569,11 +569,14 @@ def agent(
             "--replay-user-messages",
         ])
 
+    # Determine session ID early so both claude CLI and SessionMonitor use the same ID
     if resume:
         cmd.extend(["--resume", resume])
+        target_session_id = resume
     else:
         # Force a fresh session to prevent cross-contamination with other active conversations
-        cmd.extend(["--session-id", str(uuid.uuid4())])
+        target_session_id = str(uuid.uuid4())
+        cmd.extend(["--session-id", target_session_id])
 
     if model:
         cmd.extend(["--model", model])
@@ -608,7 +611,7 @@ def agent(
                 json_mode=json_status,
                 persist=True,
                 quiet=quiet,
-                target_session_id=resume,  # Monitor specified session directly when resuming
+                target_session_id=target_session_id,  # Always pin to exact session ID
                 source=session_source,
             )
             monitor.start()
