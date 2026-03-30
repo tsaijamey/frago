@@ -13,7 +13,8 @@
 
 ## 推荐路径
 
-  1. frago recipe list | grep workflow        # 检查已有 workflow recipe
+  1. frago run find <workflow 关键词>           # 搜索历史类似任务
+  2. frago recipe list | grep workflow        # 检查已有 workflow recipe
   2. frago chrome navigate <第一个页面>
   3. frago chrome list-tabs                    # 查看当前标签页
   4. frago chrome navigate <第二个页面>        # 自动在新标签打开或复用

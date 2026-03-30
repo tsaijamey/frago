@@ -13,13 +13,14 @@
 
 ## 推荐路径
 
-  1. frago run init "调研主题描述"
-  2. frago recipe list | grep research        # 检查已有调研 recipe
-  3. frago chrome navigate "https://google.com/search?q=关键词"
-  4. frago chrome get-content --selector "#search"
-  5. 逐层深入链接（禁止猜测 URL）
-  6. frago run log --step "发现" --data '{"_insights": [...]}'
-  7. 整理产出到 workspace/outputs/
+  1. frago run find <调研关键词>                # 搜索历史类似任务
+  2. frago run init "调研主题描述"
+  3. frago recipe list | grep research        # 检查已有调研 recipe
+  4. frago chrome navigate "https://google.com/search?q=关键词"
+  5. frago chrome get-content --selector "#search"
+  6. 逐层深入链接（禁止猜测 URL）
+  7. frago run log --step "发现" --data '{"_insights": [...]}'
+  8. 整理产出到 workspace/outputs/
 
 ## 关键约束
 - must-browser-search — 搜索必须走 frago chrome navigate google

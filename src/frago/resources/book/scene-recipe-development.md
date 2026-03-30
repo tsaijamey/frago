@@ -12,7 +12,8 @@
 
 ## 推荐路径
 
-  1. frago recipe list                         # 确认不存在类似 recipe
+  1. frago run find <recipe 关键词>             # 搜索历史类似任务
+  2. frago recipe list                         # 确认不存在类似 recipe
   2. 回顾 Run 日志中的 _insights
   3. 确定 Recipe 类型（atomic / workflow）
   4. 确定 runtime（chrome-js / python / shell）

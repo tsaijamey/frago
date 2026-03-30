@@ -13,7 +13,8 @@
 
 ## 推荐路径
 
-  1. frago recipe list | grep form            # 检查已有表单 recipe
+  1. frago run find <表单关键词>                # 搜索历史类似任务
+  2. frago recipe list | grep form            # 检查已有表单 recipe
   2. frago chrome navigate <目标页面>
   3. frago chrome get-content                  # 了解页面结构
   4. frago chrome exec-js "提取表单字段" --return-value

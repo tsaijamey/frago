@@ -13,7 +13,8 @@
 
 ## 推荐路径
 
-  1. frago recipe list | grep extract         # 检查已有提取 recipe
+  1. frago run find <提取关键词>                # 搜索历史类似任务
+  2. frago recipe list | grep extract         # 检查已有提取 recipe
   2. frago chrome navigate <目标页面>
   3. frago chrome get-content                  # 初步了解页面结构
   4. frago chrome exec-js "探索 DOM 结构" --return-value
