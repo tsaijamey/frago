@@ -1583,11 +1583,11 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
     metadata = _load_skills_metadata()
 
     # Sync skills
+    # Load sync metadata to detect locally-deleted skills
+    sync_meta = _load_sync_metadata()
+
     if FRAGO_SKILLS_DIR.exists():
         CLAUDE_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Load sync metadata to detect locally-deleted skills
-        sync_meta = _load_sync_metadata()
 
         for skill_dir in FRAGO_SKILLS_DIR.iterdir():
             if not skill_dir.is_dir():
