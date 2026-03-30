@@ -205,12 +205,14 @@ class RunManager:
         logger = RunLogger(run_dir)
 
         # Count files
-        screenshot_count = len(list((run_dir / "screenshots").glob("*.png")))
+        screenshots_dir = run_dir / "screenshots"
+        screenshot_count = len(list(screenshots_dir.glob("*.png"))) if screenshots_dir.is_dir() else 0
+        scripts_dir = run_dir / "scripts"
         script_count = sum(
             1
-            for p in (run_dir / "scripts").iterdir()
+            for p in scripts_dir.iterdir()
             if p.is_file() and p.suffix in [".py", ".js", ".sh"]
-        )
+        ) if scripts_dir.is_dir() else 0
 
         # Calculate disk usage
         disk_usage = sum(f.stat().st_size for f in run_dir.rglob("*") if f.is_file())
