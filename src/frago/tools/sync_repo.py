@@ -2361,6 +2361,24 @@ def sync(
             click.echo("Saving local changes...")
             _save_local_changes(result, message, dry_run)
 
+        # 1c. Fast-forward push if local is ahead and remote has no new commits
+        # This prevents the rebase-abort loop where accumulated local commits
+        # cause rebase failures that block push indefinitely.
+        if not no_push and not dry_run:
+            _run_git(["fetch", "origin"], FRAGO_HOME, check=False)
+            behind = _run_git(
+                ["rev-list", "--count", "HEAD..origin/main"],
+                FRAGO_HOME, check=False,
+            )
+            if behind.returncode == 0 and behind.stdout.strip() == "0":
+                ahead = _run_git(
+                    ["rev-list", "--count", "origin/main..HEAD"],
+                    FRAGO_HOME, check=False,
+                )
+                if ahead.returncode == 0 and int(ahead.stdout.strip() or "0") > 0:
+                    click.echo("Fast-forward pushing local commits...")
+                    _push_to_remote(result, dry_run)
+
         # 2. Fetch remote updates
         has_conflicts = _pull_remote_updates(result, dry_run)
 
