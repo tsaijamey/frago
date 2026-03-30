@@ -286,10 +286,11 @@ def install_recipes(
 
 def ensure_hooks() -> list[str]:
     """
-    Ensure frago hooks are present in ~/.claude/settings.json.
+    Ensure frago hooks are installed to ~/.claude/hooks/frago/ and
+    registered in ~/.claude/settings.json.
 
-    Checks each hook resource and installs missing ones.
-    Does NOT overwrite existing hooks of the same event type.
+    1. Copy hook scripts from package resources to ~/.claude/hooks/frago/
+    2. Register hooks in settings.json pointing to the user-local copy
 
     Returns:
         List of newly installed hook descriptions
@@ -297,14 +298,16 @@ def ensure_hooks() -> list[str]:
     import json
     from importlib.resources import files as pkg_files
 
-    CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
-    HOOKS_DIR = Path(str(pkg_files("frago.resources") / "hooks"))
+    CLAUDE_DIR = Path.home() / ".claude"
+    CLAUDE_SETTINGS_PATH = CLAUDE_DIR / "settings.json"
+    TARGET_HOOKS_DIR = CLAUDE_DIR / "hooks" / "frago"
+    SOURCE_HOOKS_DIR = Path(str(pkg_files("frago.resources") / "hooks"))
 
-    if not HOOKS_DIR.exists():
+    if not SOURCE_HOOKS_DIR.exists():
         return []
 
     # Load hook manifest
-    manifest_path = HOOKS_DIR / "_manifest.json"
+    manifest_path = SOURCE_HOOKS_DIR / "_manifest.json"
     if not manifest_path.exists():
         return []
 
@@ -312,6 +315,9 @@ def ensure_hooks() -> list[str]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, IOError):
         return []
+
+    # Ensure target directory exists
+    TARGET_HOOKS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load current settings
     CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -331,26 +337,30 @@ def ensure_hooks() -> list[str]:
         script = hook_def["script"]
         description = hook_def.get("description", script)
 
-        # Check if this exact script is already installed (match by script filename)
+        # Always copy script to user directory (update on each server start)
+        src_script = SOURCE_HOOKS_DIR / script
+        if not src_script.exists():
+            continue
+        dst_script = TARGET_HOOKS_DIR / script
+        shutil.copy2(src_script, dst_script)
+        dst_script.chmod(0o755)
+
+        # Check if hook is already registered in settings.json
         existing_entries = hooks.get(event, [])
-        already_installed = any(
+        already_registered = any(
             any(script in h.get("command", "") for h in entry.get("hooks", []))
             for entry in existing_entries
         )
-        if already_installed:
+        if already_registered:
             continue
 
-        # Build the hook command — use the script from package resources
-        script_path = HOOKS_DIR / script
-        if not script_path.exists():
-            continue
-
+        # Register hook pointing to user-local copy
         new_entry = {
-            "matcher": "",
+            "matcher": hook_def.get("matcher", ""),
             "hooks": [
                 {
                     "type": "command",
-                    "command": f"bash \"{script_path}\"",
+                    "command": f"bash \"{dst_script}\"",
                     "timeout": hook_def.get("timeout", 10),
                 }
             ],
