@@ -542,3 +542,173 @@ def screenshot(description: str):
         handle_error(e)
     except RunException as e:
         handle_error(e, exit_code=2)
+
+
+@run_group.command()
+@click.argument("keyword")
+@click.option("--limit", default=10, help="Maximum number of results")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def find(keyword: str, limit: int, fmt: str):
+    """Search run instances by keyword
+
+    \b
+    Two-layer search: fuzzy match on run ID/theme + grep log step fields.
+
+    \b
+    Examples:
+        frago run find twitter
+        frago run find etf --limit 3
+        frago run find twitter --format json
+    """
+    try:
+        manager = get_manager()
+        discovery = RunDiscovery(manager)
+        results = discovery.search_runs(keyword, max_results=limit)
+
+        if not results:
+            click.echo("No matching runs found.")
+            return
+
+        if fmt == "json":
+            click.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"\nFound {len(results)} matching runs:\n")
+            click.echo(
+                f"  {'RUN_ID':<55} {'MATCH':>5}  {'PURPOSE':<35} {'DATE':<10}"
+            )
+            click.echo("  " + "─" * 110)
+            for r in results:
+                date = r.get("created_at", r.get("last_accessed", ""))[:10]
+                similarity = r.get("similarity", 0)
+                purpose = r.get("purpose") or "—"
+                if len(purpose) > 33:
+                    purpose = purpose[:31] + ".."
+                click.echo(
+                    f"  {r['run_id']:<55} {similarity:>4}%  {purpose:<35} {date:<10}"
+                )
+            click.echo(
+                "\nTip: frago run insights --run-id <run_id> for full experience"
+            )
+    except RunException as e:
+        handle_error(e)
+
+
+@run_group.command()
+@click.option("--run-id", default=None, help="Show full experience card for a specific run")
+@click.option(
+    "--type",
+    "insight_type",
+    type=click.Choice(["pitfall", "lesson", "key_factor", "workaround"]),
+    default=None,
+    help="Filter by insight type (aggregation mode only)",
+)
+@click.option("--limit", default=20, help="Maximum number of results (0 for all)")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+def insights(run_id: Optional[str], insight_type: Optional[str], limit: int, fmt: str):
+    """Extract experience and insights from runs
+
+    \b
+    Two modes:
+      --run-id <id>   → Full experience card (purpose + method + reuse + insights)
+      (no --run-id)   → Aggregated insights list across all runs
+
+    \b
+    Examples:
+        frago run insights --run-id 20260115-twitter-timeline-frago-insight-tweet
+        frago run insights --type pitfall
+        frago run insights --type lesson --limit 5
+        frago run insights --format json
+    """
+    try:
+        manager = get_manager()
+        discovery = RunDiscovery(manager)
+
+        # Mode 1: experience card for a specific run
+        if run_id:
+            exp = discovery.get_run_experience(run_id)
+
+            if fmt == "json":
+                click.echo(json.dumps(exp, ensure_ascii=False, indent=2))
+                return
+
+            click.echo(f"\n== {exp['run_id']} ==\n")
+
+            if exp["purpose"]:
+                click.echo(f"  Purpose:  {exp['purpose']}")
+            if exp["method"]:
+                method = exp["method"]
+                if isinstance(method, str):
+                    click.echo(f"  Method:   {method}")
+                else:
+                    click.echo(f"  Method:   {json.dumps(method, ensure_ascii=False)}")
+            if exp["reuse_guidance"]:
+                guidance = exp["reuse_guidance"]
+                if isinstance(guidance, str):
+                    click.echo(f"  Reuse:    {guidance}")
+                elif isinstance(guidance, dict):
+                    for k, v in guidance.items():
+                        click.echo(f"  Reuse ({k}): {v}")
+            if exp["recipe_potential"]:
+                rp = exp["recipe_potential"]
+                if isinstance(rp, dict):
+                    ready = rp.get("ready", False)
+                    note = rp.get("reason") or rp.get("note", "")
+                    click.echo(f"  Recipe:   {'ready' if ready else 'not ready'}{' — ' + note if note else ''}")
+
+            insight_list = exp["insights"]
+            if insight_type:
+                insight_list = [i for i in insight_list if i["type"] == insight_type]
+
+            if insight_list:
+                click.echo(f"\n  Insights ({len(insight_list)}):")
+                for i in insight_list:
+                    click.echo(f"    {i['type']:<14} {i['summary']}")
+
+            if not exp["purpose"] and not exp["method"] and not insight_list:
+                click.echo("  No experience data found for this run.")
+
+            return
+
+        # Mode 2: aggregated insights across runs
+        results = discovery.extract_insights(run_id=None, insight_type=insight_type)
+
+        if limit > 0:
+            results = results[:limit]
+
+        if not results:
+            click.echo("No insights found.")
+            return
+
+        unique_runs = len({r["run_id"] for r in results})
+
+        if fmt == "json":
+            click.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        else:
+            click.echo(
+                f"\nFound {len(results)} insights across {unique_runs} runs:\n"
+            )
+            click.echo(
+                f"  {'TYPE':<14} {'SUMMARY':<55} {'RUN':<25} {'DATE':<10}"
+            )
+            click.echo("  " + "─" * 105)
+            for r in results:
+                date = r["timestamp"][:10]
+                summary = r["summary"][:53] + ".." if len(r["summary"]) > 55 else r["summary"]
+                run_short = r["run_id"][:23] + ".." if len(r["run_id"]) > 25 else r["run_id"]
+                click.echo(
+                    f"  {r['type']:<14} {summary:<55} {run_short:<25} {date:<10}"
+                )
+    except RunException as e:
+        handle_error(e)
