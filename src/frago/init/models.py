@@ -238,6 +238,7 @@ class ResourceStatus(BaseModel):
     commands: Optional[InstallResult] = None
     skills: Optional[InstallResult] = None
     recipes: Optional[InstallResult] = None
+    hooks_installed: List[str] = Field(default_factory=list)
     frago_version: str = ""
     install_time: Optional[datetime] = None
 

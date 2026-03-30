@@ -1,0 +1,10 @@
+{
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "script": "session-start-book.sh",
+      "description": "SessionStart: frago book 自省引导",
+      "timeout": 10
+    }
+  ]
+}

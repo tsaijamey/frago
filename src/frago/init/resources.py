@@ -284,6 +284,88 @@ def install_recipes(
     return result
 
 
+def ensure_hooks() -> list[str]:
+    """
+    Ensure frago hooks are present in ~/.claude/settings.json.
+
+    Checks each hook resource and installs missing ones.
+    Does NOT overwrite existing hooks of the same event type.
+
+    Returns:
+        List of newly installed hook descriptions
+    """
+    import json
+    from importlib.resources import files as pkg_files
+
+    CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+    HOOKS_DIR = Path(str(pkg_files("frago.resources") / "hooks"))
+
+    if not HOOKS_DIR.exists():
+        return []
+
+    # Load hook manifest
+    manifest_path = HOOKS_DIR / "_manifest.json"
+    if not manifest_path.exists():
+        return []
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, IOError):
+        return []
+
+    # Load current settings
+    CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if CLAUDE_SETTINGS_PATH.exists():
+        try:
+            settings = json.loads(CLAUDE_SETTINGS_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, IOError):
+            settings = {}
+    else:
+        settings = {}
+
+    hooks = settings.setdefault("hooks", {})
+    installed = []
+
+    for hook_def in manifest.get("hooks", []):
+        event = hook_def["event"]
+        script = hook_def["script"]
+        description = hook_def.get("description", script)
+
+        # Check if this exact script is already installed (match by script filename)
+        existing_entries = hooks.get(event, [])
+        already_installed = any(
+            any(script in h.get("command", "") for h in entry.get("hooks", []))
+            for entry in existing_entries
+        )
+        if already_installed:
+            continue
+
+        # Build the hook command — use the script from package resources
+        script_path = HOOKS_DIR / script
+        if not script_path.exists():
+            continue
+
+        new_entry = {
+            "matcher": "",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f"bash \"{script_path}\"",
+                    "timeout": hook_def.get("timeout", 10),
+                }
+            ],
+        }
+        existing_entries.append(new_entry)
+        hooks[event] = existing_entries
+        installed.append(description)
+
+    if installed:
+        with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+
+    return installed
+
+
 def install_all_resources(skip_recipes: bool = False, force_update: bool = False) -> ResourceStatus:
     """
     Install all resources (main entry point)
@@ -312,6 +394,9 @@ def install_all_resources(skip_recipes: bool = False, force_update: bool = False
     # Install example recipes (optional)
     if not skip_recipes:
         status.recipes = install_recipes(force_update=force_update)
+
+    # Ensure hooks in ~/.claude/settings.json
+    status.hooks_installed = ensure_hooks()
 
     return status
 
@@ -367,6 +452,12 @@ def format_install_summary(status: ResourceStatus) -> str:
         if rec.errors:
             for error in rec.errors:
                 lines.append(f"  [X] {error}")
+
+    # Hooks summary
+    if status.hooks_installed:
+        lines.append("\n[*] Installing Claude Code hooks...")
+        for desc in status.hooks_installed:
+            lines.append(f"  [OK] {desc}")
 
     # Totals
     total_installed = 0

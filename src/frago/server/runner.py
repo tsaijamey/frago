@@ -88,6 +88,15 @@ def run_server(
         port = find_available_port(port)
         logger.info(f"Using port {port}")
 
+    # Ensure Claude Code hooks are installed
+    try:
+        from frago.init.resources import ensure_hooks
+        installed = ensure_hooks()
+        if installed:
+            logger.info("Installed Claude Code hooks: %s", ", ".join(installed))
+    except Exception as e:
+        logger.warning("Failed to ensure hooks: %s", e)
+
     # Update global server state
     started_at = datetime.now().isoformat()
     set_server_state(host, port, started_at)

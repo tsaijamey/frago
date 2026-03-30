@@ -1,0 +1,90 @@
+# frago Knowledge Book — Scene Index
+# 场景按问题类型分类，每个场景指向相关 topics 和推荐路径
+
+- name: web-research
+  brief: "从网页搜索、浏览、提取信息并整理成结构化产出"
+  signals:
+    - "搜索"
+    - "调研"
+    - "查找信息"
+    - "收集资料"
+  topics:
+    - must-browser-search
+    - must-browser-fetch
+    - must-content-extraction
+    - must-navigation
+    - must-workspace
+    - run-logging
+
+- name: form-automation
+  brief: "在网页上填写表单、提交数据、处理多步骤流程"
+  signals:
+    - "填表"
+    - "提交"
+    - "申请"
+    - "注册"
+    - "登录"
+  topics:
+    - must-navigation
+    - must-tab-creation
+    - chrome-click
+    - selector-priority
+    - recipe-execution
+
+- name: data-extraction
+  brief: "从网页批量提取结构化数据（列表、表格、评论等）"
+  signals:
+    - "提取"
+    - "抓取"
+    - "爬取"
+    - "导出数据"
+    - "批量获取"
+  topics:
+    - must-content-extraction
+    - must-browser-fetch
+    - selector-priority
+    - chrome-scroll
+    - recipe-execution
+    - better-structured-data
+
+- name: content-creation
+  brief: "生成文档、演示文稿、视频脚本等内容产出物"
+  signals:
+    - "写文章"
+    - "做PPT"
+    - "生成视频"
+    - "制作内容"
+  topics:
+    - must-workspace
+    - must-execution-principles
+    - run-logging
+
+- name: recipe-development
+  brief: "创建或更新 Recipe 自动化脚本"
+  signals:
+    - "写 recipe"
+    - "创建 recipe"
+    - "自动化流程"
+    - "重复操作"
+  topics:
+    - recipe-fields
+    - recipe-execution
+    - selector-priority
+    - interactive-recipe
+    - run-logging
+    - must-tool-priority
+
+- name: multi-page-workflow
+  brief: "跨多个页面/标签页的复合操作流程"
+  signals:
+    - "多个页面"
+    - "切换标签"
+    - "跨页面"
+    - "流程操作"
+  topics:
+    - must-tab-creation
+    - must-navigation
+    - chrome-click
+    - chrome-scroll
+    - visual-effects
+    - recipe-execution

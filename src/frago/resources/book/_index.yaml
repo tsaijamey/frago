@@ -2,26 +2,42 @@
 # Categories: must (替代), better (偏好), available (效率)
 
 # 替代类 — 不遵守会出错
-- name: browser-search
+- name: must-browser-search
   category: must
   brief: "搜索用 frago chrome navigate google，禁止 WebSearch"
 
-- name: browser-fetch
+- name: must-browser-fetch
   category: must
   brief: "网页内容用 navigate + get-content，禁止 WebFetch"
 
-- name: tab-creation
+- name: must-tab-creation
   category: must
   brief: "打开 URL 用 frago chrome navigate，禁止 window.open / raw CDP"
 
+- name: must-tool-priority
+  category: must
+  brief: "工具选择四层优先级：Recipe > frago命令 > 系统命令 > Claude工具"
+
+- name: must-content-extraction
+  category: must
+  brief: "页面文字必须用 get-content 或 recipe 提取，截图仅用于验证状态"
+
+- name: must-navigation
+  category: must
+  brief: "禁止猜测 URL，必须洋葱剥皮逐层探索获取真实链接"
+
+- name: must-execution-principles
+  category: must
+  brief: "不假设意图、不停在计划、工具驱动、结果优先、建议而非擅自决定"
+
+- name: must-workspace
+  category: must
+  brief: "产出物放 workspace、单 Run 排他、禁止 cd、路径用绝对路径"
+
 # 偏好类 — 有更好的方式
-- name: structured-data
+- name: better-structured-data
   category: better
   brief: "结构化数据存取用 frago def，比手写 JSON 更规范"
-
-- name: run-workspace
-  category: better
-  brief: "任务产出物放 frago run workspace，不要散落在临时目录"
 
 # 效率类 — 你可能不知道有这个
 - name: chrome-click
@@ -34,7 +50,7 @@
 
 - name: selector-priority
   category: available
-  brief: "aria-label > data-testid > id > class"
+  brief: "选择器稳定性排序、fallback 模式、验证方法、常见网站特征"
 
 - name: recipe-execution
   category: available
@@ -43,3 +59,15 @@
 - name: visual-effects
   category: available
   brief: "highlight / pointer / spotlight / annotate 视觉辅助"
+
+- name: interactive-recipe
+  category: available
+  brief: "Web UI 人机协作 Recipe 架构、launcher、API 交互、状态管理"
+
+- name: recipe-fields
+  category: available
+  brief: "Recipe 元数据必填/可选字段、flow/env 规范、validate 检查项"
+
+- name: run-logging
+  category: available
+  brief: "自动/手动日志分工、_insights 强制记录、研究完成标准"
