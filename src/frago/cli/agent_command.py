@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -570,6 +571,9 @@ def agent(
 
     if resume:
         cmd.extend(["--resume", resume])
+    else:
+        # Force a fresh session to prevent cross-contamination with other active conversations
+        cmd.extend(["--session-id", str(uuid.uuid4())])
 
     if model:
         cmd.extend(["--model", model])
