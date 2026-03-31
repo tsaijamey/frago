@@ -613,7 +613,7 @@ class AgentService:
                 f.write(f"\n{'='*60}\n")
                 f.write(f"[Resume] {prompt[:80]}...\n")
                 f.write(f"{'='*60}\n")
-                run_subprocess_background(
+                process = run_subprocess_background(
                     cmd,
                     stdout=f,
                     stderr=subprocess.STDOUT,
@@ -624,6 +624,7 @@ class AgentService:
 
             return {
                 "status": "ok",
+                "pid": process.pid,
                 "message": f"Continued in session {session_id[:8]}...: {title}",
             }
 

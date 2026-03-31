@@ -11,16 +11,18 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-VALID_PA_ACTIONS = {"reply", "run", "resume", "update"}
+VALID_PA_ACTIONS = {"reply", "run", "resume"}
 
-VALID_QUEUE_MESSAGE_TYPES = {"user_message", "agent_notify", "agent_exit", "reply_failed"}
+VALID_QUEUE_MESSAGE_TYPES = {
+    "user_message", "agent_notify", "agent_exit",
+    "agent_completed", "agent_failed", "reply_failed",
+}
 
 # Required fields per PA action type (beyond the universal "action" field)
 _PA_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
-    "reply": ["task_id", "channel", "reply_params"],
-    "run": ["prompt"],
-    "resume": ["run_id", "prompt"],
-    "update": ["task_id"],
+    "reply": ["task_id", "channel", "text"],
+    "run": ["task_id", "channel", "description", "prompt"],
+    "resume": ["task_id", "prompt"],
 }
 
 
@@ -56,10 +58,29 @@ def _parse_json_array(text: str) -> list | None:
     except json.JSONDecodeError:
         pass
 
-    # Strategy 2: find first '[' and last ']', try that substring
-    first_bracket = cleaned.find("[")
+    # Strategy 2: find last '[...]' block (PA may output [] then correct itself)
     last_bracket = cleaned.rfind("]")
-    if first_bracket != -1 and last_bracket > first_bracket:
+    if last_bracket != -1:
+        # Search backwards for the matching '['
+        depth = 0
+        for i in range(last_bracket, -1, -1):
+            if cleaned[i] == "]":
+                depth += 1
+            elif cleaned[i] == "[":
+                depth -= 1
+                if depth == 0:
+                    candidate = cleaned[i : last_bracket + 1]
+                    try:
+                        data = json.loads(candidate, strict=False)
+                        if isinstance(data, list):
+                            return data
+                    except json.JSONDecodeError:
+                        pass
+                    break
+
+    # Strategy 3: find first '[' and last ']', try that substring
+    first_bracket = cleaned.find("[")
+    if first_bracket != -1 and last_bracket is not None and last_bracket > first_bracket:
         candidate = cleaned[first_bracket : last_bracket + 1]
         try:
             data = json.loads(candidate, strict=False)
@@ -216,19 +237,20 @@ def validate_queue_message(msg: dict) -> ValidationResult:
                 raw_data=msg,
             )
 
-    elif msg_type == "agent_notify":
+    elif msg_type in ("agent_notify", "agent_exit"):
         if not msg.get("run_id"):
             return ValidationResult(
                 ok=False,
-                error='agent_notify missing required field "run_id".',
+                error=f'{msg_type} missing required field "run_id".',
                 raw_data=msg,
             )
 
-    elif msg_type == "agent_exit":
-        if not msg.get("run_id"):
+    elif msg_type in ("agent_completed", "agent_failed"):
+        missing = [f for f in ("task_id", "channel") if not msg.get(f)]
+        if missing:
             return ValidationResult(
                 ok=False,
-                error='agent_exit missing required field "run_id".',
+                error=f'{msg_type} missing required fields: {", ".join(missing)}.',
                 raw_data=msg,
             )
 

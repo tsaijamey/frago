@@ -26,9 +26,8 @@ from typing import Any
 
 from frago.server.services.ingestion.models import TaskStatus
 from frago.server.services.pa_prompts import (
-    PA_AGENT_EXIT_TEMPLATE,
-    PA_AGENT_NOTIFY_TEMPLATE,
-    PA_DECISION_REVIEW_TEMPLATE,
+    PA_AGENT_COMPLETED_TEMPLATE,
+    PA_AGENT_FAILED_TEMPLATE,
     PA_MERGED_MESSAGES_TEMPLATE,
     PA_MESSAGE_TEMPLATE,
     PA_REPLY_FAILED_TEMPLATE,
@@ -100,12 +99,11 @@ class PrimaryAgentService:
         self._message_queue: asyncio.Queue[dict] = asyncio.Queue()
         self._queue_consumer_task: asyncio.Task | None = None
 
-        # Pending resume messages — queued when target session is still running
-        # Maps session_id → list of messages to re-enqueue after process exits
-        self._pending_resume_messages: dict[str, list[dict]] = {}
-
         # Task lifecycle coordinator — single point for all state transitions
         self._lifecycle = TaskLifecycle()
+
+        # Executor — single-threaded task runner
+        self._executor: Any = None  # Executor instance, initialized in initialize()
 
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
@@ -116,11 +114,21 @@ class PrimaryAgentService:
     # -- lifecycle --
 
     async def initialize(self) -> None:
-        """Initialize PA: create attached session, start queue consumer and heartbeat."""
+        """Initialize PA: create attached session, start queue consumer, executor and heartbeat."""
         await self._create_pa_session(reason="initialize")
 
         # Start message queue consumer
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
+
+        # Start executor
+        from frago.server.services.executor import Executor
+        from frago.server.services.ingestion.store import TaskStore
+        self._executor = Executor(
+            store=TaskStore(),
+            pa_enqueue_message=self.enqueue_message,
+            broadcast_pa_event=self._broadcast_pa_event,
+        )
+        self._executor.start()
 
         await self._start_heartbeat()
 
@@ -146,7 +154,11 @@ class PrimaryAgentService:
             return 0
 
     async def stop(self) -> None:
-        """Stop queue consumer, heartbeat, and PA session. Called during server shutdown."""
+        """Stop executor, queue consumer, heartbeat, and PA session. Called during server shutdown."""
+        # Stop executor
+        if self._executor:
+            await self._executor.stop()
+
         # Stop queue consumer
         if self._queue_consumer_task and not self._queue_consumer_task.done():
             self._queue_consumer_task.cancel()
@@ -236,91 +248,66 @@ class PrimaryAgentService:
         self._consecutive_json_failures = 0
 
     def _build_bootstrap_prompt(self) -> str:
-        """Build bootstrap context from Run system + TaskStore."""
+        """Build bootstrap context from TaskStore + RunLock."""
         sections = []
         now = datetime.now()
-        sections.append(f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        sections.append(f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
         if self._rotation_count > 0:
             sections.append(f"这是第 {self._rotation_count + 1} 个 PA session（前一个因 rotation 退役）。")
 
-        # Active runs (enriched with associated task_id from TaskStore)
+        # Task queue snapshot (from TaskStore)
         try:
-            from frago.run.manager import RunManager
-            from frago.run.models import RunStatus
-            manager = RunManager(PROJECTS_DIR)
-            active_runs = manager.list_runs(status=RunStatus.ACTIVE)
-            if active_runs:
-                # Build run_id → task info from TaskStore (any status)
-                run_task_map: dict[str, dict] = {}
-                try:
-                    from frago.server.services.ingestion.store import TaskStore
-                    store = TaskStore()
-                    for t in store.get_recent(limit=50):
-                        if t.session_id and t.session_id not in run_task_map:
-                            run_task_map[t.session_id] = {
-                                "task_id": t.id[:8],
-                                "prompt_summary": t.prompt[:80].replace("\n", " "),
-                            }
-                except Exception:
-                    pass
-                lines = [
-                    f"活跃 Run ({len(active_runs)} 个) — "
-                    "如果新任务是对某个 Run 的后续指令，用 resume（run_id 必须精确复制）:"
-                ]
-                for r in active_runs[:10]:
-                    rid = r["run_id"]
-                    lines.append(f"  - run_id: {rid}")
-                    lines.append(f"    desc: {r['theme_description'][:80]}")
-                    if rid in run_task_map:
-                        info = run_task_map[rid]
-                        lines.append(f"    来源 task: {info['task_id']} → {info['prompt_summary']}")
-                sections.append("\n".join(lines))
-            else:
-                sections.append("活跃 Run: 0 个")
-        except Exception:
-            sections.append("活跃 Run: 不可用")
-
-        # Pending tasks
-        try:
-            from frago.server.services.ingestion.models import TaskStatus
             from frago.server.services.ingestion.store import TaskStore
             store = TaskStore()
-            pending = store.get_by_status(TaskStatus.PENDING)
+
+            # Executing (0 or 1)
+            executing = store.get_executing()
+            # Queued (pending execution)
             queued = store.get_by_status(TaskStatus.QUEUED)
-            if pending:
-                lines = [f"待处理任务 ({len(pending)} 个):"]
-                for t in pending[:10]:
-                    lines.append(f"  - [{t.id[:8]}] ({t.channel}) {t.prompt[:60]}")
-                sections.append("\n".join(lines))
-            else:
-                sections.append("待处理任务: 0 个")
-            if queued:
-                lines = [f"排队中任务 ({len(queued)} 个，等 run 锁释放后自动派发):"]
-                for t in queued[:10]:
-                    lines.append(f"  - [{t.id[:8]}] ({t.channel}) {t.prompt[:60]}")
-                sections.append("\n".join(lines))
-
             # Recent completed
-            recent = store.get_recent(limit=10)
-            completed = [t for t in recent if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)]
-            if completed:
-                lines = [f"最近完成 ({len(completed)} 个):"]
-                for t in completed[:5]:
-                    lines.append(f"  - [{t.status.value}] {t.prompt[:60]}")
-                sections.append("\n".join(lines))
-        except Exception:
-            sections.append("任务状态: 不可用")
+            recent_completed = store.get_recent_completed(limit=5)
 
-        # Run mutex
+            lines = ["任务队列:"]
+            if executing:
+                lines.append("  正在执行:")
+                lines.append(f"    task_id: {executing.id[:8]}")
+                lines.append(f"    channel: {executing.channel}")
+                lines.append(f"    description: {executing.run_description or executing.prompt[:80]}")
+                lines.append(f"    session_id: {executing.session_id or '(unknown)'}")
+            else:
+                lines.append("  正在执行: 无")
+
+            if queued:
+                lines.append(f"  排队中 ({len(queued)} 个):")
+                for t in queued[:10]:
+                    lines.append(f"    - [{t.id[:8]}] ({t.channel}) {t.prompt[:60]}")
+            else:
+                lines.append("  排队中: 0 个")
+
+            if recent_completed:
+                lines.append(f"  最近完成 ({len(recent_completed)} 个):")
+                for t in recent_completed:
+                    summary = t.result_summary or t.error or ""
+                    lines.append(f"    - [{t.status.value}] {summary[:60]}")
+
+            sections.append("\n".join(lines))
+        except Exception:
+            sections.append("任务队列: 不可用")
+
+        # Run lock status
         try:
             from frago.run.context import ContextManager
             ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
             current_run_id = ctx_mgr.get_current_run_id()
             if current_run_id:
-                sections.append(f"当前执行中 Run: {current_run_id}")
+                # Determine if executor or external
+                if executing and executing.session_id == current_run_id:
+                    sections.append(f"Run 锁: executor (run_id={current_run_id})")
+                else:
+                    sections.append(f"Run 锁: external (run_id={current_run_id})（用户可能在 CLI 直接使用 frago）")
             else:
-                sections.append("当前执行中 Run: 无（空闲）")
+                sections.append("Run 锁: idle（空闲）")
         except Exception:
             sections.append("Run 锁状态: 不可用")
 
@@ -422,17 +409,6 @@ class PrimaryAgentService:
                         break
                     await asyncio.sleep(0.5)
 
-                # Pre-fetch Run info and resolve task_id for agent_notify messages
-                for msg in messages:
-                    if msg.get("type") == "agent_notify":
-                        msg["_run_info"] = await self._prefetch_run_info(msg.get("run_id"))
-                        # Resolve task_id from run_id so PA doesn't have to remember
-                        if not msg.get("task_id"):
-                            task = self._lifecycle.find_task_for_run(msg.get("run_id", ""))
-                            if task:
-                                msg["task_id"] = task.id
-                                msg["_channel"] = task.channel
-
                 # Merge into one text block
                 merged = self._format_queue_messages(messages)
                 logger.info(
@@ -467,39 +443,11 @@ class PrimaryAgentService:
                 logger.exception("Queue consumer error")
                 await asyncio.sleep(1)
 
-    async def _prefetch_run_info(self, run_id: str | None) -> dict:
-        """Pre-fetch Run log entries and outputs for an agent_notify message."""
-        info: dict[str, Any] = {}
-        if not run_id:
-            return info
-        try:
-            run_dir = PROJECTS_DIR / run_id
-            from frago.run.logger import RunLogger
-            run_logger = RunLogger(run_dir)
-            recent_logs = run_logger.get_recent_logs(count=10)
-            info["recent_logs"] = [
-                f"[{log.step}] {log.status.value}: {json.dumps(log.data, ensure_ascii=False)}"
-                for log in recent_logs
-            ]
-        except Exception:
-            info["recent_logs"] = ["(unavailable)"]
-
-        try:
-            outputs_dir = PROJECTS_DIR / run_id / "outputs"
-            if outputs_dir.exists():
-                info["output_files"] = [f.name for f in outputs_dir.iterdir() if f.is_file()]
-            else:
-                info["output_files"] = []
-        except Exception:
-            info["output_files"] = []
-
-        return info
-
     def _format_queue_messages(self, messages: list[dict]) -> str:
         """Format a batch of queued messages into a single text block for PA."""
         now = datetime.now()
         msg_parts: list[str] = []
-        msg_parts.append(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        msg_parts.append(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
         for msg in messages:
             msg_type = msg.get("type", "unknown")
@@ -525,51 +473,49 @@ class PrimaryAgentService:
                     group_line=group_line,
                 ) + recovered_note)
 
-            elif msg_type == "agent_notify":
-                summary_or_error = f"摘要: {msg.get('summary', '(无)')}"
-                if msg.get("error"):
-                    summary_or_error = f"错误: {msg['error']}"
-
-                outputs = msg.get("outputs", [])
+            elif msg_type == "agent_completed":
+                outputs = msg.get("output_files", [])
                 outputs_section = f"输出物: {', '.join(outputs)}" if outputs else ""
+                recent_logs = msg.get("recent_logs", [])
+                logs_section = ""
+                if recent_logs:
+                    logs_section = "执行日志 (最近):\n" + "\n".join(f"  {e}" for e in recent_logs)
 
-                run_info = msg.get("_run_info", {})
-                run_info_lines: list[str] = []
-                if run_info.get("recent_logs"):
-                    run_info_lines.append("执行日志 (最近):")
-                    for entry in run_info["recent_logs"]:
-                        run_info_lines.append(f"  {entry}")
-                if run_info.get("output_files"):
-                    run_info_lines.append(f"outputs/ 目录文件: {', '.join(run_info['output_files'])}")
-
-                task_info_parts = []
-                if msg.get("task_id"):
-                    task_info_parts.append(f"关联任务: {msg['task_id']}")
-                if msg.get("_channel"):
-                    task_info_parts.append(f"来源频道: {msg['_channel']}")
-                task_info = "\n".join(task_info_parts)
-
-                msg_parts.append(PA_AGENT_NOTIFY_TEMPLATE.format(
+                msg_parts.append(PA_AGENT_COMPLETED_TEMPLATE.format(
+                    task_id=msg.get("task_id", "?"),
+                    channel=msg.get("channel", "?"),
                     run_id=msg.get("run_id", "?"),
-                    task_info=task_info,
-                    summary_or_error=summary_or_error,
+                    session_id=msg.get("session_id", "?"),
+                    result_summary=msg.get("result_summary", "(无)"),
                     outputs_section=outputs_section,
-                    run_info_section="\n".join(run_info_lines),
+                    recent_logs_section=logs_section,
                 ))
 
-            elif msg_type == "agent_exit":
-                has_completion = msg.get("has_completion_marker", False)
-                has_completion_str = (
-                    "已写 completion marker" if has_completion
-                    else "未写 completion marker（可能异常退出）"
-                )
-                task_id_str = f"关联任务: {msg['task_id']}" if msg.get("task_id") else ""
+            elif msg_type == "agent_failed":
+                recent_logs = msg.get("recent_logs", [])
+                logs_section = ""
+                if recent_logs:
+                    logs_section = "执行日志 (最近):\n" + "\n".join(f"  {e}" for e in recent_logs)
 
-                msg_parts.append(PA_AGENT_EXIT_TEMPLATE.format(
+                msg_parts.append(PA_AGENT_FAILED_TEMPLATE.format(
+                    task_id=msg.get("task_id", "?"),
+                    channel=msg.get("channel", "?"),
                     run_id=msg.get("run_id", "?"),
-                    has_completion_marker=has_completion_str,
-                    task_id=task_id_str,
+                    session_id=msg.get("session_id", "?"),
+                    result_summary=msg.get("result_summary", "(无)"),
+                    recent_logs_section=logs_section,
                 ))
+
+            elif msg_type == "agent_notify":
+                # Legacy support — agent's own /api/pa/notify calls
+                # Executor is the primary notification path now
+                summary = msg.get("summary", "(无)")
+                if msg.get("error"):
+                    summary = f"错误: {msg['error']}"
+                msg_parts.append(
+                    f"[agent 通知] run: {msg.get('run_id', '?')}\n"
+                    f"摘要: {summary}"
+                )
 
             elif msg_type in ("reply_failed", "task_failed"):
                 if msg.get("content"):
@@ -579,7 +525,7 @@ class PrimaryAgentService:
                         task_id=msg.get("task_id", "?"),
                         channel=msg.get("channel", "?"),
                         error=msg.get("error", "unknown"),
-                        reply_text=msg.get("reply_text", ""),
+                        reply_text=msg.get("reply_text", msg.get("original_text", "")),
                     ))
 
             else:
@@ -715,23 +661,10 @@ class PrimaryAgentService:
                     self._heartbeat_seq, recovered,
                 )
 
-        # ④ Try to dispatch QUEUED tasks (blocked by lock earlier, now lock may be free)
-        queued_results = self._lifecycle.try_dispatch_queued()
-        for qr in queued_results:
-            if qr.get("status") == "ok":
-                run_id = qr["run_id"]
-                task_id = qr["task_id"]
-                pid = qr.get("pid")
-                await self._broadcast_pa_event("pa_agent_launched", {
-                    "run_id": run_id,
-                    "task_id": task_id,
-                    "description": "(auto-dispatched from QUEUED)",
-                })
-                if pid:
-                    asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
-
-        # ⑤ Finalize orphan executing tasks whose runs are already gone
-        self._finalize_orphan_tasks()
+        # ④ Ensure executor is alive
+        if self._executor and (self._executor._loop_task is None or self._executor._loop_task.done()):
+            logger.warning("Heartbeat [%d]: executor loop died, restarting", self._heartbeat_seq)
+            self._executor.start()
 
         self._heartbeat_seq += 1
 
@@ -795,7 +728,11 @@ class PrimaryAgentService:
     # -- PA output handling --
 
     async def _handle_pa_output(self, output_text: str) -> None:
-        """Parse PA's JSON output and route decisions to Run/Recipe/Reply."""
+        """Parse PA's JSON output and route decisions.
+
+        New protocol: reply → instant send, run → TaskStore QUEUED, resume → instant kill+restart.
+        No semantic dedup, no decision review — single-threaded executor eliminates conflicts.
+        """
         result = validate_pa_output(output_text)
 
         if not result.ok:
@@ -822,35 +759,7 @@ class PrimaryAgentService:
             logger.info("PA decision: [] (idle)")
             return
 
-        # Semantic dedup: if a task has run/resume/recipe, drop its update-completed
-        # PA sometimes emits run + update-completed for the same task in one batch,
-        # which would close the task before the sub-agent even starts.
-        tasks_with_execution = {
-            d.get("task_id") for d in decisions
-            if isinstance(d, dict) and d.get("action") in ("run", "resume") and d.get("task_id")
-        }
-        if tasks_with_execution:
-            original_count = len(decisions)
-            decisions = [
-                d for d in decisions
-                if not (
-                    isinstance(d, dict)
-                    and d.get("action") == "update"
-                    and d.get("task_id") in tasks_with_execution
-                )
-            ]
-            dropped = original_count - len(decisions)
-            if dropped:
-                logger.info(
-                    "Dropped %d update action(s) for tasks with pending execution: %s",
-                    dropped, tasks_with_execution,
-                )
-
         logger.info("PA decision: %d action(s) → %s", len(decisions), [d.get("action") for d in decisions if isinstance(d, dict)])
-
-        # Decision batch review: if ≥2 decisions, ask PA to self-review for conflicts
-        if len(decisions) >= 2:
-            decisions = await self._review_decisions(decisions)
 
         for d in decisions:
             if not isinstance(d, dict):
@@ -863,352 +772,91 @@ class PrimaryAgentService:
                 "details": {k: v for k, v in d.items() if k not in ("action", "task_id")},
             })
             try:
-                if action == "run":
-                    logger.info("→ dispatch run (task=%s, desc=%s)", task_id, d.get("description", ""))
-                    await self._dispatch_run(d)
-                elif action == "resume":
-                    logger.info("→ dispatch resume (run=%s)", d.get("run_id", "?"))
-                    await self._dispatch_resume(d)
-                elif action == "reply":
+                if action == "reply":
                     logger.info("→ reply (task=%s, channel=%s)", task_id, d.get("channel"))
-                    await self._execute_reply(d, tasks_with_execution)
-                elif action == "update":
-                    logger.info("→ update (task=%s, status=%s)", task_id, d.get("status"))
-                    self._update_task(d)
+                    await self._send_reply(d)
+
+                elif action == "run":
+                    logger.info("→ run (task=%s, desc=%s)", task_id, d.get("description", ""))
+                    await self._enqueue_run(d)
+
+                elif action == "resume":
+                    logger.info("→ resume (task=%s)", task_id)
+                    await self._handle_resume(d)
+
                 else:
                     logger.warning("Unknown PA action: %s", action)
             except Exception:
                 logger.exception("Failed to execute PA decision: %s", d)
 
-    async def _review_decisions(self, decisions: list[dict]) -> list[dict]:
-        """Ask PA to self-review a batch of ≥2 decisions for conflicts.
+    # -- decision handlers --
 
-        Returns the reviewed decisions, or the original if review fails.
-        """
-        decisions_json = json.dumps(decisions, ensure_ascii=False, indent=2)
-        review_prompt = PA_DECISION_REVIEW_TEMPLATE.format(
-            count=len(decisions),
-            decisions_json=decisions_json,
-        )
-
-        logger.info("Decision review: %d decisions, sending for review", len(decisions))
-        output = await self._send_and_wait_pa(review_prompt, timeout=30.0)
-
-        if not output:
-            logger.warning("Decision review: no response, using original decisions")
-            return decisions
-
-        result = validate_pa_output(output)
-        if not result.ok:
-            logger.warning("Decision review: invalid output (%s), using original decisions", result.error)
-            return decisions
-
-        reviewed = result.raw_data
-        if not reviewed:
-            logger.info("Decision review: PA returned [], using original decisions")
-            return decisions
-
-        logger.info(
-            "Decision review: %d → %d decisions",
-            len(decisions), len(reviewed),
-        )
-        return reviewed
-
-    # -- Run dispatch --
-
-    async def _dispatch_run(self, decision: dict) -> None:
-        """PA decided action:'run' → delegate to lifecycle.dispatch."""
+    async def _send_reply(self, decision: dict) -> None:
+        """PA decided action:'reply' → instant send + mark completed."""
         task_id = decision.get("task_id")
-
-        result = self._lifecycle.dispatch(task_id, decision)
-
-        if result["status"] == "blocked":
-            return
-
-        if result["status"] == "error":
-            return
-
-        # Success — broadcast and start monitor
-        run_id = result["run_id"]
-        await self._broadcast_pa_event("pa_agent_launched", {
-            "run_id": run_id,
-            "task_id": task_id,
-            "description": decision.get("description", ""),
-        })
-        pid = result.get("pid")
-        if pid:
-            asyncio.create_task(self._monitor_sub_agent(run_id, _task_id=task_id, pid=pid))
-
-    async def _dispatch_resume(self, decision: dict) -> None:
-        """PA decided action:'resume' → append message to existing sub-agent session.
-
-        Accepts run_id (not session_id) — resolves to the Claude Code session
-        by scanning session directories for the FRAGO_CURRENT_RUN marker.
-
-        If the target session is still running, the message is queued in
-        _pending_resume_messages and will be re-enqueued when _monitor_sub_agent
-        detects the process has exited.
-        """
-        run_id = decision.get("run_id")
-        prompt = decision.get("prompt", "")
-        task_id = decision.get("task_id")
-
-        if not run_id or not prompt:
-            logger.warning("resume decision missing run_id or prompt, skipping")
-            return
-
-        # Resolve run_id → Claude Code session_id
-        session_id = self._find_session_for_run(run_id)
-        if not session_id:
-            logger.warning(
-                "No session found for run %s, falling back to new run dispatch",
-                run_id,
-            )
-            # Fallback: dispatch as new run
-            decision["action"] = "run"
-            decision["description"] = decision.get("description", f"resume {run_id}")
-            await self._dispatch_run(decision)
-            return
-
-        # Check session status before resume
-        from frago.session.models import SessionStatus
-        from frago.session.storage import read_metadata
-
-        metadata = read_metadata(session_id)
-        if metadata and metadata.status == SessionStatus.RUNNING:
-            logger.info(
-                "Session %s (run=%s) is running, queueing message for later delivery",
-                session_id[:8], run_id,
-            )
-            pending = self._pending_resume_messages.setdefault(session_id, [])
-            pending.append({
-                "type": "user_message",
-                "task_id": task_id,
-                "prompt": prompt,
-                "target_session_id": session_id,
-            })
-            return
-
-        # Session is not running — safe to resume
-        from frago.server.services.agent_service import AgentService
-
-        result = AgentService.continue_task(session_id, prompt)
-        if result.get("status") != "ok":
-            logger.error(
-                "Failed to resume session %s (run=%s): %s",
-                session_id[:8], run_id, result.get("error"),
-            )
-        else:
-            logger.info("Resumed session %s (run=%s) with new prompt", session_id[:8], run_id)
-
-    def _find_session_for_run(self, run_id: str) -> str | None:
-        """Find the Claude Code session_id associated with a Run.
-
-        Scans session directories for the FRAGO_CURRENT_RUN=<run_id> marker
-        in the first JSONL step. Returns the most recent match, or None.
-        """
-        import os
-
-        sessions_dir = Path.home() / ".frago" / "sessions" / "claude"
-        if not sessions_dir.exists():
-            return None
-
-        marker = f"FRAGO_CURRENT_RUN={run_id}"
-        candidates: list[tuple[float, str]] = []
-
-        for session_dir in sessions_dir.iterdir():
-            if not session_dir.is_dir():
-                continue
-            steps_file = session_dir / "steps.jsonl"
-            if not steps_file.exists():
-                continue
-            try:
-                # Read only first few KB — marker is in the first step
-                with open(steps_file, encoding="utf-8") as f:
-                    head = f.read(8192)
-                if marker in head:
-                    mtime = os.path.getmtime(steps_file)
-                    candidates.append((mtime, session_dir.name))
-            except Exception:
-                continue
-
-        if not candidates:
-            return None
-
-        # Return most recently modified match
-        candidates.sort(reverse=True)
-        return candidates[0][1]
-
-
-    def _finalize_orphan_tasks(self) -> None:
-        """Finalize executing tasks whose runs are already archived or missing."""
-        count = self._lifecycle.finalize_orphan_tasks()
-        if count:
-            logger.info("Heartbeat [%d]: finalized %d orphan task(s)", self._heartbeat_seq, count)
-
-    async def _monitor_sub_agent(self, run_id: str, _task_id: str | None, pid: int) -> None:
-        """Watch sub-agent process; finalize via lifecycle when it exits."""
-        import os
-
-        monitor_start = datetime.now()
-        # Poll until process exits
-        while True:
-            try:
-                os.kill(pid, 0)
-                await asyncio.sleep(5)
-            except (ProcessLookupError, PermissionError):
-                break
-
-        step, _summary = TaskLifecycle._read_completion_info(run_id)
-        has_completion = step is not None
-        duration_seconds = int((datetime.now() - monitor_start).total_seconds())
-
-        logger.info(
-            "Run %s: sub-agent (PID %d) exited (has_completion=%s)",
-            run_id, pid, has_completion,
-        )
-        await self._broadcast_pa_event("pa_agent_exited", {
-            "run_id": run_id,
-            "task_id": _task_id or "",
-            "has_completion": has_completion,
-            "duration_seconds": duration_seconds,
-        })
-
-        # Delegate finalize (release lock + archive + update task + write journal)
-        self._lifecycle.finalize(_task_id, run_id,
-                                 reason="completion_marker" if has_completion else "agent_exit_no_marker")
-
-        # Enqueue agent_exit to PA message queue for PA awareness
-        await self.enqueue_message({
-            "type": "agent_exit",
-            "run_id": run_id,
-            "has_completion_marker": has_completion,
-            "task_id": _task_id,
-        })
-
-        # Re-enqueue any pending resume messages whose sessions are no longer running
-        await self._flush_pending_resume_messages()
-
-    async def _flush_pending_resume_messages(self) -> None:
-        """Check all pending resume messages and re-enqueue those whose sessions stopped.
-
-        Called after a sub-agent process exits. Scans _pending_resume_messages
-        for session_ids that are no longer RUNNING, and re-enqueues those
-        messages into the PA message queue for reprocessing.
-        """
-        if not self._pending_resume_messages:
-            return
-
-        from frago.session.models import SessionStatus
-        from frago.session.storage import read_metadata
-
-        flushed_sessions: list[str] = []
-
-        for session_id, messages in list(self._pending_resume_messages.items()):
-            try:
-                metadata = read_metadata(session_id)
-                # Flush if session no longer running (completed/error/cancelled/not found)
-                if not metadata or metadata.status != SessionStatus.RUNNING:
-                    for msg in messages:
-                        await self.enqueue_message(msg)
-                    flushed_sessions.append(session_id)
-                    logger.info(
-                        "Flushed %d pending messages for session %s",
-                        len(messages),
-                        session_id[:8],
-                    )
-            except Exception:
-                logger.debug(
-                    "Error checking pending session %s", session_id[:8], exc_info=True
-                )
-
-        for sid in flushed_sessions:
-            del self._pending_resume_messages[sid]
-
-    async def _execute_reply(
-        self, decision: dict, batch_execution_tasks: set[str] | None = None,
-    ) -> None:
-        """PA decided action:'reply' → delegate to lifecycle.
-
-        Checks if task is QUEUED *and* has a pending run/resume in the same
-        batch to avoid auto-completing tasks that still need execution.
-        """
         channel = decision.get("channel")
-        reply_params = decision.get("reply_params", {})
-        task_id = decision.get("task_id")
+        text = decision.get("text", "")
 
-        if not channel:
-            logger.warning("reply decision missing channel")
+        if not channel or not text:
+            logger.warning("reply decision missing channel or text")
             return
 
-        # Determine effective_task_id for lifecycle.reply()
-        effective_task_id = task_id
-        task_status_before = None
-        if task_id:
-            task = self._lifecycle.get_task(task_id)
-            task_status_before = task.status if task else None
-            # Only skip completion when QUEUED *and* same batch has run/resume for this task
-            if (
-                task
-                and task.status == TaskStatus.QUEUED
-                and batch_execution_tasks
-                and task_id in batch_execution_tasks
-            ):
-                logger.info(
-                    "Reply for QUEUED task %s — skip completion (has pending run in batch)",
-                    task_id[:8],
-                )
-                effective_task_id = None
-
-        logger.info(
-            "Reply dispatch: task_id=%s, status_before=%s, effective_task_id=%s",
-            task_id, task_status_before, effective_task_id,
-        )
-
+        reply_params = {"text": text}
         result = await asyncio.to_thread(
-            self._lifecycle.reply, effective_task_id, channel, reply_params,
+            self._lifecycle.reply, task_id, channel, reply_params,
         )
 
         if result["status"] == "ok":
-            # Backfill: if reply succeeded but effective_task_id was None,
-            # check if the original task is still stuck in PENDING/QUEUED
-            if effective_task_id is None and task_id:
-                task_after = self._lifecycle.get_task(task_id)
-                if task_after and task_after.status in (TaskStatus.PENDING, TaskStatus.QUEUED):
-                    logger.info(
-                        "Backfill: marking task %s completed after successful reply",
-                        task_id[:8],
-                    )
-                    self._lifecycle.update_task(
-                        task_id, status_str="completed",
-                        result_summary=reply_params.get("result_summary", "replied"),
-                    )
-
+            from frago.server.services.ingestion.store import TaskStore
+            TaskStore().update_status(task_id, TaskStatus.COMPLETED, result_summary="replied")
             await self._broadcast_pa_event("pa_reply", {
                 "task_id": task_id or "",
                 "channel": channel or "",
-                "reply_text": (reply_params.get("result_summary") or "")[:200],
+                "reply_text": text[:200],
             })
         elif result["status"] == "error":
-            # Notify PA immediately so it knows the reply failed
-            pa_notify = result.get("pa_notify")
-            if pa_notify:
-                await self.enqueue_message(pa_notify)
+            # reply failed → notify PA via system message
+            await self.enqueue_message({
+                "type": "reply_failed",
+                "task_id": task_id,
+                "channel": channel,
+                "error": result.get("error", "unknown"),
+                "original_text": text,
+            })
 
-    def _update_task(self, decision: dict) -> None:
-        """PA decided action:'update' → delegate to lifecycle."""
+    async def _enqueue_run(self, decision: dict) -> None:
+        """PA decided action:'run' → write to TaskStore, mark QUEUED. Executor picks up."""
         task_id = decision.get("task_id")
-        if not task_id:
-            return
-        self._lifecycle.update_task(
-            task_id,
-            status_str=decision.get("status"),
-            result_summary=decision.get("result_summary"),
-        )
+        description = decision.get("description", "")
+        prompt = decision.get("prompt", "")
 
-    def _find_task_for_run(self, run_id: str) -> Any:
-        """Find the IngestedTask associated with a run_id."""
-        return self._lifecycle.find_task_for_run(run_id)
+        if not task_id or not prompt:
+            logger.warning("run decision missing task_id or prompt")
+            return
+
+        from frago.server.services.ingestion.store import TaskStore
+        store = TaskStore()
+        store.update_run_info(
+            task_id,
+            run_description=description,
+            run_prompt=prompt,
+        )
+        store.update_status(task_id, TaskStatus.QUEUED)
+        logger.info("Task %s → QUEUED (desc=%s)", task_id[:8], description[:40])
+
+    async def _handle_resume(self, decision: dict) -> None:
+        """PA decided action:'resume' → delegate to executor for instant kill+restart."""
+        task_id = decision.get("task_id")
+        prompt = decision.get("prompt", "")
+
+        if not task_id or not prompt:
+            logger.warning("resume decision missing task_id or prompt")
+            return
+
+        if self._executor:
+            await self._executor.execute_resume(task_id, prompt)
+        else:
+            logger.warning("Executor not available for resume")
 
     # -- helpers --
 

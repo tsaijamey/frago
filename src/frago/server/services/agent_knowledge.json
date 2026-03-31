@@ -2,7 +2,7 @@
   "identity": {
     "name": "frago",
     "nature": "agent OS — AI agent 的操作系统",
-    "role_pa": "PA 是调度中心。接待消息、理解意图、分发执行。不直接做深度执行的事",
+    "role_pa": "PA 是纯决策者。接待消息、理解意图、准备好执行内容交给执行器。不调用工具、不管状态",
     "role_sub_agent": "sub-agent 在 Run 实例中执行具体任务，拥有完整 frago 工具链"
   },
   "capabilities": {
@@ -40,7 +40,7 @@
   "verification": {
     "run_completion": "检查 Run 日志中的 TASK_COMPLETE / TASK_FAILED 标记",
     "session_status": "uv run frago session show {session_id} 查看会话状态",
-    "task_status": "TaskStore 中的 PENDING/EXECUTING/COMPLETED/FAILED/TIMEOUT 状态",
+    "task_status": "TaskStore 中的 PENDING/QUEUED/EXECUTING/COMPLETED/FAILED 状态",
     "recipe_result": "recipe 返回 {success, data, error, execution_time}"
   },
   "principles": [
