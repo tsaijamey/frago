@@ -53,12 +53,44 @@ def wait_for_process_exit(pid: int, timeout: float = 10.0) -> bool:
     return False
 
 
+def _is_systemd_managed() -> bool:
+    """Check if frago-server.service is enabled via systemd."""
+    if platform.system() != "Linux":
+        return False
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", "frago-server.service"],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
 def start_new_server() -> bool:
     """Start a new frago server instance and write PID file.
+
+    When systemd user service is enabled, delegates to systemctl restart
+    instead of spawning a new process directly.
 
     Returns:
         True if server started successfully
     """
+    # Delegate to systemd if managed
+    if _is_systemd_managed():
+        print("[restarter] systemd service detected, delegating to systemctl restart")
+        result = subprocess.run(
+            ["systemctl", "--user", "restart", "frago-server.service"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print("[restarter] Server restarted via systemd")
+            return True
+        print(f"[restarter] systemctl restart failed: {result.stderr}")
+        return False
+
     try:
         # Use the same Python that ran this script
         python_exe = sys.executable
@@ -124,7 +156,7 @@ def main():
 
     # Wait for old server to exit
     if not wait_for_process_exit(old_pid):
-        print(f"[restarter] Warning: Old server did not exit within timeout")
+        print("[restarter] Warning: Old server did not exit within timeout")
         # Try to kill it
         try:
             if platform.system() == "Windows":

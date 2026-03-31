@@ -103,6 +103,10 @@ class LinuxAutostartManager(AutostartManager):
             "[Unit]",
             "Description=Frago AI Automation Server",
             "After=network.target",
+            # Prevent infinite restart loops: max 5 restarts within 5 minutes.
+            # After limit is hit, `systemctl --user reset-failed` + start to recover.
+            "StartLimitBurst=5",
+            "StartLimitIntervalSec=300",
             "",
             "[Service]",
             "Type=exec",
@@ -114,8 +118,8 @@ class LinuxAutostartManager(AutostartManager):
 
         lines.extend([
             f"ExecStart={python_path} -m frago.server.runner --daemon",
-            "Restart=on-failure",
-            "RestartSec=5",
+            "Restart=always",
+            "RestartSec=30",
             "",
             "[Install]",
             "WantedBy=default.target",

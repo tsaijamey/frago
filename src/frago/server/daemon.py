@@ -12,11 +12,43 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import psutil
 
 from frago.compat import get_windows_subprocess_kwargs
+
+_SYSTEMD_SERVICE_NAME = "frago-server.service"
+
+
+def _is_systemd_managed() -> bool:
+    """Check if frago-server.service is enabled and systemd is available.
+
+    When True, start/stop/restart should delegate to systemctl
+    instead of managing processes directly via PID files.
+    """
+    if platform.system() != "Linux":
+        return False
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", _SYSTEMD_SERVICE_NAME],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def _systemctl(*args: str) -> subprocess.CompletedProcess:
+    """Run systemctl --user with given arguments."""
+    return subprocess.run(
+        ["systemctl", "--user", *args, _SYSTEMD_SERVICE_NAME],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
 
 # Default server configuration
 DEFAULT_SERVER_PORT = 8093
@@ -69,7 +101,7 @@ def get_log_file() -> Path:
     return LOG_FILE
 
 
-def read_pid() -> Optional[int]:
+def read_pid() -> int | None:
     """Read PID from the PID file.
 
     Returns:
@@ -145,7 +177,7 @@ def is_frago_process(proc: psutil.Process) -> bool:
         return False
 
 
-def find_frago_process_on_port() -> Optional[int]:
+def find_frago_process_on_port() -> int | None:
     """Find a Frago server process listening on the server port.
 
     Checks network connections for a process on SERVER_PORT that
@@ -175,7 +207,7 @@ def find_frago_process_on_port() -> Optional[int]:
     return None
 
 
-def is_server_running() -> Tuple[bool, Optional[int]]:
+def is_server_running() -> tuple[bool, int | None]:
     """Check if the Frago server is currently running.
 
     Uses PID file first, then falls back to port scanning for processes
@@ -204,7 +236,7 @@ def is_server_running() -> Tuple[bool, Optional[int]]:
     return False, None
 
 
-def get_server_uptime() -> Optional[float]:
+def get_server_uptime() -> float | None:
     """Get the server uptime in seconds.
 
     Returns:
@@ -243,7 +275,7 @@ def format_uptime(seconds: float) -> str:
         return f"{hours}h {mins}m"
 
 
-def check_port_available() -> Tuple[bool, Optional[str]]:
+def check_port_available() -> tuple[bool, str | None]:
     """Check if port 8093 is available.
 
     Uses SO_REUSEADDR to allow binding even if port is in TIME_WAIT state.
@@ -279,16 +311,21 @@ def check_port_available() -> Tuple[bool, Optional[str]]:
         return False, "another process"
 
 
-def start_daemon() -> Tuple[bool, str]:
+def start_daemon() -> tuple[bool, str]:
     """Start the Frago server as a background daemon.
 
-    Uses platform-specific subprocess flags for proper daemonization:
-    - Unix: start_new_session=True to detach from terminal
-    - Windows: CREATE_NO_WINDOW and DETACHED_PROCESS flags
+    When systemd user service is enabled, delegates to systemctl.
+    Otherwise uses platform-specific subprocess flags for daemonization.
 
     Returns:
         Tuple of (success, message)
     """
+    if _is_systemd_managed():
+        result = _systemctl("start")
+        if result.returncode == 0:
+            return True, f"Server started via systemd on http://{SERVER_HOST}:{SERVER_PORT}"
+        return False, f"systemctl start failed: {result.stderr.strip()}"
+
     # Proactively clean up stale PID file from crashed processes
     cleanup_stale_pid()
 
@@ -380,19 +417,22 @@ def _get_self_and_ancestors() -> set:
     return protected
 
 
-def stop_daemon() -> Tuple[bool, str]:
+def stop_daemon() -> tuple[bool, str]:
     """Stop the running Frago server daemon.
 
-    Terminates the main process and all child processes to ensure
-    complete cleanup and immediate port release.
-
-    Protects the calling process and its ancestors from being killed,
-    so that 'frago server restart' called from an agent task (which is
-    a child of the server) can safely complete.
+    When systemd user service is enabled, delegates to systemctl.
+    Otherwise terminates the main process and all child processes.
 
     Returns:
         Tuple of (success, message)
     """
+    if _is_systemd_managed():
+        result = _systemctl("stop")
+        if result.returncode == 0:
+            clear_pid()
+            return True, "Server stopped via systemd"
+        return False, f"systemctl stop failed: {result.stderr.strip()}"
+
     running, pid = is_server_running()
     if not running or pid is None:
         return False, "Frago server is not running"
@@ -507,15 +547,11 @@ def _spawn_restarter_daemonized(server_pid: int) -> None:
         os._exit(1)
 
 
-def restart_daemon(force: bool = False) -> Tuple[bool, str]:
+def restart_daemon(force: bool = False) -> tuple[bool, str]:
     """Restart the Frago server daemon.
 
-    Spawns restarter.py via double fork (fully detached from process tree),
-    then stops the server. The restarter waits for the old server to exit
-    and starts a new instance.
-
-    This avoids the problem where the server's shutdown handler kills all
-    descendant processes — including the caller and any child restarter.
+    When systemd user service is enabled, delegates to systemctl restart.
+    Otherwise spawns restarter.py via double fork then stops the server.
 
     Args:
         force: Force restart even if graceful shutdown fails
@@ -523,6 +559,12 @@ def restart_daemon(force: bool = False) -> Tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
+    if _is_systemd_managed():
+        result = _systemctl("restart")
+        if result.returncode == 0:
+            return True, "Server restarted via systemd"
+        return False, f"systemctl restart failed: {result.stderr.strip()}"
+
     running, pid = is_server_running()
 
     if not running:
