@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 STORE_FILE = Path.home() / ".frago" / "ingested_tasks.json"
 ARCHIVE_DIR = Path.home() / ".frago" / "ingested_tasks"
 
-_TERMINAL_STATUSES = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value, TaskStatus.TIMEOUT.value}
+_TERMINAL_STATUSES = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}
 
 
 class TaskStore:
@@ -79,18 +79,7 @@ class TaskStore:
         error: str | None = None,
     ) -> None:
         with self._lock:
-            target = None
-            # Exact match first
-            for data in self._tasks.values():
-                if data["id"] == task_id:
-                    target = data
-                    break
-            # Prefix match (PA may truncate task_id to 8 chars)
-            if target is None and len(task_id) >= 8:
-                for data in self._tasks.values():
-                    if data["id"].startswith(task_id):
-                        target = data
-                        break
+            target = self._find(task_id)
             if target is not None:
                 target["status"] = status.value
                 if session_id is not None:
@@ -99,7 +88,7 @@ class TaskStore:
                     target["result_summary"] = result_summary
                 if error is not None:
                     target["error"] = error
-                if status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.TIMEOUT):
+                if status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     target["completed_at"] = datetime.now().isoformat()
                 self._save()
                 return
@@ -134,16 +123,8 @@ class TaskStore:
 
     def get(self, task_id: str) -> IngestedTask | None:
         with self._lock:
-            # Exact match first
-            for data in self._tasks.values():
-                if data["id"] == task_id:
-                    return self._deserialize(data)
-            # Prefix match (PA may truncate task_id to 8 chars)
-            if len(task_id) >= 8:
-                for data in self._tasks.values():
-                    if data["id"].startswith(task_id):
-                        return self._deserialize(data)
-            return None
+            data = self._find(task_id)
+            return self._deserialize(data) if data else None
 
     def get_recent(
         self, *, channel: str | None = None, limit: int = 5
@@ -161,12 +142,67 @@ class TaskStore:
         with self._lock:
             return any(d["status"] == TaskStatus.PENDING.value for d in self._tasks.values())
 
+    def get_first_queued(self) -> IngestedTask | None:
+        """执行器取下一个待执行任务（按 created_at 排序）。"""
+        with self._lock:
+            queued = [
+                d for d in self._tasks.values()
+                if d["status"] == TaskStatus.QUEUED.value
+            ]
+            if not queued:
+                return None
+            queued.sort(key=lambda d: d.get("created_at", ""))
+            return self._deserialize(queued[0])
+
+    def get_executing(self) -> IngestedTask | None:
+        """获取当前正在执行的任务（最多 1 个）。"""
+        with self._lock:
+            for data in self._tasks.values():
+                if data["status"] == TaskStatus.EXECUTING.value:
+                    return self._deserialize(data)
+            return None
+
+    def get_recent_completed(self, limit: int = 5) -> list[IngestedTask]:
+        """PA 环境 prompt 用——最近完成/失败的任务。"""
+        with self._lock:
+            terminal = [
+                d for d in self._tasks.values()
+                if d["status"] in _TERMINAL_STATUSES
+            ]
+            terminal.sort(key=lambda d: d.get("completed_at") or d.get("created_at", ""), reverse=True)
+            return [self._deserialize(d) for d in terminal[:limit]]
+
+    def update_run_info(
+        self,
+        task_id: str,
+        *,
+        run_description: str | None = None,
+        run_prompt: str | None = None,
+        session_id: str | None = None,
+        pid: int | None = None,
+    ) -> None:
+        """PA 决策或执行器回填运行时信息。"""
+        with self._lock:
+            target = self._find(task_id)
+            if target is None:
+                logger.warning("Task not found for run_info update: %s", task_id)
+                return
+            if run_description is not None:
+                target["run_description"] = run_description
+            if run_prompt is not None:
+                target["run_prompt"] = run_prompt
+            if session_id is not None:
+                target["session_id"] = session_id
+            if pid is not None:
+                target["pid"] = pid
+            self._save()
+
     # -- rotation --
 
     def rotate(self) -> int:
         """Archive terminal tasks to date-named files, return count archived.
 
-        Safe to call at any time — only moves COMPLETED/FAILED/TIMEOUT tasks.
+        Safe to call at any time — only moves COMPLETED/FAILED tasks.
         PENDING/EXECUTING tasks stay in the main file untouched.
         """
         with self._lock:
@@ -216,6 +252,19 @@ class TaskStore:
                 for d in self._tasks.values()
             )
 
+    # -- internal lookup (must hold _lock) --
+
+    def _find(self, task_id: str) -> dict[str, Any] | None:
+        """Find task data dict by exact or prefix match. Caller must hold _lock."""
+        for data in self._tasks.values():
+            if data["id"] == task_id:
+                return data
+        if len(task_id) >= 8:
+            for data in self._tasks.values():
+                if data["id"].startswith(task_id):
+                    return data
+        return None
+
     # -- persistence --
 
     def _load(self) -> dict[str, dict[str, Any]]:
@@ -250,25 +299,36 @@ class TaskStore:
             "prompt": task.prompt,
             "status": task.status.value,
             "created_at": task.created_at.isoformat(),
+            "reply_context": task.reply_context,
+            "run_description": task.run_description,
+            "run_prompt": task.run_prompt,
             "session_id": task.session_id,
+            "pid": task.pid,
             "result_summary": task.result_summary,
             "completed_at": task.completed_at.isoformat() if task.completed_at else None,
             "error": task.error,
             "retry_count": task.retry_count,
             "recovery_count": task.recovery_count,
-            "reply_context": task.reply_context,
         }
 
     @staticmethod
     def _deserialize(data: dict[str, Any]) -> IngestedTask:
+        # Handle legacy TIMEOUT status → FAILED
+        status_val = data.get("status", "pending")
+        if status_val == "timeout":
+            status_val = "failed"
         return IngestedTask(
             id=data["id"],
             channel=data["channel"],
             channel_message_id=data["channel_message_id"],
             prompt=data["prompt"],
-            status=TaskStatus(data["status"]),
+            status=TaskStatus(status_val),
             created_at=datetime.fromisoformat(data["created_at"]),
+            reply_context=data.get("reply_context", {}),
+            run_description=data.get("run_description"),
+            run_prompt=data.get("run_prompt"),
             session_id=data.get("session_id"),
+            pid=data.get("pid"),
             result_summary=data.get("result_summary"),
             completed_at=(
                 datetime.fromisoformat(data["completed_at"])
@@ -278,5 +338,4 @@ class TaskStore:
             error=data.get("error"),
             retry_count=data.get("retry_count", 0),
             recovery_count=data.get("recovery_count", 0),
-            reply_context=data.get("reply_context", {}),
         )
