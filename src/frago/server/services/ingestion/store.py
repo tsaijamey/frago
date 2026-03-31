@@ -113,6 +113,17 @@ class TaskStore:
                     self._save()
                     return
 
+    def increment_recovery_count(self, task_id: str) -> int:
+        """Increment recovery_count and return the new value."""
+        with self._lock:
+            for data in self._tasks.values():
+                if data["id"] == task_id or (len(task_id) >= 8 and data["id"].startswith(task_id)):
+                    count = data.get("recovery_count", 0) + 1
+                    data["recovery_count"] = count
+                    self._save()
+                    return count
+        return 0
+
     def get_by_status(self, status: TaskStatus) -> list[IngestedTask]:
         with self._lock:
             return [
@@ -243,6 +254,8 @@ class TaskStore:
             "result_summary": task.result_summary,
             "completed_at": task.completed_at.isoformat() if task.completed_at else None,
             "error": task.error,
+            "retry_count": task.retry_count,
+            "recovery_count": task.recovery_count,
             "reply_context": task.reply_context,
         }
 
@@ -263,5 +276,7 @@ class TaskStore:
                 else None
             ),
             error=data.get("error"),
+            retry_count=data.get("retry_count", 0),
+            recovery_count=data.get("recovery_count", 0),
             reply_context=data.get("reply_context", {}),
         )

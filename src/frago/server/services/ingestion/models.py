@@ -35,5 +35,8 @@ class IngestedTask:
     # Retry tracking — incremented each time reply() fails
     retry_count: int = 0
 
+    # Recovery tracking — incremented each time heartbeat re-enqueues a PENDING task
+    recovery_count: int = 0
+
     # Channel-specific context needed for reply (opaque to TaskStore/Scheduler)
     reply_context: dict[str, Any] = field(default_factory=dict)

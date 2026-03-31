@@ -241,6 +241,13 @@ class TaskLifecycle:
                     task_id, TaskStatus.COMPLETED,
                     result_summary=reply_params.get("result_summary", "replied"),
                 )
+                logger.info(
+                    "Reply completed: task_id=%s, recipe_ok=True, status_after=%s",
+                    task_id[:8] if task_id else "none",
+                    self._store.get(task_id).status.value if self._store.get(task_id) else "gone",
+                )
+            else:
+                logger.info("Reply completed: task_id=None (no task to mark)")
 
             return {"status": "ok"}
 
@@ -468,8 +475,21 @@ class TaskLifecycle:
         if not pending and not failed:
             return []
 
+        MAX_RECOVERY = 2
+
         messages = []
         for task in pending:
+            if task.recovery_count >= MAX_RECOVERY:
+                logger.warning(
+                    "Task %s recovered %d times without completion — marking stale",
+                    task.id[:8], task.recovery_count,
+                )
+                self._store.update_status(
+                    task.id, TaskStatus.FAILED,
+                    error=f"stale: recovered {task.recovery_count} times without resolution",
+                )
+                continue
+            self._store.increment_recovery_count(task.id)
             messages.append({
                 "type": "user_message",
                 "task_id": task.id,
