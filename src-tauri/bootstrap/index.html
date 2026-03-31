@@ -449,13 +449,12 @@
       setStep('step-frago', 'running');
       const frago = await invoke('check_frago');
       if (frago.installed) {
-        log('frago-cli ' + (frago.version || '') + ' found');
-        setStep('step-frago', 'done');
+        log('frago-cli ' + (frago.version || '') + ' found, checking for updates...');
       } else {
         log('Installing frago-cli...');
-        await invoke('install_frago', { version: null });
-        setStep('step-frago', 'done');
       }
+      await invoke('install_frago', { version: null });
+      setStep('step-frago', 'done');
 
       // --- Step 3: server ---
       setStep('step-server', 'running');

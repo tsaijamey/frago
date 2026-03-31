@@ -252,6 +252,22 @@ pub async fn install_uv(app: AppHandle) -> Result<InstallResult, String> {
     })
 }
 
+/// Query PyPI JSON API for the latest version of a package.
+/// Returns `None` on any failure (network, parse, etc.).
+async fn fetch_latest_pypi_version(package: &str) -> Option<String> {
+    let url = format!("https://pypi.org/pypi/{package}/json");
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .ok()?
+        .get(&url)
+        .send()
+        .await
+        .ok()?;
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json["info"]["version"].as_str().map(|s| s.to_string())
+}
+
 #[tauri::command]
 pub async fn install_frago(
     app: AppHandle,
@@ -260,8 +276,13 @@ pub async fn install_frago(
     let uv = resolve_uv_path();
     let uv_str = uv.to_string_lossy().to_string();
 
-    let default_version = env!("CARGO_PKG_VERSION").to_string();
-    let target_version = version.as_deref().unwrap_or(&default_version);
+    let target_version_owned: String = match version {
+        Some(v) => v,
+        None => fetch_latest_pypi_version("frago-cli")
+            .await
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+    };
+    let target_version = target_version_owned.as_str();
 
     // Check if already installed with matching version
     let check = check_frago().await?;
