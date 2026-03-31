@@ -194,7 +194,10 @@ def compute_dashboard_data() -> DashboardData:
             started_at = getattr(session, "started_at", None)
             duration_ms = None
             if started_at and ended_at:
-                duration_ms = int((ended_at - started_at).total_seconds() * 1000)
+                # Strip tzinfo to avoid naive/aware mismatch
+                sa = started_at.replace(tzinfo=None) if started_at.tzinfo else started_at
+                ea = ended_at.replace(tzinfo=None) if ended_at.tzinfo else ended_at
+                duration_ms = int((ea - sa).total_seconds() * 1000)
 
             error_summary = None
             status_val = session.status.value if session.status else "completed"
