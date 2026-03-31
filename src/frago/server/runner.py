@@ -82,11 +82,18 @@ def run_server(
             stream=sys.stderr,
         )
 
-    # Find available port if needed
-    if auto_port and not is_port_available(port, host):
-        logger.info(f"Port {port} is in use, finding available port...")
-        port = find_available_port(port)
-        logger.info(f"Using port {port}")
+    # Port availability check
+    if not is_port_available(port, host):
+        if auto_port:
+            logger.info(f"Port {port} is in use, finding available port...")
+            port = find_available_port(port)
+            logger.info(f"Using port {port}")
+        else:
+            # Fixed port mode (daemon): exit immediately before any expensive
+            # initialization (PA session, ingestion, etc.) to avoid wasting
+            # resources on every failed restart attempt.
+            logger.error("Port %d is already in use, exiting immediately", port)
+            sys.exit(1)
 
     # Ensure Claude Code hooks are installed
     try:
