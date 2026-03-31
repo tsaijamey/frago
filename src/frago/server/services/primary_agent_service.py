@@ -117,7 +117,7 @@ class PrimaryAgentService:
 
     async def initialize(self) -> None:
         """Initialize PA: create attached session, start queue consumer and heartbeat."""
-        await self._create_pa_session()
+        await self._create_pa_session(reason="initialize")
 
         # Start message queue consumer
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
@@ -176,9 +176,11 @@ class PrimaryAgentService:
 
     # -- PA session management --
 
-    async def _create_pa_session(self) -> None:
+    async def _create_pa_session(self, *, reason: str = "unknown") -> None:
         """Create a new attached PA session with bootstrap context."""
         from frago.server.services.agent_service import AgentService
+
+        logger.info("PA session creating (reason=%s, seq=%d)", reason, self._heartbeat_seq)
 
         bootstrap = self._build_bootstrap_prompt()
         prompt = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
@@ -225,7 +227,7 @@ class PrimaryAgentService:
             AgentService._attached_sessions.pop(self._pa_internal_id, None)
 
         # Create new session with bootstrap
-        await self._create_pa_session()
+        await self._create_pa_session(reason="rotation")
 
         # Reset counters
         self._total_turns = 0
@@ -398,7 +400,7 @@ class PrimaryAgentService:
                 # Ensure PA session exists
                 if not self._pa_session or not self._session_id:
                     try:
-                        await self._create_pa_session()
+                        await self._create_pa_session(reason="queue_consumer")
                     except Exception:
                         logger.exception("Failed to create PA session for queue consumer")
                         # Re-enqueue messages so they aren't lost
@@ -700,7 +702,7 @@ class PrimaryAgentService:
         if not self._pa_session or not self._session_id:
             logger.info("Heartbeat [%d]: PA idle with no session, creating new session", self._heartbeat_seq)
             try:
-                await self._create_pa_session()
+                await self._create_pa_session(reason="heartbeat")
             except Exception:
                 logger.exception("Heartbeat: failed to create PA session")
 
