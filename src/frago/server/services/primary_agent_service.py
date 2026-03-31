@@ -871,7 +871,7 @@ class PrimaryAgentService:
                     await self._dispatch_resume(d)
                 elif action == "reply":
                     logger.info("→ reply (task=%s, channel=%s)", task_id, d.get("channel"))
-                    await self._execute_reply(d)
+                    await self._execute_reply(d, tasks_with_execution)
                 elif action == "update":
                     logger.info("→ update (task=%s, status=%s)", task_id, d.get("status"))
                     self._update_task(d)
@@ -1125,11 +1125,13 @@ class PrimaryAgentService:
         for sid in flushed_sessions:
             del self._pending_resume_messages[sid]
 
-    async def _execute_reply(self, decision: dict) -> None:
+    async def _execute_reply(
+        self, decision: dict, batch_execution_tasks: set[str] | None = None,
+    ) -> None:
         """PA decided action:'reply' → delegate to lifecycle.
 
-        Checks if task is QUEUED (pending dispatch blocked by lock) to avoid
-        auto-completing tasks that still need execution.
+        Checks if task is QUEUED *and* has a pending run/resume in the same
+        batch to avoid auto-completing tasks that still need execution.
         """
         channel = decision.get("channel")
         reply_params = decision.get("reply_params", {})
@@ -1139,22 +1141,49 @@ class PrimaryAgentService:
             logger.warning("reply decision missing channel")
             return
 
-        # If this task is QUEUED (dispatch blocked by lock), don't complete it
+        # Determine effective_task_id for lifecycle.reply()
         effective_task_id = task_id
+        task_status_before = None
         if task_id:
             task = self._lifecycle.get_task(task_id)
-            if task and task.status == TaskStatus.QUEUED:
+            task_status_before = task.status if task else None
+            # Only skip completion when QUEUED *and* same batch has run/resume for this task
+            if (
+                task
+                and task.status == TaskStatus.QUEUED
+                and batch_execution_tasks
+                and task_id in batch_execution_tasks
+            ):
                 logger.info(
-                    "Reply for task %s — skipping completion (QUEUED for dispatch)",
+                    "Reply for QUEUED task %s — skip completion (has pending run in batch)",
                     task_id[:8],
                 )
                 effective_task_id = None
+
+        logger.info(
+            "Reply dispatch: task_id=%s, status_before=%s, effective_task_id=%s",
+            task_id, task_status_before, effective_task_id,
+        )
 
         result = await asyncio.to_thread(
             self._lifecycle.reply, effective_task_id, channel, reply_params,
         )
 
         if result["status"] == "ok":
+            # Backfill: if reply succeeded but effective_task_id was None,
+            # check if the original task is still stuck in PENDING/QUEUED
+            if effective_task_id is None and task_id:
+                task_after = self._lifecycle.get_task(task_id)
+                if task_after and task_after.status in (TaskStatus.PENDING, TaskStatus.QUEUED):
+                    logger.info(
+                        "Backfill: marking task %s completed after successful reply",
+                        task_id[:8],
+                    )
+                    self._lifecycle.update_task(
+                        task_id, status_str="completed",
+                        result_summary=reply_params.get("result_summary", "replied"),
+                    )
+
             await self._broadcast_pa_event("pa_reply", {
                 "task_id": task_id or "",
                 "channel": channel or "",
