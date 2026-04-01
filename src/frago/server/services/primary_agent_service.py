@@ -249,9 +249,19 @@ class PrimaryAgentService:
 
     def _build_bootstrap_prompt(self) -> str:
         """Build bootstrap context from TaskStore + RunLock."""
+        import platform
+        import time
+
         sections = []
         now = datetime.now()
-        sections.append(f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # System environment
+        tz_name = time.tzname[time.daylight] if time.daylight else time.tzname[0]
+        sections.append(
+            f"系统: {platform.system()} {platform.release()} | "
+            f"时区: {tz_name} | "
+            f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
 
         if self._rotation_count > 0:
             sections.append(f"这是第 {self._rotation_count + 1} 个 PA session（前一个因 rotation 退役）。")
@@ -792,7 +802,12 @@ class PrimaryAgentService:
     # -- decision handlers --
 
     async def _send_reply(self, decision: dict) -> None:
-        """PA decided action:'reply' → instant send + mark completed."""
+        """PA decided action:'reply' → instant send.
+
+        Only marks COMPLETED for reply-only tasks (PENDING status).
+        Tasks managed by Executor (QUEUED/EXECUTING/COMPLETED/FAILED)
+        have their status controlled exclusively by Executor.
+        """
         task_id = decision.get("task_id")
         channel = decision.get("channel")
         text = decision.get("text", "")
@@ -807,8 +822,12 @@ class PrimaryAgentService:
         )
 
         if result["status"] == "ok":
-            from frago.server.services.ingestion.store import TaskStore
-            TaskStore().update_status(task_id, TaskStatus.COMPLETED, result_summary="replied")
+            # Only mark COMPLETED for reply-only tasks (still PENDING = never went through Executor)
+            if task_id:
+                from frago.server.services.ingestion.store import TaskStore
+                task = TaskStore().get(task_id)
+                if task and task.status == TaskStatus.PENDING:
+                    TaskStore().update_status(task_id, TaskStatus.COMPLETED, result_summary="replied")
             await self._broadcast_pa_event("pa_reply", {
                 "task_id": task_id or "",
                 "channel": channel or "",
@@ -897,15 +916,6 @@ class PrimaryAgentService:
             except Exception:
                 pass
 
-        # Load agent self-knowledge index
-        knowledge_section = ""
-        try:
-            knowledge_file = Path(__file__).parent / "agent_knowledge.json"
-            knowledge = json.loads(knowledge_file.read_text(encoding="utf-8"))
-            knowledge_section = "\nfrago 系统索引:\n" + json.dumps(knowledge, ensure_ascii=False, indent=2) + "\n"
-        except Exception:
-            pass
-
         # Build reply_context section so sub-agent knows where to send messages/images
         reply_context_section = ""
         if reply_context:
@@ -922,7 +932,6 @@ class PrimaryAgentService:
             message_id=message_id,
             reply_context_section=reply_context_section,
             related_section=related_section,
-            knowledge_section=knowledge_section,
         )
 
     # -- persistence --

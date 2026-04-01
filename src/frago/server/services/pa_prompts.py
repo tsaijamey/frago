@@ -165,24 +165,19 @@ PA_MERGED_MESSAGES_TEMPLATE = """\
 
 
 # --------------------------------------------------------------------------
-# [给 sub-agent] [PA 决策 action:"run" 时] [任务 prompt + 工作规范]
-# sub-agent 在 Run 实例中工作，拥有完整 frago 工具链。
-# 开头的 /frago.run 触发 slash command，注入浏览器/recipe 行为规范。
-# 完成后写 completion marker，执行器自动检测退出并通知 PA。
-# sub-agent NEVER 直接调 frago reply。
+# [给 sub-agent] [PA 决策 action:"run" 时] [任务 prompt + 运行上下文]
+# sub-agent 通过 frago-hook SessionStart 获取 frago 能力索引，
+# 通过 PreToolUse hook 获取操作规范。这里只注入任务内容和运行上下文。
 # --------------------------------------------------------------------------
 SUB_AGENT_PROMPT_TEMPLATE = """\
-/frago.run {task_prompt}
+{task_prompt}
 
 Run 实例: {run_id}
 来源: {channel} (消息 ID: {message_id})
-{reply_context_section}{related_section}{knowledge_section}
-完成后:
-uv run frago run log --step "TASK_COMPLETE" --status "success" --action-type "other" --execution-method "analysis" --data '{{"summary": "一句话总结"}}'
-（执行器会自动检测进程退出、提取结果、通知 PA。NEVER 直接调 frago reply）
-
-失败时:
-uv run frago run log --step "TASK_FAILED" --status "error" --action-type "other" --execution-method "analysis" --data '{{"error": "失败原因"}}'
-
-当前 Run 上下文: FRAGO_CURRENT_RUN={run_id}
+{reply_context_section}{related_section}\
 """
+# NOTE: 以下内容暂时移除，由 frago-hook 动态注入替代：
+# - {knowledge_section} (agent_knowledge.json) → hook SessionStart 注入 frago book --brief
+# - /frago.run slash command trigger → 已从 ~/.claude/commands/ 移走
+# - TASK_COMPLETE/TASK_FAILED marker 指令 → Executor 通过 PID 监听检测退出
+# - FRAGO_CURRENT_RUN env var → 仍通过 Executor 的 env_extra 注入

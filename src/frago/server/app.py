@@ -10,42 +10,41 @@ Creates and configures the FastAPI application with:
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from frago.server.routes import (
-    system_router,
-    dashboard_router,
-    recipes_router,
-    tasks_router,
     agent_router,
-    config_router,
-    skills_router,
-    settings_router,
-    sync_router,
-    init_router,
-    viewer_router,
-    files_router,
-    workspace_router,
-    guide_router,
     chrome_dashboard_router,
+    config_router,
+    dashboard_router,
+    files_router,
+    guide_router,
+    init_router,
+    recipes_router,
+    settings_router,
+    skills_router,
+    sync_router,
+    system_router,
+    tasks_router,
+    viewer_router,
+    workspace_router,
 )
-from frago.server.websocket import manager, MessageType, create_message
-from frago.server.services.sync_service import SyncService
-from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.community_recipe_service import CommunityRecipeService
-from frago.server.services.version_service import VersionCheckService
 from frago.server.services.github_sync_scheduler import GitHubSyncScheduler
 from frago.server.services.recipe_scheduler_service import RecipeSchedulerService
+from frago.server.services.sessions_watcher import SessionsWatcher
+from frago.server.services.sync_service import SyncService
+from frago.server.services.version_service import VersionCheckService
 from frago.server.state import StateManager
+from frago.server.websocket import MessageType, create_message, manager
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):  # noqa: ARG001
     """Application lifespan manager.
 
     Handles startup and shutdown events:
@@ -108,6 +107,14 @@ async def lifespan(app: FastAPI):
 
     tab_cleanup = TabCleanupService.get_instance()
     await tab_cleanup.start()
+
+    # Deploy frago-hook binary if missing or outdated
+    try:
+        from frago.init.hook_binary import deploy_hook_binary
+        hook_path = deploy_hook_binary()
+        logger.info("Hook binary ready: %s", hook_path)
+    except Exception as e:
+        logger.warning("Failed to deploy hook binary: %s", e)
 
     # Initialize Primary Agent (PID 1 — always available, independent of features)
     from frago.server.services.primary_agent_service import PrimaryAgentService
@@ -202,7 +209,7 @@ def get_frontend_path() -> Path:
 
 def create_app(
     title: str = "Frago Web Service",
-    version: Optional[str] = None,
+    version: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
