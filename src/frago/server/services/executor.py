@@ -62,7 +62,7 @@ class Executor:
         self._pa_enqueue_message = pa_enqueue_message  # async callable
         self._broadcast_pa_event = broadcast_pa_event  # async callable
         self._killed_by_resume: set[int] = set()
-        self._loop_task: asyncio.Task | None = None
+        self._loop_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
         """Start the executor loop as an asyncio task."""
@@ -179,8 +179,8 @@ class Executor:
         from frago.run.manager import RunManager
         from frago.server.services.agent_service import AgentService
 
-        description = task.run_description or ""
-        prompt = task.run_prompt or ""
+        description = task.run_descriptions[-1] if task.run_descriptions else ""
+        prompt = task.run_prompts[-1] if task.run_prompts else ""
 
         if not prompt:
             logger.error("Executor: task %s has no run_prompt", task.id[:8])

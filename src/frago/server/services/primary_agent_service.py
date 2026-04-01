@@ -73,7 +73,7 @@ class PrimaryAgentService:
         self._pa_internal_id: str | None = None
 
         # Heartbeat
-        self._heartbeat_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop = asyncio.Event()
         self._heartbeat_seq: int = 0
 
@@ -96,8 +96,8 @@ class PrimaryAgentService:
         self._pa_waiting: bool = False
 
         # Message queue — all message sources enqueue here
-        self._message_queue: asyncio.Queue[dict] = asyncio.Queue()
-        self._queue_consumer_task: asyncio.Task | None = None
+        self._message_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._queue_consumer_task: asyncio.Task[None] | None = None
 
         # Task lifecycle coordinator — single point for all state transitions
         self._lifecycle = TaskLifecycle()
@@ -283,7 +283,8 @@ class PrimaryAgentService:
                 lines.append("  正在执行:")
                 lines.append(f"    task_id: {executing.id[:8]}")
                 lines.append(f"    channel: {executing.channel}")
-                lines.append(f"    description: {executing.run_description or executing.prompt[:80]}")
+                desc = executing.run_descriptions[-1] if executing.run_descriptions else executing.prompt[:80]
+                lines.append(f"    description: {desc}")
                 lines.append(f"    session_id: {executing.session_id or '(unknown)'}")
             else:
                 lines.append("  正在执行: 无")
@@ -298,8 +299,11 @@ class PrimaryAgentService:
             if recent_completed:
                 lines.append(f"  最近完成 ({len(recent_completed)} 个):")
                 for t in recent_completed:
+                    desc = t.run_descriptions[-1] if t.run_descriptions else t.prompt[:40]
                     summary = t.result_summary or t.error or ""
-                    lines.append(f"    - [{t.status.value}] {summary[:60]}")
+                    lines.append(f"    - [{t.id[:8]}] ({t.channel}) [{t.status.value}] {desc}")
+                    if summary:
+                        lines.append(f"      结果: {summary}")
 
             sections.append("\n".join(lines))
         except Exception:
@@ -333,7 +337,7 @@ class PrimaryAgentService:
 
     # -- PA event broadcast --
 
-    async def _broadcast_pa_event(self, event_type: str, data: dict) -> None:
+    async def _broadcast_pa_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Broadcast a PA event to all connected WebSocket clients.
 
         Also persists the event to pa_events.jsonl for timeline history.
@@ -359,7 +363,7 @@ class PrimaryAgentService:
 
     # -- message queue --
 
-    async def enqueue_message(self, msg: dict) -> None:
+    async def enqueue_message(self, msg: dict[str, Any]) -> None:
         """Enqueue a message for PA consumption. Called by scheduler, monitor, etc."""
         result = validate_queue_message(msg)
         if not result.ok:
@@ -453,7 +457,7 @@ class PrimaryAgentService:
                 logger.exception("Queue consumer error")
                 await asyncio.sleep(1)
 
-    def _format_queue_messages(self, messages: list[dict]) -> str:
+    def _format_queue_messages(self, messages: list[dict[str, Any]]) -> str:
         """Format a batch of queued messages into a single text block for PA."""
         now = datetime.now()
         msg_parts: list[str] = []
@@ -548,7 +552,7 @@ class PrimaryAgentService:
 
     # -- heartbeat --
 
-    def _load_heartbeat_config(self) -> dict:
+    def _load_heartbeat_config(self) -> dict[str, Any]:
         """Load heartbeat config from config.json, falling back to defaults."""
         try:
             if CONFIG_FILE.exists():
@@ -801,16 +805,16 @@ class PrimaryAgentService:
 
     # -- decision handlers --
 
-    async def _send_reply(self, decision: dict) -> None:
+    async def _send_reply(self, decision: dict[str, Any]) -> None:
         """PA decided action:'reply' → instant send.
 
         Only marks COMPLETED for reply-only tasks (PENDING status).
         Tasks managed by Executor (QUEUED/EXECUTING/COMPLETED/FAILED)
         have their status controlled exclusively by Executor.
         """
-        task_id = decision.get("task_id")
-        channel = decision.get("channel")
-        text = decision.get("text", "")
+        task_id: str = decision.get("task_id", "")
+        channel: str = decision.get("channel", "")
+        text: str = decision.get("text", "")
 
         if not channel or not text:
             logger.warning("reply decision missing channel or text")
@@ -843,7 +847,7 @@ class PrimaryAgentService:
                 "original_text": text,
             })
 
-    async def _enqueue_run(self, decision: dict) -> None:
+    async def _enqueue_run(self, decision: dict[str, Any]) -> None:
         """PA decided action:'run' → write to TaskStore, mark QUEUED. Executor picks up."""
         task_id = decision.get("task_id")
         description = decision.get("description", "")
@@ -863,7 +867,7 @@ class PrimaryAgentService:
         store.update_status(task_id, TaskStatus.QUEUED)
         logger.info("Task %s → QUEUED (desc=%s)", task_id[:8], description[:40])
 
-    async def _handle_resume(self, decision: dict) -> None:
+    async def _handle_resume(self, decision: dict[str, Any]) -> None:
         """PA decided action:'resume' → delegate to executor for instant kill+restart."""
         task_id = decision.get("task_id")
         prompt = decision.get("prompt", "")
@@ -903,7 +907,7 @@ class PrimaryAgentService:
         # Look up channel/message_id/reply_context from TaskStore
         channel = "unknown"
         message_id = ""
-        reply_context: dict = {}
+        reply_context: dict[str, Any] = {}
         if task_id:
             try:
                 lifecycle = TaskLifecycle()
@@ -939,7 +943,7 @@ class PrimaryAgentService:
     @staticmethod
     def _save_session_id(session_id: str) -> None:
         try:
-            raw: dict = {}
+            raw: dict[str, Any] = {}
             if CONFIG_FILE.exists():
                 raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             if not isinstance(raw.get("primary_agent"), dict):
@@ -961,7 +965,7 @@ class PrimaryAgentService:
         while time.monotonic() < deadline:
             info = AgentService.get_attached_session_info(internal_id)
             if info and info.get("session_id"):
-                return info["session_id"]
+                return str(info["session_id"])
             await asyncio.sleep(0.5)
 
         raise RuntimeError(

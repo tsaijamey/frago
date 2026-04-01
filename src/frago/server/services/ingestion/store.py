@@ -18,6 +18,17 @@ ARCHIVE_DIR = Path.home() / ".frago" / "ingested_tasks"
 _TERMINAL_STATUSES = {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}
 
 
+def _migrate_to_list(data: dict[str, Any], list_key: str, legacy_key: str) -> list[str]:
+    """Backward compat: if old str field exists, wrap as [str]."""
+    val = data.get(list_key)
+    if isinstance(val, list):
+        return val
+    legacy = data.get(legacy_key)
+    if isinstance(legacy, str):
+        return [legacy]
+    return []
+
+
 class TaskStore:
     """Thread-safe, file-backed store for ingested tasks.
 
@@ -30,6 +41,9 @@ class TaskStore:
     """
 
     _instances: dict[Path, "TaskStore"] = {}
+    _path: Path
+    _lock: threading.Lock
+    _tasks: dict[str, dict[str, Any]]
 
     def __new__(cls, store_path: Path | None = None) -> "TaskStore":
         path = store_path or STORE_FILE
@@ -107,7 +121,7 @@ class TaskStore:
         with self._lock:
             for data in self._tasks.values():
                 if data["id"] == task_id or (len(task_id) >= 8 and data["id"].startswith(task_id)):
-                    count = data.get("recovery_count", 0) + 1
+                    count: int = data.get("recovery_count", 0) + 1
                     data["recovery_count"] = count
                     self._save()
                     return count
@@ -188,9 +202,9 @@ class TaskStore:
                 logger.warning("Task not found for run_info update: %s", task_id)
                 return
             if run_description is not None:
-                target["run_description"] = run_description
+                target.setdefault("run_descriptions", []).append(run_description)
             if run_prompt is not None:
-                target["run_prompt"] = run_prompt
+                target.setdefault("run_prompts", []).append(run_prompt)
             if session_id is not None:
                 target["session_id"] = session_id
             if pid is not None:
@@ -300,8 +314,8 @@ class TaskStore:
             "status": task.status.value,
             "created_at": task.created_at.isoformat(),
             "reply_context": task.reply_context,
-            "run_description": task.run_description,
-            "run_prompt": task.run_prompt,
+            "run_descriptions": task.run_descriptions,
+            "run_prompts": task.run_prompts,
             "session_id": task.session_id,
             "pid": task.pid,
             "result_summary": task.result_summary,
@@ -325,8 +339,8 @@ class TaskStore:
             status=TaskStatus(status_val),
             created_at=datetime.fromisoformat(data["created_at"]),
             reply_context=data.get("reply_context", {}),
-            run_description=data.get("run_description"),
-            run_prompt=data.get("run_prompt"),
+            run_descriptions=_migrate_to_list(data, "run_descriptions", "run_description"),
+            run_prompts=_migrate_to_list(data, "run_prompts", "run_prompt"),
             session_id=data.get("session_id"),
             pid=data.get("pid"),
             result_summary=data.get("result_summary"),

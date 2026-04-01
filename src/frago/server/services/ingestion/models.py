@@ -31,9 +31,9 @@ class IngestedTask:
     created_at: datetime = field(default_factory=lambda: datetime.now())
     reply_context: dict[str, Any] = field(default_factory=dict)
 
-    # ── PA 决策 run 时回填 ──
-    run_description: str | None = None   # English，Run 目录命名
-    run_prompt: str | None = None        # PA 写好的完整 sub-agent 指令
+    # ── PA 决策 run 时回填（数组，每次 append，消费取 [-1]）──
+    run_descriptions: list[str] = field(default_factory=list)
+    run_prompts: list[str] = field(default_factory=list)
 
     # ── 执行器启动 agent 后回填 ──
     session_id: str | None = None        # agent session / run_id
