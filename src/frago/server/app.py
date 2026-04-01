@@ -108,11 +108,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     tab_cleanup = TabCleanupService.get_instance()
     await tab_cleanup.start()
 
-    # Deploy frago-hook binary if missing or outdated
+    # Deploy frago-hook binary if missing or outdated, then sync event registration
     try:
-        from frago.init.hook_binary import deploy_hook_binary
+        from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
         hook_path = deploy_hook_binary()
         logger.info("Hook binary ready: %s", hook_path)
+        sync_hook_events(str(hook_path))
     except Exception as e:
         logger.warning("Failed to deploy hook binary: %s", e)
 

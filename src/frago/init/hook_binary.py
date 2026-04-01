@@ -3,12 +3,19 @@ Hook binary deployment for Claude Code.
 
 Detects the current OS/arch, locates the matching precompiled binary
 shipped inside the frago package, and copies it to ~/.claude/hooks/frago/.
+Also syncs hook event registration in settings.json based on what
+the binary reports via --supported-events.
 """
 
+import json
+import logging
 import platform
 import shutil
 import stat
+import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_platform_key() -> str:
@@ -108,3 +115,125 @@ def get_hook_binary_path() -> str:
     """
     deploy_dir = get_hook_deploy_dir()
     return str(deploy_dir / get_binary_name())
+
+
+# ---------------------------------------------------------------------------
+# Hook event registration sync
+# ---------------------------------------------------------------------------
+
+
+def query_supported_events(hook_path: str) -> list[dict]:
+    """Call frago-hook --supported-events and return event descriptors.
+
+    Returns:
+        List of dicts like [{"event": "SessionStart", "matcher": ""}, ...]
+        Empty list on failure (graceful fallback).
+    """
+    try:
+        result = subprocess.run(
+            [hook_path, "--supported-events"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            events = json.loads(result.stdout.strip())
+            if isinstance(events, list) and all(
+                isinstance(e, dict) and "event" in e and "matcher" in e
+                for e in events
+            ):
+                return events
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to query supported events: %s", e)
+    return []
+
+
+def sync_hook_events(hook_path: str) -> None:
+    """Ensure settings.json hook registrations match what frago-hook supports.
+
+    Only touches frago-hook entries — other hooks are left untouched.
+    Matcher values come from frago-hook itself (source of truth).
+    """
+    from frago.init.configurator import CLAUDE_SETTINGS_PATH, load_claude_settings
+
+    supported = query_supported_events(hook_path)
+    if not supported:
+        logger.warning("No supported events from frago-hook, skipping sync")
+        return
+
+    supported_event_names = {desc["event"] for desc in supported}
+
+    settings = load_claude_settings()
+    hooks = settings.setdefault("hooks", {})
+
+    frago_entry = {
+        "type": "command",
+        "command": hook_path,
+        "timeout": 10,
+    }
+
+    changed = False
+
+    # Ensure supported events are registered with correct matcher
+    for desc in supported:
+        event = desc["event"]
+        matcher = desc["matcher"]
+        if not _has_frago_hook_with_matcher(hooks, event, matcher):
+            # Remove any existing frago-hook entry (wrong matcher) before adding
+            _remove_frago_hook(hooks, event)
+            _ensure_frago_hook(hooks, event, matcher, frago_entry)
+            changed = True
+
+    # Remove frago-hook from events it no longer supports
+    for event in list(hooks.keys()):
+        if event not in supported_event_names and _remove_frago_hook(hooks, event):
+            changed = True
+            if not hooks[event]:
+                del hooks[event]
+
+    if changed:
+        CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2, ensure_ascii=False)
+        logger.info("Hook events synced: %s", [d["event"] for d in supported])
+    else:
+        logger.debug("Hook events already in sync")
+
+
+def _is_frago_hook(entry: dict) -> bool:
+    """Check if a hook entry belongs to frago-hook."""
+    return entry.get("type") == "command" and "frago-hook" in entry.get("command", "")
+
+
+def _has_frago_hook_with_matcher(hooks: dict, event: str, matcher: str) -> bool:
+    """Check if an event has a frago-hook entry with the expected matcher."""
+    for group in hooks.get(event, []):
+        if group.get("matcher", "") != matcher:
+            continue
+        for hook in group.get("hooks", []):
+            if _is_frago_hook(hook):
+                return True
+    return False
+
+
+def _ensure_frago_hook(hooks: dict, event: str, matcher: str, entry: dict) -> None:
+    """Add a frago-hook entry to an event with the specified matcher."""
+    if event not in hooks:
+        hooks[event] = []
+    hooks[event].append({"matcher": matcher, "hooks": [entry]})
+
+
+def _remove_frago_hook(hooks: dict, event: str) -> bool:
+    """Remove frago-hook entries from an event. Returns True if anything was removed."""
+    if event not in hooks:
+        return False
+    removed = False
+    groups = hooks[event]
+    for group in groups[:]:
+        original_len = len(group.get("hooks", []))
+        group["hooks"] = [h for h in group.get("hooks", []) if not _is_frago_hook(h)]
+        if len(group["hooks"]) < original_len:
+            removed = True
+        if not group["hooks"]:
+            groups.remove(group)
+    return removed
