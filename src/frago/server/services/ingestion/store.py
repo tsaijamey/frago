@@ -193,6 +193,7 @@ class TaskStore:
         run_description: str | None = None,
         run_prompt: str | None = None,
         session_id: str | None = None,
+        claude_session_id: str | None = None,
         pid: int | None = None,
     ) -> None:
         """PA 决策或执行器回填运行时信息。"""
@@ -207,6 +208,8 @@ class TaskStore:
                 target.setdefault("run_prompts", []).append(run_prompt)
             if session_id is not None:
                 target["session_id"] = session_id
+            if claude_session_id is not None:
+                target["claude_session_id"] = claude_session_id
             if pid is not None:
                 target["pid"] = pid
             self._save()

@@ -36,7 +36,8 @@ class IngestedTask:
     run_prompts: list[str] = field(default_factory=list)
 
     # ── 执行器启动 agent 后回填 ──
-    session_id: str | None = None        # agent session / run_id
+    session_id: str | None = None        # frago run_id (Run 实例目录名)
+    claude_session_id: str | None = None # Claude Code session UUID (JSONL 文件名)
     pid: int | None = None               # agent 进程 PID
 
     # ── 执行完成后回填 ──

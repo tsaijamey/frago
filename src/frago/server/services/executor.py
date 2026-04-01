@@ -122,18 +122,26 @@ class Executor:
             # Killed by resume → resume handler re-entered monitoring
             return
 
-        # 4. Extract results
+        # 4. Determine success/failure from Claude Code session JSONL
+        updated_task = self._store.get(task.id)
+        claude_sid = updated_task.claude_session_id if updated_task else None
+        stop_reason = self._read_stop_reason(claude_sid) if claude_sid else None
+
+        # Also check execution.jsonl for explicit markers (agent may have written one)
         step, summary = self._read_completion_info(run_id)
 
-        # 5. Update status
+        # 5. Update status — priority: explicit marker > stop_reason > unknown
         if step == "TASK_COMPLETE":
             self._store.update_status(task.id, TaskStatus.COMPLETED, result_summary=summary)
         elif step == "TASK_FAILED":
             self._store.update_status(task.id, TaskStatus.FAILED, error=summary)
+        elif stop_reason == "end_turn":
+            self._store.update_status(task.id, TaskStatus.COMPLETED,
+                                      result_summary="completed (stop_reason: end_turn)")
         else:
             self._store.update_status(
                 task.id, TaskStatus.FAILED,
-                error="sub-agent exited without completion marker",
+                error=f"sub-agent exited abnormally (stop_reason: {stop_reason})",
             )
 
         # 6. Release context lock
@@ -153,7 +161,7 @@ class Executor:
             logger.debug("Failed to archive run %s", run_id, exc_info=True)
 
         # 8. Broadcast event
-        has_completion = step is not None
+        has_completion = step is not None or stop_reason == "end_turn"
         duration = int((datetime.now() - task.created_at).total_seconds()) if task.created_at else 0
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_exited", {
@@ -214,11 +222,15 @@ class Executor:
             run_id=run_id,
         )
 
-        # Launch
+        # Launch — pre-generate Claude Code session UUID for traceability
+        import uuid as _uuid
+        claude_session_id = str(_uuid.uuid4())
+
         result = AgentService.start_task(
             prompt=agent_prompt,
             project_path=str(Path.home()),
             env_extra={"FRAGO_CURRENT_RUN": run_id},
+            claude_session_id=claude_session_id,
         )
 
         if result.get("status") != "ok":
@@ -228,8 +240,10 @@ class Executor:
             return None, None
 
         pid = result["pid"]
-        self._store.update_run_info(task.id, session_id=run_id, pid=pid)
-        logger.info("Executor: agent launched for task %s (run=%s, pid=%d)", task.id[:8], run_id, pid)
+        self._store.update_run_info(task.id, session_id=run_id, pid=pid,
+                                    claude_session_id=claude_session_id)
+        logger.info("Executor: agent launched for task %s (run=%s, claude=%s, pid=%d)",
+                     task.id[:8], run_id, claude_session_id[:8], pid)
 
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_launched", {
@@ -301,6 +315,36 @@ class Executor:
             logger.info("Executor: resumed task %s with new pid %d", task_id[:8], new_pid)
 
     # -- result extraction --
+
+    @staticmethod
+    def _read_stop_reason(claude_session_id: str) -> str | None:
+        """Read stop_reason from the last assistant message in Claude Code JSONL.
+
+        Returns: "end_turn" (success), "max_tokens", None (interrupted/crash), etc.
+        """
+        # Derive JSONL path: ~/.claude/projects/{cwd-slug}/{uuid}.jsonl
+        # cwd is Path.home() → slug is home path with / replaced by -
+        home = str(Path.home())
+        cwd_slug = home.replace("/", "-")
+        jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_session_id}.jsonl"
+
+        if not jsonl_path.exists():
+            logger.debug("Executor: Claude JSONL not found: %s", jsonl_path)
+            return None
+
+        try:
+            lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+            # Scan from end to find last assistant message
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                if entry.get("type") == "assistant" and "message" in entry:
+                    return entry["message"].get("stop_reason")
+        except Exception:
+            logger.debug("Executor: failed to read Claude JSONL: %s", jsonl_path, exc_info=True)
+
+        return None
 
     @staticmethod
     def _read_completion_info(run_id: str) -> tuple[str | None, str | None]:

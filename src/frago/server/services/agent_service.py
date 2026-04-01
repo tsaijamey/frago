@@ -5,6 +5,7 @@ Supports both detached (fire-and-forget) and attached (streaming) modes.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import shutil
@@ -12,7 +13,7 @@ import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from frago.server.services.base import (
     run_subprocess_background,
@@ -60,18 +61,18 @@ class AgentSession:
     def __init__(self, internal_id: str, project_path: str):
         self.internal_id = internal_id
         self.project_path = project_path
-        self._process: Optional[subprocess.Popen] = None
-        self._reader_task: Optional[asyncio.Task] = None
+        self._process: subprocess.Popen | None = None
+        self._reader_task: asyncio.Task | None = None
         self._attached = False
         self._running = False
-        self._claude_session_id: Optional[str] = None
+        self._claude_session_id: str | None = None
         self._current_assistant_message = ""
         self._current_tool_input_json = ""
-        self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
+        self._pending_tool_calls: dict[str, dict[str, Any]] = {}
         # Optional callback for capturing complete assistant messages
-        self._on_assistant_message: Optional[Any] = None  # Callable[[str], None]
+        self._on_assistant_message: Any | None = None  # Callable[[str], None]
 
-    def _get_frago_agent_command(self) -> List[str]:
+    def _get_frago_agent_command(self) -> list[str]:
         """Get frago agent command for subprocess."""
         import sys
 
@@ -87,7 +88,7 @@ class AgentSession:
         # Last resort: bare name (resolve_command_path will try shutil.which)
         return ["frago", "agent"]
 
-    async def start(self, prompt: str, resume_session_id: Optional[str] = None) -> None:
+    async def start(self, prompt: str, resume_session_id: str | None = None) -> None:
         """Start agent process in attached mode.
 
         Args:
@@ -137,7 +138,7 @@ class AgentSession:
         if self._reader_task:
             try:
                 await asyncio.wait_for(self._reader_task, timeout=5)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 if self._reader_task and not self._reader_task.done():
                     self._reader_task.cancel()
 
@@ -165,10 +166,8 @@ class AgentSession:
 
         if self._reader_task:
             self._reader_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._reader_task
-            except asyncio.CancelledError:
-                pass
 
         logger.info(f"Attached agent session {self.internal_id[:8]} stopped")
 
@@ -216,7 +215,7 @@ class AgentSession:
                 "status": "completed",
             })
 
-    async def _handle_stream_event(self, event: Dict[str, Any]) -> None:
+    async def _handle_stream_event(self, event: dict[str, Any]) -> None:
         """Parse and handle stream-json events from Claude CLI."""
         event_type = event.get("type", "")
 
@@ -269,10 +268,8 @@ class AgentSession:
                 })
                 # Notify callback with complete assistant message
                 if self._on_assistant_message:
-                    try:
+                    with contextlib.suppress(Exception):
                         self._on_assistant_message(self._current_assistant_message)
-                    except Exception:
-                        pass
                 self._current_assistant_message = ""
 
             # Flush accumulated tool input
@@ -341,7 +338,7 @@ class AgentSession:
         return self._running
 
     @property
-    def claude_session_id(self) -> Optional[str]:
+    def claude_session_id(self) -> str | None:
         return self._claude_session_id
 
 
@@ -352,14 +349,15 @@ class AgentService:
     """
 
     # Attached sessions registry (in-memory, lost on server restart)
-    _attached_sessions: Dict[str, AgentSession] = {}
+    _attached_sessions: dict[str, AgentSession] = {}
 
     @staticmethod
     def start_task(
         prompt: str,
-        project_path: Optional[str] = None,
-        env_extra: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        project_path: str | None = None,
+        env_extra: dict[str, str] | None = None,
+        claude_session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Start agent task.
 
         Executes `frago agent {prompt}` command in background.
@@ -369,15 +367,17 @@ class AgentService:
             prompt: Task description/prompt.
             project_path: Optional project path context.
             env_extra: Additional environment variables for the subprocess.
+            claude_session_id: Pre-generated UUID for Claude Code session traceability.
 
         Returns:
-            Dictionary with status, task_id, and message or error.
+            Dictionary with status, task_id, pid, claude_session_id, and message or error.
         """
         if not prompt or not prompt.strip():
             return {"status": "error", "error": "Task description cannot be empty"}
 
         prompt = prompt.strip()
         task_id = str(uuid.uuid4())
+        claude_session_id = claude_session_id or str(uuid.uuid4())
 
         try:
             # Find frago executable
@@ -399,7 +399,10 @@ class AgentService:
 
             # Build command
             # Pass --source web to mark this session as created from web interface
-            cmd = [frago_path, "agent", "--yes", "--source", "web", "--prompt-file", str(prompt_file)]
+            # Pass --session-id so Executor can trace back to Claude Code JSONL
+            cmd = [frago_path, "agent", "--yes", "--source", "web",
+                   "--session-id", claude_session_id,
+                   "--prompt-file", str(prompt_file)]
 
             # Start process in background with correct cwd
             cwd = project_path or str(Path.home())
@@ -423,6 +426,7 @@ class AgentService:
                 "status": "ok",
                 "id": task_id,
                 "pid": process.pid,
+                "claude_session_id": claude_session_id,
                 "title": title,
                 "project_path": project_path,
                 "agent_type": "claude",
@@ -444,8 +448,8 @@ class AgentService:
 
     @classmethod
     async def start_task_attached(
-        cls, prompt: str, project_path: Optional[str] = None
-    ) -> Dict[str, Any]:
+        cls, prompt: str, project_path: str | None = None
+    ) -> dict[str, Any]:
         """Start agent task in attached mode with real-time streaming.
 
         Args:
@@ -479,7 +483,7 @@ class AgentService:
             return {"status": "error", "error": f"Failed to start task: {str(e)}"}
 
     @classmethod
-    async def send_message_attached(cls, internal_id: str, message: str) -> Dict[str, Any]:
+    async def send_message_attached(cls, internal_id: str, message: str) -> dict[str, Any]:
         """Send a continuation message to an attached session.
 
         Args:
@@ -501,7 +505,7 @@ class AgentService:
             return {"status": "error", "error": str(e)}
 
     @classmethod
-    async def stop_attached(cls, internal_id: str) -> Dict[str, Any]:
+    async def stop_attached(cls, internal_id: str) -> dict[str, Any]:
         """Stop an attached session.
 
         Args:
@@ -522,7 +526,7 @@ class AgentService:
             return {"status": "error", "error": str(e)}
 
     @classmethod
-    def get_attached_session_info(cls, internal_id: str) -> Optional[Dict[str, Any]]:
+    def get_attached_session_info(cls, internal_id: str) -> dict[str, Any] | None:
         """Get info about an attached session.
 
         Args:
@@ -544,7 +548,7 @@ class AgentService:
         }
 
     @staticmethod
-    def continue_task(session_id: str, prompt: str) -> Dict[str, Any]:
+    def continue_task(session_id: str, prompt: str) -> dict[str, Any]:
         """Continue conversation in specified session.
 
         Args:

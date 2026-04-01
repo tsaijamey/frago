@@ -9,6 +9,7 @@ Based on ~/.frago/config.json configuration written by `frago init`:
 3. ccr_enabled == True or --use-ccr → Use CCR proxy
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -17,12 +18,10 @@ import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import click
 
 from frago.compat import prepare_command_for_windows
-
 
 # =============================================================================
 # Configuration Loading
@@ -33,7 +32,7 @@ def get_frago_config_path() -> Path:
     return Path.home() / ".frago" / "config.json"
 
 
-def load_frago_config() -> Optional[dict]:
+def load_frago_config() -> dict | None:
     """
     Load frago configuration
 
@@ -45,9 +44,9 @@ def load_frago_config() -> Optional[dict]:
         return None
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -55,7 +54,7 @@ def load_frago_config() -> Optional[dict]:
 # Utility Functions
 # =============================================================================
 
-def find_claude_cli() -> Optional[str]:
+def find_claude_cli() -> str | None:
     """
     Find claude CLI path
 
@@ -65,7 +64,7 @@ def find_claude_cli() -> Optional[str]:
     return shutil.which("claude")
 
 
-def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
+def check_ccr_auth() -> tuple[bool, dict | None]:
     """
     Check CCR (Claude Code Router) configuration
 
@@ -85,7 +84,7 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
         return False, {"error": "CCR config file not found"}
 
     try:
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = json.load(f)
 
         # Check if Provider is configured
@@ -115,11 +114,11 @@ def check_ccr_auth() -> Tuple[bool, Optional[dict]]:
             "host": config.get("HOST", "127.0.0.1"),
             "port": config.get("PORT", 3456),
         }
-    except (json.JSONDecodeError, IOError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         return False, {"error": f"Failed to read CCR config: {e}"}
 
 
-def should_use_ccr(config: Optional[dict], force_ccr: bool = False) -> Tuple[bool, Optional[dict]]:
+def should_use_ccr(config: dict | None, force_ccr: bool = False) -> tuple[bool, dict | None]:
     """
     Determine whether to use CCR
 
@@ -143,7 +142,7 @@ def should_use_ccr(config: Optional[dict], force_ccr: bool = False) -> Tuple[boo
     return False, None
 
 
-def verify_claude_working(timeout: int = 30) -> Tuple[bool, str]:
+def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
     """
     Verify Claude CLI is working by running a simple prompt
 
@@ -232,7 +231,7 @@ def get_available_slash_commands() -> dict:
                             commands[cmd_name] = ""
                 else:
                     commands[cmd_name] = ""
-            except IOError:
+            except OSError:
                 commands[cmd_name] = ""
 
     return commands
@@ -389,6 +388,12 @@ If the task is simple and clear, you can also use other tools directly without i
     help="Session source (terminal or web) for tracking origin"
 )
 @click.option(
+    "--session-id",
+    type=str,
+    default=None,
+    help="Use specified UUID as Claude Code session ID (for Executor traceability)"
+)
+@click.option(
     "--passthrough",
     is_flag=True,
     help="Pass through raw stream-json output (for Web UI or machine consumption)"
@@ -396,7 +401,7 @@ If the task is simple and clear, you can also use other tools directly without i
 def agent(
     prompt: tuple,
     prompt_file,
-    model: Optional[str],
+    model: str | None,
     timeout: int,
     use_ccr: bool,
     dry_run: bool,
@@ -406,8 +411,9 @@ def agent(
     json_status: bool,
     no_monitor: bool,
     yes: bool,
-    resume: Optional[str],
+    resume: str | None,
     source: str,
+    session_id: str | None,
     passthrough: bool,
 ):
     """
@@ -547,7 +553,7 @@ def agent(
 
         # Display prompt (skip in passthrough mode)
         if not passthrough:
-            click.echo(f"\n[Prompt] Agent prompt:")
+            click.echo("\n[Prompt] Agent prompt:")
             click.echo("-" * 40)
             click.echo(execution_prompt)
             click.echo("-" * 40)
@@ -574,8 +580,8 @@ def agent(
         cmd.extend(["--resume", resume])
         target_session_id = resume
     else:
-        # Force a fresh session to prevent cross-contamination with other active conversations
-        target_session_id = str(uuid.uuid4())
+        # Use caller-provided session_id or generate a fresh one
+        target_session_id = session_id or str(uuid.uuid4())
         cmd.extend(["--session-id", target_session_id])
 
     if model:
@@ -719,10 +725,8 @@ def agent(
     finally:
         # Stop session monitoring
         if monitor:
-            try:
+            with contextlib.suppress(Exception):
                 monitor.stop()
-            except Exception:
-                pass
 
 
 # =============================================================================
@@ -776,7 +780,7 @@ def agent_status():
         click.echo(f"  Initialization status: {'Completed' if init_completed else 'Not completed'}")
     else:
         click.echo("  [!] Config file not found")
-        click.echo(f"  Tip: Run 'frago init' to initialize configuration")
+        click.echo("  Tip: Run 'frago init' to initialize configuration")
 
     click.echo()
 
@@ -785,7 +789,7 @@ def agent_status():
         click.echo("CCR Status:")
         ok, info = check_ccr_auth()
         if ok:
-            click.echo(f"  [OK] CCR available")
+            click.echo("  [OK] CCR available")
             click.echo(f"    Providers: {', '.join(info.get('providers', []))}")
             click.echo(f"    Running status: {'Running' if info.get('is_running') else 'Not running'}")
         else:
