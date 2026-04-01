@@ -4,12 +4,28 @@ CDP session implementation
 Implements CDP session management with WebSocket connections.
 """
 
+from __future__ import annotations
+
 import json
 import uuid
 import threading
 import queue
 import time
-from typing import Dict, Any, Optional, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from frago.cdp.commands.dom import DOMCommands
+    from frago.cdp.commands.input import InputCommands
+    from frago.cdp.commands.page import PageCommands
+    from frago.cdp.commands.runtime import RuntimeCommands
+    from frago.cdp.commands.screenshot import ScreenshotCommands
+    from frago.cdp.commands.scroll import ScrollCommands
+    from frago.cdp.commands.status import StatusCommands
+    from frago.cdp.commands.target import TargetCommands
+    from frago.cdp.commands.visual_effects import VisualEffectsCommands
+    from frago.cdp.commands.wait import WaitCommands
+    from frago.cdp.commands.zoom import ZoomCommands
 
 import websocket
 
@@ -33,27 +49,27 @@ class CDPSession(CDPClient):
             config: CDP configuration, uses default config if None
         """
         super().__init__(config)
-        self.ws: Optional[websocket.WebSocket] = None
+        self.ws: websocket.WebSocket | None = None
         self._request_id = 0
-        self._pending_requests: Dict[int, Dict] = {}
-        self._event_handlers: Dict[str, Callable] = {}
-        self._message_queue = queue.Queue()
-        self._listener_thread: Optional[threading.Thread] = None
+        self._pending_requests: dict[int, dict] = {}
+        self._event_handlers: dict[str, Callable] = {}
+        self._message_queue: queue.Queue = queue.Queue()
+        self._listener_thread: threading.Thread | None = None
         self._running = False
         self._lock = threading.RLock()
 
         # Lazy initialization of command wrappers
-        self._page = None
-        self._input = None
-        self._runtime = None
-        self._dom = None
-        self._screenshot = None
-        self._scroll = None
-        self._wait = None
-        self._zoom = None
-        self._status = None
-        self._visual_effects = None
-        self._target = None
+        self._page: PageCommands | None = None
+        self._input: InputCommands | None = None
+        self._runtime: RuntimeCommands | None = None
+        self._dom: DOMCommands | None = None
+        self._screenshot: ScreenshotCommands | None = None
+        self._scroll: ScrollCommands | None = None
+        self._wait: WaitCommands | None = None
+        self._zoom: ZoomCommands | None = None
+        self._status: StatusCommands | None = None
+        self._visual_effects: VisualEffectsCommands | None = None
+        self._target: TargetCommands | None = None
 
         # Auto viewport border indicator
         self.auto_viewport_border = True
