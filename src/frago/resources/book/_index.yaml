@@ -39,6 +39,14 @@
   category: better
   brief: "结构化数据存取用 frago def，比手写 JSON 更规范"
 
+- name: better-git-checkout
+  category: better
+  brief: "git checkout 前先审视意图，部分撤销用 diff + Edit 精确还原"
+
+- name: better-server-restart
+  category: better
+  brief: "server restart 前先检查活跃任务，有任务时禁止自行 --force"
+
 # 效率类 — 你可能不知道有这个
 - name: chrome-click
   category: available
