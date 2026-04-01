@@ -520,17 +520,6 @@ class PrimaryAgentService:
                     recent_logs_section=logs_section,
                 ))
 
-            elif msg_type == "agent_notify":
-                # Legacy support — agent's own /api/pa/notify calls
-                # Executor is the primary notification path now
-                summary = msg.get("summary", "(无)")
-                if msg.get("error"):
-                    summary = f"错误: {msg['error']}"
-                msg_parts.append(
-                    f"[agent 通知] run: {msg.get('run_id', '?')}\n"
-                    f"摘要: {summary}"
-                )
-
             elif msg_type in ("reply_failed", "task_failed"):
                 if msg.get("content"):
                     msg_parts.append(msg["content"])

@@ -14,7 +14,7 @@ from typing import Any
 VALID_PA_ACTIONS = {"reply", "run", "resume"}
 
 VALID_QUEUE_MESSAGE_TYPES = {
-    "user_message", "agent_notify", "agent_exit",
+    "user_message",
     "agent_completed", "agent_failed", "reply_failed",
 }
 
@@ -152,53 +152,6 @@ def validate_pa_output(text: str) -> ValidationResult:
 
 
 # --------------------------------------------------------------------------
-# [检查 pa/notify 输入] [POST /api/pa/notify 入口]
-# sub-agent 的完成通知必须包含 run_id。
-# 校验失败 → 返回 400，sub-agent 会看到错误并重试。
-# --------------------------------------------------------------------------
-def validate_agent_notify(data: dict) -> ValidationResult:
-    """Validate sub-agent completion notification payload.
-
-    Rules:
-    1. Must have run_id
-    2. Must have summary or error (at least one)
-    3. outputs must be list if present
-    """
-    if not isinstance(data, dict):
-        return ValidationResult(
-            ok=False,
-            error=f"Expected dict, got {type(data).__name__}.",
-            raw_data=data,
-        )
-
-    if not data.get("run_id"):
-        return ValidationResult(
-            ok=False,
-            error='Missing required field "run_id".',
-            raw_data=data,
-        )
-
-    has_summary = bool(data.get("summary"))
-    has_error = bool(data.get("error"))
-    if not has_summary and not has_error:
-        return ValidationResult(
-            ok=False,
-            error='Must have at least one of "summary" or "error".',
-            raw_data=data,
-        )
-
-    outputs = data.get("outputs")
-    if outputs is not None and not isinstance(outputs, list):
-        return ValidationResult(
-            ok=False,
-            error=f'"outputs" must be a list if present, got {type(outputs).__name__}.',
-            raw_data=data,
-        )
-
-    return ValidationResult(ok=True, raw_data=data)
-
-
-# --------------------------------------------------------------------------
 # [检查消息投递格式] [消息入队前]
 # 所有进入 PA 消息队列的消息必须有 type 字段。
 # 校验失败 → 日志告警 + 拒绝入队（不能让脏数据进队列）。
@@ -209,8 +162,7 @@ def validate_queue_message(msg: dict) -> ValidationResult:
     Rules:
     1. Must have type in VALID_QUEUE_MESSAGE_TYPES
     2. user_message must have task_id, channel, prompt
-    3. agent_notify must have run_id
-    4. agent_exit must have run_id
+    3. agent_completed/agent_failed must have task_id, channel
     """
     if not isinstance(msg, dict):
         return ValidationResult(
@@ -234,14 +186,6 @@ def validate_queue_message(msg: dict) -> ValidationResult:
             return ValidationResult(
                 ok=False,
                 error=f'user_message missing required fields: {", ".join(missing)}.',
-                raw_data=msg,
-            )
-
-    elif msg_type in ("agent_notify", "agent_exit"):
-        if not msg.get("run_id"):
-            return ValidationResult(
-                ok=False,
-                error=f'{msg_type} missing required field "run_id".',
                 raw_data=msg,
             )
 
