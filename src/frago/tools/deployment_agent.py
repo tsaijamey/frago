@@ -114,7 +114,7 @@ class DeploymentPlan:
         created_at = datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now()
         return cls(actions=actions, created_at=created_at)
 
-    def save(self, path: Optional[Path] = None) -> None:
+    def save(self, path: Path | None = None) -> None:
         """Persist deployment plan to disk."""
         target = path or PENDING_DEPLOYMENTS_FILE
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +124,7 @@ class DeploymentPlan:
         )
 
     @classmethod
-    def load(cls, path: Optional[Path] = None) -> Optional["DeploymentPlan"]:
+    def load(cls, path: Path | None = None) -> Optional["DeploymentPlan"]:
         """Load pending deployment plan from disk."""
         target = path or PENDING_DEPLOYMENTS_FILE
         if not target.exists():
@@ -137,7 +137,7 @@ class DeploymentPlan:
             return None
 
     @classmethod
-    def clear_pending(cls, path: Optional[Path] = None) -> None:
+    def clear_pending(cls, path: Path | None = None) -> None:
         """Remove pending deployment plan file."""
         target = path or PENDING_DEPLOYMENTS_FILE
         if target.exists():
@@ -163,7 +163,7 @@ class DeploymentAgent:
     ):
         self.scan_roots = scan_roots
         self.exclude_patterns = exclude_patterns
-        self._local_projects: Optional[list[ProjectInfo]] = None
+        self._local_projects: list[ProjectInfo] | None = None
 
     @property
     def local_projects(self) -> list[ProjectInfo]:
@@ -183,10 +183,7 @@ class DeploymentAgent:
         resource_changes: dict[tuple[str, str], str] = {}
         for item in changes.items:
             path_parts = item.path.split("/")
-            if len(path_parts) >= 2:
-                resource = "/".join(path_parts[:2])
-            else:
-                resource = item.path
+            resource = "/".join(path_parts[:2]) if len(path_parts) >= 2 else item.path
 
             key = (item.workspace, resource)
             if key not in resource_changes:
@@ -231,7 +228,7 @@ class DeploymentAgent:
 
         return DeploymentPlan(actions=actions)
 
-    def _find_local_project(self, canonical_id: str) -> Optional[ProjectMatch]:
+    def _find_local_project(self, canonical_id: str) -> ProjectMatch | None:
         """Match canonical ID to a local project.
 
         1. Exact match: same git remote URL
@@ -302,7 +299,19 @@ def execute_deployment(plan: DeploymentPlan) -> list[str]:
     return messages
 
 
-def _deploy_system_resource(action: DeployAction) -> Optional[str]:
+def _delete_target(dst: Path) -> bool:
+    """Delete a deploy target (file or directory). Returns True if deleted."""
+    if dst.is_dir():
+        import shutil
+        shutil.rmtree(dst)
+        return True
+    elif dst.exists():
+        dst.unlink()
+        return True
+    return False
+
+
+def _deploy_system_resource(action: DeployAction) -> str | None:
     """Deploy a __system__ workspace resource to ~/.claude/.
 
     Resources:
@@ -315,15 +324,23 @@ def _deploy_system_resource(action: DeployAction) -> Optional[str]:
     resource = action.resource
 
     if resource == "CLAUDE.md":
-        src = src_base / "CLAUDE.md"
         dst = CLAUDE_HOME / "CLAUDE.md"
+        if action.change_type == "deleted":
+            if _delete_target(dst):
+                return f"Deleted CLAUDE.md ← {dst}"
+            return None
+        src = src_base / "CLAUDE.md"
         if _sync_file(src, dst):
             return f"Deployed CLAUDE.md → {dst}"
         return None
 
     if resource.startswith(("commands/", "skills/")):
-        src = src_base / resource
         dst = CLAUDE_HOME / resource
+        if action.change_type == "deleted":
+            if _delete_target(dst):
+                return f"Deleted {resource} ← {dst}"
+            return None
+        src = src_base / resource
         synced = (_sync_dir(src, dst) if src.is_dir()
                   else _sync_file(src, dst) if src.is_file()
                   else False)
@@ -336,7 +353,7 @@ def _deploy_system_resource(action: DeployAction) -> Optional[str]:
     return None
 
 
-def _deploy_project_resource(action: DeployAction) -> Optional[str]:
+def _deploy_project_resource(action: DeployAction) -> str | None:
     """Deploy a project workspace resource to the local project directory.
 
     Resources:
@@ -351,8 +368,13 @@ def _deploy_project_resource(action: DeployAction) -> Optional[str]:
     resource = action.resource
 
     if resource.startswith(".claude/"):
-        src = src_base / resource
         dst = target_project / resource
+        if action.change_type == "deleted":
+            if _delete_target(dst):
+                suffix = " (git-tracked)" if action.git_tracked else ""
+                return f"Deleted {resource} ← {dst}{suffix}"
+            return None
+        src = src_base / resource
         synced = (_sync_dir(src, dst) if src.is_dir()
                   else _sync_file(src, dst) if src.is_file()
                   else False)
@@ -370,7 +392,7 @@ def _deploy_project_resource(action: DeployAction) -> Optional[str]:
 def _restore_project_memory(
     action: DeployAction,
     target_project: Path,
-) -> Optional[str]:
+) -> str | None:
     """Restore project memory from workspace to Claude Code's projects directory.
 
     Canonical ID → local project path → encode to Claude's format
