@@ -36,11 +36,12 @@ from .client_commands import client_group
 from .workspace_commands import workspace_group
 from .reply_command import reply_cmd
 from .book_commands import book_command
+from .def_commands import def_group
 
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "sync", "workspace", "update", "autostart"]),
@@ -68,7 +69,35 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
     - AgentFriendlyGroup: Enhanced error messages
     - Grouped display: Organize commands by category
     - Subcommand expansion: Show subcommands of command groups in help
+    - Dynamic domain commands: registered def domains become top-level commands
     """
+
+    def list_commands(self, ctx: click.Context) -> List[str]:
+        builtin = super().list_commands(ctx)
+        try:
+            from frago.def_.registry import load_registry
+            registered = sorted(load_registry().keys())
+            # Exclude names that collide with built-in commands
+            builtin_set = set(builtin)
+            dynamic = [n for n in registered if n not in builtin_set]
+            return builtin + dynamic
+        except Exception:
+            return builtin
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
+        cmd = super().get_command(ctx, cmd_name)
+        if cmd is not None:
+            return cmd
+        # Check if it's a registered domain
+        try:
+            from frago.def_.registry import load_registry
+            registry = load_registry()
+            if cmd_name in registry:
+                from frago.cli.def_commands import build_command_group
+                return build_command_group(cmd_name, registry[cmd_name])
+        except Exception:
+            pass
+        return None
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter):
         """Format command list by groups, expanding subcommand groups"""
@@ -348,6 +377,9 @@ cli.add_command(reply_cmd, name="reply")
 
 # Book command - built-in knowledge query
 cli.add_command(book_command)
+
+# Def command group - structured knowledge domain management
+cli.add_command(def_group)
 
 # Cloud commands - frago Cloud authentication, config, and market
 cli.add_command(login_cmd, name="login")

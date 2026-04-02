@@ -79,3 +79,7 @@
 - name: run-logging
   category: available
   brief: "自动/手动日志分工、_insights 强制记录、研究完成标准"
+
+- name: def-knowledge
+  category: available
+  brief: "frago def 结构化知识系统：domain 注册、find 查询、save 沉淀"
