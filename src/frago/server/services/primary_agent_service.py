@@ -257,8 +257,22 @@ class PrimaryAgentService:
 
         # System environment
         tz_name = time.tzname[time.daylight] if time.daylight else time.tzname[0]
+
+        # Detect Claude model from settings
+        model_id = "claude default"
+        try:
+            settings_path = Path.home() / ".claude" / "settings.json"
+            if settings_path.exists():
+                settings = json.loads(settings_path.read_text(encoding="utf-8"))
+                custom_model = settings.get("ANTHROPIC_MODEL")
+                if custom_model:
+                    model_id = custom_model
+        except Exception:
+            pass
+
         sections.append(
             f"系统: {platform.system()} {platform.release()} | "
+            f"模型: {model_id} | "
             f"时区: {tz_name} | "
             f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}"
         )
@@ -283,7 +297,7 @@ class PrimaryAgentService:
                 lines.append("  正在执行:")
                 lines.append(f"    task_id: {executing.id[:8]}")
                 lines.append(f"    channel: {executing.channel}")
-                desc = executing.run_descriptions[-1] if executing.run_descriptions else executing.prompt[:80]
+                desc = executing.run_descriptions[-1] if executing.run_descriptions else executing.prompt
                 lines.append(f"    description: {desc}")
                 lines.append(f"    session_id: {executing.session_id or '(unknown)'}")
             else:
@@ -291,15 +305,15 @@ class PrimaryAgentService:
 
             if queued:
                 lines.append(f"  排队中 ({len(queued)} 个):")
-                for t in queued[:10]:
-                    lines.append(f"    - [{t.id[:8]}] ({t.channel}) {t.prompt[:60]}")
+                for t in queued:
+                    lines.append(f"    - [{t.id[:8]}] ({t.channel}) {t.prompt}")
             else:
                 lines.append("  排队中: 0 个")
 
             if recent_completed:
                 lines.append(f"  最近完成 ({len(recent_completed)} 个):")
                 for t in recent_completed:
-                    desc = t.run_descriptions[-1] if t.run_descriptions else t.prompt[:40]
+                    desc = t.run_descriptions[-1] if t.run_descriptions else t.prompt
                     summary = t.result_summary or t.error or ""
                     lines.append(f"    - [{t.id[:8]}] ({t.channel}) [{t.status.value}] {desc}")
                     if summary:
@@ -638,6 +652,9 @@ class PrimaryAgentService:
                 await self._handle_pa_output(self._pa_output_buffer.strip())
             self._pa_output_buffer = ""
 
+        # ⓪ Archive completed/failed tasks from active store
+        self._cleanup_terminal_tasks()
+
         # ① Check for stale run lock
         await self._check_stale_run_lock()
 
@@ -670,6 +687,25 @@ class PrimaryAgentService:
             self._executor.start()
 
         self._heartbeat_seq += 1
+
+    def _cleanup_terminal_tasks(self) -> None:
+        """Archive completed/failed tasks out of active store.
+
+        Reuses TaskStore.rotate() which moves terminal tasks to
+        date-named archive files, keeping the active file lean.
+        Skipped if no terminal tasks exist (rotate() is a no-op).
+        """
+        try:
+            from frago.server.services.ingestion.store import TaskStore
+            store = TaskStore()
+            archived = store.rotate(exclude_failed=True)
+            if archived:
+                logger.info(
+                    "Heartbeat [%d]: archived %d terminal task(s)",
+                    self._heartbeat_seq, archived,
+                )
+        except Exception:
+            logger.debug("Failed to cleanup terminal tasks", exc_info=True)
 
     async def _check_stale_run_lock(self) -> None:
         """Check if the current run lock is stale and release it if so."""
@@ -824,7 +860,7 @@ class PrimaryAgentService:
             await self._broadcast_pa_event("pa_reply", {
                 "task_id": task_id or "",
                 "channel": channel or "",
-                "reply_text": text[:200],
+                "reply_text": text,
             })
         elif result["status"] == "error":
             # reply failed → notify PA via system message
@@ -854,7 +890,7 @@ class PrimaryAgentService:
             run_prompt=prompt,
         )
         store.update_status(task_id, TaskStatus.QUEUED)
-        logger.info("Task %s → QUEUED (desc=%s)", task_id[:8], description[:40])
+        logger.info("Task %s → QUEUED (desc=%s)", task_id[:8], description)
 
     async def _handle_resume(self, decision: dict[str, Any]) -> None:
         """PA decided action:'resume' → delegate to executor for instant kill+restart."""

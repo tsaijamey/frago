@@ -216,18 +216,23 @@ class TaskStore:
 
     # -- rotation --
 
-    def rotate(self) -> int:
+    def rotate(self, *, exclude_failed: bool = False) -> int:
         """Archive terminal tasks to date-named files, return count archived.
 
         Safe to call at any time — only moves COMPLETED/FAILED tasks.
         PENDING/EXECUTING tasks stay in the main file untouched.
+
+        Args:
+            exclude_failed: If True, only archive COMPLETED tasks (keep FAILED
+                in active store for PA visibility). Used by heartbeat cleanup.
         """
+        archivable = {TaskStatus.COMPLETED.value} if exclude_failed else _TERMINAL_STATUSES
         with self._lock:
             active: dict[str, dict[str, Any]] = {}
             to_archive: dict[str, dict[str, dict[str, Any]]] = {}
 
             for key, data in self._tasks.items():
-                if data["status"] in _TERMINAL_STATUSES:
+                if data["status"] in archivable:
                     date_str = (data.get("completed_at") or data["created_at"])[:10]
                     to_archive.setdefault(date_str, {})[key] = data
                 else:
