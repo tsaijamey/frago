@@ -202,7 +202,31 @@ def find_frago_process_on_port() -> int | None:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
     except psutil.AccessDenied:
-        # macOS requires root to enumerate all network connections
+        # macOS requires root for psutil.net_connections(); fall back to lsof
+        return _find_frago_pid_via_lsof()
+    return None
+
+
+def _find_frago_pid_via_lsof() -> int | None:
+    """Fallback: use lsof to find a frago process on SERVER_PORT (macOS)."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-i", f":{SERVER_PORT}", "-t", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.strip().splitlines():
+            pid = int(line.strip())
+            try:
+                proc = psutil.Process(pid)
+                if is_frago_process(proc):
+                    return pid
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
         pass
     return None
 
@@ -306,8 +330,14 @@ def check_port_available() -> tuple[bool, str | None]:
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         return False, f"Unknown process (PID: {conn.pid})"
         except psutil.AccessDenied:
-            # macOS requires root to enumerate all network connections
-            pass
+            # macOS: fall back to lsof for process identification
+            pid = _find_frago_pid_via_lsof()
+            if pid:
+                try:
+                    proc = psutil.Process(pid)
+                    return False, f"{proc.name()} (PID: {pid})"
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return False, f"Unknown process (PID: {pid})"
         return False, "another process"
 
 
