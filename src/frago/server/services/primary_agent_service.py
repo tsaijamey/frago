@@ -880,12 +880,16 @@ class PrimaryAgentService:
 
     @staticmethod
     def _build_sub_agent_prompt(
-        task_id: str | None,
+        task_id: str | None,  # noqa: ARG004  reserved for related_runs lookup
         task_prompt: str,
         run_id: str,
         related_runs: list[str] | None = None,
     ) -> str:
-        """Build the prompt for a sub-agent working in a Run instance."""
+        """Build the prompt for a sub-agent working in a Run instance.
+
+        Agent 只收到任务指令 + Run 实例信息。
+        NEVER 暴露消息渠道（channel/chat_id/message_id）— 回复由 PA 统一发送。
+        """
         related_section = ""
         if related_runs:
             lines = ["相关历史 Run（可用 frago run info <run_id> 查看详情）:"]
@@ -893,37 +897,9 @@ class PrimaryAgentService:
                 lines.append(f"  - {rid}")
             related_section = "\n" + "\n".join(lines) + "\n"
 
-        # Look up channel/message_id/reply_context from TaskStore
-        channel = "unknown"
-        message_id = ""
-        reply_context: dict[str, Any] = {}
-        if task_id:
-            try:
-                lifecycle = TaskLifecycle()
-                task = lifecycle.get_task(task_id)
-                if task:
-                    channel = task.channel
-                    message_id = task.channel_message_id
-                    if task.reply_context:
-                        reply_context = task.reply_context
-            except Exception:
-                pass
-
-        # Build reply_context section so sub-agent knows where to send messages/images
-        reply_context_section = ""
-        if reply_context:
-            reply_context_section = (
-                "\n回复上下文（发送消息/图片时必须使用此 chat_id，禁止使用其他 chat_id）:\n"
-                + json.dumps(reply_context, ensure_ascii=False)
-                + "\n"
-            )
-
         return SUB_AGENT_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,
             run_id=run_id,
-            channel=channel,
-            message_id=message_id,
-            reply_context_section=reply_context_section,
             related_section=related_section,
         )
 
