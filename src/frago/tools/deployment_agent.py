@@ -52,6 +52,7 @@ class DeployAction:
     confidence: float        # 0.0-1.0
     workspace: str = ""      # source workspace name
     git_tracked: bool = False  # whether target .claude/ is git-tracked
+    deleted_paths: list[str] = field(default_factory=list)  # exact file paths for delete ops
 
 
 @dataclass
@@ -85,6 +86,7 @@ class DeploymentPlan:
                 "action": a.action,
                 "confidence": a.confidence,
                 "git_tracked": a.git_tracked,
+                "deleted_paths": a.deleted_paths,
             }
             for a in self.actions
         ]
@@ -108,6 +110,7 @@ class DeploymentPlan:
                 confidence=a["confidence"],
                 workspace=a.get("workspace", ""),
                 git_tracked=a.get("git_tracked", False),
+                deleted_paths=a.get("deleted_paths", []),
             )
             for a in data.get("actions", [])
         ]
@@ -179,8 +182,9 @@ class DeploymentAgent:
         Groups file-level changes into resource-level actions and determines
         deployment targets.
         """
-        # Group changes by (workspace, resource)
+        # Group changes by (workspace, resource), track deleted file paths
         resource_changes: dict[tuple[str, str], str] = {}
+        resource_deleted_paths: dict[tuple[str, str], list[str]] = {}
         for item in changes.items:
             path_parts = item.path.split("/")
             resource = "/".join(path_parts[:2]) if len(path_parts) >= 2 else item.path
@@ -191,8 +195,12 @@ class DeploymentAgent:
             elif resource_changes[key] != item.change_type:
                 resource_changes[key] = "modified"
 
+            if item.change_type == "deleted":
+                resource_deleted_paths.setdefault(key, []).append(item.path)
+
         actions = []
         for (workspace, resource), change_type in sorted(resource_changes.items()):
+            deleted_paths = resource_deleted_paths.get((workspace, resource), [])
             if workspace == "__system__":
                 actions.append(DeployAction(
                     resource=resource,
@@ -201,6 +209,7 @@ class DeploymentAgent:
                     action="deploy",
                     confidence=1.0,
                     workspace=workspace,
+                    deleted_paths=deleted_paths,
                 ))
             else:
                 canonical_id = workspace.replace("__", "/")
@@ -215,6 +224,7 @@ class DeploymentAgent:
                         confidence=match.confidence,
                         workspace=workspace,
                         git_tracked=git_tracked,
+                        deleted_paths=deleted_paths,
                     ))
                 else:
                     actions.append(DeployAction(
@@ -224,6 +234,7 @@ class DeploymentAgent:
                         action="pending",
                         confidence=0.0,
                         workspace=workspace,
+                        deleted_paths=deleted_paths,
                     ))
 
         return DeploymentPlan(actions=actions)
@@ -299,16 +310,15 @@ def execute_deployment(plan: DeploymentPlan) -> list[str]:
     return messages
 
 
-def _delete_target(dst: Path) -> bool:
-    """Delete a deploy target (file or directory). Returns True if deleted."""
-    if dst.is_dir():
-        import shutil
-        shutil.rmtree(dst)
-        return True
-    elif dst.exists():
-        dst.unlink()
-        return True
-    return False
+def _delete_files(base: Path, paths: list[str]) -> list[str]:
+    """Delete specific files under base directory. Returns list of deleted paths."""
+    deleted = []
+    for rel_path in paths:
+        target = base / rel_path
+        if target.exists() and target.is_file():
+            target.unlink()
+            deleted.append(rel_path)
+    return deleted
 
 
 def _deploy_system_resource(action: DeployAction) -> str | None:
@@ -326,8 +336,9 @@ def _deploy_system_resource(action: DeployAction) -> str | None:
     if resource == "CLAUDE.md":
         dst = CLAUDE_HOME / "CLAUDE.md"
         if action.change_type == "deleted":
-            if _delete_target(dst):
-                return f"Deleted CLAUDE.md ← {dst}"
+            deleted = _delete_files(CLAUDE_HOME, action.deleted_paths)
+            if deleted:
+                return f"Deleted {len(deleted)} file(s) from {CLAUDE_HOME}"
             return None
         src = src_base / "CLAUDE.md"
         if _sync_file(src, dst):
@@ -337,8 +348,9 @@ def _deploy_system_resource(action: DeployAction) -> str | None:
     if resource.startswith(("commands/", "skills/")):
         dst = CLAUDE_HOME / resource
         if action.change_type == "deleted":
-            if _delete_target(dst):
-                return f"Deleted {resource} ← {dst}"
+            deleted = _delete_files(CLAUDE_HOME, action.deleted_paths)
+            if deleted:
+                return f"Deleted {len(deleted)} file(s) from {CLAUDE_HOME}"
             return None
         src = src_base / resource
         synced = (_sync_dir(src, dst) if src.is_dir()
@@ -370,9 +382,10 @@ def _deploy_project_resource(action: DeployAction) -> str | None:
     if resource.startswith(".claude/"):
         dst = target_project / resource
         if action.change_type == "deleted":
-            if _delete_target(dst):
+            deleted = _delete_files(target_project, action.deleted_paths)
+            if deleted:
                 suffix = " (git-tracked)" if action.git_tracked else ""
-                return f"Deleted {resource} ← {dst}{suffix}"
+                return f"Deleted {len(deleted)} file(s) from {target_project}{suffix}"
             return None
         src = src_base / resource
         synced = (_sync_dir(src, dst) if src.is_dir()
