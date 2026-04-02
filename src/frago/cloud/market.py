@@ -342,7 +342,7 @@ def print_recipe_list(recipes: List[Dict[str, Any]], show_id: bool = True):
         else:
             print(f"  {recipe['name']}{premium_badge}")
 
-        print(f"      {recipe.get('description', '')[:60]}...")
+        print(f"      {recipe.get('description', '')}")
         print(f"      作者: {recipe.get('author', 'unknown')} | "
               f"评分: {rating_str} | 下载: {downloads}")
         print()

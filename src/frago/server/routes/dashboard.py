@@ -146,7 +146,7 @@ def compute_dashboard_data() -> DashboardData:
                     else:
                         content = getattr(step, "content_summary", "") or ""
                         if content:
-                            current_step = content[:50]
+                            current_step = content
             except Exception:
                 pass
 

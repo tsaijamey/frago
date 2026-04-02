@@ -1171,7 +1171,7 @@ def search_recipes(query: Optional[str], output_format: str):
             name = recipe.get('name', '')
             version = recipe.get('version', '')
             recipe_type = recipe.get('type', '')
-            description = recipe.get('description', '')[:40]
+            description = recipe.get('description', '')
             click.echo(f"{name:<30} {version:<10} {recipe_type:<10} {description}")
 
         click.echo()

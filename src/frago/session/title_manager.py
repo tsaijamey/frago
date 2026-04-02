@@ -141,7 +141,7 @@ class TitleManager:
                 return existing.get("title"), None
 
         # Generate title using Claude CLI with haiku
-        title, error = self._call_haiku_for_title(content[:5000])
+        title, error = self._call_haiku_for_title(content)
 
         if title:
             data.setdefault("titles", {})[session_id] = {
@@ -341,7 +341,7 @@ Title:'''
                     title = stdout.strip()[:100] if stdout.strip() else None
                     return (title, None) if title else (None, "Failed to parse response")
 
-            error_msg = f"Claude CLI returned error: {stderr[:200] if stderr else 'unknown error'}"
+            error_msg = f"Claude CLI returned error: {stderr if stderr else 'unknown error'}"
             logger.warning(f"Title generation failed: {error_msg}")
             return None, error_msg
 

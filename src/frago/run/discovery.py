@@ -115,7 +115,7 @@ class RunDiscovery:
                         **run,
                         "match_source": "log",
                         "similarity": 50,
-                        "matched_steps": matched_steps[:3],
+                        "matched_steps": matched_steps,
                     })
             except Exception:
                 continue

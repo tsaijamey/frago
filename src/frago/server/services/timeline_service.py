@@ -97,7 +97,7 @@ def _humanize_pa_event(event_type: str, data: dict) -> tuple[str, Optional[str]]
         # Extract instruction tag if present
         import re
         match = re.search(r'<instruction>\s*([\s\S]*?)\s*</instruction>', prompt)
-        instruction = match.group(1).strip() if match else prompt[:80]
+        instruction = match.group(1).strip() if match else prompt
         return f"收到 {channel} 消息", instruction
 
     elif event_type == "pa_decision":
@@ -112,7 +112,7 @@ def _humanize_pa_event(event_type: str, data: dict) -> tuple[str, Optional[str]]
             "update": "更新任务状态",
         }
         title = titles.get(action, action)
-        return title, str(desc)[:80] if desc else None
+        return title, str(desc) if desc else None
 
     elif event_type == "pa_agent_launched":
         desc = data.get("description", "")
@@ -128,7 +128,7 @@ def _humanize_pa_event(event_type: str, data: dict) -> tuple[str, Optional[str]]
     elif event_type == "pa_reply":
         channel = data.get("channel", "")
         text = data.get("reply_text", "")
-        return f"已回复 {channel}", text[:80] if text else None
+        return f"已回复 {channel}", text if text else None
 
     return event_type, None
 

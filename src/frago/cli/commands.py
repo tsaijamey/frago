@@ -1252,7 +1252,7 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
             if result == 'success':
                 _print_msg("success", f"Scrolled to element: {display_target}", "interaction", {"selector": selector, "text": text, "block": block})
                 time.sleep(0.5)  # Wait for scroll animation to complete
-                _do_perception(session, f"scroll-to-{(text or selector)[:30]}")
+                _do_perception(session, f"scroll-to-{(text or selector)}")
             else:
                 _print_msg("error", f"Element not found: {display_target}", "interaction", {"selector": selector, "text": text})
                 return

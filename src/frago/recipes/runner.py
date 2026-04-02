@@ -570,7 +570,7 @@ class RecipeRunner:
                     recipe_name=recipe_name,
                     runtime='python',
                     exit_code=-1,
-                    stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout[:200]}"
+                    stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout}"
                 )
 
             return {"data": data, "stderr": result.stderr}
@@ -654,7 +654,7 @@ class RecipeRunner:
                     recipe_name=recipe_name,
                     runtime='shell',
                     exit_code=-1,
-                    stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout[:200]}"
+                    stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout}"
                 )
 
             return {"data": data, "stderr": result.stderr}

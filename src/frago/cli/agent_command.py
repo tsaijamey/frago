@@ -177,7 +177,7 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
         if "rate limit" in error_msg.lower():
             return False, "Rate limited - please wait and try again"
 
-        return False, f"Claude CLI error: {error_msg[:200]}"
+        return False, f"Claude CLI error: {error_msg}"
 
     except subprocess.TimeoutExpired:
         return False, f"Claude CLI timed out after {timeout}s"

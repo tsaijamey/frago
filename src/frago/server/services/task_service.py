@@ -416,7 +416,7 @@ class TaskService:
             for step in steps:
                 content = getattr(step, "content_summary", "") or ""
                 if any(kw in content.lower() for kw in ["error", "failed", "exception", "timeout"]):
-                    return content[:100]
+                    return content
         except Exception as e:
             logger.debug("Failed to extract error summary for %s: %s", session_id, e)
         return None

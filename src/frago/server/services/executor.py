@@ -181,7 +181,6 @@ class Executor:
         On failure: marks task FAILED.
         Returns (run_id, pid) or (None, None).
         """
-        from frago.run.constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
         from frago.run.context import ContextManager
         from frago.run.exceptions import ContextAlreadySetError
         from frago.run.manager import RunManager
@@ -198,7 +197,7 @@ class Executor:
         # Create Run instance
         manager = RunManager(PROJECTS_DIR)
         run = manager.create_run(
-            description[:THEME_DESC_MAX] if description else prompt[:THEME_DESC_MAX]
+            description or prompt
         )
         run_id = run.run_id
         logger.info("Executor: created Run %s for task %s", run_id, task.id[:8])

@@ -289,7 +289,7 @@ class GuideService:
         match = pattern.search(text)
 
         if not match:
-            return text[:max_length] + ("..." if len(text) > max_length else "")
+            return text
 
         # Extract surrounding text
         start = max(0, match.start() - 50)

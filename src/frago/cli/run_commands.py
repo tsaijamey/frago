@@ -705,7 +705,7 @@ def insights(run_id: Optional[str], insight_type: Optional[str], limit: int, fmt
             click.echo("  " + "─" * 105)
             for r in results:
                 date = r["timestamp"][:10]
-                summary = r["summary"][:53] + ".." if len(r["summary"]) > 55 else r["summary"]
+                summary = r["summary"]
                 run_short = r["run_id"][:23] + ".." if len(r["run_id"]) > 25 else r["run_id"]
                 click.echo(
                     f"  {r['type']:<14} {summary:<55} {run_short:<25} {date:<10}"

@@ -357,7 +357,7 @@ def sync_session(
     if first_msg:
         # Take first line and truncate
         first_line = first_msg.split("\n")[0].strip()
-        session_name = first_line[:100] if len(first_line) > 100 else first_line
+        session_name = first_line
 
     # Check for AI-generated title (preserve if exists)
     try:

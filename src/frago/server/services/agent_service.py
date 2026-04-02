@@ -195,7 +195,7 @@ class AgentSession:
                 if not line:
                     continue
 
-                logger.debug(f"Read line {line_count}: {line[:100]}...")
+                logger.debug(f"Read line {line_count}: {line}")
 
                 try:
                     event = json.loads(line)
@@ -420,7 +420,7 @@ class AgentService:
                     env=env,
                 )
 
-            title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+            title = prompt
 
             return {
                 "status": "ok",
@@ -615,7 +615,7 @@ class AgentService:
             cwd = _resolve_project_path(session_id)
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"\n{'='*60}\n")
-                f.write(f"[Resume] {prompt[:80]}...\n")
+                f.write(f"[Resume] {prompt}\n")
                 f.write(f"{'='*60}\n")
                 process = run_subprocess_background(
                     cmd,
@@ -624,7 +624,7 @@ class AgentService:
                     cwd=cwd,
                 )
 
-            title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+            title = prompt
 
             return {
                 "status": "ok",

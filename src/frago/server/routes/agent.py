@@ -75,7 +75,7 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
 
     return TaskItemResponse(
         id=result.get("id", ""),
-        title=result.get("title", request.prompt[:50] + "..." if len(request.prompt) > 50 else request.prompt),
+        title=result.get("title", request.prompt),
         status="running",
         project_path=result.get("project_path") or request.project_path,
         agent_type=result.get("agent_type", "claude"),

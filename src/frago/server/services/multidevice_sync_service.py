@@ -274,17 +274,13 @@ class MultiDeviceSyncService:
 
         if result.local_changes:
             lines.append(f"Local changes: {len(result.local_changes)} files")
-            for change in result.local_changes[:5]:
+            for change in result.local_changes:
                 lines.append(f"  - {change.name} ({change.operation})")
-            if len(result.local_changes) > 5:
-                lines.append(f"  ... and {len(result.local_changes) - 5} more")
 
         if result.remote_updates:
             lines.append(f"Remote updates: {len(result.remote_updates)} files")
-            for update in result.remote_updates[:5]:
+            for update in result.remote_updates:
                 lines.append(f"  - {update.name} ({update.operation})")
-            if len(result.remote_updates) > 5:
-                lines.append(f"  ... and {len(result.remote_updates) - 5} more")
 
         if result.pushed_to_remote:
             lines.append("Changes pushed to remote repository")
