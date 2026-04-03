@@ -35,10 +35,10 @@
     "sub_agent_environment": "sub-agent 通过 uv run frago agent 启动，自带 CLAUDE.md + slash commands + 完整 frago CLI",
     "sub_agent_context": "sub-agent 在 Run 实例中工作，有独立的 logs/screenshots/outputs 目录",
     "recipe_execution": "recipe 有三种运行时：chrome-js（浏览器）、python、shell",
-    "run_lifecycle": "Run 实例：创建 → 执行 → 完成标记（TASK_COMPLETE/TASK_FAILED）→ 归档"
+    "run_lifecycle": "Run 实例：创建 → 执行 → PID 退出 → executor 读 Claude JSONL stop_reason 判定成败 → 归档"
   },
   "verification": {
-    "run_completion": "检查 Run 日志中的 TASK_COMPLETE / TASK_FAILED 标记",
+    "run_completion": "executor 通过 Claude JSONL 最后一条非 null stop_reason 判定：end_turn/stop_sequence=成功，其他=失败",
     "session_status": "uv run frago session show {session_id} 查看会话状态",
     "task_status": "TaskStore 中的 PENDING/QUEUED/EXECUTING/COMPLETED/FAILED 状态",
     "recipe_result": "recipe 返回 {success, data, error, execution_time}"
@@ -52,7 +52,6 @@
   "conventions": {
     "run_description": "English only, becomes directory slug",
     "recipe_params": "JSON string via --params",
-    "task_complete_marker": "uv run frago run log --step 'TASK_COMPLETE' --status 'success' ...",
-    "task_failed_marker": "uv run frago run log --step 'TASK_FAILED' --status 'error' ..."
+    "completion_detection": "自动：executor 监听 PID 退出后读 Claude JSONL stop_reason，无需 agent 主动标记"
   }
 }

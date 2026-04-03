@@ -38,7 +38,7 @@ class TaskLifecycle:
     def ingest(
         self,
         channel: str,
-        messages: list[dict],
+        messages: list[dict[str, Any]],
     ) -> list[str]:
         """Ingest messages from a channel: dedup → create PENDING task.
 
@@ -72,7 +72,7 @@ class TaskLifecycle:
 
     # -- reply --
 
-    def reply(self, task_id: str, channel: str, reply_params: dict) -> dict[str, Any]:
+    def reply(self, task_id: str, channel: str, reply_params: dict[str, Any]) -> dict[str, Any]:
         """Execute a reply via notify recipe. Returns {"status": "ok"/"error"}.
 
         Enriches params with reply_context, runs notify recipe.
@@ -141,14 +141,7 @@ class TaskLifecycle:
             if not current_run_id:
                 return False
 
-            # Check for completion marker — if found, just release lock
-            step, _summary = self._read_completion_info(current_run_id)
-            if step is not None:
-                ctx_mgr.release_context()
-                logger.info("Released stale run lock %s (completion marker found)", current_run_id)
-                return True
-
-            # No completion marker — check timeout + process liveness
+            # Check timeout + process liveness
             lock_file = FRAGO_HOME / "current_run"
             if not lock_file.exists():
                 return False
@@ -203,7 +196,7 @@ class TaskLifecycle:
 
         return False
 
-    def recover_pending_tasks(self) -> list[dict]:
+    def recover_pending_tasks(self) -> list[dict[str, Any]]:
         """Scan TaskStore for PENDING and FAILED tasks, return as queue messages.
 
         PENDING → re-enqueue as user_message for PA to decide.
@@ -278,20 +271,3 @@ class TaskLifecycle:
 
     # -- static helpers --
 
-    @staticmethod
-    def _read_completion_info(run_id: str) -> tuple[str | None, str | None]:
-        """Read completion step and summary from run's execution.jsonl."""
-        log_file = PROJECTS_DIR / run_id / "logs" / "execution.jsonl"
-        try:
-            lines = log_file.read_text(encoding="utf-8").splitlines()
-            for line in reversed(lines[-20:]):
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                step = entry.get("step")
-                if step in ("TASK_COMPLETE", "TASK_FAILED"):
-                    summary = entry.get("data", {}).get("summary")
-                    return step, summary
-        except Exception:
-            pass
-        return None, None

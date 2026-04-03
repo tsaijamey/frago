@@ -95,6 +95,8 @@ class Executor:
             except Exception:
                 logger.error("Executor: unhandled error executing task %s", task.id[:8], exc_info=True)
                 self._store.update_status(task.id, TaskStatus.FAILED, error="executor internal error")
+                from frago.server.services.trace import trace as _trace
+                _trace(task.channel_message_id, task.id, "executor", "标记 FAILED: executor internal error")
 
     async def _execute_run(self, task: IngestedTask) -> None:
         """Execute a single queued task end-to-end."""
@@ -123,26 +125,42 @@ class Executor:
             return
 
         # 4. Determine success/failure from Claude Code session JSONL
+        # Wait briefly for JSONL flush — Claude Code process may have exited
+        # before the final assistant message was fsynced to disk.
+        await asyncio.sleep(2.5)
         updated_task = self._store.get(task.id)
         claude_sid = updated_task.claude_session_id if updated_task else None
         stop_reason = self._read_stop_reason(claude_sid) if claude_sid else None
 
-        # Also check execution.jsonl for explicit markers (agent may have written one)
-        step, summary = self._read_completion_info(run_id)
+        # Trace: raw diagnosis before status decision
+        from frago.server.services.trace import trace as _trace
+        _trace(task.channel_message_id, task.id, "executor",
+               f"读取结果: claude_sid={claude_sid and claude_sid[:8]}, stop_reason={stop_reason}")
 
-        # 5. Update status — priority: explicit marker > stop_reason > unknown
-        if step == "TASK_COMPLETE":
-            self._store.update_status(task.id, TaskStatus.COMPLETED, result_summary=summary)
-        elif step == "TASK_FAILED":
-            self._store.update_status(task.id, TaskStatus.FAILED, error=summary)
-        elif stop_reason == "end_turn":
+        # 5. Update status based on Claude JSONL stop_reason
+        #    (from 3940-session statistical analysis):
+        #      end_turn / stop_sequence → agent finished naturally → COMPLETED
+        #      None / tool_use / max_tokens → interrupted/crashed → FAILED
+        _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
+        if stop_reason in _SUCCESS_STOP_REASONS:
+            final_status = "COMPLETED"
             self._store.update_status(task.id, TaskStatus.COMPLETED,
-                                      result_summary="completed (stop_reason: end_turn)")
+                                      result_summary=f"completed (stop_reason: {stop_reason})")
         else:
+            final_status = "FAILED"
             self._store.update_status(
                 task.id, TaskStatus.FAILED,
                 error=f"sub-agent exited abnormally (stop_reason: {stop_reason})",
             )
+
+        # Trace: agent execution finished
+        has_completion = stop_reason in _SUCCESS_STOP_REASONS
+        duration = int((datetime.now() - task.created_at).total_seconds()) if task.created_at else 0
+        from frago.server.services.trace import trace as _trace
+        _trace(task.channel_message_id, task.id, "agent",
+               f"执行结束 {final_status}: stop_reason={stop_reason}, run={run_id}",
+               data={"event_type": "pa_agent_exited", "run_id": run_id, "task_id": task.id,
+                     "has_completion": has_completion, "duration_seconds": duration})
 
         # 6. Release context lock
         try:
@@ -161,8 +179,6 @@ class Executor:
             logger.debug("Failed to archive run %s", run_id, exc_info=True)
 
         # 8. Broadcast event
-        has_completion = step is not None or stop_reason == "end_turn"
-        duration = int((datetime.now() - task.created_at).total_seconds()) if task.created_at else 0
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_exited", {
                 "run_id": run_id,
@@ -172,7 +188,7 @@ class Executor:
             })
 
         # 9. Notify PA via system message
-        await self._notify_pa(task, run_id, step, summary)
+        await self._notify_pa(task, run_id, stop_reason)
 
     async def _launch_agent(self, task: IngestedTask) -> tuple[str | None, int | None]:
         """Create Run, acquire lock, build prompt, launch sub-agent process.
@@ -192,6 +208,8 @@ class Executor:
         if not prompt:
             logger.error("Executor: task %s has no run_prompt", task.id[:8])
             self._store.update_status(task.id, TaskStatus.FAILED, error="missing run_prompt")
+            from frago.server.services.trace import trace as _trace
+            _trace(task.channel_message_id, task.id, "executor", "标记 FAILED: missing run_prompt")
             return None, None
 
         # Create Run instance
@@ -236,6 +254,9 @@ class Executor:
             logger.error("Executor: failed to start agent for task %s: %s", task.id[:8], result.get("error"))
             ctx_mgr.release_context()
             self._store.update_status(task.id, TaskStatus.FAILED, error=result.get("error"))
+            from frago.server.services.trace import trace as _trace
+            _trace(task.channel_message_id, task.id, "executor",
+                   f"标记 FAILED: agent 启动失败, error={result.get('error')}")
             return None, None
 
         pid = result["pid"]
@@ -244,12 +265,18 @@ class Executor:
         logger.info("Executor: agent launched for task %s (run=%s, claude=%s, pid=%d)",
                      task.id[:8], run_id, claude_session_id[:8], pid)
 
+        _launched_data = {
+            "run_id": run_id,
+            "task_id": task.id,
+            "description": description,
+        }
         if self._broadcast_pa_event:
-            await self._broadcast_pa_event("pa_agent_launched", {
-                "run_id": run_id,
-                "task_id": task.id,
-                "description": description,
-            })
+            await self._broadcast_pa_event("pa_agent_launched", _launched_data)
+        # Trace: executor launched agent
+        from frago.server.services.trace import trace as _trace
+        _trace(task.channel_message_id, task.id, "executor",
+               f"启动 agent, run={run_id}, pid={pid}",
+               data={"event_type": "pa_agent_launched", **_launched_data})
 
         return run_id, pid
 
@@ -317,9 +344,14 @@ class Executor:
 
     @staticmethod
     def _read_stop_reason(claude_session_id: str) -> str | None:
-        """Read stop_reason from the last assistant message in Claude Code JSONL.
+        """Read stop_reason from the last assistant message that has one set.
 
-        Returns: "end_turn" (success), "max_tokens", None (interrupted/crash), etc.
+        Claude Code may append multiple assistant records per turn — only the
+        record that concludes an API response carries a non-null stop_reason.
+        Streaming text chunks and tool-use blocks without stop_reason are skipped.
+
+        Returns: "end_turn" / "stop_sequence" (success), "tool_use" / "max_tokens"
+                 (interrupted), or None (no assistant message found / crash).
         """
         # Derive JSONL path: ~/.claude/projects/{cwd-slug}/{uuid}.jsonl
         # cwd is Path.home() → slug is home path with / replaced by -
@@ -328,40 +360,23 @@ class Executor:
         jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_session_id}.jsonl"
 
         if not jsonl_path.exists():
-            logger.debug("Executor: Claude JSONL not found: %s", jsonl_path)
             return None
 
         try:
             lines = jsonl_path.read_text(encoding="utf-8").splitlines()
-            # Scan from end to find last assistant message
+            # Scan from end, find the last assistant record with a non-null stop_reason
             for line in reversed(lines):
                 if not line.strip():
                     continue
                 entry = json.loads(line)
                 if entry.get("type") == "assistant" and "message" in entry:
-                    return entry["message"].get("stop_reason")
-        except Exception:
-            logger.debug("Executor: failed to read Claude JSONL: %s", jsonl_path, exc_info=True)
-
-        return None
-
-    @staticmethod
-    def _read_completion_info(run_id: str) -> tuple[str | None, str | None]:
-        """Read completion step and summary from run's execution.jsonl."""
-        log_file = PROJECTS_DIR / run_id / "logs" / "execution.jsonl"
-        try:
-            lines = log_file.read_text(encoding="utf-8").splitlines()
-            for line in reversed(lines[-20:]):
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                step = entry.get("step")
-                if step in ("TASK_COMPLETE", "TASK_FAILED"):
-                    summary = entry.get("data", {}).get("summary")
-                    return step, summary
+                    sr = entry["message"].get("stop_reason")
+                    if sr is not None:
+                        return str(sr)
         except Exception:
             pass
-        return None, None
+
+        return None
 
     @staticmethod
     def _extract_recent_logs(run_id: str, limit: int = 10) -> list[str]:
@@ -400,8 +415,7 @@ class Executor:
         self,
         task: IngestedTask,
         run_id: str,
-        step: str | None,
-        summary: str | None,
+        stop_reason: str | None = None,
     ) -> None:
         """Construct system message and enqueue to PA."""
         if not self._pa_enqueue_message:
@@ -410,12 +424,12 @@ class Executor:
         outputs = self._extract_output_files(run_id)
         recent_logs = self._extract_recent_logs(run_id)
 
-        if step == "TASK_COMPLETE" or (not step and not summary):
-            msg_type = "agent_completed" if step else "agent_failed"
-        elif step == "TASK_FAILED":
-            msg_type = "agent_failed"
-        else:
-            msg_type = "agent_failed"
+        _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
+        msg_type = "agent_completed" if stop_reason in _SUCCESS_STOP_REASONS else "agent_failed"
+
+        # Use task's own result/error as summary
+        updated = self._store.get(task.id)
+        result_summary = (updated.result_summary or updated.error) if updated else None
 
         msg: dict[str, Any] = {
             "type": msg_type,
@@ -423,10 +437,14 @@ class Executor:
             "channel": task.channel,
             "session_id": task.session_id,
             "run_id": run_id,
-            "result_summary": summary or "agent exited without completion marker",
+            "result_summary": result_summary or f"agent exited (stop_reason: {stop_reason})",
             "output_files": outputs,
             "recent_logs": recent_logs,
         }
+
+        # Trace: executor notifying PA
+        from frago.server.services.trace import trace as _trace
+        _trace(task.channel_message_id, task.id, "executor", f"通知 PA: {msg_type}")
 
         try:
             await self._pa_enqueue_message(msg)
