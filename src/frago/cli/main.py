@@ -6,38 +6,47 @@ Provides backward-compatible CLI interface supporting all original shell script 
 """
 
 import sys
-import click
-from typing import Optional, List, Tuple
 from collections import OrderedDict
 
+import click
+
 from frago import __version__
+
+from .agent_command import agent, agent_status
+from .agent_friendly import AgentFriendlyGroup
+from .autostart_command import autostart_group
+from .book_commands import book_command
+from .chrome_commands import chrome_group
+from .client_commands import client_group
+from .cloud_commands import (
+    config_group,
+    install_group,
+    login_cmd,
+    logout_cmd,
+    market_group,
+    whoami_cmd,
+)
 from .commands import (
-    status,
     init as init_dirs,  # Legacy directory init command, kept as init-dirs
 )
+from .commands import (
+    status,
+)
+from .def_commands import def_group
 from .init_command import init  # New environment init command
 from .recipe_commands import recipe_group
-from .skill_commands import skill_group
+from .reply_command import reply_cmd
 from .run_commands import run_group
-from .usegit_commands import usegit_group
-from .sync_command import sync_cmd  # Sync command
-from .chrome_commands import chrome_group
-from .update_command import update
-from .agent_command import agent, agent_status
-from .session_commands import session_group
-from .view_command import view
 from .serve_command import serve
 from .server_command import server_group
-from .autostart_command import autostart_group
+from .session_commands import session_group
+from .skill_commands import skill_group
 from .start_command import start
-from .agent_friendly import AgentFriendlyGroup
-from .cloud_commands import login_cmd, logout_cmd, whoami_cmd, config_group, market_group, install_group
-from .client_commands import client_group
+from .sync_command import sync_cmd  # Sync command
+from .update_command import update
+from .usegit_commands import usegit_group
+from .view_command import view
 from .workspace_commands import workspace_group
-from .reply_command import reply_cmd
-from .book_commands import book_command
-from .def_commands import def_group
-
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
@@ -72,7 +81,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
     - Dynamic domain commands: registered def domains become top-level commands
     """
 
-    def list_commands(self, ctx: click.Context) -> List[str]:
+    def list_commands(self, ctx: click.Context) -> list[str]:
         builtin = super().list_commands(ctx)
         try:
             from frago.def_.registry import load_registry
@@ -84,7 +93,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
         except Exception:
             return builtin
 
-    def get_command(self, ctx: click.Context, cmd_name: str) -> Optional[click.Command]:
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         cmd = super().get_command(ctx, cmd_name)
         if cmd is not None:
             return cmd
@@ -101,7 +110,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter):
         """Format command list by groups, expanding subcommand groups"""
-        commands: List[Tuple[str, click.Command]] = []
+        commands: list[tuple[str, click.Command]] = []
         for subcommand in self.list_commands(ctx):
             cmd = self.get_command(ctx, subcommand)
             if cmd is None or cmd.hidden:
@@ -128,7 +137,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
                 ungrouped.append((name, cmd))
 
         # Output grouped commands in COMMAND_GROUPS order
-        for group_name in COMMAND_GROUPS.keys():
+        for group_name in COMMAND_GROUPS:
             if group_name not in grouped:
                 continue
             group_cmds = grouped[group_name]
@@ -162,7 +171,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
         ctx: click.Context,
         group_name: str,
         group_cmd: click.Group
-    ) -> List[Tuple[str, str]]:
+    ) -> list[tuple[str, str]]:
         """Get subcommand rows for a command group (with indent prefix)"""
         rows = []
 
@@ -267,9 +276,9 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
 )
 @click.pass_context
 def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: str, port: int,
-        proxy_host: Optional[str], proxy_port: Optional[int],
-        proxy_username: Optional[str], proxy_password: Optional[str],
-        no_proxy: bool, target_id: Optional[str]):
+        proxy_host: str | None, proxy_port: int | None,
+        proxy_username: str | None, proxy_password: str | None,
+        no_proxy: bool, target_id: str | None):
     """
     Frago - AI Agent Multi-Runtime Automation Infrastructure
 
@@ -388,6 +397,7 @@ cli.add_command(whoami_cmd, name="whoami")
 cli.add_command(config_group, name="config")
 cli.add_command(market_group, name="market")
 cli.add_command(install_group, name="install")
+
 
 
 def main():
