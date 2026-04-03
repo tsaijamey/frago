@@ -117,6 +117,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     except Exception as e:
         logger.warning("Failed to deploy hook binary: %s", e)
 
+    # Cleanup old trace files
+    from frago.server.services.trace import cleanup_old_traces
+    cleanup_old_traces()
+
     # Initialize Primary Agent (PID 1 — always available, independent of features)
     from frago.server.services.primary_agent_service import PrimaryAgentService
 
@@ -129,9 +133,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Start task ingestion scheduler (if enabled in config)
     ingestion_scheduler = await _start_ingestion_scheduler(logger)
 
-    # Wire ingestion scheduler → PA message queue
+    # Wire ingestion scheduler ↔ PA (bidirectional)
     if ingestion_scheduler is not None:
         ingestion_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
+        primary_agent.set_ingestion_scheduler(ingestion_scheduler)
 
     yield
 

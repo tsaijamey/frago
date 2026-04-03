@@ -19,11 +19,16 @@ VALID_QUEUE_MESSAGE_TYPES = {
 }
 
 # Required fields per PA action type (beyond the universal "action" field)
+# reply/run: require (task_id OR msg_id) + other fields
+# resume: always requires task_id (only for existing tasks)
 _PA_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
-    "reply": ["task_id", "channel", "text"],
-    "run": ["task_id", "channel", "description", "prompt"],
-    "resume": ["task_id", "prompt"],
+    "reply": ["channel", "text"],       # + task_id OR msg_id (checked separately)
+    "run": ["channel", "description", "prompt"],  # + task_id OR msg_id
+    "resume": ["task_id", "prompt"],    # always task_id
 }
+
+# Actions that require either task_id or msg_id
+_ACTIONS_REQUIRING_ID: set[str] = {"reply", "run"}
 
 
 @dataclass
@@ -148,6 +153,14 @@ def validate_pa_output(text: str) -> ValidationResult:
                     raw_data=text,
                 )
 
+        # reply/run must have either task_id or msg_id
+        if action in _ACTIONS_REQUIRING_ID and not item.get("task_id") and not item.get("msg_id"):
+                return ValidationResult(
+                    ok=False,
+                    error=f'Element [{i}] (action="{action}") missing "task_id" or "msg_id" — at least one is required.',
+                    raw_data=text,
+                )
+
     return ValidationResult(ok=True, raw_data=data)
 
 
@@ -181,7 +194,11 @@ def validate_queue_message(msg: dict) -> ValidationResult:
         )
 
     if msg_type == "user_message":
-        missing = [f for f in ("task_id", "channel", "prompt") if not msg.get(f)]
+        # New flow: msg_id (from scheduler). Legacy flow: task_id (from recovery).
+        has_id = bool(msg.get("msg_id") or msg.get("task_id"))
+        missing = [f for f in ("channel", "prompt") if not msg.get(f)]
+        if not has_id:
+            missing.insert(0, "msg_id")
         if missing:
             return ValidationResult(
                 ok=False,

@@ -105,6 +105,16 @@ class PrimaryAgentService:
         # Executor — single-threaded task runner
         self._executor: Any = None  # Executor instance, initialized in initialize()
 
+        # Ingestion scheduler reference — for accessing cached messages
+        self._scheduler: Any = None
+
+    def set_ingestion_scheduler(self, scheduler: Any) -> None:
+        """Register ingestion scheduler for message cache access.
+
+        Called by app.py during startup (bidirectional wiring).
+        """
+        self._scheduler = scheduler
+
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
         if cls._instance is None:
@@ -354,8 +364,8 @@ class PrimaryAgentService:
     async def _broadcast_pa_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Broadcast a PA event to all connected WebSocket clients.
 
-        Also persists the event to pa_events.jsonl for timeline history.
         Pure side-effect for frontend visibility.
+        Persistence is handled by trace() calls at each instrumentation point.
         Failures are logged and swallowed — PA operation must not be affected.
         """
         try:
@@ -367,13 +377,6 @@ class PrimaryAgentService:
             })
         except Exception as e:
             logger.debug("Failed to broadcast PA event %s: %s", event_type, e)
-
-        # Persist to JSONL for timeline history recovery
-        try:
-            from frago.server.services.timeline_service import append_pa_event
-            append_pa_event(event_type, data)
-        except Exception as e:
-            logger.debug("Failed to persist PA event %s: %s", event_type, e)
 
     # -- message queue --
 
@@ -437,6 +440,13 @@ class PrimaryAgentService:
                         break
                     await asyncio.sleep(0.5)
 
+                # Trace: PA received messages from queue
+                from frago.server.services.trace import trace as _trace
+                for _m in messages:
+                    if isinstance(_m, dict):
+                        _trace(_m.get("msg_id", ""), _m.get("task_id"), "pa",
+                               f"收到消息队列: {_m.get('channel', '')}")
+
                 # Merge into one text block
                 merged = self._format_queue_messages(messages)
                 logger.info(
@@ -495,8 +505,7 @@ class PrimaryAgentService:
 
                 msg_parts.append(PA_MESSAGE_TEMPLATE.format(
                     channel=channel_name,
-                    channel_message_id=msg.get("channel_message_id", "?"),
-                    task_id=msg.get("task_id", ""),
+                    channel_message_id=msg.get("channel_message_id", msg.get("msg_id", "?")),
                     prompt=msg.get("prompt", ""),
                     group_line=group_line,
                 ) + recovered_note)
@@ -698,6 +707,13 @@ class PrimaryAgentService:
         try:
             from frago.server.services.ingestion.store import TaskStore
             store = TaskStore()
+
+            # Trace terminal tasks before archiving
+            from frago.server.services.trace import trace as _trace
+            for task in store.get_by_status(TaskStatus.COMPLETED):
+                _trace(task.channel_message_id, task.id, "pa",
+                       f"归档任务: status={task.status.value}, task={task.id[:8]}")
+
             archived = store.rotate(exclude_failed=True)
             if archived:
                 logger.info(
@@ -804,23 +820,32 @@ class PrimaryAgentService:
             if not isinstance(d, dict):
                 continue
             action = d.get("action")
-            task_id = d.get("task_id", "?")[:8]
-            await self._broadcast_pa_event("pa_decision", {
+            # Log identifier: prefer task_id, fall back to msg_id
+            log_id = (d.get("task_id") or d.get("msg_id") or "?")[:8]
+            _decision_data = {
                 "action": action or "",
-                "task_id": task_id,
-                "details": {k: v for k, v in d.items() if k not in ("action", "task_id")},
-            })
+                "task_id": d.get("task_id", ""),
+                "msg_id": d.get("msg_id", ""),
+                "details": {k: v for k, v in d.items() if k not in ("action", "task_id", "msg_id")},
+            }
+            await self._broadcast_pa_event("pa_decision", _decision_data)
+            # Trace: PA decision
+            from frago.server.services.trace import trace as _trace
+            _desc = d.get("description") or d.get("text", "")
+            _trace(d.get("msg_id", ""), d.get("task_id"), "pa",
+                   f"决策 {action}: {str(_desc)[:80]}",
+                   data={"event_type": "pa_decision", **_decision_data})
             try:
                 if action == "reply":
-                    logger.info("→ reply (task=%s, channel=%s)", task_id, d.get("channel"))
+                    logger.info("→ reply (id=%s, channel=%s)", log_id, d.get("channel"))
                     await self._send_reply(d)
 
                 elif action == "run":
-                    logger.info("→ run (task=%s, desc=%s)", task_id, d.get("description", ""))
+                    logger.info("→ run (id=%s, desc=%s)", log_id, d.get("description", ""))
                     await self._enqueue_run(d)
 
                 elif action == "resume":
-                    logger.info("→ resume (task=%s)", task_id)
+                    logger.info("→ resume (task=%s)", log_id)
                     await self._handle_resume(d)
 
                 else:
@@ -830,14 +855,52 @@ class PrimaryAgentService:
 
     # -- decision handlers --
 
+    def _create_task_from_cache(
+        self, channel: str, msg_id: str, initial_status: TaskStatus,
+    ) -> Any:
+        """Create an IngestedTask from cached message data.
+
+        Called by decision handlers when PA outputs msg_id (new message scenario).
+        Returns the created task, or None if cache miss.
+        """
+        import uuid
+
+        from frago.server.services.ingestion.models import IngestedTask
+        from frago.server.services.ingestion.store import TaskStore
+
+        if not self._scheduler:
+            logger.warning("No ingestion scheduler — cannot create task from cache")
+            return None
+
+        cached = self._scheduler.get_cached_message(channel, msg_id)
+        if not cached:
+            logger.warning("Cache miss for %s:%s — message may have been lost on restart", channel, msg_id)
+            return None
+
+        task = IngestedTask(
+            id=str(uuid.uuid4()),
+            channel=cached.channel,
+            channel_message_id=cached.msg_id,
+            prompt=cached.prompt,
+            status=initial_status,
+            reply_context=cached.reply_context,
+        )
+        store = TaskStore()
+        store.add(task)
+        if initial_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            store.update_status(task.id, initial_status)
+        logger.info("Created task %s from cached message %s (status=%s)", task.id[:8], msg_id, initial_status.value)
+        return task
+
     async def _send_reply(self, decision: dict[str, Any]) -> None:
         """PA decided action:'reply' → instant send.
 
-        Only marks COMPLETED for reply-only tasks (PENDING status).
-        Tasks managed by Executor (QUEUED/EXECUTING/COMPLETED/FAILED)
-        have their status controlled exclusively by Executor.
+        Two paths:
+        - msg_id present: new message → create task(COMPLETED) from cache → reply
+        - task_id present: existing task (agent callback) → reply using existing task
         """
         task_id: str = decision.get("task_id", "")
+        msg_id: str = decision.get("msg_id", "")
         channel: str = decision.get("channel", "")
         text: str = decision.get("text", "")
 
@@ -845,25 +908,37 @@ class PrimaryAgentService:
             logger.warning("reply decision missing channel or text")
             return
 
+        # msg_id path: create task from cache (born completed — PA replied directly)
+        if msg_id and not task_id:
+            task = self._create_task_from_cache(channel, msg_id, TaskStatus.COMPLETED)
+            if task:
+                task_id = task.id
+                from frago.server.services.trace import trace as _trace
+                _trace(msg_id, task_id, "pa", f"创建任务并标记完成: reply 直达, task={task_id[:8]}")
+
         reply_params = {"text": text}
         result = await asyncio.to_thread(
             self._lifecycle.reply, task_id, channel, reply_params,
         )
 
         if result["status"] == "ok":
-            # Only mark COMPLETED for reply-only tasks (still PENDING = never went through Executor)
-            if task_id:
+            # For existing tasks still PENDING (shouldn't happen in new flow, but backward compat)
+            if task_id and not msg_id:
                 from frago.server.services.ingestion.store import TaskStore
                 task = TaskStore().get(task_id)
                 if task and task.status == TaskStatus.PENDING:
                     TaskStore().update_status(task_id, TaskStatus.COMPLETED, result_summary="replied")
-            await self._broadcast_pa_event("pa_reply", {
+            _reply_data = {
                 "task_id": task_id or "",
                 "channel": channel or "",
                 "reply_text": text,
-            })
+            }
+            await self._broadcast_pa_event("pa_reply", _reply_data)
+            # Trace: PA replied to channel
+            from frago.server.services.trace import trace as _trace
+            _trace(msg_id, task_id, "pa", f"回复 {channel}: {text[:80]}",
+                   data={"event_type": "pa_reply", **_reply_data})
         elif result["status"] == "error":
-            # reply failed → notify PA via system message
             await self.enqueue_message({
                 "type": "reply_failed",
                 "task_id": task_id,
@@ -873,23 +948,49 @@ class PrimaryAgentService:
             })
 
     async def _enqueue_run(self, decision: dict[str, Any]) -> None:
-        """PA decided action:'run' → write to TaskStore, mark QUEUED. Executor picks up."""
-        task_id = decision.get("task_id")
+        """PA decided action:'run' → create/find task, mark QUEUED. Executor picks up.
+
+        Two paths:
+        - msg_id present: new message → create task(QUEUED) from cache
+        - task_id present: existing task (e.g. multi-step follow-up)
+        """
+        task_id = decision.get("task_id", "")
+        msg_id = decision.get("msg_id", "")
         description = decision.get("description", "")
         prompt = decision.get("prompt", "")
+        channel = decision.get("channel", "")
 
-        if not task_id or not prompt:
-            logger.warning("run decision missing task_id or prompt")
+        if not prompt:
+            logger.warning("run decision missing prompt")
             return
 
         from frago.server.services.ingestion.store import TaskStore
         store = TaskStore()
+
+        # msg_id path: create task from cache
+        if msg_id and not task_id:
+            task = self._create_task_from_cache(channel, msg_id, TaskStatus.QUEUED)
+            if not task:
+                logger.warning("run decision: cannot create task from msg_id %s", msg_id)
+                return
+            task_id = task.id
+            from frago.server.services.trace import trace as _trace
+            _trace(msg_id, task_id, "pa", f"创建任务 QUEUED: {description[:60]}, task={task_id[:8]}")
+
+        if not task_id:
+            logger.warning("run decision missing both task_id and msg_id")
+            return
+
         store.update_run_info(
             task_id,
             run_description=description,
             run_prompt=prompt,
         )
-        store.update_status(task_id, TaskStatus.QUEUED)
+        # Only set QUEUED if task was just created with that status (msg_id path)
+        # or if it's an existing task that needs re-queuing
+        existing = store.get(task_id)
+        if existing and existing.status != TaskStatus.QUEUED:
+            store.update_status(task_id, TaskStatus.QUEUED)
         logger.info("Task %s → QUEUED (desc=%s)", task_id[:8], description)
 
     async def _handle_resume(self, decision: dict[str, Any]) -> None:
