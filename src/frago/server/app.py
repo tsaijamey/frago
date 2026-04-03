@@ -133,6 +133,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Start task ingestion scheduler (if enabled in config)
     ingestion_scheduler = await _start_ingestion_scheduler(logger)
 
+    # Telemetry: ensure config exists + report server start for DAU tracking
+    try:
+        from frago.telemetry import capture
+        from frago.telemetry.config import ensure_config
+        ensure_config()
+        capture("server_started")
+    except Exception:
+        pass
+
     # Wire ingestion scheduler ↔ PA (bidirectional)
     if ingestion_scheduler is not None:
         ingestion_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
