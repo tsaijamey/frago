@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.ingestion.models import IngestedTask, TaskStatus
+from frago.server.services.ingestion.models import IngestedTask, SubTask, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,55 @@ def _migrate_to_list(data: dict[str, Any], list_key: str, legacy_key: str) -> li
     if isinstance(legacy, str):
         return [legacy]
     return []
+
+
+def _migrate_sub_tasks(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Backward compat: build sub_tasks from legacy flat fields.
+
+    Old format had run_descriptions/run_prompts as parallel arrays + scalar
+    session_id/claude_session_id/pid/result_summary/error/completed_at.
+    New format: sub_tasks list where each element is a self-contained run record.
+    """
+    existing = data.get("sub_tasks")
+    if isinstance(existing, list):
+        return existing
+
+    # Reconstruct from legacy parallel arrays
+    descriptions = _migrate_to_list(data, "run_descriptions", "run_description")
+    prompts = _migrate_to_list(data, "run_prompts", "run_prompt")
+
+    if not descriptions and not prompts:
+        return []
+
+    count = max(len(descriptions), len(prompts))
+    subs: list[dict[str, Any]] = []
+    for i in range(count):
+        sub: dict[str, Any] = {
+            "description": descriptions[i] if i < len(descriptions) else "",
+            "prompt": prompts[i] if i < len(prompts) else "",
+            "status": "pending",
+            "created_at": data.get("created_at", datetime.now().isoformat()),
+        }
+        subs.append(sub)
+
+    # Backfill scalar fields into the LAST sub_task (only record we have)
+    if subs:
+        last = subs[-1]
+        for key in ("session_id", "claude_session_id", "pid",
+                     "result_summary", "error", "completed_at"):
+            val = data.get(key)
+            if val is not None:
+                last[key] = val
+        # Infer sub_task status from task-level status
+        status_val = data.get("status", "pending")
+        if status_val in ("completed", "failed"):
+            last["status"] = status_val
+        elif status_val == "executing":
+            last["status"] = "executing"
+        else:
+            last["status"] = "queued"
+
+    return subs
 
 
 class TaskStore:
@@ -96,14 +145,19 @@ class TaskStore:
             target = self._find(task_id)
             if target is not None:
                 target["status"] = status.value
-                if session_id is not None:
-                    target["session_id"] = session_id
-                if result_summary is not None:
-                    target["result_summary"] = result_summary
-                if error is not None:
-                    target["error"] = error
-                if status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-                    target["completed_at"] = datetime.now().isoformat()
+                # Write run-level fields into current sub_task
+                subs = target.get("sub_tasks", [])
+                if subs:
+                    cur = subs[-1]
+                    if session_id is not None:
+                        cur["session_id"] = session_id
+                    if result_summary is not None:
+                        cur["result_summary"] = result_summary
+                    if error is not None:
+                        cur["error"] = error
+                    if status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                        cur["completed_at"] = datetime.now().isoformat()
+                        cur["status"] = status.value
                 self._save()
                 return
             logger.warning("Task not found for status update: %s", task_id)
@@ -196,22 +250,34 @@ class TaskStore:
         claude_session_id: str | None = None,
         pid: int | None = None,
     ) -> None:
-        """PA 决策或执行器回填运行时信息。"""
+        """PA 决策或执行器回填运行时信息。
+
+        run_description + run_prompt: append 新 SubTask（PA 决策路径）
+        session_id / claude_session_id / pid: 回填到当前 sub_task（执行器路径）
+        """
         with self._lock:
             target = self._find(task_id)
             if target is None:
                 logger.warning("Task not found for run_info update: %s", task_id)
                 return
-            if run_description is not None:
-                target.setdefault("run_descriptions", []).append(run_description)
-            if run_prompt is not None:
-                target.setdefault("run_prompts", []).append(run_prompt)
-            if session_id is not None:
-                target["session_id"] = session_id
-            if claude_session_id is not None:
-                target["claude_session_id"] = claude_session_id
-            if pid is not None:
-                target["pid"] = pid
+            subs = target.setdefault("sub_tasks", [])
+            # PA 决策路径：description + prompt → append 新 sub_task
+            if run_description is not None or run_prompt is not None:
+                subs.append({
+                    "description": run_description or "",
+                    "prompt": run_prompt or "",
+                    "status": "queued",
+                    "created_at": datetime.now().isoformat(),
+                })
+            # 执行器回填路径：写入当前（最后一个）sub_task
+            if subs and (session_id is not None or claude_session_id is not None or pid is not None):
+                cur = subs[-1]
+                if session_id is not None:
+                    cur["session_id"] = session_id
+                if claude_session_id is not None:
+                    cur["claude_session_id"] = claude_session_id
+                if pid is not None:
+                    cur["pid"] = pid
             self._save()
 
     # -- rotation --
@@ -313,6 +379,21 @@ class TaskStore:
     # -- serialization --
 
     @staticmethod
+    def _serialize_sub_task(sub: SubTask) -> dict[str, Any]:
+        return {
+            "description": sub.description,
+            "prompt": sub.prompt,
+            "session_id": sub.session_id,
+            "claude_session_id": sub.claude_session_id,
+            "pid": sub.pid,
+            "result_summary": sub.result_summary,
+            "error": sub.error,
+            "status": sub.status,
+            "created_at": sub.created_at.isoformat() if isinstance(sub.created_at, datetime) else sub.created_at,
+            "completed_at": sub.completed_at.isoformat() if isinstance(sub.completed_at, datetime) else sub.completed_at,
+        }
+
+    @staticmethod
     def _serialize(task: IngestedTask) -> dict[str, Any]:
         return {
             "id": task.id,
@@ -322,16 +403,27 @@ class TaskStore:
             "status": task.status.value,
             "created_at": task.created_at.isoformat(),
             "reply_context": task.reply_context,
-            "run_descriptions": task.run_descriptions,
-            "run_prompts": task.run_prompts,
-            "session_id": task.session_id,
-            "pid": task.pid,
-            "result_summary": task.result_summary,
-            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-            "error": task.error,
+            "sub_tasks": [TaskStore._serialize_sub_task(s) for s in task.sub_tasks],
             "retry_count": task.retry_count,
             "recovery_count": task.recovery_count,
         }
+
+    @staticmethod
+    def _deserialize_sub_task(d: dict[str, Any]) -> SubTask:
+        created = d.get("created_at")
+        completed = d.get("completed_at")
+        return SubTask(
+            description=d.get("description", ""),
+            prompt=d.get("prompt", ""),
+            session_id=d.get("session_id"),
+            claude_session_id=d.get("claude_session_id"),
+            pid=d.get("pid"),
+            result_summary=d.get("result_summary"),
+            error=d.get("error"),
+            status=d.get("status", "pending"),
+            created_at=datetime.fromisoformat(created) if isinstance(created, str) else (created or datetime.now()),
+            completed_at=datetime.fromisoformat(completed) if isinstance(completed, str) else completed,
+        )
 
     @staticmethod
     def _deserialize(data: dict[str, Any]) -> IngestedTask:
@@ -339,6 +431,9 @@ class TaskStore:
         status_val = data.get("status", "pending")
         if status_val == "timeout":
             status_val = "failed"
+        # Migrate legacy flat fields → sub_tasks
+        raw_subs = _migrate_sub_tasks(data)
+        sub_tasks = [TaskStore._deserialize_sub_task(s) for s in raw_subs]
         return IngestedTask(
             id=data["id"],
             channel=data["channel"],
@@ -347,17 +442,7 @@ class TaskStore:
             status=TaskStatus(status_val),
             created_at=datetime.fromisoformat(data["created_at"]),
             reply_context=data.get("reply_context", {}),
-            run_descriptions=_migrate_to_list(data, "run_descriptions", "run_description"),
-            run_prompts=_migrate_to_list(data, "run_prompts", "run_prompt"),
-            session_id=data.get("session_id"),
-            pid=data.get("pid"),
-            result_summary=data.get("result_summary"),
-            completed_at=(
-                datetime.fromisoformat(data["completed_at"])
-                if data.get("completed_at")
-                else None
-            ),
-            error=data.get("error"),
+            sub_tasks=sub_tasks,
             retry_count=data.get("retry_count", 0),
             recovery_count=data.get("recovery_count", 0),
         )
