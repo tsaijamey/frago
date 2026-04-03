@@ -11,8 +11,9 @@
 .timeline-feed {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-width: 1200px;
+  gap: 2px;
+  max-width: 1000px;
+  margin: 0 auto;
 }
 
 /* ── Spacer ── */
@@ -26,25 +27,58 @@
 .tl-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  min-height: 36px;
+  gap: 14px;
+  min-height: 32px;
   cursor: default;
 }
 
 .tl-row--event {
   cursor: pointer;
-  border-radius: 6px;
-  padding: 4px 0;
+  padding: 3px 0 3px 10px;
+  border-left: 2px solid var(--tl-row-color, transparent);
   transition: background 0.15s ease;
 }
 
 .tl-row--event:hover {
-  background: var(--accent-primary-10);
+  background: color-mix(in srgb, var(--tl-row-color, rgba(78,205,196,0.5)) 8%, transparent);
+}
+
+/* ── Visual weight by level (no indentation) ── */
+.tl-row--L1 {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.tl-row--L1 .tl-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.tl-row--L1 .tl-subtitle {
+  font-size: 12px;
+}
+
+.tl-row--L2 .tl-title {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tl-row--L3 .tl-title {
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+.tl-row--L3 .tl-subtitle {
+  opacity: 0.55;
+}
+.tl-row--L3 .tl-icon {
+  opacity: 0.7;
 }
 
 .tl-row--heartbeat {
   opacity: 0.4;
   min-height: 24px;
+  padding-left: 10px;
+  border-left: 2px solid transparent;
+  margin-top: 8px;
 }
 
 .tl-row--sub {

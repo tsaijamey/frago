@@ -362,18 +362,29 @@ class PrimaryAgentService:
     # -- PA event broadcast --
 
     async def _broadcast_pa_event(self, event_type: str, data: dict[str, Any]) -> None:
-        """Broadcast a PA event to all connected WebSocket clients.
+        """Broadcast a humanized timeline event to all connected WebSocket clients.
 
         Pure side-effect for frontend visibility.
         Persistence is handled by trace() calls at each instrumentation point.
         Failures are logged and swallowed — PA operation must not be affected.
         """
         try:
-            from frago.server.websocket import manager
+            from frago.server.services.timeline_service import humanize_event
+            from frago.server.websocket import MessageType, manager
+            humanized = humanize_event(event_type, data)
+            ts = datetime.now().isoformat()
             await manager.broadcast({
-                "type": event_type,
-                "timestamp": datetime.now().isoformat(),
-                **data,
+                "type": MessageType.TIMELINE_EVENT,
+                "timestamp": ts,
+                "event": {
+                    "id": f"pa-{event_type}-{ts}",
+                    "timestamp": ts,
+                    **humanized,
+                    "task_id": data.get("task_id", ""),
+                    "msg_id": data.get("msg_id", ""),
+                    "run_id": data.get("run_id"),
+                    "raw_data": data,
+                },
             })
         except Exception as e:
             logger.debug("Failed to broadcast PA event %s: %s", event_type, e)

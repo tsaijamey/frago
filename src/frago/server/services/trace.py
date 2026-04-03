@@ -74,15 +74,18 @@ def load_trace_events(
     Returns entries in pa_events-compatible format for timeline_service consumption:
     [{"timestamp": ..., "event_type": ..., "data": {...}}, ...]
     """
-    entries: list[dict] = []
+    # Pass 1: scan ALL entries (including no-data ones) to build task_id → msg_id map.
+    # Agent-completed replies lose msg_id at top level, but the earlier task creation
+    # entry for the same task_id does have it.
+    task_msg_map: dict[str, str] = {}
     today = datetime.now().date()
+    raw_lines: list[tuple[datetime, dict]] = []
 
     for days_ago in range(lookback_days):
         date = today - timedelta(days=days_ago)
         path = TRACE_DIR / f"trace-{date.strftime('%Y-%m-%d')}.jsonl"
         if not path.exists():
             continue
-        day_entries: list[dict] = []
         try:
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -91,25 +94,44 @@ def load_trace_events(
                         continue
                     try:
                         entry = json.loads(line)
-                        if not entry.get("data"):
-                            continue
-                        if since:
-                            ts = datetime.fromisoformat(entry["ts"])
-                            if ts < since:
-                                continue
-                        raw_data = entry["data"]
-                        event_type = raw_data.pop("event_type", "")
-                        day_entries.append({
-                            "timestamp": entry["ts"],
-                            "event_type": event_type,
-                            "data": raw_data,
-                        })
-                    except (json.JSONDecodeError, ValueError, KeyError):
+                    except (json.JSONDecodeError, ValueError):
                         continue
+                    ts = datetime.fromisoformat(entry.get("ts", ""))
+                    if since and ts < since:
+                        continue
+                    # Build task_id → msg_id from entries that have both
+                    tid = entry.get("task_id", "")
+                    mid = entry.get("msg_id", "")
+                    if tid and mid:
+                        task_msg_map.setdefault(tid, mid)
+                    raw_lines.append((ts, entry))
         except Exception:
             continue
-        entries = day_entries + entries
-        if len(entries) >= limit:
-            break
+
+    # Pass 2: filter to data-bearing entries and resolve msg_id
+    entries: list[dict] = []
+    for _ts, entry in raw_lines:
+        if not entry.get("data"):
+            continue
+        raw_data = entry["data"]
+        event_type = raw_data.pop("event_type", "")
+
+        # Resolve msg_id: data field > top-level > task_id lookup
+        if "msg_id" not in raw_data or not raw_data.get("msg_id"):
+            mid = entry.get("msg_id", "")
+            if not mid:
+                tid = entry.get("task_id", "") or raw_data.get("task_id", "")
+                mid = task_msg_map.get(tid, "")
+            if mid:
+                raw_data["msg_id"] = mid
+
+        if "task_id" not in raw_data and entry.get("task_id"):
+            raw_data["task_id"] = entry["task_id"]
+
+        entries.append({
+            "timestamp": entry["ts"],
+            "event_type": event_type,
+            "data": raw_data,
+        })
 
     return entries[-limit:]

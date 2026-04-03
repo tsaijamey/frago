@@ -1,24 +1,22 @@
 /**
- * TimelineEventRow — Renders a single PA event in the timeline.
+ * TimelineEventRow — Renders a single timeline event.
  *
- * Humanize rules (from spec):
- * - channel name 直接嵌入标题，不翻译
- * - prompt 提取 <instruction> 标签内容，fallback 到原文
- * - PA decision 用模板化标题，不暴露 action 类型给用户
- * - agent_exited 区分完成/异常
+ * Title/subtitle from backend. Icons from Lucide based on event_type.
+ * Color-coded border-left by msg_id, visual weight by level (L1/L2/L3).
  */
 
-import { formatRelativeTime, formatDuration } from './constants';
+import { formatRelativeTime } from './constants';
 import type { TimelineEvent } from './useTimeline';
-
-/** Extract <instruction> content from ingestion prompt, fallback to raw text */
-function extractInstruction(prompt: string): string {
-  const match = prompt.match(/<instruction>\s*([\s\S]*?)\s*<\/instruction>/);
-  if (match) return match[1].trim();
-  // No instruction tag — use raw prompt, skip <context> block if present
-  const cleaned = prompt.replace(/<context>[\s\S]*?<\/context>\s*/g, '').trim();
-  return cleaned || prompt;
-}
+import {
+  Mail,
+  Zap,
+  Play,
+  CheckCircle2,
+  XCircle,
+  Reply,
+  Circle,
+  type LucideIcon,
+} from 'lucide-react';
 
 /** Truncate text to maxLen, adding ellipsis */
 function truncate(text: string, maxLen: number): string {
@@ -26,121 +24,77 @@ function truncate(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + '…';
 }
 
-interface EventDisplay {
-  icon: string;
-  iconClass: string;
-  title: string;
-  subtitle: string;
+interface IconConfig {
+  icon: LucideIcon;
+  className: string;
 }
 
-function getEventDisplay(event: TimelineEvent): EventDisplay {
-  const d = event.data;
+function getIconConfig(event: TimelineEvent): IconConfig {
+  switch (event.event_type) {
+    case 'ingestion':
+      return { icon: Mail, className: 'tl-icon--accent' };
 
-  switch (event.type) {
-    case 'ingestion': {
-      const channel = (d.channel as string) || '';
-      const prompt = (d.prompt as string) || '';
-      const instruction = extractInstruction(prompt);
-      return {
-        icon: '✉',
-        iconClass: 'tl-icon--accent',
-        title: `收到 ${channel} 消息`,
-        subtitle: truncate(instruction, 80),
-      };
-    }
+    case 'pa_decision':
+      return { icon: Zap, className: 'tl-icon--accent' };
 
-    case 'pa_decision': {
-      const action = (d.action as string) || '';
-      const details = (d.details as Record<string, unknown>) || {};
-      const desc =
-        (details.description as string) ||
-        (details.recipe_name as string) ||
-        (details.prompt as string) ||
-        '';
-
-      // Humanize action → title
-      let title: string;
-      switch (action) {
-        case 'run':
-          title = '分配任务给 Agent';
-          break;
-        case 'reply':
-          title = '回复消息';
-          break;
-        case 'resume':
-          title = '继续执行';
-          break;
-        case 'recipe':
-          title = '执行配方';
-          break;
-        case 'update':
-          title = '更新任务状态';
-          break;
-        default:
-          title = action; // fallback — 未知 action 直接显示
-      }
-
-      return {
-        icon: '⚡',
-        iconClass: 'tl-icon--accent',
-        title,
-        subtitle: truncate(desc, 80),
-      };
-    }
-
-    case 'agent_launched': {
-      const desc = (d.description as string) || '';
-      return {
-        icon: '▸',
-        iconClass: 'tl-icon--accent',
-        title: 'Agent 开始执行',
-        subtitle: desc,
-      };
-    }
+    case 'agent_launched':
+      return { icon: Play, className: 'tl-icon--accent' };
 
     case 'agent_exited': {
-      const dur = d.duration_seconds as number | undefined;
-      const ok = d.has_completion as boolean | undefined;
-      const durText = dur !== undefined ? `耗时 ${formatDuration(dur * 1000)}` : '';
-      return {
-        icon: ok ? '◼' : '✗',
-        iconClass: ok ? 'tl-icon--accent' : 'tl-icon--error',
-        title: ok ? 'Agent 执行完毕' : 'Agent 异常退出',
-        subtitle: durText,
-      };
+      const ok = event.raw_data?.has_completion as boolean | undefined;
+      return ok
+        ? { icon: CheckCircle2, className: 'tl-icon--accent' }
+        : { icon: XCircle, className: 'tl-icon--error' };
     }
 
-    case 'pa_reply': {
-      const channel = (d.channel as string) || '';
-      const text = (d.reply_text as string) || '';
-      return {
-        icon: '↩',
-        iconClass: 'tl-icon--accent',
-        title: `已回复 ${channel}`,
-        subtitle: truncate(text, 80),
-      };
-    }
+    case 'pa_reply':
+      return { icon: Reply, className: 'tl-icon--accent' };
 
     default:
-      return {
-        icon: '•',
-        iconClass: 'tl-icon--dim',
-        title: event.type,
-        subtitle: '',
-      };
+      return { icon: Circle, className: 'tl-icon--dim' };
   }
 }
 
-export default function TimelineEventRow({ event }: { event: TimelineEvent }) {
-  const display = getEventDisplay(event);
+/** Map event_type to visual level: L1 (ingestion), L2 (decision/reply), L3 (agent) */
+function getLevel(eventType: string): string {
+  switch (eventType) {
+    case 'ingestion':
+      return 'L1';
+    case 'pa_decision':
+    case 'pa_reply':
+      return 'L2';
+    case 'agent_launched':
+    case 'agent_exited':
+      return 'L3';
+    default:
+      return 'L2';
+  }
+}
+
+interface Props {
+  event: TimelineEvent;
+  color?: string;
+}
+
+export default function TimelineEventRow({ event, color }: Props) {
+  const { icon: Icon, className: iconClass } = getIconConfig(event);
+  const subtitle = event.subtitle ? truncate(event.subtitle, 80) : null;
+  const level = getLevel(event.event_type);
+  const isError = event.event_type === 'agent_exited' && !(event.raw_data?.has_completion);
+  const titleClass = isError ? 'tl-title tl-title--error' : 'tl-title';
 
   return (
-    <div className="tl-row tl-row--event">
+    <div
+      className={`tl-row tl-row--event tl-row--${level}`}
+      style={color ? { '--tl-row-color': color } as React.CSSProperties : undefined}
+    >
       <span className="tl-ts">{formatRelativeTime(event.timestamp)}</span>
-      <span className={`tl-icon ${display.iconClass}`}>{display.icon}</span>
+      <span className={`tl-icon ${iconClass}`}>
+        <Icon size={18} />
+      </span>
       <span className="tl-content">
-        <span className="tl-title">{display.title}</span>
-        {display.subtitle && <span className="tl-subtitle">{display.subtitle}</span>}
+        <span className={titleClass}>{event.title}</span>
+        {subtitle && <span className="tl-subtitle">{subtitle}</span>}
       </span>
     </div>
   );

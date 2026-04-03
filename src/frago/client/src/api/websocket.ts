@@ -37,6 +37,9 @@ export const MessageType = {
   PA_AGENT_EXITED: 'pa_agent_exited',
   PA_REPLY: 'pa_reply',
 
+  // Timeline aggregated event (humanized, ready for frontend rendering)
+  TIMELINE_EVENT: 'timeline_event',
+
   // Data push events (for cache updates)
   DATA_INITIAL: 'data_initial',
   DATA_TASKS: 'data_tasks',

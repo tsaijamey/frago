@@ -4,7 +4,6 @@ Provides aggregated timeline data for the frontend live feed.
 """
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Query
 
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/timeline")
 async def get_timeline(
-    since: Optional[str] = Query(default=None, description="ISO timestamp — events after this time"),
+    since: str | None = Query(default=None, description="ISO timestamp — events after this time"),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     """Get aggregated timeline events.

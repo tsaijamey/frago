@@ -2,19 +2,43 @@
  * TimelinePage — Live information feed
  *
  * Renders a vertical timeline of system events:
- * - Heartbeat (low visual weight)
+ * - PA event stream (trace-driven, humanized by backend)
  * - Running tasks (sub-agent blocks)
- * - Recent completed/failed tasks
- * - Real-time updates via WebSocket
+ * - Heartbeat (system status)
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { formatRelativeTime, formatDuration } from './constants';
 import { useTimeline } from './useTimeline';
 import TimelineEventRow from './TimelineEventRow';
 import SubAgentBlock from './SubAgentBlock';
+import { Heart } from 'lucide-react';
 import type { DashboardData } from '@/api/client';
+
+/** Deterministic color palette for msg_id groups */
+const MSG_COLORS = [
+  '#4ecdc4', // teal (matches accent-primary)
+  '#7c6ef0', // purple
+  '#f0a050', // orange
+  '#e06080', // rose
+  '#50b0f0', // sky blue
+  '#a0d050', // lime
+  '#f07070', // coral
+  '#60c0a0', // mint
+];
+
+/** Build a stable msg_id → color map from events (order of first appearance) */
+function buildColorMap(events: { msg_id: string | null }[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let idx = 0;
+  for (const e of events) {
+    if (e.msg_id && !map.has(e.msg_id)) {
+      map.set(e.msg_id, MSG_COLORS[idx % MSG_COLORS.length]);
+      idx++;
+    }
+  }
+  return map;
+}
 
 // Re-fetch relative times every 30s
 function useRelativeTimeRefresh() {
@@ -64,11 +88,16 @@ export default function TimelinePage() {
     });
   }, []);
 
-  // Content count for tracking changes (PA events + dashboard tasks)
-  const contentCount =
-    paEvents.length +
-    (dashboard?.running_tasks?.length || 0) +
-    (dashboard?.recent_tasks?.length || 0);
+  // Filter out "回复消息" (pa_decision + reply) — redundant, pa_reply always follows
+  const filteredEvents = useMemo(
+    () => paEvents.filter((e) => !(e.event_type === 'pa_decision' && e.raw_data?.action === 'reply')),
+    [paEvents],
+  );
+  const colorMap = useMemo(() => buildColorMap(filteredEvents), [filteredEvents]);
+
+  // Content count for tracking changes
+  const runningTasks = dashboard?.running_tasks || [];
+  const contentCount = filteredEvents.length + runningTasks.length;
 
   // Scroll to bottom: unconditional on first load, conditional on new content
   useEffect(() => {
@@ -80,12 +109,7 @@ export default function TimelinePage() {
     }
   }, [contentCount, scrollToBottom]);
 
-  // Build timeline events from dashboard data
-  const runningTasks = dashboard?.running_tasks || [];
-  // Reverse recent tasks so oldest first (API returns newest first)
-  const recentTasks = [...(dashboard?.recent_tasks || [])].reverse();
-
-  const hasAnyContent = paEvents.length > 0 || runningTasks.length > 0 || recentTasks.length > 0;
+  const hasAnyContent = filteredEvents.length > 0 || runningTasks.length > 0;
 
   return (
     <div className="timeline-page" ref={scrollRef} onScroll={handleScroll}>
@@ -98,28 +122,20 @@ export default function TimelinePage() {
           </div>
         )}
 
-        {/* PA event stream — ingestion, decisions, agent lifecycle */}
-        {paEvents.map((event, i) => {
-          // Insert spacer between different task groups
-          const prevTaskId = i > 0 ? (paEvents[i - 1].data.task_id as string || paEvents[i - 1].data.id as string) : null;
-          const curTaskId = (event.data.task_id as string || event.data.id as string) || null;
-          const needsSpacer = i > 0 && curTaskId !== prevTaskId;
+        {/* PA event stream — trace-driven, humanized by backend */}
+        {filteredEvents.map((event, i) => {
+          // Insert spacer between different message groups
+          const prevMsgId = i > 0 ? filteredEvents[i - 1].msg_id : null;
+          const curMsgId = event.msg_id || null;
+          const needsSpacer = i > 0 && curMsgId !== prevMsgId;
+          const color = curMsgId ? colorMap.get(curMsgId) : undefined;
           return (
             <div key={event.id}>
               {needsSpacer && <div className="tl-spacer" />}
-              <TimelineEventRow event={event} />
+              <TimelineEventRow event={event} color={color} />
             </div>
           );
         })}
-
-        {/* Recent completed/failed tasks — oldest first */}
-        {recentTasks.map((task) => (
-          <RecentTaskRow
-            key={task.id}
-            task={task}
-            onClick={() => openTaskDetail(task.id)}
-          />
-        ))}
 
         {/* Running tasks — sub-agent blocks (always at bottom, most recent) */}
         {runningTasks.map((task) => (
@@ -145,52 +161,12 @@ function HeartbeatRow({ dashboard }: { dashboard: DashboardData | null }) {
   return (
     <div className="tl-row tl-row--heartbeat">
       <span className="tl-ts">{/* always present */}</span>
-      <span className="tl-icon tl-icon--dim">♥</span>
+      <span className="tl-icon tl-icon--dim">
+        <Heart size={14} />
+      </span>
       <span className="tl-text tl-text--dim">
         系统正常{runCount > 0 ? `    ${runCount} 个任务运行中` : '    无任务运行'}
         {chrome !== undefined && `    Chrome ${chrome ? 'ON' : 'OFF'}`}
-      </span>
-    </div>
-  );
-}
-
-/* RunningTaskBlock replaced by SubAgentBlock component */
-
-/* ── Recent Task Row ── */
-interface RecentTask {
-  id: string;
-  name: string | null;
-  status: string;
-  duration_ms: number | null;
-  ended_at: string | null;
-  error_summary: string | null;
-}
-
-function RecentTaskRow({ task, onClick }: { task: RecentTask; onClick: () => void }) {
-  const isError = task.status === 'error';
-  const icon = isError ? '✗' : '✓';
-  const iconClass = isError ? 'tl-icon--error' : 'tl-icon--accent';
-  const titleClass = isError ? 'tl-title--error' : 'tl-title';
-
-  const title = isError
-    ? 'Agent 执行失败'
-    : 'Agent 执行完毕';
-
-  const subtitle = [
-    task.duration_ms ? formatDuration(task.duration_ms) : null,
-    task.name || null,
-  ].filter(Boolean).join('    ');
-
-  return (
-    <div className="tl-row tl-row--event" onClick={onClick}>
-      <span className="tl-ts">{task.ended_at ? formatRelativeTime(task.ended_at) : ''}</span>
-      <span className={`tl-icon ${iconClass}`}>{icon}</span>
-      <span className="tl-content">
-        <span className={titleClass}>{title}</span>
-        {subtitle && <span className="tl-subtitle">{subtitle}</span>}
-        {task.error_summary && (
-          <span className="tl-subtitle tl-subtitle--error">{task.error_summary}</span>
-        )}
       </span>
     </div>
   );
