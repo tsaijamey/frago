@@ -1,0 +1,92 @@
+# ~/.frago gitignore template
+# 此文件是 ~/.frago/.gitignore 的权威模板
+# 由 sync_repo.py:_ensure_gitignore() 在 frago sync 时写入
+#
+# 往 ~/.frago/ 新增文件时，MUST 判断是否加到这里：
+#   设备本地运行时产物（cache、state、log、pid）→ 加
+#   跨设备共享资源（recipes/、定义文件）→ 不加
+
+# Runtime data (not synced)
+sessions/
+sessions.json
+executions/
+ingested_tasks.json
+message_cache.json
+traces/
+chrome_profile/
+edge_profile/
+current_run
+projects/.tmp/
+projects/*/screenshots/
+projects/*/logs/
+
+# Commands directory (managed by frago itself, not synced)
+.claude/commands/
+
+# Local metadata (device-specific, not synced)
+.claude/skills_metadata.json
+.claude/sync_metadata.json
+.claude/settings.local.json
+.device_id
+.workspace_migrated
+.api_endpoint_migrated
+.cache/
+
+# Config files (contain sensitive information or device-specific)
+config.json
+gui_config.json
+profiles.json
+
+# Environment variable files (sensitive information)
+.env
+.env.*
+.env.local
+.env.*.local
+
+# System files
+.DS_Store
+__pycache__/
+*.pyc
+*.bak
+*.bak.*
+server.pid
+server.log*
+gui_history.jsonl
+
+# Conflict backup files (temporary)
+*.LOCAL
+*.REMOTE
+*.sync-backup
+*.sync-backup.local
+*.sync-backup.remote
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+
+# Audio files
+*.wav
+*.mp3
+*.aac
+*.flac
+*.ogg
+*.m4a
+
+# Log files
+logs/
+*.log
+
+# Archives and other large files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.pdf
+*.psd
+*.ai

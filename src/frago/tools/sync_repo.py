@@ -5,11 +5,11 @@ Treat ~/.frago/ as a Git working directory and sync to user-configured remote re
 Supports idempotency checks with ~/.claude/ to ensure resources are not lost.
 """
 
+import contextlib
 import filecmp
 import hashlib
 import json
 import os
-import platform
 import shutil
 import subprocess
 import uuid
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 import click
 
@@ -90,7 +90,7 @@ class FileChange:
     type: str  # "Command", "Skill", "Recipe", "Project", "Other"
     name: str
     operation: str  # "Modified", "Added", "Deleted"
-    timestamp: Optional[datetime] = None
+    timestamp: datetime | None = None
 
 
 @dataclass
@@ -116,8 +116,8 @@ class ConflictInfo:
     file_path: str
     local_change: ChangeType
     remote_change: ChangeType
-    local_backup: Optional[str] = None  # Path to .LOCAL backup
-    remote_backup: Optional[str] = None  # Path to .REMOTE backup
+    local_backup: str | None = None  # Path to .LOCAL backup
+    remote_backup: str | None = None  # Path to .REMOTE backup
 
 
 @dataclass
@@ -129,7 +129,7 @@ class FileConflict:
     remote_mtime: datetime
 
 
-def _get_subprocess_kwargs() -> Dict[str, Any]:
+def _get_subprocess_kwargs() -> dict[str, Any]:
     """Get subprocess kwargs with Windows hidden window support."""
     return get_windows_subprocess_kwargs()
 
@@ -167,7 +167,7 @@ def _ensure_remote_url(expected_url: str) -> None:
         click.echo(f"Updated remote URL: {old_url} → {expected_url}")
 
 
-def get_sync_repo_url(auto_repair: bool = True) -> Optional[str]:
+def get_sync_repo_url(auto_repair: bool = True) -> str | None:
     """Get sync repo URL from config, with git remote fallback.
 
     If sync_repo_url is not set but ~/.frago/ has a git remote,
@@ -224,9 +224,8 @@ def _ensure_git_user_config(repo_dir: Path) -> tuple[bool, str]:
     name_result = _run_git(["config", "user.name"], repo_dir, check=False)
     email_result = _run_git(["config", "user.email"], repo_dir, check=False)
 
-    if name_result.returncode == 0 and email_result.returncode == 0:
-        if name_result.stdout.strip() and email_result.stdout.strip():
-            return True, ""
+    if name_result.returncode == 0 and email_result.returncode == 0 and name_result.stdout.strip() and email_result.stdout.strip():
+        return True, ""
 
     # Fetch from gh api user
     try:
@@ -281,92 +280,16 @@ def _get_changed_files(repo_dir: Path) -> list[str]:
     return files
 
 
+def _load_gitignore_template() -> str:
+    """Load gitignore template from resources/frago-home-gitignore.template."""
+    template_path = Path(__file__).parent.parent / "resources" / "frago-home-gitignore.template"
+    return template_path.read_text(encoding="utf-8")
+
+
 def _ensure_gitignore(repo_dir: Path) -> None:
     """Ensure .gitignore file exists and contains correct exclusion rules"""
     gitignore_path = repo_dir / ".gitignore"
-    gitignore_content = """# Runtime data (not synced)
-sessions/
-sessions.json
-executions/
-ingested_tasks.json
-chrome_profile/
-edge_profile/
-current_run
-projects/.tmp/
-projects/*/screenshots/
-projects/*/logs/
-
-# Commands directory (managed by frago itself, not synced)
-.claude/commands/
-
-# Local metadata (device-specific, not synced)
-.claude/skills_metadata.json
-.claude/sync_metadata.json
-.claude/settings.local.json
-.device_id
-.workspace_migrated
-.api_endpoint_migrated
-.cache/
-
-# Config files (contain sensitive information or device-specific)
-config.json
-gui_config.json
-profiles.json
-
-# Environment variable files (sensitive information)
-.env
-.env.*
-.env.local
-.env.*.local
-
-# System files
-.DS_Store
-__pycache__/
-*.pyc
-*.bak
-*.bak.*
-server.pid
-server.log*
-gui_history.jsonl
-
-# Conflict backup files (temporary)
-*.LOCAL
-*.REMOTE
-*.sync-backup
-*.sync-backup.local
-*.sync-backup.remote
-
-# Video files
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.wmv
-*.flv
-*.webm
-
-# Audio files
-*.wav
-*.mp3
-*.aac
-*.flac
-*.ogg
-*.m4a
-
-# Log files
-logs/
-*.log
-
-# Archives and other large files
-*.zip
-*.tar
-*.tar.gz
-*.rar
-*.7z
-*.pdf
-*.psd
-*.ai
-"""
+    gitignore_content = _load_gitignore_template()
 
     if not gitignore_path.exists():
         gitignore_path.write_text(gitignore_content, encoding="utf-8")
@@ -456,7 +379,7 @@ def _untrack_ignored_paths(repo_dir: Path) -> None:
                 )
 
 
-def _parse_repo_owner_name(repo_url: str) -> tuple[Optional[str], Optional[str]]:
+def _parse_repo_owner_name(repo_url: str) -> tuple[str | None, str | None]:
     """Parse owner and repo name from repository URL
 
     Supported formats:
@@ -482,7 +405,7 @@ def _parse_repo_owner_name(repo_url: str) -> tuple[Optional[str], Optional[str]]
     return None, None
 
 
-def _check_repo_visibility(repo_url: str) -> Optional[str]:
+def _check_repo_visibility(repo_url: str) -> str | None:
     """Check GitHub repository visibility
 
     Args:
@@ -705,11 +628,8 @@ def _safe_copy_tree(src: Path, dst: Path) -> None:
             # Skip symbolic links
             continue
         elif src_item.is_file():
-            try:
+            with contextlib.suppress(OSError):
                 shutil.copy2(src_item, dst_item)
-            except (OSError, IOError):
-                # Skip files that cannot be copied (socket, special devices, etc.)
-                pass
         elif src_item.is_dir():
             _safe_copy_tree(src_item, dst_item)
 
@@ -823,17 +743,13 @@ def _dir_files_identical(dir1: Path, dir2: Path) -> bool:
         return dir1.exists() == dir2.exists()
 
     # Get all files
-    files1 = set(f.relative_to(dir1) for f in dir1.rglob("*") if f.is_file())
-    files2 = set(f.relative_to(dir2) for f in dir2.rglob("*") if f.is_file())
+    files1 = {f.relative_to(dir1) for f in dir1.rglob("*") if f.is_file()}
+    files2 = {f.relative_to(dir2) for f in dir2.rglob("*") if f.is_file()}
 
     if files1 != files2:
         return False
 
-    for rel_path in files1:
-        if not _files_are_identical(dir1 / rel_path, dir2 / rel_path):
-            return False
-
-    return True
+    return all(_files_are_identical(dir1 / rel_path, dir2 / rel_path) for rel_path in files1)
 
 
 def _get_file_mtime(path: Path) -> float:
@@ -936,7 +852,7 @@ def _is_repo_newer_than_local(repo_dir: Path, repo_rel_path: str, local_path: Pa
 # =============================================================================
 
 
-def _load_skills_metadata() -> Dict[str, Any]:
+def _load_skills_metadata() -> dict[str, Any]:
     """Load skills metadata from JSON file
 
     Returns a dict with structure:
@@ -964,7 +880,7 @@ def _load_skills_metadata() -> Dict[str, Any]:
 
         # Validate structure
         if not isinstance(metadata, dict):
-            click.echo(f"Warning: Invalid metadata format, recreating", err=True)
+            click.echo("Warning: Invalid metadata format, recreating", err=True)
             return empty_metadata
 
         # Check version
@@ -988,7 +904,7 @@ def _load_skills_metadata() -> Dict[str, Any]:
         return empty_metadata
 
 
-def _save_skills_metadata(metadata: Dict[str, Any]) -> bool:
+def _save_skills_metadata(metadata: dict[str, Any]) -> bool:
     """Save skills metadata to JSON file
 
     Returns:
@@ -1010,7 +926,7 @@ def _save_skills_metadata(metadata: Dict[str, Any]) -> bool:
         return False
 
 
-def _update_skill_metadata(metadata: Dict[str, Any], skill_name: str, mtime: float) -> None:
+def _update_skill_metadata(metadata: dict[str, Any], skill_name: str, mtime: float) -> None:
     """Update a single skill's metadata
 
     Args:
@@ -1023,7 +939,7 @@ def _update_skill_metadata(metadata: Dict[str, Any], skill_name: str, mtime: flo
     metadata["skills"][skill_name] = {"mtime": mtime}
 
 
-def _remove_skill_metadata(metadata: Dict[str, Any], skill_name: str) -> None:
+def _remove_skill_metadata(metadata: dict[str, Any], skill_name: str) -> None:
     """Remove a skill from metadata
 
     Args:
@@ -1034,7 +950,7 @@ def _remove_skill_metadata(metadata: Dict[str, Any], skill_name: str) -> None:
         del metadata["skills"][skill_name]
 
 
-def _get_skill_metadata_mtime(metadata: Dict[str, Any], skill_name: str) -> Optional[float]:
+def _get_skill_metadata_mtime(metadata: dict[str, Any], skill_name: str) -> float | None:
     """Get a skill's mtime from metadata
 
     Returns:
@@ -1045,7 +961,7 @@ def _get_skill_metadata_mtime(metadata: Dict[str, Any], skill_name: str) -> Opti
     return skill_data.get("mtime")
 
 
-def _is_metadata_newer_than_local(metadata: Dict[str, Any], skill_name: str, local_path: Path) -> bool:
+def _is_metadata_newer_than_local(metadata: dict[str, Any], skill_name: str, local_path: Path) -> bool:
     """Check if metadata mtime is newer than local file mtime
 
     This is used to determine if the repo version should overwrite local.
@@ -1101,7 +1017,7 @@ def _get_device_id() -> str:
     return device_id
 
 
-def _compute_content_hash(path: Path) -> Optional[str]:
+def _compute_content_hash(path: Path) -> str | None:
     """Compute content hash for a file or directory using Git blob algorithm.
 
     For files: SHA1 of "blob {size}\0{content}"
@@ -1136,7 +1052,7 @@ def _compute_content_hash(path: Path) -> Optional[str]:
     return None
 
 
-def _load_sync_metadata() -> Dict[str, Any]:
+def _load_sync_metadata() -> dict[str, Any]:
     """Load sync metadata from JSON file.
 
     Structure:
@@ -1177,7 +1093,7 @@ def _load_sync_metadata() -> Dict[str, Any]:
         return empty_metadata
 
 
-def _save_sync_metadata(metadata: Dict[str, Any]) -> bool:
+def _save_sync_metadata(metadata: dict[str, Any]) -> bool:
     """Save sync metadata to JSON file."""
     try:
         SYNC_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1190,7 +1106,7 @@ def _save_sync_metadata(metadata: Dict[str, Any]) -> bool:
         return False
 
 
-def get_last_synced_at() -> Optional[str]:
+def get_last_synced_at() -> str | None:
     """Get the most recent synced_at timestamp from sync metadata.
 
     Returns:
@@ -1205,12 +1121,12 @@ def get_last_synced_at() -> Optional[str]:
     return max(timestamps) if timestamps else None
 
 
-def _get_sync_entry(metadata: Dict[str, Any], rel_path: str) -> Optional[Dict[str, Any]]:
+def _get_sync_entry(metadata: dict[str, Any], rel_path: str) -> dict[str, Any] | None:
     """Get sync entry for a path."""
     return metadata.get("entries", {}).get(rel_path)
 
 
-def _update_sync_entry(metadata: Dict[str, Any], rel_path: str, content_hash: str) -> None:
+def _update_sync_entry(metadata: dict[str, Any], rel_path: str, content_hash: str) -> None:
     """Update sync entry for a path."""
     if "entries" not in metadata:
         metadata["entries"] = {}
@@ -1222,7 +1138,7 @@ def _update_sync_entry(metadata: Dict[str, Any], rel_path: str, content_hash: st
     }
 
 
-def _remove_sync_entry(metadata: Dict[str, Any], rel_path: str) -> None:
+def _remove_sync_entry(metadata: dict[str, Any], rel_path: str) -> None:
     """Remove sync entry for a path."""
     if "entries" in metadata and rel_path in metadata["entries"]:
         del metadata["entries"][rel_path]
@@ -1233,7 +1149,7 @@ def _remove_sync_entry(metadata: Dict[str, Any], rel_path: str) -> None:
 # =============================================================================
 
 
-def _workspace_path_to_local(ws_rel_path: str) -> Optional[Path]:
+def _workspace_path_to_local(ws_rel_path: str) -> Path | None:
     """Map a workspace relative path back to the local source path.
 
     workspaces/__system__/skills/xxx/file.md  → ~/.claude/skills/xxx/file.md
@@ -1393,7 +1309,7 @@ def _update_workspace_metadata_snapshot() -> None:
 def _determine_sync_direction(
     local_path: Path,
     repo_path: Path,
-    recorded_hash: Optional[str],
+    recorded_hash: str | None,
 ) -> SyncDirection:
     """Determine sync direction based on content hashes.
 
@@ -1527,10 +1443,9 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
             else:
                 # Even if not syncing, ensure metadata is up-to-date for existing skills
                 existing_mtime = _get_skill_metadata_mtime(metadata, skill_dir.name)
-                if existing_mtime is None or abs(existing_mtime - local_mtime) > 1.0:
-                    if not dry_run:
-                        _update_skill_metadata(metadata, skill_dir.name, local_mtime)
-                        metadata_changed = True
+                if (existing_mtime is None or abs(existing_mtime - local_mtime) > 1.0) and not dry_run:
+                    _update_skill_metadata(metadata, skill_dir.name, local_mtime)
+                    metadata_changed = True
 
     # Sync skills - detect deletions (repo has but local doesn't)
     if FRAGO_SKILLS_DIR.exists() and CLAUDE_SKILLS_DIR.exists():
@@ -1568,7 +1483,7 @@ def _sync_claude_to_frago(result: SyncResult, dry_run: bool = False) -> None:
         click.echo(_format_table(result.local_changes, "Local Changes"))
 
 
-def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
+def _sync_frago_to_claude(_result: SyncResult, dry_run: bool = False) -> None:
     """
     Sync content from ~/.frago/.claude/ to ~/.claude/
 
@@ -1613,13 +1528,12 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
             # Only copy when content differs AND metadata mtime is newer than local mtime
             if not _dir_files_identical(skill_dir, target_skill_dir) and _is_metadata_newer_than_local(
                 metadata, skill_dir.name, target_skill_dir
-            ):
-                if not dry_run:
-                    if target_skill_dir.exists():
-                        shutil.rmtree(target_skill_dir)
-                    shutil.copytree(
-                        skill_dir, target_skill_dir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
-                    )
+            ) and not dry_run:
+                if target_skill_dir.exists():
+                    shutil.rmtree(target_skill_dir)
+                shutil.copytree(
+                    skill_dir, target_skill_dir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+                )
 
     # Reverse cleanup: remove local skills that were deleted from workspace
     # by another device (git pull already removed workspace copy).
@@ -1646,7 +1560,7 @@ def _sync_frago_to_claude(result: SyncResult, dry_run: bool = False) -> None:
                     shutil.rmtree(local_skill)
 
 
-def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: bool = False) -> bool:
+def _save_local_changes(result: SyncResult, message: str | None, dry_run: bool = False) -> bool:
     """
     Save local changes (git add + commit)
 
@@ -1682,7 +1596,7 @@ def _save_local_changes(result: SyncResult, message: Optional[str], dry_run: boo
 # =============================================================================
 
 
-def _detect_potential_conflicts(current_branch: str) -> List[ConflictInfo]:
+def _detect_potential_conflicts(current_branch: str) -> list[ConflictInfo]:
     """Detect potential conflicts before rebase by analyzing change sets.
 
     Compares local changes (HEAD vs merge-base) with remote changes (origin vs merge-base)
@@ -1691,7 +1605,7 @@ def _detect_potential_conflicts(current_branch: str) -> List[ConflictInfo]:
     Returns:
         List of ConflictInfo for files that will likely conflict
     """
-    conflicts: List[ConflictInfo] = []
+    conflicts: list[ConflictInfo] = []
 
     # Get merge base
     merge_base_result = _run_git(
@@ -1710,7 +1624,7 @@ def _detect_potential_conflicts(current_branch: str) -> List[ConflictInfo]:
         FRAGO_HOME,
         check=False
     )
-    local_changes: Dict[str, ChangeType] = {}
+    local_changes: dict[str, ChangeType] = {}
     for line in local_diff.stdout.strip().split("\n"):
         if line:
             parts = line.split("\t")
@@ -1725,7 +1639,7 @@ def _detect_potential_conflicts(current_branch: str) -> List[ConflictInfo]:
         FRAGO_HOME,
         check=False
     )
-    remote_changes: Dict[str, ChangeType] = {}
+    remote_changes: dict[str, ChangeType] = {}
     for line in remote_diff.stdout.strip().split("\n"):
         if line:
             parts = line.split("\t")
@@ -1850,7 +1764,7 @@ def _auto_resolve_merge_conflicts(result: SyncResult) -> bool:
     return resolved_count == len(conflict_files)
 
 
-def _get_file_content_at_ref(ref: str, file_path: str) -> Optional[str]:
+def _get_file_content_at_ref(ref: str, file_path: str) -> str | None:
     """Get file content at a specific git ref. Returns None for binary files."""
     show_result = _run_git(
         ["show", f"{ref}:{file_path}"],
@@ -1865,7 +1779,7 @@ def _get_file_content_at_ref(ref: str, file_path: str) -> Optional[str]:
         return None
 
 
-def _get_agent_resolver() -> Optional[Any]:
+def _get_agent_resolver() -> Any | None:
     """Try to obtain an agent-based conflict resolver.
 
     Returns None if agent runtime is unavailable (server not running,
@@ -1892,7 +1806,7 @@ def _get_file_commit_time(ref: str, file_path: str) -> float:
     return 0.0
 
 
-def _save_version_backup(file_path: str, ref: str, suffix: str) -> Optional[Path]:
+def _save_version_backup(file_path: str, ref: str, suffix: str) -> Path | None:
     """Save a specific ref's version of a file as a backup."""
     show_result = _run_git(
         ["show", f"{ref}:{file_path}"],
@@ -1980,7 +1894,7 @@ def _merge_unrelated_histories(result: SyncResult, current_branch: str = "main")
     return False
 
 
-def _save_conflict_backups(conflicts: List[ConflictInfo], current_branch: str) -> None:
+def _save_conflict_backups(conflicts: list[ConflictInfo], current_branch: str) -> None:
     """Save backup copies of conflicting files for user reference.
 
     Creates .LOCAL and .REMOTE files next to the conflicting file.
@@ -2226,8 +2140,8 @@ def _push_to_remote(result: SyncResult, dry_run: bool = False) -> bool:
 
 
 def sync(
-    repo_url: Optional[str] = None,
-    message: Optional[str] = None,
+    repo_url: str | None = None,
+    message: str | None = None,
     dry_run: bool = False,
     no_push: bool = False,
 ) -> SyncResult:
@@ -2255,15 +2169,13 @@ def sync(
         # 0. Configure gh credential helper (if gh is installed)
         # This allows git to use gh's OAuth token for HTTPS authentication
         if not dry_run:
-            try:
+            with contextlib.suppress(subprocess.TimeoutExpired, FileNotFoundError):
                 subprocess.run(
                     ["gh", "auth", "setup-git"],
                     capture_output=True,
                     timeout=10,
                     **_get_subprocess_kwargs(),
                 )
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass  # gh not installed or timeout, ignore
 
         # 1. Ensure repository exists
         if not _is_git_repo(FRAGO_HOME):
