@@ -10,7 +10,7 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -44,7 +44,7 @@ class OfficialResourceSyncService:
     # Sync state management
     _sync_lock = threading.Lock()
     _sync_running = False
-    _sync_result: Optional[Dict[str, Any]] = None
+    _sync_result: dict[str, Any] | None = None
 
     @classmethod
     def get_github_api_url(cls, path: str) -> str:
@@ -57,7 +57,7 @@ class OfficialResourceSyncService:
         return f"https://raw.githubusercontent.com/{cls.REPO_OWNER}/{cls.REPO_NAME}/{cls.BRANCH}/{path}"
 
     @classmethod
-    def _fetch_directory_contents(cls, path: str) -> List[Dict[str, Any]]:
+    def _fetch_directory_contents(cls, path: str) -> list[dict[str, Any]]:
         """Fetch directory contents from GitHub API."""
         from frago.server.services.github_service import GitHubService
 
@@ -79,7 +79,7 @@ class OfficialResourceSyncService:
         logger.debug("Downloaded: %s -> %s", github_path, local_path)
 
     @classmethod
-    def _sync_directory(cls, github_path: str, local_path: Path) -> Dict[str, int]:
+    def _sync_directory(cls, github_path: str, local_path: Path) -> dict[str, int]:
         """Recursively sync a directory from GitHub to local."""
         stats = {"files": 0, "dirs": 0}
 
@@ -102,8 +102,8 @@ class OfficialResourceSyncService:
 
     @classmethod
     def _sync_resource_type(
-        cls, resource_type: str, mapping: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        cls, resource_type: str, mapping: dict[str, Any]
+    ) -> dict[str, Any]:
         """Sync a specific resource type (commands or skills)."""
         source_path = mapping["source"]
         target_path = mapping["target"]
@@ -152,11 +152,14 @@ class OfficialResourceSyncService:
         return result
 
     @classmethod
-    def _get_latest_commit(cls) -> Optional[str]:
+    def _get_latest_commit(cls) -> str | None:
         """Get the latest commit SHA for the branch."""
         url = f"https://api.github.com/repos/{cls.REPO_OWNER}/{cls.REPO_NAME}/commits/{cls.BRANCH}"
         try:
-            response = requests.get(url, timeout=cls.REQUEST_TIMEOUT)
+            from frago.server.services.github_service import GitHubService
+
+            headers = GitHubService.get_auth_headers()
+            response = requests.get(url, headers=headers, timeout=cls.REQUEST_TIMEOUT)
             response.raise_for_status()
             return response.json().get("sha")
         except Exception as e:
@@ -164,7 +167,7 @@ class OfficialResourceSyncService:
             return None
 
     @classmethod
-    def _do_sync(cls) -> Dict[str, Any]:
+    def _do_sync(cls) -> dict[str, Any]:
         """Perform the actual sync operation."""
         result = {
             "status": "ok",
@@ -200,7 +203,7 @@ class OfficialResourceSyncService:
         return result
 
     @classmethod
-    def start_sync(cls) -> Dict[str, Any]:
+    def start_sync(cls) -> dict[str, Any]:
         """Start a sync operation in background.
 
         Returns immediately with status. Use get_sync_result() to poll for completion.
@@ -231,7 +234,7 @@ class OfficialResourceSyncService:
         return {"status": "started", "message": "Sync started"}
 
     @classmethod
-    def get_sync_result(cls) -> Dict[str, Any]:
+    def get_sync_result(cls) -> dict[str, Any]:
         """Get the status/result of the current or last sync operation."""
         with cls._sync_lock:
             if cls._sync_running:
@@ -243,7 +246,7 @@ class OfficialResourceSyncService:
             return {"status": "idle"}
 
     @classmethod
-    def get_sync_status(cls) -> Dict[str, Any]:
+    def get_sync_status(cls) -> dict[str, Any]:
         """Get the current sync configuration and status."""
         config = load_config()
 
@@ -260,7 +263,7 @@ class OfficialResourceSyncService:
         }
 
     @classmethod
-    def set_sync_enabled(cls, enabled: bool) -> Dict[str, Any]:
+    def set_sync_enabled(cls, enabled: bool) -> dict[str, Any]:
         """Enable or disable auto-sync on startup."""
         config = load_config()
         config.official_resource_sync_enabled = enabled
@@ -269,7 +272,7 @@ class OfficialResourceSyncService:
         return {"status": "ok", "enabled": enabled}
 
     @classmethod
-    def check_for_updates(cls) -> Dict[str, Any]:
+    def check_for_updates(cls) -> dict[str, Any]:
         """Check if there are updates available without syncing."""
         config = load_config()
         current_commit = config.official_resource_last_commit
