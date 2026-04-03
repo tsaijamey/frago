@@ -12,14 +12,12 @@ import uuid as uuid_module
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from frago.session.models import (
     AgentType,
     MonitoredSession,
     SessionStatus,
-    SessionStep,
-    StepType,
 )
 from frago.session.parser import IncrementalParser, record_to_step
 from frago.session.storage import (
@@ -50,7 +48,7 @@ class SyncResult:
     synced: int = 0  # Number of newly synced sessions
     updated: int = 0  # Number of updated sessions
     skipped: int = 0  # Number of skipped sessions (already exists with no changes)
-    errors: List[str] = field(default_factory=list)  # Error messages
+    errors: list[str] = field(default_factory=list)  # Error messages
 
 
 def _has_legacy_step_types(session_id: str) -> bool:
@@ -72,7 +70,7 @@ def _has_legacy_step_types(session_id: str) -> bool:
         return False
 
     try:
-        with open(steps_file, "r", encoding="utf-8") as f:
+        with open(steps_file, encoding="utf-8") as f:
             # Only check first 10 lines for efficiency
             for i, line in enumerate(f):
                 if i >= 10:
@@ -163,7 +161,7 @@ def is_main_session_file(filename: str) -> bool:
 
 
 def infer_session_status(
-    records: List[Dict[str, Any]], last_activity: datetime
+    records: list[dict[str, Any]], last_activity: datetime
 ) -> SessionStatus:
     """Infer session status from records
 
@@ -176,12 +174,6 @@ def infer_session_status(
     """
     if not records:
         return SessionStatus.RUNNING
-
-    # Check for termination markers (such as summary type)
-    for record in reversed(records[-10:]):  # Only check last few records
-        record_type = record.get("type")
-        if record_type == "summary":
-            return SessionStatus.COMPLETED
 
     # Check last activity time
     now = datetime.now()
@@ -196,7 +188,7 @@ def infer_session_status(
     return SessionStatus.RUNNING
 
 
-def parse_session_file(jsonl_path: Path) -> Dict[str, Any]:
+def parse_session_file(jsonl_path: Path) -> dict[str, Any]:
     """Parse session JSONL file
 
     Args:
@@ -217,7 +209,7 @@ def parse_session_file(jsonl_path: Path) -> Dict[str, Any]:
     }
 
     try:
-        with open(jsonl_path, "r", encoding="utf-8") as f:
+        with open(jsonl_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -254,29 +246,27 @@ def parse_session_file(jsonl_path: Path) -> Dict[str, Any]:
                         content = message.get("content", [])
                         if isinstance(content, list):
                             for block in content:
-                                if isinstance(block, dict):
-                                    if block.get("type") == "tool_use":
-                                        result["tool_call_count"] += 1
+                                if isinstance(block, dict) and block.get("type") == "tool_use":
+                                    result["tool_call_count"] += 1
 
                     # Extract first real user message for session name
-                    if result["first_user_message"] is None:
-                        if (
-                            record.get("type") == "user"
-                            and not record.get("isMeta")
-                        ):
-                            msg_content = message.get("content", "") if isinstance(message, dict) else ""
-                            # Handle array content (e.g., with images)
-                            if isinstance(msg_content, list):
-                                for block in msg_content:
-                                    if isinstance(block, dict) and block.get("type") == "text":
-                                        msg_content = block.get("text", "")
-                                        break
-                                else:
-                                    msg_content = ""
-                            # Skip command messages
-                            if isinstance(msg_content, str) and msg_content.strip():
-                                if not msg_content.strip().startswith("<"):
-                                    result["first_user_message"] = msg_content.strip()
+                    if (
+                        result["first_user_message"] is None
+                        and record.get("type") == "user"
+                        and not record.get("isMeta")
+                    ):
+                        msg_content = message.get("content", "") if isinstance(message, dict) else ""
+                        # Handle array content (e.g., with images)
+                        if isinstance(msg_content, list):
+                            for block in msg_content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    msg_content = block.get("text", "")
+                                    break
+                            else:
+                                msg_content = ""
+                        # Skip command messages
+                        if isinstance(msg_content, str) and msg_content.strip() and not msg_content.strip().startswith("<"):
+                            result["first_user_message"] = msg_content.strip()
 
                 except json.JSONDecodeError:
                     continue
@@ -291,7 +281,7 @@ def sync_session(
     jsonl_path: Path,
     project_path: str,
     force: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """Synchronize a single session file
 
     Args:
@@ -342,8 +332,7 @@ def sync_session(
             existing_last_activity = existing_last_activity.replace(tzinfo=None)
 
         # If file modification time is earlier than recorded last activity time, skip
-        if file_mtime <= existing_last_activity:
-            if existing.status != SessionStatus.RUNNING:
+        if file_mtime <= existing_last_activity and existing.status != SessionStatus.RUNNING:
                 logger.debug(f"Session already exists and no updates: {session_id}")
                 return None
 
