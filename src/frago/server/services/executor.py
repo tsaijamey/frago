@@ -183,6 +183,7 @@ class Executor:
             await self._broadcast_pa_event("pa_agent_exited", {
                 "run_id": run_id,
                 "task_id": task.id,
+                "msg_id": task.channel_message_id or "",
                 "has_completion": has_completion,
                 "duration_seconds": duration,
             })
@@ -268,6 +269,7 @@ class Executor:
         _launched_data = {
             "run_id": run_id,
             "task_id": task.id,
+            "msg_id": task.channel_message_id or "",
             "description": description,
         }
         if self._broadcast_pa_event:

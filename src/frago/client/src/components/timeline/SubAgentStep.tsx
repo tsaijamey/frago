@@ -10,6 +10,7 @@
  * - sa_complete: 40px, single line, green
  */
 
+import i18n from '@/i18n';
 import type { StepData } from './SubAgentBlock';
 
 interface SubAgentStepProps {
@@ -27,7 +28,7 @@ function getStepDisplay(step: StepData) {
     return {
       icon: '◇',
       iconClass: 'tl-icon--white',
-      title: firstLine.slice(0, 80) || '思考中...',
+      title: firstLine.slice(0, 80) || i18n.t('timeline.thinking'),
       subtitle: content && content.length > 80 ? content.slice(80, 200) : undefined,
       rowClass: 'tl-step--thinking',
     };
@@ -53,7 +54,7 @@ function getStepDisplay(step: StepData) {
       return {
         icon: '✗',
         iconClass: 'tl-icon--error',
-        title: `失败`,
+        title: i18n.t('timeline.failed'),
         subtitle: content?.slice(0, 100),
         rowClass: 'tl-step--tool-err',
       };
@@ -61,7 +62,7 @@ function getStepDisplay(step: StepData) {
     return {
       icon: '✓',
       iconClass: 'tl-icon--dim',
-      title: `完成`,
+      title: i18n.t('timeline.succeeded'),
       subtitle: undefined,
       rowClass: 'tl-step--tool-ok',
     };
@@ -89,19 +90,10 @@ function getStepDisplay(step: StepData) {
 }
 
 function getToolAction(toolName: string): string {
-  const actions: Record<string, string> = {
-    Read: '读取',
-    Write: '写入',
-    Edit: '编辑',
-    Glob: '搜索文件',
-    Grep: '搜索内容',
-    Bash: '执行',
-    WebFetch: '请求',
-    WebSearch: '搜索',
-    Agent: '子任务',
-    TodoWrite: '记录待办',
-  };
-  return actions[toolName] || toolName;
+  const key = `timeline.toolActions.${toolName}`;
+  const translated = i18n.t(key);
+  // Fall back to raw tool name if no translation exists
+  return translated === key ? toolName : translated;
 }
 
 function extractTarget(content: string): string {

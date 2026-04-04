@@ -404,6 +404,7 @@ class PrimaryAgentService:
         if msg.get("type") == "user_message":
             await self._broadcast_pa_event("pa_ingestion", {
                 "task_id": msg.get("task_id", ""),
+                "msg_id": msg.get("channel_message_id", msg.get("msg_id", "")),
                 "channel": msg.get("channel", ""),
                 "prompt": msg.get("prompt", ""),
             })
@@ -941,6 +942,7 @@ class PrimaryAgentService:
                     TaskStore().update_status(task_id, TaskStatus.COMPLETED, result_summary="replied")
             _reply_data = {
                 "task_id": task_id or "",
+                "msg_id": msg_id or "",
                 "channel": channel or "",
                 "reply_text": text,
             }

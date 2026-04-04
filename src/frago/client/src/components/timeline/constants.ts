@@ -2,17 +2,19 @@
  * Timeline event type constants and visual config
  */
 
+import i18n from '@/i18n';
+
 export function formatRelativeTime(isoTimestamp: string): string {
   const now = Date.now();
   const then = new Date(isoTimestamp).getTime();
   const diffSec = Math.floor((now - then) / 1000);
 
-  if (diffSec < 10) return '刚刚';
-  if (diffSec < 60) return `${diffSec} 秒前`;
+  if (diffSec < 10) return i18n.t('timeline.time.justNow');
+  if (diffSec < 60) return i18n.t('timeline.time.secondsAgo', { count: diffSec });
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin} 分钟前`;
+  if (diffMin < 60) return i18n.t('timeline.time.minutesAgo', { count: diffMin });
   const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour} 小时前`;
+  if (diffHour < 24) return i18n.t('timeline.time.hoursAgo', { count: diffHour });
   const d = new Date(isoTimestamp);
   return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }

@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { useTimeline } from './useTimeline';
 import TimelineEventRow from './TimelineEventRow';
@@ -53,6 +54,7 @@ function useRelativeTimeRefresh() {
 const NEAR_BOTTOM_THRESHOLD = 80;
 
 export default function TimelinePage() {
+  const { t } = useTranslation();
   const { dashboard, loadTasks, openTaskDetail } = useAppStore();
   const paEvents = useTimeline();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -118,7 +120,7 @@ export default function TimelinePage() {
         {!hasAnyContent && (
           <div className="timeline-empty">
             <span className="timeline-empty-dot">◉</span>
-            <span className="timeline-empty-text">等待事件...</span>
+            <span className="timeline-empty-text">{t('timeline.waitingForEvents')}</span>
           </div>
         )}
 
@@ -155,6 +157,7 @@ export default function TimelinePage() {
 
 /* ── Heartbeat Row ── */
 function HeartbeatRow({ dashboard }: { dashboard: DashboardData | null }) {
+  const { t } = useTranslation();
   const runCount = dashboard?.running_tasks?.length || 0;
   const chrome = dashboard?.system_status?.chrome_connected;
 
@@ -165,7 +168,7 @@ function HeartbeatRow({ dashboard }: { dashboard: DashboardData | null }) {
         <Heart size={14} />
       </span>
       <span className="tl-text tl-text--dim">
-        系统正常{runCount > 0 ? `    ${runCount} 个任务运行中` : '    无任务运行'}
+        {t('timeline.systemNormal')}{runCount > 0 ? `    ${t('timeline.tasksRunning', { count: runCount })}` : `    ${t('timeline.noTasksRunning')}`}
         {chrome !== undefined && `    Chrome ${chrome ? 'ON' : 'OFF'}`}
       </span>
     </div>

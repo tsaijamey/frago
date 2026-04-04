@@ -5,6 +5,7 @@
  * Color-coded border-left by msg_id, visual weight by level (L1/L2/L3).
  */
 
+import { useTranslation } from 'react-i18next';
 import { formatRelativeTime } from './constants';
 import type { TimelineEvent } from './useTimeline';
 import {
@@ -76,9 +77,58 @@ interface Props {
   color?: string;
 }
 
+/** Humanize event on the frontend using i18n keys + raw_data */
+function useHumanizedEvent(event: TimelineEvent): { title: string; subtitle: string | null } {
+  const { t } = useTranslation();
+  const data = event.raw_data || {};
+
+  switch (event.event_type) {
+    case 'ingestion': {
+      const channel = (data.channel as string) || '';
+      const prompt = (data.prompt as string) || '';
+      const match = prompt.match(/<instruction>\s*([\s\S]*?)\s*<\/instruction>/);
+      const instruction = match ? match[1].trim() : prompt;
+      return { title: t('timeline.event.receivedMessage', { channel }), subtitle: instruction || null };
+    }
+    case 'pa_decision': {
+      const action = (data.action as string) || '';
+      const details = (data.details as Record<string, string>) || {};
+      const desc = details.description || details.recipe_name || details.prompt || '';
+      const keyMap: Record<string, string> = {
+        run: 'timeline.event.decisionRun',
+        reply: 'timeline.event.decisionReply',
+        resume: 'timeline.event.decisionResume',
+        recipe: 'timeline.event.decisionRecipe',
+        update: 'timeline.event.decisionUpdate',
+      };
+      const title = keyMap[action] ? t(keyMap[action]) : action;
+      return { title, subtitle: desc || null };
+    }
+    case 'agent_launched': {
+      const desc = (data.description as string) || '';
+      return { title: t('timeline.event.agentLaunched'), subtitle: desc || null };
+    }
+    case 'agent_exited': {
+      const ok = data.has_completion as boolean | undefined;
+      const duration = data.duration_seconds as number | undefined;
+      const title = ok ? t('timeline.event.agentCompleted') : t('timeline.event.agentFailed');
+      const subtitle = duration ? t('timeline.event.agentDuration', { duration }) : null;
+      return { title, subtitle };
+    }
+    case 'pa_reply': {
+      const channel = (data.channel as string) || '';
+      const text = (data.reply_text as string) || '';
+      return { title: t('timeline.event.replied', { channel }), subtitle: text || null };
+    }
+    default:
+      return { title: event.title, subtitle: event.subtitle };
+  }
+}
+
 export default function TimelineEventRow({ event, color }: Props) {
   const { icon: Icon, className: iconClass } = getIconConfig(event);
-  const subtitle = event.subtitle ? truncate(event.subtitle, 80) : null;
+  const { title, subtitle: rawSubtitle } = useHumanizedEvent(event);
+  const subtitle = rawSubtitle ? truncate(rawSubtitle, 80) : null;
   const level = getLevel(event.event_type);
   const isError = event.event_type === 'agent_exited' && !(event.raw_data?.has_completion);
   const titleClass = isError ? 'tl-title tl-title--error' : 'tl-title';
@@ -93,7 +143,7 @@ export default function TimelineEventRow({ event, color }: Props) {
         <Icon size={18} />
       </span>
       <span className="tl-content">
-        <span className={titleClass}>{event.title}</span>
+        <span className={titleClass}>{title}</span>
         {subtitle && <span className="tl-subtitle">{subtitle}</span>}
       </span>
     </div>

@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatElapsed } from './constants';
 import SubAgentStep from './SubAgentStep';
 import type { StepData } from './SubAgentBlock';
@@ -24,6 +25,7 @@ interface SubAgentModalProps {
 }
 
 export default function SubAgentModal({ task, isRunning, onClose }: SubAgentModalProps) {
+  const { t } = useTranslation();
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') onClose();
   }, [onClose]);
@@ -34,7 +36,7 @@ export default function SubAgentModal({ task, isRunning, onClose }: SubAgentModa
   }, [handleKeyDown]);
 
   const steps = task.steps || [];
-  const statusText = isRunning ? 'RUNNING' : 'COMPLETED';
+  const statusText = isRunning ? 'RUNNING' : t('timeline.completed');
   const statusClass = isRunning ? 'sa-modal-status--running' : 'sa-modal-status--completed';
 
   return (
@@ -52,7 +54,7 @@ export default function SubAgentModal({ task, isRunning, onClose }: SubAgentModa
           </div>
           <div className="sa-modal-header-right">
             <span className="sa-modal-meta">
-              {task.step_count} steps
+              {t('timeline.modalSteps', { count: task.step_count })}
             </span>
             <span className="sa-modal-meta">
               {formatElapsed(task.elapsed_seconds)}
@@ -74,7 +76,7 @@ export default function SubAgentModal({ task, isRunning, onClose }: SubAgentModa
             ))
           ) : (
             <div className="sa-modal-empty">
-              {isRunning ? '执行中...' : '无步骤数据'}
+              {isRunning ? t('timeline.running') : t('timeline.noStepData')}
             </div>
           )}
         </div>
@@ -82,7 +84,7 @@ export default function SubAgentModal({ task, isRunning, onClose }: SubAgentModa
         {/* Footer */}
         <div className="sa-modal-footer">
           <button className="tl-link" onClick={onClose}>
-            show less ↑
+            {t('timeline.showLess')}
           </button>
         </div>
       </div>

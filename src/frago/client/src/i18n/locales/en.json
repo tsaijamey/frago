@@ -618,6 +618,55 @@
     "customEndpointRequired": "Custom endpoint requires API URL",
     "customEndpointModelRequired": "Custom endpoint requires a main model name"
   },
+  "timeline": {
+    "waitingForEvents": "Waiting for events...",
+    "systemNormal": "System normal",
+    "tasksRunning": "{{count}} task(s) running",
+    "noTasksRunning": "No tasks running",
+    "agentRunning": "Agent running",
+    "earlierStepsHidden": "{{count}} earlier steps hidden",
+    "showMore": "show more ↓",
+    "showLess": "show less ↑",
+    "stepsViewDetail": "{{count}} steps    View detail →",
+    "modalSteps": "{{count}} steps",
+    "running": "Running...",
+    "completed": "COMPLETED",
+    "noStepData": "No step data",
+    "thinking": "Thinking...",
+    "failed": "Failed",
+    "succeeded": "Done",
+    "event": {
+      "receivedMessage": "Received {{channel}} message",
+      "decisionRun": "Assigned task to Agent",
+      "decisionReply": "Reply to message",
+      "decisionResume": "Resume execution",
+      "decisionRecipe": "Run recipe",
+      "decisionUpdate": "Update task status",
+      "agentLaunched": "Agent started",
+      "agentCompleted": "Agent completed",
+      "agentFailed": "Agent exited abnormally",
+      "agentDuration": "Duration {{duration}}s",
+      "replied": "Replied to {{channel}}"
+    },
+    "toolActions": {
+      "Read": "Read",
+      "Write": "Write",
+      "Edit": "Edit",
+      "Glob": "Search files",
+      "Grep": "Search content",
+      "Bash": "Execute",
+      "WebFetch": "Fetch",
+      "WebSearch": "Search",
+      "Agent": "Sub-task",
+      "TodoWrite": "Record todo"
+    },
+    "time": {
+      "justNow": "just now",
+      "secondsAgo": "{{count}}s ago",
+      "minutesAgo": "{{count}}m ago",
+      "hoursAgo": "{{count}}h ago"
+    }
+  },
   "update": {
     "updating": "Updating frago...",
     "restarting": "Restarting server...",

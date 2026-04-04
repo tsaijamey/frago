@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { formatRelativeTime, formatElapsed } from './constants';
 import SubAgentModal from './SubAgentModal';
 import SubAgentStep from './SubAgentStep';
@@ -37,6 +38,7 @@ interface SubAgentBlockProps {
 }
 
 export default function SubAgentBlock({ task, onViewDetail }: SubAgentBlockProps) {
+  const { t } = useTranslation();
   const [showModal, setShowModal] = useState(false);
 
   const steps = task.steps || [];
@@ -54,7 +56,7 @@ export default function SubAgentBlock({ task, onViewDetail }: SubAgentBlockProps
             <span className="tl-icon tl-icon--accent">▸</span>
             <span className="tl-content">
               <span className="tl-title tl-title--accent">
-                Agent 执行中
+                {t('timeline.agentRunning')}
               </span>
               <span className="tl-badge">{task.name || 'task'}</span>
               <span className="tl-meta">{formatElapsed(task.elapsed_seconds)}</span>
@@ -68,7 +70,7 @@ export default function SubAgentBlock({ task, onViewDetail }: SubAgentBlockProps
             <span className="tl-ts"></span>
             <span className="tl-icon"></span>
             <span className="tl-text tl-text--dim" style={{ opacity: 0.3 }}>
-              {hiddenCount} earlier steps hidden
+              {t('timeline.earlierStepsHidden', { count: hiddenCount })}
             </span>
           </div>
         )}
@@ -101,14 +103,14 @@ export default function SubAgentBlock({ task, onViewDetail }: SubAgentBlockProps
                 className="tl-link"
                 onClick={(e) => { e.stopPropagation(); setShowModal(true); }}
               >
-                show more ↓
+                {t('timeline.showMore')}
               </button>
             ) : (
               <button
                 className="tl-link"
                 onClick={(e) => { e.stopPropagation(); onViewDetail?.(); }}
               >
-                {task.step_count} 步    查看详情 →
+                {t('timeline.stepsViewDetail', { count: task.step_count })}
               </button>
             )}
           </span>

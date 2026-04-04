@@ -618,6 +618,55 @@
     "customEndpointRequired": "自定义端点需要 API 地址",
     "customEndpointModelRequired": "自定义端点需要主模型名称"
   },
+  "timeline": {
+    "waitingForEvents": "等待事件...",
+    "systemNormal": "系统正常",
+    "tasksRunning": "{{count}} 个任务运行中",
+    "noTasksRunning": "无任务运行",
+    "agentRunning": "Agent 执行中",
+    "earlierStepsHidden": "{{count}} 个更早的步骤已隐藏",
+    "showMore": "展开更多 ↓",
+    "showLess": "收起 ↑",
+    "stepsViewDetail": "{{count}} 步    查看详情 →",
+    "modalSteps": "{{count}} 步",
+    "running": "执行中...",
+    "completed": "已完成",
+    "noStepData": "无步骤数据",
+    "thinking": "思考中...",
+    "failed": "失败",
+    "succeeded": "完成",
+    "event": {
+      "receivedMessage": "收到 {{channel}} 消息",
+      "decisionRun": "分配任务给 Agent",
+      "decisionReply": "回复消息",
+      "decisionResume": "继续执行",
+      "decisionRecipe": "执行配方",
+      "decisionUpdate": "更新任务状态",
+      "agentLaunched": "Agent 开始执行",
+      "agentCompleted": "Agent 执行完毕",
+      "agentFailed": "Agent 异常退出",
+      "agentDuration": "耗时 {{duration}}s",
+      "replied": "已回复 {{channel}}"
+    },
+    "toolActions": {
+      "Read": "读取",
+      "Write": "写入",
+      "Edit": "编辑",
+      "Glob": "搜索文件",
+      "Grep": "搜索内容",
+      "Bash": "执行",
+      "WebFetch": "请求",
+      "WebSearch": "搜索",
+      "Agent": "子任务",
+      "TodoWrite": "记录待办"
+    },
+    "time": {
+      "justNow": "刚刚",
+      "secondsAgo": "{{count}} 秒前",
+      "minutesAgo": "{{count}} 分钟前",
+      "hoursAgo": "{{count}} 小时前"
+    }
+  },
   "update": {
     "updating": "正在更新 frago...",
     "restarting": "正在重启服务器...",
