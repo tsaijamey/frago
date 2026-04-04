@@ -36,6 +36,7 @@ projects/*/logs/
 config.json
 gui_config.json
 profiles.json
+recipes.local.json
 
 # Environment variable files (sensitive information)
 .env
