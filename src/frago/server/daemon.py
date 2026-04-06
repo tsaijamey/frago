@@ -4,7 +4,7 @@ Provides cross-platform background process spawning, PID file management,
 and server lifecycle control (start/stop/status).
 """
 
-import json
+import contextlib
 import os
 import platform
 import signal
@@ -398,7 +398,7 @@ def start_daemon() -> tuple[bool, str]:
 
             # Open log file and keep it open (don't use 'with' block)
             # subprocess will inherit the handle
-            log_f = open(log_file, "a")
+            log_f = open(log_file, "a")  # noqa: SIM115
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,  # Critical: close stdin to avoid console
@@ -411,7 +411,7 @@ def start_daemon() -> tuple[bool, str]:
         else:
             # Unix: use start_new_session to detach from terminal
             cmd = [sys.executable, "-m", "frago.server.runner", "--daemon"]
-            log_f = open(log_file, "a")
+            log_f = open(log_file, "a")  # noqa: SIM115
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
@@ -504,10 +504,8 @@ def stop_daemon() -> tuple[bool, str]:
         # Wait a moment then force kill any stubborn children
         gone, alive = psutil.wait_procs(children, timeout=2)
         for child in alive:
-            try:
+            with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
                 child.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
 
         # Clean up PID file
         clear_pid()
@@ -535,7 +533,7 @@ def _spawn_restarter_daemonized(server_pid: int) -> None:
     log_file = str(get_log_file())
 
     if platform.system() == "Windows":
-        log_f = open(log_file, "a")
+        log_f = open(log_file, "a")  # noqa: SIM115
         subprocess.Popen(
             [sys.executable, restarter_script, str(server_pid)],
             stdin=subprocess.DEVNULL,
@@ -619,41 +617,21 @@ def restart_daemon(force: bool = False) -> tuple[bool, str]:
 def check_active_tasks() -> dict[str, Any]:
     """Check if there are active tasks that would be killed by server stop/restart.
 
-    Checks two layers:
-    1. ~/.frago/current_run — run lock means a sub-agent is active
-    2. ingested_tasks.json — EXECUTING tasks are in progress
+    Checks TaskStore for EXECUTING tasks.
 
-    Returns dict with keys: has_active, run_lock, executing_tasks, message.
+    Returns dict with keys: has_active, executing_tasks, message.
     """
     from frago.server.services.ingestion.models import TaskStatus
     from frago.server.services.ingestion.store import TaskStore
 
     result: dict[str, Any] = {
         "has_active": False,
-        "run_lock": None,
         "executing_tasks": [],
         "message": "",
     }
     reasons: list[str] = []
 
-    # 1. Check run lock
-    current_run_file = FRAGO_DIR / "current_run"
-    if current_run_file.exists():
-        try:
-            data = json.loads(current_run_file.read_text())
-            run_id = data.get("run_id")
-            if run_id:
-                result["run_lock"] = run_id
-                result["has_active"] = True
-                theme = data.get("theme_description", "")
-                desc = f"Run lock active: {run_id}"
-                if theme:
-                    desc += f" ({theme})"
-                reasons.append(desc)
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    # 2. Check EXECUTING tasks
+    # Check EXECUTING tasks
     try:
         store = TaskStore()
         executing = store.get_by_status(TaskStatus.EXECUTING)
@@ -679,14 +657,11 @@ def check_active_tasks() -> dict[str, Any]:
 def force_cleanup_active_tasks(report: dict[str, Any]) -> None:
     """Graceful cleanup before forced stop/restart.
 
-    1. Mark EXECUTING tasks as FAILED
-    2. Release run lock
+    Marks EXECUTING tasks as FAILED.
     """
-    from frago.run.context import ContextManager
     from frago.server.services.ingestion.models import TaskStatus
     from frago.server.services.ingestion.store import TaskStore
 
-    # 1. Mark EXECUTING tasks as FAILED
     if report["executing_tasks"]:
         try:
             store = TaskStore()
@@ -696,14 +671,6 @@ def force_cleanup_active_tasks(report: dict[str, Any]) -> None:
                     TaskStatus.FAILED,
                     error="server force stop/restart",
                 )
-        except Exception:
-            pass  # best-effort
-
-    # 2. Release run lock
-    if report["run_lock"]:
-        try:
-            ctx_mgr = ContextManager(FRAGO_DIR, FRAGO_DIR / "projects")
-            ctx_mgr.release_context()
         except Exception:
             pass  # best-effort
 

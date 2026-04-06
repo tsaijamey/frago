@@ -1,7 +1,8 @@
-"""Single-threaded task executor.
+"""Parallel task executor.
 
-Takes QUEUED tasks from TaskStore one at a time, launches sub-agents,
-monitors until exit, extracts results, updates status, and notifies PA.
+Takes QUEUED tasks from TaskStore, launches sub-agents in parallel via
+asyncio.create_task, monitors until exit, extracts results, updates
+status, and notifies PA.
 
 All task status transitions for run-type tasks flow through here —
 no other code path modifies QUEUED → EXECUTING → COMPLETED/FAILED.
@@ -28,28 +29,25 @@ PROJECTS_DIR = FRAGO_HOME / "projects"
 # How often to poll for queued tasks when idle
 POLL_INTERVAL = 1.0
 
-# How often to check if a run lock held by external CLI has been released
-EXTERNAL_LOCK_RETRY_INTERVAL = 10.0
-
 # PID polling interval while monitoring agent
 PID_POLL_INTERVAL = 5.0
 
 
 class Executor:
-    """Single-threaded task executor.
+    """Parallel task executor.
 
-    从 TaskStore 内存取 queued 任务，一次一个，串行执行。
+    从 TaskStore 取所有 queued 任务，每个 spawn asyncio.Task 并行执行。
     所有状态变更写内存 → 异步刷盘。
 
     Loop:
-      1. store.get_first_queued()
-      2. check run lock (external CLI may hold it)
-      3. acquire lock → launch agent → mark executing → 回填 session_id + pid
+      1. store.get_by_status(QUEUED) → drain all
+      2. asyncio.create_task(_execute_run(task)) per task
+      3. each task: launch agent → mark executing → 回填 session_id + pid
       4. monitor PID
       5. on exit: check _killed_by_resume → 如果是就跳过，重新监听新 pid
       6. extract results → mark completed/failed
-      7. build system_notify → enqueue to PA
-      8. release lock → next task
+      7. best-effort close TabGroup
+      8. build system_notify → enqueue to PA
     """
 
     def __init__(
@@ -63,6 +61,7 @@ class Executor:
         self._broadcast_pa_event = broadcast_pa_event  # async callable
         self._killed_by_resume: set[int] = set()
         self._loop_task: asyncio.Task[None] | None = None
+        self._active_tasks: set[asyncio.Task] = set()
 
     def start(self) -> None:
         """Start the executor loop as an asyncio task."""
@@ -73,7 +72,15 @@ class Executor:
         logger.info("Executor started")
 
     async def stop(self) -> None:
-        """Stop the executor loop."""
+        """Stop the executor loop and cancel active tasks."""
+        # Cancel active tasks first
+        for t in list(self._active_tasks):
+            t.cancel()
+        for t in list(self._active_tasks):
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+        self._active_tasks.clear()
+
         if self._loop_task and not self._loop_task.done():
             self._loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -85,46 +92,42 @@ class Executor:
 
     async def _run_loop(self) -> None:
         while True:
-            task = self._store.get_first_queued()
-            if not task:
+            tasks = self._store.get_by_status(TaskStatus.QUEUED)
+            if not tasks:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
-            try:
-                await self._execute_run(task)
-            except Exception:
-                logger.error("Executor: unhandled error executing task %s", task.id[:8], exc_info=True)
-                self._store.update_status(task.id, TaskStatus.FAILED, error="executor internal error")
-                from frago.server.services.trace import trace as _trace
-                _trace(task.channel_message_id, task.id, "executor", "标记 FAILED: executor internal error")
+            for task in tasks:
+                self._store.update_status(task.id, TaskStatus.EXECUTING)
+                t = asyncio.create_task(self._safe_execute_run(task))
+                self._active_tasks.add(t)
+                t.add_done_callback(self._active_tasks.discard)
+            await asyncio.sleep(POLL_INTERVAL)
+
+    async def _safe_execute_run(self, task: IngestedTask) -> None:
+        """Wrapper around _execute_run that catches unhandled errors."""
+        try:
+            await self._execute_run(task)
+        except Exception:
+            logger.error("Executor: unhandled error executing task %s", task.id[:8], exc_info=True)
+            self._store.update_status(task.id, TaskStatus.FAILED, error="executor internal error")
+            from frago.server.services.trace import trace as _trace
+            _trace(task.channel_message_id, task.id, "executor", "标记 FAILED: executor internal error")
 
     async def _execute_run(self, task: IngestedTask) -> None:
         """Execute a single queued task end-to-end."""
-        from frago.run.context import ContextManager
-
-        # 1. Check run lock (external CLI user may hold it)
-        ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-        current_run = ctx_mgr.get_current_run_id()
-        if current_run:
-            logger.info(
-                "Executor: run lock held by %s, retrying in %ds",
-                current_run, int(EXTERNAL_LOCK_RETRY_INTERVAL),
-            )
-            await asyncio.sleep(EXTERNAL_LOCK_RETRY_INTERVAL)
-            return  # task stays QUEUED, next loop iteration retries
-
-        # 2. Launch agent
+        # 1. Launch agent
         run_id, pid = await self._launch_agent(task)
         if not run_id or not pid:
             return  # error already handled in _launch_agent
 
-        # 3. Monitor PID until exit (with resume awareness)
+        # 2. Monitor PID until exit (with resume awareness)
         final_pid = await self._monitor_until_done(task, pid)
         if final_pid is None:
             # Killed by resume → resume handler re-entered monitoring
             return
 
-        # 4. Determine success/failure from Claude Code session JSONL
+        # 3. Determine success/failure from Claude Code session JSONL
         # Wait briefly for JSONL flush — Claude Code process may have exited
         # before the final assistant message was fsynced to disk.
         await asyncio.sleep(2.5)
@@ -137,7 +140,7 @@ class Executor:
         _trace(task.channel_message_id, task.id, "executor",
                f"读取结果: claude_sid={claude_sid and claude_sid[:8]}, stop_reason={stop_reason}")
 
-        # 5. Update status based on Claude JSONL stop_reason
+        # 4. Update status based on Claude JSONL stop_reason
         #    (from 3940-session statistical analysis):
         #      end_turn / stop_sequence → agent finished naturally → COMPLETED
         #      None / tool_use / max_tokens → interrupted/crashed → FAILED
@@ -162,15 +165,24 @@ class Executor:
                data={"event_type": "pa_agent_exited", "run_id": run_id, "task_id": task.id,
                      "has_completion": has_completion, "duration_seconds": duration})
 
-        # 6. Release context lock
+        # 5. Best-effort close TabGroup
         try:
-            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-            if ctx_mgr.get_current_run_id() == run_id:
-                ctx_mgr.release_context()
+            from frago.cdp.config import CDPConfig
+            from frago.cdp.session import CDPSession
+            from frago.cdp.tab_group_manager import TabGroupManager
+            tgm = TabGroupManager()
+            group = tgm.get_group(run_id)
+            if group:
+                session = CDPSession(CDPConfig())
+                session.connect()
+                try:
+                    tgm.close_group(run_id, session)
+                finally:
+                    session.disconnect()
         except Exception:
-            logger.debug("Failed to release context lock for %s", run_id, exc_info=True)
+            logger.debug("Failed to close tab group for %s", run_id, exc_info=True)
 
-        # 7. Archive run
+        # 6. Archive run
         try:
             from frago.run.manager import RunManager
             manager = RunManager(PROJECTS_DIR)
@@ -178,7 +190,7 @@ class Executor:
         except Exception:
             logger.debug("Failed to archive run %s", run_id, exc_info=True)
 
-        # 8. Broadcast event
+        # 7. Broadcast event
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_exited", {
                 "run_id": run_id,
@@ -188,18 +200,16 @@ class Executor:
                 "duration_seconds": duration,
             })
 
-        # 9. Notify PA via system message
+        # 8. Notify PA via system message
         await self._notify_pa(task, run_id, stop_reason)
 
     async def _launch_agent(self, task: IngestedTask) -> tuple[str | None, int | None]:
-        """Create Run, acquire lock, build prompt, launch sub-agent process.
+        """Create Run, build prompt, launch sub-agent process.
 
-        On success: marks task EXECUTING, backfills session_id + pid.
+        On success: backfills session_id + pid.
         On failure: marks task FAILED.
         Returns (run_id, pid) or (None, None).
         """
-        from frago.run.context import ContextManager
-        from frago.run.exceptions import ContextAlreadySetError
         from frago.run.manager import RunManager
         from frago.server.services.agent_service import AgentService
 
@@ -221,16 +231,8 @@ class Executor:
         run_id = run.run_id
         logger.info("Executor: created Run %s for task %s", run_id, task.id[:8])
 
-        # Set mutex
-        ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-        try:
-            ctx_mgr.set_current_run(run_id, run.theme_description)
-        except ContextAlreadySetError:
-            logger.warning("Executor: run lock race for task %s", task.id[:8])
-            return None, None  # stay QUEUED, retry next loop
-
-        # Mark EXECUTING
-        self._store.update_status(task.id, TaskStatus.EXECUTING, session_id=run_id)
+        # Update session_id on the already-EXECUTING task
+        self._store.update_run_info(task.id, session_id=run_id)
 
         # Build sub-agent prompt
         from frago.server.services.primary_agent_service import PrimaryAgentService
@@ -253,7 +255,6 @@ class Executor:
 
         if result.get("status") != "ok":
             logger.error("Executor: failed to start agent for task %s: %s", task.id[:8], result.get("error"))
-            ctx_mgr.release_context()
             self._store.update_status(task.id, TaskStatus.FAILED, error=result.get("error"))
             from frago.server.services.trace import trace as _trace
             _trace(task.channel_message_id, task.id, "executor",

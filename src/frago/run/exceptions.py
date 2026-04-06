@@ -41,7 +41,10 @@ class ContextNotSetError(RunException):
 
 
 class ContextAlreadySetError(RunException):
-    """Run context already running (mutex lock)"""
+    """Run context already running (mutex lock).
+
+    Only raised by CLI set-context, not by Executor.
+    """
 
     def __init__(self, existing_run_id: str):
         self.existing_run_id = existing_run_id

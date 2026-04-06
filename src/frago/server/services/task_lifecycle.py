@@ -7,7 +7,6 @@ and PENDING task recovery.
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -128,73 +127,6 @@ class TaskLifecycle:
         except Exception as e:
             logger.exception("Failed to send reply for channel %s", channel)
             return {"status": "error", "error": str(e)}
-
-    # -- heartbeat helpers --
-
-    def check_stale_run_lock(self) -> bool:
-        """Check and release stale run locks. Returns True if a lock was released."""
-        from frago.run.context import ContextManager
-
-        try:
-            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-            current_run_id = ctx_mgr.get_current_run_id()
-            if not current_run_id:
-                return False
-
-            # Check timeout + process liveness
-            lock_file = FRAGO_HOME / "current_run"
-            if not lock_file.exists():
-                return False
-
-            lock_data = json.loads(lock_file.read_text(encoding="utf-8"))
-            last_accessed_str = lock_data.get("last_accessed", "")
-            if not last_accessed_str:
-                return False
-
-            last_accessed = datetime.fromisoformat(last_accessed_str)
-            elapsed = (datetime.now() - last_accessed).total_seconds()
-            stale_threshold = 1800  # 30 minutes
-
-            if elapsed < stale_threshold:
-                return False
-
-            # Check if process is still running
-            run_still_alive = False
-            try:
-                for pid_dir in Path("/proc").iterdir():
-                    if not pid_dir.name.isdigit():
-                        continue
-                    try:
-                        environ = (pid_dir / "environ").read_bytes()
-                        if f"FRAGO_CURRENT_RUN={current_run_id}".encode() in environ:
-                            run_still_alive = True
-                            break
-                    except (PermissionError, FileNotFoundError, OSError):
-                        continue
-            except Exception:
-                return False
-
-            if not run_still_alive:
-                ctx_mgr.release_context()
-                # Mark any EXECUTING task associated with this run as FAILED
-                executing = self._store.get_by_status(TaskStatus.EXECUTING)
-                for task in executing:
-                    if task.session_id == current_run_id:
-                        self._store.update_status(
-                            task.id, TaskStatus.FAILED,
-                            error="stale run lock timeout",
-                        )
-                        break
-                logger.info(
-                    "Released stale run lock %s (timed out after %ds, process gone)",
-                    current_run_id, int(elapsed),
-                )
-                return True
-
-        except Exception:
-            logger.debug("Stale run lock check failed", exc_info=True)
-
-        return False
 
     def recover_pending_tasks(self) -> list[dict[str, Any]]:
         """Scan TaskStore for PENDING and FAILED tasks, return as queue messages.

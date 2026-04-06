@@ -3,10 +3,10 @@
 Responsible for reading and writing ~/.frago/current_run configuration file, with environment variable priority support
 """
 
+import contextlib
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 from .exceptions import (
     ContextAlreadySetError,
@@ -18,7 +18,11 @@ from .models import CurrentRunContext
 
 
 class ContextManager:
-    """Run Context Manager"""
+    """Run Context Manager.
+
+    Used by CLI set-context/release commands. Executor does NOT use this
+    for mutex -- parallel execution is managed via independent asyncio tasks.
+    """
 
     def __init__(self, frago_home: Path, projects_dir: Path):
         """Initialize context manager
@@ -79,7 +83,7 @@ class ContextManager:
             data = json.loads(self.config_file.read_text())
             context = CurrentRunContext.from_dict(data)
         except Exception as e:
-            raise FileSystemError("read", str(self.config_file), str(e))
+            raise FileSystemError("read", str(self.config_file), str(e)) from e
 
         # 3. Verify run directory exists
         run_dir = self.projects_dir / context.run_id
@@ -138,7 +142,7 @@ class ContextManager:
         try:
             self.config_file.write_text(json.dumps(context.to_dict(), indent=2))
         except Exception as e:
-            raise FileSystemError("write", str(self.config_file), str(e))
+            raise FileSystemError("write", str(self.config_file), str(e)) from e
 
         # Update run's last_accessed
         metadata_file = run_dir / ".metadata.json"
@@ -152,12 +156,10 @@ class ContextManager:
     def _clear_context(self) -> None:
         """Clear context configuration (internal method)"""
         if self.config_file.exists():
-            try:
+            with contextlib.suppress(Exception):
                 self.config_file.unlink()
-            except Exception:
-                pass  # Ignore clear failure
 
-    def release_context(self) -> Optional[str]:
+    def release_context(self) -> str | None:
         """Release current context (public method)
 
         Also best-effort cleans up the corresponding tab group.
@@ -183,9 +185,9 @@ class ContextManager:
     def _cleanup_tab_group(self, group_name: str) -> None:
         """Best-effort cleanup of a tab group when releasing context."""
         try:
-            from frago.cdp.tab_group_manager import TabGroupManager
-            from frago.cdp.session import CDPSession
             from frago.cdp.config import CDPConfig
+            from frago.cdp.session import CDPSession
+            from frago.cdp.tab_group_manager import TabGroupManager
 
             tgm = TabGroupManager()
             group = tgm.get_group(group_name)
@@ -201,7 +203,7 @@ class ContextManager:
         except Exception:
             pass  # Best-effort, don't break context release
 
-    def get_current_run_id(self) -> Optional[str]:
+    def get_current_run_id(self) -> str | None:
         """Get current run_id (does not raise exceptions)
 
         Returns:

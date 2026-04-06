@@ -3,7 +3,7 @@
 分类: 替代（MUST）
 
 ## 解决什么问题
-agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目录导致 frago 命令失败；忘记释放 Run 上下文导致无法启动新任务。
+agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目录导致 frago 命令失败。
 
 ## 目录结构
 
@@ -31,19 +31,13 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目
 禁止在 Desktop、/tmp、Downloads 等外部位置创建文件。
 Recipe 调用时必须显式指定 output_dir 到 workspace 内。
 
-## 单 Run 排他性
+## Run 上下文（自动管理）
 
-系统只允许一个活跃的 Run 上下文。
+Executor 启动 sub-agent 时通过环境变量 FRAGO_CURRENT_RUN 自动注入 run_id。
+多个 agent 可以并行执行，各自拥有独立的 run_id 和 workspace。
 
-  # 典型工作流
-  frago run init "upwork python job apply"
-  frago run set-context upwork-python-job-apply
-  # ... 执行任务 ...
-  frago run release                            # 任务完成，释放上下文（必须）
-
-  # 忘记释放会看到：
-  # Error: Another run 'xxx' is currently active.
-  # Run 'frago run release' to release it first.
+NEVER 手动调用 frago run set-context 或 frago run release。
+这些命令仅供 CLI 手动调试使用，sub-agent 不需要也不应该调用。
 
 ## 禁止使用 cd
 
