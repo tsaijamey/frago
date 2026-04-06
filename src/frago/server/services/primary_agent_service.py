@@ -257,6 +257,43 @@ class PrimaryAgentService:
         self._rotation_count += 1
         self._consecutive_json_failures = 0
 
+        # Orphaned message reconciliation (P0)
+        orphaned = await self._reconcile_orphaned_messages()
+        if orphaned:
+            logger.info("Rotation: re-enqueued %d orphaned message(s)", orphaned)
+
+    async def _reconcile_orphaned_messages(self) -> int:
+        """Scan message_cache for messages with no corresponding Task, re-enqueue them.
+
+        Called at the end of rotate_session(). Messages that were dequeued and
+        sent to PA but never became Tasks (due to rotation cutting the chain)
+        will still be in message_cache (Phase 1 cleans cache only after Task
+        creation). Comparing cache vs TaskStore finds these orphans.
+        """
+        if not self._scheduler:
+            return 0
+
+        from frago.server.services.ingestion.store import TaskStore
+        store = TaskStore()
+        orphaned = 0
+
+        for _key, cached in list(self._scheduler._message_cache.items()):
+            if store.exists(cached.channel, cached.msg_id):
+                continue
+            await self.enqueue_message({
+                "type": "user_message",
+                "msg_id": cached.msg_id,
+                "channel": cached.channel,
+                "channel_message_id": cached.msg_id,
+                "prompt": cached.prompt,
+                "reply_context": cached.reply_context,
+                "_recovered": True,
+            })
+            orphaned += 1
+            logger.info("Orphaned message re-enqueued: %s:%s", cached.channel, cached.msg_id)
+
+        return orphaned
+
     def _build_bootstrap_prompt(self) -> str:
         """Build bootstrap context from TaskStore + RunLock."""
         import platform
@@ -300,7 +337,7 @@ class PrimaryAgentService:
             # Queued (pending execution)
             queued = store.get_by_status(TaskStatus.QUEUED)
             # Recent completed
-            recent_completed = store.get_recent_completed(limit=5)
+            recent_completed = store.get_recent_completed(limit=8)
 
             lines = ["任务队列:"]
             if executing:
@@ -325,29 +362,15 @@ class PrimaryAgentService:
                 for t in recent_completed:
                     desc = t.run_descriptions[-1] if t.run_descriptions else t.prompt
                     summary = t.result_summary or t.error or ""
+                    prompt_preview = t.prompt[:80] + "..." if len(t.prompt) > 80 else t.prompt
                     lines.append(f"    - [{t.id[:8]}] ({t.channel}) [{t.status.value}] {desc}")
+                    lines.append(f"      原始消息: {prompt_preview}")
                     if summary:
                         lines.append(f"      结果: {summary}")
 
             sections.append("\n".join(lines))
         except Exception:
             sections.append("任务队列: 不可用")
-
-        # Run lock status
-        try:
-            from frago.run.context import ContextManager
-            ctx_mgr = ContextManager(FRAGO_HOME, PROJECTS_DIR)
-            current_run_id = ctx_mgr.get_current_run_id()
-            if current_run_id:
-                # Determine if executor or external
-                if executing and executing.session_id == current_run_id:
-                    sections.append(f"Run 锁: executor (run_id={current_run_id})")
-                else:
-                    sections.append(f"Run 锁: external (run_id={current_run_id})（用户可能在 CLI 直接使用 frago）")
-            else:
-                sections.append("Run 锁: idle（空闲）")
-        except Exception:
-            sections.append("Run 锁状态: 不可用")
 
         # Agent self-knowledge index
         try:
@@ -449,6 +472,13 @@ class PrimaryAgentService:
                             "(is_running stuck), forcing rotation"
                         )
                         await self.rotate_session()
+                        # Re-enqueue dequeued messages after timeout rotation (P1)
+                        for m in messages:
+                            await self._message_queue.put(m)
+                        logger.info(
+                            "Queue consumer: re-enqueued %d message(s) after timeout rotation",
+                            len(messages),
+                        )
                         break
                     await asyncio.sleep(0.5)
 
@@ -458,6 +488,15 @@ class PrimaryAgentService:
                     if isinstance(_m, dict):
                         _trace(_m.get("msg_id", ""), _m.get("task_id"), "pa",
                                f"收到消息队列: {_m.get('channel', '')}")
+
+                # Wait for PA session subprocess to be ready (P3)
+                if self._pa_session:
+                    _ready_start = asyncio.get_event_loop().time()
+                    while not self._pa_session.is_running:
+                        if asyncio.get_event_loop().time() - _ready_start > 10:
+                            logger.warning("Queue consumer: PA session not ready after 10s")
+                            break
+                        await asyncio.sleep(0.2)
 
                 # Merge into one text block
                 merged = self._format_queue_messages(messages)
@@ -484,6 +523,13 @@ class PrimaryAgentService:
                         await self._handle_pa_output(self._pa_output_buffer.strip())
                     else:
                         logger.warning("Queue consumer: PA produced no output")
+                        # Re-enqueue messages when PA produces no output (P3)
+                        for m in messages:
+                            await self._message_queue.put(m)
+                        logger.info(
+                            "Queue consumer: re-enqueued %d message(s) after PA no-output",
+                            len(messages),
+                        )
                     self._pa_output_buffer = ""
 
             except asyncio.CancelledError:
@@ -673,13 +719,11 @@ class PrimaryAgentService:
                 await self._handle_pa_output(self._pa_output_buffer.strip())
             self._pa_output_buffer = ""
 
-        # ⓪ Archive completed/failed tasks from active store
-        self._cleanup_terminal_tasks()
-
-        # ① Check for stale run lock
-        await self._check_stale_run_lock()
-
-        # ② Rotation check (0 tokens)
+        # ① Rotation check (0 tokens)
+        # NOTE: terminal task archival is handled by scheduler._rotation_loop()
+        # (daily at 0:00 + startup catch-up). We intentionally keep COMPLETED
+        # tasks in memory so that get_recent_completed() returns them in
+        # bootstrap prompts — critical for PA continuity after rotation.
         if self._should_rotate():
             await self.rotate_session()
             self._heartbeat_seq += 1
@@ -734,12 +778,6 @@ class PrimaryAgentService:
                 )
         except Exception:
             logger.debug("Failed to cleanup terminal tasks", exc_info=True)
-
-    async def _check_stale_run_lock(self) -> None:
-        """Check if the current run lock is stale and release it if so."""
-        released = self._lifecycle.check_stale_run_lock()
-        if released:
-            logger.info("Heartbeat [%d]: stale run lock released by lifecycle", self._heartbeat_seq)
 
     def _on_pa_message(self, text: str) -> None:
         """Callback invoked by AgentSession when PA produces a complete text block."""
@@ -865,6 +903,16 @@ class PrimaryAgentService:
             except Exception:
                 logger.exception("Failed to execute PA decision: %s", d)
 
+        # Deferred cache cleanup: remove cached messages after all decisions are processed.
+        # This ensures multiple actions referencing the same msg_id all get cache access.
+        if self._scheduler:
+            seen_msg_ids: set[tuple[str, str]] = set()
+            for d in decisions:
+                if isinstance(d, dict) and d.get("msg_id"):
+                    seen_msg_ids.add((d.get("channel", ""), d["msg_id"]))
+            for channel_key, mid in seen_msg_ids:
+                self._scheduler.remove_cached_message(channel_key, mid)
+
     # -- decision handlers --
 
     def _create_task_from_cache(
@@ -902,6 +950,10 @@ class PrimaryAgentService:
         if initial_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             store.update_status(task.id, initial_status)
         logger.info("Created task %s from cached message %s (status=%s)", task.id[:8], msg_id, initial_status.value)
+
+        # NOTE: cache cleanup is deferred to after all decisions are processed
+        # (see _execute_decisions loop) to support multiple actions per msg_id.
+
         return task
 
     async def _send_reply(self, decision: dict[str, Any]) -> None:
