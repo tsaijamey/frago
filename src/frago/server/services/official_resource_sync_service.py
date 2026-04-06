@@ -29,11 +29,9 @@ class OfficialResourceSyncService:
 
     # Mapping from GitHub paths to local paths
     RESOURCE_MAPPINGS = {
-        "commands": {
-            "source": "src/frago/resources/commands",
-            "target": Path.home() / ".claude" / "commands",
-            "patterns": ["frago.*.md", "frago"],  # files and directory
-        },
+        # NOTE: commands sync removed — frago book is the sole knowledge
+        # injection channel for sub-agents. The old commands are archived
+        # in src/frago/resources/_commands/ for reference.
         "skills": {
             "source": "src/frago/resources/skills",
             "target": Path.home() / ".claude" / "skills",
