@@ -1,5 +1,5 @@
 #!/bin/bash
-# Recipe: video_clip_annotator_ui
+# Recipe: video_cut_studio_ui
 # Description: 复制 UI 资源到目标目录
 
 set -e

@@ -64,21 +64,13 @@
           </div>
           <div class="tts-content">
             <div class="tts-input-area">
-              <textarea id="tts-text" placeholder="Enter narration text...
-
-Supports emotion markers:
-[#excited]Great news!
-[#calm]Let me explain...
-[#sad]Unfortunately..."></textarea>
+              <textarea id="tts-text" placeholder="Enter narration text (any language)..."></textarea>
               <div class="tts-options">
-                <select id="tts-emotion">
-                  <option value="">Default</option>
-                  <option value="excited">Excited</option>
-                  <option value="calm">Calm</option>
-                  <option value="sad">Sad</option>
-                  <option value="serious">Serious</option>
-                  <option value="friendly">Friendly</option>
-                </select>
+                <div class="combo-box" id="emotion-combo">
+                  <input type="text" id="tts-emotion" placeholder="Select or type emotion..." autocomplete="off">
+                  <button class="combo-toggle" type="button">▾</button>
+                  <ul class="combo-dropdown" id="emotion-dropdown"></ul>
+                </div>
                 <button id="btn-generate-tts" class="btn btn-accent">Generate TTS</button>
               </div>
             </div>

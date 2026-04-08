@@ -1,9 +1,9 @@
 ---
-name: video_clip_annotator
+name: video_cut_studio
 type: workflow
 runtime: python
 version: "1.0.0"
-description: "视频剪辑标注工具 - 启动交互式 Web UI 进行视频片段标注、TTS 生成和视频合成"
+description: "视频剪辑工作台 - 启动交互式 Web UI 进行视频片段标注、TTS 生成和视频合成"
 use_cases:
   - "视频素材标注和片段提取"
   - "时间轴编排和排序"
@@ -41,7 +41,7 @@ outputs:
     type: number
     description: "找到的媒体文件数量"
 dependencies:
-  - video_clip_annotator_ui
+  - video_cut_studio_ui
   - volcengine_tts_with_emotion
   - video_merge_clips
 flow:
@@ -71,7 +71,7 @@ flow:
   - step: 4
     action: "setup_viewer_content"
     description: "Copy UI assets and generate config.json"
-    recipe: "video_clip_annotator_ui"
+    recipe: "video_cut_studio_ui"
     inputs:
       - source: "step.3.content_id"
       - source: "params.dir"
@@ -96,11 +96,11 @@ flow:
         type: "boolean"
 ---
 
-# video_clip_annotator
+# video_cut_studio
 
 ## 功能描述
 
-视频剪辑标注工具，启动一个交互式 Web UI，用于：
+视频剪辑工作台，启动一个交互式 Web UI，用于：
 
 1. **素材浏览** - 扫描指定目录的视频/音频文件，按编号排序显示
 2. **片段标注** - 在时间轴上标记需要使用的片段（起始-结束时间点）
@@ -111,7 +111,7 @@ flow:
 ## 使用方法
 
 ```bash
-frago recipe run video_clip_annotator '{"dir": "/path/to/video/clips"}'
+frago recipe run video_cut_studio '{"dir": "/path/to/video/clips"}'
 ```
 
 **参数说明**：

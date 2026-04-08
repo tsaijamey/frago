@@ -4,15 +4,14 @@
 # dependencies = []
 # ///
 """
-Recipe: video_clip_annotator
-Description: 视频剪辑标注工具 - 启动交互式 Web UI
+Recipe: video_cut_studio
+Description: 视频剪辑工作台 - 启动交互式 Web UI
 """
 
 import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -22,7 +21,7 @@ MEDIA_EXTENSIONS = {'.mp4', '.webm', '.mov', '.mkv', '.avi', '.mp3', '.wav', '.o
 # Paths
 FRAGO_HOME = Path.home() / '.frago'
 VIEWER_CONTENT_DIR = FRAGO_HOME / 'viewer' / 'content'
-UI_ASSETS_DIR = FRAGO_HOME / 'recipes' / 'atomic' / 'system' / 'video_clip_annotator_ui' / 'assets'
+UI_ASSETS_DIR = FRAGO_HOME / 'recipes' / 'atomic' / 'system' / 'video_cut_studio_ui' / 'assets'
 
 
 def generate_content_id(dir_path: str) -> str:
@@ -87,48 +86,6 @@ def ensure_subdirs(dir_path: Path):
     (dir_path / 'tts').mkdir(exist_ok=True)
     (dir_path / 'output').mkdir(exist_ok=True)
     (dir_path / 'temp').mkdir(exist_ok=True)
-
-
-def ensure_chrome_running() -> bool:
-    """Ensure Chrome CDP is running, start if needed."""
-    # Check status
-    result = subprocess.run(
-        ['frago', 'chrome', 'status'],
-        capture_output=True,
-        text=True,
-        timeout=10
-    )
-    if result.returncode == 0:
-        return True
-
-    # Start Chrome
-    print("启动 Chrome CDP...", file=sys.stderr)
-    result = subprocess.run(
-        ['frago', 'chrome', 'start'],
-        capture_output=True,
-        text=True,
-        timeout=30
-    )
-    return result.returncode == 0
-
-
-def open_browser(url: str) -> bool:
-    """Open URL in Chrome using frago chrome navigate."""
-    try:
-        if not ensure_chrome_running():
-            print("Warning: Failed to start Chrome", file=sys.stderr)
-            return False
-
-        result = subprocess.run(
-            ['frago', 'chrome', 'navigate', url, '--no-border'],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        return result.returncode == 0
-    except Exception as e:
-        print(f"Warning: Failed to open browser: {e}", file=sys.stderr)
-        return False
 
 
 def main():
@@ -208,22 +165,19 @@ def main():
     # Ensure subdirectories
     ensure_subdirs(dir_path)
 
-    # Build URL
-    url = f"http://127.0.0.1:8093/viewer/content/{content_id}/index.html"
+    # Build URL (cache-bust to force fresh assets)
+    import time as _time
+    url = f"http://127.0.0.1:8093/viewer/content/{content_id}/index.html?v={int(_time.time())}"
 
-    # Open browser
-    print(f"打开浏览器: {url}", file=sys.stderr)
-    browser_opened = open_browser(url)
-
-    # Output result
+    # Output result (open_url tells runner to open browser)
     result = {
         'success': True,
+        'open_url': url,
         'url': url,
         'content_id': content_id,
         'content_dir': str(content_dir),
         'media_count': len(media_files),
         'media_files': [f['name'] for f in media_files],
-        'browser_opened': browser_opened
     }
 
     print(json.dumps(result, ensure_ascii=False, indent=2))

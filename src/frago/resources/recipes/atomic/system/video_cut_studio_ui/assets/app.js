@@ -48,6 +48,8 @@ function cacheElements() {
   elements.markerCount = document.getElementById('marker-count');
   elements.ttsText = document.getElementById('tts-text');
   elements.ttsEmotion = document.getElementById('tts-emotion');
+  elements.emotionCombo = document.getElementById('emotion-combo');
+  elements.emotionDropdown = document.getElementById('emotion-dropdown');
   elements.ttsList = document.getElementById('tts-list');
   elements.btnGenerateTts = document.getElementById('btn-generate-tts');
   elements.btnSave = document.getElementById('btn-save');
@@ -81,6 +83,9 @@ function setupEventListeners() {
 
   // Waveform click
   elements.waveformCanvas.addEventListener('click', onWaveformClick);
+
+  // Emotion combo box
+  initEmotionCombo();
 }
 
 // ============================================================
@@ -667,6 +672,68 @@ function getTotalDuration() {
 // TTS Generation
 // ============================================================
 
+// Emotion presets for combo box
+const EMOTION_PRESETS = [
+  { label: 'Confident', value: '用自信从容的语气说', desc: 'Opening hooks, key statements' },
+  { label: 'Clear & Sharp', value: '用清晰干练的语气说', desc: 'Walkthroughs, step-by-step' },
+  { label: 'Subtle Excitement', value: '用略带兴奋但克制的语气说', desc: 'Feature highlights' },
+  { label: 'Weary Sigh', value: '用无奈叹气的语气说', desc: 'Pain points, old way sucks' },
+  { label: 'Relaxed & Cheerful', value: '用轻松愉快的语气说', desc: 'CTA, closing' },
+  { label: 'Storytelling', value: '用娓娓道来的语气说', desc: 'Background, context' },
+  { label: 'Curious', value: '用好奇探索的语气说', desc: 'Questions, what-if' },
+  { label: 'Warm & Sincere', value: '用温暖真诚的语气说', desc: 'Personal touch, thanks' },
+];
+
+function initEmotionCombo() {
+  const input = elements.ttsEmotion;
+  const dropdown = elements.emotionDropdown;
+  const toggle = elements.emotionCombo.querySelector('.combo-toggle');
+
+  function renderOptions(filter = '') {
+    const lower = filter.toLowerCase();
+    const filtered = filter
+      ? EMOTION_PRESETS.filter(p => p.label.toLowerCase().includes(lower) || p.value.includes(filter))
+      : EMOTION_PRESETS;
+
+    dropdown.innerHTML = filtered.map(p => `
+      <li class="combo-option" data-value="${escapeHtml(p.value)}">
+        <span class="combo-option-label">${escapeHtml(p.label)}</span>
+        <span class="combo-option-desc">${escapeHtml(p.desc)}</span>
+      </li>
+    `).join('');
+
+    dropdown.querySelectorAll('.combo-option').forEach(li => {
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        input.value = li.dataset.value;
+        dropdown.classList.remove('open');
+      });
+    });
+  }
+
+  toggle.addEventListener('click', () => {
+    const isOpen = dropdown.classList.toggle('open');
+    if (isOpen) renderOptions(input.value);
+  });
+
+  input.addEventListener('focus', () => {
+    renderOptions(input.value);
+    dropdown.classList.add('open');
+  });
+
+  input.addEventListener('input', () => {
+    renderOptions(input.value);
+    dropdown.classList.add('open');
+  });
+
+  input.addEventListener('blur', () => {
+    setTimeout(() => dropdown.classList.remove('open'), 150);
+  });
+
+  // Initial render
+  renderOptions();
+}
+
 async function generateTTS() {
   const text = elements.ttsText.value.trim();
   if (!text) {
@@ -674,19 +741,12 @@ async function generateTTS() {
     return;
   }
 
-  const emotion = elements.ttsEmotion.value;
+  const emotion = elements.ttsEmotion.value.trim();
   let finalText = text;
 
-  // Add emotion marker if selected and not already present
+  // Add emotion marker if provided and not already present
   if (emotion && !text.startsWith('[#')) {
-    const emotionMap = {
-      'excited': '用兴奋激动的语气说',
-      'calm': '用平静的语气说',
-      'sad': '用伤感的语气说',
-      'serious': '用严肃的语气说',
-      'friendly': '用亲切友好的语气说'
-    };
-    finalText = `[#${emotionMap[emotion] || emotion}]${text}`;
+    finalText = `[#${emotion}]${text}`;
   }
 
   setStatus('Generating TTS...');

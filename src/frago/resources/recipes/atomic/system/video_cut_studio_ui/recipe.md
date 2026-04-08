@@ -1,11 +1,11 @@
 ---
-name: video_clip_annotator_ui
+name: video_cut_studio_ui
 type: atomic
 runtime: shell
 version: "1.0.0"
-description: "视频剪辑标注工具的静态 UI 资源，包含 HTML/JS/CSS 文件"
+description: "视频剪辑工作台的静态 UI 资源，包含 HTML/JS/CSS 文件"
 use_cases:
-  - "被 video_clip_annotator workflow 配方复制使用"
+  - "被 video_cut_studio workflow 配方复制使用"
   - "提供视频播放、波形显示、时间轴标注、TTS 生成等前端功能"
 output_targets:
   - stdout
@@ -26,13 +26,13 @@ outputs:
 dependencies: []
 ---
 
-# video_clip_annotator_ui
+# video_cut_studio_ui
 
 ## 功能描述
 
-视频剪辑标注工具的静态前端资源包，包含完整的 HTML/JS/CSS 文件。
+视频剪辑工作台的静态前端资源包，包含完整的 HTML/JS/CSS 文件。
 
-此配方为纯静态资源，由 `video_clip_annotator` workflow 配方在运行时复制到 viewer content 目录使用。
+此配方为纯静态资源，由 `video_cut_studio` workflow 配方在运行时复制到 viewer content 目录使用。
 
 ## 文件结构
 
