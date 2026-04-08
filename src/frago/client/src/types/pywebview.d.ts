@@ -245,17 +245,26 @@ export interface MainConfig {
   init_completed: boolean;
 }
 
-export interface EnvVarsResponse {
-  vars: Record<string, string>;
-  file_exists: boolean;
-}
-
-export interface RecipeEnvRequirement {
-  recipe_name: string;
-  var_name: string;
+export interface RecipeSecretsField {
+  key: string;
+  type: string;
   required: boolean;
   description: string;
-  configured: boolean;
+  has_value: boolean;
+  default?: unknown;
+}
+
+export interface RecipeSecretsResponse {
+  recipe_name: string;
+  fields: RecipeSecretsField[];
+  is_ref: boolean;
+  ref_target: string | null;
+}
+
+export interface RecipeSecretsUpdateResponse {
+  status: 'ok' | 'error';
+  message?: string;
+  error?: string;
 }
 
 export interface GhCliStatus {
@@ -291,12 +300,6 @@ export interface MainConfigUpdateResponse {
 export interface AuthUpdateRequest {
   auth_method: 'official' | 'custom';
   api_endpoint?: APIEndpoint;
-}
-
-export interface EnvVarsUpdateResponse {
-  status: 'ok' | 'error';
-  vars?: Record<string, string>;
-  error?: string;
 }
 
 export interface CreateRepoResponse {
@@ -532,27 +535,18 @@ export interface PyWebviewApi {
    */
   open_working_directory(): Promise<ApiResponse>;
 
-  // ============================================================
-  // Settings API - Environment Variables Management
-  // ============================================================
+  /**
+   * Get secrets schema and configured status for a recipe
+   * @param recipe_name Recipe name
+   */
+  get_recipe_secrets(recipe_name: string): Promise<RecipeSecretsResponse>;
 
   /**
-   * Get user-level environment variables (~/.frago/.env)
+   * Update secrets for a recipe in recipes.local.json
+   * @param recipe_name Recipe name
+   * @param updates Key-value updates
    */
-  get_env_vars(): Promise<EnvVarsResponse>;
-
-  /**
-   * Batch update environment variables
-   * @param updates Update dictionary, value=null means delete
-   */
-  update_env_vars(
-    updates: Record<string, string | null>
-  ): Promise<EnvVarsUpdateResponse>;
-
-  /**
-   * Scan all Recipe environment variable requirements
-   */
-  get_recipe_env_requirements(): Promise<RecipeEnvRequirement[]>;
+  update_recipe_secrets(recipe_name: string, updates: Record<string, unknown>): Promise<RecipeSecretsUpdateResponse>;
 
   // ============================================================
   // Settings API - GitHub Integration

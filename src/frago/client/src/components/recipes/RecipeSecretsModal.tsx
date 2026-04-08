@@ -5,22 +5,24 @@
 
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { updateEnvVars } from '@/api';
-import type { RecipeEnvRequirement } from '@/types/pywebview';
-import { Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { updateRecipeSecrets } from '@/api';
+import type { RecipeSecretsResponse } from '@/types/pywebview';
+import { Check, AlertCircle, Eye, EyeOff, Link2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 
 interface RecipeSecretsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  requirements: RecipeEnvRequirement[];
+  recipeName: string;
+  secretsData: RecipeSecretsResponse;
   onSaved: () => void;
 }
 
 export default function RecipeSecretsModal({
   isOpen,
   onClose,
-  requirements,
+  recipeName,
+  secretsData,
   onSaved,
 }: RecipeSecretsModalProps) {
   const { t } = useTranslation();
@@ -41,29 +43,40 @@ export default function RecipeSecretsModal({
   }, [isOpen]);
 
   const handleSave = async () => {
-    // Validate required fields (only unconfigured ones)
-    const missingRequired = requirements.filter(
-      req => req.required && !req.configured && !formValues[req.var_name]?.trim()
+    // Validate required fields that don't have values yet
+    const missingRequired = secretsData.fields.filter(
+      f => f.required && !f.has_value && !formValues[f.key]?.trim()
     );
 
     if (missingRequired.length > 0) {
       setError(t('recipes.secretsValidationError', {
-        fields: missingRequired.map(r => r.var_name).join(', ')
+        fields: missingRequired.map(f => f.key).join(', ')
       }));
       return;
     }
 
     // Only save fields that were modified and have values
-    const updates: Record<string, string> = {};
+    const updates: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(formValues)) {
       if (modifiedFields.has(key) && value.trim()) {
-        updates[key] = value.trim();
+        // For object type fields, try to parse JSON
+        const field = secretsData.fields.find(f => f.key === key);
+        if (field?.type === 'object') {
+          try {
+            updates[key] = JSON.parse(value.trim());
+          } catch {
+            setError(t('recipes.validation.invalidJson') + `: ${key}`);
+            return;
+          }
+        } else {
+          updates[key] = value.trim();
+        }
       }
     }
 
-    // Allow saving empty updates (user may just want to confirm config)
+    // Allow saving empty updates
     if (Object.keys(updates).length === 0) {
-      onSaved();  // Refresh and close
+      onSaved();
       return;
     }
 
@@ -71,7 +84,7 @@ export default function RecipeSecretsModal({
     setError(null);
 
     try {
-      const result = await updateEnvVars(updates);
+      const result = await updateRecipeSecrets(recipeName, updates);
       if (result.status === 'ok') {
         onSaved();
       } else {
@@ -106,6 +119,16 @@ export default function RecipeSecretsModal({
           {t('recipes.secretsModalDesc')}
         </p>
 
+        {/* $ref shared hint */}
+        {secretsData.is_ref && secretsData.ref_target && (
+          <div className="flex items-start gap-2 p-3 bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/20 rounded-md">
+            <Link2 size={16} className="text-[var(--accent-primary)] mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-[var(--accent-primary)]">
+              {t('recipes.sharedSecretsHint', { target: secretsData.ref_target })}
+            </p>
+          </div>
+        )}
+
         {/* Error message */}
         {error && (
           <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
@@ -116,26 +139,28 @@ export default function RecipeSecretsModal({
 
         {/* All credentials - unified editable form */}
         <div className="space-y-3">
-          {requirements.map((req) => {
-            const isVisible = visibleFields.has(req.var_name);
-            const inputId = `secret-${req.var_name}`;
+          {secretsData.fields.map((field) => {
+            const isVisible = visibleFields.has(field.key);
+            const inputId = `secret-${field.key}`;
+            const isObjectType = field.type === 'object';
 
             return (
               <div
-                key={req.var_name}
+                key={field.key}
                 className="p-3 bg-[var(--bg-subtle)] rounded-md border border-[var(--border-color)]"
               >
-                {/* Header: variable name + status badges */}
+                {/* Header: field key + type + status badges */}
                 <div className="flex items-center gap-2 mb-2">
                   <code className="text-sm font-mono font-medium text-[var(--text-primary)]">
-                    {req.var_name}
+                    {field.key}
                   </code>
-                  {req.required && (
+                  <span className="text-xs text-[var(--text-muted)]">({field.type})</span>
+                  {field.required && (
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)]">
                       {t('recipes.required')}
                     </span>
                   )}
-                  {req.configured && (
+                  {field.has_value && (
                     <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-success)]/20 text-[var(--accent-success)] flex items-center gap-1">
                       <Check size={12} />
                       {t('recipes.configured')}
@@ -144,47 +169,66 @@ export default function RecipeSecretsModal({
                 </div>
 
                 {/* Description */}
-                {req.description && (
-                  <p className="text-xs text-[var(--text-muted)] mb-2">{req.description}</p>
+                {field.description && (
+                  <p className="text-xs text-[var(--text-muted)] mb-2">{field.description}</p>
                 )}
 
-                {/* Input field with show/hide toggle */}
-                <div className="flex gap-2">
-                  <input
+                {/* Input field */}
+                {isObjectType ? (
+                  <textarea
                     id={inputId}
-                    type={isVisible ? "text" : "password"}
-                    value={formValues[req.var_name] || ''}
+                    value={formValues[field.key] || ''}
                     onChange={(e) => {
-                      setFormValues(prev => ({ ...prev, [req.var_name]: e.target.value }));
-                      setModifiedFields(prev => new Set(prev).add(req.var_name));
+                      setFormValues(prev => ({ ...prev, [field.key]: e.target.value }));
+                      setModifiedFields(prev => new Set(prev).add(field.key));
                     }}
                     placeholder={
-                      req.configured
+                      field.has_value
                         ? t('recipes.leaveEmptyToKeep')
-                        : t('recipes.enterValue')
+                        : t('recipes.enterJsonObject')
                     }
-                    className="flex-1 px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder:text-[var(--text-muted)] placeholder:opacity-40 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono text-sm"
-                    aria-label={req.var_name}
+                    rows={3}
+                    className="w-full px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder:text-[var(--text-muted)] placeholder:opacity-40 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono text-sm"
+                    aria-label={field.key}
                   />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setVisibleFields(prev => {
-                        const next = new Set(prev);
-                        if (next.has(req.var_name)) {
-                          next.delete(req.var_name);
-                        } else {
-                          next.add(req.var_name);
-                        }
-                        return next;
-                      });
-                    }}
-                    className="btn btn-ghost btn-sm p-2"
-                    title={isVisible ? t('recipes.hide') : t('recipes.show')}
-                  >
-                    {isVisible ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      id={inputId}
+                      type={isVisible ? "text" : "password"}
+                      value={formValues[field.key] || ''}
+                      onChange={(e) => {
+                        setFormValues(prev => ({ ...prev, [field.key]: e.target.value }));
+                        setModifiedFields(prev => new Set(prev).add(field.key));
+                      }}
+                      placeholder={
+                        field.has_value
+                          ? t('recipes.leaveEmptyToKeep')
+                          : t('recipes.enterValue')
+                      }
+                      className="flex-1 px-3 py-2 bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder:text-[var(--text-muted)] placeholder:opacity-40 focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono text-sm"
+                      aria-label={field.key}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVisibleFields(prev => {
+                          const next = new Set(prev);
+                          if (next.has(field.key)) {
+                            next.delete(field.key);
+                          } else {
+                            next.add(field.key);
+                          }
+                          return next;
+                        });
+                      }}
+                      className="btn btn-ghost btn-sm p-2"
+                      title={isVisible ? t('recipes.hide') : t('recipes.show')}
+                    >
+                      {isVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

@@ -399,19 +399,6 @@ export interface MainConfig {
   init_completed: boolean;
 }
 
-export interface EnvVarsResponse {
-  vars: Record<string, string>;
-  file_exists: boolean;
-}
-
-export interface RecipeEnvRequirement {
-  name: string;
-  description?: string | null;
-  required: boolean;
-  configured: boolean;
-  recipe_name?: string | null;
-}
-
 export interface ApiResponse {
   status: 'ok' | 'error';
   message?: string;
@@ -458,19 +445,31 @@ export async function updateAuth(request: AuthUpdateRequest): Promise<ApiRespons
   });
 }
 
-export async function getEnvVars(): Promise<EnvVarsResponse> {
-  return fetchApi<EnvVarsResponse>('/settings/env-vars');
+export interface RecipeSecretsFieldHttp {
+  key: string;
+  type: string;
+  required: boolean;
+  description: string;
+  has_value: boolean;
+  default?: unknown;
 }
 
-export async function updateEnvVars(updates: Record<string, string | null>): Promise<EnvVarsResponse> {
-  return fetchApi<EnvVarsResponse>('/settings/env-vars', {
+export interface RecipeSecretsResponseHttp {
+  recipe_name: string;
+  fields: RecipeSecretsFieldHttp[];
+  is_ref: boolean;
+  ref_target: string | null;
+}
+
+export async function getRecipeSecrets(recipeName: string): Promise<RecipeSecretsResponseHttp> {
+  return fetchApi<RecipeSecretsResponseHttp>(`/settings/recipe-secrets/${encodeURIComponent(recipeName)}`);
+}
+
+export async function updateRecipeSecrets(recipeName: string, updates: Record<string, unknown>): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>(`/settings/recipe-secrets/${encodeURIComponent(recipeName)}`, {
     method: 'PUT',
     body: JSON.stringify({ updates }),
   });
-}
-
-export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]> {
-  return fetchApi<RecipeEnvRequirement[]>('/settings/recipe-env-requirements');
 }
 
 export async function openWorkingDirectory(): Promise<ApiResponse> {

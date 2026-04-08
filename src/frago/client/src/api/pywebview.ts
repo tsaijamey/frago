@@ -23,9 +23,8 @@ import type {
   MainConfig,
   MainConfigUpdateResponse,
   AuthUpdateRequest,
-  EnvVarsResponse,
-  EnvVarsUpdateResponse,
-  RecipeEnvRequirement,
+  RecipeSecretsResponse,
+  RecipeSecretsUpdateResponse,
   GhCliStatus,
   ApiResponse,
   CreateRepoResponse,
@@ -267,24 +266,20 @@ export async function openWorkingDirectory(): Promise<ApiResponse> {
 }
 
 // ============================================================
-// Settings API - Environment Variables Management
+// Settings API - Recipe Secrets Management
 // ============================================================
 
-export async function getEnvVars(): Promise<EnvVarsResponse> {
+export async function getRecipeSecrets(recipeName: string): Promise<RecipeSecretsResponse> {
   const api = await waitForPywebview();
-  return api.get_env_vars();
+  return api.get_recipe_secrets(recipeName);
 }
 
-export async function updateEnvVars(
-  updates: Record<string, string | null>
-): Promise<EnvVarsUpdateResponse> {
+export async function updateRecipeSecrets(
+  recipeName: string,
+  updates: Record<string, unknown>
+): Promise<RecipeSecretsUpdateResponse> {
   const api = await waitForPywebview();
-  return api.update_env_vars(updates);
-}
-
-export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]> {
-  const api = await waitForPywebview();
-  return api.get_recipe_env_requirements();
+  return api.update_recipe_secrets(recipeName, updates);
 }
 
 // ============================================================

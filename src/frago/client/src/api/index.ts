@@ -26,9 +26,8 @@ import type {
   MainConfigUpdateResponse,
   AuthUpdateRequest,
   APIEndpoint,
-  EnvVarsResponse,
-  EnvVarsUpdateResponse,
-  RecipeEnvRequirement,
+  RecipeSecretsResponse,
+  RecipeSecretsUpdateResponse,
   GhCliStatus,
   ApiResponse,
   CreateRepoResponse,
@@ -626,35 +625,45 @@ export async function openWorkingDirectory(): Promise<ApiResponse> {
 }
 
 // ============================================================
-// Settings API - Environment Variables Management
+// Settings API - Recipe Secrets Management
 // ============================================================
 
-export async function getEnvVars(): Promise<EnvVarsResponse> {
+export async function getRecipeSecrets(recipeName: string): Promise<RecipeSecretsResponse> {
   if (isPywebviewMode()) {
-    return pywebviewApi.getEnvVars();
+    return pywebviewApi.getRecipeSecrets(recipeName);
   }
 
   // HTTP API
-  const result = await httpApi.getEnvVars();
+  const result = await httpApi.getRecipeSecrets(recipeName);
   return {
-    vars: result.vars,
-    file_exists: result.file_exists,
+    recipe_name: result.recipe_name,
+    fields: result.fields.map((f) => ({
+      key: f.key,
+      type: f.type,
+      required: f.required,
+      description: f.description,
+      has_value: f.has_value,
+      default: f.default,
+    })),
+    is_ref: result.is_ref,
+    ref_target: result.ref_target,
   };
 }
 
-export async function updateEnvVars(
-  updates: Record<string, string | null>
-): Promise<EnvVarsUpdateResponse> {
+export async function updateRecipeSecrets(
+  recipeName: string,
+  updates: Record<string, unknown>
+): Promise<RecipeSecretsUpdateResponse> {
   if (isPywebviewMode()) {
-    return pywebviewApi.updateEnvVars(updates);
+    return pywebviewApi.updateRecipeSecrets(recipeName, updates);
   }
 
   // HTTP API
   try {
-    const result = await httpApi.updateEnvVars(updates);
+    const result = await httpApi.updateRecipeSecrets(recipeName, updates);
     return {
-      status: 'ok',
-      vars: result.vars,
+      status: result.status,
+      message: result.message,
     };
   } catch (error) {
     return {
@@ -662,22 +671,6 @@ export async function updateEnvVars(
       error: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-export async function getRecipeEnvRequirements(): Promise<RecipeEnvRequirement[]> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.getRecipeEnvRequirements();
-  }
-
-  // HTTP API
-  const requirements = await httpApi.getRecipeEnvRequirements();
-  return requirements.map((r) => ({
-    recipe_name: r.recipe_name ?? '',
-    var_name: r.name,
-    description: r.description ?? '',
-    required: r.required,
-    configured: r.configured,
-  }));
 }
 
 // ============================================================

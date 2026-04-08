@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { getRecipeDetail, runRecipe, runRecipeAsync, openPath, getRecipeEnvRequirements } from '@/api';
+import { getRecipeDetail, runRecipe, runRecipeAsync, openPath, getRecipeSecrets } from '@/api';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { ExternalLink, ChevronDown, ChevronRight, Lightbulb, Settings, Link2, Code, Key, GitBranch, ArrowRight, Check, X } from 'lucide-react';
-import type { RecipeDetail as RecipeDetailType, RecipeEnvRequirement } from '@/types/pywebview';
+import type { RecipeDetail as RecipeDetailType, RecipeSecretsResponse } from '@/types/pywebview';
 import RecipeSecretsModal from './RecipeSecretsModal';
 
 interface CollapsibleSectionProps {
@@ -51,7 +51,7 @@ export default function RecipeDetail() {
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [isInteractiveMode, setIsInteractiveMode] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(true);
-  const [envRequirements, setEnvRequirements] = useState<RecipeEnvRequirement[]>([]);
+  const [secretsData, setSecretsData] = useState<RecipeSecretsResponse | null>(null);
   const [showSecretsModal, setShowSecretsModal] = useState(false);
 
   useEffect(() => {
@@ -98,38 +98,25 @@ export default function RecipeDetail() {
     }
   }, [recipe]);
 
-  // Fetch env requirements when recipe loads
+  // Fetch secrets when recipe loads
   useEffect(() => {
     if (!recipe) return;
 
-    getRecipeEnvRequirements()
-      .then((allReqs) => {
-        // Filter to relevant recipes: current recipe + dependencies (for workflows)
-        const relevantRecipes = new Set([recipe.name, ...(recipe.dependencies ?? [])]);
-        const filtered = allReqs.filter(req => {
-          const reqRecipes = req.recipe_name.split(',').map(r => r.trim());
-          return reqRecipes.some(r => relevantRecipes.has(r));
-        });
-        setEnvRequirements(filtered);
-      })
+    getRecipeSecrets(recipe.name)
+      .then(setSecretsData)
       .catch((err) => {
-        console.error('Failed to load env requirements:', err);
+        console.error('Failed to load recipe secrets:', err);
       });
   }, [recipe]);
 
-  // Refresh env requirements after secrets are saved
-  const refreshEnvRequirements = async () => {
+  // Refresh secrets after save
+  const refreshSecrets = async () => {
     if (!recipe) return;
     try {
-      const allReqs = await getRecipeEnvRequirements();
-      const relevantRecipes = new Set([recipe.name, ...(recipe.dependencies ?? [])]);
-      const filtered = allReqs.filter(req => {
-        const reqRecipes = req.recipe_name.split(',').map(r => r.trim());
-        return reqRecipes.some(r => relevantRecipes.has(r));
-      });
-      setEnvRequirements(filtered);
+      const data = await getRecipeSecrets(recipe.name);
+      setSecretsData(data);
     } catch (err) {
-      console.error('Failed to refresh env requirements:', err);
+      console.error('Failed to refresh recipe secrets:', err);
     }
   };
 
@@ -229,10 +216,10 @@ export default function RecipeDetail() {
   const handleRun = async () => {
     if (!currentRecipeName || isRunning) return;
 
-    // Check for missing required env vars
-    const missingRequired = envRequirements.filter(
-      req => req.required && !req.configured
-    );
+    // Check for missing required secrets
+    const missingRequired = secretsData?.fields.filter(
+      f => f.required && !f.has_value
+    ) ?? [];
     if (missingRequired.length > 0) {
       showToast(t('recipes.missingEnvVars', { count: missingRequired.length }), 'warning');
       return;
@@ -289,8 +276,8 @@ export default function RecipeDetail() {
   const hasInputs = recipe.inputs && Object.keys(recipe.inputs).length > 0;
   const hasUseCases = recipe.use_cases && recipe.use_cases.length > 0;
   const hasDependencies = recipe.dependencies && recipe.dependencies.length > 0;
-  const hasEnvRequirements = envRequirements.length > 0;
-  const hasMissingEnvVars = envRequirements.some(req => !req.configured);
+  const hasSecrets = secretsData !== null && secretsData.fields.length > 0;
+  const hasMissingSecrets = secretsData?.fields.some(f => f.required && !f.has_value) ?? false;
   const hasFlow = recipe.flow && recipe.flow.length > 0;
 
   return (
@@ -550,13 +537,18 @@ export default function RecipeDetail() {
           </div>
         )}
 
-        {/* Environment Variables - with warning alert for missing vars */}
-        {hasEnvRequirements && (
-          <div className={`border-2 rounded-lg overflow-hidden ${hasMissingEnvVars ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}>
-            <div className={`flex items-center gap-2 px-4 py-3 ${hasMissingEnvVars ? 'bg-[var(--accent-error)]/10' : 'bg-[var(--bg-subtle)]'}`}>
-              <Key size={16} className={hasMissingEnvVars ? 'text-[var(--accent-error)]' : 'text-[var(--text-muted)]'} />
+        {/* Secrets - with warning alert for missing required secrets */}
+        {hasSecrets && (
+          <div className={`border-2 rounded-lg overflow-hidden ${hasMissingSecrets ? 'border-[var(--accent-error)]' : 'border-[var(--border-color)]'}`}>
+            <div className={`flex items-center gap-2 px-4 py-3 ${hasMissingSecrets ? 'bg-[var(--accent-error)]/10' : 'bg-[var(--bg-subtle)]'}`}>
+              <Key size={16} className={hasMissingSecrets ? 'text-[var(--accent-error)]' : 'text-[var(--text-muted)]'} />
               <span className="font-medium text-[var(--text-primary)]">{t('recipes.envVars')}</span>
-              {hasMissingEnvVars && (
+              {secretsData?.is_ref && secretsData.ref_target && (
+                <span className="text-xs px-2 py-0.5 rounded bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]">
+                  {t('recipes.sharedWith')}: {secretsData.ref_target}
+                </span>
+              )}
+              {hasMissingSecrets && (
                 <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--accent-error)] text-white font-medium">
                   {t('recipes.notConfigured')}
                 </span>
@@ -573,33 +565,29 @@ export default function RecipeDetail() {
             </div>
             <div className="p-4 border-t border-[var(--border-color)]">
               <div className="space-y-2">
-                {envRequirements.map((req) => (
+                {secretsData!.fields.map((field) => (
                   <div
-                    key={req.var_name}
+                    key={field.key}
                     className={`flex items-center justify-between p-3 rounded-md ${
-                      !req.configured ? 'bg-[var(--accent-error)]/5 border border-[var(--accent-error)]/20' : 'bg-[var(--bg-subtle)]'
+                      field.required && !field.has_value ? 'bg-[var(--accent-error)]/5 border border-[var(--accent-error)]/20' : 'bg-[var(--bg-subtle)]'
                     }`}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <code className="text-sm font-mono text-[var(--text-primary)]">{req.var_name}</code>
-                        {req.required && (
+                        <code className="text-sm font-mono text-[var(--text-primary)]">{field.key}</code>
+                        <span className="text-xs text-[var(--text-muted)]">({field.type})</span>
+                        {field.required && (
                           <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--accent-error)]/20 text-[var(--accent-error)]">
                             {t('recipes.required')}
                           </span>
                         )}
                       </div>
-                      {req.description && (
-                        <p className="text-xs text-[var(--text-muted)] mt-1 truncate">{req.description}</p>
-                      )}
-                      {recipe.category === 'workflow' && req.recipe_name && (
-                        <p className="text-xs text-[var(--text-muted)] mt-1">
-                          {t('recipes.usedBy')}: {req.recipe_name}
-                        </p>
+                      {field.description && (
+                        <p className="text-xs text-[var(--text-muted)] mt-1 truncate">{field.description}</p>
                       )}
                     </div>
                     <div className="ml-3 shrink-0">
-                      {req.configured ? (
+                      {field.has_value ? (
                         <Check size={18} className="text-[var(--accent-success)]" />
                       ) : (
                         <X size={18} className="text-[var(--accent-error)]" />
@@ -723,16 +711,19 @@ export default function RecipeDetail() {
       </div>
 
       {/* Secrets Configuration Modal */}
-      <RecipeSecretsModal
-        isOpen={showSecretsModal}
-        onClose={() => setShowSecretsModal(false)}
-        requirements={envRequirements}
-        onSaved={() => {
-          refreshEnvRequirements();
-          setShowSecretsModal(false);
-          showToast(t('recipes.secretSaved'), 'success');
-        }}
-      />
+      {secretsData && (
+        <RecipeSecretsModal
+          isOpen={showSecretsModal}
+          onClose={() => setShowSecretsModal(false)}
+          recipeName={recipe.name}
+          secretsData={secretsData}
+          onSaved={() => {
+            refreshSecrets();
+            setShowSecretsModal(false);
+            showToast(t('recipes.secretSaved'), 'success');
+          }}
+        />
+      )}
     </div>
   );
 }
