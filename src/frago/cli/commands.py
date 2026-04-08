@@ -408,6 +408,22 @@ def create_session(ctx) -> CDPSession:
     - --no-proxy: Bypass proxy connection
     - --target-id: Specify target tab ID
     """
+    target_id = ctx.obj.get('TARGET_ID')
+
+    # Auto-resolve target from tab group when no explicit target_id
+    if not target_id:
+        try:
+            from ..cdp.tab_group_manager import TabGroupManager
+            group_name = TabGroupManager.resolve_group_name()
+            if group_name:
+                tgm = TabGroupManager(
+                    host=ctx.obj['HOST'],
+                    port=ctx.obj['PORT'],
+                )
+                target_id = tgm.get_current_target(group_name)
+        except Exception:
+            pass
+
     config = CDPConfig(
         host=ctx.obj['HOST'],
         port=ctx.obj['PORT'],
@@ -418,7 +434,7 @@ def create_session(ctx) -> CDPSession:
         proxy_username=ctx.obj.get('PROXY_USERNAME'),
         proxy_password=ctx.obj.get('PROXY_PASSWORD'),
         no_proxy=ctx.obj.get('NO_PROXY', False),
-        target_id=ctx.obj.get('TARGET_ID')
+        target_id=target_id,
     )
     return CDPSession(config)
 
@@ -779,6 +795,17 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
             # 1. Navigate
             session.navigate(url)
             _print_msg("success", f"Navigated to {url}", "navigation", {"url": url})
+
+            # Persist current target_id for non-navigate commands
+            if resolved_group:
+                try:
+                    from ..cdp.tab_group_manager import TabGroupManager
+                    tgm = TabGroupManager(host=ctx.obj['HOST'], port=ctx.obj['PORT'])
+                    actual_target = _get_current_target_id(session)
+                    if actual_target:
+                        tgm.set_current_target(resolved_group, actual_target)
+                except Exception:
+                    pass
 
             # Print group context
             if resolved_group:

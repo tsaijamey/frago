@@ -73,6 +73,7 @@ class TabGroupState:
     last_activity: float = 0.0  # Group-level last activity timestamp
     tabs: dict[str, GroupTabEntry] = field(default_factory=dict)
     max_tabs: int = DEFAULT_MAX_TABS_PER_GROUP
+    current_target_id: str | None = None  # Last navigated tab in this group
 
     def touch(self) -> None:
         self.last_activity = time.time()
@@ -228,6 +229,19 @@ class TabGroupManager:
     def get_group(self, group_name: str) -> TabGroupState | None:
         """Get a specific group."""
         return self._state.get(group_name)
+
+    def set_current_target(self, group_name: str, target_id: str) -> None:
+        """Record the last navigated tab for a group."""
+        group = self._state.get(group_name)
+        if group:
+            group.current_target_id = target_id
+            self._dirty_groups.add(group_name)
+            self._save_state()
+
+    def get_current_target(self, group_name: str) -> str | None:
+        """Get the last navigated tab for a group."""
+        group = self._state.get(group_name)
+        return group.current_target_id if group else None
 
     def get_group_tabs(self, group_name: str) -> list[GroupTabEntry]:
         """Get tabs in a group, sorted by last_activity descending."""
@@ -427,6 +441,7 @@ class TabGroupManager:
                             "created_at": g.created_at,
                             "last_activity": g.last_activity,
                             "max_tabs": g.max_tabs,
+                            "current_target_id": g.current_target_id,
                             "tabs": {tid: asdict(t) for tid, t in g.tabs.items()},
                         }
                         for name, g in self._state.items()
