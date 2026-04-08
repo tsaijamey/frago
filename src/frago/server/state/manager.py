@@ -325,26 +325,6 @@ class StateManager:
             logger.error(f"Failed to load config: {e}")
             return {}
 
-    def _load_env_vars(self) -> Dict[str, Any]:
-        """Load environment variables from storage."""
-        try:
-            from frago.server.services.env_service import EnvService
-
-            return EnvService.get_env_vars()
-        except Exception as e:
-            logger.error(f"Failed to load env vars: {e}")
-            return {"vars": {}, "file_exists": False}
-
-    def _load_recipe_env_requirements(self) -> List[Dict[str, Any]]:
-        """Load recipe environment requirements from storage."""
-        try:
-            from frago.server.services.env_service import EnvService
-
-            return EnvService.get_recipe_env_requirements()
-        except Exception as e:
-            logger.error(f"Failed to load recipe env requirements: {e}")
-            return []
-
     def _load_gh_status(self) -> Dict[str, Any]:
         """Load GitHub CLI status."""
         try:
@@ -446,18 +426,6 @@ class StateManager:
         if isinstance(self._state.config, dict):
             return self._state.config
         return {}
-
-    def get_env_vars(self) -> Dict[str, Any]:
-        """Get environment variables, loading on first access."""
-        if not self._state.env_vars:
-            self._state.env_vars = self._load_env_vars()
-        return self._state.env_vars
-
-    def get_recipe_env_requirements(self) -> List[Dict[str, Any]]:
-        """Get recipe environment requirements, loading on first access."""
-        if not self._state.recipe_env_requirements:
-            self._state.recipe_env_requirements = self._load_recipe_env_requirements()
-        return self._state.recipe_env_requirements
 
     def get_gh_status(self) -> Dict[str, Any]:
         """Get GitHub CLI status, loading on first access."""
@@ -566,30 +534,6 @@ class StateManager:
             await self._broadcast_raw("data_config", self._state.config)
 
         logger.debug("Config refreshed")
-
-    async def refresh_env_vars(self, broadcast: bool = True) -> None:
-        """Refresh environment variables."""
-        loop = asyncio.get_event_loop()
-        self._state.env_vars = await loop.run_in_executor(None, self._load_env_vars)
-        self._state.version += 1
-
-        if broadcast:
-            await self._broadcast_raw("data_env_vars", self._state.env_vars)
-
-        logger.debug("Env vars refreshed")
-
-    async def refresh_recipe_env_requirements(self, broadcast: bool = True) -> None:
-        """Refresh recipe environment requirements."""
-        loop = asyncio.get_event_loop()
-        self._state.recipe_env_requirements = await loop.run_in_executor(
-            None, self._load_recipe_env_requirements
-        )
-        self._state.version += 1
-
-        if broadcast:
-            await self._broadcast_raw("data_recipe_env", self._state.recipe_env_requirements)
-
-        logger.debug("Recipe env requirements refreshed")
 
     async def refresh_gh_status(self, broadcast: bool = True) -> None:
         """Refresh GitHub CLI status."""

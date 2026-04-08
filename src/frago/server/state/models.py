@@ -235,8 +235,6 @@ class ServerState:
 
     # Config data
     config: UserConfig = field(default_factory=UserConfig)
-    env_vars: Dict[str, Any] = field(default_factory=dict)
-    recipe_env_requirements: List[Dict[str, Any]] = field(default_factory=list)
 
     # GitHub status
     gh_status: Dict[str, Any] = field(default_factory=dict)

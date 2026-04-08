@@ -23,7 +23,7 @@ class RecipeMetadata:
     outputs: dict[str, str] = field(default_factory=dict)
     dependencies: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)  # AI-understandable field
-    env: dict[str, dict[str, Any]] = field(default_factory=dict)  # Environment variable definitions
+    secrets: dict[str, dict[str, Any]] = field(default_factory=dict)  # Secrets schema (keys align with recipes.local.json)
     system_packages: bool = False  # Use system Python (for scripts depending on system packages like dbus)
     no_proxy: bool = False  # Strip proxy env vars from subprocess (for domestic APIs like Feishu)
     warnings: list[dict[str, str]] = field(default_factory=list)  # Security warnings for UI display
@@ -46,7 +46,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
     try:
         content = path.read_text(encoding='utf-8')
     except Exception as e:
-        raise MetadataParseError(str(path), f"Cannot read file: {e}")
+        raise MetadataParseError(str(path), f"Cannot read file: {e}") from e
 
     # Extract YAML frontmatter
     if not content.startswith('---'):
@@ -62,7 +62,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
     try:
         data = yaml.safe_load(yaml_content)
     except yaml.YAMLError as e:
-        raise MetadataParseError(str(path), f"YAML parsing failed: {e}")
+        raise MetadataParseError(str(path), f"YAML parsing failed: {e}") from e
 
     if not isinstance(data, dict):
         raise MetadataParseError(str(path), "YAML frontmatter must be in dictionary format")
@@ -81,17 +81,17 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             outputs=data.get('outputs', {}),
             dependencies=data.get('dependencies', []),
             tags=data.get('tags', []),
-            env=data.get('env', {}),
+            secrets=data.get('secrets', {}),
             system_packages=data.get('system_packages', False),
             no_proxy=data.get('no_proxy', False),
             warnings=data.get('warnings', []),
             flow=data.get('flow', []),
         )
     except KeyError as e:
-        raise MetadataParseError(str(path), f"Missing required field: {e}")
+        raise MetadataParseError(str(path), f"Missing required field: {e}") from e
     except Exception as e:
-        raise MetadataParseError(str(path), f"Metadata construction failed: {e}")
-    
+        raise MetadataParseError(str(path), f"Metadata construction failed: {e}") from e
+
     return metadata
 
 
@@ -142,21 +142,23 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
         if 'type' not in param_def or 'required' not in param_def:
             errors.append(f"Input parameter '{param_name}' is missing 'type' or 'required' field")
 
-    # Validate env
-    for env_name, env_def in metadata.env.items():
-        # Environment variable name must comply with specification
-        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', env_name):
-            errors.append(f"Environment variable '{env_name}' name invalid, must start with letter or underscore")
-        # env_def should be a dictionary
-        if not isinstance(env_def, dict):
-            errors.append(f"Environment variable '{env_name}' definition must be in dictionary format")
+    # Validate secrets
+    for secret_name, secret_def in metadata.secrets.items():
+        # Secret name must be a valid identifier
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', secret_name):
+            errors.append(f"Secret '{secret_name}' name invalid, must start with letter or underscore")
+        # secret_def should be a dictionary
+        if not isinstance(secret_def, dict):
+            errors.append(f"Secret '{secret_name}' definition must be in dictionary format")
         else:
+            # type field is required
+            if 'type' not in secret_def:
+                errors.append(f"Secret '{secret_name}' is missing 'type' field")
+            elif secret_def['type'] not in ('string', 'number', 'boolean', 'object', 'array'):
+                errors.append(f"Secret '{secret_name}' has invalid type: '{secret_def['type']}'")
             # required field must be boolean if present
-            if 'required' in env_def and not isinstance(env_def['required'], bool):
-                errors.append(f"Environment variable '{env_name}' 'required' field must be boolean")
-            # default field must be string if present
-            if 'default' in env_def and not isinstance(env_def['default'], str):
-                errors.append(f"Environment variable '{env_name}' 'default' field must be string")
+            if 'required' in secret_def and not isinstance(secret_def['required'], bool):
+                errors.append(f"Secret '{secret_name}' 'required' field must be boolean")
 
     if errors:
         raise RecipeValidationError(metadata.name, errors)
@@ -177,13 +179,12 @@ def validate_params(metadata: RecipeMetadata, params: dict[str, Any]) -> None:
 
     # Check if required parameters are provided
     for param_name, param_def in metadata.inputs.items():
-        if param_def.get('required', False):
-            if param_name not in params:
-                param_desc = param_def.get('description', '')
-                error_msg = f"Missing required parameter: '{param_name}'"
-                if param_desc:
-                    error_msg += f" ({param_desc})"
-                errors.append(error_msg)
+        if param_def.get('required', False) and param_name not in params:
+            param_desc = param_def.get('description', '')
+            error_msg = f"Missing required parameter: '{param_name}'"
+            if param_desc:
+                error_msg += f" ({param_desc})"
+            errors.append(error_msg)
 
     # Check provided parameter types
     for param_name, param_value in params.items():

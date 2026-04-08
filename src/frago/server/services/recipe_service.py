@@ -142,7 +142,7 @@ class RecipeService:
                 "inputs": m.inputs,
                 "outputs": m.outputs,
                 "dependencies": m.dependencies,
-                "env": m.env,
+                "secrets": m.secrets,
                 "flow": m.flow,
             }
 

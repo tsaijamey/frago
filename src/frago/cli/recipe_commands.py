@@ -153,7 +153,7 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
                 "inputs": recipe.metadata.inputs,
                 "outputs": recipe.metadata.outputs,
                 "dependencies": recipe.metadata.dependencies,
-                "env": recipe.metadata.env,
+                "secrets": recipe.metadata.secrets,
                 "flow": recipe.metadata.flow,
                 "examples": examples,
             }

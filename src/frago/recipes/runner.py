@@ -100,12 +100,17 @@ class RecipeRunner:
         # Resolve environment variables
         try:
             resolved_env = self.env_loader.resolve_for_recipe(
-                env_definitions=recipe.metadata.env,
+                env_definitions={},
                 cli_overrides=env_overrides,
                 workflow_context=workflow_context
             )
         except ValueError as e:
             raise RecipeValidationError(name, [str(e)])
+
+        # Load and inject secrets from recipes.local.json
+        if recipe.metadata.secrets:
+            secrets = self._resolve_secrets(name, recipe.metadata.secrets)
+            resolved_env["FRAGO_SECRETS"] = json.dumps(secrets)
 
         # Register Execution
         execution = self.store.create(
@@ -155,10 +160,15 @@ class RecipeRunner:
         recipe = self.registry.find(name, source=source)
         self._validate_params(recipe.metadata, params)
         resolved_env = self.env_loader.resolve_for_recipe(
-            env_definitions=recipe.metadata.env,
+            env_definitions={},
             cli_overrides=None,
             workflow_context=None,
         )
+
+        # Load and inject secrets from recipes.local.json
+        if recipe.metadata.secrets:
+            secrets = self._resolve_secrets(name, recipe.metadata.secrets)
+            resolved_env["FRAGO_SECRETS"] = json.dumps(secrets)
 
         # Pre-register Execution (PENDING state)
         execution = self.store.create(
@@ -236,11 +246,16 @@ class RecipeRunner:
             # Calculate execution time
             execution_time = time.time() - start_time
 
+            # Handle open_url directive from recipe output
+            data = result_data.get("data")
+            if isinstance(data, dict) and data.get("open_url"):
+                self._handle_open_url(data["open_url"], group_name=execution_id)
+
             # Complete Execution
             self.store.complete(
                 execution_id,
                 status=ExecutionStatus.SUCCEEDED,
-                data=result_data.get("data"),
+                data=data,
                 duration_ms=int(execution_time * 1000),
                 exit_code=0,
                 runtime=recipe.metadata.runtime,
@@ -289,6 +304,41 @@ class RecipeRunner:
                 exit_code=-1,
                 stderr=str(e)
             )
+
+    def _handle_open_url(self, url: str, group_name: str | None = None) -> None:
+        """Open a URL in Chrome via CDP with tab group management.
+
+        Called when recipe output contains open_url.
+        Uses TabGroupManager for tab routing (same as `frago chrome navigate`).
+        """
+        try:
+            from frago.cdp.session import CDPSession, CDPConfig
+            from frago.cdp.tab_group_manager import TabGroupManager
+
+            config = CDPConfig(host="127.0.0.1", port=9222)
+            session = CDPSession(config)
+            session.auto_viewport_border = False
+            session.connect()
+
+            # Use group for tab routing
+            resolved_group = group_name or "recipe"
+            tgm = TabGroupManager(host="127.0.0.1", port=9222)
+            tgm.reconcile()
+            target_id = tgm.get_or_create_tab(url, resolved_group, session)
+
+            if target_id:
+                current_id = session.config.target_id
+                if target_id != current_id:
+                    session.disconnect()
+                    session.config.target_id = target_id
+                    session.connect()
+
+            session.navigate(url)
+            session.wait_for_load(timeout=15)
+            session.disconnect()
+            logger.info("Opened URL via CDP (group=%s): %s", resolved_group, url)
+        except Exception:
+            logger.exception("Failed to open URL via CDP: %s", url)
 
     def cancel(self, execution_id: str) -> bool:
         """Cancel a running execution.
@@ -365,6 +415,44 @@ class RecipeRunner:
         finally:
             with _process_lock:
                 _active_processes.pop(execution_id, None)
+
+    def _resolve_secrets(self, recipe_name: str, secrets_schema: dict) -> dict:
+        """从 recipes.local.json 加载凭证，解析 $ref，校验 required 字段。
+
+        Args:
+            recipe_name: recipe name（recipes.local.json 的 key）
+            secrets_schema: recipe.md 中声明的 secrets 字段定义
+
+        Returns:
+            凭证字典（只包含 schema 中声明的字段）
+
+        Raises:
+            RecipeValidationError: 缺少 required 字段
+        """
+        config_path = Path.home() / ".frago" / "recipes.local.json"
+        if not config_path.exists():
+            raw = {}
+        else:
+            all_config = json.loads(config_path.read_text(encoding="utf-8"))
+            raw = all_config.get(recipe_name, {})
+            if "$ref" in raw:
+                raw = all_config.get(raw["$ref"], {})
+
+        # 按 schema 过滤 — 只提取 secrets: 中声明的字段
+        filtered = {k: raw[k] for k in secrets_schema if k in raw}
+
+        # 校验 required
+        missing = [
+            k for k, v in secrets_schema.items()
+            if isinstance(v, dict) and v.get("required") and k not in filtered
+        ]
+        if missing:
+            raise RecipeValidationError(recipe_name, [
+                f"Missing required secrets: {', '.join(missing)}. "
+                f"Configure in Web UI or edit ~/.frago/recipes.local.json"
+            ])
+
+        return filtered
 
     def _validate_params(self, metadata, params: dict[str, Any]) -> None:
         """

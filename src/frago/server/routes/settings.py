@@ -7,16 +7,16 @@ import os
 import platform
 import shutil
 import subprocess
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from frago.compat import get_windows_subprocess_kwargs
 from frago.server.state import StateManager
-from frago.server.services.env_service import EnvService
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
+from frago.server.services.recipe_secrets_service import RecipeSecretsService
 from frago.server.services.update_service import UpdateService
 from frago.server.services.version_service import VersionCheckService
 
@@ -80,31 +80,34 @@ class AuthUpdateRequest(BaseModel):
     api_endpoint: Optional[APIEndpointRequest] = None
 
 
-class EnvVarsResponse(BaseModel):
-    """Environment variables response"""
-    vars: Dict[str, str]
-    file_exists: bool
-
-
-class EnvVarsUpdateRequest(BaseModel):
-    """Environment variables update request"""
-    updates: Dict[str, Optional[str]]  # None value means delete
-
-
-class RecipeEnvRequirement(BaseModel):
-    """Recipe environment variable requirement"""
-    name: str
-    description: Optional[str] = None
-    required: bool = False
-    configured: bool = False
-    recipe_name: Optional[str] = None
-
-
 class ApiResponse(BaseModel):
     """Generic API response"""
     status: str
     message: Optional[str] = None
     error: Optional[str] = None
+
+
+class RecipeSecretsFieldResponse(BaseModel):
+    """Single secret field info"""
+    key: str
+    type: str
+    required: bool = False
+    description: str = ""
+    has_value: bool = False
+    default: Any | None = None
+
+
+class RecipeSecretsResponse(BaseModel):
+    """Recipe secrets response"""
+    recipe_name: str
+    fields: list[RecipeSecretsFieldResponse]
+    is_ref: bool = False
+    ref_target: str | None = None
+
+
+class RecipeSecretsUpdateRequest(BaseModel):
+    """Recipe secrets update request"""
+    updates: dict[str, Any]
 
 
 class VSCodeStatusResponse(BaseModel):
@@ -355,63 +358,36 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
 
 
 # ============================================================
-# Environment Variables Endpoints
+# Recipe Secrets Endpoints
 # ============================================================
 
 
-@router.get("/settings/env-vars", response_model=EnvVarsResponse)
-async def get_env_vars() -> EnvVarsResponse:
-    """Get environment variables from .env file.
+@router.get("/settings/recipe-secrets/{recipe_name}", response_model=RecipeSecretsResponse)
+async def get_recipe_secrets(recipe_name: str) -> RecipeSecretsResponse:
+    """Get secrets schema and configured status for a recipe.
 
-    Uses cache for improved performance on Windows.
+    Merges recipe.md secrets schema with recipes.local.json values.
+    Values are masked — only has_value is returned.
     """
-    state_manager = StateManager.get_instance()
-    result = state_manager.get_env_vars()
+    result = RecipeSecretsService.get_recipe_secrets(recipe_name)
 
-    return EnvVarsResponse(
-        vars=result.get("vars", {}),
-        file_exists=result.get("file_exists", False),
+    return RecipeSecretsResponse(
+        recipe_name=result["recipe_name"],
+        fields=[RecipeSecretsFieldResponse(**f) for f in result["fields"]],
+        is_ref=result["is_ref"],
+        ref_target=result.get("ref_target"),
     )
 
 
-@router.put("/settings/env-vars", response_model=EnvVarsResponse)
-async def update_env_vars(request: EnvVarsUpdateRequest) -> EnvVarsResponse:
-    """Update environment variables."""
-    result = EnvService.update_env_vars(request.updates)
+@router.put("/settings/recipe-secrets/{recipe_name}", response_model=ApiResponse)
+async def update_recipe_secrets(recipe_name: str, request: RecipeSecretsUpdateRequest) -> ApiResponse:
+    """Update secrets for a recipe in recipes.local.json."""
+    result = RecipeSecretsService.update_recipe_secrets(recipe_name, request.updates)
 
-    if result.get("error"):
-        raise HTTPException(status_code=400, detail=result["error"])
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error"))
 
-    # Refresh cache after update
-    state_manager = StateManager.get_instance()
-    await state_manager.refresh_env_vars(broadcast=True)
-    await state_manager.refresh_recipe_env_requirements(broadcast=True)
-
-    return EnvVarsResponse(
-        vars=result.get("vars", {}),
-        file_exists=result.get("file_exists", True),
-    )
-
-
-@router.get("/settings/recipe-env-requirements", response_model=List[RecipeEnvRequirement])
-async def get_recipe_env_requirements() -> List[RecipeEnvRequirement]:
-    """Get environment variable requirements from recipes.
-
-    Uses cache for improved performance on Windows.
-    """
-    state_manager = StateManager.get_instance()
-    requirements = state_manager.get_recipe_env_requirements()
-
-    return [
-        RecipeEnvRequirement(
-            name=r.get("var_name", ""),
-            description=r.get("description"),
-            required=r.get("required", False),
-            configured=r.get("configured", False),
-            recipe_name=r.get("recipe_name"),
-        )
-        for r in requirements
-    ]
+    return ApiResponse(status="ok", message="Recipe secrets updated")
 
 
 # ============================================================
