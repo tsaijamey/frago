@@ -2,14 +2,14 @@
 import json
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 
-from frago.recipes import RecipeRegistry, RecipeRunner, OutputHandler
-from frago.recipes.exceptions import RecipeError, MetadataParseError, RecipeValidationError
+from frago.recipes import OutputHandler, RecipeRegistry, RecipeRunner
+from frago.recipes.exceptions import MetadataParseError, RecipeError, RecipeValidationError
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
 from frago.tools.sync_repo import _ensure_git_user_config
+
 from .agent_friendly import AgentFriendlyGroup
 
 
@@ -47,16 +47,11 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
         registry.scan()
 
         # Filter recipes
-        if source != 'all':
-            # When source is specified, get recipes from that source directly
-            recipes = registry.get_by_source(source)
-        else:
-            # When source is not specified, return the highest priority version of each recipe
-            recipes = registry.list_all()
+        recipes = registry.get_by_source(source) if source != 'all' else registry.list_all()
 
         if recipe_type != 'all':
             recipes = [r for r in recipes if r.metadata.type == recipe_type]
-        
+
         # Output
         if output_format == 'json':
             # AI-friendly JSON output
@@ -126,13 +121,13 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
     default='text',
     help='Output format'
 )
-def recipe_info(name: str, source: Optional[str], output_format: str):
+def recipe_info(name: str, source: str | None, output_format: str):
     """Display detailed information about a specific recipe"""
     try:
         registry = RecipeRegistry()
         registry.scan()
         recipe = registry.find(name, source=source)
-        
+
         if output_format == 'json':
             # Get list of example files
             examples = [str(e.name) for e in recipe.list_examples()]
@@ -293,11 +288,11 @@ def recipe_info(name: str, source: Optional[str], output_format: str):
 )
 def run_recipe(
     name: str,
-    source: Optional[str],
+    source: str | None,
     params: str,
-    params_file: Optional[str],
+    params_file: str | None,
     env_vars: tuple,
-    output_file: Optional[str],
+    output_file: str | None,
     output_clipboard: bool,
     timeout: int,
     async_exec: bool,
@@ -306,7 +301,7 @@ def run_recipe(
     try:
         # Parse parameters
         if params_file:
-            with open(params_file, 'r', encoding='utf-8') as f:
+            with open(params_file, encoding='utf-8') as f:
                 params_dict = json.load(f)
         else:
             try:
@@ -427,7 +422,7 @@ def _parse_interval(value: str) -> int:
     return seconds
 
 
-def _parse_datetime(value: str) -> 'datetime':
+def _parse_datetime(value: str):  # -> datetime.datetime
     """Parse datetime string. Supports ISO 8601 and HH:MM."""
     from datetime import datetime, timedelta
 
@@ -465,12 +460,12 @@ def schedule_recipe(
     name: str,
     interval: str,
     params: str,
-    params_file: Optional[str],
-    source: Optional[str],
+    params_file: str | None,
+    source: str | None,
     env_vars: tuple,
-    start_at: Optional[str],
-    stop_at: Optional[str],
-    max_runs: Optional[int],
+    start_at: str | None,
+    stop_at: str | None,
+    max_runs: int | None,
     timeout: int,
 ):
     """Run a recipe repeatedly at fixed intervals.
@@ -494,7 +489,7 @@ def schedule_recipe(
 
     # Parse params
     if params_file:
-        with open(params_file, 'r', encoding='utf-8') as f:
+        with open(params_file, encoding='utf-8') as f:
             params_dict = json.load(f)
     else:
         try:
@@ -530,7 +525,7 @@ def schedule_recipe(
     fail_count = 0
     interrupted = False
 
-    def handle_sigint(sig, frame):
+    def handle_sigint(_sig, _frame):
         nonlocal interrupted
         interrupted = True
 
@@ -549,7 +544,7 @@ def schedule_recipe(
         while not interrupted:
             # Check stop_at
             if stop_dt and datetime.now() >= stop_dt:
-                click.echo(f"[schedule] stop time reached", err=True)
+                click.echo("[schedule] stop time reached", err=True)
                 break
 
             # Check max_runs
@@ -597,7 +592,7 @@ def schedule_recipe(
                     if next_time > stop_ts:
                         remaining = stop_ts - time.time()
                         if remaining > 0:
-                            click.echo(f"[schedule] final wait until stop time", err=True)
+                            click.echo("[schedule] final wait until stop time", err=True)
                             while not interrupted and time.time() < stop_ts:
                                 time.sleep(min(1.0, stop_ts - time.time()))
                         break
@@ -650,7 +645,7 @@ def schedule_recipe(
     default='table',
     help='Output format'
 )
-def list_executions(recipe_name: Optional[str], limit: int, status: Optional[str], workflow_id: Optional[str], output_format: str):
+def list_executions(recipe_name: str | None, limit: int, status: str | None, workflow_id: str | None, output_format: str):
     """List recent recipe executions"""
     from frago.recipes.execution import ExecutionStatus
     from frago.recipes.execution_store import ExecutionStore
@@ -826,9 +821,7 @@ def validate_recipe(path: str, output_format: str):
                     compile(content, str(script_path), 'exec')
                 except SyntaxError as e:
                     errors.append(f"Python syntax error: {e.msg} (line {e.lineno})")
-            elif metadata.runtime == 'chrome-js':
-                # Simple JavaScript check: whether it contains basic structure
-                if 'return' not in content and 'console' not in content:
+            elif metadata.runtime == 'chrome-js' and 'return' not in content and 'console' not in content:
                     warnings.append("JavaScript script does not contain return statement or console output")
 
     # 4. Check examples directory (optional)
@@ -867,8 +860,7 @@ def validate_recipe(path: str, output_format: str):
                     errors.append(f"Flow step {step_num or i+1}: missing 'description'")
 
                 # Verify recipe references exist in dependencies
-                if step.get('recipe'):
-                    if not metadata.dependencies or step['recipe'] not in metadata.dependencies:
+                if step.get('recipe') and (not metadata.dependencies or step['recipe'] not in metadata.dependencies):
                         errors.append(f"Flow step {step_num}: recipe '{step['recipe']}' not in dependencies")
 
     # Output results
@@ -932,7 +924,7 @@ def validate_recipe(path: str, output_format: str):
     default='text',
     help='Output format'
 )
-def install_recipe(source: str, force: bool, name_override: Optional[str], output_format: str):
+def install_recipe(source: str, force: bool, name_override: str | None, output_format: str):
     """
     Install a recipe from various sources
 
@@ -948,8 +940,8 @@ def install_recipe(source: str, force: bool, name_override: Optional[str], outpu
       frago recipe install /path/to/recipe --name custom-name
       frago recipe install community:stock-monitor --force
     """
-    from frago.recipes.installer import RecipeInstaller
     from frago.recipes.exceptions import RecipeAlreadyExistsError, RecipeInstallError
+    from frago.recipes.installer import RecipeInstaller
 
     try:
         installer = RecipeInstaller()
@@ -1031,8 +1023,7 @@ def uninstall_recipe(name: str, yes: bool, output_format: str):
         sys.exit(1)
 
     # Confirm
-    if not yes and output_format != 'json':
-        if not click.confirm(f"Uninstall recipe '{name}'?"):
+    if not yes and output_format != 'json' and not click.confirm(f"Uninstall recipe '{name}'?"):
             click.echo("Cancelled")
             return
 
@@ -1065,7 +1056,7 @@ def uninstall_recipe(name: str, yes: bool, output_format: str):
     default='text',
     help='Output format'
 )
-def update_recipe(name: Optional[str], update_all: bool, output_format: str):
+def update_recipe(name: str | None, update_all: bool, output_format: str):
     """
     Update installed recipes by re-fetching from original source
 
@@ -1074,8 +1065,8 @@ def update_recipe(name: Optional[str], update_all: bool, output_format: str):
       frago recipe update stock-monitor
       frago recipe update --all
     """
-    from frago.recipes.installer import RecipeInstaller
     from frago.recipes.exceptions import RecipeInstallError
+    from frago.recipes.installer import RecipeInstaller
 
     if not name and not update_all:
         click.echo("Error: Specify a recipe name or use --all", err=True)
@@ -1138,7 +1129,7 @@ def update_recipe(name: Optional[str], update_all: bool, output_format: str):
     default='table',
     help='Output format'
 )
-def search_recipes(query: Optional[str], output_format: str):
+def search_recipes(query: str | None, output_format: str):
     """
     Search for recipes in community repository
 
@@ -1271,8 +1262,7 @@ def share_recipe(name: str, yes: bool, output_format: str):
                 # Alternative format
                 parts = line.split()
                 for i, p in enumerate(parts):
-                    if p.lower() == 'as':
-                        if i + 1 < len(parts):
+                    if p.lower() == 'as' and i + 1 < len(parts):
                             gh_user = parts[i + 1].strip('()')
                             break
     except subprocess.CalledProcessError:
@@ -1498,7 +1488,4 @@ def share_recipe(name: str, yes: bool, output_format: str):
 
 
 # --- Background schedule management (persistent, server-side) ---
-
-from .schedule_commands import schedule_group as _schedule_bg_group
-
-recipe_group.add_command(_schedule_bg_group, name='schedules')
+# Moved to top-level: frago schedule (registered in main.py)
