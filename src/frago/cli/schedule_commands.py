@@ -1,18 +1,18 @@
-"""Recipe schedule management commands."""
+"""Schedule management commands."""
 
 import json
 
 import click
 
-from frago.server.services.recipe_scheduler_service import (
-    RecipeSchedulerService,
+from frago.server.services.scheduler_service import (
+    SchedulerService,
     _parse_interval,
 )
 
 
 @click.group(name="schedule")
 def schedule_group():
-    """Manage scheduled recipe executions."""
+    """Manage scheduled tasks."""
     pass
 
 
@@ -108,7 +108,7 @@ def schedule_add(
             click.echo(f"Recipe not found: {recipe_name}")
             raise SystemExit(1) from e
 
-    service = RecipeSchedulerService.get_instance()
+    service = SchedulerService.get_instance()
     schedule = service.add_schedule(
         recipe_name=recipe_name,
         interval_seconds=interval,
@@ -143,7 +143,7 @@ def schedule_add(
 @schedule_group.command(name="list")
 def schedule_list():
     """List all scheduled tasks."""
-    service = RecipeSchedulerService.get_instance()
+    service = SchedulerService.get_instance()
     schedules = service.list_schedules()
 
     if not schedules:
@@ -194,7 +194,7 @@ def schedule_list():
 @click.argument("schedule_id")
 def schedule_remove(schedule_id: str):
     """Remove a schedule by ID."""
-    service = RecipeSchedulerService.get_instance()
+    service = SchedulerService.get_instance()
     if service.remove_schedule(schedule_id):
         click.echo(f"Schedule {schedule_id} removed.")
     else:
@@ -206,7 +206,7 @@ def schedule_remove(schedule_id: str):
 @click.argument("schedule_id")
 def schedule_toggle(schedule_id: str):
     """Enable or disable a schedule."""
-    service = RecipeSchedulerService.get_instance()
+    service = SchedulerService.get_instance()
     result = service.toggle_schedule(schedule_id)
     if result is None:
         click.echo(f"Schedule {schedule_id} not found.")
@@ -219,7 +219,7 @@ def schedule_toggle(schedule_id: str):
 @click.argument("schedule_id")
 def schedule_history(schedule_id: str):
     """Show execution history for a schedule."""
-    service = RecipeSchedulerService.get_instance()
+    service = SchedulerService.get_instance()
     schedules = service.list_schedules()
 
     target = None
@@ -256,7 +256,7 @@ def schedule_run(schedule_id: str):
     """Manually trigger a schedule once (does not affect regular schedule cycle)."""
     import asyncio
 
-    service = RecipeSchedulerService.get_instance()
+    service = SchedulerService.get_instance()
     schedules = service.list_schedules()
 
     target = None

@@ -37,6 +37,7 @@ from .init_command import init  # New environment init command
 from .recipe_commands import recipe_group
 from .reply_command import reply_cmd
 from .run_commands import run_group
+from .schedule_commands import schedule_group
 from .serve_command import serve
 from .server_command import server_group
 from .session_commands import session_group
@@ -389,6 +390,9 @@ cli.add_command(book_command)
 
 # Def command group - structured knowledge domain management
 cli.add_command(def_group)
+
+# Schedule command group - manage scheduled tasks
+cli.add_command(schedule_group, name="schedule")
 
 # Cloud commands - frago Cloud authentication, config, and market
 cli.add_command(login_cmd, name="login")
