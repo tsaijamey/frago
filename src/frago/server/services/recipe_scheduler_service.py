@@ -1,17 +1,23 @@
 """Recipe scheduler service.
 
-Provides periodic background execution of recipes at configurable intervals.
+Provides periodic scheduled task delivery to the Primary Agent.
 Schedules persist in ~/.frago/schedules.json.
+
+Design: schedule is an alarm clock, not an executor.
+When a schedule is due, it enqueues a scheduled_task message to PA.
+PA decides whether/how to execute.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
 import uuid
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +29,7 @@ def _now_utc() -> datetime:
     return datetime.now()
 
 
-def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+def _parse_dt(s: str | None) -> datetime | None:
     if not s:
         return None
     dt = datetime.fromisoformat(s)
@@ -46,16 +52,20 @@ def _parse_interval(spec: str) -> int:
 
 
 class RecipeSchedulerService:
-    """Background service for scheduled recipe execution."""
+    """Background service for scheduled task delivery to PA."""
 
     _instance: Optional["RecipeSchedulerService"] = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
-        self._schedules: List[Dict[str, Any]] = []
+        self._schedules: list[dict[str, Any]] = []
         self._schedules_path = Path.home() / ".frago" / "schedules.json"
+        # PA enqueue function — set by app.py during startup
+        self._pa_enqueue: Callable[[dict[str, Any]], Coroutine] | None = None
+        # Track schedules with active (unresolved) tasks for overlap control
+        self._active_schedule_ids: set = set()
 
     @classmethod
     def get_instance(cls) -> "RecipeSchedulerService":
@@ -69,7 +79,9 @@ class RecipeSchedulerService:
         if self._schedules_path.exists():
             try:
                 data = json.loads(self._schedules_path.read_text(encoding="utf-8"))
-                self._schedules = data.get("schedules", [])
+                self._schedules = [
+                    self._migrate_schedule(s) for s in data.get("schedules", [])
+                ]
             except (json.JSONDecodeError, KeyError) as e:
                 logger.warning(f"Failed to load schedules: {e}")
                 self._schedules = []
@@ -83,22 +95,94 @@ class RecipeSchedulerService:
             encoding="utf-8",
         )
 
+    # --- PA integration ---
+
+    def set_pa_enqueue(self, enqueue_fn: Callable[[dict[str, Any]], Coroutine]) -> None:
+        """Register the PA message queue enqueue function.
+
+        Called by app.py during startup (bidirectional wiring).
+        """
+        self._pa_enqueue = enqueue_fn
+
+    def update_schedule_result(
+        self, schedule_id: str, status: str, task_id: str | None = None
+    ) -> None:
+        """Update schedule execution result. Called by PA after decision."""
+        self._load()
+        for s in self._schedules:
+            if s["id"] == schedule_id:
+                s["last_status"] = status
+                # Append to history
+                history = s.setdefault("history", [])
+                entry: dict[str, Any] = {
+                    "triggered_at": s.get("last_run_at", _now_utc().isoformat()),
+                    "status": status,
+                    "msg_id": "",
+                    "task_id": task_id,
+                }
+                history.append(entry)
+                # Keep only the most recent 50 entries
+                if len(history) > 50:
+                    s["history"] = history[-50:]
+                self._save()
+                # Clear active flag for overlap control
+                self._active_schedule_ids.discard(schedule_id)
+                logger.info(
+                    "[scheduler] Schedule %s result updated: %s (task=%s)",
+                    schedule_id, status, task_id,
+                )
+                return
+        logger.warning("[scheduler] update_schedule_result: schedule %s not found", schedule_id)
+
+    @staticmethod
+    def _migrate_schedule(s: dict[str, Any]) -> dict[str, Any]:
+        """Migrate old schedule format to new format (backward compat)."""
+        if "name" not in s:
+            s["name"] = s.get("recipe_name", "unnamed")
+        if "prompt" not in s:
+            recipe = s.get("recipe_name", "")
+            s["prompt"] = f"执行 recipe {recipe}" if recipe else ""
+        if "recipe" not in s and "recipe_name" in s:
+            s["recipe"] = s.get("recipe_name")
+        if "cron" not in s:
+            s["cron"] = None
+        if "overlap" not in s:
+            s["overlap"] = "skip"
+        if "timeout" not in s:
+            s["timeout"] = 300
+        if "history" not in s:
+            s["history"] = []
+        return s
+
     # --- CRUD ---
 
     def add_schedule(
         self,
-        recipe_name: str,
-        interval_seconds: int,
-        params: Optional[Dict[str, Any]] = None,
-        start_at: Optional[str] = None,
-        end_at: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        recipe_name: str | None = None,
+        interval_seconds: int | None = None,
+        params: dict[str, Any] | None = None,
+        start_at: str | None = None,
+        end_at: str | None = None,
+        name: str | None = None,
+        prompt: str | None = None,
+        cron: str | None = None,
+        overlap: str = "skip",
+        timeout: int = 300,
+    ) -> dict[str, Any]:
         self._load()
+        schedule_name = name or recipe_name or "unnamed"
+        schedule_prompt = prompt or (f"执行 recipe {recipe_name}" if recipe_name else "")
         schedule = {
             "id": f"sch_{uuid.uuid4().hex[:8]}",
-            "recipe_name": recipe_name,
+            "name": schedule_name,
+            "prompt": schedule_prompt,
+            "recipe": recipe_name,
+            "recipe_name": recipe_name,  # backward compat
             "params": params or {},
             "interval_seconds": interval_seconds,
+            "cron": cron,
+            "overlap": overlap,
+            "timeout": timeout,
             "start_at": start_at,
             "end_at": end_at,
             "enabled": True,
@@ -106,6 +190,7 @@ class RecipeSchedulerService:
             "last_run_at": None,
             "last_status": None,
             "run_count": 0,
+            "history": [],
         }
         self._schedules.append(schedule)
         self._save()
@@ -120,7 +205,7 @@ class RecipeSchedulerService:
             return True
         return False
 
-    def toggle_schedule(self, schedule_id: str) -> Optional[bool]:
+    def toggle_schedule(self, schedule_id: str) -> bool | None:
         self._load()
         for s in self._schedules:
             if s["id"] == schedule_id:
@@ -129,7 +214,7 @@ class RecipeSchedulerService:
                 return s["enabled"]
         return None
 
-    def list_schedules(self) -> List[Dict[str, Any]]:
+    def list_schedules(self) -> list[dict[str, Any]]:
         self._load()
         return self._schedules
 
@@ -150,15 +235,55 @@ class RecipeSchedulerService:
             return
         self._stop_event.set()
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
         self._task = None
         logger.info("Recipe scheduler stopped")
 
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def _is_due(self, schedule: dict[str, Any], now: datetime) -> bool:
+        """Check if a schedule is due for triggering."""
+        interval = schedule.get("interval_seconds")
+        cron_expr = schedule.get("cron")
+        last_run = _parse_dt(schedule.get("last_run_at"))
+
+        if cron_expr:
+            try:
+                from croniter import croniter
+                base = last_run or _parse_dt(schedule.get("created_at")) or now
+                cron = croniter(cron_expr, base)
+                next_run = cron.get_next(datetime)
+                return now >= next_run
+            except (ValueError, KeyError) as e:
+                logger.warning("[scheduler] Invalid cron expression for %s: %s", schedule["id"], e)
+                return False
+        elif interval:
+            due_at = last_run + timedelta(seconds=interval) if last_run else now
+            return now >= due_at
+        return False
+
+    def _next_run_at(self, schedule: dict[str, Any]) -> datetime | None:
+        """Calculate the next run time for a schedule."""
+        interval = schedule.get("interval_seconds")
+        cron_expr = schedule.get("cron")
+        last_run = _parse_dt(schedule.get("last_run_at"))
+        now = _now_utc()
+
+        if cron_expr:
+            try:
+                from croniter import croniter
+                base = last_run or _parse_dt(schedule.get("created_at")) or now
+                cron = croniter(cron_expr, base)
+                return cron.get_next(datetime)
+            except (ValueError, KeyError):
+                return None
+        elif interval:
+            if last_run:
+                return last_run + timedelta(seconds=interval)
+            return now
+        return None
 
     async def _loop(self) -> None:
         await asyncio.sleep(5)  # initial delay
@@ -174,14 +299,12 @@ class RecipeSchedulerService:
                 if start and now < start:
                     continue
                 if end and now > end:
+                    # Auto-disable expired schedules
+                    schedule["enabled"] = False
+                    self._save()
+                    logger.info("[scheduler] Schedule %s expired (end_at reached), disabled", schedule["id"])
                     continue
-                interval = schedule.get("interval_seconds", 600)
-                last_run = _parse_dt(schedule.get("last_run_at"))
-                if last_run:
-                    due_at = last_run + timedelta(seconds=interval)
-                else:
-                    due_at = now  # first run: immediately
-                if now >= due_at:
+                if self._is_due(schedule, now):
                     await self._execute(schedule)
             # Wait for tick or stop
             try:
@@ -189,25 +312,53 @@ class RecipeSchedulerService:
                     self._stop_event.wait(), timeout=TICK_INTERVAL
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
-    async def _execute(self, schedule: Dict[str, Any]) -> None:
-        name = schedule["recipe_name"]
-        params = schedule.get("params", {})
-        logger.info(f"[scheduler] Running recipe: {name} (schedule: {schedule['id']})")
-        try:
-            from frago.server.services.recipe_service import RecipeService
+    async def _execute(self, schedule: dict[str, Any]) -> None:
+        """Enqueue a scheduled_task message to PA (instead of direct execution)."""
+        schedule_id = schedule["id"]
+        schedule_name = schedule.get("name", schedule.get("recipe_name", "unnamed"))
+        prompt = schedule.get("prompt", "")
+        recipe = schedule.get("recipe", schedule.get("recipe_name"))
 
-            result = await asyncio.to_thread(
-                RecipeService.run_recipe, name, params, 300
+        # Overlap check: skip if previous trigger is still active
+        overlap = schedule.get("overlap", "skip")
+        if overlap == "skip" and schedule_id in self._active_schedule_ids:
+            logger.info(
+                "[scheduler] Schedule %s: skipping due to active task (overlap=skip)",
+                schedule_id,
             )
-            status = "success" if result.get("status") != "error" else "failed"
-        except Exception as e:
-            logger.warning(f"[scheduler] Recipe {name} failed: {e}")
-            status = "failed"
+            return
+
+        # Immediately update last_run_at to prevent re-triggering on next tick
         schedule["last_run_at"] = _now_utc().isoformat()
-        schedule["last_status"] = status
         schedule["run_count"] = schedule.get("run_count", 0) + 1
         self._save()
-        logger.info(f"[scheduler] Recipe {name} finished: {status}")
+
+        if not self._pa_enqueue:
+            logger.warning("[scheduler] No PA enqueue function — cannot deliver schedule %s", schedule_id)
+            return
+
+        msg_id = f"sch_msg_{uuid.uuid4().hex[:8]}"
+        message: dict[str, Any] = {
+            "type": "scheduled_task",
+            "msg_id": msg_id,
+            "channel": "schedule",
+            "schedule_id": schedule_id,
+            "schedule_name": schedule_name,
+            "prompt": prompt,
+            "recipe": recipe,
+            "triggered_at": schedule["last_run_at"],
+            "last_status": schedule.get("last_status"),
+            "run_count": schedule.get("run_count", 0),
+        }
+        try:
+            await self._pa_enqueue(message)
+            self._active_schedule_ids.add(schedule_id)
+            logger.info(
+                "[scheduler] Message enqueued: type=scheduled_task, schedule=%s (%s)",
+                schedule_id, schedule_name,
+            )
+        except Exception as e:
+            logger.warning("[scheduler] Failed to enqueue schedule %s: %s", schedule_id, e)

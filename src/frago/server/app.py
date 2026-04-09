@@ -147,6 +147,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         ingestion_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
         primary_agent.set_ingestion_scheduler(ingestion_scheduler)
 
+    # Wire recipe scheduler ↔ PA (bidirectional)
+    recipe_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
+    primary_agent.set_recipe_scheduler(recipe_scheduler)
+
     yield
 
     # Shutdown

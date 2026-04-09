@@ -16,6 +16,7 @@ VALID_PA_ACTIONS = {"reply", "run", "resume"}
 VALID_QUEUE_MESSAGE_TYPES = {
     "user_message",
     "agent_completed", "agent_failed", "reply_failed",
+    "scheduled_task",
 }
 
 # Required fields per PA action type (beyond the universal "action" field)
@@ -212,6 +213,15 @@ def validate_queue_message(msg: dict) -> ValidationResult:
             return ValidationResult(
                 ok=False,
                 error=f'{msg_type} missing required fields: {", ".join(missing)}.',
+                raw_data=msg,
+            )
+
+    elif msg_type == "scheduled_task":
+        missing = [f for f in ("msg_id", "schedule_id", "prompt") if not msg.get(f)]
+        if missing:
+            return ValidationResult(
+                ok=False,
+                error=f'scheduled_task missing required fields: {", ".join(missing)}.',
                 raw_data=msg,
             )
 

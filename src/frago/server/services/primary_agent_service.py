@@ -31,6 +31,7 @@ from frago.server.services.pa_prompts import (
     PA_MERGED_MESSAGES_TEMPLATE,
     PA_MESSAGE_TEMPLATE,
     PA_REPLY_FAILED_TEMPLATE,
+    PA_SCHEDULED_TASK_TEMPLATE,
     SUB_AGENT_PROMPT_TEMPLATE,
 )
 from frago.server.services.pa_prompts import (
@@ -99,6 +100,9 @@ class PrimaryAgentService:
         self._message_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queue_consumer_task: asyncio.Task[None] | None = None
 
+        # Track scheduled_task msg_id → schedule_id for PA result write-back
+        self._schedule_msg_map: dict[str, str] = {}
+
         # Task lifecycle coordinator — single point for all state transitions
         self._lifecycle = TaskLifecycle()
 
@@ -108,12 +112,22 @@ class PrimaryAgentService:
         # Ingestion scheduler reference — for accessing cached messages
         self._scheduler: Any = None
 
+        # Recipe scheduler reference — for updating schedule results
+        self._recipe_scheduler: Any = None
+
     def set_ingestion_scheduler(self, scheduler: Any) -> None:
         """Register ingestion scheduler for message cache access.
 
         Called by app.py during startup (bidirectional wiring).
         """
         self._scheduler = scheduler
+
+    def set_recipe_scheduler(self, scheduler: Any) -> None:
+        """Register recipe scheduler for result write-back.
+
+        Called by app.py during startup (bidirectional wiring).
+        """
+        self._recipe_scheduler = scheduler
 
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
@@ -601,6 +615,24 @@ class PrimaryAgentService:
                     recent_logs_section=logs_section,
                 ))
 
+            elif msg_type == "scheduled_task":
+                recipe = msg.get("recipe")
+                recipe_line = f"建议 recipe: {recipe}\n" if recipe else ""
+                last_status = msg.get("last_status")
+                last_status_line = f"上次结果: {last_status}\n" if last_status else ""
+                msg_parts.append(PA_SCHEDULED_TASK_TEMPLATE.format(
+                    msg_id=msg.get("msg_id", "?"),
+                    schedule_id=msg.get("schedule_id", "?"),
+                    schedule_name=msg.get("schedule_name", "?"),
+                    prompt=msg.get("prompt", ""),
+                    recipe_line=recipe_line,
+                    last_status_line=last_status_line,
+                    run_count=msg.get("run_count", 0),
+                ))
+                # Track msg_id → schedule_id for result write-back
+                if msg.get("msg_id") and msg.get("schedule_id"):
+                    self._schedule_msg_map[msg["msg_id"]] = msg["schedule_id"]
+
             elif msg_type in ("reply_failed", "task_failed"):
                 if msg.get("content"):
                     msg_parts.append(msg["content"])
@@ -912,6 +944,27 @@ class PrimaryAgentService:
                     seen_msg_ids.add((d.get("channel", ""), d["msg_id"]))
             for channel_key, mid in seen_msg_ids:
                 self._scheduler.remove_cached_message(channel_key, mid)
+
+        # Write back schedule results for scheduled_task decisions
+        if self._recipe_scheduler:
+            for d in decisions:
+                if not isinstance(d, dict):
+                    continue
+                msg_id = d.get("msg_id", "")
+                schedule_id = self._schedule_msg_map.get(msg_id)
+                if not schedule_id:
+                    continue
+                action = d.get("action", "")
+                if action == "run":
+                    status = "dispatched"
+                elif action == "reply":
+                    status = "skipped"
+                else:
+                    status = action
+                task_id = d.get("task_id")
+                self._recipe_scheduler.update_schedule_result(schedule_id, status, task_id)
+                # Clean up tracking entry
+                self._schedule_msg_map.pop(msg_id, None)
 
     # -- decision handlers --
 
