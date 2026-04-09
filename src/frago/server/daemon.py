@@ -5,11 +5,13 @@ and server lifecycle control (start/stop/status).
 """
 
 import contextlib
+import http.client
 import os
 import platform
 import signal
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,33 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
         text=True,
         timeout=30,
     )
+
+
+def _wait_for_healthy(timeout: int = 30) -> tuple[bool, str]:
+    """Poll /api/status until server responds 200 or timeout.
+
+    Returns (success, detail_message).
+    """
+    from frago.server.daemon import get_server_port
+
+    port = get_server_port()
+    deadline = time.time() + timeout
+    attempt = 0
+    last_error = ""
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            conn.request("GET", "/api/status")
+            resp = conn.getresponse()
+            if resp.status == 200:
+                return True, f"port={port}, attempts={attempt}"
+            last_error = f"HTTP {resp.status}"
+            conn.close()
+        except (ConnectionRefusedError, OSError, http.client.HTTPException) as e:
+            last_error = str(e)
+        time.sleep(1)
+    return False, f"timeout after {timeout}s ({last_error})"
 
 
 # Default server configuration
@@ -588,10 +617,17 @@ def restart_daemon(force: bool = False) -> tuple[bool, str]:
         Tuple of (success, message)
     """
     if _is_systemd_managed():
+        print("[restart] Sending restart to systemd...")
         result = _systemctl("restart")
-        if result.returncode == 0:
-            return True, "Server restarted via systemd"
-        return False, f"systemctl restart failed: {result.stderr.strip()}"
+        if result.returncode != 0:
+            return False, f"systemctl restart failed: {result.stderr.strip()}"
+        print("[restart] systemd accepted restart, waiting for server...")
+        ok, detail = _wait_for_healthy(timeout=60)
+        if ok:
+            print(f"[restart] Server is healthy ({detail})")
+            return True, f"Server restarted via systemd ({detail})"
+        print(f"[restart] Server failed health check: {detail}")
+        return False, f"systemd restart issued but server unhealthy: {detail}"
 
     running, pid = is_server_running()
 

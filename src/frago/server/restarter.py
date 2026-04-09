@@ -9,6 +9,7 @@ after an update. It runs as an independent process to:
 Usage: python restarter.py <old_pid>
 """
 
+import http.client
 import os
 import platform
 import subprocess
@@ -53,6 +54,27 @@ def wait_for_process_exit(pid: int, timeout: float = 10.0) -> bool:
     return False
 
 
+def _wait_for_healthy(port: int = 8093, timeout: int = 30) -> tuple[bool, str]:
+    """Poll /api/status until server responds 200 or timeout."""
+    deadline = time.time() + timeout
+    attempt = 0
+    last_error = ""
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            conn.request("GET", "/api/status")
+            resp = conn.getresponse()
+            if resp.status == 200:
+                return True, f"port={port}, attempts={attempt}"
+            last_error = f"HTTP {resp.status}"
+            conn.close()
+        except (ConnectionRefusedError, OSError, http.client.HTTPException) as e:
+            last_error = str(e)
+        time.sleep(1)
+    return False, f"timeout after {timeout}s ({last_error})"
+
+
 def _is_systemd_managed() -> bool:
     """Check if frago-server.service is enabled via systemd."""
     if platform.system() != "Linux":
@@ -85,10 +107,15 @@ def start_new_server() -> bool:
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0:
-            print("[restarter] Server restarted via systemd")
+        if result.returncode != 0:
+            print(f"[restarter] systemctl restart failed: {result.stderr}")
+            return False
+        print("[restarter] systemd accepted restart, waiting for server...")
+        ok, detail = _wait_for_healthy(port=8093, timeout=30)
+        if ok:
+            print(f"[restarter] Server is healthy ({detail})")
             return True
-        print(f"[restarter] systemctl restart failed: {result.stderr}")
+        print(f"[restarter] Server failed health check: {detail}")
         return False
 
     try:

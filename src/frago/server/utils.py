@@ -5,7 +5,6 @@ and other server-related utilities.
 """
 
 import socket
-from typing import Optional, Tuple
 
 import psutil
 
@@ -16,7 +15,7 @@ SERVER_PORT = get_server_port()
 SERVER_HOST = get_server_host()
 
 # Global server state (shared across modules)
-_server_started_at: Optional[str] = None
+_server_started_at: str | None = None
 _server_host: str = SERVER_HOST
 _server_port: int = SERVER_PORT
 
@@ -89,10 +88,11 @@ def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.settimeout(1)
             sock.bind((host, port))
             return True
-    except (socket.error, OSError):
+    except OSError:
         return False
 
 
@@ -109,7 +109,7 @@ def get_server_url(host: str = SERVER_HOST, port: int = SERVER_PORT) -> str:
     return f"http://{host}:{port}"
 
 
-def check_port_conflict(port: int = SERVER_PORT, host: str = SERVER_HOST) -> Tuple[bool, Optional[str]]:
+def check_port_conflict(port: int = SERVER_PORT, host: str = SERVER_HOST) -> tuple[bool, str | None]:
     """Check if the specified port is available and identify conflicting process.
 
     Args:
@@ -137,7 +137,7 @@ def check_port_conflict(port: int = SERVER_PORT, host: str = SERVER_HOST) -> Tup
         return False, "Unknown process"
 
 
-def parse_host_port(address: str, default_port: int = 8080) -> Tuple[str, int]:
+def parse_host_port(address: str, default_port: int = 8080) -> tuple[str, int]:
     """Parse a host:port string.
 
     Args:
