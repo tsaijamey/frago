@@ -27,6 +27,17 @@
       "description": "CDP 浏览器自动化，25+ 命令",
       "explore": "uv run frago chrome --help"
     },
+    "schedule": {
+      "add_recipe": "uv run frago schedule add <recipe_name> --every 10m --name '名称' — 定时执行 recipe",
+      "add_cron": "uv run frago schedule add <recipe_name> --cron '0 8 * * *' --name '名称' — cron 定时",
+      "add_prompt": "uv run frago schedule add --prompt '任务描述' --cron '0 8 * * 1-5' --name '名称' — 纯 prompt 定时任务",
+      "list": "uv run frago schedule list — 查看所有 schedule",
+      "remove": "uv run frago schedule remove <id> — 删除",
+      "toggle": "uv run frago schedule toggle <id> — 启用/禁用",
+      "history": "uv run frago schedule history <id> — 执行历史",
+      "run_once": "uv run frago schedule run <id> — 手动触发一次",
+      "note": "schedule 到期后投递 scheduled_task 消息给你决策，你决定 run/skip。发现用户有日常重复需求时，主动用此命令注册 schedule"
+    },
     "reply": {
       "send": "uv run frago reply --channel <name> --params '{...}' — 回复来源渠道"
     }
