@@ -66,6 +66,9 @@ class IngestionScheduler:
         self._stop_event = asyncio.Event()
         # Set by PrimaryAgentService after initialization
         self._pa_enqueue: asyncio.coroutines | None = None
+        # Shared runner — avoids recreating RecipeRegistry + ExecutionStore per poll
+        from frago.recipes.runner import RecipeRunner
+        self._runner = RecipeRunner()
         # Message cache: key = "channel:msg_id" → CachedMessage
         # Persisted to ~/.frago/message_cache.json to survive restarts
         self._message_cache: dict[str, CachedMessage] = self._load_cache()
@@ -200,11 +203,8 @@ class IngestionScheduler:
 
     async def _poll_channel(self, ch: ChannelConfig) -> None:
         """Call poll_recipe, parse return value, cache messages, deliver to PA."""
-        from frago.recipes.runner import RecipeRunner
-
-        runner = RecipeRunner()
         result = await asyncio.to_thread(
-            runner.run, ch.poll_recipe,
+            self._runner.run, ch.poll_recipe,
             params={"notify_recipe": ch.notify_recipe},
         )
         if not result.get("success"):
@@ -298,10 +298,7 @@ class IngestionScheduler:
 
     async def _notify(self, task: object, ch: ChannelConfig) -> None:
         """Call notify_recipe with contract-defined params."""
-        from frago.recipes.runner import RecipeRunner
-
         try:
-            runner = RecipeRunner()
             params = {
                 "status": task.status.value,
                 "reply_context": task.reply_context,
@@ -311,7 +308,7 @@ class IngestionScheduler:
             if task.error is not None:
                 params["error"] = task.error
             await asyncio.to_thread(
-                runner.run,
+                self._runner.run,
                 ch.notify_recipe,
                 params=params,
             )

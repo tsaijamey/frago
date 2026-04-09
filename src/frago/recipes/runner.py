@@ -8,14 +8,14 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import RecipeExecutionError, RecipeValidationError
 from .execution import ExecutionStatus
 from .execution_store import ExecutionStore
 from .metadata import validate_params
-from .registry import RecipeRegistry
+from .registry import RecipeRegistry, get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,8 @@ class RecipeRunner:
 
     def __init__(
         self,
-        registry: Optional[RecipeRegistry] = None,
-        project_root: Optional[Path] = None
+        registry: RecipeRegistry | None = None,
+        project_root: Path | None = None
     ):
         """
         Initialize RecipeRunner
@@ -41,8 +41,7 @@ class RecipeRunner:
             project_root: Project root directory (used to load project-level .env)
         """
         if registry is None:
-            registry = RecipeRegistry()
-            registry.scan()
+            registry = get_registry()
 
         self.registry = registry
         self.env_loader = EnvLoader(project_root=project_root)
@@ -52,7 +51,7 @@ class RecipeRunner:
         self,
         name: str,
         params: dict[str, Any] | None = None,
-        output_target: str = 'stdout',
+        output_target: str = 'stdout',  # noqa: ARG002 — passed by CLI, output handling is caller's responsibility
         output_options: dict[str, Any] | None = None,
         env_overrides: dict[str, str] | None = None,
         workflow_context: WorkflowContext | None = None,
@@ -105,7 +104,7 @@ class RecipeRunner:
                 workflow_context=workflow_context
             )
         except ValueError as e:
-            raise RecipeValidationError(name, [str(e)])
+            raise RecipeValidationError(name, [str(e)]) from e
 
         # Load and inject secrets from recipes.local.json
         if recipe.metadata.secrets:
@@ -303,7 +302,7 @@ class RecipeRunner:
                 runtime=recipe.metadata.runtime,
                 exit_code=-1,
                 stderr=str(e)
-            )
+            ) from e
 
     def _handle_open_url(self, url: str, group_name: str | None = None) -> None:
         """Open a URL in Chrome via CDP with tab group management.
@@ -312,7 +311,7 @@ class RecipeRunner:
         Uses TabGroupManager for tab routing (same as `frago chrome navigate`).
         """
         try:
-            from frago.cdp.session import CDPSession, CDPConfig
+            from frago.cdp.session import CDPConfig, CDPSession
             from frago.cdp.tab_group_manager import TabGroupManager
 
             config = CDPConfig(host="127.0.0.1", port=9222)
@@ -519,13 +518,13 @@ class RecipeRunner:
                         exit_code=inject_result.returncode,
                         stderr=f"Parameter injection failed: {inject_result.stderr}"
                     )
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as e:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
                     runtime='chrome-js',
                     exit_code=-1,
                     stderr="Parameter injection timeout"
-                )
+                ) from e
 
         # Build command: uv run frago chrome exec-js <script_path> --return-value
         cmd = [
@@ -568,13 +567,13 @@ class RecipeRunner:
 
             return {"data": data, "stderr": result.stderr}
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             raise RecipeExecutionError(
                 recipe_name=recipe_name,
                 runtime='chrome-js',
                 exit_code=-1,
                 stderr=f"Execution timeout ({timeout}s)" if timeout else "Execution timeout"
-            )
+            ) from e
 
     def _run_python(
         self,
@@ -659,17 +658,17 @@ class RecipeRunner:
                     runtime='python',
                     exit_code=-1,
                     stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout}"
-                )
+                ) from e
 
             return {"data": data, "stderr": result.stderr}
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             raise RecipeExecutionError(
                 recipe_name=recipe_name,
                 runtime='python',
                 exit_code=-1,
                 stderr=f"Execution timeout ({timeout}s)" if timeout else "Execution timeout"
-            )
+            ) from e
 
     def _run_shell(
         self,
@@ -698,14 +697,13 @@ class RecipeRunner:
             RecipeExecutionError: Execution failed
         """
         # Check execution permissions (Unix systems only, Windows does not use Unix permission mode)
-        if platform.system() != "Windows":
-            if not script_path.stat().st_mode & 0o100:
-                raise RecipeExecutionError(
-                    recipe_name=recipe_name,
-                    runtime='shell',
-                    exit_code=-1,
-                    stderr=f"Script does not have execute permission: {script_path}"
-                )
+        if platform.system() != "Windows" and not script_path.stat().st_mode & 0o100:
+            raise RecipeExecutionError(
+                recipe_name=recipe_name,
+                runtime='shell',
+                exit_code=-1,
+                stderr=f"Script does not have execute permission: {script_path}"
+            )
 
         # Build command: <script_path> <params_json>
         params_json = json.dumps(params)
@@ -743,14 +741,14 @@ class RecipeRunner:
                     runtime='shell',
                     exit_code=-1,
                     stderr=f"JSON parsing failed: {e}\nOutput: {result.stdout}"
-                )
+                ) from e
 
             return {"data": data, "stderr": result.stderr}
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             raise RecipeExecutionError(
                 recipe_name=recipe_name,
                 runtime='shell',
                 exit_code=-1,
                 stderr=f"Execution timeout ({timeout}s)" if timeout else "Execution timeout"
-            )
+            ) from e
