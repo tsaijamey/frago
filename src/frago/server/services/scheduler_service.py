@@ -1,4 +1,4 @@
-"""Recipe scheduler service.
+"""Scheduler service — PA's alarm clock.
 
 Provides periodic scheduled task delivery to the Primary Agent.
 Schedules persist in ~/.frago/schedules.json.
@@ -51,10 +51,10 @@ def _parse_interval(spec: str) -> int:
         return int(spec)
 
 
-class RecipeSchedulerService:
+class SchedulerService:
     """Background service for scheduled task delivery to PA."""
 
-    _instance: Optional["RecipeSchedulerService"] = None
+    _instance: Optional["SchedulerService"] = None
     _lock = threading.Lock()
 
     def __init__(self) -> None:
@@ -68,7 +68,7 @@ class RecipeSchedulerService:
         self._active_schedule_ids: set = set()
 
     @classmethod
-    def get_instance(cls) -> "RecipeSchedulerService":
+    def get_instance(cls) -> "SchedulerService":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:

@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-VALID_PA_ACTIONS = {"reply", "run", "resume"}
+VALID_PA_ACTIONS = {"reply", "run", "resume", "schedule"}
 
 VALID_QUEUE_MESSAGE_TYPES = {
     "user_message",
@@ -26,10 +26,11 @@ _PA_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "reply": ["channel", "text"],       # + task_id OR msg_id (checked separately)
     "run": ["channel", "description", "prompt"],  # + task_id OR msg_id
     "resume": ["task_id", "prompt"],    # always task_id
+    "schedule": ["name", "prompt"],     # + cron OR every (checked in handler)
 }
 
 # Actions that require either task_id or msg_id
-_ACTIONS_REQUIRING_ID: set[str] = {"reply", "run"}
+_ACTIONS_REQUIRING_ID: set[str] = {"reply", "run", "schedule"}
 
 
 @dataclass

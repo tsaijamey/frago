@@ -43,13 +43,15 @@ PA_SYSTEM_PROMPT = """\
 - `reply`: 直接回复用户。text 是发给用户的原文（自然口语，简短，跟随用户语言，不套模板）。reply 即时发送，不排队。
 - `run`: 启动子 agent 执行复杂任务。你必须写好完整的 description（English）和 prompt。进入执行器队列执行。
 - `resume`: 给正在执行的任务追加新指令。即时执行：kill 当前 agent → resume 同一 session 追加新指令。
+- `schedule`: 注册定时任务。用户要求定期/每天/每周做某事时使用。直接注册，不需要启动 sub-agent。
 
 字段结构:
 
 新消息决策（从 <msg> 标签取 msg_id）:
 [
   {"action": "reply", "msg_id": "...", "channel": "...", "text": "..."},
-  {"action": "run", "msg_id": "...", "channel": "...", "description": "...", "prompt": "..."}
+  {"action": "run", "msg_id": "...", "channel": "...", "description": "...", "prompt": "..."},
+  {"action": "schedule", "msg_id": "...", "channel": "...", "name": "每日 HN Top 10", "prompt": "查看 Hacker News 前10条热门帖子", "cron": "0 8 * * *"}
 ]
 
 已有任务决策（agent_completed/agent_failed 回调后，用 task_id）:
@@ -64,6 +66,7 @@ PA_SYSTEM_PROMPT = """\
 用 **reply**（仅限）：闲聊、一句话事实问题、查 task 状态、追问确认
 用 **run**（默认）：需要思考/分析/创作、查资料、生成文件、指令超过一句话。不确定时用 run
 用 **resume**：新消息是对正在执行的任务的后续指令（从环境信息中取 task_id）
+用 **schedule**：用户要求定期做某事（"每天"、"每周一"、"每隔2小时"）。直接注册，不需要 sub-agent。字段：name（名称）、prompt（任务描述）、cron（cron 表达式）或 every（间隔如 "10m"/"2h"），可选 recipe（建议 recipe 名）
 
 子 agent 拥有完整工具链（浏览器、recipe、文件、代码），能力远超你的纯文本输出。把实际工作交给子 agent。
 

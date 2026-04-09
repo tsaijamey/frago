@@ -113,7 +113,7 @@ class PrimaryAgentService:
         self._scheduler: Any = None
 
         # Recipe scheduler reference — for updating schedule results
-        self._recipe_scheduler: Any = None
+        self._scheduler_service: Any = None
 
     def set_ingestion_scheduler(self, scheduler: Any) -> None:
         """Register ingestion scheduler for message cache access.
@@ -122,12 +122,12 @@ class PrimaryAgentService:
         """
         self._scheduler = scheduler
 
-    def set_recipe_scheduler(self, scheduler: Any) -> None:
+    def set_scheduler_service(self, scheduler: Any) -> None:
         """Register recipe scheduler for result write-back.
 
         Called by app.py during startup (bidirectional wiring).
         """
-        self._recipe_scheduler = scheduler
+        self._scheduler_service = scheduler
 
     @classmethod
     def get_instance(cls) -> "PrimaryAgentService":
@@ -930,6 +930,10 @@ class PrimaryAgentService:
                     logger.info("→ resume (task=%s)", log_id)
                     await self._handle_resume(d)
 
+                elif action == "schedule":
+                    logger.info("→ schedule (name=%s)", d.get("name", ""))
+                    await self._handle_schedule(d)
+
                 else:
                     logger.warning("Unknown PA action: %s", action)
             except Exception:
@@ -946,7 +950,7 @@ class PrimaryAgentService:
                 self._scheduler.remove_cached_message(channel_key, mid)
 
         # Write back schedule results for scheduled_task decisions
-        if self._recipe_scheduler:
+        if self._scheduler_service:
             for d in decisions:
                 if not isinstance(d, dict):
                     continue
@@ -962,7 +966,7 @@ class PrimaryAgentService:
                 else:
                     status = action
                 task_id = d.get("task_id")
-                self._recipe_scheduler.update_schedule_result(schedule_id, status, task_id)
+                self._scheduler_service.update_schedule_result(schedule_id, status, task_id)
                 # Clean up tracking entry
                 self._schedule_msg_map.pop(msg_id, None)
 
@@ -1124,6 +1128,45 @@ class PrimaryAgentService:
             await self._executor.execute_resume(task_id, prompt)
         else:
             logger.warning("Executor not available for resume")
+
+    async def _handle_schedule(self, decision: dict[str, Any]) -> None:
+        """PA decided action:'schedule' → register schedule directly via SchedulerService."""
+        name = decision.get("name", "unnamed")
+        prompt = decision.get("prompt", "")
+        cron = decision.get("cron")
+        every = decision.get("every")
+        recipe = decision.get("recipe")
+
+        if not prompt:
+            logger.warning("schedule decision missing prompt")
+            return
+
+        if not cron and not every:
+            logger.warning("schedule decision missing cron or every")
+            return
+
+        if not self._scheduler_service:
+            logger.warning("Recipe scheduler not available for schedule action")
+            return
+
+        # Parse interval if using --every syntax
+        interval_seconds = None
+        if every:
+            from frago.server.services.scheduler_service import _parse_interval
+            try:
+                interval_seconds = _parse_interval(every)
+            except (ValueError, IndexError):
+                logger.warning("Invalid interval in schedule decision: %s", every)
+                return
+
+        schedule = self._scheduler_service.add_schedule(
+            recipe_name=recipe,
+            interval_seconds=interval_seconds,
+            name=name,
+            prompt=prompt,
+            cron=cron,
+        )
+        logger.info("Schedule registered by PA: %s (%s)", schedule["id"], name)
 
     # -- helpers --
 

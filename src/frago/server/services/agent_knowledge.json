@@ -36,7 +36,7 @@
       "toggle": "uv run frago schedule toggle <id> — 启用/禁用",
       "history": "uv run frago schedule history <id> — 执行历史",
       "run_once": "uv run frago schedule run <id> — 手动触发一次",
-      "note": "schedule 到期后投递 scheduled_task 消息给你决策，你决定 run/skip。发现用户有日常重复需求时，主动用此命令注册 schedule"
+      "note": "schedule 到期后投递 scheduled_task 消息给你决策，你决定 run/skip。发现用户有日常重复需求时，直接用 action:schedule 注册，不需要启动 sub-agent。CLI 命令供 sub-agent 或高级用户使用"
     },
     "reply": {
       "send": "uv run frago reply --channel <name> --params '{...}' — 回复来源渠道"

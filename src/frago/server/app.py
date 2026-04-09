@@ -35,7 +35,7 @@ from frago.server.routes import (
 )
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.github_sync_scheduler import GitHubSyncScheduler
-from frago.server.services.recipe_scheduler_service import RecipeSchedulerService
+from frago.server.services.scheduler_service import SchedulerService
 from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.sync_service import SyncService
 from frago.server.services.version_service import VersionCheckService
@@ -98,9 +98,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     github_sync_scheduler = GitHubSyncScheduler.get_instance()
     await github_sync_scheduler.start()
 
-    # Start recipe scheduler (persistent scheduled recipe execution)
-    recipe_scheduler = RecipeSchedulerService.get_instance()
-    await recipe_scheduler.start()
+    # Prepare recipe scheduler (started after PA wiring below)
+    scheduler = SchedulerService.get_instance()
 
     # Start tab cleanup service (periodic orphan tab reconciliation)
     from frago.server.services.tab_cleanup_service import TabCleanupService
@@ -147,9 +146,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         ingestion_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
         primary_agent.set_ingestion_scheduler(ingestion_scheduler)
 
-    # Wire recipe scheduler ↔ PA (bidirectional)
-    recipe_scheduler.set_pa_enqueue(primary_agent.enqueue_message)
-    primary_agent.set_recipe_scheduler(recipe_scheduler)
+    # Wire recipe scheduler ↔ PA (bidirectional), then start loop
+    scheduler.set_pa_enqueue(primary_agent.enqueue_message)
+    primary_agent.set_scheduler_service(scheduler)
+    await scheduler.start()
 
     yield
 
@@ -158,7 +158,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         await ingestion_scheduler.stop()
     await tab_cleanup.stop()
     await primary_agent.stop()
-    await recipe_scheduler.stop()
+    await scheduler.stop()
     await github_sync_scheduler.stop()
     await version_service.stop()
     await community_service.stop()
