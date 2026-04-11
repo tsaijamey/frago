@@ -187,130 +187,6 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
         return False, f"Unexpected error: {e}"
 
 
-def get_available_slash_commands() -> dict:
-    """
-    Get all available frago slash commands
-
-    Returns:
-        Command name to description mapping, e.g. {"/frago.dev.run": "Execute AI-hosted..."}
-    """
-    commands = {}
-
-    # Search paths
-    search_dirs = [
-        Path.cwd() / ".claude" / "commands",
-        Path.home() / ".claude" / "commands",
-    ]
-
-    for search_dir in search_dirs:
-        if not search_dir.exists():
-            continue
-
-        # Find frago.*.md files
-        for md_file in search_dir.glob("frago*.md"):
-            cmd_name = "/" + md_file.stem  # frago.dev.run.md → /frago.dev.run
-
-            if cmd_name in commands:
-                continue  # Use first found
-
-            # Try to extract description
-            try:
-                content = md_file.read_text(encoding="utf-8")
-                if content.startswith("---"):
-                    # Parse YAML frontmatter
-                    second_delimiter = content.find("---", 3)
-                    if second_delimiter != -1:
-                        frontmatter = content[3:second_delimiter].strip()
-                        # Simple description extraction
-                        for line in frontmatter.split("\n"):
-                            if line.startswith("description:"):
-                                desc = line[12:].strip().strip('"\'')
-                                commands[cmd_name] = desc
-                                break
-                        else:
-                            commands[cmd_name] = ""
-                else:
-                    commands[cmd_name] = ""
-            except OSError:
-                commands[cmd_name] = ""
-
-    return commands
-
-
-# =============================================================================
-# Agent Prompt Building
-# =============================================================================
-
-def _build_agent_prompt(user_prompt: str) -> str:
-    """
-    Build agent execution prompt.
-
-    .. deprecated::
-        This function is deprecated. The prompt injection logic should be
-        handled by the /frago.agent skill defined in frago.agent.md.
-        This function is kept for backward compatibility only.
-
-    Constructs a prompt that includes available slash command descriptions
-    and the user's task, letting the agent determine which mode to use.
-
-    Args:
-        user_prompt: User's original prompt
-
-    Returns:
-        Complete prompt
-    """
-    # Get user's language preference for AI output
-    from frago.server.services.config_service import ConfigService
-
-    language = ConfigService.get_user_language()
-    lang_section = (
-        "\n\n## Language\n\nRespond in Chinese (中文)."
-        if language == "zh"
-        else ""
-    )
-
-    # Get available commands and their descriptions
-    commands = get_available_slash_commands()
-
-    # Extract key command descriptions
-    command_descriptions = []
-    key_commands = ["/frago.run", "/frago.recipe", "/frago.test"]
-
-    for cmd in key_commands:
-        if cmd in commands:
-            desc = commands[cmd]
-            command_descriptions.append(f"- {cmd}: {desc}")
-
-    commands_section = "\n".join(command_descriptions) if command_descriptions else "(No available commands)"
-
-    commands_to_send = f"""# Frago Agent
-
-You are an intelligent automation agent. Choose the appropriate execution mode based on the user's task intent.
-
-## Available Slash Commands
-
-{commands_section}
-
-## Execution Strategy
-
-Use Slash Commands to invoke appropriate skills based on user intent:
-- **Execute/Complete/Explore/Research** → /frago.run
-- **Create Recipe/Automation** → /frago.recipe
-- **Test/Verify Recipe** → /frago.test
-If the task is simple and clear, you can also use other tools directly without invoking the above Slash Commands.{lang_section}
-
----
-
-## User Task
-
-{user_prompt}
-"""
-    # Print commands_to_send
-    # click.echo(commands_to_send)
-
-    return commands_to_send
-
-
 # =============================================================================
 # CLI Commands
 # =============================================================================
@@ -349,11 +225,6 @@ If the task is simple and clear, you can also use other tools directly without i
     "--ask",
     is_flag=True,
     help="Enable permission confirmation (skip by default)"
-)
-@click.option(
-    "--direct",
-    is_flag=True,
-    help="Execute directly, skip routing analysis"
 )
 @click.option(
     "--quiet", "-q",
@@ -406,7 +277,6 @@ def agent(
     use_ccr: bool,
     dry_run: bool,
     ask: bool,
-    direct: bool,
     quiet: bool,
     json_status: bool,
     no_monitor: bool,
@@ -417,19 +287,13 @@ def agent(
     passthrough: bool,
 ):
     """
-    Intelligent Agent: Automatically choose execution mode based on user intent
-
-    agent determines which mode to use based on task intent:
-    - Execute/Explore/Research → /frago.run
-    - Create Recipe → /frago.recipe
-    - Test Recipe → /frago.test
+    Intelligent Agent: Execute tasks via Claude Code session
 
     \b
     Examples:
       frago agent Help me find Python jobs on Upwork
       frago agent Research YouTube subtitle extraction API
       frago agent Write a recipe to extract Twitter comments
-      frago agent --direct List current directory     # Skip mode determination, execute directly
 
     \b
     Available models (--model):
@@ -539,24 +403,10 @@ def agent(
         if not passthrough:
             click.echo(f"\n[Resume] Continue in session {resume[:8]}...: {prompt_text}")
         execution_prompt = prompt_text
-    elif direct:
-        if not passthrough:
-            click.echo(f"\n[Direct] Execute directly: {prompt_text}")
-        execution_prompt = prompt_text
     else:
         if not passthrough:
             click.echo(f"\n[Execute] {prompt_text}")
-
-        # Use /frago.agent slash command to let Claude handle intent routing
-        # The frago.agent skill will analyze intent and invoke appropriate sub-commands
-        execution_prompt = f"/frago.agent {prompt_text}"
-
-        # Display prompt (skip in passthrough mode)
-        if not passthrough:
-            click.echo("\n[Prompt] Agent prompt:")
-            click.echo("-" * 40)
-            click.echo(execution_prompt)
-            click.echo("-" * 40)
+        execution_prompt = prompt_text
 
         if dry_run:
             click.echo("[Dry Run] Skip actual execution")
