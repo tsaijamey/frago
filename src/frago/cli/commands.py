@@ -22,32 +22,33 @@ import click
 
 COMMAND_EXAMPLES = {
     # Chrome subcommands (using full paths for easy agent copy-paste)
+    # All tab-operating commands require --group (or FRAGO_CURRENT_RUN env)
     "navigate": [
-        "frago chrome navigate <url>",
-        "frago chrome navigate https://example.com",
-        "frago chrome navigate https://example.com --wait-for '.content-loaded'",
+        "frago chrome navigate <url> --group <name>",
+        "frago chrome navigate https://example.com --group research",
+        "frago chrome navigate https://example.com --group research --wait-for '.content-loaded'",
     ],
     "click": [
-        "frago chrome click <selector>",
+        "frago chrome click <selector>  # requires FRAGO_CURRENT_RUN or prior navigate --group",
         "frago chrome click 'button.submit'",
         "frago chrome click '#login-btn' --wait-timeout 15",
     ],
     "screenshot": [
-        "frago chrome screenshot <output_file>",
+        "frago chrome screenshot <output_file>  # requires group context",
         "frago chrome screenshot page.png",
         "frago chrome screenshot full.png --full-page --quality 90",
     ],
     "exec-js": [
-        "frago chrome exec-js <script>",
+        "frago chrome exec-js <script>  # requires group context",
         "frago chrome exec-js 'document.title'",
         "frago chrome exec-js 'return window.scrollY' --return-value",
         "frago chrome exec-js ./script.js  # Load from file",
     ],
     "get-title": [
-        "frago chrome get-title",
+        "frago chrome get-title  # requires group context",
     ],
     "get-content": [
-        "frago chrome get-content [selector]",
+        "frago chrome get-content [selector]  # requires group context",
         "frago chrome get-content  # Default: get body",
         "frago chrome get-content 'article.main' --desc 'article-content'",
     ],
@@ -181,7 +182,7 @@ def print_usage(func):
 from ..cdp.config import CDPConfig
 from ..cdp.exceptions import CDPError
 from ..cdp.session import CDPSession
-from ..cdp.tab_group_manager import ChromeCommandError
+from ..cdp.tab_group_manager import CHROME_ERRORS, ChromeCommandError
 
 
 # =============================================================================
@@ -392,37 +393,32 @@ def _print_msg(
     _write_run_log(message, status, action_type, log_data)
 
 
-def create_session(ctx) -> CDPSession:
+def create_session(ctx, *, require_group: bool = True) -> CDPSession:
     """
-    Create CDP session
+    Create CDP session.
 
-    Uses global options:
-    - --debug: Enable debug mode
-    - --timeout: Set operation timeout
-    - --host: CDP service host address
-    - --port: CDP service port
-    - --proxy-host: Proxy server host address
-    - --proxy-port: Proxy server port
-    - --proxy-username: Proxy auth username
-    - --proxy-password: Proxy auth password
-    - --no-proxy: Bypass proxy connection
-    - --target-id: Specify target tab ID
+    When require_group=True (default), resolves target from the group's
+    current_target_id.  Raises ChromeCommandError("NO_GROUP") if no
+    group context is available.
+
+    Management commands (status, reset, group-close) pass require_group=False
+    to skip group enforcement — they don't operate on a specific tab.
     """
     target_id = ctx.obj.get('TARGET_ID')
 
     # Auto-resolve target from tab group when no explicit target_id
-    if not target_id:
-        try:
-            from ..cdp.tab_group_manager import TabGroupManager
-            group_name = TabGroupManager.resolve_group_name()
-            if group_name:
-                tgm = TabGroupManager(
-                    host=ctx.obj['HOST'],
-                    port=ctx.obj['PORT'],
-                )
-                target_id = tgm.get_current_target(group_name)
-        except Exception:
-            pass
+    if not target_id and require_group:
+        from ..cdp.tab_group_manager import ChromeCommandError, TabGroupManager
+        group_name = TabGroupManager.resolve_group_name()
+        if not group_name:
+            raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
+        tgm = TabGroupManager(
+            host=ctx.obj['HOST'],
+            port=ctx.obj['PORT'],
+        )
+        target_id = tgm.get_current_target(group_name)
+        # Store resolved group in ctx for downstream use
+        ctx.obj['_RESOLVED_GROUP'] = group_name
 
     config = CDPConfig(
         host=ctx.obj['HOST'],
@@ -638,54 +634,32 @@ def _build_group_index(host: str = "127.0.0.1", port: int = 9222) -> dict[str, s
 
 def _route_tab_for_navigate(
     ctx, session: CDPSession, url: str, group: Optional[str] = None
-) -> tuple[Optional[str], Optional[str]]:
-    """Route to the correct tab for a URL.
+) -> tuple[Optional[str], str]:
+    """Route to the correct tab for a URL within a group.
 
-    If a group context exists (explicit --group or FRAGO_CURRENT_RUN),
-    uses TabGroupManager for group-scoped routing.
-    Otherwise falls back to original TabManager.
+    Group context is mandatory — resolved from explicit --group or
+    FRAGO_CURRENT_RUN env var.  Raises ChromeCommandError if missing.
 
     Returns (target_id, resolved_group_name) tuple.
     """
-    try:
-        from ..cdp.tab_group_manager import TabGroupManager
+    from ..cdp.tab_group_manager import ChromeCommandError, TabGroupManager
 
-        group_name = TabGroupManager.resolve_group_name(group)
-        if group_name:
-            tgm = TabGroupManager(
-                host=ctx.obj['HOST'],
-                port=ctx.obj['PORT'],
-            )
-            tgm.reconcile()
-            tid = tgm.get_or_create_tab(url, group_name, session) or None
-            return tid, group_name
-    except Exception:
-        pass
+    group_name = TabGroupManager.resolve_group_name(group)
+    if not group_name:
+        raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
 
-    # Fallback: original TabManager (no group context)
-    try:
-        from ..cdp.tab_manager import TabManager
-        tab_mgr = TabManager(
-            host=ctx.obj['HOST'],
-            port=ctx.obj['PORT'],
-        )
-        tab_mgr.reconcile()
-        target_id = tab_mgr.get_or_create_tab(url, session)
-        return target_id or None, None
-    except Exception:
-        return None, None
+    tgm = TabGroupManager(
+        host=ctx.obj['HOST'],
+        port=ctx.obj['PORT'],
+    )
+    tgm.reconcile()
+    tid = tgm.get_or_create_tab(url, group_name, session) or None
+    return tid, group_name
 
 
 def _handle_chrome_command_error(e: ChromeCommandError) -> None:
     """Format and print a ChromeCommandError, then exit."""
-    import json as _json
-    error_output = {
-        "error": e.code,
-        "message": e.message,
-    }
-    if e.context:
-        error_output["context"] = e.context
-    click.echo(_json.dumps(error_output, ensure_ascii=False), err=True)
+    _print_msg("error", f"{e.code}: {e.message}", "chrome", e.context)
     sys.exit(1)
 
 
@@ -717,11 +691,14 @@ def _check_landing_page_protection(session: CDPSession, ctx=None) -> None:
 
 
 def _lazy_cleanup_expired_groups(session: CDPSession, host: str, port: int) -> None:
-    """Lazily clean up groups that have been inactive for >30 minutes."""
+    """Lazily clean up groups that have been inactive for >30 minutes.
+    Also ensures the landing page tab exists (auto-restore if missing).
+    """
     try:
         from ..cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=host, port=port)
         tgm.cleanup_expired_groups(session)
+        tgm.ensure_landing_page()
     except Exception:
         pass
 
@@ -773,7 +750,8 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
 def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str] = None, load_timeout: float = 30, no_border: bool = False):
     """Navigate to URL and get page features after loading"""
     try:
-        with create_session(ctx) as session:
+        # navigate does its own tab routing, so skip group enforcement here
+        with create_session(ctx, require_group=False) as session:
             # Lazy cleanup of expired groups
             _lazy_cleanup_expired_groups(session, ctx.obj['HOST'], ctx.obj['PORT'])
 
@@ -781,7 +759,7 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
             if no_border:
                 session.auto_viewport_border = False
 
-            # Tab routing: reuse tab by origin or create new
+            # Tab routing: reuse tab by origin or create new (group enforced here)
             resolved_group = None
             if not ctx.obj.get('TARGET_ID'):
                 target_id, resolved_group = _route_tab_for_navigate(ctx, session, url, group=group)
@@ -807,11 +785,8 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
                 except Exception:
                     pass
 
-            # Print group context
-            if resolved_group:
-                _print_msg("success", f"Tab group: {resolved_group}", "navigation", {"group": resolved_group})
-            else:
-                _print_msg("warning", "No group context — tab is unprotected from cleanup (use --group or set FRAGO_CURRENT_RUN)", "navigation")
+            # Print group context (always present — enforced by _route_tab_for_navigate)
+            _print_msg("success", f"Tab group: {resolved_group}", "navigation", {"group": resolved_group})
 
             # 2. Wait for page load
             session.wait_for_load(timeout=load_timeout)
@@ -825,6 +800,8 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
             # 4. Perception: get DOM features (delay 2s for dynamic content)
             _do_perception(session, f"navigate-{url}", delay=2.0)
 
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Navigation failed: {e}", "navigation", {"url": url, "error": str(e)})
         sys.exit(1)
@@ -1144,7 +1121,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
 def status(ctx):
     """Check CDP connection status"""
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, require_group=False) as session:
             # Perform health check
             is_healthy = session.status.health_check()
             if is_healthy:
@@ -1300,6 +1277,8 @@ def wait(ctx, seconds: float):
         with create_session(ctx) as session:
             session.wait.wait(seconds)
             _print_msg("success", f"Waited {seconds} seconds")
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         _print_msg("error", f"Wait failed: {e}")
 
@@ -2010,7 +1989,7 @@ def tab_group_close(ctx, group_name: str):
     port = ctx.obj.get('PORT', 9222)
     tgm = TabGroupManager(host=host, port=port)
 
-    with create_session(ctx) as session:
+    with create_session(ctx, require_group=False) as session:
         if tgm.close_group(group_name, session):
             click.echo(f"Closed group '{group_name}'")
         else:
@@ -2052,7 +2031,7 @@ def chrome_reset(ctx):
     agent_run = _os.environ.get("FRAGO_CURRENT_RUN")
     click.echo(f"Group context: {agent_run or '(none — global reset)'}")
 
-    with create_session(ctx) as session:
+    with create_session(ctx, require_group=False) as session:
         if agent_run:
             # Only close the current agent's group
             if tgm.close_group(agent_run, session):
@@ -2249,6 +2228,14 @@ def switch_tab(ctx, tab_id: str):
             pass
 
         tab_group = _lookup_tab_group(full_id, host=host, port=port)
+        # Update group's current_target_id so subsequent commands follow
+        if tab_group:
+            try:
+                from ..cdp.tab_group_manager import TabGroupManager
+                tgm = TabGroupManager(host=host, port=port)
+                tgm.set_current_target(tab_group, full_id)
+            except Exception:
+                pass
         group_info = f" (group: {tab_group})" if tab_group else ""
         _print_msg("success", f"Switched to tab: {target.get('title', 'Unknown')}{group_info}", "tab_switch", {
             "tab_id": full_id,
@@ -2301,7 +2288,7 @@ def close_tab(ctx, tab_id: str):
         tab_group = _lookup_tab_group(full_id, host=host, port=port)
 
         # Close via TargetCommands CDP command
-        with create_session(ctx) as session:
+        with create_session(ctx, require_group=False) as session:
             success = session.target.close_target(full_id)
 
         if success:

@@ -33,7 +33,7 @@ class ChromeCommandError(Exception):
 
 # Error code definitions
 CHROME_ERRORS = {
-    "NO_GROUP": "no group context — set FRAGO_CURRENT_RUN or pass --group",
+    "NO_GROUP": "no group context — pass --group <name> (any descriptive name, e.g. --group research)",
     "BROWSER_NOT_RUNNING": "chrome is not running — start with: uv run frago chrome start",
     "TAB_NOT_IN_GROUP": "target tab does not belong to current group",
     "NAVIGATION_TIMEOUT": "page load timed out",
@@ -490,3 +490,58 @@ class TabGroupManager:
             ws.close()
         except Exception:
             pass  # Best-effort, don't break normal operations
+
+    LANDING_PAGE_URL = "http://127.0.0.1:8093/chrome/dashboard"
+
+    def ensure_landing_page(self) -> bool:
+        """Check if landing page exists; recreate if missing. Best-effort."""
+        try:
+            import websocket as _ws
+
+            # Check if server is running
+            try:
+                requests.get(self.LANDING_PAGE_URL, timeout=1)
+            except Exception:
+                return False
+
+            resp = requests.get(
+                f"http://{self.host}:{self.port}/json/list", timeout=2
+            )
+            targets = resp.json()
+
+            # Already exists?
+            for t in targets:
+                if t.get("type") != "page":
+                    continue
+                url = t.get("url", "")
+                title = t.get("title", "")
+                if "/chrome/dashboard" in url or title == "frago":
+                    return True
+
+            # Missing — create it
+            ws_url = None
+            for t in targets:
+                if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                    ws_url = t["webSocketDebuggerUrl"]
+                    break
+            if not ws_url:
+                ver = requests.get(
+                    f"http://{self.host}:{self.port}/json/version", timeout=2
+                ).json()
+                ws_url = ver.get("webSocketDebuggerUrl")
+            if not ws_url:
+                return False
+
+            ws = _ws.create_connection(ws_url, timeout=5)
+            ws.send(json.dumps({
+                "id": 100,
+                "method": "Target.createTarget",
+                "params": {"url": self.LANDING_PAGE_URL},
+            }))
+            ws.recv()
+            ws.close()
+
+            get_logger().info("Landing page restored")
+            return True
+        except Exception:
+            return False
