@@ -83,6 +83,17 @@ class IngestionScheduler:
         """
         self._pa_enqueue = enqueue_fn
 
+    def cache_message(self, msg: CachedMessage) -> None:
+        """Manually insert a message into cache.
+
+        Used by SchedulerService/PA to cache scheduled_task messages that
+        bypass the normal ingestion polling path.
+        """
+        key = f"{msg.channel}:{msg.msg_id}"
+        self._message_cache[key] = msg
+        self._save_cache()
+        logger.debug("Manually cached message %s", key)
+
     def get_cached_message(self, channel: str, msg_id: str) -> CachedMessage | None:
         """Retrieve a cached message by channel + msg_id.
 

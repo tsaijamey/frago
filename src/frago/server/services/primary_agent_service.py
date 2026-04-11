@@ -620,8 +620,10 @@ class PrimaryAgentService:
                 recipe_line = f"建议 recipe: {recipe}\n" if recipe else ""
                 last_status = msg.get("last_status")
                 last_status_line = f"上次结果: {last_status}\n" if last_status else ""
+                msg_channel = msg.get("channel", "schedule")
                 msg_parts.append(PA_SCHEDULED_TASK_TEMPLATE.format(
                     msg_id=msg.get("msg_id", "?"),
+                    channel=msg_channel,
                     schedule_id=msg.get("schedule_id", "?"),
                     schedule_name=msg.get("schedule_name", "?"),
                     prompt=msg.get("prompt", ""),
@@ -629,6 +631,22 @@ class PrimaryAgentService:
                     last_status_line=last_status_line,
                     run_count=msg.get("run_count", 0),
                 ))
+                # Cache scheduled_task message so _create_task_from_cache
+                # can find it when PA decides action:"run".
+                # Scheduled tasks bypass ingestion polling, so without this
+                # the cache lookup fails and no agent is ever started.
+                if self._scheduler and msg.get("msg_id"):
+                    from frago.server.services.ingestion.scheduler import CachedMessage
+                    # Merge schedule metadata into reply_context for downstream use
+                    cache_reply_ctx = dict(msg.get("reply_context") or {})
+                    cache_reply_ctx["schedule_id"] = msg.get("schedule_id", "")
+                    cache_reply_ctx["schedule_name"] = msg.get("schedule_name", "")
+                    self._scheduler.cache_message(CachedMessage(
+                        channel=msg_channel,
+                        msg_id=msg["msg_id"],
+                        prompt=msg.get("prompt", ""),
+                        reply_context=cache_reply_ctx,
+                    ))
                 # Track msg_id → schedule_id for result write-back
                 if msg.get("msg_id") and msg.get("schedule_id"):
                     self._schedule_msg_map[msg["msg_id"]] = msg["schedule_id"]
@@ -951,6 +969,7 @@ class PrimaryAgentService:
 
         # Write back schedule results for scheduled_task decisions
         if self._scheduler_service:
+            referenced_schedule_msg_ids: set[str] = set()
             for d in decisions:
                 if not isinstance(d, dict):
                     continue
@@ -958,6 +977,7 @@ class PrimaryAgentService:
                 schedule_id = self._schedule_msg_map.get(msg_id)
                 if not schedule_id:
                     continue
+                referenced_schedule_msg_ids.add(msg_id)
                 action = d.get("action", "")
                 if action == "run":
                     status = "dispatched"
@@ -968,6 +988,20 @@ class PrimaryAgentService:
                 task_id = d.get("task_id")
                 self._scheduler_service.update_schedule_result(schedule_id, status, task_id)
                 # Clean up tracking entry
+                self._schedule_msg_map.pop(msg_id, None)
+
+            # Fallback: if PA output [] or ignored a scheduled_task,
+            # clear its active state to prevent overlap deadlock.
+            orphaned = {
+                mid: sid for mid, sid in self._schedule_msg_map.items()
+                if mid not in referenced_schedule_msg_ids
+            }
+            for msg_id, schedule_id in orphaned.items():
+                logger.warning(
+                    "[scheduler] PA did not reference scheduled_task %s (schedule %s) — marking skipped",
+                    msg_id, schedule_id,
+                )
+                self._scheduler_service.update_schedule_result(schedule_id, "skipped")
                 self._schedule_msg_map.pop(msg_id, None)
 
     # -- decision handlers --
@@ -1159,12 +1193,24 @@ class PrimaryAgentService:
                 logger.warning("Invalid interval in schedule decision: %s", every)
                 return
 
+        # Capture channel and reply_context from the original message so scheduled_task
+        # results can be routed back to the correct channel with proper context (e.g. chat_id).
+        reply_channel = decision.get("channel")
+        reply_context: dict[str, Any] = {}
+        msg_id = decision.get("msg_id", "")
+        if self._scheduler and msg_id:
+            cached = self._scheduler.get_cached_message(reply_channel or "", msg_id)
+            if cached and cached.reply_context:
+                reply_context = dict(cached.reply_context)
+
         schedule = self._scheduler_service.add_schedule(
             recipe_name=recipe,
             interval_seconds=interval_seconds,
             name=name,
             prompt=prompt,
             cron=cron,
+            reply_channel=reply_channel,
+            reply_context=reply_context,
         )
         logger.info("Schedule registered by PA: %s (%s)", schedule["id"], name)
 

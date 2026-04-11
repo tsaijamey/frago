@@ -152,6 +152,10 @@ class SchedulerService:
             s["timeout"] = 300
         if "history" not in s:
             s["history"] = []
+        if "reply_channel" not in s:
+            s["reply_channel"] = None
+        if "reply_context" not in s:
+            s["reply_context"] = {}
         return s
 
     # --- CRUD ---
@@ -168,6 +172,8 @@ class SchedulerService:
         cron: str | None = None,
         overlap: str = "skip",
         timeout: int = 300,
+        reply_channel: str | None = None,
+        reply_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._load()
         schedule_name = name or recipe_name or "unnamed"
@@ -185,6 +191,8 @@ class SchedulerService:
             "timeout": timeout,
             "start_at": start_at,
             "end_at": end_at,
+            "reply_channel": reply_channel,
+            "reply_context": reply_context or {},
             "enabled": True,
             "created_at": _now_utc().isoformat(),
             "last_run_at": None,
@@ -341,14 +349,18 @@ class SchedulerService:
             return
 
         msg_id = f"sch_msg_{uuid.uuid4().hex[:8]}"
+        # Use reply_channel as the message channel so downstream task creation
+        # and reply routing use the correct channel (e.g. "feishu") instead of "schedule".
+        effective_channel = schedule.get("reply_channel") or "schedule"
         message: dict[str, Any] = {
             "type": "scheduled_task",
             "msg_id": msg_id,
-            "channel": "schedule",
+            "channel": effective_channel,
             "schedule_id": schedule_id,
             "schedule_name": schedule_name,
             "prompt": prompt,
             "recipe": recipe,
+            "reply_context": schedule.get("reply_context", {}),
             "triggered_at": schedule["last_run_at"],
             "last_status": schedule.get("last_status"),
             "run_count": schedule.get("run_count", 0),
