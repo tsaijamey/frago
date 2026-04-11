@@ -10,21 +10,9 @@
   category: must
   brief: "网页内容用 navigate + get-content，禁止 WebFetch"
 
-- name: must-tab-creation
-  category: must
-  brief: "打开 URL 用 frago chrome navigate，禁止 window.open / raw CDP"
-
 - name: must-tool-priority
   category: must
   brief: "工具选择四层优先级：Recipe > frago命令 > 系统命令 > Claude工具"
-
-- name: must-content-extraction
-  category: must
-  brief: "页面文字必须用 get-content 或 recipe 提取，截图仅用于验证状态"
-
-- name: must-navigation
-  category: must
-  brief: "禁止猜测 URL，必须洋葱剥皮逐层探索获取真实链接"
 
 - name: must-execution-principles
   category: must
@@ -33,6 +21,10 @@
 - name: must-workspace
   category: must
   brief: "产出物放 workspace、单 Run 排他、禁止 cd、路径用绝对路径"
+
+- name: chrome-usage
+  category: must
+  brief: "chrome 操作完整指南：group 必选、导航规则、内容提取、交互、选择器、视觉辅助"
 
 # 偏好类 — 有更好的方式
 - name: better-structured-data
@@ -48,29 +40,17 @@
   brief: "server restart 前先检查活跃任务，有任务时禁止自行 --force"
 
 # 效率类 — 你可能不知道有这个
-- name: chrome-click
-  category: available
-  brief: "JS-first + fallback，--precise 坐标级点击"
-
-- name: chrome-scroll
-  category: available
-  brief: "JS scrollBy 跨平台，不受 Wayland 限制"
-
-- name: selector-priority
-  category: available
-  brief: "选择器稳定性排序、fallback 模式、验证方法、常见网站特征"
-
 - name: recipe-execution
   category: available
   brief: "frago recipe list/run 查询和执行已有 recipe"
 
-- name: visual-effects
-  category: available
-  brief: "highlight / pointer / spotlight / annotate 视觉辅助"
-
 - name: interactive-recipe
   category: available
   brief: "Web UI 人机协作 Recipe 架构、launcher、API 交互、状态管理"
+
+- name: recipe-authoring
+  category: available
+  brief: "Recipe 脚本编写规范：参数接收（sys.argv[1]/$1/__FRAGO_PARAMS__）、输出规范、代码模板"
 
 - name: recipe-fields
   category: available
