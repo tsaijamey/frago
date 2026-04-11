@@ -88,6 +88,30 @@ class AgentSession:
         # Last resort: bare name (resolve_command_path will try shutil.which)
         return ["frago", "agent"]
 
+    def _cleanup_old_process(self) -> None:
+        """Terminate old subprocess and reap it to prevent orphan/zombie leaks."""
+        if not self._process:
+            return
+
+        old_pid = self._process.pid
+        try:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=3)
+        except OSError:
+            pass  # already dead
+        finally:
+            # Close pipe FDs so the old process doesn't linger
+            for pipe in (self._process.stdin, self._process.stdout, self._process.stderr):
+                if pipe:
+                    with contextlib.suppress(OSError):
+                        pipe.close()
+            self._process = None
+            logger.info(f"Cleaned up old subprocess (PID: {old_pid})")
+
     async def start(self, prompt: str, resume_session_id: str | None = None) -> None:
         """Start agent process in attached mode.
 
@@ -95,6 +119,9 @@ class AgentSession:
             prompt: The prompt to send to Claude
             resume_session_id: If set, resume an existing Claude session
         """
+        # Kill old process before starting new one to prevent orphan leaks
+        self._cleanup_old_process()
+
         cmd = self._get_frago_agent_command() + [
             "--passthrough",
             "--yes",
@@ -134,13 +161,13 @@ class AgentSession:
         if not self._claude_session_id:
             raise RuntimeError("No Claude session to resume (session_id not captured)")
 
-        # Wait for current reader to finish
+        # Stop current reader task before starting new process
+        self._running = False
         if self._reader_task:
-            try:
-                await asyncio.wait_for(self._reader_task, timeout=5)
-            except (TimeoutError, asyncio.CancelledError):
-                if self._reader_task and not self._reader_task.done():
-                    self._reader_task.cancel()
+            self._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reader_task
+            self._reader_task = None
 
         # Broadcast user message
         await manager.broadcast({
@@ -150,24 +177,19 @@ class AgentSession:
             "content": message,
         })
 
-        # Start new process with --resume
+        # Start new process with --resume (start() will kill old process first)
         await self.start(message, resume_session_id=self._claude_session_id)
 
     async def stop(self) -> None:
         """Stop the attached session."""
         self._running = False
 
-        if self._process:
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-
         if self._reader_task:
             self._reader_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._reader_task
+
+        self._cleanup_old_process()
 
         logger.info(f"Attached agent session {self.internal_id[:8]} stopped")
 
