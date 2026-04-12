@@ -171,20 +171,17 @@ class TaskLifecycle:
         for task in failed:
             # Reset to PENDING so PA can re-dispatch
             self._store.update_status(task.id, TaskStatus.PENDING)
-            # Use user_message type (valid queue message) with failure context prepended
-            failure_context = (
-                f"[恢复失败任务] task: {task.id} channel: {task.channel}\n"
-                f"上次错误: {task.error or 'unknown'}\n"
-                f"该任务已重置为 PENDING，请决定如何处理（重新 run 或 reply 告知用户）。\n\n"
-            )
+            # Dedicated message type — keeps the user's original prompt in
+            # its own field instead of polluting user_message.prompt with a
+            # system-side "[恢复失败任务] ..." preamble.
             messages.append({
-                "type": "user_message",
+                "type": "recovered_failed_task",
                 "task_id": task.id,
                 "channel": task.channel,
                 "channel_message_id": task.channel_message_id,
-                "prompt": failure_context + task.prompt,
+                "original_prompt": task.prompt,
+                "original_error": task.error or "unknown",
                 "reply_context": task.reply_context,
-                "_recovered": True,
             })
 
         return messages

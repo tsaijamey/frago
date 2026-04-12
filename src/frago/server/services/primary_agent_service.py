@@ -30,9 +30,21 @@ from frago.server.services.pa_prompts import (
     PA_AGENT_FAILED_TEMPLATE,
     PA_MERGED_MESSAGES_TEMPLATE,
     PA_MESSAGE_TEMPLATE,
+    PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE,
+    PA_QUEUE_GROUP_LINE_TEMPLATE,
+    PA_QUEUE_LAST_STATUS_LINE_TEMPLATE,
+    PA_QUEUE_LOGS_SECTION_TEMPLATE,
+    PA_QUEUE_OUTPUTS_LINE_TEMPLATE,
+    PA_QUEUE_RECIPE_LINE_TEMPLATE,
+    PA_QUEUE_RECOVERED_NOTE,
+    PA_QUEUE_TIME_HEADER_TEMPLATE,
+    PA_QUEUE_UNKNOWN_FALLBACK_TEMPLATE,
+    PA_RECOVERED_FAILED_TASK_TEMPLATE,
     PA_REPLY_FAILED_TEMPLATE,
     PA_SCHEDULED_TASK_TEMPLATE,
     SUB_AGENT_PROMPT_TEMPLATE,
+    USER_PA_ONLINE_RESTART_TEMPLATE,
+    USER_PA_ONLINE_ROTATION_TEMPLATE,
 )
 from frago.server.services.pa_prompts import (
     PA_SYSTEM_PROMPT as PRIMARY_AGENT_SYSTEM_PROMPT,
@@ -218,7 +230,7 @@ class PrimaryAgentService:
 
         logger.info("PA session creating (reason=%s, seq=%d)", reason, self._heartbeat_seq)
 
-        bootstrap = self._build_bootstrap_prompt()
+        bootstrap, reborn_reason = self._build_bootstrap_prompt()
         prompt = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
 
         result = await AgentService.start_task_attached(
@@ -241,6 +253,9 @@ class PrimaryAgentService:
         self._session_id = await self._wait_for_session_id(self._pa_internal_id)
         self._save_session_id(self._session_id)
         logger.info("PA session created: %s", self._session_id[:8])
+
+        if reborn_reason in ("rotation", "server_restart"):
+            asyncio.create_task(self._send_online_notification(reborn_reason))
 
     async def rotate_session(self) -> None:
         """Create a new session, rebuild from external state."""
@@ -308,93 +323,39 @@ class PrimaryAgentService:
 
         return orphaned
 
-    def _build_bootstrap_prompt(self) -> str:
-        """Build bootstrap context from TaskStore + RunLock."""
-        import platform
-        import time
+    def _build_bootstrap_prompt(self) -> tuple[str, str]:
+        """Build bootstrap context from TaskStore + RunLock + conversation history.
 
-        sections = []
-        now = datetime.now()
+        Returns (bootstrap_prompt, reborn_reason).
+        """
+        from frago.server.services.pa_context_builder import build_bootstrap
 
-        # System environment
-        tz_name = time.tzname[time.daylight] if time.daylight else time.tzname[0]
+        return build_bootstrap(self._rotation_count)
 
-        # Detect Claude model from settings
-        model_id = "claude default"
+    async def _send_online_notification(self, reborn_reason: str) -> None:
+        """Send online notification to the most recently active channel."""
         try:
-            settings_path = Path.home() / ".claude" / "settings.json"
-            if settings_path.exists():
-                settings = json.loads(settings_path.read_text(encoding="utf-8"))
-                custom_model = settings.get("ANTHROPIC_MODEL")
-                if custom_model:
-                    model_id = custom_model
+            from frago.server.services.trace import get_last_active_channel
+
+            channel = get_last_active_channel()
+            if not channel:
+                logger.debug("No active channel found, skipping online notification")
+                return
+
+            text = (
+                USER_PA_ONLINE_ROTATION_TEMPLATE
+                if reborn_reason == "rotation"
+                else USER_PA_ONLINE_RESTART_TEMPLATE
+            )
+
+            self._lifecycle.reply(
+                task_id="",
+                channel=channel,
+                reply_params={"text": text},
+            )
+            logger.info("Online notification sent to %s", channel)
         except Exception:
-            pass
-
-        sections.append(
-            f"系统: {platform.system()} {platform.release()} | "
-            f"模型: {model_id} | "
-            f"时区: {tz_name} | "
-            f"当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-
-        if self._rotation_count > 0:
-            sections.append(f"这是第 {self._rotation_count + 1} 个 PA session（前一个因 rotation 退役）。")
-
-        # Task queue snapshot (from TaskStore)
-        try:
-            from frago.server.services.ingestion.store import TaskStore
-            store = TaskStore()
-
-            # Executing (0 or 1)
-            executing = store.get_executing()
-            # Queued (pending execution)
-            queued = store.get_by_status(TaskStatus.QUEUED)
-            # Recent completed
-            recent_completed = store.get_recent_completed(limit=8)
-
-            lines = ["任务队列:"]
-            if executing:
-                lines.append("  正在执行:")
-                lines.append(f"    task_id: {executing.id[:8]}")
-                lines.append(f"    channel: {executing.channel}")
-                desc = executing.run_descriptions[-1] if executing.run_descriptions else executing.prompt
-                lines.append(f"    description: {desc}")
-                lines.append(f"    session_id: {executing.session_id or '(unknown)'}")
-            else:
-                lines.append("  正在执行: 无")
-
-            if queued:
-                lines.append(f"  排队中 ({len(queued)} 个):")
-                for t in queued:
-                    lines.append(f"    - [{t.id[:8]}] ({t.channel}) {t.prompt}")
-            else:
-                lines.append("  排队中: 0 个")
-
-            if recent_completed:
-                lines.append(f"  最近完成 ({len(recent_completed)} 个):")
-                for t in recent_completed:
-                    desc = t.run_descriptions[-1] if t.run_descriptions else t.prompt
-                    summary = t.result_summary or t.error or ""
-                    prompt_preview = t.prompt[:80] + "..." if len(t.prompt) > 80 else t.prompt
-                    lines.append(f"    - [{t.id[:8]}] ({t.channel}) [{t.status.value}] {desc}")
-                    lines.append(f"      原始消息: {prompt_preview}")
-                    if summary:
-                        lines.append(f"      结果: {summary}")
-
-            sections.append("\n".join(lines))
-        except Exception:
-            sections.append("任务队列: 不可用")
-
-        # Agent self-knowledge index
-        try:
-            knowledge_file = Path(__file__).parent / "agent_knowledge.json"
-            knowledge = json.loads(knowledge_file.read_text(encoding="utf-8"))
-            sections.append("frago 系统索引:\n" + json.dumps(knowledge, ensure_ascii=False, indent=2))
-        except Exception:
-            pass
-
-        return "\n\n".join(sections)
+            logger.warning("Failed to send online notification", exc_info=True)
 
     # -- PA event broadcast --
 
@@ -503,15 +464,6 @@ class PrimaryAgentService:
                         _trace(_m.get("msg_id", ""), _m.get("task_id"), "pa",
                                f"收到消息队列: {_m.get('channel', '')}")
 
-                # Wait for PA session subprocess to be ready (P3)
-                if self._pa_session:
-                    _ready_start = asyncio.get_event_loop().time()
-                    while not self._pa_session.is_running:
-                        if asyncio.get_event_loop().time() - _ready_start > 10:
-                            logger.warning("Queue consumer: PA session not ready after 10s")
-                            break
-                        await asyncio.sleep(0.2)
-
                 # Merge into one text block
                 merged = self._format_queue_messages(messages)
                 logger.info(
@@ -557,23 +509,23 @@ class PrimaryAgentService:
         """Format a batch of queued messages into a single text block for PA."""
         now = datetime.now()
         msg_parts: list[str] = []
-        msg_parts.append(f"时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        msg_parts.append(PA_QUEUE_TIME_HEADER_TEMPLATE.format(
+            current_time=now.strftime("%Y-%m-%d %H:%M:%S"),
+        ))
 
         for msg in messages:
             msg_type = msg.get("type", "unknown")
             msg_parts.append("")
 
             if msg_type == "user_message":
-                recovered_note = ""
-                if msg.get("_recovered"):
-                    recovered_note = (
-                        "\n⚠️ 这是一个重新投递的待处理任务——之前的处理结果未生效"
-                        "（可能因 session rotation 丢失）。你必须重新处理此任务。"
-                    )
+                recovered_note = PA_QUEUE_RECOVERED_NOTE if msg.get("_recovered") else ""
                 channel_name = msg.get("channel", "?")
                 reply_ctx = msg.get("reply_context") or {}
                 chat_name = reply_ctx.get("chat_name")
-                group_line = f"<group_name>{chat_name}</group_name>\n" if chat_name else ""
+                group_line = (
+                    PA_QUEUE_GROUP_LINE_TEMPLATE.format(chat_name=chat_name)
+                    if chat_name else ""
+                )
 
                 msg_parts.append(PA_MESSAGE_TEMPLATE.format(
                     channel=channel_name,
@@ -584,11 +536,11 @@ class PrimaryAgentService:
 
             elif msg_type == "agent_completed":
                 outputs = msg.get("output_files", [])
-                outputs_section = f"输出物: {', '.join(outputs)}" if outputs else ""
-                recent_logs = msg.get("recent_logs", [])
-                logs_section = ""
-                if recent_logs:
-                    logs_section = "执行日志 (最近):\n" + "\n".join(f"  {e}" for e in recent_logs)
+                outputs_section = (
+                    PA_QUEUE_OUTPUTS_LINE_TEMPLATE.format(outputs_list=", ".join(outputs))
+                    if outputs else ""
+                )
+                logs_section = self._format_logs_section(msg.get("recent_logs", []))
 
                 msg_parts.append(PA_AGENT_COMPLETED_TEMPLATE.format(
                     task_id=msg.get("task_id", "?"),
@@ -601,10 +553,7 @@ class PrimaryAgentService:
                 ))
 
             elif msg_type == "agent_failed":
-                recent_logs = msg.get("recent_logs", [])
-                logs_section = ""
-                if recent_logs:
-                    logs_section = "执行日志 (最近):\n" + "\n".join(f"  {e}" for e in recent_logs)
+                logs_section = self._format_logs_section(msg.get("recent_logs", []))
 
                 msg_parts.append(PA_AGENT_FAILED_TEMPLATE.format(
                     task_id=msg.get("task_id", "?"),
@@ -617,9 +566,15 @@ class PrimaryAgentService:
 
             elif msg_type == "scheduled_task":
                 recipe = msg.get("recipe")
-                recipe_line = f"建议 recipe: {recipe}\n" if recipe else ""
+                recipe_line = (
+                    PA_QUEUE_RECIPE_LINE_TEMPLATE.format(recipe=recipe)
+                    if recipe else ""
+                )
                 last_status = msg.get("last_status")
-                last_status_line = f"上次结果: {last_status}\n" if last_status else ""
+                last_status_line = (
+                    PA_QUEUE_LAST_STATUS_LINE_TEMPLATE.format(last_status=last_status)
+                    if last_status else ""
+                )
                 msg_channel = msg.get("channel", "schedule")
                 msg_parts.append(PA_SCHEDULED_TASK_TEMPLATE.format(
                     msg_id=msg.get("msg_id", "?"),
@@ -662,13 +617,37 @@ class PrimaryAgentService:
                         reply_text=msg.get("reply_text", msg.get("original_text", "")),
                     ))
 
+            elif msg_type == "recovered_failed_task":
+                msg_parts.append(PA_RECOVERED_FAILED_TASK_TEMPLATE.format(
+                    task_id=msg.get("task_id", "?"),
+                    channel=msg.get("channel", "?"),
+                    original_error=msg.get("original_error", "unknown"),
+                    original_prompt=msg.get("original_prompt", ""),
+                ))
+
             else:
-                msg_parts.append(f"[{msg_type}] {json.dumps(msg, ensure_ascii=False, default=str)}")
+                msg_parts.append(PA_QUEUE_UNKNOWN_FALLBACK_TEMPLATE.format(
+                    msg_type=msg_type,
+                    msg_json=json.dumps(msg, ensure_ascii=False, default=str),
+                ))
 
         return PA_MERGED_MESSAGES_TEMPLATE.format(
             count=len(messages),
             messages_body="\n".join(msg_parts),
         )
+
+    @staticmethod
+    def _format_logs_section(recent_logs: list[str]) -> str:
+        """Format recent log lines into PA_QUEUE_LOGS_SECTION_TEMPLATE body.
+
+        Each log line is indented by two spaces; the indent is part of the
+        rendered output and intentionally inline (single-character format
+        detail, not a semantic constant).
+        """
+        if not recent_logs:
+            return ""
+        body = "\n".join(f"  {line}" for line in recent_logs)
+        return PA_QUEUE_LOGS_SECTION_TEMPLATE.format(logs_body=body)
 
     # -- heartbeat --
 
@@ -900,9 +879,8 @@ class PrimaryAgentService:
                 return
 
             # Give PA one correction chance
-            correction_msg = (
-                f"你的上一条输出格式错误: {result.error}\n"
-                "请重新输出纯 JSON 数组，不包含任何解释性文字。"
+            correction_msg = PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE.format(
+                error=result.error,
             )
             await self._send_to_pa(correction_msg)
             return

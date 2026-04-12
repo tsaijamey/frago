@@ -17,6 +17,7 @@ VALID_QUEUE_MESSAGE_TYPES = {
     "user_message",
     "agent_completed", "agent_failed", "reply_failed",
     "scheduled_task",
+    "recovered_failed_task",
 }
 
 # Required fields per PA action type (beyond the universal "action" field)
@@ -42,7 +43,7 @@ class ValidationResult:
     raw_data: Any = field(default=None, repr=False)
 
 
-def _parse_json_array(text: str) -> list | None:
+def _parse_json_array(text: str) -> list[Any] | None:
     """Parse a JSON array from text, tolerating all known PA output quirks.
 
     Handles: markdown code blocks, natural language prefix/suffix,
@@ -171,7 +172,7 @@ def validate_pa_output(text: str) -> ValidationResult:
 # 所有进入 PA 消息队列的消息必须有 type 字段。
 # 校验失败 → 日志告警 + 拒绝入队（不能让脏数据进队列）。
 # --------------------------------------------------------------------------
-def validate_queue_message(msg: dict) -> ValidationResult:
+def validate_queue_message(msg: dict[str, Any]) -> ValidationResult:
     """Validate a message before it enters the PA message queue.
 
     Rules:
@@ -223,6 +224,17 @@ def validate_queue_message(msg: dict) -> ValidationResult:
             return ValidationResult(
                 ok=False,
                 error=f'scheduled_task missing required fields: {", ".join(missing)}.',
+                raw_data=msg,
+            )
+
+    elif msg_type == "recovered_failed_task":
+        missing = [
+            f for f in ("task_id", "channel", "original_prompt") if not msg.get(f)
+        ]
+        if missing:
+            return ValidationResult(
+                ok=False,
+                error=f'recovered_failed_task missing required fields: {", ".join(missing)}.',
                 raw_data=msg,
             )
 
