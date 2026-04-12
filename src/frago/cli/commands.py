@@ -21,90 +21,87 @@ import click
 # =============================================================================
 
 COMMAND_EXAMPLES = {
-    # Chrome subcommands (using full paths for easy agent copy-paste)
-    # All tab-operating commands require --group (or FRAGO_CURRENT_RUN env)
+    # Chrome subcommands — all tab-operating commands require --group (or FRAGO_CURRENT_RUN env)
     "navigate": [
         "frago chrome navigate <url> --group <name>",
         "frago chrome navigate https://example.com --group research",
         "frago chrome navigate https://example.com --group research --wait-for '.content-loaded'",
     ],
     "click": [
-        "frago chrome click <selector>  # requires FRAGO_CURRENT_RUN or prior navigate --group",
-        "frago chrome click 'button.submit'",
-        "frago chrome click '#login-btn' --wait-timeout 15",
+        "frago chrome click --group <name> <selector>",
+        "frago chrome click --group research 'button.submit'",
+        "frago chrome click --group research '#login-btn' --wait-timeout 15",
     ],
     "screenshot": [
-        "frago chrome screenshot <output_file>  # requires group context",
-        "frago chrome screenshot page.png",
-        "frago chrome screenshot full.png --full-page --quality 90",
+        "frago chrome screenshot --group <name> <output_file>",
+        "frago chrome screenshot --group research page.png",
+        "frago chrome screenshot --group research full.png --full-page --quality 90",
     ],
     "exec-js": [
-        "frago chrome exec-js <script>  # requires group context",
-        "frago chrome exec-js 'document.title'",
-        "frago chrome exec-js 'return window.scrollY' --return-value",
-        "frago chrome exec-js ./script.js  # Load from file",
+        "frago chrome exec-js --group <name> <script>",
+        "frago chrome exec-js --group research 'document.title'",
+        "frago chrome exec-js --group research 'return window.scrollY' --return-value",
+        "frago chrome exec-js --group research ./script.js  # Load from file",
     ],
     "get-title": [
-        "frago chrome get-title  # requires group context",
+        "frago chrome get-title --group <name>",
+        "frago chrome get-title --group research",
     ],
     "get-content": [
-        "frago chrome get-content [selector]  # requires group context",
-        "frago chrome get-content  # Default: get body",
-        "frago chrome get-content 'article.main' --desc 'article-content'",
+        "frago chrome get-content --group <name> [selector]",
+        "frago chrome get-content --group research",
+        "frago chrome get-content --group research 'article.main' --desc 'article-content'",
     ],
     "scroll": [
-        "frago chrome scroll <distance>",
-        "frago chrome scroll 500      # Scroll down 500px",
-        "frago chrome scroll -300     # Scroll up 300px",
-        "frago chrome scroll down     # Alias: scroll down 500px",
-        "frago chrome scroll up       # Alias: scroll up 500px",
+        "frago chrome scroll --group <name> <distance>",
+        "frago chrome scroll --group research 500",
+        "frago chrome scroll --group research down",
+        "frago chrome scroll --group research up",
     ],
     "scroll-to": [
-        "frago chrome scroll-to <selector>",
-        "frago chrome scroll-to 'article'",
-        "frago chrome scroll-to --text 'Section Title'",
-        "frago chrome scroll-to '#footer' --block end",
+        "frago chrome scroll-to --group <name> <selector>",
+        "frago chrome scroll-to --group research 'article'",
+        "frago chrome scroll-to --group research --text 'Section Title'",
     ],
     "wait": [
-        "frago chrome wait <seconds>",
-        "frago chrome wait 2",
-        "frago chrome wait 0.5",
+        "frago chrome wait --group <name> <seconds>",
+        "frago chrome wait --group research 2",
     ],
     "zoom": [
-        "frago chrome zoom <factor>",
-        "frago chrome zoom 1.5   # Zoom to 150%",
-        "frago chrome zoom 0.8   # Zoom to 80%",
-        "frago chrome zoom 1     # Reset to original size",
+        "frago chrome zoom --group <name> <factor>",
+        "frago chrome zoom --group research 1.5",
+        "frago chrome zoom --group research 1     # Reset to original size",
     ],
     "clear-effects": [
-        "frago chrome clear-effects",
+        "frago chrome clear-effects --group <name>",
+        "frago chrome clear-effects --group research",
     ],
     "highlight": [
-        "frago chrome highlight <selector>",
-        "frago chrome highlight 'button.primary'",
-        "frago chrome highlight '#target' --color red --width 5",
-        "frago chrome highlight '.element' --longlife  # Permanent display",
+        "frago chrome highlight --group <name> <selector>",
+        "frago chrome highlight --group research 'button.primary'",
+        "frago chrome highlight --group research '#target' --color red --width 5",
     ],
     "pointer": [
-        "frago chrome pointer <selector>",
-        "frago chrome pointer 'button.submit'",
-        "frago chrome pointer '#element' --life-time 10",
+        "frago chrome pointer --group <name> <selector>",
+        "frago chrome pointer --group research 'button.submit'",
     ],
     "spotlight": [
-        "frago chrome spotlight <selector>",
-        "frago chrome spotlight '.highlight-me'",
-        "frago chrome spotlight '#focus' --longlife",
+        "frago chrome spotlight --group <name> <selector>",
+        "frago chrome spotlight --group research '.highlight-me'",
     ],
     "annotate": [
-        "frago chrome annotate <selector> <text>",
-        "frago chrome annotate 'button' 'Click here'",
-        "frago chrome annotate '#form' 'Fill this' --position bottom",
+        "frago chrome annotate --group <name> <selector> <text>",
+        "frago chrome annotate --group research 'button' 'Click here'",
+        "frago chrome annotate --group research '#form' 'Fill this' --position bottom",
     ],
     "underline": [
-        "frago chrome underline <selector>",
-        "frago chrome underline 'article p'",
-        "frago chrome underline --text 'Important text'",
-        "frago chrome underline '.content' --color blue --width 2",
+        "frago chrome underline --group <name> <selector>",
+        "frago chrome underline --group research 'article p'",
+        "frago chrome underline --group research --text 'Important text'",
+    ],
+    "groups": [
+        "frago chrome groups",
+        "frago chrome groups --json",
     ],
     "start": [
         "frago chrome start",
@@ -137,6 +134,7 @@ COMMAND_EXAMPLES = {
         "frago chrome <command>",
         "frago chrome start      # Start browser",
         "frago chrome navigate   # Navigate to URL",
+        "frago chrome groups     # List tab groups",
         "frago chrome click      # Click element",
         "frago chrome screenshot # Take screenshot",
     ],
@@ -393,7 +391,17 @@ def _print_msg(
     _write_run_log(message, status, action_type, log_data)
 
 
-def create_session(ctx, *, require_group: bool = True) -> CDPSession:
+def group_option(fn):
+    """Shared --group/-g option for all tab-operating commands."""
+    return click.option(
+        '--group', '-g',
+        type=str,
+        default=None,
+        help='Tab group name (also reads FRAGO_CURRENT_RUN env)',
+    )(fn)
+
+
+def create_session(ctx, *, group: str | None = None, require_group: bool = True) -> CDPSession:
     """
     Create CDP session.
 
@@ -409,7 +417,7 @@ def create_session(ctx, *, require_group: bool = True) -> CDPSession:
     # Auto-resolve target from tab group when no explicit target_id
     if not target_id and require_group:
         from ..cdp.tab_group_manager import ChromeCommandError, TabGroupManager
-        group_name = TabGroupManager.resolve_group_name()
+        group_name = TabGroupManager.resolve_group_name(group)
         if not group_name:
             raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
         tgm = TabGroupManager(
@@ -821,12 +829,13 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
     default=False,
     help='Use coordinate-based click (dispatchMouseEvent) instead of JS click'
 )
+@group_option
 @click.pass_context
 @print_usage
-def click_element(ctx, selector: str, wait_timeout: int, precise: bool):
+def click_element(ctx, selector: str, wait_timeout: int, precise: bool, group: Optional[str] = None):
     """Click element by selector and get page features"""
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             if precise:
@@ -860,9 +869,10 @@ def click_element(ctx, selector: str, wait_timeout: int, precise: bool):
     default=80,
     help='Image quality (1-100), default 80'
 )
+@group_option
 @click.pass_context
 @print_usage
-def screenshot(ctx, output_file: str, full_page: bool, quality: int):
+def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: Optional[str] = None):
     """
     Capture page screenshot
 
@@ -894,7 +904,7 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
             # Get run context failed, use original path
             pass
 
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.screenshot.capture(actual_output_file, full_page=full_page, quality=quality)
@@ -912,9 +922,10 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int):
     is_flag=True,
     help='Return JavaScript execution result'
 )
+@group_option
 @click.pass_context
 @print_usage
-def execute_javascript(ctx, script: str, return_value: bool):
+def execute_javascript(ctx, script: str, return_value: bool, group: Optional[str] = None):
     """
     Execute JavaScript code and automatically capture page features
 
@@ -933,7 +944,7 @@ def execute_javascript(ctx, script: str, return_value: bool):
                 _print_msg("error", f"Failed to read script file: {e}", "interaction", {"error": str(e)})
                 return
 
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             result = session.evaluate(script, return_by_value=return_value)
@@ -955,12 +966,13 @@ def execute_javascript(ctx, script: str, return_value: bool):
 
 
 @click.command('get-title')
+@group_option
 @click.pass_context
 @print_usage
-def get_title(ctx):
+def get_title(ctx, group: Optional[str] = None):
     """Get page title"""
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             title = session.get_title()
             _print_msg("success", f"Page title: {title}", "extraction", {"title": title})
@@ -998,9 +1010,10 @@ def _get_next_output_number(outputs_dir: Path, ext: str = ".txt") -> int:
     default=None,
     help='Content description (used for filename generation)'
 )
+@group_option
 @click.pass_context
 @print_usage
-def get_content(ctx, selector: str, desc: Optional[str]):
+def get_content(ctx, selector: str, desc: Optional[str], group: Optional[str] = None):
     """
     Get text content from page or element
 
@@ -1014,7 +1027,7 @@ def get_content(ctx, selector: str, desc: Optional[str]):
     import json as json_module
 
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             script = f"""
@@ -1141,9 +1154,10 @@ def status(ctx):
 
 @click.command('scroll')
 @click.argument('distance', type=SCROLL_DISTANCE)
+@group_option
 @click.pass_context
 @print_usage
-def scroll(ctx, distance: int):
+def scroll(ctx, distance: int, group: Optional[str] = None):
     """
     Scroll page and automatically capture page features
 
@@ -1153,7 +1167,7 @@ def scroll(ctx, distance: int):
       - Alias: down, up, page-down, page-up
     """
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
             session.scroll.scroll(distance)
@@ -1184,9 +1198,10 @@ def scroll(ctx, distance: int):
     default='center',
     help='Vertical alignment (default: center)'
 )
+@group_option
 @click.pass_context
 @print_usage
-def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'center'):
+def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str, group: Optional[str] = None):
     """
     Scroll to specified element
 
@@ -1204,7 +1219,7 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
         return
 
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             if text:
                 # Find element by text content
@@ -1269,12 +1284,13 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str = 'c
 
 @click.command('wait')
 @click.argument('seconds', type=WAIT_SECONDS)
+@group_option
 @click.pass_context
 @print_usage
-def wait(ctx, seconds: float):
+def wait(ctx, seconds: float, group: Optional[str] = None):
     """Wait for specified seconds (supports decimals, e.g., 0.5)"""
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             session.wait.wait(seconds)
             _print_msg("success", f"Waited {seconds} seconds")
     except ChromeCommandError as e:
@@ -1285,9 +1301,10 @@ def wait(ctx, seconds: float):
 
 @click.command('zoom')
 @click.argument('factor', type=ZOOM_FACTOR)
+@group_option
 @click.pass_context
 @print_usage
-def zoom(ctx, factor: float):
+def zoom(ctx, factor: float, group: Optional[str] = None):
     """
     Set page zoom level and automatically capture page features
 
@@ -1295,7 +1312,7 @@ def zoom(ctx, factor: float):
     FACTOR examples: 1.5 (150%), 0.8 (80%), 1 (original size)
     """
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             session.zoom(factor)
             _print_msg("success", f"Page zoom set to: {factor}", "interaction", {"zoom_factor": factor})
@@ -1313,12 +1330,13 @@ def zoom(ctx, factor: float):
 
 
 @click.command('clear-effects')
+@group_option
 @click.pass_context
 @print_usage
-def clear_effects(ctx):
+def clear_effects(ctx, group: Optional[str] = None):
     """Clear all visual effects"""
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             session.clear_effects()
             _print_msg("success", "Visual effects cleared", "interaction")
@@ -1354,13 +1372,14 @@ def clear_effects(ctx):
     is_flag=True,
     help='Show permanently until manually cleared'
 )
+@group_option
 @click.pass_context
 @print_usage
-def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool):
+def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool, group: Optional[str] = None):
     """Highlight specified element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             session.highlight(selector, color=color, border_width=width, lifetime=lifetime_ms)
             _print_msg("success", f"Highlighted element: {selector} (color: {color}, width: {width}px, duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "color": color, "width": width})
@@ -1384,13 +1403,14 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
     is_flag=True,
     help='Show permanently until manually cleared'
 )
+@group_option
 @click.pass_context
 @print_usage
-def pointer(ctx, selector: str, life_time: int, longlife: bool):
+def pointer(ctx, selector: str, life_time: int, longlife: bool, group: Optional[str] = None):
     """Show mouse pointer on element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             session.pointer(selector, lifetime=lifetime_ms)
             _print_msg("success", f"Pointer shown: {selector} (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector})
@@ -1414,13 +1434,14 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool):
     is_flag=True,
     help='Show permanently until manually cleared'
 )
+@group_option
 @click.pass_context
 @print_usage
-def spotlight(ctx, selector: str, life_time: int, longlife: bool):
+def spotlight(ctx, selector: str, life_time: int, longlife: bool, group: Optional[str] = None):
     """Show element with spotlight effect"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             session.spotlight(selector, lifetime=lifetime_ms)
             _print_msg("success", f"Spotlight shown: {selector} (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector})
@@ -1451,13 +1472,14 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool):
     is_flag=True,
     help='Show permanently until manually cleared'
 )
+@group_option
 @click.pass_context
 @print_usage
-def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool):
+def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool, group: Optional[str] = None):
     """Add annotation on element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             session.annotate(selector, text, position=position, lifetime=lifetime_ms)
             _print_msg("success", f"Annotation added: {text} ({selector}) (duration: {'permanent' if longlife else f'{life_time}s'})", "interaction", {"selector": selector, "text": text, "position": position})
@@ -1504,9 +1526,10 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
     is_flag=True,
     help='Show permanently until manually cleared'
 )
+@group_option
 @click.pass_context
 @print_usage
-def underline(ctx, selector: Optional[str], text: Optional[str], color: str, width: int, duration: int, life_time: int, longlife: bool):
+def underline(ctx, selector: Optional[str], text: Optional[str], color: str, width: int, duration: int, life_time: int, longlife: bool, group: Optional[str] = None):
     """
     Draw line animation under element text line by line
 
@@ -1601,7 +1624,7 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
 })(""" + json.dumps(selector) + "," + json.dumps(text) + "," + json.dumps(color) + "," + str(width) + "," + str(duration) + "," + str(lifetime_ms) + ")"
 
     try:
-        with create_session(ctx) as session:
+        with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             result = session.evaluate(js_code, return_by_value=True)
 

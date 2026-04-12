@@ -109,9 +109,10 @@ def chrome_group():
     \b
     Examples:
       frago chrome start                    # Start Chrome
-      frago chrome navigate https://...     # Navigate to URL
-      frago chrome click "#button"          # Click element
-      frago chrome screenshot out.png       # Take screenshot
+      frago chrome navigate https://... --group research  # Navigate
+      frago chrome get-content --group research            # Get content
+      frago chrome click --group research "#button"        # Click
+      frago chrome groups                                  # List groups
     """
     pass
 
