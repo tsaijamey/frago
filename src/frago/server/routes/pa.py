@@ -1,15 +1,44 @@
 """Primary Agent API endpoints.
 
-Query endpoints for PA tasks.
+Query endpoints for PA tasks + CLI chat ingestion.
 """
 
 import dataclasses
 import logging
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class ChatRequest(BaseModel):
+    prompt: str
+    cli_session_id: str
+
+
+@router.post("/pa/chat")
+async def pa_chat(request: ChatRequest) -> dict:
+    """Accept a CLI chat message and enqueue for PA."""
+    from frago.server.services.primary_agent_service import PrimaryAgentService
+
+    pa = PrimaryAgentService.get_instance()
+    if pa._pa_session is None:
+        raise HTTPException(503, "PA is not running")
+
+    msg_id = f"cli_{uuid4().hex[:8]}"
+    msg = {
+        "type": "user_message",
+        "msg_id": msg_id,
+        "channel": "cli",
+        "channel_message_id": msg_id,
+        "prompt": request.prompt,
+        "reply_context": {"cli_session_id": request.cli_session_id},
+    }
+    await pa.enqueue_message(msg)
+    return {"status": "ok", "msg_id": msg_id}
 
 
 @router.get("/pa/tasks")

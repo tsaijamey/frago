@@ -323,9 +323,10 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
         click.echo("Please use 'frago server start' instead.")
         return
 
-    # If no subcommand is invoked, show help
+    # If no subcommand is invoked, enter chat mode
     if ctx.invoked_subcommand is None:
-        click.echo(ctx.get_help())
+        from frago.cli.chat import start_chat
+        start_chat()
         return
 
     if debug:

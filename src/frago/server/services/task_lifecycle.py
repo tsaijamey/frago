@@ -77,6 +77,9 @@ class TaskLifecycle:
         Enriches params with reply_context, runs notify recipe.
         Caller (_send_reply) handles task status updates.
         """
+        if channel == "cli":
+            return {"status": "ok"}
+
         # Enrich reply_params with reply_context from TaskStore
         if task_id:
             task = self._store.get(task_id)
