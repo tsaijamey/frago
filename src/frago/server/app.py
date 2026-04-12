@@ -62,6 +62,25 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     state_manager = StateManager.get_instance()
     await state_manager.initialize()
 
+    # Clean up zombie EXECUTING tasks from previous server lifecycle
+    try:
+        from frago.server.daemon import _is_pid_alive
+        from frago.server.services.ingestion.models import TaskStatus
+        from frago.server.services.ingestion.store import TaskStore
+
+        store = TaskStore()
+        executing = store.get_by_status(TaskStatus.EXECUTING)
+        for task in executing:
+            if not _is_pid_alive(task.pid):
+                store.update_status(
+                    task.id,
+                    TaskStatus.FAILED,
+                    error="zombie: process not found at server startup",
+                )
+                logger.info("Cleaned zombie task %s (pid=%s)", task.id[:8], task.pid)
+    except Exception as e:
+        logger.warning("Failed to clean zombie tasks: %s", e)
+
     # Auto-sync official resources if enabled
     try:
         from frago.init.config_manager import load_config

@@ -650,10 +650,22 @@ def restart_daemon(force: bool = False) -> tuple[bool, str]:
     return True, f"Server restart initiated (old PID: {pid}). Restarter will start new instance."
 
 
+def _is_pid_alive(pid: int | None) -> bool:
+    """Check if a process with the given PID is still running."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
 def check_active_tasks() -> dict[str, Any]:
     """Check if there are active tasks that would be killed by server stop/restart.
 
-    Checks TaskStore for EXECUTING tasks.
+    Checks TaskStore for EXECUTING tasks and verifies their PIDs are alive.
+    Tasks whose PIDs are dead are auto-cleaned to FAILED (zombie recovery).
 
     Returns dict with keys: has_active, executing_tasks, message.
     """
@@ -667,18 +679,30 @@ def check_active_tasks() -> dict[str, Any]:
     }
     reasons: list[str] = []
 
-    # Check EXECUTING tasks
+    # Check EXECUTING tasks, verify PID liveness
     try:
         store = TaskStore()
         executing = store.get_by_status(TaskStatus.EXECUTING)
+        zombie_count = 0
         for task in executing:
-            result["executing_tasks"].append({
-                "id": task.id,
-                "channel": task.channel,
-            })
-        if executing:
+            if _is_pid_alive(task.pid):
+                result["executing_tasks"].append({
+                    "id": task.id,
+                    "channel": task.channel,
+                })
+            else:
+                # PID dead — auto-clean zombie task
+                store.update_status(
+                    task.id,
+                    TaskStatus.FAILED,
+                    error="zombie: process not found at restart check",
+                )
+                zombie_count += 1
+        if result["executing_tasks"]:
             result["has_active"] = True
-            reasons.append(f"{len(executing)} task(s) executing")
+            reasons.append(f"{len(result['executing_tasks'])} task(s) executing")
+        if zombie_count:
+            reasons.append(f"{zombie_count} zombie task(s) auto-cleaned to FAILED")
     except Exception:
         pass  # TaskStore unreadable should not block guard
 
