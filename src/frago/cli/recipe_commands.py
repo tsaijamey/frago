@@ -203,18 +203,6 @@ def recipe_info(name: str, source: str | None, output_format: str):
                     desc = param_def.get('description', '')
                     click.echo(f"- {param_name} ({param_type}, {required}): {desc}")
                 click.echo()
-            if m.env:
-                click.echo("Environment Variables")
-                click.echo("─" * 50)
-                for env_name, env_def in m.env.items():
-                    required = "required" if env_def.get('required', False) else "optional"
-                    default = env_def.get('default', '')
-                    desc = env_def.get('description', '')
-                    if default:
-                        click.echo(f"- {env_name} ({required}, default: {default}): {desc}")
-                    else:
-                        click.echo(f"- {env_name} ({required}): {desc}")
-                click.echo()
             if m.dependencies:
                 click.echo("Dependencies")
                 click.echo("─" * 50)
