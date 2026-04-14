@@ -95,6 +95,28 @@ def run_server(
             logger.error("Port %d is already in use, exiting immediately", port)
             sys.exit(1)
 
+    # Detect and persist launcher info for frago-hook (Rust) to consume.
+    # MUST run in the parent process before uvicorn reload forks a child
+    # (child sys.argv[0] points to uvicorn internals, not the user command).
+    try:
+        from frago.init.launcher_detector import detect_launcher
+        from frago.init.runtime_state import update_launcher
+
+        launcher = detect_launcher()
+        if launcher:
+            update_launcher(launcher)
+            logger.info(
+                "Launcher detected: mode=%s command=%s",
+                launcher.mode,
+                launcher.command,
+            )
+        else:
+            logger.warning(
+                "Launcher detection failed; frago-hook will stay silent until next restart"
+            )
+    except Exception as e:
+        logger.warning("Failed to persist launcher info: %s", e)
+
     # Ensure Claude Code hooks are installed
     try:
         from frago.init.resources import ensure_hooks

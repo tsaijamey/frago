@@ -19,6 +19,8 @@ current_run
 projects/.tmp/
 projects/*/screenshots/
 projects/*/logs/
+runtime.json
+runtime.json.bak.*
 
 # Commands directory (managed by frago itself, not synced)
 .claude/commands/
