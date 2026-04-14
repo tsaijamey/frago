@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level process registry shared across all RecipeRunner instances.
 # Enables cancel() from any runner instance (e.g., a different request handler).
-_active_processes: dict[str, subprocess.Popen] = {}
+_active_processes: dict[str, subprocess.Popen[bytes]] = {}
 _process_lock = threading.Lock()
 
 
@@ -177,7 +177,7 @@ class RecipeRunner:
             timeout_seconds=timeout,
         )
 
-        def _run_in_background():
+        def _run_in_background() -> None:
             try:
                 self._run_with_execution(
                     execution_id=execution.id,
@@ -220,6 +220,23 @@ class RecipeRunner:
             for proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                               "http_proxy", "https_proxy", "all_proxy"):
                 resolved_env.pop(proxy_key, None)
+
+        # Bind recipe subprocess to a chrome tab group so `frago chrome ...`
+        # inside the recipe resolves a group context without needing --group.
+        # Priority: existing env (agent/executor already injected) → current
+        # run instance (CLI with active run context) → execution_id fallback
+        # (standalone run, at least get an isolated group).
+        if "FRAGO_CURRENT_RUN" not in resolved_env:
+            run_id: str | None = None
+            try:
+                from frago.run.context import ContextManager
+                frago_home = Path.home() / ".frago"
+                run_id = ContextManager(
+                    frago_home, frago_home / "projects"
+                ).get_current_run_id()
+            except Exception:
+                run_id = None
+            resolved_env["FRAGO_CURRENT_RUN"] = run_id or execution_id
 
         try:
             # Resolve effective timeout (explicit > None = no limit for backward compat)
@@ -375,7 +392,7 @@ class RecipeRunner:
         cmd: list[str],
         env: dict[str, str],
         timeout: int | None = None,
-    ) -> subprocess.CompletedProcess:
+    ) -> subprocess.CompletedProcess[str]:
         """Run a command via Popen, tracking the process for cancellation.
 
         Args:
@@ -415,7 +432,7 @@ class RecipeRunner:
             with _process_lock:
                 _active_processes.pop(execution_id, None)
 
-    def _resolve_secrets(self, recipe_name: str, secrets_schema: dict) -> dict:
+    def _resolve_secrets(self, recipe_name: str, secrets_schema: dict[str, Any]) -> dict[str, Any]:
         """从 recipes.local.json 加载凭证，解析 $ref，校验 required 字段。
 
         Args:
@@ -453,7 +470,7 @@ class RecipeRunner:
 
         return filtered
 
-    def _validate_params(self, metadata, params: dict[str, Any]) -> None:
+    def _validate_params(self, metadata: Any, params: dict[str, Any]) -> None:
         """
         Validate if parameters conform to metadata definition
 
