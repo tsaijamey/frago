@@ -125,11 +125,50 @@ class TaskLifecycle:
             )
             runner.run(notify_recipe, params=reply_params)
             logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
+
+            # Auto-send output image files for completed tasks
+            if task_id:
+                self._send_output_images(task_id, reply_params, notify_recipe, runner)
+
             return {"status": "ok"}
 
         except Exception as e:
             logger.exception("Failed to send reply for channel %s", channel)
             return {"status": "error", "error": str(e)}
+
+    _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+    def _send_output_images(
+        self,
+        task_id: str,
+        reply_params: dict[str, Any],
+        notify_recipe: str,
+        runner: Any,
+    ) -> None:
+        """Send image files from task outputs dir after text reply."""
+        task = self._store.get(task_id)
+        if not task:
+            return
+        run_id = task.session_id
+        if not run_id:
+            return
+        outputs_dir = PROJECTS_DIR / run_id / "outputs"
+        if not outputs_dir.is_dir():
+            return
+
+        chat_id = reply_params.get("chat_id") or reply_params.get("reply_context", {}).get("chat_id")
+        if not chat_id:
+            return
+
+        images = [f for f in sorted(outputs_dir.iterdir()) if f.is_file() and f.suffix.lower() in self._IMAGE_SUFFIXES]
+        for img in images:
+            try:
+                image_params = {"chat_id": chat_id, "image_path": str(img)}
+                logger.info("Auto-sending output image via %s: %s", notify_recipe, img.name)
+                runner.run(notify_recipe, params=image_params)
+                logger.info("Output image sent: %s", img.name)
+            except Exception:
+                logger.exception("Failed to send output image: %s", img.name)
 
     def recover_pending_tasks(self) -> list[dict[str, Any]]:
         """Scan TaskStore for PENDING and FAILED tasks, return as queue messages.
