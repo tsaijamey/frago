@@ -12,39 +12,39 @@ Includes:
 
 import click
 
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from .commands import (
-    navigate,
-    click_element,
-    screenshot,
-    execute_javascript,
-    get_title,
-    get_content,
-    status,
-    scroll,
-    scroll_to,
-    wait,
-    zoom,
-    clear_effects,
-    highlight,
-    pointer,
-    spotlight,
     annotate,
-    underline,
+    chrome_reset,
     chrome_start,
     chrome_stop,
-    list_tabs,
-    switch_tab,
+    clear_effects,
+    click_element,
     close_tab,
-    tab_groups,
-    tab_group_info,
-    tab_group_close,
+    execute_javascript,
+    get_content,
+    get_title,
+    highlight,
+    list_tabs,
+    navigate,
+    pointer,
+    screenshot,
+    scroll,
+    scroll_to,
+    spotlight,
+    status,
+    switch_tab,
     tab_group_cleanup,
-    chrome_reset,
+    tab_group_close,
+    tab_group_info,
+    tab_groups,
+    underline,
+    wait,
+    zoom,
 )
-from .agent_friendly import AgentFriendlyGroup
 
 
-@click.command('detect')
+@click.command('detect', cls=AgentFriendlyCommand)
 def detect_browsers():
     """
     Detect available browsers on the system
@@ -56,7 +56,7 @@ def detect_browsers():
     Examples:
       frago chrome detect
     """
-    from ..cdp.commands.chrome import detect_available_browsers, BrowserType
+    from ..cdp.commands.chrome import BrowserType, detect_available_browsers
 
     browsers = detect_available_browsers()
 

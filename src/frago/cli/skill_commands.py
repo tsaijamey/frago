@@ -5,7 +5,8 @@ import json
 import click
 
 from frago.skills import SkillRegistry
-from .agent_friendly import AgentFriendlyGroup
+
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 
 @click.group(name='skill', cls=AgentFriendlyGroup)
@@ -14,7 +15,7 @@ def skill_group():
     pass
 
 
-@skill_group.command(name='list')
+@skill_group.command(name='list', cls=AgentFriendlyCommand)
 @click.option(
     '--format',
     'output_format',

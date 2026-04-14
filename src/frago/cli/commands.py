@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 
 import click
 
+from .agent_friendly import AgentFriendlyCommand
 
 # =============================================================================
 # Command usage examples (Agent-friendly output)
@@ -143,7 +144,336 @@ COMMAND_EXAMPLES = {
         "frago <command>",
         "frago chrome start      # Start browser",
         "frago status            # Check CDP connection status",
-        "frago --gui             # Launch GUI app",
+        "frago server            # Start web server",
+    ],
+    # Chrome additional
+    "close-tab": [
+        "frago chrome close-tab <tab_id>",
+    ],
+    "detect": [
+        "frago chrome detect",
+    ],
+    "group-info": [
+        "frago chrome group-info <group_name>",
+    ],
+    "group-close": [
+        "frago chrome group-close <group_name>",
+    ],
+    "group-cleanup": [
+        "frago chrome group-cleanup",
+    ],
+    "reset": [
+        "frago chrome reset",
+    ],
+    # Server
+    "server": [
+        "frago server",
+        "frago server start",
+        "frago server --debug",
+    ],
+    "server/start": [
+        "frago server start",
+        "frago server start --debug",
+    ],
+    "server/stop": [
+        "frago server stop",
+        "frago server stop --force",
+    ],
+    "server/restart": [
+        "frago server restart",
+        "frago server restart --force",
+    ],
+    "server/status": [
+        "frago server status",
+    ],
+    # Recipe
+    "recipe": [
+        "frago recipe <command>",
+        "frago recipe list",
+        "frago recipe run <name> --params '{...}'",
+    ],
+    "recipe/list": [
+        "frago recipe list",
+        "frago recipe list --source user --format json",
+    ],
+    "recipe/info": [
+        "frago recipe info <name>",
+    ],
+    "recipe/run": [
+        "frago recipe run <name> --params '{\"key\": \"value\"}'",
+        "frago recipe run <name> --params '{...}' --async",
+    ],
+    "recipe/validate": [
+        "frago recipe validate <path>",
+        "frago recipe validate ./my-recipe.yaml --strict",
+    ],
+    "recipe/install": [
+        "frago recipe install <url>",
+    ],
+    "recipe/uninstall": [
+        "frago recipe uninstall <name>",
+    ],
+    "recipe/search": [
+        "frago recipe search <query>",
+    ],
+    "recipe/schedule": [
+        "frago recipe schedule <name> --every 1h",
+        "frago recipe schedule <name> --cron '0 9 * * *'",
+    ],
+    "recipe/executions": [
+        "frago recipe executions <name>",
+    ],
+    "recipe/execution": [
+        "frago recipe execution <execution_id>",
+    ],
+    "recipe/cancel": [
+        "frago recipe cancel <execution_id>",
+    ],
+    "recipe/update": [
+        "frago recipe update <name>",
+    ],
+    "recipe/share": [
+        "frago recipe share <name>",
+    ],
+    # Run
+    "run": [
+        "frago run <command>",
+        "frago run list",
+        "frago run init '<description>'",
+    ],
+    "run/init": [
+        "frago run init '<description>'",
+        "frago run init 'research web scraping'",
+    ],
+    "run/set-context": [
+        "frago run set-context <run_id>",
+    ],
+    "run/release": [
+        "frago run release",
+    ],
+    "run/list": [
+        "frago run list",
+        "frago run list --status active --format json",
+    ],
+    "run/info": [
+        "frago run info <run_id>",
+    ],
+    "run/log": [
+        "frago run log --step 'step description' --status success",
+    ],
+    "run/export": [
+        "frago run export <run_id> --format markdown --output report.md",
+    ],
+    "run/archive": [
+        "frago run archive <run_id>",
+    ],
+    "run/delete": [
+        "frago run delete <run_id> --force",
+    ],
+    "run/discover": [
+        "frago run discover",
+    ],
+    # Session
+    "session": [
+        "frago session <command>",
+        "frago session list",
+        "frago session show <id>",
+    ],
+    "session/list": [
+        "frago session list",
+        "frago session list --status running --limit 10",
+    ],
+    "session/show": [
+        "frago session show <session_id>",
+        "frago session show <id> --format timeline",
+    ],
+    "session/watch": [
+        "frago session watch <session_id> --follow",
+    ],
+    "session/clean": [
+        "frago session clean --before 7d --dry-run",
+    ],
+    "session/delete": [
+        "frago session delete <session_id> --force",
+    ],
+    "session/sync": [
+        "frago session sync",
+    ],
+    # Agent
+    "agent": [
+        "frago agent '<prompt>'",
+        "frago agent 'fix the login bug' --model sonnet",
+    ],
+    "agent-status": [
+        "frago agent-status",
+    ],
+    # Schedule
+    "schedule": [
+        "frago schedule <command>",
+        "frago schedule list",
+    ],
+    "schedule/add": [
+        "frago schedule add <recipe> --every 1h",
+        "frago schedule add --cron '0 9 * * *' --prompt 'daily check'",
+    ],
+    "schedule/list": [
+        "frago schedule list",
+    ],
+    "schedule/remove": [
+        "frago schedule remove <schedule_id>",
+    ],
+    "schedule/toggle": [
+        "frago schedule toggle <schedule_id>",
+    ],
+    "schedule/history": [
+        "frago schedule history <schedule_id>",
+    ],
+    "schedule/run": [
+        "frago schedule run <schedule_id>",
+    ],
+    # Client
+    "client": [
+        "frago client <command>",
+        "frago client start",
+    ],
+    "client/start": [
+        "frago client start",
+        "frago client start --no-download",
+    ],
+    "client/status": [
+        "frago client status",
+    ],
+    "client/update": [
+        "frago client update",
+    ],
+    "client/uninstall": [
+        "frago client uninstall",
+    ],
+    # Autostart
+    "autostart": [
+        "frago autostart <command>",
+    ],
+    "autostart/enable": [
+        "frago autostart enable",
+    ],
+    "autostart/disable": [
+        "frago autostart disable",
+    ],
+    "autostart/status": [
+        "frago autostart status",
+    ],
+    # Workspace
+    "workspace": [
+        "frago workspace <command>",
+    ],
+    "workspace/list": [
+        "frago workspace list",
+    ],
+    "workspace/set-scan-roots": [
+        "frago workspace set-scan-roots ~/repos ~/projects",
+    ],
+    "workspace/collect": [
+        "frago workspace collect",
+        "frago workspace collect --dry-run",
+    ],
+    "workspace/pending": [
+        "frago workspace pending",
+    ],
+    # Other top-level
+    "sync": [
+        "frago sync",
+        "frago sync --dry-run",
+        "frago sync --no-push",
+    ],
+    "update": [
+        "frago update",
+        "frago update --check",
+    ],
+    "view": [
+        "frago view <file>",
+        "frago view report.md --theme dark",
+    ],
+    "book": [
+        "frago book",
+        "frago book <topic>",
+        "frago book chrome-usage --brief",
+    ],
+    "reply": [
+        "frago reply --channel email --params '{...}'",
+    ],
+    "serve": [
+        "frago serve  # deprecated, use 'frago server'",
+    ],
+    # Cloud
+    "login": [
+        "frago login",
+    ],
+    "logout": [
+        "frago logout",
+    ],
+    "whoami": [
+        "frago whoami",
+        "frago whoami --refresh",
+    ],
+    "config": [
+        "frago config <command>",
+    ],
+    "config/get": [
+        "frago config get <key>",
+    ],
+    "config/set": [
+        "frago config set <key> <value>",
+    ],
+    "config/list": [
+        "frago config list",
+    ],
+    "market": [
+        "frago market <command>",
+    ],
+    "market/search": [
+        "frago market search <query>",
+    ],
+    "market/info": [
+        "frago market info <name>",
+    ],
+    "market/install": [
+        "frago market install <name>",
+    ],
+    "market/list": [
+        "frago market list",
+    ],
+    "market/uninstall": [
+        "frago market uninstall <name>",
+    ],
+    "install": [
+        "frago install <command>",
+    ],
+    "install/claude-code": [
+        "frago install claude-code",
+    ],
+    "install/check-update": [
+        "frago install check-update",
+    ],
+    # Def
+    "def": [
+        "frago def <command>",
+        "frago def list",
+    ],
+    "def/add": [
+        "frago def add <name> --purpose '...' --schema '{...}'",
+    ],
+    "def/list": [
+        "frago def list",
+    ],
+    "def/remove": [
+        "frago def remove <name>",
+    ],
+    # Skill
+    "skill": [
+        "frago skill <command>",
+    ],
+    "skill/list": [
+        "frago skill list",
     ],
 }
 
@@ -181,7 +511,6 @@ from ..cdp.config import CDPConfig
 from ..cdp.exceptions import CDPError
 from ..cdp.session import CDPSession
 from ..cdp.tab_group_manager import CHROME_ERRORS, ChromeCommandError
-
 
 # =============================================================================
 # Custom parameter types (with friendly error messages and usage examples)
@@ -550,9 +879,11 @@ def _take_perception_screenshot(session: CDPSession, description: str = "page") 
         Screenshot file path, None on failure
     """
     try:
-        from ..run.screenshot import get_next_screenshot_number
-        from slugify import slugify
         import base64
+
+        from slugify import slugify
+
+        from ..run.screenshot import get_next_screenshot_number
 
         screenshots_dir = _get_run_screenshots_dir()
         seq = get_next_screenshot_number(screenshots_dir)
@@ -728,7 +1059,7 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
         pass
 
 
-@click.command('navigate')
+@click.command('navigate', cls=AgentFriendlyCommand)
 @click.argument('url')
 @click.option(
     '--group', '-g',
@@ -815,7 +1146,7 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
         sys.exit(1)
 
 
-@click.command('click')
+@click.command('click', cls=AgentFriendlyCommand)
 @click.argument('selector')
 @click.option(
     '--wait-timeout',
@@ -856,7 +1187,7 @@ def click_element(ctx, selector: str, wait_timeout: int, precise: bool, group: O
         _print_msg("error", f"Click failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
-@click.command('screenshot')
+@click.command('screenshot', cls=AgentFriendlyCommand)
 @click.argument('output_file')
 @click.option(
     '--full-page',
@@ -885,8 +1216,9 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: Opti
         # Check for active run context
         actual_output_file = output_file
         try:
-            from ..run.screenshot import get_next_screenshot_number
             from slugify import slugify
+
+            from ..run.screenshot import get_next_screenshot_number
 
             screenshots_dir = _get_run_screenshots_dir()
             run_dir = _get_run_dir()
@@ -915,7 +1247,7 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: Opti
         _print_msg("error", f"Screenshot failed: {e}", "screenshot", {"file": output_file, "error": str(e)})
 
 
-@click.command('exec-js')
+@click.command('exec-js', cls=AgentFriendlyCommand)
 @click.argument('script')
 @click.option(
     '--return-value',
@@ -965,7 +1297,7 @@ def execute_javascript(ctx, script: str, return_value: bool, group: Optional[str
         _print_msg("error", f"JavaScript execution failed: {e}", "interaction", {"error": str(e)})
 
 
-@click.command('get-title')
+@click.command('get-title', cls=AgentFriendlyCommand)
 @group_option
 @click.pass_context
 @print_usage
@@ -1002,7 +1334,7 @@ def _get_next_output_number(outputs_dir: Path, ext: str = ".txt") -> int:
     return max_num + 1
 
 
-@click.command('get-content')
+@click.command('get-content', cls=AgentFriendlyCommand)
 @click.argument('selector', default='body')
 @click.option(
     '--desc',
@@ -1128,7 +1460,7 @@ def get_content(ctx, selector: str, desc: Optional[str], group: Optional[str] = 
         _print_msg("error", f"Failed to get content: {e}", "extraction", {"selector": selector, "error": str(e)})
 
 
-@click.command('status')
+@click.command('status', cls=AgentFriendlyCommand)
 @click.pass_context
 @print_usage
 def status(ctx):
@@ -1152,7 +1484,7 @@ def status(ctx):
         sys.exit(1)
 
 
-@click.command('scroll')
+@click.command('scroll', cls=AgentFriendlyCommand)
 @click.argument('distance', type=SCROLL_DISTANCE)
 @group_option
 @click.pass_context
@@ -1185,7 +1517,7 @@ def scroll(ctx, distance: int, group: Optional[str] = None):
         _print_msg("error", f"Scroll failed: {e}", "interaction", {"distance": distance, "error": str(e)})
 
 
-@click.command('scroll-to')
+@click.command('scroll-to', cls=AgentFriendlyCommand)
 @click.argument('selector', required=False)
 @click.option(
     '--text',
@@ -1282,7 +1614,7 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str, gro
         _print_msg("error", f"Failed to scroll to element: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
 
-@click.command('wait')
+@click.command('wait', cls=AgentFriendlyCommand)
 @click.argument('seconds', type=WAIT_SECONDS)
 @group_option
 @click.pass_context
@@ -1299,7 +1631,7 @@ def wait(ctx, seconds: float, group: Optional[str] = None):
         _print_msg("error", f"Wait failed: {e}")
 
 
-@click.command('zoom')
+@click.command('zoom', cls=AgentFriendlyCommand)
 @click.argument('factor', type=ZOOM_FACTOR)
 @group_option
 @click.pass_context
@@ -1329,7 +1661,7 @@ def zoom(ctx, factor: float, group: Optional[str] = None):
         _print_msg("error", f"Zoom failed: {e}", "interaction", {"zoom_factor": factor, "error": str(e)})
 
 
-@click.command('clear-effects')
+@click.command('clear-effects', cls=AgentFriendlyCommand)
 @group_option
 @click.pass_context
 @print_usage
@@ -1347,7 +1679,7 @@ def clear_effects(ctx, group: Optional[str] = None):
         _print_msg("error", f"Failed to clear effects: {e}", "interaction", {"error": str(e)})
 
 
-@click.command('highlight')
+@click.command('highlight', cls=AgentFriendlyCommand)
 @click.argument('selector')
 @click.option(
     '--color',
@@ -1390,7 +1722,7 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
         _print_msg("error", f"Highlight failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
-@click.command('pointer')
+@click.command('pointer', cls=AgentFriendlyCommand)
 @click.argument('selector')
 @click.option(
     '--life-time',
@@ -1421,7 +1753,7 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool, group: Optional[
         _print_msg("error", f"Failed to show pointer: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
-@click.command('spotlight')
+@click.command('spotlight', cls=AgentFriendlyCommand)
 @click.argument('selector')
 @click.option(
     '--life-time',
@@ -1452,7 +1784,7 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool, group: Optiona
         _print_msg("error", f"Spotlight failed: {e}", "interaction", {"selector": selector, "error": str(e)})
 
 
-@click.command('annotate')
+@click.command('annotate', cls=AgentFriendlyCommand)
 @click.argument('selector')
 @click.argument('text')
 @click.option(
@@ -1490,7 +1822,7 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
         _print_msg("error", f"Failed to add annotation: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
 
-@click.command('underline')
+@click.command('underline', cls=AgentFriendlyCommand)
 @click.argument('selector', required=False)
 @click.option(
     '--text',
@@ -1640,7 +1972,7 @@ def underline(ctx, selector: Optional[str], text: Optional[str], color: str, wid
         _print_msg("error", f"Underline failed: {e}", "interaction", {"selector": selector, "text": text, "error": str(e)})
 
 
-@click.command('init')
+@click.command('init', cls=AgentFriendlyCommand)
 @click.option(
     '--force',
     is_flag=True,
@@ -1707,7 +2039,7 @@ def init(force: bool):
 # ============================================================
 
 
-@click.command('chrome')
+@click.command('chrome', cls=AgentFriendlyCommand)
 @click.option(
     '--browser', '-b',
     type=click.Choice(['chrome', 'edge', 'chromium'], case_sensitive=False),
@@ -1809,8 +2141,9 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
       frago chrome --port 9333                  # Use different port
       frago chrome --keep-alive                 # Keep running after launch
     """
-    from ..cdp.commands.chrome import ChromeLauncher
     from pathlib import Path
+
+    from ..cdp.commands.chrome import ChromeLauncher
 
     # Mode exclusivity check
     mode_count = sum([headless, void, app_mode])
@@ -1906,7 +2239,7 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
         click.echo("[X] Failed to launch browser", err=True)
 
 
-@click.command('chrome-stop')
+@click.command('chrome-stop', cls=AgentFriendlyCommand)
 @click.option(
     '--port',
     type=int,
@@ -1935,13 +2268,14 @@ def chrome_stop(port: int):
 # Tab group commands
 # =============================================================================
 
-@click.command('groups')
+@click.command('groups', cls=AgentFriendlyCommand)
 @click.option('--json', 'as_json', is_flag=True, default=False, help='Output as JSON')
 @click.pass_context
 @print_usage
 def tab_groups(ctx, as_json: bool):
     """List all tab groups and their tab counts"""
     import json as _json
+
     from ..cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
@@ -1970,13 +2304,14 @@ def tab_groups(ctx, as_json: bool):
         click.echo(f"  {name}  ({len(g.tabs)} tabs)")
 
 
-@click.command('group-info')
+@click.command('group-info', cls=AgentFriendlyCommand)
 @click.argument('group_name')
 @click.pass_context
 @print_usage
 def tab_group_info(ctx, group_name: str):
     """Show details of a tab group"""
     from datetime import datetime
+
     from ..cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
@@ -2000,7 +2335,7 @@ def tab_group_info(ctx, group_name: str):
         click.echo(f"  [{tab.target_id[:8]}] {title}  ({tab.origin})")
 
 
-@click.command('group-close')
+@click.command('group-close', cls=AgentFriendlyCommand)
 @click.argument('group_name')
 @click.pass_context
 @print_usage
@@ -2020,7 +2355,7 @@ def tab_group_close(ctx, group_name: str):
             sys.exit(1)
 
 
-@click.command('group-cleanup')
+@click.command('group-cleanup', cls=AgentFriendlyCommand)
 @click.pass_context
 @print_usage
 def tab_group_cleanup(ctx):
@@ -2034,7 +2369,7 @@ def tab_group_cleanup(ctx):
     click.echo(f"Cleaned up {count} stale group(s)")
 
 
-@click.command('reset')
+@click.command('reset', cls=AgentFriendlyCommand)
 @click.pass_context
 @print_usage
 def chrome_reset(ctx):
@@ -2044,7 +2379,9 @@ def chrome_reset(ctx):
     Without: closes all groups and ungrouped non-landing tabs.
     """
     import os as _os
+
     import requests as _requests
+
     from ..cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
@@ -2090,7 +2427,7 @@ def chrome_reset(ctx):
             click.echo(f"Reset: closed {len(groups)} group(s) and {ungrouped_closed} ungrouped tab(s)")
 
 
-@click.command('list-tabs')
+@click.command('list-tabs', cls=AgentFriendlyCommand)
 @click.option('--tracked', is_flag=True, default=False, help='Show tab tracking info (origin, last activity)')
 @click.option('--json', 'as_json', is_flag=True, default=False, help='Output as JSON for programmatic use')
 @click.pass_context
@@ -2104,6 +2441,7 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
     Use --json for machine-readable output.
     """
     import json
+
     import requests
 
     config = ctx.obj or {}
@@ -2189,7 +2527,7 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
         click.echo(f"Failed to get tabs list: {e}", err=True)
 
 
-@click.command('switch-tab')
+@click.command('switch-tab', cls=AgentFriendlyCommand)
 @click.argument('tab_id')
 @click.pass_context
 @print_usage
@@ -2200,8 +2538,9 @@ def switch_tab(ctx, tab_id: str):
     TAB_ID can be the complete target ID or partial match (e.g., first 8 characters).
     Use list-tabs command to view available tab IDs.
     """
-    import requests
     import json
+
+    import requests
     import websocket
 
     config = ctx.obj or {}
@@ -2271,7 +2610,7 @@ def switch_tab(ctx, tab_id: str):
         click.echo(f"Failed to switch tab: {e}", err=True)
 
 
-@click.command('close-tab')
+@click.command('close-tab', cls=AgentFriendlyCommand)
 @click.argument('tab_id')
 @click.pass_context
 @print_usage

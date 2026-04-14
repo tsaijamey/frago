@@ -10,7 +10,7 @@ import logging
 
 import click
 
-from .agent_friendly import AgentFriendlyGroup
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def def_group(ctx):
     click.echo("  frago def remove <name>                     Unregister (keeps files)")
 
 
-@def_group.command(name="add")
+@def_group.command(name="add", cls=AgentFriendlyCommand)
 @click.argument("name")
 @click.option("--purpose", required=True, help="Domain purpose (used for convergence decisions)")
 @click.option("--schema", "schema_json", required=True, help="Schema JSON: {\"fields\": [...]}")
@@ -100,7 +100,7 @@ def def_add(name: str, purpose: str, schema_json: str):
     click.echo("  frago def list            See all domains")
 
 
-@def_group.command(name="list")
+@def_group.command(name="list", cls=AgentFriendlyCommand)
 def def_list():
     """List all registered domains."""
     from frago.def_.registry import list_domains
@@ -119,7 +119,7 @@ def def_list():
         )
 
 
-@def_group.command(name="remove")
+@def_group.command(name="remove", cls=AgentFriendlyCommand)
 @click.argument("name")
 def def_remove(name: str):
     """Unregister a domain (files are kept)."""
@@ -180,7 +180,7 @@ def build_command_group(domain_name: str, definition: dict) -> click.Group:
 
     # ── find ──
 
-    @domain_group.command(name="find")
+    @domain_group.command(name="find", cls=AgentFriendlyCommand)
     @click.option("--fields", default=None, help="Comma-separated field names to display")
     @click.option("--sort-by", default=None, help="Sort by field name")
     @click.option("--desc", is_flag=True, help="Descending sort order")
@@ -214,7 +214,7 @@ def build_command_group(domain_name: str, definition: dict) -> click.Group:
 
     # ── schema ──
 
-    @domain_group.command(name="schema")
+    @domain_group.command(name="schema", cls=AgentFriendlyCommand)
     def schema_cmd():
         """Show queryable fields for this domain."""
         from frago.def_.query_engine import get_schema_display
@@ -225,7 +225,7 @@ def build_command_group(domain_name: str, definition: dict) -> click.Group:
 
     # ── save ──
 
-    @domain_group.command(name="save")
+    @domain_group.command(name="save", cls=AgentFriendlyCommand)
     @click.option("--name", "doc_name", required=True, help="Document name (filename without .md)")
     @click.option("--data", "data_json", default=None, help="Frontmatter fields as JSON")
     @click.option("--content", "content_json", default=None, help="Content entries as JSON array")

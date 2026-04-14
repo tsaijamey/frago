@@ -23,6 +23,8 @@ import click
 
 from frago.compat import prepare_command_for_windows
 
+from .agent_friendly import AgentFriendlyCommand
+
 # =============================================================================
 # Configuration Loading
 # =============================================================================
@@ -191,7 +193,7 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
 # CLI Commands
 # =============================================================================
 
-@click.command("agent")
+@click.command("agent", cls=AgentFriendlyCommand)
 @click.argument("prompt", nargs=-1, required=False)
 @click.option(
     "--prompt-file",
@@ -583,7 +585,7 @@ def agent(
 # Auxiliary Command: Check Authentication Status
 # =============================================================================
 
-@click.command("agent-status")
+@click.command("agent-status", cls=AgentFriendlyCommand)
 def agent_status():
     """
     Check Claude CLI authentication status

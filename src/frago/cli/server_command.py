@@ -8,6 +8,8 @@ import os
 
 import click
 
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
+
 
 def _guard_sub_agent(action: str) -> None:
     """Block server stop/restart when called from a sub-agent.
@@ -45,7 +47,7 @@ def _guard_active_tasks(force: bool, action: str) -> None:
     click.echo("Active tasks cleaned up.")
 
 
-@click.group("server", invoke_without_command=True)
+@click.group("server", cls=AgentFriendlyGroup, invoke_without_command=True)
 @click.option(
     "--debug",
     is_flag=True,
@@ -75,7 +77,7 @@ def server_group(ctx: click.Context, debug: bool) -> None:
         ctx.invoke(start, debug=debug)
 
 
-@server_group.command("start")
+@server_group.command("start", cls=AgentFriendlyCommand)
 @click.option(
     "--debug",
     is_flag=True,
@@ -136,7 +138,7 @@ def _run_foreground() -> None:
     )
 
 
-@server_group.command("stop")
+@server_group.command("stop", cls=AgentFriendlyCommand)
 @click.option(
     "--force",
     is_flag=True,
@@ -155,7 +157,7 @@ def stop(force: bool) -> None:
         raise SystemExit(1)
 
 
-@server_group.command("restart")
+@server_group.command("restart", cls=AgentFriendlyCommand)
 @click.option(
     "--force",
     is_flag=True,
@@ -178,7 +180,7 @@ def restart(force: bool) -> None:
         raise SystemExit(1)
 
 
-@server_group.command("status")
+@server_group.command("status", cls=AgentFriendlyCommand)
 def status() -> None:
     """Check if the Frago web service is running."""
     from frago.server.daemon import get_server_status

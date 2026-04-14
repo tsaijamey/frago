@@ -8,10 +8,11 @@ so the Primary Agent can proactively reply to message sources.
 """
 
 import json
-import sys
 from pathlib import Path
 
 import click
+
+from .agent_friendly import AgentFriendlyCommand
 
 CONFIG_FILE = Path.home() / ".frago" / "config.json"
 
@@ -47,7 +48,7 @@ def _load_channel_notify_recipe(channel_name: str) -> str:
     return notify_recipe
 
 
-@click.command(name="reply")
+@click.command(name="reply", cls=AgentFriendlyCommand)
 @click.option(
     "--channel",
     required=True,

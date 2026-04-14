@@ -4,7 +4,7 @@ import sys
 
 import click
 
-from frago.cli.agent_friendly import AgentFriendlyGroup
+from frago.cli.agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from frago.init.config_manager import load_config, save_config
 
 
@@ -20,7 +20,7 @@ def workspace_group():
     pass
 
 
-@workspace_group.command("list")
+@workspace_group.command("list", cls=AgentFriendlyCommand)
 def workspace_list():
     """List discovered projects and workspace status"""
     config = load_config()
@@ -77,7 +77,7 @@ def workspace_list():
         click.echo(f"Workspace storage: {WORKSPACES_DIR} ({workspace_count} workspace(s))")
 
 
-@workspace_group.command("set-scan-roots")
+@workspace_group.command("set-scan-roots", cls=AgentFriendlyCommand)
 @click.argument("roots", nargs=-1, required=True)
 def workspace_set_scan_roots(roots: tuple[str, ...]):
     """Set directories to scan for projects
@@ -97,7 +97,7 @@ def workspace_set_scan_roots(roots: tuple[str, ...]):
     click.echo("Run 'frago sync' to collect and sync workspace resources.")
 
 
-@workspace_group.command("collect")
+@workspace_group.command("collect", cls=AgentFriendlyCommand)
 @click.option("--dry-run", is_flag=True, help="Preview what would be collected")
 def workspace_collect(dry_run: bool):
     """Collect workspace resources without syncing"""
@@ -133,7 +133,7 @@ def workspace_collect(dry_run: bool):
             click.echo(f"  {err}", err=True)
 
 
-@workspace_group.command("pending")
+@workspace_group.command("pending", cls=AgentFriendlyCommand)
 def workspace_pending():
     """View pending deployment actions from last sync
 

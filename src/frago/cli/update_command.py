@@ -10,6 +10,7 @@ import click
 
 from frago.init.checker import compare_versions
 
+from .agent_friendly import AgentFriendlyCommand
 
 PACKAGE_NAME = "frago-cli"  # PyPI package name
 TOOL_NAME = "frago"  # CLI command name / entry point
@@ -52,7 +53,7 @@ def get_latest_version() -> Optional[str]:
         return None
 
 
-@click.command(name="update")
+@click.command(name="update", cls=AgentFriendlyCommand)
 @click.option(
     "--check",
     "check_only",

@@ -127,11 +127,10 @@ class AgentFriendlyGroup(click.Group):
         examples = get_command_examples(info_name, group_prefix)
 
         if examples:
-            original_msg = error.format_message()
-            enhanced_msg = f"{original_msg}\n\nCorrect usage:"
+            suffix = "\n\nCorrect usage:"
             for ex in examples[:3]:
-                enhanced_msg += f"\n  {ex}"
-            error.message = enhanced_msg
+                suffix += f"\n  {ex}"
+            error.message = (error.message or "") + suffix
 
     def _enhance_bad_param_error(
         self,
@@ -186,88 +185,9 @@ class AgentFriendlyCommand(click.Command):
         examples = get_command_examples(info_name, group_prefix)
 
         if examples:
-            original_msg = error.format_message()
-            enhanced_msg = f"{original_msg}\n\nCorrect usage:"
+            suffix = "\n\nCorrect usage:"
             for ex in examples[:3]:
-                enhanced_msg += f"\n  {ex}"
-            error.message = enhanced_msg
+                suffix += f"\n  {ex}"
+            error.message = (error.message or "") + suffix
 
 
-def _get_available_options(ctx: Optional[Context]) -> List[str]:
-    """Get available options list from context"""
-    if not ctx or not ctx.command:
-        return []
-
-    options = []
-    for param in ctx.command.params:
-        if isinstance(param, click.Option):
-            # Get option name (prefer long option)
-            opt_names = param.opts
-            if opt_names:
-                # Prefer long options starting with --
-                long_opts = [o for o in opt_names if o.startswith("--")]
-                if long_opts:
-                    options.append(long_opts[0])
-                else:
-                    options.append(opt_names[0])
-
-    return sorted(options)
-
-
-def install_agent_friendly_errors():
-    """Install global Agent-friendly error handling
-
-    By monkey-patching Click's UsageError.show method,
-    automatically add usage examples after all error messages.
-    """
-    original_show = click.UsageError.show
-
-    def enhanced_show(self, file=None):
-        """Enhanced error display"""
-        # Call original show method first
-        original_show(self, file)
-
-        # Try to get command info from context and add examples
-        if not self.ctx:
-            return
-
-        cmd_name = self.ctx.info_name
-        if not cmd_name:
-            return
-
-        # Get parent context's command group name
-        group_prefix = ""
-        if self.ctx.parent and self.ctx.parent.info_name:
-            group_prefix = self.ctx.parent.info_name
-
-        # Get examples
-        examples = get_command_examples(cmd_name, group_prefix)
-        if not examples:
-            return
-
-        # Check error type and add corresponding examples
-        error_msg = self.format_message()
-        import sys
-        err_file = file or sys.stderr
-
-        # Handle missing parameter errors
-        if "Missing" in error_msg or "required" in error_msg.lower():
-            click.echo("\nCorrect usage:", file=err_file)
-            for ex in examples[:3]:
-                click.echo(f"  {ex}", file=err_file)
-        # Handle invalid option errors
-        elif "No such option" in error_msg or "no such option" in error_msg.lower():
-            # Show available options
-            available_options = _get_available_options(self.ctx)
-            if available_options:
-                click.echo(f"\nAvailable options: {', '.join(available_options)}", file=err_file)
-            # Show correct usage
-            click.echo("\nCorrect usage:", file=err_file)
-            for ex in examples[:3]:
-                click.echo(f"  {ex}", file=err_file)
-
-    click.UsageError.show = enhanced_show
-
-
-# Automatically install enhanced error handling
-install_agent_friendly_errors()

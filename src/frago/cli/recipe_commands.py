@@ -10,7 +10,7 @@ from frago.recipes.exceptions import MetadataParseError, RecipeError, RecipeVali
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
 from frago.tools.sync_repo import _ensure_git_user_config
 
-from .agent_friendly import AgentFriendlyGroup
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 
 @click.group(name='recipe', cls=AgentFriendlyGroup)
@@ -19,7 +19,7 @@ def recipe_group():
     pass
 
 
-@recipe_group.command(name='list')
+@recipe_group.command(name='list', cls=AgentFriendlyCommand)
 @click.option(
     '--source',
     type=click.Choice(['user', 'community', 'official', 'all'], case_sensitive=False),
@@ -106,7 +106,7 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
         click.echo(f"Error: {e}", err=True)
 
 
-@recipe_group.command(name='info')
+@recipe_group.command(name='info', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option(
     '--source',
@@ -228,7 +228,7 @@ def recipe_info(name: str, source: str | None, output_format: str):
         click.echo(f"Error: {e}", err=True)
 
 
-@recipe_group.command(name='run')
+@recipe_group.command(name='run', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option(
     '--source',
@@ -433,7 +433,7 @@ def _parse_datetime(value: str):  # -> datetime.datetime
     raise click.BadParameter(f"Cannot parse datetime: '{value}'. Use ISO 8601 or HH:MM format.")
 
 
-@recipe_group.command(name='schedule')
+@recipe_group.command(name='schedule', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option('--interval', required=True, help='Run interval (e.g., 30s, 10m, 2h, 1h30m)')
 @click.option('--params', type=str, default='{}', help='Recipe parameters (JSON)')
@@ -599,7 +599,7 @@ def schedule_recipe(
     )
 
 
-@recipe_group.command(name='executions')
+@recipe_group.command(name='executions', cls=AgentFriendlyCommand)
 @click.option(
     '--recipe',
     'recipe_name',
@@ -661,7 +661,7 @@ def list_executions(recipe_name: str | None, limit: int, status: str | None, wor
             click.echo(f"{e.id:<20} {e.recipe_name:<25} {e.status.value:<12} {duration:<10} {created}")
 
 
-@recipe_group.command(name='execution')
+@recipe_group.command(name='execution', cls=AgentFriendlyCommand)
 @click.argument('execution_id')
 @click.option(
     '--format',
@@ -718,7 +718,7 @@ def show_execution(execution_id: str, output_format: str):
             click.echo(json.dumps(execution.error, ensure_ascii=False, indent=2))
 
 
-@recipe_group.command(name='cancel')
+@recipe_group.command(name='cancel', cls=AgentFriendlyCommand)
 @click.argument('execution_id')
 def cancel_execution(execution_id: str):
     """Cancel a running execution"""
@@ -734,7 +734,7 @@ def cancel_execution(execution_id: str):
         sys.exit(1)
 
 
-@recipe_group.command('validate')
+@recipe_group.command('validate', cls=AgentFriendlyCommand)
 @click.argument('path', type=click.Path(exists=True))
 @click.option(
     '--format',
@@ -891,7 +891,7 @@ def validate_recipe(path: str, output_format: str):
                     click.echo(f"  - {w}")
 
 
-@recipe_group.command(name='install')
+@recipe_group.command(name='install', cls=AgentFriendlyCommand)
 @click.argument('source')
 @click.option(
     '--force', '-f',
@@ -973,7 +973,7 @@ def install_recipe(source: str, force: bool, name_override: str | None, output_f
         sys.exit(1)
 
 
-@recipe_group.command(name='uninstall')
+@recipe_group.command(name='uninstall', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option(
     '--yes', '-y',
@@ -1030,7 +1030,7 @@ def uninstall_recipe(name: str, yes: bool, output_format: str):
         sys.exit(1)
 
 
-@recipe_group.command(name='update')
+@recipe_group.command(name='update', cls=AgentFriendlyCommand)
 @click.argument('name', required=False)
 @click.option(
     '--all', 'update_all',
@@ -1108,7 +1108,7 @@ def update_recipe(name: str | None, update_all: bool, output_format: str):
             sys.exit(1)
 
 
-@recipe_group.command(name='search')
+@recipe_group.command(name='search', cls=AgentFriendlyCommand)
 @click.argument('query', required=False)
 @click.option(
     '--format',
@@ -1158,7 +1158,7 @@ def search_recipes(query: str | None, output_format: str):
         click.echo("Install with: frago recipe install community:<name>")
 
 
-@recipe_group.command(name='share')
+@recipe_group.command(name='share', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option(
     '--yes', '-y',

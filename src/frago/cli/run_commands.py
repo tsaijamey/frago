@@ -16,15 +16,19 @@ from ..run.discovery import RunDiscovery
 from ..run.exceptions import (
     ContextAlreadySetError,
     ContextNotSetError,
-    FileSystemError,
     RunException,
-    RunNotFoundError,
 )
 from ..run.logger import RunLogger
 from ..run.manager import RunManager
-from ..run.models import ActionType, ExecutionMethod, InsightEntry, InsightType, LogStatus, RunStatus
-from .agent_friendly import AgentFriendlyGroup
-
+from ..run.models import (
+    ActionType,
+    ExecutionMethod,
+    InsightEntry,
+    InsightType,
+    LogStatus,
+    RunStatus,
+)
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 # Use user directory consistently
 FRAGO_HOME = Path.home() / ".frago"
@@ -115,7 +119,7 @@ def run_group():
     pass
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.argument("description")
 @click.option(
     "--run-id",
@@ -142,7 +146,7 @@ def init(description: str, run_id: Optional[str]):
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.argument("run_id")
 def set_context(run_id: str):
     """Set the current working run
@@ -172,7 +176,7 @@ def set_context(run_id: str):
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 def release():
     """Release the current run context (mutual exclusion lock)
 
@@ -198,7 +202,7 @@ def release():
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.option(
     "--format",
     type=click.Choice(["table", "json"]),
@@ -257,7 +261,7 @@ def list(format: str, status: str):
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.argument("run_id")
 @click.option(
     "--format",
@@ -339,7 +343,7 @@ def info(run_id: str, format: str):
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.argument("run_id")
 def archive(run_id: str):
     """Archive a run instance
@@ -367,7 +371,7 @@ def archive(run_id: str):
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.option("--step", required=True, help="Step description")
 @click.option(
     "--status",
@@ -497,7 +501,7 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
         handle_error(e, exit_code=3)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.argument("description")
 def screenshot(description: str):
     """Save screenshot (auto-numbered)
@@ -544,7 +548,7 @@ def screenshot(description: str):
         handle_error(e, exit_code=2)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.argument("keyword")
 @click.option("--limit", default=10, help="Maximum number of results")
 @click.option(
@@ -599,7 +603,7 @@ def find(keyword: str, limit: int, fmt: str):
         handle_error(e)
 
 
-@run_group.command()
+@run_group.command(cls=AgentFriendlyCommand)
 @click.option("--run-id", default=None, help="Show full experience card for a specific run")
 @click.option(
     "--type",

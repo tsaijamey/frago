@@ -13,6 +13,8 @@ from typing import Dict, Optional
 
 import click
 
+from .agent_friendly import AgentFriendlyCommand
+
 # ASCII Art Banner - using block characters for fill effect
 FRAGO_BANNER = """\
 ███████╗██████╗  █████╗  ██████╗  ██████╗
@@ -77,12 +79,6 @@ def print_banner() -> None:
 
 from frago.init.checker import (
     parallel_dependency_check,
-    get_missing_dependencies,
-    format_check_results,
-)
-from frago.init.installer import (
-    get_installation_order,
-    install_dependency,
 )
 from frago.init.config_manager import load_config, save_config
 from frago.init.configurator import (
@@ -93,22 +89,24 @@ from frago.init.configurator import (
     run_auth_configuration,
     warn_auth_switch,
 )
-from frago.init.models import Config, DependencyCheckResult
 from frago.init.exceptions import CommandError, InitErrorCode
+from frago.init.installer import (
+    get_installation_order,
+    install_dependency,
+)
+from frago.init.models import Config, DependencyCheckResult
 from frago.init.resources import (
     install_all_resources,
-    format_install_summary,
-    format_resources_status,
 )
 from frago.init.ui import (
-    spinner_context,
+    ProgressReporter,
     print_section,
     print_summary,
-    ProgressReporter,
+    spinner_context,
 )
 
 
-@click.command("init")
+@click.command("init", cls=AgentFriendlyCommand)
 @click.option(
     "--skip-deps",
     is_flag=True,
@@ -195,6 +193,7 @@ def init(
         config.init_completed = True
         if resources_success:
             from datetime import datetime
+
             from frago import __version__
             config.resources_installed = True
             config.resources_version = __version__

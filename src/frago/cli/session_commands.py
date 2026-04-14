@@ -17,16 +17,12 @@ from typing import Optional
 import click
 
 from frago.session.formatter import (
-    TerminalFormatter,
     format_duration,
-    format_timestamp,
     get_step_icon,
     get_step_label,
-    Icons,
 )
-from frago.session.models import AgentType, SessionStatus, StepType
+from frago.session.models import AgentType, SessionStatus
 from frago.session.storage import (
-    clean_old_sessions,
     delete_session,
     get_session_data,
     list_sessions,
@@ -34,7 +30,8 @@ from frago.session.storage import (
     read_steps,
     read_summary,
 )
-from .agent_friendly import AgentFriendlyGroup
+
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 
 @click.group("session", cls=AgentFriendlyGroup)
@@ -47,7 +44,7 @@ def session_group():
     pass
 
 
-@session_group.command("list")
+@session_group.command("list", cls=AgentFriendlyCommand)
 @click.option(
     "--agent-type", "-a",
     type=click.Choice(["claude", "cursor", "cline", "all"]),
@@ -139,7 +136,7 @@ def _get_status_display(status: SessionStatus) -> str:
     return status_map.get(status, status.value)
 
 
-@session_group.command("show")
+@session_group.command("show", cls=AgentFriendlyCommand)
 @click.argument("session_id")
 @click.option(
     "--steps", "-s",
@@ -259,7 +256,7 @@ def _find_session_by_prefix(prefix: str, agent_type: AgentType):
     return None
 
 
-@session_group.command("watch")
+@session_group.command("watch", cls=AgentFriendlyCommand)
 @click.argument("session_id", required=False)
 @click.option(
     "--json", "json_output",
@@ -306,7 +303,7 @@ def watch_cmd(
         watch_latest_session(agent, json_output)
 
 
-@session_group.command("clean")
+@session_group.command("clean", cls=AgentFriendlyCommand)
 @click.option(
     "--days", "-d",
     type=int,
@@ -385,7 +382,7 @@ def clean_cmd(
     click.echo(f"[OK] Cleaned {cleaned} sessions")
 
 
-@session_group.command("delete")
+@session_group.command("delete", cls=AgentFriendlyCommand)
 @click.argument("session_id")
 @click.option(
     "--agent-type", "-a",
@@ -434,7 +431,7 @@ def delete_cmd(
         sys.exit(1)
 
 
-@session_group.command("sync")
+@session_group.command("sync", cls=AgentFriendlyCommand)
 @click.option(
     "--all", "sync_all",
     is_flag=True,

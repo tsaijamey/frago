@@ -6,8 +6,10 @@ from typing import Optional
 
 import click
 
+from .agent_friendly import AgentFriendlyCommand
 
-@click.command("view", short_help="Content viewer: Markdown / PDF / Code highlighting")
+
+@click.command("view", cls=AgentFriendlyCommand, short_help="Content viewer: Markdown / PDF / Code highlighting")
 @click.argument("file", type=click.Path(exists=True), required=False)
 @click.option(
     "--theme", "-t",

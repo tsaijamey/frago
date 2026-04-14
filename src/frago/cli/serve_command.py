@@ -6,10 +6,12 @@ allowing access through any modern browser.
 
 import click
 
-from frago.server.utils import SERVER_PORT, SERVER_HOST
+from frago.server.utils import SERVER_HOST, SERVER_PORT
+
+from .agent_friendly import AgentFriendlyCommand
 
 
-@click.command("serve")
+@click.command("serve", cls=AgentFriendlyCommand)
 @click.option(
     "--port",
     "-p",

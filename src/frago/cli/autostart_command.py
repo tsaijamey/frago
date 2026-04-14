@@ -3,9 +3,10 @@
 import click
 
 from frago.autostart import get_autostart_manager
+from frago.cli.agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 
-@click.group("autostart")
+@click.group("autostart", cls=AgentFriendlyGroup)
 def autostart_group():
     """Manage frago server autostart on system boot.
 
@@ -20,7 +21,7 @@ def autostart_group():
     pass
 
 
-@autostart_group.command("enable")
+@autostart_group.command("enable", cls=AgentFriendlyCommand)
 def enable():
     """Enable frago server autostart on system boot."""
     try:
@@ -38,7 +39,7 @@ def enable():
         raise SystemExit(1)
 
 
-@autostart_group.command("disable")
+@autostart_group.command("disable", cls=AgentFriendlyCommand)
 def disable():
     """Disable frago server autostart on system boot."""
     try:
@@ -56,7 +57,7 @@ def disable():
         raise SystemExit(1)
 
 
-@autostart_group.command("status")
+@autostart_group.command("status", cls=AgentFriendlyCommand)
 def status():
     """Show current autostart configuration status."""
     try:

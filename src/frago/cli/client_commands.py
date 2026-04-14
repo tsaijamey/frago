@@ -10,9 +10,10 @@ Commands:
 import click
 
 from frago import client_manager
+from frago.cli.agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 
-@click.group(name="client")
+@click.group(name="client", cls=AgentFriendlyGroup)
 def client_group():
     """Manage the frago desktop client.
 
@@ -29,7 +30,7 @@ def client_group():
     pass
 
 
-@client_group.command(name="status")
+@client_group.command(name="status", cls=AgentFriendlyCommand)
 def client_status():
     """Show the desktop client installation status."""
     status = client_manager.get_status()
@@ -61,7 +62,7 @@ def client_status():
     click.echo(f"Install dir: {status['install_dir']}")
 
 
-@client_group.command(name="start")
+@client_group.command(name="start", cls=AgentFriendlyCommand)
 @click.option(
     "--no-download",
     is_flag=True,
@@ -99,7 +100,7 @@ def client_start(no_download: bool):
         raise SystemExit(1)
 
 
-@client_group.command(name="update")
+@client_group.command(name="update", cls=AgentFriendlyCommand)
 @click.option(
     "--version",
     type=str,
@@ -134,7 +135,7 @@ def client_update(version: str, force: bool):
         raise SystemExit(1)
 
 
-@client_group.command(name="uninstall")
+@client_group.command(name="uninstall", cls=AgentFriendlyCommand)
 @click.confirmation_option(
     prompt="Are you sure you want to uninstall the frago client?"
 )

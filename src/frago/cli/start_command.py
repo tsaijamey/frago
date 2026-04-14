@@ -12,6 +12,8 @@ import webbrowser
 
 import click
 
+from .agent_friendly import AgentFriendlyCommand
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,7 +170,7 @@ def launch_chrome_app_mode(url: str) -> bool:
         return open_browser(url)
 
 
-@click.command("start")
+@click.command("start", cls=AgentFriendlyCommand)
 @click.option(
     "--no-browser",
     is_flag=True,

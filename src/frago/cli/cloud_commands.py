@@ -10,24 +10,31 @@ frago Cloud CLI 命令
 
 import click
 
+from frago.cli.agent_friendly import AgentFriendlyGroup
+from frago.cloud import market
+from frago.cloud.auth import (
+    AuthError,
+    is_logged_in,
+    print_user_info,
+    whoami,
+)
 from frago.cloud.auth import (
     login as cloud_login,
+)
+from frago.cloud.auth import (
     logout as cloud_logout,
-    whoami,
-    print_user_info,
-    is_logged_in,
-    AuthError,
 )
 from frago.cloud.config import (
     config_get,
-    config_set,
     config_list,
+    config_set,
 )
-from frago.cloud import market
 from frago.cloud.market import MarketError
 
+from .agent_friendly import AgentFriendlyCommand
 
-@click.command('login')
+
+@click.command('login', cls=AgentFriendlyCommand)
 @click.option('--no-browser', is_flag=True, help='不自动打开浏览器')
 @click.option('--timeout', type=int, default=600, help='登录超时时间（秒）')
 def login_cmd(no_browser: bool, timeout: int):
@@ -56,7 +63,7 @@ def login_cmd(no_browser: bool, timeout: int):
         raise SystemExit(1)
 
 
-@click.command('logout')
+@click.command('logout', cls=AgentFriendlyCommand)
 def logout_cmd():
     """
     退出登录
@@ -70,7 +77,7 @@ def logout_cmd():
     cloud_logout()
 
 
-@click.command('whoami')
+@click.command('whoami', cls=AgentFriendlyCommand)
 @click.option('--refresh', '-r', is_flag=True, help='强制从服务器获取最新信息')
 def whoami_cmd(refresh: bool):
     """
@@ -87,7 +94,7 @@ def whoami_cmd(refresh: bool):
     print_user_info(user_info)
 
 
-@click.group('config')
+@click.group('config', cls=AgentFriendlyGroup)
 def config_group():
     """
     配置管理
@@ -97,7 +104,7 @@ def config_group():
     pass
 
 
-@config_group.command('get')
+@config_group.command('get', cls=AgentFriendlyCommand)
 @click.argument('key')
 def config_get_cmd(key: str):
     """
@@ -112,7 +119,7 @@ def config_get_cmd(key: str):
         click.echo(f'{key}: {value}')
 
 
-@config_group.command('set')
+@config_group.command('set', cls=AgentFriendlyCommand)
 @click.argument('key')
 @click.argument('value')
 def config_set_cmd(key: str, value: str):
@@ -126,7 +133,7 @@ def config_set_cmd(key: str, value: str):
     click.echo(f'已设置 {key} = {value}')
 
 
-@config_group.command('list')
+@config_group.command('list', cls=AgentFriendlyCommand)
 def config_list_cmd():
     """
     列出所有配置项
@@ -153,7 +160,7 @@ def config_list_cmd():
 
 # ==================== Market 命令组 ====================
 
-@click.group('market')
+@click.group('market', cls=AgentFriendlyGroup)
 def market_group():
     """
     Recipe 市场
@@ -163,7 +170,7 @@ def market_group():
     pass
 
 
-@market_group.command('search')
+@market_group.command('search', cls=AgentFriendlyCommand)
 @click.argument('keyword', required=False)
 @click.option('--author', '-a', help='按作者筛选')
 @click.option('--runtime', '-r', type=click.Choice(['chrome-js', 'python', 'shell']), help='按运行时类型筛选')
@@ -216,7 +223,7 @@ def market_search(keyword, author, runtime, min_rating, premium, page, page_size
         raise SystemExit(1)
 
 
-@market_group.command('info')
+@market_group.command('info', cls=AgentFriendlyCommand)
 @click.argument('recipe_id', type=int)
 def market_info(recipe_id):
     """
@@ -237,7 +244,7 @@ def market_info(recipe_id):
         raise SystemExit(1)
 
 
-@market_group.command('install')
+@market_group.command('install', cls=AgentFriendlyCommand)
 @click.argument('recipe_id', type=int)
 @click.option('--version', '-v', help='指定版本（默认最新）')
 @click.option('--force', '-f', is_flag=True, help='覆盖已存在的 Recipe')
@@ -269,7 +276,7 @@ def market_install(recipe_id, version, force):
         raise SystemExit(1)
 
 
-@market_group.command('list')
+@market_group.command('list', cls=AgentFriendlyCommand)
 def market_list_installed():
     """
     列出已安装的 Recipe
@@ -280,7 +287,7 @@ def market_list_installed():
     market.print_installed_list(recipes)
 
 
-@market_group.command('uninstall')
+@market_group.command('uninstall', cls=AgentFriendlyCommand)
 @click.argument('name')
 def market_uninstall(name):
     """
@@ -302,7 +309,7 @@ def market_uninstall(name):
 
 # ==================== Install 命令组 ====================
 
-@click.group('install')
+@click.group('install', cls=AgentFriendlyGroup)
 def install_group():
     """
     安装工具
@@ -312,7 +319,7 @@ def install_group():
     pass
 
 
-@install_group.command('claude-code')
+@install_group.command('claude-code', cls=AgentFriendlyCommand)
 @click.option('--version', '-v', help='指定版本（默认最新）')
 @click.option('--force', '-f', is_flag=True, help='强制重新安装')
 @click.option('--mirror-only', is_flag=True, help='仅使用镜像源')
@@ -332,12 +339,13 @@ def install_claude_code(version, force, mirror_only, install_dir):
       frago install claude-code -f              # 强制重新安装
     """
     from pathlib import Path
+
     from frago.cloud.installer import (
         ClaudeCodeInstaller,
-        InstallerError,
         DownloadError,
-        VerificationError,
+        InstallerError,
         InstallError,
+        VerificationError,
     )
 
     try:
@@ -373,7 +381,7 @@ def install_claude_code(version, force, mirror_only, install_dir):
         raise SystemExit(1)
 
 
-@install_group.command('check-update')
+@install_group.command('check-update', cls=AgentFriendlyCommand)
 @click.option('--tool', type=click.Choice(['claude-code']), default='claude-code', help='要检查的工具')
 def install_check_update(tool):
     """

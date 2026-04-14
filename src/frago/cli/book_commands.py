@@ -6,6 +6,8 @@ from importlib.resources import files as pkg_files
 import click
 import yaml
 
+from .agent_friendly import AgentFriendlyCommand
+
 logger = logging.getLogger(__name__)
 
 BOOK_DIR = pkg_files("frago.resources") / "book"
@@ -46,7 +48,7 @@ def _load_scenes() -> list[dict]:
     return raw if raw else []
 
 
-@click.command("book")
+@click.command("book", cls=AgentFriendlyCommand)
 @click.argument("topic", required=False)
 @click.option("--brief", is_flag=True, help="One-line summary for each topic")
 def book_command(topic: str | None, brief: bool):

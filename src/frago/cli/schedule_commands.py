@@ -4,19 +4,20 @@ import json
 
 import click
 
+from frago.cli.agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from frago.server.services.scheduler_service import (
     SchedulerService,
     _parse_interval,
 )
 
 
-@click.group(name="schedule")
+@click.group(name="schedule", cls=AgentFriendlyGroup)
 def schedule_group():
     """Manage scheduled tasks."""
     pass
 
 
-@schedule_group.command(name="add")
+@schedule_group.command(name="add", cls=AgentFriendlyCommand)
 @click.argument("recipe_name", required=False, default=None)
 @click.option(
     "--every",
@@ -140,7 +141,7 @@ def schedule_add(
     click.echo("\nSchedule will be active when the frago server is running.")
 
 
-@schedule_group.command(name="list")
+@schedule_group.command(name="list", cls=AgentFriendlyCommand)
 def schedule_list():
     """List all scheduled tasks."""
     service = SchedulerService.get_instance()
@@ -190,7 +191,7 @@ def schedule_list():
         )
 
 
-@schedule_group.command(name="remove")
+@schedule_group.command(name="remove", cls=AgentFriendlyCommand)
 @click.argument("schedule_id")
 def schedule_remove(schedule_id: str):
     """Remove a schedule by ID."""
@@ -202,7 +203,7 @@ def schedule_remove(schedule_id: str):
         raise SystemExit(1)
 
 
-@schedule_group.command(name="toggle")
+@schedule_group.command(name="toggle", cls=AgentFriendlyCommand)
 @click.argument("schedule_id")
 def schedule_toggle(schedule_id: str):
     """Enable or disable a schedule."""
@@ -215,7 +216,7 @@ def schedule_toggle(schedule_id: str):
     click.echo(f"Schedule {schedule_id} is now {state}.")
 
 
-@schedule_group.command(name="history")
+@schedule_group.command(name="history", cls=AgentFriendlyCommand)
 @click.argument("schedule_id")
 def schedule_history(schedule_id: str):
     """Show execution history for a schedule."""
@@ -250,7 +251,7 @@ def schedule_history(schedule_id: str):
         click.echo(f"{i:<4} {triggered:<22} {status:<14} {task_id}")
 
 
-@schedule_group.command(name="run")
+@schedule_group.command(name="run", cls=AgentFriendlyCommand)
 @click.argument("schedule_id")
 def schedule_run(schedule_id: str):
     """Manually trigger a schedule once (does not affect regular schedule cycle)."""
