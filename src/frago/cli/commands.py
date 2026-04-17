@@ -191,6 +191,8 @@ COMMAND_EXAMPLES = {
         "frago recipe <command>",
         "frago recipe list",
         "frago recipe run <name> --params '{...}'",
+        "frago recipe plan <name> --prompt '...'",
+        "frago recipe create <name>",
     ],
     "recipe/list": [
         "frago recipe list",
@@ -207,11 +209,22 @@ COMMAND_EXAMPLES = {
         "frago recipe validate <path>",
         "frago recipe validate ./my-recipe.yaml --strict",
     ],
+    "recipe/plan": [
+        "frago recipe plan <name> --prompt '<requirement>'",
+        "frago recipe plan <name> --prompt-file requirements.txt",
+        "frago recipe plan <name> --prompt '...' --type atomic --runtime python",
+    ],
+    "recipe/create": [
+        "frago recipe create <name>",
+        "frago recipe create <name> --prompt '<requirement>'",
+        "frago recipe create <name> --spec /path/to/spec.md",
+    ],
     "recipe/install": [
         "frago recipe install <url>",
     ],
     "recipe/uninstall": [
         "frago recipe uninstall <name>",
+        "frago recipe uninstall <name> --source user",
     ],
     "recipe/search": [
         "frago recipe search <query>",

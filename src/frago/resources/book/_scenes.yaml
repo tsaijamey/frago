@@ -67,7 +67,10 @@
     - "自动化流程"
     - "重复操作"
   topics:
+    - recipe-spec-writing
+    - recipe-creation
     - recipe-fields
+    - recipe-authoring
     - recipe-execution
     - selector-priority
     - interactive-recipe

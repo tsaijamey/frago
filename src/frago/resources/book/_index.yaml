@@ -60,6 +60,14 @@
   category: available
   brief: "自动/手动日志分工、_insights 强制记录、研究完成标准"
 
+- name: recipe-spec-writing
+  category: available
+  brief: "Recipe spec 撰写规范：从需求到 spec.md 的结构化定义"
+
+- name: recipe-creation
+  category: available
+  brief: "Recipe 创建规范：从 spec.md 到 recipe.md + 脚本的完整流程"
+
 - name: def-knowledge
   category: available
   brief: "frago def 结构化知识系统：domain 注册、find 查询、save 沉淀"

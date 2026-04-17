@@ -1,6 +1,9 @@
 """Recipe management commands"""
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import click
@@ -17,6 +20,285 @@ from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 def recipe_group():
     """Recipe management command group"""
     pass
+
+
+def _resolve_recipe_dir(name: str, type_: str | None, runtime: str | None) -> Path:
+    """Resolve recipe directory path based on type and runtime."""
+    base = Path.home() / '.frago' / 'recipes'
+    if type_ == 'workflow':
+        return base / 'workflows' / name
+    if runtime == 'chrome-js':
+        return base / 'atomic' / 'chrome' / name
+    return base / 'atomic' / 'system' / name
+
+
+def _find_recipe_dir_by_name(name: str) -> Path | None:
+    """Find existing recipe directory by name from registry or filesystem."""
+    base = Path.home() / '.frago' / 'recipes'
+    # Check known locations
+    for subdir in ['atomic/system', 'atomic/chrome', 'workflows']:
+        candidate = base / subdir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _run_frago_agent(prompt_text: str) -> int:
+    """Run frago agent as subprocess with the given prompt.
+
+    Returns the process exit code.
+    """
+    # Write prompt to temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+        f.write(prompt_text)
+        prompt_file = f.name
+
+    try:
+        # Find the frago executable (same as current process)
+        frago_bin = shutil.which("frago")
+        if frago_bin:
+            cmd = [frago_bin, "agent", "--yes", "--quiet", "--prompt-file", prompt_file]
+        else:
+            cmd = [sys.executable, "-m", "frago", "agent", "--yes", "--quiet", "--prompt-file", prompt_file]
+
+        result = subprocess.run(cmd, timeout=600)
+        return result.returncode
+    except subprocess.TimeoutExpired:
+        click.echo("Error: Agent execution timed out (600s)", err=True)
+        return 1
+    finally:
+        Path(prompt_file).unlink(missing_ok=True)
+
+
+@recipe_group.command(name='plan', cls=AgentFriendlyCommand)
+@click.argument('name')
+@click.option(
+    '--prompt', '-p',
+    type=str,
+    default=None,
+    help='Requirement description'
+)
+@click.option(
+    '--prompt-file',
+    type=click.Path(exists=True),
+    default=None,
+    help='Read requirement from file'
+)
+@click.option(
+    '--type', 'type_',
+    type=click.Choice(['atomic', 'workflow'], case_sensitive=False),
+    default=None,
+    help='Preset type (atomic/workflow)'
+)
+@click.option(
+    '--runtime',
+    type=click.Choice(['python', 'chrome-js', 'shell'], case_sensitive=False),
+    default=None,
+    help='Preset runtime'
+)
+@click.option(
+    '--force', '-f',
+    is_flag=True,
+    help='Overwrite existing spec.md'
+)
+def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: str | None, runtime: str | None, force: bool):
+    """
+    Generate a recipe spec via agent
+
+    Creates a spec.md file defining requirements for a recipe.
+    The agent will consult frago book recipe-spec-writing for guidelines.
+
+    \b
+    Examples:
+      frago recipe plan my_scraper --prompt "从指定网站提取文章标题和链接"
+      frago recipe plan my_tool --prompt-file requirements.txt
+      frago recipe plan my_tool --prompt "..." --type atomic --runtime python
+    """
+    # Read prompt
+    if prompt_file:
+        prompt_text = Path(prompt_file).read_text(encoding='utf-8').strip()
+    elif prompt:
+        prompt_text = prompt
+    else:
+        click.echo("Error: --prompt or --prompt-file is required", err=True)
+        click.echo("[Fix] frago recipe plan <name> --prompt \"<requirement>\"", err=True)
+        sys.exit(1)
+
+    # Resolve directory
+    recipe_dir = _resolve_recipe_dir(name, type_, runtime)
+    spec_path = recipe_dir / "spec.md"
+
+    # Check conflict
+    if spec_path.exists() and not force:
+        click.echo(f"Error: spec.md already exists at {spec_path}", err=True)
+        click.echo("[Fix] Use --force to overwrite, or review the existing spec", err=True)
+        sys.exit(1)
+
+    # Create directory
+    recipe_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build agent prompt
+    type_hint = f"\n预设 type: {type_}" if type_ else ""
+    runtime_hint = f"\n预设 runtime: {runtime}" if runtime else ""
+
+    agent_prompt = f"""你是 frago recipe spec 撰写专家。
+
+任务：为 recipe '{name}' 撰写需求 spec。
+
+先运行以下命令获取规范：
+  uv run frago book recipe-spec-writing
+
+用户需求：
+{prompt_text}
+{type_hint}{runtime_hint}
+
+将 spec 写入：{spec_path}
+"""
+
+    click.echo(f"[Plan] Generating spec for recipe '{name}'...")
+    click.echo(f"  Directory: {recipe_dir}")
+
+    exit_code = _run_frago_agent(agent_prompt)
+
+    if exit_code != 0:
+        click.echo("Error: Agent failed to generate spec", err=True)
+        sys.exit(1)
+
+    if spec_path.exists():
+        click.echo(f"[OK] Spec written: {spec_path}")
+        click.echo("Review and edit the spec, then run:")
+        click.echo(f"  frago recipe create {name}")
+    else:
+        click.echo("Error: Agent did not produce spec.md", err=True)
+        sys.exit(1)
+
+
+@recipe_group.command(name='create', cls=AgentFriendlyCommand)
+@click.argument('name')
+@click.option(
+    '--prompt', '-p',
+    type=str,
+    default=None,
+    help='Requirement description (one-step creation, skip spec)'
+)
+@click.option(
+    '--prompt-file',
+    type=click.Path(exists=True),
+    default=None,
+    help='Read requirement from file'
+)
+@click.option(
+    '--spec',
+    'spec_path',
+    type=click.Path(exists=True),
+    default=None,
+    help='Path to spec file (default: recipe_dir/spec.md)'
+)
+@click.option(
+    '--force', '-f',
+    is_flag=True,
+    help='Overwrite existing recipe.md and script'
+)
+def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_path: str | None, force: bool):
+    """
+    Create a recipe via agent from spec or prompt
+
+    Two modes:
+    1. From spec: reads spec.md and generates recipe code
+    2. One-step: --prompt creates spec + code in one pass
+
+    \b
+    Examples:
+      frago recipe create my_scraper
+      frago recipe create my_tool --prompt "打印 hello world"
+      frago recipe create my_tool --spec /path/to/spec.md
+    """
+    from frago.recipes.registry import get_registry, invalidate_registry
+
+    # Determine spec source
+    if prompt or prompt_file:
+        # One-step mode
+        user_prompt = prompt if prompt else Path(prompt_file).read_text(encoding='utf-8').strip()
+        spec_content = None
+        recipe_dir = _find_recipe_dir_by_name(name) or _resolve_recipe_dir(name, None, None)
+    else:
+        # Two-step mode: read from spec.md
+        user_prompt = None
+        recipe_dir = _find_recipe_dir_by_name(name)
+
+        resolved_spec = Path(spec_path) if spec_path else (recipe_dir / "spec.md" if recipe_dir else None)
+        if not resolved_spec or not resolved_spec.exists():
+            click.echo(f"Error: No spec found for recipe '{name}'", err=True)
+            click.echo(f"[Fix] Run 'frago recipe plan {name} --prompt \"...\"' first, or use --prompt for direct creation", err=True)
+            sys.exit(1)
+
+        spec_content = resolved_spec.read_text(encoding='utf-8')
+        if not recipe_dir:
+            recipe_dir = resolved_spec.parent
+
+    # Check conflict
+    if recipe_dir and (recipe_dir / "recipe.md").exists() and not force:
+        click.echo(f"Error: recipe.md already exists at {recipe_dir / 'recipe.md'}", err=True)
+        click.echo("[Fix] Use --force to overwrite", err=True)
+        sys.exit(1)
+
+    # Ensure directory exists
+    recipe_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build agent prompt
+    if spec_content:
+        agent_prompt = f"""你是 frago recipe 开发专家。
+
+任务：根据 spec 创建 recipe '{name}'。
+
+先运行以下命令获取规范：
+  uv run frago book recipe-creation
+
+Spec 内容（位于 {resolved_spec}）：
+{spec_content}
+
+创建 recipe.md 和对应脚本文件到 {recipe_dir}/。
+创建完成后，运行 uv run frago recipe validate {recipe_dir}。
+如果 validate 失败，根据错误信息修复后重试，最多 3 轮。
+"""
+    else:
+        agent_prompt = f"""你是 frago recipe 开发专家。
+
+任务：创建 recipe '{name}'。
+
+先运行以下命令获取规范：
+  uv run frago book recipe-spec-writing
+  uv run frago book recipe-creation
+
+用户需求：
+{user_prompt}
+
+先在 {recipe_dir}/ 写 spec.md，再创建 recipe.md 和脚本文件。
+创建完成后，运行 uv run frago recipe validate {recipe_dir}。
+如果 validate 失败，根据错误信息修复后重试，最多 3 轮。
+"""
+
+    click.echo(f"[Create] Creating recipe '{name}'...")
+    click.echo(f"  Directory: {recipe_dir}")
+
+    exit_code = _run_frago_agent(agent_prompt)
+
+    if exit_code != 0:
+        click.echo("Error: Agent failed to create recipe", err=True)
+        sys.exit(1)
+
+    # Refresh registry and verify
+    invalidate_registry()
+    registry = get_registry()
+    try:
+        registry.find(name)
+        click.echo(f"[OK] Recipe '{name}' created successfully")
+        click.echo(f"  frago recipe info {name}")
+        click.echo(f"  frago recipe run {name} --params '{{...}}'")
+    except Exception:
+        click.echo(f"Warning: recipe '{name}' not found in registry after creation", err=True)
+        click.echo(f"Check the files in {recipe_dir}", err=True)
+        sys.exit(1)
 
 
 @recipe_group.command(name='list', cls=AgentFriendlyCommand)
@@ -981,53 +1263,134 @@ def install_recipe(source: str, force: bool, name_override: str | None, output_f
     help='Skip confirmation prompt'
 )
 @click.option(
+    '--source',
+    type=click.Choice(['user', 'community'], case_sensitive=False),
+    default=None,
+    help='Specify source to uninstall when recipe exists in multiple sources'
+)
+@click.option(
     '--format',
     'output_format',
     type=click.Choice(['text', 'json'], case_sensitive=False),
     default='text',
     help='Output format'
 )
-def uninstall_recipe(name: str, yes: bool, output_format: str):
+def uninstall_recipe(name: str, yes: bool, source: str | None, output_format: str):
     """
-    Uninstall an installed recipe
+    Uninstall a recipe (User or Community)
+
+    Supports all sources via registry lookup. Official recipes cannot be uninstalled.
+    Checks for dependent recipes before deletion.
 
     \b
     Examples:
       frago recipe uninstall stock-monitor
       frago recipe uninstall stock-monitor --yes
+      frago recipe uninstall my-tool --source user
     """
-    from frago.recipes.installer import RecipeInstaller
+    from frago.recipes.registry import get_registry, invalidate_registry
 
-    installer = RecipeInstaller()
+    registry = get_registry()
 
     # Check if recipe exists
-    installed = installer.manifest.recipes.get(name)
-    if not installed and not installer._find_installed_recipe(name):
+    if name not in registry.recipes:
         if output_format == 'json':
             result = {"success": False, "error": f"Recipe '{name}' not found", "code": "not_found"}
             click.echo(json.dumps(result, ensure_ascii=False, indent=2))
         else:
-            click.echo(f"Error: Recipe '{name}' not found in community-recipes", err=True)
+            click.echo(f"Error: Recipe '{name}' not found", err=True)
+            click.echo("[Fix] frago recipe list --format names", err=True)
+        sys.exit(1)
+
+    sources_dict = registry.recipes[name]
+
+    # Determine target source
+    if source:
+        source_label = source.capitalize()
+        if source_label not in sources_dict:
+            if output_format == 'json':
+                result = {"success": False, "error": f"Recipe '{name}' not found in {source}", "code": "not_found"}
+                click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                available = ", ".join(sources_dict.keys())
+                click.echo(f"Error: Recipe '{name}' not found in {source}. Available: {available}", err=True)
+            sys.exit(1)
+    else:
+        # Auto-select: User > Community, skip Official
+        source_label = None
+        for s in ['User', 'Community']:
+            if s in sources_dict:
+                source_label = s
+                break
+        if not source_label:
+            if output_format == 'json':
+                result = {"success": False, "error": f"Recipe '{name}' is Official and cannot be uninstalled", "code": "official"}
+                click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+            else:
+                click.echo(f"Error: Recipe '{name}' is an Official recipe and cannot be uninstalled", err=True)
+            sys.exit(1)
+
+    # Official guard
+    if source_label == 'Official':
+        if output_format == 'json':
+            result = {"success": False, "error": "Cannot uninstall Official recipe", "code": "official"}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: Cannot uninstall Official recipe '{name}'. It is bundled with frago.", err=True)
+        sys.exit(1)
+
+    # Dependency check
+    dependents = _check_dependents(name, registry)
+    if dependents:
+        dep_list = "\n".join(f"  - {dep}" for dep in dependents)
+        if output_format == 'json':
+            result = {"success": False, "error": f"Depended on by: {', '.join(dependents)}", "code": "has_dependents", "dependents": dependents}
+            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            click.echo(f"Error: Cannot uninstall '{name}': depended on by:", err=True)
+            click.echo(dep_list, err=True)
+            click.echo("\nUninstall or update these recipes first.", err=True)
         sys.exit(1)
 
     # Confirm
-    if not yes and output_format != 'json' and not click.confirm(f"Uninstall recipe '{name}'?"):
-            click.echo("Cancelled")
-            return
+    if not yes and output_format != 'json' and not click.confirm(f"Uninstall recipe '{name}' ({source_label})?"):
+        click.echo("Cancelled")
+        return
 
-    if installer.uninstall(name):
-        if output_format == 'json':
-            result = {"success": True, "recipe_name": name}
-            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
-        else:
-            click.echo(f"[OK] Recipe '{name}' uninstalled")
+    # Delete
+    recipe = sources_dict[source_label]
+    recipe_dir = recipe.base_dir or recipe.metadata_path.parent
+    shutil.rmtree(recipe_dir)
+
+    # Clean up community manifest if needed
+    if source_label == 'Community':
+        try:
+            from frago.recipes.installer import RecipeInstaller
+            installer = RecipeInstaller()
+            if name in installer.manifest.recipes:
+                del installer.manifest.recipes[name]
+                installer._save_manifest()
+        except Exception:
+            pass  # Non-fatal: directory already deleted
+
+    invalidate_registry()
+
+    if output_format == 'json':
+        result = {"success": True, "recipe_name": name, "source": source_label}
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
     else:
-        if output_format == 'json':
-            result = {"success": False, "error": "Uninstall failed", "code": "uninstall_error"}
-            click.echo(json.dumps(result, ensure_ascii=False, indent=2))
-        else:
-            click.echo(f"Error: Failed to uninstall '{name}'", err=True)
-        sys.exit(1)
+        click.echo(f"[OK] Recipe '{name}' ({source_label}) uninstalled")
+
+
+def _check_dependents(name: str, registry: RecipeRegistry) -> list[str]:
+    """Find all recipes that depend on the given recipe name."""
+    dependents = []
+    for recipe_name, sources in registry.recipes.items():
+        for source_label, recipe in sources.items():
+            deps = getattr(recipe.metadata, 'dependencies', []) or []
+            if name in deps:
+                dependents.append(f"{recipe_name} ({source_label})")
+    return dependents
 
 
 @recipe_group.command(name='update', cls=AgentFriendlyCommand)
