@@ -26,6 +26,10 @@
   category: must
   brief: "chrome 操作完整指南：group 必选、导航规则、内容提取、交互、选择器、视觉辅助"
 
+- name: must-no-auto-memory
+  category: must
+  brief: "禁用 Claude Code auto memory，结构化沉淀走 frago def save，忽略 MEMORY.md"
+
 # 偏好类 — 有更好的方式
 - name: better-structured-data
   category: better
