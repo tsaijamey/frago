@@ -8,7 +8,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +27,18 @@ class SyncService:
 
     def __init__(self) -> None:
         """Initialize the sync service."""
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
-        self._last_result: Optional[Dict[str, Any]] = None
+        self._last_result: dict[str, Any] | None = None
 
         # Debounce state
         self._pending_refresh: bool = False
         self._last_refresh_time: float = 0.0
-        self._debounce_task: Optional[asyncio.Task] = None
+        self._debounce_task: asyncio.Task | None = None
+
+        # mtime cache: session_id -> last-seen mtime (float)
+        # Persists across sync cycles so unchanged sessions skip read_metadata entirely
+        self._session_mtimes: dict[str, float] = {}
 
     @classmethod
     def get_instance(cls) -> "SyncService":
@@ -67,10 +71,9 @@ class SyncService:
         self._stop_event.set()
         self._task.cancel()
 
-        try:
+        import contextlib
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
 
         self._task = None
         logger.info("Session sync stopped")
@@ -108,11 +111,11 @@ class SyncService:
                 )
                 # If wait completes without timeout, stop was requested
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Timeout means continue to next sync
                 continue
 
-    def _do_sync(self) -> Dict[str, Any]:
+    def _do_sync(self) -> dict[str, Any]:
         """Perform synchronization (runs in thread pool).
 
         Returns:
@@ -120,7 +123,7 @@ class SyncService:
         """
         from frago.session.sync import sync_all_projects
 
-        result = sync_all_projects()
+        result = sync_all_projects(mtime_cache=self._session_mtimes)
 
         return {
             "synced": result.synced,
@@ -129,7 +132,7 @@ class SyncService:
             "errors": result.errors,
         }
 
-    def get_last_result(self) -> Optional[Dict[str, Any]]:
+    def get_last_result(self) -> dict[str, Any] | None:
         """Get the last sync result.
 
         Returns:
@@ -174,7 +177,7 @@ class SyncService:
             logger.warning(f"Debounced refresh failed: {e}")
 
     @staticmethod
-    def sync_now() -> Dict[str, Any]:
+    def sync_now() -> dict[str, Any]:
         """Perform immediate synchronization.
 
         Returns:

@@ -428,12 +428,16 @@ def sync_session(
 def sync_project_sessions(
     project_path: str,
     force: bool = False,
+    mtime_cache: dict[str, float] | None = None,
 ) -> SyncResult:
     """Synchronize Claude sessions for a specified project
 
     Args:
         project_path: Project absolute path
         force: Whether to force re-synchronization
+        mtime_cache: Optional dict mapping session_id to last-seen mtime (float).
+            When provided, sessions whose mtime hasn't changed are skipped before
+            any disk read, eliminating per-session read_metadata() overhead.
 
     Returns:
         Synchronization result
@@ -455,31 +459,28 @@ def sync_project_sessions(
             continue
 
         try:
-            # Check if already synced (for statistics only, actual check is done by sync_session)
             session_id = jsonl_file.stem
-            existing = read_metadata(session_id, AgentType.CLAUDE)
+            current_mtime = jsonl_file.stat().st_mtime
 
-            # Skip completed/error sessions early — they won't change
-            if existing and not force and existing.status != SessionStatus.RUNNING:
-                # Only re-check if the source file was modified after last sync
-                file_mtime = datetime.fromtimestamp(
-                    jsonl_file.stat().st_mtime
-                )
-                existing_last = existing.last_activity
-                if existing_last.tzinfo is not None:
-                    existing_last = existing_last.replace(tzinfo=None)
-                if file_mtime <= existing_last:
-                    result.skipped += 1
-                    continue
+            # Fast path: skip if mtime unchanged since last cycle (no disk read needed)
+            if not force and mtime_cache is not None and session_id in mtime_cache and current_mtime <= mtime_cache[session_id]:
+                result.skipped += 1
+                continue
+
+            existing = read_metadata(session_id, AgentType.CLAUDE)
 
             # Sync session (sync_session will check file modification time to decide if update is needed)
             synced_id = sync_session(jsonl_file, project_path, force)
             if synced_id:
+                if mtime_cache is not None:
+                    mtime_cache[session_id] = current_mtime
                 if existing:
                     result.updated += 1
                 else:
                     result.synced += 1
             else:
+                if mtime_cache is not None:
+                    mtime_cache[session_id] = current_mtime
                 result.skipped += 1
 
         except Exception as e:
@@ -496,11 +497,15 @@ def sync_project_sessions(
     return result
 
 
-def sync_all_projects(force: bool = False) -> SyncResult:
+def sync_all_projects(
+    force: bool = False,
+    mtime_cache: dict[str, float] | None = None,
+) -> SyncResult:
     """Synchronize Claude sessions for all projects
 
     Args:
         force: Whether to force re-synchronization
+        mtime_cache: Optional shared mtime cache passed through to sync_project_sessions.
 
     Returns:
         Synchronization result
@@ -520,7 +525,7 @@ def sync_all_projects(force: bool = False) -> SyncResult:
         project_path = decode_project_path(project_dir.name)
 
         # Sync this project
-        project_result = sync_project_sessions(project_path, force)
+        project_result = sync_project_sessions(project_path, force, mtime_cache)
 
         result.synced += project_result.synced
         result.updated += project_result.updated
