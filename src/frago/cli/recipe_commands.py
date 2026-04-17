@@ -54,12 +54,16 @@ def _run_frago_agent(prompt_text: str) -> int:
         prompt_file = f.name
 
     try:
-        # Find the frago executable (same as current process)
-        frago_bin = shutil.which("frago")
-        if frago_bin:
-            cmd = [frago_bin, "agent", "--yes", "--quiet", "--prompt-file", prompt_file]
+        # Resolve frago binary: prefer the entry point next to current Python interpreter,
+        # same strategy as server/services/agent_service.py::_get_frago_agent_command
+        frago_in_venv = Path(sys.executable).parent / "frago"
+        if frago_in_venv.exists():
+            frago_cmd = [str(frago_in_venv)]
+        elif shutil.which("uv"):
+            frago_cmd = ["uv", "run", "frago"]
         else:
-            cmd = [sys.executable, "-m", "frago", "agent", "--yes", "--quiet", "--prompt-file", prompt_file]
+            frago_cmd = ["frago"]
+        cmd = [*frago_cmd, "agent", "--yes", "--quiet", "--prompt-file", prompt_file]
 
         result = subprocess.run(cmd, timeout=600)
         return result.returncode
