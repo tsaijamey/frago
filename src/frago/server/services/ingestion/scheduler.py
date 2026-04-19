@@ -39,6 +39,7 @@ class CachedMessage:
     prompt: str
     reply_context: dict[str, Any] = field(default_factory=dict)
     received_at: datetime = field(default_factory=datetime.now)
+    thread_id: str | None = None  # spec 20260418 — populated by classifier at ingress
 
 
 @dataclass
@@ -126,6 +127,7 @@ class IngestionScheduler:
                     prompt=data["prompt"],
                     reply_context=data.get("reply_context", {}),
                     received_at=datetime.fromisoformat(data["received_at"]),
+                    thread_id=data.get("thread_id"),
                 )
             logger.info("Loaded %d cached message(s) from %s", len(cache), CACHE_FILE.name)
             return cache
@@ -144,6 +146,7 @@ class IngestionScheduler:
                     "prompt": msg.prompt,
                     "reply_context": msg.reply_context,
                     "received_at": msg.received_at.isoformat(),
+                    "thread_id": msg.thread_id,
                 }
                 for key, msg in self._message_cache.items()
             }
@@ -251,7 +254,7 @@ class IngestionScheduler:
                 self._seen_messages.add(key)
                 continue
 
-            # Cache raw message data
+            # Cache raw message data (thread_id populated below after classify)
             cached = CachedMessage(
                 channel=ch.name,
                 msg_id=msg_id,
@@ -262,12 +265,53 @@ class IngestionScheduler:
             self._seen_messages.add(key)
             new_count += 1
 
-            # Trace: scheduler received message
-            from frago.server.services.trace import trace
-            trace(msg_id, None, "scheduler", f"收到 {ch.name} 消息: {msg['prompt'][:80]}",
-                  data={"event_type": "pa_ingestion", "channel": ch.name, "prompt": msg["prompt"]})
+            # Thread attribution (spec 20260418-thread-organization Phase 2)
+            from frago.server.services.thread_classifier import (
+                classify as thread_classify,
+            )
+            from frago.server.services.thread_classifier import (
+                ensure_thread,
+            )
+            from frago.server.services.trace import trace_entry
 
-            # Enqueue to PA message queue
+            reply_ctx = msg.get("reply_context") or {}
+            sender = reply_ctx.get("sender_id") or reply_ctx.get("sender") or ""
+            classify_result = thread_classify(
+                channel=ch.name,
+                sender=sender,
+                content=msg["prompt"],
+                reply_context=reply_ctx,
+            )
+            ensure_thread(
+                classify_result,
+                channel=ch.name,
+                sender=sender,
+                msg_id=msg_id,
+                root_summary=msg["prompt"][:80],
+            )
+            # Backfill cached message with resolved thread_id for downstream consumers
+            cached.thread_id = classify_result.thread_id
+
+            # Timeline entry with thread metadata
+            trace_entry(
+                origin="external",
+                subkind=ch.name,
+                data_type="message",
+                thread_id=classify_result.thread_id,
+                parent_id=None,   # L1 parent_ref points at channel msg_id, not entry.id
+                task_id=None,
+                data={
+                    "event_type": "pa_ingestion",
+                    "channel": ch.name,
+                    "prompt": msg["prompt"],
+                    "_classify_layer": classify_result.layer,
+                },
+                msg_id=msg_id,
+                role="scheduler",
+                event=f"收到 {ch.name} 消息: {msg['prompt'][:80]}",
+            )
+
+            # Enqueue to PA message queue (carry thread_id so downstream events can chain)
             if self._pa_enqueue:
                 try:
                     await self._pa_enqueue({
@@ -277,8 +321,12 @@ class IngestionScheduler:
                         "channel_message_id": msg_id,
                         "prompt": msg["prompt"],
                         "reply_context": msg.get("reply_context", {}),
+                        "thread_id": classify_result.thread_id,
                     })
-                    logger.info("Message %s enqueued to PA", msg_id)
+                    logger.info(
+                        "Message %s enqueued to PA (thread=%s, layer=%s)",
+                        msg_id, classify_result.thread_id, classify_result.layer,
+                    )
                 except Exception:
                     logger.exception("Failed to enqueue message %s to PA", msg_id)
 

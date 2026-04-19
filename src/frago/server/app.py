@@ -43,6 +43,113 @@ from frago.server.state import StateManager
 from frago.server.websocket import MessageType, create_message, manager
 
 
+def _wire_timeline_broadcast(register_hook) -> None:
+    """Install hook that bridges new trace_entry writes → WS timeline_event.
+
+    The hook humanizes the raw timeline entry into the same TimelineEvent
+    shape the frontend (useTimeline.ts) already consumes. Legacy PA event
+    types are skipped here because `PrimaryAgentService._broadcast_pa_event`
+    already emits them on the same WS channel — double-broadcasting would
+    cause duplicate renders (entries have different ids).
+    """
+    import asyncio
+
+    # Types already broadcast by PrimaryAgentService._broadcast_pa_event
+    _LEGACY_BROADCAST_TYPES = frozenset({
+        "pa_ingestion", "pa_decision",
+        "pa_agent_launched", "pa_agent_exited", "pa_reply",
+    })
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def _build_frontend_event(entry: dict) -> dict | None:
+        """Humanize a raw timeline entry into the TimelineEvent shape.
+
+        Returns None if this entry is already covered by the legacy PA broadcast
+        path (to avoid duplicates).
+        """
+        data = entry.get("data") or {}
+        legacy_event_type = data.get("event_type")
+        if legacy_event_type in _LEGACY_BROADCAST_TYPES:
+            return None
+
+        from frago.server.services.timeline_service import humanize_event
+
+        # For entries with data_type alone (no legacy event_type), synthesize
+        # a reasonable title/subtitle from data_type + event + subkind
+        if legacy_event_type:
+            humanized = humanize_event(legacy_event_type, data)
+            title = humanized["title"]
+            subtitle = humanized["subtitle"]
+            event_type = humanized["event_type"]
+        else:
+            data_type = entry.get("data_type", "event")
+            subkind = entry.get("subkind", "")
+            event = entry.get("event")
+            title = event or f"{subkind}/{data_type}" if subkind else data_type
+            subtitle = None
+            # Surface reflection/os_event/task_state substatus
+            if data_type == "task_state":
+                status = data.get("status")
+                prev = data.get("prev_status")
+                if status and prev:
+                    subtitle = f"{prev} → {status}"
+                elif status:
+                    subtitle = f"status={status}"
+            elif data_type == "os_event":
+                subtitle = data.get("title") or data.get("os_event_type")
+            elif data_type == "thought":
+                subtitle = data.get("prompt_hint") or data.get("trigger")
+            event_type = data_type
+
+        return {
+            "id": entry.get("id", ""),
+            "timestamp": entry.get("ts", ""),
+            "event_type": event_type,
+            "title": title,
+            "subtitle": subtitle,
+            "task_id": entry.get("task_id"),
+            "msg_id": entry.get("msg_id"),
+            "run_id": data.get("run_id"),
+            "raw_data": {
+                "thread_id": entry.get("thread_id"),
+                "parent_id": entry.get("parent_id"),
+                "origin": entry.get("origin"),
+                "subkind": entry.get("subkind"),
+                "data_type": entry.get("data_type"),
+                **data,
+            },
+        }
+
+    def _broadcast(entry_dict: dict) -> None:
+        frontend_event = _build_frontend_event(entry_dict)
+        if frontend_event is None:
+            return   # covered by legacy PA broadcast path
+
+        msg = {
+            "type": MessageType.TIMELINE_EVENT,
+            "timestamp": frontend_event["timestamp"],
+            "event": frontend_event,
+        }
+        coro = manager.broadcast(msg)
+        if loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+                return
+            except RuntimeError:
+                pass
+        try:
+            cur_loop = asyncio.get_event_loop()
+            cur_loop.create_task(coro)
+        except RuntimeError:
+            pass
+
+    register_hook(_broadcast)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Application lifespan manager.
@@ -136,8 +243,11 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         logger.warning("Failed to deploy hook binary: %s", e)
 
     # Cleanup old trace files
-    from frago.server.services.trace import cleanup_old_traces
+    from frago.server.services.trace import cleanup_old_traces, register_broadcast_hook
     cleanup_old_traces()
+
+    # Wire timeline entries → WS timeline_event (spec 20260418-timeline-consumer-unification Phase 3)
+    _wire_timeline_broadcast(register_broadcast_hook)
 
     # Initialize Primary Agent (PID 1 — always available, independent of features)
     from frago.server.services.primary_agent_service import PrimaryAgentService

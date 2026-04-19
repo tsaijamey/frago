@@ -52,9 +52,16 @@ class IngestedTask:
     channel: str
     channel_message_id: str
     prompt: str
+    #: Cached task status snapshot. NOT the source of truth — the authoritative
+    #: status comes from the latest `task_state` timeline entry. Use
+    #: ``TaskStore.get_status(task_id)`` when consuming from application code
+    #: (spec 20260418-timeline-consumer-unification Phase 5).
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = field(default_factory=lambda: datetime.now())
     reply_context: dict[str, Any] = field(default_factory=dict)
+
+    # Thread attribution (spec 20260418-thread-organization)
+    thread_id: str | None = None
 
     # ── run 级信息（每次 PA 决策 run 时 append）──
     sub_tasks: list[SubTask] = field(default_factory=list)

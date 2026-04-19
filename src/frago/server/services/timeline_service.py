@@ -6,9 +6,11 @@ Merges events from multiple data sources into a unified timeline:
 Returns TimelineAggEvent list sorted by timestamp, with humanized title/subtitle.
 """
 
+import json
 import logging
-from dataclasses import asdict, dataclass
-from datetime import datetime
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -147,3 +149,186 @@ def get_timeline(since: str | None = None, limit: int = 50) -> list[dict]:
         all_events = [e for e in all_events if e.timestamp > since]
 
     return [e.to_dict() for e in all_events[-limit:]]
+
+
+# ---------------------------------------------------------------------------
+# Thread-aware folded view (spec 20260418-timeline-consumer-unification Phase 1)
+# ---------------------------------------------------------------------------
+
+HOT_WINDOW_HOURS = 24
+WARM_WINDOW_DAYS = 7
+
+
+@dataclass
+class ThreadDigest:
+    """Compressed summary of a thread (used for warm tier)."""
+
+    thread_id: str
+    origin: str
+    subkind: str
+    root_summary: str
+    status: str
+    last_active_ts: str
+    entry_count: int = 0
+    task_status_summary: dict[str, str] = field(default_factory=dict)
+    latest_event: str | None = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class ThreadExpanded:
+    """Full-detail view of a hot thread: digest + recent entries."""
+
+    digest: ThreadDigest
+    entries: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"digest": self.digest.to_dict(), "entries": self.entries}
+
+
+def _iter_trace_entries(lookback_days: int):
+    """Yield raw trace entries within lookback_days (newest day first, lines in file order)."""
+    from frago.server.services.trace import TRACE_DIR
+
+    today = datetime.now().date()
+    for days_ago in range(lookback_days):
+        date = today - timedelta(days=days_ago)
+        path = TRACE_DIR / f"trace-{date.strftime('%Y-%m-%d')}.jsonl"
+        if not path.exists():
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            continue
+
+
+def _collect_entries_by_thread(lookback_days: int) -> dict[str, list[dict]]:
+    """Group trace entries by thread_id within the lookback window."""
+    by_thread: dict[str, list[dict]] = {}
+    for entry in _iter_trace_entries(lookback_days):
+        tid = entry.get("thread_id")
+        if not tid:
+            continue
+        by_thread.setdefault(tid, []).append(entry)
+    # Sort each thread's entries by ts asc
+    for tid in by_thread:
+        by_thread[tid].sort(key=lambda e: e.get("ts", ""))
+    return by_thread
+
+
+def _build_digest(thread_idx, entries: list[dict]) -> ThreadDigest:
+    """Compose a ThreadDigest from the ThreadIndex + its entries."""
+    latest = entries[-1] if entries else None
+    latest_event = None
+    if latest:
+        latest_event = latest.get("event") or latest.get("data_type")
+
+    # Reconstruct per-task latest status from task_state entries
+    task_status_summary: dict[str, str] = {}
+    for e in entries:
+        if e.get("data_type") != "task_state":
+            continue
+        tid = e.get("task_id")
+        if not tid:
+            continue
+        status = (e.get("data") or {}).get("status")
+        if status:
+            task_status_summary[tid] = status
+
+    return ThreadDigest(
+        thread_id=thread_idx.thread_id,
+        origin=thread_idx.origin,
+        subkind=thread_idx.subkind,
+        root_summary=thread_idx.root_summary,
+        status=thread_idx.status,
+        last_active_ts=thread_idx.last_active_ts,
+        entry_count=len(entries),
+        task_status_summary=task_status_summary,
+        latest_event=latest_event,
+    )
+
+
+def get_thread_context(
+    *,
+    hot_limit: int = 10,
+    warm_limit: int = 20,
+    hot_window_hours: int = HOT_WINDOW_HOURS,
+    warm_window_days: int = WARM_WINDOW_DAYS,
+    entries_per_hot: int = 30,
+) -> dict:
+    """Folded view of recent threads for PA context injection.
+
+    hot threads: last_active within `hot_window_hours` — include ThreadExpanded
+                 with up to `entries_per_hot` most recent entries.
+    warm threads: last_active within [hot, warm_window_days] — include ThreadDigest only.
+    Threads older than `warm_window_days` are not included (agent must hydrate explicitly).
+    """
+    from frago.server.services.thread_service import (
+        STATUS_ACTIVE,
+        STATUS_IDLE,
+        get_thread_store,
+    )
+
+    store = get_thread_store()
+    now = datetime.now()
+    hot_cutoff = now - timedelta(hours=hot_window_hours)
+    warm_cutoff = now - timedelta(days=warm_window_days)
+
+    threads_by_id = _collect_entries_by_thread(lookback_days=warm_window_days + 1)
+
+    hot: list[ThreadExpanded] = []
+    warm: list[ThreadDigest] = []
+    visible_statuses = {STATUS_ACTIVE, STATUS_IDLE}
+
+    # Iterate ThreadStore to respect thread metadata (status, root_summary etc.)
+    for idx in store.get_all():
+        if idx.status not in visible_statuses:
+            continue
+        try:
+            last_active = datetime.fromisoformat(idx.last_active_ts)
+        except ValueError:
+            continue
+        if last_active < warm_cutoff:
+            continue
+        entries = threads_by_id.get(idx.thread_id, [])
+        digest = _build_digest(idx, entries)
+
+        if last_active >= hot_cutoff:
+            recent_entries = entries[-entries_per_hot:] if entries else []
+            hot.append(ThreadExpanded(digest=digest, entries=recent_entries))
+        else:
+            warm.append(digest)
+
+    hot.sort(key=lambda h: h.digest.last_active_ts, reverse=True)
+    warm.sort(key=lambda d: d.last_active_ts, reverse=True)
+
+    hot = hot[:hot_limit]
+    warm = warm[:warm_limit]
+
+    return {
+        "hot": [h.to_dict() for h in hot],
+        "warm": [d.to_dict() for d in warm],
+        "cold_hint": (
+            "Older threads are not loaded. Use `frago thread search <query>` "
+            "to find them and `frago thread hydrate <id>` to load."
+        ),
+        "counts": {
+            "hot": len(hot),
+            "warm": len(warm),
+            "total_known": store.count(),
+        },
+    }
+
+
+# Silence "imported but unused" — Path is re-exported for future extension
+_ = Path

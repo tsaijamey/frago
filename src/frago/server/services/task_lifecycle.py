@@ -56,12 +56,37 @@ class TaskLifecycle:
                 logger.debug("Channel %s: message %s already exists, skipping", channel, msg_id)
                 continue
 
+            # Thread attribution (spec 20260418-thread-organization)
+            from frago.server.services.thread_classifier import (
+                classify as _thread_classify,
+            )
+            from frago.server.services.thread_classifier import (
+                ensure_thread as _ensure_thread,
+            )
+
+            _reply_ctx = msg.get("reply_context", {})
+            _sender = _reply_ctx.get("sender_id") or _reply_ctx.get("sender") or ""
+            _classify = _thread_classify(
+                channel=channel,
+                sender=_sender,
+                content=msg["prompt"],
+                reply_context=_reply_ctx,
+            )
+            _ensure_thread(
+                _classify,
+                channel=channel,
+                sender=_sender,
+                msg_id=msg_id,
+                root_summary=msg["prompt"][:80],
+            )
+
             task = IngestedTask(
                 id=str(uuid.uuid4()),
                 channel=channel,
                 channel_message_id=msg_id,
                 prompt=msg["prompt"],
                 reply_context=msg.get("reply_context", {}),
+                thread_id=_classify.thread_id,
             )
             self._store.add(task)
             new_task_ids.append(task.id)

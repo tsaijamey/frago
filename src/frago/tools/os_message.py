@@ -1,11 +1,11 @@
 """
 OS Message — structured message pushing from OS modules to the conversation flow.
 
-Fire-and-forget: if the message API is unavailable, messages are silently dropped.
-The deployment plan is already persisted to disk, so users can always access it
-via `frago workspace pending`.
+Spec 20260418-timeline-event-coverage Phase 3: OSMessages are now timeline
+entries (origin=internal, subkind=os, data_type=os_event) rather than a separate
+HTTP push channel. The old `/api/conversation/push` endpoint is obsolete.
 
-Interface contract defined by 20260212-continuous-conversation.md spec.
+Fire-and-forget: trace write errors are silently swallowed.
 """
 
 import logging
@@ -15,21 +15,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Server endpoint for pushing messages
-OS_MESSAGE_ENDPOINT = "http://127.0.0.1:8093/api/conversation/push"
-
 
 @dataclass
 class OSMessage:
-    """Structured message pushed from OS modules to the conversation flow.
+    """Structured message from OS modules (sync, workspace, deploy, etc.).
 
-    The receiving side (defined by continuous-conversation spec) renders
-    the content appropriately. This module is only a producer.
+    Rendered in the timeline via `data_type=os_event`; UI can style based on
+    `data.os_event_type`.
     """
     type: str                # "workspace-deploy", "sync-complete", ...
     title: str               # Human-readable title
     content: dict[str, Any]  # Structured payload (table data, change lists, etc.)
-    actions: list[str] = field(default_factory=list)  # Optional: ["confirm", "skip", "elaborate"]
+    actions: list[str] = field(default_factory=list)  # e.g. ["confirm", "skip"]
     created_at: datetime = field(default_factory=lambda: datetime.now())
 
     def to_dict(self) -> dict:
@@ -42,34 +39,32 @@ class OSMessage:
         }
 
 
-def push_os_message(message: OSMessage) -> bool:
-    """Fire-and-forget push to OS message API.
+def push_os_message(message: OSMessage, *, thread_id: str | None = None) -> bool:
+    """Fire-and-forget: write OSMessage to the timeline.
 
-    Returns True if message was accepted, False otherwise.
-    Failure is silent — the deployment plan is already on disk.
+    Returns True if the entry was written, False on failure (silent).
+    Pass `thread_id` to attach to a specific thread; otherwise the entry
+    forms its own root thread.
     """
     try:
-        import httpx
-        httpx.post(
-            OS_MESSAGE_ENDPOINT,
-            json=message.to_dict(),
-            timeout=2,
+        from frago.server.services.trace import trace_entry
+
+        trace_entry(
+            origin="internal",
+            subkind="os",
+            data_type="os_event",
+            thread_id=thread_id,
+            parent_id=None,
+            task_id=None,
+            data={
+                "os_event_type": message.type,
+                "title": message.title,
+                "content": message.content,
+                "actions": message.actions,
+            },
+            event=message.title,
         )
         return True
-    except ImportError:
-        # httpx not available, try urllib
-        try:
-            import json
-            import urllib.request
-            req = urllib.request.Request(
-                OS_MESSAGE_ENDPOINT,
-                data=json.dumps(message.to_dict()).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=2)
-            return True
-        except Exception:
-            return False
     except Exception:
+        logger.debug("push_os_message: trace_entry failed", exc_info=True)
         return False
