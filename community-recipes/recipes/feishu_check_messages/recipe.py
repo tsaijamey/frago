@@ -596,6 +596,10 @@ def fetch_messages(app_id, app_secret, max_results=5, context_limit=CONTEXT_LIMI
                     "chat_id": chat_id,
                     "chat_name": chat_name,
                     "message_id": last_msg["msg_id"],
+                    # parent_message_id: the feishu message this message quotes/replies to.
+                    # Used by frago Thread Classifier Layer 1 for native thread attribution
+                    # across long time gaps (spec 20260418-thread-organization).
+                    "parent_message_id": last_msg.get("parent_id"),
                     "sender_id": first_msg["sender_id"],
                 },
             }
