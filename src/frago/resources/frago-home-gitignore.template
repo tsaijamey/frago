@@ -13,6 +13,7 @@ executions/
 ingested_tasks.json
 message_cache.json
 traces/
+threads/
 chrome_profile/
 edge_profile/
 current_run
