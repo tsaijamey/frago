@@ -23,7 +23,7 @@ inputs:
 outputs:
   messages:
     type: array
-    description: "消息列表，每条包含 id, prompt, reply_context"
+    description: "消息列表。每条包含 id（= 消息 msg_id）、prompt（指令文本）、reply_context。reply_context 字段：chat_id / chat_name / message_id（= 最后一条消息 id，用于回复定位）/ parent_message_id（若引用回复了其它消息则指向被引用消息，否则为 null；frago Thread Classifier L1 据此跨时间续挂 thread）/ sender_id"
   count:
     type: number
     description: "消息数量"
