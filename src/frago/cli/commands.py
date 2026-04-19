@@ -488,6 +488,74 @@ COMMAND_EXAMPLES = {
     "skill/list": [
         "frago skill list",
     ],
+    # Thread — timeline thread organization (spec 20260418-thread-organization)
+    "thread": [
+        "frago thread <command>",
+        "frago thread list",
+        "frago thread info <thread_id>",
+    ],
+    "thread/list": [
+        "frago thread list",
+        "frago thread list --status active --limit 10",
+        "frago thread list --origin internal --subkind reflection",
+    ],
+    "thread/search": [
+        "frago thread search <query>",
+        "frago thread search 报销",
+        "frago thread search \"\" --task-id t_123",
+    ],
+    "thread/info": [
+        "frago thread info <thread_id>",
+        "frago thread info 01HW001 --json",
+    ],
+    "thread/peek": [
+        "frago thread peek <thread_id>",
+        "frago thread peek 01HW001",
+    ],
+    "thread/close": [
+        "frago thread close <thread_id>",
+    ],
+    "thread/open": [
+        "frago thread open <thread_id>",
+    ],
+    "thread/bind-run": [
+        "frago thread bind-run <thread_id> <run_instance_id>",
+    ],
+    "thread/tag": [
+        "frago thread tag <thread_id> <tag>",
+    ],
+    "thread/set-summary": [
+        "frago thread set-summary <thread_id> <summary>",
+    ],
+    # Timeline — unified event timeline (spec 20260418-timeline-event-coverage)
+    "timeline": [
+        "frago timeline <command>",
+        "frago timeline tail --thread <thread_id>",
+        "frago timeline view --recent 24h",
+    ],
+    "timeline/tail": [
+        "frago timeline tail --thread <thread_id> --limit 20",
+        "frago timeline tail --data-type task_state --task-id <id>",
+        "frago timeline tail --origin internal",
+    ],
+    "timeline/trace": [
+        "frago timeline trace <entry_id>",
+    ],
+    "timeline/search": [
+        "frago timeline search --task-id <id>",
+        "frago timeline search --data-type thought --subkind reflection",
+    ],
+    "timeline/view": [
+        "frago timeline view --recent 24h",
+        "frago timeline view --recent 1h --full",
+    ],
+    "timeline/task-status": [
+        "frago timeline task-status <task_id>",
+    ],
+    "timeline/append": [
+        "frago timeline append --origin internal --subkind pa --data-type thought --thread <id> --event \"...\"",
+        "frago timeline append --origin internal --subkind observation --data-type os_event --data '{\"kind\":\"state_change\"}'",
+    ],
 }
 
 
