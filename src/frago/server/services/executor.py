@@ -61,7 +61,7 @@ class Executor:
         self._broadcast_pa_event = broadcast_pa_event  # async callable
         self._killed_by_resume: set[int] = set()
         self._loop_task: asyncio.Task[None] | None = None
-        self._active_tasks: set[asyncio.Task] = set()
+        self._active_tasks: set[asyncio.Task[None]] = set()
 
     def start(self) -> None:
         """Start the executor loop as an asyncio task."""
@@ -110,9 +110,8 @@ class Executor:
             await self._execute_run(task)
         except Exception:
             logger.error("Executor: unhandled error executing task %s", task.id[:8], exc_info=True)
+            # update_status emits task_state entry automatically (spec 20260418 Phase 4)
             self._store.update_status(task.id, TaskStatus.FAILED, error="executor internal error")
-            from frago.server.services.trace import trace as _trace
-            _trace(task.channel_message_id, task.id, "executor", "标记 FAILED: executor internal error")
 
     async def _execute_run(self, task: IngestedTask) -> None:
         """Execute a single queued task end-to-end."""
@@ -135,35 +134,59 @@ class Executor:
         claude_sid = updated_task.claude_session_id if updated_task else None
         stop_reason = self._read_stop_reason(claude_sid) if claude_sid else None
 
-        # Trace: raw diagnosis before status decision
-        from frago.server.services.trace import trace as _trace
-        _trace(task.channel_message_id, task.id, "executor",
-               f"读取结果: claude_sid={claude_sid and claude_sid[:8]}, stop_reason={stop_reason}")
+        # Trace: raw diagnosis before status decision (result observation, not state change)
+        from frago.server.services.trace import trace_entry
+        trace_entry(
+            origin="internal", subkind="executor", data_type="tool_result",
+            thread_id=task.thread_id, task_id=task.id,
+            msg_id=task.channel_message_id, role="executor",
+            event=f"读取结果: claude_sid={claude_sid and claude_sid[:8]}, stop_reason={stop_reason}",
+            data={"claude_sid_prefix": claude_sid[:8] if claude_sid else None,
+                  "stop_reason": stop_reason},
+        )
 
         # 4. Update status based on Claude JSONL stop_reason
         #    (from 3940-session statistical analysis):
         #      end_turn / stop_sequence → agent finished naturally → COMPLETED
         #      None / tool_use / max_tokens → interrupted/crashed → FAILED
         _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
+        # 抽 sub-agent 最后一条 assistant 文本作为给 PA 的原料
+        final_text = self._read_final_assistant_text(claude_sid) if claude_sid else None
         if stop_reason in _SUCCESS_STOP_REASONS:
             final_status = "COMPLETED"
+            if final_text:
+                summary = final_text
+            else:
+                summary = f"completed (stop_reason: {stop_reason}) — no assistant text captured"
             self._store.update_status(task.id, TaskStatus.COMPLETED,
-                                      result_summary=f"completed (stop_reason: {stop_reason})")
+                                      result_summary=summary)
         else:
             final_status = "FAILED"
+            base_error = f"sub-agent exited abnormally (stop_reason: {stop_reason})"
+            if final_text:
+                base_error = f"{base_error}\n\n{final_text}"
             self._store.update_status(
                 task.id, TaskStatus.FAILED,
-                error=f"sub-agent exited abnormally (stop_reason: {stop_reason})",
+                error=base_error,
             )
 
         # Trace: agent execution finished
         has_completion = stop_reason in _SUCCESS_STOP_REASONS
         duration = int((datetime.now() - task.created_at).total_seconds()) if task.created_at else 0
-        from frago.server.services.trace import trace as _trace
-        _trace(task.channel_message_id, task.id, "agent",
-               f"执行结束 {final_status}: stop_reason={stop_reason}, run={run_id}",
-               data={"event_type": "pa_agent_exited", "run_id": run_id, "task_id": task.id,
-                     "has_completion": has_completion, "duration_seconds": duration})
+        trace_entry(
+            origin="internal", subkind="executor", data_type="task_state",
+            thread_id=task.thread_id, task_id=task.id,
+            msg_id=task.channel_message_id, role="agent",
+            event=f"执行结束 {final_status}: stop_reason={stop_reason}, run={run_id}",
+            data={
+                "event_type": "pa_agent_exited",
+                "run_id": run_id, "task_id": task.id,
+                "has_completion": has_completion,
+                "duration_seconds": duration,
+                "stop_reason": stop_reason,
+                "final_status": final_status,
+            },
+        )
 
         # 5. Best-effort close TabGroup
         try:
@@ -203,6 +226,54 @@ class Executor:
         # 8. Notify PA via system message
         await self._notify_pa(task, run_id, stop_reason)
 
+    async def _get_or_create_run_for_thread(
+        self,
+        *,
+        manager: "RunManager",  # noqa: F821 — forward reference
+        thread_id: str | None,
+        description: str,
+        task_short_id: str,
+    ) -> str:
+        """Resolve the run_instance for a thread, creating on first use.
+
+        If thread has a bound run_instance that still exists on disk → reuse.
+        Otherwise create a new run and bind it to the thread. No thread_id → fresh run.
+        """
+        from frago.run.exceptions import RunNotFoundError
+        from frago.server.services.thread_service import get_thread_store
+
+        if thread_id:
+            store = get_thread_store()
+            idx = store.get(thread_id)
+            if idx and idx.run_instance_id:
+                # Thread already has a run — verify it still exists, else fall through to create
+                try:
+                    existing = manager.find_run(idx.run_instance_id)
+                    logger.info(
+                        "Executor: reusing Run %s for task %s (thread=%s)",
+                        existing.run_id, task_short_id, thread_id,
+                    )
+                    return existing.run_id
+                except RunNotFoundError:
+                    logger.warning(
+                        "Executor: thread %s binds missing run %s — creating new",
+                        thread_id, idx.run_instance_id,
+                    )
+
+        run = manager.create_run(description)
+        if thread_id:
+            get_thread_store().bind_run(thread_id, run.run_id)
+            logger.info(
+                "Executor: created Run %s for task %s and bound to thread %s",
+                run.run_id, task_short_id, thread_id,
+            )
+        else:
+            logger.info(
+                "Executor: created Run %s for task %s (no thread)",
+                run.run_id, task_short_id,
+            )
+        return run.run_id
+
     async def _launch_agent(self, task: IngestedTask) -> tuple[str | None, int | None]:
         """Create Run, build prompt, launch sub-agent process.
 
@@ -218,18 +289,19 @@ class Executor:
 
         if not prompt:
             logger.error("Executor: task %s has no run_prompt", task.id[:8])
+            # update_status emits task_state entry automatically (spec 20260418 Phase 4)
             self._store.update_status(task.id, TaskStatus.FAILED, error="missing run_prompt")
-            from frago.server.services.trace import trace as _trace
-            _trace(task.channel_message_id, task.id, "executor", "标记 FAILED: missing run_prompt")
             return None, None
 
-        # Create Run instance
+        # Get-or-create Run instance for this thread (spec 20260418-thread-organization Phase 3)
+        # Same thread → reuse same run_instance → workspace accumulates across turns.
         manager = RunManager(PROJECTS_DIR)
-        run = manager.create_run(
-            description or prompt
+        run_id = await self._get_or_create_run_for_thread(
+            manager=manager,
+            thread_id=task.thread_id,
+            description=description or prompt,
+            task_short_id=task.id[:8],
         )
-        run_id = run.run_id
-        logger.info("Executor: created Run %s for task %s", run_id, task.id[:8])
 
         # Update session_id on the already-EXECUTING task
         self._store.update_run_info(task.id, session_id=run_id)
@@ -255,10 +327,8 @@ class Executor:
 
         if result.get("status") != "ok":
             logger.error("Executor: failed to start agent for task %s: %s", task.id[:8], result.get("error"))
+            # update_status emits task_state entry automatically (spec 20260418 Phase 4)
             self._store.update_status(task.id, TaskStatus.FAILED, error=result.get("error"))
-            from frago.server.services.trace import trace as _trace
-            _trace(task.channel_message_id, task.id, "executor",
-                   f"标记 FAILED: agent 启动失败, error={result.get('error')}")
             return None, None
 
         pid = result["pid"]
@@ -275,11 +345,16 @@ class Executor:
         }
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_launched", _launched_data)
-        # Trace: executor launched agent
-        from frago.server.services.trace import trace as _trace
-        _trace(task.channel_message_id, task.id, "executor",
-               f"启动 agent, run={run_id}, pid={pid}",
-               data={"event_type": "pa_agent_launched", **_launched_data})
+        # Trace: executor launched agent (supplements the QUEUED→EXECUTING
+        # task_state entry from update_status with run_id/pid context)
+        from frago.server.services.trace import trace_entry
+        trace_entry(
+            origin="internal", subkind="executor", data_type="task_state",
+            thread_id=task.thread_id, task_id=task.id,
+            msg_id=task.channel_message_id, role="executor",
+            event=f"启动 agent, run={run_id}, pid={pid}",
+            data={"event_type": "pa_agent_launched", **_launched_data, "pid": pid},
+        )
 
         return run_id, pid
 
@@ -382,6 +457,58 @@ class Executor:
         return None
 
     @staticmethod
+    def _read_final_assistant_text(claude_session_id: str, max_turns: int = 5) -> str | None:
+        """抽取 session 结束前最后 max_turns 条有文本的 assistant 记录，按时间顺序拼接。
+
+        与 _read_stop_reason 走同一份 JSONL。反向扫描：只要是 assistant 记录
+        且含至少一个非空 type="text" content block 就收集（不管 stop_reason，
+        因为中间 tool_use 轮次里也常有 text block 表达思考过程）。收集满
+        max_turns 条即停；按时间顺序（最早→最晚）拼接，每条用
+        `--- msg N/M ---` 分隔。无文本或异常返回 None。
+        """
+        home = str(Path.home())
+        cwd_slug = home.replace("/", "-")
+        jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_session_id}.jsonl"
+
+        if not jsonl_path.exists():
+            return None
+
+        try:
+            lines = jsonl_path.read_text(encoding="utf-8").splitlines()
+            collected: list[str] = []  # newest first during scan
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                if entry.get("type") != "assistant" or "message" not in entry:
+                    continue
+                content = entry["message"].get("content")
+                if not isinstance(content, list):
+                    continue
+                texts = [
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+                joined = "\n".join(t for t in texts if t)
+                if joined:
+                    collected.append(joined)
+                if len(collected) >= max_turns:
+                    break
+
+            if not collected:
+                return None
+
+            ordered = list(reversed(collected))
+            total = len(ordered)
+            if total == 1:
+                return ordered[0]
+            parts = [f"--- msg {i + 1}/{total} ---\n{t}" for i, t in enumerate(ordered)]
+            return "\n\n".join(parts)
+        except Exception:
+            return None
+
+    @staticmethod
     def _extract_recent_logs(run_id: str, limit: int = 10) -> list[str]:
         """Extract recent log entries from run's execution.jsonl."""
         log_file = PROJECTS_DIR / run_id / "logs" / "execution.jsonl"
@@ -438,16 +565,22 @@ class Executor:
             "type": msg_type,
             "task_id": task.id,
             "channel": task.channel,
-            "session_id": task.session_id,
+            "session_id": updated.session_id if updated else task.session_id,
             "run_id": run_id,
             "result_summary": result_summary or f"agent exited (stop_reason: {stop_reason})",
             "output_files": outputs,
             "recent_logs": recent_logs,
         }
 
-        # Trace: executor notifying PA
-        from frago.server.services.trace import trace as _trace
-        _trace(task.channel_message_id, task.id, "executor", f"通知 PA: {msg_type}")
+        # Trace: executor notifying PA (cross-module message, treated as os_event)
+        from frago.server.services.trace import trace_entry
+        trace_entry(
+            origin="internal", subkind="executor", data_type="os_event",
+            thread_id=task.thread_id, task_id=task.id,
+            msg_id=task.channel_message_id, role="executor",
+            event=f"通知 PA: {msg_type}",
+            data={"notify_type": msg_type},
+        )
 
         try:
             await self._pa_enqueue_message(msg)

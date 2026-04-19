@@ -136,6 +136,60 @@ def _build_conversation_history(per_channel_limit: int = 10) -> str | None:
     return "\n".join(lines)
 
 
+def _build_thread_section() -> str | None:
+    """Thread-aware folded view (spec 20260418-timeline-consumer-unification Phase 2).
+
+    Produces a compact text block showing hot threads expanded and warm threads
+    as summaries. PA is hinted to use `frago thread search/hydrate` for cold
+    threads not shown here.
+    """
+    try:
+        from frago.server.services.timeline_service import get_thread_context
+        ctx = get_thread_context()
+    except Exception:
+        logger.debug("Failed to build thread section", exc_info=True)
+        return None
+
+    if not ctx["hot"] and not ctx["warm"]:
+        return None
+
+    lines = ["## Active threads (timeline-folded view)"]
+    lines.append(
+        f"Hot: {ctx['counts']['hot']}, Warm: {ctx['counts']['warm']}, "
+        f"Total known: {ctx['counts']['total_known']}"
+    )
+
+    if ctx["hot"]:
+        lines.append("")
+        lines.append("### Hot threads (active in last 24h)")
+        for h in ctx["hot"]:
+            d = h["digest"]
+            head = (
+                f"- [{d['thread_id']}] {d['origin']}/{d['subkind']} "
+                f"— {d['root_summary']!r} (status={d['status']}, "
+                f"last={d['last_active_ts'][:19]}, entries={d['entry_count']})"
+            )
+            lines.append(head)
+            if d.get("task_status_summary"):
+                lines.append(f"    tasks: {d['task_status_summary']}")
+            if d.get("latest_event"):
+                lines.append(f"    latest: {d['latest_event']}")
+
+    if ctx["warm"]:
+        lines.append("")
+        lines.append("### Warm threads (24h–7d, digest only)")
+        for d in ctx["warm"]:
+            lines.append(
+                f"- [{d['thread_id']}] {d['origin']}/{d['subkind']} "
+                f"— {d['root_summary']!r} (last={d['last_active_ts'][:19]})"
+            )
+
+    lines.append("")
+    lines.append(f"> {ctx['cold_hint']}")
+
+    return "\n".join(lines)
+
+
 def _build_knowledge_index() -> str | None:
     try:
         knowledge_file = Path(__file__).parent / "agent_knowledge.json"
@@ -167,6 +221,13 @@ def build_bootstrap(rotation_count: int) -> tuple[str, str]:
     # 不代入任务快照：重启后任务由 ingestion 自然驱动；
     # 任务状态在消息触达 PA 时按需呈现，避免把"历史回顾"误当成"待办列表"。
 
+    # Thread-aware view (spec 20260418-timeline-consumer-unification Phase 2)
+    thread_section = _build_thread_section()
+    if thread_section:
+        sections.append(thread_section)
+
+    # Legacy conversation turns (kept as complementary user-PA pairing view;
+    # future: drop once thread view is proven sufficient).
     conversation = _build_conversation_history()
     if conversation:
         sections.append(conversation)

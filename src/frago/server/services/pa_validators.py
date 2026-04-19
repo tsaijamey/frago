@@ -18,6 +18,7 @@ VALID_QUEUE_MESSAGE_TYPES = {
     "agent_completed", "agent_failed", "reply_failed",
     "scheduled_task",
     "recovered_failed_task",
+    "internal_reflection",  # spec 20260418-timeline-event-coverage Phase 5
 }
 
 # Required fields per PA action type (beyond the universal "action" field)

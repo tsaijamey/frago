@@ -141,9 +141,15 @@ class TaskStore:
         result_summary: str | None = None,
         error: str | None = None,
     ) -> None:
+        prev_status_value: str | None = None
+        thread_id: str | None = None
+        channel_msg_id: str | None = None
         with self._lock:
             target = self._find(task_id)
             if target is not None:
+                prev_status_value = target.get("status")
+                thread_id = target.get("thread_id")
+                channel_msg_id = target.get("channel_message_id")
                 target["status"] = status.value
                 # Write run-level fields into current sub_task
                 subs = target.get("sub_tasks", [])
@@ -159,8 +165,34 @@ class TaskStore:
                         cur["completed_at"] = datetime.now().isoformat()
                         cur["status"] = status.value
                 self._save()
+            else:
+                logger.warning("Task not found for status update: %s", task_id)
                 return
-            logger.warning("Task not found for status update: %s", task_id)
+
+        # Emit task_state timeline entry (spec 20260418-timeline-event-coverage Phase 4)
+        if prev_status_value != status.value:
+            try:
+                from frago.server.services.trace import trace_entry
+
+                data = {"status": status.value, "prev_status": prev_status_value}
+                if error is not None:
+                    data["error"] = error
+                if session_id is not None:
+                    data["run_id"] = session_id
+                if result_summary is not None:
+                    data["result_summary"] = result_summary[:200]
+                trace_entry(
+                    origin="internal",
+                    subkind="task_store",
+                    data_type="task_state",
+                    thread_id=thread_id,
+                    parent_id=None,
+                    task_id=task_id,
+                    data=data,
+                    msg_id=channel_msg_id,
+                )
+            except Exception:
+                logger.debug("failed to emit task_state entry", exc_info=True)
 
     def update_retry_count(self, task_id: str, count: int) -> None:
         with self._lock:
@@ -180,6 +212,50 @@ class TaskStore:
                     self._save()
                     return count
         return 0
+
+    def get_status(self, task_id: str) -> str | None:
+        """Preferred API for reading a task's current status.
+
+        Spec 20260418-timeline-consumer-unification Phase 5: timeline is the
+        source of truth; this method transparently prefers the latest task_state
+        entry in the timeline, falling back to the cached field in TaskStore
+        only if the timeline has no entry yet for the task.
+        """
+        from frago.server.services.trace import get_current_task_status
+        timeline_status = get_current_task_status(task_id)
+        if timeline_status:
+            return timeline_status
+        # Fallback: cache (task created but no state transition emitted yet)
+        with self._lock:
+            data = self._find(task_id)
+            return data.get("status") if data else None
+
+    def rebuild_status_cache(self) -> int:
+        """Reconcile TaskStore.status with timeline's task_state entries.
+
+        Spec 20260418-timeline-event-coverage Phase 4: timeline is source of
+        truth; this re-hydrates the cache on startup or periodically.
+        Returns number of statuses corrected.
+        """
+        from frago.server.services.trace import get_current_task_status
+
+        corrected = 0
+        with self._lock:
+            for data in self._tasks.values():
+                task_id = data.get("id")
+                if not task_id:
+                    continue
+                timeline_status = get_current_task_status(task_id)
+                if timeline_status and timeline_status != data.get("status"):
+                    logger.info(
+                        "TaskStore rebuild: task %s cache=%s → timeline=%s",
+                        task_id[:8], data.get("status"), timeline_status,
+                    )
+                    data["status"] = timeline_status
+                    corrected += 1
+            if corrected:
+                self._save()
+        return corrected
 
     def get_by_status(self, status: TaskStatus) -> list[IngestedTask]:
         with self._lock:
@@ -403,6 +479,7 @@ class TaskStore:
             "status": task.status.value,
             "created_at": task.created_at.isoformat(),
             "reply_context": task.reply_context,
+            "thread_id": task.thread_id,
             "sub_tasks": [TaskStore._serialize_sub_task(s) for s in task.sub_tasks],
             "retry_count": task.retry_count,
             "recovery_count": task.recovery_count,
@@ -442,6 +519,7 @@ class TaskStore:
             status=TaskStatus(status_val),
             created_at=datetime.fromisoformat(data["created_at"]),
             reply_context=data.get("reply_context", {}),
+            thread_id=data.get("thread_id"),
             sub_tasks=sub_tasks,
             retry_count=data.get("retry_count", 0),
             recovery_count=data.get("recovery_count", 0),

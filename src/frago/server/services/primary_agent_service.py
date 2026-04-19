@@ -168,8 +168,19 @@ class PrimaryAgentService:
 
         await self._start_heartbeat()
 
+        # Start Reflection Tick (spec 20260418-timeline-event-coverage Phase 5)
+        await self._start_reflection_tick()
+
         # Recover PENDING tasks from TaskStore
         await self._recover_pending_tasks()
+
+        # Rebuild TaskStore status cache from timeline (spec 20260418 Phase 4)
+        try:
+            corrected = TaskStore().rebuild_status_cache()
+            if corrected:
+                logger.info("TaskStore status cache rebuilt: %d correction(s)", corrected)
+        except Exception:
+            logger.debug("Failed to rebuild TaskStore status cache", exc_info=True)
 
     async def _recover_pending_tasks(self) -> int:
         """Scan TaskStore for PENDING tasks and re-enqueue them.
@@ -203,6 +214,7 @@ class PrimaryAgentService:
             self._queue_consumer_task = None
 
         await self._stop_heartbeat()
+        await self._stop_reflection_tick()
         if self._pa_session:
             try:
                 await self._pa_session.stop()
@@ -457,12 +469,29 @@ class PrimaryAgentService:
                         break
                     await asyncio.sleep(0.5)
 
-                # Trace: PA received messages from queue
-                from frago.server.services.trace import trace as _trace
+                # Trace: PA received messages from queue.
+                # Use trace_entry with the upstream-classified thread_id so this
+                # PA-side event chains to the same thread as the ingress entry
+                # (spec 20260418 — avoid thread_id being set to msg_id via legacy fallback).
+                from frago.server.services.trace import trace_entry
                 for _m in messages:
-                    if isinstance(_m, dict):
-                        _trace(_m.get("msg_id", ""), _m.get("task_id"), "pa",
-                               f"收到消息队列: {_m.get('channel', '')}")
+                    if not isinstance(_m, dict):
+                        continue
+                    _tid = _m.get("thread_id")
+                    _mtype = _m.get("type", "")
+                    _channel = _m.get("channel", "") or _mtype
+                    trace_entry(
+                        origin="internal",
+                        subkind="pa",
+                        data_type="message",
+                        thread_id=_tid,   # None → trace_entry mints a self-thread ulid
+                        parent_id=None,
+                        task_id=_m.get("task_id"),
+                        data={"queue_msg_type": _mtype, "channel": _m.get("channel")},
+                        msg_id=_m.get("msg_id"),
+                        role="pa",
+                        event=f"收到消息队列: {_channel}",
+                    )
 
                 # Merge into one text block
                 merged = self._format_queue_messages(messages)
@@ -625,6 +654,17 @@ class PrimaryAgentService:
                     original_prompt=msg.get("original_prompt", ""),
                 ))
 
+            elif msg_type == "internal_reflection":
+                from frago.server.services.pa_prompts import (
+                    PA_INTERNAL_REFLECTION_TEMPLATE,
+                )
+                msg_parts.append(PA_INTERNAL_REFLECTION_TEMPLATE.format(
+                    thread_id=msg.get("thread_id", "?"),
+                    ts=msg.get("ts", ""),
+                    reason=msg.get("reason", "scheduled"),
+                    prompt_hint=msg.get("prompt_hint", ""),
+                ))
+
             else:
                 msg_parts.append(PA_QUEUE_UNKNOWN_FALLBACK_TEMPLATE.format(
                     msg_type=msg_type,
@@ -688,6 +728,33 @@ class PrimaryAgentService:
             await self._heartbeat_task
         self._heartbeat_task = None
         logger.info("PA heartbeat stopped")
+
+    # -- Reflection Tick (spec 20260418-timeline-event-coverage Phase 5) --
+    async def _start_reflection_tick(self) -> None:
+        from frago.server.services.reflection_tick import (
+            ReflectionTicker,
+            load_reflection_config,
+        )
+
+        config = load_reflection_config()
+        if not config.get("enabled", True):
+            logger.info("Reflection tick disabled by config")
+            self._reflection_ticker = None
+            return
+
+        self._reflection_ticker = ReflectionTicker(
+            enqueue=self.enqueue_message,
+            interval_min=int(config["interval_min"]),
+            initial_delay_sec=int(config["initial_delay_sec"]),
+            prompt_hint=str(config["prompt_hint"]),
+        )
+        await self._reflection_ticker.start()
+
+    async def _stop_reflection_tick(self) -> None:
+        ticker = getattr(self, "_reflection_ticker", None)
+        if ticker is not None:
+            await ticker.stop()
+            self._reflection_ticker = None
 
     async def _heartbeat_loop(self, interval: int, initial_delay: int) -> None:
         """Main heartbeat loop."""
@@ -1013,6 +1080,7 @@ class PrimaryAgentService:
             prompt=cached.prompt,
             status=initial_status,
             reply_context=cached.reply_context,
+            thread_id=cached.thread_id,
         )
         store = TaskStore()
         store.add(task)
@@ -1036,6 +1104,8 @@ class PrimaryAgentService:
         msg_id: str = decision.get("msg_id", "")
         channel: str = decision.get("channel", "")
         text: str = decision.get("text", "")
+        file_path: str = decision.get("file_path", "") or ""
+        image_path: str = decision.get("image_path", "") or ""
 
         if not channel or not text:
             logger.warning("reply decision missing channel or text")
@@ -1049,7 +1119,11 @@ class PrimaryAgentService:
                 from frago.server.services.trace import trace as _trace
                 _trace(msg_id, task_id, "pa", f"创建任务并标记完成: reply 直达, task={task_id[:8]}")
 
-        reply_params = {"text": text}
+        reply_params: dict[str, Any] = {"text": text}
+        if file_path:
+            reply_params["file_path"] = file_path
+        if image_path:
+            reply_params["image_path"] = image_path
         result = await asyncio.to_thread(
             self._lifecycle.reply, task_id, channel, reply_params,
         )
