@@ -421,8 +421,29 @@ cli.add_command(install_group, name="install")
 
 
 
+def _force_utf8_stdio_on_windows() -> None:
+    """Reconfigure stdout/stderr to UTF-8 on Windows.
+
+    Japanese/Chinese/Korean Windows editions default console codepage to
+    cp932/cp936/cp949, which can't encode the CJK text and box-drawing
+    characters frago CLI emits (recipe list tables, def find output, book
+    content). Native UTF-8 mode is safe for Windows APIs and fixes agent
+    views that read stdout through Git Bash.
+    """
+    import contextlib
+    import platform
+    if platform.system() != "Windows":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            with contextlib.suppress(OSError, ValueError):
+                reconfigure(encoding="utf-8", errors="replace")
+
+
 def main():
     """CLI entry point"""
+    _force_utf8_stdio_on_windows()
     try:
         cli()
     except KeyboardInterrupt:
