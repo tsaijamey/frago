@@ -80,7 +80,17 @@ def save_runtime_state(state: RuntimeState) -> None:
 
 
 def update_launcher(launcher: LauncherInfo) -> RuntimeState:
-    """Load → replace launcher field → save. Returns the new state."""
+    """Load → replace launcher field → save. Returns the new state.
+
+    Windows backslash paths in `launcher.command` get eaten by Git Bash as
+    escape sequences when an agent pastes the injected command (e.g.
+    `C:\\Users\\x\\frago.exe` → `C:Usersxfrago.exe` → not found). Both
+    Windows APIs and bash accept forward slashes, so normalize at the
+    source. frago-hook's format_launcher_for_shell also normalizes as a
+    belt-and-suspenders, but fixing here keeps runtime.json itself clean
+    for other downstream consumers.
+    """
+    launcher.command = [arg.replace("\\", "/") for arg in launcher.command]
     state = load_runtime_state()
     state.launcher = launcher
     save_runtime_state(state)
