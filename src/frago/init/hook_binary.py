@@ -134,6 +134,7 @@ def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
             [hook_path, "--supported-events"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
