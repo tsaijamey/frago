@@ -1,5 +1,6 @@
 """Recipe management commands"""
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -1020,6 +1021,53 @@ def cancel_execution(execution_id: str):
         sys.exit(1)
 
 
+_SECRET_ENV_PATTERN = re.compile(
+    r'''os\.environ(?:\.get)?\s*[\[(]\s*['"]([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY))['"]''',
+    re.IGNORECASE,
+)
+_SECRET_ENV_PATTERN_SHELL = re.compile(r'\$\{?([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY))\}?')
+_PARAMS_SECRETS_PATTERN = re.compile(r'''params\s*(?:\.get\s*\(\s*['"]secrets['"]|\[\s*['"]secrets['"]\s*\])''')
+
+
+def _scan_secrets_usage(content: str, metadata) -> list[str]:
+    """Scan recipe script for non-standard secrets usage.
+
+    Enforces FRAGO_SECRETS as the only channel (see book recipe-authoring):
+      - params["secrets"] / params.get("secrets") is never populated by runner
+      - Hardcoded *_API_KEY / *_TOKEN / *_SECRET env reads bypass the profile system
+      - If recipe.md declares secrets:, script must reference FRAGO_SECRETS
+    """
+    errors: list[str] = []
+    has_secrets_schema = bool(getattr(metadata, 'secrets', None))
+    uses_frago_secrets = 'FRAGO_SECRETS' in content
+
+    if _PARAMS_SECRETS_PATTERN.search(content):
+        errors.append(
+            "Secrets must not be read from params (found params[\"secrets\"] or params.get(\"secrets\")). "
+            "Runner injects secrets via FRAGO_SECRETS env var only. "
+            "See: frago book recipe-authoring"
+        )
+
+    pattern = _SECRET_ENV_PATTERN if metadata.runtime == 'python' else _SECRET_ENV_PATTERN_SHELL
+    hardcoded = {m.group(1) for m in pattern.finditer(content) if m.group(1) != 'FRAGO_SECRETS'}
+    if hardcoded:
+        names = ', '.join(sorted(hardcoded))
+        errors.append(
+            f"Recipe-specific env vars are not supported: {names}. "
+            f"Declare credentials in recipe.md 'secrets:' and read via json.loads(os.environ['FRAGO_SECRETS']). "
+            f"See: frago book recipe-authoring"
+        )
+
+    if has_secrets_schema and not uses_frago_secrets:
+        errors.append(
+            "recipe.md declares 'secrets:' but script never references FRAGO_SECRETS. "
+            "Read credentials via json.loads(os.environ.get('FRAGO_SECRETS', '{}')). "
+            "See: frago book recipe-authoring"
+        )
+
+    return errors
+
+
 @recipe_group.command('validate', cls=AgentFriendlyCommand)
 @click.argument('path', type=click.Path(exists=True))
 @click.option(
@@ -1097,6 +1145,11 @@ def validate_recipe(path: str, output_format: str):
                     errors.append(f"Python syntax error: {e.msg} (line {e.lineno})")
             elif metadata.runtime == 'chrome-js' and 'return' not in content and 'console' not in content:
                     warnings.append("JavaScript script does not contain return statement or console output")
+
+            # 3.5 Scan secrets usage — enforce FRAGO_SECRETS as the only channel
+            if metadata.runtime in ('python', 'shell'):
+                secrets_errors = _scan_secrets_usage(content, metadata)
+                errors.extend(secrets_errors)
 
     # 4. Check examples directory (optional)
     examples_dir = recipe_dir / 'examples'
