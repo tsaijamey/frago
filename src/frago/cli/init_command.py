@@ -60,21 +60,24 @@ def _get_gradient_color(position: float) -> tuple:
 
 
 def print_banner() -> None:
-    """Print gradient ASCII art banner"""
+    """Print gradient ASCII art banner.
+
+    Skipped on non-TTY stdout: the block characters (█╔═╗║╝╚) are UTF-8 but
+    downstream pipe readers on Windows often decode with cp936/cp1252, producing
+    mojibake. Branding is only meaningful in an interactive terminal anyway.
+    """
+    if not sys.stdout.isatty():
+        return
     lines = FRAGO_BANNER.rstrip().split("\n")
     total_lines = len(lines)
-    use_color = sys.stdout.isatty()
 
     click.echo()
     for i, line in enumerate(lines):
-        if use_color:
-            position = i / max(total_lines - 1, 1)
-            r, g, b = _get_gradient_color(position)
-            color_code = _rgb_to_ansi(r, g, b)
-            reset_code = "\033[0m"
-            click.echo(f"{color_code}{line}{reset_code}")
-        else:
-            click.echo(line)
+        position = i / max(total_lines - 1, 1)
+        r, g, b = _get_gradient_color(position)
+        color_code = _rgb_to_ansi(r, g, b)
+        reset_code = "\033[0m"
+        click.echo(f"{color_code}{line}{reset_code}")
     click.echo()
 
 from frago.init.checker import (

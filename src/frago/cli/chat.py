@@ -208,23 +208,27 @@ def start_chat() -> None:
     stop_event = threading.Event()
     reply_event = threading.Event()
 
-    # Banner — dark green (256-color 28)
+    # Banner — dark green (256-color 28). Only for interactive TTY;
+    # pipe-captured stdout on Windows would mojibake the box/block chars.
     g = "\033[38;5;28m"
     r = "\033[0m"
     d = "\033[2m"
-    sys.stdout.write(
-        f"\n"
-        f"  {g}───────────────────────────────{r}\n"
-        f"   {g}█▀▀ █▀▄ ▄▀█ █▀▀ █▀█   █▀█ █▀{r}\n"
-        f"   {g}█▀  █▀▄ █▀█ █▄█ █▄█   █▄█ ▄█{r}\n"
-        f"  {g}───────────────────────────────{r}\n"
-        f"\n"
-        f"  {d}agent OS — AI agent 的操作系统{r}\n"
-        f"  {d}https://github.com/tsaijamey/frago{r}\n"
-        f"\n"
-        f"  {d}session{r} {session_id}\n"
-        f"  {d}输入消息与 PA 对话，exit/quit 退出{r}\n\n"
-    )
+    if sys.stdout.isatty():
+        sys.stdout.write(
+            f"\n"
+            f"  {g}───────────────────────────────{r}\n"
+            f"   {g}█▀▀ █▀▄ ▄▀█ █▀▀ █▀█   █▀█ █▀{r}\n"
+            f"   {g}█▀  █▀▄ █▀█ █▄█ █▄█   █▄█ ▄█{r}\n"
+            f"  {g}───────────────────────────────{r}\n"
+            f"\n"
+            f"  {d}agent OS — AI agent 的操作系统{r}\n"
+            f"  {d}https://github.com/tsaijamey/frago{r}\n"
+            f"\n"
+            f"  {d}session{r} {session_id}\n"
+            f"  {d}输入消息与 PA 对话，exit/quit 退出{r}\n\n"
+        )
+    else:
+        sys.stdout.write(f"\nfrago chat — session {session_id}\n\n")
 
     ws_thread = threading.Thread(
         target=_ws_listener,
