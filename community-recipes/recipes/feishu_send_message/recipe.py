@@ -152,8 +152,13 @@ def upload_file(app_id, app_secret, file_path):
         raise FileNotFoundError(f"文件不存在: {file_path}")
 
     suffix = path.suffix.lower()
+    # Feishu 两段分层：file_type 影响上传后 file_key 的语义；msg_type 影响发送方式。
+    # 本 recipe 统一以 msg_type="file" 发送，因此 file_type 必须落在 file-compatible
+    # 集合里（opus/pdf/doc/xls/ppt/stream）。视频类（mp4/mov/...）如果声明为 file_type="mp4"
+    # 会被 Feishu 判为 media，后续按 msg_type="file" 发送会被 API 拒绝。
+    # 统一：视频走 stream 路径（上传为通用文件，消息类型 file，用户看到附件图标而非内嵌播放）。
     type_map = {
-        ".opus": "opus", ".mp4": "mp4", ".pdf": "pdf",
+        ".opus": "opus", ".pdf": "pdf",
         ".doc": "doc", ".xls": "xls", ".ppt": "ppt",
         ".docx": "doc", ".xlsx": "xls", ".pptx": "ppt",
     }
