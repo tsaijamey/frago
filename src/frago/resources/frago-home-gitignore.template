@@ -94,3 +94,17 @@ logs/
 *.pdf
 *.psd
 *.ai
+
+# Recipe-scoped project runtime artifacts (not synced)
+# Text state (project.json / script.md / manifest.json) under _projects/
+# IS synced; only binary / cacheable artifacts below are excluded.
+recipes/*/*/_projects/**/assets/
+recipes/*/*/_projects/**/tts/
+recipes/*/*/_projects/**/html/
+recipes/*/*/_projects/**/logs/
+recipes/*/*/_projects/**/*.mp4
+recipes/*/*/_projects/**/*.png
+recipes/*/*/_projects/**/*.jpg
+recipes/*/*/_projects/**/*.jpeg
+recipes/*/*/_projects/**/*.webp
+recipes/*/*/_projects/**/*.wav
