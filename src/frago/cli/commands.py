@@ -481,6 +481,36 @@ COMMAND_EXAMPLES = {
     "def/remove": [
         "frago def remove <name>",
     ],
+    # Hook-rules — frago-hook routing rules engine (spec 20260419-hook-rules-engine)
+    "hook-rules": [
+        "frago hook-rules <command>",
+        "frago hook-rules list",
+        "frago hook-rules list --source=agent",
+    ],
+    "hook-rules/list": [
+        "frago hook-rules list",
+        "frago hook-rules list --source=agent --show-disabled",
+        "frago hook-rules list --event=PreToolUse",
+    ],
+    "hook-rules/add": [
+        "frago hook-rules add --rule='{\"id\":\"agent-<name>\",\"event\":\"UserPromptSubmit\",\"match\":{\"type\":\"prompt_contains\",\"value\":\"<kw>\"},\"action\":{\"type\":\"inject_book_topic\",\"topic\":\"<topic>\"}}'",
+        "See `frago book hook-rules-authoring` for schema and examples.",
+    ],
+    "hook-rules/show": [
+        "frago hook-rules show <rule_id>",
+    ],
+    "hook-rules/remove": [
+        "frago hook-rules remove <rule_id>",
+    ],
+    "hook-rules/disable": [
+        "frago hook-rules disable <rule_id>",
+    ],
+    "hook-rules/enable": [
+        "frago hook-rules enable <rule_id>",
+    ],
+    "hook-rules/validate": [
+        "frago hook-rules validate",
+    ],
     # Skill
     "skill": [
         "frago skill <command>",
@@ -555,6 +585,15 @@ COMMAND_EXAMPLES = {
     "timeline/append": [
         "frago timeline append --origin internal --subkind pa --data-type thought --thread <id> --event \"...\"",
         "frago timeline append --origin internal --subkind observation --data-type os_event --data '{\"kind\":\"state_change\"}'",
+    ],
+    # Task — hand-adjust task state via timeline-aware override
+    "task": [
+        "frago task <command>",
+        "frago task mark <task_id> <status>",
+    ],
+    "task/mark": [
+        "frago task mark <task_id> completed --reason \"manual cleanup\"",
+        "frago task mark <task_id> failed --error \"zombie killed\"",
     ],
 }
 

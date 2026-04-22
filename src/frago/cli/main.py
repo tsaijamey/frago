@@ -33,11 +33,13 @@ from .commands import (
     status,
 )
 from .def_commands import def_group
+from .hook_rules_commands import hook_rules_group
 from .init_command import init  # New environment init command
 from .recipe_commands import recipe_group
 from .reply_command import reply_cmd
 from .run_commands import run_group
 from .schedule_commands import schedule_group
+from .task_commands import task_group
 from .thread_commands import thread_group
 from .timeline_commands import timeline_group
 from .serve_command import serve
@@ -394,6 +396,9 @@ cli.add_command(book_command)
 # Def command group - structured knowledge domain management
 cli.add_command(def_group)
 
+# Hook-rules command group - manage frago-hook's data-driven routing rules
+cli.add_command(hook_rules_group)
+
 # Schedule command group - manage scheduled tasks
 cli.add_command(schedule_group, name="schedule")
 
@@ -402,6 +407,9 @@ cli.add_command(thread_group, name="thread")
 
 # Timeline command group - unified timeline queries (spec 20260418-timeline-event-coverage)
 cli.add_command(timeline_group, name="timeline")
+
+# Task command group - hand-adjust task state via timeline-aware override
+cli.add_command(task_group, name="task")
 
 # Cloud commands - frago Cloud authentication, config, and market
 cli.add_command(login_cmd, name="login")

@@ -43,6 +43,10 @@
   category: better
   brief: "server restart 前先检查活跃任务，有任务时禁止自行 --force"
 
+- name: hook-rules-authoring
+  category: better
+  brief: "观察到重复路由模式时用 frago hook-rules add 沉淀为数据化规则，不改 Rust"
+
 # 效率类 — 你可能不知道有这个
 - name: recipe-execution
   category: available
