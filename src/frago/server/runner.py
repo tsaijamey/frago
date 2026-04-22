@@ -135,7 +135,7 @@ def run_server(
 
     # Print startup message
     print("\n  Frago Web Service")
-    print("  ─────────────────────────────────")
+    print("  ---------------------------------")
     print(f"  Local:   {url}")
     print(f"  API:     {url}/api/docs")
     if reload:

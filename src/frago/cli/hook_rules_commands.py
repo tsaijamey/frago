@@ -137,7 +137,7 @@ def hook_rules_list(source: str | None, event: str | None, show_disabled: bool):
     click.echo(
         f"\n  {'ID':<40s} {'SOURCE':<8s} {'EVENT':<17s} {'MATCH':<26s} ACTION"
     )
-    click.echo("  " + "─" * 118)
+    click.echo("  " + "-" * 118)
     for r in filtered:
         match = r.get("match", {})
         action = r.get("action", {})
@@ -437,9 +437,9 @@ def hook_rules_stats(source: str | None):
     rows.sort(key=lambda r: (-r[2], r[0]))
 
     click.echo(f"\n  {'ID':<42s} {'SOURCE':<8s} {'HITS':>6s}   LAST HIT")
-    click.echo("  " + "─" * 80)
+    click.echo("  " + "-" * 80)
     for rid, src, count, ts in rows:
-        last = datetime.fromtimestamp(ts).isoformat(timespec="seconds") if ts else "—"
+        last = datetime.fromtimestamp(ts).isoformat(timespec="seconds") if ts else "-"
         click.echo(f"  {rid:<42s} {src:<8s} {count:>6d}   {last}")
 
     zero = sum(1 for r in rows if r[2] == 0)

@@ -38,7 +38,7 @@ def def_group(ctx):
     click.echo(f"\nRegistered domains ({len(domains)}):\n")
     # Table header
     click.echo(f"  {'NAME':<24s} {'DOCS':>4s}   PURPOSE")
-    click.echo("  " + "─" * 70)
+    click.echo("  " + "-" * 70)
     for d in domains:
         click.echo(f"  {d['name']:<24s} {d['docs']:>4d}   {d['purpose']}")
 
@@ -112,7 +112,7 @@ def def_list():
         return
 
     click.echo(f"\n{'NAME':<24s} {'DOCS':>4s}   {'CREATED':<12s} PURPOSE")
-    click.echo("─" * 80)
+    click.echo("-" * 80)
     for d in domains:
         click.echo(
             f"{d['name']:<24s} {d['docs']:>4d}   {d['created']:<12s} {d['purpose']}"

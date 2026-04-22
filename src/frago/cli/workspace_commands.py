@@ -51,7 +51,7 @@ def workspace_list():
 
     # Table header
     click.echo(f"{'Canonical ID':<40} {'Local Path'}")
-    click.echo(f"{'─' * 40} {'─' * 40}")
+    click.echo(f"{'-' * 40} {'-' * 40}")
 
     # System workspace
     click.echo(f"{'__system__':<40} {'~/.claude/ (global)'}")

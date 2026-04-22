@@ -368,7 +368,7 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
 
             # Table output
             click.echo(f"{'SOURCE':<10} {'TYPE':<10} {'NAME':<40} {'RUNTIME':<10} {'VERSION':<8}")
-            click.echo("─" * 80)
+            click.echo("-" * 80)
             for r in recipes:
                 click.echo(
                     f"{r.source:<10} {r.metadata.type:<10} {r.metadata.name:<40} "
@@ -446,7 +446,7 @@ def recipe_info(name: str, source: str | None, output_format: str):
             click.echo("=" * 50)
             click.echo()
             click.echo("Basic Information")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             click.echo(f"Name:     {m.name}")
             click.echo(f"Type:     {m.type}")
             click.echo(f"Runtime:  {m.runtime}")
@@ -463,27 +463,27 @@ def recipe_info(name: str, source: str | None, output_format: str):
             click.echo(f"Path:     {recipe.script_path}")
             click.echo()
             click.echo("Description")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             click.echo(m.description)
             click.echo()
             if m.use_cases:
                 click.echo("Use Cases")
-                click.echo("─" * 50)
+                click.echo("-" * 50)
                 for case in m.use_cases:
                     click.echo(f"- {case}")
                 click.echo()
             if m.tags:
                 click.echo("Tags")
-                click.echo("─" * 50)
+                click.echo("-" * 50)
                 click.echo(", ".join(m.tags))
                 click.echo()
             click.echo("Output Targets")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             click.echo(", ".join(m.output_targets))
             click.echo()
             if m.inputs:
                 click.echo("Input Parameters")
-                click.echo("─" * 50)
+                click.echo("-" * 50)
                 for param_name, param_def in m.inputs.items():
                     required = "required" if param_def.get('required', False) else "optional"
                     param_type = param_def.get('type', 'unknown')
@@ -492,19 +492,19 @@ def recipe_info(name: str, source: str | None, output_format: str):
                 click.echo()
             if m.dependencies:
                 click.echo("Dependencies")
-                click.echo("─" * 50)
+                click.echo("-" * 50)
                 click.echo(", ".join(m.dependencies))
                 click.echo()
             else:
                 click.echo("Dependencies")
-                click.echo("─" * 50)
+                click.echo("-" * 50)
                 click.echo("None")
                 click.echo()
 
             # Display example files
             examples = recipe.list_examples()
             click.echo("Example Files")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             if examples:
                 for example in examples:
                     click.echo(f"- {example.name}")
@@ -941,7 +941,7 @@ def list_executions(recipe_name: str | None, limit: int, status: str | None, wor
             return
 
         click.echo(f"{'ID':<20} {'RECIPE':<25} {'STATUS':<12} {'DURATION':<10} {'CREATED'}")
-        click.echo("─" * 90)
+        click.echo("-" * 90)
         for e in executions:
             duration = f"{e.duration_ms}ms" if e.duration_ms is not None else "-"
             created = e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "-"
@@ -991,17 +991,17 @@ def show_execution(execution_id: str, output_format: str):
         if execution.params:
             click.echo()
             click.echo("Parameters")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             click.echo(json.dumps(execution.params, ensure_ascii=False, indent=2))
         if execution.data:
             click.echo()
             click.echo("Data")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             click.echo(json.dumps(execution.data, ensure_ascii=False, indent=2))
         if execution.error:
             click.echo()
             click.echo("Error")
-            click.echo("─" * 50)
+            click.echo("-" * 50)
             click.echo(json.dumps(execution.error, ensure_ascii=False, indent=2))
 
 
