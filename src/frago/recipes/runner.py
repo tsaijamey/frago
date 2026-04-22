@@ -625,6 +625,11 @@ class RecipeRunner:
         """
         params_json = json.dumps(params)
 
+        # Force UTF-8 stdio in child Python so recipes printing 中文/UTF-8 to
+        # stderr don't crash on Windows consoles whose default encoding is
+        # cp936/cp932/etc. Applies to both system-python and uv-run paths.
+        env["PYTHONIOENCODING"] = "utf-8"
+
         if use_system_python:
             # Use system Python (for scripts depending on system packages like dbus)
             # Must clear VIRTUAL_ENV to avoid inheriting uv's virtual environment
