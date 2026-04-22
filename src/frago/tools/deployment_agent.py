@@ -439,7 +439,7 @@ def format_deployment_table(plan: DeploymentPlan) -> str:
 
     lines = ["\nWorkspace Deployment Plan:"]
     lines.append(f"{'Resource':<35} {'Change':<10} {'Target':<30} {'Action':<8}")
-    lines.append("─" * 83)
+    lines.append("-" * 83)
 
     for a in plan.actions:
         # Shorten target for display

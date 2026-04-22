@@ -593,10 +593,10 @@ def _format_table(changes: list[FileChange], title: str) -> str:
 
     lines = [f"\n{title}:"]
     lines.append(f"{'Type':<10} {'Name':<40} {'Operation':<10} {'Time':<20}")
-    lines.append("─" * 80)
+    lines.append("-" * 80)
 
     for change in changes:
-        time_str = change.timestamp.strftime("%Y-%m-%d %H:%M") if change.timestamp else "—"
+        time_str = change.timestamp.strftime("%Y-%m-%d %H:%M") if change.timestamp else "-"
         lines.append(f"{change.type:<10} {change.name:<40} {change.operation:<10} {time_str:<20}")
 
     return "\n".join(lines)

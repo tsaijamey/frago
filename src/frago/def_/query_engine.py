@@ -337,7 +337,7 @@ def _format_docs(
 
     # Format header
     header = "  ".join(col.upper().ljust(col_widths[col]) for col in columns)
-    separator = "  ".join("─" * col_widths[col] for col in columns)
+    separator = "  ".join("-" * col_widths[col] for col in columns)
 
     # Format rows
     lines = [header, separator]
@@ -362,7 +362,7 @@ def _format_schema_fields(schema: dict[str, Any]) -> str:
 
     lines = []
     lines.append("  FIELD        TYPE       REQUIRED   DESCRIPTION")
-    lines.append("  " + "─" * 60)
+    lines.append("  " + "-" * 60)
     for f in fields:
         name = f.get("name", "?")
         ftype = f.get("type", "?")

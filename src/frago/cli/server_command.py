@@ -121,7 +121,7 @@ def _run_foreground() -> None:
         click.echo()
 
     click.echo("  Frago Web Service (Debug Mode)")
-    click.echo("  ─────────────────────────────────")
+    click.echo("  ---------------------------------")
     click.echo(f"  Local:   http://{SERVER_HOST}:{SERVER_PORT}")
     click.echo(f"  API:     http://{SERVER_HOST}:{SERVER_PORT}/api/docs")
     click.echo()

@@ -143,7 +143,7 @@ def print_header(text: str):
 def print_section(title: str):
     """Print section title"""
     click.echo()
-    click.secho(f"━━━ {title} ━━━", fg="cyan", bold=True)
+    click.secho(f"=== {title} ===", fg="cyan", bold=True)
     click.echo()
 
 
@@ -246,7 +246,7 @@ def ask_question(
 
     # Display title
     click.echo()
-    click.secho(f"━━━ {header} ━━━", fg="cyan", bold=True)
+    click.secho(f"=== {header} ===", fg="cyan", bold=True)
     click.echo()
 
     # Build questionary options (with descriptions)

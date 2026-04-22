@@ -586,11 +586,11 @@ def find(keyword: str, limit: int, fmt: str):
             click.echo(
                 f"  {'RUN_ID':<55} {'MATCH':>5}  {'PURPOSE':<35} {'DATE':<10}"
             )
-            click.echo("  " + "─" * 110)
+            click.echo("  " + "-" * 110)
             for r in results:
                 date = r.get("created_at", r.get("last_accessed", ""))[:10]
                 similarity = r.get("similarity", 0)
-                purpose = r.get("purpose") or "—"
+                purpose = r.get("purpose") or "-"
                 if len(purpose) > 33:
                     purpose = purpose[:31] + ".."
                 click.echo(
@@ -706,7 +706,7 @@ def insights(run_id: Optional[str], insight_type: Optional[str], limit: int, fmt
             click.echo(
                 f"  {'TYPE':<14} {'SUMMARY':<55} {'RUN':<25} {'DATE':<10}"
             )
-            click.echo("  " + "─" * 105)
+            click.echo("  " + "-" * 105)
             for r in results:
                 date = r["timestamp"][:10]
                 summary = r["summary"]
