@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import signal
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,13 @@ POLL_INTERVAL = 1.0
 
 # PID polling interval while monitoring agent
 PID_POLL_INTERVAL = 5.0
+
+# Idle-stuck detection: if the claude JSONL hasn't been touched for this many
+# minutes while the process is still alive, declare the agent stuck and kill
+# it so the task can advance. Guards against zombie sub-agents that wrote
+# outputs but never emitted a terminating assistant message (observed in
+# 2026-04-19 5cf89f19 incident: 4.5h idle with SUMMARY.md already on disk).
+IDLE_STUCK_TIMEOUT_MIN = 15
 
 
 class Executor:
@@ -359,64 +367,185 @@ class Executor:
         return run_id, pid
 
     async def _monitor_until_done(self, task: IngestedTask, pid: int) -> int | None:
-        """Poll PID until process exits. Handles resume kills.
+        """Poll PID until process exits OR declares itself stuck. Handles resume kills.
 
         Returns final PID on normal exit, or None if killed by resume
         (resume handler takes over monitoring).
+
+        Idle-stuck detection: if the claude JSONL file hasn't grown for
+        IDLE_STUCK_TIMEOUT_MIN minutes, kill the process and treat as exit
+        so the task moves to a terminal state instead of waiting forever.
         """
+        from pathlib import Path as _Path
+
+        idle_timeout_sec = IDLE_STUCK_TIMEOUT_MIN * 60
+        home_str = str(_Path.home())
+        cwd_slug = home_str.replace("/", "-")
+
+        def _jsonl_mtime() -> float | None:
+            updated = self._store.get(task.id)
+            claude_sid = updated.claude_session_id if updated else None
+            if not claude_sid:
+                return None
+            jsonl_path = _Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_sid}.jsonl"
+            try:
+                return jsonl_path.stat().st_mtime
+            except OSError:
+                return None
+
+        last_active = _jsonl_mtime() or time.time()
+        last_check_pid = pid
+
         while True:
             try:
                 os.kill(pid, 0)
-                await asyncio.sleep(PID_POLL_INTERVAL)
             except (ProcessLookupError, PermissionError):
                 # Process exited
                 if pid in self._killed_by_resume:
                     self._killed_by_resume.discard(pid)
-                    # Re-read task to get new PID from resume
                     updated = self._store.get(task.id)
                     if updated and updated.pid and updated.pid != pid:
-                        # Resume installed a new PID — continue monitoring
                         pid = updated.pid
-                        logger.info("Executor: resume detected, now monitoring pid %d for task %s", pid, task.id[:8])
+                        last_active = _jsonl_mtime() or time.time()
+                        logger.info(
+                            "Executor: resume detected, now monitoring pid %d for task %s",
+                            pid, task.id[:8],
+                        )
                         continue
-                    # No new PID yet or same PID — unusual, treat as normal exit
                     logger.warning("Executor: resume kill but no new pid for task %s", task.id[:8])
                 return pid
 
+            await asyncio.sleep(PID_POLL_INTERVAL)
+
+            # Idle-stuck check: refresh mtime; if unchanged for too long, declare stuck
+            cur_mtime = _jsonl_mtime()
+            if cur_mtime and cur_mtime > last_active:
+                last_active = cur_mtime
+
+            if (pid == last_check_pid
+                    and time.time() - last_active > idle_timeout_sec):
+                logger.warning(
+                    "Executor: task %s idle for %.0f min (pid %d alive but JSONL not growing) "
+                    "— declaring stuck, killing process",
+                    task.id[:8], (time.time() - last_active) / 60, pid,
+                )
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGTERM)
+                # Mark task FAILED with a clear reason; outputs on disk are preserved.
+                self._store.update_status(
+                    task.id, TaskStatus.FAILED,
+                    error=f"idle-stuck: no JSONL activity for {IDLE_STUCK_TIMEOUT_MIN}+ min",
+                )
+                from frago.server.services.trace import trace_entry
+                trace_entry(
+                    origin="internal", subkind="executor", data_type="os_event",
+                    thread_id=task.thread_id, task_id=task.id,
+                    msg_id=task.channel_message_id,
+                    data={"kind": "idle_stuck_kill",
+                          "idle_minutes": IDLE_STUCK_TIMEOUT_MIN,
+                          "pid": pid},
+                    event="idle-stuck kill",
+                )
+                return pid
+
+            last_check_pid = pid
+
     # -- resume --
 
-    async def execute_resume(self, task_id: str, new_prompt: str) -> None:
-        """即时执行：kill 当前 agent → resume session → 回填新 pid。
+    async def execute_resume(
+        self, task_id: str, new_prompt: str,
+    ) -> dict[str, Any]:
+        """Resume semantics: continue the Claude session with a new prompt.
 
-        Called by PrimaryAgentService when PA decides 'resume'.
+        Relaxed guards (spec Level 2 of resume-fix):
+        - Missing pid is OK (task already completed) — skip the kill step.
+        - Task must still exist in TaskStore and have session_id; otherwise fail.
+        - If session is still RUNNING, AgentService.continue_task will refuse.
+
+        Returns a structured result:
+            {"status": "ok", "new_pid": int} on success
+            {"status": "failed", "reason": str, "detail": str} on failure
         """
+        from frago.server.services.trace import trace_entry
+
         task = self._store.get(task_id)
-        if not task or not task.pid or not task.session_id:
-            logger.warning("Executor: cannot resume task %s (missing pid/session)", task_id[:8])
-            return
+        if not task:
+            reason = "task_not_found"
+            detail = (
+                "Task is not in TaskStore (may have been archived by daily rotation "
+                "or never existed). Resume cannot target an archived task."
+            )
+            logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
+            trace_entry(
+                origin="internal", subkind="executor", data_type="action_result",
+                thread_id=None, task_id=task_id,
+                data={"action": "resume", "status": "failed",
+                      "reason": reason, "detail": detail},
+                event=f"resume 失败: {reason}",
+            )
+            return {"status": "failed", "reason": reason, "detail": detail}
 
-        # Mark pid as killed-by-resume so monitor won't mark it failed
-        self._killed_by_resume.add(task.pid)
+        if not task.session_id:
+            reason = "missing_session_id"
+            detail = "Task has no bound session_id — never entered EXECUTING state."
+            logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
+            trace_entry(
+                origin="internal", subkind="executor", data_type="action_result",
+                thread_id=task.thread_id, task_id=task_id,
+                data={"action": "resume", "status": "failed",
+                      "reason": reason, "detail": detail},
+                event=f"resume 失败: {reason}",
+            )
+            return {"status": "failed", "reason": reason, "detail": detail}
 
-        try:
-            os.kill(task.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            logger.debug("Executor: pid %d already gone for task %s", task.pid, task_id[:8])
+        # Try to kill the current agent process if one is alleged to exist.
+        # If pid is None or the process already exited, silently skip — continue_task
+        # will resume the Claude session regardless of whether a live process existed.
+        if task.pid:
+            self._killed_by_resume.add(task.pid)
+            try:
+                os.kill(task.pid, signal.SIGTERM)
+                logger.debug("Executor: sent SIGTERM to pid %d for resume of task %s",
+                             task.pid, task_id[:8])
+            except (ProcessLookupError, PermissionError):
+                logger.debug("Executor: pid %d already gone for task %s",
+                             task.pid, task_id[:8])
+                self._killed_by_resume.discard(task.pid)
 
         # Resume session with new prompt
         from frago.server.services.agent_service import AgentService
 
         result = AgentService.continue_task(task.session_id, new_prompt)
         if result.get("status") != "ok":
-            logger.error("Executor: failed to resume task %s: %s", task_id[:8], result.get("error"))
-            self._killed_by_resume.discard(task.pid)
-            return
+            reason = "continue_task_failed"
+            detail = str(result.get("error", ""))
+            logger.error("Executor: failed to resume task %s: %s", task_id[:8], detail)
+            if task.pid:
+                self._killed_by_resume.discard(task.pid)
+            trace_entry(
+                origin="internal", subkind="executor", data_type="action_result",
+                thread_id=task.thread_id, task_id=task_id,
+                data={"action": "resume", "status": "failed",
+                      "reason": reason, "detail": detail},
+                event=f"resume 失败: {detail}",
+            )
+            return {"status": "failed", "reason": reason, "detail": detail}
 
         # Backfill new PID
         new_pid = result.get("pid")
         if new_pid:
             self._store.update_run_info(task_id, pid=new_pid)
-            logger.info("Executor: resumed task %s with new pid %d", task_id[:8], new_pid)
+            logger.info("Executor: resumed task %s with new pid %d",
+                        task_id[:8], new_pid)
+
+        trace_entry(
+            origin="internal", subkind="executor", data_type="action_result",
+            thread_id=task.thread_id, task_id=task_id,
+            data={"action": "resume", "status": "ok", "new_pid": new_pid,
+                  "session_id": task.session_id},
+            event=f"resume 成功: pid={new_pid}",
+        )
+        return {"status": "ok", "new_pid": new_pid}
 
     # -- result extraction --
 

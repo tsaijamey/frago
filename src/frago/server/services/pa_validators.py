@@ -19,6 +19,10 @@ VALID_QUEUE_MESSAGE_TYPES = {
     "scheduled_task",
     "recovered_failed_task",
     "internal_reflection",  # spec 20260418-timeline-event-coverage Phase 5
+    # Action delivery feedback — PA needs to know when its decisions got silently dropped
+    "resume_failed",
+    "run_failed",
+    "schedule_failed",
 }
 
 # Required fields per PA action type (beyond the universal "action" field)

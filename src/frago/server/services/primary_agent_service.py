@@ -665,6 +665,37 @@ class PrimaryAgentService:
                     prompt_hint=msg.get("prompt_hint", ""),
                 ))
 
+            elif msg_type == "resume_failed":
+                from frago.server.services.pa_prompts import (
+                    PA_RESUME_FAILED_TEMPLATE,
+                )
+                msg_parts.append(PA_RESUME_FAILED_TEMPLATE.format(
+                    task_id=msg.get("task_id", "?"),
+                    reason=msg.get("reason", "unknown"),
+                    detail=msg.get("detail", "") or f"(original prompt: {msg.get('original_prompt', '')[:200]})",
+                ))
+
+            elif msg_type == "run_failed":
+                from frago.server.services.pa_prompts import (
+                    PA_RUN_FAILED_TEMPLATE,
+                )
+                msg_parts.append(PA_RUN_FAILED_TEMPLATE.format(
+                    msg_id=msg.get("msg_id", "-") or "-",
+                    task_id=msg.get("task_id", "-") or "-",
+                    reason=msg.get("reason", "unknown"),
+                    detail=msg.get("detail", ""),
+                ))
+
+            elif msg_type == "schedule_failed":
+                from frago.server.services.pa_prompts import (
+                    PA_SCHEDULE_FAILED_TEMPLATE,
+                )
+                msg_parts.append(PA_SCHEDULE_FAILED_TEMPLATE.format(
+                    name=msg.get("name", "?"),
+                    reason=msg.get("reason", "unknown"),
+                    detail=msg.get("detail", ""),
+                ))
+
             else:
                 msg_parts.append(PA_QUEUE_UNKNOWN_FALLBACK_TEMPLATE.format(
                     msg_type=msg_type,
@@ -1100,6 +1131,8 @@ class PrimaryAgentService:
         - msg_id present: new message → create task(COMPLETED) from cache → reply
         - task_id present: existing task (agent callback) → reply using existing task
         """
+        from frago.server.services.trace import trace_entry
+
         task_id: str = decision.get("task_id", "")
         msg_id: str = decision.get("msg_id", "")
         channel: str = decision.get("channel", "")
@@ -1109,6 +1142,22 @@ class PrimaryAgentService:
 
         if not channel or not text:
             logger.warning("reply decision missing channel or text")
+            trace_entry(
+                origin="internal", subkind="pa", data_type="action_result",
+                thread_id=None, task_id=task_id or None,
+                data={"action": "reply", "status": "failed",
+                      "reason": "missing_channel_or_text",
+                      "detail": f"channel={channel!r} text_len={len(text)}"},
+                msg_id=msg_id or None,
+                event="reply 失败: missing channel or text",
+            )
+            await self.enqueue_message({
+                "type": "reply_failed",
+                "task_id": task_id,
+                "channel": channel,
+                "error": "missing channel or text",
+                "original_text": text,
+            })
             return
 
         # msg_id path: create task from cache (born completed — PA replied directly)
@@ -1142,16 +1191,35 @@ class PrimaryAgentService:
                 "reply_text": text,
             }
             await self._broadcast_pa_event("pa_reply", _reply_data)
-            # Trace: PA replied to channel
+            # Trace: PA replied to channel (legacy event) + action_result for PA self-diagnosis
             from frago.server.services.trace import trace as _trace
             _trace(msg_id, task_id, "pa", f"回复 {channel}: {text[:80]}",
                    data={"event_type": "pa_reply", **_reply_data})
+            trace_entry(
+                origin="internal", subkind="pa", data_type="action_result",
+                thread_id=None, task_id=task_id or None,
+                data={"action": "reply", "status": "ok",
+                      "channel": channel, "text_len": len(text),
+                      "has_attachment": bool(file_path or image_path)},
+                msg_id=msg_id or None,
+                event=f"reply 成功: {channel}",
+            )
         elif result["status"] == "error":
+            error_detail = result.get("error", "unknown")
+            trace_entry(
+                origin="internal", subkind="pa", data_type="action_result",
+                thread_id=None, task_id=task_id or None,
+                data={"action": "reply", "status": "failed",
+                      "reason": "send_failed", "detail": error_detail,
+                      "channel": channel},
+                msg_id=msg_id or None,
+                event=f"reply 失败: {error_detail[:80]}",
+            )
             await self.enqueue_message({
                 "type": "reply_failed",
                 "task_id": task_id,
                 "channel": channel,
-                "error": result.get("error", "unknown"),
+                "error": error_detail,
                 "original_text": text,
             })
 
@@ -1161,15 +1229,41 @@ class PrimaryAgentService:
         Two paths:
         - msg_id present: new message → create task(QUEUED) from cache
         - task_id present: existing task (e.g. multi-step follow-up)
+
+        Every failure path emits a run_failed feedback message so PA learns
+        of silent drops (spec resume-fix generalized to run action).
         """
+        from frago.server.services.trace import trace_entry
+
         task_id = decision.get("task_id", "")
         msg_id = decision.get("msg_id", "")
         description = decision.get("description", "")
         prompt = decision.get("prompt", "")
         channel = decision.get("channel", "")
 
+        async def _fail(reason: str, detail: str) -> None:
+            logger.warning("run %s failed: %s — %s", task_id[:8] or msg_id[:12] or "?", reason, detail)
+            trace_entry(
+                origin="internal", subkind="pa", data_type="action_result",
+                thread_id=None, task_id=task_id or None,
+                data={"action": "run", "status": "failed",
+                      "reason": reason, "detail": detail,
+                      "decision_msg_id": msg_id, "decision_task_id": task_id,
+                      "channel": channel},
+                msg_id=msg_id or None,
+                event=f"run 失败: {reason}",
+            )
+            await self.enqueue_message({
+                "type": "run_failed",
+                "msg_id": msg_id,
+                "task_id": task_id,
+                "channel": channel,
+                "reason": reason,
+                "detail": detail,
+            })
+
         if not prompt:
-            logger.warning("run decision missing prompt")
+            await _fail("missing_prompt", "run 决策未提供 prompt 字段，无法派发任务。")
             return
 
         from frago.server.services.ingestion.store import TaskStore
@@ -1179,14 +1273,22 @@ class PrimaryAgentService:
         if msg_id and not task_id:
             task = self._create_task_from_cache(channel, msg_id, TaskStatus.QUEUED)
             if not task:
-                logger.warning("run decision: cannot create task from msg_id %s", msg_id)
+                await _fail(
+                    "msg_id_cache_miss",
+                    f"channel={channel} msg_id={msg_id!r} 在 message_cache 中找不到。"
+                    f" 常见原因：msg_id 使用了假格式（如 'task_<uuid>'）；原始消息缓存已过期。"
+                    f" 正确做法：新消息用 <msg> 标签里的 msg_id，续派已有 task 用 task_id。",
+                )
                 return
             task_id = task.id
             from frago.server.services.trace import trace as _trace
             _trace(msg_id, task_id, "pa", f"创建任务 QUEUED: {description[:60]}, task={task_id[:8]}")
 
         if not task_id:
-            logger.warning("run decision missing both task_id and msg_id")
+            await _fail(
+                "missing_id",
+                "run 决策必须提供 msg_id (新消息) 或 task_id (已有任务) 至少一个。",
+            )
             return
 
         store.update_run_info(
@@ -1201,38 +1303,97 @@ class PrimaryAgentService:
             store.update_status(task_id, TaskStatus.QUEUED)
         logger.info("Task %s → QUEUED (desc=%s)", task_id[:8], description)
 
+        # Success path emits action_result so PA can confirm via timeline
+        trace_entry(
+            origin="internal", subkind="pa", data_type="action_result",
+            thread_id=None, task_id=task_id,
+            data={"action": "run", "status": "ok", "description": description[:120]},
+            msg_id=msg_id or None,
+            event=f"run 成功: task={task_id[:8]}",
+        )
+
     async def _handle_resume(self, decision: dict[str, Any]) -> None:
-        """PA decided action:'resume' → delegate to executor for instant kill+restart."""
+        """PA decided action:'resume' → continue Claude session with new prompt.
+
+        On any failure path, enqueue a resume_failed feedback message so PA
+        knows its decision was not consumed (spec Level 1 of resume-fix).
+        """
         task_id = decision.get("task_id")
         prompt = decision.get("prompt", "")
 
-        if not task_id or not prompt:
-            logger.warning("resume decision missing task_id or prompt")
+        async def _feedback_fail(reason: str, detail: str) -> None:
+            await self.enqueue_message({
+                "type": "resume_failed",
+                "task_id": task_id or "?",
+                "reason": reason,
+                "detail": detail,
+                "original_prompt": prompt or "",
+            })
+
+        if not task_id:
+            logger.warning("resume decision missing task_id")
+            await _feedback_fail("missing_task_id",
+                                 "PA 决策未提供 task_id，无法执行 resume。")
+            return
+        if not prompt:
+            logger.warning("resume decision missing prompt")
+            await _feedback_fail("missing_prompt",
+                                 f"PA 决策未提供 prompt，无法 resume task {task_id[:8]}。")
             return
 
-        if self._executor:
-            await self._executor.execute_resume(task_id, prompt)
-        else:
+        if not self._executor:
             logger.warning("Executor not available for resume")
+            await _feedback_fail("executor_unavailable",
+                                 "Executor 未初始化，无法执行 resume。")
+            return
+
+        result = await self._executor.execute_resume(task_id, prompt)
+        if result.get("status") != "ok":
+            await _feedback_fail(
+                result.get("reason", "unknown"),
+                result.get("detail", ""),
+            )
 
     async def _handle_schedule(self, decision: dict[str, Any]) -> None:
-        """PA decided action:'schedule' → register schedule directly via SchedulerService."""
+        """PA decided action:'schedule' → register schedule directly via SchedulerService.
+
+        Every failure path emits a schedule_failed feedback message so PA
+        learns of silent drops (spec resume-fix generalized to schedule action).
+        """
+        from frago.server.services.trace import trace_entry
+
         name = decision.get("name", "unnamed")
         prompt = decision.get("prompt", "")
         cron = decision.get("cron")
         every = decision.get("every")
         recipe = decision.get("recipe")
 
+        async def _fail(reason: str, detail: str) -> None:
+            logger.warning("schedule %r failed: %s — %s", name, reason, detail)
+            trace_entry(
+                origin="internal", subkind="pa", data_type="action_result",
+                thread_id=None, task_id=None,
+                data={"action": "schedule", "status": "failed",
+                      "reason": reason, "detail": detail, "name": name},
+                event=f"schedule 失败: {reason}",
+            )
+            await self.enqueue_message({
+                "type": "schedule_failed",
+                "name": name,
+                "reason": reason,
+                "detail": detail,
+            })
+
         if not prompt:
-            logger.warning("schedule decision missing prompt")
+            await _fail("missing_prompt", "schedule 决策未提供 prompt。")
             return
 
         if not cron and not every:
-            logger.warning("schedule decision missing cron or every")
+            await _fail("missing_schedule_spec", "schedule 决策必须提供 cron 或 every 至少一个。")
             return
 
         if not self._scheduler_service:
-            logger.warning("Recipe scheduler not available for schedule action")
+            await _fail("scheduler_unavailable", "Recipe scheduler 未初始化。")
             return
 
         # Parse interval if using --every syntax
@@ -1241,8 +1402,9 @@ class PrimaryAgentService:
             from frago.server.services.scheduler_service import _parse_interval
             try:
                 interval_seconds = _parse_interval(every)
-            except (ValueError, IndexError):
-                logger.warning("Invalid interval in schedule decision: %s", every)
+            except (ValueError, IndexError) as e:
+                await _fail("invalid_interval",
+                            f"Invalid --every value {every!r}: {e}")
                 return
 
         # Capture channel and reply_context from the original message so scheduled_task
@@ -1255,16 +1417,27 @@ class PrimaryAgentService:
             if cached and cached.reply_context:
                 reply_context = dict(cached.reply_context)
 
-        schedule = self._scheduler_service.add_schedule(
-            recipe_name=recipe,
-            interval_seconds=interval_seconds,
-            name=name,
-            prompt=prompt,
-            cron=cron,
-            reply_channel=reply_channel,
-            reply_context=reply_context,
-        )
+        try:
+            schedule = self._scheduler_service.add_schedule(
+                recipe_name=recipe,
+                interval_seconds=interval_seconds,
+                name=name,
+                prompt=prompt,
+                cron=cron,
+                reply_channel=reply_channel,
+                reply_context=reply_context,
+            )
+        except Exception as e:
+            await _fail("add_schedule_exception", str(e))
+            return
         logger.info("Schedule registered by PA: %s (%s)", schedule["id"], name)
+        trace_entry(
+            origin="internal", subkind="pa", data_type="action_result",
+            thread_id=None, task_id=None,
+            data={"action": "schedule", "status": "ok",
+                  "schedule_id": schedule["id"], "name": name},
+            event=f"schedule 成功: {schedule['id']}",
+        )
 
     # -- helpers --
 

@@ -114,6 +114,20 @@ else:
   {"action": "resume", "task_id": "...", "prompt": "..."}
 ]
 
+### ⚠️ id 字段硬约束（踩过坑，必读）
+
+- **msg_id** 是 channel 原生消息 id，必须从 `<msg>` 标签原样复制（feishu 形如 `om_x...`，email 形如 `<xxx@domain>`）。**不可自造**。
+- **task_id** 是 frago 内部 uuid，来自环境信息里的 task 列表或 agent_completed 回调字段。**不可添加前缀/后缀**。
+- `msg_id` 和 `task_id` 二选一。**不要在同一决策里同时填两个**，也不要把 task_id 放进 msg_id 字段（例如 `msg_id: "task_33a72e2e"` 是错的 — 会被静默丢弃，派发不出去）。
+- 想续派一个已有的 task（比如 agent 跑完后让它做下一步）→ 只填 `task_id`，**不填** msg_id。
+- 想启动一个全新 task 处理刚到的用户消息 → 只填 `msg_id`，**不填** task_id。
+
+错误示例（会触发 run_failed 反馈）：
+  `{"action": "run", "msg_id": "task_33a72e2e", ...}`  ← 把 task_id 伪装成 msg_id
+  `{"action": "run", "msg_id": "task_33a72e2e_restart", ...}`  ← 自造后缀
+正确示例：
+  `{"action": "run", "task_id": "33a72e2e-f62a-450c-8d5f-deed8296e1de", ...}`
+
 ## 调度路由
 
 用 **reply**：
@@ -540,6 +554,52 @@ PA_INTERNAL_REFLECTION_TEMPLATE = """\
 和活跃 thread (frago thread list --status active)，如果发现需要主动处理的事项（未完成 \
 task、环境异常、sub-agent 卡死、跨 thread 关联事项等），可决定 reply/run/schedule；如无， \
 返回空决策即可，不强制行动。\
+"""
+
+
+# --------------------------------------------------------------------------
+# [给 PA] [resume 决策投递失败反馈]
+# 三类常见失败：task_id 缺失/无效、task 已归档或 session_id 丢失、session 仍 RUNNING。
+# PA 收到这条消息说明上一轮 resume 没被消费，需要选择补救动作（run / reply / 放弃）。
+# --------------------------------------------------------------------------
+PA_RESUME_FAILED_TEMPLATE = """\
+[resume 失败] task: {task_id}  reason: {reason}
+{detail}
+
+你上一轮投递的 resume 没有被执行。可选恢复路径：
+- 对用户原诉求新派 run（创建新任务）
+- reply 告知用户需要重新拉起/说明情况
+- 如确认无需补救，忽略即可
+\
+"""
+
+
+# --------------------------------------------------------------------------
+# [给 PA] [run 决策投递失败反馈]
+# 常见触发：msg_id 在 cache 找不到（PA 把 task_id 拼成假 msg_id）、msg_id 和
+# task_id 都缺失、prompt/description 空、cache 过期。
+# --------------------------------------------------------------------------
+PA_RUN_FAILED_TEMPLATE = """\
+[run 失败] msg_id: {msg_id}  task_id: {task_id}  reason: {reason}
+{detail}
+
+你上一轮投递的 run 决策未落入执行器队列。常见原因：
+- msg_id 使用了假格式（如 "task_<uuid>"）：msg_id 必须来自 <msg> 标签，形如 "om_..." (feishu) 或 channel 原生格式；不可自造。
+- 想重派已有 task 时 → 使用 `task_id`（不是 msg_id）且不要加前缀/后缀。
+- 原始消息 cache 已过期 → 改用 reply，或引用 channel 上仍可见的消息。
+
+修正后请重新投递决策。\
+"""
+
+
+# --------------------------------------------------------------------------
+# [给 PA] [schedule 决策投递失败反馈]
+# --------------------------------------------------------------------------
+PA_SCHEDULE_FAILED_TEMPLATE = """\
+[schedule 失败] name: {name}  reason: {reason}
+{detail}
+
+你上一轮 schedule 注册未生效。修正后可重新投递，或改用 reply 告知用户。\
 """
 
 
