@@ -13,22 +13,22 @@
 
 ## 推荐路径
 
-  1. frago run find <提取关键词>                # 搜索历史类似任务
-  2. frago recipe list | grep extract         # 检查已有提取 recipe
-  2. frago chrome navigate <目标页面>
-  3. frago chrome get-content                  # 初步了解页面结构
-  4. frago chrome exec-js "探索 DOM 结构" --return-value
+  1. {{frago_launcher}} run find <提取关键词>                # 搜索历史类似任务
+  2. {{frago_launcher}} recipe list | grep extract         # 检查已有提取 recipe
+  2. {{frago_launcher}} chrome navigate <目标页面>
+  3. {{frago_launcher}} chrome get-content                  # 初步了解页面结构
+  4. {{frago_launcher}} chrome exec-js "探索 DOM 结构" --return-value
   5. 确定选择器（按 selector-priority 排序）
-  6. frago chrome highlight "选择器"           # 高亮验证
-  7. frago chrome exec-js "批量提取" --return-value
-  8. 如需翻页：frago chrome scroll / click 下一页
+  6. {{frago_launcher}} chrome highlight "选择器"           # 高亮验证
+  7. {{frago_launcher}} chrome exec-js "批量提取" --return-value
+  8. 如需翻页：{{frago_launcher}} chrome scroll / click 下一页
   9. 结果存入 workspace/outputs/
 
 ## 关键约束
 - must-content-extraction — 用 get-content + exec-js 提取，不截图读字
 - selector-priority — 选稳定选择器，写 fallback
 - chrome-scroll — 懒加载页面需要滚动触发内容加载
-- better-structured-data — 提取结果用 frago def 存档（开发中）
+- better-structured-data — 提取结果用 {{frago_launcher}} def 存档（开发中）
 
 ## 常见陷阱
 - 页面懒加载 → 只拿到首屏数据，需要 scroll + 等待

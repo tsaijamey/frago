@@ -1,15 +1,15 @@
 == 下一步 ==
 
 1. 思考你正在面对什么问题。它属于哪类场景？
-   frago book scenes                          查看已知场景类型
-   frago run find <关键词>                     搜索历史类似任务
+   {{frago_launcher}} book scenes                          查看已知场景类型
+   {{frago_launcher}} run find <关键词>                     搜索历史类似任务
 
 2. 如果找到匹配场景，按场景卡片中的推荐路径行动。
-   frago book scene-<name>                    查看具体场景的决策路径
+   {{frago_launcher}} book scene-<name>                    查看具体场景的决策路径
 
 3. 如果没有匹配场景，从上方索引中选择相关 topic 深入阅读。
-   frago book <topic>                         查看具体知识
+   {{frago_launcher}} book <topic>                         查看具体知识
 
 4. 任务完成后，把新场景经验结构化存档，供下次冷启动召回。
-   frago run insights                          查看历史经验洞察
-   frago def（开发中）                         结构化知识存取
+   {{frago_launcher}} run insights                          查看历史经验洞察
+   {{frago_launcher}} def（开发中）                         结构化知识存取

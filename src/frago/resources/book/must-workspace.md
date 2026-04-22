@@ -21,11 +21,11 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目
 所有产出必须放在 workspace 内。
 
   # ✅ 正确：产出在 workspace 内
-  frago recipe run video_produce_from_script \
+  {{frago_launcher}} recipe run video_produce_from_script \
     --params '{"script_file": "~/.frago/projects/<id>/outputs/script.json", "output_dir": "~/.frago/projects/<id>/outputs/video"}'
 
   # ❌ 错误：使用外部目录
-  frago recipe run video_produce_from_script \
+  {{frago_launcher}} recipe run video_produce_from_script \
     --params '{"script_file": "~/Desktop/script.json"}'
 
 禁止在 Desktop、/tmp、Downloads 等外部位置创建文件。
@@ -36,7 +36,7 @@ Recipe 调用时必须显式指定 output_dir 到 workspace 内。
 Executor 启动 sub-agent 时通过环境变量 FRAGO_CURRENT_RUN 自动注入 run_id。
 多个 agent 可以并行执行，各自拥有独立的 run_id 和 workspace。
 
-NEVER 手动调用 frago run set-context 或 frago run release。
+NEVER 手动调用 {{frago_launcher}} run set-context 或 {{frago_launcher}} run release。
 这些命令仅供 CLI 手动调试使用，sub-agent 不需要也不应该调用。
 
 ## 禁止使用 cd
@@ -49,14 +49,14 @@ NEVER 手动调用 frago run set-context 或 frago run release。
 
   # ❌ 错误：cd 后 frago 命令会失败
   cd ~/.frago/projects/<id>
-  frago run log ...                            # 会报错
+  {{frago_launcher}} run log ...                            # 会报错
 
 ## 路径约定
 
 日志中用相对于 workspace 的路径，执行脚本时用绝对路径：
 
   # 日志记录用相对路径
-  frago run log --data '{"file": "scripts/filter.py", "result_file": "outputs/filtered.json"}'
+  {{frago_launcher}} run log --data '{"file": "scripts/filter.py", "result_file": "outputs/filtered.json"}'
 
   # 执行脚本用绝对路径
   uv run python ~/.frago/projects/<id>/scripts/filter.py

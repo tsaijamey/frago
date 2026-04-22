@@ -12,16 +12,16 @@
 
 ## 推荐路径
 
-  1. frago run find <recipe 关键词>             # 搜索历史类似任务
-  2. frago recipe list                         # 确认不存在类似 recipe
+  1. {{frago_launcher}} run find <recipe 关键词>             # 搜索历史类似任务
+  2. {{frago_launcher}} recipe list                         # 确认不存在类似 recipe
   3. 回顾 Run 日志中的 _insights
-  4. frago recipe plan <name> --prompt "..."   # 生成 spec.md（需求定义）
+  4. {{frago_launcher}} recipe plan <name> --prompt "..."   # 生成 spec.md（需求定义）
   5. 审阅 spec.md，必要时手动修改
-  6. frago recipe create <name>                # 根据 spec 生成代码 + 自动 validate
-  7. frago recipe run <name> --params '...'    # 测试
+  6. {{frago_launcher}} recipe create <name>                # 根据 spec 生成代码 + 自动 validate
+  7. {{frago_launcher}} recipe run <name> --params '...'    # 测试
 
 简单 recipe 可跳过 plan，直接一步创建：
-  frago recipe create <name> --prompt "..."
+  {{frago_launcher}} recipe create <name> --prompt "..."
 
 ## 关键约束
 - recipe-fields — 必填字段、schema 规范

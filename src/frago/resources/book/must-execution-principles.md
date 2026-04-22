@@ -19,7 +19,7 @@ agent 执行任务时常犯：假设用户意图、提供交互菜单（auto-app
 ### 2. 立即感知可用工具
 开始任务前，立即查看可用的 recipe 和工具：
 
-  frago recipe list --format json
+  {{frago_launcher}} recipe list --format json
 
 ### 3. 工具驱动
 放弃预训练记忆，用工具"看"和"交互"获取真实信息：

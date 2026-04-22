@@ -13,16 +13,16 @@
 
 ## 推荐路径
 
-  1. frago run find <workflow 关键词>           # 搜索历史类似任务
-  2. frago recipe list | grep workflow        # 检查已有 workflow recipe
-  2. frago chrome navigate <第一个页面>
-  3. frago chrome list-tabs                    # 查看当前标签页
-  4. frago chrome navigate <第二个页面>        # 自动在新标签打开或复用
-  5. frago chrome switch-tab <tab_id>          # 在标签页间切换
+  1. {{frago_launcher}} run find <workflow 关键词>           # 搜索历史类似任务
+  2. {{frago_launcher}} recipe list | grep workflow        # 检查已有 workflow recipe
+  2. {{frago_launcher}} chrome navigate <第一个页面>
+  3. {{frago_launcher}} chrome list-tabs                    # 查看当前标签页
+  4. {{frago_launcher}} chrome navigate <第二个页面>        # 自动在新标签打开或复用
+  5. {{frago_launcher}} chrome switch-tab <tab_id>          # 在标签页间切换
   6. 每次切换后 get-content 确认页面状态
 
 ## 关键约束
-- must-tab-creation — 打开新 URL 用 frago chrome navigate
+- must-tab-creation — 打开新 URL 用 {{frago_launcher}} chrome navigate
 - must-navigation — 不猜测页面间的跳转 URL
 - chrome-click — 点击可能触发新标签页打开
 - visual-effects — 在复杂页面中高亮定位目标元素

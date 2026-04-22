@@ -2,7 +2,7 @@
 
 分类: 偏好（BETTER）
 
-frago-hook 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察到"一类事件应该触发一类知识注入"的重复模式时，MUST 用 `frago hook-rules add` 沉淀为规则——不要改 Rust，不要靠提醒用户。
+frago-hook 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察到"一类事件应该触发一类知识注入"的重复模式时，MUST 用 `{{frago_launcher}} hook-rules add` 沉淀为规则——不要改 Rust，不要靠提醒用户。
 
 ## 何时该写规则
 
@@ -19,13 +19,13 @@ frago-hook 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察
 ## 核心命令
 
 ```bash
-frago hook-rules list [--source=builtin|user|agent] [--event=<name>] [--show-disabled]
-frago hook-rules show <rule_id>
-frago hook-rules add --rule='<JSON>'               # 默认 source=agent + ttl_days=30
-frago hook-rules disable <rule_id>
-frago hook-rules enable <rule_id>
-frago hook-rules remove <rule_id>
-frago hook-rules validate
+{{frago_launcher}} hook-rules list [--source=builtin|user|agent] [--event=<name>] [--show-disabled]
+{{frago_launcher}} hook-rules show <rule_id>
+{{frago_launcher}} hook-rules add --rule='<JSON>'               # 默认 source=agent + ttl_days=30
+{{frago_launcher}} hook-rules disable <rule_id>
+{{frago_launcher}} hook-rules enable <rule_id>
+{{frago_launcher}} hook-rules remove <rule_id>
+{{frago_launcher}} hook-rules validate
 ```
 
 ## 规则 JSON 结构
@@ -63,7 +63,7 @@ frago hook-rules validate
 
 | type | 字段 | 行为 |
 |---|---|---|
-| `inject_book_topic` | topic | 跑 `frago book <topic>`，stdout 注入 context |
+| `inject_book_topic` | topic | 跑 `{{frago_launcher}} book <topic>`，stdout 注入 context |
 | `inject_literal` | text | 原文注入 |
 | `run_command_and_inject_stdout` | command, timeout_ms? | command 前置 frago launcher，stdout 注入 |
 | `spawn_recipe_async` | recipe, params_from_event | fire-and-forget 异步 recipe |
@@ -72,7 +72,7 @@ frago hook-rules validate
 
 **关键词路由到 def 领域：**
 ```bash
-frago hook-rules add --source=agent --rule='{
+{{frago_launcher}} hook-rules add --source=agent --rule='{
   "id":"agent-video-tutorial",
   "event":"UserPromptSubmit",
   "match":{"type":"prompt_contains","value":"视频教程"},
@@ -83,7 +83,7 @@ frago hook-rules add --source=agent --rule='{
 
 **工具使用前挂专题提示：**
 ```bash
-frago hook-rules add --rule='{
+{{frago_launcher}} hook-rules add --rule='{
   "id":"agent-ffmpeg-safety",
   "event":"PreToolUse",
   "match":{"type":"bash_contains","value":"ffmpeg"},
@@ -102,7 +102,7 @@ frago hook-rules add --rule='{
 ## 下次召回入口
 
 ```bash
-frago book hook-rules-authoring
+{{frago_launcher}} book hook-rules-authoring
 ```
 
-系统会在你在 Bash 里运行任何 `frago hook-rules` 命令时自动注入本条。
+系统会在你在 Bash 里运行任何 `{{frago_launcher}} hook-rules` 命令时自动注入本条。

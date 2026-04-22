@@ -13,13 +13,13 @@
 
 ## 推荐路径
 
-  1. frago run find <表单关键词>                # 搜索历史类似任务
-  2. frago recipe list | grep form            # 检查已有表单 recipe
-  2. frago chrome navigate <目标页面>
-  3. frago chrome get-content                  # 了解页面结构
-  4. frago chrome exec-js "提取表单字段" --return-value
+  1. {{frago_launcher}} run find <表单关键词>                # 搜索历史类似任务
+  2. {{frago_launcher}} recipe list | grep form            # 检查已有表单 recipe
+  2. {{frago_launcher}} chrome navigate <目标页面>
+  3. {{frago_launcher}} chrome get-content                  # 了解页面结构
+  4. {{frago_launcher}} chrome exec-js "提取表单字段" --return-value
   5. 逐字段填写，每步验证
-  6. frago chrome screenshot verify.png        # 提交前截图确认
+  6. {{frago_launcher}} chrome screenshot verify.png        # 提交前截图确认
 
 ## 关键约束
 - selector-priority — 优先 aria-label/data-testid，避免脆弱 class

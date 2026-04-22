@@ -3,12 +3,12 @@
 分类: 替代（MUST）
 
 ## 是什么
-获取网页内容必须通过 frago chrome navigate 导航到目标页面，再用 get-content 提取内容。WebFetch 工具在 frago 环境中不可靠，且无法处理需要 JS 渲染的页面。
+获取网页内容必须通过 {{frago_launcher}} chrome navigate 导航到目标页面，再用 get-content 提取内容。WebFetch 工具在 frago 环境中不可靠，且无法处理需要 JS 渲染的页面。
 
 ## 怎么用
-  frago chrome navigate "https://example.com/page"
-  frago chrome get-content                           # 获取整页内容
-  frago chrome get-content --selector ".article"     # 获取指定区域
+  {{frago_launcher}} chrome navigate "https://example.com/page"
+  {{frago_launcher}} chrome get-content                           # 获取整页内容
+  {{frago_launcher}} chrome get-content --selector ".article"     # 获取指定区域
 
 ## 什么时候用
 - 需要读取任何网页内容时

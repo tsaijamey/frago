@@ -33,7 +33,7 @@ agent 不清楚哪些日志自动记录、哪些需手动补充，不写 _insigh
 
 ## 手动日志命令格式
 
-  frago run log \
+  {{frago_launcher}} run log \
     --step "步骤描述" \
     --status "success|error|warning" \
     --action-type "<见下方>" \
@@ -68,13 +68,13 @@ CDP 自动：navigation, extraction, interaction, screenshot
 
 示例：
 
-  frago run log \
+  {{frago_launcher}} run log \
     --step "分析点击失败原因" \
     --status "warning" \
     --action-type "analysis" \
     --execution-method "analysis" \
     --data '{
-      "command": "frago chrome click .job-card",
+      "command": "{{frago_launcher}} chrome click .job-card",
       "error": "Element not found",
       "_insights": [
         {"type": "pitfall", "summary": "动态 class 不可靠，需要 data-testid"}
@@ -83,7 +83,7 @@ CDP 自动：navigation, extraction, interaction, screenshot
 
 ## 脚本文件处理
 
-- 简单命令：直接用 frago <command>，记为 execution_method: command
+- 简单命令：直接用 {{frago_launcher}} <command>，记为 execution_method: command
 - 复杂脚本（>30 行）：保存为 scripts/<name>.{py,js,sh}，记为 execution_method: file
 
 file 类型的 data 必须包含 file 字段，代码不要内联到日志。
