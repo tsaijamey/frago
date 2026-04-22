@@ -6,9 +6,9 @@
 frago recipe 系统提供可复用的自动化脚本。执行前先查询可用 recipe，避免重复造轮子。支持同步和异步执行。
 
 ## 怎么用
-  frago recipe list                                          # 查看所有可用 recipe
-  frago recipe run <name> --params '{"key": "value"}'        # 同步执行
-  frago recipe run <name> --params '{"key": "value"}' --async  # 异步执行
+  {{frago_launcher}} recipe list                                          # 查看所有可用 recipe
+  {{frago_launcher}} recipe run <name> --params '{"key": "value"}'        # 同步执行
+  {{frago_launcher}} recipe run <name> --params '{"key": "value"}' --async  # 异步执行
 
 ## 什么时候用
 - 开始一个浏览器自动化任务前，先查看是否已有对应 recipe

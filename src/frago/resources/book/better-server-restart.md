@@ -29,7 +29,7 @@ agent 在需要刷新后端时倾向于直接 `{{frago_launcher}} server restart
 
 ## server 进程管理的背景
 
-frago server 通过 systemd user service 管理。`frago server restart` 检测 systemd 状态后委托 `systemctl --user restart`。不要直接操作 systemctl，不要 kill 进程，不要用 daemon.py 的内部方法。
+frago server 通过 systemd user service 管理。`{{frago_launcher}} server restart` 检测 systemd 状态后委托 `systemctl --user restart`。不要直接操作 systemctl，不要 kill 进程，不要用 daemon.py 的内部方法。
 
 ## 不要做
 - 不要在有活跃任务时直接 restart — 任务会丢失

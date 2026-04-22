@@ -81,5 +81,5 @@ agent 有了 spec 之后，需要把需求映射为 recipe.md 元数据 + 脚本
   □ 脚本文件与 runtime 匹配（.py/.js/.sh）
   □ 脚本能正确接收 JSON 参数
   □ 脚本输出有效 JSON
-  □ frago recipe validate 通过
+  □ {{frago_launcher}} recipe validate 通过
   □ spec.md 中的测试用例能执行通过

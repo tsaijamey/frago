@@ -4,7 +4,7 @@
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "搜索用 frago chrome navigate google，禁止 WebSearch"
+  brief: "搜索用 {{frago_launcher}} chrome navigate google，禁止 WebSearch"
 
 - name: must-browser-fetch
   category: must
@@ -28,12 +28,12 @@
 
 - name: must-no-auto-memory
   category: must
-  brief: "禁用 Claude Code auto memory，结构化沉淀走 frago def save，忽略 MEMORY.md"
+  brief: "禁用 Claude Code auto memory，结构化沉淀走 {{frago_launcher}} def save，忽略 MEMORY.md"
 
 # 偏好类 — 有更好的方式
 - name: better-structured-data
   category: better
-  brief: "结构化数据存取用 frago def，比手写 JSON 更规范"
+  brief: "结构化数据存取用 {{frago_launcher}} def，比手写 JSON 更规范"
 
 - name: better-git-checkout
   category: better
@@ -45,12 +45,12 @@
 
 - name: hook-rules-authoring
   category: better
-  brief: "观察到重复路由模式时用 frago hook-rules add 沉淀为数据化规则，不改 Rust"
+  brief: "观察到重复路由模式时用 {{frago_launcher}} hook-rules add 沉淀为数据化规则，不改 Rust"
 
 # 效率类 — 你可能不知道有这个
 - name: recipe-execution
   category: available
-  brief: "frago recipe list/run 查询和执行已有 recipe"
+  brief: "{{frago_launcher}} recipe list/run 查询和执行已有 recipe"
 
 - name: interactive-recipe
   category: available
@@ -78,4 +78,4 @@
 
 - name: def-knowledge
   category: available
-  brief: "frago def 结构化知识系统：domain 注册、find 查询、save 沉淀"
+  brief: "{{frago_launcher}} def 结构化知识系统：domain 注册、find 查询、save 沉淀"

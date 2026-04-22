@@ -283,12 +283,12 @@ if __name__ == "__main__":
 ## 创建完整流程
 
 ```
-1. frago recipe list                          # 确认不存在类似 recipe
+1. {{frago_launcher}} recipe list                          # 确认不存在类似 recipe
 2. 确定 type（atomic/workflow）和 runtime
 3. 创建目录和 recipe.md（见 recipe-fields）
 4. 编写脚本文件（本文档的模板）
-5. frago recipe validate <path>               # 校验
-6. frago recipe run <name> --params '{...}'   # 测试
+5. {{frago_launcher}} recipe validate <path>               # 校验
+6. {{frago_launcher}} recipe run <name> --params '{...}'   # 测试
 ```
 
 ## 不要做
@@ -297,7 +297,7 @@ if __name__ == "__main__":
 - 不要在 stdout 混入非 JSON 内容（进度日志走 stderr）
 - 不要 `chmod +x` recipe 脚本 — runner 不需要
 - 不要加 shebang 行 — runner 通过 uv run 或指定解释器执行
-- 不要直接 `python recipe.py` 或 `node recipe.js` 执行 — 走 `frago recipe run`
+- 不要直接 `python recipe.py` 或 `node recipe.js` 执行 — 走 `{{frago_launcher}} recipe run`
 - 不要用 `2>&1` 重定向 recipe 输出 — 会把 stderr 混入 stdout 破坏 JSON 解析
 - 不要从 `params` 读 secrets（如 `params["secrets"]`、`params.get("api_key")`）— runner 不通过 params 传凭证
 - 不要硬编码读 recipe 专属环境变量（如 `os.environ["ARK_API_KEY"]`、`os.environ["OPENAI_API_KEY"]`）— 凭证统一走 `FRAGO_SECRETS`

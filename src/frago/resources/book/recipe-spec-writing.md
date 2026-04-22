@@ -60,7 +60,7 @@ runtime 选择（仅 atomic）：
 
 ### 6. Test Cases
 至少一个可执行的测试用例：
-  命令: frago recipe run <name> --params '{"query": "test"}'
+  命令: {{frago_launcher}} recipe run <name> --params '{"query": "test"}'
   预期输出: {"success": true, "results": [...]}
   验证点: results 数组非空，每项包含 title 和 url
 

@@ -3,12 +3,12 @@
 分类: 效率（AVAILABLE）
 
 ## 解决什么问题
-agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级字段用法不正确，导致 frago recipe validate 失败。
+agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级字段用法不正确，导致 {{frago_launcher}} recipe validate 失败。
 
 ## 验证命令
 
-  frago recipe validate <recipe 目录或 recipe.md 路径>
-  frago recipe validate <path> --format json
+  {{frago_launcher}} recipe validate <recipe 目录或 recipe.md 路径>
+  {{frago_launcher}} recipe validate <path> --format json
 
 ## 必填字段
 
