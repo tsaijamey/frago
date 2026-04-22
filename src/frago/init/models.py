@@ -81,10 +81,10 @@ class Config(BaseModel):
     last_resource_update: Optional[datetime] = None
 
     # Task ingestion configuration
-    task_ingestion: Optional[dict] = None
+    task_ingestion: dict = Field(default_factory=dict)
 
     # Primary Agent configuration
-    primary_agent: Optional[dict] = None
+    primary_agent: dict = Field(default_factory=dict)
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.now)

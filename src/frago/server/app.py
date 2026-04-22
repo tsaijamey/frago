@@ -304,7 +304,7 @@ async def _start_ingestion_scheduler(logger):
         if not config_file.exists():
             return None
         raw_config = _json.loads(config_file.read_text(encoding="utf-8"))
-        ingestion_config = raw_config.get("task_ingestion", {})
+        ingestion_config = raw_config.get("task_ingestion") or {}
         if not ingestion_config.get("enabled", False):
             return None
 
