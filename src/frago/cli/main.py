@@ -422,23 +422,38 @@ cli.add_command(install_group, name="install")
 
 
 def _force_utf8_stdio_on_windows() -> None:
-    """Reconfigure stdout/stderr to UTF-8 on Windows.
+    """Replace sys.stdout/stderr with explicit UTF-8 TextIOWrapper on Windows.
 
     Japanese/Chinese/Korean Windows editions default console codepage to
     cp932/cp936/cp949, which can't encode the CJK text and box-drawing
     characters frago CLI emits (recipe list tables, def find output, book
-    content). Native UTF-8 mode is safe for Windows APIs and fixes agent
-    views that read stdout through Git Bash.
+    content). English Windows uses cp1252, equally CJK-unfriendly.
+
+    The simpler `sys.stdout.reconfigure(encoding='utf-8')` silently fails
+    when stdout is a pipe captured by a parent process (Claude Code →
+    Git Bash → frago.exe), leaving Python encoding at locale default.
+    Replacing the stream object with a fresh TextIOWrapper on top of the
+    raw buffer is the robust path: no hidden wrapper intercepts it, and
+    every subsequent write() goes through UTF-8 regardless of TTY state.
     """
     import contextlib
+    import io
     import platform
     if platform.system() != "Windows":
         return
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            with contextlib.suppress(OSError, ValueError):
-                reconfigure(encoding="utf-8", errors="replace")
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            continue
+        with contextlib.suppress(OSError, ValueError):
+            setattr(sys, name, io.TextIOWrapper(
+                buffer,
+                encoding="utf-8",
+                errors="replace",
+                line_buffering=True,
+                write_through=True,
+            ))
 
 
 def main():
