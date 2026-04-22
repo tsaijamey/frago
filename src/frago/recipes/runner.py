@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from frago.compat import get_windows_subprocess_kwargs
+
 from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import RecipeExecutionError, RecipeValidationError
 from .execution import ExecutionStatus
@@ -412,6 +414,7 @@ class RecipeRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            **get_windows_subprocess_kwargs(),
         )
         with _process_lock:
             _active_processes[execution_id] = proc
@@ -526,7 +529,8 @@ class RecipeRunner:
                     errors='replace',
                     timeout=30,
                     check=False,
-                    env=env
+                    env=env,
+                    **get_windows_subprocess_kwargs(),
                 )
                 if inject_result.returncode != 0:
                     raise RecipeExecutionError(
@@ -552,7 +556,8 @@ class RecipeRunner:
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout) if execution_id else subprocess.run(
-                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env
+                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env,
+                **get_windows_subprocess_kwargs(),
             )
 
             if result.returncode != 0:
@@ -650,7 +655,8 @@ class RecipeRunner:
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout) if execution_id else subprocess.run(
-                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env
+                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env,
+                **get_windows_subprocess_kwargs(),
             )
 
             if result.returncode != 0:
@@ -733,7 +739,8 @@ class RecipeRunner:
 
         try:
             result = self._run_subprocess(execution_id, cmd, env, timeout=timeout) if execution_id else subprocess.run(
-                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env
+                cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env,
+                **get_windows_subprocess_kwargs(),
             )
 
             if result.returncode != 0:
