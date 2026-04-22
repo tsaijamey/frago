@@ -727,7 +727,7 @@ class PrimaryAgentService:
         try:
             if CONFIG_FILE.exists():
                 raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-                user_config = raw.get("primary_agent", {}).get("heartbeat", {})
+                user_config = (raw.get("primary_agent") or {}).get("heartbeat") or {}
                 return {**HEARTBEAT_DEFAULTS, **user_config}
         except (json.JSONDecodeError, OSError):
             pass

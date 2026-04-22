@@ -137,7 +137,7 @@ class TaskLifecycle:
         # Find and run notify recipe for channel
         try:
             raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            channels = raw.get("task_ingestion", {}).get("channels", [])
+            channels = (raw.get("task_ingestion") or {}).get("channels") or []
             notify_recipe = None
             for ch in channels:
                 if ch.get("name") == channel:

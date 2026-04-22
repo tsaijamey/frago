@@ -30,7 +30,7 @@ def _load_channel_notify_recipe(channel_name: str) -> str:
     except (json.JSONDecodeError, OSError) as e:
         raise click.ClickException(f"Error reading config: {e}")
 
-    channels = raw.get("task_ingestion", {}).get("channels", [])
+    channels = (raw.get("task_ingestion") or {}).get("channels") or []
     matched = next(
         (ch for ch in channels if ch.get("name") == channel_name), None
     )
