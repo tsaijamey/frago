@@ -94,14 +94,15 @@ def ulid_new() -> str:
 
 # data_type 软约束：常见值列举，运行时不强校验
 KNOWN_DATA_TYPES = frozenset({
-    "message",      # 用户/channel 消息、PA 回复
-    "thought",      # PA 思考/决策
-    "task_state",   # task 状态变化
-    "tool_call",    # 工具调用
-    "tool_result",  # 工具结果
-    "result",       # sub-agent 结果
-    "os_event",     # 系统事件（sync/workspace/...）
-    "legacy",       # 迁移前的老数据或无法推断的 event
+    "message",       # 用户/channel 消息、PA 回复
+    "thought",       # PA 思考/决策
+    "task_state",    # task 状态变化
+    "tool_call",     # 工具调用
+    "tool_result",   # 工具结果
+    "result",        # sub-agent 结果
+    "os_event",      # 系统事件（sync/workspace/...）
+    "action_result", # PA action 执行结果（resume/reply/run/schedule 的 ok/failed）
+    "legacy",        # 迁移前的老数据或无法推断的 event
 })
 
 

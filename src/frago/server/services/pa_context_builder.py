@@ -136,6 +136,32 @@ def _build_conversation_history(per_channel_limit: int = 10) -> str | None:
     return "\n".join(lines)
 
 
+def _extract_recent_action_results(entries: list[dict], limit: int = 3) -> list[str]:
+    """Pull the last N action_result entries from a hot thread's entries.
+
+    Formats each as `ts | action=reply status=ok` or `... status=failed reason=...`
+    so PA can quickly scan for silent failures (e.g. resume that never consumed).
+    """
+    results: list[str] = []
+    for entry in reversed(entries):
+        if entry.get("data_type") != "action_result":
+            continue
+        data = entry.get("data") or {}
+        ts = (entry.get("ts") or "")[11:19]
+        action = data.get("action", "?")
+        status = data.get("status", "?")
+        line = f"{ts} action={action} status={status}"
+        if status != "ok":
+            reason = data.get("reason", "")
+            if reason:
+                line += f" reason={reason}"
+        results.append(line)
+        if len(results) >= limit:
+            break
+    results.reverse()
+    return results
+
+
 def _build_thread_section() -> str | None:
     """Thread-aware folded view (spec 20260418-timeline-consumer-unification Phase 2).
 
@@ -174,6 +200,14 @@ def _build_thread_section() -> str | None:
                 lines.append(f"    tasks: {d['task_status_summary']}")
             if d.get("latest_event"):
                 lines.append(f"    latest: {d['latest_event']}")
+
+            # Surface recent action_result entries so PA can self-diagnose
+            # which of its prior decisions succeeded / failed (spec Level 3).
+            recent_actions = _extract_recent_action_results(h.get("entries") or [])
+            if recent_actions:
+                lines.append("    recent actions:")
+                for ar in recent_actions:
+                    lines.append(f"      - {ar}")
 
     if ctx["warm"]:
         lines.append("")

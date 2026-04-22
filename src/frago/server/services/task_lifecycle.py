@@ -125,6 +125,13 @@ class TaskLifecycle:
                 }
                 if reply_params.get("html_body"):
                     full_params["html_body"] = reply_params["html_body"]
+                # Preserve attachment fields — previously these were silently
+                # dropped whenever a task had reply_context, causing PA's
+                # file_path / image_path to vanish (problem 6 of 2026-04-19 audit).
+                if reply_params.get("file_path"):
+                    full_params["file_path"] = reply_params["file_path"]
+                if reply_params.get("image_path"):
+                    full_params["image_path"] = reply_params["image_path"]
                 reply_params = full_params
 
         # Find and run notify recipe for channel
@@ -236,6 +243,15 @@ class TaskLifecycle:
             })
 
         for task in failed:
+            # Safety: cap FAILED → PENDING recovery too (same MAX_RECOVERY as PENDING path).
+            # Without this, a task that keeps dying mid-run oscillates FAILED↔PENDING forever.
+            if task.recovery_count >= MAX_RECOVERY:
+                logger.warning(
+                    "FAILED task %s already recovered %d times — leaving as FAILED (stale)",
+                    task.id[:8], task.recovery_count,
+                )
+                continue
+            self._store.increment_recovery_count(task.id)
             # Reset to PENDING so PA can re-dispatch
             self._store.update_status(task.id, TaskStatus.PENDING)
             # Dedicated message type — keeps the user's original prompt in
