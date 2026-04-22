@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,8 @@ def deploy_hook_binary(force: bool = False) -> Path:
     dst_dir = get_hook_deploy_dir()
     dst = dst_dir / get_binary_name()
 
-    if dst.exists() and not force:
-        if dst.stat().st_size == src.stat().st_size:
-            return dst
+    if dst.exists() and not force and dst.stat().st_size == src.stat().st_size:
+        return dst
 
     shutil.copy2(src, dst)
 
@@ -122,7 +122,7 @@ def get_hook_binary_path() -> str:
 # ---------------------------------------------------------------------------
 
 
-def query_supported_events(hook_path: str) -> list[dict]:
+def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
     """Call frago-hook --supported-events and return event descriptors.
 
     Returns:
@@ -161,6 +161,11 @@ def sync_hook_events(hook_path: str) -> None:
         logger.warning("No supported events from frago-hook, skipping sync")
         return
 
+    # Claude Code on Windows launches hooks via Git Bash (/usr/bin/bash);
+    # backslash paths get eaten as escape sequences. Forward slashes work
+    # for both Windows APIs and bash, and are a no-op on POSIX.
+    hook_path = hook_path.replace("\\", "/")
+
     supported_event_names = {desc["event"] for desc in supported}
 
     settings = load_claude_settings()
@@ -174,12 +179,12 @@ def sync_hook_events(hook_path: str) -> None:
 
     changed = False
 
-    # Ensure supported events are registered with correct matcher
+    # Ensure supported events are registered with correct matcher AND command
     for desc in supported:
         event = desc["event"]
         matcher = desc["matcher"]
-        if not _has_frago_hook_with_matcher(hooks, event, matcher):
-            # Remove any existing frago-hook entry (wrong matcher) before adding
+        if not _has_frago_hook_with_command(hooks, event, matcher, hook_path):
+            # Stale entry (wrong matcher or wrong command path) → remove + re-add
             _remove_frago_hook(hooks, event)
             _ensure_frago_hook(hooks, event, matcher, frago_entry)
             changed = True
@@ -200,30 +205,34 @@ def sync_hook_events(hook_path: str) -> None:
         logger.debug("Hook events already in sync")
 
 
-def _is_frago_hook(entry: dict) -> bool:
+def _is_frago_hook(entry: dict[str, Any]) -> bool:
     """Check if a hook entry belongs to frago-hook."""
     return entry.get("type") == "command" and "frago-hook" in entry.get("command", "")
 
 
-def _has_frago_hook_with_matcher(hooks: dict, event: str, matcher: str) -> bool:
-    """Check if an event has a frago-hook entry with the expected matcher."""
+def _has_frago_hook_with_command(
+    hooks: dict[str, Any], event: str, matcher: str, command: str
+) -> bool:
+    """Check if an event has a frago-hook entry with the expected matcher AND command."""
     for group in hooks.get(event, []):
         if group.get("matcher", "") != matcher:
             continue
         for hook in group.get("hooks", []):
-            if _is_frago_hook(hook):
+            if _is_frago_hook(hook) and hook.get("command") == command:
                 return True
     return False
 
 
-def _ensure_frago_hook(hooks: dict, event: str, matcher: str, entry: dict) -> None:
+def _ensure_frago_hook(
+    hooks: dict[str, Any], event: str, matcher: str, entry: dict[str, Any]
+) -> None:
     """Add a frago-hook entry to an event with the specified matcher."""
     if event not in hooks:
         hooks[event] = []
     hooks[event].append({"matcher": matcher, "hooks": [entry]})
 
 
-def _remove_frago_hook(hooks: dict, event: str) -> bool:
+def _remove_frago_hook(hooks: dict[str, Any], event: str) -> bool:
     """Remove frago-hook entries from an event. Returns True if anything was removed."""
     if event not in hooks:
         return False
