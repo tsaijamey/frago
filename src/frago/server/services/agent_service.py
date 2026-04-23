@@ -10,6 +10,7 @@ import json
 import logging
 import shutil
 import subprocess
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,27 @@ from frago.server.services.base import (
 from frago.server.websocket import manager
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_frago_cmd() -> list[str]:
+    """Return the base command used to invoke frago from the server process.
+
+    Preference order:
+      1. ``frago`` in the same venv as the running server (most reliable when
+         the daemon's PATH doesn't include ``.venv/Scripts`` — common on
+         Windows and under systemd).
+      2. ``uv run frago`` if ``uv`` is available (dev environments).
+      3. Bare ``frago`` — last resort, only works when it happens to be on PATH.
+
+    Callers append the subcommand and arguments (e.g. ``+ ["agent", ...]``).
+    """
+    venv_dir = Path(sys.executable).parent
+    frago_in_venv = shutil.which("frago", path=str(venv_dir))
+    if frago_in_venv:
+        return [frago_in_venv]
+    if shutil.which("uv"):
+        return ["uv", "run", "frago"]
+    return ["frago"]
 
 
 def _resolve_project_path(session_id: str) -> str:
@@ -74,20 +96,7 @@ class AgentSession:
 
     def _get_frago_agent_command(self) -> list[str]:
         """Get frago agent command for subprocess."""
-        import sys
-
-        # Prefer frago in the same venv as the running server (most reliable)
-        venv_dir = Path(sys.executable).parent
-        frago_in_venv = shutil.which("frago", path=str(venv_dir))
-        if frago_in_venv:
-            return [frago_in_venv, "agent"]
-
-        # Fall back to uv run (works in dev environments with uv in PATH)
-        if shutil.which("uv"):
-            return ["uv", "run", "frago", "agent"]
-
-        # Last resort: bare name (resolve_command_path will try shutil.which)
-        return ["frago", "agent"]
+        return _resolve_frago_cmd() + ["agent"]
 
     def _cleanup_old_process(self) -> None:
         """Terminate old subprocess and reap it to prevent orphan/zombie leaks."""
@@ -403,14 +412,6 @@ class AgentService:
         claude_session_id = claude_session_id or str(uuid.uuid4())
 
         try:
-            # Find frago executable
-            frago_path = shutil.which("frago")
-            if not frago_path:
-                return {
-                    "status": "error",
-                    "error": "frago command not found, please ensure it's properly installed and in PATH",
-                }
-
             # Prepare log directory
             log_dir = Path.home() / ".frago" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -420,12 +421,13 @@ class AgentService:
             prompt_file = log_dir / f"prompt-{task_id[:8]}.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
 
-            # Build command
-            # Pass --source web to mark this session as created from web interface
-            # Pass --session-id so Executor can trace back to Claude Code JSONL
-            cmd = [frago_path, "agent", "--yes", "--source", "web",
-                   "--session-id", claude_session_id,
-                   "--prompt-file", str(prompt_file)]
+            # Build command (uses venv-aware frago lookup so daemons without
+            # .venv on PATH still find the right binary)
+            cmd = _resolve_frago_cmd() + [
+                "agent", "--yes", "--source", "web",
+                "--session-id", claude_session_id,
+                "--prompt-file", str(prompt_file),
+            ]
 
             # Start process in background with correct cwd
             cwd = project_path or str(Path.home())
@@ -608,14 +610,6 @@ class AgentService:
             logger.debug("Could not verify session status: %s", e)
 
         try:
-            # Find frago executable
-            frago_path = shutil.which("frago")
-            if not frago_path:
-                return {
-                    "status": "error",
-                    "error": "frago command not found, please ensure it's properly installed and in PATH",
-                }
-
             # Prepare log directory
             log_dir = Path.home() / ".frago" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -625,9 +619,8 @@ class AgentService:
             prompt_file = log_dir / f"prompt-resume-{session_id[:8]}.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
 
-            # Start process in background
-            cmd = [
-                frago_path,
+            # Start process in background (venv-aware frago lookup)
+            cmd = _resolve_frago_cmd() + [
                 "agent",
                 "--resume",
                 session_id,
