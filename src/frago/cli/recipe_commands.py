@@ -57,9 +57,10 @@ def _run_frago_agent(prompt_text: str) -> int:
     try:
         # Resolve frago binary: prefer the entry point next to current Python interpreter,
         # same strategy as server/services/agent_service.py::_get_frago_agent_command
-        frago_in_venv = Path(sys.executable).parent / "frago"
-        if frago_in_venv.exists():
-            frago_cmd = [str(frago_in_venv)]
+        venv_dir = Path(sys.executable).parent
+        frago_in_venv = shutil.which("frago", path=str(venv_dir))
+        if frago_in_venv:
+            frago_cmd = [frago_in_venv]
         elif shutil.which("uv"):
             frago_cmd = ["uv", "run", "frago"]
         else:

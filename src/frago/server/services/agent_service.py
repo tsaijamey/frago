@@ -77,9 +77,10 @@ class AgentSession:
         import sys
 
         # Prefer frago in the same venv as the running server (most reliable)
-        frago_in_venv = Path(sys.executable).parent / "frago"
-        if frago_in_venv.exists():
-            return [str(frago_in_venv), "agent"]
+        venv_dir = Path(sys.executable).parent
+        frago_in_venv = shutil.which("frago", path=str(venv_dir))
+        if frago_in_venv:
+            return [frago_in_venv, "agent"]
 
         # Fall back to uv run (works in dev environments with uv in PATH)
         if shutil.which("uv"):
