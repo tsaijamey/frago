@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -497,17 +498,28 @@ def agent(
         # Pass prompt via stdin (avoid Windows command line argument truncation of multi-line text)
         if passthrough:
             # In passthrough mode, send prompt as stream-json format
-            input_event = json.dumps({
+            stdin_payload = json.dumps({
                 "type": "user",
                 "message": {
                     "role": "user",
                     "content": execution_prompt
                 }
-            })
-            process.stdin.write(input_event + "\n")
+            }) + "\n"
         else:
-            process.stdin.write(execution_prompt)
-        process.stdin.close()
+            stdin_payload = execution_prompt
+
+        # Write stdin in a background thread so stdout reading can start concurrently.
+        # On Windows, pipe buffers are small and a synchronous large write blocks
+        # before the reader drains — causing BrokenPipe when claude exits.
+        def _write_stdin() -> None:
+            try:
+                process.stdin.write(stdin_payload)
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+        stdin_thread = threading.Thread(target=_write_stdin, daemon=True)
+        stdin_thread.start()
 
         if passthrough:
             # Passthrough mode: output raw stream-json directly
@@ -575,6 +587,9 @@ def agent(
     except Exception as e:
         click.echo(f"\n[X] Execution error: {e}", err=True)
     finally:
+        # Ensure stdin writer thread is reaped (daemon, but clean up eagerly)
+        with contextlib.suppress(Exception):
+            stdin_thread.join(timeout=1)
         # Stop session monitoring
         if monitor:
             with contextlib.suppress(Exception):
