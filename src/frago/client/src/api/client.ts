@@ -1376,3 +1376,47 @@ export async function setupSyncRepo(): Promise<SetupRepoResponse> {
 export async function getSetupStatus(): Promise<SetupRepoResponse> {
   return fetchApi<SetupRepoResponse>('/sync/setup-status');
 }
+
+// ============================================================
+// Task Ingestion API (spec 20260422-channel-config-ui)
+// ============================================================
+
+export interface TaskIngestionChannel {
+  name: string;
+  poll_recipe: string;
+  notify_recipe: string;
+  poll_interval_seconds: number;
+  poll_timeout_seconds: number;
+}
+
+export interface TaskIngestionGetResponse {
+  enabled: boolean;
+  channels: TaskIngestionChannel[];
+  available_recipes: string[];
+  restart_supported: boolean;
+}
+
+export interface TaskIngestionPutResponse {
+  status: string;
+  requires_restart: boolean;
+  message?: string;
+}
+
+export async function getTaskIngestion(): Promise<TaskIngestionGetResponse> {
+  return fetchApi<TaskIngestionGetResponse>('/settings/task-ingestion');
+}
+
+export async function putTaskIngestion(
+  payload: { enabled: boolean; channels: TaskIngestionChannel[] }
+): Promise<TaskIngestionPutResponse> {
+  return fetchApi<TaskIngestionPutResponse>('/settings/task-ingestion', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function restartServer(): Promise<{ status: string; message: string }> {
+  return fetchApi<{ status: string; message: string }>('/server/restart', {
+    method: 'POST',
+  });
+}

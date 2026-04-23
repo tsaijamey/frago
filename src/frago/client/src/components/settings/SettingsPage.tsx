@@ -3,6 +3,7 @@ import GeneralSettings from './GeneralSettings';
 import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
 import { InitSettings } from './InitSettings';
+import TaskIngestionPanel from './TaskIngestionPanel';
 
 interface SettingsPageProps {
   onOpenInitWizard?: () => void;
@@ -28,6 +29,11 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
         {/* General configuration */}
         <section>
           <GeneralSettings />
+        </section>
+
+        {/* Task ingestion channels */}
+        <section>
+          <TaskIngestionPanel />
         </section>
 
         {/* Appearance settings */}
