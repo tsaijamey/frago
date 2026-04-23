@@ -374,6 +374,8 @@ class GitHubService:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,  # Merge stderr into stdout
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,  # Line buffered
             )
 

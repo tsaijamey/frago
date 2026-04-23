@@ -111,7 +111,9 @@ def get_platform_arch() -> str:
             result = subprocess.run(
                 ['ldd', '--version'],
                 capture_output=True,
-                text=True
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             if 'musl' in result.stdout.lower() or 'musl' in result.stderr.lower():
                 return f'{plat}-{arch}-musl'
@@ -583,7 +585,9 @@ class ClaudeCodeInstaller:
             result = subprocess.run(
                 [str(claude_path), '--version'],
                 capture_output=True,
-                text=True
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             current_version = result.stdout.strip().replace('Claude Code ', '')
         except Exception:
