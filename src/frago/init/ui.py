@@ -261,16 +261,24 @@ def ask_question(
             )
         )
 
-    # Use questionary.select
+    # questionary caps keyboard shortcuts at 36 (a-z + 0-9). Disable them for
+    # longer lists so we don't crash with e.g. 208 installed recipes.
+    use_shortcuts = len(choices) <= 36
+    instruction = (
+        "(Use arrow keys, j/k, or number keys)"
+        if use_shortcuts
+        else "(Use arrow keys or j/k)"
+    )
+
     try:
         answer = questionary.select(
             question,
             choices=choices,
             default=choices[default_index],  # Use Choice object as default value
             style=custom_style,
-            use_shortcuts=True,
+            use_shortcuts=use_shortcuts,
             use_indicator=True,
-            instruction="(Use arrow keys, j/k, or number keys)"
+            instruction=instruction,
         ).ask()
     except KeyboardInterrupt:
         # Use default value on Ctrl+C
