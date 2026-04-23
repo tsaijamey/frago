@@ -67,6 +67,36 @@ def find_claude_cli() -> str | None:
     return shutil.which("claude")
 
 
+def wait_for_claude_session_file(session_id: str, timeout: float = 3.0) -> bool:
+    """Wait until Claude CLI has flushed <session_id>.jsonl to ~/.claude/projects/*/.
+
+    Claude CLI writes the session file asynchronously after emitting the init
+    event. A `--resume <session_id>` invocation that runs before the file lands
+    exits immediately with no stdout. Poll briefly so the resume actually finds
+    something to resume.
+
+    Returns True if the file appeared, False on timeout. A False return is not
+    fatal — the caller still attempts --resume, but the subsequent exit will be
+    attributed to the missing file rather than being mysterious.
+    """
+    import time
+
+    claude_dir = Path(os.environ.get("FRAGO_CLAUDE_DIR", "")).expanduser() \
+        if os.environ.get("FRAGO_CLAUDE_DIR") else Path.home() / ".claude" / "projects"
+    if not claude_dir.is_dir():
+        return False
+
+    deadline = time.monotonic() + timeout
+    target = f"{session_id}.jsonl"
+    while True:
+        for project_dir in claude_dir.iterdir():
+            if project_dir.is_dir() and (project_dir / target).is_file():
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def check_ccr_auth() -> tuple[bool, dict | None]:
     """
     Check CCR (Claude Code Router) configuration
@@ -430,6 +460,13 @@ def agent(
 
     # Determine session ID early so both claude CLI and SessionMonitor use the same ID
     if resume:
+        # Claude CLI flushes the session .jsonl asynchronously after init; a
+        # --resume that arrives before the file lands exits with zero output.
+        if not wait_for_claude_session_file(resume, timeout=3.0) and not passthrough:
+            click.echo(
+                f"  [!] Session file for {resume[:8]} not yet visible; "
+                "proceeding anyway", err=True,
+            )
         cmd.extend(["--resume", resume])
         target_session_id = resume
     else:
