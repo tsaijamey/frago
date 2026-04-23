@@ -266,6 +266,8 @@ class DeploymentAgent:
                 ["git", "-C", str(project_path), "ls-files", ".claude/"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 **get_windows_subprocess_kwargs(),
             )
