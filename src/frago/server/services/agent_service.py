@@ -85,6 +85,9 @@ class AgentSession:
         self.project_path = project_path
         self._process: subprocess.Popen | None = None
         self._reader_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
+        self._last_stream_activity: float | None = None
+        self._last_turn_complete: bool = False
         self._attached = False
         self._running = False
         self._claude_session_id: str | None = None
@@ -157,7 +160,9 @@ class AgentSession:
 
         self._attached = True
         self._running = True
+        self._last_stream_activity = asyncio.get_event_loop().time()
         self._reader_task = asyncio.create_task(self._read_stream())
+        self._watchdog_task = asyncio.create_task(self._activity_watchdog(timeout=60.0))
 
         logger.info(
             f"Attached agent session {self.internal_id[:8]} started (PID: {self._process.pid})"
@@ -166,7 +171,11 @@ class AgentSession:
     async def send_message(self, message: str) -> None:
         """Send a continuation message to the attached session.
 
-        Uses --resume to continue the Claude session.
+        Uses --resume when the prior turn completed successfully. If the prior
+        subprocess was killed mid-turn (e.g. by rotation's cleanup) the Claude
+        session was never registered as resumable, so --resume would fail with
+        "No conversation found"; in that case we abandon the stale id and start
+        a fresh session, delivering this message as the first turn.
         """
         if not self._claude_session_id:
             raise RuntimeError("No Claude session to resume (session_id not captured)")
@@ -187,12 +196,30 @@ class AgentSession:
             "content": message,
         })
 
-        # Start new process with --resume (start() will kill old process first)
-        await self.start(message, resume_session_id=self._claude_session_id)
+        if self._last_turn_complete:
+            resume_id: str | None = self._claude_session_id
+        else:
+            logger.warning(
+                "Claude session %s never completed a turn — abandoning and "
+                "starting a fresh session for this message "
+                "(prevents '--resume No conversation found')",
+                self._claude_session_id[:8],
+            )
+            self._claude_session_id = None
+            resume_id = None
+
+        # Start new process (start() will kill old process first)
+        await self.start(message, resume_session_id=resume_id)
 
     async def stop(self) -> None:
         """Stop the attached session."""
         self._running = False
+
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._watchdog_task
+            self._watchdog_task = None
 
         if self._reader_task:
             self._reader_task.cancel()
@@ -202,6 +229,42 @@ class AgentSession:
         self._cleanup_old_process()
 
         logger.info(f"Attached agent session {self.internal_id[:8]} stopped")
+
+    async def _activity_watchdog(self, timeout: float) -> None:
+        """Kill the subprocess if stdout stays silent for ``timeout`` seconds.
+
+        Covers two failure modes with one mechanism:
+          1. Startup deadlock — child never produces the init event (stdin
+             write blocked on Windows pipe buffer before 514c061).
+          2. Mid-turn stall — child emitted init/progress then went silent
+             (observed during bootstraps that hang past 120s; without this
+             the queue consumer was the only backstop at 120s).
+
+        Any successful readline in ``_read_stream`` refreshes the activity
+        timestamp. Normal inter-event gaps (thinking, tool calls) are much
+        shorter than the timeout so legitimate work isn't killed.
+        """
+        check_interval = 5.0
+        while True:
+            try:
+                await asyncio.sleep(check_interval)
+            except asyncio.CancelledError:
+                return
+            if not self._running:
+                return
+            if self._process is None or self._process.poll() is not None:
+                return
+            if self._last_stream_activity is None:
+                continue
+            idle = asyncio.get_event_loop().time() - self._last_stream_activity
+            if idle < timeout:
+                continue
+            logger.warning(
+                "Activity watchdog: PID %s silent for %.0fs (> %.0fs) — killing stuck child",
+                self._process.pid, idle, timeout,
+            )
+            self._cleanup_old_process()
+            return
 
     async def _read_stream(self) -> None:
         """Read and parse stream-json output from Claude CLI."""
@@ -217,6 +280,7 @@ class AgentSession:
 
             while self._running and self._process:
                 line = await loop.run_in_executor(None, self._process.stdout.readline)
+                self._last_stream_activity = loop.time()
 
                 if not line:
                     logger.info(f"Attached process ended (read {line_count} lines)")
@@ -251,9 +315,19 @@ class AgentSession:
         """Parse and handle stream-json events from Claude CLI."""
         event_type = event.get("type", "")
 
+        # Completed turn signal from Claude CLI — session is now resumable.
+        # Use top-level type="result" (final stream-json frame before exit).
+        if event_type == "result":
+            self._last_turn_complete = True
+
         # Extract Claude session ID from system init event
         if event_type == "system" and event.get("subtype") == "init":
-            self._claude_session_id = event.get("session_id")
+            new_session_id = event.get("session_id")
+            # A different session id means a fresh Claude session with no
+            # completed turns yet; the resumability flag must reset.
+            if new_session_id != self._claude_session_id:
+                self._last_turn_complete = False
+            self._claude_session_id = new_session_id
             logger.info(f"Claude session ID resolved: {self._claude_session_id}")
 
             await manager.broadcast({
@@ -367,7 +441,15 @@ class AgentSession:
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        if not self._running:
+            return False
+        # The reader task may still be in its readline executor when the
+        # subprocess has already exited; report the ground truth so the queue
+        # consumer isn't stalled waiting for _read_stream's finally block.
+        if self._process is None or self._process.poll() is not None:
+            self._running = False
+            return False
+        return True
 
     @property
     def claude_session_id(self) -> str | None:
