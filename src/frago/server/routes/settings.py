@@ -914,3 +914,145 @@ async def save_current_as_profile(request: SaveCurrentAsProfileRequest) -> ApiRe
         return ApiResponse(status="ok", message=f"Profile '{request.name}' saved")
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
+
+
+# ============================================================
+# Task Ingestion Channel Configuration
+# (spec 20260422-channel-config-ui)
+# ============================================================
+
+
+class TaskIngestionChannelDTO(BaseModel):
+    """Channel payload for GET/PUT /api/settings/task-ingestion."""
+    name: str
+    poll_recipe: str
+    notify_recipe: str
+    poll_interval_seconds: int = 120
+    poll_timeout_seconds: int = 20
+
+
+class TaskIngestionConfigDTO(BaseModel):
+    """Top-level task-ingestion config payload."""
+    enabled: bool = False
+    channels: List[TaskIngestionChannelDTO] = []
+
+
+class TaskIngestionGetResponse(BaseModel):
+    enabled: bool
+    channels: List[TaskIngestionChannelDTO]
+    available_recipes: List[str]
+    restart_supported: bool
+
+
+class TaskIngestionPutResponse(BaseModel):
+    status: str
+    requires_restart: bool
+    message: Optional[str] = None
+
+
+@router.get(
+    "/settings/task-ingestion",
+    response_model=TaskIngestionGetResponse,
+)
+async def get_task_ingestion() -> TaskIngestionGetResponse:
+    """Return current task ingestion configuration plus supporting data for the UI.
+
+    `available_recipes` powers the poll/notify dropdowns so the client doesn't
+    have to know how recipes are discovered.
+    """
+    from frago.init.config_manager import load_config
+    from frago.recipes.lookup import list_recipe_names
+    from frago.server.daemon import is_server_running
+
+    config = load_config()
+    ti = config.task_ingestion
+
+    running, _ = is_server_running()
+
+    return TaskIngestionGetResponse(
+        enabled=ti.enabled,
+        channels=[
+            TaskIngestionChannelDTO(**c.model_dump()) for c in ti.channels
+        ],
+        available_recipes=list_recipe_names(),
+        restart_supported=running,
+    )
+
+
+@router.put(
+    "/settings/task-ingestion",
+    response_model=TaskIngestionPutResponse,
+)
+async def put_task_ingestion(
+    payload: TaskIngestionConfigDTO,
+) -> TaskIngestionPutResponse:
+    """Validate and persist task ingestion configuration.
+
+    Returns `requires_restart: true` so the UI can prompt the user to restart
+    the server — the IngestionScheduler only reads this config at boot.
+    """
+    from frago.init.config_manager import load_config, save_config
+    from frago.init.models import TaskIngestionChannel, TaskIngestionConfig
+    from frago.recipes.lookup import validate_recipe_exists
+
+    # Validate every referenced recipe exists up-front so partial writes don't
+    # happen on first bad name.
+    for ch in payload.channels:
+        try:
+            validate_recipe_exists(ch.poll_recipe)
+            validate_recipe_exists(ch.notify_recipe)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        new_ti = TaskIngestionConfig(
+            enabled=payload.enabled,
+            channels=[
+                TaskIngestionChannel(**ch.model_dump()) for ch in payload.channels
+            ],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    config = load_config()
+    config.task_ingestion = new_ti
+    save_config(config)
+
+    return TaskIngestionPutResponse(
+        status="ok",
+        requires_restart=True,
+        message=f"Saved {len(new_ti.channels)} channel(s)",
+    )
+
+
+class RestartResponse(BaseModel):
+    status: str
+    message: str
+
+
+@router.post("/server/restart", response_model=RestartResponse)
+async def restart_server() -> RestartResponse:
+    """Restart the frago server (daemon mode only).
+
+    The caller's HTTP connection will be terminated as the server exits; the
+    restarter daemon then brings up a fresh instance. In non-daemon mode
+    (e.g. `frago server --debug`) this returns 409 so the UI can fall back
+    to a textual prompt.
+    """
+    from frago.server.daemon import is_server_running, restart_daemon
+
+    running, _ = is_server_running()
+    if not running:
+        raise HTTPException(
+            status_code=409,
+            detail="Server is not running in daemon mode; restart manually.",
+        )
+
+    # Fire-and-forget: restart_daemon spawns a detached restarter and then
+    # stops the current process. The HTTP response may or may not make it
+    # back to the client depending on timing, which is fine.
+    success, message = restart_daemon(force=False)
+    return RestartResponse(
+        status="ok" if success else "error",
+        message=message,
+    )
