@@ -513,3 +513,33 @@ def install_dependency(
         return success, warning, False
     else:
         raise ValueError(f"Unknown dependency: {name}")
+
+
+def install_claude_code_auto() -> Tuple[bool, str]:
+    """Preferred Claude Code install path used by `frago init`.
+
+    Checks reachability of Anthropic's official installer and runs
+    `curl -fsSL https://claude.ai/install.sh | bash` when available. On any
+    failure (network blocked, Windows, curl/bash missing, script error) the
+    user sees a manual install hint and this function returns (False, msg).
+    init should keep going — auth config and channel setup don't strictly
+    need Claude Code to succeed.
+
+    Returns:
+        (success, message): success=True means Claude Code is installed;
+        message is a short status string suitable for logging.
+    """
+    from frago.init.claude_installer import (
+        install_claude_code_via_official,
+        is_claude_official_reachable,
+        print_manual_install_hint,
+    )
+
+    if not is_claude_official_reachable():
+        print_manual_install_hint()
+        return (False, "claude.ai unreachable; manual install required")
+
+    success, message = install_claude_code_via_official()
+    if not success:
+        print_manual_install_hint()
+    return (success, message)

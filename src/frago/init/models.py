@@ -37,6 +37,58 @@ class APIEndpoint(BaseModel):
         return self
 
 
+class TaskIngestionChannel(BaseModel):
+    """One declared ingestion channel. Field names match ingestion/scheduler.py
+    `ChannelConfig` so `ChannelConfig(**channel.model_dump())` works."""
+
+    name: str
+    poll_recipe: str
+    notify_recipe: str
+    poll_interval_seconds: int = 120
+    poll_timeout_seconds: int = 20
+
+    @field_validator("name")
+    @classmethod
+    def _name_non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Channel name cannot be empty")
+        return v.strip()
+
+    @field_validator("poll_recipe", "notify_recipe")
+    @classmethod
+    def _recipe_non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Recipe name cannot be empty")
+        return v.strip()
+
+    @field_validator("poll_interval_seconds", "poll_timeout_seconds")
+    @classmethod
+    def _positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("Interval/timeout must be positive")
+        return v
+
+
+class TaskIngestionConfig(BaseModel):
+    """Container for task ingestion configuration.
+
+    Nested under `Config.task_ingestion`. Persists to config.json with the
+    layout `{enabled: bool, channels: [TaskIngestionChannel, ...]}`, which
+    matches what `server/app.py:_start_ingestion_scheduler` and
+    `cli/reply_command.py` have always read by hand.
+    """
+
+    enabled: bool = False
+    channels: List[TaskIngestionChannel] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _unique_names(self) -> "TaskIngestionConfig":
+        names = [c.name for c in self.channels]
+        if len(names) != len(set(names)):
+            raise ValueError("Channel names must be unique")
+        return self
+
+
 class Config(BaseModel):
     """Frago configuration entity (persisted to ~/.frago/config.json)"""
 
@@ -70,18 +122,18 @@ class Config(BaseModel):
     # Community recipe repository
     community_repo: str = "tsaijamey/frago"  # GitHub repo for community recipes
 
-    # Official resource sync (from GitHub repo)
+    # DEPRECATED (spec 20260422-init-flow-modernization): init no longer
+    # bundles or installs official commands/skills/recipes. Fields kept so
+    # older config.json files continue to deserialize; values are unread.
     official_resource_sync_enabled: bool = False
     official_resource_last_sync: Optional[datetime] = None
-    official_resource_last_commit: Optional[str] = None  # For detecting updates
-
-    # Resource installation status
+    official_resource_last_commit: Optional[str] = None
     resources_installed: bool = False
     resources_version: Optional[str] = None
     last_resource_update: Optional[datetime] = None
 
-    # Task ingestion configuration
-    task_ingestion: dict = Field(default_factory=dict)
+    # Task ingestion configuration (spec 20260422-channel-config-ui)
+    task_ingestion: TaskIngestionConfig = Field(default_factory=TaskIngestionConfig)
 
     # Primary Agent configuration
     primary_agent: dict = Field(default_factory=dict)

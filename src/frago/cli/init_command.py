@@ -92,15 +92,9 @@ from frago.init.configurator import (
     run_auth_configuration,
     warn_auth_switch,
 )
-from frago.init.exceptions import CommandError, InitErrorCode
-from frago.init.installer import (
-    get_installation_order,
-    install_dependency,
-)
+from frago.init.exceptions import InitErrorCode
+from frago.init.installer import install_claude_code_auto
 from frago.init.models import Config, DependencyCheckResult
-from frago.init.resources import (
-    install_all_resources,
-)
 from frago.init.ui import (
     ProgressReporter,
     print_section,
@@ -130,29 +124,17 @@ from frago.init.ui import (
     is_flag=True,
     help="Non-interactive mode (use default values, suitable for CI/CD)",
 )
-@click.option(
-    "--skip-resources",
-    is_flag=True,
-    help="Skip resource installation (Claude Code commands and sample recipes)",
-)
-@click.option(
-    "--update-resources",
-    is_flag=True,
-    help="Force update all resources (including overwriting existing recipes)",
-)
 def init(
     skip_deps: bool = False,
     show_config: bool = False,
     reset: bool = False,
     non_interactive: bool = False,
-    skip_resources: bool = False,
-    update_resources: bool = False,
 ) -> None:
     """
     Initialize Frago development environment
 
-    Check and install necessary dependencies (Node.js, Claude Code),
-    configure authentication method and related settings.
+    Check and install Claude Code via the official installer, then configure
+    authentication and channel setup.
     """
     # Show configuration only
     if show_config:
@@ -170,7 +152,7 @@ def init(
     # Load existing configuration
     existing_config = load_config() if config_exists() else None
 
-    # 1. Dependency check
+    # 1. Dependency check (Claude Code)
     deps_satisfied = True
     if not skip_deps:
         deps_satisfied = _check_and_install_dependencies(non_interactive)
@@ -178,29 +160,19 @@ def init(
         click.secho("Skipped dependency check", dim=True)
         click.echo()
 
-    # 2. Install resource files (Claude Code commands and sample recipes)
-    resources_success = False
-    if deps_satisfied and not skip_resources:
-        resources_success = _install_resources(force_update=update_resources)
-    elif skip_resources:
-        click.secho("Skipped resource installation", dim=True)
-        click.echo()
-
-    # 3. Configuration process
+    # 2. Configuration process
     if deps_satisfied:
         if not non_interactive:
             click.echo()  # Empty line separator
         config = _handle_configuration(existing_config, non_interactive)
 
-        # 4. Update resource installation status and save configuration
-        config.init_completed = True
-        if resources_success:
-            from datetime import datetime
+        # 3. Optional channel wizard (mutates config.task_ingestion in place)
+        from frago.init.channel_wizard import offer_channel_setup
 
-            from frago import __version__
-            config.resources_installed = True
-            config.resources_version = __version__
-            config.last_resource_update = datetime.now()
+        config = offer_channel_setup(config, non_interactive=non_interactive)
+
+        # 4. Save configuration
+        config.init_completed = True
 
         with spinner_context("Saving configuration", "Configuration saved"):
             save_config(config)
@@ -305,6 +277,14 @@ def _print_completion_summary(config: Config) -> None:
     else:
         endpoint_type = config.api_endpoint.type if config.api_endpoint else "custom"
         items.append(("Authentication", f"Frago managed ({endpoint_type})"))
+
+    # Task ingestion channels
+    channel_count = len(config.task_ingestion.channels)
+    if channel_count:
+        state = "enabled" if config.task_ingestion.enabled else "disabled"
+        items.append(
+            ("Ingestion channels", f"{channel_count} configured ({state})")
+        )
 
     print_summary(items, "Configuration")
 
@@ -444,15 +424,11 @@ def _handle_missing_dependencies(
     missing: list[str],
     non_interactive: bool = False,
 ) -> None:
-    """
-    Handle missing dependencies
+    """Handle missing dependencies.
 
-    Args:
-        results: Dependency check results
-        missing: List of missing dependencies
-        non_interactive: Non-interactive mode
+    Claude Code is the only dependency init installs automatically. Non-Claude
+    items in `missing` are surfaced for user visibility but not auto-installed.
     """
-    # Display missing information
     click.echo("[!]  The following dependencies need to be installed:")
     for name in missing:
         result = results.get(name)
@@ -460,7 +436,6 @@ def _handle_missing_dependencies(
             click.echo(f"  - {result.display_status()}")
     click.echo()
 
-    # Non-interactive mode: auto install
     if non_interactive:
         click.echo("Installing dependencies automatically (non-interactive mode)\n")
     elif not click.confirm("Install missing dependencies?", default=True):
@@ -468,180 +443,27 @@ def _handle_missing_dependencies(
         click.echo()
         return
 
-    # Install in order
-    node_needed = "node" in missing
-    claude_code_needed = "claude-code" in missing
-    install_order = get_installation_order(node_needed, claude_code_needed)
-
-    click.echo()
-
-    # Track whether Node.js was just installed and npm is not in PATH
-    node_installed_needs_activation = False
-
-    for name in install_order:
-        # For claude-code: if node was just installed and npm is unavailable, use nvm fallback
-        use_nvm = node_installed_needs_activation and name == "claude-code"
-
-        requires_restart = _install_with_progress(
-            name,
-            use_nvm_fallback=use_nvm,
-            node_just_installed=node_installed_needs_activation,
-        )
-
-        if name == "node" and requires_restart:
-            # Node.js installed successfully but npm is not in PATH
-            node_installed_needs_activation = True
-
-            # Check if there are remaining dependencies
-            remaining = install_order[install_order.index(name) + 1:]
-            if remaining:
-                # Try to install remaining dependencies using nvm fallback instead of requiring restart
-                click.echo()
-                click.secho(
-                    "npm not yet active in current terminal, attempting to continue installation via nvm environment...",
-                    fg="cyan",
-                )
-                continue
-
-        # If not node, but requires restart (shouldn't happen in theory)
-        if requires_restart and name != "node":
-            _show_restart_required_message([])
-            sys.exit(0)
+    if "claude-code" in missing:
+        _install_claude_code_with_progress()
 
 
-def _show_restart_required_message(remaining_deps: list) -> None:
+def _install_claude_code_with_progress() -> None:
+    """Install Claude Code via the official curl script, with graceful fallback.
+
+    Does not raise or exit — init should keep going so the user still gets
+    auth configuration and channel setup even if Claude Code install fails.
+    The manual install hint (printed by `install_claude_code_auto` on failure)
+    tells the user how to finish the job themselves.
     """
-    Display terminal restart required message
-
-    Args:
-        remaining_deps: Remaining dependencies to install
-    """
-    from frago.init.installer import _get_shell_config_file
-
-    click.echo()
-    click.secho("[!]  Node.js installed, but needs to be activated to continue", fg="yellow")
-    click.echo()
-
-    shell_config = _get_shell_config_file()
-    if shell_config:
-        click.echo("Please perform one of the following operations:")
-        click.echo()
-        click.echo(f"  1. Activate current terminal (recommended):")
-        click.echo(f"     source {shell_config}")
-        click.echo()
-        click.echo("  2. Restart terminal")
-        click.echo()
+    click.echo("Installing Claude Code via official installer...")
+    success, message = install_claude_code_auto()
+    if success:
+        click.echo("[OK] Claude Code installed successfully")
     else:
-        click.echo("Please restart terminal or run:")
-        click.echo("    source ~/.nvm/nvm.sh")
-        click.echo()
-
-    click.echo("Then run again:")
-    click.secho("    frago init", fg="cyan")
+        click.secho(
+            f"[!]  Claude Code install skipped: {message}",
+            fg="yellow",
+        )
     click.echo()
 
-    remaining_names = ", ".join(
-        "Claude Code" if d == "claude-code" else d for d in remaining_deps
-    )
-    click.echo(f"(Remaining dependencies: {remaining_names})")
 
-
-def _install_with_progress(
-    name: str,
-    use_nvm_fallback: bool = False,
-    node_just_installed: bool = False,
-) -> bool:
-    """
-    Installation with progress indication
-
-    Args:
-        name: Dependency name
-        use_nvm_fallback: For claude-code, whether to use nvm environment when npm is unavailable
-        node_just_installed: Whether Node.js was just installed (for error messages)
-
-    Returns:
-        requires_restart: Whether terminal restart is required to continue
-    """
-    display_name = "Node.js" if name == "node" else "Claude Code"
-
-    click.echo(f"Installing {display_name}...")
-
-    try:
-        success, warning, requires_restart = install_dependency(
-            name,
-            use_nvm_fallback=use_nvm_fallback,
-        )
-        click.echo(f"[OK] {display_name} installed successfully")
-
-        # Display Windows PATH warning (if any)
-        if warning:
-            click.secho(warning, fg="yellow")
-
-        click.echo()
-        return requires_restart
-
-    except CommandError as e:
-        click.echo(f"\n[X] {display_name} installation failed")
-        click.echo(str(e))
-
-        # If npm is unavailable due to just installing Node.js, give more friendly message
-        if name == "claude-code" and node_just_installed:
-            click.echo()
-            _show_restart_required_message(["claude-code"])
-
-        sys.exit(e.code)
-
-
-def _install_resources(force_update: bool = False) -> bool:
-    """
-    Install resource files (Claude Code commands and sample recipes)
-
-    Args:
-        force_update: Force update all resources (overwrite existing recipes)
-
-    Returns:
-        True if resource installation succeeded (no errors)
-
-    Called after dependency check, before configuration
-    """
-    try:
-        with spinner_context("Installing resources", "Installed resources") as reporter:
-            status = install_all_resources(force_update=force_update)
-
-        # Display installation details (uv style)
-        reporter = ProgressReporter()
-
-        # Commands
-        if status.commands:
-            for name in status.commands.installed:
-                reporter.item_added(name)
-            for error in status.commands.errors:
-                click.secho(f" [X] {error}", fg="red")
-
-        # Skills
-        if status.skills:
-            for name in status.skills.installed:
-                reporter.item_added(f"skill/{name}")
-            for name in status.skills.skipped:
-                reporter.item_skipped(f"skill/{name}")
-
-        # Recipes
-        if status.recipes:
-            for name in status.recipes.installed:
-                reporter.item_added(f"recipe/{name}")
-            for name in status.recipes.skipped:
-                reporter.item_skipped(f"recipe/{name}")
-
-        click.echo()
-
-        # Check for errors
-        if not status.all_success:
-            click.secho("Warning: Some resources failed to install", fg="yellow")
-            return False
-
-        return True
-
-    except Exception as e:
-        click.secho(f"Error: Resource installation failed - {e}", fg="red", err=True)
-        click.secho("  Ensure write permissions for ~/.claude/ and ~/.frago/", dim=True, err=True)
-        return False
