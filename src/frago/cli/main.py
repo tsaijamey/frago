@@ -16,6 +16,7 @@ from .agent_command import agent, agent_status
 from .agent_friendly import AgentFriendlyGroup
 from .autostart_command import autostart_group
 from .book_commands import book_command
+from .channel_commands import channel_group
 from .chrome_commands import chrome_group
 from .client_commands import client_group
 from .cloud_commands import (
@@ -56,7 +57,7 @@ from .workspace_commands import workspace_group
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "view", "server", "serve"]),
-    ("Session & Intelligence", ["session", "agent", "agent-status", "reply"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "sync", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
@@ -297,6 +298,11 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     GUI Mode (deprecated):
       frago --gui    Use 'frago server start' instead
     """
+    # Ensure Windows console can emit CJK / symbols in every subcommand,
+    # including when invoked via `frago.exe` (whose entry point is `cli`,
+    # not `main`, so the wrapper in main() is bypassed).
+    _force_utf8_stdio_on_windows()
+
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
     ctx.obj['TIMEOUT'] = timeout
@@ -389,6 +395,9 @@ cli.add_command(workspace_group)
 
 # Reply command - send replies through ingestion channels
 cli.add_command(reply_cmd, name="reply")
+
+# Channel command group - manage task ingestion channels
+cli.add_command(channel_group, name="channel")
 
 # Book command - built-in knowledge query
 cli.add_command(book_command)

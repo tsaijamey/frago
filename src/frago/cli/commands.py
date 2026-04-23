@@ -414,6 +414,34 @@ COMMAND_EXAMPLES = {
     "reply": [
         "frago reply --channel email --params '{...}'",
     ],
+    # Channel (task ingestion channel CRUD)
+    "channel": [
+        "frago channel <command>",
+        "frago channel list",
+    ],
+    "channel/list": [
+        "frago channel list",
+    ],
+    "channel/add": [
+        "frago channel add <name> --poll <recipe> --notify <recipe>",
+        "frago channel add feishu --poll feishu_poll --notify feishu_notify --interval 300",
+    ],
+    "channel/rm": [
+        "frago channel rm <name>",
+    ],
+    "channel/edit": [
+        "frago channel edit <name> --interval 300",
+        "frago channel edit <name> --notify new_notify_recipe",
+    ],
+    "channel/enable": [
+        "frago channel enable",
+    ],
+    "channel/disable": [
+        "frago channel disable",
+    ],
+    "channel/recipes": [
+        "frago channel recipes  # list installed recipes usable for channels",
+    ],
     "serve": [
         "frago serve  # deprecated, use 'frago server'",
     ],
