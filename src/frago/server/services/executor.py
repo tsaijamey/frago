@@ -128,6 +128,19 @@ class Executor:
         if not run_id or not pid:
             return  # error already handled in _launch_agent
 
+        await self._finalize_run(task, pid, run_id)
+
+    async def _finalize_run(
+        self, task: IngestedTask, pid: int, run_id: str,
+    ) -> None:
+        """Monitor running agent to completion, record result, archive, notify PA.
+
+        Shared tail of the first-launch pipeline and the resume pipeline —
+        both need to watch a live pid, read the Claude JSONL for stop_reason,
+        flip the task to COMPLETED/FAILED, close tab group, archive the run,
+        and hand the outcome to PA. Takes run_id explicitly so resume can
+        reuse the existing Run instance instead of re-creating one.
+        """
         # 2. Monitor PID until exit (with resume awareness)
         final_pid = await self._monitor_until_done(task, pid)
         if final_pid is None:
@@ -538,6 +551,33 @@ class Executor:
             logger.info("Executor: resumed task %s with new pid %d",
                         task_id[:8], new_pid)
 
+        # Unarchive the Run instance — prior completion set it to ARCHIVED,
+        # but this resume turn is fresh activity on the same run directory.
+        # Without this, external observers (UI, `frago run list`) still see
+        # a dead run while the agent is actually writing new outputs.
+        run_id = task.session_id
+        if run_id:
+            try:
+                from frago.run.manager import RunManager
+                from frago.run.models import RunStatus
+                mgr = RunManager(PROJECTS_DIR)
+                run = mgr.find_run(run_id)
+                if run.status == RunStatus.ARCHIVED:
+                    run.status = RunStatus.ACTIVE
+                    metadata_file = PROJECTS_DIR / run_id / ".metadata.json"
+                    metadata_file.write_text(
+                        json.dumps(run.to_dict(), indent=2),
+                        encoding="utf-8",
+                    )
+                    logger.info("Executor: unarchived run %s for resume", run_id)
+            except Exception:
+                logger.debug("Failed to unarchive run %s", run_id, exc_info=True)
+
+        # Flip task back to EXECUTING so timeline records this resume turn
+        # as live work rather than a lingering COMPLETED/FAILED state.
+        # update_status emits a task_state timeline entry.
+        self._store.update_status(task_id, TaskStatus.EXECUTING)
+
         trace_entry(
             origin="internal", subkind="executor", data_type="action_result",
             thread_id=task.thread_id, task_id=task_id,
@@ -545,7 +585,37 @@ class Executor:
                   "session_id": task.session_id},
             event=f"resume 成功: pid={new_pid}",
         )
+
+        # Attach monitoring so the resume turn flows through the same
+        # completion → JSONL read → status update → PA notify pipeline as
+        # first-launch. Without this, resume fires-and-forgets and nothing
+        # downstream notices when the new turn finishes.
+        if new_pid and run_id:
+            refreshed = self._store.get(task_id)
+            if refreshed:
+                monitor_task = asyncio.create_task(
+                    self._safe_finalize_resume(refreshed, new_pid, run_id)
+                )
+                self._active_tasks.add(monitor_task)
+                monitor_task.add_done_callback(self._active_tasks.discard)
+
         return {"status": "ok", "new_pid": new_pid}
+
+    async def _safe_finalize_resume(
+        self, task: IngestedTask, pid: int, run_id: str,
+    ) -> None:
+        """Wrapper around _finalize_run for resume-spawned monitoring."""
+        try:
+            await self._finalize_run(task, pid, run_id)
+        except Exception:
+            logger.error(
+                "Executor: unhandled error finalizing resumed task %s",
+                task.id[:8], exc_info=True,
+            )
+            self._store.update_status(
+                task.id, TaskStatus.FAILED,
+                error="executor internal error during resume finalize",
+            )
 
     # -- result extraction --
 
