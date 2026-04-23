@@ -345,8 +345,17 @@ class PrimaryAgentService:
         return build_bootstrap(self._rotation_count)
 
     async def _send_online_notification(self, reborn_reason: str) -> None:
-        """Send online notification to the most recently active channel."""
+        """Send online notification to the most recently active channel.
+
+        We call lifecycle.reply with task_id="" (this notification isn't tied
+        to any task), which normally skips reply_context enrichment. Channels
+        like feishu require chat_id to route, so without reply_context the
+        notify_recipe exits 1. We look up the most recent task on the channel
+        and piggyback on its reply_context so the notification lands instead
+        of failing silently.
+        """
         try:
+            from frago.server.services.ingestion.store import TaskStore
             from frago.server.services.trace import get_last_active_channel
 
             channel = get_last_active_channel()
@@ -360,10 +369,22 @@ class PrimaryAgentService:
                 else USER_PA_ONLINE_RESTART_TEMPLATE
             )
 
+            reply_params: dict[str, Any] = {"text": text}
+            recent = TaskStore().get_recent(channel=channel, limit=1)
+            if recent and recent[0].reply_context:
+                reply_params["reply_context"] = recent[0].reply_context
+            else:
+                logger.info(
+                    "Skipping online notification to %s: no recent task with reply_context "
+                    "(notify_recipe would fail without chat routing info)",
+                    channel,
+                )
+                return
+
             self._lifecycle.reply(
                 task_id="",
                 channel=channel,
-                reply_params={"text": text},
+                reply_params=reply_params,
             )
             logger.info("Online notification sent to %s", channel)
         except Exception:
