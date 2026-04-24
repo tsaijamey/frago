@@ -43,6 +43,7 @@ from frago.server.services.pa_prompts import (
     PA_REPLY_FAILED_TEMPLATE,
     PA_SCHEDULED_TASK_TEMPLATE,
     SUB_AGENT_PROMPT_TEMPLATE,
+    USER_PA_ONLINE_RESPAWN_TEMPLATE,
     USER_PA_ONLINE_RESTART_TEMPLATE,
     USER_PA_ONLINE_ROTATION_TEMPLATE,
 )
@@ -242,7 +243,7 @@ class PrimaryAgentService:
 
         logger.info("PA session creating (reason=%s, seq=%d)", reason, self._heartbeat_seq)
 
-        bootstrap, reborn_reason = self._build_bootstrap_prompt()
+        bootstrap, reborn_reason = self._build_bootstrap_prompt(create_reason=reason)
         prompt = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
 
         result = await AgentService.start_task_attached(
@@ -266,7 +267,7 @@ class PrimaryAgentService:
         self._save_session_id(self._session_id)
         logger.info("PA session created: %s", self._session_id[:8])
 
-        if reborn_reason in ("rotation", "server_restart"):
+        if reborn_reason in ("rotation", "server_restart", "respawn"):
             asyncio.create_task(self._send_online_notification(reborn_reason))
 
     async def rotate_session(self) -> None:
@@ -335,14 +336,14 @@ class PrimaryAgentService:
 
         return orphaned
 
-    def _build_bootstrap_prompt(self) -> tuple[str, str]:
+    def _build_bootstrap_prompt(self, create_reason: str | None = None) -> tuple[str, str]:
         """Build bootstrap context from TaskStore + RunLock + conversation history.
 
         Returns (bootstrap_prompt, reborn_reason).
         """
         from frago.server.services.pa_context_builder import build_bootstrap
 
-        return build_bootstrap(self._rotation_count)
+        return build_bootstrap(self._rotation_count, create_reason=create_reason)
 
     async def _send_online_notification(self, reborn_reason: str) -> None:
         """Send online notification to the most recently active channel.
@@ -363,11 +364,12 @@ class PrimaryAgentService:
                 logger.debug("No active channel found, skipping online notification")
                 return
 
-            text = (
-                USER_PA_ONLINE_ROTATION_TEMPLATE
-                if reborn_reason == "rotation"
-                else USER_PA_ONLINE_RESTART_TEMPLATE
-            )
+            if reborn_reason == "rotation":
+                text = USER_PA_ONLINE_ROTATION_TEMPLATE
+            elif reborn_reason == "respawn":
+                text = USER_PA_ONLINE_RESPAWN_TEMPLATE
+            else:
+                text = USER_PA_ONLINE_RESTART_TEMPLATE
 
             reply_params: dict[str, Any] = {"text": text}
             recent = TaskStore().get_recent(channel=channel, limit=1)

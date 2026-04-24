@@ -15,6 +15,7 @@ from frago.server.services.pa_prompts import (
     PA_BOOTSTRAP_CHANNEL_HEADER_TEMPLATE,
     PA_BOOTSTRAP_CONVERSATION_HEADER,
     PA_BOOTSTRAP_KNOWLEDGE_TEMPLATE,
+    PA_BOOTSTRAP_REBORN_RESPAWN,
     PA_BOOTSTRAP_REBORN_RESTART,
     PA_BOOTSTRAP_REBORN_ROTATION_TEMPLATE,
     PA_BOOTSTRAP_SYSTEM_ENV_TEMPLATE,
@@ -32,8 +33,28 @@ from frago.server.services.trace import (
 logger = logging.getLogger(__name__)
 
 
-def detect_reborn_reason(rotation_count: int) -> str:
-    """Detect why this PA session is being created."""
+def detect_reborn_reason(
+    rotation_count: int,
+    create_reason: str | None = None,
+) -> str:
+    """Detect why this PA session is being created.
+
+    If create_reason is provided by the caller, it takes precedence over
+    the rotation_count heuristic — callers know their intent precisely,
+    whereas rotation_count alone cannot distinguish the first rotation
+    (count still 0 pre-increment) from a genuine server restart, nor
+    distinguish a server restart from a PA subprocess respawn.
+
+    create_reason mapping:
+      - "rotation"                        → "rotation"
+      - "heartbeat" / "queue_consumer"    → "respawn"
+      - "initialize" / None / other       → heuristic (history → server_restart,
+                                            otherwise fresh_start)
+    """
+    if create_reason == "rotation":
+        return "rotation"
+    if create_reason in ("heartbeat", "queue_consumer"):
+        return "respawn"
     if rotation_count > 0:
         return "rotation"
     recent = load_conversation_turns(limit=1)
@@ -74,6 +95,8 @@ def _build_reborn_info(reason: str, rotation_count: int) -> str | None:
         )
     if reason == "server_restart":
         return PA_BOOTSTRAP_REBORN_RESTART
+    if reason == "respawn":
+        return PA_BOOTSTRAP_REBORN_RESPAWN
     return None
 
 
@@ -235,13 +258,16 @@ def _build_knowledge_index() -> str | None:
         return None
 
 
-def build_bootstrap(rotation_count: int) -> tuple[str, str]:
+def build_bootstrap(
+    rotation_count: int,
+    create_reason: str | None = None,
+) -> tuple[str, str]:
     """Build the full bootstrap prompt for a new PA session.
 
     Returns (bootstrap_prompt, reborn_reason).
-    reborn_reason is one of: "rotation", "server_restart", "fresh_start".
+    reborn_reason is one of: "rotation", "server_restart", "respawn", "fresh_start".
     """
-    reason = detect_reborn_reason(rotation_count)
+    reason = detect_reborn_reason(rotation_count, create_reason=create_reason)
 
     sections: list[str] = []
 
