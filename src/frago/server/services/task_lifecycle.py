@@ -31,6 +31,12 @@ class TaskLifecycle:
         task_store: TaskStore | None = None,
     ) -> None:
         self._store = task_store or TaskStore()
+        # Per-run already-auto-sent image paths. Keyed by run_id because multiple
+        # tasks can reuse the same Run (shared outputs/ dir). Scoped to the
+        # lifecycle instance — not persisted across server restarts, which is
+        # acceptable: after restart, outputs from old runs are unlikely to be
+        # re-scanned because new replies belong to new tasks.
+        self._sent_image_paths: dict[str, set[str]] = {}
 
     # -- ingestion --
 
@@ -192,12 +198,30 @@ class TaskLifecycle:
         if not chat_id:
             return
 
-        images = [f for f in sorted(outputs_dir.iterdir()) if f.is_file() and f.suffix.lower() in self._IMAGE_SUFFIXES]
+        # Dedup: skip images already auto-sent for this run, and skip the image
+        # explicitly declared in this reply (feishu_send_message handles that).
+        sent = self._sent_image_paths.setdefault(run_id, set())
+        explicit = reply_params.get("image_path")
+        if explicit:
+            sent.add(str(explicit))
+
+        # Only broadcast images produced (or modified) after this task started,
+        # so we don't re-send historical PNGs left in a shared outputs/ dir by
+        # prior tasks in the same Run (root cause: dup_image_root_cause.md R1+R2).
+        task_start_ts = task.created_at.timestamp() if task.created_at else 0
+        images = [
+            f for f in sorted(outputs_dir.iterdir())
+            if f.is_file()
+            and f.suffix.lower() in self._IMAGE_SUFFIXES
+            and str(f) not in sent
+            and f.stat().st_mtime >= task_start_ts
+        ]
         for img in images:
             try:
                 image_params = {"chat_id": chat_id, "image_path": str(img)}
                 logger.info("Auto-sending output image via %s: %s", notify_recipe, img.name)
                 runner.run(notify_recipe, params=image_params)
+                sent.add(str(img))
                 logger.info("Output image sent: %s", img.name)
             except Exception:
                 logger.exception("Failed to send output image: %s", img.name)
