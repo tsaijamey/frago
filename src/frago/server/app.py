@@ -387,18 +387,20 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # Configure CORS for local development
-    # Allow localhost origins on common ports for security
+    # Configure CORS for local development and home LAN access
+    # Allows localhost plus RFC1918 private network ranges (10/8, 172.16/12, 192.168/16)
+    # on any port — safe assumption for a trusted home network.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:8080",
-            "http://127.0.0.1:8080",
-            "http://localhost:8093",
-            "http://127.0.0.1:8093",
-            "http://localhost:3000",  # Vite dev server
-            "http://127.0.0.1:3000",
-        ],
+        allow_origin_regex=(
+            r"^http://("
+            r"localhost"
+            r"|127\.\d+\.\d+\.\d+"
+            r"|10\.\d+\.\d+\.\d+"
+            r"|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+"
+            r"|192\.168\.\d+\.\d+"
+            r")(:\d+)?$"
+        ),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
