@@ -9,6 +9,7 @@ import http.client
 import os
 import platform
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -81,7 +82,7 @@ def _wait_for_healthy(timeout: int = 30) -> tuple[bool, str]:
 
 # Default server configuration
 DEFAULT_SERVER_PORT = 8093
-DEFAULT_SERVER_HOST = "127.0.0.1"
+DEFAULT_SERVER_HOST = "0.0.0.0"
 
 
 def get_server_port() -> int:
@@ -103,7 +104,7 @@ def get_server_port() -> int:
 def get_server_host() -> str:
     """Get the server host from environment or default.
 
-    Priority: FRAGO_SERVER_HOST env var > default (127.0.0.1)
+    Priority: FRAGO_SERVER_HOST env var > default (0.0.0.0, LAN accessible)
     """
     return os.environ.get("FRAGO_SERVER_HOST", DEFAULT_SERVER_HOST)
 
@@ -111,6 +112,44 @@ def get_server_host() -> str:
 # Runtime server configuration (for backward compatibility)
 SERVER_PORT = get_server_port()
 SERVER_HOST = get_server_host()
+
+
+def _is_private_ipv4(ip: str) -> bool:
+    """Check if an IPv4 address is in RFC1918 private ranges."""
+    try:
+        parts = [int(p) for p in ip.split(".")]
+    except ValueError:
+        return False
+    if len(parts) != 4:
+        return False
+    a, b = parts[0], parts[1]
+    return a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
+def get_lan_ipv4s() -> list[str]:
+    """Return private-range IPv4 addresses bound to local interfaces."""
+    ips: list[str] = []
+    try:
+        for addrs in psutil.net_if_addrs().values():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and _is_private_ipv4(addr.address):
+                    ips.append(addr.address)
+    except Exception:
+        pass
+    return ips
+
+
+def get_accessible_urls(host: str = SERVER_HOST, port: int = SERVER_PORT) -> list[str]:
+    """Return human-readable URLs for reaching the server.
+
+    When bound to 0.0.0.0, expands to localhost plus LAN interfaces.
+    Otherwise returns a single URL for the configured host.
+    """
+    if host in ("0.0.0.0", "::", ""):
+        urls = [f"http://127.0.0.1:{port}"]
+        urls.extend(f"http://{ip}:{port}" for ip in get_lan_ipv4s())
+        return urls
+    return [f"http://{host}:{port}"]
 
 # PID and log file paths
 FRAGO_DIR = Path.home() / ".frago"
@@ -382,7 +421,8 @@ def start_daemon() -> tuple[bool, str]:
     if _is_systemd_managed():
         result = _systemctl("start")
         if result.returncode == 0:
-            return True, f"Server started via systemd on http://{SERVER_HOST}:{SERVER_PORT}"
+            urls = ", ".join(get_accessible_urls())
+            return True, f"Server started via systemd on {urls}"
         return False, f"systemctl start failed: {result.stderr.strip()}"
 
     # Proactively clean up stale PID file from crashed processes
@@ -453,7 +493,8 @@ def start_daemon() -> tuple[bool, str]:
         # Write PID file
         write_pid(proc.pid)
 
-        return True, f"Frago server started on http://{SERVER_HOST}:{SERVER_PORT} (PID: {proc.pid})"
+        urls = ", ".join(get_accessible_urls())
+        return True, f"Frago server started on {urls} (PID: {proc.pid})"
 
     except Exception as e:
         return False, f"Failed to start server: {e}"
@@ -625,6 +666,8 @@ def restart_daemon(force: bool = False) -> tuple[bool, str]:
         ok, detail = _wait_for_healthy(timeout=60)
         if ok:
             print(f"[restart] Server is healthy ({detail})")
+            for url in get_accessible_urls():
+                print(f"[restart]   {url}")
             return True, f"Server restarted via systemd ({detail})"
         print(f"[restart] Server failed health check: {detail}")
         return False, f"systemd restart issued but server unhealthy: {detail}"
