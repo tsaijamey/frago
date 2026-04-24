@@ -302,6 +302,18 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
     is_flag=True,
     help="Pass through raw stream-json output (for Web UI or machine consumption)"
 )
+@click.option(
+    "--endpoint",
+    type=str,
+    default=None,
+    help="Override endpoint URL (ANTHROPIC_BASE_URL), takes precedence over profile/CCR"
+)
+@click.option(
+    "--api-key",
+    type=str,
+    default=None,
+    help="Override API key (ANTHROPIC_AUTH_TOKEN), takes precedence over profile/CCR"
+)
 def agent(
     prompt: tuple,
     prompt_file,
@@ -318,6 +330,8 @@ def agent(
     source: str,
     session_id: str | None,
     passthrough: bool,
+    endpoint: str | None,
+    api_key: str | None,
 ):
     """
     Intelligent Agent: Execute tasks via Claude Code session
@@ -391,6 +405,18 @@ def agent(
 
         if not passthrough:
             click.echo(f"[OK] Using CCR: http://{host}:{port}")
+
+    # CLI overrides (highest priority): --endpoint / --api-key win over profile/CCR
+    if endpoint:
+        env["ANTHROPIC_BASE_URL"] = endpoint
+        if not passthrough:
+            click.echo(f"[OK] Override endpoint: {endpoint}")
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
+        # Clear AUTH_TOKEN set by CCR mode so API_KEY takes effect
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        if not passthrough:
+            click.echo("[OK] Override API key: (from --api-key)")
 
     # Step 4: Permission confirmation (--yes skips confirmation)
     # In passthrough mode, skip confirmation (Web UI handles this)
