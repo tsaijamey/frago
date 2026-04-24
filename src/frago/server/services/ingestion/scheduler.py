@@ -16,8 +16,11 @@ Every message reaches the PA.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
+import os
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -51,6 +54,10 @@ class ChannelConfig:
     notify_recipe: str
     poll_interval_seconds: int = 120
     poll_timeout_seconds: int = 20
+    # "poll" → periodic recipe invocation returning a message batch (default).
+    # "stream" → spawn poll_recipe as a long-lived subprocess; each stdout line
+    # is one `{"type": "message", ...}` event fed straight into ingest_message.
+    mode: str = "poll"
 
 
 class IngestionScheduler:
@@ -163,10 +170,16 @@ class IngestionScheduler:
             return
         self._stop_event.clear()
         for ch in self._channels:
-            task = asyncio.create_task(
-                self._channel_loop(ch),
-                name=f"ingestion-{ch.name}",
-            )
+            if ch.mode == "stream":
+                task = asyncio.create_task(
+                    self._stream_loop(ch),
+                    name=f"ingestion-stream-{ch.name}",
+                )
+            else:
+                task = asyncio.create_task(
+                    self._channel_loop(ch),
+                    name=f"ingestion-{ch.name}",
+                )
             self._channel_tasks[ch.name] = task
         self._rotation_task = asyncio.create_task(
             self._rotation_loop(), name="ingestion-rotation"
@@ -235,104 +248,252 @@ class IngestionScheduler:
             return
         logger.info("Poll %s: %d message(s) received", ch.poll_recipe, len(messages))
 
-        # Dedup + cache + enqueue (NO task creation)
         new_count = 0
         for msg in messages:
-            msg_id = str(msg.get("id", ""))
-            if not msg_id or "prompt" not in msg:
-                logger.warning("Channel %s: message missing required fields, skipping", ch.name)
-                continue
-
-            key = f"{ch.name}:{msg_id}"
-
-            # Dedup: in-memory set + archive history
-            if key in self._seen_messages:
-                logger.debug("Channel %s: message %s already seen, skipping", ch.name, msg_id)
-                continue
-            if self._store.exists(ch.name, msg_id):
-                logger.debug("Channel %s: message %s exists in store/archive, skipping", ch.name, msg_id)
-                self._seen_messages.add(key)
-                continue
-
-            # Cache raw message data (thread_id populated below after classify)
-            cached = CachedMessage(
-                channel=ch.name,
-                msg_id=msg_id,
-                prompt=msg["prompt"],
-                reply_context=msg.get("reply_context", {}),
-            )
-            self._message_cache[key] = cached
-            self._seen_messages.add(key)
-            new_count += 1
-
-            # Thread attribution (spec 20260418-thread-organization Phase 2)
-            from frago.server.services.thread_classifier import (
-                classify as thread_classify,
-            )
-            from frago.server.services.thread_classifier import (
-                ensure_thread,
-            )
-            from frago.server.services.trace import trace_entry
-
-            reply_ctx = msg.get("reply_context") or {}
-            sender = reply_ctx.get("sender_id") or reply_ctx.get("sender") or ""
-            classify_result = thread_classify(
-                channel=ch.name,
-                sender=sender,
-                content=msg["prompt"],
-                reply_context=reply_ctx,
-            )
-            ensure_thread(
-                classify_result,
-                channel=ch.name,
-                sender=sender,
-                msg_id=msg_id,
-                root_summary=msg["prompt"][:80],
-            )
-            # Backfill cached message with resolved thread_id for downstream consumers
-            cached.thread_id = classify_result.thread_id
-
-            # Timeline entry with thread metadata
-            trace_entry(
-                origin="external",
-                subkind=ch.name,
-                data_type="message",
-                thread_id=classify_result.thread_id,
-                parent_id=None,   # L1 parent_ref points at channel msg_id, not entry.id
-                task_id=None,
-                data={
-                    "event_type": "pa_ingestion",
-                    "channel": ch.name,
-                    "prompt": msg["prompt"],
-                    "_classify_layer": classify_result.layer,
-                },
-                msg_id=msg_id,
-                role="scheduler",
-                event=f"收到 {ch.name} 消息: {msg['prompt'][:80]}",
-            )
-
-            # Enqueue to PA message queue (carry thread_id so downstream events can chain)
-            if self._pa_enqueue:
-                try:
-                    await self._pa_enqueue({
-                        "type": "user_message",
-                        "msg_id": msg_id,
-                        "channel": ch.name,
-                        "channel_message_id": msg_id,
-                        "prompt": msg["prompt"],
-                        "reply_context": msg.get("reply_context", {}),
-                        "thread_id": classify_result.thread_id,
-                    })
-                    logger.info(
-                        "Message %s enqueued to PA (thread=%s, layer=%s)",
-                        msg_id, classify_result.thread_id, classify_result.layer,
-                    )
-                except Exception:
-                    logger.exception("Failed to enqueue message %s to PA", msg_id)
+            if await self.ingest_message(ch, msg):
+                new_count += 1
 
         if new_count:
             self._save_cache()
             logger.info("Poll %s: %d new message(s) cached and persisted", ch.poll_recipe, new_count)
+
+    async def ingest_message(self, ch: ChannelConfig, msg: dict[str, Any]) -> bool:
+        """Dedup + cache + classify + enqueue a single message dict.
+
+        Shared by poll mode (_poll_channel) and stream mode (_stream_loop).
+        Returns True if the message was newly cached (caller may want to persist),
+        False if skipped (dedup, malformed, etc).
+
+        Note: caller is responsible for calling `_save_cache()` at a suitable
+        cadence — poll mode batches one save per poll, stream mode saves per event.
+        """
+        msg_id = str(msg.get("id", ""))
+        if not msg_id or "prompt" not in msg:
+            logger.warning("Channel %s: message missing required fields, skipping", ch.name)
+            return False
+
+        key = f"{ch.name}:{msg_id}"
+
+        if key in self._seen_messages:
+            logger.debug("Channel %s: message %s already seen, skipping", ch.name, msg_id)
+            return False
+        if self._store.exists(ch.name, msg_id):
+            logger.debug("Channel %s: message %s exists in store/archive, skipping", ch.name, msg_id)
+            self._seen_messages.add(key)
+            return False
+
+        cached = CachedMessage(
+            channel=ch.name,
+            msg_id=msg_id,
+            prompt=msg["prompt"],
+            reply_context=msg.get("reply_context", {}),
+        )
+        self._message_cache[key] = cached
+        self._seen_messages.add(key)
+
+        from frago.server.services.thread_classifier import (
+            classify as thread_classify,
+        )
+        from frago.server.services.thread_classifier import (
+            ensure_thread,
+        )
+        from frago.server.services.trace import trace_entry
+
+        reply_ctx = msg.get("reply_context") or {}
+        sender = reply_ctx.get("sender_id") or reply_ctx.get("sender") or ""
+        classify_result = thread_classify(
+            channel=ch.name,
+            sender=sender,
+            content=msg["prompt"],
+            reply_context=reply_ctx,
+        )
+        ensure_thread(
+            classify_result,
+            channel=ch.name,
+            sender=sender,
+            msg_id=msg_id,
+            root_summary=msg["prompt"][:80],
+        )
+        cached.thread_id = classify_result.thread_id
+
+        trace_entry(
+            origin="external",
+            subkind=ch.name,
+            data_type="message",
+            thread_id=classify_result.thread_id,
+            parent_id=None,
+            task_id=None,
+            data={
+                "event_type": "pa_ingestion",
+                "channel": ch.name,
+                "prompt": msg["prompt"],
+                "_classify_layer": classify_result.layer,
+            },
+            msg_id=msg_id,
+            role="scheduler",
+            event=f"收到 {ch.name} 消息: {msg['prompt'][:80]}",
+        )
+
+        if self._pa_enqueue:
+            try:
+                await self._pa_enqueue({
+                    "type": "user_message",
+                    "msg_id": msg_id,
+                    "channel": ch.name,
+                    "channel_message_id": msg_id,
+                    "prompt": msg["prompt"],
+                    "reply_context": msg.get("reply_context", {}),
+                    "thread_id": classify_result.thread_id,
+                })
+                logger.info(
+                    "Message %s enqueued to PA (thread=%s, layer=%s)",
+                    msg_id, classify_result.thread_id, classify_result.layer,
+                )
+            except Exception:
+                logger.exception("Failed to enqueue message %s to PA", msg_id)
+        return True
+
+    # -- stream mode (long-connection recipes) --
+
+    async def _stream_loop(self, ch: ChannelConfig) -> None:
+        """Keep `poll_recipe` alive as a streaming subprocess.
+
+        Each stdout line from the recipe must be a JSON object
+        `{"type": "message", "id", "prompt", "reply_context"}`; lines with
+        other `type` values are ignored (reserved for future control events).
+
+        The recipe subprocess is expected to never exit voluntarily. If it
+        does (crash, network error, flag day), we restart with exponential
+        backoff capped at `max_backoff` seconds.
+        """
+        backoff = 2
+        max_backoff = 60
+        await asyncio.sleep(5)  # startup delay, match poll mode
+        while not self._stop_event.is_set():
+            proc = None
+            try:
+                proc = await self._spawn_stream_recipe(ch)
+                logger.info(
+                    "Stream channel %s: recipe %s started (pid=%s)",
+                    ch.name, ch.poll_recipe, proc.pid,
+                )
+                backoff = 2  # successful spawn resets backoff
+                await self._read_stream(ch, proc)
+                logger.warning(
+                    "Stream channel %s: recipe %s exited (code=%s)",
+                    ch.name, ch.poll_recipe, proc.returncode,
+                )
+            except Exception:
+                logger.exception("Stream channel %s: spawn/read failed", ch.name)
+            finally:
+                if proc is not None and proc.returncode is None:
+                    try:
+                        proc.terminate()
+                        await asyncio.wait_for(proc.wait(), timeout=5)
+                    except (TimeoutError, ProcessLookupError):
+                        try:
+                            proc.kill()
+                            await proc.wait()
+                        except ProcessLookupError:
+                            pass
+
+            # Backoff before restart (interruptible by stop_event)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=backoff)
+                break  # stop_event set → exit loop
+            except TimeoutError:
+                backoff = min(backoff * 2, max_backoff)
+
+    async def _spawn_stream_recipe(self, ch: ChannelConfig) -> asyncio.subprocess.Process:
+        """Spawn a stream-mode recipe as a persistent subprocess via `uv run`.
+
+        Reuses RecipeRunner internals for recipe discovery + secret resolution
+        so FRAGO_SECRETS injection and PEP 723 inline deps work identically to
+        normal `frago recipe run` invocations.
+        """
+        runner = self._runner
+        recipe = runner.registry.find(ch.poll_recipe)
+
+        env = os.environ.copy()
+        if recipe.metadata.secrets:
+            secrets = runner._resolve_secrets(ch.poll_recipe, recipe.metadata.secrets)
+            env["FRAGO_SECRETS"] = json.dumps(secrets)
+        if getattr(recipe.metadata, "no_proxy", False):
+            for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                      "http_proxy", "https_proxy", "all_proxy"):
+                env.pop(k, None)
+
+        uv_bin = shutil.which("uv") or "uv"
+        params_json = json.dumps({"notify_recipe": ch.notify_recipe})
+        cmd = [uv_bin, "run", "--quiet", str(recipe.script_path), params_json]
+
+        return await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+    async def _read_stream(
+        self, ch: ChannelConfig, proc: asyncio.subprocess.Process
+    ) -> None:
+        """Read recipe stdout/stderr until it exits or stop_event fires."""
+
+        async def pump_stderr() -> None:
+            assert proc.stderr is not None
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    return
+                logger.info(
+                    "[stream:%s] %s",
+                    ch.name,
+                    line.decode(errors="replace").rstrip(),
+                )
+
+        stderr_task = asyncio.create_task(pump_stderr())
+        try:
+            assert proc.stdout is not None
+            while not self._stop_event.is_set():
+                line_task = asyncio.create_task(proc.stdout.readline())
+                stop_task = asyncio.create_task(self._stop_event.wait())
+                done, pending = await asyncio.wait(
+                    {line_task, stop_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if stop_task in done:
+                    return
+                line = line_task.result()
+                if not line:
+                    return  # EOF → subprocess exited
+                try:
+                    msg = json.loads(line.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Stream %s: non-JSON stdout line: %s",
+                        ch.name, line[:200],
+                    )
+                    continue
+                if msg.get("type") != "message":
+                    logger.debug(
+                        "Stream %s: ignoring non-message event type=%s",
+                        ch.name, msg.get("type"),
+                    )
+                    continue
+                try:
+                    if await self.ingest_message(ch, msg):
+                        self._save_cache()
+                except Exception:
+                    logger.exception(
+                        "Stream %s: ingest_message failed for %s",
+                        ch.name, msg.get("id"),
+                    )
+        finally:
+            stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await stderr_task
 
     async def _rotation_loop(self) -> None:
         """Archive terminal tasks daily at 0:00 UTC. Catch-up on startup."""

@@ -46,6 +46,10 @@ class TaskIngestionChannel(BaseModel):
     notify_recipe: str
     poll_interval_seconds: int = 120
     poll_timeout_seconds: int = 20
+    # "poll" = periodic invocation returning a batch; "stream" = long-lived
+    # subprocess emitting one JSON event per stdout line. See
+    # server/services/ingestion/scheduler.py for the full contract.
+    mode: Literal["poll", "stream"] = "poll"
 
     @field_validator("name")
     @classmethod
