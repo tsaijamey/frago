@@ -4,10 +4,10 @@ Status check related CDP commands
 Encapsulates CDP status check functionality.
 """
 
-from typing import List, Dict, Any
-import requests
+from typing import Any, Dict, List
 
 from ..logger import get_logger
+from ..transport import cdp_get
 
 
 class StatusCommands:
@@ -55,7 +55,7 @@ class StatusCommands:
             self.logger.info("Getting pages list")
             
             http_url = self.session.config.http_url
-            response = requests.get(f"{http_url}/json/list", timeout=10)
+            response = cdp_get(f"{http_url}/json/list", timeout=10)
             
             if response.status_code == 200:
                 pages = response.json()
@@ -78,7 +78,7 @@ class StatusCommands:
             self.logger.info("Checking Chrome status")
             
             http_url = self.session.config.http_url
-            response = requests.get(f"{http_url}/json/version", timeout=10)
+            response = cdp_get(f"{http_url}/json/version", timeout=10)
             
             if response.status_code == 200:
                 version_info = response.json()

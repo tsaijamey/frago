@@ -15,11 +15,10 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import requests
-import websocket as _ws
-
 from .logger import get_logger
 from .tab_manager import TabManager
+from .transport import cdp_get, cdp_ws_connect
+
 
 class ChromeCommandError(Exception):
     """Structured error for chrome command failures."""
@@ -343,7 +342,7 @@ class TabGroupManager:
     def _get_live_target_ids(self) -> set[str]:
         """Fetch current page target IDs from Chrome via HTTP."""
         try:
-            resp = requests.get(
+            resp = cdp_get(
                 f"http://{self.host}:{self.port}/json/list", timeout=5
             )
             resp.raise_for_status()
@@ -458,7 +457,7 @@ class TabGroupManager:
     def _push_to_landing_page(self, data: dict) -> None:
         """Push group state to the landing page dashboard via CDP."""
         try:
-            resp = requests.get(
+            resp = cdp_get(
                 f"http://{self.host}:{self.port}/json/list", timeout=2
             )
             targets = resp.json()
@@ -480,7 +479,7 @@ class TabGroupManager:
             payload = json.dumps(data, ensure_ascii=False)
             js = f"window.__frago_update_dashboard__({payload})"
 
-            ws = _ws.create_connection(landing_ws, timeout=3)
+            ws = cdp_ws_connect(landing_ws, timeout=3)
             ws.send(json.dumps({
                 "id": 1,
                 "method": "Runtime.evaluate",
@@ -496,15 +495,13 @@ class TabGroupManager:
     def ensure_landing_page(self) -> bool:
         """Check if landing page exists; recreate if missing. Best-effort."""
         try:
-            import websocket as _ws
-
             # Check if server is running
             try:
-                requests.get(self.LANDING_PAGE_URL, timeout=1)
+                cdp_get(self.LANDING_PAGE_URL, timeout=1)
             except Exception:
                 return False
 
-            resp = requests.get(
+            resp = cdp_get(
                 f"http://{self.host}:{self.port}/json/list", timeout=2
             )
             targets = resp.json()
@@ -525,14 +522,14 @@ class TabGroupManager:
                     ws_url = t["webSocketDebuggerUrl"]
                     break
             if not ws_url:
-                ver = requests.get(
+                ver = cdp_get(
                     f"http://{self.host}:{self.port}/json/version", timeout=2
                 ).json()
                 ws_url = ver.get("webSocketDebuggerUrl")
             if not ws_url:
                 return False
 
-            ws = _ws.create_connection(ws_url, timeout=5)
+            ws = cdp_ws_connect(ws_url, timeout=5)
             ws.send(json.dumps({
                 "id": 100,
                 "method": "Target.createTarget",

@@ -7,18 +7,17 @@ Supports headless and void modes.
 """
 
 import os
-import sys
-import subprocess
-import time
-import signal
 import platform
 import shutil
+import subprocess
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 import psutil
-import requests
+
+from frago.cdp.transport import cdp_get, cdp_ws_connect
 
 
 class BrowserType(Enum):
@@ -480,7 +479,7 @@ class ChromeLauncher:
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
-                response = requests.get(
+                response = cdp_get(
                     f"http://localhost:{self.debugging_port}/json/version", timeout=1
                 )
                 if response.status_code == 200:
@@ -504,7 +503,7 @@ class ChromeLauncher:
                 stealth_script = f.read()
 
             # Get first tab
-            response = requests.get(
+            response = cdp_get(
                 f"http://localhost:{self.debugging_port}/json", timeout=2
             )
             targets = response.json()
@@ -514,10 +513,9 @@ class ChromeLauncher:
 
             ws_url = targets[0]["webSocketDebuggerUrl"]
 
-            import websocket
             import json
 
-            ws = websocket.create_connection(ws_url)
+            ws = cdp_ws_connect(ws_url)
 
             # Inject stealth script
             message = {
@@ -714,10 +712,9 @@ class ChromeLauncher:
         """
         try:
             import json
-            import websocket
 
             # Get browser websocket URL
-            response = requests.get(
+            response = cdp_get(
                 f"http://localhost:{self.debugging_port}/json/version", timeout=2
             )
             if response.status_code != 200:
@@ -727,10 +724,10 @@ class ChromeLauncher:
             if not ws_url:
                 return False
 
-            ws = websocket.create_connection(ws_url, timeout=5)
+            ws = cdp_ws_connect(ws_url, timeout=5)
 
             # Get target list to find the window
-            targets_response = requests.get(
+            targets_response = cdp_get(
                 f"http://localhost:{self.debugging_port}/json", timeout=2
             )
             if targets_response.status_code != 200 or not targets_response.json():
@@ -805,9 +802,8 @@ class ChromeLauncher:
         """
         try:
             import json as _json
-            import websocket as _ws
 
-            resp = requests.get(
+            resp = cdp_get(
                 f"http://localhost:{self.debugging_port}/json/list", timeout=5
             )
             all_targets = resp.json()
@@ -819,7 +815,7 @@ class ChromeLauncher:
             # Close all tabs except the first one
             for tab in page_tabs[1:]:
                 try:
-                    requests.get(
+                    cdp_get(
                         f"http://localhost:{self.debugging_port}/json/close/{tab['id']}",
                         timeout=2,
                     )
@@ -834,11 +830,11 @@ class ChromeLauncher:
 
             # Check if frago server is running before navigating to dashboard
             try:
-                requests.get(self.LANDING_PAGE_URL, timeout=1)
+                cdp_get(self.LANDING_PAGE_URL, timeout=1)
             except Exception:
                 return  # Server not running, leave tab as-is
 
-            ws = _ws.create_connection(ws_url, timeout=5)
+            ws = cdp_ws_connect(ws_url, timeout=5)
             ws.send(_json.dumps({
                 "id": 1,
                 "method": "Page.navigate",
@@ -877,7 +873,7 @@ class ChromeLauncher:
             }
 
             # Fetch live tabs and close orphans
-            resp = requests.get(
+            resp = cdp_get(
                 f"http://localhost:{self.debugging_port}/json/list", timeout=5
             )
             for t in resp.json():
@@ -897,7 +893,7 @@ class ChromeLauncher:
                     continue
                 # Orphan — close it
                 try:
-                    requests.get(
+                    cdp_get(
                         f"http://localhost:{self.debugging_port}/json/close/{tid}",
                         timeout=2,
                     )
@@ -914,16 +910,15 @@ class ChromeLauncher:
         """
         try:
             import json as _json
-            import websocket as _ws
 
             # Check if frago server is running
             try:
-                requests.get(self.LANDING_PAGE_URL, timeout=1)
+                cdp_get(self.LANDING_PAGE_URL, timeout=1)
             except Exception:
                 return False  # Server not running, skip landing page
 
             # Check if landing page already exists
-            response = requests.get(
+            response = cdp_get(
                 f"http://localhost:{self.debugging_port}/json", timeout=2
             )
             targets = response.json()
@@ -942,14 +937,14 @@ class ChromeLauncher:
                     break
 
             if not ws_url:
-                ver = requests.get(
+                ver = cdp_get(
                     f"http://localhost:{self.debugging_port}/json/version", timeout=2
                 ).json()
                 ws_url = ver.get("webSocketDebuggerUrl")
                 if not ws_url:
                     return False
 
-            ws = _ws.create_connection(ws_url, timeout=5)
+            ws = cdp_ws_connect(ws_url, timeout=5)
 
             # Create a new tab with the landing page
             ws.send(_json.dumps({
@@ -988,7 +983,7 @@ class ChromeLauncher:
     def get_status(self) -> dict:
         """Get Chrome status information"""
         try:
-            response = requests.get(
+            response = cdp_get(
                 f"http://localhost:{self.debugging_port}/json/version", timeout=2
             )
             if response.status_code == 200:

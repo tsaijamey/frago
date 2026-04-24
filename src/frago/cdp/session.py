@@ -7,9 +7,8 @@ Implements CDP session management with WebSocket connections.
 from __future__ import annotations
 
 import json
-import uuid
-import threading
 import queue
+import threading
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
@@ -31,9 +30,10 @@ import websocket
 
 from .client import CDPClient
 from .config import CDPConfig
-from .logger import get_logger
-from .exceptions import ConnectionError, TimeoutError, CDPError
-from .types import CDPRequest, CDPResponse
+from .exceptions import CDPError, ConnectionError, TimeoutError
+from .transport import cdp_get, cdp_ws_connect
+from .types import CDPRequest
+
 # Lazy import to avoid circular imports
 # from .commands import PageCommands, InputCommands, RuntimeCommands, DOMCommands
 
@@ -99,26 +99,8 @@ class CDPSession(CDPClient):
                 "enable_multithread": True      # Enable multithreading support
             }
 
-            # Configure proxy parameters
-            if self.config.proxy_host and self.config.proxy_port and not self.config.no_proxy:
-                ws_options["http_proxy_host"] = self.config.proxy_host
-                ws_options["http_proxy_port"] = self.config.proxy_port
-
-                if self.config.proxy_username and self.config.proxy_password:
-                    ws_options["http_proxy_auth"] = (
-                        self.config.proxy_username,
-                        self.config.proxy_password
-                    )
-
-                self.logger.debug(f"Using proxy: {self.config.proxy_host}:{self.config.proxy_port}")
-            elif self.config.no_proxy:
-                self.logger.debug("Proxy bypassed (no_proxy=True)")
-
-            # Create WebSocket connection
-            self.ws = websocket.create_connection(
-                ws_url,
-                **ws_options
-            )
+            # Create WebSocket connection (cdp_ws_connect always bypasses proxy)
+            self.ws = cdp_ws_connect(ws_url, **ws_options)
             self._ws_url = ws_url
 
             self._connected = True
@@ -146,14 +128,11 @@ class CDPSession(CDPClient):
         Returns:
             str: WebSocket URL
         """
-        import requests
         try:
             # Get list of all targets
-            # Disable proxy when no_proxy is set to avoid connection issues
-            response = requests.get(
+            response = cdp_get(
                 f"{self.config.http_url}/json/list",
                 timeout=self.config.connect_timeout,
-                proxies={} if self.config.no_proxy else None
             )
             response.raise_for_status()
             targets = response.json()
@@ -193,10 +172,9 @@ class CDPSession(CDPClient):
                 return fallback_ws_url
 
             # If no page available, use browser endpoint
-            response = requests.get(
+            response = cdp_get(
                 f"{self.config.http_url}/json/version",
                 timeout=self.config.connect_timeout,
-                proxies={} if self.config.no_proxy else None
             )
             response.raise_for_status()
             version_info = response.json()
@@ -427,12 +405,10 @@ class CDPSession(CDPClient):
 
         Returns target_id of the landing page, or None if not found.
         """
-        import requests as _requests
         try:
-            response = _requests.get(
+            response = cdp_get(
                 f"{self.config.http_url}/json/list",
                 timeout=5,
-                proxies={} if self.config.no_proxy else None,
             )
             response.raise_for_status()
             for target in response.json():

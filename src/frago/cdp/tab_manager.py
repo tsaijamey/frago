@@ -9,14 +9,13 @@ Provides:
 
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-import requests
-
 from .logger import get_logger
+from .transport import cdp_get
 
 MAX_TABS = 20
 STATE_FILE = Path.home() / ".frago" / "chrome" / "tab_state.json"
@@ -124,7 +123,7 @@ class TabManager:
     def _get_live_tabs(self) -> List[Dict]:
         """Fetch current page tabs from Chrome via HTTP /json/list."""
         try:
-            resp = requests.get(
+            resp = cdp_get(
                 f"http://{self.host}:{self.port}/json/list",
                 timeout=5,
             )
