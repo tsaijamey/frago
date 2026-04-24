@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from frago.compat import get_windows_subprocess_kwargs
 from frago.server.services.ingestion.store import TaskStore
 
 logger = logging.getLogger(__name__)
@@ -415,6 +416,11 @@ class IngestionScheduler:
         recipe = runner.registry.find(ch.poll_recipe)
 
         env = os.environ.copy()
+        # Force UTF-8 for child stdio so non-ASCII stderr/stdout (Chinese,
+        # emoji, etc.) survives the pipe on Windows, where the default
+        # locale codec (cp936) would otherwise corrupt bytes into U+FFFD
+        # and blow up the parent's logger when it writes to server.log.
+        env["PYTHONIOENCODING"] = "utf-8"
         if recipe.metadata.secrets:
             secrets = runner._resolve_secrets(ch.poll_recipe, recipe.metadata.secrets)
             env["FRAGO_SECRETS"] = json.dumps(secrets)
@@ -432,6 +438,7 @@ class IngestionScheduler:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            **get_windows_subprocess_kwargs(),
         )
 
     async def _read_stream(
