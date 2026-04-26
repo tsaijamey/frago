@@ -1,5 +1,27 @@
 # frago Knowledge Book — Topic Index
 # Categories: must (替代), better (偏好), available (效率)
+# frago-principle-* 是 frago 的第一性原理——用 must/better/available 复用现有标签等级
+
+# 第一性原理 — frago 的根本主张，决定一切设计取舍
+- name: frago-principle-os
+  category: available
+  brief: "frago=agent OS，四支柱 hook/系列命令/def/recipe；UI 是给人用的不在 agent 视野"
+
+- name: frago-principle-supreme
+  category: must
+  brief: "最高准则=让 agent 更容易正确地使用 frago，所有取舍回到这条"
+
+- name: frago-principle-trust
+  category: must
+  brief: "默认相信 frago 命令——agent-first 设计、有 token 节省工程、语义贴 agent 视角；冲突先信 frago"
+
+- name: frago-principle-rigor
+  category: must
+  brief: "抽丝剥茧不跳步、禁止截断数据、改完代码必须验证再汇报——刻意对抗训练缺陷"
+
+- name: frago-principle-extend
+  category: better
+  brief: "重复路由→{{frago_launcher}} hook-rules add；重复知识→{{frago_launcher}} def save；重复工作流→recipe；不要硬编码进 Rust"
 
 # 替代类 — 不遵守会出错
 - name: must-browser-search
