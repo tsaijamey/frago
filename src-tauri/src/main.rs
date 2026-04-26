@@ -9,9 +9,11 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::check_uv,
             commands::check_frago,
+            commands::check_claude_code,
             commands::check_server,
             commands::install_uv,
             commands::install_frago,
+            commands::install_claude_code,
             commands::start_server,
             commands::wait_for_server,
         ])
