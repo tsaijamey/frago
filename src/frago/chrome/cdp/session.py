@@ -14,17 +14,17 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from frago.cdp.commands.dom import DOMCommands
-    from frago.cdp.commands.input import InputCommands
-    from frago.cdp.commands.page import PageCommands
-    from frago.cdp.commands.runtime import RuntimeCommands
-    from frago.cdp.commands.screenshot import ScreenshotCommands
-    from frago.cdp.commands.scroll import ScrollCommands
-    from frago.cdp.commands.status import StatusCommands
-    from frago.cdp.commands.target import TargetCommands
-    from frago.cdp.commands.visual_effects import VisualEffectsCommands
-    from frago.cdp.commands.wait import WaitCommands
-    from frago.cdp.commands.zoom import ZoomCommands
+    from frago.chrome.cdp.commands.dom import DOMCommands
+    from frago.chrome.cdp.commands.input import InputCommands
+    from frago.chrome.cdp.commands.page import PageCommands
+    from frago.chrome.cdp.commands.runtime import RuntimeCommands
+    from frago.chrome.cdp.commands.screenshot import ScreenshotCommands
+    from frago.chrome.cdp.commands.scroll import ScrollCommands
+    from frago.chrome.cdp.commands.status import StatusCommands
+    from frago.chrome.cdp.commands.target import TargetCommands
+    from frago.chrome.cdp.commands.visual_effects import VisualEffectsCommands
+    from frago.chrome.cdp.commands.wait import WaitCommands
+    from frago.chrome.cdp.commands.zoom import ZoomCommands
 
 import websocket
 

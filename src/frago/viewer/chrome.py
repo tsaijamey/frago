@@ -90,7 +90,7 @@ class ChromeViewer:
 
     def _ensure_chrome_running(self) -> None:
         """Ensure Chrome is running with CDP enabled."""
-        from frago.cdp.commands.chrome import ChromeLauncher
+        from frago.chrome.cdp.commands.chrome import ChromeLauncher
 
         launcher = ChromeLauncher()
         status = launcher.get_status()
@@ -108,7 +108,7 @@ class ChromeViewer:
         """
         self._ensure_chrome_running()
 
-        from frago.cdp import CDPSession
+        from frago.chrome.cdp import CDPSession
 
         session = CDPSession()
         try:

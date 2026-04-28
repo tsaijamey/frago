@@ -17,7 +17,7 @@ __email__ = "caijia@frago.ai"
 # Recommended to use explicit imports:
 # from frago.recipes import RecipeRegistry, RecipeRunner
 # from frago.run import RunInstance, RunManager
-# from frago.cdp import CDPClient, CDPSession
+# from frago.chrome.cdp import CDPClient, CDPSession
 # from frago.cli import cli
 
 # Submodules accessed via path (avoid top-level namespace pollution)

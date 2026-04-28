@@ -330,8 +330,8 @@ class RecipeRunner:
         Uses TabGroupManager for tab routing (same as `frago chrome navigate`).
         """
         try:
-            from frago.cdp.session import CDPConfig, CDPSession
-            from frago.cdp.tab_group_manager import TabGroupManager
+            from frago.chrome.cdp.session import CDPConfig, CDPSession
+            from frago.chrome.cdp.tab_group_manager import TabGroupManager
 
             config = CDPConfig(host="127.0.0.1", port=9222)
             session = CDPSession(config)

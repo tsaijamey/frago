@@ -137,7 +137,7 @@ def launch_chrome_app_mode(url: str) -> bool:
         True if Chrome app mode was launched successfully, False if fallback was used
     """
     try:
-        from frago.cdp.commands.chrome import ChromeLauncher
+        from frago.chrome.cdp.commands.chrome import ChromeLauncher
 
         # Calculate window size based on screen dimensions
         screen_width, screen_height = get_screen_size()

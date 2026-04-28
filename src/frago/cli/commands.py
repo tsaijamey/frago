@@ -286,6 +286,16 @@ COMMAND_EXAMPLES = {
     "run/discover": [
         "frago run discover",
     ],
+    "run/insights": [
+        "frago run insights                                   # list current domain",
+        "frago run insights --domain twitter --query 'API'     # search payloads",
+        "frago run insights --save --type fact --payload 'concrete fact' --confidence 0.9",
+        "frago run insights --update <id> --payload 'revised text'",
+    ],
+    "run/find": [
+        "frago run find <keyword>",
+        "frago run find twitter --limit 5",
+    ],
     # Session
     "session": [
         "frago session <command>",
@@ -655,10 +665,10 @@ def print_usage(func):
         return func(*args, **kwargs)
     return wrapper
 
-from ..cdp.config import CDPConfig
-from ..cdp.exceptions import CDPError
-from ..cdp.session import CDPSession
-from ..cdp.tab_group_manager import CHROME_ERRORS, ChromeCommandError
+from ..chrome.cdp.config import CDPConfig
+from ..chrome.cdp.exceptions import CDPError
+from ..chrome.cdp.session import CDPSession
+from ..chrome.cdp.tab_group_manager import CHROME_ERRORS, ChromeCommandError
 
 # =============================================================================
 # Custom parameter types (with friendly error messages and usage examples)
@@ -893,7 +903,7 @@ def create_session(ctx, *, group: str | None = None, require_group: bool = True)
 
     # Auto-resolve target from tab group when no explicit target_id
     if not target_id and require_group:
-        from ..cdp.tab_group_manager import ChromeCommandError, TabGroupManager
+        from ..chrome.cdp.tab_group_manager import ChromeCommandError, TabGroupManager
         group_name = TabGroupManager.resolve_group_name(group)
         if not group_name:
             raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
@@ -1095,7 +1105,7 @@ def _get_current_target_id(session: CDPSession) -> Optional[str]:
 def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) -> Optional[str]:
     """Find which group a tab belongs to. Returns group name or None."""
     try:
-        from ..cdp.tab_group_manager import TabGroupManager
+        from ..chrome.cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=host, port=port)
         for name, group in tgm.list_groups().items():
             if tab_id in group.tabs:
@@ -1108,7 +1118,7 @@ def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) ->
 def _build_group_index(host: str = "127.0.0.1", port: int = 9222) -> dict[str, str]:
     """Build tab_id → group_name mapping for all groups. Returns empty dict on failure."""
     try:
-        from ..cdp.tab_group_manager import TabGroupManager
+        from ..chrome.cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=host, port=port)
         index: dict[str, str] = {}
         for name, group in tgm.list_groups().items():
@@ -1129,7 +1139,7 @@ def _route_tab_for_navigate(
 
     Returns (target_id, resolved_group_name) tuple.
     """
-    from ..cdp.tab_group_manager import ChromeCommandError, TabGroupManager
+    from ..chrome.cdp.tab_group_manager import ChromeCommandError, TabGroupManager
 
     group_name = TabGroupManager.resolve_group_name(group)
     if not group_name:
@@ -1182,7 +1192,7 @@ def _lazy_cleanup_expired_groups(session: CDPSession, host: str, port: int) -> N
     Also ensures the landing page tab exists (auto-restore if missing).
     """
     try:
-        from ..cdp.tab_group_manager import TabGroupManager
+        from ..chrome.cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=host, port=port)
         tgm.cleanup_expired_groups(session)
         tgm.ensure_landing_page()
@@ -1197,7 +1207,7 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
     """
     _lazy_cleanup_expired_groups(session, host, port)
     try:
-        from ..cdp.tab_manager import TabManager
+        from ..chrome.cdp.tab_manager import TabManager
         tab_id = _get_current_target_id(session)
         if tab_id:
             tab_mgr = TabManager(host=host, port=port)
@@ -1264,7 +1274,7 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
             # Persist current target_id for non-navigate commands
             if resolved_group:
                 try:
-                    from ..cdp.tab_group_manager import TabGroupManager
+                    from ..chrome.cdp.tab_group_manager import TabGroupManager
                     tgm = TabGroupManager(host=ctx.obj['HOST'], port=ctx.obj['PORT'])
                     actual_target = _get_current_target_id(session)
                     if actual_target:
@@ -2291,7 +2301,7 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     """
     from pathlib import Path
 
-    from ..cdp.commands.chrome import ChromeLauncher
+    from ..chrome.cdp.commands.chrome import ChromeLauncher
 
     # Mode exclusivity check
     mode_count = sum([headless, void, app_mode])
@@ -2401,7 +2411,7 @@ def chrome_stop(port: int):
 
     Closes the Chrome CDP instance running on the specified port.
     """
-    from ..cdp.commands.chrome import ChromeLauncher
+    from ..chrome.cdp.commands.chrome import ChromeLauncher
 
     launcher = ChromeLauncher(port=port)
     killed = launcher.kill_existing_chrome()
@@ -2424,7 +2434,7 @@ def tab_groups(ctx, as_json: bool):
     """List all tab groups and their tab counts"""
     import json as _json
 
-    from ..cdp.tab_group_manager import TabGroupManager
+    from ..chrome.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2460,7 +2470,7 @@ def tab_group_info(ctx, group_name: str):
     """Show details of a tab group"""
     from datetime import datetime
 
-    from ..cdp.tab_group_manager import TabGroupManager
+    from ..chrome.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2489,7 +2499,7 @@ def tab_group_info(ctx, group_name: str):
 @print_usage
 def tab_group_close(ctx, group_name: str):
     """Close a tab group and all its tabs"""
-    from ..cdp.tab_group_manager import TabGroupManager
+    from ..chrome.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2508,7 +2518,7 @@ def tab_group_close(ctx, group_name: str):
 @print_usage
 def tab_group_cleanup(ctx):
     """Remove stale groups whose tabs no longer exist"""
-    from ..cdp.tab_group_manager import TabGroupManager
+    from ..chrome.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2530,7 +2540,7 @@ def chrome_reset(ctx):
 
     import requests as _requests
 
-    from ..cdp.tab_group_manager import TabGroupManager
+    from ..chrome.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2613,7 +2623,7 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
         tracking = {}
         if tracked:
             try:
-                from ..cdp.tab_manager import TabManager
+                from ..chrome.cdp.tab_manager import TabManager
                 tab_mgr = TabManager(host=host, port=port)
                 tab_mgr.reconcile()
                 tracking = {e.tab_id: e for e in tab_mgr.get_tracked_tabs()}
@@ -2730,7 +2740,7 @@ def switch_tab(ctx, tab_id: str):
         # Update tab activity tracking
         full_id = target.get('id')
         try:
-            from ..cdp.tab_manager import TabManager
+            from ..chrome.cdp.tab_manager import TabManager
             tab_mgr = TabManager(host=host, port=port)
             tab_mgr.touch_tab(full_id)
             tab_mgr._save_state()
@@ -2741,7 +2751,7 @@ def switch_tab(ctx, tab_id: str):
         # Update group's current_target_id so subsequent commands follow
         if tab_group:
             try:
-                from ..cdp.tab_group_manager import TabGroupManager
+                from ..chrome.cdp.tab_group_manager import TabGroupManager
                 tgm = TabGroupManager(host=host, port=port)
                 tgm.set_current_target(tab_group, full_id)
             except Exception:
@@ -2804,7 +2814,7 @@ def close_tab(ctx, tab_id: str):
         if success:
             # Remove from TabManager state (best-effort)
             try:
-                from ..cdp.tab_manager import TabManager
+                from ..chrome.cdp.tab_manager import TabManager
                 tab_mgr = TabManager(host=host, port=port)
                 tab_mgr.untrack_tab(full_id)
                 tab_mgr._save_state()
@@ -2814,7 +2824,7 @@ def close_tab(ctx, tab_id: str):
             # Remove from TabGroupManager if it was grouped
             if tab_group:
                 try:
-                    from ..cdp.tab_group_manager import TabGroupManager
+                    from ..chrome.cdp.tab_group_manager import TabGroupManager
                     tgm = TabGroupManager(host=host, port=port)
                     grp = tgm.get_group(tab_group)
                     if grp and full_id in grp.tabs:

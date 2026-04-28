@@ -185,9 +185,9 @@ class ContextManager:
     def _cleanup_tab_group(self, group_name: str) -> None:
         """Best-effort cleanup of a tab group when releasing context."""
         try:
-            from frago.cdp.config import CDPConfig
-            from frago.cdp.session import CDPSession
-            from frago.cdp.tab_group_manager import TabGroupManager
+            from frago.chrome.cdp.config import CDPConfig
+            from frago.chrome.cdp.session import CDPSession
+            from frago.chrome.cdp.tab_group_manager import TabGroupManager
 
             tgm = TabGroupManager()
             group = tgm.get_group(group_name)

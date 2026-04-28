@@ -18,6 +18,7 @@ from .autostart_command import autostart_group
 from .book_commands import book_command
 from .channel_commands import channel_group
 from .chrome_commands import chrome_group
+from .extension_commands import extension_group
 from .client_commands import client_group
 from .cloud_commands import (
     config_group,
@@ -358,6 +359,7 @@ cli.add_command(update)  # Self-update command
 # Command groups
 cli.add_command(usegit_group)  # Git sync command group: use-git sync (deprecated, use sync)
 cli.add_command(chrome_group)  # Chrome CDP command group
+cli.add_command(extension_group, name="extension")  # Browser extension bridge (P1 MVP)
 
 # Recipe management command group
 cli.add_command(recipe_group)

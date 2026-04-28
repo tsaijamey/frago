@@ -17,7 +17,7 @@ from typing import Optional
 
 import psutil
 
-from frago.cdp.transport import cdp_get, cdp_ws_connect
+from frago.chrome.cdp.transport import cdp_get, cdp_ws_connect
 
 
 class BrowserType(Enum):
