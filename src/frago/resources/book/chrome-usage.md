@@ -76,3 +76,11 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
 - 禁止 exec-js 手写 scrollBy / element.click() 替代专用命令
 - 禁止截图当阅读工具
 - 禁止凭记忆猜测 URL
+
+## 进一步阅读
+
+`chrome-usage` 只覆盖通用层。下列场景需要再拉对应 topic：
+
+- 选 cdp 还是 extension 后端、profile 隔离机制 → `{{frago_launcher}} book chrome-backend-choice`
+- 遇到 anti-bot / Cloudflare / captcha / 验证码 → `{{frago_launcher}} book chrome-anti-bot`
+- 启动浏览器换 browser/端口/headless/void/app 模式 → `{{frago_launcher}} book chrome-startup`

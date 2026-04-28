@@ -48,6 +48,18 @@
   category: must
   brief: "chrome 操作完整指南：group 必选、导航规则、内容提取、交互、选择器、视觉辅助"
 
+- name: chrome-backend-choice
+  category: must
+  brief: "chrome 双后端 cdp/extension 决策表 + profile 隔离机制；anti-bot 必走 extension"
+
+- name: chrome-anti-bot
+  category: available
+  brief: "Cloudflare/Datadome/captcha：detect 探针 + interactive/invisible/blocked 三档处理"
+
+- name: chrome-startup
+  category: available
+  brief: "chrome start 完整 flags：browser/headless/void/app/port/profile-dir/no-kill"
+
 - name: must-no-auto-memory
   category: must
   brief: "禁用 Claude Code auto memory，结构化沉淀走 {{frago_launcher}} def save，忽略 MEMORY.md"
