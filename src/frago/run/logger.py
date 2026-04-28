@@ -1,6 +1,11 @@
 """Run Logger
 
-Responsible for writing and reading logs in JSONL format
+Responsible for writing and reading logs in JSONL format.
+
+Note: deprecated path, will be replaced by run/insights.py in Phase 2 of
+spec ``20260426-run-as-domain-knowledge-base``. Phase 1 keeps both read and
+write paths working so existing callers continue to function during the
+migration window.
 """
 
 import json
@@ -75,7 +80,47 @@ class RunLogger:
         except Exception as e:
             raise FileSystemError("write", str(self.log_file), str(e))
 
+        # Phase 2: also forward attached insights to the new domain insight
+        # store. Legacy InsightType values are mapped to the new schema so a
+        # single ``frago run log --insight ...`` call keeps working while the
+        # canonical sink shifts to ``insight.jsonl``.
+        if insights:
+            try:
+                self._forward_insights_to_domain(insights)
+            except Exception:
+                # Forwarding is best-effort during the migration window.
+                pass
+
         return entry
+
+    _LEGACY_INSIGHT_TYPE_MAP = {
+        InsightType.KEY_FACTOR: "fact",
+        InsightType.PITFALL: "lesson",
+        InsightType.LESSON: "lesson",
+        InsightType.WORKAROUND: "decision",
+    }
+
+    def _forward_insights_to_domain(self, insights: List[InsightEntry]) -> None:
+        """Translate legacy InsightEntry list into DomainInsight rows."""
+        from .insights import save_insight as save_domain_insight
+
+        # run_dir is ``~/.frago/projects/<domain>/`` — the parent ``projects``
+        # dir is what insights.py expects.
+        domain = self.run_dir.name
+        projects_dir = self.run_dir.parent
+        for legacy in insights:
+            new_type = self._LEGACY_INSIGHT_TYPE_MAP.get(legacy.insight_type, "lesson")
+            payload_parts = [legacy.summary]
+            if legacy.detail:
+                payload_parts.append(legacy.detail)
+            payload = " — ".join(payload_parts)
+            save_domain_insight(
+                projects_dir,
+                domain,
+                type=new_type,
+                payload=payload,
+                confidence=0.5,
+            )
 
     def read_logs(
         self, limit: Optional[int] = None, skip_corrupted: bool = True

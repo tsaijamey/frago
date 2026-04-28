@@ -211,9 +211,9 @@ class Executor:
 
         # 5. Best-effort close TabGroup
         try:
-            from frago.cdp.config import CDPConfig
-            from frago.cdp.session import CDPSession
-            from frago.cdp.tab_group_manager import TabGroupManager
+            from frago.chrome.cdp.config import CDPConfig
+            from frago.chrome.cdp.session import CDPSession
+            from frago.chrome.cdp.tab_group_manager import TabGroupManager
             tgm = TabGroupManager()
             group = tgm.get_group(run_id)
             if group:
@@ -257,31 +257,45 @@ class Executor:
     ) -> str:
         """Resolve the run_instance for a thread, creating on first use.
 
-        If thread has a bound run_instance that still exists on disk → reuse.
-        Otherwise create a new run and bind it to the thread. No thread_id → fresh run.
+        Phase 3 (run-as-domain): classify ``description`` via the def
+        ``domain_dict`` first. The canonical domain (or ``"misc"`` on miss)
+        is the *target* domain. If the thread has a bound run with a
+        different domain, we re-bind to a freshly ensured target domain
+        rather than returning the stale slug.
         """
         from frago.run.exceptions import RunNotFoundError
         from frago.server.services.thread_service import get_thread_store
+
+        canonical = manager.resolve_domain_from_description(description) or "misc"
 
         if thread_id:
             store = get_thread_store()
             idx = store.get(thread_id)
             if idx and idx.run_instance_id:
-                # Thread already has a run — verify it still exists, else fall through to create
                 try:
                     existing = manager.find_run(idx.run_instance_id)
+                    if existing.run_id == canonical:
+                        logger.info(
+                            "Executor: reusing Run %s for task %s (thread=%s)",
+                            existing.run_id, task_short_id, thread_id,
+                        )
+                        return existing.run_id
                     logger.info(
-                        "Executor: reusing Run %s for task %s (thread=%s)",
-                        existing.run_id, task_short_id, thread_id,
+                        "Executor: thread %s bound to %s but description maps to %s — rebinding",
+                        thread_id, existing.run_id, canonical,
                     )
-                    return existing.run_id
                 except RunNotFoundError:
                     logger.warning(
                         "Executor: thread %s binds missing run %s — creating new",
                         thread_id, idx.run_instance_id,
                     )
 
-        run = manager.create_run(description)
+        run = manager.ensure_domain(canonical)
+        if description and description != run.theme_description:
+            try:
+                manager.update_run(run.run_id, theme_description=description)
+            except Exception:
+                logger.debug("Executor: update theme_description failed", exc_info=True)
         if thread_id:
             get_thread_store().bind_run(thread_id, run.run_id)
             logger.info(
@@ -327,22 +341,39 @@ class Executor:
         # Update session_id on the already-EXECUTING task
         self._store.update_run_info(task.id, session_id=run_id)
 
+        # Phase 3: peek the resolved domain so the sub-agent boots with prior
+        # context (recent sessions + top insights). Best-effort: a peek failure
+        # must not block task launch.
+        peek_payload: dict | None = None
+        try:
+            peek_payload = manager.peek_domain(run_id, n_sessions=3, n_insights=5)
+        except Exception:
+            logger.debug("Executor: peek_domain failed for %s", run_id, exc_info=True)
+            peek_payload = None
+
         # Build sub-agent prompt
         from frago.server.services.primary_agent_service import PrimaryAgentService
         agent_prompt = PrimaryAgentService._build_sub_agent_prompt(
             task_id=task.id,
             task_prompt=prompt,
             run_id=run_id,
+            domain_peek=peek_payload,
         )
 
         # Launch — pre-generate Claude Code session UUID for traceability
         import uuid as _uuid
         claude_session_id = str(_uuid.uuid4())
 
+        # Phase 3: also inject FRAGO_DOMAIN so PreToolUse hook reminders can
+        # interpolate the domain name and `frago run insights --save` resolves
+        # the target domain without requiring an explicit --domain.
         result = AgentService.start_task(
             prompt=agent_prompt,
             project_path=str(Path.home()),
-            env_extra={"FRAGO_CURRENT_RUN": run_id},
+            env_extra={
+                "FRAGO_CURRENT_RUN": run_id,
+                "FRAGO_DOMAIN": run_id,
+            },
             claude_session_id=claude_session_id,
         )
 
@@ -551,7 +582,7 @@ class Executor:
             logger.info("Executor: resumed task %s with new pid %d",
                         task_id[:8], new_pid)
 
-        # Unarchive the Run instance — prior completion set it to ARCHIVED,
+        # Reactivate the Run instance — prior completion set it to INACTIVE,
         # but this resume turn is fresh activity on the same run directory.
         # Without this, external observers (UI, `frago run list`) still see
         # a dead run while the agent is actually writing new outputs.
@@ -562,14 +593,22 @@ class Executor:
                 from frago.run.models import RunStatus
                 mgr = RunManager(PROJECTS_DIR)
                 run = mgr.find_run(run_id)
-                if run.status == RunStatus.ARCHIVED:
+                if run.status == RunStatus.INACTIVE:
                     run.status = RunStatus.ACTIVE
-                    metadata_file = PROJECTS_DIR / run_id / ".metadata.json"
-                    metadata_file.write_text(
+                    # Phase 1 canonical metadata file is _domain.json; fall back
+                    # to legacy .metadata.json for not-yet-migrated runs.
+                    domain_metadata_file = PROJECTS_DIR / run_id / "_domain.json"
+                    legacy_metadata_file = PROJECTS_DIR / run_id / ".metadata.json"
+                    target_file = (
+                        domain_metadata_file
+                        if domain_metadata_file.exists() or not legacy_metadata_file.exists()
+                        else legacy_metadata_file
+                    )
+                    target_file.write_text(
                         json.dumps(run.to_dict(), indent=2),
                         encoding="utf-8",
                     )
-                    logger.info("Executor: unarchived run %s for resume", run_id)
+                    logger.info("Executor: reactivated run %s for resume", run_id)
             except Exception:
                 logger.debug("Failed to unarchive run %s", run_id, exc_info=True)
 
@@ -730,13 +769,27 @@ class Executor:
             return []
 
     @staticmethod
-    def _extract_output_files(run_id: str) -> list[str]:
-        """List files in run's outputs/ directory."""
+    def _extract_output_files(run_id: str, since: "datetime | None" = None) -> list[str]:
+        """List files in run's outputs/ directory.
+
+        Phase 3 (run-as-domain): when ``since`` is given, only return files
+        whose mtime is at or after that timestamp. Domains are long-lived so
+        the directory accumulates historical artefacts; reporting them as
+        "this session's outputs" is misleading.
+        """
         outputs_dir = PROJECTS_DIR / run_id / "outputs"
         if not outputs_dir.is_dir():
             return []
         try:
-            return [f.name for f in outputs_dir.iterdir() if f.is_file()]
+            since_ts = since.timestamp() if since else None
+            out: list[str] = []
+            for f in outputs_dir.iterdir():
+                if not f.is_file():
+                    continue
+                if since_ts is not None and f.stat().st_mtime < since_ts:
+                    continue
+                out.append(f.name)
+            return out
         except Exception:
             return []
 
@@ -750,7 +803,13 @@ class Executor:
         if not self._pa_enqueue_message:
             return
 
-        outputs = self._extract_output_files(run_id)
+        # Phase 3: only list outputs produced during this session window so
+        # historical files in the long-lived domain dir don't pollute the
+        # PA's "输出物" line.
+        updated_for_started = self._store.get(task.id)
+        sub = updated_for_started.current_sub if updated_for_started else None
+        session_started_at = sub.created_at if sub else None
+        outputs = self._extract_output_files(run_id, since=session_started_at)
         recent_logs = self._extract_recent_logs(run_id)
 
         _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}

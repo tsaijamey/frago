@@ -31,8 +31,9 @@ from frago.session.models import (
 
 logger = logging.getLogger(__name__)
 
-# Default storage directory
+# Default storage directory (legacy path; Phase 1 introduces ~/.frago/projects/{domain}/...)
 DEFAULT_SESSION_DIR = Path.home() / ".frago" / "sessions"
+DEFAULT_PROJECTS_DIR = Path.home() / ".frago" / "projects"
 
 
 def get_session_base_dir() -> Path:
@@ -49,43 +50,71 @@ def get_session_base_dir() -> Path:
     return DEFAULT_SESSION_DIR
 
 
+def get_projects_base_dir() -> Path:
+    """Get the ~/.frago/projects base directory (Phase 1 domain layout).
+
+    Honors ``FRAGO_PROJECTS_DIR`` env var for tests / overrides.
+    """
+    custom_dir = os.environ.get("FRAGO_PROJECTS_DIR")
+    if custom_dir:
+        return Path(custom_dir).expanduser()
+    return DEFAULT_PROJECTS_DIR
+
+
+def _domain_session_dir(domain: str, session_id: str) -> Path:
+    """Compute the new domain-scoped session directory."""
+    return get_projects_base_dir() / domain / session_id
+
+
 # ============================================================
 # Session Directory Management
 # ============================================================
 
 
 def get_session_dir(
-    session_id: str, agent_type: AgentType = AgentType.CLAUDE
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    domain: Optional[str] = None,
 ) -> Path:
-    """Get session storage directory path
+    """Get session storage directory path.
 
-    Args:
-        session_id: Session ID
-        agent_type: Agent type
-
-    Returns:
-        Session directory path
+    Phase 1 (run-as-domain-knowledge-base):
+    - If ``domain`` is provided -> ``~/.frago/projects/{domain}/{session_id}/``
+    - Otherwise -> legacy ``~/.frago/sessions/{agent_type}/{session_id}/`` (fallback)
     """
+    if domain:
+        return _domain_session_dir(domain, session_id)
     base_dir = get_session_base_dir()
     return base_dir / agent_type.value / session_id
 
 
 def create_session_dir(
-    session_id: str, agent_type: AgentType = AgentType.CLAUDE
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    domain: Optional[str] = None,
 ) -> Path:
-    """Create session storage directory
-
-    Args:
-        session_id: Session ID
-        agent_type: Agent type
-
-    Returns:
-        Created session directory path
-    """
-    session_dir = get_session_dir(session_id, agent_type)
+    """Create session storage directory."""
+    session_dir = get_session_dir(session_id, agent_type, domain)
     session_dir.mkdir(parents=True, exist_ok=True)
     logger.debug(f"Created session directory: {session_dir}")
     return session_dir
+
+
+def _scan_domain_session_dir(session_id: str) -> Optional[Path]:
+    """Scan ~/.frago/projects/*/{session_id}/ to find a domain-scoped session.
+
+    Returns the path of the first match, or None.
+    """
+    projects_dir = get_projects_base_dir()
+    if not projects_dir.exists():
+        return None
+    for domain_dir in projects_dir.iterdir():
+        if not domain_dir.is_dir() or domain_dir.name.startswith("_"):
+            continue
+        candidate = domain_dir / session_id
+        if candidate.is_dir() and (candidate / "metadata.json").exists():
+            return candidate
+    return None
 
 
 # ============================================================
@@ -94,15 +123,15 @@ def create_session_dir(
 
 
 def write_metadata(session: MonitoredSession) -> Path:
-    """Write session metadata
+    """Write session metadata.
 
-    Args:
-        session: Monitored session object
-
-    Returns:
-        metadata.json file path
+    Phase 1: when ``session.domain`` is set, write under
+    ``~/.frago/projects/{domain}/{session_id}/``; otherwise fall back to the
+    legacy ``~/.frago/sessions/{agent_type}/{session_id}/`` path.
     """
-    session_dir = create_session_dir(session.session_id, session.agent_type)
+    session_dir = create_session_dir(
+        session.session_id, session.agent_type, domain=session.domain
+    )
     metadata_path = session_dir / "metadata.json"
 
     data = session.model_dump(mode="json")
@@ -115,21 +144,39 @@ def write_metadata(session: MonitoredSession) -> Path:
 
 
 def read_metadata(
-    session_id: str, agent_type: AgentType = AgentType.CLAUDE
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    domain: Optional[str] = None,
 ) -> Optional[MonitoredSession]:
-    """Read session metadata
+    """Read session metadata.
 
-    Args:
-        session_id: Session ID
-        agent_type: Agent type
-
-    Returns:
-        Monitored session object, None if does not exist
+    Resolution order:
+    1. If ``domain`` is provided -> read directly from the domain path.
+    2. Otherwise scan ``~/.frago/projects/*/{session_id}/metadata.json``
+       (Phase 1 new layout).
+    3. Fall back to the legacy ``~/.frago/sessions/{agent_type}/{session_id}/``
+       path.
     """
-    session_dir = get_session_dir(session_id, agent_type)
-    metadata_path = session_dir / "metadata.json"
+    metadata_path: Optional[Path] = None
 
-    if not metadata_path.exists():
+    if domain:
+        metadata_path = _domain_session_dir(domain, session_id) / "metadata.json"
+        if not metadata_path.exists():
+            return None
+    else:
+        # Try new domain-scoped layout first.
+        candidate = _scan_domain_session_dir(session_id)
+        if candidate is not None:
+            metadata_path = candidate / "metadata.json"
+        else:
+            # Fall back to legacy path.
+            legacy_path = (
+                get_session_base_dir() / agent_type.value / session_id / "metadata.json"
+            )
+            if legacy_path.exists():
+                metadata_path = legacy_path
+
+    if metadata_path is None or not metadata_path.exists():
         return None
 
     try:
@@ -174,17 +221,19 @@ def update_metadata(
 # ============================================================
 
 
-def append_step(step: SessionStep, agent_type: AgentType = AgentType.CLAUDE) -> Path:
-    """Append write step record
+def append_step(
+    step: SessionStep,
+    agent_type: AgentType = AgentType.CLAUDE,
+    domain: Optional[str] = None,
+) -> Path:
+    """Append write step record.
 
-    Args:
-        step: Session step object
-        agent_type: Agent type
-
-    Returns:
-        steps.jsonl file path
+    When ``domain`` is provided, writes under the new domain-scoped layout.
+    Otherwise falls back to the legacy session path (or auto-detects an
+    existing domain-scoped session).
     """
-    session_dir = create_session_dir(step.session_id, agent_type)
+    session_dir = _resolve_existing_or_legacy_dir(step.session_id, agent_type, domain)
+    session_dir.mkdir(parents=True, exist_ok=True)
     steps_path = session_dir / "steps.jsonl"
 
     data = step.model_dump(mode="json")
@@ -197,19 +246,32 @@ def append_step(step: SessionStep, agent_type: AgentType = AgentType.CLAUDE) -> 
     return steps_path
 
 
-def read_steps(
-    session_id: str, agent_type: AgentType = AgentType.CLAUDE
-) -> List[SessionStep]:
-    """Read all step records
+def _resolve_existing_or_legacy_dir(
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    domain: Optional[str] = None,
+) -> Path:
+    """Resolve a session directory, preferring the new domain layout.
 
-    Args:
-        session_id: Session ID
-        agent_type: Agent type
-
-    Returns:
-        List of step records
+    1. If ``domain`` is given -> ``~/.frago/projects/{domain}/{session_id}/``.
+    2. Otherwise scan for an existing domain-scoped dir.
+    3. Fall back to the legacy ``~/.frago/sessions/{agent_type}/{session_id}/``.
     """
-    session_dir = get_session_dir(session_id, agent_type)
+    if domain:
+        return _domain_session_dir(domain, session_id)
+    candidate = _scan_domain_session_dir(session_id)
+    if candidate is not None:
+        return candidate
+    return get_session_base_dir() / agent_type.value / session_id
+
+
+def read_steps(
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    domain: Optional[str] = None,
+) -> List[SessionStep]:
+    """Read all step records."""
+    session_dir = _resolve_existing_or_legacy_dir(session_id, agent_type, domain)
     steps_path = session_dir / "steps.jsonl"
 
     if not steps_path.exists():
@@ -238,6 +300,7 @@ def generate_summary(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
     tool_calls: Optional[List[ToolCallRecord]] = None,
+    domain: Optional[str] = None,
 ) -> Optional[SessionSummary]:
     """Generate session summary
 
@@ -249,11 +312,12 @@ def generate_summary(
     Returns:
         Session summary object
     """
-    session = read_metadata(session_id, agent_type)
+    session = read_metadata(session_id, agent_type, domain=domain)
     if not session:
         return None
+    effective_domain = domain or session.domain
 
-    steps = read_steps(session_id, agent_type)
+    steps = read_steps(session_id, agent_type, domain=effective_domain)
 
     # Count messages
     user_count = sum(1 for s in steps if s.type == StepType.USER_MESSAGE)
@@ -312,22 +376,24 @@ def write_summary(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
     tool_calls: Optional[List[ToolCallRecord]] = None,
+    domain: Optional[str] = None,
 ) -> Optional[Path]:
-    """Generate and write session summary
+    """Generate and write session summary.
 
-    Args:
-        session_id: Session ID
-        agent_type: Agent type
-        tool_calls: Tool call record list
-
-    Returns:
-        summary.json file path
+    Phase 1: also produces a sibling ``summary.md`` (human-readable) when
+    ``summary.json`` is written.
     """
-    summary = generate_summary(session_id, agent_type, tool_calls)
+    summary = generate_summary(session_id, agent_type, tool_calls, domain=domain)
     if not summary:
         return None
 
-    session_dir = get_session_dir(session_id, agent_type)
+    # Resolve domain (explicit arg > metadata.domain) for storage path.
+    if domain is None:
+        existing = read_metadata(session_id, agent_type)
+        domain = existing.domain if existing else None
+
+    session_dir = _resolve_existing_or_legacy_dir(session_id, agent_type, domain)
+    session_dir.mkdir(parents=True, exist_ok=True)
     summary_path = session_dir / "summary.json"
 
     data = summary.model_dump(mode="json")
@@ -336,7 +402,64 @@ def write_summary(
         json.dump(data, f, ensure_ascii=False, indent=2)
 
     logger.debug(f"Wrote summary: {summary_path}")
+
+    # Best-effort: also produce summary.md.
+    try:
+        write_summary_md(session_id, agent_type, summary=summary, domain=domain)
+    except Exception as e:
+        logger.warning(f"Failed to write summary.md: {e}")
+
     return summary_path
+
+
+def write_summary_md(
+    session_id: str,
+    agent_type: AgentType = AgentType.CLAUDE,
+    summary: Optional[SessionSummary] = None,
+    domain: Optional[str] = None,
+) -> Optional[Path]:
+    """Render the session summary as human-readable markdown.
+
+    Args:
+        session_id: session identifier
+        agent_type: agent type
+        summary: pre-computed summary (skips a re-read when supplied)
+        domain: explicit domain (overrides metadata)
+
+    Returns:
+        Path to the written ``summary.md`` (None on failure / missing data).
+    """
+    if summary is None:
+        summary = generate_summary(session_id, agent_type, domain=domain)
+    if summary is None:
+        return None
+
+    if domain is None:
+        existing = read_metadata(session_id, agent_type)
+        domain = existing.domain if existing else None
+
+    session_dir = _resolve_existing_or_legacy_dir(session_id, agent_type, domain)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    md_path = session_dir / "summary.md"
+
+    most_used_str = (
+        ", ".join(f"{t.tool_name}×{t.count}" for t in summary.most_used_tools)
+        if summary.most_used_tools
+        else "(none)"
+    )
+
+    lines = [
+        f"# Session {session_id}",
+        f"- Status: {summary.final_status.value if hasattr(summary.final_status, 'value') else summary.final_status}",
+        f"- Duration: {summary.total_duration_ms} ms",
+        f"- Messages: user={summary.user_message_count}, assistant={summary.assistant_message_count}",
+        f"- Tool calls: {summary.tool_call_count} (success={summary.tool_success_count}, error={summary.tool_error_count})",
+        f"- Most used tools: {most_used_str}",
+        "",
+    ]
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.debug(f"Wrote summary.md: {md_path}")
+    return md_path
 
 
 def read_summary(

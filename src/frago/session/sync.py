@@ -358,6 +358,19 @@ def sync_session(
     except Exception as e:
         logger.debug(f"Could not check AI title: {e}")
 
+    # Resolve domain for the session (Phase 1 — run-as-domain-knowledge-base).
+    # Lazy import to avoid a session -> run circular import at module load.
+    resolved_domain: str | None = None
+    try:
+        from frago.run.manager import RunManager
+        from frago.session.storage import get_projects_base_dir
+
+        run_manager = RunManager(get_projects_base_dir())
+        resolved_domain = run_manager.resolve_domain_for_session(session_id, project_path)
+    except Exception as e:
+        logger.debug(f"Failed to resolve domain for session {session_id}: {e}")
+        resolved_domain = None
+
     # Create or update session metadata
     session = MonitoredSession(
         session_id=session_id,
@@ -371,6 +384,8 @@ def sync_session(
         step_count=0,  # Updated later
         tool_call_count=parsed["tool_call_count"],
         last_activity=last_activity,
+        domain=resolved_domain,
+        source_jsonl=str(jsonl_path.resolve()),
     )
 
     # Get existing step count (for incremental sync)
@@ -399,7 +414,7 @@ def sync_session(
         step, _ = record_to_step(record, step_id)
         if step:
             step.session_id = session_id
-            append_step(step, AgentType.CLAUDE)
+            append_step(step, AgentType.CLAUDE, domain=resolved_domain)
             new_steps += 1
 
     session.step_count = step_id
@@ -415,7 +430,7 @@ def sync_session(
 
         # If completed, generate summary
         if status == SessionStatus.COMPLETED:
-            write_summary(session_id, AgentType.CLAUDE)
+            write_summary(session_id, AgentType.CLAUDE, domain=resolved_domain)
 
         logger.info(f"Synced session: {session_id} (steps={step_id}, new={new_steps}, status={status.value})")
         return session_id
