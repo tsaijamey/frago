@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -94,6 +95,7 @@ def update_launcher(launcher: LauncherInfo) -> RuntimeState:
     state = load_runtime_state()
     state.launcher = launcher
     save_runtime_state(state)
+    os.environ["FRAGO_LAUNCHER"] = json.dumps(launcher.command)
     return state
 
 

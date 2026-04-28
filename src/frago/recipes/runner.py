@@ -1,6 +1,7 @@
 """Recipe executor"""
 import json
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -20,6 +21,39 @@ from .metadata import validate_params
 from .registry import RecipeRegistry, get_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _frago_argv() -> list[str]:
+    """Return argv prefix to invoke frago.
+
+    Order: FRAGO_LAUNCHER env (set by server on startup via update_launcher) →
+    ~/.frago/runtime.json (persistent, written by any frago server/CLI run) →
+    shutil.which → `python -m frago`.
+
+    runtime.json is the durable fallback for CLI invocations that bypass
+    server (e.g. `frago recipe run ...` on a shell whose PATH lacks the
+    venv bin)."""
+    raw = os.environ.get("FRAGO_LAUNCHER")
+    if raw:
+        try:
+            argv = json.loads(raw)
+            if isinstance(argv, list) and argv:
+                return argv
+        except json.JSONDecodeError:
+            pass
+    rt = Path.home() / ".frago" / "runtime.json"
+    if rt.exists():
+        try:
+            data = json.loads(rt.read_text(encoding="utf-8"))
+            argv = (data.get("launcher") or {}).get("command")
+            if isinstance(argv, list) and argv:
+                return argv
+        except (json.JSONDecodeError, OSError):
+            pass
+    found = shutil.which("frago")
+    if found:
+        return [found]
+    return [sys.executable, "-m", "frago"]
 
 # Module-level process registry shared across all RecipeRunner instances.
 # Enables cancel() from any runner instance (e.g., a different request handler).
@@ -517,7 +551,7 @@ class RecipeRunner:
         if params:
             params_json = json.dumps(params)
             inject_cmd = [
-                'uv', 'run', 'frago', 'chrome', 'exec-js',
+                *_frago_argv(), 'chrome', 'exec-js',
                 f'window.__FRAGO_PARAMS__ = {params_json}'
             ]
             try:
@@ -547,9 +581,9 @@ class RecipeRunner:
                     stderr="Parameter injection timeout"
                 ) from e
 
-        # Build command: uv run frago chrome exec-js <script_path> --return-value
+        # Build command: <frago_launcher> chrome exec-js <script_path> --return-value
         cmd = [
-            'uv', 'run', 'frago', 'chrome', 'exec-js',
+            *_frago_argv(), 'chrome', 'exec-js',
             str(script_path),
             '--return-value'
         ]
