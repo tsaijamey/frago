@@ -93,10 +93,11 @@ include = [
     "src/frago/bin/**/*",
 ]
 
-# 排除前端源码（只保留构建产物 assets/）
+# 排除前端源码（只保留构建产物 assets/）和扩展私钥
 exclude = [
     "src/frago/gui_deprecated/frontend/**",
     "src/frago/client/**",
+    "src/frago/_resources/extension_bundle/keys/private.pem",
 ]
 
 [tool.setuptools]

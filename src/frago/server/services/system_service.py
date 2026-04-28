@@ -42,7 +42,7 @@ class SystemService:
             chrome_available = False
             chrome_connected = False
             try:
-                from frago.cdp.commands.chrome import ChromeLauncher
+                from frago.chrome.cdp.commands.chrome import ChromeLauncher
                 launcher = ChromeLauncher()
                 chrome_available = launcher.chrome_path is not None
                 status = launcher.get_status()
@@ -58,7 +58,7 @@ class SystemService:
             # Get tab count from TabManager
             tab_count = 0
             try:
-                from frago.cdp.tab_manager import TabManager
+                from frago.chrome.cdp.tab_manager import TabManager
                 tm = TabManager()
                 tab_count = len(tm._state)
             except Exception:

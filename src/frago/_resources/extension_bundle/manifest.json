@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "frago bridge",
+  "version": "0.1.0",
+  "description": "frago agent OS \u2014 browser bridge (MVP P1).",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA01yvqkJGY42v37WEUKr5qqH+bToHgjWePd2t/QmLQZJu7Fi5mcArGXXGMYOyYpqeB/k7Cx8wTcLsdJ/fmDMMi6M2dCowgyMSyLQKDqvM+0q2newhcp9B68NkFy7OrjpkNLiovrsBf/pYjziZ8l/VE6+ETvxhCmtB7T9XQ3ODcI8X4gNrHuO9emGIUWS/qqKpHi8Yp9WGFbVWzia8bKuxIqYeCnv/PFaHoWqrh2apVNQib7XKbwH+erSakhe+POyn/cahZhmoSRJHm5VuMOoBw8MB3+2wGENzmC1/cU5o9ON2xx1gSDt8FtNxgzdCFPMFSnmkZIkwVaK1ZfLWMX0PmQIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service_worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/content_script.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_title": "frago bridge"
+  }
+}
