@@ -51,7 +51,6 @@ from .skill_commands import skill_group
 from .start_command import start
 from .sync_command import sync_cmd  # Sync command
 from .update_command import update
-from .usegit_commands import usegit_group
 from .view_command import view
 from .workspace_commands import workspace_group
 
@@ -357,7 +356,6 @@ cli.add_command(sync_cmd, name="sync")  # Resource sync command
 cli.add_command(update)  # Self-update command
 
 # Command groups
-cli.add_command(usegit_group)  # Git sync command group: use-git sync (deprecated, use sync)
 cli.add_command(chrome_group)  # Chrome CDP command group
 cli.add_command(extension_group, name="extension")  # Browser extension bridge (P1 MVP)
 
