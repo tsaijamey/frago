@@ -73,6 +73,52 @@ ROTATION_TOKEN_THRESHOLD = 50000
 # Task execution timeout (seconds)
 TASK_TIMEOUT_SECONDS = 900
 
+
+def _render_domain_peek(peek: dict[str, Any] | None) -> str:
+    """Render a domain peek payload as compact prior-context for sub-agent bootstrap.
+
+    Phase 3: feeds ``RunManager.peek_domain`` output into the sub-agent prompt
+    so the agent boots with prior knowledge instead of starting from zero.
+    Output is bounded to a few hundred tokens; the caller already constrains
+    ``n_sessions`` / ``n_insights`` upstream.
+    """
+    if not peek:
+        return ""
+    lines: list[str] = []
+    domain = peek.get("domain") or ""
+    lines.append(f"\nDomain 先验摘要 ({domain})")
+    sess_count = peek.get("session_count")
+    insi_count = peek.get("insight_count")
+    last = peek.get("last_accessed")
+    if sess_count is not None or insi_count is not None or last:
+        lines.append(
+            f"  status={peek.get('status')} sessions={sess_count} insights={insi_count} last={last}"
+        )
+
+    insights = peek.get("top_insights") or []
+    if insights:
+        lines.append("  Top insights:")
+        for ins in insights:
+            payload = (ins.get("payload") or "").replace("\n", " ").strip()
+            if len(payload) > 160:
+                payload = payload[:157] + "..."
+            lines.append(
+                f"    - [{ins.get('type')}] (conf={ins.get('confidence')}) {payload}"
+            )
+
+    sessions = peek.get("recent_sessions") or []
+    if sessions:
+        lines.append("  Recent sessions:")
+        for s in sessions:
+            sid = (s.get("session_id") or "")[:8]
+            head = (s.get("summary_head") or "").replace("\n", " | ")
+            if len(head) > 120:
+                head = head[:117] + "..."
+            lines.append(f"    - {sid} {head}")
+    lines.append("")  # trailing blank line
+    return "\n".join(lines) + "\n"
+
+
 class PrimaryAgentService:
     """Manages the Primary Agent lifecycle: attached session + heartbeat + Run dispatch.
 
@@ -1476,6 +1522,7 @@ class PrimaryAgentService:
         task_prompt: str,
         run_id: str,
         related_runs: list[str] | None = None,
+        domain_peek: dict[str, Any] | None = None,
     ) -> str:
         """Build the prompt for a sub-agent working in a Run instance.
 
@@ -1488,6 +1535,13 @@ class PrimaryAgentService:
             for rid in related_runs:
                 lines.append(f"  - {rid}")
             related_section = "\n" + "\n".join(lines) + "\n"
+
+        # Phase 3: prepend the domain peek summary so the sub-agent boots with
+        # prior knowledge instead of starting from zero.
+        if domain_peek:
+            related_section = (
+                _render_domain_peek(domain_peek) + related_section
+            )
 
         return SUB_AGENT_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,

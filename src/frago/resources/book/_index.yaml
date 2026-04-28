@@ -88,7 +88,11 @@
 
 - name: run-logging
   category: available
-  brief: "自动/手动日志分工、_insights 强制记录、研究完成标准"
+  brief: "execution.jsonl 自动/手动日志分工、action_type/execution_method、研究完成标准（不含 insight 沉淀）"
+
+- name: domain-insights
+  category: available
+  brief: "{{frago_launcher}} run insights 沉淀领域知识：5 种 type（fact/decision/foreshadow/state/lesson）语义边界、追加式版本化、跟旧 _insights 的关系"
 
 - name: recipe-spec-writing
   category: available

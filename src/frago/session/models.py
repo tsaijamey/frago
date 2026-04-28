@@ -137,6 +137,15 @@ class MonitoredSession(BaseModel):
         default=SessionSource.UNKNOWN,
         description="Session source (terminal/web/unknown)",
     )
+    # --- Phase 1 domain fields (run-as-domain-knowledge-base spec) ---
+    domain: Optional[str] = Field(
+        default=None,
+        description="Frago domain this session is attached to (e.g. twitter / CROSS-twitter-feishu / misc)",
+    )
+    source_jsonl: Optional[str] = Field(
+        default=None,
+        description="Absolute path to the source ~/.claude/projects/.../{session_id}.jsonl file",
+    )
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}

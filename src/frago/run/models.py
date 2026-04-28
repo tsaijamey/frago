@@ -12,10 +12,15 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class RunStatus(str, Enum):
-    """Run instance status"""
+    """Run instance status (Phase 1: domain knowledge base era).
+
+    Two-state machine:
+    - ACTIVE: domain currently in use
+    - INACTIVE: dormant domain (replaces legacy ARCHIVED)
+    """
 
     ACTIVE = "active"
-    ARCHIVED = "archived"
+    INACTIVE = "inactive"
 
 
 class ActionType(str, Enum):
@@ -52,7 +57,12 @@ class LogStatus(str, Enum):
 
 
 class InsightType(str, Enum):
-    """Insight type enumeration"""
+    """[DEPRECATED] Legacy log-attached insight type.
+
+    Phase 2 supersedes this with frago.run.insights.DomainInsightType
+    (fact / decision / foreshadow / state / lesson). Kept only for Phase 2
+    migration compatibility (read path + one-shot history rewrite).
+    """
 
     KEY_FACTOR = "key_factor"  # Key success factor
     PITFALL = "pitfall"  # Pitfall/trap
@@ -61,7 +71,12 @@ class InsightType(str, Enum):
 
 
 class InsightEntry(BaseModel):
-    """Insight entry model - records key findings and pitfalls"""
+    """[DEPRECATED] Legacy log-attached insight entry.
+
+    Replaced by frago.run.insights.DomainInsight (independent domain-level
+    schema in insight.jsonl). Kept readable for Phase 2 migration only;
+    new writes should use `frago run insights --save`.
+    """
 
     insight_type: InsightType
     summary: str = Field(..., min_length=1, max_length=200)  # Brief summary
@@ -92,13 +107,23 @@ from .constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
 
 
 class RunInstance(BaseModel):
-    """Run instance model (stored in .metadata.json)"""
+    """Run instance model (Phase 1: now represents a Domain knowledge base).
 
-    run_id: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-z0-9-]{1,100}$")
+    Stored as ``_domain.json`` in each domain directory (legacy: ``.metadata.json``).
+    """
+
+    run_id: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z0-9-]{1,100}$")
     theme_description: str = Field(..., min_length=1, max_length=THEME_DESC_MAX)
     created_at: datetime
     last_accessed: datetime
     status: RunStatus = RunStatus.ACTIVE
+    # --- Phase 1 domain fields ---
+    domain: Optional[str] = Field(default=None, description="Domain name (e.g. twitter, frago-meta)")
+    aliases: List[str] = Field(default_factory=list, description="Cached domain alias list (authoritative source: frago def domain_dict)")
+    is_cross_domain: bool = Field(default=False, description="True when name has CROSS- prefix")
+    component_domains: List[str] = Field(default_factory=list, description="Component domains for cross-domain runs")
+    session_count: int = Field(default=0, ge=0, description="Cumulative session count attached to this domain")
+    insight_count: int = Field(default=0, ge=0, description="Cumulative insight entry count")
 
     class Config:
         """Pydantic configuration"""
@@ -106,7 +131,7 @@ class RunInstance(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunInstance":
-        """Create instance from dictionary (compatible with ISO 8601 timestamp strings)"""
+        """Create instance from dictionary (compatible with ISO 8601 timestamp strings)."""
         if isinstance(data.get("created_at"), str):
             data["created_at"] = datetime.fromisoformat(
                 data["created_at"].replace("Z", "+00:00")
@@ -116,7 +141,11 @@ class RunInstance(BaseModel):
                 data["last_accessed"].replace("Z", "+00:00")
             )
         if isinstance(data.get("status"), str):
-            data["status"] = RunStatus(data["status"])
+            # Migrate legacy "archived" literal -> INACTIVE
+            raw_status = data["status"]
+            if raw_status == "archived":
+                raw_status = "inactive"
+            data["status"] = RunStatus(raw_status)
         return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -141,7 +170,7 @@ class LogEntry(BaseModel):
     action_type: ActionType
     execution_method: ExecutionMethod
     data: Dict[str, Any] = Field(default_factory=dict)
-    insights: Optional[List["InsightEntry"]] = Field(default=None)  # Key findings and pitfalls
+    insights: Optional[List["InsightEntry"]] = Field(default=None)  # [DEPRECATED Phase 2] use frago.run.insights.DomainInsight instead
     schema_version: str = "1.1"  # Schema version
 
     @field_validator("data")

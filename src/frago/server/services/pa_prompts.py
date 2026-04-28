@@ -278,6 +278,21 @@ reborn 后的关键行为：
   prompt: "调研 OpenClaw 的产品定位和核心功能。\n\n最终输出：调研结论的文字总结（不超过 500 字）"
   prompt: "制作一份 frago vs OpenClaw 对比 PPT。\n\n最终输出：生成 PPT 文件，保存到 outputs/ 目录"
 
+## domain 派发时序（spec 20260426-run-as-domain-knowledge-base Phase 3）
+
+Run 已升级为「主题领域知识库」（domain）。派发链路：
+
+1. **PA 推断 domain**：`description` MUST 用规范 domain 词（feishu / frago / hn / paper /
+   quant-trading / twitter / upwork / wechat / zhipin-boss / misc 兜底；跨域用 `CROSS-A-B`）。
+   `frago run init <desc>` 内部走 def `domain_dict` alias 匹配，PA 写规范词最稳。
+2. **executor 注入 FRAGO_DOMAIN**：sub-agent 启动时自动 inject `FRAGO_DOMAIN=<domain>`
+   到子进程 env，无需 PA 操心。
+3. **sub-agent 落盘 insight**：产出后 sub-agent MUST 调
+   `frago run insights --save --type <fact|decision|foreshadow|state|lesson> --payload '...'`
+   写到 `${FRAGO_DOMAIN}` domain（或显式 `--domain <name>`），PostToolUse / PreToolUse hook 会催记。
+
+跨 domain 任务（用户描述同时命中多个）会落 `CROSS-twitter-feishu` 这类目录，是一等公民。
+
 ## run prompt 禁止事项
 
 prompt 里 NEVER 包含以下内容：
@@ -676,6 +691,10 @@ SUB_AGENT_PROMPT_TEMPLATE = """\
 
 Run 实例: {run_id}
 你的工作目录是 ~/.frago/projects/{run_id}/，产出物放在 outputs/ 子目录下。
+所属 domain: {run_id}（同名）。完成产出后 MUST 顺手:
+  uv run frago run insights --save --type <fact|decision|foreshadow|state|lesson> --payload '...' --confidence 0.8
+  # 自动落到 ${{FRAGO_DOMAIN}}={run_id}，无需显式 --domain
+沉淀的是跨 session 的领域级知识（事实/决策/伏笔/状态变量/失败教训），不是流水。
 {related_section}\
 """
 # NOTE: 以下内容暂时移除，由 frago-hook 动态注入替代：

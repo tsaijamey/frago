@@ -3,13 +3,18 @@
 Provides helper functions for theme slug generation, path handling, etc.
 """
 
+import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-import pypinyin
 from slugify import slugify as _slugify
+
+# Legacy run dir naming pattern: yyyyMMdd-{slug}
+_LEGACY_RUN_PREFIX_RE = re.compile(r"^\d{8}-")
+# Cross-domain prefix (case-insensitive)
+_CROSS_PREFIX_RE = re.compile(r"^CROSS-", re.IGNORECASE)
 
 
 def generate_theme_slug(description: str, max_length: int = 90) -> str:
@@ -45,7 +50,9 @@ def generate_theme_slug(description: str, max_length: int = 90) -> str:
 
 
 def is_valid_run_id(run_id: str) -> bool:
-    """Validate run_id format
+    """Validate run_id format.
+
+    Phase 1: now also allows uppercase to support ``CROSS-`` prefix.
 
     Args:
         run_id: run ID to validate
@@ -53,11 +60,76 @@ def is_valid_run_id(run_id: str) -> bool:
     Returns:
         True if valid, False otherwise
     """
-    import re
-
-    # Support date prefix format: yyyyMMdd-slug (max 100 characters)
-    pattern = r"^[a-z0-9-]{1,100}$"
+    # Allow uppercase (CROSS- prefix), lowercase, digits, hyphens; max 100 chars
+    pattern = r"^[A-Za-z0-9-]{1,100}$"
     return bool(re.match(pattern, run_id))
+
+
+def parse_cross_domain(name: str) -> Optional[List[str]]:
+    """Parse a cross-domain run name into its component domains.
+
+    A cross-domain run is named ``CROSS-<domain1>-<domain2>[-...]``.
+
+    Args:
+        name: directory / domain name
+
+    Returns:
+        List of component domain names if ``name`` has the ``CROSS-`` prefix,
+        otherwise ``None``.
+
+    Examples:
+        >>> parse_cross_domain("CROSS-twitter-feishu")
+        ['twitter', 'feishu']
+        >>> parse_cross_domain("twitter") is None
+        True
+    """
+    if not _CROSS_PREFIX_RE.match(name):
+        return None
+    remainder = name[len("CROSS-"):]
+    if not remainder:
+        return []
+    return [part for part in remainder.split("-") if part]
+
+
+def is_legacy_run_dir(name: str) -> bool:
+    """Detect legacy ``YYYYMMDD-<slug>`` style run directory names.
+
+    Args:
+        name: directory name (not full path)
+
+    Returns:
+        True when ``name`` starts with 8 digits followed by a hyphen.
+    """
+    return bool(_LEGACY_RUN_PREFIX_RE.match(name))
+
+
+def normalize_domain_name(raw: str) -> str:
+    """Normalize a raw domain name into the canonical on-disk form.
+
+    Rules:
+    - If ``raw`` starts with a (case-insensitive) ``CROSS-`` prefix, the prefix
+      is preserved as ``CROSS-`` and the remainder is slugified (lowercase).
+    - Otherwise, the whole string is slugified (lowercase, kebab-case).
+
+    Args:
+        raw: user-provided domain name or theme description
+
+    Returns:
+        Normalized domain name suitable for use as a directory name.
+    """
+    if not raw:
+        return ""
+    cross_match = _CROSS_PREFIX_RE.match(raw)
+    if cross_match:
+        remainder = raw[cross_match.end():]
+        slugged = _slugify(remainder, max_length=90)
+        if not slugged:
+            return "CROSS-"
+        return f"CROSS-{slugged}"
+    slugged = _slugify(raw, max_length=90)
+    if not slugged:
+        slugged = f"task-{int(time.time())}"
+    return slugged
 
 
 def scan_run_directories(projects_dir: Path) -> List[str]:
