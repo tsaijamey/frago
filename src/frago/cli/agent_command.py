@@ -67,36 +67,6 @@ def find_claude_cli() -> str | None:
     return shutil.which("claude")
 
 
-def wait_for_claude_session_file(session_id: str, timeout: float = 3.0) -> bool:
-    """Wait until Claude CLI has flushed <session_id>.jsonl to ~/.claude/projects/*/.
-
-    Claude CLI writes the session file asynchronously after emitting the init
-    event. A `--resume <session_id>` invocation that runs before the file lands
-    exits immediately with no stdout. Poll briefly so the resume actually finds
-    something to resume.
-
-    Returns True if the file appeared, False on timeout. A False return is not
-    fatal — the caller still attempts --resume, but the subsequent exit will be
-    attributed to the missing file rather than being mysterious.
-    """
-    import time
-
-    claude_dir = Path(os.environ.get("FRAGO_CLAUDE_DIR", "")).expanduser() \
-        if os.environ.get("FRAGO_CLAUDE_DIR") else Path.home() / ".claude" / "projects"
-    if not claude_dir.is_dir():
-        return False
-
-    deadline = time.monotonic() + timeout
-    target = f"{session_id}.jsonl"
-    while True:
-        for project_dir in claude_dir.iterdir():
-            if project_dir.is_dir() and (project_dir / target).is_file():
-                return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
-
-
 def check_ccr_auth() -> tuple[bool, dict | None]:
     """
     Check CCR (Claude Code Router) configuration
@@ -280,12 +250,6 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
     help="Skip permission confirmation prompt, execute directly"
 )
 @click.option(
-    "--resume", "-r",
-    type=str,
-    default=None,
-    help="Continue conversation in specified session (pass session_id)"
-)
-@click.option(
     "--source",
     type=click.Choice(["terminal", "web"], case_sensitive=False),
     default="terminal",
@@ -326,7 +290,6 @@ def agent(
     json_status: bool,
     no_monitor: bool,
     yes: bool,
-    resume: str | None,
     source: str,
     session_id: str | None,
     passthrough: bool,
@@ -434,42 +397,13 @@ def agent(
     # Single-phase execution: Let agent determine and execute directly
     # =========================================================================
 
-    if resume:
-        # Check session status before resume — prevent concurrent writes to same JSONL
-        try:
-            from frago.session.models import SessionStatus
-            from frago.session.storage import read_metadata
+    if not passthrough:
+        click.echo(f"\n[Execute] {prompt_text}")
+    execution_prompt = prompt_text
 
-            metadata = read_metadata(resume)
-            if metadata and metadata.status == SessionStatus.RUNNING:
-                click.echo(
-                    f"[Error] Session {resume[:8]} is currently running. "
-                    "Cannot resume a running session.",
-                    err=True,
-                )
-                click.echo(
-                    "Wait for the session to complete, or use a different session.",
-                    err=True,
-                )
-                raise SystemExit(1)
-        except SystemExit:
-            raise
-        except Exception as e:
-            # Non-fatal: if we can't check status, proceed with caution
-            if not passthrough:
-                click.echo(f"  [!] Could not verify session status: {e}", err=True)
-
-        if not passthrough:
-            click.echo(f"\n[Resume] Continue in session {resume[:8]}...: {prompt_text}")
-        execution_prompt = prompt_text
-    else:
-        if not passthrough:
-            click.echo(f"\n[Execute] {prompt_text}")
-        execution_prompt = prompt_text
-
-        if dry_run:
-            click.echo("[Dry Run] Skip actual execution")
-            return
+    if dry_run:
+        click.echo("[Dry Run] Skip actual execution")
+        return
 
     # Build final command - use stream-json for real-time output
     # Note: stream-json must be used with --verbose
@@ -484,21 +418,9 @@ def agent(
             "--replay-user-messages",
         ])
 
-    # Determine session ID early so both claude CLI and SessionMonitor use the same ID
-    if resume:
-        # Claude CLI flushes the session .jsonl asynchronously after init; a
-        # --resume that arrives before the file lands exits with zero output.
-        if not wait_for_claude_session_file(resume, timeout=3.0) and not passthrough:
-            click.echo(
-                f"  [!] Session file for {resume[:8]} not yet visible; "
-                "proceeding anyway", err=True,
-            )
-        cmd.extend(["--resume", resume])
-        target_session_id = resume
-    else:
-        # Use caller-provided session_id or generate a fresh one
-        target_session_id = session_id or str(uuid.uuid4())
-        cmd.extend(["--session-id", target_session_id])
+    # Use caller-provided session_id or generate a fresh one
+    target_session_id = session_id or str(uuid.uuid4())
+    cmd.extend(["--session-id", target_session_id])
 
     if model:
         cmd.extend(["--model", model])
