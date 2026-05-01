@@ -437,13 +437,6 @@ export interface PyWebviewApi {
    */
   start_agent_task(prompt: string): Promise<TaskStartResponse>;
 
-  /**
-   * Continue conversation in specified session
-   * @param session_id Session ID
-   * @param prompt New prompt
-   */
-  continue_agent_task(session_id: string, prompt: string): Promise<TaskStartResponse>;
-
   // ============================================================
   // Recipes API
   // ============================================================

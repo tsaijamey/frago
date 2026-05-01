@@ -143,14 +143,6 @@ export async function startAgentTask(
   return api.start_agent_task(prompt);
 }
 
-export async function continueAgentTask(
-  sessionId: string,
-  prompt: string
-): Promise<TaskStartResponse> {
-  const api = await waitForPywebview();
-  return api.continue_agent_task(sessionId, prompt);
-}
-
 // ============================================================
 // Recipes API
 // ============================================================

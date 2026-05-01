@@ -260,31 +260,6 @@ export async function startAgent(
   });
 }
 
-export interface AgentContinueResponse {
-  status: 'ok' | 'error';
-  message?: string;
-  error?: string;
-}
-
-/**
- * Continue conversation in an existing Claude session.
- *
- * @param sessionId - The Claude session_id (from task list), NOT the web task_id
- * @param prompt - The continuation prompt
- */
-export async function continueAgent(
-  sessionId: string,
-  prompt: string
-): Promise<AgentContinueResponse> {
-  return fetchApi<AgentContinueResponse>(
-    `/agent/${encodeURIComponent(sessionId)}/continue`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ prompt }),
-    }
-  );
-}
-
 // ============================================================
 // Agent Attached API (real-time streaming mode)
 // ============================================================
