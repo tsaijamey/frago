@@ -115,7 +115,7 @@ def hook_rules_group(ctx):
 
 
 @hook_rules_group.command(name="list", cls=AgentFriendlyCommand)
-@click.option("--source", type=click.Choice(["builtin", "user", "agent"]), default=None)
+@click.option("--source", type=click.Choice(["builtin", "userdir", "agent"]), default=None)
 @click.option("--event", default=None, help="Filter by event name (e.g. PreToolUse)")
 @click.option("--show-disabled", is_flag=True, help="Include disabled rules")
 def hook_rules_list(source: str | None, event: str | None, show_disabled: bool):
@@ -203,10 +203,10 @@ def hook_rules_show(rule_id: str):
 )
 @click.option(
     "--source",
-    type=click.Choice(["user", "agent"]),
+    type=click.Choice(["userdir", "agent"]),
     default="agent",
     show_default=True,
-    help="Defaults to 'agent'; pass --source=user for curated rules (no TTL).",
+    help="Defaults to 'agent'; pass --source=userdir for curated rules (no TTL).",
 )
 def hook_rules_add(rule_json: str, source: str):
     """Append a new rule to the user rules file.
@@ -310,7 +310,7 @@ def _set_disabled(rule_id: str, disabled: bool) -> None:
             f"No rule with id '{rule_id}' (neither user nor builtin)."
         )
     override = dict(builtin)
-    override["source"] = "user"
+    override["source"] = "userdir"
     override["disabled"] = disabled
     data.setdefault("rules", []).append(override)
     _save_user_file(data)
@@ -422,7 +422,7 @@ def _read_hits() -> dict[str, dict]:
 
 
 @hook_rules_group.command(name="stats", cls=AgentFriendlyCommand)
-@click.option("--source", type=click.Choice(["builtin", "user", "agent"]), default=None)
+@click.option("--source", type=click.Choice(["builtin", "userdir", "agent"]), default=None)
 def hook_rules_stats(source: str | None):
     """Show hit counts and last-hit timestamps per rule."""
     merged = _load_merged()

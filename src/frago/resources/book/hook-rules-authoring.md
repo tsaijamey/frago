@@ -19,7 +19,7 @@ frago-hook 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察
 ## 核心命令
 
 ```bash
-{{frago_launcher}} hook-rules list [--source=builtin|user|agent] [--event=<name>] [--show-disabled]
+{{frago_launcher}} hook-rules list [--source=builtin|userdir|agent] [--event=<name>] [--show-disabled]
 {{frago_launcher}} hook-rules show <rule_id>
 {{frago_launcher}} hook-rules add --rule='<JSON>'               # 默认 source=agent + ttl_days=30
 {{frago_launcher}} hook-rules disable <rule_id>
@@ -96,7 +96,7 @@ frago-hook 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察
 - 一条规则一件事，别塞多个场景进同一条
 - id 用 `agent-<kebab-case>` 前缀，避免与 builtin 冲突
 - 写 `description` 字段解释 why + how to apply，便于日后 distill 时判断是否保留
-- agent 加的规则 30 天 TTL；真正长期有价值的规则等稳定后升级为 `source=user`（规划中）
+- agent 加的规则 30 天 TTL；真正长期有价值的规则等稳定后升级为 `source=userdir`（永不过期，规划中）
 - 不要绕过 CLI 直接编辑 `~/.frago/hook-rules.json`，会绕过 seeding 和校验
 
 ## 下次召回入口
