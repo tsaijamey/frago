@@ -227,23 +227,6 @@ export async function startAgentTask(
   };
 }
 
-export async function continueAgentTask(
-  sessionId: string,
-  prompt: string
-): Promise<TaskStartResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.continueAgentTask(sessionId, prompt);
-  }
-
-  // Use the Claude session_id (from task list) to continue the conversation
-  // This calls frago agent --resume {session_id} on the backend
-  const result = await httpApi.continueAgent(sessionId, prompt);
-  return {
-    status: result.status,
-    message: result.message || `Continuing session ${sessionId.slice(0, 8)}...`,
-  };
-}
-
 // ============================================================
 // Recipes API
 // ============================================================

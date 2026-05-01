@@ -1,14 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { getTaskDetail, continueAgentTask, generateTaskTitle } from '@/api';
+import { getTaskDetail, generateTaskTitle } from '@/api';
 import StepList from './StepList';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import DirectoryAutocomplete from '@/components/ui/DirectoryAutocomplete';
 import Modal from '@/components/ui/Modal';
-import { recordDirectoriesFromText } from '@/utils/recentDirectories';
-import { Send, Info, Zap, ArrowLeft, RefreshCw } from 'lucide-react';
-import { modKey } from '@/hooks/usePlatform';
+import { Info, Zap, ArrowLeft, RefreshCw } from 'lucide-react';
 
 // Format date time
 function formatDateTime(isoString: string): string {
@@ -35,19 +32,11 @@ export default function TaskDetail() {
   const { t } = useTranslation();
   const { taskDetail, isLoading, switchPage, setTaskDetail, showToast } = useAppStore();
 
-  // Continue feature state
-  const [continuePrompt, setContinuePrompt] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
   // Details modal state
   const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   // Title generation state
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
-
-  // Whether can continue conversation (only completed and error status)
-  const canContinue = taskDetail?.status === 'completed' || taskDetail?.status === 'error';
 
   // Generate AI title for the task
   const handleGenerateTitle = async () => {
@@ -89,48 +78,6 @@ export default function TaskDetail() {
     const interval = setInterval(refreshDetail, refreshInterval);
     return () => clearInterval(interval);
   }, [taskDetail?.session_id, taskDetail?.status, setTaskDetail]);
-
-  // Auto focus when page loads and can continue
-  useEffect(() => {
-    if (canContinue && textareaRef.current) {
-      textareaRef.current.focus();
-    }
-  }, [canContinue]);
-
-  // Continue conversation submit
-  const handleContinueSubmit = async () => {
-    const trimmed = continuePrompt.trim();
-    if (!trimmed || isSubmitting || !taskDetail) return;
-
-    // Record directories from the prompt
-    recordDirectoriesFromText(trimmed);
-
-    setIsSubmitting(true);
-    try {
-      const result = await continueAgentTask(taskDetail.session_id, trimmed);
-      if (result.status === 'ok') {
-        setContinuePrompt('');
-        showToast('Continue conversation request sent', 'success');
-        // Refresh detail to get new status
-        const updated = await getTaskDetail(taskDetail.session_id);
-        setTaskDetail(updated);
-      } else {
-        showToast(result.error || 'Send failed', 'error');
-      }
-    } catch (error) {
-      console.error('Failed to continue task:', error);
-      showToast('Send failed', 'error');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleContinueKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      handleContinueSubmit();
-    }
-  };
 
   if (isLoading) {
     return (
@@ -220,43 +167,6 @@ export default function TaskDetail() {
           isRunning={taskDetail.status === 'running'}
         />
       </div>
-
-      {/* Input area - at the very bottom */}
-      {canContinue && (
-        <div className="shrink-0 px-6 pt-4 pb-6">
-          <div className="task-input-wrapper relative">
-            <DirectoryAutocomplete
-              value={continuePrompt}
-              onChange={setContinuePrompt}
-              textareaRef={textareaRef}
-            />
-            <textarea
-              ref={textareaRef}
-              className="task-input"
-              placeholder={t('tasks.enterContinueContent')}
-              value={continuePrompt}
-              onChange={(e) => setContinuePrompt(e.target.value)}
-              onKeyDown={handleContinueKeyDown}
-              aria-label="Continue conversation input"
-            />
-            <button
-              type="button"
-              className={`task-input-btn ${continuePrompt.trim() ? 'visible' : ''}`}
-              onClick={handleContinueSubmit}
-              disabled={isSubmitting || !continuePrompt.trim()}
-            >
-              {isSubmitting ? (
-                <div className="spinner" />
-              ) : (
-                <Send className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-          <div className="text-xs text-[var(--text-muted)] mt-2">
-            {modKey}+Enter to send
-          </div>
-        </div>
-      )}
 
       {/* Task details modal */}
       <Modal
