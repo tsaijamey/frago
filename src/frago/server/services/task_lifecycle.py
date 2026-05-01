@@ -264,6 +264,7 @@ class TaskLifecycle:
                 "prompt": task.prompt,
                 "reply_context": task.reply_context,
                 "_recovered": True,
+                "received_at": task.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             })
 
         for task in failed:

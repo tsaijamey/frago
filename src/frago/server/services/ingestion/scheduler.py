@@ -345,6 +345,7 @@ class IngestionScheduler:
                     "prompt": msg["prompt"],
                     "reply_context": msg.get("reply_context", {}),
                     "thread_id": classify_result.thread_id,
+                    "received_at": cached.received_at.strftime("%Y-%m-%d %H:%M:%S"),
                 })
                 logger.info(
                     "Message %s enqueued to PA (thread=%s, layer=%s)",

@@ -376,6 +376,7 @@ class PrimaryAgentService:
                 "prompt": cached.prompt,
                 "reply_context": cached.reply_context,
                 "_recovered": True,
+                "received_at": cached.received_at.strftime("%Y-%m-%d %H:%M:%S"),
             })
             orphaned += 1
             logger.info("Orphaned message re-enqueued: %s:%s", cached.channel, cached.msg_id)
@@ -630,6 +631,7 @@ class PrimaryAgentService:
                     channel_message_id=msg.get("channel_message_id", msg.get("msg_id", "?")),
                     prompt=msg.get("prompt", ""),
                     group_line=group_line,
+                    received_at=msg.get("received_at") or "unknown",
                 ) + recovered_note)
 
             elif msg_type == "agent_completed":
@@ -648,6 +650,7 @@ class PrimaryAgentService:
                     result_summary=msg.get("result_summary", "(无)"),
                     outputs_section=outputs_section,
                     recent_logs_section=logs_section,
+                    event_at=msg.get("event_at") or "unknown",
                 ))
 
             elif msg_type == "agent_failed":
@@ -660,6 +663,7 @@ class PrimaryAgentService:
                     session_id=msg.get("session_id", "?"),
                     result_summary=msg.get("result_summary", "(无)"),
                     recent_logs_section=logs_section,
+                    event_at=msg.get("event_at") or "unknown",
                 ))
 
             elif msg_type == "scheduled_task":
@@ -683,6 +687,7 @@ class PrimaryAgentService:
                     recipe_line=recipe_line,
                     last_status_line=last_status_line,
                     run_count=msg.get("run_count", 0),
+                    fired_at=msg.get("triggered_at") or "unknown",
                 ))
                 # Cache scheduled_task message so _create_task_from_cache
                 # can find it when PA decides action:"run".

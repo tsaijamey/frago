@@ -253,6 +253,15 @@ reborn 后的关键行为：
 - 已经完成的任务由 executor 自动收尾，PA 端不需要补做任何处理；如果用户后续追问结果，从 agent_completed 通知或重新投递的消息里取上下文
 - 如果新到来的用户消息含"刚才的"、"那个"等指代，结合各通道最近对话理解上下文后再决策；指代不清时直接 reply 追问而不是猜测重做
 
+规则（合法 input 来源白名单）：
+bootstrap 中的「各消息通道最近对话」「Active threads (timeline-folded view)」
+是 read-only 历史，仅供恢复语境。你的合法 input 只有两种来源：
+  1. 新到达的 user 消息（在 `--- 待处理消息 ---` block 里）
+  2. 系统投递的 agent_completed / agent_failed / scheduled_task /
+     reply_failed / recovered_failed_task / reply_failed 类型消息
+这两类之外的任何信息（包括 bootstrap 历史、thread folded view、knowledge 索引），
+**MUST 不能成为 reply / run / resume / schedule 的触发源。**
+
 ## run 的 description 和 prompt
 
 - description: English only，用于 Run 目录命名（简短，如 "compare frago and openclaw"）
@@ -362,7 +371,17 @@ PA_BOOTSTRAP_REBORN_RESPAWN = (
 # [给 PA] [创建 session 时, bootstrap 对话历史段] [大标题]
 # 各消息通道分组的对话回顾段开头。无变量。
 # --------------------------------------------------------------------------
-PA_BOOTSTRAP_CONVERSATION_HEADER = "各消息通道最近对话（按通道分组，无主次之分）:"
+PA_BOOTSTRAP_CONVERSATION_HEADER = (
+    "## 各消息通道最近对话（仅供恢复语境，按通道分组）\n"
+    "\n"
+    "⚠️ 以下全部是历史快照，PA session rotation / server 重启之前发生的对话。"
+    "这些消息**已经被处理过**，**无需 reply / run / 任何 action**。"
+    "仅用于让你理解最近的语境（用户在聊什么、你做过哪些决策）。\n"
+    "\n"
+    "如果其中某条任务实际未完成，会通过\"新消息独立投递\"重新到达你面前"
+    "（带 ⚠️ 重新投递标记）。**只对独立投递到的新消息行动，禁止从历史快照"
+    "反向触发任何动作。**"
+)
 
 
 # --------------------------------------------------------------------------
@@ -417,7 +436,7 @@ PA_BOOTSTRAP_KNOWLEDGE_TEMPLATE = "frago 系统索引:\n{knowledge_json}"
 # 由 _format_queue_messages() 将多条消息用 PA_MERGED_MESSAGES_TEMPLATE 包裹。
 # --------------------------------------------------------------------------
 PA_MESSAGE_TEMPLATE = """\
-<msg msg_id="{channel_message_id}" channel="{channel}">
+<msg msg_id="{channel_message_id}" channel="{channel}" received_at="{received_at}">
 {group_line}{prompt}
 </msg>\
 """
@@ -429,7 +448,7 @@ PA_MESSAGE_TEMPLATE = """\
 # 最近日志，构造系统消息送 PA。PA 阅读后 reply 回复用户。
 # --------------------------------------------------------------------------
 PA_AGENT_COMPLETED_TEMPLATE = """\
-[agent 完成] task: {task_id} channel: {channel}
+[agent 完成 @ {event_at}] task: {task_id} channel: {channel}
 Run: {run_id} (session: {session_id})
 结果: {result_summary}
 {outputs_section}
@@ -438,7 +457,7 @@ Run: {run_id} (session: {session_id})
 """
 
 PA_AGENT_FAILED_TEMPLATE = """\
-[agent 失败] task: {task_id} channel: {channel}
+[agent 失败 @ {event_at}] task: {task_id} channel: {channel}
 Run: {run_id} (session: {session_id})
 错误: {result_summary}
 {recent_logs_section}
@@ -463,7 +482,7 @@ PA_REPLY_FAILED_TEMPLATE = """\
 # [给 PA] [scheduled_task 投递时] [定时任务消息格式]
 # --------------------------------------------------------------------------
 PA_SCHEDULED_TASK_TEMPLATE = """\
-<msg msg_id="{msg_id}" channel="{channel}" type="scheduled_task">
+<msg msg_id="{msg_id}" channel="{channel}" type="scheduled_task" fired_at="{fired_at}">
 [定时任务] {schedule_name} (id: {schedule_id})
 {prompt}
 {recipe_line}{last_status_line}触发次数: {run_count}

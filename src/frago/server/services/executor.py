@@ -828,6 +828,7 @@ class Executor:
             "result_summary": result_summary or f"agent exited (stop_reason: {stop_reason})",
             "output_files": outputs,
             "recent_logs": recent_logs,
+            "event_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
         # Trace: executor notifying PA (cross-module message, treated as os_event)
