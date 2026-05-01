@@ -46,32 +46,6 @@ def _resolve_frago_cmd() -> list[str]:
     return ["frago"]
 
 
-def _resolve_project_path(session_id: str) -> str:
-    """Resolve project_path from session metadata for correct cwd.
-
-    Lookup order:
-    1. metadata.json project_path (if directory exists)
-    2. Decode from source_file path
-    3. Fallback to Path.home()
-    """
-    from frago.session.storage import read_metadata
-    from frago.session.sync import decode_project_path
-
-    session = read_metadata(session_id)
-    if session:
-        if session.project_path and Path(session.project_path).is_dir():
-            return session.project_path
-
-        if session.source_file:
-            # source_file: ~/.claude/projects/-home-yammi/xxx.jsonl
-            encoded_dir = Path(session.source_file).parent.name
-            decoded = decode_project_path(encoded_dir)
-            if Path(decoded).is_dir():
-                return decoded
-
-    return str(Path.home())
-
-
 class AgentSession:
     """Manages a single agent session with optional streaming support.
 
@@ -87,7 +61,6 @@ class AgentSession:
         self._reader_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
         self._last_stream_activity: float | None = None
-        self._last_turn_complete: bool = False
         self._attached = False
         self._running = False
         self._claude_session_id: str | None = None
@@ -125,12 +98,12 @@ class AgentSession:
             self._process = None
             logger.info(f"Cleaned up old subprocess (PID: {old_pid})")
 
-    async def start(self, prompt: str, resume_session_id: str | None = None) -> None:
+    async def start(self, prompt: str) -> None:
         """Start agent process in attached mode.
 
-        Args:
-            prompt: The prompt to send to Claude
-            resume_session_id: If set, resume an existing Claude session
+        A fresh Claude session is started each time; conversational
+        memory across messages is the caller's responsibility (PA
+        rebuilds its prompt from queue + memory each turn).
         """
         # Kill old process before starting new one to prevent orphan leaks
         self._cleanup_old_process()
@@ -140,9 +113,6 @@ class AgentSession:
             "--yes",
             "--source", "web",
         ]
-
-        if resume_session_id:
-            cmd.extend(["--resume", resume_session_id, "--no-monitor"])
 
         # Write prompt to temp file
         log_dir = Path.home() / ".frago" / "logs"
@@ -169,17 +139,13 @@ class AgentSession:
         )
 
     async def send_message(self, message: str) -> None:
-        """Send a continuation message to the attached session.
+        """Send a follow-up message by restarting the attached subprocess.
 
-        Uses --resume when the prior turn completed successfully. If the prior
-        subprocess was killed mid-turn (e.g. by rotation's cleanup) the Claude
-        session was never registered as resumable, so --resume would fail with
-        "No conversation found"; in that case we abandon the stale id and start
-        a fresh session, delivering this message as the first turn.
+        Each call kills the existing claude child and launches a fresh
+        ``frago agent`` invocation with the message as the new prompt.
+        Cross-message Claude-side memory is not preserved at this layer;
+        callers (PA) provide their own conversation context.
         """
-        if not self._claude_session_id:
-            raise RuntimeError("No Claude session to resume (session_id not captured)")
-
         # Stop current reader task before starting new process
         self._running = False
         if self._reader_task:
@@ -196,20 +162,11 @@ class AgentSession:
             "content": message,
         })
 
-        if self._last_turn_complete:
-            resume_id: str | None = self._claude_session_id
-        else:
-            logger.warning(
-                "Claude session %s never completed a turn — abandoning and "
-                "starting a fresh session for this message "
-                "(prevents '--resume No conversation found')",
-                self._claude_session_id[:8],
-            )
-            self._claude_session_id = None
-            resume_id = None
+        # Drop the prior session id — fresh start has no continuation guarantee.
+        self._claude_session_id = None
 
         # Start new process (start() will kill old process first)
-        await self.start(message, resume_session_id=resume_id)
+        await self.start(message)
 
     async def stop(self) -> None:
         """Stop the attached session."""
@@ -315,19 +272,9 @@ class AgentSession:
         """Parse and handle stream-json events from Claude CLI."""
         event_type = event.get("type", "")
 
-        # Completed turn signal from Claude CLI — session is now resumable.
-        # Use top-level type="result" (final stream-json frame before exit).
-        if event_type == "result":
-            self._last_turn_complete = True
-
         # Extract Claude session ID from system init event
         if event_type == "system" and event.get("subtype") == "init":
-            new_session_id = event.get("session_id")
-            # A different session id means a fresh Claude session with no
-            # completed turns yet; the resumability flag must reset.
-            if new_session_id != self._claude_session_id:
-                self._last_turn_complete = False
-            self._claude_session_id = new_session_id
+            self._claude_session_id = event.get("session_id")
             logger.info(f"Claude session ID resolved: {self._claude_session_id}")
 
             await manager.broadcast({
@@ -654,90 +601,3 @@ class AgentService:
             "running": session.is_running,
         }
 
-    @staticmethod
-    def continue_task(session_id: str, prompt: str) -> dict[str, Any]:
-        """Continue conversation in specified session.
-
-        Args:
-            session_id: Session ID to continue.
-            prompt: User's new prompt.
-
-        Returns:
-            Dictionary with status and message or error.
-        """
-        if not session_id:
-            return {"status": "error", "error": "session_id cannot be empty"}
-        if not prompt or not prompt.strip():
-            return {"status": "error", "error": "Task description cannot be empty"}
-
-        prompt = prompt.strip()
-
-        # Check session status — prevent concurrent writes to same JSONL
-        try:
-            from frago.session.models import SessionStatus
-            from frago.session.storage import read_metadata
-
-            metadata = read_metadata(session_id)
-            if metadata and metadata.status == SessionStatus.RUNNING:
-                logger.warning(
-                    "Refusing to resume running session %s", session_id[:8]
-                )
-                return {
-                    "status": "error",
-                    "error": f"Session {session_id[:8]} is currently running. "
-                    "Cannot resume a running session.",
-                }
-        except Exception as e:
-            # Non-fatal: log and proceed
-            logger.debug("Could not verify session status: %s", e)
-
-        try:
-            # Prepare log directory
-            log_dir = Path.home() / ".frago" / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"agent-resume-{session_id[:8]}.log"
-
-            # Use temp file to pass prompt
-            prompt_file = log_dir / f"prompt-resume-{session_id[:8]}.txt"
-            prompt_file.write_text(prompt, encoding="utf-8")
-
-            # Start process in background (venv-aware frago lookup)
-            cmd = _resolve_frago_cmd() + [
-                "agent",
-                "--resume",
-                session_id,
-                "--yes",
-                "--prompt-file",
-                str(prompt_file),
-            ]
-            cwd = _resolve_project_path(session_id)
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(f"\n{'='*60}\n")
-                f.write(f"[Resume] {prompt}\n")
-                f.write(f"{'='*60}\n")
-                process = run_subprocess_background(
-                    cmd,
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    cwd=cwd,
-                )
-
-            title = prompt
-
-            return {
-                "status": "ok",
-                "pid": process.pid,
-                "message": f"Continued in session {session_id[:8]}...: {title}",
-            }
-
-        except FileNotFoundError:
-            return {
-                "status": "error",
-                "error": "frago command not found, please ensure it's properly installed",
-            }
-        except Exception as e:
-            logger.error("Failed to continue agent task: %s", e)
-            return {
-                "status": "error",
-                "error": f"Failed to continue task: {str(e)}",
-            }

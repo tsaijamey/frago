@@ -8,7 +8,7 @@
   "capabilities": {
     "agent": {
       "create": "uv run frago agent {prompt} — 启动 sub-agent",
-      "resume": "uv run frago agent '消息' --resume {session_id} — 追加到已有会话",
+      "resume": "PA 决策 action:resume → executor 写 ResumeInbox，sub-agent 下次工具调用前自动注入新指令（无需重启进程）",
       "list": "uv run frago session list — 查看所有会话",
       "status": "uv run frago session show {session_id} — 查看会话详情"
     },

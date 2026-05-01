@@ -36,7 +36,7 @@ class AgentStartRequest(BaseModel):
 
 
 class AgentContinueRequest(BaseModel):
-    """Request body for POST /api/agent/{session_id}/continue"""
+    """Request body for POST /api/agent/attached/{internal_id}/message"""
 
     prompt: str = Field(..., min_length=1, description="Continuation prompt")
 
