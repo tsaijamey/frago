@@ -216,19 +216,43 @@ def download_file(api_client, file_key, file_name, message_id):
     return None
 
 
+PLACEHOLDER_MAP = {
+    "sticker": "[表情包]",
+    "audio": "[音频]",
+    "media": "[视频]",
+    "folder": "[文件夹]",
+    "share_chat": "[分享群名片]",
+    "share_user": "[分享个人名片]",
+    "location": "[位置]",
+    "video_chat": "[视频会议]",
+    "todo": "[待办]",
+    "vote": "[投票]",
+    "merge_forward": "[合并转发]",
+    "hongbao": "[红包]",
+}
+
+
 def extract_text_from_content(msg_type, content_str, message_id, api_client):
-    """Parse msg.content JSON → (text, attachments_paths)."""
+    """Parse msg.content JSON.
+
+    Returns (body_text, placeholder_text, attachment_paths):
+      body_text       — user-typed text only (used for 'frago' keyword detection;
+                        path-like strings like /home/yammi/.frago/... must NOT leak in)
+      placeholder_text — [图片: path] / [文件: path] / [类型] block to append to prompt
+      attachment_paths — local cache paths for downloaded media
+    """
     try:
         content = json.loads(content_str)
     except (json.JSONDecodeError, TypeError):
-        return content_str, []
+        return content_str, "", []
 
-    images = []
+    paths = []
     if msg_type == "text":
-        return content.get("text", ""), images
+        return content.get("text", ""), "", paths
     if msg_type == "post":
         title = content.get("title", "")
-        parts = [title] if title else []
+        text_parts = [title] if title else []
+        ph_parts = []
         for lang_content in content.values():
             if isinstance(lang_content, list):
                 for para in lang_content:
@@ -236,33 +260,31 @@ def extract_text_from_content(msg_type, content_str, message_id, api_client):
                         for elem in para:
                             if isinstance(elem, dict):
                                 if elem.get("tag") == "text":
-                                    parts.append(elem.get("text", ""))
+                                    text_parts.append(elem.get("text", ""))
                                 elif elem.get("tag") == "img" and elem.get("image_key"):
                                     p = download_image(api_client, elem["image_key"], message_id)
                                     if p:
-                                        images.append(p)
-                                        parts.append(f"[图片: {p}]")
-        return "\n".join(parts), images
+                                        paths.append(p)
+                                        ph_parts.append(f"[图片: {p}]")
+        return "\n".join(text_parts), "\n".join(ph_parts), paths
     if msg_type == "image":
         image_key = content.get("image_key", "")
         if image_key:
             p = download_image(api_client, image_key, message_id)
             if p:
-                images.append(p)
-                return f"[图片: {p}]", images
-        return "[image]", images
-    if msg_type == "sticker":
-        return "[表情包]", images
+                paths.append(p)
+                return "", f"[图片: {p}]", paths
+        return "", "[图片]", paths
     if msg_type == "file":
         file_name = content.get("file_name", "unknown")
         file_key = content.get("file_key", "")
         if file_key and message_id:
             p = download_file(api_client, file_key, file_name, message_id)
             if p:
-                images.append(p)
-                return f"[文件: {p}]", images
-        return f"[文件: {file_name}]", images
-    return f"[{msg_type}]", images
+                paths.append(p)
+                return "", f"[文件: {p}]", paths
+        return "", f"[文件: {file_name}]", paths
+    return "", PLACEHOLDER_MAP.get(msg_type, f"[{msg_type}]"), paths
 
 
 def fetch_message_text(api_client, message_id):
@@ -275,28 +297,39 @@ def fetch_message_text(api_client, message_id):
             return None
         msg = resp.data.items[0]
         content = msg.body.content if msg.body else "{}"
-        text, _ = extract_text_from_content(msg.msg_type, content, message_id, api_client)
-        return text.strip() or None
+        body, ph, _ = extract_text_from_content(msg.msg_type, content, message_id, api_client)
+        combined = "\n".join(p for p in (body, ph) if p)
+        return combined.strip() or None
     except Exception as e:
         _log(f"[warn] fetch_message_text {message_id}: {e}")
         return None
 
 
-def is_command(text, mentions, bot_open_id):
-    t = text.strip().lower()
-    bot_mentioned = False
-    if mentions and bot_open_id:
-        for m in mentions:
-            # Mentions from WS event payload are dicts, not SDK objects
-            mid = m.get("id", {})
-            if isinstance(mid, dict):
-                if mid.get("open_id") == bot_open_id:
-                    bot_mentioned = True
-                    break
-            elif mid == bot_open_id:
-                bot_mentioned = True
-                break
-    return bot_mentioned or t.startswith("/") or "frago" in t
+def is_bot_mentioned(mentions, bot_open_id):
+    if not (mentions and bot_open_id):
+        return False
+    for m in mentions:
+        # Mentions from WS event payload are dicts, not SDK objects
+        mid = m.get("id", {})
+        if isinstance(mid, dict):
+            if mid.get("open_id") == bot_open_id:
+                return True
+        elif mid == bot_open_id:
+            return True
+    return False
+
+
+def should_trigger_pa(body_text, mentions, bot_open_id):
+    """PA trigger requires either an @-mention of the bot or 'frago' in body text.
+
+    body_text MUST be the raw user-typed text without attachment placeholders
+    (which contain ~/.frago/cache/... and would self-trigger).
+    """
+    if is_bot_mentioned(mentions, bot_open_id):
+        return True
+    if body_text and re.search(r"frago", body_text, re.IGNORECASE):
+        return True
+    return False
 
 
 def strip_mention(text, mentions, bot_open_id):
@@ -420,31 +453,40 @@ def _handle_event(event, api_client, bot_open_id, allowed_chat_ids, allowed_send
     if is_bot:
         return  # never process bot's own messages as tasks
 
-    # Extract text + attachments
+    # Extract text + attachments. body_text is user-typed only; placeholder_text
+    # holds [图片: path] / [文件: path] / [类型]. Attachments (image/file) are
+    # always downloaded so the agent can reference local paths even if this
+    # particular message ends up being context-only.
     content_str = msg.content or "{}"
-    text, images = extract_text_from_content(msg.message_type, content_str, msg_id, api_client)
-    if not text.strip():
+    body_text, placeholder_text, attachments = extract_text_from_content(
+        msg.message_type, content_str, msg_id, api_client
+    )
+    combined = "\n".join(p for p in (body_text, placeholder_text) if p).strip()
+    if not combined:
         return
-    if msg.message_type == "system" or text.startswith("[system]"):
+    if msg.message_type == "system":
         return
-    if "This message was recalled" in text:
+    if "This message was recalled" in body_text or "This message was recalled" in placeholder_text:
         return
 
-    # Command gate: only bot-targeted messages become tasks
+    # PA trigger gate: must be sender-allowed AND (bot mentioned OR 'frago' in body)
     if not sender_allowed:
         return
-    if not is_command(text, mentions_raw, bot_open_id):
+    if not should_trigger_pa(body_text, mentions_raw, bot_open_id):
+        _log(
+            f"[skip] not mentioned, msg {msg_id} parsed to context only, no PA trigger"
+        )
         return
 
-    clean_text = strip_mention(text, mentions_raw, bot_open_id)
+    clean_body = strip_mention(body_text, mentions_raw, bot_open_id) if body_text else ""
+    prompt_text = "\n".join(p for p in (clean_body, placeholder_text) if p).strip()
 
     # Handle quote/reply
     parent_id = getattr(msg, "parent_id", None) or None
-    prompt_text = clean_text
     if parent_id:
         quoted = fetch_message_text(api_client, parent_id)
         if quoted:
-            prompt_text = f"<quoted_message>{quoted}</quoted_message>\n{clean_text}"
+            prompt_text = f"<quoted_message>{quoted}</quoted_message>\n{prompt_text}"
 
     reply_context = {
         "chat_id": chat_id,
@@ -453,8 +495,8 @@ def _handle_event(event, api_client, bot_open_id, allowed_chat_ids, allowed_send
         "parent_message_id": parent_id,
         "sender_id": sender_open_id,
     }
-    if images:
-        reply_context["attachments"] = images
+    if attachments:
+        reply_context["attachments"] = attachments
 
     _flush({
         "type": "message",

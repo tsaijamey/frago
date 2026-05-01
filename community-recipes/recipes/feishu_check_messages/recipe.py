@@ -249,10 +249,29 @@ def save_state(state):
     state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
-def extract_text(msg, client=None):
-    """Extract plain text from a Feishu message object. Returns (text, msg_type, attachments).
+PLACEHOLDER_MAP = {
+    "sticker": "[表情包]",
+    "audio": "[音频]",
+    "media": "[视频]",
+    "folder": "[文件夹]",
+    "share_chat": "[分享群名片]",
+    "share_user": "[分享个人名片]",
+    "location": "[位置]",
+    "video_chat": "[视频会议]",
+    "todo": "[待办]",
+    "vote": "[投票]",
+    "merge_forward": "[合并转发]",
+    "hongbao": "[红包]",
+}
 
-    attachments: list of local file paths for downloaded images/files.
+
+def extract_text(msg, client=None):
+    """Extract content from a Feishu message object.
+
+    Returns (body_text, placeholder_text, msg_type, attachments):
+      body_text       — user-typed text only (used for 'frago' detection)
+      placeholder_text — [图片: path] / [文件: path] / [类型] for non-text content
+      attachments     — local cache paths for downloaded media
     """
     msg_type = msg.msg_type
     msg_id = msg.message_id
@@ -263,13 +282,14 @@ def extract_text(msg, client=None):
     except (json.JSONDecodeError, TypeError):
         content = {"text": content_str}
 
-    images = []
+    paths = []
 
     if msg_type == "text":
-        return content.get("text", ""), msg_type, images
+        return content.get("text", ""), "", msg_type, paths
     elif msg_type == "post":
         title = content.get("title", "")
         text_parts = [title] if title else []
+        ph_parts = []
         for lang_content in content.values():
             if isinstance(lang_content, list):
                 for para in lang_content:
@@ -281,30 +301,28 @@ def extract_text(msg, client=None):
                                 elif elem.get("tag") == "img" and elem.get("image_key") and client:
                                     path = download_image(client, elem["image_key"], message_id=msg_id)
                                     if path:
-                                        images.append(path)
-                                        text_parts.append(f"[图片: {path}]")
-        return "\n".join(text_parts), msg_type, images
+                                        paths.append(path)
+                                        ph_parts.append(f"[图片: {path}]")
+        return "\n".join(text_parts), "\n".join(ph_parts), msg_type, paths
     elif msg_type == "image":
         image_key = content.get("image_key", "")
         if image_key and client:
             path = download_image(client, image_key, message_id=msg_id)
             if path:
-                images.append(path)
-                return f"[图片: {path}]", msg_type, images
-        return "[image]", msg_type, images
-    elif msg_type == "sticker":
-        return "[表情包]", msg_type, images
+                paths.append(path)
+                return "", f"[图片: {path}]", msg_type, paths
+        return "", "[图片]", msg_type, paths
     elif msg_type == "file":
         file_name = content.get("file_name", "unknown")
         file_key = content.get("file_key", "")
         if file_key and client and msg_id:
             path = download_file(client, file_key, file_name, message_id=msg_id)
             if path:
-                images.append(path)
-                return f"[文件: {path}]", msg_type, images
-        return f"[文件: {file_name}]", msg_type, images
+                paths.append(path)
+                return "", f"[文件: {path}]", msg_type, paths
+        return "", f"[文件: {file_name}]", msg_type, paths
     else:
-        return f"[{msg_type}]", msg_type, images
+        return "", PLACEHOLDER_MAP.get(msg_type, f"[{msg_type}]"), msg_type, paths
 
 
 def fetch_message_content(client, message_id):
@@ -322,35 +340,29 @@ def fetch_message_content(client, message_id):
             print(f"[warn] Failed to fetch quoted message {message_id}: code={response.code}, msg={response.msg}", file=sys.stderr)
             return None
         msg = response.data.items[0]
-        text, _, _ = extract_text(msg, client=client)
-        return text.strip() if text.strip() else None
+        body, ph, _, _ = extract_text(msg, client=client)
+        combined = "\n".join(p for p in (body, ph) if p).strip()
+        return combined or None
     except Exception as e:
         print(f"[warn] Exception fetching quoted message {message_id}: {e}", file=sys.stderr)
         return None
 
 
-def is_command(text, mentions=None, bot_open_id=None):
-    """Check if a message is directed at the bot (task) vs ordinary chat (context).
+def is_command(body_text, mentions=None, bot_open_id=None):
+    """A message triggers PA only if it @-mentions the bot OR contains 'frago' in body.
 
-    A message is a command if:
-    - It explicitly @-mentions the bot (checked via mentions list + bot_open_id)
-    - It starts with /
-    - It contains "frago" (case-insensitive)
-
-    Pure image/text messages without bot mention are NOT commands.
+    body_text MUST be the raw user-typed text WITHOUT attachment placeholders —
+    placeholder paths like /home/yammi/.frago/cache/... contain 'frago' and would
+    self-trigger every image/file message.
     """
-    t = text.strip().lower()
-
-    # Check if bot is mentioned via structured mentions data
     bot_mentioned = False
     if mentions and bot_open_id:
         bot_mentioned = any(m.id == bot_open_id for m in mentions)
-
-    return (
-        bot_mentioned
-        or t.startswith("/")
-        or "frago" in t
-    )
+    if bot_mentioned:
+        return True
+    if body_text and re.search(r"frago", body_text, re.IGNORECASE):
+        return True
+    return False
 
 
 def strip_mention(text, mentions=None, bot_open_id=None):
@@ -491,14 +503,15 @@ def fetch_messages(app_id, app_secret, max_results=5, context_limit=CONTEXT_LIMI
             is_bot = sender and sender.sender_type == "app"
 
             parent_id = getattr(msg, "parent_id", None) or None
-            text, msg_type, msg_images = extract_text(msg, client=client)
-            if not text.strip():
+            body_text, placeholder_text, msg_type, msg_images = extract_text(msg, client=client)
+            combined_text = "\n".join(p for p in (body_text, placeholder_text) if p).strip()
+            if not combined_text:
                 continue
 
             # Skip system/recalled
-            if msg_type == "system" or text.startswith("[system]"):
+            if msg_type == "system":
                 continue
-            if "This message was recalled" in text:
+            if "This message was recalled" in body_text or "This message was recalled" in placeholder_text:
                 continue
 
             sender_id = sender.id if sender else ""
@@ -526,11 +539,13 @@ def fetch_messages(app_id, app_secret, max_results=5, context_limit=CONTEXT_LIMI
                 "msg_id": msg_id,
                 "create_time": create_time,
                 "update_time": update_time,
-                "text": text.strip(),
+                "body_text": body_text,
+                "placeholder_text": placeholder_text,
+                "text": combined_text,
                 "sender_id": sender_id,
                 "is_bot": is_bot,
                 "is_new": msg_is_new or msg_is_edited,
-                "is_command": not is_bot and sender_allowed and is_command(text, msg.mentions, bot_open_id),
+                "is_command": not is_bot and sender_allowed and is_command(body_text, msg.mentions, bot_open_id),
                 "mentions": msg.mentions,
                 "chat_id": chat_id,
                 "chat_name": chat_name,
@@ -573,7 +588,9 @@ def fetch_messages(app_id, app_secret, max_results=5, context_limit=CONTEXT_LIMI
             # For replies/quotes, fetch the original message content
             instruction_parts = []
             for _, p in group:
-                part_text = strip_mention(p["text"], p.get("mentions"), bot_open_id)
+                clean_body = strip_mention(p.get("body_text", ""), p.get("mentions"), bot_open_id) if p.get("body_text") else ""
+                ph = p.get("placeholder_text", "")
+                part_text = "\n".join(s for s in (clean_body, ph) if s).strip()
                 if p.get("parent_id"):
                     quoted = fetch_message_content(client, p["parent_id"])
                     if quoted:
