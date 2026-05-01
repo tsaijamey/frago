@@ -5,7 +5,7 @@ Supports both detached (fire-and-forget) and attached (streaming) modes.
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -85,37 +85,6 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
     )
 
 
-@router.post("/agent/{session_id}/continue")
-async def continue_agent(session_id: str, request: AgentContinueRequest) -> Dict[str, Any]:
-    """Continue conversation in an existing session.
-
-    Uses the Claude session_id (from task list) to resume the conversation.
-    This is the correct ID that maps to ~/.frago/sessions/claude/{session_id}/.
-
-    Args:
-        session_id: Claude session ID (NOT the web task_id)
-        request: Continuation request with new prompt
-
-    Returns:
-        Status and message
-
-    Raises:
-        HTTPException: 400 if session_id is empty, 500 if continue fails
-    """
-    if not session_id or not session_id.strip():
-        raise HTTPException(status_code=400, detail="session_id cannot be empty")
-
-    result = AgentService.continue_task(session_id, request.prompt)
-
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=result.get("error"))
-
-    # Schedule delayed refresh to update task list
-    asyncio.create_task(_delayed_refresh())
-
-    return result
-
-
 # ============================================================
 # Attached mode endpoints
 # ============================================================
@@ -159,7 +128,7 @@ async def start_agent_attached(
 
 
 @router.post("/agent/attached/{internal_id}/message")
-async def send_message_attached(internal_id: str, request: AgentContinueRequest) -> Dict[str, Any]:
+async def send_message_attached(internal_id: str, request: AgentContinueRequest) -> dict[str, Any]:
     """Send a continuation message to an attached session.
 
     Args:
@@ -187,7 +156,7 @@ async def send_message_attached(internal_id: str, request: AgentContinueRequest)
 
 
 @router.post("/agent/attached/{internal_id}/stop")
-async def stop_agent_attached(internal_id: str) -> Dict[str, Any]:
+async def stop_agent_attached(internal_id: str) -> dict[str, Any]:
     """Stop an attached session.
 
     Args:
@@ -211,7 +180,7 @@ async def stop_agent_attached(internal_id: str) -> Dict[str, Any]:
 
 
 @router.get("/agent/attached/{internal_id}/info")
-async def get_attached_info(internal_id: str) -> Dict[str, Any]:
+async def get_attached_info(internal_id: str) -> dict[str, Any]:
     """Get info about an attached session.
 
     Args:

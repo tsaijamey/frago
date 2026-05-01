@@ -21,6 +21,7 @@ from typing import Any
 
 from frago.server.services.ingestion.models import IngestedTask, TaskStatus
 from frago.server.services.ingestion.store import TaskStore
+from frago.server.services.resume_inbox import ResumeInbox
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,14 @@ class Executor:
       2. asyncio.create_task(_execute_run(task)) per task
       3. each task: launch agent → mark executing → 回填 session_id + pid
       4. monitor PID
-      5. on exit: check _killed_by_resume → 如果是就跳过，重新监听新 pid
-      6. extract results → mark completed/failed
-      7. best-effort close TabGroup
-      8. build system_notify → enqueue to PA
+      5. on exit: extract results → mark completed/failed
+      6. best-effort close TabGroup
+      7. build system_notify → enqueue to PA
+
+    Resume semantics: PA "resume" no longer kills the sub-agent. New
+    prompts are appended to ``ResumeInbox`` and picked up by the
+    PreToolUse hook on the agent's next tool call (spec
+    20260501-pa-resume-hot-injection).
     """
 
     def __init__(
@@ -67,7 +72,6 @@ class Executor:
         self._store = store
         self._pa_enqueue_message = pa_enqueue_message  # async callable
         self._broadcast_pa_event = broadcast_pa_event  # async callable
-        self._killed_by_resume: set[int] = set()
         self._loop_task: asyncio.Task[None] | None = None
         self._active_tasks: set[asyncio.Task[None]] = set()
 
@@ -141,11 +145,8 @@ class Executor:
         and hand the outcome to PA. Takes run_id explicitly so resume can
         reuse the existing Run instance instead of re-creating one.
         """
-        # 2. Monitor PID until exit (with resume awareness)
-        final_pid = await self._monitor_until_done(task, pid)
-        if final_pid is None:
-            # Killed by resume → resume handler re-entered monitoring
-            return
+        # 2. Monitor PID until exit
+        await self._monitor_until_done(task, pid)
 
         # 3. Determine success/failure from Claude Code session JSONL
         # Wait briefly for JSONL flush — Claude Code process may have exited
@@ -410,11 +411,10 @@ class Executor:
 
         return run_id, pid
 
-    async def _monitor_until_done(self, task: IngestedTask, pid: int) -> int | None:
-        """Poll PID until process exits OR declares itself stuck. Handles resume kills.
+    async def _monitor_until_done(self, task: IngestedTask, pid: int) -> int:
+        """Poll PID until process exits OR declares itself stuck.
 
-        Returns final PID on normal exit, or None if killed by resume
-        (resume handler takes over monitoring).
+        Returns final PID on exit (normal or idle-stuck kill).
 
         Idle-stuck detection: if the claude JSONL file hasn't grown for
         IDLE_STUCK_TIMEOUT_MIN minutes, kill the process and treat as exit
@@ -438,25 +438,11 @@ class Executor:
                 return None
 
         last_active = _jsonl_mtime() or time.time()
-        last_check_pid = pid
 
         while True:
             try:
                 os.kill(pid, 0)
             except (ProcessLookupError, PermissionError):
-                # Process exited
-                if pid in self._killed_by_resume:
-                    self._killed_by_resume.discard(pid)
-                    updated = self._store.get(task.id)
-                    if updated and updated.pid and updated.pid != pid:
-                        pid = updated.pid
-                        last_active = _jsonl_mtime() or time.time()
-                        logger.info(
-                            "Executor: resume detected, now monitoring pid %d for task %s",
-                            pid, task.id[:8],
-                        )
-                        continue
-                    logger.warning("Executor: resume kill but no new pid for task %s", task.id[:8])
                 return pid
 
             await asyncio.sleep(PID_POLL_INTERVAL)
@@ -466,8 +452,7 @@ class Executor:
             if cur_mtime and cur_mtime > last_active:
                 last_active = cur_mtime
 
-            if (pid == last_check_pid
-                    and time.time() - last_active > idle_timeout_sec):
+            if time.time() - last_active > idle_timeout_sec:
                 logger.warning(
                     "Executor: task %s idle for %.0f min (pid %d alive but JSONL not growing) "
                     "— declaring stuck, killing process",
@@ -492,23 +477,23 @@ class Executor:
                 )
                 return pid
 
-            last_check_pid = pid
-
     # -- resume --
 
     async def execute_resume(
         self, task_id: str, new_prompt: str,
     ) -> dict[str, Any]:
-        """Resume semantics: continue the Claude session with a new prompt.
+        """Resume via PreToolUse hot injection (spec 20260501).
 
-        Relaxed guards (spec Level 2 of resume-fix):
-        - Missing pid is OK (task already completed) — skip the kill step.
-        - Task must still exist in TaskStore and have session_id; otherwise fail.
-        - If session is still RUNNING, AgentService.continue_task will refuse.
+        Appends the new prompt to the per-claude-session ``ResumeInbox``;
+        the agent's next PreToolUse hook drains the inbox and surfaces
+        the prompts as ``additionalContext``. The sub-agent process is
+        not killed and not restarted — if it has already exited the
+        injection is left pending until the session is revived (or
+        cleaned up by the 7-day .consumed/ retention).
 
         Returns a structured result:
-            {"status": "ok", "new_pid": int} on success
-            {"status": "failed", "reason": str, "detail": str} on failure
+            {"status": "ok", "claude_session_id": str, "injection_id": str}
+            {"status": "failed", "reason": str, "detail": str}
         """
         from frago.server.services.trace import trace_entry
 
@@ -542,119 +527,65 @@ class Executor:
             )
             return {"status": "failed", "reason": reason, "detail": detail}
 
-        # Try to kill the current agent process if one is alleged to exist.
-        # If pid is None or the process already exited, silently skip — continue_task
-        # will resume the Claude session regardless of whether a live process existed.
-        if task.pid:
-            self._killed_by_resume.add(task.pid)
-            try:
-                os.kill(task.pid, signal.SIGTERM)
-                logger.debug("Executor: sent SIGTERM to pid %d for resume of task %s",
-                             task.pid, task_id[:8])
-            except (ProcessLookupError, PermissionError):
-                logger.debug("Executor: pid %d already gone for task %s",
-                             task.pid, task_id[:8])
-                self._killed_by_resume.discard(task.pid)
-
-        # Resume session with new prompt
-        from frago.server.services.agent_service import AgentService
-
-        result = AgentService.continue_task(task.session_id, new_prompt)
-        if result.get("status") != "ok":
-            reason = "continue_task_failed"
-            detail = str(result.get("error", ""))
-            logger.error("Executor: failed to resume task %s: %s", task_id[:8], detail)
-            if task.pid:
-                self._killed_by_resume.discard(task.pid)
+        if not task.claude_session_id:
+            reason = "missing_claude_session_id"
+            detail = (
+                "Task has no claude_session_id — sub-agent never reached the "
+                "init event. Hot injection requires a known Claude session UUID."
+            )
+            logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
                 thread_id=task.thread_id, task_id=task_id,
                 data={"action": "resume", "status": "failed",
                       "reason": reason, "detail": detail},
-                event=f"resume 失败: {detail}",
+                event=f"resume 失败: {reason}",
             )
             return {"status": "failed", "reason": reason, "detail": detail}
 
-        # Backfill new PID
-        new_pid = result.get("pid")
-        if new_pid:
-            self._store.update_run_info(task_id, pid=new_pid)
-            logger.info("Executor: resumed task %s with new pid %d",
-                        task_id[:8], new_pid)
+        try:
+            injection = ResumeInbox.append(
+                run_id=task.session_id,
+                claude_session_id=task.claude_session_id,
+                task_id=task_id,
+                prompt=new_prompt,
+                pa_thread_id=task.thread_id,
+            )
+        except Exception as e:
+            reason = "inbox_write_failed"
+            detail = f"Failed to write resume_inbox file: {e}"
+            logger.error("Executor: resume %s failed — %s", task_id[:8], detail,
+                         exc_info=True)
+            trace_entry(
+                origin="internal", subkind="executor", data_type="action_result",
+                thread_id=task.thread_id, task_id=task_id,
+                data={"action": "resume", "status": "failed",
+                      "reason": reason, "detail": detail},
+                event=f"resume 失败: {reason}",
+            )
+            return {"status": "failed", "reason": reason, "detail": detail}
 
-        # Reactivate the Run instance — prior completion set it to INACTIVE,
-        # but this resume turn is fresh activity on the same run directory.
-        # Without this, external observers (UI, `frago run list`) still see
-        # a dead run while the agent is actually writing new outputs.
-        run_id = task.session_id
-        if run_id:
-            try:
-                from frago.run.manager import RunManager
-                from frago.run.models import RunStatus
-                mgr = RunManager(PROJECTS_DIR)
-                run = mgr.find_run(run_id)
-                if run.status == RunStatus.INACTIVE:
-                    run.status = RunStatus.ACTIVE
-                    # Phase 1 canonical metadata file is _domain.json; fall back
-                    # to legacy .metadata.json for not-yet-migrated runs.
-                    domain_metadata_file = PROJECTS_DIR / run_id / "_domain.json"
-                    legacy_metadata_file = PROJECTS_DIR / run_id / ".metadata.json"
-                    target_file = (
-                        domain_metadata_file
-                        if domain_metadata_file.exists() or not legacy_metadata_file.exists()
-                        else legacy_metadata_file
-                    )
-                    target_file.write_text(
-                        json.dumps(run.to_dict(), indent=2),
-                        encoding="utf-8",
-                    )
-                    logger.info("Executor: reactivated run %s for resume", run_id)
-            except Exception:
-                logger.debug("Failed to unarchive run %s", run_id, exc_info=True)
-
-        # Flip task back to EXECUTING so timeline records this resume turn
-        # as live work rather than a lingering COMPLETED/FAILED state.
-        # update_status emits a task_state timeline entry.
-        self._store.update_status(task_id, TaskStatus.EXECUTING)
+        logger.info(
+            "Executor: queued hot-injection %s for task %s (csid=%s)",
+            injection.injection_id[:8], task_id[:8],
+            task.claude_session_id[:8],
+        )
 
         trace_entry(
             origin="internal", subkind="executor", data_type="action_result",
             thread_id=task.thread_id, task_id=task_id,
-            data={"action": "resume", "status": "ok", "new_pid": new_pid,
+            data={"action": "resume", "status": "ok",
+                  "injection_id": injection.injection_id,
+                  "claude_session_id": task.claude_session_id,
                   "session_id": task.session_id},
-            event=f"resume 成功: pid={new_pid}",
+            event=f"resume 排队: injection={injection.injection_id[:8]}",
         )
 
-        # Attach monitoring so the resume turn flows through the same
-        # completion → JSONL read → status update → PA notify pipeline as
-        # first-launch. Without this, resume fires-and-forgets and nothing
-        # downstream notices when the new turn finishes.
-        if new_pid and run_id:
-            refreshed = self._store.get(task_id)
-            if refreshed:
-                monitor_task = asyncio.create_task(
-                    self._safe_finalize_resume(refreshed, new_pid, run_id)
-                )
-                self._active_tasks.add(monitor_task)
-                monitor_task.add_done_callback(self._active_tasks.discard)
-
-        return {"status": "ok", "new_pid": new_pid}
-
-    async def _safe_finalize_resume(
-        self, task: IngestedTask, pid: int, run_id: str,
-    ) -> None:
-        """Wrapper around _finalize_run for resume-spawned monitoring."""
-        try:
-            await self._finalize_run(task, pid, run_id)
-        except Exception:
-            logger.error(
-                "Executor: unhandled error finalizing resumed task %s",
-                task.id[:8], exc_info=True,
-            )
-            self._store.update_status(
-                task.id, TaskStatus.FAILED,
-                error="executor internal error during resume finalize",
-            )
+        return {
+            "status": "ok",
+            "injection_id": injection.injection_id,
+            "claude_session_id": task.claude_session_id,
+        }
 
     # -- result extraction --
 
