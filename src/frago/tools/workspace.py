@@ -283,8 +283,29 @@ def _encode_project_path(project_path: Path) -> str:
 # =============================================================================
 
 
+_FILE_HASH_CHUNK = 1 << 20  # 1 MiB; bounded RSS regardless of file size
+
+
+def _file_digest(path: Path) -> bytes:
+    """Stream-hash a file. Bounded memory (1 MiB buffer)."""
+    import hashlib
+    h = hashlib.blake2b(digest_size=32)
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(_FILE_HASH_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.digest()
+
+
 def _sync_file(src: Path, dst: Path) -> bool:
-    """Copy a single file if content differs. Returns True if copied."""
+    """Copy a single file if content differs. Returns True if copied.
+
+    Compares with stat size first, then streamed hash on size match. Never
+    loads entire files into memory (was: src.read_bytes() == dst.read_bytes()
+    which doubled the largest file's RSS and contributed to bootstrap OOM).
+    """
     if not src.exists() or not src.is_file():
         return False
 
@@ -294,12 +315,27 @@ def _sync_file(src: Path, dst: Path) -> bool:
     if dst.is_symlink():
         dst.unlink()
     elif dst.exists() and dst.is_file():
-        # Compare content
-        if src.read_bytes() == dst.read_bytes():
-            return False
+        # Fast path: differing size means differing content.
+        try:
+            if src.stat().st_size != dst.stat().st_size:
+                pass  # fall through to copy
+            elif _file_digest(src) == _file_digest(dst):
+                return False
+        except OSError:
+            pass  # fall through to copy on stat/read error
 
     shutil.copy2(src, dst)
     return True
+
+
+# Names always skipped during recursive sync. These are large/binary trees
+# that have no business in workspace sync (e.g. nested git repos, node deps,
+# Python venvs, byte-compiled caches). Top-level callers can additionally
+# pass exclude_names for context-specific exclusions.
+_RECURSIVE_HARD_EXCLUDE: set[str] = {
+    ".git", "node_modules", ".venv", "venv", "__pycache__",
+    ".cache", ".tmp", "chrome_profile", "edge_profile",
+}
 
 
 def _sync_dir(
@@ -307,19 +343,25 @@ def _sync_dir(
     dst: Path,
     exclude_names: Optional[set[str]] = None,
     delete_extra: bool = True,
+    _max_depth: int = 16,
 ) -> bool:
     """Sync a directory tree. Returns True if anything changed.
-
-    Resolves symlinks to copy actual content.
-    Handles exclude_names to skip specific files/dirs at the top level.
 
     Args:
         delete_extra: If True (default), remove dst entries not in src (mirror).
             If False, keep dst entries not in src (additive merge).
             Use False when collecting to workspace — other devices may have
             added files that don't exist locally.
+
+    Symlinks: directory symlinks are NOT followed (prevents loops + escapes
+    out of the source tree); file symlinks ARE resolved and copied as content.
+    Recursive descent always skips _RECURSIVE_HARD_EXCLUDE names plus any
+    caller-supplied exclude_names; both are propagated to all subtrees.
     """
     if not src.exists() or not src.is_dir():
+        return False
+    if _max_depth <= 0:
+        logger.warning("_sync_dir: depth limit reached at %s, skipping", src)
         return False
 
     changed = False
@@ -332,13 +374,27 @@ def _sync_dir(
     # Track what exists in source (for deletion detection)
     src_names: set[str] = set()
 
-    for item in src.iterdir():
-        # Resolve symlinks
-        real_item = item.resolve() if item.is_symlink() else item
-        name = item.name
+    effective_exclude = set(_RECURSIVE_HARD_EXCLUDE)
+    if exclude_names:
+        effective_exclude |= exclude_names
 
-        if exclude_names and name in exclude_names:
+    for item in src.iterdir():
+        name = item.name
+        if name in effective_exclude:
             continue
+
+        # File symlinks → resolve and copy content. Directory symlinks → skip
+        # (avoids loops and accidental escape into mounts / sibling repos).
+        if item.is_symlink():
+            try:
+                real_item = item.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if real_item.is_dir():
+                logger.debug("_sync_dir: skipping dir symlink %s -> %s", item, real_item)
+                continue
+        else:
+            real_item = item
 
         src_names.add(name)
 
@@ -346,7 +402,13 @@ def _sync_dir(
             if _sync_file(real_item, dst / name):
                 changed = True
         elif real_item.is_dir():
-            if _sync_dir(real_item, dst / name, delete_extra=delete_extra):
+            if _sync_dir(
+                real_item,
+                dst / name,
+                exclude_names=exclude_names,
+                delete_extra=delete_extra,
+                _max_depth=_max_depth - 1,
+            ):
                 changed = True
 
     # Remove entries in dst that no longer exist in src
