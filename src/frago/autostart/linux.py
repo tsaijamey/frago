@@ -120,6 +120,13 @@ class LinuxAutostartManager(AutostartManager):
             f"ExecStart={python_path} -m frago.server.runner --daemon",
             "Restart=always",
             "RestartSec=30",
+            # Memory protection: server + Claude Code sub-agents + recipes can
+            # legitimately use a few GB. Cap so a runaway (e.g. git push on a
+            # bloated sync repo) is killed cgroup-internally instead of taking
+            # down the host. MemoryHigh applies soft pressure (reclaim);
+            # MemoryMax is a hard kill ceiling.
+            "MemoryHigh=6G",
+            "MemoryMax=8G",
             "",
             "[Install]",
             "WantedBy=default.target",
