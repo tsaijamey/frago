@@ -20,8 +20,22 @@ current_run
 projects/.tmp/
 projects/*/screenshots/
 projects/*/logs/
+# Run instance binary/cache artifacts under both legacy projects/{session}/...
+# and domain layout projects/{domain}/{session}/... (commit 1a66bc7).
+# metadata.json / steps.jsonl / summary.{json,md} / _domain.json / insights/
+# are still synced as text-only run state.
+projects/**/chrome_profile/
+projects/**/chrome_profile_*/
+projects/**/chrome_profile2/
+projects/**/temp/
+projects/**/outputs/
+projects/**/.cache/
+projects/**/.git/
 runtime.json
 runtime.json.bak.*
+
+# Cache directories (device-local, not synced)
+cache/
 
 # Commands directory (managed by frago itself, not synced)
 .claude/commands/
