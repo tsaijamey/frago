@@ -15,11 +15,14 @@ message_cache.json
 traces/
 threads/
 chrome_profile/
+chrome_profile_*/
 edge_profile/
+edge_profile_*/
+chrome/extension-profile/
 current_run
 projects/.tmp/
-projects/*/screenshots/
-projects/*/logs/
+projects/**/screenshots/
+projects/**/logs/
 # Run instance binary/cache artifacts under both legacy projects/{session}/...
 # and domain layout projects/{domain}/{session}/... (commit 1a66bc7).
 # metadata.json / steps.jsonl / summary.{json,md} / _domain.json / insights/
