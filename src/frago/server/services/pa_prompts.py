@@ -570,7 +570,19 @@ PA_QUEUE_UNKNOWN_FALLBACK_TEMPLATE = "[{msg_type}] {msg_json}"
 # --------------------------------------------------------------------------
 PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE = (
     "你的上一条输出格式错误: {error}\n"
-    "请重新输出纯 JSON 数组，不包含任何解释性文字。"
+    "\n"
+    "上一条输出的原文（供你恢复内容，不要丢弃）:\n"
+    "<<<RAW_BEGIN\n"
+    "{raw_output}\n"
+    "RAW_END>>>\n"
+    "\n"
+    "如果上面那段原文是要发给用户的回复（自然语言、Markdown、或长答案），"
+    "请把它整段塞进 reply action 的 text 字段，输出形如:\n"
+    "[{{\"action\": \"reply\", \"msg_id\": \"<你正在处理的 msg_id>\", "
+    "\"channel\": \"<对应 channel>\", \"text\": \"<上面整段原文，保留 Markdown>\"}}]\n"
+    "\n"
+    "如果上面那段原文是中间思考、不是最终答复，则按本次新的判断输出 JSON 数组。\n"
+    "本次响应必须是且仅是合法 JSON 数组，JSON 外不允许任何字符。"
 )
 
 
