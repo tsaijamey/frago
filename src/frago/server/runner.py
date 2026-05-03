@@ -9,11 +9,13 @@ Can be run as a module for daemon mode:
 
 import contextlib
 import logging
+import logging.config
 import signal
 import sys
 import threading
 import webbrowser
 from datetime import datetime
+from typing import Any
 
 import uvicorn
 
@@ -58,6 +60,7 @@ def run_server(
     auto_port: bool = True,
     log_level: str = "info",
     reload: bool = True,
+    log_config: dict[str, Any] | None = None,
 ) -> None:
     """Start the Uvicorn server.
 
@@ -148,27 +151,30 @@ def run_server(
 
     # Configure Uvicorn
     # Note: reload requires app as import string, not instance
+    config_kwargs: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "log_level": log_level,
+        "access_log": log_level == "debug",
+    }
+    # Pass log_config only when caller supplied one (daemon mode injects a
+    # RotatingFileHandler-based dict). Omitting the kwarg lets uvicorn fall back
+    # to its built-in stderr default — correct for foreground/dev mode.
+    if log_config is not None:
+        config_kwargs["log_config"] = log_config
+
     if reload:
         config = uvicorn.Config(
             app="frago.server.app:create_app",
             factory=True,
-            host=host,
-            port=port,
-            log_level=log_level,
-            access_log=log_level == "debug",
             reload=True,
             reload_dirs=["src/frago"],
+            **config_kwargs,
         )
     else:
         from frago.server.app import create_app
         app = create_app()
-        config = uvicorn.Config(
-            app=app,
-            host=host,
-            port=port,
-            log_level=log_level,
-            access_log=log_level == "debug",
-        )
+        config = uvicorn.Config(app=app, **config_kwargs)
 
     server = uvicorn.Server(config)
 
@@ -226,33 +232,93 @@ def _cleanup_child_processes() -> None:
         logger.warning(f"Error cleaning up child processes: {e}")
 
 
+def _build_daemon_log_config(log_file: str) -> dict[str, Any]:
+    """Construct a uvicorn-compatible logging dictConfig backed by a single
+    RotatingFileHandler.
+
+    Why a single shared handler: two RotatingFileHandler instances pointing at
+    the same file would race on rotation rename. Sharing one handler between
+    root and the uvicorn loggers also keeps the file as the *only* writer to
+    server.log, which is what makes rotation reliable on Windows (where
+    rename-on-open fails if any other fd holds the file).
+    """
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "format": "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+            },
+        },
+        "handlers": {
+            "rotating_file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "filename": log_file,
+                "mode": "a",
+                "maxBytes": 5 * 1024 * 1024,
+                "backupCount": 3,
+                "encoding": "utf-8",
+                "formatter": "default",
+            },
+        },
+        "loggers": {
+            # Uvicorn's default config attaches its own StreamHandler with
+            # propagate=False; that path bypasses RotatingFileHandler entirely.
+            # Re-route both loggers to the shared rotating handler.
+            "uvicorn": {
+                "handlers": ["rotating_file"],
+                "level": "INFO",
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "handlers": ["rotating_file"],
+                "level": "INFO",
+                "propagate": False,
+            },
+        },
+        "root": {
+            "level": "INFO",
+            "handlers": ["rotating_file"],
+        },
+    }
+
+
 def run_daemon_server() -> None:
     """Run the server in daemon mode.
 
     This function is called when running as a module for background mode.
-    It sets up logging to file and runs the server without interactive features.
+    It sets up rotating file logging and runs the server without interactive
+    features. Stdin/stdout/stderr are expected to be DEVNULL'd by the parent
+    spawner — this process owns server.log exclusively via Python logging.
     """
     from pathlib import Path
 
-    # Setup file logging for daemon mode
     log_file = Path.home() / ".frago" / "server.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    from logging.handlers import RotatingFileHandler
+    log_config = _build_daemon_log_config(str(log_file))
+    logging.config.dictConfig(log_config)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] %(levelname)s: %(message)s",
-        handlers=[
-            RotatingFileHandler(
-                str(log_file), mode="a",
-                maxBytes=5 * 1024 * 1024,  # 5MB per file
-                backupCount=3,             # keep server.log.1 ~ .3
-            ),
-        ],
-    )
+    # Route uncaught exceptions through the rotating handler instead of the
+    # process's stderr (which is /dev/null in daemon mode).
+    from types import TracebackType
 
-    logger.info(f"Starting Frago server daemon on http://{SERVER_HOST}:{SERVER_PORT}")
+    def _excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        logging.getLogger("frago.daemon").critical(
+            "Uncaught exception in daemon process",
+            exc_info=(exc_type, exc_value, exc_tb),
+        )
+
+    sys.excepthook = _excepthook
+
+    logger.info("Starting Frago server daemon on http://%s:%s", SERVER_HOST, SERVER_PORT)
 
     run_server(
         host=SERVER_HOST,
@@ -261,6 +327,7 @@ def run_daemon_server() -> None:
         auto_port=False,  # Fixed port, no auto-find
         log_level="info",
         reload=False,  # No reload in daemon mode
+        log_config=log_config,
     )
 
 

@@ -131,29 +131,32 @@ def start_new_server() -> bool:
         # Start server as daemon
         cmd = [python_exe, "-m", "frago.server.runner", "--daemon"]
 
-        log_file = Path.home() / ".frago" / "server.log"
-        log_file.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure ~/.frago exists so the daemon child can open server.log there.
+        (Path.home() / ".frago").mkdir(parents=True, exist_ok=True)
 
-        with open(log_file, "a") as log_f:
-            if platform.system() == "Windows":
-                # Windows-specific flags
-                CREATE_NO_WINDOW = 0x08000000
-                DETACHED_PROCESS = 0x00000008
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                    creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
-                )
-            else:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
+        # stdout/stderr → DEVNULL: the daemon configures its own
+        # RotatingFileHandler. Letting the parent inherit an open server.log fd
+        # to the child would block rotation on Windows (rename-on-open) and
+        # bypass rotation for any non-logging write (uvicorn StreamHandler,
+        # raw print, child subprocess stdout).
+        if platform.system() == "Windows":
+            CREATE_NO_WINDOW = 0x08000000
+            DETACHED_PROCESS = 0x00000008
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
+            )
+        else:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
 
         # Write PID file so daemon.py can track the new server
         pid_file = Path.home() / ".frago" / "server.pid"

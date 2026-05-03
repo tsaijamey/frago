@@ -438,8 +438,8 @@ def start_daemon() -> tuple[bool, str]:
     if not port_available:
         return False, f"Port {SERVER_PORT} is in use by {conflict_info}"
 
-    # Prepare log file
-    log_file = get_log_file()
+    # Ensure ~/.frago exists so the daemon child can open server.log there.
+    get_log_file()
 
     try:
         # Platform-specific subprocess creation
@@ -465,30 +465,29 @@ def start_daemon() -> tuple[bool, str]:
 
             cmd = [executable, "-m", "frago.server.runner", "--daemon"]
 
-            # Open log file and keep it open (don't use 'with' block)
-            # subprocess will inherit the handle
-            log_f = open(log_file, "a")  # noqa: SIM115
+            # stdout/stderr → DEVNULL: the daemon process configures its own
+            # RotatingFileHandler against server.log. Inheriting an open log_file
+            # fd here would (a) hold the file open across the daemon's lifetime,
+            # blocking RotatingFileHandler's rename-on-rotate on Windows, and
+            # (b) bypass rotation entirely for any byte written via the fd
+            # (uvicorn StreamHandler, raw print, child stdout).
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,  # Critical: close stdin to avoid console
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 **get_windows_subprocess_kwargs(detach=True),
             )
-            # Close our handle - subprocess has its own copy
-            log_f.close()
         else:
             # Unix: use start_new_session to detach from terminal
             cmd = [sys.executable, "-m", "frago.server.runner", "--daemon"]
-            log_f = open(log_file, "a")  # noqa: SIM115
             proc = subprocess.Popen(
                 cmd,
                 stdin=subprocess.DEVNULL,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-            log_f.close()
 
         # Write PID file
         write_pid(proc.pid)
@@ -600,18 +599,18 @@ def _spawn_restarter_daemonized(server_pid: int) -> None:
     On Windows, uses DETACHED_PROCESS + CREATE_NO_WINDOW flags (no fork needed).
     """
     restarter_script = str(Path(__file__).parent / "restarter.py")
-    log_file = str(get_log_file())
 
     if platform.system() == "Windows":
-        log_f = open(log_file, "a")  # noqa: SIM115
+        # stdout/stderr → DEVNULL: restarter is short-lived but inherits the fd
+        # to whichever file we point at; sharing server.log defeats rotation.
+        # Restarter status is observable via the new daemon's own log lines.
         subprocess.Popen(
             [sys.executable, restarter_script, str(server_pid)],
             stdin=subprocess.DEVNULL,
-            stdout=log_f,
-            stderr=subprocess.STDOUT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             **get_windows_subprocess_kwargs(detach=True),
         )
-        log_f.close()
         return
 
     # Unix: double fork to fully detach from process tree
@@ -631,14 +630,14 @@ def _spawn_restarter_daemonized(server_pid: int) -> None:
     # Second child (grandchild): this is the actual restarter process,
     # now fully detached (PPID = 1/init, new session)
     try:
-        # Redirect stdin/stdout/stderr
+        # All three streams → /dev/null. server.log is owned exclusively by
+        # the daemon process (managed via Python RotatingFileHandler); having
+        # the restarter inherit a write fd here would defeat rotation.
         devnull = os.open(os.devnull, os.O_RDWR)
-        log_fd = os.open(log_file, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-        os.dup2(devnull, 0)  # stdin
-        os.dup2(log_fd, 1)   # stdout
-        os.dup2(log_fd, 2)   # stderr
+        os.dup2(devnull, 0)
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
         os.close(devnull)
-        os.close(log_fd)
 
         os.execvp(sys.executable, [sys.executable, restarter_script, str(server_pid)])
     except Exception:
