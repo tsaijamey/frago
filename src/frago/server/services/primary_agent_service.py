@@ -1050,9 +1050,12 @@ class PrimaryAgentService:
                 await self.rotate_session()
                 return
 
-            # Give PA one correction chance
+            # Give PA one correction chance — pass the raw output so PA can
+            # re-wrap a long markdown answer into a reply action's text field
+            # instead of giving up with [].
             correction_msg = PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE.format(
                 error=result.error,
+                raw_output=output_text,
             )
             await self._send_to_pa(correction_msg)
             return

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from frago.server.services.base import (
+    get_utf8_env,
     run_subprocess_background,
     run_subprocess_interactive,
 )
@@ -121,8 +122,14 @@ class AgentSession:
         prompt_file.write_text(prompt, encoding="utf-8")
         cmd.extend(["--prompt-file", str(prompt_file)])
 
+        # FRAGO_PA marks this subprocess as a Primary Agent spawn so frago-hook
+        # can short-circuit SessionStart / PreToolUse injections that pollute
+        # PA's narrow JSON-action protocol with vanilla-agent guidance and
+        # markdown tutorials. See PA validator failure analysis (2026-05-03).
+        env = get_utf8_env()
+        env["FRAGO_PA"] = "1"
         logger.info(f"Starting attached agent with command: {cmd} in {self.project_path}")
-        self._process = run_subprocess_interactive(cmd, cwd=self.project_path)
+        self._process = run_subprocess_interactive(cmd, cwd=self.project_path, env=env)
 
         # Close stdin — prompt comes from --prompt-file
         if self._process.stdin:
