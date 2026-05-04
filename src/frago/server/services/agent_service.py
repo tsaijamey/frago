@@ -355,6 +355,28 @@ class AgentSession:
 
                 self._current_tool_input_json = ""
 
+        # Turn-end detection. Anthropic stream protocol emits message_delta
+        # with stop_reason at the end of every turn. stop_reason="tool_use"
+        # means the model wants its tool result fed back; the wrapper will
+        # then start another turn cycle. Any other stop_reason (end_turn /
+        # stop_sequence / max_tokens) means the model is done with this
+        # prompt — the wrapper SHOULD exit, but some wrappers (notably
+        # non-Anthropic backends in Claude Code passthrough mode) hang
+        # without closing stdout. Preempt the 60s activity watchdog by
+        # terminating proactively when we see a real end_turn marker.
+        elif event_type == "message_delta":
+            delta = event.get("delta", {})
+            stop_reason = delta.get("stop_reason")
+            if stop_reason and stop_reason != "tool_use":
+                logger.info(
+                    "Stream end-of-turn detected (stop_reason=%s) for "
+                    "session %s; terminating subprocess proactively",
+                    stop_reason, self.internal_id[:8],
+                )
+                if self._process and self._process.poll() is None:
+                    with contextlib.suppress(Exception):
+                        self._process.terminate()
+
         # Tool use detected
         elif event_type == "content_block_start":
             block = event.get("content_block", {})
