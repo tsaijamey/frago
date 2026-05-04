@@ -616,6 +616,11 @@ PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE = (
     "如果原文是任务派单的描述 / prompt → 用 run，把核心需求放进 prompt 字段。\n"
     "如果原文只是中间思考、并非最终输出 → 重新判断，按当前对话输出新的 JSON。\n"
     "\n"
+    "字段来源（不要自造，input 已经把值喂给你了，缺字段时去那里抄）：\n"
+    "  msg_id   — 从你正在处理的 input <msg msg_id=\"...\"> 标签里原样复制\n"
+    "  task_id  — 从环境信息的活跃 task 列表 / agent_completed 通知里复制\n"
+    "  channel  — 从 input <msg channel=\"...\"> 标签里原样复制\n"
+    "\n"
     "本次响应必须是且仅是合法 JSON 数组，JSON 外不允许任何字符。"
 )
 
