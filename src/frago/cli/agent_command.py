@@ -262,6 +262,13 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
     help="Use specified UUID as Claude Code session ID (for Executor traceability)"
 )
 @click.option(
+    "--resume",
+    "resume_session_id",
+    type=str,
+    default=None,
+    help="Resume an existing Claude Code session by UUID (uses claude --resume internally)."
+)
+@click.option(
     "--passthrough",
     is_flag=True,
     help="Pass through raw stream-json output (for Web UI or machine consumption)"
@@ -292,6 +299,7 @@ def agent(
     yes: bool,
     source: str,
     session_id: str | None,
+    resume_session_id: str | None,
     passthrough: bool,
     endpoint: str | None,
     api_key: str | None,
@@ -418,9 +426,16 @@ def agent(
             "--replay-user-messages",
         ])
 
-    # Use caller-provided session_id or generate a fresh one
-    target_session_id = session_id or str(uuid.uuid4())
-    cmd.extend(["--session-id", target_session_id])
+    # Resume mode vs new-session mode (mutually exclusive)
+    if session_id and resume_session_id:
+        click.echo("Error: --session-id and --resume are mutually exclusive", err=True)
+        raise click.Abort()
+    if resume_session_id:
+        target_session_id = resume_session_id
+        cmd.extend(["--resume", resume_session_id])
+    else:
+        target_session_id = session_id or str(uuid.uuid4())
+        cmd.extend(["--session-id", target_session_id])
 
     if model:
         cmd.extend(["--model", model])
