@@ -11,7 +11,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-VALID_PA_ACTIONS = {"reply", "run", "resume", "schedule"}
+# spec freeze v1.1 §3: PA 对 Msg 输出的 action 词汇集 = {run, reply, resume, dismiss} 4 个
+# schedule 是 PA 全局 action (注册 cron), 走独立 SchedulerService 通路, 不在 Msg loop 内.
+# Phase 1: 加 dismiss; schedule 暂保留兼容 (Phase 1 后续 commit 与 scheduler 改造同步移除).
+VALID_PA_ACTIONS = {"reply", "run", "resume", "dismiss", "schedule"}
+
+# Msg-action 词汇 (spec freeze v1.1 §3 严格 4 个, 用于 DecisionApplier 路由)
+VALID_MSG_ACTIONS = {"run", "reply", "resume", "dismiss"}
 
 VALID_QUEUE_MESSAGE_TYPES = {
     "user_message",
@@ -32,8 +38,30 @@ _PA_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "reply": ["channel", "text"],       # + task_id OR msg_id (checked separately)
     "run": ["channel", "description", "prompt"],  # + task_id OR msg_id
     "resume": ["task_id", "prompt"],    # always task_id
+    "dismiss": ["msg_id"],              # spec v1.1: PA 显式放弃 msg, 不创建 task
     "schedule": ["name", "prompt"],     # + cron OR every (checked in handler)
 }
+
+
+def validate_prompt_format(prompt: str) -> str | None:
+    """spec freeze v1.1 §3 prompt 格式契约: 首行 ≤80 字摘要 + 空行 + 正文.
+
+    Applier 调用此函数, 不符则 reject(reason=prompt_format_invalid).
+    返回 None = 合法; 返回 str = 非法理由.
+    """
+    if not prompt:
+        return "prompt is empty"
+    parts = prompt.split("\n", 2)
+    if len(parts) < 2:
+        return "prompt missing newline (need '首行摘要\\n\\n正文')"
+    first_line = parts[0]
+    if len(first_line) > 80:
+        return f"first line length {len(first_line)} > 80 chars"
+    if "```" in first_line:
+        return "first line contains code fence"
+    if len(parts) >= 2 and parts[1].strip() != "":
+        return "missing blank line between summary and body"
+    return None
 
 # Actions that require either task_id or msg_id
 _ACTIONS_REQUIRING_ID: set[str] = {"reply", "run", "schedule"}
