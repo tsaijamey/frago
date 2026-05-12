@@ -9,14 +9,10 @@ The scheduler's job is:
 3. Ingest into TaskBoard via ``Ingestor.ingest_external`` (single source of truth)
 4. Enqueue the message to the PA message queue for immediate processing
 
-Phase 1 part B-2a (root-cause fix): the legacy per-channel disk dedup file is
-removed. TaskBoard's append_msg dedup (same msg_id → duplicate_msg_ingest
-timeline entry, no second task) is now the only dedup gate.
-
-Phase finish (post-#74): the in-memory ``_message_cache`` shim is also removed
-along with ``cache_message`` / ``get_cached_message`` / ``remove_cached_message``.
-Callers that previously read the shim now read board.view_for_pa directly
-(msg.reply_context, msg.channel are exposed there).
+Dedup is TaskBoard's responsibility: ``board.append_msg`` of the same msg_id
+writes a ``duplicate_msg_ingest`` timeline entry instead of creating a second
+Msg. Spec 20260512 v1.2 freeze: TaskStore + ingested_tasks.json are gone;
+board.timeline.jsonl is the only persistence layer.
 """
 
 import asyncio
@@ -26,11 +22,10 @@ import logging
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from frago.compat import get_windows_subprocess_kwargs
-from frago.server.services.taskboard.legacy_store import TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +50,9 @@ class IngestionScheduler:
     def __init__(
         self,
         channels: list[ChannelConfig],
-        store: TaskStore,
     ) -> None:
         self._channels = channels
-        self._store = store
         self._channel_tasks: dict[str, asyncio.Task[None]] = {}
-        self._rotation_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         # Set by PrimaryAgentService after initialization
         self._pa_enqueue: asyncio.coroutines | None = None
@@ -93,26 +85,20 @@ class IngestionScheduler:
                     name=f"ingestion-{ch.name}",
                 )
             self._channel_tasks[ch.name] = task
-        self._rotation_task = asyncio.create_task(
-            self._rotation_loop(), name="ingestion-rotation"
-        )
         logger.info(
             "IngestionScheduler started (channels=%s)",
             [c.name for c in self._channels],
         )
 
     async def stop(self) -> None:
-        if not self._channel_tasks and not self._rotation_task:
+        if not self._channel_tasks:
             return
         self._stop_event.set()
         tasks_to_cancel = list(self._channel_tasks.values())
-        if self._rotation_task:
-            tasks_to_cancel.append(self._rotation_task)
         for task in tasks_to_cancel:
             task.cancel()
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         self._channel_tasks.clear()
-        self._rotation_task = None
         logger.info("IngestionScheduler stopped")
 
     async def _channel_loop(self, ch: ChannelConfig) -> None:
@@ -173,30 +159,23 @@ class IngestionScheduler:
 
         Shared by poll mode (_poll_channel) and stream mode (_stream_loop).
         Returns True if the message was newly ingested, False if skipped
-        (malformed payload or store-level dedup hit).
+        (malformed payload or board-level dedup hit via duplicate_msg_ingest).
 
         Dedup is TaskBoard's responsibility: ``board.append_msg`` of the same
         msg_id writes a ``duplicate_msg_ingest`` timeline entry instead of
-        creating a second Msg. The legacy ``_seen_messages`` / persisted cache
-        defenses are removed; TaskStore.exists (archive check) is the only
-        secondary gate — it stops messages that were archived in a prior
-        rotation from being re-ingested.
+        creating a second Msg.
         """
         msg_id = str(msg.get("id", ""))
         if not msg_id or "prompt" not in msg:
             logger.warning("Channel %s: message missing required fields, skipping", ch.name)
             return False
 
-        if self._store.exists(ch.name, msg_id):
-            logger.debug("Channel %s: message %s exists in store/archive, skipping", ch.name, msg_id)
-            return False
-
         from frago.server.services.taskboard import get_board
         from frago.server.services.taskboard.ingestor import Ingestor
-        from frago.server.services.thread_classifier import (
+        from frago.server.services.taskboard.thread_classifier import (
             classify as thread_classify,
         )
-        from frago.server.services.thread_classifier import (
+        from frago.server.services.taskboard.thread_classifier import (
             ensure_thread,
         )
         from frago.server.services.trace import trace_entry
@@ -433,43 +412,3 @@ class IngestionScheduler:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await stderr_task
 
-    async def _rotation_loop(self) -> None:
-        """Archive terminal tasks daily at 0:00 UTC. Catch-up on startup."""
-        if self._store.needs_rotation():
-            logger.info("Startup: stale terminal tasks found, running catch-up rotation")
-            self._store.rotate()
-
-        while not self._stop_event.is_set():
-            now = datetime.now()
-            tomorrow = (now + timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            wait_seconds = (tomorrow - now).total_seconds()
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=wait_seconds
-                )
-                break  # stop_event was set
-            except TimeoutError:
-                pass
-            self._store.rotate()
-
-    async def _notify(self, task: object, ch: ChannelConfig) -> None:
-        """Call notify_recipe with contract-defined params."""
-        try:
-            params = {
-                "status": task.status.value,
-                "reply_context": task.reply_context,
-            }
-            if task.result_summary is not None:
-                params["result_summary"] = task.result_summary
-            if task.error is not None:
-                params["error"] = task.error
-            await asyncio.to_thread(
-                self._runner.run,
-                ch.notify_recipe,
-                params=params,
-            )
-            logger.info("Notified task result: %s via %s", task.id[:8], ch.name)
-        except Exception:
-            logger.exception("Failed to notify task: %s", task.id[:8])

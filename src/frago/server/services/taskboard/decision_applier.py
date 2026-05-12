@@ -83,12 +83,10 @@ class DecisionApplier(BaseApplier):
                 ) else None
             elif action == "resume":
                 self._resume_applier.route_resume(task_id, prompt)
-            elif action == "dismiss":
-                if hasattr(self._board, "mark_msg_dismissed"):
-                    self._board.mark_msg_dismissed(
-                        msg_id, reason=prompt or "(no reason)", by=self.name
-                    )
-                # Phase 1 后续 commit: board.mark_msg_dismissed 公有方法实装
+            elif action == "dismiss" and hasattr(self._board, "mark_msg_dismissed"):
+                self._board.mark_msg_dismissed(
+                    msg_id, reason=prompt or "(no reason)", by=self.name
+                )
         except IllegalTransitionError:
             # board 内部已 record_rejection, 不重复
             pass

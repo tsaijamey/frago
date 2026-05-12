@@ -3,13 +3,14 @@
 走完整 IngestionScheduler.poll_recipe → ingest_message → Ingestor.ingest_external
 → board.append_msg → timeline.jsonl 路径, 断言:
 
-1. 同一 msg_id 触发 10 次 ingest_message → board 仅产 1 个 Msg + 1 个 Task
+1. 同一 msg_id 触发 10 次 ingest_message → board 仅产 1 个 Msg + 0 个 Task
+   (无 PA 决策, dispatch 不会发生 — 仅断言 dedup 生效)
 2. timeline.jsonl 含 9 条 duplicate_msg_ingest entry
 3. ingestion/scheduler 文件内不再有 message_cache.json 持久化 helper
    (验证 B-2a "摘 message_cache 全部 helper" 约束生效)
 
-这是 Phase 2 vacuum BLOCK 解除条件 (Yi 决议 #82 修订: B-2a merge + 真生产
-路径回归测试通过 = Phase 2 解锁).
+Spec 20260512 v1.2 freeze: TaskStore 物理删除, board.timeline.jsonl 是唯一源.
+本测试不再注入 store.
 """
 
 from __future__ import annotations
@@ -28,7 +29,6 @@ from frago.server.services.ingestion.scheduler import (
 )
 from frago.server.services.taskboard import _reset_for_tests, set_board
 from frago.server.services.taskboard.board import TaskBoard
-from frago.server.services.taskboard.legacy_store import TaskStore
 from frago.server.services.taskboard.timeline import Timeline
 
 
@@ -46,10 +46,10 @@ def _reset_board_singleton():
     _reset_for_tests()
 
 
-def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch):
+def test_production_path_repeat_ingest_10x_one_msg(tmp_path: Path):
     """根因消除回归 (生产路径):
     poll_recipe 返回同 msg_id 10 次 → IngestionScheduler.ingest_message
-    → Ingestor.ingest_external → board 仅 1 msg + 1 task, timeline 9 dup."""
+    → Ingestor.ingest_external → board 仅 1 msg, timeline 9 dup."""
     board = _make_isolated_board(tmp_path)
     set_board(board)
 
@@ -60,24 +60,11 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
         poll_interval_seconds=120,
     )
 
-    # isolate TaskStore: tmp store path via monkeypatch
-    store_dir = tmp_path / "store"
-    store_dir.mkdir()
-    monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
-    monkeypatch.setattr(
-        "frago.server.services.taskboard.legacy_store.STORE_PATH",
-        store_dir / "ingested_tasks.json",
-        raising=False,
-    )
-    store = TaskStore()
-    # store path may have been frozen at import; force fresh empty state
-    if hasattr(store, "_tasks"):
-        store._tasks = {}
+    scheduler = IngestionScheduler(channels=[ch_cfg])
 
-    scheduler = IngestionScheduler(channels=[ch_cfg], store=store)
-
-    # Stub thread_classifier to avoid hitting real ThreadStore disk index
-    from frago.server.services.thread_classifier import ClassifyResult
+    # Stub thread_classifier to avoid hitting real classifier (taskboard/thread_classifier
+    # accesses real board; we want isolation).
+    from frago.server.services.taskboard.thread_classifier import ClassifyResult
 
     fake_classify = ClassifyResult(
         thread_id="T_PROD_001",
@@ -87,10 +74,10 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
     )
 
     with patch(
-        "frago.server.services.thread_classifier.classify",
+        "frago.server.services.taskboard.thread_classifier.classify",
         return_value=fake_classify,
     ), patch(
-        "frago.server.services.thread_classifier.ensure_thread",
+        "frago.server.services.taskboard.thread_classifier.ensure_thread",
     ), patch(
         "frago.server.services.trace.trace_entry",
     ):
@@ -109,7 +96,7 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
 
         results = asyncio.run(run_10x())
 
-    # ── 断言 1: board 仅 1 个 msg + 1 个 task ─────────────────────────
+    # ── 断言 1: board 仅 1 个 msg ───────────────────────────────────────
     thread = board._threads.get("T_PROD_001")
     assert thread is not None, "thread T_PROD_001 should exist on board"
     assert len(thread.msgs) == 1, (
@@ -135,9 +122,10 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
         f"应有 1 条 msg_received entry, got {len(msg_received_entries)}"
     )
 
-    # ── 断言 4: 首次返回 True, 后续视 store.exists() 而定 ────────────
+    # ── 断言 4: 全部 ingest 都返回 True (board.append_msg dedup 内部 swallow) ─
+    # ingest_message 返回 True 仅代表 "payload 合法 + 不被前置过滤跳过";
+    # 实际 dedup 由 board.append_msg 内的 duplicate_msg_ingest 处理.
     assert results[0] is True, "first ingest should return True"
-    # 后续 9 次因 store.exists 可能跳过, 但 board dedup 仍然保证只有 1 msg
 
 
 def test_scheduler_module_has_no_message_cache_persistence():
@@ -166,8 +154,39 @@ def test_scheduler_module_has_no_message_cache_persistence():
     )
 
 
+def test_scheduler_module_has_no_taskstore_or_ingested_tasks_json():
+    """Phase D 硬约束 (spec 20260512 v1.2): scheduler 不应再有 TaskStore /
+    ingested_tasks.json 持久化痕迹 (excluding docstring mentions).
+    """
+    import ast as _ast
+
+    import frago.server.services.ingestion.scheduler as scheduler_mod
+
+    src = Path(scheduler_mod.__file__).read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    # Strip module-level docstring so it doesn't count as a code-level reference.
+    if (
+        tree.body and isinstance(tree.body[0], _ast.Expr)
+        and isinstance(tree.body[0].value, _ast.Constant)
+        and isinstance(tree.body[0].value.value, str)
+    ):
+        tree.body = tree.body[1:]
+    code_src = _ast.unparse(tree)
+
+    forbidden = [
+        "TaskStore",
+        "ingested_tasks.json",
+        "legacy_store",
+    ]
+    found = [pat for pat in forbidden if re.search(re.escape(pat), code_src)]
+    assert not found, (
+        f"ingestion/scheduler.py 仍含 TaskStore 痕迹: {found}\n"
+        f"Phase D 硬约束: TaskStore 物理删除, scheduler 只走 board"
+    )
+
+
 def test_scheduler_ingest_message_routes_to_board(tmp_path: Path):
-    """B-2a wire-up 回归: ingest_message 必须实际调到 board, 不能只走 legacy cache."""
+    """B-2a wire-up 回归: ingest_message 必须实际调到 board."""
     board = _make_isolated_board(tmp_path)
     set_board(board)
 
@@ -176,22 +195,19 @@ def test_scheduler_ingest_message_routes_to_board(tmp_path: Path):
         poll_recipe="dummy_poll",
         notify_recipe="dummy_notify",
     )
-    store = TaskStore()
-    if hasattr(store, "_tasks"):
-        store._tasks = {}
 
-    scheduler = IngestionScheduler(channels=[ch_cfg], store=store)
+    scheduler = IngestionScheduler(channels=[ch_cfg])
 
-    from frago.server.services.thread_classifier import ClassifyResult
+    from frago.server.services.taskboard.thread_classifier import ClassifyResult
     fake_classify = ClassifyResult(
         thread_id="T_WIRE_001", parent_ref=None, layer="new", is_new=True,
     )
 
     with patch(
-        "frago.server.services.thread_classifier.classify",
+        "frago.server.services.taskboard.thread_classifier.classify",
         return_value=fake_classify,
     ), patch(
-        "frago.server.services.thread_classifier.ensure_thread",
+        "frago.server.services.taskboard.thread_classifier.ensure_thread",
     ), patch(
         "frago.server.services.trace.trace_entry",
     ):

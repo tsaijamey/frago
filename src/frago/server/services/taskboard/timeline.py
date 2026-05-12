@@ -11,10 +11,11 @@ import os
 import secrets
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from frago.server.services.taskboard.models import TimelineEntry
 
@@ -95,16 +96,14 @@ class Timeline:
             data=data or {},
         )
         line = json.dumps(asdict(entry), ensure_ascii=False, default=_serialize)
-        with self._lock:
-            with self._path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
+        with self._lock, self._path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
         return entry
 
     def fsync(self) -> None:
-        with self._lock:
-            with self._path.open("a", encoding="utf-8") as f:
-                f.flush()
-                os.fsync(f.fileno())
+        with self._lock, self._path.open("a", encoding="utf-8") as f:
+            f.flush()
+            os.fsync(f.fileno())
 
     def iter_entries(self) -> Iterator[dict[str, Any]]:
         if not self._path.exists():
