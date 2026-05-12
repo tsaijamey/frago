@@ -1,18 +1,21 @@
-"""Ingestion scheduler — polls channels, caches messages, delivers to PA.
+"""Ingestion scheduler — polls channels, ingests messages into TaskBoard.
 
 Channels are config declarations (a pair of poll + notify recipes), not code components.
 Adding a new channel requires zero code changes — just config + recipes.
 
 The scheduler's job is:
 1. Poll channels via recipes
-2. Deduplicate by (channel, channel_message_id)
-3. Cache raw message data in memory (NO task creation)
-4. Enqueue messages to the PA message queue for immediate processing
+2. Classify each new message into a thread (L1/L2 via thread_classifier)
+3. Ingest into TaskBoard via ``Ingestor.ingest_external`` (single source of truth)
+4. Enqueue the message to the PA message queue for immediate processing
 
-Task creation happens later — when PA decides an action (reply/run),
-the decision handler pulls cached data and creates the IngestedTask.
-The scheduler does NOT classify, filter, or short-circuit any messages.
-Every message reaches the PA.
+Phase 1 part B-2a (root-cause fix): the legacy per-channel disk dedup file is
+removed. TaskBoard's append_msg dedup (same msg_id → duplicate_msg_ingest
+timeline entry, no second task) is now the only dedup gate. Stale callers of
+``cache_message`` / ``get_cached_message`` / ``remove_cached_message`` continue
+to compile via in-memory shims that mirror the latest ingest payload long
+enough for primary_agent_service legacy reply path (those callers move to
+TaskBoard in B-2b).
 """
 
 import asyncio
@@ -31,19 +34,23 @@ from frago.server.services.ingestion.store import TaskStore
 
 logger = logging.getLogger(__name__)
 
-CACHE_FILE = Path.home() / ".frago" / "message_cache.json"
-
 
 @dataclass
 class CachedMessage:
-    """Raw message data cached until PA decides what to do with it."""
+    """In-memory mirror of the most recent ingest payload per (channel, msg_id).
+
+    Kept as a transient shim during B-2a so legacy callers in
+    primary_agent_service can still resolve prompt/reply_context until B-2b
+    rewrites them to read TaskBoard directly. No longer persisted to disk —
+    the durable source is ``~/.frago/timeline/timeline.jsonl``.
+    """
 
     channel: str
     msg_id: str
     prompt: str
     reply_context: dict[str, Any] = field(default_factory=dict)
     received_at: datetime = field(default_factory=datetime.now)
-    thread_id: str | None = None  # spec 20260418 — populated by classifier at ingress
+    thread_id: str | None = None
 
 
 @dataclass
@@ -78,11 +85,10 @@ class IngestionScheduler:
         # Shared runner — avoids recreating RecipeRegistry + ExecutionStore per poll
         from frago.recipes.runner import RecipeRunner
         self._runner = RecipeRunner()
-        # Message cache: key = "channel:msg_id" → CachedMessage
-        # Persisted to ~/.frago/message_cache.json to survive restarts
-        self._message_cache: dict[str, CachedMessage] = self._load_cache()
-        # In-memory dedup set (supplements store.exists() for archive check)
-        self._seen_messages: set[str] = set(self._message_cache.keys())
+        # In-memory shim (B-2a transitional): mirror most recent payload per key.
+        # Empty on boot — no longer rebuilt from disk. Cleared after each PA decision
+        # cycle by primary_agent_service.remove_cached_message.
+        self._message_cache: dict[str, CachedMessage] = {}
 
     def set_pa_enqueue(self, enqueue_fn: object) -> None:
         """Register the PA message queue enqueue function.
@@ -93,77 +99,27 @@ class IngestionScheduler:
         self._pa_enqueue = enqueue_fn
 
     def cache_message(self, msg: CachedMessage) -> None:
-        """Manually insert a message into cache.
-
-        Used by SchedulerService/PA to cache scheduled_task messages that
-        bypass the normal ingestion polling path.
+        """Insert a message into the transient shim. Used by SchedulerService
+        for scheduled_task delivery (legacy path until B-2b). B-2a no longer
+        persists to disk.
         """
         key = f"{msg.channel}:{msg.msg_id}"
         self._message_cache[key] = msg
-        self._save_cache()
-        logger.debug("Manually cached message %s", key)
+        logger.debug("Cached message %s (in-memory shim)", key)
 
     def get_cached_message(self, channel: str, msg_id: str) -> CachedMessage | None:
-        """Retrieve a cached message by channel + msg_id.
-
-        Called by PA decision handlers to get raw data for task creation.
+        """Retrieve the in-memory shim entry. Returns None after restart or
+        after ``remove_cached_message`` cleared the key — callers in
+        primary_agent_service handle the miss by skipping task creation.
         """
         return self._message_cache.get(f"{channel}:{msg_id}")
 
     def remove_cached_message(self, channel: str, msg_id: str) -> None:
-        """Remove a processed message from cache. Called after task creation."""
+        """Drop a processed message from the in-memory shim."""
         key = f"{channel}:{msg_id}"
         if key in self._message_cache:
             del self._message_cache[key]
-            self._save_cache()
             logger.debug("Removed cached message %s", key)
-
-    # -- cache persistence --
-
-    @staticmethod
-    def _load_cache() -> dict[str, CachedMessage]:
-        """Load message cache from disk on startup."""
-        if not CACHE_FILE.exists():
-            return {}
-        try:
-            raw = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-            cache: dict[str, CachedMessage] = {}
-            for key, data in raw.items():
-                cache[key] = CachedMessage(
-                    channel=data["channel"],
-                    msg_id=data["msg_id"],
-                    prompt=data["prompt"],
-                    reply_context=data.get("reply_context", {}),
-                    received_at=datetime.fromisoformat(data["received_at"]),
-                    thread_id=data.get("thread_id"),
-                )
-            logger.info("Loaded %d cached message(s) from %s", len(cache), CACHE_FILE.name)
-            return cache
-        except (json.JSONDecodeError, OSError, KeyError) as e:
-            logger.warning("Failed to load message cache: %s", e)
-            return {}
-
-    def _save_cache(self) -> None:
-        """Persist message cache to disk."""
-        try:
-            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                key: {
-                    "channel": msg.channel,
-                    "msg_id": msg.msg_id,
-                    "prompt": msg.prompt,
-                    "reply_context": msg.reply_context,
-                    "received_at": msg.received_at.isoformat(),
-                    "thread_id": msg.thread_id,
-                }
-                for key, msg in self._message_cache.items()
-            }
-            CACHE_FILE.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-        except OSError as e:
-            logger.error("Failed to save message cache: %s", e)
 
     async def start(self) -> None:
         if self._channel_tasks:
@@ -230,7 +186,7 @@ class IngestionScheduler:
                 continue
 
     async def _poll_channel(self, ch: ChannelConfig) -> None:
-        """Call poll_recipe, parse return value, cache messages, deliver to PA."""
+        """Call poll_recipe, parse return value, ingest each message, deliver to PA."""
         result = await asyncio.to_thread(
             self._runner.run, ch.poll_recipe,
             params={"notify_recipe": ch.notify_recipe},
@@ -255,43 +211,33 @@ class IngestionScheduler:
                 new_count += 1
 
         if new_count:
-            self._save_cache()
-            logger.info("Poll %s: %d new message(s) cached and persisted", ch.poll_recipe, new_count)
+            logger.info("Poll %s: %d new message(s) ingested into TaskBoard", ch.poll_recipe, new_count)
 
     async def ingest_message(self, ch: ChannelConfig, msg: dict[str, Any]) -> bool:
-        """Dedup + cache + classify + enqueue a single message dict.
+        """Classify + ingest a single message via TaskBoard.
 
         Shared by poll mode (_poll_channel) and stream mode (_stream_loop).
-        Returns True if the message was newly cached (caller may want to persist),
-        False if skipped (dedup, malformed, etc).
+        Returns True if the message was newly ingested, False if skipped
+        (malformed payload or store-level dedup hit).
 
-        Note: caller is responsible for calling `_save_cache()` at a suitable
-        cadence — poll mode batches one save per poll, stream mode saves per event.
+        Dedup is TaskBoard's responsibility: ``board.append_msg`` of the same
+        msg_id writes a ``duplicate_msg_ingest`` timeline entry instead of
+        creating a second Msg. The legacy ``_seen_messages`` / persisted cache
+        defenses are removed; TaskStore.exists (archive check) is the only
+        secondary gate — it stops messages that were archived in a prior
+        rotation from being re-ingested.
         """
         msg_id = str(msg.get("id", ""))
         if not msg_id or "prompt" not in msg:
             logger.warning("Channel %s: message missing required fields, skipping", ch.name)
             return False
 
-        key = f"{ch.name}:{msg_id}"
-
-        if key in self._seen_messages:
-            logger.debug("Channel %s: message %s already seen, skipping", ch.name, msg_id)
-            return False
         if self._store.exists(ch.name, msg_id):
             logger.debug("Channel %s: message %s exists in store/archive, skipping", ch.name, msg_id)
-            self._seen_messages.add(key)
             return False
 
-        cached = CachedMessage(
-            channel=ch.name,
-            msg_id=msg_id,
-            prompt=msg["prompt"],
-            reply_context=msg.get("reply_context", {}),
-        )
-        self._message_cache[key] = cached
-        self._seen_messages.add(key)
-
+        from frago.server.services.taskboard import get_board
+        from frago.server.services.taskboard.ingestor import Ingestor
         from frago.server.services.thread_classifier import (
             classify as thread_classify,
         )
@@ -315,7 +261,50 @@ class IngestionScheduler:
             msg_id=msg_id,
             root_summary=msg["prompt"][:80],
         )
-        cached.thread_id = classify_result.thread_id
+
+        # B-2a single source: write to TaskBoard via Ingestor. Dedup happens
+        # inside board.append_msg (same msg_id → duplicate_msg_ingest entry).
+        board = get_board()
+        # Ensure board.Thread exists (classifier wrote ThreadStore index but
+        # board is a separate object graph). create_thread is idempotent-by-
+        # caller-checking: we silently swallow IllegalTransitionError if a
+        # previous ingest already created it on this side.
+        from frago.server.services.taskboard.models import IllegalTransitionError
+        try:
+            board.create_thread(
+                thread_id=classify_result.thread_id,
+                origin="external",
+                subkind=ch.name,
+                root_summary=msg["prompt"][:80],
+                by="IngestionScheduler",
+            )
+        except IllegalTransitionError:
+            pass
+
+        ingestor = Ingestor(board)
+        ingestor.ingest_external(
+            channel=ch.name,
+            msg_id=msg_id,
+            sender_id=sender,
+            text=msg["prompt"],
+            parent_ref=classify_result.parent_ref,
+            received_at=datetime.now(),
+            reply_context=reply_ctx,
+            thread_id=classify_result.thread_id,
+        )
+
+        # B-2a transitional shim: mirror payload in-memory so
+        # primary_agent_service legacy paths (reply enrichment, scheduled task
+        # cache lookup) keep working. B-2b will drop these readers and we can
+        # remove the shim. No disk persistence.
+        cached = CachedMessage(
+            channel=ch.name,
+            msg_id=msg_id,
+            prompt=msg["prompt"],
+            reply_context=reply_ctx,
+            thread_id=classify_result.thread_id,
+        )
+        self._message_cache[f"{ch.name}:{msg_id}"] = cached
 
         trace_entry(
             origin="external",
@@ -491,8 +480,7 @@ class IngestionScheduler:
                     )
                     continue
                 try:
-                    if await self.ingest_message(ch, msg):
-                        self._save_cache()
+                    await self.ingest_message(ch, msg)
                 except Exception:
                     logger.exception(
                         "Stream %s: ingest_message failed for %s",

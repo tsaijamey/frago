@@ -477,6 +477,64 @@ class Executor:
                 )
                 return pid
 
+    # -- B-2a: spawn_resume for ResumeApplier Case A (FRAGO_CASE_A_ENABLED) --
+    def spawn_resume(
+        self,
+        csid: str | None,
+        prompt: str,
+    ) -> tuple[str, int]:
+        """Spawn a brand-new sub-agent that resumes a Claude session by CSID.
+
+        Used by ResumeApplier when ``task.status ∈ {completed, failed}`` (the
+        prior session has already exited). Distinct from
+        ``execute_resume`` which appends to ResumeInbox for live sessions.
+
+        Returns ``(new_run_id, new_pid)``. Raises
+        ``ClaudeSessionNotFoundError`` when the CSID file no longer exists on
+        disk (~/.claude/projects/<cwd-slug>/<csid>.jsonl) — ResumeApplier
+        catches this and marks the task ``resume_failed``.
+
+        Phase 1 stage-gate: callers must check
+        ``resume_applier.case_a_enabled()`` (env FRAGO_CASE_A_ENABLED=1)
+        before invoking; this method itself does no gate so tests can
+        exercise the spawn path.
+        """
+        import uuid as _uuid
+
+        from frago.server.services.agent_service import AgentService
+        from frago.server.services.taskboard.models import (
+            ClaudeSessionNotFoundError,
+        )
+
+        if csid:
+            home = str(Path.home())
+            cwd_slug = home.replace("/", "-")
+            jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{csid}.jsonl"
+            if not jsonl_path.exists():
+                raise ClaudeSessionNotFoundError(
+                    f"Claude session jsonl not found: {jsonl_path}"
+                )
+
+        new_run_id = f"resume-{_uuid.uuid4().hex[:12]}"
+        # AgentService.start_task does not yet support a true `claude --resume`
+        # invocation; passing the prior CSID makes the new sub-agent reuse the
+        # same Claude session UUID for trace continuity. Real resume semantics
+        # (replaying the session JSONL) land alongside the AgentService rewrite.
+        result = AgentService.start_task(
+            prompt=prompt,
+            project_path=str(Path.home()),
+            env_extra={
+                "FRAGO_CURRENT_RUN": new_run_id,
+                "FRAGO_DOMAIN": new_run_id,
+            },
+            claude_session_id=csid,
+        )
+        if result.get("status") != "ok":
+            raise RuntimeError(
+                f"spawn_resume failed: {result.get('error', 'unknown')}"
+            )
+        return new_run_id, int(result["pid"])
+
     # -- resume --
 
     async def execute_resume(

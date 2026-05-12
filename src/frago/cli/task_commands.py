@@ -23,6 +23,60 @@ def task_group():
     pass
 
 
+@task_group.command(name="history", cls=AgentFriendlyCommand)
+@click.argument("task_id", required=True)
+@click.option("--limit", type=int, default=50,
+              help="Max timeline entries to return (newest first, default 50)")
+def task_history(task_id: str, limit: int):
+    """Show the full timeline of a task across resume / restart boundaries.
+
+    Reads ~/.frago/timeline/timeline.jsonl and filters entries whose task_id
+    matches (or whose data contains the task_id). Output is JSON for agent
+    consumption — one object per entry, ordered newest first.
+
+    spec v1.2 A5: Task→Session 0..1, history walks back over multiple
+    Sessions (resume can mint a new run_id + CSID; history stitches them
+    via task_id).
+
+    Examples:
+      frago task history 01HW00ABC
+      frago task history 01HW00ABC --limit 200
+    """
+    from pathlib import Path as _Path
+
+    timeline_path = _Path.home() / ".frago" / "timeline" / "timeline.jsonl"
+    if not timeline_path.exists():
+        click.echo(json.dumps(
+            {"task_id": task_id, "entries": [], "note": "no timeline.jsonl yet"},
+            ensure_ascii=False, indent=2,
+        ))
+        return
+
+    matched: list[dict] = []
+    for line in timeline_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("task_id") == task_id:
+            matched.append(entry)
+            continue
+        data = entry.get("data") or {}
+        if isinstance(data, dict) and (
+            data.get("task_id") == task_id or data.get("run_id") == task_id
+        ):
+            matched.append(entry)
+
+    matched.reverse()
+    click.echo(json.dumps(
+        {"task_id": task_id, "count": len(matched[:limit]), "entries": matched[:limit]},
+        ensure_ascii=False, indent=2,
+    ))
+
+
 @task_group.command(name="mark", cls=AgentFriendlyCommand)
 @click.argument("task_id", required=True)
 @click.argument(

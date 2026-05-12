@@ -185,6 +185,58 @@ def _extract_recent_action_results(entries: list[dict], limit: int = 3) -> list[
     return results
 
 
+def _build_board_section() -> str | None:
+    """TaskBoard view (spec 20260512-msg-task-board-redesign Phase 1).
+
+    B-2a: 直接读 board.view_for_pa() 拿到 (threads + recent_rejections), 渲染成
+    PA bootstrap 可见的简洁面板. board 是单一源 (timeline.jsonl), 状态新鲜度
+    与 ingestion 实时同步, 优于 legacy timeline_service.get_thread_context
+    (后者扫 trace.jsonl). Phase 2 vacuum 完成后 legacy section 可下线.
+    """
+    try:
+        from frago.server.services.taskboard import get_board
+        view = get_board().view_for_pa()
+    except Exception:
+        logger.debug("Failed to build board section", exc_info=True)
+        return None
+
+    threads = view.get("threads") or []
+    rejections = view.get("recent_rejections") or []
+    if not threads and not rejections:
+        return None
+
+    lines = ["## TaskBoard view (board.view_for_pa)"]
+    if threads:
+        lines.append(f"Threads: {len(threads)}")
+        for t in threads[:10]:
+            head = (
+                f"- [{t['id']}] {t.get('subkind','?')} "
+                f"(status={t.get('status','?')}) — {t.get('root_summary','')!r}"
+            )
+            lines.append(head)
+            for m in (t.get("msgs") or [])[-3:]:
+                lines.append(
+                    f"    msg [{m.get('id','?')}] status={m.get('status','?')} "
+                    f"tasks={len(m.get('tasks') or [])}"
+                )
+                for tk in (m.get("tasks") or [])[-3:]:
+                    lines.append(
+                        f"      task [{tk.get('id','?')}] type={tk.get('type','?')} "
+                        f"status={tk.get('status','?')}"
+                    )
+
+    if rejections:
+        lines.append("")
+        lines.append("### Recent rejections (board.recent_rejections, rolling window)")
+        for r in rejections:
+            lines.append(
+                f"- {r.get('ts','')[:19]} action={r.get('original_action','?')!r} "
+                f"reason={r.get('reason','?')} prompt_head={r.get('original_prompt_head','')!r}"
+            )
+
+    return "\n".join(lines)
+
+
 def _build_thread_section() -> str | None:
     """Thread-aware folded view (spec 20260418-timeline-consumer-unification Phase 2).
 
@@ -280,6 +332,11 @@ def build_bootstrap(
 
     # 不代入任务快照：重启后任务由 ingestion 自然驱动；
     # 任务状态在消息触达 PA 时按需呈现，避免把"历史回顾"误当成"待办列表"。
+
+    # TaskBoard view (spec 20260512-msg-task-board-redesign, B-2a 接入)
+    board_section = _build_board_section()
+    if board_section:
+        sections.append(board_section)
 
     # Thread-aware view (spec 20260418-timeline-consumer-unification Phase 2)
     thread_section = _build_thread_section()

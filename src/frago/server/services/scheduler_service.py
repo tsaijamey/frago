@@ -344,6 +344,29 @@ class SchedulerService:
         schedule["run_count"] = schedule.get("run_count", 0) + 1
         self._save()
 
+        # B-2a: scheduled fast-path through TaskBoard. Ingestor.ingest_scheduled
+        # creates a fresh thread (origin="scheduled", subkind=job_name) and a
+        # run-type task in one transaction so PA sees msg.status=dispatched on
+        # its next view_for_pa tick. Failure here is non-fatal — the PA
+        # enqueue path below still delivers the heartbeat for legacy decision.
+        try:
+            from frago.server.services.taskboard import get_board
+            from frago.server.services.taskboard.ingestor import Ingestor
+
+            board = get_board()
+            ingestor = Ingestor(board)
+            ingestor.ingest_scheduled(
+                schedule_id=schedule_id,
+                prompt=prompt,
+                trigger_at=_now_utc(),
+                job_name=schedule_name,
+            )
+        except Exception:
+            logger.exception(
+                "[scheduler] TaskBoard ingest_scheduled failed for %s",
+                schedule_id,
+            )
+
         if not self._pa_enqueue:
             logger.warning("[scheduler] No PA enqueue function — cannot deliver schedule %s", schedule_id)
             return
