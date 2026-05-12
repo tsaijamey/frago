@@ -9,21 +9,20 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-
 # ── Thread / Msg / Task 三层 ─────────────────────────────────────────────────
 
 
 @dataclass
 class Thread:
     thread_id: str
-    status: Literal["active", "dormant", "closed"]
+    status: Literal["active", "dormant", "closed", "archived"]
     origin: Literal["external", "internal", "scheduled"]
     subkind: str
     root_summary: str
     created_at: datetime
     last_active_at: datetime
     senders: set[str] = field(default_factory=set)
-    msgs: list["Msg"] = field(default_factory=list)
+    msgs: list[Msg] = field(default_factory=list)
 
 
 @dataclass
@@ -36,8 +35,8 @@ class Msg:
         "closed",
         "dismissed",
     ]
-    source: "Source"
-    tasks: list["Task"] = field(default_factory=list)
+    source: Source
+    tasks: list[Task] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -64,9 +63,9 @@ class Task:
         "replied",
     ]
     type: Literal["run", "reply"]
-    intent: "Intent"
-    session: "Session | None" = None
-    result: "Result | None" = None
+    intent: Intent
+    session: Session | None = None
+    result: Result | None = None
 
 
 @dataclass

@@ -110,8 +110,12 @@ def test_fold_two_pass_marker_skip(tmp_path: Path):
     assert "T1" not in board._threads, "archived thread 不应进内存 board"
 
 
-def test_startup_fold_completed_phase0_4_fields(tmp_path: Path):
-    """Ce specify: Phase 0 startup_fold_completed entry 严格 4 字段 (Yi 23:49:25 锁定)."""
+def test_startup_fold_completed_phase2_6_fields(tmp_path: Path):
+    """Ce specify: Phase 2 startup_fold_completed entry 严格 6 字段 (Yi #92 锁定).
+
+    Phase 0 锁定 4 字段, Phase 2 vacuum 引入后扩展 +2:
+    vacuum_duration_ms / archived_threads_count.
+    """
     home = tmp_path
     board = boot(home)
     assert board is not None
@@ -123,11 +127,15 @@ def test_startup_fold_completed_phase0_4_fields(tmp_path: Path):
     assert last["data_type"] == "startup_fold_completed"
     assert set(last["data"].keys()) == {
         "fold_duration_ms",
+        "vacuum_duration_ms",
         "entries_read",
         "entries_skipped",
         "timeline_bytes",
-    }, f"Phase 0 字段集严格 4 字段, got {set(last['data'].keys())}"
+        "archived_threads_count",
+    }, f"Phase 2 字段集严格 6 字段, got {set(last['data'].keys())}"
     assert isinstance(last["data"]["fold_duration_ms"], int)
+    assert isinstance(last["data"]["vacuum_duration_ms"], int)
     assert last["data"]["entries_read"] == 0  # 空 timeline
     assert last["data"]["entries_skipped"] == 0
     assert last["data"]["timeline_bytes"] == 0
+    assert last["data"]["archived_threads_count"] == 0  # 空 timeline 没 marker

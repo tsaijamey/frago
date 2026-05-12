@@ -328,5 +328,80 @@ def timeline_append(origin, subkind, data_type, thread_id, parent_id, task_id, d
     }, ensure_ascii=False))
 
 
+# ---------------------------------------------------------------------------
+# Maintenance (Phase 2: taskboard timeline.jsonl vacuum + fold)
+# ---------------------------------------------------------------------------
+
+
+def _frago_home() -> Path:
+    import os as _os
+
+    custom = _os.environ.get("FRAGO_HOME")
+    if custom:
+        return Path(custom).expanduser()
+    return Path.home() / ".frago"
+
+
+@timeline_group.command(name="vacuum", cls=AgentFriendlyCommand)
+@click.option("--max-markers", type=int, default=100,
+              help="Bounded-progress cap on archived threads processed per run (default 100, Yi #92 lock)")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def timeline_vacuum(max_markers, as_json):
+    """Run bounded-progress vacuum: archive retired threads into archive/<tid>.jsonl.
+
+    Scans ~/.frago/timeline/timeline.jsonl for `thread_archived` markers (data_type),
+    moves all entries belonging to archived threads into separate per-thread files
+    under ~/.frago/timeline/archive/, and atomically rewrites the main timeline.
+
+    Equivalent to triggering an offline server restart for vacuum purposes only.
+
+    Examples:
+      frago timeline vacuum
+      frago timeline vacuum --max-markers 200 --json
+    """
+    from frago.server.services.taskboard import vacuum as vac
+
+    home = _frago_home()
+    report = vac.run_bounded_vacuum(home, max_markers=max_markers)
+    payload = {
+        "processed": report.processed,
+        "archived_thread_ids": list(report.archived_thread_ids),
+        "max_markers": max_markers,
+    }
+    _emit(payload, as_json=as_json)
+
+
+@timeline_group.command(name="fold", cls=AgentFriendlyCommand)
+@click.option("--thread", "thread_id", required=True,
+              help="Thread id to compact (e.g. T_ABC). Required.")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def timeline_fold(thread_id, as_json):
+    """Fold redundant entries inside a thread into a single summary entry.
+
+    Currently compacts `duplicate_msg_ingest` entries (grouped by msg_id + channel)
+    into one `duplicate_msg_ingest_summary` entry per group containing the count,
+    first/last entry_id, and first/last ts. Reduces PA context noise for high-churn
+    threads where the same message id is repeatedly seen by the ingestor.
+
+    Operates in-place via two-pass scan + atomic replace.
+
+    Examples:
+      frago timeline fold --thread T_ABC
+      frago timeline fold --thread T_ABC --json
+    """
+    from frago.server.services.taskboard import vacuum as vac
+
+    home = _frago_home()
+    report = vac.fold_thread_duplicates(home, thread_id)
+    payload = {
+        "thread_id": report.thread_id,
+        "folded_count": report.folded_count,
+        "summary_entries_written": report.summary_entries_written,
+        "bytes_before": report.bytes_before,
+        "bytes_after": report.bytes_after,
+    }
+    _emit(payload, as_json=as_json)
+
+
 # Silence Path import ruff warning (used for future extension)
 _ = Path
