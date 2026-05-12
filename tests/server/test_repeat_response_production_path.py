@@ -159,6 +159,7 @@ def test_scheduler_module_has_no_taskstore_or_ingested_tasks_json():
     ingested_tasks.json 持久化痕迹 (excluding docstring mentions).
     """
     import ast as _ast
+
     import frago.server.services.ingestion.scheduler as scheduler_mod
 
     src = Path(scheduler_mod.__file__).read_text(encoding="utf-8")
