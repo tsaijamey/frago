@@ -26,6 +26,7 @@ tests/*
 tests/server/*
 !tests/server/test_taskboard_*.py
 !tests/server/test_repeat_response_production_path.py
+!tests/server/test_timeline_query_perf.py
 tests/results/
 tests/*.log
 coverage/

@@ -59,41 +59,22 @@ class TaskBoard:
         self.entries_read = 0
         self.entries_skipped = 0
 
-    # ── fold (两遍算法) ──────────────────────────────────────────────
+    # ── fold (两遍算法; 实现迁到 taskboard.fold 模块) ───────────────
 
     @classmethod
     def fold(cls, timeline_path: Path) -> TaskBoard:
-        """从 timeline.jsonl 重建内存投影。
+        """从 timeline.jsonl 重建内存投影 (thin wrapper around fold.fold).
 
-        两遍算法 (T5.1):
-        - 第一遍: 扫全文件收 archived_thread_ids set (data_type=='thread_archived')
-        - 第二遍: 读 entries 跳过该 set 内 thread_id 的全部 entries
+        Two-pass algorithm (T5.1):
+        - First pass: collect ``archived_thread_ids`` (data_type=='thread_archived')
+        - Second pass: replay entries, skip those whose thread_id is in the set
+
+        Phase finish: 算法主体迁入 ``frago.server.services.taskboard.fold``;
+        本方法保留为 backward-compat 入口, 行为不变.
         """
-        timeline = Timeline(timeline_path)
-        board = cls(timeline)
+        from frago.server.services.taskboard.fold import fold as _fold
 
-        # 第一遍
-        archived_thread_ids: set[str] = set()
-        for entry in timeline.iter_entries():
-            if entry.get("data_type") == "thread_archived":
-                tid = entry.get("thread_id")
-                if tid:
-                    archived_thread_ids.add(tid)
-
-        # 第二遍
-        entries_read = 0
-        entries_skipped = 0
-        for entry in timeline.iter_entries():
-            entries_read += 1
-            tid = entry.get("thread_id")
-            if tid in archived_thread_ids:
-                entries_skipped += 1
-                continue
-            board._apply_entry(entry)
-
-        board.entries_read = entries_read
-        board.entries_skipped = entries_skipped
-        return board
+        return _fold(timeline_path)
 
     def _apply_entry(self, entry: dict) -> None:
         """根据 data_type 把 timeline entry 转化为内存对象变更。
@@ -749,6 +730,12 @@ class TaskBoard:
                             {
                                 "id": m.msg_id,
                                 "status": m.status,
+                                "channel": m.source.channel,
+                                "sender_id": m.source.sender_id,
+                                "reply_context": (
+                                    dict(m.source.reply_context)
+                                    if m.source.reply_context else None
+                                ),
                                 "tasks": [
                                     {"id": tk.task_id, "type": tk.type, "status": tk.status}
                                     for tk in m.tasks

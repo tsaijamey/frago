@@ -316,45 +316,10 @@ class PrimaryAgentService:
         self._rotation_count += 1
         self._consecutive_json_failures = 0
 
-        orphaned = await self._reconcile_orphaned_messages()
-        if orphaned:
-            logger.info("Rotation: re-enqueued %d orphaned message(s)", orphaned)
-
-    async def _reconcile_orphaned_messages(self) -> int:
-        """Phase 3: scan message_cache for messages without a board.msg entry, re-enqueue.
-
-        Reads board.view_for_pa() to determine which channel:msg_id pairs the
-        board already knows about; cached messages absent from board are orphans
-        from a mid-rotation chain break and get re-enqueued for PA decision.
-        """
-        if not self._scheduler:
-            return 0
-
-        board = get_board()
-        view = board.view_for_pa()
-        seen_board_msg_ids: set[str] = {
-            m["id"] for t in view.get("threads", []) for m in t.get("msgs", [])
-        }
-        orphaned = 0
-
-        for _key, cached in list(self._scheduler._message_cache.items()):
-            board_msg_id = f"{cached.channel}:{cached.msg_id}"
-            if board_msg_id in seen_board_msg_ids:
-                continue
-            await self.enqueue_message({
-                "type": "user_message",
-                "msg_id": cached.msg_id,
-                "channel": cached.channel,
-                "channel_message_id": cached.msg_id,
-                "prompt": cached.prompt,
-                "reply_context": cached.reply_context,
-                "_recovered": True,
-                "received_at": cached.received_at.strftime("%Y-%m-%d %H:%M:%S"),
-            })
-            orphaned += 1
-            logger.info("Orphaned message re-enqueued: %s:%s", cached.channel, cached.msg_id)
-
-        return orphaned
+        # Phase finish: orphan reconciliation removed alongside ingestion._message_cache.
+        # Ingestor.ingest_external/ingest_scheduled writes board synchronously, so every
+        # ingested message is on board immediately. There is no "cached but not yet on
+        # board" intermediate state to reconcile after rotation.
 
     def _build_bootstrap_prompt(self, create_reason: str | None = None) -> tuple[str, str]:
         """Build bootstrap context (board view + conversation history + knowledge)."""
@@ -404,33 +369,25 @@ class PrimaryAgentService:
             logger.warning("Failed to send online notification", exc_info=True)
 
     def _lookup_recent_reply_context(self, channel: str) -> dict | None:
-        """Phase 3: look up the most recent reply_context for ``channel`` from
-        cached messages. board view itself does not expose reply_context yet
-        (B-2d will widen view_for_pa); we ask the ingestion scheduler's cache
-        which holds the live message metadata produced by the channel pollers.
+        """Look up the most recent reply_context for ``channel`` from board.
+
+        Phase finish: view_for_pa now exposes msg.reply_context directly,
+        so this reads board only — no scheduler cache lookup.
         """
-        if not self._scheduler:
-            return None
         try:
-            board = get_board()
-            view = board.view_for_pa()
-            # Find latest msg on this channel (subkind) from board
-            latest_msg_id = None
+            view = get_board().view_for_pa()
+            latest_ctx: dict | None = None
             for t in view.get("threads", []):
                 if t.get("subkind") != channel:
                     continue
                 for m in t.get("msgs", []):
-                    mid = m.get("id", "")
-                    if mid.startswith(f"{channel}:"):
-                        latest_msg_id = mid.split(":", 1)[1]
-            if not latest_msg_id:
-                return None
-            cached = self._scheduler.get_cached_message(channel, latest_msg_id)
-            if cached and getattr(cached, "reply_context", None):
-                return cached.reply_context
+                    ctx = m.get("reply_context")
+                    if ctx:
+                        latest_ctx = ctx
+            return latest_ctx
         except Exception:
             logger.debug("reply_context board lookup failed", exc_info=True)
-        return None
+            return None
 
     # -- PA event broadcast --
 
@@ -660,17 +617,9 @@ class PrimaryAgentService:
                     run_count=msg.get("run_count", 0),
                     fired_at=msg.get("triggered_at") or "unknown",
                 ))
-                if self._scheduler and msg.get("msg_id"):
-                    from frago.server.services.ingestion.scheduler import CachedMessage
-                    cache_reply_ctx = dict(msg.get("reply_context") or {})
-                    cache_reply_ctx["schedule_id"] = msg.get("schedule_id", "")
-                    cache_reply_ctx["schedule_name"] = msg.get("schedule_name", "")
-                    self._scheduler.cache_message(CachedMessage(
-                        channel=msg_channel,
-                        msg_id=msg["msg_id"],
-                        prompt=msg.get("prompt", ""),
-                        reply_context=cache_reply_ctx,
-                    ))
+                # Phase finish: scheduled_task reply_context is now carried inline on
+                # board.Source (ingest_scheduled writes it through Ingestor) and on the
+                # queue dict above. No separate cache_message shim needed.
                 if msg.get("msg_id") and msg.get("schedule_id"):
                     self._schedule_msg_map[msg["msg_id"]] = msg["schedule_id"]
 
@@ -1050,14 +999,7 @@ class PrimaryAgentService:
             except Exception:
                 logger.exception("Failed to execute PA decision: %s", d)
 
-        # Deferred cache cleanup.
-        if self._scheduler:
-            seen_msg_ids: set[tuple[str, str]] = set()
-            for d in decisions:
-                if isinstance(d, dict) and d.get("msg_id"):
-                    seen_msg_ids.add((d.get("channel", ""), d["msg_id"]))
-            for channel_key, mid in seen_msg_ids:
-                self._scheduler.remove_cached_message(channel_key, mid)
+        # Phase finish: deferred cache cleanup removed alongside _message_cache shim.
 
         # Write back schedule results.
         if self._scheduler_service:
@@ -1333,10 +1275,23 @@ class PrimaryAgentService:
         reply_channel = decision.get("channel")
         reply_context: dict[str, Any] = {}
         msg_id = decision.get("msg_id", "")
-        if self._scheduler and msg_id:
-            cached = self._scheduler.get_cached_message(reply_channel or "", msg_id)
-            if cached and cached.reply_context:
-                reply_context = dict(cached.reply_context)
+        # Phase finish: reply_context read from board (view_for_pa exposes it).
+        if msg_id and reply_channel:
+            board_msg_id = f"{reply_channel}:{msg_id}"
+            try:
+                view = get_board().view_for_pa()
+                for t in view.get("threads", []):
+                    for m in t.get("msgs", []):
+                        if m.get("id") == board_msg_id:
+                            ctx = m.get("reply_context")
+                            if ctx:
+                                reply_context = dict(ctx)
+                            break
+            except Exception:
+                logger.debug(
+                    "schedule reply_context board lookup failed for %s",
+                    board_msg_id, exc_info=True,
+                )
 
         try:
             schedule = self._scheduler_service.add_schedule(

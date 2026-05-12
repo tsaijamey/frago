@@ -11,11 +11,12 @@ The scheduler's job is:
 
 Phase 1 part B-2a (root-cause fix): the legacy per-channel disk dedup file is
 removed. TaskBoard's append_msg dedup (same msg_id → duplicate_msg_ingest
-timeline entry, no second task) is now the only dedup gate. Stale callers of
-``cache_message`` / ``get_cached_message`` / ``remove_cached_message`` continue
-to compile via in-memory shims that mirror the latest ingest payload long
-enough for primary_agent_service legacy reply path (those callers move to
-TaskBoard in B-2b).
+timeline entry, no second task) is now the only dedup gate.
+
+Phase finish (post-#74): the in-memory ``_message_cache`` shim is also removed
+along with ``cache_message`` / ``get_cached_message`` / ``remove_cached_message``.
+Callers that previously read the shim now read board.view_for_pa directly
+(msg.reply_context, msg.channel are exposed there).
 """
 
 import asyncio
@@ -24,7 +25,7 @@ import json
 import logging
 import os
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -32,24 +33,6 @@ from frago.compat import get_windows_subprocess_kwargs
 from frago.server.services.taskboard.legacy_store import TaskStore
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class CachedMessage:
-    """In-memory mirror of the most recent ingest payload per (channel, msg_id).
-
-    Kept as a transient shim during B-2a so legacy callers in
-    primary_agent_service can still resolve prompt/reply_context until B-2b
-    rewrites them to read TaskBoard directly. No longer persisted to disk —
-    the durable source is ``~/.frago/timeline/timeline.jsonl``.
-    """
-
-    channel: str
-    msg_id: str
-    prompt: str
-    reply_context: dict[str, Any] = field(default_factory=dict)
-    received_at: datetime = field(default_factory=datetime.now)
-    thread_id: str | None = None
 
 
 @dataclass
@@ -84,10 +67,6 @@ class IngestionScheduler:
         # Shared runner — avoids recreating RecipeRegistry + ExecutionStore per poll
         from frago.recipes.runner import RecipeRunner
         self._runner = RecipeRunner()
-        # In-memory shim (B-2a transitional): mirror most recent payload per key.
-        # Empty on boot — no longer rebuilt from disk. Cleared after each PA decision
-        # cycle by primary_agent_service.remove_cached_message.
-        self._message_cache: dict[str, CachedMessage] = {}
 
     def set_pa_enqueue(self, enqueue_fn: object) -> None:
         """Register the PA message queue enqueue function.
@@ -96,29 +75,6 @@ class IngestionScheduler:
         can deliver messages to the PA queue without a circular import.
         """
         self._pa_enqueue = enqueue_fn
-
-    def cache_message(self, msg: CachedMessage) -> None:
-        """Insert a message into the transient shim. Used by SchedulerService
-        for scheduled_task delivery (legacy path until B-2b). B-2a no longer
-        persists to disk.
-        """
-        key = f"{msg.channel}:{msg.msg_id}"
-        self._message_cache[key] = msg
-        logger.debug("Cached message %s (in-memory shim)", key)
-
-    def get_cached_message(self, channel: str, msg_id: str) -> CachedMessage | None:
-        """Retrieve the in-memory shim entry. Returns None after restart or
-        after ``remove_cached_message`` cleared the key — callers in
-        primary_agent_service handle the miss by skipping task creation.
-        """
-        return self._message_cache.get(f"{channel}:{msg_id}")
-
-    def remove_cached_message(self, channel: str, msg_id: str) -> None:
-        """Drop a processed message from the in-memory shim."""
-        key = f"{channel}:{msg_id}"
-        if key in self._message_cache:
-            del self._message_cache[key]
-            logger.debug("Removed cached message %s", key)
 
     async def start(self) -> None:
         if self._channel_tasks:
@@ -292,19 +248,6 @@ class IngestionScheduler:
             thread_id=classify_result.thread_id,
         )
 
-        # B-2a transitional shim: mirror payload in-memory so
-        # primary_agent_service legacy paths (reply enrichment, scheduled task
-        # cache lookup) keep working. B-2b will drop these readers and we can
-        # remove the shim. No disk persistence.
-        cached = CachedMessage(
-            channel=ch.name,
-            msg_id=msg_id,
-            prompt=msg["prompt"],
-            reply_context=reply_ctx,
-            thread_id=classify_result.thread_id,
-        )
-        self._message_cache[f"{ch.name}:{msg_id}"] = cached
-
         trace_entry(
             origin="external",
             subkind=ch.name,
@@ -333,7 +276,7 @@ class IngestionScheduler:
                     "prompt": msg["prompt"],
                     "reply_context": msg.get("reply_context", {}),
                     "thread_id": classify_result.thread_id,
-                    "received_at": cached.received_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "received_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 })
                 logger.info(
                     "Message %s enqueued to PA (thread=%s, layer=%s)",

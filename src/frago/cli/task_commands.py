@@ -134,3 +134,246 @@ def task_mark(task_id, status, reason, error, result_summary):
         "reason": reason,
         "note": "task_state entry emitted — safe against rebuild_status_cache reversion",
     }, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------------------
+# Phase finish (spec line 11): list / awaiting / active / stats subcommands
+# ---------------------------------------------------------------------------
+# These commands read ~/.frago/timeline/timeline.jsonl via TaskBoard.fold so
+# they work offline (server not required). Agents use them for ground-truth
+# board state inspection without going through the server's HTTP API.
+
+
+def _fold_board_offline():
+    """Boot a fresh TaskBoard by folding ~/.frago/timeline/timeline.jsonl.
+
+    Returns (board, timeline_path). Returns (None, path) when timeline is
+    absent — callers should treat that as an empty board.
+    """
+    from pathlib import Path as _Path
+
+    from frago.server.services.taskboard.board import TaskBoard
+
+    timeline_path = _Path.home() / ".frago" / "timeline" / "timeline.jsonl"
+    if not timeline_path.exists():
+        return None, timeline_path
+    return TaskBoard.fold(timeline_path), timeline_path
+
+
+@task_group.command(name="list", cls=AgentFriendlyCommand)
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit raw JSON (default: human-readable)")
+def task_list(as_json: bool):
+    """List the current board snapshot — threads, msgs, tasks.
+
+    Reads ~/.frago/timeline/timeline.jsonl by folding offline (no server
+    required). Output groups msgs under their thread and tasks under each msg.
+
+    Examples:
+      frago task list
+      frago task list --json | jq '.threads[] | select(.status=="active")'
+    """
+    board, timeline_path = _fold_board_offline()
+    if board is None:
+        payload = {
+            "threads": [],
+            "note": f"timeline.jsonl missing at {timeline_path}",
+        }
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    view = board.view_for_pa()
+    payload = {
+        "thread_count": len(view.get("threads", [])),
+        "threads": view.get("threads", []),
+    }
+
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    threads = view.get("threads", [])
+    if not threads:
+        click.echo("(no threads on board)")
+        return
+    for t in threads:
+        click.echo(
+            f"thread {t['id']} [{t.get('status', '?')}] subkind={t.get('subkind', '?')} "
+            f"msgs={len(t.get('msgs', []))}"
+        )
+        for m in t.get("msgs", []):
+            click.echo(
+                f"  msg {m['id']} [{m.get('status', '?')}] "
+                f"tasks={len(m.get('tasks', []))}"
+            )
+            for tk in m.get("tasks", []):
+                click.echo(
+                    f"    task {tk['id']} type={tk.get('type', '?')} "
+                    f"status={tk.get('status', '?')}"
+                )
+
+
+@task_group.command(name="awaiting", cls=AgentFriendlyCommand)
+@click.option("--json", "as_json", is_flag=True, default=False)
+def task_awaiting(as_json: bool):
+    """List Msgs in status=awaiting_decision (PA has not decided yet).
+
+    Helps diagnose PA stalled / queue backlog.
+
+    Examples:
+      frago task awaiting
+      frago task awaiting --json
+    """
+    board, timeline_path = _fold_board_offline()
+    rows: list[dict] = []
+    if board is not None:
+        for t in board.view_for_pa().get("threads", []):
+            for m in t.get("msgs", []):
+                if m.get("status") != "awaiting_decision":
+                    continue
+                rows.append({
+                    "thread_id": t.get("id"),
+                    "subkind": t.get("subkind"),
+                    "msg_id": m.get("id"),
+                    "channel": m.get("channel"),
+                    "sender_id": m.get("sender_id"),
+                })
+
+    payload = {"count": len(rows), "awaiting": rows}
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        click.echo("(no msgs awaiting PA decision)")
+        return
+    for r in rows:
+        click.echo(
+            f"awaiting {r['msg_id']} thread={r['thread_id']} channel={r.get('channel', '?')} sender={r.get('sender_id', '?')}"
+        )
+
+
+@task_group.command(name="active", cls=AgentFriendlyCommand)
+@click.option("--json", "as_json", is_flag=True, default=False)
+def task_active(as_json: bool):
+    """List Tasks in status in {queued, executing}.
+
+    Helps diagnose sub-agent stalled / executor backlog.
+
+    Examples:
+      frago task active
+      frago task active --json
+    """
+    board, _ = _fold_board_offline()
+    rows: list[dict] = []
+    active_set = {"queued", "executing"}
+    if board is not None:
+        for t in board.view_for_pa().get("threads", []):
+            for m in t.get("msgs", []):
+                for tk in m.get("tasks", []):
+                    if tk.get("status") not in active_set:
+                        continue
+                    rows.append({
+                        "thread_id": t.get("id"),
+                        "msg_id": m.get("id"),
+                        "task_id": tk.get("id"),
+                        "type": tk.get("type"),
+                        "status": tk.get("status"),
+                    })
+
+    payload = {"count": len(rows), "active": rows}
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        click.echo("(no active tasks: queued or executing)")
+        return
+    for r in rows:
+        click.echo(
+            f"active {r['task_id']} type={r.get('type', '?')} status={r.get('status', '?')} "
+            f"msg={r.get('msg_id', '?')}"
+        )
+
+
+@task_group.command(name="stats", cls=AgentFriendlyCommand)
+@click.option("--json", "as_json", is_flag=True, default=False)
+def task_stats(as_json: bool):
+    """Long-running health stats for the board.
+
+    Reports:
+      timeline_bytes       — current ~/.frago/timeline/timeline.jsonl size
+      threads_count        — total threads on board (active + dormant + closed + archived)
+      active_msgs          — msgs in awaiting_decision / dispatched
+      queued_tasks         — tasks in queued
+      executing_tasks      — tasks in executing
+      archived_threads     — last vacuum cycle's archived_threads_count (from
+                             most recent startup_fold_completed entry)
+      last_fold_duration_ms — most recent boot fold duration
+
+    Examples:
+      frago task stats
+      frago task stats --json | jq '.timeline_bytes'
+    """
+    from pathlib import Path as _Path
+
+    timeline_path = _Path.home() / ".frago" / "timeline" / "timeline.jsonl"
+    timeline_bytes = timeline_path.stat().st_size if timeline_path.exists() else 0
+
+    board, _ = _fold_board_offline()
+    threads_count = 0
+    active_msgs = 0
+    queued_tasks = 0
+    executing_tasks = 0
+    if board is not None:
+        view = board.view_for_pa()
+        threads_count = len(view.get("threads", []))
+        for t in view.get("threads", []):
+            for m in t.get("msgs", []):
+                if m.get("status") in {"awaiting_decision", "dispatched"}:
+                    active_msgs += 1
+                for tk in m.get("tasks", []):
+                    s = tk.get("status")
+                    if s == "queued":
+                        queued_tasks += 1
+                    elif s == "executing":
+                        executing_tasks += 1
+
+    archived_threads = 0
+    last_fold_duration_ms: int | None = None
+    if timeline_path.exists():
+        # walk from end backwards for the latest startup_fold_completed
+        try:
+            for line in reversed(timeline_path.read_text(encoding="utf-8").splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("data_type") == "startup_fold_completed":
+                    data = entry.get("data") or {}
+                    archived_threads = int(data.get("archived_threads_count", 0))
+                    last_fold_duration_ms = data.get("fold_duration_ms")
+                    break
+        except OSError:
+            pass
+
+    payload = {
+        "timeline_bytes": timeline_bytes,
+        "threads_count": threads_count,
+        "active_msgs": active_msgs,
+        "queued_tasks": queued_tasks,
+        "executing_tasks": executing_tasks,
+        "archived_threads": archived_threads,
+        "last_fold_duration_ms": last_fold_duration_ms,
+    }
+
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    click.echo(
+        f"timeline_bytes={payload['timeline_bytes']} threads={payload['threads_count']} "
+        f"active_msgs={payload['active_msgs']} queued={payload['queued_tasks']} "
+        f"executing={payload['executing_tasks']} archived={payload['archived_threads']} "
+        f"last_fold_ms={payload['last_fold_duration_ms']}"
+    )
