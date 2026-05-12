@@ -253,7 +253,8 @@ def timeline_view(recent, collapsed, as_json):
 def timeline_task_status(task_id, as_json):
     """Show the current status of a task (reconstructed from timeline).
 
-    This is the source of truth (TaskStore is a cache).
+    Single source: board.timeline.jsonl (spec 20260512 v1.2 freeze — no
+    secondary persistence remains).
 
     Examples:
       frago timeline task-status t_abc123

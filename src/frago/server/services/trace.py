@@ -266,8 +266,8 @@ def latest_entry_for_task(task_id: str, data_type: str | None = None) -> dict[st
 def get_current_task_status(task_id: str) -> str | None:
     """Return the latest task_state entry's data.status for the task, or None.
 
-    Spec 20260418-timeline-event-coverage Phase 4: timeline is the source of
-    truth for task state; TaskStore.status is a cache.
+    Single source: board.timeline.jsonl. There is no parallel cache to
+    reconcile (TaskStore was removed in spec 20260512 v1.2 freeze).
     """
     entry = latest_entry_for_task(task_id, data_type="task_state")
     if not entry:
