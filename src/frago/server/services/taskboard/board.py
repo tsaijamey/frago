@@ -749,6 +749,12 @@ class TaskBoard:
                             {
                                 "id": m.msg_id,
                                 "status": m.status,
+                                "channel": m.source.channel,
+                                "sender_id": m.source.sender_id,
+                                "reply_context": (
+                                    dict(m.source.reply_context)
+                                    if m.source.reply_context else None
+                                ),
                                 "tasks": [
                                     {"id": tk.task_id, "type": tk.type, "status": tk.status}
                                     for tk in m.tasks
