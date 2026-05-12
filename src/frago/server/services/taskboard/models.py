@@ -23,6 +23,9 @@ class Thread:
     last_active_at: datetime
     senders: set[str] = field(default_factory=set)
     msgs: list[Msg] = field(default_factory=list)
+    # B-2b: 取代 ThreadStore 的 tags + run_instance_id 字段
+    tags: list[str] = field(default_factory=list)
+    run_instance_id: str | None = None
 
 
 @dataclass

@@ -10,6 +10,10 @@ Layered cost model:
   L4 (user)  — user anchoring via `frago thread follow` (deferred, Phase 5)
 
 If nothing matches, a new thread root is generated.
+
+B-2b: 替换 ThreadStore 调用为 TaskBoard 公有方法 (search_threads_by_tag /
+search_threads_by_sender / create_thread / add_tag / touch_thread). ThreadStore
+已物理删除, 此模块只依赖 TaskBoard.
 """
 
 from __future__ import annotations
@@ -18,11 +22,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from frago.server.services.thread_service import (
-    STATUS_ACTIVE,
-    get_thread_store,
-)
-from frago.server.services.trace import ulid_new
+from frago.server.services.taskboard import get_board
+from frago.server.services.taskboard.timeline import ulid_new
 
 logger = logging.getLogger(__name__)
 
@@ -123,22 +124,25 @@ def classify(
     now: datetime | None = None,
     window_min: int = DEFAULT_WINDOW_MIN,
 ) -> ClassifyResult:
-    """Determine thread_id for an incoming external message."""
-    store = get_thread_store()
+    """Determine thread_id for an incoming external message.
+
+    B-2b: 走 TaskBoard.search_threads_by_tag (L1) / search_threads_by_sender (L2).
+    """
+    board = get_board()
     reply_context = reply_context or {}
     now = now or datetime.now()
 
     # ── Layer 1: channel-native threading ──────────────────────────────────
     parent_ref = _extract_parent_ref(channel, reply_context)
     if parent_ref:
-        matches = store.search(required_tags=[channel_ref_tag(channel, parent_ref)])
+        matches = board.search_threads_by_tag(channel_ref_tag(channel, parent_ref))
         if matches:
             logger.debug(
                 "classify L1 hit: channel=%s parent=%s → thread=%s",
-                channel, parent_ref, matches[0].thread_id,
+                channel, parent_ref, matches[0]["thread_id"],
             )
             return ClassifyResult(
-                thread_id=matches[0].thread_id,
+                thread_id=matches[0]["thread_id"],
                 parent_ref=parent_ref,
                 layer="L1",
                 is_new=False,
@@ -147,23 +151,25 @@ def classify(
     # ── Layer 2: heuristic (same sender, within window, no new-topic marker) ─
     if sender and not _is_new_topic_marker(content):
         cutoff = now - timedelta(minutes=window_min)
-        candidates = store.search(
-            required_tags=[sender_tag(channel, sender)],
-            status=STATUS_ACTIVE,
-            subkind=channel,
-        )
+        candidates = board.search_threads_by_sender(channel, sender, active_only=True)
         for c in candidates:
+            last_raw = c.get("last_active_at", "")
             try:
-                last = datetime.fromisoformat(c.last_active_ts)
+                last = datetime.fromisoformat(last_raw)
             except ValueError:
                 continue
+            # Strip tz to compare with caller-supplied naive `now` if needed
+            if last.tzinfo and not now.tzinfo:
+                last = last.replace(tzinfo=None)
+            elif now.tzinfo and not last.tzinfo:
+                last = last.replace(tzinfo=now.tzinfo)
             if last >= cutoff:
                 logger.debug(
                     "classify L2 hit: sender=%s last_active=%s → thread=%s",
-                    sender, c.last_active_ts, c.thread_id,
+                    sender, last_raw, c["thread_id"],
                 )
                 return ClassifyResult(
-                    thread_id=c.thread_id,
+                    thread_id=c["thread_id"],
                     parent_ref=None,
                     layer="L2",
                     is_new=False,
@@ -191,25 +197,35 @@ def ensure_thread(
     """Create or touch the thread indicated by a classification result.
 
     Adds channelref and sender tags so future messages can be grouped.
+
+    B-2b: 直接调 board.create_thread (含 tags 参数) / add_tag / touch_thread.
     """
-    store = get_thread_store()
-    if result.is_new:
-        store.create(
-            result.thread_id,
-            origin="external",
-            subkind=channel,
-            root_summary=root_summary,
-            tags=[
-                channel_ref_tag(channel, msg_id),
-                sender_tag(channel, sender) if sender else "",
-            ],
-        )
-        # Drop empty tag if sender absent
-        idx = store.get(result.thread_id)
-        if idx and "" in idx.tags:
-            idx.tags = [t for t in idx.tags if t]
-    else:
-        # Existing thread: record new message as a channelref (so reply to
-        # THIS msg will also land in the same thread) and touch activity.
-        store.add_tag(result.thread_id, channel_ref_tag(channel, msg_id))
-        store.touch(result.thread_id)
+    board = get_board()
+    tags = [channel_ref_tag(channel, msg_id)]
+    if sender:
+        tags.append(sender_tag(channel, sender))
+
+    # board.create_thread 在 thread_id 已存在时抛 IllegalTransitionError;
+    # classify 路径理论上 is_new=True 时 thread 不存在, 但 Ingestor 可能
+    # 并发已建; 用 get_thread 探测后选 path.
+    if result.is_new and board.get_thread(result.thread_id) is None:
+        try:
+            board.create_thread(
+                thread_id=result.thread_id,
+                origin="external",
+                subkind=channel,
+                root_summary=root_summary,
+                by="thread_classifier",
+                tags=tags,
+            )
+            return
+        except Exception:
+            logger.debug(
+                "classify ensure_thread create raced, falling through to tag/touch",
+                exc_info=True,
+            )
+    # Existing thread: append new channelref tag (so reply to THIS msg lands here)
+    # + sender tag (in case 历史 thread 尚未含此 sender tag) + touch.
+    for tag in tags:
+        board.add_tag(result.thread_id, tag, by="thread_classifier")
+    board.touch_thread(result.thread_id, by="thread_classifier")
