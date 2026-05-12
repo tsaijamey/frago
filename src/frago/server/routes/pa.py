@@ -47,8 +47,8 @@ async def list_pa_tasks(
     status: str = Query(default="all"),
 ) -> dict:
     """Return recent IngestedTask list for Timeline initial load."""
-    from frago.server.services.ingestion.models import TaskStatus
-    from frago.server.services.ingestion.store import TaskStore
+    from frago.server.services.taskboard.legacy_store import TaskStore
+    from frago.server.services.taskboard.models import TaskStatus
 
     store = TaskStore()
     if status == "all":

@@ -1,4 +1,14 @@
-"""Persistent task store backed by a JSON file."""
+"""Legacy persistent task store backed by a JSON file.
+
+Phase 4 (Yi #133 + HUMAN #152 + Orchestrator #158): 从
+``frago.server.services.ingestion.store`` 迁入 taskboard 层. Source-of-truth
+现在是 board.timeline.jsonl; this store remains as an execution-context
+sidecar holding fields not yet on board (channel / reply_context /
+sub_tasks). Future phases may collapse it into board.Task entirely.
+
+External imports should use ``from frago.server.services.taskboard.legacy_store
+import TaskStore``. ingestion/store.py 已物理删除.
+"""
 
 import contextlib
 import json
@@ -8,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.ingestion.models import IngestedTask, SubTask, TaskStatus
+from frago.server.services.taskboard.models import IngestedTask, SubTask, TaskStatus
 
 logger = logging.getLogger(__name__)
 

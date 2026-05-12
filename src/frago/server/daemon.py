@@ -711,8 +711,8 @@ def check_active_tasks() -> dict[str, Any]:
 
     Returns dict with keys: has_active, executing_tasks, message.
     """
-    from frago.server.services.ingestion.models import TaskStatus
-    from frago.server.services.ingestion.store import TaskStore
+    from frago.server.services.taskboard.legacy_store import TaskStore
+    from frago.server.services.taskboard.models import TaskStatus
 
     result: dict[str, Any] = {
         "has_active": False,
@@ -761,8 +761,8 @@ def force_cleanup_active_tasks(report: dict[str, Any]) -> None:
 
     Marks EXECUTING tasks as FAILED.
     """
-    from frago.server.services.ingestion.models import TaskStatus
-    from frago.server.services.ingestion.store import TaskStore
+    from frago.server.services.taskboard.legacy_store import TaskStore
+    from frago.server.services.taskboard.models import TaskStatus
 
     if report["executing_tasks"]:
         try:

@@ -191,7 +191,7 @@ class PrimaryAgentService:
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
 
         from frago.server.services.executor import Executor
-        from frago.server.services.ingestion.store import TaskStore
+        from frago.server.services.taskboard.legacy_store import TaskStore
         self._executor = Executor(
             store=TaskStore(),
             pa_enqueue_message=self.enqueue_message,
