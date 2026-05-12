@@ -64,12 +64,16 @@ def migrate(home: Path) -> MigrationReport:
     # 1. ingested_tasks.json + ingested_tasks/*.json
     legacy_tasks_file = home / "ingested_tasks.json"
     if legacy_tasks_file.exists():
-        migrated_tasks += _replay_legacy_tasks(legacy_tasks_file, timeline_path)
+        n_tasks, n_entries = _replay_legacy_tasks(legacy_tasks_file, timeline_path)
+        migrated_tasks += n_tasks
+        migrated_entries += n_entries
         source_files.append(legacy_tasks_file)
     legacy_archive_dir = home / "ingested_tasks"
     if legacy_archive_dir.exists():
         for p in sorted(legacy_archive_dir.glob("*.json")):
-            migrated_tasks += _replay_legacy_tasks(p, timeline_path)
+            n_tasks, n_entries = _replay_legacy_tasks(p, timeline_path)
+            migrated_tasks += n_tasks
+            migrated_entries += n_entries
             source_files.append(p)
 
     # 2. threads/index.jsonl
@@ -122,19 +126,139 @@ def migrate(home: Path) -> MigrationReport:
     return report
 
 
-def _replay_legacy_tasks(path: Path, timeline_path: Path) -> int:
+def _replay_legacy_tasks(path: Path, timeline_path: Path) -> tuple[int, int]:
     """旧 IngestedTask 列表 → task_appended / task_started / task_finished entries.
 
-    Phase 0 stub: 实际重放逻辑 + dedup 留下次 commit (含 legacy schema 解析)。
+    Legacy schema (src/frago/server/services/ingestion/models.py):
+      IngestedTask: id, channel, channel_message_id, prompt, status, created_at,
+                    reply_context, thread_id, sub_tasks (list[SubTask]),
+                    retry_count, recovery_count
+      SubTask: description, prompt, session_id (run_id), claude_session_id, pid,
+               result_summary, error, status, created_at, completed_at
+
+    Returns: (task_count, entry_count) — 任务数 + 写入 timeline 的 entry 总数。
     """
-    # TODO Phase 0 后续 commit: 解析 legacy IngestedTask 字段 + 生成 timeline entries
-    return 0
+    from frago.server.services.taskboard.timeline import Timeline, ulid_new
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    tasks = data if isinstance(data, list) else data.get("tasks", [])
+    if not tasks:
+        return 0, 0
+
+    timeline = Timeline(timeline_path)
+    count = 0
+    for task in tasks:
+        thread_id = task.get("thread_id")
+        channel = task.get("channel", "external")
+        msg_id_raw = task.get("channel_message_id") or task.get("id", "")
+        msg_id = f"{channel}:{msg_id_raw}" if msg_id_raw else None
+        task_id = task.get("id") or ulid_new()
+
+        # msg_received (重放原始入站)
+        timeline.append_entry(
+            data_type="msg_received",
+            by="migration",
+            thread_id=thread_id,
+            msg_id=msg_id,
+            data={
+                "channel": channel,
+                "sender_id": "__migration__",
+                "status": "received",
+                "prompt": task.get("prompt", ""),
+            },
+        )
+        count += 1
+
+        # 每个 sub_task 重放 task_started + task_finished
+        for sub in task.get("sub_tasks") or []:
+            sub_status = (sub.get("status") or "").lower()
+            timeline.append_entry(
+                data_type="task_started",
+                by="migration",
+                thread_id=thread_id,
+                msg_id=msg_id,
+                task_id=task_id,
+                data={
+                    "run_id": sub.get("session_id"),
+                    "csid": sub.get("claude_session_id"),
+                    "started_at": sub.get("created_at"),
+                },
+            )
+            count += 1
+            if sub_status in {"completed", "failed"}:
+                timeline.append_entry(
+                    data_type="task_finished",
+                    by="migration",
+                    thread_id=thread_id,
+                    msg_id=msg_id,
+                    task_id=task_id,
+                    data={
+                        "run_id": sub.get("session_id"),
+                        "ended_at": sub.get("completed_at"),
+                        "status": sub_status,
+                        "result_summary": sub.get("result_summary"),
+                        "error": sub.get("error"),
+                    },
+                )
+                count += 1
+
+        # 若 task 顶层是终态但无 sub_task 终态记录, 补一条 task_appended
+        if not task.get("sub_tasks"):
+            timeline.append_entry(
+                data_type="task_appended",
+                by="migration",
+                thread_id=thread_id,
+                msg_id=msg_id,
+                task_id=task_id,
+                data={
+                    "prev_status": "awaiting_decision",
+                    "status": "dispatched",
+                    "type": "run",
+                },
+            )
+            count += 1
+    return len(tasks), count
 
 
 def _replay_thread_index(path: Path, timeline_path: Path) -> int:
-    """threads/index.jsonl → thread_created entries."""
-    # TODO Phase 0 后续 commit
-    return 0
+    """threads/index.jsonl → thread_created entries (latest-wins dedup by thread_id)."""
+    from frago.server.services.taskboard.timeline import Timeline
+
+    if not path.exists():
+        return 0
+
+    # latest-wins dedup
+    by_id: dict[str, dict] = {}
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            tid = entry.get("thread_id")
+            if tid:
+                by_id[tid] = entry
+
+    if not by_id:
+        return 0
+
+    timeline = Timeline(timeline_path)
+    for tid, entry in by_id.items():
+        timeline.append_entry(
+            data_type="thread_created",
+            by="migration",
+            thread_id=tid,
+            data={
+                "origin": entry.get("origin", "external"),
+                "subkind": entry.get("subkind", ""),
+                "root_summary": entry.get("root_summary", ""),
+                "status": entry.get("status", "active"),
+            },
+        )
+    return len(by_id)
 
 
 def _replay_trace_file(

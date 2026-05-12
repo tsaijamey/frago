@@ -28,6 +28,19 @@ from frago.server.services.taskboard.timeline import Timeline, ulid_new
 _RECENT_REJECTIONS_WINDOW = 10
 
 
+def _parse_dt(value) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 class TaskBoard:
     """单例 (per process)。状态变更走公有方法 + 同锁段必写 timeline entry。"""
 
@@ -85,12 +98,142 @@ class TaskBoard:
     def _apply_entry(self, entry: dict) -> None:
         """根据 data_type 把 timeline entry 转化为内存对象变更。
 
-        Phase 0 实现基础 data_type: msg_received / task_appended / task_started /
-        task_finished / thread_created。其余 data_type Phase 1+ 补全。
+        Phase 0 重建路径: thread_created / msg_received / task_appended /
+        task_started / task_finished / decision_rejected。fold 期间直接改
+        内存字典, 不调公有 mutation (避免再写 timeline 造成循环)。
         """
-        # Phase 0 占位实现 — 详细 fold 逻辑随 Applier 同期完善
-        # 当前只确保 fold 不抛错, 实际 board 状态恢复留 Phase 1
-        return
+        from frago.server.services.taskboard.models import (
+            Intent,
+            Msg,
+            RejectionRecord,
+            Result,
+            Session,
+            Source,
+            Task,
+        )
+
+        data_type = entry.get("data_type")
+        data = entry.get("data") or {}
+        thread_id = entry.get("thread_id")
+        msg_id = entry.get("msg_id")
+        task_id = entry.get("task_id")
+        ts_raw = entry.get("ts")
+        ts = _parse_dt(ts_raw) if ts_raw else datetime.now().astimezone()
+
+        if data_type == "thread_created":
+            if thread_id and thread_id not in self._threads:
+                self._threads[thread_id] = Thread(
+                    thread_id=thread_id,
+                    status=data.get("status", "active"),
+                    origin=data.get("origin", "external"),
+                    subkind=data.get("subkind", ""),
+                    root_summary=data.get("root_summary", ""),
+                    created_at=ts,
+                    last_active_at=ts,
+                )
+            return
+
+        if data_type == "msg_received":
+            if not thread_id or not msg_id:
+                return
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                thread = Thread(
+                    thread_id=thread_id,
+                    status="active",
+                    origin=data.get("origin", "external"),
+                    subkind=data.get("channel", ""),
+                    root_summary="",
+                    created_at=ts,
+                    last_active_at=ts,
+                )
+                self._threads[thread_id] = thread
+            if any(m.msg_id == msg_id for m in thread.msgs):
+                return
+            channel = data.get("channel", thread.subkind or "external")
+            source = Source(
+                channel=channel,
+                text=data.get("prompt", ""),
+                sender_id=data.get("sender_id", ""),
+                parent_ref=data.get("parent_ref"),
+                received_at=ts,
+                reply_context=data.get("reply_context"),
+            )
+            msg = Msg(
+                msg_id=msg_id,
+                status=data.get("status", "awaiting_decision"),
+                source=source,
+            )
+            thread.msgs.append(msg)
+            thread.last_active_at = ts
+            if source.sender_id:
+                thread.senders.add(source.sender_id)
+            self._channelref_index[(channel, msg_id)] = thread_id
+            if source.sender_id:
+                self._sender_index.setdefault(
+                    (channel, source.sender_id), set()
+                ).add(thread_id)
+            return
+
+        if data_type == "task_appended":
+            msg = self._find_msg(msg_id) if msg_id else None
+            if msg is None or not task_id:
+                return
+            if any(t.task_id == task_id for t in msg.tasks):
+                return
+            task_type = data.get("type", "run")
+            msg.tasks.append(
+                Task(
+                    task_id=task_id,
+                    status="queued",
+                    type=task_type,  # type: ignore[arg-type]
+                    intent=Intent(prompt=data.get("prompt", "")),
+                )
+            )
+            new_status = data.get("status")
+            if new_status:
+                msg.status = new_status  # type: ignore[assignment]
+            return
+
+        if data_type == "task_started":
+            task = self._find_task(task_id) if task_id else None
+            if task is None:
+                return
+            task.status = "executing"
+            task.session = Session(
+                run_id=data.get("run_id") or task_id,
+                claude_session_id=data.get("csid"),
+                pid=data.get("pid"),
+                started_at=_parse_dt(data.get("started_at")) or ts,
+            )
+            return
+
+        if data_type == "task_finished":
+            task = self._find_task(task_id) if task_id else None
+            if task is None:
+                return
+            status = data.get("status", "completed")
+            task.status = status if status in {"completed", "failed"} else "completed"  # type: ignore[assignment]
+            if task.session is not None:
+                task.session.ended_at = _parse_dt(data.get("ended_at"))
+            task.result = Result(
+                summary=data.get("result_summary") or "",
+                error=data.get("error"),
+            )
+            return
+
+        if data_type == "decision_rejected":
+            self._recent_rejections.append(
+                RejectionRecord(
+                    ts=ts,
+                    reason=data.get("reason", ""),
+                    offending_msg_id=msg_id,
+                    offending_task_id=task_id,
+                    original_action=data.get("original_action", ""),
+                    original_prompt_head=data.get("original_prompt_head", ""),
+                )
+            )
+            return
 
     # ── 公有 mutation 方法 (skeleton) ───────────────────────────────
 
@@ -198,6 +341,14 @@ class TaskBoard:
                     return msg
         return None
 
+    def _find_task(self, task_id: str) -> Task | None:
+        for thread in self._threads.values():
+            for msg in thread.msgs:
+                for task in msg.tasks:
+                    if task.task_id == task_id:
+                        return task
+        return None
+
     def _thread_of_msg(self, msg_id: str) -> str | None:
         for thread in self._threads.values():
             for msg in thread.msgs:
@@ -274,3 +425,43 @@ class TaskBoard:
                     for r in self._recent_rejections
                 ],
             }
+
+
+def boot(home: Path) -> TaskBoard:
+    """Server 启动序列: (可选 migration) → fold timeline → 写 startup_fold_completed。
+
+    Phase 0 范围: fold 两遍重建内存 + 写 4 字段 entry。
+    Phase 2 范围: vacuum bounded-progress 加入 + entry 扩展为 6 字段
+                  (vacuum_duration_ms / archived_threads_count)。
+
+    Yi 23:49:25 锁定 Phase 0 字段集: {fold_duration_ms, entries_read,
+    entries_skipped, timeline_bytes}。
+    """
+    import time
+
+    from frago.server.services.taskboard import migration
+
+    if migration.needs_migration(home):
+        migration.migrate(home)
+
+    timeline_path = home / "timeline" / "timeline.jsonl"
+    timeline_path.parent.mkdir(parents=True, exist_ok=True)
+    if not timeline_path.exists():
+        timeline_path.touch()
+
+    t0 = time.monotonic()
+    board = TaskBoard.fold(timeline_path)
+    fold_ms = int((time.monotonic() - t0) * 1000)
+    timeline_bytes = timeline_path.stat().st_size
+
+    board._timeline.append_entry(
+        data_type="startup_fold_completed",
+        by="boot",
+        data={
+            "fold_duration_ms": fold_ms,
+            "entries_read": board.entries_read,
+            "entries_skipped": board.entries_skipped,
+            "timeline_bytes": timeline_bytes,
+        },
+    )
+    return board
