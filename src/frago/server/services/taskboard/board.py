@@ -62,7 +62,7 @@ class TaskBoard:
     # ── fold (两遍算法) ──────────────────────────────────────────────
 
     @classmethod
-    def fold(cls, timeline_path: Path) -> "TaskBoard":
+    def fold(cls, timeline_path: Path) -> TaskBoard:
         """从 timeline.jsonl 重建内存投影。
 
         两遍算法 (T5.1):
@@ -108,7 +108,6 @@ class TaskBoard:
             RejectionRecord,
             Result,
             Session,
-            Source,
             Task,
         )
 
@@ -276,6 +275,15 @@ class TaskBoard:
             thread = self._threads.get(thread_id)
             if thread is None:
                 raise IllegalTransitionError(f"thread {thread_id} missing")
+            # Phase 2: post-archive append 走 reject 通道, 不抛 + 不改 thread.
+            if thread.status == "archived":
+                self.record_rejection(
+                    reason="post_archive_append",
+                    offending_msg_id=msg.msg_id,
+                    original_action="append_msg",
+                    original_prompt_head=msg.source.text.split("\n", 1)[0][:80],
+                )
+                return
             # Phase 1 part B: 重复响应根因消除 — 同 msg_id 重复 ingest 直接 dedup,
             # 落 timeline duplicate_msg_ingest 让 PA 可见 (recent_rejections), 不重复 append.
             # 这是替代 message_cache 兜底的核心修复.
@@ -320,6 +328,18 @@ class TaskBoard:
             msg = self._find_msg(msg_id)
             if msg is None:
                 raise IllegalTransitionError(f"msg {msg_id} missing")
+            # Phase 2: thread archived 后 append_task 走 reject 通道.
+            thread_id = self._thread_of_msg(msg_id)
+            if thread_id and self._threads[thread_id].status == "archived":
+                self.record_rejection(
+                    reason="post_archive_append",
+                    offending_msg_id=msg_id,
+                    original_action=task_type,
+                    original_prompt_head=intent.prompt.split("\n", 1)[0][:80],
+                )
+                raise IllegalTransitionError(
+                    f"thread {thread_id} is archived, cannot append task"
+                )
             if msg.status not in {"awaiting_decision", "dispatched"}:
                 self.record_rejection(
                     reason="illegal_transition",
@@ -458,6 +478,50 @@ class TaskBoard:
                     data={"prev_status": prev, "status": "closed"},
                 )
 
+    def record_thread_archived(
+        self, thread_id: str, *, by: str, archived_to: str | None = None
+    ) -> None:
+        """Phase 2 vacuum: 把 thread 标记为 archived 并落 marker.
+
+        marker schema (Yi #92):
+            data_type='thread_archived', thread_id=<tid>,
+            data={archived_at: <iso>, archived_to: 'archive/<tid>.jsonl',
+                  by: <vacuum|applier|user>}
+
+        runtime 调用 (applier / user CLI) 只标记 thread.status='archived' + 落
+        marker; 下次 server 启动时 vacuum 物理抽 entries 到 archive 目录.
+
+        重复 archive 同 thread_id 落 duplicate_marker reject entry (不抛).
+        """
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                self.record_rejection(
+                    reason="thread_not_found",
+                    offending_msg_id=None,
+                    original_action="record_thread_archived",
+                )
+                return
+            if thread.status == "archived":
+                self.record_rejection(
+                    reason="duplicate_marker",
+                    offending_msg_id=None,
+                    original_action="record_thread_archived",
+                )
+                return
+            thread.status = "archived"  # type: ignore[assignment]
+            target = archived_to or f"archive/{thread_id}.jsonl"
+            self._timeline.append_entry(
+                data_type="thread_archived",
+                by=by,
+                thread_id=thread_id,
+                data={
+                    "archived_at": datetime.now().astimezone().isoformat(),
+                    "archived_to": target,
+                    "by": by,
+                },
+            )
+
     def mark_msg_dismissed(self, msg_id: str, *, reason: str, by: str) -> None:
         """PA dismiss action 路径: msg.status = dismissed (终态, 不再 dispatch)."""
         with self._lock:
@@ -520,18 +584,19 @@ class TaskBoard:
 
 
 def boot(home: Path) -> TaskBoard:
-    """Server 启动序列: (可选 migration) → fold timeline → 写 startup_fold_completed。
+    """Server 启动序列: (可选 migration) → vacuum → fold → startup_fold_completed.
 
-    Phase 0 范围: fold 两遍重建内存 + 写 4 字段 entry。
+    Phase 0 范围: fold 两遍重建内存 + 写 4 字段 entry.
     Phase 2 范围: vacuum bounded-progress 加入 + entry 扩展为 6 字段
-                  (vacuum_duration_ms / archived_threads_count)。
+                  (vacuum_duration_ms / archived_threads_count).
 
-    Yi 23:49:25 锁定 Phase 0 字段集: {fold_duration_ms, entries_read,
-    entries_skipped, timeline_bytes}。
+    Yi #92 锁定 Phase 2 字段集: {fold_duration_ms, vacuum_duration_ms,
+    entries_read, entries_skipped, timeline_bytes, archived_threads_count}.
     """
     import time
 
     from frago.server.services.taskboard import migration
+    from frago.server.services.taskboard import vacuum as vac
 
     if migration.needs_migration(home):
         migration.migrate(home)
@@ -541,9 +606,14 @@ def boot(home: Path) -> TaskBoard:
     if not timeline_path.exists():
         timeline_path.touch()
 
-    t0 = time.monotonic()
+    # Phase 2: bounded vacuum 在 fold 之前 (markers > 0 时实际处理).
+    vac_t0 = time.monotonic()
+    vac_report = vac.run_bounded_vacuum(home)
+    vacuum_ms = int((time.monotonic() - vac_t0) * 1000)
+
+    fold_t0 = time.monotonic()
     board = TaskBoard.fold(timeline_path)
-    fold_ms = int((time.monotonic() - t0) * 1000)
+    fold_ms = int((time.monotonic() - fold_t0) * 1000)
     timeline_bytes = timeline_path.stat().st_size
 
     board._timeline.append_entry(
@@ -551,9 +621,11 @@ def boot(home: Path) -> TaskBoard:
         by="boot",
         data={
             "fold_duration_ms": fold_ms,
+            "vacuum_duration_ms": vacuum_ms,
             "entries_read": board.entries_read,
             "entries_skipped": board.entries_skipped,
             "timeline_bytes": timeline_bytes,
+            "archived_threads_count": vac_report.processed,
         },
     )
     return board
