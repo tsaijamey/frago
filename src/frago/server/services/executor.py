@@ -103,13 +103,52 @@ class Executor:
     # -- main loop --
 
     async def _run_loop(self) -> None:
+        """Phase 3 (Yi #133): queued task discovery reads from TaskBoard.
+
+        The board (timeline.jsonl) is the single source of truth for status.
+        Per board view, queued task ids become run candidates; for each we
+        hydrate the rich IngestedTask object from TaskStore (until Phase 4
+        retires it) to access fields the board does not yet expose
+        (run_descriptions / run_prompts / claude_session_id / thread_id etc).
+        State transitions (queued → executing) go through ExecutionApplier so
+        the board's timeline observes them.
+        """
+        from frago.server.services.taskboard import get_board
+        from frago.server.services.taskboard.execution_applier import (
+            ExecutionApplier,
+        )
+
         while True:
-            tasks = self._store.get_by_status(TaskStatus.QUEUED)
+            board = get_board()
+            view = board.view_for_pa()
+            queued_ids = [
+                tk["id"]
+                for t in view.get("threads", [])
+                for m in t.get("msgs", [])
+                for tk in m.get("tasks", [])
+                if tk.get("status") == "queued"
+            ]
+            tasks: list[IngestedTask] = []
+            for tid in queued_ids:
+                obj = self._store.get(tid)
+                if obj is not None:
+                    tasks.append(obj)
             if not tasks:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
+            ea = ExecutionApplier(board)
             for task in tasks:
+                # Phase 3 (Yi #133): board is authoritative — mark executing via
+                # ExecutionApplier; TaskStore.update_status remains until Phase 4
+                # to keep IngestedTask field continuity for executor consumers.
+                try:
+                    ea.start_task(task.id, run_id=task.id, pid=0, csid=None)
+                except Exception:
+                    logger.debug(
+                        "ExecutionApplier.start_task failed (non-fatal)",
+                        exc_info=True,
+                    )
                 self._store.update_status(task.id, TaskStatus.EXECUTING)
                 t = asyncio.create_task(self._safe_execute_run(task))
                 self._active_tasks.add(t)
@@ -117,12 +156,26 @@ class Executor:
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _safe_execute_run(self, task: IngestedTask) -> None:
-        """Wrapper around _execute_run that catches unhandled errors."""
+        """Wrapper around _execute_run that catches unhandled errors.
+
+        Phase 3: on unhandled error, status transition goes through
+        ExecutionApplier.finish_task so the board reflects the failure.
+        """
         try:
             await self._execute_run(task)
         except Exception:
             logger.error("Executor: unhandled error executing task %s", task.id[:8], exc_info=True)
-            # update_status emits task_state entry automatically (spec 20260418 Phase 4)
+            try:
+                from frago.server.services.taskboard import get_board
+                from frago.server.services.taskboard.execution_applier import (
+                    ExecutionApplier,
+                )
+                ExecutionApplier(get_board()).finish_task(
+                    task.id, status="failed",
+                    result_summary="executor internal error",
+                )
+            except Exception:
+                logger.debug("ExecutionApplier.finish_task failed (non-fatal)", exc_info=True)
             self._store.update_status(task.id, TaskStatus.FAILED, error="executor internal error")
 
     async def _execute_run(self, task: IngestedTask) -> None:
@@ -139,11 +192,10 @@ class Executor:
     ) -> None:
         """Monitor running agent to completion, record result, archive, notify PA.
 
-        Shared tail of the first-launch pipeline and the resume pipeline —
-        both need to watch a live pid, read the Claude JSONL for stop_reason,
-        flip the task to COMPLETED/FAILED, close tab group, archive the run,
-        and hand the outcome to PA. Takes run_id explicitly so resume can
-        reuse the existing Run instance instead of re-creating one.
+        Phase 3 (Yi #133): terminal state transitions (executing → completed/failed)
+        are persisted via ExecutionApplier so the board's timeline.jsonl reflects
+        the run's outcome. TaskStore.update_status remains until Phase 4 strips
+        the legacy class.
         """
         # 2. Monitor PID until exit
         await self._monitor_until_done(task, pid)
@@ -174,12 +226,24 @@ class Executor:
         _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
         # 抽 sub-agent 最后一条 assistant 文本作为给 PA 的原料
         final_text = self._read_final_assistant_text(claude_sid) if claude_sid else None
+        # Phase 3 (Yi #133): final state goes through ExecutionApplier so the
+        # board observes the transition; TaskStore.update_status persists the
+        # rich IngestedTask record until Phase 4.
+        from frago.server.services.taskboard import get_board
+        from frago.server.services.taskboard.execution_applier import (
+            ExecutionApplier,
+        )
+        ea = ExecutionApplier(get_board())
         if stop_reason in _SUCCESS_STOP_REASONS:
             final_status = "COMPLETED"
             if final_text:
                 summary = final_text
             else:
                 summary = f"completed (stop_reason: {stop_reason}) — no assistant text captured"
+            try:
+                ea.finish_task(task.id, status="completed", result_summary=summary)
+            except Exception:
+                logger.debug("ExecutionApplier.finish_task(completed) failed (non-fatal)", exc_info=True)
             self._store.update_status(task.id, TaskStatus.COMPLETED,
                                       result_summary=summary)
         else:
@@ -187,6 +251,10 @@ class Executor:
             base_error = f"sub-agent exited abnormally (stop_reason: {stop_reason})"
             if final_text:
                 base_error = f"{base_error}\n\n{final_text}"
+            try:
+                ea.finish_task(task.id, status="failed", result_summary=base_error)
+            except Exception:
+                logger.debug("ExecutionApplier.finish_task(failed) failed (non-fatal)", exc_info=True)
             self._store.update_status(
                 task.id, TaskStatus.FAILED,
                 error=base_error,

@@ -1,8 +1,8 @@
 """Task Lifecycle — coordination point for ingestion, reply, and recovery.
 
-Execution (run) tasks are handled by executor.py, not here.
-TaskLifecycle handles: ingestion, reply via notify recipe, stale lock detection,
-and PENDING task recovery.
+Phase 3 (Yi #133): the read authority shifts to TaskBoard.view_for_pa for
+status / discovery; ingestion.store + IngestedTask remain for field continuity
+(reply_context, session_id, channel_message_id) until Phase 4 retires them.
 """
 
 import json
@@ -12,6 +12,7 @@ from typing import Any
 
 from frago.server.services.ingestion.models import IngestedTask, TaskStatus
 from frago.server.services.ingestion.store import TaskStore
+from frago.server.services.taskboard import get_board
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,19 @@ class TaskLifecycle:
                 logger.warning("Channel %s: message missing required fields, skipping", channel)
                 continue
 
-            if self._store.exists(channel, msg_id):
-                logger.debug("Channel %s: message %s already exists, skipping", channel, msg_id)
+            # Phase 3 (Yi #133): dedup reads board.view_for_pa for the
+            # authoritative msg_id set; store.exists is no longer consulted.
+            # Phase 4 will retire store.exists entirely.
+            board = get_board()
+            view = board.view_for_pa()
+            board_msg_id = f"{channel}:{msg_id}"
+            already_present = any(
+                m.get("id") == board_msg_id
+                for t in view.get("threads", [])
+                for m in t.get("msgs", [])
+            )
+            if already_present:
+                logger.debug("Channel %s: message %s already on board, skipping", channel, msg_id)
                 continue
 
             # Thread attribution (spec 20260418-thread-organization)
@@ -103,16 +115,17 @@ class TaskLifecycle:
             new_task_ids.append(task.id)
             logger.info("Ingested task %s from %s", task.id[:8], channel)
 
-            # B-2a: mirror into TaskBoard (dedup happens inside board.append_msg)
+            # B-2a / Phase 3: mirror into TaskBoard (dedup inside board.append_msg)
             try:
-                from frago.server.services.taskboard import get_board
+                import contextlib as _contextlib
+
                 from frago.server.services.taskboard.ingestor import Ingestor
                 from frago.server.services.taskboard.models import (
                     IllegalTransitionError,
                 )
 
                 board = get_board()
-                try:
+                with _contextlib.suppress(IllegalTransitionError):
                     board.create_thread(
                         thread_id=_classify.thread_id,
                         origin="external",
@@ -120,8 +133,6 @@ class TaskLifecycle:
                         root_summary=msg["prompt"][:80],
                         by="TaskLifecycle",
                     )
-                except IllegalTransitionError:
-                    pass
                 Ingestor(board).ingest_external(
                     channel=channel,
                     msg_id=msg_id,
@@ -264,16 +275,49 @@ class TaskLifecycle:
                 logger.exception("Failed to send output image: %s", img.name)
 
     def recover_pending_tasks(self) -> list[dict[str, Any]]:
-        """Scan TaskStore for PENDING and FAILED tasks, return as queue messages.
+        """Phase 3 (Yi #133): scan TaskBoard for non-terminal msgs/tasks.
 
-        PENDING → re-enqueue as user_message for PA to decide.
-        FAILED → notify PA so it knows (PA will inform user after 2 failures).
+        Reads board.view_for_pa() to find msgs in {awaiting_decision, dispatched}
+        and tasks in {queued, executing, resume_failed}. For each found item we
+        hydrate the rich IngestedTask record from TaskStore (still needed for
+        reply_context / channel_message_id / recovery_count until Phase 4
+        retires the legacy class).
 
         Does NOT enqueue — returns the messages for the caller to handle.
         """
+        board = get_board()
+        view = board.view_for_pa()
 
-        pending = self._store.get_by_status(TaskStatus.PENDING)
-        failed = self._store.get_by_status(TaskStatus.FAILED)
+        # Collect IngestedTask ids whose board view indicates non-terminal work.
+        non_terminal_msg_statuses = {"awaiting_decision", "dispatched"}
+        non_terminal_task_statuses = {"queued", "executing", "resume_failed"}
+        task_ids_to_recover: list[str] = []
+        for t in view.get("threads", []):
+            for m in t.get("msgs", []):
+                m_status = m.get("status")
+                if m_status in non_terminal_msg_statuses and not m.get("tasks"):
+                    # msg awaiting decision with no task → represented in store
+                    pass
+                for tk in m.get("tasks", []):
+                    if tk.get("status") in non_terminal_task_statuses:
+                        task_ids_to_recover.append(tk["id"])
+
+        # Hydrate IngestedTask records from store for field continuity.
+        pending: list[IngestedTask] = []
+        failed: list[IngestedTask] = []
+        for tid in task_ids_to_recover:
+            obj = self._store.get(tid)
+            if obj is None:
+                continue
+            if obj.status == TaskStatus.FAILED:
+                failed.append(obj)
+            else:
+                pending.append(obj)
+        # Also collect tasks that are still PENDING in the store but have no
+        # task entry on the board yet (msg awaiting_decision case).
+        for store_task in self._store.get_by_status(TaskStatus.PENDING):
+            if store_task.id not in task_ids_to_recover:
+                pending.append(store_task)
 
         if not pending and not failed:
             return []
