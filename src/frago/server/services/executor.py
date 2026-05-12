@@ -265,16 +265,17 @@ class Executor:
         rather than returning the stale slug.
         """
         from frago.run.exceptions import RunNotFoundError
-        from frago.server.services.thread_service import get_thread_store
+        from frago.server.services.taskboard import get_board
 
         canonical = manager.resolve_domain_from_description(description) or "misc"
 
         if thread_id:
-            store = get_thread_store()
-            idx = store.get(thread_id)
-            if idx and idx.run_instance_id:
+            board = get_board()
+            tdict = board.get_thread(thread_id)
+            bound_run = tdict.get("run_instance_id") if tdict else None
+            if bound_run:
                 try:
-                    existing = manager.find_run(idx.run_instance_id)
+                    existing = manager.find_run(bound_run)
                     if existing.run_id == canonical:
                         logger.info(
                             "Executor: reusing Run %s for task %s (thread=%s)",
@@ -288,7 +289,7 @@ class Executor:
                 except RunNotFoundError:
                     logger.warning(
                         "Executor: thread %s binds missing run %s — creating new",
-                        thread_id, idx.run_instance_id,
+                        thread_id, bound_run,
                     )
 
         run = manager.ensure_domain(canonical)
@@ -298,7 +299,7 @@ class Executor:
             except Exception:
                 logger.debug("Executor: update theme_description failed", exc_info=True)
         if thread_id:
-            get_thread_store().bind_run(thread_id, run.run_id)
+            get_board().bind_run(thread_id, run.run_id, by="executor")
             logger.info(
                 "Executor: created Run %s for task %s and bound to thread %s",
                 run.run_id, task_short_id, thread_id,

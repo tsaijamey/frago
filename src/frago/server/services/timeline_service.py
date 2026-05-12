@@ -226,8 +226,12 @@ def _collect_entries_by_thread(lookback_days: int) -> dict[str, list[dict]]:
     return by_thread
 
 
-def _build_digest(thread_idx, entries: list[dict]) -> ThreadDigest:
-    """Compose a ThreadDigest from the ThreadIndex + its entries."""
+def _build_digest(thread_dict: dict, entries: list[dict]) -> ThreadDigest:
+    """Compose a ThreadDigest from board.get_thread() dict + its trace entries.
+
+    B-2b: thread_dict 是 board.get_thread / list_threads 返回的 dict
+    (Yi #94 b' dict 风格), 不再是 ThreadIndex dataclass.
+    """
     latest = entries[-1] if entries else None
     latest_event = None
     if latest:
@@ -246,12 +250,12 @@ def _build_digest(thread_idx, entries: list[dict]) -> ThreadDigest:
             task_status_summary[tid] = status
 
     return ThreadDigest(
-        thread_id=thread_idx.thread_id,
-        origin=thread_idx.origin,
-        subkind=thread_idx.subkind,
-        root_summary=thread_idx.root_summary,
-        status=thread_idx.status,
-        last_active_ts=thread_idx.last_active_ts,
+        thread_id=thread_dict["thread_id"],
+        origin=thread_dict.get("origin", ""),
+        subkind=thread_dict.get("subkind", ""),
+        root_summary=thread_dict.get("root_summary", ""),
+        status=thread_dict.get("status", "active"),
+        last_active_ts=thread_dict.get("last_active_at", ""),
         entry_count=len(entries),
         task_status_summary=task_status_summary,
         latest_event=latest_event,
@@ -273,13 +277,12 @@ def get_thread_context(
     warm threads: last_active within [hot, warm_window_days] — include ThreadDigest only.
     Threads older than `warm_window_days` are not included (agent must hydrate explicitly).
     """
-    from frago.server.services.thread_service import (
-        STATUS_ACTIVE,
-        STATUS_IDLE,
-        get_thread_store,
-    )
+    # B-2b: 改读 TaskBoard. status 投射:
+    # board "active" ≡ STATUS_ACTIVE; board "dormant" ≡ STATUS_IDLE.
+    # closed/archived 不出现在 hot/warm (与 visible_statuses 对齐).
+    from frago.server.services.taskboard import get_board
 
-    store = get_thread_store()
+    board = get_board()
     now = datetime.now()
     hot_cutoff = now - timedelta(hours=hot_window_hours)
     warm_cutoff = now - timedelta(days=warm_window_days)
@@ -288,20 +291,22 @@ def get_thread_context(
 
     hot: list[ThreadExpanded] = []
     warm: list[ThreadDigest] = []
-    visible_statuses = {STATUS_ACTIVE, STATUS_IDLE}
+    threads = board.list_threads(statuses={"active", "dormant"})
+    total_known = len(board.list_threads())
 
-    # Iterate ThreadStore to respect thread metadata (status, root_summary etc.)
-    for idx in store.get_all():
-        if idx.status not in visible_statuses:
-            continue
+    for tdict in threads:
+        last_raw = tdict.get("last_active_at", "")
         try:
-            last_active = datetime.fromisoformat(idx.last_active_ts)
+            last_active = datetime.fromisoformat(last_raw)
         except ValueError:
             continue
+        # Strip tz to compare with naive now if needed
+        if last_active.tzinfo and not now.tzinfo:
+            last_active = last_active.replace(tzinfo=None)
         if last_active < warm_cutoff:
             continue
-        entries = threads_by_id.get(idx.thread_id, [])
-        digest = _build_digest(idx, entries)
+        entries = threads_by_id.get(tdict["thread_id"], [])
+        digest = _build_digest(tdict, entries)
 
         if last_active >= hot_cutoff:
             recent_entries = entries[-entries_per_hot:] if entries else []
@@ -325,7 +330,7 @@ def get_thread_context(
         "counts": {
             "hot": len(hot),
             "warm": len(warm),
-            "total_known": store.count(),
+            "total_known": total_known,
         },
     }
 
