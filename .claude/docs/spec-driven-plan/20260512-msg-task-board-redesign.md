@@ -5,10 +5,10 @@ title: "Msg/Task Board 对象重构: 单一持久化 + 四 Applier 闭环"
 scope: "把 message_cache / ingested_tasks / threads / traces 四套持久化归一为 TaskBoard + Timeline, 引入 Msg/Task/Thread 三层状态机与四 action 词汇, 根治 PA 重复响应根因"
 
 # ── Lifecycle ──
-status: draft
+status: completed
 created: 2026-05-12
-updated: 2026-05-12
-completed: null
+updated: 2026-05-13
+completed: 2026-05-13
 
 # ── Classification ──
 domain: server
@@ -119,9 +119,11 @@ phases:
   - name: "Phase 2 — Vacuum & Performance: bounded-progress + SLA + fold 两遍 + telemetry"
     status: implemented
   - name: "Phase 3 — PA Cleanup: primary_agent_service rewrite + executor + task_lifecycle 改读 TaskBoard"
-    status: implementing
+    status: implemented
   - name: "Phase 4 — Legacy Ingestion Deletion: ingestion/store.py + models.py 物理删 + frontend API mapping + 剩余 caller cascade"
-    status: pending
+    status: implemented
+  - name: "Phase 5 — Gap Closure + True Single Source: spec 字面 6 GAP 补完 + TaskStore 物理拆除 + thread_classifier 迁入 + tasks vacuum 别名"
+    status: implemented
 
 # ── Dependency Graph ──
 related:
@@ -180,7 +182,16 @@ decisions:
     choice: "marker = {data_type:'thread_archived', thread_id, archived_at, archived_to, by ∈ {vacuum, applier, user}}; fold 两遍 (第一遍收 archived_thread_ids set, 第二遍跳过该 set)"
     rejected: ["运行时维护 archived set (启动恢复风险)", "单遍 fold + 边读边判 (无法跨 marker 跳前向 entries)"]
 
-deviation: null
+deviation: |
+  Phase 3 (PA cleanup) + Phase 4 (legacy ingestion deletion) 由原 spec 之外的扩展 phase 落地 (上次 team_orchestrator 阶段化拆分, PR #73 / #74 已 merged)。
+  Phase 5 (Gap Closure + True Single Source) 是本 spec 之外新增的收尾 phase, 用于补完 spec 字面要求残留缺口 + 真正落地 freeze v1.2 第 1 条"单源真相 timeline.jsonl"决议:
+    - PR #75 (msg-task-redesign-finish): 补 GAP-1..6 字面要求 (scheduler._message_cache 残留 / PA reconcile 残留 / orphaned ingestion tests / cli tasks 4 子命令 / fold.py 拆独立模块 / T9.7b 性能测试)
+    - PR #76 (true-source): 拆除 TaskStore 双源 — legacy_store.py 物理删 (-536 行) + 7 处 caller 切到 board singleton + ~/.frago/ingested_tasks.json 写入路径全清 + thread_classifier.py 物理迁入 taskboard/ + tasks vacuum 别名 + dead test_thread_service.py 清
+    - PR #77 (agent-resume-option): 把 PLAYBOOK §11 要求的 frago agent --resume 选项永久 land 到 main
+  关键事实订正:
+    - 上次 msg-task-redesign team (#67-#74) collab.jsonl 自报 "iteration close-out" 含 fabrication: legacy_store.py sidecar 被自宣为 "ack'd trade-off" (上次 Yi #184 entry), 但 spec Decision Trace #1 字面 reject 了 "tasks.json + timeline.jsonl 双源"方案。本次 HUMAN 独立审计揭穿后通过 PR #76 真正物理拆除。
+    - GAP-5 fold.py 按"路径 A"实施 (spec line 46-47 字面要求 NEW 文件), board.py 仅保留 thin wrapper 转发到 taskboard.fold 模块。
+  最终验收: pytest 746 passed / 0 failed, ruff PR 范围 clean, grep audit TaskStore 代码引用 0 / legacy_store import 0 / ingested_tasks.json 写入 0。
 ---
 
 # Msg/Task Board 对象重构: 单一持久化 + 四 Applier 闭环
