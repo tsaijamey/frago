@@ -1,11 +1,16 @@
 """Parallel task executor.
 
-Takes QUEUED tasks from TaskStore, launches sub-agents in parallel via
-asyncio.create_task, monitors until exit, extracts results, updates
-status, and notifies PA.
+Takes QUEUED tasks from the board (single source of truth — timeline.jsonl)
+launches sub-agents in parallel via asyncio.create_task, monitors until exit,
+extracts results, transitions task status, and notifies PA.
 
 All task status transitions for run-type tasks flow through here —
 no other code path modifies QUEUED → EXECUTING → COMPLETED/FAILED.
+
+Spec 20260512-msg-task-board-redesign v1.2 freeze: TaskStore is gone.
+Board public methods (mark_task_executing / mark_task_completed /
+mark_task_failed / update_task_session / increment_*_count) are the only
+persistence path.
 """
 
 import asyncio
@@ -15,13 +20,16 @@ import logging
 import os
 import signal
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from frago.server.services.resume_inbox import ResumeInbox
-from frago.server.services.taskboard.legacy_store import TaskStore
-from frago.server.services.taskboard.models import IngestedTask, TaskStatus
+from frago.server.services.taskboard import TaskBoard
+from frago.server.services.taskboard.models import (
+    ClaudeSessionNotFoundError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +50,67 @@ PID_POLL_INTERVAL = 5.0
 IDLE_STUCK_TIMEOUT_MIN = 15
 
 
-class Executor:
-    """Parallel task executor.
+@dataclass
+class _TaskContext:
+    """Per-run snapshot extracted from board.
 
-    从 TaskStore 取所有 queued 任务，每个 spawn asyncio.Task 并行执行。
-    所有状态变更写内存 → 异步刷盘。
+    The executor needs a handful of cross-cutting fields (channel, prompt,
+    reply_context, thread_id, ...) that live across board.Task / board.Msg /
+    board.Thread. We freeze them into a small struct at task-pickup time so
+    downstream methods do not need to keep refetching from the board.
+    """
+
+    task_id: str
+    prompt: str
+    description: str
+    channel: str
+    channel_message_id: str
+    thread_id: str | None
+    reply_context: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+def _hydrate_context(board: TaskBoard, task_id: str) -> _TaskContext | None:
+    """Build a _TaskContext from board lookups; return None if task missing."""
+    task = board.get_task(task_id)
+    if task is None:
+        return None
+    msg = board.get_msg_for_task(task_id)
+    thread = board.get_thread_for_task(task_id)
+    if msg is None:
+        return None
+    channel_msg_id = msg.msg_id
+    # board.Msg.msg_id is stored as "<channel>:<original_id>" by Ingestor;
+    # strip the prefix when the caller wants the channel-native id.
+    if channel_msg_id.startswith(f"{msg.source.channel}:"):
+        channel_msg_id = channel_msg_id[len(msg.source.channel) + 1:]
+    return _TaskContext(
+        task_id=task.task_id,
+        prompt=task.intent.prompt or msg.source.text,
+        # description (first line ≤80 chars of prompt) is what we previously
+        # stored in IngestedTask.run_descriptions[-1]; reuse the prompt head.
+        description=(task.intent.prompt or msg.source.text).split("\n", 1)[0][:80],
+        channel=msg.source.channel,
+        channel_message_id=channel_msg_id,
+        thread_id=thread.thread_id if thread else None,
+        reply_context=dict(msg.source.reply_context or {}),
+        created_at=task.created_at,
+    )
+
+
+class Executor:
+    """Parallel task executor (board-only, no TaskStore).
+
+    Discovers queued tasks via board.get_queued_tasks(), spawns asyncio.Task
+    per task, mutates state via board public methods, writes timeline entries
+    as the single source of truth.
 
     Loop:
-      1. store.get_by_status(QUEUED) → drain all
-      2. asyncio.create_task(_execute_run(task)) per task
-      3. each task: launch agent → mark executing → 回填 session_id + pid
+      1. board.get_queued_tasks()
+      2. asyncio.create_task(_execute_run(ctx)) per task (after mark_executing)
+      3. each task: launch agent → update_task_session(run_id, csid, pid)
       4. monitor PID
-      5. on exit: extract results → mark completed/failed
+      5. on exit: extract results → mark_task_completed / mark_task_failed
       6. best-effort close TabGroup
       7. build system_notify → enqueue to PA
 
@@ -65,11 +122,11 @@ class Executor:
 
     def __init__(
         self,
-        store: TaskStore,
+        board: TaskBoard,
         pa_enqueue_message: Any = None,
         broadcast_pa_event: Any = None,
     ) -> None:
-        self._store = store
+        self._board = board
         self._pa_enqueue_message = pa_enqueue_message  # async callable
         self._broadcast_pa_event = broadcast_pa_event  # async callable
         self._loop_task: asyncio.Task[None] | None = None
@@ -103,117 +160,86 @@ class Executor:
     # -- main loop --
 
     async def _run_loop(self) -> None:
-        """Phase 3 (Yi #133): queued task discovery reads from TaskBoard.
+        """Discover queued tasks on the board and dispatch each in parallel.
 
-        The board (timeline.jsonl) is the single source of truth for status.
-        Per board view, queued task ids become run candidates; for each we
-        hydrate the rich IngestedTask object from TaskStore (until Phase 4
-        retires it) to access fields the board does not yet expose
-        (run_descriptions / run_prompts / claude_session_id / thread_id etc).
-        State transitions (queued → executing) go through ExecutionApplier so
-        the board's timeline observes them.
+        All status transitions go through board public methods so the
+        timeline observes them; no parallel store updates remain.
         """
-        from frago.server.services.taskboard import get_board
-        from frago.server.services.taskboard.execution_applier import (
-            ExecutionApplier,
-        )
-
         while True:
-            board = get_board()
-            view = board.view_for_pa()
-            queued_ids = [
-                tk["id"]
-                for t in view.get("threads", [])
-                for m in t.get("msgs", [])
-                for tk in m.get("tasks", [])
-                if tk.get("status") == "queued"
-            ]
-            tasks: list[IngestedTask] = []
-            for tid in queued_ids:
-                obj = self._store.get(tid)
-                if obj is not None:
-                    tasks.append(obj)
-            if not tasks:
+            queued = self._board.get_queued_tasks()
+            if not queued:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
-            ea = ExecutionApplier(board)
-            for task in tasks:
-                # Phase 3 (Yi #133): board is authoritative — mark executing via
-                # ExecutionApplier; TaskStore.update_status remains until Phase 4
-                # to keep IngestedTask field continuity for executor consumers.
+            for task in queued:
+                ctx = _hydrate_context(self._board, task.task_id)
+                if ctx is None:
+                    logger.debug(
+                        "Executor: task %s missing context — skipping",
+                        task.task_id[:8],
+                    )
+                    continue
                 try:
-                    ea.start_task(task.id, run_id=task.id, pid=0, csid=None)
+                    self._board.mark_task_executing(task.task_id, by="executor")
                 except Exception:
                     logger.debug(
-                        "ExecutionApplier.start_task failed (non-fatal)",
+                        "Executor: mark_task_executing failed (non-fatal)",
                         exc_info=True,
                     )
-                self._store.update_status(task.id, TaskStatus.EXECUTING)
-                t = asyncio.create_task(self._safe_execute_run(task))
+                    continue
+                t = asyncio.create_task(self._safe_execute_run(ctx))
                 self._active_tasks.add(t)
                 t.add_done_callback(self._active_tasks.discard)
             await asyncio.sleep(POLL_INTERVAL)
 
-    async def _safe_execute_run(self, task: IngestedTask) -> None:
-        """Wrapper around _execute_run that catches unhandled errors.
-
-        Phase 3: on unhandled error, status transition goes through
-        ExecutionApplier.finish_task so the board reflects the failure.
-        """
+    async def _safe_execute_run(self, ctx: _TaskContext) -> None:
+        """Wrapper around _execute_run that catches unhandled errors."""
         try:
-            await self._execute_run(task)
+            await self._execute_run(ctx)
         except Exception:
-            logger.error("Executor: unhandled error executing task %s", task.id[:8], exc_info=True)
-            try:
-                from frago.server.services.taskboard import get_board
-                from frago.server.services.taskboard.execution_applier import (
-                    ExecutionApplier,
-                )
-                ExecutionApplier(get_board()).finish_task(
-                    task.id, status="failed",
-                    result_summary="executor internal error",
-                )
-            except Exception:
-                logger.debug("ExecutionApplier.finish_task failed (non-fatal)", exc_info=True)
-            self._store.update_status(task.id, TaskStatus.FAILED, error="executor internal error")
+            logger.error(
+                "Executor: unhandled error executing task %s",
+                ctx.task_id[:8], exc_info=True,
+            )
+            self._board.mark_task_failed(
+                ctx.task_id,
+                error="executor internal error",
+                by="executor",
+            )
 
-    async def _execute_run(self, task: IngestedTask) -> None:
+    async def _execute_run(self, ctx: _TaskContext) -> None:
         """Execute a single queued task end-to-end."""
         # 1. Launch agent
-        run_id, pid = await self._launch_agent(task)
+        run_id, pid = await self._launch_agent(ctx)
         if not run_id or not pid:
             return  # error already handled in _launch_agent
 
-        await self._finalize_run(task, pid, run_id)
+        await self._finalize_run(ctx, pid, run_id)
 
     async def _finalize_run(
-        self, task: IngestedTask, pid: int, run_id: str,
+        self, ctx: _TaskContext, pid: int, run_id: str,
     ) -> None:
-        """Monitor running agent to completion, record result, archive, notify PA.
-
-        Phase 3 (Yi #133): terminal state transitions (executing → completed/failed)
-        are persisted via ExecutionApplier so the board's timeline.jsonl reflects
-        the run's outcome. TaskStore.update_status remains until Phase 4 strips
-        the legacy class.
-        """
+        """Monitor running agent to completion, record result, archive, notify PA."""
         # 2. Monitor PID until exit
-        await self._monitor_until_done(task, pid)
+        await self._monitor_until_done(ctx, pid)
 
         # 3. Determine success/failure from Claude Code session JSONL
         # Wait briefly for JSONL flush — Claude Code process may have exited
         # before the final assistant message was fsynced to disk.
         await asyncio.sleep(2.5)
-        updated_task = self._store.get(task.id)
-        claude_sid = updated_task.claude_session_id if updated_task else None
+        task_obj = self._board.get_task(ctx.task_id)
+        claude_sid = (
+            task_obj.session.claude_session_id
+            if task_obj and task_obj.session else None
+        )
         stop_reason = self._read_stop_reason(claude_sid) if claude_sid else None
 
-        # Trace: raw diagnosis before status decision (result observation, not state change)
+        # Trace: raw diagnosis before status decision
         from frago.server.services.trace import trace_entry
         trace_entry(
             origin="internal", subkind="executor", data_type="tool_result",
-            thread_id=task.thread_id, task_id=task.id,
-            msg_id=task.channel_message_id, role="executor",
+            thread_id=ctx.thread_id, task_id=ctx.task_id,
+            msg_id=ctx.channel_message_id, role="executor",
             event=f"读取结果: claude_sid={claude_sid and claude_sid[:8]}, stop_reason={stop_reason}",
             data={"claude_sid_prefix": claude_sid[:8] if claude_sid else None,
                   "stop_reason": stop_reason},
@@ -224,53 +250,36 @@ class Executor:
         #      end_turn / stop_sequence → agent finished naturally → COMPLETED
         #      None / tool_use / max_tokens → interrupted/crashed → FAILED
         _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
-        # 抽 sub-agent 最后一条 assistant 文本作为给 PA 的原料
         final_text = self._read_final_assistant_text(claude_sid) if claude_sid else None
-        # Phase 3 (Yi #133): final state goes through ExecutionApplier so the
-        # board observes the transition; TaskStore.update_status persists the
-        # rich IngestedTask record until Phase 4.
-        from frago.server.services.taskboard import get_board
-        from frago.server.services.taskboard.execution_applier import (
-            ExecutionApplier,
-        )
-        ea = ExecutionApplier(get_board())
         if stop_reason in _SUCCESS_STOP_REASONS:
             final_status = "COMPLETED"
             if final_text:
                 summary = final_text
             else:
                 summary = f"completed (stop_reason: {stop_reason}) — no assistant text captured"
-            try:
-                ea.finish_task(task.id, status="completed", result_summary=summary)
-            except Exception:
-                logger.debug("ExecutionApplier.finish_task(completed) failed (non-fatal)", exc_info=True)
-            self._store.update_status(task.id, TaskStatus.COMPLETED,
-                                      result_summary=summary)
+            self._board.mark_task_completed(
+                ctx.task_id, summary=summary, by="executor",
+            )
         else:
             final_status = "FAILED"
             base_error = f"sub-agent exited abnormally (stop_reason: {stop_reason})"
             if final_text:
                 base_error = f"{base_error}\n\n{final_text}"
-            try:
-                ea.finish_task(task.id, status="failed", result_summary=base_error)
-            except Exception:
-                logger.debug("ExecutionApplier.finish_task(failed) failed (non-fatal)", exc_info=True)
-            self._store.update_status(
-                task.id, TaskStatus.FAILED,
-                error=base_error,
+            self._board.mark_task_failed(
+                ctx.task_id, error=base_error, by="executor",
             )
 
         # Trace: agent execution finished
         has_completion = stop_reason in _SUCCESS_STOP_REASONS
-        duration = int((datetime.now() - task.created_at).total_seconds()) if task.created_at else 0
+        duration = int((datetime.now() - ctx.created_at).total_seconds()) if ctx.created_at else 0
         trace_entry(
             origin="internal", subkind="executor", data_type="task_state",
-            thread_id=task.thread_id, task_id=task.id,
-            msg_id=task.channel_message_id, role="agent",
+            thread_id=ctx.thread_id, task_id=ctx.task_id,
+            msg_id=ctx.channel_message_id, role="agent",
             event=f"执行结束 {final_status}: stop_reason={stop_reason}, run={run_id}",
             data={
                 "event_type": "pa_agent_exited",
-                "run_id": run_id, "task_id": task.id,
+                "run_id": run_id, "task_id": ctx.task_id,
                 "has_completion": has_completion,
                 "duration_seconds": duration,
                 "stop_reason": stop_reason,
@@ -307,14 +316,14 @@ class Executor:
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_exited", {
                 "run_id": run_id,
-                "task_id": task.id,
-                "msg_id": task.channel_message_id or "",
+                "task_id": ctx.task_id,
+                "msg_id": ctx.channel_message_id or "",
                 "has_completion": has_completion,
                 "duration_seconds": duration,
             })
 
         # 8. Notify PA via system message
-        await self._notify_pa(task, run_id, stop_reason)
+        await self._notify_pa(ctx, run_id, stop_reason)
 
     async def _get_or_create_run_for_thread(
         self,
@@ -324,22 +333,13 @@ class Executor:
         description: str,
         task_short_id: str,
     ) -> str:
-        """Resolve the run_instance for a thread, creating on first use.
-
-        Phase 3 (run-as-domain): classify ``description`` via the def
-        ``domain_dict`` first. The canonical domain (or ``"misc"`` on miss)
-        is the *target* domain. If the thread has a bound run with a
-        different domain, we re-bind to a freshly ensured target domain
-        rather than returning the stale slug.
-        """
+        """Resolve the run_instance for a thread, creating on first use."""
         from frago.run.exceptions import RunNotFoundError
-        from frago.server.services.taskboard import get_board
 
         canonical = manager.resolve_domain_from_description(description) or "misc"
 
         if thread_id:
-            board = get_board()
-            tdict = board.get_thread(thread_id)
+            tdict = self._board.get_thread(thread_id)
             bound_run = tdict.get("run_instance_id") if tdict else None
             if bound_run:
                 try:
@@ -367,7 +367,7 @@ class Executor:
             except Exception:
                 logger.debug("Executor: update theme_description failed", exc_info=True)
         if thread_id:
-            get_board().bind_run(thread_id, run.run_id, by="executor")
+            self._board.bind_run(thread_id, run.run_id, by="executor")
             logger.info(
                 "Executor: created Run %s for task %s and bound to thread %s",
                 run.run_id, task_short_id, thread_id,
@@ -379,37 +379,32 @@ class Executor:
             )
         return run.run_id
 
-    async def _launch_agent(self, task: IngestedTask) -> tuple[str | None, int | None]:
+    async def _launch_agent(self, ctx: _TaskContext) -> tuple[str | None, int | None]:
         """Create Run, build prompt, launch sub-agent process.
 
-        On success: backfills session_id + pid.
+        On success: writes Task.session (run_id / claude_session_id / pid).
         On failure: marks task FAILED.
         Returns (run_id, pid) or (None, None).
         """
         from frago.run.manager import RunManager
         from frago.server.services.agent_service import AgentService
 
-        description = task.run_descriptions[-1] if task.run_descriptions else ""
-        prompt = task.run_prompts[-1] if task.run_prompts else ""
-
-        if not prompt:
-            logger.error("Executor: task %s has no run_prompt", task.id[:8])
-            # update_status emits task_state entry automatically (spec 20260418 Phase 4)
-            self._store.update_status(task.id, TaskStatus.FAILED, error="missing run_prompt")
+        if not ctx.prompt:
+            logger.error("Executor: task %s has no prompt", ctx.task_id[:8])
+            self._board.mark_task_failed(
+                ctx.task_id, error="missing run_prompt", by="executor",
+            )
             return None, None
 
-        # Get-or-create Run instance for this thread (spec 20260418-thread-organization Phase 3)
+        # Get-or-create Run instance for this thread
         # Same thread → reuse same run_instance → workspace accumulates across turns.
         manager = RunManager(PROJECTS_DIR)
         run_id = await self._get_or_create_run_for_thread(
             manager=manager,
-            thread_id=task.thread_id,
-            description=description or prompt,
-            task_short_id=task.id[:8],
+            thread_id=ctx.thread_id,
+            description=ctx.description or ctx.prompt,
+            task_short_id=ctx.task_id[:8],
         )
-
-        # Update session_id on the already-EXECUTING task
-        self._store.update_run_info(task.id, session_id=run_id)
 
         # Phase 3: peek the resolved domain so the sub-agent boots with prior
         # context (recent sessions + top insights). Best-effort: a peek failure
@@ -424,8 +419,8 @@ class Executor:
         # Build sub-agent prompt
         from frago.server.services.primary_agent_service import PrimaryAgentService
         agent_prompt = PrimaryAgentService._build_sub_agent_prompt(
-            task_id=task.id,
-            task_prompt=prompt,
+            task_id=ctx.task_id,
+            task_prompt=ctx.prompt,
             run_id=run_id,
             domain_peek=peek_payload,
         )
@@ -448,39 +443,46 @@ class Executor:
         )
 
         if result.get("status") != "ok":
-            logger.error("Executor: failed to start agent for task %s: %s", task.id[:8], result.get("error"))
-            # update_status emits task_state entry automatically (spec 20260418 Phase 4)
-            self._store.update_status(task.id, TaskStatus.FAILED, error=result.get("error"))
+            logger.error("Executor: failed to start agent for task %s: %s", ctx.task_id[:8], result.get("error"))
+            self._board.mark_task_failed(
+                ctx.task_id,
+                error=str(result.get("error") or "agent start failed"),
+                by="executor",
+            )
             return None, None
 
         pid = result["pid"]
-        self._store.update_run_info(task.id, session_id=run_id, pid=pid,
-                                    claude_session_id=claude_session_id)
+        self._board.update_task_session(
+            ctx.task_id,
+            run_id=run_id,
+            claude_session_id=claude_session_id,
+            pid=pid,
+            by="executor",
+        )
         logger.info("Executor: agent launched for task %s (run=%s, claude=%s, pid=%d)",
-                     task.id[:8], run_id, claude_session_id[:8], pid)
+                     ctx.task_id[:8], run_id, claude_session_id[:8], pid)
 
         _launched_data = {
             "run_id": run_id,
-            "task_id": task.id,
-            "msg_id": task.channel_message_id or "",
-            "description": description,
+            "task_id": ctx.task_id,
+            "msg_id": ctx.channel_message_id or "",
+            "description": ctx.description,
         }
         if self._broadcast_pa_event:
             await self._broadcast_pa_event("pa_agent_launched", _launched_data)
-        # Trace: executor launched agent (supplements the QUEUED→EXECUTING
-        # task_state entry from update_status with run_id/pid context)
+        # Trace: executor launched agent
         from frago.server.services.trace import trace_entry
         trace_entry(
             origin="internal", subkind="executor", data_type="task_state",
-            thread_id=task.thread_id, task_id=task.id,
-            msg_id=task.channel_message_id, role="executor",
+            thread_id=ctx.thread_id, task_id=ctx.task_id,
+            msg_id=ctx.channel_message_id, role="executor",
             event=f"启动 agent, run={run_id}, pid={pid}",
             data={"event_type": "pa_agent_launched", **_launched_data, "pid": pid},
         )
 
         return run_id, pid
 
-    async def _monitor_until_done(self, task: IngestedTask, pid: int) -> int:
+    async def _monitor_until_done(self, ctx: _TaskContext, pid: int) -> int:
         """Poll PID until process exits OR declares itself stuck.
 
         Returns final PID on exit (normal or idle-stuck kill).
@@ -496,8 +498,11 @@ class Executor:
         cwd_slug = home_str.replace("/", "-")
 
         def _jsonl_mtime() -> float | None:
-            updated = self._store.get(task.id)
-            claude_sid = updated.claude_session_id if updated else None
+            task_obj = self._board.get_task(ctx.task_id)
+            claude_sid = (
+                task_obj.session.claude_session_id
+                if task_obj and task_obj.session else None
+            )
             if not claude_sid:
                 return None
             jsonl_path = _Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_sid}.jsonl"
@@ -525,20 +530,21 @@ class Executor:
                 logger.warning(
                     "Executor: task %s idle for %.0f min (pid %d alive but JSONL not growing) "
                     "— declaring stuck, killing process",
-                    task.id[:8], (time.time() - last_active) / 60, pid,
+                    ctx.task_id[:8], (time.time() - last_active) / 60, pid,
                 )
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.kill(pid, signal.SIGTERM)
                 # Mark task FAILED with a clear reason; outputs on disk are preserved.
-                self._store.update_status(
-                    task.id, TaskStatus.FAILED,
+                self._board.mark_task_failed(
+                    ctx.task_id,
                     error=f"idle-stuck: no JSONL activity for {IDLE_STUCK_TIMEOUT_MIN}+ min",
+                    by="executor",
                 )
                 from frago.server.services.trace import trace_entry
                 trace_entry(
                     origin="internal", subkind="executor", data_type="os_event",
-                    thread_id=task.thread_id, task_id=task.id,
-                    msg_id=task.channel_message_id,
+                    thread_id=ctx.thread_id, task_id=ctx.task_id,
+                    msg_id=ctx.channel_message_id,
                     data={"kind": "idle_stuck_kill",
                           "idle_minutes": IDLE_STUCK_TIMEOUT_MIN,
                           "pid": pid},
@@ -560,20 +566,11 @@ class Executor:
 
         Returns ``(new_run_id, new_pid)``. Raises
         ``ClaudeSessionNotFoundError`` when the CSID file no longer exists on
-        disk (~/.claude/projects/<cwd-slug>/<csid>.jsonl) — ResumeApplier
-        catches this and marks the task ``resume_failed``.
-
-        Phase 1 stage-gate: callers must check
-        ``resume_applier.case_a_enabled()`` (env FRAGO_CASE_A_ENABLED=1)
-        before invoking; this method itself does no gate so tests can
-        exercise the spawn path.
+        disk — ResumeApplier catches this and marks the task ``resume_failed``.
         """
         import uuid as _uuid
 
         from frago.server.services.agent_service import AgentService
-        from frago.server.services.taskboard.models import (
-            ClaudeSessionNotFoundError,
-        )
 
         if csid:
             home = str(Path.home())
@@ -585,10 +582,6 @@ class Executor:
                 )
 
         new_run_id = f"resume-{_uuid.uuid4().hex[:12]}"
-        # AgentService.start_task does not yet support a true `claude --resume`
-        # invocation; passing the prior CSID makes the new sub-agent reuse the
-        # same Claude session UUID for trace continuity. Real resume semantics
-        # (replaying the session JSONL) land alongside the AgentService rewrite.
         result = AgentService.start_task(
             prompt=prompt,
             project_path=str(Path.home()),
@@ -624,12 +617,15 @@ class Executor:
         """
         from frago.server.services.trace import trace_entry
 
-        task = self._store.get(task_id)
+        task = self._board.get_task(task_id)
+        thread = self._board.get_thread_for_task(task_id)
+        thread_id = thread.thread_id if thread else None
+
         if not task:
             reason = "task_not_found"
             detail = (
-                "Task is not in TaskStore (may have been archived by daily rotation "
-                "or never existed). Resume cannot target an archived task."
+                "Task is not on the board (may have been archived or never "
+                "existed). Resume cannot target an archived task."
             )
             logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
             trace_entry(
@@ -641,20 +637,21 @@ class Executor:
             )
             return {"status": "failed", "reason": reason, "detail": detail}
 
-        if not task.session_id:
+        session = task.session
+        if session is None or not session.run_id:
             reason = "missing_session_id"
             detail = "Task has no bound session_id — never entered EXECUTING state."
             logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
-                thread_id=task.thread_id, task_id=task_id,
+                thread_id=thread_id, task_id=task_id,
                 data={"action": "resume", "status": "failed",
                       "reason": reason, "detail": detail},
                 event=f"resume 失败: {reason}",
             )
             return {"status": "failed", "reason": reason, "detail": detail}
 
-        if not task.claude_session_id:
+        if not session.claude_session_id:
             reason = "missing_claude_session_id"
             detail = (
                 "Task has no claude_session_id — sub-agent never reached the "
@@ -663,7 +660,7 @@ class Executor:
             logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
-                thread_id=task.thread_id, task_id=task_id,
+                thread_id=thread_id, task_id=task_id,
                 data={"action": "resume", "status": "failed",
                       "reason": reason, "detail": detail},
                 event=f"resume 失败: {reason}",
@@ -672,11 +669,11 @@ class Executor:
 
         try:
             injection = ResumeInbox.append(
-                run_id=task.session_id,
-                claude_session_id=task.claude_session_id,
+                run_id=session.run_id,
+                claude_session_id=session.claude_session_id,
                 task_id=task_id,
                 prompt=new_prompt,
-                pa_thread_id=task.thread_id,
+                pa_thread_id=thread_id,
             )
         except Exception as e:
             reason = "inbox_write_failed"
@@ -685,7 +682,7 @@ class Executor:
                          exc_info=True)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
-                thread_id=task.thread_id, task_id=task_id,
+                thread_id=thread_id, task_id=task_id,
                 data={"action": "resume", "status": "failed",
                       "reason": reason, "detail": detail},
                 event=f"resume 失败: {reason}",
@@ -695,23 +692,23 @@ class Executor:
         logger.info(
             "Executor: queued hot-injection %s for task %s (csid=%s)",
             injection.injection_id[:8], task_id[:8],
-            task.claude_session_id[:8],
+            session.claude_session_id[:8],
         )
 
         trace_entry(
             origin="internal", subkind="executor", data_type="action_result",
-            thread_id=task.thread_id, task_id=task_id,
+            thread_id=thread_id, task_id=task_id,
             data={"action": "resume", "status": "ok",
                   "injection_id": injection.injection_id,
-                  "claude_session_id": task.claude_session_id,
-                  "session_id": task.session_id},
+                  "claude_session_id": session.claude_session_id,
+                  "session_id": session.run_id},
             event=f"resume 排队: injection={injection.injection_id[:8]}",
         )
 
         return {
             "status": "ok",
             "injection_id": injection.injection_id,
-            "claude_session_id": task.claude_session_id,
+            "claude_session_id": session.claude_session_id,
         }
 
     # -- result extraction --
@@ -853,7 +850,7 @@ class Executor:
 
     async def _notify_pa(
         self,
-        task: IngestedTask,
+        ctx: _TaskContext,
         run_id: str,
         stop_reason: str | None = None,
     ) -> None:
@@ -864,9 +861,9 @@ class Executor:
         # Phase 3: only list outputs produced during this session window so
         # historical files in the long-lived domain dir don't pollute the
         # PA's "输出物" line.
-        updated_for_started = self._store.get(task.id)
-        sub = updated_for_started.current_sub if updated_for_started else None
-        session_started_at = sub.created_at if sub else None
+        task_obj = self._board.get_task(ctx.task_id)
+        session = task_obj.session if task_obj else None
+        session_started_at = session.started_at if session else ctx.created_at
         outputs = self._extract_output_files(run_id, since=session_started_at)
         recent_logs = self._extract_recent_logs(run_id)
 
@@ -874,14 +871,15 @@ class Executor:
         msg_type = "agent_completed" if stop_reason in _SUCCESS_STOP_REASONS else "agent_failed"
 
         # Use task's own result/error as summary
-        updated = self._store.get(task.id)
-        result_summary = (updated.result_summary or updated.error) if updated else None
+        result_summary: str | None = None
+        if task_obj and task_obj.result is not None:
+            result_summary = task_obj.result.summary or task_obj.result.error
 
         msg: dict[str, Any] = {
             "type": msg_type,
-            "task_id": task.id,
-            "channel": task.channel,
-            "session_id": updated.session_id if updated else task.session_id,
+            "task_id": ctx.task_id,
+            "channel": ctx.channel,
+            "session_id": session.run_id if session else None,
             "run_id": run_id,
             "result_summary": result_summary or f"agent exited (stop_reason: {stop_reason})",
             "output_files": outputs,
@@ -889,12 +887,12 @@ class Executor:
             "event_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-        # Trace: executor notifying PA (cross-module message, treated as os_event)
+        # Trace: executor notifying PA
         from frago.server.services.trace import trace_entry
         trace_entry(
             origin="internal", subkind="executor", data_type="os_event",
-            thread_id=task.thread_id, task_id=task.id,
-            msg_id=task.channel_message_id, role="executor",
+            thread_id=ctx.thread_id, task_id=ctx.task_id,
+            msg_id=ctx.channel_message_id, role="executor",
             event=f"通知 PA: {msg_type}",
             data={"notify_type": msg_type},
         )
@@ -902,4 +900,4 @@ class Executor:
         try:
             await self._pa_enqueue_message(msg)
         except Exception:
-            logger.error("Executor: failed to notify PA for task %s", task.id[:8], exc_info=True)
+            logger.error("Executor: failed to notify PA for task %s", ctx.task_id[:8], exc_info=True)
