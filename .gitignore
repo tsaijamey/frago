@@ -18,7 +18,13 @@ src/frago/resources/_commands/
 # ====================
 # Testing
 # ====================
+# tests/ 历史是 dev-local; Phase 0 重构 (20260512-msg-task-board-redesign)
+# 起允许 tests/server/test_taskboard_*.py 进 git, 便于 CI/PR review。
+# 其余 tests/* 维持本地 only。
 tests/*
+!tests/server/
+tests/server/*
+!tests/server/test_taskboard_*.py
 tests/results/
 tests/*.log
 coverage/
