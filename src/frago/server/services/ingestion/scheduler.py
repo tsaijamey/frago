@@ -172,10 +172,10 @@ class IngestionScheduler:
 
         from frago.server.services.taskboard import get_board
         from frago.server.services.taskboard.ingestor import Ingestor
-        from frago.server.services.thread_classifier import (
+        from frago.server.services.taskboard.thread_classifier import (
             classify as thread_classify,
         )
-        from frago.server.services.thread_classifier import (
+        from frago.server.services.taskboard.thread_classifier import (
             ensure_thread,
         )
         from frago.server.services.trace import trace_entry

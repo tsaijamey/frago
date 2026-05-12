@@ -64,7 +64,7 @@ def test_production_path_repeat_ingest_10x_one_msg(tmp_path: Path):
 
     # Stub thread_classifier to avoid hitting real classifier (taskboard/thread_classifier
     # accesses real board; we want isolation).
-    from frago.server.services.thread_classifier import ClassifyResult
+    from frago.server.services.taskboard.thread_classifier import ClassifyResult
 
     fake_classify = ClassifyResult(
         thread_id="T_PROD_001",
@@ -74,10 +74,10 @@ def test_production_path_repeat_ingest_10x_one_msg(tmp_path: Path):
     )
 
     with patch(
-        "frago.server.services.thread_classifier.classify",
+        "frago.server.services.taskboard.thread_classifier.classify",
         return_value=fake_classify,
     ), patch(
-        "frago.server.services.thread_classifier.ensure_thread",
+        "frago.server.services.taskboard.thread_classifier.ensure_thread",
     ), patch(
         "frago.server.services.trace.trace_entry",
     ):
@@ -197,16 +197,16 @@ def test_scheduler_ingest_message_routes_to_board(tmp_path: Path):
 
     scheduler = IngestionScheduler(channels=[ch_cfg])
 
-    from frago.server.services.thread_classifier import ClassifyResult
+    from frago.server.services.taskboard.thread_classifier import ClassifyResult
     fake_classify = ClassifyResult(
         thread_id="T_WIRE_001", parent_ref=None, layer="new", is_new=True,
     )
 
     with patch(
-        "frago.server.services.thread_classifier.classify",
+        "frago.server.services.taskboard.thread_classifier.classify",
         return_value=fake_classify,
     ), patch(
-        "frago.server.services.thread_classifier.ensure_thread",
+        "frago.server.services.taskboard.thread_classifier.ensure_thread",
     ), patch(
         "frago.server.services.trace.trace_entry",
     ):

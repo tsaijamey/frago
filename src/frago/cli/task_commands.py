@@ -292,6 +292,24 @@ def task_active(as_json: bool):
         )
 
 
+@task_group.command(name="vacuum", cls=AgentFriendlyCommand)
+@click.option("--max-markers", type=int, default=100,
+              help="Bounded-progress cap on archived threads processed per run (default 100)")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def task_vacuum(max_markers, as_json):
+    """Alias for ``frago timeline vacuum``: archive retired threads.
+
+    Spec 20260512 line 11 places this in the `tasks` command group too —
+    discoverability for agents reasoning about task lifecycle.
+
+    Examples:
+      frago task vacuum
+      frago task vacuum --max-markers 200 --json
+    """
+    from frago.cli.timeline_commands import _run_vacuum
+    _run_vacuum(max_markers, as_json)
+
+
 @task_group.command(name="stats", cls=AgentFriendlyCommand)
 @click.option("--json", "as_json", is_flag=True, default=False)
 def task_stats(as_json: bool):

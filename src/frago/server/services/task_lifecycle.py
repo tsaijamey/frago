@@ -128,10 +128,10 @@ class TaskLifecycle:
                 continue
 
             # Thread attribution
-            from frago.server.services.thread_classifier import (
+            from frago.server.services.taskboard.thread_classifier import (
                 classify as _thread_classify,
             )
-            from frago.server.services.thread_classifier import (
+            from frago.server.services.taskboard.thread_classifier import (
                 ensure_thread as _ensure_thread,
             )
 

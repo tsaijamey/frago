@@ -343,6 +343,20 @@ def _frago_home() -> Path:
     return Path.home() / ".frago"
 
 
+def _run_vacuum(max_markers: int, as_json: bool) -> None:
+    """Shared implementation for ``frago timeline vacuum`` and ``frago task vacuum``."""
+    from frago.server.services.taskboard import vacuum as vac
+
+    home = _frago_home()
+    report = vac.run_bounded_vacuum(home, max_markers=max_markers)
+    payload = {
+        "processed": report.processed,
+        "archived_thread_ids": list(report.archived_thread_ids),
+        "max_markers": max_markers,
+    }
+    _emit(payload, as_json=as_json)
+
+
 @timeline_group.command(name="vacuum", cls=AgentFriendlyCommand)
 @click.option("--max-markers", type=int, default=100,
               help="Bounded-progress cap on archived threads processed per run (default 100, Yi #92 lock)")
@@ -360,16 +374,7 @@ def timeline_vacuum(max_markers, as_json):
       frago timeline vacuum
       frago timeline vacuum --max-markers 200 --json
     """
-    from frago.server.services.taskboard import vacuum as vac
-
-    home = _frago_home()
-    report = vac.run_bounded_vacuum(home, max_markers=max_markers)
-    payload = {
-        "processed": report.processed,
-        "archived_thread_ids": list(report.archived_thread_ids),
-        "max_markers": max_markers,
-    }
-    _emit(payload, as_json=as_json)
+    _run_vacuum(max_markers, as_json)
 
 
 @timeline_group.command(name="fold", cls=AgentFriendlyCommand)
