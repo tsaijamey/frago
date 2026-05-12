@@ -26,11 +26,10 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from frago.compat import get_windows_subprocess_kwargs
-from frago.server.services.ingestion.store import TaskStore
+from frago.server.services.taskboard.legacy_store import TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -269,8 +268,10 @@ class IngestionScheduler:
         # board is a separate object graph). create_thread is idempotent-by-
         # caller-checking: we silently swallow IllegalTransitionError if a
         # previous ingest already created it on this side.
+        import contextlib as _contextlib
+
         from frago.server.services.taskboard.models import IllegalTransitionError
-        try:
+        with _contextlib.suppress(IllegalTransitionError):
             board.create_thread(
                 thread_id=classify_result.thread_id,
                 origin="external",
@@ -278,8 +279,6 @@ class IngestionScheduler:
                 root_summary=msg["prompt"][:80],
                 by="IngestionScheduler",
             )
-        except IllegalTransitionError:
-            pass
 
         ingestor = Ingestor(board)
         ingestor.ingest_external(

@@ -100,8 +100,8 @@ def task_mark(task_id, status, reason, error, result_summary):
       frago task mark 5cf89f19 completed --reason "stuck-executing manual cleanup"
       frago task mark abc123 failed --error "zombie process killed at midnight"
     """
-    from frago.server.services.ingestion.models import TaskStatus
-    from frago.server.services.ingestion.store import TaskStore
+    from frago.server.services.taskboard.legacy_store import TaskStore
+    from frago.server.services.taskboard.models import TaskStatus
 
     store = TaskStore()
     task = store.get(task_id)
