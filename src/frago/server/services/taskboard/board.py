@@ -129,7 +129,32 @@ class TaskBoard:
                     root_summary=data.get("root_summary", ""),
                     created_at=ts,
                     last_active_at=ts,
+                    tags=list(data.get("tags") or []),
+                    run_instance_id=data.get("run_instance_id"),
                 )
+            return
+
+        if data_type == "thread_tag_added":
+            thread = self._threads.get(thread_id) if thread_id else None
+            tag = data.get("tag")
+            if thread and tag and tag not in thread.tags:
+                thread.tags.append(tag)
+            return
+
+        if data_type == "thread_touched":
+            thread = self._threads.get(thread_id) if thread_id else None
+            if thread:
+                new_ts = _parse_dt(data.get("ts")) or ts
+                if new_ts > thread.last_active_at:
+                    thread.last_active_at = new_ts
+                if thread.status == "dormant":
+                    thread.status = "active"  # type: ignore[assignment]
+            return
+
+        if data_type == "thread_bound_to_run":
+            thread = self._threads.get(thread_id) if thread_id else None
+            if thread:
+                thread.run_instance_id = data.get("run_instance_id")
             return
 
         if data_type == "msg_received":
@@ -245,6 +270,7 @@ class TaskBoard:
         root_summary: str,
         by: str,
         created_at: datetime | None = None,
+        tags: list[str] | None = None,
     ) -> Thread:
         with self._lock:
             if thread_id in self._threads:
@@ -252,6 +278,7 @@ class TaskBoard:
                     f"thread {thread_id} already exists"
                 )
             now = created_at or datetime.now().astimezone()
+            tag_list = [t for t in (tags or []) if t]
             thread = Thread(
                 thread_id=thread_id,
                 status="active",
@@ -260,13 +287,19 @@ class TaskBoard:
                 root_summary=root_summary,
                 created_at=now,
                 last_active_at=now,
+                tags=list(tag_list),
             )
             self._threads[thread_id] = thread
             self._timeline.append_entry(
                 data_type="thread_created",
                 by=by,
                 thread_id=thread_id,
-                data={"origin": origin, "subkind": subkind},
+                data={
+                    "origin": origin,
+                    "subkind": subkind,
+                    "root_summary": root_summary,
+                    "tags": list(tag_list),
+                },
             )
             return thread
 
@@ -521,6 +554,163 @@ class TaskBoard:
                     "by": by,
                 },
             )
+
+    # ── B-2b 新公有方法 (取代 thread_service.ThreadStore) ──────────────
+
+    def add_tag(self, thread_id: str, tag: str, *, by: str) -> None:
+        """Append tag to thread.tags (idempotent). 写 timeline thread_tag_added.
+
+        B-2b: 替代 ThreadStore.add_tag. tag 通常为 channelref:<channel>:<msg_id>
+        或 sender:<channel>:<sender>; thread_classifier ensure_thread 调用.
+        """
+        if not tag:
+            return
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                self.record_rejection(
+                    reason="thread_not_found",
+                    original_action="add_tag",
+                )
+                return
+            if tag in thread.tags:
+                return
+            thread.tags.append(tag)
+            self._timeline.append_entry(
+                data_type="thread_tag_added",
+                by=by,
+                thread_id=thread_id,
+                data={"tag": tag},
+            )
+
+    def touch_thread(
+        self, thread_id: str, *, by: str, ts: datetime | None = None
+    ) -> None:
+        """Advance thread.last_active_at; dormant → active. 写 thread_touched.
+
+        B-2b: 替代 ThreadStore.touch. classifier 在归并已有 thread 时调用.
+        """
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                return
+            new_ts = ts or datetime.now().astimezone()
+            if new_ts <= thread.last_active_at and thread.status != "dormant":
+                return
+            if new_ts > thread.last_active_at:
+                thread.last_active_at = new_ts
+            if thread.status == "dormant":
+                thread.status = "active"  # type: ignore[assignment]
+            self._timeline.append_entry(
+                data_type="thread_touched",
+                by=by,
+                thread_id=thread_id,
+                data={"ts": new_ts.isoformat()},
+            )
+
+    def bind_run(
+        self, thread_id: str, run_instance_id: str, *, by: str
+    ) -> None:
+        """Attach run_instance_id to thread (idempotent). 写 thread_bound_to_run.
+
+        B-2b: 替代 ThreadStore.bind_run. executor._get_or_create_run_for_thread
+        在确定/重新绑定 run 时调用. Yi #94 (b'): mutation 返回 None.
+        """
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                self.record_rejection(
+                    reason="thread_not_found",
+                    original_action="bind_run",
+                )
+                return
+            if thread.run_instance_id == run_instance_id:
+                return
+            thread.run_instance_id = run_instance_id
+            self._timeline.append_entry(
+                data_type="thread_bound_to_run",
+                by=by,
+                thread_id=thread_id,
+                data={"run_instance_id": run_instance_id},
+            )
+
+    def _thread_to_dict(self, t: Thread) -> dict:
+        """Yi #94 (b'): board 公有方法返回 dict 风格. 序列化 Thread → dict."""
+        return {
+            "thread_id": t.thread_id,
+            "status": t.status,
+            "origin": t.origin,
+            "subkind": t.subkind,
+            "root_summary": t.root_summary,
+            "created_at": t.created_at.isoformat(),
+            "last_active_at": t.last_active_at.isoformat(),
+            "tags": list(t.tags),
+            "run_instance_id": t.run_instance_id,
+            "senders": sorted(t.senders),
+            "msg_count": len(t.msgs),
+            "task_ids": [
+                tk.task_id for m in t.msgs for tk in m.tasks
+            ],
+        }
+
+    def search_threads_by_tag(self, tag: str) -> list[dict]:
+        """B-2b L1 classifier 替代: 按 tag 精确匹配返回 thread dict 列表.
+
+        排序: last_active_at desc. 仅包含 status ∈ {active, dormant} 的 thread
+        (closed/archived 不参与 classifier 归并).
+        """
+        if not tag:
+            return []
+        with self._lock:
+            matches = [
+                t for t in self._threads.values()
+                if tag in t.tags and t.status in {"active", "dormant"}
+            ]
+            matches.sort(key=lambda t: t.last_active_at, reverse=True)
+            return [self._thread_to_dict(t) for t in matches]
+
+    def search_threads_by_sender(
+        self, channel: str, sender: str, *, active_only: bool = True
+    ) -> list[dict]:
+        """B-2b L2 classifier 替代: 同 channel 同 sender 的 thread.
+
+        组合 sender:<channel>:<sender> tag + subkind=channel 过滤.
+        active_only=True 时仅含 status==active. 排序 last_active_at desc.
+        """
+        if not channel or not sender:
+            return []
+        sender_label = f"sender:{channel}:{sender}"
+        target_status = {"active"} if active_only else {"active", "dormant"}
+        with self._lock:
+            matches = [
+                t for t in self._threads.values()
+                if t.subkind == channel
+                and sender_label in t.tags
+                and t.status in target_status
+            ]
+            matches.sort(key=lambda t: t.last_active_at, reverse=True)
+            return [self._thread_to_dict(t) for t in matches]
+
+    def list_threads(
+        self, *, statuses: set[str] | None = None
+    ) -> list[dict]:
+        """B-2b: 替代 ThreadStore.get_all/count. timeline_service.get_thread_context 用.
+
+        statuses=None 返回全部. 否则按 status 集合过滤. 排序 last_active_at desc.
+        """
+        target = statuses if statuses is not None else {
+            "active", "dormant", "closed", "archived"
+        }
+        with self._lock:
+            matches = [t for t in self._threads.values() if t.status in target]
+            matches.sort(key=lambda t: t.last_active_at, reverse=True)
+            return [self._thread_to_dict(t) for t in matches]
+
+    def get_thread(self, thread_id: str) -> dict | None:
+        """B-2b: 替代 ThreadStore.get. dict 风格 (Yi #94 b')."""
+        with self._lock:
+            t = self._threads.get(thread_id)
+            return self._thread_to_dict(t) if t else None
 
     def mark_msg_dismissed(self, msg_id: str, *, reason: str, by: str) -> None:
         """PA dismiss action 路径: msg.status = dismissed (终态, 不再 dispatch)."""
