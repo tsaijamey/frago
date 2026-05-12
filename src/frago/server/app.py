@@ -169,22 +169,24 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     state_manager = StateManager.get_instance()
     await state_manager.initialize()
 
-    # Clean up zombie EXECUTING tasks from previous server lifecycle
+    # Clean up zombie EXECUTING tasks from previous server lifecycle.
+    # Single source: board.timeline.jsonl. We read board.get_executing_tasks()
+    # and transition any whose pid is dead via board.mark_task_failed.
     try:
         from frago.server.daemon import _is_pid_alive
-        from frago.server.services.taskboard.legacy_store import TaskStore
-        from frago.server.services.taskboard.models import TaskStatus
+        from frago.server.services.taskboard import get_board
 
-        store = TaskStore()
-        executing = store.get_by_status(TaskStatus.EXECUTING)
+        board = get_board()
+        executing = board.get_executing_tasks()
         for task in executing:
-            if not _is_pid_alive(task.pid):
-                store.update_status(
-                    task.id,
-                    TaskStatus.FAILED,
+            pid = task.session.pid if task.session else None
+            if not _is_pid_alive(pid):
+                board.mark_task_failed(
+                    task.task_id,
                     error="zombie: process not found at server startup",
+                    by="server_startup",
                 )
-                logger.info("Cleaned zombie task %s (pid=%s)", task.id[:8], task.pid)
+                logger.info("Cleaned zombie task %s (pid=%s)", task.task_id[:8], pid)
     except Exception as e:
         logger.warning("Failed to clean zombie tasks: %s", e)
 
@@ -312,7 +314,6 @@ async def _start_ingestion_scheduler(logger):
             ChannelConfig,
             IngestionScheduler,
         )
-        from frago.server.services.taskboard.legacy_store import TaskStore
 
         channel_configs = [
             ChannelConfig(**ch) for ch in ingestion_config.get("channels", [])
@@ -321,10 +322,7 @@ async def _start_ingestion_scheduler(logger):
             logger.info("No ingestion channels configured, skipping scheduler")
             return None
 
-        scheduler = IngestionScheduler(
-            channels=channel_configs,
-            store=TaskStore(),
-        )
+        scheduler = IngestionScheduler(channels=channel_configs)
         await scheduler.start()
         return scheduler
     except Exception as e:

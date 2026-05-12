@@ -1,9 +1,8 @@
 """Task management CLI (surgical state adjustments).
 
 Correct way to hand-edit a task's status: go through this CLI so the timeline
-records a task_state entry. Directly editing ingested_tasks.json loses a round
-trip with TaskStore.rebuild_status_cache — the rebuild sees no matching entry
-in the timeline and reverts your edit.
+records a task_state entry. board.timeline.jsonl is the single source of
+truth — spec 20260512 v1.2 freeze: no other persistence layer exists.
 
 Spec ref: 2026-04-20 audit item P2 #3.
 """
@@ -92,19 +91,17 @@ def task_history(task_id: str, limit: int):
 def task_mark(task_id, status, reason, error, result_summary):
     """Override a task's status and emit a task_state timeline entry.
 
-    This is the ONLY correct way to hand-adjust a task's state while preserving
-    the timeline source-of-truth invariant (TaskStore.rebuild_status_cache uses
-    timeline as ground truth; a direct JSON edit would be reverted on restart).
+    Reads/writes through board public methods so the single-source
+    timeline.jsonl reflects the change.
 
     Examples:
       frago task mark 5cf89f19 completed --reason "stuck-executing manual cleanup"
       frago task mark abc123 failed --error "zombie process killed at midnight"
     """
-    from frago.server.services.taskboard.legacy_store import TaskStore
-    from frago.server.services.taskboard.models import TaskStatus
+    from frago.server.services.taskboard import get_board
 
-    store = TaskStore()
-    task = store.get(task_id)
+    board = get_board()
+    task = board.get_task(task_id)
     if not task:
         click.echo(json.dumps({
             "error": f"task not found: {task_id}",
@@ -112,27 +109,28 @@ def task_mark(task_id, status, reason, error, result_summary):
         }, ensure_ascii=False), err=True)
         raise SystemExit(1)
 
-    try:
-        target_status = TaskStatus(status)
-    except ValueError as e:
-        click.echo(json.dumps({"error": f"invalid status {status!r}"},
-                              ensure_ascii=False), err=True)
-        raise SystemExit(1) from e
-
-    prev_status = task.status.value
-    # update_status internally emits the task_state timeline entry
-    # (spec 20260418-timeline-event-coverage Phase 4).
-    store.update_status(
-        task.id, target_status,
-        error=error, result_summary=result_summary,
-    )
+    prev_status = task.status
+    by = f"cli:task_mark({reason})"
+    if status == "completed":
+        board.mark_task_completed(task.task_id, summary=result_summary or "", by=by)
+    elif status == "failed":
+        board.mark_task_failed(task.task_id, error=error or "", by=by)
+    elif status == "executing":
+        board.mark_task_executing(task.task_id, by=by)
+    else:
+        # pending / queued are not reachable transitions on the new board.
+        click.echo(json.dumps({
+            "error": f"unsupported manual transition to {status!r}",
+            "hint": "valid: completed | failed | executing",
+        }, ensure_ascii=False), err=True)
+        raise SystemExit(1)
 
     click.echo(json.dumps({
-        "task_id": task.id,
+        "task_id": task.task_id,
         "prev_status": prev_status,
         "new_status": status,
         "reason": reason,
-        "note": "task_state entry emitted — safe against rebuild_status_cache reversion",
+        "note": "task_state entry emitted to board.timeline.jsonl",
     }, ensure_ascii=False))
 
 
@@ -292,6 +290,24 @@ def task_active(as_json: bool):
             f"active {r['task_id']} type={r.get('type', '?')} status={r.get('status', '?')} "
             f"msg={r.get('msg_id', '?')}"
         )
+
+
+@task_group.command(name="vacuum", cls=AgentFriendlyCommand)
+@click.option("--max-markers", type=int, default=100,
+              help="Bounded-progress cap on archived threads processed per run (default 100)")
+@click.option("--json", "as_json", is_flag=True, default=False)
+def task_vacuum(max_markers, as_json):
+    """Alias for ``frago timeline vacuum``: archive retired threads.
+
+    Spec 20260512 line 11 places this in the `tasks` command group too —
+    discoverability for agents reasoning about task lifecycle.
+
+    Examples:
+      frago task vacuum
+      frago task vacuum --max-markers 200 --json
+    """
+    from frago.cli.timeline_commands import _run_vacuum
+    _run_vacuum(max_markers, as_json)
 
 
 @task_group.command(name="stats", cls=AgentFriendlyCommand)

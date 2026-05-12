@@ -51,7 +51,7 @@
   "verification": {
     "run_completion": "executor 通过 Claude JSONL 最后一条非 null stop_reason 判定：end_turn/stop_sequence=成功，其他=失败",
     "session_status": "uv run frago session show {session_id} 查看会话状态",
-    "task_status": "TaskStore 中的 PENDING/QUEUED/EXECUTING/COMPLETED/FAILED 状态",
+    "task_status": "board.timeline.jsonl 中的 task_state entry: queued/executing/completed/failed/resume_failed/replied",
     "recipe_result": "recipe 返回 {success, data, error, execution_time}"
   },
   "principles": [

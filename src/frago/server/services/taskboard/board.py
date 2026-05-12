@@ -193,11 +193,60 @@ class TaskBoard:
                     status="queued",
                     type=task_type,  # type: ignore[arg-type]
                     intent=Intent(prompt=data.get("prompt", "")),
+                    created_at=ts,
                 )
             )
             new_status = data.get("status")
             if new_status:
                 msg.status = new_status  # type: ignore[assignment]
+            return
+
+        if data_type == "task_state":
+            task = self._find_task(task_id) if task_id else None
+            if task is None:
+                return
+            new_status = data.get("status")
+            if new_status in {
+                "queued", "executing", "completed", "failed",
+                "resume_failed", "replied",
+            }:
+                task.status = new_status  # type: ignore[assignment]
+                if new_status == "completed":
+                    summary = data.get("result_summary") or ""
+                    task.result = Result(summary=summary)
+                elif new_status == "failed":
+                    err = data.get("error") or ""
+                    task.result = Result(summary="", error=err)
+            return
+
+        if data_type == "task_session_updated":
+            task = self._find_task(task_id) if task_id else None
+            if task is None:
+                return
+            task.session = Session(
+                run_id=data.get("run_id") or task_id,
+                claude_session_id=data.get("csid"),
+                pid=data.get("pid"),
+                started_at=_parse_dt(data.get("started_at")) or ts,
+            )
+            return
+
+        if data_type == "task_retry":
+            task = self._find_task(task_id) if task_id else None
+            if task is None:
+                return
+            new_count = data.get("retry_count")
+            if isinstance(new_count, int):
+                task.retry_count = new_count
+            return
+
+        if data_type == "task_recovery":
+            task = self._find_task(task_id) if task_id else None
+            if task is None:
+                return
+            new_count = data.get("recovery_count")
+            if isinstance(new_count, int):
+                task.recovery_count = new_count
             return
 
         if data_type == "task_started":
@@ -369,6 +418,7 @@ class TaskBoard:
                 status="queued",
                 type=task_type,  # type: ignore[arg-type]
                 intent=intent,
+                created_at=datetime.now().astimezone(),
             )
             msg.tasks.append(task)
             prev = msg.status
@@ -379,7 +429,12 @@ class TaskBoard:
                 thread_id=self._thread_of_msg(msg_id),
                 msg_id=msg_id,
                 task_id=task.task_id,
-                data={"prev_status": prev, "status": "dispatched", "type": task_type},
+                data={
+                    "prev_status": prev,
+                    "status": "dispatched",
+                    "type": task_type,
+                    "prompt": intent.prompt,
+                },
             )
             return task
 
@@ -692,6 +747,279 @@ class TaskBoard:
         with self._lock:
             t = self._threads.get(thread_id)
             return self._thread_to_dict(t) if t else None
+
+    # ── Executor-facing API (single-source: replaces TaskStore.* lookups) ──
+    # All mutations enter via the _lock and write a timeline entry so the
+    # board (timeline.jsonl) is the only persistence layer.
+
+    def get_task(self, task_id: str) -> Task | None:
+        """Return the live Task object (or None). Read-only — no timeline entry."""
+        with self._lock:
+            return self._find_task(task_id)
+
+    def get_msg_for_task(self, task_id: str) -> Msg | None:
+        """Reverse lookup: which Msg owns this task_id (or None)."""
+        with self._lock:
+            for thread in self._threads.values():
+                for msg in thread.msgs:
+                    for tk in msg.tasks:
+                        if tk.task_id == task_id:
+                            return msg
+            return None
+
+    def get_thread_for_task(self, task_id: str) -> Thread | None:
+        """Reverse lookup: which Thread owns this task_id (or None)."""
+        with self._lock:
+            for thread in self._threads.values():
+                for msg in thread.msgs:
+                    for tk in msg.tasks:
+                        if tk.task_id == task_id:
+                            return thread
+            return None
+
+    def get_queued_tasks(self) -> list[Task]:
+        """All tasks with status=='queued' across every thread/msg.
+
+        Returned in insertion order (board scan order). Executor uses this to
+        discover new work each tick — replaces TaskStore.get_by_status(QUEUED).
+        """
+        with self._lock:
+            out: list[Task] = []
+            for thread in self._threads.values():
+                for msg in thread.msgs:
+                    for tk in msg.tasks:
+                        if tk.status == "queued":
+                            out.append(tk)
+            return out
+
+    def get_executing_tasks(self) -> list[Task]:
+        """All tasks with status=='executing'. Daemon zombie-scan callers."""
+        with self._lock:
+            out: list[Task] = []
+            for thread in self._threads.values():
+                for msg in thread.msgs:
+                    for tk in msg.tasks:
+                        if tk.status == "executing":
+                            out.append(tk)
+            return out
+
+    def increment_retry_count(self, task_id: str, *, by: str) -> int:
+        """Bump task.retry_count by 1, append timeline task_retry entry.
+
+        Returns the new count. Returns 0 + reject if task missing.
+        """
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="increment_retry_count",
+                )
+                return 0
+            task.retry_count += 1
+            new_count = task.retry_count
+            self._timeline.append_entry(
+                data_type="task_retry",
+                by=by,
+                thread_id=self._thread_of_task(task_id),
+                msg_id=self._msg_id_of_task(task_id),
+                task_id=task_id,
+                data={"retry_count": new_count},
+            )
+            return new_count
+
+    def increment_recovery_count(self, task_id: str, *, by: str) -> int:
+        """Bump task.recovery_count by 1, append timeline task_recovery entry."""
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="increment_recovery_count",
+                )
+                return 0
+            task.recovery_count += 1
+            new_count = task.recovery_count
+            self._timeline.append_entry(
+                data_type="task_recovery",
+                by=by,
+                thread_id=self._thread_of_task(task_id),
+                msg_id=self._msg_id_of_task(task_id),
+                task_id=task_id,
+                data={"recovery_count": new_count},
+            )
+            return new_count
+
+    def update_task_session(
+        self,
+        task_id: str,
+        *,
+        run_id: str,
+        claude_session_id: str | None,
+        pid: int | None,
+        started_at: datetime | None = None,
+        by: str,
+    ) -> None:
+        """Set / replace Task.session and append task_session_updated timeline entry.
+
+        Used by executor to record run_id / claude_session_id / pid as the
+        sub-agent process is launched (or rebound on resume). The status
+        transition itself goes through ``mark_task_executing`` /
+        ``ExecutionApplier.start_task``; this method is the field-level write.
+        """
+        from frago.server.services.taskboard.models import Session as _Session
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="update_task_session",
+                )
+                return
+            task.session = _Session(
+                run_id=run_id,
+                claude_session_id=claude_session_id,
+                pid=pid,
+                started_at=started_at or datetime.now().astimezone(),
+            )
+            self._timeline.append_entry(
+                data_type="task_session_updated",
+                by=by,
+                thread_id=self._thread_of_task(task_id),
+                msg_id=self._msg_id_of_task(task_id),
+                task_id=task_id,
+                data={
+                    "run_id": run_id,
+                    "csid": claude_session_id,
+                    "pid": pid,
+                },
+            )
+
+    def mark_task_executing(self, task_id: str, *, by: str) -> None:
+        """status queued → executing. Appends task_state timeline entry.
+
+        For setting session fields use ``update_task_session`` after this call
+        (or rely on ExecutionApplier.start_task which does both in one shot).
+        """
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="mark_task_executing",
+                )
+                return
+            if task.status == "executing":
+                return
+            if task.status != "queued":
+                self.record_rejection(
+                    reason="illegal_transition",
+                    offending_task_id=task_id,
+                    original_action="mark_task_executing",
+                )
+                raise IllegalTransitionError(
+                    f"task {task_id}.status={task.status} cannot move to executing"
+                )
+            prev = task.status
+            task.status = "executing"
+            self._timeline.append_entry(
+                data_type="task_state",
+                by=by,
+                thread_id=self._thread_of_task(task_id),
+                msg_id=self._msg_id_of_task(task_id),
+                task_id=task_id,
+                data={"prev_status": prev, "status": "executing"},
+            )
+
+    def mark_task_completed(
+        self, task_id: str, *, summary: str, by: str
+    ) -> None:
+        """status executing → completed + record Result. Appends task_state."""
+        from frago.server.services.taskboard.models import Result as _Result
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="mark_task_completed",
+                )
+                return
+            if task.status == "completed":
+                return
+            prev = task.status
+            task.status = "completed"
+            task.result = _Result(summary=summary or "")
+            if task.session is not None:
+                task.session.ended_at = datetime.now().astimezone()
+            self._timeline.append_entry(
+                data_type="task_state",
+                by=by,
+                thread_id=self._thread_of_task(task_id),
+                msg_id=self._msg_id_of_task(task_id),
+                task_id=task_id,
+                data={
+                    "prev_status": prev,
+                    "status": "completed",
+                    "result_summary": (summary or "")[:200],
+                },
+            )
+
+    def mark_task_failed(
+        self, task_id: str, *, error: str, by: str
+    ) -> None:
+        """status → failed + record Result.error. Appends task_state."""
+        from frago.server.services.taskboard.models import Result as _Result
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="mark_task_failed",
+                )
+                return
+            if task.status == "failed":
+                return
+            prev = task.status
+            task.status = "failed"
+            task.result = _Result(summary="", error=error or "")
+            if task.session is not None:
+                task.session.ended_at = datetime.now().astimezone()
+            self._timeline.append_entry(
+                data_type="task_state",
+                by=by,
+                thread_id=self._thread_of_task(task_id),
+                msg_id=self._msg_id_of_task(task_id),
+                task_id=task_id,
+                data={
+                    "prev_status": prev,
+                    "status": "failed",
+                    "error": (error or "")[:200],
+                },
+            )
+
+    # ── private reverse-lookup helpers (must hold _lock) ─────────────────
+
+    def _thread_of_task(self, task_id: str) -> str | None:
+        for thread in self._threads.values():
+            for msg in thread.msgs:
+                for tk in msg.tasks:
+                    if tk.task_id == task_id:
+                        return thread.thread_id
+        return None
+
+    def _msg_id_of_task(self, task_id: str) -> str | None:
+        for thread in self._threads.values():
+            for msg in thread.msgs:
+                for tk in msg.tasks:
+                    if tk.task_id == task_id:
+                        return msg.msg_id
+        return None
 
     def mark_msg_dismissed(self, msg_id: str, *, reason: str, by: str) -> None:
         """PA dismiss action 路径: msg.status = dismissed (终态, 不再 dispatch)."""

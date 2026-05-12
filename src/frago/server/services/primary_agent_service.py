@@ -1,10 +1,9 @@
 """Primary Agent service — manages the lifecycle of frago's PID 1 agent.
 
-Phase 3 (Yi #133): PA service reads from board.view_for_pa and dispatches
-PA decisions via DecisionApplier / ExecutionApplier / ResumeApplier / Ingestor.
-The legacy ingestion.store + IngestedTask are kept ONLY for field continuity
-that the board doesn't yet expose (reply_context, session_id, claude_session_id,
-channel_message_id) — Phase 4 deletes the legacy classes entirely.
+PA service reads from board.view_for_pa and dispatches PA decisions via
+DecisionApplier / ExecutionApplier / ResumeApplier / Ingestor. The single
+persistence layer is board.timeline.jsonl (spec 20260512 v1.2 freeze:
+TaskStore + ingested_tasks.json are gone).
 
 Key design properties:
 - Logically immortal: scheduling continuity across server restarts
@@ -191,9 +190,8 @@ class PrimaryAgentService:
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
 
         from frago.server.services.executor import Executor
-        from frago.server.services.taskboard.legacy_store import TaskStore
         self._executor = Executor(
-            store=TaskStore(),
+            board=get_board(),
             pa_enqueue_message=self.enqueue_message,
             broadcast_pa_event=self._broadcast_pa_event,
         )

@@ -183,6 +183,10 @@ class Task:
     intent: Intent
     session: Session | None = None
     result: Result | None = None
+    # Executor / recovery bookkeeping (Yi spec v1.2 freeze: single-source on board).
+    retry_count: int = 0
+    recovery_count: int = 0
+    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
 
 @dataclass

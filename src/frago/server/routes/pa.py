@@ -3,7 +3,6 @@
 Query endpoints for PA tasks + CLI chat ingestion.
 """
 
-import dataclasses
 import logging
 from uuid import uuid4
 
@@ -46,21 +45,40 @@ async def list_pa_tasks(
     limit: int = Query(default=20, ge=1, le=100),
     status: str = Query(default="all"),
 ) -> dict:
-    """Return recent IngestedTask list for Timeline initial load."""
-    from frago.server.services.taskboard.legacy_store import TaskStore
-    from frago.server.services.taskboard.models import TaskStatus
+    """Return recent task list for Timeline initial load.
 
-    store = TaskStore()
-    if status == "all":
-        tasks = store.get_recent(limit=limit)
-    else:
-        try:
-            tasks = store.get_by_status(TaskStatus(status))
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from e
-    return {
-        "tasks": [
-            {k: v.value if hasattr(v, "value") else v for k, v in dataclasses.asdict(t).items()}
-            for t in tasks[:limit]
-        ],
+    Single source: board.timeline.jsonl. We walk the board.view_for_pa()
+    snapshot, flatten msg → task pairs, and serialise into the JSON shape
+    the frontend expects (id, channel, status, prompt, ...).
+    """
+    from frago.server.services.taskboard import get_board
+
+    valid_status = {
+        "all", "queued", "executing", "completed", "failed",
+        "resume_failed", "replied",
     }
+    if status not in valid_status:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+
+    board = get_board()
+    view = board.view_for_pa()
+    out: list[dict] = []
+    for t in view.get("threads", []):
+        for m in t.get("msgs", []):
+            channel = m.get("channel") or t.get("subkind") or "unknown"
+            msg_id = m.get("id", "")
+            channel_msg_id = msg_id.split(":", 1)[1] if ":" in msg_id else msg_id
+            for tk in m.get("tasks", []):
+                if status != "all" and tk.get("status") != status:
+                    continue
+                out.append({
+                    "id": tk.get("id"),
+                    "channel": channel,
+                    "channel_message_id": channel_msg_id,
+                    "status": tk.get("status"),
+                    "type": tk.get("type"),
+                    "thread_id": t.get("id"),
+                    "reply_context": m.get("reply_context") or {},
+                })
+    out.sort(key=lambda d: d.get("id", ""), reverse=True)
+    return {"tasks": out[:limit]}

@@ -706,13 +706,13 @@ def _is_pid_alive(pid: int | None) -> bool:
 def check_active_tasks() -> dict[str, Any]:
     """Check if there are active tasks that would be killed by server stop/restart.
 
-    Checks TaskStore for EXECUTING tasks and verifies their PIDs are alive.
-    Tasks whose PIDs are dead are auto-cleaned to FAILED (zombie recovery).
+    Reads board.get_executing_tasks() (single source: timeline.jsonl) and
+    verifies their PIDs are alive. Tasks whose PIDs are dead are auto-cleaned
+    to failed (zombie recovery) via board.mark_task_failed.
 
     Returns dict with keys: has_active, executing_tasks, message.
     """
-    from frago.server.services.taskboard.legacy_store import TaskStore
-    from frago.server.services.taskboard.models import TaskStatus
+    from frago.server.services.taskboard import get_board
 
     result: dict[str, Any] = {
         "has_active": False,
@@ -721,23 +721,26 @@ def check_active_tasks() -> dict[str, Any]:
     }
     reasons: list[str] = []
 
-    # Check EXECUTING tasks, verify PID liveness
+    # Check executing tasks, verify PID liveness
     try:
-        store = TaskStore()
-        executing = store.get_by_status(TaskStatus.EXECUTING)
+        board = get_board()
+        executing = board.get_executing_tasks()
         zombie_count = 0
         for task in executing:
-            if _is_pid_alive(task.pid):
+            pid = task.session.pid if task.session else None
+            msg = board.get_msg_for_task(task.task_id)
+            channel = msg.source.channel if msg else "unknown"
+            if _is_pid_alive(pid):
                 result["executing_tasks"].append({
-                    "id": task.id,
-                    "channel": task.channel,
+                    "id": task.task_id,
+                    "channel": channel,
                 })
             else:
                 # PID dead — auto-clean zombie task
-                store.update_status(
-                    task.id,
-                    TaskStatus.FAILED,
+                board.mark_task_failed(
+                    task.task_id,
                     error="zombie: process not found at restart check",
+                    by="daemon",
                 )
                 zombie_count += 1
         if result["executing_tasks"]:
@@ -746,7 +749,7 @@ def check_active_tasks() -> dict[str, Any]:
         if zombie_count:
             reasons.append(f"{zombie_count} zombie task(s) auto-cleaned to FAILED")
     except Exception:
-        pass  # TaskStore unreadable should not block guard
+        pass  # board unreadable should not block guard
 
     if reasons:
         result["message"] = "Active tasks detected:\n" + "\n".join(
@@ -759,19 +762,18 @@ def check_active_tasks() -> dict[str, Any]:
 def force_cleanup_active_tasks(report: dict[str, Any]) -> None:
     """Graceful cleanup before forced stop/restart.
 
-    Marks EXECUTING tasks as FAILED.
+    Marks executing tasks as failed via board.mark_task_failed.
     """
-    from frago.server.services.taskboard.legacy_store import TaskStore
-    from frago.server.services.taskboard.models import TaskStatus
+    from frago.server.services.taskboard import get_board
 
     if report["executing_tasks"]:
         try:
-            store = TaskStore()
+            board = get_board()
             for task_info in report["executing_tasks"]:
-                store.update_status(
+                board.mark_task_failed(
                     task_info["id"],
-                    TaskStatus.FAILED,
                     error="server force stop/restart",
+                    by="daemon",
                 )
         except Exception:
             pass  # best-effort
