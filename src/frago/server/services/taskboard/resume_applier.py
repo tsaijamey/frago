@@ -98,19 +98,27 @@ class ResumeApplier(BaseApplier):
 
         # Case B: session 在跑 (executing) → ResumeInbox 注入
         if task.status == "executing":
-            if self._resume_inbox is None:
-                # Phase 1 后续 commit: 注入实际 ResumeInbox 实例
-                # 当前 fallback: 仅 record_resume_pending + 落 timeline, 不实际 enqueue
-                with self._board._lock:
-                    self._board._timeline.append_entry(
-                        data_type="task_resume_pending_caseB",
-                        by=self.name,
-                        task_id=task_id,
-                        data={"prompt_head": prompt.split("\n", 1)[0][:80]},
-                    )
-                return
             csid = task.session.claude_session_id if task.session else None
-            self._resume_inbox.enqueue(csid, task_id, prompt)
+            run_id = task.session.run_id if task.session else None
+            if self._resume_inbox is not None and run_id and csid:
+                # 生产路径: 直接调 ResumeInbox.append (Python file writer)
+                try:
+                    self._resume_inbox.append(
+                        run_id=run_id,
+                        claude_session_id=csid,
+                        task_id=task_id,
+                        prompt=prompt,
+                        pa_thread_id=None,
+                    )
+                except Exception:
+                    # ResumeInbox write 失败时记 reject 而不是 silent fail
+                    self._reject(
+                        reason="resume_inbox_write_failed",
+                        offending_task_id=task_id,
+                        original_action="resume",
+                        original_prompt_head=prompt.split("\n", 1)[0][:80] if prompt else "",
+                    )
+                    return
             with self._board._lock:
                 self._board._timeline.append_entry(
                     data_type="task_resume_pending_caseB",

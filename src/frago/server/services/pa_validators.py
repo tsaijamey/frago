@@ -13,8 +13,9 @@ from typing import Any
 
 # spec freeze v1.1 §3: PA 对 Msg 输出的 action 词汇集 = {run, reply, resume, dismiss} 4 个
 # schedule 是 PA 全局 action (注册 cron), 走独立 SchedulerService 通路, 不在 Msg loop 内.
-# Phase 1: 加 dismiss; schedule 暂保留兼容 (Phase 1 后续 commit 与 scheduler 改造同步移除).
-VALID_PA_ACTIONS = {"reply", "run", "resume", "dismiss", "schedule"}
+# B-2a: schedule 已从 PA action 词汇集移除, SchedulerService 改由 cron-style trigger
+# 直接调 Ingestor.ingest_scheduled (无需 PA 显式 "schedule" decision).
+VALID_PA_ACTIONS = {"reply", "run", "resume", "dismiss"}
 
 # Msg-action 词汇 (spec freeze v1.1 §3 严格 4 个, 用于 DecisionApplier 路由)
 VALID_MSG_ACTIONS = {"run", "reply", "resume", "dismiss"}
@@ -39,7 +40,6 @@ _PA_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
     "run": ["channel", "description", "prompt"],  # + task_id OR msg_id
     "resume": ["task_id", "prompt"],    # always task_id
     "dismiss": ["msg_id"],              # spec v1.1: PA 显式放弃 msg, 不创建 task
-    "schedule": ["name", "prompt"],     # + cron OR every (checked in handler)
 }
 
 
@@ -64,7 +64,7 @@ def validate_prompt_format(prompt: str) -> str | None:
     return None
 
 # Actions that require either task_id or msg_id
-_ACTIONS_REQUIRING_ID: set[str] = {"reply", "run", "schedule"}
+_ACTIONS_REQUIRING_ID: set[str] = {"reply", "run"}
 
 
 @dataclass

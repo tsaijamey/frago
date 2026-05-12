@@ -48,8 +48,13 @@ class TaskLifecycle:
         """Ingest messages from a channel: dedup → create PENDING task.
 
         Returns list of new task_ids.
+
+        B-2a: Also mirrors each new message into TaskBoard via
+        ``Ingestor.ingest_external`` so the new single-source timeline sees
+        every ingest regardless of which legacy entry point produced it.
         """
         import uuid
+        from datetime import datetime
 
         new_task_ids: list[str] = []
         for msg in messages:
@@ -97,6 +102,38 @@ class TaskLifecycle:
             self._store.add(task)
             new_task_ids.append(task.id)
             logger.info("Ingested task %s from %s", task.id[:8], channel)
+
+            # B-2a: mirror into TaskBoard (dedup happens inside board.append_msg)
+            try:
+                from frago.server.services.taskboard import get_board
+                from frago.server.services.taskboard.ingestor import Ingestor
+                from frago.server.services.taskboard.models import (
+                    IllegalTransitionError,
+                )
+
+                board = get_board()
+                try:
+                    board.create_thread(
+                        thread_id=_classify.thread_id,
+                        origin="external",
+                        subkind=channel,
+                        root_summary=msg["prompt"][:80],
+                        by="TaskLifecycle",
+                    )
+                except IllegalTransitionError:
+                    pass
+                Ingestor(board).ingest_external(
+                    channel=channel,
+                    msg_id=msg_id,
+                    sender_id=_sender,
+                    text=msg["prompt"],
+                    parent_ref=_classify.parent_ref,
+                    received_at=datetime.now(),
+                    reply_context=_reply_ctx,
+                    thread_id=_classify.thread_id,
+                )
+            except Exception:
+                logger.debug("TaskLifecycle: TaskBoard mirror failed", exc_info=True)
 
         return new_task_ids
 

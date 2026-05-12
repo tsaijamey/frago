@@ -94,7 +94,8 @@ class ReflectionTicker:
                 continue
 
     async def _fire(self) -> str:
-        from frago.server.services.thread_service import get_thread_store
+        from frago.server.services.taskboard import get_board
+        from frago.server.services.taskboard.models import IllegalTransitionError
         from frago.server.services.trace import trace_entry, ulid_new
 
         tid = ulid_new()
@@ -112,12 +113,20 @@ class ReflectionTicker:
             role="reflection",
             event="Reflection tick",
         )
-        get_thread_store().create(
-            tid,
-            origin="internal",
-            subkind="reflection",
-            root_summary="Reflection tick",
-        )
+        # B-2a: reflection thread 落 TaskBoard (single timeline source)
+        try:
+            get_board().create_thread(
+                thread_id=tid,
+                origin="internal",
+                subkind="reflection",
+                root_summary="Reflection tick",
+                by="reflection_tick",
+            )
+        except IllegalTransitionError:
+            # tick fired with same ulid (shouldn't happen) — proceed
+            pass
+        except Exception:
+            logger.debug("reflection tick: board.create_thread failed", exc_info=True)
         await self._enqueue({
             "type": "internal_reflection",
             "thread_id": tid,
