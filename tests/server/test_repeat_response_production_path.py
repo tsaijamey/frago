@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,9 +26,9 @@ from frago.server.services.ingestion.scheduler import (
     ChannelConfig,
     IngestionScheduler,
 )
-from frago.server.services.ingestion.store import TaskStore
 from frago.server.services.taskboard import _reset_for_tests, set_board
 from frago.server.services.taskboard.board import TaskBoard
+from frago.server.services.taskboard.legacy_store import TaskStore
 from frago.server.services.taskboard.timeline import Timeline
 
 
@@ -66,7 +65,7 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
     store_dir.mkdir()
     monkeypatch.setenv("FRAGO_HOME", str(tmp_path))
     monkeypatch.setattr(
-        "frago.server.services.ingestion.store.STORE_PATH",
+        "frago.server.services.taskboard.legacy_store.STORE_PATH",
         store_dir / "ingested_tasks.json",
         raising=False,
     )
@@ -122,7 +121,7 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
     # ── 断言 2: timeline 含 9 条 duplicate_msg_ingest entry ───────────
     timeline_path = tmp_path / "timeline.jsonl"
     lines = [
-        json.loads(l) for l in timeline_path.read_text().splitlines() if l.strip()
+        json.loads(line) for line in timeline_path.read_text().splitlines() if line.strip()
     ]
     dup_entries = [e for e in lines if e.get("data_type") == "duplicate_msg_ingest"]
     assert len(dup_entries) == 9, (
@@ -141,7 +140,7 @@ def test_production_path_repeat_ingest_10x_one_task(tmp_path: Path, monkeypatch)
     # 后续 9 次因 store.exists 可能跳过, 但 board dedup 仍然保证只有 1 msg
 
 
-def test_scheduler_module_has_no_message_cache_persistence(tmp_path: Path):
+def test_scheduler_module_has_no_message_cache_persistence():
     """B-2a 硬约束验证 (Yi #82 项 9 子条款):
     ingestion/scheduler.py 内不应再有 message_cache.json 持久化 helper.
 
@@ -167,7 +166,7 @@ def test_scheduler_module_has_no_message_cache_persistence(tmp_path: Path):
     )
 
 
-def test_scheduler_ingest_message_routes_to_board(tmp_path: Path, monkeypatch):
+def test_scheduler_ingest_message_routes_to_board(tmp_path: Path):
     """B-2a wire-up 回归: ingest_message 必须实际调到 board, 不能只走 legacy cache."""
     board = _make_isolated_board(tmp_path)
     set_board(board)

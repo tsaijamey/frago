@@ -10,9 +10,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.ingestion.models import IngestedTask, TaskStatus
-from frago.server.services.ingestion.store import TaskStore
 from frago.server.services.taskboard import get_board
+from frago.server.services.taskboard.legacy_store import TaskStore
+from frago.server.services.taskboard.models import IngestedTask, TaskStatus
 
 logger = logging.getLogger(__name__)
 

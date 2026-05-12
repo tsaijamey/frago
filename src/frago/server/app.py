@@ -172,8 +172,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Clean up zombie EXECUTING tasks from previous server lifecycle
     try:
         from frago.server.daemon import _is_pid_alive
-        from frago.server.services.ingestion.models import TaskStatus
-        from frago.server.services.ingestion.store import TaskStore
+        from frago.server.services.taskboard.legacy_store import TaskStore
+        from frago.server.services.taskboard.models import TaskStatus
 
         store = TaskStore()
         executing = store.get_by_status(TaskStatus.EXECUTING)
@@ -312,7 +312,7 @@ async def _start_ingestion_scheduler(logger):
             ChannelConfig,
             IngestionScheduler,
         )
-        from frago.server.services.ingestion.store import TaskStore
+        from frago.server.services.taskboard.legacy_store import TaskStore
 
         channel_configs = [
             ChannelConfig(**ch) for ch in ingestion_config.get("channels", [])

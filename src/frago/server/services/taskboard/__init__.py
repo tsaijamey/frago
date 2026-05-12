@@ -17,6 +17,7 @@ from frago.server.services.taskboard.models import (
     Session,
     Source,
     Task,
+    TaskStatus,
     Thread,
     TimelineEntry,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "Thread",
     "Msg",
     "Task",
+    "TaskStatus",
     "Source",
     "Intent",
     "Session",
