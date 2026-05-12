@@ -276,6 +276,23 @@ class TaskBoard:
             thread = self._threads.get(thread_id)
             if thread is None:
                 raise IllegalTransitionError(f"thread {thread_id} missing")
+            # Phase 1 part B: 重复响应根因消除 — 同 msg_id 重复 ingest 直接 dedup,
+            # 落 timeline duplicate_msg_ingest 让 PA 可见 (recent_rejections), 不重复 append.
+            # 这是替代 message_cache 兜底的核心修复.
+            if any(m.msg_id == msg.msg_id for m in thread.msgs):
+                self._timeline.append_entry(
+                    data_type="duplicate_msg_ingest",
+                    by=by,
+                    thread_id=thread_id,
+                    msg_id=msg.msg_id,
+                    data={"channel": msg.source.channel},
+                )
+                return
+            # spec §2: received → awaiting_decision 立即转换 (心跳前).
+            # Phase 0 未实施, Phase 1 part B 在 append_msg 内自动转 (scheduled fast-path
+            # 在 Ingestor.ingest_scheduled 后续 append_task 时直接 dispatch, 此处不影响).
+            if msg.status == "received":
+                msg.status = "awaiting_decision"  # type: ignore[assignment]
             thread.msgs.append(msg)
             thread.last_active_at = datetime.now().astimezone()
             thread.senders.add(msg.source.sender_id)
@@ -387,6 +404,81 @@ class TaskBoard:
                     "original_action": original_action,
                     "original_prompt_head": original_prompt_head,
                 },
+            )
+
+    # ── 公有 mutation 方法 — Phase 1 part B 补 (Applier 调用) ──
+
+    def mark_task_replied(self, task_id: str, *, by: str) -> None:
+        """reply task 推送完成后调用. task.status = 'replied' + 落 timeline."""
+        with self._lock:
+            task = self._find_task(task_id)
+            if task is None:
+                self.record_rejection(
+                    reason="task_not_found",
+                    offending_task_id=task_id,
+                    original_action="mark_replied",
+                )
+                return
+            if task.type != "reply":
+                self.record_rejection(
+                    reason="illegal_transition",
+                    offending_task_id=task_id,
+                    original_action="mark_replied",
+                )
+                return
+            task.status = "replied"  # type: ignore[assignment]
+            self._timeline.append_entry(
+                data_type="task_replied",
+                by=by,
+                task_id=task_id,
+                data={"status": "replied"},
+            )
+
+    def close_msg_if_terminal(self, msg_id: str, *, by: str) -> None:
+        """全部 task 终态 + 至少 1 个 reply 已 replied → msg.status = closed."""
+        with self._lock:
+            msg = self._find_msg(msg_id)
+            if msg is None:
+                return
+            if msg.status in {"closed", "dismissed"}:
+                return
+            terminal_statuses = {"completed", "failed", "replied", "resume_failed"}
+            all_terminal = all(t.status in terminal_statuses for t in msg.tasks)
+            has_replied = any(
+                t.type == "reply" and t.status == "replied" for t in msg.tasks
+            )
+            if all_terminal and has_replied:
+                prev = msg.status
+                msg.status = "closed"
+                self._timeline.append_entry(
+                    data_type="msg_closed",
+                    by=by,
+                    thread_id=self._thread_of_msg(msg_id),
+                    msg_id=msg_id,
+                    data={"prev_status": prev, "status": "closed"},
+                )
+
+    def mark_msg_dismissed(self, msg_id: str, *, reason: str, by: str) -> None:
+        """PA dismiss action 路径: msg.status = dismissed (终态, 不再 dispatch)."""
+        with self._lock:
+            msg = self._find_msg(msg_id)
+            if msg is None:
+                self.record_rejection(
+                    reason="msg_not_found",
+                    offending_msg_id=msg_id,
+                    original_action="dismiss",
+                )
+                return
+            if msg.status in {"closed", "dismissed"}:
+                return
+            prev = msg.status
+            msg.status = "dismissed"
+            self._timeline.append_entry(
+                data_type="msg_dismissed",
+                by=by,
+                thread_id=self._thread_of_msg(msg_id),
+                msg_id=msg_id,
+                data={"prev_status": prev, "status": "dismissed", "reason": reason},
             )
 
     def view_for_pa(self) -> dict:
