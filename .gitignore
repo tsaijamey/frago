@@ -1,7 +1,18 @@
 # ====================
+# Catch-all: ignore all dotfiles/dotdirs
+# ====================
+.*
+# 白名单：必须可见的点文件/目录
+!.gitignore
+!.gitattributes
+!.github/
+!.gitkeep
+!.env.example
+!.env.cdpREADME.pdf
+
+# ====================
 # Python
 # ====================
-.venv/
 venv/
 venv3/
 env/
@@ -12,33 +23,20 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-.next/
 *deprecated*/
 src/frago/resources/_commands/
+
 # ====================
 # Testing
 # ====================
-# tests/ 历史是 dev-local; Phase 0 重构 (20260512-msg-task-board-redesign)
-# 起允许 tests/server/test_taskboard_*.py 进 git, 便于 CI/PR review。
-# 其余 tests/* 维持本地 only。
-tests/*
-!tests/server/
-tests/server/*
-!tests/server/test_taskboard_*.py
-!tests/server/test_repeat_response_production_path.py
-!tests/server/test_timeline_query_perf.py
 tests/results/
 tests/*.log
 coverage/
-.coverage
 htmlcov/
-.pytest_cache/
 
 # ====================
 # IDE & Editor
 # ====================
-.vscode/
-.idea/
 *.swp
 *.bak
 *~
@@ -46,31 +44,15 @@ htmlcov/
 # ====================
 # OS Generated
 # ====================
-.DS_Store
 Thumbs.db
 nul
-
-# ====================
-# AI Tools
-# ====================
-.claude/
-.agent/
 
 # ====================
 # Frago Runtime
 # ====================
 chrome_profile/*
 projects/
-.frago/test_output/
-.frago/current_project
 examples/
-
-# ====================
-# Environment & Secrets
-# ====================
-.env*
-!.env.example
-!.env.cdpREADME.pdf
 
 # ====================
 # Temporary & Working Files
@@ -80,13 +62,6 @@ examples/
 *.backup
 workdir/
 tmp/
-
-# ====================
-# Project-Specific
-# ====================
-.specify/
-.crossnote/
-.backup_docs/
 
 # ====================
 # Frontend Build
