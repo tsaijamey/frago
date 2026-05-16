@@ -390,6 +390,9 @@ def list_recipes(source: str, recipe_type: str, output_format: str):
                 for name, sources in duplicates:
                     click.echo(f"  - {name}: {' > '.join(sources)}")
 
+            click.echo()
+            click.echo("Next: recipe info <name> | recipe run <name>")
+
     except RecipeError as e:
         click.echo(f"Error: {e}", err=True)
 
