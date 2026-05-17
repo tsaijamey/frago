@@ -403,11 +403,6 @@ COMMAND_EXAMPLES = {
         "frago workspace pending",
     ],
     # Other top-level
-    "sync": [
-        "frago sync",
-        "frago sync --dry-run",
-        "frago sync --no-push",
-    ],
     "update": [
         "frago update",
         "frago update --check",

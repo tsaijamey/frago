@@ -48,7 +48,6 @@ from .server_command import server_group
 from .session_commands import session_group
 from .skill_commands import skill_group
 from .start_command import start
-from .sync_command import sync_cmd  # Sync command
 from .update_command import update
 from .view_command import view
 from .workspace_commands import workspace_group
@@ -58,7 +57,7 @@ COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
-    ("Environment", ["init", "status", "sync", "workspace", "update", "autostart"]),
+    ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
 ])
 
@@ -351,7 +350,6 @@ cli.add_command(start)  # User-friendly entry point: starts server + opens brows
 cli.add_command(init)  # New environment init command
 cli.add_command(init_dirs, name="init-dirs")  # Legacy directory init command
 cli.add_command(status)  # CDP connection status (kept at top level for quick checks)
-cli.add_command(sync_cmd, name="sync")  # Resource sync command
 cli.add_command(update)  # Self-update command
 
 # Command groups
