@@ -7,6 +7,7 @@ Includes one-time migration from api_endpoint in config.json to ~/.claude/settin
 import json
 import logging
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -22,6 +23,19 @@ _MIGRATION_PERFORMED_FLAG = Path.home() / ".frago" / ".api_endpoint_migrated"
 
 # Main configuration file path
 CONFIG_PATH = Path.home() / ".frago" / "config.json"
+
+# Legacy fields silently dropped from older config.json (removed alongside
+# the multi-device sync stack). Loader emits a stderr warning so users
+# notice their value is no longer honoured but startup is not blocked.
+_LEGACY_DROPPED_FIELDS = ("sync_repo_url", "sync_max_file_size_mb")
+
+
+def _drop_legacy_fields(data: Dict[str, Any]) -> None:
+    """Pop fields no longer defined on Config, with a stderr warning."""
+    for field in _LEGACY_DROPPED_FIELDS:
+        if field in data:
+            print(f"ignoring legacy field: {field}", file=sys.stderr)
+            data.pop(field)
 
 
 def load_config() -> Config:
@@ -44,6 +58,9 @@ def load_config() -> Config:
         # Perform one-time migration if needed
         _migrate_api_endpoint_if_needed(data)
 
+        # Drop fields removed from the schema (warns on stderr)
+        _drop_legacy_fields(data)
+
         return Config(**data)
     except json.JSONDecodeError as e:
         # JSON parsing failed, backup corrupted file
@@ -55,6 +72,7 @@ def load_config() -> Config:
         logger.warning("Config validation failed: %s. Attempting recovery.", e)
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+            _drop_legacy_fields(data)
             return _recover_config_from_data(data)
         except Exception:
             return Config()
@@ -95,7 +113,7 @@ def update_config(updates: Dict[str, Any]) -> Config:
     """Partially update configuration file
 
     Args:
-        updates: Dictionary of fields to update, e.g. {"sync_repo_url": "git@github.com:user/repo.git"}
+        updates: Dictionary of fields to update, e.g. {"auth_method": "custom"}
 
     Returns:
         Updated Config instance
@@ -104,8 +122,8 @@ def update_config(updates: Dict[str, Any]) -> Config:
         ValidationError: If the updated configuration is invalid
 
     Examples:
-        >>> config = update_config({"sync_repo_url": "git@github.com:user/repo.git"})
         >>> config = update_config({"auth_method": "custom"})
+        >>> config = update_config({"ccr_enabled": True})
     """
     # Load existing configuration
     config = load_config()
@@ -155,7 +173,6 @@ def _recover_config_from_data(data: Dict[str, Any]) -> Config:
 
     # Preserve critical non-auth fields that don't affect validation
     preserve_fields = [
-        'sync_repo_url',
         'resources_installed',
         'resources_version',
         'last_resource_update',

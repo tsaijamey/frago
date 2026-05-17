@@ -113,10 +113,6 @@ class Config(BaseModel):
     ccr_enabled: bool = False
     ccr_config_path: Optional[str] = None
 
-    # Multi-device sync configuration
-    sync_repo_url: Optional[str] = None  # User's private repo URL (for sync)
-    sync_max_file_size_mb: float = 5.0  # Max file size to sync (MB), default 5MB
-
     # Workspace resource management
     workspace_scan_roots: List[str] = Field(default_factory=list)  # e.g. ["~/repos/", "~/work/"]
     workspace_exclude_patterns: List[str] = Field(
