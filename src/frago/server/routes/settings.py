@@ -51,7 +51,6 @@ class MainConfigResponse(BaseModel):
     working_directory: str
     auth_method: str
     api_endpoint: Optional[APIEndpointResponse] = None
-    sync_repo: Optional[str] = None
     resources_installed: bool = True
     resources_version: Optional[str] = None
     init_completed: bool = True
@@ -61,7 +60,6 @@ class MainConfigUpdateRequest(BaseModel):
     """Main configuration update request"""
     working_directory: Optional[str] = None
     auth_method: Optional[str] = None
-    sync_repo: Optional[str] = None
 
 
 class APIEndpointRequest(BaseModel):
@@ -215,7 +213,6 @@ async def get_main_config() -> MainConfigResponse:
         working_directory=config.get("working_directory_display", "~/.frago"),
         auth_method=actual_auth_method,
         api_endpoint=api_endpoint,
-        sync_repo=config.get("sync_repo_url"),
         resources_installed=config.get("resources_installed", True),
         resources_version=config.get("resources_version"),
         init_completed=config.get("init_completed", True),
@@ -230,8 +227,6 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
         updates["working_directory"] = request.working_directory
     if request.auth_method is not None:
         updates["auth_method"] = request.auth_method
-    if request.sync_repo is not None:
-        updates["sync_repo_url"] = request.sync_repo
 
     result = MainConfigService.update_config(updates)
 
@@ -248,7 +243,6 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
     return MainConfigResponse(
         working_directory=config.get("working_directory_display", "~/.frago"),
         auth_method=config.get("auth_method", "official"),
-        sync_repo=config.get("sync_repo_url"),
     )
 
 
