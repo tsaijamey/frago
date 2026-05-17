@@ -15,7 +15,6 @@ import TaskDetail from '@/components/tasks/TaskDetail';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
 import SkillList from '@/components/skills/SkillList';
-import SyncPage from '@/components/sync/SyncPage';
 import SettingsPage from '@/components/settings/SettingsPage';
 import NewTaskPage from '@/components/newTask/NewTaskPage';
 import { WorkspacePage } from '@/components/workspace';
@@ -112,8 +111,6 @@ function App() {
         return <SkillList />;
       case 'guide':
         return <GuidePage />;
-      case 'sync':
-        return <SyncPage />;
       case 'settings':
         return <SettingsPage />;
       case 'newTask':

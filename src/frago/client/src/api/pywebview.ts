@@ -27,11 +27,6 @@ import type {
   RecipeSecretsUpdateResponse,
   GhCliStatus,
   ApiResponse,
-  CreateRepoResponse,
-  SyncResponse,
-  RepoVisibilityResponse,
-  ListReposResponse,
-  SelectRepoResponse,
   TutorialResponse,
 } from '@/types/pywebview';
 
@@ -286,39 +281,6 @@ export async function checkGhCli(): Promise<GhCliStatus> {
 export async function ghAuthLogin(): Promise<ApiResponse> {
   const api = await waitForPywebview();
   return api.gh_auth_login();
-}
-
-export async function createSyncRepo(
-  repoName: string,
-  privateRepo: boolean = true
-): Promise<CreateRepoResponse> {
-  const api = await waitForPywebview();
-  return api.create_sync_repo(repoName, privateRepo);
-}
-
-export async function runFirstSync(): Promise<SyncResponse> {
-  const api = await waitForPywebview();
-  return api.run_first_sync();
-}
-
-export async function getSyncResult(): Promise<SyncResponse> {
-  const api = await waitForPywebview();
-  return api.get_sync_result();
-}
-
-export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
-  const api = await waitForPywebview();
-  return api.check_sync_repo_visibility();
-}
-
-export async function listUserRepos(limit?: number): Promise<ListReposResponse> {
-  const api = await waitForPywebview();
-  return api.list_user_repos(limit);
-}
-
-export async function selectExistingRepo(sshUrl: string): Promise<SelectRepoResponse> {
-  const api = await waitForPywebview();
-  return api.select_existing_repo(sshUrl);
 }
 
 // ============================================================

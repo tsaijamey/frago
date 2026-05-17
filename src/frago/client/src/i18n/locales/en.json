@@ -7,7 +7,6 @@
     "skills": "Skills",
     "guide": "Guide",
     "workspace": "Workspace",
-    "sync": "Sync",
     "secrets": "Secrets",
     "settings": "Settings",
     "sections": {
@@ -45,7 +44,6 @@
     "viewAll": "View all",
     "newTask": "New Task",
     "runRecipe": "Run Recipe",
-    "syncNow": "Sync",
     "runningTasks": "Running",
     "recentTasks": "Recent Tasks",
     "noRecentTasks": "No recent tasks",
@@ -294,15 +292,6 @@
       "createRecipePrompt": "Help me create a Recipe to ",
       "testRecipePrompt": "Help me test Recipe "
     }
-  },
-  "sync": {
-    "title": "Sync",
-    "description": "Sync your frago resources across devices",
-    "pageDesc": "Sync your frago resources across devices",
-    "notConfigured": "Sync not configured",
-    "configureGitHub": "Configure GitHub",
-    "lastSync": "Last sync",
-    "syncNow": "Sync Now"
   },
   "secrets": {
     "title": "Secrets",

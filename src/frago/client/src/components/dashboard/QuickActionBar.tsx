@@ -1,12 +1,12 @@
 /**
  * QuickActionBar — top action buttons for dashboard.
  *
- * Provides quick access to: New Task, Run Recipe, Sync.
+ * Provides quick access to: New Task, Run Recipe.
  */
 
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Play, RefreshCw } from 'lucide-react';
+import { Plus, Play } from 'lucide-react';
 
 export default function QuickActionBar() {
   const { t } = useTranslation();
@@ -29,14 +29,6 @@ export default function QuickActionBar() {
       >
         <Play size={16} />
         {t('dashboard.runRecipe')}
-      </button>
-      <button
-        type="button"
-        className="dashboard-action-btn"
-        onClick={() => switchPage('sync')}
-      >
-        <RefreshCw size={16} />
-        {t('dashboard.syncNow')}
       </button>
     </div>
   );

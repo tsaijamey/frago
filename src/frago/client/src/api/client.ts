@@ -368,7 +368,6 @@ export interface MainConfig {
   working_directory: string;
   auth_method: string;
   api_endpoint?: APIEndpointConfig | null;
-  sync_repo?: string | null;
   resources_installed: boolean;
   resources_version?: string | null;
   init_completed: boolean;
@@ -553,87 +552,6 @@ export async function waitForApi(): Promise<void> {
   } catch {
     throw new Error('Failed to connect to Frago web service');
   }
-}
-
-// ============================================================
-// Multi-Device Sync API
-// ============================================================
-
-export interface GithubRepo {
-  name: string;
-  full_name: string;
-  description: string | null;
-  private: boolean;
-  ssh_url: string;
-  url: string;
-}
-
-export interface CreateRepoResponse {
-  status: 'ok' | 'error';
-  repo_url?: string;
-  error?: string;
-}
-
-export interface ListReposResponse {
-  status: 'ok' | 'error';
-  repos?: GithubRepo[];
-  error?: string;
-}
-
-export interface SelectRepoResponse {
-  status: 'ok' | 'error';
-  repo_url?: string;
-  error?: string;
-}
-
-export interface RepoVisibilityResponse {
-  status: 'ok' | 'error';
-  is_public?: boolean;
-  error?: string;
-}
-
-export interface SyncResponse {
-  status: 'ok' | 'error' | 'running' | 'idle';
-  success?: boolean;
-  output?: string;
-  error?: string;
-  message?: string;
-  local_changes?: number;
-  remote_updates?: number;
-  pushed_to_remote?: boolean;
-  conflicts?: string[];
-  warnings?: string[];
-  is_public_repo?: boolean;
-}
-
-export async function createSyncRepo(repoName: string, privateRepo: boolean = true): Promise<CreateRepoResponse> {
-  return fetchApi<CreateRepoResponse>('/sync/create-repo', {
-    method: 'POST',
-    body: JSON.stringify({ repo_name: repoName, private: privateRepo }),
-  });
-}
-
-export async function listUserRepos(limit: number = 100): Promise<ListReposResponse> {
-  return fetchApi<ListReposResponse>(`/sync/repos?limit=${limit}`);
-}
-
-export async function selectExistingRepo(repoUrl: string): Promise<SelectRepoResponse> {
-  return fetchApi<SelectRepoResponse>('/sync/select-repo', {
-    method: 'POST',
-    body: JSON.stringify({ repo_url: repoUrl }),
-  });
-}
-
-export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
-  return fetchApi<RepoVisibilityResponse>('/sync/repo-visibility');
-}
-
-export async function runSync(): Promise<SyncResponse> {
-  return fetchApi<SyncResponse>('/sync/run', { method: 'POST' });
-}
-
-export async function getSyncStatus(): Promise<SyncResponse> {
-  return fetchApi<SyncResponse>('/sync/status');
 }
 
 // ============================================================
@@ -1064,14 +982,14 @@ export interface StarResult {
  * Check if user has starred the frago repository.
  */
 export async function checkGitHubStarred(): Promise<StarredStatus> {
-  return fetchApi<StarredStatus>('/sync/github/starred');
+  return fetchApi<StarredStatus>('/github/starred');
 }
 
 /**
  * Star or unstar the frago repository.
  */
 export async function toggleGitHubStar(star: boolean): Promise<StarResult> {
-  return fetchApi<StarResult>('/sync/github/star', {
+  return fetchApi<StarResult>('/github/star', {
     method: 'POST',
     body: JSON.stringify({ star }),
   });
@@ -1260,96 +1178,6 @@ export async function getGuideContent(lang: string, chapterId: string): Promise<
 export async function searchGuide(query: string, lang: string = 'en'): Promise<GuideSearchResponse> {
   const params = new URLSearchParams({ q: query, lang });
   return fetchApi<GuideSearchResponse>(`/guide/search?${params.toString()}`);
-}
-
-// ============================================================
-// New Wizard Flow API (Web Login + Auto Setup)
-// ============================================================
-
-export interface WebLoginResponse {
-  status: 'ok' | 'error';
-  code?: string;
-  url?: string;
-  error?: string;
-}
-
-export interface AuthStatusResponse {
-  status: 'ok' | 'error';
-  completed: boolean;
-  authenticated: boolean;
-  username?: string | null;
-  error?: string;
-}
-
-export interface CheckRepoResponse {
-  status: 'ok' | 'error';
-  exists?: boolean;
-  repo_url?: string | null;
-  is_private?: boolean;
-  username?: string | null;
-  default_repo_name: string;
-  error?: string;
-}
-
-export interface SetupRepoResponse {
-  status: 'ok' | 'running' | 'syncing' | 'idle' | 'error';
-  repo_url?: string | null;
-  username?: string | null;
-  created?: boolean;
-  sync_success?: boolean;
-  local_changes?: number;
-  remote_updates?: number;
-  pushed_to_remote?: boolean;
-  message?: string | null;
-  error?: string | null;
-  warnings?: string[];
-  needs_refresh?: boolean;
-}
-
-/**
- * Start web-based GitHub authentication.
- * Returns the device code to display in the UI.
- */
-export async function startWebLogin(): Promise<WebLoginResponse> {
-  return fetchApi<WebLoginResponse>('/sync/auth-login-web', { method: 'POST' });
-}
-
-/**
- * Check if the web login process has completed.
- * Poll this to detect when user completes authorization.
- */
-export async function checkAuthStatus(): Promise<AuthStatusResponse> {
-  return fetchApi<AuthStatusResponse>('/sync/auth-status');
-}
-
-/**
- * Cancel any ongoing web login process.
- */
-export async function cancelWebLogin(): Promise<{ status: string }> {
-  return fetchApi<{ status: string }>('/sync/auth-cancel', { method: 'POST' });
-}
-
-/**
- * Check if the default sync repository (frago-working-dir) exists.
- */
-export async function checkSyncRepo(): Promise<CheckRepoResponse> {
-  return fetchApi<CheckRepoResponse>('/sync/check-repo');
-}
-
-/**
- * Start automatic repository setup.
- * Creates frago-working-dir if needed and runs first sync.
- */
-export async function setupSyncRepo(): Promise<SetupRepoResponse> {
-  return fetchApi<SetupRepoResponse>('/sync/setup-repo', { method: 'POST' });
-}
-
-/**
- * Get the status of the repository setup operation.
- * Poll this to track setup progress.
- */
-export async function getSetupStatus(): Promise<SetupRepoResponse> {
-  return fetchApi<SetupRepoResponse>('/sync/setup-status');
 }
 
 // ============================================================

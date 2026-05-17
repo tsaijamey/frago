@@ -31,7 +31,6 @@ export type PageType =
   | 'recipe_detail'
   | 'skills'
   | 'guide'
-  | 'sync'
   | 'settings'
   | 'newTask'
   | 'workspace'

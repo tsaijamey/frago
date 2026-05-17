@@ -4,6 +4,7 @@ import AppearanceSettings from './AppearanceSettings';
 import AboutSettings from './AboutSettings';
 import { InitSettings } from './InitSettings';
 import TaskIngestionPanel from './TaskIngestionPanel';
+import OfficialResourceSettings from './OfficialResourceSettings';
 
 interface SettingsPageProps {
   onOpenInitWizard?: () => void;
@@ -34,6 +35,11 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
         {/* Task ingestion channels */}
         <section>
           <TaskIngestionPanel />
+        </section>
+
+        {/* Official resource sync (commands/skills from official frago repo) */}
+        <section>
+          <OfficialResourceSettings />
         </section>
 
         {/* Appearance settings */}
