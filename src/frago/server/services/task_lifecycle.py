@@ -187,11 +187,41 @@ class TaskLifecycle:
 
     # -- reply --
 
-    def reply(self, task_id: str, channel: str, reply_params: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _merge_reply_context(
+        reply_params: dict[str, Any], reply_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build full notify-recipe params: text + reply_context + preserved attachments.
+
+        Attachment passthrough (html_body / file_path / image_path) was previously
+        dropped on the task path — see 2026-04-19 audit, problem 6.
+        """
+        full = {
+            "text": reply_params.get("text", ""),
+            "reply_context": reply_context,
+        }
+        for k in ("html_body", "file_path", "image_path"):
+            if reply_params.get(k):
+                full[k] = reply_params[k]
+        return full
+
+    def reply(
+        self,
+        task_id: str,
+        channel: str,
+        reply_params: dict[str, Any],
+        *,
+        msg_id: str = "",
+    ) -> dict[str, Any]:
         """Execute a reply via notify recipe. Returns {"status": "ok"/"error"}.
 
         Enriches params with reply_context (from board.Msg.source.reply_context),
         runs notify recipe. Caller (_send_reply) handles task status updates.
+
+        Resolution order for reply_context:
+        1. ``task_id`` non-empty → board task → task.reply_context
+        2. ``task_id`` empty and ``msg_id`` non-empty → board msg → msg.source.reply_context
+           (covers PA decisions that reply directly to a msg without creating a task)
         """
         if channel == "cli":
             return {"status": "ok"}
@@ -210,20 +240,17 @@ class TaskLifecycle:
                 channel = view.channel
 
             if view and view.reply_context:
-                full_params = {
-                    "text": reply_params.get("text", ""),
-                    "reply_context": view.reply_context,
-                }
-                if reply_params.get("html_body"):
-                    full_params["html_body"] = reply_params["html_body"]
-                # Preserve attachment fields — previously these were silently
-                # dropped whenever a task had reply_context, causing PA's
-                # file_path / image_path to vanish (problem 6 of 2026-04-19 audit).
-                if reply_params.get("file_path"):
-                    full_params["file_path"] = reply_params["file_path"]
-                if reply_params.get("image_path"):
-                    full_params["image_path"] = reply_params["image_path"]
-                reply_params = full_params
+                reply_params = self._merge_reply_context(reply_params, view.reply_context)
+        elif msg_id:
+            # Reply targets a msg directly (no task created). Board stores msg_id
+            # as f"{channel}:{msg_id}", PA decisions carry the bare id.
+            board = get_board()
+            board_msg_id = f"{channel}:{msg_id}"
+            board_msg = board._find_msg(board_msg_id)  # noqa: SLF001 — internal lookup
+            if board_msg and board_msg.source.reply_context:
+                reply_params = self._merge_reply_context(
+                    reply_params, board_msg.source.reply_context,
+                )
 
         # Find and run notify recipe for channel
         try:
