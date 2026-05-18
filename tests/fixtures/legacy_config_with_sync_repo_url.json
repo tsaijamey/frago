@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "auth_method": "official",
+  "sync_repo_url": "https://github.com/example/legacy-repo",
+  "sync_max_file_size_mb": 5.0,
+  "claude_code_path": "/usr/bin/claude",
+  "ccr_enabled": false,
+  "init_completed": true
+}

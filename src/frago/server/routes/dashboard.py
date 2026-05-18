@@ -309,19 +309,13 @@ def compute_dashboard_data() -> DashboardData:
         except Exception:
             pass
 
-        # Last synced time
-        last_synced_at = None
-        try:
-            from frago.tools.sync_repo import get_last_synced_at
-            last_synced_at = get_last_synced_at()
-        except Exception:
-            pass
-
+        # Last synced time: legacy field, multi-device sync removed; recipe
+        # implementations may repopulate this from their own state later.
         system_status = DashboardStatus(
             chrome_connected=chrome_connected,
             tab_count=tab_count,
             error_count=error_count,
-            last_synced_at=last_synced_at,
+            last_synced_at=None,
         )
     except Exception as e:
         logger.error("Failed to compute system status: %s", e)
