@@ -1085,7 +1085,7 @@ class PrimaryAgentService:
         if image_path:
             reply_params["image_path"] = image_path
         result = await asyncio.to_thread(
-            self._lifecycle.reply, task_id, channel, reply_params,
+            self._lifecycle.reply, task_id, channel, reply_params, msg_id=msg_id,
         )
 
         if result["status"] == "ok":
