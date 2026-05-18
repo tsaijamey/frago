@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,13 @@ class AgentSession:
     the process continues running (degrades to detached mode).
     """
 
-    def __init__(self, internal_id: str, project_path: str):
+    def __init__(
+        self,
+        internal_id: str,
+        project_path: str,
+        *,
+        prefix_provider: Callable[[], str] | None = None,
+    ):
         self.internal_id = internal_id
         self.project_path = project_path
         self._process: subprocess.Popen | None = None
@@ -70,6 +77,10 @@ class AgentSession:
         self._pending_tool_calls: dict[str, dict[str, Any]] = {}
         # Optional callback for capturing complete assistant messages
         self._on_assistant_message: Any | None = None  # Callable[[str], None]
+        # Session-bound prompt prefix (e.g., PA system prompt + bootstrap).
+        # Invoked on every (re)start so identity/context survives the restart
+        # that send_message performs. None for plain agent sessions.
+        self._prefix_provider = prefix_provider
 
     def _get_frago_agent_command(self) -> list[str]:
         """Get frago agent command for subprocess."""
@@ -99,12 +110,27 @@ class AgentSession:
             self._process = None
             logger.info(f"Cleaned up old subprocess (PID: {old_pid})")
 
+    def _assemble_prompt(self, message: str) -> str:
+        """Prepend session-bound prefix to the caller-supplied message.
+
+        Called on every (re)start. When ``prefix_provider`` is set the prefix
+        is re-evaluated each time so dynamic state (e.g. PA bootstrap) is
+        always current. Empty message returns the prefix alone.
+        """
+        if self._prefix_provider is None:
+            return message
+        prefix = self._prefix_provider()
+        if not message:
+            return prefix
+        return f"{prefix}\n\n{message}"
+
     async def start(self, prompt: str) -> None:
         """Start agent process in attached mode.
 
-        A fresh Claude session is started each time; conversational
-        memory across messages is the caller's responsibility (PA
-        rebuilds its prompt from queue + memory each turn).
+        A fresh Claude session is started each time; per-turn user content
+        comes from ``prompt``, while any session-bound prefix (PA system
+        prompt + bootstrap, etc.) is supplied by ``prefix_provider`` and
+        re-attached on every (re)start.
         """
         # Kill old process before starting new one to prevent orphan leaks
         self._cleanup_old_process()
@@ -119,7 +145,7 @@ class AgentSession:
         log_dir = Path.home() / ".frago" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         prompt_file = log_dir / f"agent-attached-{self.internal_id[:8]}.txt"
-        prompt_file.write_text(prompt, encoding="utf-8")
+        prompt_file.write_text(self._assemble_prompt(prompt), encoding="utf-8")
         cmd.extend(["--prompt-file", str(prompt_file)])
 
         # FRAGO_PA marks this subprocess as a Primary Agent spawn so frago-hook
@@ -149,9 +175,12 @@ class AgentSession:
         """Send a follow-up message by restarting the attached subprocess.
 
         Each call kills the existing claude child and launches a fresh
-        ``frago agent`` invocation with the message as the new prompt.
-        Cross-message Claude-side memory is not preserved at this layer;
-        callers (PA) provide their own conversation context.
+        ``frago agent`` invocation. The new subprocess receives
+        ``prefix_provider() + message`` (when a prefix provider is set),
+        so session identity / bootstrap context survives the restart
+        without the caller having to re-attach it on every send.
+        Cross-message Claude-side conversational memory is still not
+        preserved at this layer.
         """
         # Stop current reader task before starting new process
         self._running = False
@@ -531,25 +560,35 @@ class AgentService:
 
     @classmethod
     async def start_task_attached(
-        cls, prompt: str, project_path: str | None = None
+        cls,
+        prompt: str,
+        project_path: str | None = None,
+        *,
+        prefix_provider: Callable[[], str] | None = None,
     ) -> dict[str, Any]:
         """Start agent task in attached mode with real-time streaming.
 
         Args:
             prompt: Task description/prompt.
             project_path: Optional project path context.
+            prefix_provider: Optional zero-arg callable returning a prompt
+                prefix re-evaluated on every (re)start. Use this to bind
+                a long-lived role (e.g. PA system prompt + bootstrap) to
+                the session — survives restarts triggered by send_message.
 
         Returns:
             Dictionary with internal_id, status, and project_path.
         """
-        if not prompt or not prompt.strip():
+        # Empty `prompt` is allowed only when a prefix_provider is bound —
+        # the prefix becomes the entire initial message.
+        if (not prompt or not prompt.strip()) and prefix_provider is None:
             return {"status": "error", "error": "Task description cannot be empty"}
 
         prompt = prompt.strip()
         internal_id = str(uuid.uuid4())
         cwd = project_path or str(Path.home())
 
-        session = AgentSession(internal_id, cwd)
+        session = AgentSession(internal_id, cwd, prefix_provider=prefix_provider)
 
         try:
             await session.start(prompt)
