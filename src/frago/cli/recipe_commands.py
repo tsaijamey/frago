@@ -12,7 +12,7 @@ import click
 from frago.recipes import OutputHandler, RecipeRegistry, RecipeRunner
 from frago.recipes.exceptions import MetadataParseError, RecipeError, RecipeValidationError
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
-from frago.tools.sync_repo import _ensure_git_user_config
+from frago.tools.git_utils import _ensure_git_user_config
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 

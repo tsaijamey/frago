@@ -22,19 +22,18 @@ from frago.server.routes import (
     config_router,
     dashboard_router,
     files_router,
+    github_star_router,
     guide_router,
     init_router,
     recipes_router,
     settings_router,
     skills_router,
-    sync_router,
     system_router,
     tasks_router,
     viewer_router,
     workspace_router,
 )
 from frago.server.services.community_recipe_service import CommunityRecipeService
-from frago.server.services.github_sync_scheduler import GitHubSyncScheduler
 from frago.server.services.scheduler_service import SchedulerService
 from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.sync_service import SyncService
@@ -222,10 +221,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await version_service.initialize()
     await version_service.start()
 
-    # Start GitHub sync scheduler (5min interval, only if configured)
-    github_sync_scheduler = GitHubSyncScheduler.get_instance()
-    await github_sync_scheduler.start()
-
     # Prepare recipe scheduler (started after PA wiring below)
     scheduler = SchedulerService.get_instance()
 
@@ -290,7 +285,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await tab_cleanup.stop()
     await primary_agent.stop()
     await scheduler.stop()
-    await github_sync_scheduler.stop()
     await version_service.stop()
     await community_service.stop()
     await sessions_watcher.stop()
@@ -434,7 +428,7 @@ def create_app(
     app.include_router(config_router, prefix="/api", tags=["config"])
     app.include_router(skills_router, prefix="/api", tags=["skills"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])
-    app.include_router(sync_router, prefix="/api", tags=["sync"])
+    app.include_router(github_star_router, prefix="/api", tags=["github_star"])
     app.include_router(init_router, prefix="/api", tags=["init"])
     app.include_router(guide_router, prefix="/api", tags=["guide"])
 

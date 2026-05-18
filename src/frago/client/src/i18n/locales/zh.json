@@ -7,7 +7,6 @@
     "skills": "技能",
     "guide": "使用指南",
     "workspace": "工作区",
-    "sync": "同步",
     "secrets": "密钥",
     "settings": "设置",
     "sections": {
@@ -45,7 +44,6 @@
     "viewAll": "查看全部",
     "newTask": "新任务",
     "runRecipe": "运行配方",
-    "syncNow": "同步",
     "runningTasks": "运行中",
     "recentTasks": "最近任务",
     "noRecentTasks": "暂无最近任务",
@@ -294,15 +292,6 @@
       "createRecipePrompt": "帮我创建一个配方来 ",
       "testRecipePrompt": "帮我测试配方 "
     }
-  },
-  "sync": {
-    "title": "同步",
-    "description": "跨设备同步您的 frago 资源",
-    "pageDesc": "跨设备同步您的 frago 资源",
-    "notConfigured": "同步未配置",
-    "configureGitHub": "配置 GitHub",
-    "lastSync": "上次同步",
-    "syncNow": "立即同步"
   },
   "secrets": {
     "title": "密钥",

@@ -232,7 +232,6 @@ export interface MainConfig {
   // Optional features
   ccr_enabled: boolean;
   ccr_config_path?: string;
-  sync_repo_url?: string;
   // Working directory (read-only, calculated by backend)
   working_directory_display?: string;
   // Resource status
@@ -300,53 +299,6 @@ export interface MainConfigUpdateResponse {
 export interface AuthUpdateRequest {
   auth_method: 'official' | 'custom';
   api_endpoint?: APIEndpoint;
-}
-
-export interface CreateRepoResponse {
-  status: 'ok' | 'error';
-  repo_url?: string;
-  error?: string;
-}
-
-export interface SyncResponse {
-  status: 'ok' | 'error' | 'running' | 'idle';
-  message?: string;
-  output?: string;
-  error?: string;
-  success?: boolean;
-  local_changes?: number;
-  remote_updates?: number;
-  pushed_to_remote?: boolean;
-  conflicts?: string[];
-  warnings?: string[];
-  is_public_repo?: boolean;
-}
-
-export interface RepoVisibilityResponse {
-  status: 'ok' | 'error';
-  visibility?: 'public' | 'private';
-  is_public?: boolean;
-  error?: string;
-}
-
-export interface GithubRepo {
-  name: string;
-  full_name: string;
-  private: boolean;
-  ssh_url: string;
-  description: string | null;
-}
-
-export interface ListReposResponse {
-  status: 'ok' | 'error';
-  repos?: GithubRepo[];
-  error?: string;
-}
-
-export interface SelectRepoResponse {
-  status: 'ok' | 'error';
-  repo_url?: string;
-  error?: string;
 }
 
 // ============================================================
@@ -554,40 +506,6 @@ export interface PyWebviewApi {
    * Execute gh auth login in external terminal
    */
   gh_auth_login(): Promise<ApiResponse>;
-
-  /**
-   * Create GitHub repo and configure in config.json
-   * @param repo_name Repository name
-   * @param private_repo Whether it's a private repo
-   */
-  create_sync_repo(repo_name: string, private_repo?: boolean): Promise<CreateRepoResponse>;
-
-  /**
-   * Execute frago sync (background thread)
-   */
-  run_first_sync(): Promise<SyncResponse>;
-
-  /**
-   * Get sync result (polling)
-   */
-  get_sync_result(): Promise<SyncResponse>;
-
-  /**
-   * Check sync repository visibility
-   */
-  check_sync_repo_visibility(): Promise<RepoVisibilityResponse>;
-
-  /**
-   * List user's GitHub repositories
-   * @param limit Maximum number to return (default 100)
-   */
-  list_user_repos(limit?: number): Promise<ListReposResponse>;
-
-  /**
-   * Select existing repo as sync repo
-   * @param repo_url Repository URL (SSH or HTTPS format, will be converted to HTTPS)
-   */
-  select_existing_repo(repo_url: string): Promise<SelectRepoResponse>;
 
   // ============================================================
   // System API

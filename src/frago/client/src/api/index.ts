@@ -30,11 +30,6 @@ import type {
   RecipeSecretsUpdateResponse,
   GhCliStatus,
   ApiResponse,
-  CreateRepoResponse,
-  SyncResponse,
-  RepoVisibilityResponse,
-  ListReposResponse,
-  SelectRepoResponse,
   TutorialResponse,
   CommunityRecipeItem,
   CommunityRecipeInstallResponse,
@@ -487,7 +482,6 @@ export async function getMainConfig(): Promise<MainConfig> {
       haiku_model: config.api_endpoint.haiku_model ?? undefined,
     } : undefined,
     ccr_enabled: false,
-    sync_repo_url: config.sync_repo ?? undefined,
     working_directory_display: config.working_directory,
     resources_installed: config.resources_installed,
     resources_version: config.resources_version ?? undefined,
@@ -512,9 +506,6 @@ export async function updateMainConfig(
       // Pass through directly: backend accepts 'official' or 'custom'
       backendUpdates.auth_method = updates.auth_method;
     }
-    if (updates.sync_repo_url !== undefined) {
-      backendUpdates.sync_repo = updates.sync_repo_url;
-    }
 
     const config = await httpApi.updateMainConfig(backendUpdates);
     return {
@@ -523,7 +514,6 @@ export async function updateMainConfig(
         schema_version: '1.0',
         auth_method: config.auth_method as MainConfig['auth_method'],
         ccr_enabled: false,
-        sync_repo_url: config.sync_repo ?? undefined,
         working_directory_display: config.working_directory,
         resources_installed: true,
         created_at: localISOString(),
@@ -577,7 +567,6 @@ export async function updateAuthMethod(
             haiku_model: config.api_endpoint.haiku_model ?? undefined,
           } : undefined,
           ccr_enabled: false,
-          sync_repo_url: config.sync_repo ?? undefined,
           working_directory_display: config.working_directory,
           resources_installed: config.resources_installed,
           created_at: localISOString(),
@@ -686,63 +675,6 @@ export async function ghAuthLogin(): Promise<ApiResponse> {
     status: (result.status === 'ok' ? 'ok' : 'error') as 'ok' | 'error',
     error: result.error ?? undefined,
   };
-}
-
-export async function createSyncRepo(
-  repoName: string,
-  privateRepo: boolean = true
-): Promise<CreateRepoResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.createSyncRepo(repoName, privateRepo);
-  }
-
-  // HTTP API
-  return httpApi.createSyncRepo(repoName, privateRepo);
-}
-
-export async function runFirstSync(): Promise<SyncResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.runFirstSync();
-  }
-
-  // HTTP API
-  return httpApi.runSync();
-}
-
-export async function getSyncResult(): Promise<SyncResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.getSyncResult();
-  }
-
-  // HTTP API
-  return httpApi.getSyncStatus();
-}
-
-export async function checkSyncRepoVisibility(): Promise<RepoVisibilityResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.checkSyncRepoVisibility();
-  }
-
-  // HTTP API
-  return httpApi.checkSyncRepoVisibility();
-}
-
-export async function listUserRepos(limit?: number): Promise<ListReposResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.listUserRepos(limit);
-  }
-
-  // HTTP API
-  return httpApi.listUserRepos(limit);
-}
-
-export async function selectExistingRepo(sshUrl: string): Promise<SelectRepoResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.selectExistingRepo(sshUrl);
-  }
-
-  // HTTP API
-  return httpApi.selectExistingRepo(sshUrl);
 }
 
 // ============================================================
@@ -1093,76 +1025,6 @@ export async function searchGuide(
     };
   }
   return httpApi.searchGuide(query, lang);
-}
-
-// ============================================================
-// New Wizard Flow API (Web Login + Auto Setup)
-// ============================================================
-
-export type {
-  WebLoginResponse,
-  AuthStatusResponse,
-  CheckRepoResponse,
-  SetupRepoResponse,
-} from './client';
-
-export async function startWebLogin(): Promise<httpApi.WebLoginResponse> {
-  if (isPywebviewMode()) {
-    return {
-      status: 'error',
-      error: 'Web login not supported in pywebview mode',
-    };
-  }
-  return httpApi.startWebLogin();
-}
-
-export async function checkAuthStatus(): Promise<httpApi.AuthStatusResponse> {
-  if (isPywebviewMode()) {
-    return {
-      status: 'error',
-      completed: true,
-      authenticated: false,
-      error: 'Not supported in pywebview mode',
-    };
-  }
-  return httpApi.checkAuthStatus();
-}
-
-export async function cancelWebLogin(): Promise<{ status: string }> {
-  if (isPywebviewMode()) {
-    return { status: 'ok' };
-  }
-  return httpApi.cancelWebLogin();
-}
-
-export async function checkSyncRepo(): Promise<httpApi.CheckRepoResponse> {
-  if (isPywebviewMode()) {
-    return {
-      status: 'error',
-      default_repo_name: 'frago-working-dir',
-      error: 'Not supported in pywebview mode',
-    };
-  }
-  return httpApi.checkSyncRepo();
-}
-
-export async function setupSyncRepo(): Promise<httpApi.SetupRepoResponse> {
-  if (isPywebviewMode()) {
-    return {
-      status: 'error',
-      error: 'Not supported in pywebview mode',
-    };
-  }
-  return httpApi.setupSyncRepo();
-}
-
-export async function getSetupStatus(): Promise<httpApi.SetupRepoResponse> {
-  if (isPywebviewMode()) {
-    return {
-      status: 'idle',
-    };
-  }
-  return httpApi.getSetupStatus();
 }
 
 // ============================================================

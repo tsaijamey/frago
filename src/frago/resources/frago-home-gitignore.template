@@ -1,6 +1,5 @@
 # ~/.frago gitignore template
-# 此文件是 ~/.frago/.gitignore 的权威模板
-# 由 sync_repo.py:_ensure_gitignore() 在 frago sync 时写入
+# 此文件是 ~/.frago/.gitignore 的权威模板，由 frago init 写入。
 #
 # 往 ~/.frago/ 新增文件时，MUST 判断是否加到这里：
 #   设备本地运行时产物（cache、state、log、pid）→ 加
@@ -44,8 +43,6 @@ cache/
 .claude/commands/
 
 # Local metadata (device-specific, not synced)
-.claude/skills_metadata.json
-.claude/sync_metadata.json
 .claude/settings.local.json
 .device_id
 .workspace_migrated

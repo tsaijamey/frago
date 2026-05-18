@@ -57,12 +57,6 @@ const SkillsIcon = () => (
 
 // ConsoleIcon removed - Console functionality merged into Task Detail
 
-const SyncIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 0 1 9-9" />
-  </svg>
-);
-
 const SettingsIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3" />
@@ -119,7 +113,6 @@ const menuItems: MenuItem[] = [
 const footerToolItems: MenuItem[] = [
   { id: 'guide', labelKey: 'sidebar.guide', icon: <GuideIcon /> },
   { id: 'workspace', labelKey: 'sidebar.workspace', icon: <WorkspaceIcon /> },
-  { id: 'sync', labelKey: 'sidebar.sync', icon: <SyncIcon /> },
   { id: 'settings', labelKey: 'sidebar.settings', icon: <SettingsIcon /> },
 ];
 
