@@ -264,12 +264,20 @@ class PrimaryAgentService:
 
         logger.info("PA session creating (reason=%s, seq=%d)", reason, self._heartbeat_seq)
 
-        bootstrap, reborn_reason = self._build_bootstrap_prompt(create_reason=reason)
-        prompt = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
+        # reborn_reason is only meaningful for the online-notification gate.
+        # The prefix itself is re-assembled on every (re)start by the
+        # AgentSession via the prefix_provider below, so a single restart
+        # triggered by send_message cannot strip PA identity / bootstrap.
+        _, reborn_reason = self._build_bootstrap_prompt(create_reason=reason)
+
+        def _pa_prefix_provider() -> str:
+            latest_bootstrap, _ = self._build_bootstrap_prompt(create_reason="message_dispatch")
+            return PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + latest_bootstrap
 
         result = await AgentService.start_task_attached(
-            prompt=prompt,
+            prompt="",
             project_path=str(Path.home()),
+            prefix_provider=_pa_prefix_provider,
         )
         if result.get("status") != "ok":
             raise RuntimeError(
