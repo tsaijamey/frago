@@ -271,7 +271,15 @@ class Executor:
 
         # Trace: agent execution finished
         has_completion = stop_reason in _SUCCESS_STOP_REASONS
-        duration = int((datetime.now() - ctx.created_at).total_seconds()) if ctx.created_at else 0
+        # board.append_task stores task.created_at as datetime.now().astimezone()
+        # (tz-aware). datetime.now() alone is naive → subtraction raises
+        # TypeError on Windows and the executor crashes before _notify_pa,
+        # so PA never gets agent_completed and the user is stuck on the
+        # interim "稍等一下" reply.
+        duration = (
+            int((datetime.now().astimezone() - ctx.created_at).total_seconds())
+            if ctx.created_at else 0
+        )
         trace_entry(
             origin="internal", subkind="executor", data_type="task_state",
             thread_id=ctx.thread_id, task_id=ctx.task_id,

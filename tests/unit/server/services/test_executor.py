@@ -264,3 +264,68 @@ class TestMonitorUntilDoneWindowsOSError:
         result = await executor._monitor_until_done(ctx, pid=99999)
         assert result == 99999
         assert call_count["n"] >= 1
+
+
+class TestFinalizeRunDatetimeAwareness:
+    """Bug 2026-05-20 Test 6: board.append_task stores task.created_at as
+    datetime.now().astimezone() (tz-aware), but _finalize_run computed
+    duration as `datetime.now() - ctx.created_at` (naive minus aware) →
+    TypeError on every successful run. The executor crashed before
+    _notify_pa fired, so PA never got agent_completed and the user was
+    stuck on the interim "稍等一下" reply even though the sub-agent had
+    finished its investigation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_aware_created_at_does_not_raise(self, tmp_path, monkeypatch):
+        """ctx.created_at as tz-aware datetime must not break duration calc."""
+        from datetime import datetime, timezone
+
+        from frago.server.services.executor import Executor, _TaskContext
+
+        monkeypatch.setattr(
+            "frago.server.services.executor.Path.home", lambda: tmp_path,
+        )
+
+        # Aware created_at matching what board.append_task produces
+        aware_created = datetime.now(timezone.utc).astimezone()
+
+        ctx = _TaskContext(
+            task_id="t1",
+            prompt="x",
+            description="x",
+            channel="feishu",
+            channel_message_id="om_x",
+            thread_id="th1",
+            reply_context={},
+            created_at=aware_created,
+        )
+
+        board = MagicMock()
+        board.get_task.return_value = None
+        # Avoid touching real disk for sub-agent JSONL
+        executor = Executor(
+            board=board,
+            pa_enqueue_message=AsyncMock(),
+            broadcast_pa_event=AsyncMock(),
+        )
+
+        # Force _monitor_until_done to be a no-op for this test
+        async def _no_wait(_ctx, _pid):
+            return _pid
+        monkeypatch.setattr(executor, "_monitor_until_done", _no_wait)
+        monkeypatch.setattr(
+            executor, "_read_stop_reason", lambda _sid: "end_turn",
+        )
+        monkeypatch.setattr(
+            executor, "_read_final_assistant_text", lambda _sid: "done",
+        )
+        # Stub TabGroupManager + RunManager cleanup paths
+        monkeypatch.setattr(executor, "_get_or_create_run_for_thread",
+                            AsyncMock(return_value="run-x"))
+
+        # _finalize_run is the path that crashed. It used to do
+        #   datetime.now() - ctx.created_at
+        # which raises TypeError when sides differ in tz-awareness.
+        # Just running it without raising is the regression assertion.
+        await executor._finalize_run(ctx, pid=99999, run_id="run-x")
