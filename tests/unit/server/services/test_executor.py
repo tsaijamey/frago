@@ -215,3 +215,52 @@ class TestNotifyPASessionId:
         assert enqueued[0]["session_id"] is None
         # synthesized fallback summary uses stop_reason
         assert "end_turn" in enqueued[0]["result_summary"]
+
+
+class TestMonitorUntilDoneWindowsOSError:
+    """Bug 2026-05-20: Windows raises OSError(WinError 6, "invalid handle")
+    when os.kill(pid, 0) is called on an already-exited process — not
+    ProcessLookupError as on POSIX. The monitor loop's except clause only
+    caught ProcessLookupError/PermissionError, so the OSError propagated
+    out of _safe_execute_run and the task was marked failed even though
+    the agent completed normally. Regression: OSError must be caught and
+    treated as "process is gone".
+    """
+
+    @pytest.mark.asyncio
+    async def test_oserror_from_os_kill_treated_as_exited(
+        self, tmp_path, monkeypatch,
+    ):
+        import os
+
+        from frago.server.services.executor import Executor
+
+        # Simulate Windows behavior: os.kill(pid, 0) raises OSError(WinError 6)
+        call_count = {"n": 0}
+
+        def _fake_kill(pid, sig):
+            call_count["n"] += 1
+            if sig == 0:
+                # Equivalent of Windows WinError 6
+                raise OSError(6, "invalid handle")
+            return None
+
+        monkeypatch.setattr(os, "kill", _fake_kill)
+        monkeypatch.setattr(
+            "frago.server.services.executor.Path.home", lambda: tmp_path,
+        )
+
+        board = MagicMock()
+        board.get_task.return_value = None
+        executor = Executor(board=board)
+
+        ctx = MagicMock()
+        ctx.task_id = "t1"
+        ctx.thread_id = "th1"
+        ctx.channel_message_id = None
+
+        # _monitor_until_done must return cleanly when os.kill raises OSError,
+        # not propagate to _safe_execute_run.
+        result = await executor._monitor_until_done(ctx, pid=99999)
+        assert result == 99999
+        assert call_count["n"] >= 1

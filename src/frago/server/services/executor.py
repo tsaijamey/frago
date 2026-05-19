@@ -518,6 +518,12 @@ class Executor:
                 os.kill(pid, 0)
             except (ProcessLookupError, PermissionError):
                 return pid
+            except OSError:
+                # Windows: after the process exits, os.kill(pid, 0) raises
+                # OSError(WinError 6, "invalid handle") rather than
+                # ProcessLookupError that POSIX uses. Treat both as "process
+                # is gone, stop monitoring."
+                return pid
 
             await asyncio.sleep(PID_POLL_INTERVAL)
 
@@ -532,7 +538,7 @@ class Executor:
                     "— declaring stuck, killing process",
                     ctx.task_id[:8], (time.time() - last_active) / 60, pid,
                 )
-                with contextlib.suppress(ProcessLookupError, PermissionError):
+                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                     os.kill(pid, signal.SIGTERM)
                 # Mark task FAILED with a clear reason; outputs on disk are preserved.
                 self._board.mark_task_failed(
