@@ -333,7 +333,15 @@ class TaskBoard:
             )
             return thread
 
-    def append_msg(self, thread_id: str, msg: Msg, *, by: str) -> None:
+    def append_msg(self, thread_id: str, msg: Msg, *, by: str) -> bool:
+        """Append msg to thread. Returns True if newly appended, False if
+        rejected (post-archive) or deduped (same msg_id already present).
+
+        Callers that side-effect on each ingest (e.g. PA enqueue) must
+        gate on this return value — otherwise duplicate deliveries from
+        the channel (lark WS redelivery, email re-poll) produce duplicate
+        replies even though the board itself dedups.
+        """
         with self._lock:
             thread = self._threads.get(thread_id)
             if thread is None:
@@ -346,7 +354,7 @@ class TaskBoard:
                     original_action="append_msg",
                     original_prompt_head=msg.source.text.split("\n", 1)[0][:80],
                 )
-                return
+                return False
             # Phase 1 part B: 重复响应根因消除 — 同 msg_id 重复 ingest 直接 dedup,
             # 落 timeline duplicate_msg_ingest 让 PA 可见 (recent_rejections), 不重复 append.
             # 这是替代 message_cache 兜底的核心修复.
@@ -358,7 +366,7 @@ class TaskBoard:
                     msg_id=msg.msg_id,
                     data={"channel": msg.source.channel},
                 )
-                return
+                return False
             # spec §2: received → awaiting_decision 立即转换 (心跳前).
             # Phase 0 未实施, Phase 1 part B 在 append_msg 内自动转 (scheduled fast-path
             # 在 Ingestor.ingest_scheduled 后续 append_task 时直接 dispatch, 此处不影响).
@@ -383,6 +391,7 @@ class TaskBoard:
                     "status": msg.status,
                 },
             )
+            return True
 
     def append_task(
         self, msg_id: str, intent: Intent, *, task_type: str, by: str

@@ -28,10 +28,14 @@ class Ingestor:
         received_at: datetime,
         reply_context: dict | None,
         thread_id: str,
-    ) -> Msg:
+    ) -> tuple[Msg, bool]:
         """外部信道消息入 board (飞书 / 邮件 / webhook 共用此路径)。
 
         thread_id 由调用方 (scheduler + thread_classifier) 决定; Ingestor 不做归并。
+
+        Returns (msg, is_new). is_new=False 表示 board.append_msg 走 dedup /
+        post-archive reject 分支, 调用方应跳过 PA enqueue / notify 等副作用,
+        否则同一 msg_id 会被 PA 重复处理 (channel 侧重发时尤其明显).
         """
         msg = Msg(
             msg_id=f"{channel}:{msg_id}",
@@ -45,8 +49,8 @@ class Ingestor:
                 reply_context=reply_context,
             ),
         )
-        self._board.append_msg(thread_id, msg, by="Ingestor")
-        return msg
+        is_new = self._board.append_msg(thread_id, msg, by="Ingestor")
+        return msg, is_new
 
     def ingest_scheduled(
         self,

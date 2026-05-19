@@ -216,7 +216,7 @@ class IngestionScheduler:
             )
 
         ingestor = Ingestor(board)
-        ingestor.ingest_external(
+        _, is_new = ingestor.ingest_external(
             channel=ch.name,
             msg_id=msg_id,
             sender_id=sender,
@@ -226,6 +226,17 @@ class IngestionScheduler:
             reply_context=reply_ctx,
             thread_id=classify_result.thread_id,
         )
+
+        # Channel redelivery defense: lark WS / email re-poll can deliver the
+        # same msg_id twice. board.append_msg dedups (timeline duplicate_msg_ingest)
+        # but PA enqueue is a side-effect that must also be gated, otherwise the
+        # second delivery produces a second PA round-trip and a second reply.
+        if not is_new:
+            logger.info(
+                "Channel %s: duplicate msg %s (board dedup hit) — skip PA enqueue",
+                ch.name, msg_id,
+            )
+            return False
 
         trace_entry(
             origin="external",

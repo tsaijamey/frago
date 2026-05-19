@@ -122,10 +122,13 @@ def test_production_path_repeat_ingest_10x_one_msg(tmp_path: Path):
         f"应有 1 条 msg_received entry, got {len(msg_received_entries)}"
     )
 
-    # ── 断言 4: 全部 ingest 都返回 True (board.append_msg dedup 内部 swallow) ─
-    # ingest_message 返回 True 仅代表 "payload 合法 + 不被前置过滤跳过";
-    # 实际 dedup 由 board.append_msg 内的 duplicate_msg_ingest 处理.
-    assert results[0] is True, "first ingest should return True"
+    # ── 断言 4: dedup 信号 — 首次 True, 后续 9 次 False ─────────────────
+    # ingest_message 现在透传 board.append_msg 的 is_new 信号, 让 scheduler
+    # 在 dedup 时跳过 PA enqueue (lark WS / email re-poll redelivery 防御).
+    assert results[0] is True, "first ingest should return True (new msg)"
+    assert all(r is False for r in results[1:]), (
+        f"后续 9 次 ingest 应全部返回 False (dedup), got {results[1:]}"
+    )
 
 
 def test_scheduler_module_has_no_message_cache_persistence():
