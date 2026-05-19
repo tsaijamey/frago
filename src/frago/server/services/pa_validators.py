@@ -7,7 +7,6 @@ Validation failure does NOT silently discard — the caller decides how to corre
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -77,59 +76,46 @@ class ValidationResult:
 
 
 def _parse_json_array(text: str) -> list[Any] | None:
-    """Parse a JSON array from text, tolerating all known PA output quirks.
+    """Parse a JSON array from PA output using json-repair.
 
-    Handles: markdown code blocks, natural language prefix/suffix,
-    real newlines in string values, trailing punctuation.
-    Returns parsed list or None.
+    PA's output comes from a Claude subprocess and routinely breaks strict
+    JSON in ways stdlib json can't recover from: natural language prefix
+    ("Now dispatching...\\n\\n[...]"), markdown code fences, trailing
+    commas, mixed single/double quotes, half-finished escapes, chinese
+    smart quotes, unescaped control chars, forgotten outer array, etc.
+
+    json-repair is purpose-built for LLM-broken JSON and handles all of
+    the above in one pass. Stdlib json is intentionally NOT used as a
+    fast-path: at PA output sizes (<10KB, once per turn) the speed
+    delta is meaningless, and dual-strategy code drifts apart — better
+    to have one consistently-tested parser. json-repair on clean JSON
+    is a no-op cost-wise.
+
+    Returns parsed list or None on unrecoverable failure.
     """
     cleaned = text.strip()
+    if not cleaned:
+        return None
 
-    # Strip markdown code block wrappers
+    # Strip markdown code block wrappers (json-repair handles many fences
+    # but explicit strip keeps behavior predictable across versions).
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
         if len(lines) >= 3:
             cleaned = "\n".join(lines[1:-1]).strip()
 
-    # Strategy 1: direct parse (covers clean output)
     try:
-        data = json.loads(cleaned, strict=False)
-        if isinstance(data, list):
-            return data
-    except json.JSONDecodeError:
-        pass
+        import json_repair
+        data = json_repair.loads(cleaned)
+    except Exception:  # noqa: BLE001 — repair lib raises various types
+        return None
 
-    # Strategy 2: find last '[...]' block (PA may output [] then correct itself)
-    last_bracket = cleaned.rfind("]")
-    if last_bracket != -1:
-        # Search backwards for the matching '['
-        depth = 0
-        for i in range(last_bracket, -1, -1):
-            if cleaned[i] == "]":
-                depth += 1
-            elif cleaned[i] == "[":
-                depth -= 1
-                if depth == 0:
-                    candidate = cleaned[i : last_bracket + 1]
-                    try:
-                        data = json.loads(candidate, strict=False)
-                        if isinstance(data, list):
-                            return data
-                    except json.JSONDecodeError:
-                        pass
-                    break
-
-    # Strategy 3: find first '[' and last ']', try that substring
-    first_bracket = cleaned.find("[")
-    if first_bracket != -1 and last_bracket is not None and last_bracket > first_bracket:
-        candidate = cleaned[first_bracket : last_bracket + 1]
-        try:
-            data = json.loads(candidate, strict=False)
-            if isinstance(data, list):
-                return data
-        except json.JSONDecodeError:
-            pass
-
+    if isinstance(data, list):
+        return data
+    # PA sometimes forgets the outer array on a single-action turn —
+    # accept the bare object and wrap it so DecisionApplier can route.
+    if isinstance(data, dict):
+        return [data]
     return None
 
 

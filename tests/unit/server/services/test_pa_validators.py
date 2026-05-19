@@ -145,6 +145,81 @@ class TestValidateQueueMessage:
     def test_valid_actions_constant(self):
         assert VALID_PA_ACTIONS == {"reply", "run", "resume", "dismiss"}
 
+
+class TestBrokenJSONRecovery:
+    """Regression for LLM-produced broken JSON that locked PA in correction loops.
+
+    PA's output comes from a Claude subprocess and produces these shapes
+    in production. stdlib json.loads gives up on most of them, so the
+    parser delegates to json-repair.
+    """
+
+    def test_natural_language_prefix_before_json(self):
+        """2026-05-20 stuck-PA incident: PA prefixed the run decision with
+        'Now dispatching the research sub-agent.\\n\\n' before the array.
+        """
+        text = (
+            'Now dispatching the research sub-agent.\n\n'
+            '[{"action":"run","msg_id":"om_x","channel":"feishu",'
+            '"description":"japan stock","prompt":"调查\\n\\n详细"}]'
+        )
+        r = validate_pa_output(text)
+        assert r.ok is True
+        assert r.raw_data[0]["action"] == "run"
+
+    def test_markdown_code_fence_wrapper(self):
+        text = (
+            '```json\n'
+            '[{"action":"reply","msg_id":"om_x","channel":"feishu","text":"hi"}]'
+            '\n```'
+        )
+        r = validate_pa_output(text)
+        assert r.ok is True
+
+    def test_trailing_comma_in_object(self):
+        text = (
+            '[{"action":"run","msg_id":"om_x","channel":"feishu",'
+            '"description":"d","prompt":"a\\n\\nb",}]'
+        )
+        r = validate_pa_output(text)
+        assert r.ok is True
+
+    def test_real_newline_inside_prompt_string(self):
+        """Multi-line `prompt` field with literal newlines (not \\n escapes)
+        is the shape PA produces for run actions — the body is real Chinese
+        text with paragraph breaks.
+        """
+        text = (
+            '[{"action":"run","msg_id":"om_x","channel":"feishu",'
+            '"description":"d","prompt":"调查日本股市\n\n详细：2026-05-20 开盘情况"}]'
+        )
+        r = validate_pa_output(text)
+        assert r.ok is True
+        assert "\n" in r.raw_data[0]["prompt"]
+
+    def test_bare_object_without_outer_array(self):
+        """PA sometimes forgets the outer [] on a single-action turn.
+        Parser wraps it so DecisionApplier can still route.
+        """
+        text = '{"action":"reply","msg_id":"om_x","channel":"feishu","text":"hi"}'
+        r = validate_pa_output(text)
+        assert r.ok is True
+        assert len(r.raw_data) == 1
+        assert r.raw_data[0]["action"] == "reply"
+
+    def test_single_quotes_instead_of_double(self):
+        text = "[{'action':'reply','msg_id':'om_x','channel':'feishu','text':'hi'}]"
+        r = validate_pa_output(text)
+        assert r.ok is True
+
+    def test_unparseable_garbage_returns_failure(self):
+        """json-repair is permissive but truly empty / non-JSON-shaped input
+        must still surface as a validation failure so PA's correction loop
+        engages instead of silently treating garbage as idle.
+        """
+        r = validate_pa_output("this is just prose, no json anywhere")
+        assert r.ok is False
+
     def test_valid_queue_message_types_constant(self):
         assert VALID_QUEUE_MESSAGE_TYPES == {
             "user_message",

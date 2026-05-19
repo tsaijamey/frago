@@ -46,6 +46,10 @@ dependencies = [
     "uvicorn[standard]>=0.23.0",
     # Cron expression parsing for schedule service
     "croniter>=1.3.0",
+    # Robust JSON parsing of PA / sub-agent output (handles trailing commas,
+    # unescaped backslashes, mixed quotes, half-finished escapes — failure
+    # modes that LLM JSON output regularly produces and json.loads cannot fix).
+    "json-repair>=0.30.0",
 ]
 
 [project.optional-dependencies]
@@ -180,3 +184,4 @@ include_trailing_comma = true
 force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
+
