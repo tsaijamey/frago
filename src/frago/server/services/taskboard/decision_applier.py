@@ -61,7 +61,7 @@ class DecisionApplier(BaseApplier):
                 )
                 return
 
-        msg_id = d.get("msg_id")
+        msg_id = _normalize_msg_id(d.get("msg_id"), d.get("channel"))
         task_id = d.get("task_id")
 
         try:
@@ -87,9 +87,39 @@ class DecisionApplier(BaseApplier):
                 self._board.mark_msg_dismissed(
                     msg_id, reason=prompt or "(no reason)", by=self.name
                 )
-        except IllegalTransitionError:
-            # board 内部已 record_rejection, 不重复
-            pass
+        except IllegalTransitionError as e:
+            # board records its own rejection for archived/status-violation
+            # paths. The "msg missing" path raises before recording — surface
+            # that here so PA's recent_rejections shows the lookup failure
+            # instead of the action vanishing silently (sub-agent never
+            # launches, no trace, no warning).
+            err_text = str(e)
+            if "missing" in err_text:
+                self._reject(
+                    reason="msg_not_found",
+                    offending_msg_id=msg_id,
+                    offending_task_id=task_id,
+                    original_action=action,
+                    original_prompt_head=prompt.split("\n", 1)[0][:80],
+                )
+
+
+def _normalize_msg_id(msg_id: str | None, channel: str | None) -> str | None:
+    """Prepend {channel}: prefix when PA gave the raw msg_id.
+
+    PA sees msg_id via PA_MESSAGE_TEMPLATE which renders the unprefixed
+    `channel_message_id` (e.g. `om_x100b...`). Board stores the prefixed
+    form (e.g. `feishu:om_x100b...`) — that mismatch makes _find_msg miss
+    and IllegalTransitionError gets swallowed silently, so the run task
+    never lands and the executor never picks anything up. Scheduled msgs
+    already arrive in `scheduled:...` shape, so only prefix when missing.
+    """
+    if not msg_id or not channel:
+        return msg_id
+    prefix = f"{channel}:"
+    if msg_id.startswith(prefix):
+        return msg_id
+    return f"{prefix}{msg_id}"
 
 
 def validate_prompt_format(prompt: str) -> str | None:

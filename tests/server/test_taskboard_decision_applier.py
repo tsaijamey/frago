@@ -76,6 +76,86 @@ def test_t3_3_summary_first_line_not_truncate(tmp_path):
     assert "\n" not in rejections[0]["original_prompt_head"]
 
 
+def test_run_decision_with_raw_msg_id_prefixes_with_channel(tmp_path):
+    """Regression (2026-05-19 sub-agent never launches):
+
+    PA sees msg_id via PA_MESSAGE_TEMPLATE which renders the unprefixed
+    channel_message_id (e.g. `om_x100b...`). Board stores `feishu:om_x100b...`.
+    Without channel-prefix normalization, board.append_task → _find_msg miss →
+    IllegalTransitionError → swallowed by DecisionApplier → no task created →
+    executor's poll loop never sees a queued task → user's run goes nowhere.
+    """
+    from datetime import datetime, timezone
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board = _make_board(tmp_path)
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="japan stock", by="test",
+    )
+    Ingestor(board).ingest_external(
+        channel="feishu", msg_id="om_x100b_run_test",
+        sender_id="u1", text="日本股市", parent_ref=None,
+        received_at=datetime.now(timezone.utc),
+        reply_context={}, thread_id="T1",
+    )
+
+    # PA-shaped decision: raw msg_id + separate channel field (mirror production)
+    DecisionApplier(board).handle_pa_output([{
+        "action": "run",
+        "msg_id": "om_x100b_run_test",
+        "channel": "feishu",
+        "description": "japan stock",
+        "prompt": "调查日本股市\n\n2026-05-20 开盘情况",
+    }])
+
+    queued = board.get_queued_tasks()
+    assert len(queued) == 1, (
+        f"run decision should produce a queued task, got {len(queued)}. "
+        f"Cause: channel-prefix normalization missing — _find_msg saw "
+        f"`om_x100b_run_test` while board has `feishu:om_x100b_run_test`."
+    )
+    assert queued[0].type == "run"
+    assert queued[0].status == "queued"
+
+
+def test_run_decision_with_already_prefixed_msg_id_not_double_prefixed(tmp_path):
+    """Scheduled msgs arrive with msg_id already in `scheduled:<id>:<iso>` form
+    and channel=scheduled. Normalizer must not double-prefix to
+    `scheduled:scheduled:...`.
+    """
+    from datetime import datetime, timezone
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board = _make_board(tmp_path)
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="scheduled",
+        root_summary="cron", by="test",
+    )
+    # Ingest with a msg_id that already includes a colon in the raw portion
+    Ingestor(board).ingest_external(
+        channel="scheduled", msg_id="job_42:2026-05-20T08:00:00",
+        sender_id="__scheduler__", text="cron fired", parent_ref=None,
+        received_at=datetime.now(timezone.utc),
+        reply_context={}, thread_id="T1",
+    )
+
+    # PA echoes back the full prefixed msg_id (because scheduled tasks
+    # are exposed to PA via PA_SCHEDULED_TASK_TEMPLATE with the prefixed form)
+    DecisionApplier(board).handle_pa_output([{
+        "action": "run",
+        "msg_id": "scheduled:job_42:2026-05-20T08:00:00",
+        "channel": "scheduled",
+        "description": "cron",
+        "prompt": "执行 cron\n\nbody",
+    }])
+
+    queued = board.get_queued_tasks()
+    assert len(queued) == 1, "scheduled msg_id should not be double-prefixed"
+
+
 def test_t3_4_recent_rejections_exposed_in_view_for_pa(tmp_path):
     """T3.4 — recent_rejections 在 view_for_pa() 顶层暴露, PA 下轮可见."""
     board = _make_board(tmp_path)
