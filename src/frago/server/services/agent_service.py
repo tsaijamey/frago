@@ -75,6 +75,13 @@ class AgentSession:
         self._current_assistant_message = ""
         self._current_tool_input_json = ""
         self._pending_tool_calls: dict[str, dict[str, Any]] = {}
+        # Has a `text` content block appeared in the current message yet?
+        # Some non-Anthropic backends (DeepSeek under Claude Code passthrough)
+        # emit an early message_delta(stop_reason=end_turn) right after a
+        # thinking block, then keep streaming the real text 60–90s later.
+        # Suppressing premature termination until we've seen actual text
+        # avoids killing the subprocess mid-output.
+        self._saw_text_block_in_message = False
         # Optional callback for capturing complete assistant messages
         self._on_assistant_message: Any | None = None  # Callable[[str], None]
         # Session-bound prompt prefix (e.g., PA system prompt + bootstrap).
@@ -163,6 +170,11 @@ class AgentSession:
 
         self._attached = True
         self._running = True
+        # Fresh subprocess → fresh message → text-block flag must start False
+        # (otherwise a prior turn's flag would leak across the kill+restart
+        # boundary and a stray early end_turn could terminate the new child
+        # before its first content block arrives).
+        self._saw_text_block_in_message = False
         self._last_stream_activity = asyncio.get_event_loop().time()
         self._reader_task = asyncio.create_task(self._read_stream())
         self._watchdog_task = asyncio.create_task(self._activity_watchdog(timeout=60.0))
@@ -393,23 +405,52 @@ class AgentSession:
         # non-Anthropic backends in Claude Code passthrough mode) hang
         # without closing stdout. Preempt the 60s activity watchdog by
         # terminating proactively when we see a real end_turn marker.
+        #
+        # BUT: DeepSeek (and other non-Anthropic backends) sometimes emit
+        # message_delta(stop_reason=end_turn) right after a thinking block
+        # without having produced any text yet, then keep streaming the
+        # actual text 60–90s later. Terminating on the early signal kills
+        # the subprocess mid-output and the user's reply never reaches PA.
+        # Gate the proactive terminate on "we've seen real text in this
+        # message"; if only thinking has appeared, ignore the signal and
+        # let the activity watchdog handle a genuine hang.
         elif event_type == "message_delta":
             delta = event.get("delta", {})
             stop_reason = delta.get("stop_reason")
             if stop_reason and stop_reason != "tool_use":
-                logger.info(
-                    "Stream end-of-turn detected (stop_reason=%s) for "
-                    "session %s; terminating subprocess proactively",
-                    stop_reason, self.internal_id[:8],
-                )
-                if self._process and self._process.poll() is None:
-                    with contextlib.suppress(Exception):
-                        self._process.terminate()
+                if not self._saw_text_block_in_message:
+                    logger.info(
+                        "Stream end-of-turn (stop_reason=%s) seen before any "
+                        "text block for session %s — likely a thinking-block "
+                        "false signal from a non-Anthropic backend; deferring "
+                        "to activity watchdog instead of terminating now.",
+                        stop_reason, self.internal_id[:8],
+                    )
+                else:
+                    logger.info(
+                        "Stream end-of-turn detected (stop_reason=%s) for "
+                        "session %s; terminating subprocess proactively",
+                        stop_reason, self.internal_id[:8],
+                    )
+                    if self._process and self._process.poll() is None:
+                        with contextlib.suppress(Exception):
+                            self._process.terminate()
+
+        # New message starting (after tool_use roundtrip or follow-up turn).
+        # Reset the text-block flag so each message's end_turn is judged on
+        # its own content, not a previous message's text.
+        elif event_type == "message_start":
+            self._saw_text_block_in_message = False
 
         # Tool use detected
         elif event_type == "content_block_start":
             block = event.get("content_block", {})
-            if block.get("type") == "tool_use":
+            block_type = block.get("type")
+            if block_type == "text":
+                # Real user-facing text has begun — a subsequent end_turn
+                # is now meaningful (vs. a stray end_turn after thinking).
+                self._saw_text_block_in_message = True
+            elif block_type == "tool_use":
                 tool_call_id = block.get("id", "")
                 tool_name = block.get("name", "")
 
