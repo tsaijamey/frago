@@ -43,6 +43,10 @@ class ChannelConfig:
     # "stream" → spawn poll_recipe as a long-lived subprocess; each stdout line
     # is one `{"type": "message", ...}` event fed straight into ingest_message.
     mode: str = "poll"
+    # False → skip this channel at startup (no poll loop). Lets a channel stay
+    # documented in config.json without spamming the log when its secrets /
+    # recipe aren't configured (e.g. email needing email/password).
+    enabled: bool = True
 
 
 class IngestionScheduler:

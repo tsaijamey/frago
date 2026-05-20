@@ -310,10 +310,13 @@ async def _start_ingestion_scheduler(logger):
         )
 
         channel_configs = [
-            ChannelConfig(**ch) for ch in ingestion_config.get("channels", [])
+            cfg for cfg in (
+                ChannelConfig(**ch) for ch in ingestion_config.get("channels", [])
+            )
+            if cfg.enabled
         ]
         if not channel_configs:
-            logger.info("No ingestion channels configured, skipping scheduler")
+            logger.info("No enabled ingestion channels configured, skipping scheduler")
             return None
 
         scheduler = IngestionScheduler(channels=channel_configs)
