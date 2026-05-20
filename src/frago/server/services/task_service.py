@@ -416,6 +416,13 @@ class TaskService:
             for step in steps:
                 content = getattr(step, "content_summary", "") or ""
                 if any(kw in content.lower() for kw in ["error", "failed", "exception", "timeout"]):
+                    # Contract (docstring): this is a SUMMARY for compact
+                    # display, capped at 100 chars. The full step content
+                    # remains available via get_task_steps — this cap is
+                    # presentation, not data hiding.
+                    content = content.strip()
+                    if len(content) > 100:
+                        content = content[:97] + "..."
                     return content
         except Exception as e:
             logger.debug("Failed to extract error summary for %s: %s", session_id, e)
