@@ -47,6 +47,16 @@ class TaskView:
     recovery_count: int = 0
 
 
+def _pid_alive(pid: int) -> bool:
+    """Cross-platform liveness check. Uses psutil so Windows behaves the
+    same as POSIX (os.kill(pid, 0) is unreliable for signal 0 on Windows)."""
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except Exception:
+        return False
+
+
 def _board_task_to_view(board, task_id: str) -> TaskView | None:
     task = board.get_task(task_id)
     if task is None:
@@ -371,6 +381,20 @@ class TaskLifecycle:
         for tid in pending_task_ids:
             view_tk = _board_task_to_view(board, tid)
             if view_tk is None:
+                continue
+            # An `executing` task whose sub-agent process is still alive is
+            # actively monitored by the executor — it is NOT orphaned. The old
+            # code recovered it anyway, incrementing recovery_count every
+            # heartbeat and marking it stale within ~2 ticks while the agent
+            # was still working (then the executor flipped it FAILED→COMPLETED
+            # on real exit, plus 8 min of "already recovered" log spam).
+            # Recovery is only for tasks orphaned by a crash, i.e. executing
+            # with no live PID. Skip live ones entirely.
+            if (
+                view_tk.status == "executing"
+                and view_tk.pid
+                and _pid_alive(view_tk.pid)
+            ):
                 continue
             if view_tk.recovery_count >= MAX_RECOVERY:
                 logger.warning(
