@@ -960,11 +960,19 @@ class PrimaryAgentService:
             d for d in decisions
             if isinstance(d, dict) and d.get("action") in {"run", "reply", "resume", "dismiss"}
         ]
+        # id(decision) → board outcome ({"ok", "reason", ...}). The board's
+        # append result is authoritative for whether a run will actually
+        # launch; the per-action loop below consults it instead of blindly
+        # reporting "dispatched ok" (which masked rejected runs as success —
+        # the sub-agent silently never started, see 2026-05-20 12:22).
+        outcome_by_decision: dict[int, dict[str, Any]] = {}
         if da_decisions:
             try:
-                DecisionApplier(board).handle_pa_output(da_decisions)
+                outcomes = DecisionApplier(board).handle_pa_output(da_decisions)
+                for dec, out in zip(da_decisions, outcomes, strict=True):
+                    outcome_by_decision[id(dec)] = out
             except Exception:
-                logger.debug("DecisionApplier dispatch error (non-fatal)", exc_info=True)
+                logger.warning("DecisionApplier dispatch error", exc_info=True)
 
         # Per-action side effects (channel push, executor.execute_resume, feedback).
         for d in decisions:
@@ -990,7 +998,11 @@ class PrimaryAgentService:
                     await self._send_reply(d)
                 elif action == "run":
                     logger.info("→ run (id=%s, desc=%s)", log_id, d.get("description", ""))
-                    await self._enqueue_run(d)
+                    out = outcome_by_decision.get(id(d))
+                    if out is not None and not out.get("ok", True):
+                        await self._enqueue_run(d, board_reason=out.get("reason"))
+                    else:
+                        await self._enqueue_run(d)
                 elif action == "resume":
                     logger.info("→ resume (task=%s)", log_id)
                     await self._handle_resume(d)
@@ -1127,13 +1139,42 @@ class PrimaryAgentService:
                 "original_text": text,
             })
 
-    async def _enqueue_run(self, decision: dict[str, Any]) -> None:
+    # Board rejection reason → human-readable detail fed back to the PA so it
+    # can self-correct (re-dispatch on a clean task, wait, or tell the user)
+    # instead of believing a silently-rejected run actually launched.
+    _RUN_REJECT_DETAIL = {
+        "illegal_transition": (
+            "board 拒绝 run：父 msg 已关闭/状态不允许 append（常见于 ack reply 先关了"
+            " msg）。子 agent 未启动。请用一条干净的任务（新 msg_id 或既有 task_id）重派。"
+        ),
+        "duplicate_run_inflight": (
+            "board 拒绝 run：该 msg 已有一个 run 在排队/执行中，拒绝重复派发。等它完成"
+            "再处理结果，不要重派。"
+        ),
+        "post_archive_append": (
+            "board 拒绝 run：所属 thread 已归档，无法再 append。子 agent 未启动。"
+        ),
+        "msg_not_found": (
+            "board 拒绝 run：找不到该 msg_id，run 无法落盘。子 agent 未启动。"
+        ),
+        "prompt_format_invalid": (
+            "board 拒绝 run：prompt 不符合「首行≤80 摘要 + 空行 + 正文」格式。子 agent 未启动。"
+        ),
+    }
+
+    async def _enqueue_run(
+        self, decision: dict[str, Any], *, board_reason: str | None = None
+    ) -> None:
         """PA decided action:'run'.
 
-        DecisionApplier already appended the run task onto the board.
-        This wrapper validates inputs and emits run_failed feedback if the PA
-        gave us a malformed decision (missing prompt / both ids absent).
-        The executor's poll loop picks up the queued board task from there.
+        DecisionApplier already attempted to append the run task onto the
+        board. ``board_reason`` (set by the caller from the board outcome)
+        means the append was *rejected* — we surface it as a "run 失败" trace
+        plus run_failed feedback so the failure is loud and the PA can
+        self-correct, rather than the old blind "dispatched ok" that masked a
+        sub-agent that never launched. On success the executor's poll loop
+        picks up the queued board task. This wrapper also still catches
+        malformed PA decisions (missing prompt / both ids absent).
         """
         from frago.server.services.trace import trace_entry
 
@@ -1163,6 +1204,15 @@ class PrimaryAgentService:
                 "reason": reason,
                 "detail": detail,
             })
+
+        if board_reason:
+            await _fail(
+                board_reason,
+                self._RUN_REJECT_DETAIL.get(
+                    board_reason, f"board 拒绝 run：{board_reason}。子 agent 未启动。"
+                ),
+            )
+            return
 
         if not prompt:
             await _fail("missing_prompt", "run 决策未提供 prompt 字段，无法派发任务。")

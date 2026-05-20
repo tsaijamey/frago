@@ -399,7 +399,9 @@ class TaskBoard:
         with self._lock:
             msg = self._find_msg(msg_id)
             if msg is None:
-                raise IllegalTransitionError(f"msg {msg_id} missing")
+                raise IllegalTransitionError(
+                    f"msg {msg_id} missing", reason="msg_missing"
+                )
             # Phase 2: thread archived 后 append_task 走 reject 通道.
             thread_id = self._thread_of_msg(msg_id)
             if thread_id and self._threads[thread_id].status == "archived":
@@ -410,7 +412,8 @@ class TaskBoard:
                     original_prompt_head=intent.prompt.split("\n", 1)[0][:80],
                 )
                 raise IllegalTransitionError(
-                    f"thread {thread_id} is archived, cannot append task"
+                    f"thread {thread_id} is archived, cannot append task",
+                    reason="post_archive_append",
                 )
             if msg.status not in {"awaiting_decision", "dispatched"}:
                 self.record_rejection(
@@ -420,7 +423,8 @@ class TaskBoard:
                     original_prompt_head=intent.prompt.split("\n", 1)[0][:80],
                 )
                 raise IllegalTransitionError(
-                    f"msg {msg_id}.status={msg.status} cannot accept task"
+                    f"msg {msg_id}.status={msg.status} cannot accept task",
+                    reason="illegal_transition",
                 )
             # Duplicate-run guard: a PA session rotation drops the in-memory
             # record of "I already dispatched a run for this msg", so after
@@ -444,7 +448,8 @@ class TaskBoard:
                     )
                     raise IllegalTransitionError(
                         f"msg {msg_id} already has an in-flight run task "
-                        f"{inflight[0].task_id}; refusing duplicate run"
+                        f"{inflight[0].task_id}; refusing duplicate run",
+                        reason="duplicate_run_inflight",
                     )
             task = Task(
                 task_id=ulid_new(),

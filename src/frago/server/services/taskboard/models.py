@@ -239,7 +239,16 @@ class RejectionRecord:
 
 
 class IllegalTransitionError(RuntimeError):
-    """状态机非法 transition 时由 board 公有方法抛出。"""
+    """状态机非法 transition 时由 board 公有方法抛出。
+
+    ``reason`` 与 board.record_rejection 写入的 reason 对齐（illegal_transition /
+    duplicate_run_inflight / post_archive_append / msg_missing …），让上层
+    (DecisionApplier) 不必解析异常文本即可把拒绝原因带回给 PA 与 trace。
+    """
+
+    def __init__(self, *args: object, reason: str | None = None) -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
 class DuplicateMarkerError(RuntimeError):

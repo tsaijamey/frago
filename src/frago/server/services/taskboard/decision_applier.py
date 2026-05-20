@@ -12,6 +12,8 @@ Phase 1 后续 commit: PA wire-up (primary_agent_service._handle_pa_output 改�
 
 from __future__ import annotations
 
+from typing import Any
+
 from frago.server.services.taskboard.applier import BaseApplier
 from frago.server.services.taskboard.board import TaskBoard
 from frago.server.services.taskboard.models import (
@@ -31,8 +33,8 @@ class DecisionApplier(BaseApplier):
         super().__init__(board)
         self._resume_applier = resume_applier or ResumeApplier(board)
 
-    def handle_pa_output(self, decisions: list[dict]) -> None:
-        """主路由入口, 接收 PA 输出 list[dict].
+    def handle_pa_output(self, decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """主路由入口, 接收 PA 输出 list[dict], 返回每条决策的落盘结果.
 
         msg-closing is deferred to AFTER the whole batch is applied. PA
         commonly emits [reply(ack), run] in one decision — closing the msg
@@ -40,23 +42,46 @@ class DecisionApplier(BaseApplier):
         run is appended, so the run would hit a closed msg and be rejected
         (illegal_transition) and never dispatch. Evaluating close once at
         the end lets the queued run keep the msg open.
+
+        Returns one outcome dict per input decision (index-aligned), shaped
+        ``{"action", "ok", "reason", "msg_id", "task_id"}``. The caller
+        (primary_agent_service) consults ``ok`` to decide whether to emit a
+        "dispatched" or a "失败" trace + run_failed feedback — the board's
+        append result, not a separate blind wrapper, is the single source of
+        truth for whether a sub-agent will actually launch.
         """
         reply_msg_ids: list[str] = []
+        outcomes: list[dict[str, Any]] = []
         for d in decisions:
-            affected = self._handle_one(d)
-            if affected:
-                reply_msg_ids.append(affected)
+            outcome = self._handle_one(d)
+            outcomes.append(outcome)
+            reply_mid = outcome.get("reply_msg_id")
+            if reply_mid:
+                reply_msg_ids.append(reply_mid)
         seen: set[str] = set()
         for mid in reply_msg_ids:
             if mid in seen:
                 continue
             seen.add(mid)
             self._board.close_msg_if_terminal(mid, by=self.name)
+        return outcomes
 
-    def _handle_one(self, d: dict) -> str | None:
-        """Route one decision. Returns the parent msg_id of a reply action
-        (so the caller can evaluate close after the full batch), else None."""
+    def _handle_one(self, d: dict[str, Any]) -> dict[str, Any]:
+        """Route one decision. Returns an outcome dict carrying ``ok`` and a
+        board ``reason`` on failure, plus ``reply_msg_id`` for a successful
+        reply (so handle_pa_output can evaluate close after the full batch)."""
         action = d.get("action")
+        msg_id = _normalize_msg_id(d.get("msg_id"), d.get("channel"))
+        task_id = d.get("task_id")
+
+        def _outcome(ok: bool, reason: str | None = None,
+                     reply_msg_id: str | None = None) -> dict[str, Any]:
+            return {
+                "action": action, "ok": ok, "reason": reason,
+                "msg_id": msg_id, "task_id": task_id,
+                "reply_msg_id": reply_msg_id,
+            }
+
         if action not in VALID_MSG_ACTIONS:
             self._reject(
                 reason="action_invalid",
@@ -65,7 +90,7 @@ class DecisionApplier(BaseApplier):
                 original_action=str(action or ""),
                 original_prompt_head=(d.get("prompt") or "").split("\n", 1)[0][:80],
             )
-            return None
+            return _outcome(False, "action_invalid")
 
         prompt = d.get("prompt", "")
         # Only run/resume carry a sub-agent prompt subject to the
@@ -84,16 +109,16 @@ class DecisionApplier(BaseApplier):
                     original_action=action,
                     original_prompt_head=prompt.split("\n", 1)[0][:80],
                 )
-                return None
-
-        msg_id = _normalize_msg_id(d.get("msg_id"), d.get("channel"))
-        task_id = d.get("task_id")
+                return _outcome(False, "prompt_format_invalid")
 
         try:
             if action == "run":
+                # msg_id None → "" → board._find_msg miss → msg_missing reject
+                # (surfaced to caller as a failed outcome, never a silent ok).
                 self._board.append_task(
-                    msg_id, Intent(prompt=prompt), task_type="run", by=self.name
+                    msg_id or "", Intent(prompt=prompt), task_type="run", by=self.name
                 )
+                return _outcome(True)
             elif action == "reply":
                 # Resolve the parent msg. PA replies either by msg_id (new
                 # message) or by task_id (replying to a finished run's
@@ -112,21 +137,25 @@ class DecisionApplier(BaseApplier):
                         task_type="reply", by=self.name,
                     )
                     self._board.mark_task_replied(task.task_id, by=self.name)
-                    return reply_msg_id
+                    return _outcome(True, reply_msg_id=reply_msg_id)
+                return _outcome(True)
             elif action == "resume":
                 self._resume_applier.route_resume(task_id, prompt)
+                return _outcome(True)
             elif action == "dismiss" and hasattr(self._board, "mark_msg_dismissed"):
                 self._board.mark_msg_dismissed(
-                    msg_id, reason=prompt or "(no reason)", by=self.name
+                    msg_id or "", reason=prompt or "(no reason)", by=self.name
                 )
+                return _outcome(True)
         except IllegalTransitionError as e:
             # board records its own rejection for archived/status-violation
-            # paths. The "msg missing" path raises before recording — surface
-            # that here so PA's recent_rejections shows the lookup failure
-            # instead of the action vanishing silently (sub-agent never
-            # launches, no trace, no warning).
-            err_text = str(e)
-            if "missing" in err_text:
+            # paths via record_rejection. The "msg missing" path raises before
+            # recording — surface that here so PA's recent_rejections shows the
+            # lookup failure instead of the action vanishing silently
+            # (sub-agent never launches, no trace, no warning).
+            reason = e.reason or "illegal_transition"
+            if reason == "msg_missing":
+                reason = "msg_not_found"
                 self._reject(
                     reason="msg_not_found",
                     offending_msg_id=msg_id,
@@ -134,7 +163,8 @@ class DecisionApplier(BaseApplier):
                     original_action=action,
                     original_prompt_head=prompt.split("\n", 1)[0][:80],
                 )
-        return None
+            return _outcome(False, reason)
+        return _outcome(True)
 
 
 def _normalize_msg_id(msg_id: str | None, channel: str | None) -> str | None:

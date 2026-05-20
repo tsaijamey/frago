@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 
 from frago.server.services.taskboard.board import TaskBoard
@@ -58,7 +60,7 @@ def test_t3_2_prompt_format_invalid_code_fence_in_first_line(tmp_path):
     assert any(r["reason"] == "prompt_format_invalid" for r in rejections)
 
 
-def test_validate_prompt_format_valid(tmp_path):
+def test_validate_prompt_format_valid():
     """T3.2 valid case: 首行 ≤80 + 空行 + 正文 → None (合法)."""
     assert validate_prompt_format("摘要\n\n正文") is None
     assert validate_prompt_format("摘要 80 字以内\n\n正文 multi-line\nactually 多行") is None
@@ -85,7 +87,7 @@ def test_run_decision_with_raw_msg_id_prefixes_with_channel(tmp_path):
     IllegalTransitionError → swallowed by DecisionApplier → no task created →
     executor's poll loop never sees a queued task → user's run goes nowhere.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from frago.server.services.taskboard.ingestor import Ingestor
 
@@ -97,7 +99,7 @@ def test_run_decision_with_raw_msg_id_prefixes_with_channel(tmp_path):
     Ingestor(board).ingest_external(
         channel="feishu", msg_id="om_x100b_run_test",
         sender_id="u1", text="日本股市", parent_ref=None,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
         reply_context={}, thread_id="T1",
     )
 
@@ -125,7 +127,7 @@ def test_run_decision_with_already_prefixed_msg_id_not_double_prefixed(tmp_path)
     and channel=scheduled. Normalizer must not double-prefix to
     `scheduled:scheduled:...`.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from frago.server.services.taskboard.ingestor import Ingestor
 
@@ -138,7 +140,7 @@ def test_run_decision_with_already_prefixed_msg_id_not_double_prefixed(tmp_path)
     Ingestor(board).ingest_external(
         channel="scheduled", msg_id="job_42:2026-05-20T08:00:00",
         sender_id="__scheduler__", text="cron fired", parent_ref=None,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
         reply_context={}, thread_id="T1",
     )
 
@@ -163,7 +165,7 @@ def test_duplicate_run_inflight_rejected(tmp_path):
     two sub-agents do identical work, user gets duplicate artefacts.
     board.append_task must reject a fresh run while one is in flight.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from frago.server.services.taskboard.ingestor import Ingestor
 
@@ -175,7 +177,7 @@ def test_duplicate_run_inflight_rejected(tmp_path):
     Ingestor(board).ingest_external(
         channel="feishu", msg_id="om_dup",
         sender_id="u1", text="分析 ETF", parent_ref=None,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
         reply_context={}, thread_id="T1",
     )
 
@@ -200,7 +202,7 @@ def test_second_run_allowed_after_first_completes(tmp_path):
     """The guard is scoped to in-flight (queued/executing) runs only — once
     the first run reaches a terminal state a follow-up run is permitted.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from frago.server.services.taskboard.ingestor import Ingestor
 
@@ -212,7 +214,7 @@ def test_second_run_allowed_after_first_completes(tmp_path):
     Ingestor(board).ingest_external(
         channel="feishu", msg_id="om_seq",
         sender_id="u1", text="分析", parent_ref=None,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
         reply_context={}, thread_id="T1",
     )
     da = DecisionApplier(board)
@@ -240,7 +242,7 @@ def test_reply_then_run_batch_does_not_block_run(tmp_path):
     rejected (illegal_transition) — sub-agent never launches. Closing must be
     deferred to end-of-batch so the queued run keeps the msg open.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from frago.server.services.taskboard.ingestor import Ingestor
 
@@ -252,7 +254,7 @@ def test_reply_then_run_batch_does_not_block_run(tmp_path):
     Ingestor(board).ingest_external(
         channel="feishu", msg_id="om_batch",
         sender_id="u1", text="研究一下", parent_ref=None,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
         reply_context={}, thread_id="T1",
     )
 
@@ -282,7 +284,7 @@ def test_reply_by_task_id_closes_parent_msg(tmp_path):
     unanswered and re-sent the whole analysis + PNG. The task_id reply path
     must resolve and close the parent msg.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from frago.server.services.taskboard.ingestor import Ingestor
 
@@ -294,7 +296,7 @@ def test_reply_by_task_id_closes_parent_msg(tmp_path):
     Ingestor(board).ingest_external(
         channel="feishu", msg_id="om_reply",
         sender_id="u1", text="分析", parent_ref=None,
-        received_at=datetime.now(timezone.utc),
+        received_at=datetime.now(UTC),
         reply_context={}, thread_id="T1",
     )
     da = DecisionApplier(board)
@@ -338,3 +340,109 @@ def test_t3_4_recent_rejections_exposed_in_view_for_pa(tmp_path):
     assert "offending_msg_id" in r0
     assert "reason" in r0
     assert "original_action" in r0
+
+
+# ── outcome reporting (2026-05-20 silent-dispatch RCA) ───────────────────────
+# handle_pa_output now returns a per-decision outcome so primary_agent_service
+# can tell a real dispatch from a board rejection, instead of blindly tracing
+# "dispatched ok" while the sub-agent silently never launched.
+
+def _ingest_one(board, *, msg_id, thread_id="T1", text="研究一下"):
+    from datetime import datetime
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board.create_thread(
+        thread_id=thread_id, origin="external", subkind="feishu",
+        root_summary="topic", by="test",
+    )
+    Ingestor(board).ingest_external(
+        channel="feishu", msg_id=msg_id,
+        sender_id="u1", text=text, parent_ref=None,
+        received_at=datetime.now(UTC),
+        reply_context={}, thread_id=thread_id,
+    )
+
+
+def test_handle_pa_output_returns_per_decision_outcomes(tmp_path):
+    """handle_pa_output returns one outcome per input decision, ok=True for a
+    run that lands on the board."""
+    board = _make_board(tmp_path)
+    _ingest_one(board, msg_id="om_ok")
+    outcomes = DecisionApplier(board).handle_pa_output([
+        {"action": "run", "msg_id": "om_ok", "channel": "feishu",
+         "description": "research", "prompt": "研究主题\n\n详细展开"},
+    ])
+    assert len(outcomes) == 1
+    assert outcomes[0]["ok"] is True
+    assert outcomes[0]["reason"] is None
+    assert len(board.get_queued_tasks()) == 1
+
+
+def test_run_rejected_on_closed_msg_reports_illegal_transition(tmp_path):
+    """A run targeting an already-closed msg (separate batch from the ack
+    reply that closed it) is rejected — the outcome must say so, not silently
+    look like a success. This is the 2026-05-20 12:22 silent failure."""
+    board = _make_board(tmp_path)
+    _ingest_one(board, msg_id="om_closed")
+    da = DecisionApplier(board)
+    # Batch 1: ack reply alone → closes the msg at end of batch.
+    da.handle_pa_output([
+        {"action": "reply", "msg_id": "om_closed", "channel": "feishu",
+         "text": "收到，稍等"},
+    ])
+    parent = board._find_msg("feishu:om_closed")
+    assert parent.status == "closed"
+    # Batch 2: the run now hits a closed msg.
+    outcomes = da.handle_pa_output([
+        {"action": "run", "msg_id": "om_closed", "channel": "feishu",
+         "description": "research", "prompt": "研究主题\n\n详细展开"},
+    ])
+    assert outcomes[0]["ok"] is False
+    assert outcomes[0]["reason"] == "illegal_transition"
+    # and nothing got queued for the executor to launch
+    assert board.get_queued_tasks() == []
+
+
+def test_duplicate_run_inflight_reports_reason(tmp_path):
+    """Second run while one is in-flight for the same msg → ok=False with the
+    duplicate_run_inflight reason surfaced to the caller."""
+    board = _make_board(tmp_path)
+    _ingest_one(board, msg_id="om_dup")
+    da = DecisionApplier(board)
+    da.handle_pa_output([
+        {"action": "run", "msg_id": "om_dup", "channel": "feishu",
+         "description": "first", "prompt": "第一个\n\n正文"},
+    ])
+    outcomes = da.handle_pa_output([
+        {"action": "run", "msg_id": "om_dup", "channel": "feishu",
+         "description": "second", "prompt": "第二个\n\n正文"},
+    ])
+    assert outcomes[0]["ok"] is False
+    assert outcomes[0]["reason"] == "duplicate_run_inflight"
+
+
+def test_run_on_unknown_msg_reports_msg_not_found(tmp_path):
+    """A run for a msg_id the board never saw → ok=False reason=msg_not_found
+    (the 2026-05-20 12:51 reflection-tick rejection)."""
+    board = _make_board(tmp_path)
+    outcomes = DecisionApplier(board).handle_pa_output([
+        {"action": "run", "msg_id": "om_ghost", "channel": "feishu",
+         "description": "x", "prompt": "摘要\n\n正文"},
+    ])
+    assert outcomes[0]["ok"] is False
+    assert outcomes[0]["reason"] == "msg_not_found"
+
+
+def test_append_task_illegal_transition_carries_reason(tmp_path):
+    """board.append_task raises IllegalTransitionError with a machine-readable
+    .reason so DecisionApplier need not parse the message text."""
+    from frago.server.services.taskboard.models import (
+        IllegalTransitionError,
+        Intent,
+    )
+
+    board = _make_board(tmp_path)
+    with pytest.raises(IllegalTransitionError) as exc:
+        board.append_task("nope", Intent(prompt="x\n\ny"), task_type="run", by="t")
+    assert exc.value.reason == "msg_missing"
