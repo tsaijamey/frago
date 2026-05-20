@@ -49,7 +49,13 @@ class DecisionApplier(BaseApplier):
             return
 
         prompt = d.get("prompt", "")
-        if action in {"run", "reply", "resume"}:
+        # Only run/resume carry a sub-agent prompt subject to the
+        # "首行摘要 + 空行 + 正文" contract. reply carries free-form `text`
+        # (no `prompt`), so validating prompt-format on reply wrongly
+        # rejected every reply with prompt_format_invalid — the board reply
+        # task was never created and the parent msg never closed (the channel
+        # push still happened via the separate _send_reply path, masking it).
+        if action in {"run", "resume"}:
             err = validate_prompt_format(prompt)
             if err:
                 self._reject(
@@ -70,17 +76,23 @@ class DecisionApplier(BaseApplier):
                     msg_id, Intent(prompt=prompt), task_type="run", by=self.name
                 )
             elif action == "reply":
-                task = self._board.append_task(
-                    msg_id, Intent(prompt=prompt), task_type="reply", by=self.name
-                )
-                # Phase 1 后续 commit: lifecycle.send_reply(channel, payload) 集成
-                # 当前仅落 task + mark_replied + close_msg, 不实际推送
-                self._board.mark_task_replied(task.task_id, by=self.name) if hasattr(
-                    self._board, "mark_task_replied"
-                ) else None
-                self._board.close_msg_if_terminal(msg_id, by=self.name) if hasattr(
-                    self._board, "close_msg_if_terminal"
-                ) else None
+                # Resolve the parent msg. PA replies either by msg_id (new
+                # message) or by task_id (replying to a finished run's
+                # result). The task_id path must still attach the reply to —
+                # and close — the parent msg; otherwise the msg lingers in
+                # `dispatched` and a later reflection tick judges it
+                # unanswered and re-replies, re-sending the same artefact.
+                reply_msg_id = msg_id
+                if not reply_msg_id and task_id:
+                    parent = self._board.get_msg_for_task(task_id)
+                    reply_msg_id = parent.msg_id if parent else None
+                if reply_msg_id:
+                    task = self._board.append_task(
+                        reply_msg_id, Intent(prompt=prompt),
+                        task_type="reply", by=self.name,
+                    )
+                    self._board.mark_task_replied(task.task_id, by=self.name)
+                    self._board.close_msg_if_terminal(reply_msg_id, by=self.name)
             elif action == "resume":
                 self._resume_applier.route_resume(task_id, prompt)
             elif action == "dismiss" and hasattr(self._board, "mark_msg_dismissed"):

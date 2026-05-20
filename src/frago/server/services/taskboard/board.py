@@ -422,6 +422,30 @@ class TaskBoard:
                 raise IllegalTransitionError(
                     f"msg {msg_id}.status={msg.status} cannot accept task"
                 )
+            # Duplicate-run guard: a PA session rotation drops the in-memory
+            # record of "I already dispatched a run for this msg", so after
+            # rotation PA re-scans the board and dispatches a second run for
+            # the same message — two sub-agents do identical work and the
+            # user gets duplicate replies/artefacts. Reject a fresh run while
+            # a run for this msg is still queued/executing. (reply/resume are
+            # not guarded — multiple replies on one msg are legitimate.)
+            if task_type == "run":
+                inflight = [
+                    t for t in msg.tasks
+                    if t.type == "run" and t.status in {"queued", "executing"}
+                ]
+                if inflight:
+                    self.record_rejection(
+                        reason="duplicate_run_inflight",
+                        offending_msg_id=msg_id,
+                        offending_task_id=inflight[0].task_id,
+                        original_action=task_type,
+                        original_prompt_head=intent.prompt.split("\n", 1)[0][:80],
+                    )
+                    raise IllegalTransitionError(
+                        f"msg {msg_id} already has an in-flight run task "
+                        f"{inflight[0].task_id}; refusing duplicate run"
+                    )
             task = Task(
                 task_id=ulid_new(),
                 status="queued",

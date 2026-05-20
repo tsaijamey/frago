@@ -156,6 +156,129 @@ def test_run_decision_with_already_prefixed_msg_id_not_double_prefixed(tmp_path)
     assert len(queued) == 1, "scheduled msg_id should not be double-prefixed"
 
 
+def test_duplicate_run_inflight_rejected(tmp_path):
+    """Bug H (2026-05-20 dup-artefact): a PA session rotation drops the
+    in-memory 'I already dispatched a run for this msg' record, so PA
+    re-scans the board and dispatches a SECOND run for the same message —
+    two sub-agents do identical work, user gets duplicate artefacts.
+    board.append_task must reject a fresh run while one is in flight.
+    """
+    from datetime import datetime, timezone
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board = _make_board(tmp_path)
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="etf", by="test",
+    )
+    Ingestor(board).ingest_external(
+        channel="feishu", msg_id="om_dup",
+        sender_id="u1", text="分析 ETF", parent_ref=None,
+        received_at=datetime.now(timezone.utc),
+        reply_context={}, thread_id="T1",
+    )
+
+    da = DecisionApplier(board)
+    run_decision = {
+        "action": "run", "msg_id": "om_dup", "channel": "feishu",
+        "description": "etf", "prompt": "分析\n\n详细",
+    }
+    da.handle_pa_output([run_decision])   # run ① — accepted
+    da.handle_pa_output([run_decision])   # run ② — must be rejected
+
+    queued = board.get_queued_tasks()
+    assert len(queued) == 1, (
+        f"second run for the same in-flight msg must be rejected, "
+        f"got {len(queued)} queued tasks"
+    )
+    reasons = [r["reason"] for r in board.view_for_pa()["recent_rejections"]]
+    assert "duplicate_run_inflight" in reasons
+
+
+def test_second_run_allowed_after_first_completes(tmp_path):
+    """The guard is scoped to in-flight (queued/executing) runs only — once
+    the first run reaches a terminal state a follow-up run is permitted.
+    """
+    from datetime import datetime, timezone
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board = _make_board(tmp_path)
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="etf", by="test",
+    )
+    Ingestor(board).ingest_external(
+        channel="feishu", msg_id="om_seq",
+        sender_id="u1", text="分析", parent_ref=None,
+        received_at=datetime.now(timezone.utc),
+        reply_context={}, thread_id="T1",
+    )
+    da = DecisionApplier(board)
+    da.handle_pa_output([{
+        "action": "run", "msg_id": "om_seq", "channel": "feishu",
+        "description": "x", "prompt": "a\n\nb",
+    }])
+    first = board.get_queued_tasks()[0]
+    board.mark_task_executing(first.task_id, by="test")
+    board.mark_task_completed(first.task_id, summary="done", by="test")
+
+    # Now a fresh run is allowed (no in-flight run remains)
+    da.handle_pa_output([{
+        "action": "run", "msg_id": "om_seq", "channel": "feishu",
+        "description": "y", "prompt": "c\n\nd",
+    }])
+    queued = board.get_queued_tasks()
+    assert len(queued) == 1, "follow-up run after completion should be accepted"
+
+
+def test_reply_by_task_id_closes_parent_msg(tmp_path):
+    """Bug J (2026-05-20 dup-artefact, send ③): replying by task_id (no
+    msg_id) used to mark the task replied but never closed the parent msg.
+    The msg lingered in `dispatched`, a reflection tick later judged it
+    unanswered and re-sent the whole analysis + PNG. The task_id reply path
+    must resolve and close the parent msg.
+    """
+    from datetime import datetime, timezone
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board = _make_board(tmp_path)
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="etf", by="test",
+    )
+    Ingestor(board).ingest_external(
+        channel="feishu", msg_id="om_reply",
+        sender_id="u1", text="分析", parent_ref=None,
+        received_at=datetime.now(timezone.utc),
+        reply_context={}, thread_id="T1",
+    )
+    da = DecisionApplier(board)
+    # PA dispatches a run, sub-agent finishes
+    da.handle_pa_output([{
+        "action": "run", "msg_id": "om_reply", "channel": "feishu",
+        "description": "x", "prompt": "a\n\nb",
+    }])
+    run_task = board.get_queued_tasks()[0]
+    board.mark_task_executing(run_task.task_id, by="test")
+    board.mark_task_completed(run_task.task_id, summary="done", by="test")
+
+    # PA replies by task_id ONLY (no msg_id) — the production shape that left
+    # the msg open.
+    da.handle_pa_output([{
+        "action": "reply", "task_id": run_task.task_id,
+        "channel": "feishu", "text": "结论 + 图",
+    }])
+
+    parent = board.get_msg_for_task(run_task.task_id)
+    assert parent.status == "closed", (
+        f"parent msg must be closed after task_id reply, got {parent.status} "
+        f"— otherwise a reflection tick re-replies"
+    )
+
+
 def test_t3_4_recent_rejections_exposed_in_view_for_pa(tmp_path):
     """T3.4 — recent_rejections 在 view_for_pa() 顶层暴露, PA 下轮可见."""
     board = _make_board(tmp_path)

@@ -68,8 +68,21 @@ def test_get_queued_tasks_returns_only_queued(tmp_path):
     board, _ = _fresh_board(tmp_path)
     set_board(board)
     msg_id = _seed_thread_msg(board)
+    # Two separate msgs: board.append_task now rejects a second in-flight run
+    # on the SAME msg (duplicate-run guard), so each run needs its own msg.
+    import datetime as _dt
+    msg2 = Msg(
+        msg_id="m_002",
+        status="received",
+        source=Source(
+            channel="feishu", text="hello2", sender_id="u1",
+            parent_ref=None, received_at=_dt.datetime.now().astimezone(),
+        ),
+    )
+    board.append_msg("T_A", msg2, by="test")
+
     t1 = board.append_task(msg_id, Intent(prompt="p1"), task_type="run", by="test")
-    t2 = board.append_task(msg_id, Intent(prompt="p2"), task_type="run", by="test")
+    t2 = board.append_task("m_002", Intent(prompt="p2"), task_type="run", by="test")
     # Move t2 → executing so only t1 remains queued
     board.mark_task_executing(t2.task_id, by="test")
 
