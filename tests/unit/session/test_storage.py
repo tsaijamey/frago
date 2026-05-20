@@ -208,3 +208,33 @@ class TestAppendAndReadSteps:
         for i, step in enumerate(result):
             assert step.step_id == i + 1
             assert step.content_summary == f"Message {i + 1}"
+
+
+class TestGenerateSummaryDuration:
+    """Regression: mixed naive/aware timestamps must not break the duration
+    calc — was the dashboard's recurring 'Failed to compute recent tasks:
+    can't subtract offset-naive and offset-aware datetimes' every poll."""
+
+    def test_mixed_tz_timestamps_no_raise(self, mock_home):
+        from datetime import timedelta
+
+        from frago.session.storage import generate_summary
+
+        aware = datetime.now(timezone.utc)
+        naive_later = aware.replace(tzinfo=None) + timedelta(seconds=5)
+        session = MonitoredSession(
+            session_id="tz-mix-session",
+            agent_type=AgentType.CLAUDE,
+            status=SessionStatus.RUNNING,
+            project_path="/home/test/project",
+            source_file="/home/test/.claude/projects/x/session.jsonl",
+            started_at=aware,            # tz-aware
+            ended_at=naive_later,        # tz-naive — the mismatch that crashed
+            last_activity=naive_later,
+        )
+        write_metadata(session)
+
+        summary = generate_summary("tz-mix-session")  # must not raise
+
+        assert summary is not None
+        assert summary.total_duration_ms == 5000

@@ -347,12 +347,19 @@ def generate_summary(
         for name, count in tool_usage.most_common(5)
     ]
 
-    # Calculate duration (ensure non-negative, as timestamps in file may not be strictly ordered)
+    # Calculate duration (ensure non-negative, as timestamps in file may not be strictly ordered).
+    # Normalize tz first: file timestamps can be a mix of naive and aware, and
+    # subtracting across the two raises "can't subtract offset-naive and
+    # offset-aware datetimes" — surfaced as the dashboard's recurring
+    # "Failed to compute recent tasks" error every poll.
+    def _naive(dt: datetime) -> datetime:
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
     if session.started_at and session.ended_at:
-        delta = session.ended_at - session.started_at
+        delta = _naive(session.ended_at) - _naive(session.started_at)
         total_duration_ms = max(0, int(delta.total_seconds() * 1000))
     elif session.started_at and session.last_activity:
-        delta = session.last_activity - session.started_at
+        delta = _naive(session.last_activity) - _naive(session.started_at)
         total_duration_ms = max(0, int(delta.total_seconds() * 1000))
     else:
         total_duration_ms = 0
