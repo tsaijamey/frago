@@ -233,6 +233,48 @@ def test_second_run_allowed_after_first_completes(tmp_path):
     assert len(queued) == 1, "follow-up run after completion should be accepted"
 
 
+def test_reply_then_run_batch_does_not_block_run(tmp_path):
+    """Regression for the Bug J fix's own regression (2026-05-20 12:22):
+    PA commonly emits [reply(ack), run] in ONE decision batch. If the reply
+    closes the msg immediately, the subsequent run hits a closed msg and is
+    rejected (illegal_transition) — sub-agent never launches. Closing must be
+    deferred to end-of-batch so the queued run keeps the msg open.
+    """
+    from datetime import datetime, timezone
+
+    from frago.server.services.taskboard.ingestor import Ingestor
+
+    board = _make_board(tmp_path)
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="topic", by="test",
+    )
+    Ingestor(board).ingest_external(
+        channel="feishu", msg_id="om_batch",
+        sender_id="u1", text="研究一下", parent_ref=None,
+        received_at=datetime.now(timezone.utc),
+        reply_context={}, thread_id="T1",
+    )
+
+    DecisionApplier(board).handle_pa_output([
+        {"action": "reply", "msg_id": "om_batch", "channel": "feishu",
+         "text": "收到，正在研究，稍等"},
+        {"action": "run", "msg_id": "om_batch", "channel": "feishu",
+         "description": "research", "prompt": "研究主题\n\n详细展开"},
+    ])
+
+    queued = board.get_queued_tasks()
+    assert len(queued) == 1 and queued[0].type == "run", (
+        f"run in [reply, run] batch must be dispatched, got {len(queued)} "
+        f"queued tasks"
+    )
+    # msg must stay open (run is in flight), NOT closed by the interim reply
+    parent = board.get_msg_for_task(queued[0].task_id)
+    assert parent.status == "dispatched", (
+        f"msg must stay open while run is queued, got {parent.status}"
+    )
+
+
 def test_reply_by_task_id_closes_parent_msg(tmp_path):
     """Bug J (2026-05-20 dup-artefact, send ③): replying by task_id (no
     msg_id) used to mark the task replied but never closed the parent msg.

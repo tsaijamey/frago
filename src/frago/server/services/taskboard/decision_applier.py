@@ -32,11 +32,30 @@ class DecisionApplier(BaseApplier):
         self._resume_applier = resume_applier or ResumeApplier(board)
 
     def handle_pa_output(self, decisions: list[dict]) -> None:
-        """主路由入口, 接收 PA 输出 list[dict]."""
-        for d in decisions:
-            self._handle_one(d)
+        """主路由入口, 接收 PA 输出 list[dict].
 
-    def _handle_one(self, d: dict) -> None:
+        msg-closing is deferred to AFTER the whole batch is applied. PA
+        commonly emits [reply(ack), run] in one decision — closing the msg
+        the moment the reply lands would mark all-tasks-terminal before the
+        run is appended, so the run would hit a closed msg and be rejected
+        (illegal_transition) and never dispatch. Evaluating close once at
+        the end lets the queued run keep the msg open.
+        """
+        reply_msg_ids: list[str] = []
+        for d in decisions:
+            affected = self._handle_one(d)
+            if affected:
+                reply_msg_ids.append(affected)
+        seen: set[str] = set()
+        for mid in reply_msg_ids:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            self._board.close_msg_if_terminal(mid, by=self.name)
+
+    def _handle_one(self, d: dict) -> str | None:
+        """Route one decision. Returns the parent msg_id of a reply action
+        (so the caller can evaluate close after the full batch), else None."""
         action = d.get("action")
         if action not in VALID_MSG_ACTIONS:
             self._reject(
@@ -46,7 +65,7 @@ class DecisionApplier(BaseApplier):
                 original_action=str(action or ""),
                 original_prompt_head=(d.get("prompt") or "").split("\n", 1)[0][:80],
             )
-            return
+            return None
 
         prompt = d.get("prompt", "")
         # Only run/resume carry a sub-agent prompt subject to the
@@ -65,7 +84,7 @@ class DecisionApplier(BaseApplier):
                     original_action=action,
                     original_prompt_head=prompt.split("\n", 1)[0][:80],
                 )
-                return
+                return None
 
         msg_id = _normalize_msg_id(d.get("msg_id"), d.get("channel"))
         task_id = d.get("task_id")
@@ -78,10 +97,11 @@ class DecisionApplier(BaseApplier):
             elif action == "reply":
                 # Resolve the parent msg. PA replies either by msg_id (new
                 # message) or by task_id (replying to a finished run's
-                # result). The task_id path must still attach the reply to —
-                # and close — the parent msg; otherwise the msg lingers in
-                # `dispatched` and a later reflection tick judges it
-                # unanswered and re-replies, re-sending the same artefact.
+                # result). The task_id path must still attach the reply to the
+                # parent msg so it can be closed (deferred to end of batch by
+                # handle_pa_output) — otherwise the msg lingers in `dispatched`
+                # and a later reflection tick judges it unanswered and
+                # re-replies, re-sending the same artefact.
                 reply_msg_id = msg_id
                 if not reply_msg_id and task_id:
                     parent = self._board.get_msg_for_task(task_id)
@@ -92,7 +112,7 @@ class DecisionApplier(BaseApplier):
                         task_type="reply", by=self.name,
                     )
                     self._board.mark_task_replied(task.task_id, by=self.name)
-                    self._board.close_msg_if_terminal(reply_msg_id, by=self.name)
+                    return reply_msg_id
             elif action == "resume":
                 self._resume_applier.route_resume(task_id, prompt)
             elif action == "dismiss" and hasattr(self._board, "mark_msg_dismissed"):
@@ -114,6 +134,7 @@ class DecisionApplier(BaseApplier):
                     original_action=action,
                     original_prompt_head=prompt.split("\n", 1)[0][:80],
                 )
+        return None
 
 
 def _normalize_msg_id(msg_id: str | None, channel: str | None) -> str | None:
