@@ -49,6 +49,11 @@ PID_POLL_INTERVAL = 5.0
 # 2026-04-19 5cf89f19 incident: 4.5h idle with SUMMARY.md already on disk).
 IDLE_STUCK_TIMEOUT_MIN = 15
 
+# claude JSONL stop_reason values that mean the agent finished its turn
+# naturally. Shared by _monitor_until_done (to detect completion the same way
+# the recovery path does) and _finalize_run (to decide COMPLETED vs FAILED).
+_SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
+
 
 @dataclass
 class _TaskContext:
@@ -249,7 +254,6 @@ class Executor:
         #    (from 3940-session statistical analysis):
         #      end_turn / stop_sequence → agent finished naturally → COMPLETED
         #      None / tool_use / max_tokens → interrupted/crashed → FAILED
-        _SUCCESS_STOP_REASONS = {"end_turn", "stop_sequence"}
         final_text = self._read_final_assistant_text(claude_sid) if claude_sid else None
         if stop_reason in _SUCCESS_STOP_REASONS:
             final_status = "COMPLETED"
@@ -332,6 +336,12 @@ class Executor:
 
         # 8. Notify PA via system message
         await self._notify_pa(ctx, run_id, stop_reason)
+
+        # 9. Best-effort reap: when monitoring ended on the JSONL stop_reason
+        # signal the wrapper process may have exited a moment later; reap it now
+        # so it doesn't linger as a zombie (which would make os.kill(pid,0)
+        # unreliable for any future pid check).
+        self._pid_exited(pid)
 
     async def _get_or_create_run_for_thread(
         self,
@@ -491,46 +501,75 @@ class Executor:
         return run_id, pid
 
     async def _monitor_until_done(self, ctx: _TaskContext, pid: int) -> int:
-        """Poll PID until process exits OR declares itself stuck.
+        """Wait until the agent is actually done, then return its PID.
 
-        Returns final PID on exit (normal or idle-stuck kill).
+        Completion is driven by *authoritative* signals, never a wall-clock
+        budget, so a long-but-active agent is never killed merely for running
+        long:
 
-        Idle-stuck detection: if the claude JSONL file hasn't grown for
-        IDLE_STUCK_TIMEOUT_MIN minutes, kill the process and treat as exit
-        so the task moves to a terminal state instead of waiting forever.
+        1. The claude JSONL reports a terminal ``stop_reason``
+           (end_turn / stop_sequence) — the same signal the recovery path
+           uses. Fires even when the spawned wrapper lingers after the agent's
+           final turn.
+        2. The spawned process has actually exited — detected via
+           ``os.waitpid(pid, WNOHANG)`` which ALSO reaps the child. Without
+           reaping, an exited-but-unreaped child stays a zombie and
+           ``os.kill(pid, 0)`` keeps reporting it alive forever, so monitoring
+           never ends and the PA is never notified (the silent ~9-min hang on
+           2026-05-21 00:00: the agent finished at 23:59 but its zombie wrapper
+           kept os.kill succeeding).
+
+        Only a genuinely *idle* agent — process still alive but the JSONL has
+        not grown for IDLE_STUCK_TIMEOUT_MIN minutes — escalates to a kill.
         """
         from pathlib import Path as _Path
 
-        idle_timeout_sec = IDLE_STUCK_TIMEOUT_MIN * 60
-        home_str = str(_Path.home())
-        cwd_slug = home_str.replace("/", "-")
+        from frago.server.services.trace import trace_entry
 
-        def _jsonl_mtime() -> float | None:
+        idle_timeout_sec = IDLE_STUCK_TIMEOUT_MIN * 60
+        cwd_slug = str(_Path.home()).replace("/", "-")
+
+        def _claude_sid() -> str | None:
             task_obj = self._board.get_task(ctx.task_id)
-            claude_sid = (
+            return (
                 task_obj.session.claude_session_id
                 if task_obj and task_obj.session else None
             )
-            if not claude_sid:
+
+        def _jsonl_mtime() -> float | None:
+            sid = _claude_sid()
+            if not sid:
                 return None
-            jsonl_path = _Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_sid}.jsonl"
+            jsonl_path = _Path.home() / ".claude" / "projects" / cwd_slug / f"{sid}.jsonl"
             try:
                 return jsonl_path.stat().st_mtime
             except OSError:
                 return None
 
+        def _done() -> str | None:
+            """Name of the completion signal, or None to keep waiting."""
+            sid = _claude_sid()
+            if sid and self._read_stop_reason(sid) in _SUCCESS_STOP_REASONS:
+                return "stop_reason"
+            if self._pid_exited(pid):
+                return "process_exit"
+            return None
+
         last_active = _jsonl_mtime() or time.time()
 
         while True:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, PermissionError):
-                return pid
-            except OSError:
-                # Windows: after the process exits, os.kill(pid, 0) raises
-                # OSError(WinError 6, "invalid handle") rather than
-                # ProcessLookupError that POSIX uses. Treat both as "process
-                # is gone, stop monitoring."
+            done_signal = _done()
+            if done_signal:
+                # Loud breadcrumb: which signal ended monitoring. The previous
+                # os.kill-only loop returned silently and could hang forever
+                # undetected when the child became an unreaped zombie.
+                trace_entry(
+                    origin="internal", subkind="executor", data_type="os_event",
+                    thread_id=ctx.thread_id, task_id=ctx.task_id,
+                    msg_id=ctx.channel_message_id, role="executor",
+                    data={"kind": "monitor_done", "signal": done_signal, "pid": pid},
+                    event=f"monitor 结束: {done_signal}, pid={pid}",
+                )
                 return pid
 
             await asyncio.sleep(PID_POLL_INTERVAL)
@@ -548,13 +587,13 @@ class Executor:
                 )
                 with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                     os.kill(pid, signal.SIGTERM)
+                self._pid_exited(pid)  # reap the just-killed child
                 # Mark task FAILED with a clear reason; outputs on disk are preserved.
                 self._board.mark_task_failed(
                     ctx.task_id,
                     error=f"idle-stuck: no JSONL activity for {IDLE_STUCK_TIMEOUT_MIN}+ min",
                     by="executor",
                 )
-                from frago.server.services.trace import trace_entry
                 trace_entry(
                     origin="internal", subkind="executor", data_type="os_event",
                     thread_id=ctx.thread_id, task_id=ctx.task_id,
@@ -565,6 +604,31 @@ class Executor:
                     event="idle-stuck kill",
                 )
                 return pid
+
+    @staticmethod
+    def _pid_exited(pid: int) -> bool:
+        """Return True if ``pid`` has exited.
+
+        Tries ``os.waitpid(pid, WNOHANG)`` first: if the process is our child
+        and has exited, this reaps the zombie and reports it gone — preventing
+        the failure where an unreaped zombie keeps ``os.kill(pid, 0)``
+        succeeding forever. Falls back to ``os.kill(pid, 0)`` for processes
+        that aren't our reapable child (already reaped, reparented, or Windows
+        where waitpid is unavailable for arbitrary pids).
+        """
+        try:
+            reaped, _ = os.waitpid(pid, os.WNOHANG)
+            if reaped == pid:
+                return True  # exited and now reaped
+        except ChildProcessError:
+            pass  # not our child / already reaped elsewhere
+        except (OSError, ValueError, AttributeError):
+            pass  # e.g. Windows has no os.WNOHANG semantics for this
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError, OSError):
+            return True
+        return False
 
     # -- B-2a: spawn_resume for ResumeApplier Case A (FRAGO_CASE_A_ENABLED) --
     def spawn_resume(

@@ -1,6 +1,9 @@
 """Tests for Executor._read_final_assistant_text and _notify_pa session_id fix."""
 
 import json
+import os
+import sys
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -329,3 +332,34 @@ class TestFinalizeRunDatetimeAwareness:
         # which raises TypeError when sides differ in tz-awareness.
         # Just running it without raising is the regression assertion.
         await executor._finalize_run(ctx, pid=99999, run_id="run-x")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="waitpid/fork are POSIX-only")
+class TestPidExited:
+    """Executor._pid_exited must report an exited child as gone AND reap it,
+    so an unreaped zombie can't keep os.kill(pid,0) succeeding forever — the
+    silent ~9-min monitor hang observed 2026-05-21 00:00."""
+
+    def test_running_process_not_exited(self):
+        import subprocess
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            assert Executor._pid_exited(p.pid) is False
+        finally:
+            p.kill()
+            p.wait()
+
+    def test_exited_zombie_detected_and_reaped(self):
+        # fork a child that exits immediately → becomes a zombie until reaped.
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        exited = False
+        for _ in range(100):
+            if Executor._pid_exited(pid):  # waitpid(WNOHANG) reaps the zombie
+                exited = True
+                break
+            time.sleep(0.02)
+        assert exited, "exited child (zombie) must be detected as exited"
+        # already reaped → still reports exited, never re-hangs
+        assert Executor._pid_exited(pid) is True
