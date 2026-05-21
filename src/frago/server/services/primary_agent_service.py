@@ -103,7 +103,7 @@ def _render_domain_peek(peek: dict[str, Any] | None) -> str:
     if sessions:
         lines.append("  Recent sessions:")
         for s in sessions:
-            sid = (s.get("session_id") or "")[:8]
+            sid = s.get("session_id") or ""
             head = (s.get("summary_head") or "").replace("\n", " | ")
             if len(head) > 120:
                 head = head[:117] + "..."
@@ -292,7 +292,7 @@ class PrimaryAgentService:
 
         self._session_id = await self._wait_for_session_id(self._pa_internal_id)
         self._save_session_id(self._session_id)
-        logger.info("PA session created: %s", self._session_id[:8])
+        logger.info("PA session created: %s", self._session_id)
 
         if reborn_reason in ("rotation", "server_restart", "respawn"):
             asyncio.create_task(self._send_online_notification(reborn_reason))
@@ -979,7 +979,7 @@ class PrimaryAgentService:
             if not isinstance(d, dict):
                 continue
             action = d.get("action")
-            log_id = (d.get("task_id") or d.get("msg_id") or "?")[:8]
+            log_id = d.get("task_id") or d.get("msg_id") or "?"
             _decision_data = {
                 "action": action or "",
                 "task_id": d.get("task_id", ""),
@@ -1185,7 +1185,7 @@ class PrimaryAgentService:
         channel = decision.get("channel", "")
 
         async def _fail(reason: str, detail: str) -> None:
-            logger.warning("run %s failed: %s — %s", task_id[:8] or msg_id[:12] or "?", reason, detail)
+            logger.warning("run %s failed: %s — %s", task_id or msg_id or "?", reason, detail)
             trace_entry(
                 origin="internal", subkind="pa", data_type="action_result",
                 thread_id=None, task_id=task_id or None,
@@ -1230,7 +1230,7 @@ class PrimaryAgentService:
             thread_id=None, task_id=task_id or None,
             data={"action": "run", "status": "ok", "description": description[:120]},
             msg_id=msg_id or None,
-            event=f"run dispatched (board): task={(task_id or msg_id)[:8]}",
+            event=f"run dispatched (board): task={task_id or msg_id}",
         )
 
     async def _handle_resume(self, decision: dict[str, Any]) -> None:
@@ -1258,7 +1258,7 @@ class PrimaryAgentService:
         if not prompt:
             logger.warning("resume decision missing prompt")
             await _feedback_fail("missing_prompt",
-                                 f"PA 决策未提供 prompt，无法 resume task {task_id[:8]}。")
+                                 f"PA 决策未提供 prompt，无法 resume task {task_id}。")
             return
 
         if not self._executor:

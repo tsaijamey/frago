@@ -151,7 +151,7 @@ class AgentSession:
         # Write prompt to temp file
         log_dir = Path.home() / ".frago" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        prompt_file = log_dir / f"agent-attached-{self.internal_id[:8]}.txt"
+        prompt_file = log_dir / f"agent-attached-{self.internal_id}.txt"
         prompt_file.write_text(self._assemble_prompt(prompt), encoding="utf-8")
         cmd.extend(["--prompt-file", str(prompt_file)])
 
@@ -180,7 +180,7 @@ class AgentSession:
         self._watchdog_task = asyncio.create_task(self._activity_watchdog(timeout=60.0))
 
         logger.info(
-            f"Attached agent session {self.internal_id[:8]} started (PID: {self._process.pid})"
+            f"Attached agent session {self.internal_id} started (PID: {self._process.pid})"
         )
 
     async def send_message(self, message: str) -> None:
@@ -233,7 +233,7 @@ class AgentSession:
 
         self._cleanup_old_process()
 
-        logger.info(f"Attached agent session {self.internal_id[:8]} stopped")
+        logger.info(f"Attached agent session {self.internal_id} stopped")
 
     async def _activity_watchdog(self, timeout: float) -> None:
         """Kill the subprocess if stdout stays silent for ``timeout`` seconds.
@@ -277,7 +277,7 @@ class AgentSession:
             logger.error("No process or stdout available")
             return
 
-        logger.info(f"Starting stream reader for attached session {self.internal_id[:8]}")
+        logger.info(f"Starting stream reader for attached session {self.internal_id}")
         line_count = 0
 
         try:
@@ -424,13 +424,13 @@ class AgentSession:
                         "text block for session %s — likely a thinking-block "
                         "false signal from a non-Anthropic backend; deferring "
                         "to activity watchdog instead of terminating now.",
-                        stop_reason, self.internal_id[:8],
+                        stop_reason, self.internal_id,
                     )
                 else:
                     logger.info(
                         "Stream end-of-turn detected (stop_reason=%s) for "
                         "session %s; terminating subprocess proactively",
-                        stop_reason, self.internal_id[:8],
+                        stop_reason, self.internal_id,
                     )
                     if self._process and self._process.poll() is None:
                         with contextlib.suppress(Exception):
@@ -543,10 +543,10 @@ class AgentService:
             # Prepare log directory
             log_dir = Path.home() / ".frago" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"agent-{task_id[:8]}.log"
+            log_file = log_dir / f"agent-{task_id}.log"
 
             # Use temp file to pass prompt (Windows compatibility)
-            prompt_file = log_dir / f"prompt-{task_id[:8]}.txt"
+            prompt_file = log_dir / f"prompt-{task_id}.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
 
             # Build command (uses venv-aware frago lookup so daemons without

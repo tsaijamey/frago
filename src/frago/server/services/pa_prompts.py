@@ -458,7 +458,7 @@ PA_BOOTSTRAP_TURN_PA_REPLY_LINE_TEMPLATE = "  [{ts}] PA → {pa_response}"
 # PA 派发任务（action=run）的消息行，带 task_id 短码（前 8 位）。
 # --------------------------------------------------------------------------
 PA_BOOTSTRAP_TURN_PA_DISPATCH_LINE_TEMPLATE = (
-    "  [{ts}] PA → {pa_response} (task={task_id_short})"
+    "  [{ts}] PA → {pa_response} (task={task_id})"
 )
 
 

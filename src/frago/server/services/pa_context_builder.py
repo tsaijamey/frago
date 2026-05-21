@@ -120,7 +120,7 @@ def _format_turn_lines(turns: list[ConversationTurn]) -> list[str]:
                 lines.append(PA_BOOTSTRAP_TURN_PA_DISPATCH_LINE_TEMPLATE.format(
                     ts=ts,
                     pa_response=turn.pa_response,
-                    task_id_short=turn.task_id[:8],
+                    task_id=turn.task_id,
                 ))
             else:
                 lines.append(PA_BOOTSTRAP_TURN_PA_REPLY_LINE_TEMPLATE.format(

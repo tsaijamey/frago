@@ -9,7 +9,6 @@ Provides the redesigned dashboard data:
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -28,11 +27,11 @@ class RunningTaskSummary(BaseModel):
     """Summary of a currently running task."""
 
     id: str
-    name: Optional[str] = None
+    name: str | None = None
     project_path: str = ""
     started_at: str = ""
     elapsed_seconds: float = 0.0
-    current_step: Optional[str] = None
+    current_step: str | None = None
     step_count: int = 0
 
 
@@ -40,21 +39,21 @@ class RecentTaskSummary(BaseModel):
     """Summary of a recently completed/failed task."""
 
     id: str
-    name: Optional[str] = None
+    name: str | None = None
     status: str = "completed"
-    duration_ms: Optional[int] = None
-    ended_at: Optional[str] = None
-    error_summary: Optional[str] = None
+    duration_ms: int | None = None
+    ended_at: str | None = None
+    error_summary: str | None = None
 
 
 class QuickRecipeItem(BaseModel):
     """Recipe item for quick access on dashboard."""
 
     name: str
-    description: Optional[str] = None
-    runtime: Optional[str] = None
+    description: str | None = None
+    runtime: str | None = None
     run_count: int = 0
-    last_used: Optional[str] = None
+    last_used: str | None = None
 
 
 class ResourceCounts(BaseModel):
@@ -71,7 +70,7 @@ class DashboardStatus(BaseModel):
     chrome_connected: bool = False
     tab_count: int = 0
     error_count: int = 0
-    last_synced_at: Optional[str] = None
+    last_synced_at: str | None = None
 
 
 class DashboardData(BaseModel):
@@ -119,7 +118,7 @@ def compute_dashboard_data() -> DashboardData:
         for session in running_sessions:
             name = title_manager.get_title(session.session_id)
             if not name:
-                name = getattr(session, "name", None) or f"Task {session.session_id[:8]}"
+                name = getattr(session, "name", None) or f"Task {session.session_id}"
 
             started_at = getattr(session, "started_at", None)
             elapsed = 0.0

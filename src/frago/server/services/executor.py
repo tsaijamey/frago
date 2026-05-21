@@ -181,7 +181,7 @@ class Executor:
                 if ctx is None:
                     logger.debug(
                         "Executor: task %s missing context — skipping",
-                        task.task_id[:8],
+                        task.task_id,
                     )
                     continue
                 try:
@@ -204,7 +204,7 @@ class Executor:
         except Exception:
             logger.error(
                 "Executor: unhandled error executing task %s",
-                ctx.task_id[:8], exc_info=True,
+                ctx.task_id, exc_info=True,
             )
             self._board.mark_task_failed(
                 ctx.task_id,
@@ -245,8 +245,8 @@ class Executor:
             origin="internal", subkind="executor", data_type="tool_result",
             thread_id=ctx.thread_id, task_id=ctx.task_id,
             msg_id=ctx.channel_message_id, role="executor",
-            event=f"读取结果: claude_sid={claude_sid and claude_sid[:8]}, stop_reason={stop_reason}",
-            data={"claude_sid_prefix": claude_sid[:8] if claude_sid else None,
+            event=f"读取结果: claude_sid={claude_sid}, stop_reason={stop_reason}",
+            data={"claude_sid": claude_sid,
                   "stop_reason": stop_reason},
         )
 
@@ -408,7 +408,7 @@ class Executor:
         from frago.server.services.agent_service import AgentService
 
         if not ctx.prompt:
-            logger.error("Executor: task %s has no prompt", ctx.task_id[:8])
+            logger.error("Executor: task %s has no prompt", ctx.task_id)
             self._board.mark_task_failed(
                 ctx.task_id, error="missing run_prompt", by="executor",
             )
@@ -421,7 +421,7 @@ class Executor:
             manager=manager,
             thread_id=ctx.thread_id,
             description=ctx.description or ctx.prompt,
-            task_short_id=ctx.task_id[:8],
+            task_short_id=ctx.task_id,
         )
 
         # Phase 3: peek the resolved domain so the sub-agent boots with prior
@@ -461,7 +461,7 @@ class Executor:
         )
 
         if result.get("status") != "ok":
-            logger.error("Executor: failed to start agent for task %s: %s", ctx.task_id[:8], result.get("error"))
+            logger.error("Executor: failed to start agent for task %s: %s", ctx.task_id, result.get("error"))
             self._board.mark_task_failed(
                 ctx.task_id,
                 error=str(result.get("error") or "agent start failed"),
@@ -478,7 +478,7 @@ class Executor:
             by="executor",
         )
         logger.info("Executor: agent launched for task %s (run=%s, claude=%s, pid=%d)",
-                     ctx.task_id[:8], run_id, claude_session_id[:8], pid)
+                     ctx.task_id, run_id, claude_session_id, pid)
 
         _launched_data = {
             "run_id": run_id,
@@ -583,7 +583,7 @@ class Executor:
                 logger.warning(
                     "Executor: task %s idle for %.0f min (pid %d alive but JSONL not growing) "
                     "— declaring stuck, killing process",
-                    ctx.task_id[:8], (time.time() - last_active) / 60, pid,
+                    ctx.task_id, (time.time() - last_active) / 60, pid,
                 )
                 with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                     os.kill(pid, signal.SIGTERM)
@@ -705,7 +705,7 @@ class Executor:
                 "Task is not on the board (may have been archived or never "
                 "existed). Resume cannot target an archived task."
             )
-            logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
+            logger.warning("Executor: resume %s failed — %s", task_id, reason)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
                 thread_id=None, task_id=task_id,
@@ -719,7 +719,7 @@ class Executor:
         if session is None or not session.run_id:
             reason = "missing_session_id"
             detail = "Task has no bound session_id — never entered EXECUTING state."
-            logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
+            logger.warning("Executor: resume %s failed — %s", task_id, reason)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
                 thread_id=thread_id, task_id=task_id,
@@ -735,7 +735,7 @@ class Executor:
                 "Task has no claude_session_id — sub-agent never reached the "
                 "init event. Hot injection requires a known Claude session UUID."
             )
-            logger.warning("Executor: resume %s failed — %s", task_id[:8], reason)
+            logger.warning("Executor: resume %s failed — %s", task_id, reason)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
                 thread_id=thread_id, task_id=task_id,
@@ -756,7 +756,7 @@ class Executor:
         except Exception as e:
             reason = "inbox_write_failed"
             detail = f"Failed to write resume_inbox file: {e}"
-            logger.error("Executor: resume %s failed — %s", task_id[:8], detail,
+            logger.error("Executor: resume %s failed — %s", task_id, detail,
                          exc_info=True)
             trace_entry(
                 origin="internal", subkind="executor", data_type="action_result",
@@ -769,8 +769,8 @@ class Executor:
 
         logger.info(
             "Executor: queued hot-injection %s for task %s (csid=%s)",
-            injection.injection_id[:8], task_id[:8],
-            session.claude_session_id[:8],
+            injection.injection_id, task_id,
+            session.claude_session_id,
         )
 
         trace_entry(
@@ -780,7 +780,7 @@ class Executor:
                   "injection_id": injection.injection_id,
                   "claude_session_id": session.claude_session_id,
                   "session_id": session.run_id},
-            event=f"resume 排队: injection={injection.injection_id[:8]}",
+            event=f"resume 排队: injection={injection.injection_id}",
         )
 
         return {
@@ -978,4 +978,4 @@ class Executor:
         try:
             await self._pa_enqueue_message(msg)
         except Exception:
-            logger.error("Executor: failed to notify PA for task %s", ctx.task_id[:8], exc_info=True)
+            logger.error("Executor: failed to notify PA for task %s", ctx.task_id, exc_info=True)

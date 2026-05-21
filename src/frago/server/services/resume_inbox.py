@@ -87,10 +87,10 @@ class ResumeInbox:
 
         logger.info(
             "ResumeInbox: appended injection %s for csid=%s (run=%s, task=%s)",
-            injection.injection_id[:8],
-            claude_session_id[:8],
+            injection.injection_id,
+            claude_session_id,
             run_id,
-            task_id[:8],
+            task_id,
         )
         return injection
 

@@ -399,7 +399,7 @@ class TaskLifecycle:
             if view_tk.recovery_count >= MAX_RECOVERY:
                 logger.warning(
                     "Task %s recovered %d times without completion — marking stale",
-                    tid[:8], view_tk.recovery_count,
+                    tid, view_tk.recovery_count,
                 )
                 board.mark_task_failed(
                     tid,
@@ -435,7 +435,7 @@ class TaskLifecycle:
             if view_tk.recovery_count >= MAX_RECOVERY:
                 logger.warning(
                     "FAILED task %s already recovered %d times — leaving as failed (stale)",
-                    tid[:8], view_tk.recovery_count,
+                    tid, view_tk.recovery_count,
                 )
                 continue
             board.increment_recovery_count(tid, by="lifecycle")

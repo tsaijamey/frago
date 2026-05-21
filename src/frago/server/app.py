@@ -185,7 +185,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
                     error="zombie: process not found at server startup",
                     by="server_startup",
                 )
-                logger.info("Cleaned zombie task %s (pid=%s)", task.task_id[:8], pid)
+                logger.info("Cleaned zombie task %s (pid=%s)", task.task_id, pid)
     except Exception as e:
         logger.warning("Failed to clean zombie tasks: %s", e)
 

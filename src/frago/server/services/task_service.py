@@ -3,9 +3,10 @@
 Provides functionality for listing and viewing tasks from session storage.
 """
 
+import contextlib
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,8 @@ class TaskService:
     def get_tasks(
         limit: int = 50,
         offset: int = 0,
-        status: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        status: str | None = None,
+    ) -> dict[str, Any]:
         """Get task list.
 
         Reads session data from ~/.frago/sessions/.
@@ -46,10 +47,9 @@ class TaskService:
             # Convert status filter
             status_filter = None
             if status:
-                try:
+                # Invalid status -> ignore filter
+                with contextlib.suppress(ValueError):
                     status_filter = SessionStatus(status)
-                except ValueError:
-                    pass  # Invalid status, ignore filter
 
             tasks = []
 
@@ -96,7 +96,7 @@ class TaskService:
             return {"tasks": [], "total": 0}
 
     @staticmethod
-    def _session_to_task(session, title_manager=None) -> Optional[Dict[str, Any]]:
+    def _session_to_task(session, title_manager=None) -> dict[str, Any] | None:
         """Convert session metadata to task dictionary.
 
         Args:
@@ -117,7 +117,7 @@ class TaskService:
         if not name:
             name = getattr(session, "name", None)
         if not name:
-            name = f"Session {session.session_id[:8]}"
+            name = f"Session {session.session_id}"
 
         # Convert status
         status = getattr(session, "status", None)
@@ -181,7 +181,7 @@ class TaskService:
         steps_file = session_dir / "steps.jsonl"
         if steps_file.exists():
             try:
-                with open(steps_file, "r", encoding="utf-8") as f:
+                with open(steps_file, encoding="utf-8") as f:
                     for line in f:
                         if not line.strip():
                             continue
@@ -199,7 +199,7 @@ class TaskService:
         return False
 
     @staticmethod
-    def get_task(session_id: str) -> Optional[Dict[str, Any]]:
+    def get_task(session_id: str) -> dict[str, Any] | None:
         """Get task details by session ID.
 
         Args:
@@ -250,11 +250,11 @@ class TaskService:
     @staticmethod
     def _build_task_detail(
         session,
-        steps: List[Any],
-        summary: Optional[Any],
-        steps_result: Dict[str, Any],
+        steps: list[Any],
+        summary: Any | None,
+        steps_result: dict[str, Any],
         title_manager=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build task detail dictionary from session data.
 
         Args:
@@ -274,7 +274,7 @@ class TaskService:
         if not name:
             name = getattr(session, "name", None)
         if not name:
-            name = f"Session {session.session_id[:8]}"
+            name = f"Session {session.session_id}"
         status = getattr(session, "status", None)
         status_str = status.value if status else "running"
 
@@ -320,7 +320,7 @@ class TaskService:
         }
 
     @staticmethod
-    def _step_to_dict(step) -> Dict[str, Any]:
+    def _step_to_dict(step) -> dict[str, Any]:
         """Convert session step to dictionary.
 
         Args:
@@ -350,7 +350,7 @@ class TaskService:
     @staticmethod
     def generate_title_for_task(
         session_id: str, force: bool = True
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Generate AI title for a single task.
 
         Args:
@@ -372,7 +372,7 @@ class TaskService:
     @staticmethod
     async def generate_title_for_task_async(
         session_id: str, force: bool = True
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Async version of generate_title_for_task.
 
         Runs title generation in a thread pool to avoid blocking the event loop.
@@ -394,7 +394,7 @@ class TaskService:
             return None, f"Internal error: {e}"
 
     @staticmethod
-    def extract_error_summary(session_id: str) -> Optional[str]:
+    def extract_error_summary(session_id: str) -> str | None:
         """Extract error summary from the last few steps of a failed task.
 
         Reads the last 3 steps and looks for error-related content.
@@ -434,7 +434,7 @@ class TaskService:
         limit: int = 50,
         offset: int = 0,
         from_end: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get task steps with pagination.
 
         Args:
