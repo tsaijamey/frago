@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -241,7 +242,7 @@ class TestMonitorUntilDoneWindowsOSError:
         # Simulate Windows behavior: os.kill(pid, 0) raises OSError(WinError 6)
         call_count = {"n": 0}
 
-        def _fake_kill(pid, sig):
+        def _fake_kill(_pid, sig):
             call_count["n"] += 1
             if sig == 0:
                 # Equivalent of Windows WinError 6
@@ -282,7 +283,7 @@ class TestFinalizeRunDatetimeAwareness:
     @pytest.mark.asyncio
     async def test_aware_created_at_does_not_raise(self, tmp_path, monkeypatch):
         """ctx.created_at as tz-aware datetime must not break duration calc."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from frago.server.services.executor import Executor, _TaskContext
 
@@ -291,7 +292,7 @@ class TestFinalizeRunDatetimeAwareness:
         )
 
         # Aware created_at matching what board.append_task produces
-        aware_created = datetime.now(timezone.utc).astimezone()
+        aware_created = datetime.now(UTC).astimezone()
 
         ctx = _TaskContext(
             task_id="t1",
@@ -363,3 +364,96 @@ class TestPidExited:
         assert exited, "exited child (zombie) must be detected as exited"
         # already reaped → still reports exited, never re-hangs
         assert Executor._pid_exited(pid) is True
+
+
+class TestClaudeJsonlPathSlugRobust:
+    """Bug 2026-05-21 (Windows host Aliciiiiiia): the claude JSONL path was
+    rebuilt as home.replace('/', '-'), wrong on Windows where the project-dir
+    slug also maps '\\' and the drive ':' (cwd 'C:\\Users\\choka' → dir
+    'C--Users-choka'). The file was never found, so _read_stop_reason always
+    returned None and every task was wrongly FAILED. Fix globs by the globally
+    unique session id instead of recomputing the slug.
+    """
+
+    def test_finds_jsonl_under_windows_style_slug(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "frago.server.services.executor.Path.home", lambda: tmp_path,
+        )
+        csid = "40caeadb-d2b4-492a-b9e8-e6b6e72dcf34"
+        # A slug that home.replace('/', '-') could never produce on this host.
+        proj = tmp_path / ".claude" / "projects" / "C--Users-choka"
+        proj.mkdir(parents=True)
+        (proj / f"{csid}.jsonl").write_text(
+            json.dumps({"type": "assistant",
+                        "message": {"stop_reason": "end_turn"}}) + "\n",
+            encoding="utf-8",
+        )
+        found = Executor._claude_jsonl_path(csid)
+        assert found is not None and found.name == f"{csid}.jsonl"
+        assert Executor._read_stop_reason(csid) == "end_turn"
+
+    def test_missing_session_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "frago.server.services.executor.Path.home", lambda: tmp_path,
+        )
+        (tmp_path / ".claude" / "projects").mkdir(parents=True)
+        assert Executor._claude_jsonl_path("does-not-exist") is None
+        assert Executor._read_stop_reason("does-not-exist") is None
+
+
+class TestMonitorUntilDoneWindowsPidStub:
+    """Bug 2026-05-21 (Windows host Aliciiiiiia): the launched pid is a
+    console-script stub that exits within ms while the real claude worker runs
+    detached. _pid_exited fired 'process_exit' on the first poll → monitoring
+    ended before a terminal stop_reason → stop_reason=None → task wrongly FAILED
+    ~3ms after launch. On Windows the pid-exit signal must be ignored;
+    completion comes from the claude JSONL stop_reason.
+    """
+
+    @pytest.mark.asyncio
+    async def test_windows_ignores_early_pid_exit_waits_for_stop_reason(
+        self, tmp_path, monkeypatch,
+    ):
+        from frago.server.services import executor as exec_mod
+
+        monkeypatch.setattr(exec_mod, "PID_POLL_INTERVAL", 0.01)
+        monkeypatch.setattr(os, "name", "nt")  # simulate Windows
+        monkeypatch.setattr(
+            "frago.server.services.executor.Path.home", lambda: tmp_path,
+        )
+
+        # Real JSONL on disk so _jsonl_mtime != None (launch-grace won't fire).
+        csid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        proj = tmp_path / ".claude" / "projects" / "C--Users-x"
+        proj.mkdir(parents=True)
+        (proj / f"{csid}.jsonl").write_text("{}\n", encoding="utf-8")
+
+        task_obj = MagicMock()
+        task_obj.session.claude_session_id = csid
+        board = MagicMock()
+        board.get_task.return_value = task_obj
+        executor = Executor(board=board)
+
+        # Windows stub: pid always looks exited. With the bug this ends monitoring
+        # immediately; with the fix the Windows path never consults it.
+        monkeypatch.setattr(Executor, "_pid_exited", staticmethod(lambda _pid: True))
+
+        # stop_reason: None for the first two polls, then end_turn.
+        calls = {"n": 0}
+
+        def _sr(_sid):
+            calls["n"] += 1
+            return "end_turn" if calls["n"] >= 3 else None
+
+        monkeypatch.setattr(Executor, "_read_stop_reason", staticmethod(_sr))
+
+        ctx = MagicMock()
+        ctx.task_id = "t1"
+        ctx.thread_id = "th1"
+        ctx.channel_message_id = None
+
+        result = await executor._monitor_until_done(ctx, pid=4440)
+        assert result == 4440
+        # Proves it did NOT bail on the early pid-exit — it kept polling
+        # stop_reason until end_turn.
+        assert calls["n"] >= 3

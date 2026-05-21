@@ -49,6 +49,13 @@ PID_POLL_INTERVAL = 5.0
 # 2026-04-19 5cf89f19 incident: 4.5h idle with SUMMARY.md already on disk).
 IDLE_STUCK_TIMEOUT_MIN = 15
 
+# Windows-only: the launched pid is a console-script stub that exits while the
+# real claude worker runs detached, so process-exit can't be a completion
+# signal there. If the worker never even creates its JSONL within this grace,
+# the spawn genuinely failed — fail fast instead of waiting out the full idle
+# timeout. Generous so a slow claude cold-start is never mistaken for a failure.
+WINDOWS_LAUNCH_GRACE_SEC = 90
+
 # claude JSONL stop_reason values that mean the agent finished its turn
 # naturally. Shared by _monitor_until_done (to detect completion the same way
 # the recovery path does) and _finalize_run (to decide COMPLETED vs FAILED).
@@ -511,23 +518,28 @@ class Executor:
            (end_turn / stop_sequence) — the same signal the recovery path
            uses. Fires even when the spawned wrapper lingers after the agent's
            final turn.
-        2. The spawned process has actually exited — detected via
+        2. (POSIX only) The spawned process exited — detected via
            ``os.waitpid(pid, WNOHANG)`` which ALSO reaps the child. Without
            reaping, an exited-but-unreaped child stays a zombie and
            ``os.kill(pid, 0)`` keeps reporting it alive forever, so monitoring
            never ends and the PA is never notified (the silent ~9-min hang on
            2026-05-21 00:00: the agent finished at 23:59 but its zombie wrapper
-           kept os.kill succeeding).
+           kept os.kill succeeding). On Windows this signal is OFF: the launched
+           pid is a console-script stub that exits within milliseconds while the
+           real claude worker runs detached, so trusting it wrongly FAILED
+           healthy tasks (2026-05-21 Aliciiiiiia incident) — Windows relies on
+           stop_reason plus the JSONL-driven backstops below.
 
-        Only a genuinely *idle* agent — process still alive but the JSONL has
-        not grown for IDLE_STUCK_TIMEOUT_MIN minutes — escalates to a kill.
+        Backstops (both platforms, driven by the worker's JSONL, never the pid):
+        - idle-stuck: process/JSONL alive but not grown for IDLE_STUCK_TIMEOUT_MIN
+          minutes → kill + fail.
+        - launch-failed (Windows): JSONL never appeared within
+          WINDOWS_LAUNCH_GRACE_SEC → the spawn produced no worker → fail fast.
         """
-        from pathlib import Path as _Path
-
         from frago.server.services.trace import trace_entry
 
+        is_windows = os.name == "nt"
         idle_timeout_sec = IDLE_STUCK_TIMEOUT_MIN * 60
-        cwd_slug = str(_Path.home()).replace("/", "-")
 
         def _claude_sid() -> str | None:
             task_obj = self._board.get_task(ctx.task_id)
@@ -540,9 +552,11 @@ class Executor:
             sid = _claude_sid()
             if not sid:
                 return None
-            jsonl_path = _Path.home() / ".claude" / "projects" / cwd_slug / f"{sid}.jsonl"
+            path = Executor._claude_jsonl_path(sid)
+            if path is None:
+                return None
             try:
-                return jsonl_path.stat().st_mtime
+                return path.stat().st_mtime
             except OSError:
                 return None
 
@@ -551,11 +565,17 @@ class Executor:
             sid = _claude_sid()
             if sid and self._read_stop_reason(sid) in _SUCCESS_STOP_REASONS:
                 return "stop_reason"
-            if self._pid_exited(pid):
+            # Process-exit is only trustworthy where the launched pid IS the
+            # worker (POSIX). On Windows it's a short-lived launcher stub whose
+            # exit fires within milliseconds while claude runs detached, so using
+            # it would wrongly FAIL a healthy task — rely on stop_reason + the
+            # JSONL backstops instead.
+            if not is_windows and self._pid_exited(pid):
                 return "process_exit"
             return None
 
-        last_active = _jsonl_mtime() or time.time()
+        started = time.time()
+        last_active = _jsonl_mtime() or started
 
         while True:
             done_signal = _done()
@@ -569,6 +589,25 @@ class Executor:
                     msg_id=ctx.channel_message_id, role="executor",
                     data={"kind": "monitor_done", "signal": done_signal, "pid": pid},
                     event=f"monitor 结束: {done_signal}, pid={pid}",
+                )
+                return pid
+
+            # Windows launch failure: no pid signal here to catch a spawn that
+            # never produced a worker, so check explicitly — if the JSONL never
+            # appears within the grace window, the agent never really started.
+            if (
+                is_windows
+                and _jsonl_mtime() is None
+                and time.time() - started > WINDOWS_LAUNCH_GRACE_SEC
+            ):
+                trace_entry(
+                    origin="internal", subkind="executor", data_type="os_event",
+                    thread_id=ctx.thread_id, task_id=ctx.task_id,
+                    msg_id=ctx.channel_message_id, role="executor",
+                    data={"kind": "monitor_done", "signal": "launch_failed",
+                          "pid": pid},
+                    event=f"monitor 结束: launch_failed "
+                          f"(no JSONL in {WINDOWS_LAUNCH_GRACE_SEC}s), pid={pid}",
                 )
                 return pid
 
@@ -651,12 +690,10 @@ class Executor:
         from frago.server.services.agent_service import AgentService
 
         if csid:
-            home = str(Path.home())
-            cwd_slug = home.replace("/", "-")
-            jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{csid}.jsonl"
-            if not jsonl_path.exists():
+            jsonl_path = self._claude_jsonl_path(csid)
+            if jsonl_path is None or not jsonl_path.exists():
                 raise ClaudeSessionNotFoundError(
-                    f"Claude session jsonl not found: {jsonl_path}"
+                    f"Claude session jsonl not found for csid {csid}"
                 )
 
         new_run_id = f"resume-{_uuid.uuid4().hex[:12]}"
@@ -792,6 +829,24 @@ class Executor:
     # -- result extraction --
 
     @staticmethod
+    def _claude_jsonl_path(claude_session_id: str) -> "Path | None":
+        """Locate a Claude Code session JSONL by id, robust to cwd-slug rules.
+
+        Claude names its per-project dir by slugifying the launch cwd, and the
+        rule is OS-specific (POSIX maps ``/``→``-``; Windows also maps ``\\`` and
+        the drive ``:``). Recomputing that slug as ``home.replace("/", "-")`` was
+        wrong on Windows — backslashes and the drive colon survived, so the path
+        never matched, ``_read_stop_reason``/JSONL-activity always returned None,
+        and every task was wrongly FAILED. The session id is globally unique, so
+        glob for it across all project dirs instead of rebuilding the slug.
+        """
+        base = Path.home() / ".claude" / "projects"
+        try:
+            return next(base.glob(f"*/{claude_session_id}.jsonl"), None)
+        except OSError:
+            return None
+
+    @staticmethod
     def _read_stop_reason(claude_session_id: str) -> str | None:
         """Read stop_reason from the last assistant message that has one set.
 
@@ -802,13 +857,8 @@ class Executor:
         Returns: "end_turn" / "stop_sequence" (success), "tool_use" / "max_tokens"
                  (interrupted), or None (no assistant message found / crash).
         """
-        # Derive JSONL path: ~/.claude/projects/{cwd-slug}/{uuid}.jsonl
-        # cwd is Path.home() → slug is home path with / replaced by -
-        home = str(Path.home())
-        cwd_slug = home.replace("/", "-")
-        jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_session_id}.jsonl"
-
-        if not jsonl_path.exists():
+        jsonl_path = Executor._claude_jsonl_path(claude_session_id)
+        if jsonl_path is None or not jsonl_path.exists():
             return None
 
         try:
@@ -837,11 +887,8 @@ class Executor:
         max_turns 条即停；按时间顺序（最早→最晚）拼接，每条用
         `--- msg N/M ---` 分隔。无文本或异常返回 None。
         """
-        home = str(Path.home())
-        cwd_slug = home.replace("/", "-")
-        jsonl_path = Path.home() / ".claude" / "projects" / cwd_slug / f"{claude_session_id}.jsonl"
-
-        if not jsonl_path.exists():
+        jsonl_path = Executor._claude_jsonl_path(claude_session_id)
+        if jsonl_path is None or not jsonl_path.exists():
             return None
 
         try:
