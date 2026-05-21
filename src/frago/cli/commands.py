@@ -560,7 +560,6 @@ COMMAND_EXAMPLES = {
     "thread/list": [
         "frago thread list",
         "frago thread list --status active --limit 10",
-        "frago thread list --origin internal --subkind reflection",
     ],
     "thread/search": [
         "frago thread search <query>",
