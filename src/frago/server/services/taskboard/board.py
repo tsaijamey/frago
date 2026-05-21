@@ -180,6 +180,17 @@ class TaskBoard:
                 ).add(thread_id)
             return
 
+        # Terminal msg transitions. Without replaying these, a closed/dismissed
+        # msg rebuilds as "dispatched" after every boot fold, so the PA re-handles
+        # (re-replies) an already-finished message on the next rotation.
+        if data_type in ("msg_closed", "msg_dismissed"):
+            msg = self._find_msg(msg_id) if msg_id else None
+            if msg is not None:
+                new_status = data.get("status")
+                if new_status in {"closed", "dismissed"}:
+                    msg.status = new_status  # type: ignore[assignment]
+            return
+
         if data_type == "task_appended":
             msg = self._find_msg(msg_id) if msg_id else None
             if msg is None or not task_id:
@@ -217,6 +228,15 @@ class TaskBoard:
                 elif new_status == "failed":
                     err = data.get("error") or ""
                     task.result = Result(summary="", error=err)
+            return
+
+        # reply task terminal transition. Emitted as its own data_type (not
+        # task_state); without replaying it, a replied reply-task rebuilds as
+        # "queued" and gets resurrected by lifecycle recovery into failed.
+        if data_type == "task_replied":
+            task = self._find_task(task_id) if task_id else None
+            if task is not None:
+                task.status = "replied"  # type: ignore[assignment]
             return
 
         if data_type == "task_session_updated":

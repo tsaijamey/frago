@@ -139,3 +139,71 @@ def test_startup_fold_completed_phase2_6_fields(tmp_path: Path):
     assert last["data"]["entries_skipped"] == 0
     assert last["data"]["timeline_bytes"] == 0
     assert last["data"]["archived_threads_count"] == 0  # 空 timeline 没 marker
+
+
+def _feishu_msg(msg_id: str, text: str = "hi"):
+    """Build a Msg for driving the real board through its public mutations."""
+    from datetime import datetime
+
+    from frago.server.services.taskboard.models import Msg, Source
+
+    return Msg(
+        msg_id=msg_id,
+        status="awaiting_decision",
+        source=Source(
+            channel="feishu", text=text, sender_id="u1",
+            parent_ref=None, received_at=datetime.now().astimezone(),
+        ),
+    )
+
+
+def test_fold_roundtrip_preserves_closed_and_replied(tmp_path: Path):
+    """Regression: fold dropped msg_closed / task_replied, so a finished+closed
+    msg rebuilt as "dispatched" with its reply task back to "queued" — the PA
+    then re-replied yesterday's task after every boot/rotation.
+
+    emit terminal events through the real board → fold a fresh board → state
+    must be preserved (not resurrected).
+    """
+    from frago.server.services.taskboard.models import Intent
+
+    p = tmp_path / "timeline" / "timeline.jsonl"
+    board = TaskBoard(Timeline(p))
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="t", by="test",
+    )
+    board.append_msg("T1", _feishu_msg("feishu:M1"), by="test")
+    tk = board.append_task(
+        "feishu:M1", Intent(prompt=""), task_type="reply", by="test",
+    )
+    board.mark_task_replied(tk.task_id, by="test")
+    board.close_msg_if_terminal("feishu:M1", by="test")
+
+    # live board reached terminal state
+    live = board.view_for_pa()["threads"][0]["msgs"][0]
+    assert live["status"] == "closed"
+    assert live["tasks"][0]["status"] == "replied"
+
+    # fresh fold from the same timeline must preserve it
+    rebuilt = TaskBoard.fold(p).view_for_pa()["threads"][0]["msgs"][0]
+    assert rebuilt["status"] == "closed", \
+        f"closed msg resurrected as {rebuilt['status']}"
+    assert rebuilt["tasks"][0]["status"] == "replied", \
+        f"replied task resurrected as {rebuilt['tasks'][0]['status']}"
+
+
+def test_fold_roundtrip_preserves_dismissed(tmp_path: Path):
+    """msg_dismissed must survive fold too (same bug class as msg_closed)."""
+    p = tmp_path / "timeline" / "timeline.jsonl"
+    board = TaskBoard(Timeline(p))
+    board.create_thread(
+        thread_id="T1", origin="external", subkind="feishu",
+        root_summary="t", by="test",
+    )
+    board.append_msg("T1", _feishu_msg("feishu:M2", "spam"), by="test")
+    board.mark_msg_dismissed("feishu:M2", reason="noise", by="test")
+
+    rebuilt = TaskBoard.fold(p).view_for_pa()["threads"][0]["msgs"][0]
+    assert rebuilt["status"] == "dismissed", \
+        f"dismissed msg resurrected as {rebuilt['status']}"
