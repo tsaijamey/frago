@@ -354,7 +354,7 @@ def strip_mention(text, mentions, bot_open_id):
     return text.strip()
 
 
-def react_to_message(api_client, message_id, emoji_type="OnIt"):
+def react_to_message(api_client, message_id, emoji_type="OK"):
     from lark_oapi.api.im.v1 import (
         CreateMessageReactionRequest,
         CreateMessageReactionRequestBody,
