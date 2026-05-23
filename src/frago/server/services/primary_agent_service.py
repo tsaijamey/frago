@@ -337,9 +337,15 @@ class PrimaryAgentService:
 
         logger.info("PA session created: %s (%s)", session_id, tag)
 
+        # Online notification ("PA 回来了") is a server-level event, not a
+        # per-conversation one. Only the fallback (server-level) session emits it.
+        # Per-thread external sessions must NOT: a conversation unit's first
+        # session gets reborn_reason heuristically tagged "server_restart" (history
+        # exists), which would otherwise spam "PA 已重新上线" on every new thread —
+        # i.e. on every inbound user message to a fresh conversation.
         if (
-            reborn_reason in ("rotation", "server_restart", "respawn")
-            and (is_fallback or reborn_reason != "rotation")
+            is_fallback
+            and reborn_reason in ("rotation", "server_restart", "respawn")
         ):
             asyncio.create_task(self._send_online_notification(reborn_reason))
 
