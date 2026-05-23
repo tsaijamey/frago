@@ -96,8 +96,12 @@ class Timeline:
             data=data or {},
         )
         line = json.dumps(asdict(entry), ensure_ascii=False, default=_serialize)
-        with self._lock, self._path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        with self._lock:
+            # Self-heal: external deletion of the timeline dir (e.g. git sync /
+            # cache rm) must not permanently break the ingest path. Recreate on write.
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
         return entry
 
     def fsync(self) -> None:
