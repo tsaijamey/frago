@@ -121,9 +121,26 @@ class PrimaryAgentService:
     _instance: "PrimaryAgentService | None" = None
 
     def __init__(self) -> None:
-        self._session_id: str | None = None
-        self._pa_session: Any | None = None
-        self._pa_internal_id: str | None = None
+        # Per-thread PA sessions (Phase 3: one session per conversation unit)
+        self._sessions: dict[str, Any] = {}          # thread_id → AgentSession
+        self._session_ids: dict[str, str] = {}       # thread_id → claude session_id
+        self._pa_internal_ids: dict[str, str] = {}   # thread_id → internal_id
+
+        # Per-thread rotation counters
+        self._total_turns: dict[str, int] = {}
+        self._accumulated_tokens: dict[str, int] = {}
+        self._rotation_count: dict[str, int] = {}
+
+        # Currently active thread (serial dispatch: one at a time)
+        self._current_thread_id: str | None = None
+
+        # Server-level fallback session (schedule_failed etc. with no thread)
+        self._fallback_session: Any | None = None
+        self._fallback_session_id: str | None = None
+        self._fallback_internal_id: str | None = None
+        self._fallback_total_turns: int = 0
+        self._fallback_accumulated_tokens: int = 0
+        self._fallback_rotation_count: int = 0
 
         # Heartbeat
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -134,11 +151,6 @@ class PrimaryAgentService:
         self._server_start_time: float = time.monotonic()
         self._busy: bool = False
         self._last_external_message_at: float | None = None
-
-        # Rotation counters
-        self._total_turns: int = 0
-        self._accumulated_tokens: int = 0
-        self._rotation_count: int = 0
 
         # JSON parse failure counter
         self._consecutive_json_failures: int = 0
@@ -184,9 +196,11 @@ class PrimaryAgentService:
     # -- lifecycle --
 
     async def initialize(self) -> None:
-        """Initialize PA: create attached session, start queue consumer, executor and heartbeat."""
-        await self._create_pa_session(reason="initialize")
+        """Initialize PA: start queue consumer, executor and heartbeat.
 
+        Per-thread PA sessions are created on demand when messages arrive
+        (Phase 3: no single default session at startup).
+        """
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
 
         from frago.server.services.executor import Executor
@@ -228,7 +242,7 @@ class PrimaryAgentService:
             return 0
 
     async def stop(self) -> None:
-        """Stop executor, queue consumer, heartbeat, and PA session."""
+        """Stop executor, queue consumer, heartbeat, and all PA sessions."""
         if self._executor:
             await self._executor.stop()
 
@@ -240,15 +254,29 @@ class PrimaryAgentService:
 
         await self._stop_heartbeat()
         await self._stop_reflection_tick()
-        if self._pa_session:
+        for tid, sess in list(self._sessions.items()):
             try:
-                await self._pa_session.stop()
+                await sess.stop()
             except Exception:
-                logger.debug("PA session stop error", exc_info=True)
-            self._pa_session = None
+                logger.debug("PA session stop error for thread %s", tid, exc_info=True)
+        self._sessions.clear()
+        if self._fallback_session:
+            try:
+                await self._fallback_session.stop()
+            except Exception:
+                logger.debug("Fallback session stop error", exc_info=True)
+            self._fallback_session = None
 
-    def get_session_id(self) -> str | None:
-        return self._session_id
+    def get_session_id(self, thread_id: str | None = None) -> str | None:
+        """Get the Claude session_id for a given thread (or current, or fallback).
+
+        Phase 3: sessions are per-thread. ``thread_id=None`` returns the
+        currently active thread's session_id (or fallback if no active thread).
+        """
+        tid = thread_id or self._current_thread_id
+        if tid:
+            return self._session_ids.get(tid)
+        return self._fallback_session_id
 
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -258,20 +286,25 @@ class PrimaryAgentService:
 
     # -- PA session management --
 
-    async def _create_pa_session(self, *, reason: str = "unknown") -> None:
-        """Create a new attached PA session with bootstrap context."""
+    async def _create_pa_session(self, *, thread_id: str | None = None, reason: str = "unknown") -> str:
+        """Create a new attached PA session with bootstrap context.
+
+        ``thread_id``: the conversation unit this session serves. When None,
+        the session is a fallback (server-level, no specific thread).
+
+        Returns the internal_id for the new session.
+        """
         from frago.server.services.agent_service import AgentService
 
-        logger.info("PA session creating (reason=%s, seq=%d)", reason, self._heartbeat_seq)
+        is_fallback = thread_id is None
+        tag = f"thread={thread_id}" if thread_id else "fallback"
 
-        # reborn_reason is only meaningful for the online-notification gate.
-        # The prefix itself is re-assembled on every (re)start by the
-        # AgentSession via the prefix_provider below, so a single restart
-        # triggered by send_message cannot strip PA identity / bootstrap.
-        _, reborn_reason = self._build_bootstrap_prompt(create_reason=reason)
+        logger.info("PA session creating (reason=%s, %s, seq=%d)", reason, tag, self._heartbeat_seq)
+
+        _, reborn_reason = self._build_bootstrap_prompt(thread_id=thread_id, create_reason=reason)
 
         def _pa_prefix_provider() -> str:
-            latest_bootstrap, _ = self._build_bootstrap_prompt(create_reason="message_dispatch")
+            latest_bootstrap, _ = self._build_bootstrap_prompt(thread_id=thread_id, create_reason="message_dispatch")
             return PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + latest_bootstrap
 
         result = await AgentService.start_task_attached(
@@ -281,57 +314,171 @@ class PrimaryAgentService:
         )
         if result.get("status") != "ok":
             raise RuntimeError(
-                f"Failed to create PA session: {result.get('error')}"
+                f"Failed to create PA session ({tag}): {result.get('error')}"
             )
 
-        self._pa_internal_id = result["internal_id"]
-        self._pa_session = AgentService._attached_sessions.get(self._pa_internal_id)
+        internal_id = result["internal_id"]
+        session = AgentService._attached_sessions.get(internal_id)
 
-        if self._pa_session:
-            self._pa_session._on_assistant_message = self._on_pa_message
+        if session:
+            session._on_assistant_message = self._on_pa_message
 
-        self._session_id = await self._wait_for_session_id(self._pa_internal_id)
-        self._save_session_id(self._session_id)
-        logger.info("PA session created: %s", self._session_id)
+        session_id = await self._wait_for_session_id(internal_id)
 
-        if reborn_reason in ("rotation", "server_restart", "respawn"):
+        if is_fallback:
+            self._fallback_session = session
+            self._fallback_session_id = session_id
+            self._fallback_internal_id = internal_id
+        else:
+            self._sessions[thread_id] = session
+            self._session_ids[thread_id] = session_id
+            self._pa_internal_ids[thread_id] = internal_id
+            get_board().bind_pa_session(thread_id, session_id, by="pa")
+
+        logger.info("PA session created: %s (%s)", session_id, tag)
+
+        if (
+            reborn_reason in ("rotation", "server_restart", "respawn")
+            and (is_fallback or reborn_reason != "rotation")
+        ):
             asyncio.create_task(self._send_online_notification(reborn_reason))
 
-    async def rotate_session(self) -> None:
-        """Create a new session, rebuild from external state."""
+        return internal_id
+
+    async def rotate_session(self, thread_id: str | None = None) -> None:
+        """Create a new session for a thread, rebuild from external state.
+
+        ``thread_id=None`` rotates the fallback session.
+        """
+        is_fallback = thread_id is None
+        tag = f"thread={thread_id}" if thread_id else "fallback"
+
+        if is_fallback:
+            turns = self._fallback_total_turns
+            tokens = self._fallback_accumulated_tokens
+            count = self._fallback_rotation_count
+        else:
+            turns = self._total_turns.get(thread_id, 0)
+            tokens = self._accumulated_tokens.get(thread_id, 0)
+            count = self._rotation_count.get(thread_id, 0)
+
         logger.info(
-            "PA session rotation (turns=%d, tokens=%d, rotation_count=%d)",
-            self._total_turns, self._accumulated_tokens, self._rotation_count,
+            "PA session rotation (%s, turns=%d, tokens=%d, rotation_count=%d)",
+            tag, turns, tokens, count,
         )
 
-        if self._pa_session:
-            try:
-                await self._pa_session.stop()
-            except Exception:
-                logger.debug("Old PA session stop error", exc_info=True)
-            self._pa_session = None
+        if is_fallback:
+            if self._fallback_session:
+                try:
+                    await self._fallback_session.stop()
+                except Exception:
+                    logger.debug("Old fallback session stop error", exc_info=True)
+                self._fallback_session = None
+            if self._fallback_internal_id:
+                from frago.server.services.agent_service import AgentService
+                AgentService._attached_sessions.pop(self._fallback_internal_id, None)
+            self._fallback_internal_id = None
+            self._fallback_session_id = None
+        else:
+            old_sess = self._sessions.pop(thread_id, None)
+            if old_sess:
+                try:
+                    await old_sess.stop()
+                except Exception:
+                    logger.debug("Old PA session stop error for thread %s", thread_id, exc_info=True)
+            old_internal = self._pa_internal_ids.pop(thread_id, None)
+            if old_internal:
+                from frago.server.services.agent_service import AgentService
+                AgentService._attached_sessions.pop(old_internal, None)
+            self._session_ids.pop(thread_id, None)
 
-        if self._pa_internal_id:
-            from frago.server.services.agent_service import AgentService
-            AgentService._attached_sessions.pop(self._pa_internal_id, None)
+        await self._create_pa_session(thread_id=thread_id, reason="rotation")
 
-        await self._create_pa_session(reason="rotation")
+        if is_fallback:
+            self._fallback_total_turns = 0
+            self._fallback_accumulated_tokens = 0
+            self._fallback_rotation_count = count + 1
+        else:
+            self._total_turns[thread_id] = 0
+            self._accumulated_tokens[thread_id] = 0
+            self._rotation_count[thread_id] = count + 1
 
-        self._total_turns = 0
-        self._accumulated_tokens = 0
-        self._rotation_count += 1
         self._consecutive_json_failures = 0
 
-        # Phase finish: orphan reconciliation removed alongside ingestion._message_cache.
-        # Ingestor.ingest_external/ingest_scheduled writes board synchronously, so every
-        # ingested message is on board immediately. There is no "cached but not yet on
-        # board" intermediate state to reconcile after rotation.
+    # -- Phase 3: per-thread session routing --
 
-    def _build_bootstrap_prompt(self, create_reason: str | None = None) -> tuple[str, str]:
-        """Build bootstrap context (board view + conversation history + knowledge)."""
+    async def _session_for(self, thread_id: str | None) -> Any | None:
+        """Get or create a PA session for ``thread_id``.
+
+        ``thread_id=None`` returns/creates the fallback session.
+        Returns the AgentSession (or None on failure).
+        """
+        if thread_id is None:
+            if self._fallback_session and self._fallback_session.is_running:
+                return self._fallback_session
+            try:
+                await self._create_pa_session(thread_id=None, reason="route")
+            except Exception:
+                logger.exception("Failed to create fallback PA session")
+                return None
+            return self._fallback_session
+
+        sess = self._sessions.get(thread_id)
+        if sess and sess.is_running:
+            return sess
+
+        try:
+            await self._create_pa_session(thread_id=thread_id, reason="route")
+        except Exception:
+            logger.exception("Failed to create PA session for thread %s", thread_id)
+            return None
+        return self._sessions.get(thread_id)
+
+    @staticmethod
+    def _resolve_thread_id(msg: dict) -> str | None:
+        """Resolve which dedicated session a queue message routes to.
+
+        Spec §不做什么 4: only ``origin=external`` threads bind a dedicated
+        session. internal (reflection) / scheduled messages — and any thread_id
+        not backed by a live board thread — route to the fallback session
+        (return None). reflection intentionally creates no board thread, so
+        binding its thread_id would crash _create_pa_session via board
+        IllegalTransitionError(thread missing); fallback avoids that.
+        """
+        board = get_board()
+        tid = msg.get("thread_id")
+        if not tid:
+            task_id = msg.get("task_id")
+            if task_id:
+                t = board.get_thread_for_task(task_id)
+                if t:
+                    tid = t.thread_id
+        if not tid:
+            msg_id = msg.get("msg_id")
+            if msg_id:
+                tid = board.thread_id_of_msg(msg_id)
+
+        if tid:
+            t = board.get_thread(tid)
+            if t and t.get("origin") == "external":
+                return tid
+        return None
+
+    @staticmethod
+    def _set_msg_thread_id(msg: dict, thread_id: str | None) -> None:
+        """Backfill thread_id on msg dict for downstream tracing."""
+        if thread_id is not None:
+            msg["thread_id"] = thread_id
+
+    def _build_bootstrap_prompt(self, thread_id: str | None = None, create_reason: str | None = None) -> tuple[str, str]:
+        """Build bootstrap context (board view + conversation history + knowledge).
+
+        ``thread_id`` optional: when set, board view is filtered to that thread only
+        (Phase 3 per-conversation routing). Default None = full view for fallback.
+        """
         from frago.server.services.pa_context_builder import build_bootstrap
 
-        return build_bootstrap(self._rotation_count, create_reason=create_reason)
+        return build_bootstrap(self._rotation_count.get(thread_id, 0) if thread_id else self._fallback_rotation_count, create_reason=create_reason, thread_id=thread_id)
 
     async def _send_online_notification(self, reborn_reason: str) -> None:
         """Send online notification to the most recently active channel.
@@ -440,8 +587,8 @@ class PrimaryAgentService:
             })
 
     async def _queue_consumer_loop(self) -> None:
-        """Consumer loop: drain queue, merge messages, send to PA."""
-        logger.info("PA queue consumer started")
+        """Consumer loop: drain queue, resolve thread_id, group by thread, route per session (serial)."""
+        logger.info("PA queue consumer started (Phase 3: per-thread routing)")
         while True:
             try:
                 first = await self._message_queue.get()
@@ -454,82 +601,98 @@ class PrimaryAgentService:
                     except asyncio.QueueEmpty:
                         break
 
-                if not self._pa_session or not self._session_id:
-                    try:
-                        await self._create_pa_session(reason="queue_consumer")
-                    except Exception:
-                        logger.exception("Failed to create PA session for queue consumer")
-                        for m in messages:
-                            await self._message_queue.put(m)
-                        await asyncio.sleep(5)
+                # Phase 3: resolve thread_id for each message, group by thread
+                from collections import defaultdict
+                grouped: dict[str | None, list[dict]] = defaultdict(list)
+                for m in messages:
+                    tid = self._resolve_thread_id(m)
+                    self._set_msg_thread_id(m, tid)
+                    grouped[tid].append(m)
+
+                # Serial dispatch: process each group one at a time
+                for tid, group in grouped.items():
+                    self._current_thread_id = tid
+
+                    session = await self._session_for(tid)
+                    if not session:
+                        logger.error("No PA session available for thread=%s, dropping %d message(s)", tid, len(group))
                         continue
 
-                _wait_start = asyncio.get_event_loop().time()
-                while self._pa_session and self._pa_session.is_running:
-                    if asyncio.get_event_loop().time() - _wait_start > 120:
-                        logger.warning(
-                            "Queue consumer: timed out waiting for PA subprocess "
-                            "(is_running stuck), forcing rotation"
-                        )
-                        await self.rotate_session()
-                        for m in messages:
-                            await self._message_queue.put(m)
-                        logger.info(
-                            "Queue consumer: re-enqueued %d message(s) after timeout rotation",
-                            len(messages),
-                        )
-                        break
-                    await asyncio.sleep(0.5)
-
-                from frago.server.services.trace import trace_entry
-                for _m in messages:
-                    if not isinstance(_m, dict):
-                        continue
-                    _tid = _m.get("thread_id")
-                    _mtype = _m.get("type", "")
-                    _channel = _m.get("channel", "") or _mtype
-                    trace_entry(
-                        origin="internal",
-                        subkind="pa",
-                        data_type="message",
-                        thread_id=_tid,
-                        parent_id=None,
-                        task_id=_m.get("task_id"),
-                        data={"queue_msg_type": _mtype, "channel": _m.get("channel")},
-                        msg_id=_m.get("msg_id"),
-                        role="pa",
-                        event=f"收到消息队列: {_channel}",
-                    )
-
-                merged = self._format_queue_messages(messages)
-                logger.info(
-                    "Queue consumer: sending %d merged messages to PA (%d chars)",
-                    len(messages), len(merged),
-                )
-                await self._send_to_pa(merged)
-
-                while self._pa_waiting:
-                    if self._pa_session and not self._pa_session.is_running:
-                        break
-                    await asyncio.sleep(0.5)
-
-                if self._pa_waiting:
-                    self._pa_waiting = False
-                    self._total_turns += 1
-                    estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
-                    self._accumulated_tokens += estimated_tokens
-                    if self._pa_output_buffer.strip():
-                        logger.info("Queue consumer: processing PA response (%d chars)", len(self._pa_output_buffer))
-                        await self._handle_pa_output(self._pa_output_buffer.strip())
+                    # Wait for session to be ready (no concurrent processing)
+                    _wait_start = asyncio.get_event_loop().time()
+                    while session.is_running:
+                        if asyncio.get_event_loop().time() - _wait_start > 120:
+                            logger.warning(
+                                "Queue consumer: timed out waiting for PA subprocess "
+                                "(is_running stuck, thread=%s), forcing rotation", tid,
+                            )
+                            await self.rotate_session(thread_id=tid)
+                            for m in group:
+                                await self._message_queue.put(m)
+                            logger.info(
+                                "Queue consumer: re-enqueued %d message(s) after timeout rotation",
+                                len(group),
+                            )
+                            break
+                        await asyncio.sleep(0.5)
                     else:
-                        logger.warning("Queue consumer: PA produced no output")
-                        for m in messages:
-                            await self._message_queue.put(m)
+                        # Only process if we didn't break out of the timeout loop
+                        from frago.server.services.trace import trace_entry
+                        for _m in group:
+                            if not isinstance(_m, dict):
+                                continue
+                            _tid = _m.get("thread_id")
+                            _mtype = _m.get("type", "")
+                            _channel = _m.get("channel", "") or _mtype
+                            trace_entry(
+                                origin="internal",
+                                subkind="pa",
+                                data_type="message",
+                                thread_id=_tid,
+                                parent_id=None,
+                                task_id=_m.get("task_id"),
+                                data={"queue_msg_type": _mtype, "channel": _m.get("channel")},
+                                msg_id=_m.get("msg_id"),
+                                role="pa",
+                                event=f"收到消息队列: {_channel}",
+                            )
+
+                        merged = self._format_queue_messages(group)
                         logger.info(
-                            "Queue consumer: re-enqueued %d message(s) after PA no-output",
-                            len(messages),
+                            "Queue consumer: sending %d merged messages to PA (thread=%s, %d chars)",
+                            len(group), tid, len(merged),
                         )
-                    self._pa_output_buffer = ""
+                        await self._send_to_pa(merged)
+
+                        while self._pa_waiting:
+                            sess = self._current_session()
+                            if sess and not sess.is_running:
+                                break
+                            await asyncio.sleep(0.5)
+
+                        if self._pa_waiting:
+                            self._pa_waiting = False
+                            if tid:
+                                self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
+                                estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
+                                self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
+                            else:
+                                self._fallback_total_turns += 1
+                                self._fallback_accumulated_tokens += (self._pa_input_len + len(self._pa_output_buffer)) // 4
+                            if self._pa_output_buffer.strip():
+                                logger.info("Queue consumer: processing PA response (%d chars, thread=%s)", len(self._pa_output_buffer), tid)
+                                await self._handle_pa_output(self._pa_output_buffer.strip())
+                            else:
+                                logger.warning("Queue consumer: PA produced no output (thread=%s)", tid)
+                                for m in group:
+                                    await self._message_queue.put(m)
+                                logger.info(
+                                    "Queue consumer: re-enqueued %d message(s) after PA no-output",
+                                    len(group),
+                                )
+                            self._pa_output_buffer = ""
+
+                self._current_thread_id = None
 
             except asyncio.CancelledError:
                 logger.info("PA queue consumer cancelled")
@@ -791,7 +954,10 @@ class PrimaryAgentService:
                 continue
 
     async def _send_heartbeat(self) -> None:
-        """Heartbeat: idle detection + environment awareness + output collection."""
+        """Heartbeat: idle detection + environment awareness + output collection.
+
+        Phase 3: iterates over all per-thread sessions, checks rotation per-thread.
+        """
         logger.info("Heartbeat [%d]: tick (waiting=%s)", self._heartbeat_seq, self._pa_waiting)
 
         if self._queue_consumer_task is None or self._queue_consumer_task.done():
@@ -809,29 +975,40 @@ class PrimaryAgentService:
             return
 
         if self._pa_waiting:
-            if not self._pa_session or self._pa_session.is_running:
+            sess = self._current_session()
+            if sess and sess.is_running:
                 logger.debug("Heartbeat [%d]: PA still processing, skip", self._heartbeat_seq)
                 return
             self._pa_waiting = False
-            self._total_turns += 1
-            estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
-            self._accumulated_tokens += estimated_tokens
+            tid = self._current_thread_id
+            if tid:
+                self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
+                estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
+                self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
+            else:
+                self._fallback_total_turns += 1
+                self._fallback_accumulated_tokens += (self._pa_input_len + len(self._pa_output_buffer)) // 4
             if self._pa_output_buffer.strip():
                 logger.info("Heartbeat [%d]: processing PA response (%d chars)", self._heartbeat_seq, len(self._pa_output_buffer))
                 await self._handle_pa_output(self._pa_output_buffer.strip())
             self._pa_output_buffer = ""
 
-        if self._should_rotate():
-            await self.rotate_session()
-            self._heartbeat_seq += 1
-            return
+        # Per-thread rotation check: iterate all sessions
+        for tid in list(self._sessions.keys()):
+            if self._should_rotate(tid):
+                await self.rotate_session(thread_id=tid)
+        if self._should_rotate(None):
+            await self.rotate_session(thread_id=None)
 
-        if not self._pa_session or not self._session_id:
-            logger.info("Heartbeat [%d]: PA idle with no session, creating new session", self._heartbeat_seq)
-            try:
-                await self._create_pa_session(reason="heartbeat")
-            except Exception:
-                logger.exception("Heartbeat: failed to create PA session")
+        # Ensure at least one session exists if there are pending tasks
+        all_sessions = bool(self._sessions) or bool(self._fallback_session)
+        if not all_sessions:
+            recovered = await self._recover_pending_tasks()
+            if recovered:
+                logger.info(
+                    "Heartbeat [%d]: recovered %d pending tasks, sessions will be created on demand",
+                    self._heartbeat_seq, recovered,
+                )
 
         if not self._pa_waiting and self._message_queue.empty():
             recovered = await self._recover_pending_tasks()
@@ -873,8 +1050,9 @@ class PrimaryAgentService:
         self._pa_output_buffer += text
 
     async def _send_to_pa(self, message: str) -> None:
-        """Send message to PA via attached session. Non-blocking."""
-        if not self._pa_session:
+        """Send message to PA via current thread's attached session. Non-blocking."""
+        session = self._current_session()
+        if not session:
             logger.warning("Cannot send to PA: no session")
             return
 
@@ -882,20 +1060,29 @@ class PrimaryAgentService:
         self._pa_input_len = len(message)
 
         try:
-            await self._pa_session.send_message(message)
+            await session.send_message(message)
             self._pa_waiting = True
             logger.info("Heartbeat [%d]: sent message to PA (%d chars)", self._heartbeat_seq, len(message))
         except RuntimeError as e:
             logger.error("Failed to send to PA: %s", e)
-            await self.rotate_session()
+            tid = self._current_thread_id
+            self._current_thread_id = None
+            await self.rotate_session(thread_id=tid)
+
+    def _current_session(self) -> Any | None:
+        """Get the currently active PA session."""
+        if self._current_thread_id:
+            return self._sessions.get(self._current_thread_id)
+        return self._fallback_session
 
     async def _send_and_wait_pa(self, message: str, timeout: float = 60.0) -> str | None:
-        """Send message to PA and wait for response."""
+        """Send message to PA via current session and wait for response."""
         await self._send_to_pa(message)
 
         deadline = asyncio.get_event_loop().time() + timeout
         while self._pa_waiting:
-            if self._pa_session and not self._pa_session.is_running:
+            sess = self._current_session()
+            if sess and not sess.is_running:
                 break
             if asyncio.get_event_loop().time() > deadline:
                 logger.warning("_send_and_wait_pa: timed out after %.0fs", timeout)
@@ -905,9 +1092,14 @@ class PrimaryAgentService:
 
         if self._pa_waiting:
             self._pa_waiting = False
-            self._total_turns += 1
-            estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
-            self._accumulated_tokens += estimated_tokens
+            tid = self._current_thread_id
+            if tid:
+                self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
+                estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
+                self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
+            else:
+                self._fallback_total_turns += 1
+                self._fallback_accumulated_tokens += (self._pa_input_len + len(self._pa_output_buffer)) // 4
             output = self._pa_output_buffer.strip()
             self._pa_output_buffer = ""
             return output if output else None
@@ -935,7 +1127,7 @@ class PrimaryAgentService:
 
             if self._consecutive_json_failures >= 2:
                 logger.error("2 consecutive validation failures after correction, rotating session")
-                await self.rotate_session()
+                await self.rotate_session(thread_id=self._current_thread_id)
                 return
 
             correction_msg = PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE.format(
@@ -1373,11 +1565,20 @@ class PrimaryAgentService:
 
     # -- helpers --
 
-    def _should_rotate(self) -> bool:
-        """Check if session rotation is needed."""
-        if self._total_turns >= ROTATION_TURN_THRESHOLD:
+    def _should_rotate(self, thread_id: str | None = None) -> bool:
+        """Check if session rotation is needed for a given thread.
+
+        ``thread_id=None`` checks fallback session.
+        """
+        if thread_id is None:
+            turns = self._fallback_total_turns
+            tokens = self._fallback_accumulated_tokens
+        else:
+            turns = self._total_turns.get(thread_id, 0)
+            tokens = self._accumulated_tokens.get(thread_id, 0)
+        if turns >= ROTATION_TURN_THRESHOLD:
             return True
-        return self._accumulated_tokens >= ROTATION_TOKEN_THRESHOLD
+        return tokens >= ROTATION_TOKEN_THRESHOLD
 
     @staticmethod
     def _build_sub_agent_prompt(

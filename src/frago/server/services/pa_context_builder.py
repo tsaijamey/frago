@@ -185,17 +185,19 @@ def _extract_recent_action_results(entries: list[dict], limit: int = 3) -> list[
     return results
 
 
-def _build_board_section() -> str | None:
+def _build_board_section(thread_id: str | None = None) -> str | None:
     """TaskBoard view (spec 20260512-msg-task-board-redesign Phase 1).
 
     B-2a: 直接读 board.view_for_pa() 拿到 (threads + recent_rejections), 渲染成
     PA bootstrap 可见的简洁面板. board 是单一源 (timeline.jsonl), 状态新鲜度
     与 ingestion 实时同步, 优于 legacy timeline_service.get_thread_context
     (后者扫 trace.jsonl). Phase 2 vacuum 完成后 legacy section 可下线.
+
+    可选 ``thread_id``: 给定时只渲染该 thread (Phase 3 多会话路由用).
     """
     try:
         from frago.server.services.taskboard import get_board
-        view = get_board().view_for_pa()
+        view = get_board().view_for_pa(thread_id=thread_id)
     except Exception:
         logger.debug("Failed to build board section", exc_info=True)
         return None
@@ -313,8 +315,12 @@ def _build_knowledge_index() -> str | None:
 def build_bootstrap(
     rotation_count: int,
     create_reason: str | None = None,
+    thread_id: str | None = None,
 ) -> tuple[str, str]:
     """Build the full bootstrap prompt for a new PA session.
+
+    ``thread_id`` optional: when set, the board view is filtered to only that
+    thread (Phase 3 per-conversation routing). Default None = full view.
 
     Returns (bootstrap_prompt, reborn_reason).
     reborn_reason is one of: "rotation", "server_restart", "respawn", "fresh_start".
@@ -334,7 +340,7 @@ def build_bootstrap(
     # 任务状态在消息触达 PA 时按需呈现，避免把"历史回顾"误当成"待办列表"。
 
     # TaskBoard view (spec 20260512-msg-task-board-redesign, B-2a 接入)
-    board_section = _build_board_section()
+    board_section = _build_board_section(thread_id=thread_id)
     if board_section:
         sections.append(board_section)
 

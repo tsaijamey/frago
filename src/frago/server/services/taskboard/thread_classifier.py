@@ -42,7 +42,7 @@ NEW_TOPIC_KEYWORDS = (
 class ClassifyResult:
     thread_id: str                  # existing or newly minted ulid
     parent_ref: str | None          # channel-native parent message id (for L1)
-    layer: str                      # "L1" | "L2" | "new"
+    layer: str                      # "L0" | "L1" | "L2" | "new"
     is_new: bool
 
 
@@ -64,6 +64,29 @@ def sender_tag(channel: str, sender: str) -> str:
     Used for L2 heuristic grouping.
     """
     return f"sender:{channel}:{sender}"
+
+
+def conv_tag(_channel: str, conv_key: str) -> str:
+    """Tag indicating this thread belongs to a conversation unit.
+
+    conv_key already contains the channel prefix (e.g. "feishu:oc_xxx").
+    ``_channel`` accepted for forward-compatibility with future channel types.
+    """
+    return f"conv:{conv_key}"
+
+
+def _extract_conv_key(channel: str, reply_context: dict | None) -> str | None:
+    """Extract conversation unit key from reply_context.
+
+    feishu: chat_id (native SDK field on every message, group or direct).
+    email / webhook: return None for now (post-iteration adapter).
+    """
+    if not reply_context:
+        return None
+    if channel == "feishu":
+        cid = reply_context.get("chat_id")
+        return f"feishu:{cid}" if cid else None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +155,22 @@ def classify(
     reply_context = reply_context or {}
     now = now or datetime.now()
 
+    # ── Layer 0: conversation-unit exact match ──────────────────────────────
+    conv_key = _extract_conv_key(channel, reply_context)
+    if conv_key:
+        matches = board.search_threads_by_tag(conv_tag(channel, conv_key))
+        if matches:
+            logger.debug(
+                "classify L0 hit: conv_key=%s → thread=%s",
+                conv_key, matches[0]["thread_id"],
+            )
+            return ClassifyResult(
+                thread_id=matches[0]["thread_id"],
+                parent_ref=None,
+                layer="L0",
+                is_new=False,
+            )
+
     # ── Layer 1: channel-native threading ──────────────────────────────────
     parent_ref = _extract_parent_ref(channel, reply_context)
     if parent_ref:
@@ -193,10 +232,11 @@ def ensure_thread(
     sender: str,
     msg_id: str,
     root_summary: str,
+    reply_context: dict | None = None,
 ) -> None:
     """Create or touch the thread indicated by a classification result.
 
-    Adds channelref and sender tags so future messages can be grouped.
+    Adds channelref, sender, and conv tags so future messages can be grouped.
 
     B-2b: 直接调 board.create_thread (含 tags 参数) / add_tag / touch_thread.
     """
@@ -204,6 +244,16 @@ def ensure_thread(
     tags = [channel_ref_tag(channel, msg_id)]
     if sender:
         tags.append(sender_tag(channel, sender))
+    conv_key = _extract_conv_key(channel, reply_context)
+    if not conv_key and result.layer in ("L1", "L2"):
+        existing = board.get_thread(result.thread_id)
+        if existing:
+            for t in existing.get("tags") or []:
+                if t.startswith("conv:"):
+                    conv_key = t.removeprefix("conv:")
+                    break
+    if conv_key:
+        tags.append(conv_tag(channel, conv_key))
 
     # board.create_thread 在 thread_id 已存在时抛 IllegalTransitionError;
     # classify 路径理论上 is_new=True 时 thread 不存在, 但 Ingestor 可能

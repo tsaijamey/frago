@@ -159,6 +159,7 @@ class TaskLifecycle:
                 sender=_sender,
                 msg_id=msg_id,
                 root_summary=msg["prompt"][:80],
+                reply_context=_reply_ctx,
             )
 
             # Mirror into board via Ingestor; dedup inside board.append_msg.

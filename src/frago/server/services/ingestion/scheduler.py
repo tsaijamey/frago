@@ -198,6 +198,7 @@ class IngestionScheduler:
             sender=sender,
             msg_id=msg_id,
             root_summary=msg["prompt"][:80],
+            reply_context=reply_ctx,
         )
 
         # B-2a single source: write to TaskBoard via Ingestor. Dedup happens

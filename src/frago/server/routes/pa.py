@@ -24,7 +24,7 @@ async def pa_chat(request: ChatRequest) -> dict:
     from frago.server.services.primary_agent_service import PrimaryAgentService
 
     pa = PrimaryAgentService.get_instance()
-    if pa._pa_session is None:
+    if not pa._sessions and pa._fallback_session is None:
         raise HTTPException(503, "PA is not running")
 
     msg_id = f"cli_{uuid4().hex[:8]}"

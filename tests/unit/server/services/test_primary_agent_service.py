@@ -15,71 +15,55 @@ class TestPrimaryAgentService:
         """Create a fresh instance (bypass singleton for testing)."""
         svc = PrimaryAgentService.__new__(PrimaryAgentService)
         svc.__init__()
-        svc._session_id = None
         return svc
 
-    def test_initialize_creates_session_and_starts_heartbeat(self):
+    def test_initialize_starts_heartbeat(self):
+        """Phase 3: initialize no longer creates a session — sessions are per-thread, created on demand."""
         svc = self._fresh_service()
 
         async def run():
-            async def fake_create(**_kwargs):
-                svc._session_id = "created-session-id-123"
-
             with patch.object(
-                svc, "_create_pa_session", side_effect=fake_create
-            ), patch.object(
                 svc, "_start_heartbeat", new_callable=AsyncMock
             ) as mock_hb:
                 await svc.initialize()
-                assert svc.get_session_id() == "created-session-id-123"
+                assert svc.get_session_id() is None  # no default session
                 mock_hb.assert_called_once()
 
         asyncio.run(run())
 
-    def test_initialize_saves_session_id(self):
+    def test_session_for_creates_and_caches_session(self):
+        """_session_for creates a session for a thread and caches it."""
         svc = self._fresh_service()
+        svc._create_pa_session = AsyncMock(return_value="internal_001")
 
         async def run():
-            async def fake_create(**_kwargs):
-                svc._session_id = "claude-real-session-id-456"
-                PrimaryAgentService._save_session_id("claude-real-session-id-456")
+            board = MagicMock()
+            board.bind_pa_session = MagicMock()
 
-            with patch.object(
-                svc, "_create_pa_session", side_effect=fake_create
-            ), patch.object(
-                PrimaryAgentService,
-                "_save_session_id",
-            ) as mock_save, patch.object(
-                svc, "_start_heartbeat", new_callable=AsyncMock
-            ):
-                await svc.initialize()
+            with patch("frago.server.services.primary_agent_service.get_board", return_value=board):
+                from frago.server.services.agent_service import AgentService
+                AgentService._attached_sessions = {}
 
-                assert svc.get_session_id() == "claude-real-session-id-456"
-                mock_save.assert_called_once_with("claude-real-session-id-456")
+                # Simulate a session that will be returned
+                fake_session = MagicMock()
+                fake_session.is_running = True
+                svc._sessions["thread_A"] = fake_session
+                svc._session_ids["thread_A"] = "sess_A"
+
+                sess = await svc._session_for("thread_A")
+                assert sess is fake_session
+                assert svc.get_session_id("thread_A") == "sess_A"
 
         asyncio.run(run())
 
-    def test_initialize_raises_on_start_failure(self):
+    def test_get_session_id_by_thread(self):
+        """get_session_id(thread_id) returns that thread's session."""
         svc = self._fresh_service()
+        svc._session_ids["thread_X"] = "sess_X"
 
-        async def run():
-            async def fake_create(**_kwargs):
-                raise RuntimeError("no claude")
-
-            with patch.object(
-                svc, "_create_pa_session", side_effect=fake_create
-            ):
-                try:
-                    await svc.initialize()
-                    raise AssertionError("Should have raised")
-                except RuntimeError as e:
-                    assert "no claude" in str(e)
-
-        asyncio.run(run())
-
-    def test_get_session_id_before_init(self):
-        svc = self._fresh_service()
-        assert svc.get_session_id() is None
+        assert svc.get_session_id("thread_X") == "sess_X"
+        assert svc.get_session_id("nonexistent") is None
+        assert svc.get_session_id() is None  # no current thread
 
     def test_config_persistence_save(self):
         """Save session_id to config.json."""
@@ -105,7 +89,6 @@ class TestHeartbeat:
     def _fresh_service(self):
         svc = PrimaryAgentService.__new__(PrimaryAgentService)
         svc.__init__()
-        svc._session_id = "test-session-abc"
         return svc
 
     def test_record_external_message(self):
@@ -154,9 +137,6 @@ class TestHeartbeat:
 
     def test_send_heartbeat_increments_seq(self):
         svc = self._fresh_service()
-        # Give service a mock pa_session so it doesn't try to create one
-        svc._pa_session = MagicMock()
-        svc._pa_session.is_running = False
 
         async def run():
             assert svc._heartbeat_seq == 0

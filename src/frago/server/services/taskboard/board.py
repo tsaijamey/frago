@@ -138,6 +138,12 @@ class TaskBoard:
                 thread.run_instance_id = data.get("run_instance_id")
             return
 
+        if data_type == "thread_bound_to_session":
+            thread = self._threads.get(thread_id) if thread_id else None
+            if thread:
+                thread.pa_session_id = data.get("session_id")
+            return
+
         if data_type == "msg_received":
             if not thread_id or not msg_id:
                 return
@@ -520,6 +526,13 @@ class TaskBoard:
                     return thread.thread_id
         return None
 
+    def thread_id_of_msg(self, msg_id: str) -> str | None:
+        """Public wrapper: reverse-lookup thread_id from msg_id.
+
+        Spec 20260522-pa-per-conversation-session Phase 3 routing.
+        """
+        return self._thread_of_msg(msg_id)
+
     # ── PA 可见接口 ────────────────────────────────────────────────
 
     def record_rejection(
@@ -728,6 +741,31 @@ class TaskBoard:
                 data={"run_instance_id": run_instance_id},
             )
 
+    def bind_pa_session(
+        self, thread_id: str, session_id: str, *, by: str
+    ) -> None:
+        """Attach pa_session_id to thread (idempotent). 写 thread_bound_to_session.
+
+        Spec 20260522-pa-per-conversation-session Phase 2.
+        Raises IllegalTransitionError if thread does not exist.
+        """
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                raise IllegalTransitionError(
+                    f"thread {thread_id} missing",
+                    reason="thread_missing",
+                )
+            if thread.pa_session_id == session_id:
+                return
+            thread.pa_session_id = session_id
+            self._timeline.append_entry(
+                data_type="thread_bound_to_session",
+                by=by,
+                thread_id=thread_id,
+                data={"session_id": session_id},
+            )
+
     def _thread_to_dict(self, t: Thread) -> dict:
         """Yi #94 (b'): board 公有方法返回 dict 风格. 序列化 Thread → dict."""
         return {
@@ -740,6 +778,7 @@ class TaskBoard:
             "last_active_at": t.last_active_at.isoformat(),
             "tags": list(t.tags),
             "run_instance_id": t.run_instance_id,
+            "pa_session_id": t.pa_session_id,
             "senders": sorted(t.senders),
             "msg_count": len(t.msgs),
             "task_ids": [
@@ -1102,36 +1141,43 @@ class TaskBoard:
                 data={"prev_status": prev, "status": "dismissed", "reason": reason},
             )
 
-    def view_for_pa(self) -> dict:
-        """返回 PA 心跳可见的 board 切片。Phase 1 完善 (thread 折叠 / recent_rejections)。"""
+    def view_for_pa(self, thread_id: str | None = None) -> dict:
+        """返回 PA 心跳可见的 board 切片。Phase 1 完善 (thread 折叠 / recent_rejections)。
+
+        可选 ``thread_id`` 参数: 给定时只返回该 thread 的视图 (Phase 3 多会话路由用);
+        默认 None = 全量 (向后兼容).
+        """
         with self._lock:
+            threads_view = [
+                {
+                    "id": t.thread_id,
+                    "subkind": t.subkind,
+                    "status": t.status,
+                    "root_summary": t.root_summary,
+                    "pa_session_id": t.pa_session_id,
+                    "msgs": [
+                        {
+                            "id": m.msg_id,
+                            "status": m.status,
+                            "channel": m.source.channel,
+                            "sender_id": m.source.sender_id,
+                            "reply_context": (
+                                dict(m.source.reply_context)
+                                if m.source.reply_context else None
+                            ),
+                            "tasks": [
+                                {"id": tk.task_id, "type": tk.type, "status": tk.status}
+                                for tk in m.tasks
+                            ],
+                        }
+                        for m in t.msgs
+                    ],
+                }
+                for t in self._threads.values()
+                if thread_id is None or t.thread_id == thread_id
+            ]
             return {
-                "threads": [
-                    {
-                        "id": t.thread_id,
-                        "subkind": t.subkind,
-                        "status": t.status,
-                        "root_summary": t.root_summary,
-                        "msgs": [
-                            {
-                                "id": m.msg_id,
-                                "status": m.status,
-                                "channel": m.source.channel,
-                                "sender_id": m.source.sender_id,
-                                "reply_context": (
-                                    dict(m.source.reply_context)
-                                    if m.source.reply_context else None
-                                ),
-                                "tasks": [
-                                    {"id": tk.task_id, "type": tk.type, "status": tk.status}
-                                    for tk in m.tasks
-                                ],
-                            }
-                            for m in t.msgs
-                        ],
-                    }
-                    for t in self._threads.values()
-                ],
+                "threads": threads_view,
                 "recent_rejections": [
                     {
                         "ts": r.ts.isoformat(),
