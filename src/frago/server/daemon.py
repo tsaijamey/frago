@@ -109,6 +109,32 @@ def get_server_host() -> str:
     return os.environ.get("FRAGO_SERVER_HOST", DEFAULT_SERVER_HOST)
 
 
+def get_ssl_certfile() -> str | None:
+    """Optional SSL cert file path from FRAGO_SSL_CERTFILE env var.
+
+    When both certfile and keyfile are set and both files exist, the server
+    starts as HTTPS; otherwise plain HTTP (default, backward compatible).
+    """
+    p = os.environ.get("FRAGO_SSL_CERTFILE")
+    return p if p and os.path.isfile(os.path.expanduser(p)) else None
+
+
+def get_ssl_keyfile() -> str | None:
+    """Optional SSL key file path from FRAGO_SSL_KEYFILE env var."""
+    p = os.environ.get("FRAGO_SSL_KEYFILE")
+    return p if p and os.path.isfile(os.path.expanduser(p)) else None
+
+
+def is_https() -> bool:
+    """True iff SSL cert+key are both configured and readable."""
+    return bool(get_ssl_certfile() and get_ssl_keyfile())
+
+
+def get_scheme() -> str:
+    """Return 'https' or 'http' based on SSL configuration."""
+    return "https" if is_https() else "http"
+
+
 # Runtime server configuration (for backward compatibility)
 SERVER_PORT = get_server_port()
 SERVER_HOST = get_server_host()
@@ -145,11 +171,23 @@ def get_accessible_urls(host: str = SERVER_HOST, port: int = SERVER_PORT) -> lis
     When bound to 0.0.0.0, expands to localhost plus LAN interfaces.
     Otherwise returns a single URL for the configured host.
     """
+    # Primary HTTP URLs (always present, the canonical contract).
     if host in ("0.0.0.0", "::", ""):
         urls = [f"http://127.0.0.1:{port}"]
         urls.extend(f"http://{ip}:{port}" for ip in get_lan_ipv4s())
-        return urls
-    return [f"http://{host}:{port}"]
+    else:
+        urls = [f"http://{host}:{port}"]
+
+    # HTTPS sidecar URLs (additive — only when both cert+key are configured).
+    if is_https():
+        ssl_port = int(os.environ.get("FRAGO_SSL_PORT", "8443"))
+        if host in ("0.0.0.0", "::", ""):
+            urls.append(f"https://127.0.0.1:{ssl_port}")
+            urls.extend(f"https://{ip}:{ssl_port}" for ip in get_lan_ipv4s())
+        else:
+            urls.append(f"https://{host}:{ssl_port}")
+
+    return urls
 
 # PID and log file paths
 FRAGO_DIR = Path.home() / ".frago"

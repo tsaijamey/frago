@@ -10,6 +10,7 @@ Can be run as a module for daemon mode:
 import contextlib
 import logging
 import logging.config
+import os
 import signal
 import sys
 import threading
@@ -171,10 +172,31 @@ def run_server(
             reload_dirs=["src/frago"],
             **config_kwargs,
         )
+        primary_app = None  # reload forks workers; sidecar would orphan
     else:
         from frago.server.app import create_app
-        app = create_app()
-        config = uvicorn.Config(app=app, **config_kwargs)
+        primary_app = create_app()
+        config = uvicorn.Config(app=primary_app, **config_kwargs)
+
+    # Optional HTTPS sidecar (env-driven, additive — does NOT replace HTTP).
+    # When FRAGO_SSL_CERTFILE + FRAGO_SSL_KEYFILE are both set to readable files,
+    # we start a SECOND uvicorn.Server in a daemon thread sharing the SAME
+    # FastAPI app, listening on FRAGO_SSL_PORT (default 8443). The primary
+    # HTTP server on `port` stays exactly as-is — all existing recipes / scripts /
+    # browser tabs that hit http://127.0.0.1:8093 keep working unchanged.
+    # Only LAN / PWA / WSS consumers point at the new HTTPS port.
+    #
+    # Sidecar requires the primary app instance (sharing singletons / state).
+    # Incompatible with reload mode → silently skipped if reload=True.
+    if primary_app is not None:
+        from frago.server.daemon import get_ssl_certfile, get_ssl_keyfile
+        ssl_cert = get_ssl_certfile()
+        ssl_key = get_ssl_keyfile()
+        if ssl_cert and ssl_key:
+            ssl_port = int(os.environ.get("FRAGO_SSL_PORT", "8443"))
+            _start_https_sidecar(
+                primary_app, host, ssl_port, ssl_cert, ssl_key, log_level, log_config,
+            )
 
     server = uvicorn.Server(config)
 
@@ -200,6 +222,58 @@ def run_server(
         # Clean up child processes (important for reload mode)
         _cleanup_child_processes()
         logger.info("Server shutdown complete")
+
+
+def _start_https_sidecar(
+    app,  # FastAPI app instance — MUST share with primary, not create a second one
+    host: str,
+    port: int,
+    ssl_cert: str,
+    ssl_key: str,
+    log_level: str,
+    log_config: dict[str, Any] | None,
+) -> None:
+    """Start a second uvicorn.Server for HTTPS, sharing the primary FastAPI app.
+
+    Critical: the sidecar reuses the SAME app instance the primary uvicorn
+    runs. Creating a second app via create_app() causes double initialization
+    of singletons (state manager, sessions watcher, etc.) and dead-locks.
+    """
+    if not is_port_available(port, host):
+        logger.warning(
+            "FRAGO_SSL_PORT=%d is already in use; HTTPS sidecar not started", port
+        )
+        return
+
+    cfg: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "log_level": log_level,
+        "access_log": log_level == "debug",
+        "ssl_certfile": ssl_cert,
+        "ssl_keyfile": ssl_key,
+        # Critical: skip lifespan events. The primary uvicorn already ran
+        # FastAPI's startup hooks (state manager init, sessions watcher, etc).
+        # Running them again from this sidecar would double-init singletons
+        # and dead-lock. The app's already-initialized state is fully shared.
+        "lifespan": "off",
+    }
+    if log_config is not None:
+        cfg["log_config"] = log_config
+
+    def _run() -> None:
+        try:
+            srv = uvicorn.Server(uvicorn.Config(app=app, **cfg))
+            logger.info(
+                "HTTPS sidecar starting on https://%s:%d (cert=%s)",
+                host, port, ssl_cert,
+            )
+            srv.run()
+        except Exception as e:  # noqa: BLE001
+            logger.error("HTTPS sidecar crashed: %s", e, exc_info=True)
+
+    t = threading.Thread(target=_run, name="frago-https-sidecar", daemon=True)
+    t.start()
 
 
 def _cleanup_child_processes() -> None:

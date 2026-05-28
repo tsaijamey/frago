@@ -99,12 +99,11 @@ def is_port_available(port: int, host: str = "127.0.0.1") -> bool:
 def get_server_url(host: str = SERVER_HOST, port: int = SERVER_PORT) -> str:
     """Get the full server URL.
 
-    Args:
-        host: Server host (default: 127.0.0.1)
-        port: Server port (default: 8093)
-
-    Returns:
-        Full URL string (e.g., "http://127.0.0.1:8093")
+    Always returns http:// for the primary port — frago server's main socket
+    is HTTP and that contract is permanent (all existing recipes / scripts
+    depend on it). HTTPS, when enabled via FRAGO_SSL_CERTFILE + FRAGO_SSL_KEYFILE,
+    runs as a SIDECAR on a separate port (default 8443) and is exposed
+    additively via get_accessible_urls(), not as a replacement here.
     """
     return f"http://{host}:{port}"
 
