@@ -13,7 +13,7 @@
     - must-browser-fetch
     - must-content-extraction
     - must-navigation
-    - must-workspace
+    - must-projects-dir
     - run-logging
 
 - name: form-automation
@@ -55,7 +55,7 @@
     - "生成视频"
     - "制作内容"
   topics:
-    - must-workspace
+    - must-projects-dir
     - must-execution-principles
     - run-logging
 

@@ -20,13 +20,13 @@
   5. {{frago_launcher}} chrome get-content --selector "#search"
   6. 逐层深入链接（禁止猜测 URL）
   7. {{frago_launcher}} run log --step "发现" --data '{"_insights": [...]}'
-  8. 整理产出到 workspace/outputs/
+  8. 整理产出到 ~/.frago/projects/<id>/outputs/
 
 ## 关键约束
 - must-browser-search — 搜索必须走 {{frago_launcher}} chrome navigate google
 - must-content-extraction — 读内容用 get-content，不要截图读字
 - must-navigation — 不要猜 URL，从搜索结果逐层探索
-- must-workspace — 所有产出放 workspace 内
+- must-projects-dir — 所有产出放 ~/.frago/projects/<id>/ 内
 - run-logging — 每 5 条日志至少 1 条含 _insights
 
 ## 常见陷阱

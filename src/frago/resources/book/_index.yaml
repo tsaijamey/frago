@@ -40,9 +40,9 @@
   category: must
   brief: "不假设意图、不停在计划、工具驱动、结果优先、建议而非擅自决定"
 
-- name: must-workspace
+- name: must-projects-dir
   category: must
-  brief: "产出物放 workspace、单 Run 排他、禁止 cd、路径用绝对路径"
+  brief: "产出物放 ~/.frago/projects/<id>/、单 Run 排他、禁止 cd、路径用绝对路径"
 
 - name: chrome-usage
   category: must
