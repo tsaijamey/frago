@@ -454,6 +454,11 @@ class Executor:
         import uuid as _uuid
         claude_session_id = str(_uuid.uuid4())
 
+        # Phase 0 (spec 20260529): record csid -> real domain so daemon-side
+        # session sync can attribute this session to its domain (sync has no
+        # FRAGO_DOMAIN env to read).
+        manager.record_session_domain(claude_session_id, run_id)
+
         # Phase 3: also inject FRAGO_DOMAIN so PreToolUse hook reminders can
         # interpolate the domain name and `frago run insights --save` resolves
         # the target domain without requiring an explicit --domain.
@@ -697,13 +702,22 @@ class Executor:
                 )
 
         new_run_id = f"resume-{_uuid.uuid4().hex[:12]}"
+        # FRAGO_CURRENT_RUN is a transient run-context id; FRAGO_DOMAIN must be a
+        # real knowledge domain. Phase 0 (spec 20260529): look up the resumed
+        # session's real domain recorded at its original launch. If found, route
+        # insights back to it; else omit FRAGO_DOMAIN so the reminder hook
+        # degrades rather than forking a `resume-<hex>` orphan domain.
+        from frago.run.manager import RunManager
+        env_extra = {"FRAGO_CURRENT_RUN": new_run_id}
+        resumed_domain = (
+            RunManager(PROJECTS_DIR).lookup_session_domain(csid) if csid else None
+        )
+        if resumed_domain:
+            env_extra["FRAGO_DOMAIN"] = resumed_domain
         result = AgentService.start_task(
             prompt=prompt,
             project_path=str(Path.home()),
-            env_extra={
-                "FRAGO_CURRENT_RUN": new_run_id,
-                "FRAGO_DOMAIN": new_run_id,
-            },
+            env_extra=env_extra,
             claude_session_id=csid,
         )
         if result.get("status") != "ok":

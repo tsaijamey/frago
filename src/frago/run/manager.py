@@ -11,7 +11,6 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from .exceptions import FileSystemError, InvalidRunIDError, RunNotFoundError
 from .models import RunInstance, RunStatus
@@ -125,6 +124,42 @@ class RunManager:
     # Domain resolution for sessions
     # ------------------------------------------------------------------
 
+    @property
+    def _session_domain_dir(self) -> Path:
+        """Sidecar mapping csid -> real domain, written by the executor at spawn.
+
+        Phase 0 (spec 20260529-domain-routing-funnel-gap): daemon-side session
+        sync has no ``FRAGO_DOMAIN`` env, so the executor records the resolved
+        domain here at launch time and sync reads it back by csid.
+        """
+        return self.projects_dir.parent / "session_domains"
+
+    def record_session_domain(self, claude_session_id: str, domain: str) -> None:
+        """Persist ``claude_session_id -> domain`` for later sync resolution."""
+        if not claude_session_id or not domain:
+            return
+        d = self._session_domain_dir
+        ensure_directory_exists(d)
+        (d / claude_session_id).write_text(domain, encoding="utf-8")
+
+    def lookup_session_domain(self, claude_session_id: str) -> str | None:
+        """Return the recorded real domain for a csid, or None.
+
+        Synthetic / catch-all domains (``misc`` / ``resume-*``) are treated as
+        "no real domain" so callers fall through to their own defaults.
+        """
+        if not claude_session_id:
+            return None
+        try:
+            dom = (self._session_domain_dir / claude_session_id).read_text(
+                encoding="utf-8"
+            ).strip()
+        except (FileNotFoundError, OSError):
+            return None
+        if not dom or dom == "misc" or dom.startswith("resume-"):
+            return None
+        return dom
+
     def resolve_domain_for_session(self, session_id: str, project_path: str) -> str:
         """Resolve which domain a session should be attached to.
 
@@ -141,6 +176,13 @@ class RunManager:
         Returns:
             Normalized domain name.
         """
+        # Phase 0 (spec 20260529): a session recorded by the executor at spawn
+        # carries its real domain in the sidecar — the only reliable signal
+        # daemon-side, where FRAGO_DOMAIN is never set.
+        recorded = self.lookup_session_domain(session_id)
+        if recorded:
+            return recorded
+
         env_domain = os.environ.get("FRAGO_DOMAIN")
         if env_domain:
             normalized = normalize_domain_name(env_domain)
@@ -163,7 +205,7 @@ class RunManager:
     # Legacy create_run / archive_run preserved as thin wrappers
     # ------------------------------------------------------------------
 
-    def resolve_domain_from_description(self, description: str) -> Optional[str]:
+    def resolve_domain_from_description(self, description: str) -> str | None:
         """Lookup a description in the def ``domain_dict`` (Phase 3).
 
         Returns the canonical domain name on a hit, or ``None`` when no
@@ -174,7 +216,7 @@ class RunManager:
 
         return lookup_domain(description)
 
-    def create_run(self, theme_description: str, run_id: Optional[str] = None) -> RunInstance:
+    def create_run(self, theme_description: str, run_id: str | None = None) -> RunInstance:
         """Create new run instance (legacy API).
 
         Phase 1+: thin wrapper around :meth:`ensure_domain`. The old
@@ -225,7 +267,7 @@ class RunManager:
 
         return self._read_metadata_files(run_dir, run_id)
 
-    def list_runs(self, status: Optional[RunStatus] = None) -> List[Dict]:
+    def list_runs(self, status: RunStatus | None = None) -> list[dict]:
         """List all run instances / domains.
 
         Args:
@@ -349,7 +391,7 @@ class RunManager:
         *,
         n_sessions: int = 3,
         n_insights: int = 5,
-    ) -> Dict:
+    ) -> dict:
         """Return a compact prior-knowledge summary for ``domain``.
 
         Designed for sub-agent bootstrap injection: keep payload small (target
@@ -360,7 +402,7 @@ class RunManager:
         run_dir = self.projects_dir / domain_name
 
         # Recent sessions: each session lives under a subdir with metadata.json
-        sessions: List[Dict] = []
+        sessions: list[dict] = []
         if run_dir.is_dir():
             session_dirs = [
                 p for p in run_dir.iterdir()
@@ -370,7 +412,7 @@ class RunManager:
             for session_dir in session_dirs[:n_sessions]:
                 meta_file = session_dir / "metadata.json"
                 summary_md = session_dir / "summary.md"
-                entry: Dict = {"session_id": session_dir.name}
+                entry: dict = {"session_id": session_dir.name}
                 if meta_file.exists():
                     try:
                         meta = json.loads(meta_file.read_text(encoding="utf-8"))
@@ -416,7 +458,7 @@ class RunManager:
             "top_insights": insight_payload,
         }
 
-    def get_run_statistics(self, run_id: str) -> Dict:
+    def get_run_statistics(self, run_id: str) -> dict:
         """Get run instance statistics."""
         instance = self.find_run(run_id)
         run_dir = self.projects_dir / run_id
@@ -460,7 +502,7 @@ class RunManager:
         domain_metadata_file = run_dir / DOMAIN_METADATA_FILENAME
         legacy_metadata_file = run_dir / LEGACY_METADATA_FILENAME
 
-        target: Optional[Path] = None
+        target: Path | None = None
         if domain_metadata_file.exists():
             target = domain_metadata_file
         elif legacy_metadata_file.exists():
