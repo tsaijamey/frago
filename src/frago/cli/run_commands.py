@@ -3,16 +3,18 @@
 Provides run instance management, logging, screenshot and other commands
 """
 
+import builtins
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import click
 
 from ..run.context import ContextManager
 from ..run.discovery import RunDiscovery
+from ..run.domain_dict import lookup_domain
 from ..run.exceptions import (
     ContextAlreadySetError,
     ContextNotSetError,
@@ -21,10 +23,20 @@ from ..run.exceptions import (
 )
 from ..run.insights import (
     VALID_TYPES as DOMAIN_INSIGHT_TYPES,
+)
+from ..run.insights import (
     list_insights as list_domain_insights,
+)
+from ..run.insights import (
     query_insights as query_domain_insights,
+)
+from ..run.insights import (
     save_insight as save_domain_insight,
+)
+from ..run.insights import (
     search_insights_across_domains,
+)
+from ..run.insights import (
     update_insight as update_domain_insight,
 )
 from ..run.logger import RunLogger
@@ -60,12 +72,12 @@ def format_timestamp(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def output_json(data: Dict[str, Any]) -> None:
+def output_json(data: dict[str, Any]) -> None:
     """Output data in JSON format"""
     click.echo(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def get_extra_metadata(instance: Any) -> Dict[str, Any]:
+def get_extra_metadata(instance: Any) -> dict[str, Any]:
     """Get extra metadata fields (excluding core fields)"""
     core_fields = {"run_id", "theme_description", "created_at", "last_accessed", "status"}
 
@@ -81,7 +93,7 @@ def get_extra_metadata(instance: Any) -> Dict[str, Any]:
     return extra_metadata
 
 
-def format_extra_metadata(extra_metadata: Dict[str, Any], indent: str = "  ") -> str:
+def format_extra_metadata(extra_metadata: dict[str, Any], indent: str = "  ") -> str:
     """Format extra metadata into a readable string"""
     if not extra_metadata:
         return ""
@@ -141,7 +153,7 @@ def run_group():
     default=False,
     help="Resolve candidate domain without creating any directory",
 )
-def init(description: str, run_id: Optional[str], dry_run: bool):
+def init(description: str, run_id: str | None, dry_run: bool):
     """Initialize / ensure a domain (Phase 2: dictionary-aware ensure_domain)
 
     \b
@@ -425,7 +437,7 @@ def info(run_id: str, format: str, peek: bool, n_sessions: int, n_insights: int)
                 f"Last Accessed: {instance.last_accessed.strftime('%Y-%m-%d %H:%M:%S')}"
             )
 
-            click.echo(f"\nStatistics:")
+            click.echo("\nStatistics:")
             click.echo(f"- Log Entries: {stats['log_entries']}")
             click.echo(f"- Screenshots: {stats['screenshots']}")
             click.echo(f"- Scripts: {stats['scripts']}")
@@ -437,7 +449,7 @@ def info(run_id: str, format: str, peek: bool, n_sessions: int, n_insights: int)
                 click.echo(format_extra_metadata(extra_metadata))
 
             if recent_logs:
-                click.echo(f"\nRecent Logs (last 5):")
+                click.echo("\nRecent Logs (last 5):")
                 for log in recent_logs:
                     status_icon = "[OK]" if log.status == LogStatus.SUCCESS else "[X]"
                     timestamp = log.timestamp.strftime("%Y-%m-%d %H:%M")
@@ -735,15 +747,25 @@ def find(keyword: str, limit: int, fmt: str):
         handle_error(e)
 
 
-def _resolve_insight_domain(explicit: Optional[str]) -> str:
+def _resolve_insight_domain(explicit: str | None) -> str:
     """Resolve which domain insight CRUD applies to.
 
     Order: --domain > current_run context > error.
     """
     if explicit:
-        normalized = normalize_domain_name(explicit)
+        # Route explicit --domain through the canonical dict, exactly like
+        # `run init` does: an alias such as "etf-research" snaps to its
+        # canonical "quant-trading" instead of forking a near-duplicate domain.
+        hit = lookup_domain(explicit)
+        normalized = normalize_domain_name(hit or explicit)
         if not normalized:
             raise click.UsageError("--domain cannot be empty after normalization")
+        if hit and hit != normalize_domain_name(explicit):
+            click.echo(
+                f"[domain] '--domain {explicit}' 命中 canonical 域 '{hit}'，"
+                f"知识将并入该域；如需独立域请先 `frago def save domain_dict.<name>` 注册",
+                err=True,
+            )
         return normalized
     ctx_mgr = get_context_manager()
     try:
@@ -792,15 +814,15 @@ def _resolve_insight_domain(explicit: Optional[str]) -> str:
     help="Output format",
 )
 def insights(
-    run_id: Optional[str],
-    domain: Optional[str],
+    run_id: str | None,
+    domain: str | None,
     save_mode: bool,
-    update_id: Optional[str],
-    query_text: Optional[str],
-    insight_type: Optional[str],
-    payload: Optional[str],
-    confidence: Optional[float],
-    related_sessions: Optional[str],
+    update_id: str | None,
+    query_text: str | None,
+    insight_type: str | None,
+    payload: str | None,
+    confidence: float | None,
+    related_sessions: str | None,
     limit: int,
     fmt: str,
 ):
@@ -872,7 +894,7 @@ def insights(
         # UPDATE mode -----------------------------------------------------
         if update_id:
             target_domain = _resolve_insight_domain(domain)
-            update_related: Optional[List[str]] = None
+            update_related: builtins.list[str] | None = None
             if related_sessions is not None:
                 update_related = [
                     s.strip() for s in related_sessions.split(",") if s.strip()
