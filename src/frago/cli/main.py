@@ -18,7 +18,6 @@ from .autostart_command import autostart_group
 from .book_commands import book_command
 from .channel_commands import channel_group
 from .chrome_commands import chrome_group
-from .extension_commands import extension_group
 from .client_commands import client_group
 from .cloud_commands import (
     config_group,
@@ -35,26 +34,28 @@ from .commands import (
     status,
 )
 from .def_commands import def_group
+from .extension_commands import extension_group
 from .hook_rules_commands import hook_rules_group
 from .init_command import init  # New environment init command
 from .recipe_commands import recipe_group
 from .reply_command import reply_cmd
 from .run_commands import run_group
 from .schedule_commands import schedule_group
-from .task_commands import task_group
-from .timeline_commands import timeline_group
 from .serve_command import serve
 from .server_command import server_group
 from .session_commands import session_group
 from .skill_commands import skill_group
 from .start_command import start
+from .task_commands import task_group
+from .timeline_commands import timeline_group
+from .todo_commands import todo_group
 from .update_command import update
 from .view_command import view
 from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "todo", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -401,6 +402,9 @@ cli.add_command(book_command)
 
 # Def command group - structured knowledge domain management
 cli.add_command(def_group)
+
+# Todo command group - standardized CRUD over ~/.frago/todo/ (one JSON per todo)
+cli.add_command(todo_group, name="todo")
 
 # Hook-rules command group - manage frago-hook's data-driven routing rules
 cli.add_command(hook_rules_group)
