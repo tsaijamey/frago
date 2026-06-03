@@ -44,7 +44,8 @@ def _print_list(status=None, priority=None, tag=None):
 
 
 @todo_group.command(name="add", cls=AgentFriendlyCommand)
-@click.option("--title", required=True, help="Todo title (auto-generates the filename slug)")
+@click.argument("title_arg", required=False)
+@click.option("--title", "title_opt", default=None, help="Todo title (or pass it positionally)")
 @click.option("--summary", default=None, help="Shorter summary")
 @click.option("--priority", type=_PRIORITY_CHOICE, default="normal", help="Priority (default normal)")
 @click.option("--status", type=_STATUS_CHOICE, default="todo", help="Initial status (default todo)")
@@ -53,9 +54,15 @@ def _print_list(status=None, priority=None, tag=None):
 @click.option("--step", "steps", multiple=True, help="Step (repeatable)")
 @click.option("--done-when", "done_when", multiple=True, help="Completion condition (repeatable)")
 @click.option("--link", "links", multiple=True, help="Related URL (repeatable)")
-def todo_add(title, summary, priority, status, tags, context, steps, done_when, links):
-    """Create a new todo."""
+def todo_add(title_arg, title_opt, summary, priority, status, tags, context, steps, done_when, links):
+    """Create a new todo. Title can be positional (`todo add "..."`) or via --title."""
     from frago.todo import store
+
+    title = title_arg or title_opt
+    if not title:
+        raise click.ClickException(
+            'provide a title: `frago todo add "..."` or `frago todo add --title "..."`'
+        )
 
     try:
         todo = store.add(

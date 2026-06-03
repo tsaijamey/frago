@@ -61,6 +61,21 @@ def test_add_list_show_done_rm_roundtrip(runner):
     assert "No todos." in res.output
 
 
+def test_add_positional_title(runner):
+    res = runner.invoke(todo_group, ["add", "调研上海万得在 AI agent 方面的近况"])
+    assert res.exit_code == 0, res.output
+    assert "Created todo" in res.output
+    # positional and --title are equivalent; --title still works too
+    res2 = runner.invoke(todo_group, ["add", "--title", "via option"])
+    assert res2.exit_code == 0
+
+
+def test_add_without_any_title_errors(runner):
+    res = runner.invoke(todo_group, ["add"])
+    assert res.exit_code != 0
+    assert "provide a title" in res.output.lower()
+
+
 def test_bare_invocation_lists(runner):
     _add(runner, "--title", "bare list check")
     res = runner.invoke(todo_group, [])
