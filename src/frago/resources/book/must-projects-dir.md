@@ -5,6 +5,23 @@
 ## 解决什么问题
 agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目录导致 frago 命令失败。
 
+## 先判断：写进 projects 还是 data
+
+落盘前先看有没有 `FRAGO_CURRENT_RUN` 环境变量：
+
+  有（env | grep FRAGO_CURRENT_RUN 有输出）
+  → 你是 frago run 驱动的 sub-agent
+  → 产出走 ~/.frago/projects/<domain>/<run>/
+  → 本文其余规则都针对这种情况
+
+  没有（claude code 人工直驱，无 FRAGO_CURRENT_RUN）
+  → 产出走 ~/.frago/data/<语义-slug>/
+  → slug 用 kebab-case，可加日期后缀（如 power-seller-reg-audit-20260529）
+  → 扁平存放，不按 domain 分层；哪怕主题命中已注册 domain 也仍落 data，不并入 projects
+
+注: `~/.frago/data/` 是 claude code 人工直驱任务的工作区（2026-05-24 起纳入同步）。
+    旧定位"recipe 缓存数据用"已作废，别混。
+
 ## 目录结构
 
   ~/.frago/projects/<id>/          # Run 实例的工作目录（每个 frago run 独占一个 <id>）
@@ -16,7 +33,6 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目
   ├── outputs/                     # 任务产出（数据、报告、视频等）
   └── temp/                        # 临时文件（任务完成后清理）
 
-注: `~/.frago/data/` 是另一回事——recipe 缓存数据用（如行情数据），不是 Run 产出目录，别混。
 
 ## 产出物隔离
 
