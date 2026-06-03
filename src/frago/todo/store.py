@@ -98,16 +98,26 @@ def _path_for(todo_id: str) -> Path:
     return todo_dir() / f"{todo_id}.json"
 
 
+SLUG_MAX_LENGTH = 32
+
+
 def _make_id(title: str) -> str:
     """Build a unique ``<YYYYMMDD>-<slug>`` id from the title.
 
     Slug generation is delegated to ``python-slugify`` (already a project
-    dependency, used in cli/commands.py) — it transliterates CJK via unidecode
-    and returns an empty string for un-sluggable input, in which case the id
-    degrades to the bare date and uniqueness is preserved by the ``-N`` suffix.
+    dependency). We keep the default ASCII transliteration (unidecode) rather
+    than ``allow_unicode``: this is an open-source, internationalized tool, and
+    ASCII filenames are portable across every locale and filesystem (a Japanese
+    or Arabic title would otherwise produce script-specific filenames with
+    cross-platform / git / archive pitfalls). Transliteration of non-Latin
+    scripts is inherently lossy and unlovely (CJK -> pinyin, etc.), so we keep
+    it SHORT via ``max_length`` + ``word_boundary`` instead of trying to make it
+    pretty. The filename is only a handle — the real title lives in the JSON and
+    is shown by ``list`` / ``show``. Empty slug (un-transliterable input)
+    degrades to the bare date; uniqueness is preserved by the ``-N`` suffix.
     """
     stem = date.today().strftime("%Y%m%d")
-    slug = slugify(title, max_length=48)
+    slug = slugify(title, max_length=SLUG_MAX_LENGTH, word_boundary=True, save_order=True)
     if slug:
         stem = f"{stem}-{slug}"
     candidate = stem

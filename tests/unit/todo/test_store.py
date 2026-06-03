@@ -53,6 +53,20 @@ def test_cjk_title_transliterated_by_slugify(tmp_path):
     assert (tmp_path / f"{todo.id}.json").exists()
 
 
+def test_slug_is_ascii_and_length_capped():
+    # i18n: a long non-Latin title must yield a short, ASCII-only slug.
+    todo = store.add("调研上海万得在 AI agent 方面的近况，包含商业模式与监管边界")
+    slug = todo.id.split("-", 1)[1]  # drop the YYYYMMDD prefix
+    assert slug.isascii(), f"slug must be ASCII for portability, got {slug!r}"
+    assert len(slug) <= store.SLUG_MAX_LENGTH
+    assert not slug.endswith("-")  # word_boundary must not leave a trailing sep
+
+
+def test_latin_title_stays_readable():
+    todo = store.add("add chrome fill command")
+    assert todo.id.endswith("-add-chrome-fill-command")  # short Latin title intact
+
+
 def test_resolve_id_exact_prefix_ambiguous_missing():
     a = store.add("alpha one")
     store.add("alpha two")
