@@ -73,8 +73,5 @@ class RecipeAlreadyExistsError(RecipeError):
     def __init__(self, recipe_name: str, existing_path: str):
         self.recipe_name = recipe_name
         self.existing_path = existing_path
-        message = (
-            f"Recipe '{recipe_name}' already exists at {existing_path}\n"
-            "Use --force to overwrite"
-        )
+        message = f"Recipe '{recipe_name}' already exists at {existing_path}"
         super().__init__(message)

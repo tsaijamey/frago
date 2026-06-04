@@ -248,6 +248,7 @@ class CommunityRecipeService:
         Returns:
             Result dictionary with status, recipe_name, message, error
         """
+        from frago.recipes.exceptions import RecipeAlreadyExistsError
         from frago.recipes.installer import RecipeInstaller
 
         try:
@@ -260,6 +261,41 @@ class CommunityRecipeService:
                 "recipe_name": installed_name,
                 "message": f"Successfully installed {installed_name}",
             }
+        except RecipeAlreadyExistsError as exists_err:
+            # Stale files on disk but not in manifest.
+            # Guard: if disk version is newer than community, refuse to overwrite.
+            if self._should_protect_disk_version(name, exists_err.existing_path):
+                disk_ver = self._read_disk_version(exists_err.existing_path)
+                community_ver = self._get_community_version(name)
+                logger.warning(
+                    f"Refusing auto-force for '{name}': "
+                    f"disk={disk_ver} > community={community_ver}"
+                )
+                return {
+                    "status": "error",
+                    "error": (
+                        f"Recipe '{name}' already exists on disk "
+                        f"with a newer version (v{disk_ver}) than the community "
+                        f"version (v{community_ver}). Uninstall it first if you "
+                        f"want to reinstall from community."
+                    ),
+                }
+            # Disk version is same/older or unreadable — safe to overwrite
+            try:
+                installer = RecipeInstaller()
+                installed_name = installer.install(f"community:{name}", force=True)
+                self._cache = None
+                return {
+                    "status": "ok",
+                    "recipe_name": installed_name,
+                    "message": f"Successfully installed {installed_name}",
+                }
+            except Exception as e:
+                logger.error(f"Failed to force-install community recipe {name}: {e}")
+                return {
+                    "status": "error",
+                    "error": str(e),
+                }
         except Exception as e:
             logger.error(f"Failed to install community recipe {name}: {e}")
             return {
@@ -335,3 +371,39 @@ class CommunityRecipeService:
             Error message or None
         """
         return self._last_fetch_error
+
+    # ------------------------------------------------------------------
+    # Version helpers for auto-force guard
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_version(version_str: str) -> tuple:
+        """Parse '1.2.3' or '1.2' into a comparable tuple of ints."""
+        try:
+            return tuple(int(x) for x in version_str.strip().split('.'))
+        except Exception:
+            return (0,)
+
+    def _read_disk_version(self, existing_path: str) -> str:
+        """Read version from an existing recipe directory's recipe.md."""
+        from pathlib import Path
+        try:
+            from frago.recipes.metadata import parse_metadata_file
+            meta = parse_metadata_file(Path(existing_path) / "recipe.md")
+            return meta.version
+        except Exception:
+            return "0"
+
+    def _get_community_version(self, name: str) -> str:
+        """Get the community version for a recipe from cache."""
+        if self._cache:
+            for r in self._cache:
+                if r.get("name") == name and r.get("version"):
+                    return r["version"]
+        return "0"
+
+    def _should_protect_disk_version(self, name: str, existing_path: str) -> bool:
+        """Return True if the on-disk recipe is newer than the community version."""
+        disk_ver = self._parse_version(self._read_disk_version(existing_path))
+        community_ver = self._parse_version(self._get_community_version(name))
+        return disk_ver > community_ver
