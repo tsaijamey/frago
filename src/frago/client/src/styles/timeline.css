@@ -40,7 +40,7 @@
 }
 
 .tl-row--event:hover {
-  background: color-mix(in srgb, var(--tl-row-color, rgba(78,205,196,0.5)) 8%, transparent);
+  background: color-mix(in srgb, var(--tl-row-color, rgba(21,179,77,0.5)) 8%, transparent);
 }
 
 /* ── Visual weight by level (no indentation) ── */
@@ -205,7 +205,7 @@
   margin: 8px 0;
   padding: 12px 0;
   background: var(--accent-primary-10);
-  border-left: 2px solid var(--border-accent, rgba(78, 205, 196, 0.19));
+  border-left: 2px solid var(--border-accent, rgba(21, 179, 77, 0.19));
   border-radius: 0 6px 6px 0;
   cursor: pointer;
   transition: background 0.15s ease;

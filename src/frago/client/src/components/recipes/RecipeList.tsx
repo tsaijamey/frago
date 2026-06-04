@@ -152,6 +152,14 @@ export default function RecipeList() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Page header — consistent with Sessions / Settings */}
+      <div className="cs-header" style={{ padding: 'var(--spacing-md) var(--spacing-md) 0' }}>
+        <div>
+          <h1 className="cs-title">{t('recipes.title')}</h1>
+          <p className="cs-subtitle">{t('recipes.pageDesc')}</p>
+        </div>
+      </div>
+
       {/* Tab Navigation */}
       <RecipeTabs
         activeTab={activeTab}

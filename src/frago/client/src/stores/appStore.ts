@@ -24,6 +24,7 @@ import * as api from '@/api';
 // Page type - Updated for new admin panel layout
 export type PageType =
   | 'live'
+  | 'claude_sessions'
   | 'dashboard'
   | 'tasks'
   | 'task_detail'
@@ -187,8 +188,8 @@ function getInitialSidebarCollapsed(): boolean {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Initial state - default to 'live' timeline page
-  currentPage: 'live',
+  // Initial state - default to Claude session management homepage
+  currentPage: 'claude_sessions',
   currentTaskId: null,
   currentRecipeName: null,
   currentProjectId: null,

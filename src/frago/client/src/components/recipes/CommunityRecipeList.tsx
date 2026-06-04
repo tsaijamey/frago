@@ -154,7 +154,7 @@ export default function CommunityRecipeList() {
   const showGhWarning = ghStatus && (!ghStatus.installed || !ghStatus.authenticated);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* GitHub CLI Warning */}
       {showGhWarning && (
         <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">

@@ -735,6 +735,39 @@ export async function getDashboard(): Promise<httpApi.DashboardData> {
 }
 
 // ============================================================
+// Claude Code Sessions API
+// ============================================================
+
+export type {
+  ClaudeSessionHuman,
+  ClaudeSessionItem,
+  ClaudeSessionsResponse,
+  ClaudeSessionMessage,
+  ClaudeSessionDetail,
+} from './client';
+
+export async function getClaudeSessions(options?: {
+  days?: number;
+  since?: string;
+  until?: string;
+}): Promise<httpApi.ClaudeSessionsResponse> {
+  if (isPywebviewMode()) {
+    throw new Error('Claude sessions API not available in pywebview mode');
+  }
+  return httpApi.getClaudeSessions(options);
+}
+
+export async function getClaudeSessionDetail(
+  sid: string,
+  limit?: number
+): Promise<httpApi.ClaudeSessionDetail> {
+  if (isPywebviewMode()) {
+    throw new Error('Claude sessions API not available in pywebview mode');
+  }
+  return httpApi.getClaudeSessionDetail(sid, limit);
+}
+
+// ============================================================
 // Community Recipes API
 // ============================================================
 

@@ -16,7 +16,10 @@ export default function TopBar() {
 
   return (
     <div className="topbar">
-      <div className="topbar-logo">{'> frago'}</div>
+      <div className="topbar-logo">
+        <img src="/icons/logo-64.png" alt="frago" className="topbar-logo-img" />
+        <span className="topbar-logo-text">frago</span>
+      </div>
       <div className="topbar-right">
         <span className={`topbar-status ${isRunning ? 'topbar-status--active' : ''}`}>
           {isRunning ? '● 运行中' : '○ 空闲'}

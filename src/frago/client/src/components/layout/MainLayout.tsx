@@ -1,7 +1,7 @@
 /**
  * MainLayout Component
  *
- * New layout: TopBar + full-width content + floating BottomDock.
+ * New layout: TopBar + full-width content + docked BottomDock bar.
  * No sidebar — navigation lives in the dock.
  */
 
@@ -32,7 +32,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
         </div>
       </div>
 
-      {/* Floating bottom navigation */}
+      {/* Docked bottom navigation bar */}
       <BottomDock />
     </div>
   );

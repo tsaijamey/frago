@@ -1,5 +1,6 @@
 {
   "sidebar": {
+    "claudeSessions": "会话",
     "dashboard": "仪表盘",
     "newTask": "新任务",
     "tasks": "任务",
@@ -34,6 +35,33 @@
   "status": {
     "connected": "已连接",
     "disconnected": "已断开"
+  },
+  "claudeSessions": {
+    "title": "Claude 会话",
+    "subtitle": "浏览并恢复你的 Claude Code 对话",
+    "rescan": "重新扫描",
+    "scanning": "正在扫描会话…",
+    "days_one": "{{count}} 天",
+    "days_other": "{{count}} 天",
+    "searchPlaceholder": "搜索标题、提示词、项目…",
+    "summary": "{{total}} 个会话中显示 {{visible}} 个 · 已扫描 {{files}} 个文件",
+    "filter": {
+      "human": "人工",
+      "maybe": "疑似",
+      "agent": "Agent"
+    },
+    "resume": "恢复",
+    "copyResume": "复制恢复命令",
+    "copiedShort": "已复制",
+    "copied": "恢复命令已复制",
+    "copyFailed": "复制失败",
+    "unnamed": "(未命名)",
+    "empty": "该时间范围内没有会话",
+    "emptyHint": "试试扩大日期范围，或开启 Agent 过滤。",
+    "error": "加载会话失败",
+    "loadingDetail": "正在加载会话…",
+    "noMessages": "该会话没有可读消息",
+    "truncated": "显示最近 {{shown}} 条（共 {{total}} 条）"
   },
   "dashboard": {
     "title": "工作台",
@@ -138,6 +166,7 @@
   },
   "recipes": {
     "title": "配方",
+    "pageDesc": "浏览并运行可复用的自动化配方",
     "noRecipes": "暂无配方",
     "noRecipesDescription": "使用 frago recipe create 创建新配方",
     "searchPlaceholder": "搜索配方...",
@@ -337,9 +366,19 @@
     "description": "配置 frago 功能",
     "tabs": {
       "general": "通用",
+      "channels": "任务通道",
+      "resources": "官方资源",
       "appearance": "外观",
       "init": "初始化",
       "about": "关于"
+    },
+    "tabDesc": {
+      "general": "认证与工作目录",
+      "channels": "任务接入通道",
+      "resources": "官方命令与技能同步",
+      "appearance": "语言与行为",
+      "init": "初始化状态与向导",
+      "about": "版本与许可"
     },
     "general": {
       "title": "通用配置",

@@ -18,7 +18,7 @@ import type { DashboardData } from '@/api/client';
 
 /** Deterministic color palette for msg_id groups */
 const MSG_COLORS = [
-  '#4ecdc4', // teal (matches accent-primary)
+  '#15b34d', // frog-green (matches accent-primary)
   '#7c6ef0', // purple
   '#f0a050', // orange
   '#e06080', // rose

@@ -1,5 +1,6 @@
 {
   "sidebar": {
+    "claudeSessions": "Sessions",
     "dashboard": "Dashboard",
     "newTask": "New Task",
     "tasks": "Tasks",
@@ -34,6 +35,33 @@
   "status": {
     "connected": "Connected",
     "disconnected": "Disconnected"
+  },
+  "claudeSessions": {
+    "title": "Claude Sessions",
+    "subtitle": "Browse and resume your Claude Code conversations",
+    "rescan": "Rescan",
+    "scanning": "Scanning sessions…",
+    "days_one": "{{count}}d",
+    "days_other": "{{count}}d",
+    "searchPlaceholder": "Search title, prompt, project…",
+    "summary": "{{visible}} of {{total}} sessions · {{files}} files scanned",
+    "filter": {
+      "human": "Human",
+      "maybe": "Maybe",
+      "agent": "Agent"
+    },
+    "resume": "Resume",
+    "copyResume": "Copy resume command",
+    "copiedShort": "Copied",
+    "copied": "Resume command copied",
+    "copyFailed": "Copy failed",
+    "unnamed": "(unnamed)",
+    "empty": "No sessions in this range",
+    "emptyHint": "Try a wider date range, or enable the Agent filter.",
+    "error": "Failed to load sessions",
+    "loadingDetail": "Loading session…",
+    "noMessages": "No readable messages in this session",
+    "truncated": "Showing latest {{shown}} of {{total}} messages"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -138,6 +166,7 @@
   },
   "recipes": {
     "title": "Recipes",
+    "pageDesc": "Browse and run reusable automation recipes",
     "noRecipes": "No Recipes",
     "noRecipesDescription": "Use frago recipe create to create a new recipe",
     "searchPlaceholder": "Search recipes...",
@@ -337,9 +366,19 @@
     "description": "Configure frago features",
     "tabs": {
       "general": "General",
+      "channels": "Channels",
+      "resources": "Resources",
       "appearance": "Appearance",
       "init": "Init",
       "about": "About"
+    },
+    "tabDesc": {
+      "general": "Authentication and working directory",
+      "channels": "Task ingestion channels",
+      "resources": "Official commands & skills sync",
+      "appearance": "Language and behavior",
+      "init": "Setup status and wizard",
+      "about": "Version and license"
     },
     "general": {
       "title": "General Configuration",

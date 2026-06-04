@@ -1,11 +1,12 @@
 /**
  * BottomDock Component
  *
- * Floating bottom navigation dock, replacing the sidebar.
- * 4 items: live | tasks | recipe || config
+ * Docked bottom navigation bar (non-floating). Icons only; the menu name
+ * appears as a tooltip on hover.
+ * Items: sessions | recipe || config
  */
 
-import { Radio, LayoutGrid, Settings } from 'lucide-react';
+import { MessageSquare, LayoutGrid, Settings } from 'lucide-react';
 import { useAppStore, type PageType } from '@/stores/appStore';
 
 interface DockItem {
@@ -15,21 +16,21 @@ interface DockItem {
 }
 
 const DOCK_ITEMS: DockItem[] = [
-  { id: 'live', label: 'live', icon: <Radio size={20} /> },
-  { id: 'recipes', label: 'recipe', icon: <LayoutGrid size={20} /> },
+  { id: 'claude_sessions', label: 'sessions', icon: <MessageSquare size={22} /> },
+  { id: 'recipes', label: 'recipe', icon: <LayoutGrid size={22} /> },
 ];
 
 const DOCK_CONFIG: DockItem = {
   id: 'settings',
   label: 'config',
-  icon: <Settings size={20} />,
+  icon: <Settings size={22} />,
 };
 
 export default function BottomDock() {
   const { currentPage, switchPage } = useAppStore();
 
   const isActive = (id: PageType) => {
-    if (id === 'live') return currentPage === 'live';
+    if (id === 'claude_sessions') return currentPage === 'claude_sessions';
     if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
     if (id === 'settings') return currentPage === 'settings';
     return false;

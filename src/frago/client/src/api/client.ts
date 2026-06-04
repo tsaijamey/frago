@@ -1223,3 +1223,86 @@ export async function restartServer(): Promise<{ status: string; message: string
     method: 'POST',
   });
 }
+
+// ============================================================
+// Claude Code Sessions API
+// ============================================================
+
+export type ClaudeSessionHuman = 'human' | 'maybe' | 'agent';
+
+export interface ClaudeSessionItem {
+  sid: string;
+  human: ClaudeSessionHuman;
+  human_reason: string;
+  name: string | null;
+  title: string | null;
+  recap: string | null;
+  ai_title: string | null;
+  last_prompt: string | null;
+  first_user_preview: string;
+  first_user_full: string;
+  last_assistant_preview: string;
+  first_interaction_at: string | null;
+  first_interaction_ts: number | null;
+  last_interaction_at: string | null;
+  last_interaction_ts: number | null;
+  cwd: string | null;
+  branch: string | null;
+  project: string;
+  n_user_messages: number;
+  n_assistant_messages: number;
+  resume_command: string;
+}
+
+export interface ClaudeSessionsResponse {
+  scanned_at: string;
+  range: {
+    since: string | null;
+    until: string | null;
+    since_ts: number;
+    until_ts: number;
+  };
+  projects_root: string;
+  scanned_files: number;
+  matched_sessions: number;
+  sessions: ClaudeSessionItem[];
+}
+
+export interface ClaudeSessionMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string | null;
+}
+
+export interface ClaudeSessionDetail {
+  sid: string;
+  path: string;
+  total_messages: number;
+  returned_messages: number;
+  truncated: boolean;
+  messages: ClaudeSessionMessage[];
+  resume_command: string;
+}
+
+export async function getClaudeSessions(options?: {
+  days?: number;
+  since?: string;
+  until?: string;
+}): Promise<ClaudeSessionsResponse> {
+  const params = new URLSearchParams();
+  if (options?.days != null) params.set('days', String(options.days));
+  if (options?.since) params.set('since', options.since);
+  if (options?.until) params.set('until', options.until);
+  const query = params.toString();
+  return fetchApi<ClaudeSessionsResponse>(`/claude-sessions${query ? `?${query}` : ''}`);
+}
+
+export async function getClaudeSessionDetail(
+  sid: string,
+  limit: number = 200
+): Promise<ClaudeSessionDetail> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return fetchApi<ClaudeSessionDetail>(
+    `/claude-sessions/${encodeURIComponent(sid)}?${params.toString()}`
+  );
+}

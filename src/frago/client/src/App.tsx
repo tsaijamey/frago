@@ -10,6 +10,7 @@ import MainLayout from '@/components/layout/MainLayout';
 // Pages
 import TimelinePage from '@/components/timeline/TimelinePage';
 import DashboardPage from '@/components/dashboard/DashboardPage';
+import ClaudeSessionsPage from '@/components/claudeSessions/ClaudeSessionsPage';
 import TaskList from '@/components/tasks/TaskList';
 import TaskDetail from '@/components/tasks/TaskDetail';
 import RecipeList from '@/components/recipes/RecipeList';
@@ -95,6 +96,8 @@ function App() {
   // Default page is 'live' (timeline, set in appStore)
   const renderPage = () => {
     switch (currentPage) {
+      case 'claude_sessions':
+        return <ClaudeSessionsPage />;
       case 'live':
         return <TimelinePage />;
       case 'dashboard':
@@ -119,7 +122,7 @@ function App() {
       case 'project_detail':
         return <WorkspacePage />;
       default:
-        return <TimelinePage />;
+        return <ClaudeSessionsPage />;
     }
   };
 
