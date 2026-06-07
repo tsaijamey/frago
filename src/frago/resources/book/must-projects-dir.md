@@ -18,6 +18,7 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目
   → 产出走 ~/.frago/data/<语义-slug>/
   → slug 用 kebab-case，可加日期后缀（如 power-seller-reg-audit-20260529）
   → 扁平存放，不按 domain 分层；哪怕主题命中已注册 domain 也仍落 data，不并入 projects
+  → 若保留工作流水笔记，主文件固定叫 notebook.md（小写），别自创 session.md / log.md 之类的名字
 
 注: `~/.frago/data/` 是 claude code 人工直驱任务的工作区（2026-05-24 起纳入同步）。
     旧定位"recipe 缓存数据用"已作废，别混。
