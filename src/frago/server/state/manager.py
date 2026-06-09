@@ -15,18 +15,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 from frago.server.state.models import (
     CommunityRecipe,
-    DashboardData,
-    DashboardStatus,
     Project,
     Recipe,
-    ResourceCounts,
     ServerState,
     Skill,
-    TaskDetail,
-    TaskItem,
-    TaskStep,
-    TaskSummary,
-    ToolUsageStat,
     UserConfig,
 )
 
@@ -109,25 +101,17 @@ class StateManager:
             loop = asyncio.get_event_loop()
 
             # Load all data concurrently
-            tasks_future = loop.run_in_executor(None, self._load_tasks)
             recipes_future = loop.run_in_executor(None, self._load_recipes)
             skills_future = loop.run_in_executor(None, self._load_skills)
             projects_future = loop.run_in_executor(None, self._load_projects)
 
-            tasks_data, recipes_data, skills_data, projects_data = await asyncio.gather(
-                tasks_future, recipes_future, skills_future, projects_future
+            recipes_data, skills_data, projects_data = await asyncio.gather(
+                recipes_future, skills_future, projects_future
             )
 
-            self._state.tasks = tasks_data.get("tasks", [])
-            self._state.tasks_total = tasks_data.get("total", 0)
             self._state.recipes = recipes_data
             self._state.skills = skills_data
             self._state.projects = projects_data
-
-            # Compute dashboard
-            self._state.dashboard = await loop.run_in_executor(
-                None, self._compute_dashboard
-            )
 
             self._state.version += 1
             self._state.last_updated = datetime.now()
@@ -136,7 +120,6 @@ class StateManager:
         duration = (datetime.now() - start_time).total_seconds()
         logger.info(
             f"State initialized in {duration:.2f}s: "
-            f"tasks={len(self._state.tasks)}, "
             f"recipes={len(self._state.recipes)}, "
             f"skills={len(self._state.skills)}, "
             f"projects={len(self._state.projects)}"
@@ -145,98 +128,6 @@ class StateManager:
     # ============================================================
     # Data Loading (internal)
     # ============================================================
-
-    def _load_tasks(self) -> Dict[str, Any]:
-        """Load tasks from session storage."""
-        try:
-            from frago.server.services.task_service import TaskService
-
-            result = TaskService.get_tasks(limit=100, offset=0)
-            tasks = []
-            for t in result.get("tasks", []):
-                tasks.append(
-                    TaskItem(
-                        id=t.get("id", ""),
-                        title=t.get("title", ""),
-                        status=t.get("status", "running"),
-                        project_path=t.get("project_path"),
-                        agent_type=t.get("agent_type", "claude"),
-                        started_at=self._parse_datetime(t.get("started_at")),
-                        completed_at=self._parse_datetime(t.get("completed_at")),
-                        duration_ms=t.get("duration_ms"),
-                        step_count=t.get("step_count", 0),
-                        tool_call_count=t.get("tool_call_count", 0),
-                        source=t.get("source", "unknown"),
-                    )
-                )
-            return {"tasks": tasks, "total": result.get("total", len(tasks))}
-        except Exception as e:
-            logger.error(f"Failed to load tasks: {e}")
-            return {"tasks": [], "total": 0}
-
-    def _load_task_detail(self, task_id: str) -> Optional[TaskDetail]:
-        """Load task detail from session storage."""
-        try:
-            from frago.server.services.task_service import TaskService
-
-            task = TaskService.get_task(task_id)
-            if task is None:
-                return None
-
-            steps = []
-            for s in task.get("steps", []):
-                steps.append(
-                    TaskStep(
-                        timestamp=self._parse_datetime(s.get("timestamp"))
-                        or datetime.now(),
-                        type=s.get("type", "assistant"),
-                        content=s.get("content", ""),
-                        tool_name=s.get("tool_name"),
-                        tool_call_id=s.get("tool_call_id"),
-                        tool_result=s.get("tool_result"),
-                    )
-                )
-
-            summary = None
-            if task.get("summary"):
-                s = task["summary"]
-                most_used_tools = []
-                for t in s.get("most_used_tools", []):
-                    if hasattr(t, "tool_name"):
-                        most_used_tools.append(ToolUsageStat(name=t.tool_name, count=t.count))
-                    else:
-                        most_used_tools.append(
-                            ToolUsageStat(name=t.get("name", ""), count=t.get("count", 0))
-                        )
-                summary = TaskSummary(
-                    total_duration_ms=s.get("total_duration_ms", 0),
-                    user_message_count=s.get("user_message_count", 0),
-                    assistant_message_count=s.get("assistant_message_count", 0),
-                    tool_call_count=s.get("tool_call_count", 0),
-                    tool_success_count=s.get("tool_success_count", 0),
-                    tool_error_count=s.get("tool_error_count", 0),
-                    most_used_tools=most_used_tools,
-                )
-
-            return TaskDetail(
-                id=task.get("id", task_id),
-                title=task.get("title", ""),
-                status=task.get("status", "running"),
-                project_path=task.get("project_path"),
-                started_at=self._parse_datetime(task.get("started_at")),
-                completed_at=self._parse_datetime(task.get("completed_at")),
-                duration_ms=task.get("duration_ms"),
-                step_count=task.get("step_count", len(steps)),
-                tool_call_count=task.get("tool_call_count", 0),
-                steps=steps,
-                steps_total=task.get("steps_total", len(steps)),
-                steps_offset=task.get("steps_offset", 0),
-                has_more_steps=task.get("has_more_steps", False),
-                summary=summary,
-            )
-        except Exception as e:
-            logger.error(f"Failed to load task detail {task_id}: {e}")
-            return None
 
     def _load_recipes(self) -> List[Recipe]:
         """Load recipes from storage."""
@@ -335,68 +226,9 @@ class StateManager:
             logger.error(f"Failed to load gh status: {e}")
             return {"installed": False, "authenticated": False, "username": None}
 
-    def _compute_dashboard(self) -> DashboardData:
-        """Compute dashboard data using the shared compute function."""
-        try:
-            from frago.server.routes.dashboard import compute_dashboard_data
-
-            pydantic_data = compute_dashboard_data()
-
-            return DashboardData(
-                running_tasks=[t.model_dump() for t in pydantic_data.running_tasks],
-                recent_tasks=[t.model_dump() for t in pydantic_data.recent_tasks],
-                quick_recipes=[r.model_dump() for r in pydantic_data.quick_recipes],
-                resource_counts=ResourceCounts(
-                    tasks=pydantic_data.resource_counts.tasks,
-                    recipes=pydantic_data.resource_counts.recipes,
-                    skills=pydantic_data.resource_counts.skills,
-                ),
-                system_status=DashboardStatus(
-                    chrome_connected=pydantic_data.system_status.chrome_connected,
-                    tab_count=pydantic_data.system_status.tab_count,
-                    error_count=pydantic_data.system_status.error_count,
-                    last_synced_at=pydantic_data.system_status.last_synced_at,
-                ),
-            )
-        except Exception as e:
-            logger.error(f"Failed to compute dashboard: {e}")
-            return DashboardData()
-
-    def _parse_datetime(self, value: Any) -> Optional[datetime]:
-        """Parse datetime from string or return as-is if already datetime."""
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value
-        if isinstance(value, str):
-            try:
-                return datetime.fromisoformat(value)
-            except ValueError:
-                return None
-        return None
-
     # ============================================================
     # Data Access (public)
     # ============================================================
-
-    def get_tasks(self) -> List[TaskItem]:
-        """Get task list."""
-        return self._state.tasks
-
-    def get_tasks_total(self) -> int:
-        """Get total task count."""
-        return self._state.tasks_total
-
-    def get_task_detail(self, task_id: str) -> Optional[TaskDetail]:
-        """Get task detail, loading from storage if not cached."""
-        if task_id in self._state.task_details:
-            return self._state.task_details[task_id]
-
-        # Load and cache
-        detail = self._load_task_detail(task_id)
-        if detail:
-            self._state.task_details[task_id] = detail
-        return detail
 
     def get_recipes(self) -> List[Recipe]:
         """Get recipe list."""
@@ -413,10 +245,6 @@ class StateManager:
     def get_projects(self) -> List[Project]:
         """Get project list."""
         return self._state.projects
-
-    def get_dashboard(self) -> DashboardData:
-        """Get dashboard data."""
-        return self._state.dashboard
 
     def get_config(self) -> Dict[str, Any]:
         """Get user config, loading on first access."""
@@ -436,44 +264,6 @@ class StateManager:
     # ============================================================
     # Data Refresh (public)
     # ============================================================
-
-    async def refresh_tasks(self, broadcast: bool = True) -> None:
-        """Refresh task data."""
-        async with self._get_async_lock():
-            loop = asyncio.get_event_loop()
-            tasks_data = await loop.run_in_executor(None, self._load_tasks)
-            self._state.tasks = tasks_data.get("tasks", [])
-            self._state.tasks_total = tasks_data.get("total", 0)
-            # Clear cached task details
-            self._state.task_details.clear()
-            # Update dashboard
-            self._state.dashboard = await loop.run_in_executor(
-                None, self._compute_dashboard
-            )
-            self._state.version += 1
-            self._state.last_updated = datetime.now()
-
-        if broadcast:
-            await self._broadcast("tasks", self._state.tasks)
-            await self._broadcast("dashboard", self._state.dashboard)
-
-        logger.debug(f"Tasks refreshed, version={self._state.version}")
-
-    async def refresh_task_detail(self, task_id: str, broadcast: bool = True) -> Optional[TaskDetail]:
-        """Refresh specific task detail."""
-        async with self._get_async_lock():
-            loop = asyncio.get_event_loop()
-            detail = await loop.run_in_executor(None, self._load_task_detail, task_id)
-            if detail:
-                self._state.task_details[task_id] = detail
-                self._state.version += 1
-            elif task_id in self._state.task_details:
-                del self._state.task_details[task_id]
-
-        if broadcast and detail:
-            await self._broadcast("task_detail", {"task_id": task_id, "detail": detail})
-
-        return detail
 
     async def refresh_recipes(self, broadcast: bool = True) -> None:
         """Refresh recipe data."""
@@ -516,7 +306,6 @@ class StateManager:
 
     async def refresh_all(self, broadcast: bool = True) -> None:
         """Refresh all data."""
-        await self.refresh_tasks(broadcast=False)
         await self.refresh_recipes(broadcast=False)
         await self.refresh_skills(broadcast=False)
         await self.refresh_projects(broadcast=False)
@@ -572,51 +361,10 @@ class StateManager:
         """Get all data for initial WebSocket connection."""
         return {
             "version": self._state.version,
-            "tasks": {"tasks": self._tasks_to_dict(), "total": self._state.tasks_total},
-            "dashboard": self._dashboard_to_dict(),
             "recipes": self._recipes_to_dict(),
             "skills": self._skills_to_dict(),
             "community_recipes": self._community_recipes_to_dict(),
             "projects": self._projects_to_dict(),
-        }
-
-    def _tasks_to_dict(self) -> List[Dict[str, Any]]:
-        """Convert tasks to dict for API response."""
-        return [
-            {
-                "id": t.id,
-                "title": t.title,
-                "status": t.status,
-                "project_path": t.project_path,
-                "agent_type": t.agent_type,
-                "started_at": t.started_at.isoformat() if t.started_at else None,
-                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-                "duration_ms": t.duration_ms,
-                "step_count": t.step_count,
-                "tool_call_count": t.tool_call_count,
-                "source": t.source,
-            }
-            for t in self._state.tasks
-        ]
-
-    def _dashboard_to_dict(self) -> Dict[str, Any]:
-        """Convert dashboard to dict for API response."""
-        d = self._state.dashboard
-        return {
-            "running_tasks": d.running_tasks,
-            "recent_tasks": d.recent_tasks,
-            "quick_recipes": d.quick_recipes,
-            "resource_counts": {
-                "tasks": d.resource_counts.tasks,
-                "recipes": d.resource_counts.recipes,
-                "skills": d.resource_counts.skills,
-            },
-            "system_status": {
-                "chrome_connected": d.system_status.chrome_connected,
-                "tab_count": d.system_status.tab_count,
-                "error_count": d.system_status.error_count,
-                "last_synced_at": d.system_status.last_synced_at,
-            },
         }
 
     def _recipes_to_dict(self) -> List[Dict[str, Any]]:
@@ -699,11 +447,7 @@ class StateManager:
 
             # Convert data to dict based on data_type
             # Note: data may be a list of dataclasses, not a dataclass itself
-            if data_type == "tasks":
-                payload = {"tasks": self._tasks_to_dict(), "total": self._state.tasks_total}
-            elif data_type == "dashboard":
-                payload = self._dashboard_to_dict()
-            elif data_type == "recipes":
+            if data_type == "recipes":
                 payload = self._recipes_to_dict()
             elif data_type == "skills":
                 payload = self._skills_to_dict()

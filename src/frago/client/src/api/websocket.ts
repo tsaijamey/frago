@@ -42,8 +42,6 @@ export const MessageType = {
 
   // Data push events (for cache updates)
   DATA_INITIAL: 'data_initial',
-  DATA_TASKS: 'data_tasks',
-  DATA_DASHBOARD: 'data_dashboard',
   DATA_RECIPES: 'data_recipes',
   DATA_SKILLS: 'data_skills',
   DATA_COMMUNITY_RECIPES: 'data_community_recipes',

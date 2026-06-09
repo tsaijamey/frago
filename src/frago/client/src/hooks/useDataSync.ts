@@ -9,25 +9,7 @@ import { useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { MessageType, type WebSocketMessage } from '@/api/websocket';
 import { useAppStore } from '@/stores/appStore';
-import type { TaskItem, RecipeItem, SkillItem, CommunityRecipeItem, VersionInfo, UpdateStatus } from '@/types/pywebview';
-import type { DashboardData } from '@/api/client';
-
-/**
- * Raw task data from WebSocket (matches backend TaskService format)
- */
-interface RawTaskData {
-  id: string;
-  title: string;
-  status: string;
-  project_path?: string | null;
-  agent_type?: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  duration_ms?: number | null;
-  step_count?: number;
-  tool_call_count?: number;
-  source?: string;
-}
+import type { RecipeItem, SkillItem, CommunityRecipeItem, VersionInfo, UpdateStatus } from '@/types/pywebview';
 
 /**
  * Raw recipe data from WebSocket (matches backend RecipeService format)
@@ -67,26 +49,6 @@ interface RawCommunityRecipeData {
   installed?: boolean;
   installed_version?: string | null;
   has_update?: boolean;
-}
-
-/**
- * Transform raw task data from WebSocket to frontend TaskItem format.
- * This mirrors the transformation done in api/index.ts getTasks().
- */
-function transformTaskData(raw: RawTaskData): TaskItem {
-  return {
-    session_id: raw.id,
-    name: raw.title,
-    status: raw.status as TaskItem['status'],
-    started_at: raw.started_at || '',
-    ended_at: raw.completed_at || null,
-    duration_ms: raw.duration_ms ?? 0,
-    step_count: raw.step_count ?? 0,
-    tool_call_count: raw.tool_call_count ?? 0,
-    last_activity: raw.started_at || '',
-    project_path: raw.project_path ?? '',
-    source: (raw.source ?? 'unknown') as TaskItem['source'],
-  };
 }
 
 /**
@@ -147,11 +109,9 @@ function transformCommunityRecipeData(raw: RawCommunityRecipeData): CommunityRec
  */
 export function useDataSync() {
   const setDataFromPush = useAppStore((state) => state.setDataFromPush);
-  const setTasks = useAppStore((state) => state.setTasks);
   const setRecipes = useAppStore((state) => state.setRecipes);
   const setSkills = useAppStore((state) => state.setSkills);
   const setCommunityRecipes = useAppStore((state) => state.setCommunityRecipes);
-  const setDashboard = useAppStore((state) => state.setDashboard);
   const setVersionInfo = useAppStore((state) => state.setVersionInfo);
   const setUpdateStatus = useAppStore((state) => state.setUpdateStatus);
 
@@ -162,7 +122,6 @@ export function useDataSync() {
           // Full data bundle on connect
           const data = message.data as {
             version?: number;
-            tasks?: { tasks: RawTaskData[]; total: number };
             recipes?: RawRecipeData[];
             skills?: RawSkillData[];
             community_recipes?: RawCommunityRecipeData[];
@@ -170,11 +129,6 @@ export function useDataSync() {
           console.log('[useDataSync] Received initial data, version:', data?.version);
           if (data) {
             // Transform all data from raw backend format to frontend format
-            const transformedTasks = data.tasks ? {
-              tasks: data.tasks.tasks.map(transformTaskData),
-              total: data.tasks.total,
-            } : undefined;
-
             const transformedRecipes = data.recipes
               ? data.recipes.map(transformRecipeData)
               : undefined;
@@ -189,45 +143,10 @@ export function useDataSync() {
 
             setDataFromPush({
               version: data.version,
-              tasks: transformedTasks,
               recipes: transformedRecipes,
               skills: transformedSkills,
               communityRecipes: transformedCommunityRecipes,
             });
-          }
-          break;
-        }
-
-        case MessageType.DATA_TASKS: {
-          // Tasks list updated
-          const data = message.data as {
-            version?: number;
-            data?: { tasks: RawTaskData[]; total: number };
-          };
-          console.log('[useDataSync] Received tasks update');
-          if (data?.data?.tasks) {
-            // Transform tasks from raw backend format to frontend format
-            const transformedTasks = {
-              tasks: data.data.tasks.map(transformTaskData),
-              total: data.data.total,
-            };
-
-            setDataFromPush({
-              version: data.version,
-              tasks: transformedTasks,
-            });
-          }
-          break;
-        }
-
-        case MessageType.DATA_DASHBOARD: {
-          const data = message.data as {
-            version?: number;
-            data?: DashboardData;
-          };
-          console.log('[useDataSync] Received dashboard update');
-          if (data?.data) {
-            setDashboard(data.data);
           }
           break;
         }
@@ -298,15 +217,13 @@ export function useDataSync() {
         }
       }
     },
-    [setDataFromPush, setTasks, setRecipes, setSkills, setCommunityRecipes, setDashboard, setVersionInfo, setUpdateStatus]
+    [setDataFromPush, setRecipes, setSkills, setCommunityRecipes, setVersionInfo, setUpdateStatus]
   );
 
   // Subscribe to data push messages
   const { isConnected } = useWebSocket({
     messageTypes: [
       MessageType.DATA_INITIAL,
-      MessageType.DATA_TASKS,
-      MessageType.DATA_DASHBOARD,
       MessageType.DATA_RECIPES,
       MessageType.DATA_SKILLS,
       MessageType.DATA_COMMUNITY_RECIPES,

@@ -7,15 +7,11 @@ Provides background session synchronization from Claude Code
 import asyncio
 import logging
 import threading
-import time
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Debounce delay for refresh requests
-DEBOUNCE_DELAY_SECONDS = 2.0
-
-# Sync interval in seconds (30s is sufficient — file watcher handles real-time)
+# Sync interval in seconds (30s is sufficient)
 SYNC_INTERVAL_SECONDS = 30
 
 
@@ -30,11 +26,6 @@ class SyncService:
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._last_result: dict[str, Any] | None = None
-
-        # Debounce state
-        self._pending_refresh: bool = False
-        self._last_refresh_time: float = 0.0
-        self._debounce_task: asyncio.Task | None = None
 
         # mtime cache: session_id -> last-seen mtime (float)
         # Persists across sync cycles so unchanged sessions skip read_metadata entirely
@@ -97,9 +88,6 @@ class SyncService:
                         f"updated={result.get('updated', 0)}"
                     )
 
-                    # Request debounced cache refresh
-                    await self.request_refresh()
-
             except Exception as e:
                 logger.warning(f"Session sync failed: {e}")
 
@@ -139,42 +127,6 @@ class SyncService:
             Last sync result or None
         """
         return self._last_result
-
-    async def request_refresh(self) -> None:
-        """Request a debounced cache refresh.
-
-        Multiple calls within DEBOUNCE_DELAY_SECONDS will be coalesced
-        into a single refresh operation.
-        """
-        self._pending_refresh = True
-
-        # If debounce task already scheduled and running, let it handle the refresh
-        if self._debounce_task is not None and not self._debounce_task.done():
-            logger.debug("Refresh already scheduled, coalescing request")
-            return
-
-        # Schedule debounced refresh
-        self._debounce_task = asyncio.create_task(self._debounced_refresh())
-
-    async def _debounced_refresh(self) -> None:
-        """Execute refresh after debounce delay."""
-        await asyncio.sleep(DEBOUNCE_DELAY_SECONDS)
-
-        if not self._pending_refresh:
-            return
-
-        self._pending_refresh = False
-        self._last_refresh_time = time.monotonic()
-
-        try:
-            from frago.server.state import StateManager
-
-            state_manager = StateManager.get_instance()
-            if state_manager.is_initialized():
-                logger.debug("Executing debounced state refresh")
-                await state_manager.refresh_tasks(broadcast=True)
-        except Exception as e:
-            logger.warning(f"Debounced refresh failed: {e}")
 
     @staticmethod
     def sync_now() -> dict[str, Any]:

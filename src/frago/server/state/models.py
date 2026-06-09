@@ -215,11 +215,6 @@ class ServerState:
     WebUI reads from this state, and all modifications go through StateManager.
     """
 
-    # Task data
-    tasks: List[TaskItem] = field(default_factory=list)
-    tasks_total: int = 0
-    task_details: Dict[str, TaskDetail] = field(default_factory=dict)
-
     # Recipe data
     recipes: List[Recipe] = field(default_factory=list)
     community_recipes: List[CommunityRecipe] = field(default_factory=list)
@@ -229,9 +224,6 @@ class ServerState:
 
     # Project data
     projects: List[Project] = field(default_factory=list)
-
-    # Dashboard data
-    dashboard: DashboardData = field(default_factory=DashboardData)
 
     # Config data
     config: UserConfig = field(default_factory=UserConfig)

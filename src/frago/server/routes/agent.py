@@ -29,12 +29,8 @@ async def _delayed_refresh() -> None:
     await asyncio.sleep(1.0)
     try:
         from frago.server.services.sync_service import SyncService
-        from frago.server.state import StateManager
 
         SyncService.sync_now()
-        state_manager = StateManager.get_instance()
-        if state_manager.is_initialized():
-            await state_manager.refresh_tasks(broadcast=True)
     except Exception:
         pass  # Best effort, don't fail the request
 

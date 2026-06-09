@@ -5,8 +5,6 @@
 import { create } from 'zustand';
 import i18n from '@/i18n';
 import type {
-  TaskItem,
-  TaskDetail,
   RecipeItem,
   SkillItem,
   UserConfig,
@@ -17,7 +15,6 @@ import type {
   VersionInfo,
   UpdateStatus,
 } from '@/types/pywebview';
-import type { DashboardData } from '@/api/client';
 import type { ConsoleMessage } from '@/types/console';
 import * as api from '@/api';
 
@@ -66,13 +63,10 @@ interface AppState {
 
   // Data cache
   config: UserConfig | null;
-  tasks: TaskItem[];
-  taskDetail: TaskDetail | null;
   recipes: RecipeItem[];
   communityRecipes: CommunityRecipeItem[];
   skills: SkillItem[];
   systemStatus: SystemStatus | null;
-  dashboard: DashboardData | null;
 
   // UI state
   isLoading: boolean;
@@ -112,9 +106,6 @@ interface AppState {
   setTheme: (theme: Theme) => void;
   setLanguage: (language: Language) => void;
   loadConfig: () => Promise<void>;
-  loadTasks: () => Promise<void>;
-  openTaskDetail: (sessionId: string) => Promise<void>;
-  setTaskDetail: (detail: TaskDetail) => void;
   loadRecipes: () => Promise<void>;
   loadSkills: () => Promise<void>;
   loadSystemStatus: () => Promise<void>;
@@ -123,17 +114,14 @@ interface AppState {
   dismissToast: (id: string) => void;
 
   // Data sync actions (for WebSocket push)
-  setTasks: (tasks: TaskItem[]) => void;
   setRecipes: (recipes: RecipeItem[]) => void;
   setCommunityRecipes: (recipes: CommunityRecipeItem[]) => void;
   setSkills: (skills: SkillItem[]) => void;
-  setDashboard: (dashboard: DashboardData) => void;
   loadCommunityRecipes: () => Promise<void>;
   setVersionInfo: (info: VersionInfo) => void;
   setUpdateStatus: (status: UpdateStatus | null) => void;
   setDataFromPush: (data: {
     version?: number;
-    tasks?: { tasks: TaskItem[]; total: number };
     recipes?: RecipeItem[];
     communityRecipes?: CommunityRecipeItem[];
     skills?: SkillItem[];
@@ -195,13 +183,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentProjectId: null,
   sidebarCollapsed: getInitialSidebarCollapsed(),
   config: null,
-  tasks: [],
-  taskDetail: null,
   recipes: [],
   communityRecipes: [],
   skills: [],
   systemStatus: null,
-  dashboard: null,
   isLoading: false,
   toasts: [],
   dataVersion: 0,
@@ -237,7 +222,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentTaskId: page === 'task_detail' ? id ?? null : null,
       currentRecipeName: page === 'recipe_detail' ? id ?? null : null,
       currentProjectId: page === 'project_detail' ? id ?? null : null,
-      taskDetail: page !== 'task_detail' ? null : get().taskDetail,
     });
   },
 
@@ -375,35 +359,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  // Load task list
-  loadTasks: async () => {
-    try {
-      const tasks = await api.getTasks({});
-      set({ tasks: tasks || [] });
-    } catch (error) {
-      console.error('Failed to load tasks:', error);
-    }
-  },
-
-  // Open task detail
-  openTaskDetail: async (sessionId) => {
-    set({ isLoading: true, currentPage: 'task_detail', currentTaskId: sessionId });
-    try {
-      // steps_limit = 0 means get all steps for frontend filtering
-      const taskDetail = await api.getTaskDetail(sessionId, 0, 0);
-      set({ taskDetail, isLoading: false });
-    } catch (error) {
-      console.error('Failed to load task detail:', error);
-      set({ isLoading: false });
-      get().showToast('Failed to load task details', 'error');
-    }
-  },
-
-  // Update task detail (for loading more steps)
-  setTaskDetail: (detail) => {
-    set({ taskDetail: detail });
-  },
-
   // Load recipe list
   loadRecipes: async () => {
     try {
@@ -475,10 +430,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   // Data sync actions (for WebSocket push)
-  setTasks: (tasks) => {
-    set({ tasks });
-  },
-
   setRecipes: (recipes) => {
     set({ recipes });
   },
@@ -489,10 +440,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSkills: (skills) => {
     set({ skills });
-  },
-
-  setDashboard: (dashboard) => {
-    set({ dashboard });
   },
 
   setVersionInfo: (versionInfo) => {
@@ -527,9 +474,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       dataInitialized: true,
     };
 
-    if (data.tasks) {
-      updates.tasks = data.tasks.tasks;
-    }
     if (data.recipes) {
       updates.recipes = data.recipes;
     }

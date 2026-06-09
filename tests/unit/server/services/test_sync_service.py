@@ -3,7 +3,7 @@
 Tests background session synchronization service.
 """
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -85,42 +85,6 @@ class TestSyncServiceStop:
 
         # Should not raise
         await service.stop()
-
-
-class TestSyncServiceRequestRefresh:
-    """Test SyncService.request_refresh() method."""
-
-    @pytest.mark.asyncio
-    async def test_request_refresh_sets_pending(self):
-        """request_refresh() should set pending flag."""
-        service = SyncService.get_instance()
-        service._pending_refresh = False
-
-        await service.request_refresh()
-
-        assert service._pending_refresh is True
-
-    @pytest.mark.asyncio
-    async def test_request_refresh_debounces(self):
-        """Multiple rapid requests should be debounced."""
-        service = SyncService.get_instance()
-
-        # Multiple rapid calls
-        await service.request_refresh()
-        await service.request_refresh()
-        await service.request_refresh()
-
-        # Only one pending
-        assert service._pending_refresh is True
-
-        # Cleanup any debounce tasks
-        if service._debounce_task:
-            service._debounce_task.cancel()
-            try:
-                await service._debounce_task
-            except asyncio.CancelledError:
-                pass
-            service._debounce_task = None
 
 
 class TestSyncServiceGetLastResult:

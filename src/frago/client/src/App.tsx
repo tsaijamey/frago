@@ -8,11 +8,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import MainLayout from '@/components/layout/MainLayout';
 
 // Pages
-import TimelinePage from '@/components/timeline/TimelinePage';
-import DashboardPage from '@/components/dashboard/DashboardPage';
 import ClaudeSessionsPage from '@/components/claudeSessions/ClaudeSessionsPage';
-import TaskList from '@/components/tasks/TaskList';
-import TaskDetail from '@/components/tasks/TaskDetail';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
 import SkillList from '@/components/skills/SkillList';
@@ -98,14 +94,6 @@ function App() {
     switch (currentPage) {
       case 'claude_sessions':
         return <ClaudeSessionsPage />;
-      case 'live':
-        return <TimelinePage />;
-      case 'dashboard':
-        return <DashboardPage />;
-      case 'tasks':
-        return <TaskList />;
-      case 'task_detail':
-        return <TaskDetail />;
       case 'recipes':
         return <RecipeList />;
       case 'recipe_detail':

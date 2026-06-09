@@ -20,7 +20,6 @@ from frago.server.routes import (
     agent_router,
     chrome_dashboard_router,
     config_router,
-    dashboard_router,
     files_router,
     github_star_router,
     guide_router,
@@ -29,13 +28,11 @@ from frago.server.routes import (
     settings_router,
     skills_router,
     system_router,
-    tasks_router,
     viewer_router,
     workspace_router,
 )
 from frago.server.services.community_recipe_service import CommunityRecipeService
 from frago.server.services.scheduler_service import SchedulerService
-from frago.server.services.sessions_watcher import SessionsWatcher
 from frago.server.services.sync_service import SyncService
 from frago.server.services.version_service import VersionCheckService
 from frago.server.state import StateManager
@@ -207,10 +204,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     sync_service = SyncService.get_instance()
     await sync_service.start()
 
-    # Start sessions watcher (watchdog-based real-time monitoring)
-    sessions_watcher = SessionsWatcher.get_instance()
-    await sessions_watcher.start()
-
     # Initialize and start community recipe service (60s refresh interval)
     community_service = CommunityRecipeService.get_instance()
     await community_service.initialize()  # Fetch first to populate initial data
@@ -287,7 +280,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await scheduler.stop()
     await version_service.stop()
     await community_service.stop()
-    await sessions_watcher.stop()
     await sync_service.stop()
 
 
@@ -424,9 +416,7 @@ def create_app(
 
     # Include API routers
     app.include_router(system_router, prefix="/api", tags=["system"])
-    app.include_router(dashboard_router, prefix="/api", tags=["dashboard"])
     app.include_router(recipes_router, prefix="/api", tags=["recipes"])
-    app.include_router(tasks_router, prefix="/api", tags=["tasks"])
     app.include_router(agent_router, prefix="/api", tags=["agent"])
     app.include_router(config_router, prefix="/api", tags=["config"])
     app.include_router(skills_router, prefix="/api", tags=["skills"])
@@ -445,9 +435,6 @@ def create_app(
 
     from frago.server.routes.pa import router as pa_router
     app.include_router(pa_router, prefix="/api", tags=["pa"])
-
-    from frago.server.routes.timeline import router as timeline_router
-    app.include_router(timeline_router, prefix="/api", tags=["timeline"])
 
     from frago.server.routes.claude_sessions import router as claude_sessions_router
     app.include_router(claude_sessions_router, prefix="/api", tags=["claude_sessions"])

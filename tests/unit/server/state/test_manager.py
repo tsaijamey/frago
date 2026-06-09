@@ -4,8 +4,7 @@ Tests unified state management with singleton pattern,
 initialization, data loading, and refresh mechanisms.
 """
 
-import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -53,34 +52,6 @@ class TestStateManagerSingleton:
 
 class TestStateManagerLoadMethods:
     """Test StateManager data loading methods."""
-
-    def test_load_tasks(self):
-        """_load_tasks should call TaskService.get_tasks."""
-        manager = StateManager.get_instance()
-
-        with patch(
-            "frago.server.services.task_service.TaskService.get_tasks"
-        ) as mock_get:
-            mock_get.return_value = {
-                "tasks": [{"id": "1", "title": "Test", "status": "running"}],
-                "total": 1,
-            }
-            result = manager._load_tasks()
-
-        assert result["total"] == 1
-        assert len(result["tasks"]) == 1
-
-    def test_load_tasks_handles_error(self):
-        """_load_tasks should return empty dict on error."""
-        manager = StateManager.get_instance()
-
-        with patch(
-            "frago.server.services.task_service.TaskService.get_tasks",
-            side_effect=Exception("Error"),
-        ):
-            result = manager._load_tasks()
-
-        assert result == {"tasks": [], "total": 0}
 
     def test_load_recipes(self):
         """_load_recipes should call RecipeService.get_recipes."""
@@ -153,11 +124,9 @@ class TestStateManagerInitialize:
         manager = StateManager.get_instance()
 
         with (
-            patch.object(manager, "_load_tasks", return_value={"tasks": [], "total": 0}),
             patch.object(manager, "_load_recipes", return_value=[]),
             patch.object(manager, "_load_skills", return_value=[]),
             patch.object(manager, "_load_projects", return_value=[]),
-            patch.object(manager, "_compute_dashboard", return_value=MagicMock()),
         ):
             await manager.initialize()
 
@@ -169,7 +138,7 @@ class TestStateManagerInitialize:
         manager = StateManager.get_instance()
         manager._initialized = True
 
-        with patch.object(manager, "_load_tasks") as mock_load:
+        with patch.object(manager, "_load_recipes") as mock_load:
             await manager.initialize()
 
         mock_load.assert_not_called()
@@ -181,11 +150,9 @@ class TestStateManagerInitialize:
         initial_version = manager.version
 
         with (
-            patch.object(manager, "_load_tasks", return_value={"tasks": [], "total": 0}),
             patch.object(manager, "_load_recipes", return_value=[]),
             patch.object(manager, "_load_skills", return_value=[]),
             patch.object(manager, "_load_projects", return_value=[]),
-            patch.object(manager, "_compute_dashboard", return_value=MagicMock()),
         ):
             await manager.initialize()
 
@@ -212,14 +179,6 @@ class TestStateManagerIsInitialized:
 
 class TestStateManagerDataAccess:
     """Test StateManager data access methods."""
-
-    def test_get_tasks_returns_state_tasks(self):
-        """get_tasks() should return state tasks."""
-        manager = StateManager.get_instance()
-
-        tasks = manager.get_tasks()
-
-        assert tasks == manager.state.tasks
 
     def test_get_recipes_returns_state_recipes(self):
         """get_recipes() should return state recipes."""

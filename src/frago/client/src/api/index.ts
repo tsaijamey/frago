@@ -8,10 +8,6 @@
 import * as pywebviewApi from './pywebview';
 import * as httpApi from './client';
 import type {
-  TaskItem,
-  TaskDetail,
-  TaskStepsResponse,
-  TaskStatus,
   RecipeItem,
   RecipeDetail,
   RecipeRunResponse,
@@ -77,132 +73,6 @@ export function isApiReady(): boolean {
 // ============================================================
 // Tasks API
 // ============================================================
-
-export async function getTasks(options?: {
-  limit?: number;
-  status?: TaskStatus;
-}): Promise<TaskItem[]> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.getTasks(options?.limit, options?.status);
-  }
-
-  // HTTP API - convert response format
-  const response = await httpApi.getTasks({
-    limit: options?.limit,
-    status: options?.status ?? undefined,
-  });
-
-  // Map HTTP response to pywebview format
-  return response.tasks.map((t) => ({
-    session_id: t.id,
-    name: t.title,
-    status: t.status as TaskStatus,
-    started_at: t.started_at,
-    ended_at: t.completed_at,
-    duration_ms: t.duration_ms ?? 0,
-    step_count: t.step_count ?? 0,
-    tool_call_count: t.tool_call_count ?? 0,
-    last_activity: t.started_at,
-    project_path: t.project_path ?? '',
-    source: (t.source ?? 'unknown') as TaskItem['source'],
-  }));
-}
-
-export async function getTaskDetail(
-  sessionId: string,
-  stepsLimit?: number,
-  stepsOffset?: number
-): Promise<TaskDetail> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.getTaskDetail(sessionId, stepsLimit, stepsOffset);
-  }
-
-  // HTTP API
-  const task = await httpApi.getTask(sessionId);
-
-  return {
-    session_id: task.id,
-    name: task.title,
-    status: task.status as TaskStatus,
-    started_at: task.started_at ?? '',
-    ended_at: task.completed_at ?? null,
-    duration_ms: task.duration_ms ?? task.summary?.total_duration_ms ?? 0,
-    project_path: task.project_path ?? '',
-    step_count: task.step_count ?? task.steps.length,
-    tool_call_count: task.tool_call_count ?? task.summary?.tool_call_count ?? 0,
-    user_message_count: task.summary?.user_message_count ?? 0,
-    assistant_message_count: task.summary?.assistant_message_count ?? 0,
-    // Backend returns steps in reverse order (newest first), reverse to chronological order
-    steps: task.steps.map((s, i) => ({
-      step_id: i,
-      type: s.type as TaskDetail['steps'][0]['type'],
-      timestamp: s.timestamp,
-      content: s.content,
-      tool_name: s.tool_name,
-      tool_call_id: s.tool_call_id ?? undefined,
-      tool_status: null,
-    })).reverse(),
-    steps_total: task.steps_total ?? task.steps.length,
-    steps_offset: task.steps_offset ?? 0,
-    has_more_steps: task.has_more_steps ?? false,
-    summary: task.summary
-      ? {
-          total_duration_ms: task.summary.total_duration_ms,
-          user_message_count: task.summary.user_message_count,
-          assistant_message_count: task.summary.assistant_message_count,
-          tool_call_count: task.summary.tool_call_count,
-          tool_success_count: task.summary.tool_success_count,
-          tool_error_count: task.summary.tool_error_count,
-          most_used_tools: task.summary.most_used_tools,
-        }
-      : null,
-  };
-}
-
-export interface GenerateTitleResponse {
-  status: 'ok' | 'error';
-  title?: string;
-  error?: string;
-}
-
-export async function generateTaskTitle(
-  sessionId: string
-): Promise<GenerateTitleResponse> {
-  if (isPywebviewMode()) {
-    // Not supported in pywebview mode
-    return { status: 'error', error: 'Not supported in pywebview mode' };
-  }
-
-  return httpApi.generateTaskTitle(sessionId);
-}
-
-export async function getTaskSteps(
-  sessionId: string,
-  offset?: number,
-  limit?: number
-): Promise<TaskStepsResponse> {
-  if (isPywebviewMode()) {
-    return pywebviewApi.getTaskSteps(sessionId, offset, limit);
-  }
-
-  const response = await httpApi.getTaskSteps(sessionId, { offset, limit });
-
-  return {
-    // Backend returns steps in reverse order (newest first), reverse to chronological order
-    steps: response.steps.map((s, i) => ({
-      step_id: i + (offset ?? 0),
-      type: s.type as TaskStepsResponse['steps'][0]['type'],
-      timestamp: s.timestamp,
-      content: s.content,
-      tool_name: s.tool_name,
-      tool_call_id: s.tool_call_id ?? undefined,
-      tool_status: null,
-    })).reverse(),
-    total: response.total,
-    offset: offset ?? 0,
-    has_more: response.has_more,
-  };
-}
 
 export async function startAgentTask(
   prompt: string
@@ -714,25 +584,6 @@ export async function openConfigInVSCode(): Promise<ApiResponse> {
   return httpApi.openConfigInVSCode();
 }
 
-// ============================================================
-// Dashboard API
-// ============================================================
-
-export type {
-  RunningTaskSummary,
-  RecentTaskSummary,
-  QuickRecipeItem,
-  DashboardResourceCounts,
-  DashboardStatus,
-  DashboardData,
-} from './client';
-
-export async function getDashboard(): Promise<httpApi.DashboardData> {
-  if (isPywebviewMode()) {
-    throw new Error('Dashboard API not available in pywebview mode');
-  }
-  return httpApi.getDashboard();
-}
 
 // ============================================================
 // Claude Code Sessions API

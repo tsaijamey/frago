@@ -1,16 +1,13 @@
 """Tests for recipe usage tracker."""
 
 import json
-from unittest.mock import patch, MagicMock
 
 import pytest
 
 from frago.recipes.usage_tracker import (
-    record_usage,
-    get_usage,
     get_top_recipes,
-    _load_usage,
-    USAGE_FILE,
+    get_usage,
+    record_usage,
 )
 
 
@@ -81,55 +78,3 @@ class TestGetTopRecipes:
         assert result == []
 
 
-class TestExtractErrorSummary:
-    """Test TaskService.extract_error_summary."""
-
-    def test_returns_error_content(self):
-        from frago.server.services.task_service import TaskService
-
-        mock_step = MagicMock()
-        mock_step.content_summary = "Error: Chrome disconnected during navigation"
-
-        with patch(
-            "frago.server.services.task_service.TaskService.extract_error_summary"
-        ) as mock_method:
-            # Direct test of the logic
-            pass
-
-        # Test actual method with mocked storage
-        with patch("frago.session.storage.read_steps_paginated") as mock_read:
-            mock_read.return_value = {"steps": [mock_step]}
-            result = TaskService.extract_error_summary("fake-session-id")
-            assert result is not None
-            assert "Error" in result
-
-    def test_returns_none_for_no_error(self):
-        from frago.server.services.task_service import TaskService
-
-        mock_step = MagicMock()
-        mock_step.content_summary = "Successfully completed all steps"
-
-        with patch("frago.session.storage.read_steps_paginated") as mock_read:
-            mock_read.return_value = {"steps": [mock_step]}
-            result = TaskService.extract_error_summary("fake-session-id")
-            assert result is None
-
-    def test_truncates_to_100_chars(self):
-        from frago.server.services.task_service import TaskService
-
-        mock_step = MagicMock()
-        mock_step.content_summary = "Error: " + "x" * 200
-
-        with patch("frago.session.storage.read_steps_paginated") as mock_read:
-            mock_read.return_value = {"steps": [mock_step]}
-            result = TaskService.extract_error_summary("fake-session-id")
-            assert result is not None
-            assert len(result) <= 100
-
-    def test_handles_exception_gracefully(self):
-        from frago.server.services.task_service import TaskService
-
-        with patch("frago.session.storage.read_steps_paginated") as mock_read:
-            mock_read.side_effect = Exception("Storage error")
-            result = TaskService.extract_error_summary("fake-session-id")
-            assert result is None
