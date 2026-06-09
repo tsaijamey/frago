@@ -253,42 +253,63 @@ def task_awaiting(as_json: bool):
 @task_group.command(name="active", cls=AgentFriendlyCommand)
 @click.option("--json", "as_json", is_flag=True, default=False)
 def task_active(as_json: bool):
-    """List Tasks in status in {queued, executing}.
+    """Active tasks (queued/executing) with OS-verified sub-agent liveness.
 
-    Helps diagnose sub-agent stalled / executor backlog.
+    Answers "are there truly-alive sub-agents right now" in one shot — no
+    manual ps/grep dance. Each executing task's recorded pid is checked
+    against the live process table, so a task still marked ``executing`` whose
+    claude subprocess already died is flagged ``stale`` (process gone, board
+    never flipped) instead of being counted as live. Reads the board offline,
+    so it works even when the server is down or unresponsive.
 
     Examples:
       frago task active
-      frago task active --json
+      frago task active --json | jq '.alive_count'
     """
-    board, _ = _fold_board_offline()
-    rows: list[dict] = []
-    active_set = {"queued", "executing"}
-    if board is not None:
-        for t in board.view_for_pa().get("threads", []):
-            for m in t.get("msgs", []):
-                for tk in m.get("tasks", []):
-                    if tk.get("status") not in active_set:
-                        continue
-                    rows.append({
-                        "thread_id": t.get("id"),
-                        "msg_id": m.get("id"),
-                        "task_id": tk.get("id"),
-                        "type": tk.get("type"),
-                        "status": tk.get("status"),
-                    })
+    from frago.server.services.task_lifecycle import list_active_agents
 
-    payload = {"count": len(rows), "active": rows}
+    board, _ = _fold_board_offline()
+    rows = list_active_agents(board) if board is not None else []
+
+    alive = [r for r in rows if r["alive"]]
+    stale = [r for r in rows if r["stale"]]
+    executing = [r for r in rows if r["status"] == "executing"]
+
     if as_json:
+        payload = {
+            "alive_count": len(alive),
+            "executing_count": len(executing),
+            "stale_count": len(stale),
+            "active": rows,
+        }
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
+
     if not rows:
+        click.echo("live sub-agents: 0 alive")
         click.echo("(no active tasks: queued or executing)")
         return
+
+    headline = f"live sub-agents: {len(alive)} alive"
+    if executing:
+        headline += f" / {len(executing)} executing"
+    if stale:
+        headline += (
+            f" — {len(stale)} stale (board says executing but the process is gone)"
+        )
+    click.echo(headline)
+
     for r in rows:
+        if r["alive"]:
+            mark = "● alive"
+        elif r["stale"]:
+            mark = "○ STALE"
+        else:  # queued — not launched yet
+            mark = "· queued"
+        pid_str = f"pid={r['pid']}" if r["pid"] is not None else "pid=-"
         click.echo(
-            f"active {r['task_id']} type={r.get('type', '?')} status={r.get('status', '?')} "
-            f"msg={r.get('msg_id', '?')}"
+            f"{mark}  task={r['task_id']} type={r.get('type', '?')} "
+            f"status={r['status']} {pid_str} msg={r.get('msg_id', '?')}"
         )
 
 

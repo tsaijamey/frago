@@ -88,6 +88,46 @@ def _board_task_to_view(board, task_id: str) -> TaskView | None:
     )
 
 
+def list_active_agents(board) -> list[dict[str, Any]]:
+    """Active (queued/executing) tasks joined with OS-verified process liveness.
+
+    One-shot ground truth for "are there truly-alive sub-agents right now",
+    so callers don't fall back to scanning ``ps`` by hand. ``frago session
+    list``'s "Running" and the board's ``executing`` status are inferred or
+    stored state — a task can read ``executing`` long after its claude
+    subprocess died because nothing reconciled the status against the OS. Here
+    every executing task's recorded pid is checked against the live process
+    table, so a dead-but-not-flipped task surfaces as ``alive=False`` /
+    ``stale=True`` instead of masquerading as live.
+
+    ``alive`` uses the exact definition the recovery path trusts (status ==
+    "executing" AND pid set AND pid exists). Queued tasks have no pid yet —
+    not launched — so they are never ``alive`` nor ``stale``.
+    """
+    rows: list[dict[str, Any]] = []
+    for task in board.get_queued_tasks() + board.get_executing_tasks():
+        pid = task.session.pid if task.session else None
+        alive = bool(task.status == "executing" and pid and _pid_alive(pid))
+        msg = board.get_msg_for_task(task.task_id)
+        thread = board.get_thread_for_task(task.task_id)
+        rows.append(
+            {
+                "task_id": task.task_id,
+                "type": task.type,
+                "status": task.status,
+                "pid": pid,
+                "alive": alive,
+                "stale": task.status == "executing" and not alive,
+                "thread_id": thread.thread_id if thread else None,
+                "msg_id": msg.msg_id if msg else None,
+                "claude_session_id": (
+                    task.session.claude_session_id if task.session else None
+                ),
+            }
+        )
+    return rows
+
+
 class TaskLifecycle:
     """Single coordination point for task state transitions.
 
