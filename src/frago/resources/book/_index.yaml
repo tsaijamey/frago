@@ -21,7 +21,7 @@
 
 - name: frago-principle-extend
   category: better
-  brief: "重复路由→{{frago_launcher}} hook-rules add；重复知识→{{frago_launcher}} def save；重复工作流→recipe；不要硬编码进 Rust"
+  brief: "重复路由→{{frago_launcher}} hook-rules add；重复知识→{{frago_launcher}} <domain> save；重复工作流→recipe；不要硬编码进 Rust"
 
 # 替代类 — 不遵守会出错
 - name: must-browser-search
@@ -62,12 +62,12 @@
 
 - name: must-no-auto-memory
   category: must
-  brief: "禁用 Claude Code auto memory，结构化沉淀走 {{frago_launcher}} def save，忽略 MEMORY.md"
+  brief: "禁用 Claude Code auto memory，结构化沉淀走 {{frago_launcher}} <domain> save，忽略 MEMORY.md"
 
 # 偏好类 — 有更好的方式
 - name: better-structured-data
   category: better
-  brief: "结构化数据存取用 {{frago_launcher}} def，比手写 JSON 更规范"
+  brief: "结构化数据用 {{frago_launcher}} def 注册域、`<domain>` 存取，比手写 JSON 更规范"
 
 - name: better-git-checkout
   category: better
@@ -116,4 +116,4 @@
 
 - name: def-knowledge
   category: available
-  brief: "{{frago_launcher}} def 结构化知识系统：domain 注册、find 查询、save 沉淀"
+  brief: "{{frago_launcher}} def 结构化知识系统：domain 注册、`<domain>` find 查询、`<domain>` save 沉淀"

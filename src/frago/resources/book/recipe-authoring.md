@@ -125,7 +125,7 @@ chrome-js runtime 不注入 FRAGO_SECRETS（浏览器环境无法访问）。如
 
 ## Recipe 内调 frago CLI（subprocess）
 
-recipe 子进程里要调 `frago chrome navigate` / `frago def find` 等命令时，**禁止裸写 `["frago", ...]` 或 `["uv", "run", "frago", ...]`**——前者依赖 PATH，后者假设 uv 在 PATH 且 cwd 是 frago 项目，pip 安装或 systemd 派生场景都会失败无声。
+recipe 子进程里要调 `frago chrome navigate` / `frago <domain> find` 等命令时，**禁止裸写 `["frago", ...]` 或 `["uv", "run", "frago", ...]`**——前者依赖 PATH，后者假设 uv 在 PATH 且 cwd 是 frago 项目，pip 安装或 systemd 派生场景都会失败无声。
 
 server 在启动时把 launcher argv 写进 `FRAGO_LAUNCHER` 环境变量（JSON 编码的 argv 列表，如 `["uv","run","--project","/abs/path","frago"]` 或 `["/abs/path/.venv/bin/frago"]`），子进程默认继承。recipe 这样调：
 

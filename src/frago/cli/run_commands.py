@@ -763,7 +763,7 @@ def _resolve_insight_domain(explicit: str | None) -> str:
         if hit and hit != normalize_domain_name(explicit):
             click.echo(
                 f"[domain] '--domain {explicit}' 命中 canonical 域 '{hit}'，"
-                f"知识将并入该域；如需独立域请先 `frago def save domain_dict.<name>` 注册",
+                f"知识将并入该域；如需独立域请先 `frago domain_dict save --name=<name> --data='{{\"aliases\":[...]}}'` 注册",
                 err=True,
             )
         return normalized
