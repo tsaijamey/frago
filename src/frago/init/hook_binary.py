@@ -7,6 +7,7 @@ Also syncs hook event registration in settings.json based on what
 the binary reports via --supported-events.
 """
 
+import filecmp
 import json
 import logging
 import platform
@@ -96,7 +97,7 @@ def deploy_hook_binary(force: bool = False) -> Path:
     dst_dir = get_hook_deploy_dir()
     dst = dst_dir / get_binary_name()
 
-    if dst.exists() and not force and dst.stat().st_size == src.stat().st_size:
+    if dst.exists() and not force and filecmp.cmp(src, dst, shallow=False):
         return dst
 
     shutil.copy2(src, dst)
