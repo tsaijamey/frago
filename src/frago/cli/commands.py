@@ -866,6 +866,9 @@ def _print_msg(
         action_type: Action type (navigation/interaction/screenshot/extraction/other)
         log_data: Additional log data
     """
+    # JS-side UTF-16 truncation can leave lone surrogates in extracted text;
+    # they crash utf-8 encoding on echo and on log write, so sanitize here.
+    message = message.encode("utf-8", errors="replace").decode("utf-8")
     click.echo(f"{_format_ts()}, {status}, {message}")
 
     # Auto write to run log
