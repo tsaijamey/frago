@@ -53,6 +53,81 @@ def _extract_text(content: Any) -> str:
     return ""
 
 
+def _stringify_tool_result(content: Any) -> str:
+    """Flatten a tool_result ``content`` (str or list of blocks) into text.
+
+    Tool results may be a plain string or a list of content blocks (text and/or
+    image references). Full content is preserved — never truncated.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif block.get("type") == "image":
+                    parts.append("[image]")
+        return "\n".join(parts)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _extract_blocks(content: Any) -> list[dict[str, Any]]:
+    """Parse a message ``content`` into typed blocks for the detail view.
+
+    Preserves every block — text, thinking, tool_use (name + full input) and
+    tool_result (full output) — so the panel can show all session data, not just
+    the assistant's prose.
+    """
+    blocks: list[dict[str, Any]] = []
+    if isinstance(content, str):
+        if content.strip():
+            blocks.append({"type": "text", "text": content})
+        return blocks
+    if not isinstance(content, list):
+        return blocks
+    for block in content:
+        if isinstance(block, str):
+            if block.strip():
+                blocks.append({"type": "text", "text": block})
+            continue
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            text = block.get("text", "")
+            if text:
+                blocks.append({"type": "text", "text": text})
+        elif btype == "thinking":
+            blocks.append({"type": "thinking", "text": block.get("thinking", "")})
+        elif btype == "tool_use":
+            blocks.append(
+                {
+                    "type": "tool_use",
+                    "name": block.get("name", ""),
+                    "tool_input": block.get("input"),
+                    "tool_id": block.get("id"),
+                }
+            )
+        elif btype == "tool_result":
+            blocks.append(
+                {
+                    "type": "tool_result",
+                    "content": _stringify_tool_result(block.get("content")),
+                    "is_error": bool(block.get("is_error", False)),
+                    "tool_id": block.get("tool_use_id"),
+                }
+            )
+        elif btype == "image":
+            blocks.append({"type": "image"})
+    return blocks
+
+
 def _classify_human(slug: str | None, first_user_text: str | None) -> tuple[str, str]:
     """Return (classification, reason) where classification is human|maybe|agent.
 
@@ -334,13 +409,16 @@ def read_session_messages(
                 if record.get("isMeta"):
                     continue
                 msg = record.get("message") or {}
-                text = _extract_text(msg.get("content", "")).strip()
-                if not text:
+                content = msg.get("content", "")
+                blocks = _extract_blocks(content)
+                if not blocks:
                     continue
+                text = _extract_text(content).strip()
                 messages.append(
                     {
                         "role": rtype,
                         "text": text,
+                        "blocks": blocks,
                         "timestamp": record.get("timestamp"),
                     }
                 )
