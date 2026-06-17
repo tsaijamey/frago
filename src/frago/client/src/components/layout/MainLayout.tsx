@@ -1,13 +1,13 @@
 /**
  * MainLayout Component
  *
- * New layout: TopBar + full-width content + docked BottomDock bar.
- * No sidebar — navigation lives in the dock.
+ * Layout: TopBar across the top + left icon-rail Sidebar + content area.
+ * Navigation lives in the left rail (collapsed to icons, expands on hover).
  */
 
 import { ReactNode } from 'react';
 import TopBar from './TopBar';
-import BottomDock from './BottomDock';
+import Sidebar from './Sidebar';
 import VersionBanner from './VersionBanner';
 
 interface MainLayoutProps {
@@ -23,17 +23,17 @@ export default function MainLayout({ children }: MainLayoutProps) {
       {/* Top status bar */}
       <TopBar />
 
-      <div className="main-layout main-layout--no-sidebar">
-        {/* Content Area — full width */}
-        <div className="content-area content-area--full">
+      <div className="main-layout">
+        {/* Left icon-rail navigation */}
+        <Sidebar />
+
+        {/* Content Area */}
+        <div className="content-area">
           <main className="main-content">
             {children}
           </main>
         </div>
       </div>
-
-      {/* Docked bottom navigation bar */}
-      <BottomDock />
     </div>
   );
 }

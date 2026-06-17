@@ -1268,9 +1268,22 @@ export interface ClaudeSessionsResponse {
   sessions: ClaudeSessionItem[];
 }
 
+export interface ClaudeSessionBlock {
+  type: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'image';
+  text?: string;
+  // tool_use
+  name?: string;
+  tool_input?: unknown;
+  tool_id?: string | null;
+  // tool_result
+  content?: string;
+  is_error?: boolean;
+}
+
 export interface ClaudeSessionMessage {
   role: 'user' | 'assistant';
   text: string;
+  blocks?: ClaudeSessionBlock[];
   timestamp: string | null;
 }
 

@@ -594,6 +594,7 @@ export type {
   ClaudeSessionItem,
   ClaudeSessionsResponse,
   ClaudeSessionMessage,
+  ClaudeSessionBlock,
   ClaudeSessionDetail,
 } from './client';
 

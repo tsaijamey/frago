@@ -23,6 +23,9 @@ import {
   MessageSquare,
   FolderGit2,
   Clock,
+  Wrench,
+  Terminal,
+  Brain,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { getClaudeSessions, getClaudeSessionDetail } from '@/api';
@@ -30,7 +33,46 @@ import type {
   ClaudeSessionItem,
   ClaudeSessionHuman,
   ClaudeSessionDetail,
+  ClaudeSessionBlock,
 } from '@/api/client';
+
+function MessageBlock({ block }: { block: ClaudeSessionBlock }) {
+  switch (block.type) {
+    case 'text':
+      return <div className="cs-msg-text">{block.text}</div>;
+    case 'thinking':
+      return (
+        <details className="cs-block cs-block--thinking">
+          <summary className="cs-block-summary"><Brain size={12} /> thinking</summary>
+          <pre className="cs-block-body">{block.text}</pre>
+        </details>
+      );
+    case 'tool_use': {
+      const input = typeof block.tool_input === 'string'
+        ? block.tool_input
+        : JSON.stringify(block.tool_input ?? {}, null, 2);
+      return (
+        <details className="cs-block cs-block--tool">
+          <summary className="cs-block-summary"><Wrench size={12} /> {block.name || 'tool'}</summary>
+          <pre className="cs-block-body">{input}</pre>
+        </details>
+      );
+    }
+    case 'tool_result':
+      return (
+        <details className={`cs-block cs-block--result ${block.is_error ? 'cs-block--error' : ''}`}>
+          <summary className="cs-block-summary">
+            <Terminal size={12} /> {block.is_error ? 'tool error' : 'tool result'}
+          </summary>
+          <pre className="cs-block-body">{block.content}</pre>
+        </details>
+      );
+    case 'image':
+      return <div className="cs-msg-text cs-block-image">[image]</div>;
+    default:
+      return null;
+  }
+}
 
 const DAY_OPTIONS = [1, 7, 14, 30];
 
@@ -360,15 +402,29 @@ export default function ClaudeSessionsPage() {
               {detailLoading ? (
                 <div className="cs-drawer-loading">{t('claudeSessions.loadingDetail')}</div>
               ) : detail && detail.messages.length > 0 ? (
-                detail.messages.map((m, i) => (
-                  <div key={i} className={`cs-msg cs-msg-${m.role}`}>
-                    <div className="cs-msg-role">
-                      {m.role === 'user' ? <User size={12} /> : <Bot size={12} />}
-                      <span>{m.role}</span>
+                detail.messages.map((m, i) => {
+                  const blocks = m.blocks && m.blocks.length > 0
+                    ? m.blocks
+                    : [{ type: 'text' as const, text: m.text }];
+                  // A "user" message carrying only tool results is the tool talking
+                  // back, not the human — label it accordingly.
+                  const isToolReturn = m.role === 'user'
+                    && blocks.every((b) => b.type === 'tool_result');
+                  const displayRole = isToolReturn ? 'tool' : m.role;
+                  return (
+                    <div key={i} className={`cs-msg cs-msg-${displayRole}`}>
+                      <div className="cs-msg-role">
+                        {displayRole === 'user' ? <User size={12} />
+                          : displayRole === 'tool' ? <Terminal size={12} />
+                          : <Bot size={12} />}
+                        <span>{displayRole}</span>
+                      </div>
+                      {blocks.map((b, j) => (
+                        <MessageBlock key={j} block={b} />
+                      ))}
                     </div>
-                    <div className="cs-msg-text">{m.text}</div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="cs-drawer-loading">{t('claudeSessions.noMessages')}</div>
               )}
