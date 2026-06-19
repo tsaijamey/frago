@@ -69,6 +69,8 @@ class AgentRecipe:
     done_signal: PaneMatcher
     extract: Callable[[str], str]
     exception_handlers: list[ExceptionHandler] = field(default_factory=list)
+    # 运行期遇到认证墙/权限门/澄清门时命中；driver 据此把本轮判为 needs_input。
+    needs_input_signal: PaneMatcher | None = None
 
 
 _REGISTRY: dict[str, AgentRecipe] = {}

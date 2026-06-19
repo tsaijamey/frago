@@ -9,6 +9,7 @@ NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 Agent
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import time
 from collections.abc import Callable
@@ -153,34 +154,47 @@ class TmuxAgentSession:
         self.status = "busy"
         pre_snapshot = self.capture_pane()
         self.recipe.submit(self, prompt)
-        done = self._wait_for(self.recipe.done_signal.matches, timeout_s)
+        # 轮询直到本轮答完 / 撞上 needs_input 门（认证墙、权限门、澄清门）/ 超时。
+        needs_input = self.recipe.needs_input_signal
+        outcome = self._wait_for_any(
+            {
+                "ok": self.recipe.done_signal.matches,
+                **({"needs_input": needs_input.matches} if needs_input else {}),
+            },
+            timeout_s,
+        )
         scrollback = self.capture_pane(full=True)
         delta = _compute_delta(pre_snapshot, scrollback)
         duration_ms = int((self._clock() - start) * 1000)
         self.status = "idle"
-        if not done:
-            return TurnResult(
-                text=self.recipe.extract(delta),
-                raw_delta=delta,
-                status="timeout",
-                duration_ms=duration_ms,
-            )
+        status: Literal["ok", "timeout", "needs_input", "error"] = outcome or "timeout"
         return TurnResult(
             text=self.recipe.extract(delta),
             raw_delta=delta,
-            status="ok",
+            status=status,
             duration_ms=duration_ms,
         )
 
     # ── 轮询辅助 ───────────────────────────────────────────────────
     def _wait_for(self, predicate: Callable[[str], bool], timeout_s: float) -> bool:
         """轮询 pane 直到 predicate 命中或超时；命中返回 True，超时 False。"""
+        return self._wait_for_any({"hit": predicate}, timeout_s) == "hit"
+
+    def _wait_for_any(
+        self, predicates: dict[str, Callable[[str], bool]], timeout_s: float
+    ) -> str | None:
+        """轮询 pane，命中任一 predicate 返回其 key；超时返回 None。
+
+        同屏多个命中时按 predicates 的插入顺序取第一个（done 优先于 needs_input）。
+        """
         deadline = self._clock() + timeout_s
         while True:
-            if predicate(self.capture_pane()):
-                return True
+            pane = self.capture_pane()
+            for key, predicate in predicates.items():
+                if predicate(pane):
+                    return key
             if self._clock() >= deadline:
-                return False
+                return None
             self._sleep(self._poll_interval_s)
 
 
@@ -199,3 +213,26 @@ class AgentSessionDriver:
         )
         session.open()
         return session
+
+    def run(
+        self,
+        prompt: str,
+        *,
+        agent_type: str,
+        session_id: str,
+        cwd: str,
+        keep_alive: bool = False,
+        timeout_s: float = 120.0,
+    ) -> TurnResult:
+        """开会话（或复用）→ 投喂一轮 → 取归一化结果。
+
+        Phase 1 无 warm pool，默认每次开新会话并在结束后 kill；keep_alive=True
+        时保活会话供后续复用（Phase 3 warm pool 的雏形）。
+        """
+        session = self.open_session(agent_type, session_id, cwd)
+        try:
+            return session.send(prompt, timeout_s=timeout_s)
+        finally:
+            if not keep_alive:
+                with contextlib.suppress(Exception):
+                    session.close()
