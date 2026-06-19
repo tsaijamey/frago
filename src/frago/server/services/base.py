@@ -19,15 +19,22 @@ from frago.compat import get_windows_subprocess_kwargs, prepare_command_for_wind
 logger = logging.getLogger(__name__)
 
 
-def get_claude_command() -> List[str]:
-    """Get the command to run Claude CLI without console window flash on Windows.
+def get_agent_command(agent_type: str = "claude") -> List[str]:
+    """Get the command to run a cli-agent without console window flash on Windows.
 
-    On Windows, claude is installed as a .CMD file which causes console window flash.
-    This function returns the direct node.exe + cli.js command to avoid that.
+    On Windows, claude is installed as a .CMD file which causes console window flash;
+    this returns the direct node.exe + cli.js command to avoid that. Other agents
+    return their bare binary name (Windows flash workaround is claude-specific).
+
+    Args:
+        agent_type: which cli-agent ("claude" / "opencode" / "codex")
 
     Returns:
-        Command list to execute Claude CLI
+        Command list to execute the agent CLI
     """
+    if agent_type != "claude":
+        return [agent_type]
+
     if platform.system() != "Windows":
         return ["claude"]
 
@@ -56,6 +63,11 @@ def get_claude_command() -> List[str]:
         node_exe = Path(node_exe_path)
 
     return [str(node_exe), str(cli_js)]
+
+
+def get_claude_command() -> List[str]:
+    """Thin backward-compatible wrapper over get_agent_command("claude")."""
+    return get_agent_command("claude")
 
 
 def get_gh_command() -> List[str]:

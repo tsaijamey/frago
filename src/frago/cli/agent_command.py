@@ -57,14 +57,73 @@ def load_frago_config() -> dict | None:
 # Utility Functions
 # =============================================================================
 
-def find_claude_cli() -> str | None:
+def find_agent_cli(agent_type: str = "claude") -> str | None:
     """
-    Find claude CLI path
+    Find a cli-agent executable path (parameterized; delegates to compat).
 
     Returns:
-        claude executable path, or None if not found
+        agent executable path, or None if not found
     """
-    return shutil.which("claude")
+    from frago.compat import find_agent_cli as _compat_find_agent_cli
+
+    return _compat_find_agent_cli(agent_type)
+
+
+def find_claude_cli() -> str | None:
+    """Thin backward-compatible wrapper over find_agent_cli("claude")."""
+    return find_agent_cli("claude")
+
+
+def _run_tmux_driver(
+    prompt_text: str,
+    *,
+    agent_type: str,
+    session_id: str | None,
+    cwd: str,
+    timeout: int,
+    quiet: bool,
+    dry_run: bool,
+) -> None:
+    """Drive a resident tmux TUI session via AgentSessionDriver (one turn).
+
+    Phase 1: no warm pool yet — opens a fresh session, sends one turn, closes.
+    The legacy claude -p backend remains the default; this path is opt-in via
+    --driver tmux and shares no code with it.
+    """
+    from frago.agent_driver import AgentSessionDriver
+
+    sid = session_id or str(uuid.uuid4())
+    if not quiet:
+        click.echo(f"[OK] tmux driver: agent={agent_type} session={sid}")
+    if dry_run:
+        click.echo("[Dry Run] Skip actual execution")
+        return
+
+    driver = AgentSessionDriver()
+    try:
+        result = driver.run(
+            prompt_text,
+            agent_type=agent_type,
+            session_id=sid,
+            cwd=cwd,
+            timeout_s=float(timeout),
+        )
+    except KeyError:
+        click.echo(f"Error: no recipe registered for agent-type {agent_type!r}", err=True)
+        sys.exit(1)
+    except FileNotFoundError:
+        click.echo("Error: tmux not found. Please install tmux first.", err=True)
+        sys.exit(1)
+
+    if result.status == "needs_input":
+        click.echo(result.text)
+        click.echo("[!] Agent needs input (auth wall / permission / clarification)", err=True)
+        sys.exit(2)
+    if result.status == "timeout":
+        click.echo(result.text)
+        click.echo(f"[!] Turn timed out after {timeout}s", err=True)
+        sys.exit(1)
+    click.echo(result.text)
 
 
 def check_ccr_auth() -> tuple[bool, dict | None]:
@@ -285,6 +344,18 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
     default=None,
     help="Override API key (ANTHROPIC_AUTH_TOKEN), takes precedence over profile/CCR"
 )
+@click.option(
+    "--agent-type",
+    type=str,
+    default="claude",
+    help="Which cli-agent to drive (claude / opencode / codex). Default: claude"
+)
+@click.option(
+    "--driver",
+    type=click.Choice(["claude-p", "tmux"]),
+    default="claude-p",
+    help="Execution backend: claude-p (legacy headless, default) or tmux (resident TUI session)"
+)
 def agent(
     prompt: tuple,
     prompt_file,
@@ -303,6 +374,8 @@ def agent(
     passthrough: bool,
     endpoint: str | None,
     api_key: str | None,
+    agent_type: str,
+    driver: str,
 ):
     """
     Intelligent Agent: Execute tasks via Claude Code session
@@ -330,10 +403,24 @@ def agent(
         click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
-    # Step 1: Check if claude CLI exists
-    claude_path = find_claude_cli()
+    # tmux backend: resident TUI session driven by AgentSessionDriver.
+    # Legacy claude -p path stays the default and is left fully intact below.
+    if driver == "tmux":
+        _run_tmux_driver(
+            prompt_text,
+            agent_type=agent_type,
+            session_id=session_id,
+            cwd=os.getcwd(),
+            timeout=timeout,
+            quiet=quiet,
+            dry_run=dry_run,
+        )
+        return
+
+    # Step 1: Check if agent CLI exists
+    claude_path = find_agent_cli(agent_type)
     if not claude_path:
-        click.echo("Error: claude CLI not found", err=True)
+        click.echo(f"Error: {agent_type} CLI not found", err=True)
         click.echo("Please install Claude Code first: https://claude.ai/code", err=True)
         sys.exit(1)
 

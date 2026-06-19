@@ -93,6 +93,36 @@ def _search_node_version_dirs(base_dir: str, subpath: str, executable: str) -> O
     return None
 
 
+_AGENT_BINARY = {
+    "claude": "claude",
+    "opencode": "opencode",
+    "codex": "codex",
+}
+
+
+def find_agent_cli(agent_type: str) -> Optional[str]:
+    """Find a cli-agent executable path by agent type.
+
+    claude keeps its deep Node-version-manager search (npm-installed); other
+    agents fall back to PATH plus common system/Homebrew locations. Returns the
+    full path, or None if not found.
+    """
+    if agent_type == "claude":
+        return find_claude_cli()
+
+    binary = _AGENT_BINARY.get(agent_type, agent_type)
+    path = shutil.which(binary)
+    if path:
+        return path
+
+    if platform.system() != "Windows":
+        for base in ("/usr/local/bin", "/usr/bin", "/opt/homebrew/bin"):
+            candidate = os.path.join(base, binary)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def find_claude_cli() -> Optional[str]:
     """Find claude CLI executable path.
 

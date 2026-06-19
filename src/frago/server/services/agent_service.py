@@ -517,6 +517,7 @@ class AgentService:
         project_path: str | None = None,
         env_extra: dict[str, str] | None = None,
         claude_session_id: str | None = None,
+        agent_type: str = "claude",
     ) -> dict[str, Any]:
         """Start agent task.
 
@@ -553,6 +554,7 @@ class AgentService:
             # .venv on PATH still find the right binary)
             cmd = _resolve_frago_cmd() + [
                 "agent", "--yes", "--source", "web",
+                "--agent-type", agent_type,
                 "--session-id", claude_session_id,
                 "--prompt-file", str(prompt_file),
             ]
@@ -582,7 +584,7 @@ class AgentService:
                 "claude_session_id": claude_session_id,
                 "title": title,
                 "project_path": project_path,
-                "agent_type": "claude",
+                "agent_type": agent_type,
                 "started_at": datetime.now().isoformat(),
                 "message": f"Task started: {title}",
             }
