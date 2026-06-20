@@ -83,6 +83,7 @@ def _run_tmux_driver(
     timeout: int,
     quiet: bool,
     dry_run: bool,
+    no_persist: bool = False,
 ) -> None:
     """Drive a resident tmux TUI session via AgentSessionDriver (one turn).
 
@@ -114,6 +115,13 @@ def _run_tmux_driver(
     except FileNotFoundError:
         click.echo("Error: tmux not found. Please install tmux first.", err=True)
         sys.exit(1)
+
+    # Normalize this turn into the session subsystem (Web UI / session list).
+    if not no_persist:
+        with contextlib.suppress(Exception):
+            from frago.agent_driver.transcript import write_turn
+
+            write_turn(sid, agent_type, cwd, prompt_text, result, source="terminal")
 
     if result.status == "needs_input":
         click.echo(result.text)
@@ -414,6 +422,7 @@ def agent(
             timeout=timeout,
             quiet=quiet,
             dry_run=dry_run,
+            no_persist=no_monitor,
         )
         return
 

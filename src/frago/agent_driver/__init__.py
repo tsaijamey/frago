@@ -6,6 +6,7 @@ from frago.agent_driver.tmux_session import (
     TmuxAgentSession,
     TurnResult,
 )
+from frago.agent_driver.transcript import write_turn
 
 __all__ = [
     "AgentRecipe",
@@ -13,4 +14,5 @@ __all__ = [
     "TmuxAgentSession",
     "TurnResult",
     "load_recipe",
+    "write_turn",
 ]
