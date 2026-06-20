@@ -44,8 +44,17 @@ def _find_recipe_dir_by_name(name: str) -> Path | None:
     return None
 
 
-def _run_frago_agent(prompt_text: str) -> int:
+def _run_frago_agent(
+    prompt_text: str,
+    *,
+    agent_type: str = "claude",
+    driver: str | None = None,
+) -> int:
     """Run frago agent as subprocess with the given prompt.
+
+    ``agent_type`` defaults to claude (unchanged behavior); pass another agent
+    to drive a different cli-agent recipe. ``driver`` opts into the tmux backend
+    ("tmux") — None keeps the legacy claude -p default.
 
     Returns the process exit code.
     """
@@ -65,7 +74,13 @@ def _run_frago_agent(prompt_text: str) -> int:
             frago_cmd = ["uv", "run", "frago"]
         else:
             frago_cmd = ["frago"]
-        cmd = [*frago_cmd, "agent", "--yes", "--quiet", "--prompt-file", prompt_file]
+        cmd = [
+            *frago_cmd, "agent", "--yes", "--quiet",
+            "--agent-type", agent_type,
+            "--prompt-file", prompt_file,
+        ]
+        if driver:
+            cmd += ["--driver", driver]
 
         result = subprocess.run(cmd, timeout=600)
         return result.returncode
