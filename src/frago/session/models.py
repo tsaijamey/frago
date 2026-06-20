@@ -22,6 +22,8 @@ class AgentType(str, Enum):
     """Agent tool type identifier"""
 
     CLAUDE = "claude"  # Claude Code
+    OPENCODE = "opencode"  # opencode (tmux-driven)
+    CODEX = "codex"  # OpenAI Codex CLI (tmux-driven)
     CURSOR = "cursor"  # Cursor (reserved)
     CLINE = "cline"  # Cline (reserved)
 

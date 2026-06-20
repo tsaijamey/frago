@@ -670,6 +670,33 @@ class AgentAdapter:
         """
         raise NotImplementedError
 
+    def parse_turn(
+        self,
+        *,
+        role: str,
+        content: str,
+        session_id: str,
+        uuid: str,
+        timestamp: datetime,
+        parent_uuid: Optional[str] = None,
+    ) -> ParsedRecord:
+        """Build a ParsedRecord from one already-normalized turn half.
+
+        The tmux driver hands clean user/agent text (no agent-native transcript
+        to parse), so the default wraps it directly. Adapters carrying extra
+        structure may override. ``role`` is "user" or "assistant".
+        """
+        return ParsedRecord(
+            uuid=uuid,
+            session_id=session_id,
+            timestamp=timestamp,
+            record_type=role,
+            parent_uuid=parent_uuid,
+            role=role,
+            content_text=content,
+            raw_data={"role": role, "content": content, "agent": self.agent_type.value},
+        )
+
 
 class ClaudeCodeAdapter(AgentAdapter):
     """Claude Code adapter
@@ -698,9 +725,57 @@ class ClaudeCodeAdapter(AgentAdapter):
         return parser._parse_record(data)
 
 
+class TmuxDriverAdapter(AgentAdapter):
+    """Adapter for tmux-driven agents whose turns arrive pre-normalized.
+
+    These agents (opencode / codex) are driven through resident TUI sessions;
+    the driver already extracts clean text per turn, so no agent-native
+    transcript parsing is needed — the base ``parse_turn`` default suffices.
+    ``parse_record`` accepts the same normalized dict the driver emits.
+    """
+
+    def get_session_dir(self, project_path: str) -> Path:
+        # tmux-driven sessions persist under ~/.frago/sessions/{agent_type}/ via
+        # storage.py, not under a project-encoded directory.
+        from frago.session.storage import get_session_base_dir
+
+        return get_session_base_dir() / self.agent_type.value
+
+    def encode_project_path(self, project_path: str) -> str:
+        return project_path.replace("/", "-")
+
+    def parse_record(self, data: Dict) -> Optional[ParsedRecord]:
+        role = data.get("role") or data.get("record_type") or "assistant"
+        content = data.get("content") or data.get("content_text") or ""
+        return self.parse_turn(
+            role=role,
+            content=content,
+            session_id=data.get("session_id", ""),
+            uuid=data.get("uuid", ""),
+            timestamp=data.get("timestamp") or datetime.now(),
+            parent_uuid=data.get("parent_uuid"),
+        )
+
+
+class OpencodeAdapter(TmuxDriverAdapter):
+    """opencode adapter (tmux-driven)."""
+
+    def __init__(self):
+        super().__init__(AgentType.OPENCODE)
+
+
+class CodexAdapter(TmuxDriverAdapter):
+    """codex adapter (tmux-driven)."""
+
+    def __init__(self):
+        super().__init__(AgentType.CODEX)
+
+
 # Adapter registry
 _adapters: Dict[AgentType, AgentAdapter] = {
     AgentType.CLAUDE: ClaudeCodeAdapter(),
+    AgentType.OPENCODE: OpencodeAdapter(),
+    AgentType.CODEX: CodexAdapter(),
 }
 
 
