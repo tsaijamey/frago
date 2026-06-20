@@ -291,6 +291,10 @@ Conversation:
 Title:'''
 
         try:
+            # claude-only tool path (spec 20260607 acceptance #7): a one-shot
+            # haiku title generation. Intentionally NOT migrated to the tmux
+            # backend — a resident TUI session is overkill for a quick headless
+            # utility call, and this is explicitly carved out as claude-specific.
             cmd = [
                 claude_path, "-p", "-",
                 "--model", "haiku",

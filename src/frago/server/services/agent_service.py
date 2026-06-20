@@ -27,6 +27,18 @@ from frago.server.websocket import manager
 logger = logging.getLogger(__name__)
 
 
+def _tmux_driver_enabled() -> bool:
+    """Gated opt-in: route spawned sub-agents through the tmux backend.
+
+    Default off — claude -p stays the live path. Set FRAGO_AGENT_DRIVER=tmux
+    to opt in (Phase 3, spec 20260607). The deep server-resident warm pool is a
+    follow-up; this gate reuses the tested Phase 1 CLI tmux backend.
+    """
+    import os
+
+    return os.environ.get("FRAGO_AGENT_DRIVER", "").strip().lower() == "tmux"
+
+
 def _resolve_frago_cmd() -> list[str]:
     """Return the base command used to invoke frago from the server process.
 
@@ -558,6 +570,9 @@ class AgentService:
                 "--session-id", claude_session_id,
                 "--prompt-file", str(prompt_file),
             ]
+            # Gated opt-in: route through the tmux resident-session backend.
+            if _tmux_driver_enabled():
+                cmd += ["--driver", "tmux"]
 
             # Start process in background with correct cwd
             cwd = project_path or str(Path.home())
