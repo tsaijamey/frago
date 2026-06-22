@@ -26,7 +26,10 @@ _CHROME_LINE = re.compile(
 
 
 def _launch(_ctx: LaunchCtx) -> str:
-    return "claude"
+    # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
+    # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
+    # 直接拼入该 flag。
+    return "claude --dangerously-skip-permissions"
 
 
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
