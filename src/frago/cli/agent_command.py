@@ -24,7 +24,7 @@ import click
 
 from frago.compat import prepare_command_for_windows
 
-from .agent_friendly import AgentFriendlyCommand
+from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
 # =============================================================================
 # Configuration Loading
@@ -261,7 +261,51 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
 # CLI Commands
 # =============================================================================
 
-@click.command("agent", cls=AgentFriendlyCommand)
+# 动词名 → frago agent 的常驻会话子命令（实现在 drive_command）。
+_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop"})
+# 隐藏的默认命令名：承载原 `frago agent <prompt> [options]` 全部逻辑。
+_DEFAULT_RUN_CMD = "__run__"
+
+
+class AgentGroup(AgentFriendlyGroup):
+    """``frago agent`` 命令组，向后兼容裸调用。
+
+    历史上 ``frago agent`` 是单个 command，到处以
+    ``frago agent "<prompt>" [--options]`` 或 ``frago agent --yes --source web
+    --prompt-file ...``（PA 路径，选项在前、无位置 prompt）的形式被调用。改成 group
+    后，只有当第一个 token 明确是 start/send/peek/ls/stop（或 --help）时才走子命令分发；
+    其余一切（选项开头、裸 prompt、空参）原样转交隐藏的默认命令，保证旧用法零破坏。
+    """
+
+    def parse_args(self, ctx, args):
+        if args and (args[0] in _AGENT_SUBCOMMANDS or args[0] in ("--help", "-h")):
+            return super().parse_args(ctx, args)
+        # 旧的裸 prompt / 选项在前 / 空参 → 默认命令，参数原样透传。
+        return super().parse_args(ctx, [_DEFAULT_RUN_CMD, *args])
+
+
+@click.group("agent", cls=AgentGroup, invoke_without_command=True)
+def agent() -> None:
+    """
+    Intelligent Agent: Execute tasks via a cli-agent session.
+
+    \b
+    Bare-prompt usage (unchanged, backward compatible):
+      frago agent Help me find Python jobs on Upwork
+      frago agent "fix the login bug" --model sonnet --yes
+      frago agent --yes --source web --prompt-file task.txt
+
+    \b
+    Resident tmux-session subcommands:
+      frago agent start <agent_type> [--name NAME]
+      frago agent send <name> "<prompt>"
+      frago agent peek <name>
+      frago agent ls
+      frago agent stop <name>
+    """
+
+
+@agent.command(_DEFAULT_RUN_CMD, cls=AgentFriendlyCommand, hidden=True)
 @click.argument("prompt", nargs=-1, required=False)
 @click.option(
     "--prompt-file",
@@ -364,7 +408,7 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
     default="claude-p",
     help="Execution backend: claude-p (legacy headless, default) or tmux (resident TUI session)"
 )
-def agent(
+def agent_run(
     prompt: tuple,
     prompt_file,
     model: str | None,
@@ -759,3 +803,13 @@ def agent_status():
             click.echo("  [X] CCR not available")
             if info and info.get("error"):
                 click.echo(f"    Reason: {info['error']}")
+
+
+# =============================================================================
+# Resident-session subcommands: frago agent start/send/peek/ls/stop
+# =============================================================================
+# 实现在 drive_command（薄封装 agent_driver）；这里只负责把它们挂到 agent 组下。
+from .drive_command import DRIVE_SUBCOMMANDS  # noqa: E402
+
+for _subcmd in DRIVE_SUBCOMMANDS:
+    agent.add_command(_subcmd)
