@@ -39,6 +39,37 @@ def _tmux_driver_enabled() -> bool:
     return os.environ.get("FRAGO_AGENT_DRIVER", "").strip().lower() == "tmux"
 
 
+def resolve_backend() -> str:
+    """Resolve the primary-agent backend identifier: "tmux" or "claude-p".
+
+    Resolution order (high → low):
+      1. config.json -> primary_agent.agent_backend (explicit operator choice).
+      2. env FRAGO_AGENT_DRIVER == "tmux" -> "tmux".
+      3. default "tmux".
+
+    Phase 1 only defines this resolver; it is NOT wired into start()/start_task
+    yet (Phase 3 does the wiring), so live behaviour is unchanged. Any read/parse
+    failure falls back to the default.
+    """
+    import os
+
+    from frago.server.services.primary_agent_service import CONFIG_FILE
+
+    try:
+        if CONFIG_FILE.exists():
+            raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            backend = (raw.get("primary_agent") or {}).get("agent_backend")
+            if isinstance(backend, str) and backend.strip():
+                return backend.strip()
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    if os.environ.get("FRAGO_AGENT_DRIVER", "").strip().lower() == "tmux":
+        return "tmux"
+
+    return "tmux"
+
+
 def _resolve_frago_cmd() -> list[str]:
     """Return the base command used to invoke frago from the server process.
 
