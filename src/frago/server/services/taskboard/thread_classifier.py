@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from frago.server.services.taskboard import get_board
+from frago.server.services.taskboard.conv_key import derive_conv_key
 from frago.server.services.taskboard.timeline import ulid_new
 
 logger = logging.getLogger(__name__)
@@ -76,17 +77,16 @@ def conv_tag(_channel: str, conv_key: str) -> str:
 
 
 def _extract_conv_key(channel: str, reply_context: dict | None) -> str | None:
-    """Extract conversation unit key from reply_context.
+    """Extract conversation unit key (without the ``conv:`` prefix) from reply_context.
 
-    feishu: chat_id (native SDK field on every message, group or direct).
-    email / webhook: return None for now (post-iteration adapter).
+    Delegates per-channel derivation to ``derive_conv_key``. The returned string
+    is ``"{channel}:{native_id}"`` so the existing ``conv_tag`` wrapping (which
+    prepends ``conv:``) is unchanged; feishu behaviour is preserved exactly.
     """
-    if not reply_context:
+    key = derive_conv_key(channel, reply_context)
+    if key is None:
         return None
-    if channel == "feishu":
-        cid = reply_context.get("chat_id")
-        return f"feishu:{cid}" if cid else None
-    return None
+    return f"{key.channel}:{key.native_id}"
 
 
 # ---------------------------------------------------------------------------
