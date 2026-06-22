@@ -194,4 +194,6 @@ def test_open_waits_ready_and_dismisses_modal() -> None:
 
 def test_launch_command_receives_ctx() -> None:
     recipe = load_recipe("claude")
-    assert recipe.launch_command(LaunchCtx(cwd="/w", session_id="s")) == "claude"
+    cmd = recipe.launch_command(LaunchCtx(cwd="/w", session_id="s"))
+    assert cmd.startswith("claude")
+    assert "--dangerously-skip-permissions" in cmd

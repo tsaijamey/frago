@@ -163,14 +163,23 @@ class TmuxAgentSession:
             },
             timeout_s,
         )
-        scrollback = self.capture_pane(full=True)
-        delta = _compute_delta(pre_snapshot, scrollback)
+        # recipe 提供 read_answer 时，从完成时可见 pane 直接抽答案（claude 这类
+        # 固定底部输入框 + alt-screen 无 scrollback 的 TUI，通用 delta 锚点失效）；
+        # 否则走通用"全 scrollback 减发送前快照"取 delta 的路径。
+        if self.recipe.read_answer is not None:
+            pane = self.capture_pane()
+            text = self.recipe.read_answer(pane, prompt)
+            raw_delta = pane
+        else:
+            scrollback = self.capture_pane(full=True)
+            raw_delta = _compute_delta(pre_snapshot, scrollback)
+            text = self.recipe.extract(raw_delta)
         duration_ms = int((self._clock() - start) * 1000)
         self.status = "idle"
         status: Literal["ok", "timeout", "needs_input", "error"] = outcome or "timeout"
         return TurnResult(
-            text=self.recipe.extract(delta),
-            raw_delta=delta,
+            text=text,
+            raw_delta=raw_delta,
             status=status,
             duration_ms=duration_ms,
         )
