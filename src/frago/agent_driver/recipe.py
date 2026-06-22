@@ -69,6 +69,11 @@ class AgentRecipe:
     done_signal: PaneMatcher
     extract: Callable[[str], str]
     exception_handlers: list[ExceptionHandler] = field(default_factory=list)
+    # 可选：直接从完成时的可见 pane 抽取本轮答案（pane, prompt）→ answer。
+    # 给 claude 这类"固定底部输入框 + 答案在框上方渲染 + alt-screen 无 scrollback"
+    # 的 TUI 用：通用的 pre/post delta 锚点模型对其失效。设置后 driver 跳过
+    # delta+extract 路径，直接喂可见 pane。opencode/codex 不设，沿用 delta 路径。
+    read_answer: Callable[[str, str], str] | None = None
     # 运行期遇到认证墙/权限门/澄清门时命中；driver 据此把本轮判为 needs_input。
     needs_input_signal: PaneMatcher | None = None
 
