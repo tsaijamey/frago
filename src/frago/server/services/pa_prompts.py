@@ -463,11 +463,22 @@ PA_BOOTSTRAP_TURN_PA_DISPATCH_LINE_TEMPLATE = (
 
 
 # --------------------------------------------------------------------------
-# [给 PA] [创建 session 时, 对话历史段] [pending 占位行]
-# 上一个 PA session 在该 turn 的 reply 还没生成就被 rotation 打断。
+# [给 PA] [创建 session 时, 对话历史段] [无回复记录占位行]
+# 该 turn 在 trace 里找不到任何 PA 决策记录。成因无法从 trace 区分（真
+# session rotation / 空决策 [] / 尚未处理），所以措辞保持中性，不归因 rotation。
 # --------------------------------------------------------------------------
 PA_BOOTSTRAP_TURN_PA_PENDING_LINE_TEMPLATE = (
-    "  [{ts}] PA → （未回复，可能被 rotation 打断）"
+    "  [{ts}] PA → （本轮无回复记录）"
+)
+
+
+# --------------------------------------------------------------------------
+# [给 PA] [创建 session 时, 对话历史段] [已决策但无回复行]
+# 该 turn 有真实 PA 决策记录，但 action 非 reply/run（dismiss/resume/schedule
+# 等）——PA 主动判定无需回复，pa_response 为该 action 名。不是被 rotation 打断。
+# --------------------------------------------------------------------------
+PA_BOOTSTRAP_TURN_PA_NOTED_LINE_TEMPLATE = (
+    "  [{ts}] PA → （已决策 {pa_response}，无回复内容）"
 )
 
 

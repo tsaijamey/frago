@@ -373,8 +373,8 @@ def test_view_for_pa_exposes_pa_session_id(tmp_path):
 
 def test_should_rotate_per_thread():
     svc = _fresh_pa()
-    svc._total_turns["thread_A"] = 31  # exceeds ROTATION_TURN_THRESHOLD
-    svc._total_turns["thread_B"] = 5
+    svc._accumulated_tokens["thread_A"] = 500001  # exceeds ROTATION_TOKEN_THRESHOLD
+    svc._accumulated_tokens["thread_B"] = 5
 
     assert svc._should_rotate("thread_A")
     assert not svc._should_rotate("thread_B")
@@ -383,7 +383,7 @@ def test_should_rotate_per_thread():
 
 def test_should_rotate_fallback():
     svc = _fresh_pa()
-    svc._fallback_total_turns = 31
+    svc._fallback_accumulated_tokens = 500001
 
     assert svc._should_rotate(None)
     assert not svc._should_rotate("thread_X")  # per-thread untouched

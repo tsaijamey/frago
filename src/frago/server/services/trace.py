@@ -418,7 +418,16 @@ class ConversationTurn:
     user_message: str
     pa_response: str | None
     task_id: str | None
-    action: str  # "reply" | "dispatch" | "pending"
+    # "reply"   → PA replied to the user (action:reply)
+    # "dispatch"→ PA dispatched a task (action:run)
+    # "noted"   → PA emitted a real decision that produced no user-facing reply
+    #             (dismiss / resume / schedule / unknown action). NOT a rotation
+    #             interruption — PA consciously chose not to respond.
+    # "pending" → no PA decision record found for this msg at all. Could be a
+    #             genuine session rotation, an empty decision ([]), or a not-yet
+    #             -processed msg. Trace alone cannot distinguish these, so the
+    #             renderer stays neutral ("本轮无回复记录") instead of guessing.
+    action: str
 
 
 def _extract_instruction(prompt: str) -> str:
@@ -520,6 +529,12 @@ def _parse_all_conversation_turns() -> list[ConversationTurn]:
             elif pa_action == "run":
                 pa_text = f"派发任务: {details.get('description', '')}"
                 action = "dispatch"
+            else:
+                # A decision exists for this msg but it is neither reply nor run
+                # (dismiss / resume / schedule / unknown). PA made a conscious
+                # call to not reply — record what it was, do NOT label rotation.
+                action = "noted"
+                pa_text = pa_action or "(无 action)"
             task_id = pa_entry.get("task_id") or pa_data.get("task_id") or None
 
         turns.append(ConversationTurn(

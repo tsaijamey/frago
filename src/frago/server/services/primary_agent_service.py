@@ -66,8 +66,12 @@ HEARTBEAT_DEFAULTS = {
 }
 
 # Rotation thresholds
-ROTATION_TURN_THRESHOLD = 30
-ROTATION_TOKEN_THRESHOLD = 50000
+# Turn limit disabled (None): turns alone don't bloat context (each turn is
+# already token-counted), so rotation is driven purely by accumulated tokens.
+ROTATION_TURN_THRESHOLD = None
+# Token window aligned to ~half of Claude's 1M context, leaving ample room
+# for system prompt + bootstrap on rebuild.
+ROTATION_TOKEN_THRESHOLD = 500000
 
 # Task execution timeout (seconds)
 TASK_TIMEOUT_SECONDS = 900
@@ -343,9 +347,17 @@ class PrimaryAgentService:
         # session gets reborn_reason heuristically tagged "server_restart" (history
         # exists), which would otherwise spam "PA 已重新上线" on every new thread —
         # i.e. on every inbound user message to a fresh conversation.
+        #
+        # Default OFF: rotation/respawn/server_restart are internal self-healing
+        # events with no information value for the user, so the auto-broadcast is
+        # suppressed unless explicitly enabled via
+        # config.json -> primary_agent.reborn_notification.enabled = true.
+        # This only gates the reborn broadcast; real user-facing replies
+        # (reply / agent_completed) go through other paths and are unaffected.
         if (
             is_fallback
             and reborn_reason in ("rotation", "server_restart", "respawn")
+            and self._reborn_notification_enabled()
         ):
             asyncio.create_task(self._send_online_notification(reborn_reason))
 
@@ -485,6 +497,23 @@ class PrimaryAgentService:
         from frago.server.services.pa_context_builder import build_bootstrap
 
         return build_bootstrap(self._rotation_count.get(thread_id, 0) if thread_id else self._fallback_rotation_count, create_reason=create_reason, thread_id=thread_id)
+
+    def _reborn_notification_enabled(self) -> bool:
+        """Whether the PA reborn/restart auto-notification should be broadcast.
+
+        Defaults to False: session rotation / subprocess respawn / server
+        restart are internal self-healing events that carry no information for
+        the user, so the "PA 已重新上线" broadcast is silenced by default. Opt in
+        via config.json -> primary_agent.reborn_notification.enabled = true.
+        """
+        try:
+            if CONFIG_FILE.exists():
+                raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                cfg = (raw.get("primary_agent") or {}).get("reborn_notification") or {}
+                return bool(cfg.get("enabled", False))
+        except (json.JSONDecodeError, OSError):
+            pass
+        return False
 
     async def _send_online_notification(self, reborn_reason: str) -> None:
         """Send online notification to the most recently active channel.
@@ -1582,7 +1611,7 @@ class PrimaryAgentService:
         else:
             turns = self._total_turns.get(thread_id, 0)
             tokens = self._accumulated_tokens.get(thread_id, 0)
-        if turns >= ROTATION_TURN_THRESHOLD:
+        if ROTATION_TURN_THRESHOLD is not None and turns >= ROTATION_TURN_THRESHOLD:
             return True
         return tokens >= ROTATION_TOKEN_THRESHOLD
 
