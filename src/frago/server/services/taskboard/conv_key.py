@@ -4,7 +4,7 @@ A ``ConvKey`` is the stable identity of one content topic on a channel. The
 classifier's L0 layer uses it to land follow-up messages on the same thread.
 
 Each channel derives its native conversation handle differently (feishu uses
-chat_id, email the account address, slack the channel_id), so derivation lives
+chat_id, email the sender address, slack the channel_id), so derivation lives
 in a per-channel registry rather than a chain of ``if channel == ...`` blocks.
 Channels not in the registry (scheduled / internal) have no conversation unit
 and yield ``None``.
@@ -36,8 +36,8 @@ def _feishu(_channel: str, reply_context: dict | None) -> ConvKey | None:
 
 
 def _email(_channel: str, reply_context: dict | None) -> ConvKey | None:
-    # 起步：单账号单 conversation，用发件账号地址作 native_id。reply_context 的
-    # 发件账号字段沿用 ingestion 既有命名（sender_id，回落 sender）。
+    # 起步：按发件人——每个通信对象一个主 agent，用发件人地址作 native_id。
+    # reply_context 的发件人字段沿用 ingestion 既有命名（sender_id，回落 sender）。
     if not reply_context:
         return None
     addr = reply_context.get("sender_id") or reply_context.get("sender")
