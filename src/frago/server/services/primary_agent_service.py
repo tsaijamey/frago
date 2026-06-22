@@ -76,6 +76,10 @@ ROTATION_TOKEN_THRESHOLD = 500000
 # Task execution timeout (seconds)
 TASK_TIMEOUT_SECONDS = 900
 
+# Resident-tmux session key used when a message has no bound thread (fallback).
+# Kept in sync with PaTmuxRunner.FALLBACK_KEY.
+PaTmuxRunner_FALLBACK = "__fallback__"
+
 
 def _render_domain_peek(peek: dict[str, Any] | None) -> str:
     """Render a domain peek payload as compact prior-context for sub-agent bootstrap."""
@@ -170,6 +174,10 @@ class PrimaryAgentService:
 
         # Track scheduled_task msg_id → schedule_id for PA result write-back
         self._schedule_msg_map: dict[str, str] = {}
+
+        # Phase 3 (tmux 后端): 常驻会话执行器，按 thread_id 复用 tmux claude TUI。
+        # 仅 backend=="tmux" 时使用；claude-p 路径不碰它。懒初始化。
+        self._pa_tmux_runner: Any | None = None
 
         # Task lifecycle coordinator
         self._lifecycle = TaskLifecycle()
@@ -270,6 +278,12 @@ class PrimaryAgentService:
             except Exception:
                 logger.debug("Fallback session stop error", exc_info=True)
             self._fallback_session = None
+        if self._pa_tmux_runner is not None:
+            try:
+                self._pa_tmux_runner.shutdown()
+            except Exception:
+                logger.debug("PA tmux runner shutdown error", exc_info=True)
+            self._pa_tmux_runner = None
 
     def get_session_id(self, thread_id: str | None = None) -> str | None:
         """Get the Claude session_id for a given thread (or current, or fallback).
@@ -368,6 +382,14 @@ class PrimaryAgentService:
 
         ``thread_id=None`` rotates the fallback session.
         """
+        # Backend dispatch: the tmux backend has no subprocess to stop — rotation
+        # evicts the resident session instead of tearing down an AgentSession.
+        # This keeps _handle_pa_output's internal rotation call correct for tmux.
+        from frago.server.services.agent_service import resolve_backend
+        if resolve_backend() == "tmux":
+            await self._rotate_tmux_session(thread_id)
+            return
+
         is_fallback = thread_id is None
         tag = f"thread={thread_id}" if thread_id else "fallback"
 
@@ -644,9 +666,19 @@ class PrimaryAgentService:
                     self._set_msg_thread_id(m, tid)
                     grouped[tid].append(m)
 
+                # Phase 3: choose execution backend once per drain cycle.
+                from frago.server.services.agent_service import resolve_backend
+                backend = resolve_backend()
+
                 # Serial dispatch: process each group one at a time
                 for tid, group in grouped.items():
                     self._current_thread_id = tid
+
+                    # backend=="tmux": resident tmux claude TUI, synchronous turn.
+                    # The claude-p path below is left exactly as-is for fallback.
+                    if backend == "tmux":
+                        await self._dispatch_group_tmux(tid, group)
+                        continue
 
                     session = await self._session_for(tid)
                     if not session:
@@ -1599,6 +1631,129 @@ class PrimaryAgentService:
         )
 
     # -- helpers --
+
+    # -- Phase 3: tmux 常驻后端执行路径 --
+
+    def _get_pa_tmux_runner(self) -> Any:
+        """Lazily construct the resident-tmux PA executor (backend=="tmux")."""
+        if self._pa_tmux_runner is None:
+            from frago.server.services.pa_tmux_runner import PaTmuxRunner
+
+            self._pa_tmux_runner = PaTmuxRunner(cwd=str(Path.home()))
+        return self._pa_tmux_runner
+
+    async def _dispatch_group_tmux(self, tid: str | None, group: list[dict]) -> None:
+        """Send a message group to PA via the resident tmux session, then route output.
+
+        Synchronous from PA's view: run the resident claude TUI turn (blocking, in a
+        thread), get the full answer text, and feed it through the *same* output path
+        the claude-p backend uses (``_handle_pa_output`` → ``validate_pa_output`` →
+        DecisionApplier). reply/run/resume/dismiss persistence and push are untouched.
+
+        Rotation is token-driven and evicts the resident session (no subprocess to
+        kill); on empty output the group is re-enqueued, mirroring the claude-p path.
+        """
+        from frago.server.services.trace import trace_entry
+
+        for _m in group:
+            if not isinstance(_m, dict):
+                continue
+            _mtype = _m.get("type", "")
+            _channel = _m.get("channel", "") or _mtype
+            trace_entry(
+                origin="internal",
+                subkind="pa",
+                data_type="message",
+                thread_id=_m.get("thread_id"),
+                parent_id=None,
+                task_id=_m.get("task_id"),
+                data={"queue_msg_type": _mtype, "channel": _m.get("channel")},
+                msg_id=_m.get("msg_id"),
+                role="pa",
+                event=f"收到消息队列: {_channel}",
+            )
+
+        merged = self._format_queue_messages(group)
+        bootstrap, _ = self._build_bootstrap_prompt(
+            thread_id=tid, create_reason="message_dispatch"
+        )
+        full_bootstrap = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
+        session_key = tid or PaTmuxRunner_FALLBACK
+
+        runner = self._get_pa_tmux_runner()
+        self._pa_input_len = len(merged)
+        logger.info(
+            "Queue consumer [tmux]: sending %d merged messages to PA (thread=%s, %d chars)",
+            len(group), tid, len(merged),
+        )
+
+        try:
+            text = await asyncio.to_thread(
+                runner.run, session_key, merged, bootstrap=full_bootstrap
+            )
+        except Exception:
+            logger.exception("PA tmux run failed (thread=%s), re-enqueueing group", tid)
+            for m in group:
+                await self._message_queue.put(m)
+            return
+
+        # Token accounting (same estimator as the claude-p path).
+        estimated_tokens = (self._pa_input_len + len(text or "")) // 4
+        if tid:
+            self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
+            self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
+        else:
+            self._fallback_total_turns += 1
+            self._fallback_accumulated_tokens += estimated_tokens
+
+        if text and text.strip():
+            logger.info(
+                "Queue consumer [tmux]: processing PA response (%d chars, thread=%s)",
+                len(text), tid,
+            )
+            await self._handle_pa_output(text.strip())
+        else:
+            logger.warning("Queue consumer [tmux]: PA produced no output (thread=%s)", tid)
+            for m in group:
+                await self._message_queue.put(m)
+
+        # Rotation is token-driven; evict the resident session and reset counters.
+        if self._should_rotate(tid):
+            await self._rotate_tmux_session(tid)
+
+    async def _rotate_tmux_session(self, thread_id: str | None = None) -> None:
+        """Rotate a resident-tmux PA session: evict it and reset that key's counters.
+
+        No subprocess exists in the tmux backend, so this NEVER touches
+        ``_sessions`` / ``_create_pa_session`` (the claude-p machinery). The next
+        ``run`` for this key re-injects bootstrap on a fresh resident session.
+        """
+        is_fallback = thread_id is None
+        tag = f"thread={thread_id}" if thread_id else "fallback"
+        session_key = thread_id or PaTmuxRunner_FALLBACK
+
+        if is_fallback:
+            count = self._fallback_rotation_count
+        else:
+            count = self._rotation_count.get(thread_id, 0)
+
+        logger.info("PA tmux session rotation (%s, rotation_count=%d)", tag, count)
+
+        try:
+            self._get_pa_tmux_runner().evict(session_key)
+        except Exception:
+            logger.debug("PA tmux evict error for %s", tag, exc_info=True)
+
+        if is_fallback:
+            self._fallback_total_turns = 0
+            self._fallback_accumulated_tokens = 0
+            self._fallback_rotation_count = count + 1
+        else:
+            self._total_turns[thread_id] = 0
+            self._accumulated_tokens[thread_id] = 0
+            self._rotation_count[thread_id] = count + 1
+
+        self._consecutive_json_failures = 0
 
     def _should_rotate(self, thread_id: str | None = None) -> bool:
         """Check if session rotation is needed for a given thread.
