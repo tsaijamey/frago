@@ -20,6 +20,7 @@ from frago.server.services.pa_prompts import (
     PA_BOOTSTRAP_REBORN_ROTATION_TEMPLATE,
     PA_BOOTSTRAP_SYSTEM_ENV_TEMPLATE,
     PA_BOOTSTRAP_TURN_PA_DISPATCH_LINE_TEMPLATE,
+    PA_BOOTSTRAP_TURN_PA_NOTED_LINE_TEMPLATE,
     PA_BOOTSTRAP_TURN_PA_PENDING_LINE_TEMPLATE,
     PA_BOOTSTRAP_TURN_PA_REPLY_LINE_TEMPLATE,
     PA_BOOTSTRAP_TURN_USER_LINE_TEMPLATE,
@@ -115,7 +116,12 @@ def _format_turn_lines(turns: list[ConversationTurn]) -> list[str]:
             ts=ts,
             user_message=turn.user_message,
         ))
-        if turn.pa_response:
+        if turn.action == "noted":
+            lines.append(PA_BOOTSTRAP_TURN_PA_NOTED_LINE_TEMPLATE.format(
+                ts=ts,
+                pa_response=turn.pa_response or "(无 action)",
+            ))
+        elif turn.pa_response:
             if turn.action == "dispatch" and turn.task_id:
                 lines.append(PA_BOOTSTRAP_TURN_PA_DISPATCH_LINE_TEMPLATE.format(
                     ts=ts,

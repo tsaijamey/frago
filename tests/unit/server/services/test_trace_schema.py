@@ -264,3 +264,78 @@ class TestBackwardCompatConsumer:
         assert len(events) == 2
         actions = {e["data"]["action"] for e in events}
         assert actions == {"reply", "run"}
+
+
+class TestConversationTurnActionClassification:
+    """Reborn history snapshot must not blanket-blame rotation for empty replies."""
+
+    def _write_turns(self, tmp_path, monkeypatch, scheduler_lines, pa_lines):
+        monkeypatch.setattr(trace_mod, "TRACE_DIR", tmp_path)
+        today = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+        path = tmp_path / f"trace-{today}.jsonl"
+        lines = []
+        for i, (msg_id, channel, text) in enumerate(scheduler_lines):
+            lines.append(json.dumps({
+                "msg_id": msg_id, "role": "scheduler", "event": "收到 消息",
+                "ts": f"2026-06-18T10:0{i}:00",
+                "data": {"prompt": f"<instruction>{text}</instruction>",
+                         "channel": channel},
+            }))
+        for msg_id, action, details in pa_lines:
+            data = {"action": action}
+            if details is not None:
+                data["details"] = details
+            lines.append(json.dumps({
+                "msg_id": msg_id, "role": "pa", "event": f"决策 {action}",
+                "ts": "2026-06-18T10:30:00", "data": data,
+            }))
+        path.write_text("\n".join(lines) + "\n")
+
+    def test_no_record_stays_neutral(self, tmp_path, monkeypatch):
+        # User msg with NO pa decision at all → "pending", neutral wording.
+        self._write_turns(
+            tmp_path, monkeypatch,
+            [("m1", "wechat", "hi")],
+            [],
+        )
+        turns = trace_mod.load_conversation_turns()
+        assert len(turns) == 1
+        assert turns[0].action == "pending"
+        assert turns[0].pa_response is None
+
+    def test_non_reply_decision_is_noted_not_rotation(self, tmp_path, monkeypatch):
+        # PA emitted a real dismiss decision → "noted", not blamed on rotation.
+        self._write_turns(
+            tmp_path, monkeypatch,
+            [("m2", "wechat", "echo of my own msg")],
+            [("m2", "dismiss", {})],
+        )
+        turns = trace_mod.load_conversation_turns()
+        assert len(turns) == 1
+        assert turns[0].action == "noted"
+        assert turns[0].pa_response == "dismiss"
+
+    def test_reply_and_run_unaffected(self, tmp_path, monkeypatch):
+        self._write_turns(
+            tmp_path, monkeypatch,
+            [("m3", "wechat", "q"), ("m4", "wechat", "do it")],
+            [("m3", "reply", {"text": "answer"}),
+             ("m4", "run", {"description": "task"})],
+        )
+        by_id = {t.user_message: t for t in trace_mod.load_conversation_turns()}
+        assert by_id["q"].action == "reply"
+        assert by_id["do it"].action == "dispatch"
+
+    def test_rendered_lines_match_action(self, tmp_path, monkeypatch):
+        from frago.server.services import pa_context_builder as pcb
+        self._write_turns(
+            tmp_path, monkeypatch,
+            [("m5", "wechat", "no record"), ("m6", "wechat", "dismissed")],
+            [("m6", "dismiss", {})],
+        )
+        turns = trace_mod.load_conversation_turns()
+        lines = pcb._format_turn_lines(turns)
+        joined = "\n".join(lines)
+        assert "本轮无回复记录" in joined
+        assert "已决策 dismiss" in joined
+        assert "可能被 rotation 打断" not in joined

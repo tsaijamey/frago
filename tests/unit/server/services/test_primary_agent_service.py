@@ -244,3 +244,30 @@ class TestHeartbeat:
                 mock_stop.assert_called_once()
 
         asyncio.run(run())
+
+    def test_reborn_notification_disabled_by_default(self):
+        """No config / no flag -> reborn broadcast stays silent."""
+        svc = self._fresh_service()
+        with tempfile.TemporaryDirectory() as d:
+            missing = Path(d) / "config.json"
+            with patch.object(mod, "CONFIG_FILE", missing):
+                assert svc._reborn_notification_enabled() is False
+
+            # Config present but flag absent -> still off.
+            missing.write_text(json.dumps({"primary_agent": {}}), encoding="utf-8")
+            with patch.object(mod, "CONFIG_FILE", missing):
+                assert svc._reborn_notification_enabled() is False
+
+    def test_reborn_notification_opt_in(self):
+        """Explicit primary_agent.reborn_notification.enabled = true turns it on."""
+        svc = self._fresh_service()
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d) / "config.json"
+            cfg.write_text(
+                json.dumps(
+                    {"primary_agent": {"reborn_notification": {"enabled": True}}}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(mod, "CONFIG_FILE", cfg):
+                assert svc._reborn_notification_enabled() is True
