@@ -251,6 +251,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Start task ingestion scheduler (if enabled in config)
     ingestion_scheduler = await _start_ingestion_scheduler(logger)
 
+    # Start daemon service (supervises config-declared recipe daemons, if enabled)
+    daemon_service = await _start_daemon_service(logger)
+
     # Telemetry: ensure config exists + report server start for DAU tracking
     try:
         from frago.telemetry import capture
@@ -273,6 +276,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     yield
 
     # Shutdown
+    if daemon_service is not None:
+        await daemon_service.stop()
     if ingestion_scheduler is not None:
         await ingestion_scheduler.stop()
     await tab_cleanup.stop()
@@ -316,6 +321,29 @@ async def _start_ingestion_scheduler(logger):
         return scheduler
     except Exception as e:
         logger.warning("Failed to start ingestion scheduler: %s", e)
+        return None
+
+
+async def _start_daemon_service(logger):
+    """Start the recipe daemon service if enabled in config."""
+    try:
+        import json as _json
+
+        config_file = Path.home() / ".frago" / "config.json"
+        if not config_file.exists():
+            return None
+        raw_config = _json.loads(config_file.read_text(encoding="utf-8"))
+
+        from frago.server.services.daemon_service import DaemonService
+
+        daemon_service = DaemonService.from_config(raw_config)
+        if daemon_service is None:
+            return None
+        DaemonService._instance = daemon_service
+        await daemon_service.start()
+        return daemon_service
+    except Exception as e:
+        logger.warning("Failed to start daemon service: %s", e)
         return None
 
 

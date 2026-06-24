@@ -16,16 +16,11 @@ board.timeline.jsonl is the only persistence layer.
 """
 
 import asyncio
-import contextlib
 import json
 import logging
-import os
-import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-
-from frago.compat import get_windows_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -290,141 +285,77 @@ class IngestionScheduler:
         `{"type": "message", "id", "prompt", "reply_context"}`; lines with
         other `type` values are ignored (reserved for future control events).
 
-        The recipe subprocess is expected to never exit voluntarily. If it
-        does (crash, network error, flag day), we restart with exponential
-        backoff capped at `max_backoff` seconds.
+        The recipe subprocess is expected to never exit voluntarily; if it does
+        (crash, network error, flag day) it is restarted with exponential
+        backoff. The spawn + backoff + teardown loop lives in the generic
+        ``RecipeSupervisor``; this method only wires a channel-ingestion sink
+        into it (``restart_policy="always"`` to match the original
+        "restart on any exit" stream behaviour).
         """
-        backoff = 2
-        max_backoff = 60
-        await asyncio.sleep(5)  # startup delay, match poll mode
-        while not self._stop_event.is_set():
-            proc = None
-            try:
-                proc = await self._spawn_stream_recipe(ch)
-                logger.info(
-                    "Stream channel %s: recipe %s started (pid=%s)",
-                    ch.name, ch.poll_recipe, proc.pid,
-                )
-                backoff = 2  # successful spawn resets backoff
-                await self._read_stream(ch, proc)
-                logger.warning(
-                    "Stream channel %s: recipe %s exited (code=%s)",
-                    ch.name, ch.poll_recipe, proc.returncode,
-                )
-            except Exception:
-                logger.exception("Stream channel %s: spawn/read failed", ch.name)
-            finally:
-                if proc is not None and proc.returncode is None:
-                    try:
-                        proc.terminate()
-                        await asyncio.wait_for(proc.wait(), timeout=5)
-                    except (TimeoutError, ProcessLookupError):
-                        try:
-                            proc.kill()
-                            await proc.wait()
-                        except ProcessLookupError:
-                            pass
-
-            # Backoff before restart (interruptible by stop_event)
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=backoff)
-                break  # stop_event set → exit loop
-            except TimeoutError:
-                backoff = min(backoff * 2, max_backoff)
-
-    async def _spawn_stream_recipe(self, ch: ChannelConfig) -> asyncio.subprocess.Process:
-        """Spawn a stream-mode recipe as a persistent subprocess via `uv run`.
-
-        Reuses RecipeRunner internals for recipe discovery + secret resolution
-        so FRAGO_SECRETS injection and PEP 723 inline deps work identically to
-        normal `frago recipe run` invocations.
-        """
-        runner = self._runner
-        recipe = runner.registry.find(ch.poll_recipe)
-
-        env = os.environ.copy()
-        # Force UTF-8 for child stdio so non-ASCII stderr/stdout (Chinese,
-        # emoji, etc.) survives the pipe on Windows, where the default
-        # locale codec (cp936) would otherwise corrupt bytes into U+FFFD
-        # and blow up the parent's logger when it writes to server.log.
-        env["PYTHONIOENCODING"] = "utf-8"
-        if recipe.metadata.secrets:
-            secrets = runner._resolve_secrets(ch.poll_recipe, recipe.metadata.secrets)
-            env["FRAGO_SECRETS"] = json.dumps(secrets)
-        if getattr(recipe.metadata, "no_proxy", False):
-            for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-                      "http_proxy", "https_proxy", "all_proxy"):
-                env.pop(k, None)
-
-        uv_bin = shutil.which("uv") or "uv"
-        params_json = json.dumps({"notify_recipe": ch.notify_recipe})
-        cmd = [uv_bin, "run", "--quiet", str(recipe.script_path), params_json]
-
-        return await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            **get_windows_subprocess_kwargs(),
+        from frago.server.services.recipe_supervisor import (
+            RecipeSupervisor,
+            SupervisedRecipe,
         )
 
-    async def _read_stream(
-        self, ch: ChannelConfig, proc: asyncio.subprocess.Process
-    ) -> None:
-        """Read recipe stdout/stderr until it exits or stop_event fires."""
+        spec = SupervisedRecipe(
+            recipe=ch.poll_recipe,
+            params={"notify_recipe": ch.notify_recipe},
+            restart_policy="always",
+            max_backoff=60,
+            initial_backoff=2,
+            startup_delay=5.0,
+            name=ch.name,
+        )
+        supervisor = RecipeSupervisor(
+            spec,
+            _ChannelIngestSink(self, ch),
+            runner=self._runner,
+            stop_event=self._stop_event,
+        )
+        await supervisor.run()
 
-        async def pump_stderr() -> None:
-            assert proc.stderr is not None
-            while True:
-                line = await proc.stderr.readline()
-                if not line:
-                    return
-                logger.info(
-                    "[stream:%s] %s",
-                    ch.name,
-                    line.decode(errors="replace").rstrip(),
-                )
 
-        stderr_task = asyncio.create_task(pump_stderr())
+class _ChannelIngestSink:
+    """RecipeSupervisor sink that turns each stdout line into an ingested msg.
+
+    Preserves the original ``_read_stream`` semantics: parse the line as JSON,
+    ignore non-``message`` event types, feed ``message`` events into
+    ``ingest_message``; stderr lines are logged with the ``[stream:<name>]``
+    prefix.
+    """
+
+    def __init__(self, scheduler: IngestionScheduler, ch: ChannelConfig) -> None:
+        self._scheduler = scheduler
+        self._ch = ch
+
+    async def on_stdout_line(self, line: bytes) -> None:
+        ch = self._ch
         try:
-            assert proc.stdout is not None
-            while not self._stop_event.is_set():
-                line_task = asyncio.create_task(proc.stdout.readline())
-                stop_task = asyncio.create_task(self._stop_event.wait())
-                done, pending = await asyncio.wait(
-                    {line_task, stop_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for t in pending:
-                    t.cancel()
-                if stop_task in done:
-                    return
-                line = line_task.result()
-                if not line:
-                    return  # EOF → subprocess exited
-                try:
-                    msg = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Stream %s: non-JSON stdout line: %s",
-                        ch.name, line[:200],
-                    )
-                    continue
-                if msg.get("type") != "message":
-                    logger.debug(
-                        "Stream %s: ignoring non-message event type=%s",
-                        ch.name, msg.get("type"),
-                    )
-                    continue
-                try:
-                    await self.ingest_message(ch, msg)
-                except Exception:
-                    logger.exception(
-                        "Stream %s: ingest_message failed for %s",
-                        ch.name, msg.get("id"),
-                    )
-        finally:
-            stderr_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await stderr_task
+            msg = json.loads(line.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            logger.warning(
+                "Stream %s: non-JSON stdout line: %s",
+                ch.name, line[:200],
+            )
+            return
+        if msg.get("type") != "message":
+            logger.debug(
+                "Stream %s: ignoring non-message event type=%s",
+                ch.name, msg.get("type"),
+            )
+            return
+        try:
+            await self._scheduler.ingest_message(ch, msg)
+        except Exception:
+            logger.exception(
+                "Stream %s: ingest_message failed for %s",
+                ch.name, msg.get("id"),
+            )
+
+    async def on_stderr_line(self, line: bytes) -> None:
+        logger.info(
+            "[stream:%s] %s",
+            self._ch.name,
+            line.decode(errors="replace").rstrip(),
+        )
 
