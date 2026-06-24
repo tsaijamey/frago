@@ -72,6 +72,11 @@ class WarmSessionPool:
         session = TmuxAgentSession(
             session_id=session_id, recipe=recipe, cwd=cwd, runner=self._runner
         )
+        # 重启后内存池为空，但同名 tmux 会话可能作为孤儿仍存活；直接 new-session
+        # 会撞名 exit 1。先探测：存在则 kill 掉，保证 open() 能干净重建并重新注入
+        # bootstrap（孤儿会话的 claude TUI 上下文已不可信，复用反而错乱）。
+        if session.is_alive():
+            self._safe_close(session)
         session.open()
         if resume_hook is not None:
             resume_hook(session)

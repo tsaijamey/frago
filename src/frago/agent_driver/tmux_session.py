@@ -16,7 +16,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from frago.agent_driver.recipe import AgentRecipe, LaunchCtx, load_recipe
+from frago.agent_driver.recipe import (
+    AgentRecipe,
+    CompletionVerdict,
+    LaunchCtx,
+    load_recipe,
+)
 
 # 注入点：测试以 fake runner 替换真实 tmux 调用，单测不拉真实 tmux。
 TmuxRunner = Callable[[list[str]], str]
@@ -108,9 +113,25 @@ class TmuxAgentSession:
         """投喂按键/文本。键名（如 "Enter" / "Escape"）由调用方给。"""
         self._tmux("send-keys", "-t", self.tmux_name, *keys)
 
+    # tmux send-keys 单条命令行有长度上限（实测约 15KB 触发 "command too long"）。
+    # PA 的启动提示词（system prompt + bootstrap）可达 ~19KB，故按码点切块顺序发送。
+    # 1000 码点：中文按 3 字节算约 3KB/块，远低于上限；切点落在码点边界，不裂字。
+    _SEND_TEXT_CHUNK = 1000
+
     def send_text(self, text: str) -> None:
-        """以字面文本发送（-l），不解释键名。"""
-        self._tmux("send-keys", "-t", self.tmux_name, "-l", text)
+        """以字面文本发送（-l），不解释键名。
+
+        - `--` 终止 tmux 选项解析：否则以 `-` 开头的文本（如 PA 提示词的
+          `--- 待处理消息（N 条）---` 前缀）会被 send-keys 当成非法 flag 而退非零。
+        - 超长文本按块切分多次发送：claude TUI 字面模式下不带 Enter，分块投喂
+          会原样拼接成同一行输入，提交（Enter）由 submit 单独负责。
+        """
+        if not text:
+            self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", "")
+            return
+        for i in range(0, len(text), self._SEND_TEXT_CHUNK):
+            chunk = text[i : i + self._SEND_TEXT_CHUNK]
+            self._tmux("send-keys", "-t", self.tmux_name, "-l", "--", chunk)
 
     # ── 生命周期 ───────────────────────────────────────────────────
     def open(self, *, ready_timeout_s: float = 30.0) -> None:
@@ -153,20 +174,56 @@ class TmuxAgentSession:
         start = self._clock()
         self.status = "busy"
         pre_snapshot = self.capture_pane()
+
+        # 权威完成探针（如 claude 的 transcript JSONL）。在提交前先读一次取 baseline
+        # marker：常驻多轮会话里，文件尾此刻仍是上一轮的 end_turn，本轮答完时 marker
+        # 会推进，据此区分「答完的是本轮」而非误采上一轮残留。
+        probe = self.recipe.completion_probe
+        baseline_marker: str | None = None
+        if probe is not None:
+            with contextlib.suppress(Exception):
+                pre = probe(self)
+                baseline_marker = pre.marker if pre else None
+
         self.recipe.submit(self, prompt)
+
         # 轮询直到本轮答完 / 撞上 needs_input 门（认证墙、权限门、澄清门）/ 超时。
         needs_input = self.recipe.needs_input_signal
+        # ok 判定：有探针时优先采信 JSONL 权威信号（marker 须推进过 baseline 才算
+        # 本轮新完成）；探针不可用（返回 None / 抛错）当帧退回 pane done_signal，
+        # 保证无 transcript 时与原行为一致、绝不卡死。pane 仍独占 needs_input 门。
+        probe_box: dict[str, CompletionVerdict | None] = {"verdict": None}
+
+        def _ok(pane: str) -> bool:
+            if probe is None:
+                return self.recipe.done_signal.matches(pane)
+            try:
+                verdict = probe(self)
+            except Exception:
+                verdict = None
+            if verdict is None:
+                return self.recipe.done_signal.matches(pane)
+            if verdict.done and verdict.marker != baseline_marker:
+                probe_box["verdict"] = verdict
+                return True
+            return False
+
         outcome = self._wait_for_any(
             {
-                "ok": self.recipe.done_signal.matches,
+                "ok": _ok,
                 **({"needs_input": needs_input.matches} if needs_input else {}),
             },
             timeout_s,
         )
+        # 探针给出本轮 verdict 且带文本时，直接采用其权威文本（绕开读屏抠答案）。
+        verdict = probe_box["verdict"]
+        if outcome == "ok" and verdict is not None and verdict.text is not None:
+            text = verdict.text
+            raw_delta = verdict.text
         # recipe 提供 read_answer 时，从完成时可见 pane 直接抽答案（claude 这类
         # 固定底部输入框 + alt-screen 无 scrollback 的 TUI，通用 delta 锚点失效）；
         # 否则走通用"全 scrollback 减发送前快照"取 delta 的路径。
-        if self.recipe.read_answer is not None:
+        elif self.recipe.read_answer is not None:
             pane = self.capture_pane()
             text = self.recipe.read_answer(pane, prompt)
             raw_delta = pane

@@ -10,14 +10,24 @@ extract 擦掉 TUI 边框、侧栏、页脚等视觉 chrome，只留答案文本
 from __future__ import annotations
 
 import re
+import uuid
 
 from frago.agent_driver.recipe import (
     AgentRecipe,
+    CompletionVerdict,
     LaunchCtx,
     PaneMatcher,
     register_recipe,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
+
+# 把 frago 自己的 session_id 确定性映射成一个合法 claude session uuid。launch 用它
+# 传 ``--session-id``，探针用它定位 jsonl——两端同一派生，路径在起会话那刻就锁定。
+_CLAUDE_SID_NS = uuid.UUID("6f4d2c1a-0b3e-4a5d-8c7b-9e0f1a2b3c4d")
+
+
+def _claude_session_uuid(frago_session_id: str) -> str:
+    return str(uuid.uuid5(_CLAUDE_SID_NS, frago_session_id))
 
 # claude TUI 底部输入框提示符行。当前 claude 用 ``❯``，旧版本用 ``>``，两者都认。
 # 一轮答完回到此态。注意：scrollback 里 shell 回显的启动命令行（``❯ claude …``）也
@@ -70,11 +80,35 @@ class _ClaudeDone:
 _DONE = _ClaudeDone()
 
 
-def _launch(_ctx: LaunchCtx) -> str:
+def _launch(ctx: LaunchCtx) -> str:
     # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。
-    return "claude --dangerously-skip-permissions"
+    # 同时用确定性 ``--session-id`` 锁定 transcript jsonl 路径，供完成探针定位；
+    # 该 id 由 frago session_id 经 uuid5 派生，重开同一 session 复用同一 transcript。
+    sid = _claude_session_uuid(ctx.session_id)
+    return f"claude --dangerously-skip-permissions --session-id {sid}"
+
+
+def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
+    """权威完成探针：读 claude 的 session JSONL 判本轮是否答完 + 取最终文本。
+
+    定位不到 transcript（jsonl 尚未生成 / 路径未知）时返回 None，由 driver 当帧
+    退回 pane 防抖——保证无 transcript 场景与原读屏行为一致。延迟导入解析核心，
+    避免把 server 解析依赖（watchdog 等）拉进 agent_driver 的导入面。
+    """
+    from frago.server.services.transcript_completion import evaluate_file, locate_transcript
+
+    sid = _claude_session_uuid(session.session_id)
+    path = locate_transcript(sid, cwd=session.cwd)
+    if path is None:
+        return None
+    tc = evaluate_file(path)
+    return CompletionVerdict(
+        done=tc.done,
+        text=tc.final_text if tc.done else None,
+        marker=tc.last_uuid,
+    )
 
 
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
@@ -139,6 +173,7 @@ register_recipe(
         done_signal=_DONE,
         extract=_extract,
         read_answer=_read_answer,
+        completion_probe=_completion_probe,
         exception_handlers=[],
     )
 )

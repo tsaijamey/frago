@@ -47,6 +47,20 @@ class PaneMatcher:
 
 
 @dataclass(frozen=True)
+class CompletionVerdict:
+    """权威完成探针的一次判定结果。
+
+    ``done`` 为最新一轮是否答完；``text`` 是该轮最终文本（已知时），未知时为 None；
+    ``marker`` 是这一轮的去重锚点（如终结记录 uuid），driver 据此判断「答完的是
+    *本轮* 而非常驻会话里残留的上一轮」。
+    """
+
+    done: bool
+    text: str | None = None
+    marker: str | None = None
+
+
+@dataclass(frozen=True)
 class ExceptionHandler:
     """启动/运行期异常的一次性处理（如更新模态 → Esc）。
 
@@ -76,6 +90,12 @@ class AgentRecipe:
     read_answer: Callable[[str, str], str] | None = None
     # 运行期遇到认证墙/权限门/澄清门时命中；driver 据此把本轮判为 needs_input。
     needs_input_signal: PaneMatcher | None = None
+    # 可选：权威完成探针。给 claude 这类把结构化 transcript 写进 session JSONL 的
+    # agent 用——从 JSONL 的 stop_reason 判「本轮是否真答完」+ 取最终文本，绕开读屏
+    # 在多工具轮空窗帧的误判。入参是 session（探针自行定位/读取其 transcript），
+    # 返回 CompletionVerdict；探针不可用（如 jsonl 尚未生成）时返回 None，driver
+    # 当帧退回 pane done_signal。不设置时（opencode/codex）行为完全不变。
+    completion_probe: Callable[[TmuxAgentSession], CompletionVerdict | None] | None = None
 
 
 _REGISTRY: dict[str, AgentRecipe] = {}

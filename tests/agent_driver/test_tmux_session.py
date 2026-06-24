@@ -137,7 +137,7 @@ def test_claude_submit_single_enter() -> None:
     sess = TmuxAgentSession("c", recipe, cwd="/tmp", runner=fake, sleep=_no_sleep)
     recipe.submit(sess, "hello")
     keys = fake.sent_keys()
-    assert ["tmux", "send-keys", "-t", sess.tmux_name, "-l", "hello"] in keys
+    assert ["tmux", "send-keys", "-t", sess.tmux_name, "-l", "--", "hello"] in keys
     enter_count = sum(1 for k in keys if k[-1] == "Enter")
     assert enter_count == 1
 
