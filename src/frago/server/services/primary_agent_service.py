@@ -910,16 +910,6 @@ class PrimaryAgentService:
                     detail=msg.get("detail", ""),
                 ))
 
-            elif msg_type == "schedule_failed":
-                from frago.server.services.pa_prompts import (
-                    PA_SCHEDULE_FAILED_TEMPLATE,
-                )
-                msg_parts.append(PA_SCHEDULE_FAILED_TEMPLATE.format(
-                    name=msg.get("name", "?"),
-                    reason=msg.get("reason", "unknown"),
-                    detail=msg.get("detail", ""),
-                ))
-
             else:
                 msg_parts.append(PA_QUEUE_UNKNOWN_FALLBACK_TEMPLATE.format(
                     msg_type=msg_type,
@@ -1268,9 +1258,6 @@ class PrimaryAgentService:
                 elif action == "dismiss":
                     logger.info("→ dismiss (msg=%s)", log_id)
                     # DA already marked msg dismissed on board; no side effect needed.
-                elif action == "schedule":
-                    logger.info("→ schedule (name=%s)", d.get("name", ""))
-                    await self._handle_schedule(d)
                 else:
                     logger.warning("Unknown PA action: %s", action)
             except Exception:
@@ -1534,101 +1521,6 @@ class PrimaryAgentService:
                 result.get("reason", "unknown"),
                 result.get("detail", ""),
             )
-
-    async def _handle_schedule(self, decision: dict[str, Any]) -> None:
-        """PA decided action:'schedule' → register schedule via SchedulerService.
-
-        ``schedule`` is intentionally outside the 4-action board vocabulary; it is
-        a separate subsystem (recipe scheduler), so we don't route it through DA.
-        """
-        from frago.server.services.trace import trace_entry
-
-        name = decision.get("name", "unnamed")
-        prompt = decision.get("prompt", "")
-        cron = decision.get("cron")
-        every = decision.get("every")
-        recipe = decision.get("recipe")
-
-        async def _fail(reason: str, detail: str) -> None:
-            logger.warning("schedule %r failed: %s — %s", name, reason, detail)
-            trace_entry(
-                origin="internal", subkind="pa", data_type="action_result",
-                thread_id=None, task_id=None,
-                data={"action": "schedule", "status": "failed",
-                      "reason": reason, "detail": detail, "name": name},
-                event=f"schedule 失败: {reason}",
-            )
-            await self.enqueue_message({
-                "type": "schedule_failed",
-                "name": name,
-                "reason": reason,
-                "detail": detail,
-            })
-
-        if not prompt:
-            await _fail("missing_prompt", "schedule 决策未提供 prompt。")
-            return
-
-        if not cron and not every:
-            await _fail("missing_schedule_spec", "schedule 决策必须提供 cron 或 every 至少一个。")
-            return
-
-        if not self._scheduler_service:
-            await _fail("scheduler_unavailable", "Recipe scheduler 未初始化。")
-            return
-
-        interval_seconds = None
-        if every:
-            from frago.server.services.scheduler_service import _parse_interval
-            try:
-                interval_seconds = _parse_interval(every)
-            except (ValueError, IndexError) as e:
-                await _fail("invalid_interval",
-                            f"Invalid --every value {every!r}: {e}")
-                return
-
-        reply_channel = decision.get("channel")
-        reply_context: dict[str, Any] = {}
-        msg_id = decision.get("msg_id", "")
-        # Phase finish: reply_context read from board (view_for_pa exposes it).
-        if msg_id and reply_channel:
-            board_msg_id = f"{reply_channel}:{msg_id}"
-            try:
-                view = get_board().view_for_pa()
-                for t in view.get("threads", []):
-                    for m in t.get("msgs", []):
-                        if m.get("id") == board_msg_id:
-                            ctx = m.get("reply_context")
-                            if ctx:
-                                reply_context = dict(ctx)
-                            break
-            except Exception:
-                logger.debug(
-                    "schedule reply_context board lookup failed for %s",
-                    board_msg_id, exc_info=True,
-                )
-
-        try:
-            schedule = self._scheduler_service.add_schedule(
-                recipe_name=recipe,
-                interval_seconds=interval_seconds,
-                name=name,
-                prompt=prompt,
-                cron=cron,
-                reply_channel=reply_channel,
-                reply_context=reply_context,
-            )
-        except Exception as e:
-            await _fail("add_schedule_exception", str(e))
-            return
-        logger.info("Schedule registered by PA: %s (%s)", schedule["id"], name)
-        trace_entry(
-            origin="internal", subkind="pa", data_type="action_result",
-            thread_id=None, task_id=None,
-            data={"action": "schedule", "status": "ok",
-                  "schedule_id": schedule["id"], "name": name},
-            event=f"schedule 成功: {schedule['id']}",
-        )
 
     # -- helpers --
 
