@@ -26,6 +26,8 @@ class RecipeMetadata:
     secrets: dict[str, dict[str, Any]] = field(default_factory=dict)  # Secrets schema (keys align with recipes.local.json)
     system_packages: bool = False  # Use system Python (for scripts depending on system packages like dbus)
     no_proxy: bool = False  # Strip proxy env vars from subprocess (for domestic APIs like Feishu)
+    daemon: bool = False  # Capability declaration: this recipe may run as a supervised daemon
+    restart_policy: str = "on-failure"  # Default daemon restart policy (config.json daemons may override)
     warnings: list[dict[str, str]] = field(default_factory=list)  # Security warnings for UI display
     flow: list[dict[str, Any]] = field(default_factory=list)  # Workflow execution flow
 
@@ -84,6 +86,8 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             secrets=data.get('secrets', {}),
             system_packages=data.get('system_packages', False),
             no_proxy=data.get('no_proxy', False),
+            daemon=data.get('daemon', False),
+            restart_policy=data.get('restart_policy', 'on-failure'),
             warnings=data.get('warnings', []),
             flow=data.get('flow', []),
         )
@@ -136,6 +140,12 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
     for target in metadata.output_targets:
         if target not in ['stdout', 'file', 'clipboard']:
             errors.append(f"output_targets contains invalid value: '{target}', valid values: stdout, file, clipboard")
+
+    # Validate daemon restart_policy
+    if metadata.restart_policy not in ('always', 'on-failure', 'never'):
+        errors.append(
+            f"restart_policy must be 'always', 'on-failure' or 'never', current value: '{metadata.restart_policy}'"
+        )
 
     # Validate inputs
     for param_name, param_def in metadata.inputs.items():

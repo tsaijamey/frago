@@ -33,6 +33,7 @@ from .commands import (
 from .commands import (
     status,
 )
+from .daemon_commands import daemon_group
 from .def_commands import def_group
 from .extension_commands import extension_group
 from .hook_rules_commands import hook_rules_group
@@ -56,7 +57,7 @@ from .workspace_commands import workspace_group
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "todo", "view", "server", "serve"]),
-    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
@@ -396,6 +397,9 @@ cli.add_command(reply_cmd, name="reply")
 
 # Channel command group - manage task ingestion channels
 cli.add_command(channel_group, name="channel")
+
+# Daemon command group - supervise long-lived recipe daemons
+cli.add_command(daemon_group, name="daemon")
 
 # Book command - built-in knowledge query
 cli.add_command(book_command)
