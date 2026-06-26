@@ -39,6 +39,13 @@ _AGENT_PATTERNS = [
 
 _RECAP_TRAILER = "(disable recaps in /config)"
 
+# Slash-command echoes (/clear, /compact, …) and their stdout are recorded as
+# "user" messages but are session-management actions, not the human's first real
+# prompt. Skipping them when picking ``first_user`` keeps a human who cleared and
+# kept typing from being misclassified as an agent session (its first message
+# would otherwise be ``<command-name>/clear…`` which matches an agent pattern).
+_COMMAND_ECHO = re.compile(r"^\s*<(command-name|local-command-stdout)>")
+
 
 def _extract_text(content: Any) -> str:
     """Flatten a message ``content`` (str or list of blocks) into plain text."""
@@ -209,7 +216,7 @@ def _scan_file(path: Path) -> dict[str, Any] | None:
                     if first_user is None:
                         msg = record.get("message") or {}
                         txt = _extract_text(msg.get("content", ""))
-                        if txt and txt.strip():
+                        if txt and txt.strip() and not _COMMAND_ECHO.match(txt):
                             first_user = txt.strip()
                 elif rtype == "assistant":
                     n_assistant += 1
