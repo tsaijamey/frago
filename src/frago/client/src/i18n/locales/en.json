@@ -61,7 +61,14 @@
     "error": "Failed to load sessions",
     "loadingDetail": "Loading session…",
     "noMessages": "No readable messages in this session",
-    "truncated": "Showing latest {{shown}} of {{total}} messages"
+    "truncated": "Showing latest {{shown}} of {{total}} messages",
+    "send": "Send",
+    "composerPlaceholder": "Message this session… (Enter to send, Shift+Enter for newline)",
+    "activating": "Waking up session…",
+    "awaitingReply": "Waiting for reply…",
+    "sendFailed": "Send failed: {{error}}",
+    "refresh": "Refresh",
+    "replyStalled": "The reply is taking a while — refresh to check."
   },
   "dashboard": {
     "title": "Dashboard",

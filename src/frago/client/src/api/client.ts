@@ -1295,6 +1295,22 @@ export interface ClaudeSessionDetail {
   truncated: boolean;
   messages: ClaudeSessionMessage[];
   resume_command: string;
+  // Phase 1: transcript_completion probe — whether the latest turn finished
+  // (collapse the progress bar) or is still streaming / tool-using.
+  done?: boolean;
+  stop_reason?: string | null;
+  // Marker (terminal record uuid). The composer records it before sending and
+  // polls until done with a *changed* marker, so a stale prior-turn done can't
+  // collapse the progress bar before the new reply lands.
+  last_uuid?: string | null;
+}
+
+export interface ClaudeSessionSendResponse {
+  sid: string;
+  // "ready" → warm session hit, forwarded immediately;
+  // "activating" → cold start, tmux claude is being resumed/rebuilt.
+  status: 'ready' | 'activating' | string;
+  text: string;
 }
 
 export async function getClaudeSessions(options?: {
@@ -1317,5 +1333,18 @@ export async function getClaudeSessionDetail(
   const params = new URLSearchParams({ limit: String(limit) });
   return fetchApi<ClaudeSessionDetail>(
     `/claude-sessions/${encodeURIComponent(sid)}?${params.toString()}`
+  );
+}
+
+export async function sendClaudeSessionMessage(
+  sid: string,
+  text: string
+): Promise<ClaudeSessionSendResponse> {
+  return fetchApi<ClaudeSessionSendResponse>(
+    `/claude-sessions/${encodeURIComponent(sid)}/send`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }
   );
 }
