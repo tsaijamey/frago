@@ -223,6 +223,13 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     tab_cleanup = TabCleanupService.get_instance()
     await tab_cleanup.start()
 
+    # Start WebUI session idle-reclaim service (periodic eviction of idle tmux
+    # claude sessions driven from the claude-sessions page).
+    from frago.server.services.ui_session_lifecycle import UiSessionLifecycleService
+
+    ui_session_lifecycle = UiSessionLifecycleService.get_instance()
+    await ui_session_lifecycle.start()
+
     # Deploy frago-hook binary if missing or outdated, then sync event registration
     try:
         from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
@@ -281,6 +288,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     if ingestion_scheduler is not None:
         await ingestion_scheduler.stop()
     await tab_cleanup.stop()
+    await ui_session_lifecycle.stop()
     await primary_agent.stop()
     await scheduler.stop()
     await version_service.stop()

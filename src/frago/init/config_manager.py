@@ -61,7 +61,14 @@ def load_config() -> Config:
         # Drop fields removed from the schema (warns on stderr)
         _drop_legacy_fields(data)
 
-        return Config(**data)
+        config = Config(**data)
+
+        # 缺省自愈：旧 config.json 缺 webui_sessions 段时补默认并回写，
+        # 让 server 启动期生效（spec 20260625-webui-session-lifecycle-mediator）。
+        if "webui_sessions" not in data:
+            save_config(config)
+
+        return config
     except json.JSONDecodeError as e:
         # JSON parsing failed, backup corrupted file
         _backup_corrupted_config(f"json_error_{e}")

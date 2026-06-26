@@ -93,6 +93,19 @@ class TaskIngestionConfig(BaseModel):
         return self
 
 
+class WebuiSessionsConfig(BaseModel):
+    """WebUI 会话集群的生命周期参数，持久化在 ~/.frago/config.json -> webui_sessions。
+
+    server 启动时若缺失，config_manager 补默认值后回写（缺省自愈）。
+    spec 20260625-webui-session-lifecycle-mediator。
+    """
+
+    # 同时常驻的 tmux claude 会话上限（LRU 数量闸），由 UI runner 注入 WarmSessionPool。
+    max_resident: int = 10
+    # 自最后一个终结 stop_reason 起、超过即关 tmux 的空闲秒数（Phase 2 用，默认 30min）。
+    idle_timeout_secs: int = 1800
+
+
 class Config(BaseModel):
     """Frago configuration entity (persisted to ~/.frago/config.json)"""
 
@@ -137,6 +150,9 @@ class Config(BaseModel):
 
     # Primary Agent configuration
     primary_agent: dict = Field(default_factory=dict)
+
+    # WebUI 会话集群生命周期配置 (spec 20260625-webui-session-lifecycle-mediator)
+    webui_sessions: WebuiSessionsConfig = Field(default_factory=WebuiSessionsConfig)
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.now)

@@ -241,6 +241,17 @@ class TaskStepsResponse(BaseModel):
     has_more: bool
 
 
+class WebuiSessionsResponse(BaseModel):
+    """Read-only view of ~/.frago/config.json -> webui_sessions, exposed via GET /config.
+
+    spec 20260625-webui-session-lifecycle-mediator: front-end reads max_resident
+    (and idle_timeout_secs) instead of hard-coding them.
+    """
+
+    max_resident: int = 10
+    idle_timeout_secs: int = 1800
+
+
 class UserConfigResponse(BaseModel):
     """Response for GET /api/config"""
 
@@ -253,6 +264,7 @@ class UserConfigResponse(BaseModel):
     max_history_items: int = 100
     shortcuts: Dict[str, str] = Field(default_factory=dict)
     ai_title_enabled: bool = False
+    webui_sessions: WebuiSessionsResponse = Field(default_factory=WebuiSessionsResponse)
 
 
 class SystemStatusResponse(BaseModel):
