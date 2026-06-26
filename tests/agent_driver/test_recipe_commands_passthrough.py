@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from frago.agent_driver import load_recipe
+from frago.agent_driver import load_driver
 from frago.cli import recipe_commands
 
 
@@ -42,20 +42,20 @@ def test_passthrough_agent_type_and_driver(captured) -> None:
     assert cmd[cmd.index("--driver") + 1] == "tmux"
 
 
-# ── opencode recipe 端到端契约(Phase 0 实测坑全部进 recipe) ──────────
-def test_opencode_recipe_encodes_all_three_quirks() -> None:
-    recipe = load_recipe("opencode")
+# ── opencode driver 端到端契约(Phase 0 实测坑全部进 driver) ──────────
+def test_opencode_driver_encodes_all_three_quirks() -> None:
+    driver = load_driver("opencode")
     # 1) 启动 Update 模态 → Esc 异常处理器。
-    assert any(h.name == "dismiss-update-modal" for h in recipe.exception_handlers)
+    assert any(h.name == "dismiss-update-modal" for h in driver.exception_handlers)
     # 2) ▣ Build 完成页脚作 done_signal。
-    assert recipe.done_signal.matches("▣ Build · m · 2.1s")
+    assert driver.done_signal.matches("▣ Build · m · 2.1s")
     # 3) 双 Enter 提交：用 FakeTmux 数 Enter 次数。
     from frago.agent_driver.tmux_session import TmuxAgentSession
     from tests.agent_driver.test_tmux_session import FakeTmux
 
     fake = FakeTmux(["box has text"])
-    sess = TmuxAgentSession("e2e", recipe, cwd="/tmp", runner=fake)
-    recipe.submit(sess, "box has text")
+    sess = TmuxAgentSession("e2e", driver, cwd="/tmp", runner=fake)
+    driver.submit(sess, "box has text")
     enters = sum(
         1 for c in fake.commands if c[1:2] == ["send-keys"] and c[-1] == "Enter"
     )

@@ -1,4 +1,4 @@
-"""claude (Claude Code) TUI recipe。
+"""claude (Claude Code) TUI driver。
 
 claude 的特异性：单 Enter 提交；就绪以输入框提示符为信号。完成判定要兼顾当前
 claude（v2.1.x，提示符是 ``❯``）的关键行为——思考期间空输入框 ``❯ `` 持续显示，
@@ -12,12 +12,12 @@ from __future__ import annotations
 import re
 import uuid
 
-from frago.agent_driver.recipe import (
-    AgentRecipe,
+from frago.agent_driver.driver import (
+    AgentDriver,
     CompletionVerdict,
     LaunchCtx,
     PaneMatcher,
-    register_recipe,
+    register_driver,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
 
@@ -84,8 +84,15 @@ def _launch(ctx: LaunchCtx) -> str:
     # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。
-    # 同时用确定性 ``--session-id`` 锁定 transcript jsonl 路径，供完成探针定位；
-    # 该 id 由 frago session_id 经 uuid5 派生，重开同一 session 复用同一 transcript。
+    if ctx.native_session_id:
+        # 续接一个**已存在**的真实 claude 会话（如 WebUI 点开页面上的某会话）：
+        # 必须用 ``--resume`` 原样带真实 id——claude 会续上原对话、把回复写回同一个
+        # ``<sid>.jsonl``（页面正读的那个）。NEVER 用 ``--session-id``：那是"用此 id
+        # 新建会话"，撞上已存在的会话直接 ``Error: Session ID ... is already in use``
+        # 并退出，链路断在启动那一刻。
+        return f"claude --dangerously-skip-permissions --resume {ctx.session_id}"
+    # 非 native：frago 自己的标识经 uuid5 确定性映射成合法 claude 会话 id，用
+    # ``--session-id`` 首次创建 / 重开同一 session 复用同一 transcript（PA 路径）。
     sid = _claude_session_uuid(ctx.session_id)
     return f"claude --dangerously-skip-permissions --session-id {sid}"
 
@@ -99,7 +106,12 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     """
     from frago.server.services.transcript_completion import evaluate_file, locate_transcript
 
-    sid = _claude_session_uuid(session.session_id)
+    # 与 _launch 同一套规则：native 会话原样用真实 id 定位 jsonl，否则按 uuid5 派生。
+    sid = (
+        session.session_id
+        if session.native_session_id
+        else _claude_session_uuid(session.session_id)
+    )
     path = locate_transcript(sid, cwd=session.cwd)
     if path is None:
         return None
@@ -164,8 +176,8 @@ def _read_answer(pane: str, prompt: str) -> str:
     return "\n".join(out).strip()
 
 
-register_recipe(
-    AgentRecipe(
+register_driver(
+    AgentDriver(
         agent_type="claude",
         launch_command=_launch,
         ready_signal=_READY_BOX,

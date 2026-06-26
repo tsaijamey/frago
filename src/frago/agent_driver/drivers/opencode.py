@@ -1,6 +1,6 @@
-"""opencode TUI recipe。
+"""opencode TUI driver。
 
-实测真实坑（全部进 recipe，只在会话首启发生一次）：
+实测真实坑（全部进 driver，只在会话首启发生一次）：
 - 启动弹 Update 模态 → 先 Esc 关掉。
 - send-keys 文本上屏有渲染时序 → 提交前重抓 pane 确认文本进框再发 Enter。
 - Enter 要连发两次才提交。
@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import re
 
-from frago.agent_driver.recipe import (
-    AgentRecipe,
+from frago.agent_driver.driver import (
+    AgentDriver,
     ExceptionHandler,
     LaunchCtx,
     PaneMatcher,
-    register_recipe,
+    register_driver,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
 
@@ -55,8 +55,8 @@ def _extract(delta: str) -> str:
     return "\n".join(ln.strip() for ln in lines).strip()
 
 
-register_recipe(
-    AgentRecipe(
+register_driver(
+    AgentDriver(
         agent_type="opencode",
         launch_command=_launch,
         ready_signal=_READY,

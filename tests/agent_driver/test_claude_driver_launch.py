@@ -1,0 +1,44 @@
+"""Phase 1 单测：claude driver 的 launch_command 拼入 --dangerously-skip-permissions。
+
+tmux 后端注入 prompt 时若卡在权限弹窗，就绪信号永不出现，故启动命令默认免权限确认。
+"""
+
+from __future__ import annotations
+
+# 触发 driver 注册
+import frago.agent_driver.drivers.claude as claude_driver  # noqa: F401
+from frago.agent_driver import load_driver
+from frago.agent_driver.driver import LaunchCtx
+
+
+def test_launch_command_includes_skip_permissions() -> None:
+    driver = load_driver("claude")
+    cmd = driver.launch_command(LaunchCtx(cwd="/tmp", session_id="s1"))
+    assert "--dangerously-skip-permissions" in cmd
+    assert cmd.startswith("claude")
+
+
+def test_launch_derives_uuid5_by_default() -> None:
+    """默认（非 native）：frago 标识经 uuid5 派生成合法 claude 会话 id。"""
+    driver = load_driver("claude")
+    cmd = driver.launch_command(LaunchCtx(cwd="/tmp", session_id="thread-xyz"))
+    derived = claude_driver._claude_session_uuid("thread-xyz")
+    assert f"--session-id {derived}" in cmd
+    assert "thread-xyz" not in cmd  # 原始标识不直接出现
+
+
+def test_launch_resumes_raw_id_when_native() -> None:
+    """native_session_id=True：用 --resume 原样带真实 id 续接已存在的 claude 会话。
+
+    这是 WebUI 续接已存在会话的关键。NEVER 用 --session-id——那是"新建"，撞上
+    已存在会话会 'already in use' 报错退出（端到端实测确认）。
+    """
+    real_sid = "7f3c2a10-0b1d-4e2f-9a8b-1c2d3e4f5a6b"
+    driver = load_driver("claude")
+    cmd = driver.launch_command(
+        LaunchCtx(cwd="/tmp", session_id=real_sid, native_session_id=True)
+    )
+    assert f"--resume {real_sid}" in cmd
+    assert "--session-id" not in cmd
+    # 没有被套一层 uuid5。
+    assert claude_driver._claude_session_uuid(real_sid) not in cmd

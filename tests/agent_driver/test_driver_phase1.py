@@ -5,17 +5,17 @@
 
 from __future__ import annotations
 
-from frago.agent_driver import AgentSessionDriver, load_recipe
+from frago.agent_driver import SessionLauncher, load_driver
 from tests.agent_driver.test_tmux_session import FakeTmux, _no_sleep
 
 
-def test_codex_recipe_registered_with_auth_wall() -> None:
-    recipe = load_recipe("codex")
-    assert recipe.agent_type == "codex"
-    assert recipe.needs_input_signal is not None
-    assert recipe.needs_input_signal.matches("401 Unauthorized")
-    assert recipe.needs_input_signal.matches("Please login to continue")
-    assert not recipe.needs_input_signal.matches("all good, here is the answer")
+def test_codex_driver_registered_with_auth_wall() -> None:
+    driver = load_driver("codex")
+    assert driver.agent_type == "codex"
+    assert driver.needs_input_signal is not None
+    assert driver.needs_input_signal.matches("401 Unauthorized")
+    assert driver.needs_input_signal.matches("Please login to continue")
+    assert not driver.needs_input_signal.matches("all good, here is the answer")
 
 
 def test_driver_run_codex_returns_needs_input_when_not_logged_in() -> None:
@@ -27,10 +27,10 @@ def test_driver_run_codex_returns_needs_input_when_not_logged_in() -> None:
         "401 Unauthorized\nplease login",  # send: full scrollback
     ]
     fake = FakeTmux(panes)
-    driver = AgentSessionDriver(runner=fake)
-    # driver 内部 TmuxAgentSession 用默认 time.sleep；用极短超时避免真睡。
+    launcher = SessionLauncher(runner=fake)
+    # launcher 内部 TmuxAgentSession 用默认 time.sleep；用极短超时避免真睡。
     # 但 needs_input 会在第一轮轮询即命中，不会进入 sleep 分支。
-    result = driver.run(
+    result = launcher.run(
         "hello",
         agent_type="codex",
         session_id="cx1",
@@ -48,8 +48,8 @@ def test_driver_run_keep_alive_does_not_close() -> None:
         "▣ Build · m · 1.0s\nhello there",  # scrollback
     ]
     fake = FakeTmux(panes)
-    driver = AgentSessionDriver(runner=fake)
-    result = driver.run(
+    launcher = SessionLauncher(runner=fake)
+    result = launcher.run(
         "hi",
         agent_type="opencode",
         session_id="oc1",
@@ -70,8 +70,8 @@ def test_driver_run_closes_by_default() -> None:
         "▣ Build · m · 1.0s\nbye",
     ]
     fake = FakeTmux(panes)
-    driver = AgentSessionDriver(runner=fake)
-    driver.run("hi", agent_type="opencode", session_id="oc2", cwd="/tmp", timeout_s=5)
+    launcher = SessionLauncher(runner=fake)
+    launcher.run("hi", agent_type="opencode", session_id="oc2", cwd="/tmp", timeout_s=5)
     assert any(c[1:2] == ["kill-session"] for c in fake.commands)
 
 

@@ -3,8 +3,8 @@
 这些动词作为 ``frago agent`` 的子命令注册（见 agent_command.py），动词名不含
 ``drive`` 前缀；本模块只承载实现，归属由 agent_command 决定。
 
-这是对 agent_driver（AgentSessionDriver / TmuxAgentSession / WarmSessionPool /
-load_recipe）的薄封装，NEVER 新造 tmux 驱动机制。
+这是对 agent_driver（SessionLauncher / TmuxAgentSession / WarmSessionPool /
+load_driver）的薄封装，NEVER 新造 tmux 驱动机制。
 
 跨进程定位：WarmSessionPool 是进程内的，CLI 每次是独立进程。tmux 会话本身跨进程
 存活（``frago-agent-<name>``），再配一个轻量 sidecar（``~/.frago/drive/<name>.json``
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import click
 
-from frago.agent_driver import WarmSessionPool, load_recipe
-from frago.agent_driver.recipe import AgentRecipe
+from frago.agent_driver import WarmSessionPool, load_driver
+from frago.agent_driver.driver import AgentDriver
 from frago.agent_driver.tmux_session import (
     TmuxAgentSession,
     TmuxRunner,
@@ -120,18 +120,18 @@ def _is_alive(tmux_name: str, runner: TmuxRunner | None) -> bool:
 
 
 def _known_agent_types() -> list[str]:
-    import frago.agent_driver.recipes  # noqa: F401  触发各 recipe 自注册
-    from frago.agent_driver.recipe import _REGISTRY
+    import frago.agent_driver.drivers  # noqa: F401  触发各 driver 自注册
+    from frago.agent_driver.driver import _REGISTRY
 
     return sorted(_REGISTRY)
 
 
 def _bind_session(
-    entry: DriveEntry, recipe: AgentRecipe, runner: TmuxRunner | None
+    entry: DriveEntry, driver: AgentDriver, runner: TmuxRunner | None
 ) -> TmuxAgentSession:
     """绑定到一个已存活的 tmux 会话，复用 TmuxAgentSession 原语（不再 open）。"""
     return TmuxAgentSession(
-        session_id=entry.name, recipe=recipe, cwd=entry.cwd, runner=runner
+        session_id=entry.name, driver=driver, cwd=entry.cwd, runner=runner
     )
 
 
@@ -168,12 +168,12 @@ def _resolve_or_die(name: str) -> DriveEntry:
 @click.argument("agent_type")
 @click.option("--name", default=None, help="Session name (default: agent_type, auto-suffixed if taken).")
 def drive_start(agent_type: str, name: str | None) -> None:
-    """Start a resident session and wait until the recipe's ready_signal fires."""
-    # agent_type 无 recipe → 列出已注册 agent_type（负反馈）。
+    """Start a resident session and wait until the driver's ready_signal fires."""
+    # agent_type 无 driver → 列出已注册 agent_type（负反馈）。
     try:
-        load_recipe(agent_type)
+        load_driver(agent_type)
     except KeyError:
-        click.echo(f"Error: no recipe registered for agent_type {agent_type!r}.", err=True)
+        click.echo(f"Error: no driver registered for agent_type {agent_type!r}.", err=True)
         click.echo(f"  Known agent types: {', '.join(_known_agent_types()) or '<none>'}", err=True)
         sys.exit(1)
 
@@ -221,12 +221,12 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
         _echo_active_sessions()
         sys.exit(1)
 
-    recipe = load_recipe(entry.agent_type)
-    session = _bind_session(entry, recipe, runner)
+    driver = load_driver(entry.agent_type)
+    session = _bind_session(entry, driver, runner)
 
     # 会话尚未 ready 就 send → 提示启动中 + 末屏（负反馈）。
     pane = session.capture_pane()
-    if not recipe.ready_signal.matches(pane):
+    if not driver.ready_signal.matches(pane):
         click.echo(f"[!] Session {name!r} is still starting up — not ready for input yet.", err=True)
         click.echo("--- current pane ---", err=True)
         click.echo(pane, err=True)
@@ -256,8 +256,8 @@ def drive_peek(name: str) -> None:
     """Capture and print the session's current pane."""
     entry = _resolve_or_die(name)
     runner = make_runner()
-    recipe = load_recipe(entry.agent_type)
-    session = _bind_session(entry, recipe, runner)
+    driver = load_driver(entry.agent_type)
+    session = _bind_session(entry, driver, runner)
     click.echo(session.capture_pane())
 
 
@@ -281,8 +281,8 @@ def drive_stop(name: str) -> None:
     """Kill a session and remove its sidecar entry."""
     entry = _resolve_or_die(name)
     runner = make_runner()
-    recipe = load_recipe(entry.agent_type)
-    session = _bind_session(entry, recipe, runner)
+    driver = load_driver(entry.agent_type)
+    session = _bind_session(entry, driver, runner)
     with contextlib.suppress(Exception):
         session.close()
     _sidecar_path(name).unlink(missing_ok=True)

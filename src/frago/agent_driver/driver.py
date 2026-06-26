@@ -1,9 +1,9 @@
-"""Agent recipe contract — 单个 cli-agent 的适配契约。
+"""Agent driver contract — 单个 cli-agent 的适配契约。
 
 所有 agent 特异性集中于此（启动命令、就绪信号、提交键、完成信号、答案抽取、
-异常处理），driver 主路径不可见，NEVER 出现 ``if agent == "claude"``。
+异常处理），主路径不可见，NEVER 出现 ``if agent == "claude"``。
 
-Phase 0 spike 阶段，recipe 以裸字符串 agent key（"claude" / "opencode"）注册，
+Phase 0 spike 阶段，driver 以裸字符串 agent key（"claude" / "opencode"）注册，
 不引入共享的 ``session.models.AgentType`` 枚举（补 OPENCODE/CODEX 属 Phase 2，
 会触碰会话子系统，违反本轮零侵入约束）。
 """
@@ -25,6 +25,12 @@ class LaunchCtx:
 
     cwd: str
     session_id: str
+    # session_id 是否已是 agent 原生的真实会话 id（无需再派生）。
+    # 默认 False：调用方给的是 frago 自己的标识（如 thread_id / conv-key），driver
+    # 需把它确定性映射成合法的 agent 会话 id（claude 走 uuid5）。
+    # True：调用方（如 WebUI 续接一个已存在的 claude 会话）给的就是真实 id，driver
+    # 原样使用、跳过派生，否则会另起新会话、写进别的 jsonl，续不上原会话。
+    native_session_id: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,7 +79,7 @@ class ExceptionHandler:
 
 
 @dataclass(frozen=True)
-class AgentRecipe:
+class AgentDriver:
     """单个 cli-agent 的适配契约。"""
 
     agent_type: str
@@ -98,23 +104,23 @@ class AgentRecipe:
     completion_probe: Callable[[TmuxAgentSession], CompletionVerdict | None] | None = None
 
 
-_REGISTRY: dict[str, AgentRecipe] = {}
+_REGISTRY: dict[str, AgentDriver] = {}
 
 
-def register_recipe(recipe: AgentRecipe) -> None:
-    """注册一个 recipe；重复注册同 agent_type 覆盖旧值。"""
-    _REGISTRY[recipe.agent_type] = recipe
+def register_driver(driver: AgentDriver) -> None:
+    """注册一个 driver；重复注册同 agent_type 覆盖旧值。"""
+    _REGISTRY[driver.agent_type] = driver
 
 
-def load_recipe(agent_type: str) -> AgentRecipe:
-    """按 agent key 加载 recipe；未注册抛 KeyError。"""
-    # 延迟导入触发各 recipe 模块自注册，避免循环依赖。
-    import frago.agent_driver.recipes  # noqa: F401
+def load_driver(agent_type: str) -> AgentDriver:
+    """按 agent key 加载 driver；未注册抛 KeyError。"""
+    # 延迟导入触发各 driver 模块自注册，避免循环依赖。
+    import frago.agent_driver.drivers  # noqa: F401
 
     try:
         return _REGISTRY[agent_type]
     except KeyError as exc:
         known = ", ".join(sorted(_REGISTRY)) or "<none>"
         raise KeyError(
-            f"no recipe registered for agent_type={agent_type!r} (known: {known})"
+            f"no driver registered for agent_type={agent_type!r} (known: {known})"
         ) from exc
