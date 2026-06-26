@@ -85,13 +85,13 @@ def _run_tmux_driver(
     dry_run: bool,
     no_persist: bool = False,
 ) -> None:
-    """Drive a resident tmux TUI session via AgentSessionDriver (one turn).
+    """Drive a resident tmux TUI session via SessionLauncher (one turn).
 
     Phase 1: no warm pool yet — opens a fresh session, sends one turn, closes.
     The legacy claude -p backend remains the default; this path is opt-in via
     --driver tmux and shares no code with it.
     """
-    from frago.agent_driver import AgentSessionDriver
+    from frago.agent_driver import SessionLauncher
 
     sid = session_id or str(uuid.uuid4())
     if not quiet:
@@ -100,9 +100,9 @@ def _run_tmux_driver(
         click.echo("[Dry Run] Skip actual execution")
         return
 
-    driver = AgentSessionDriver()
+    launcher = SessionLauncher()
     try:
-        result = driver.run(
+        result = launcher.run(
             prompt_text,
             agent_type=agent_type,
             session_id=sid,
@@ -110,7 +110,7 @@ def _run_tmux_driver(
             timeout_s=float(timeout),
         )
     except KeyError:
-        click.echo(f"Error: no recipe registered for agent-type {agent_type!r}", err=True)
+        click.echo(f"Error: no driver registered for agent-type {agent_type!r}", err=True)
         sys.exit(1)
     except FileNotFoundError:
         click.echo("Error: tmux not found. Please install tmux first.", err=True)
@@ -455,7 +455,7 @@ def agent_run(
         click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
-    # tmux backend: resident TUI session driven by AgentSessionDriver.
+    # tmux backend: resident TUI session driven by SessionLauncher.
     # Legacy claude -p path stays the default and is left fully intact below.
     if driver == "tmux":
         _run_tmux_driver(

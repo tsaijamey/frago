@@ -12,7 +12,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 
-from frago.agent_driver.recipe import load_recipe
+from frago.agent_driver.driver import load_driver
 from frago.agent_driver.tmux_session import (
     TmuxAgentSession,
     TmuxRunner,
@@ -58,6 +58,7 @@ class WarmSessionPool:
         session_id: str,
         cwd: str,
         *,
+        native_session_id: bool = False,
         resume_hook: ResumeHook | None = None,
     ) -> TmuxAgentSession:
         existing = self._sessions.get(session_id)
@@ -68,9 +69,13 @@ class WarmSessionPool:
             # 探测到崩溃 → 丢弃，走重建（可 resume 恢复）。
             del self._sessions[session_id]
 
-        recipe = load_recipe(agent_type)
+        driver = load_driver(agent_type)
         session = TmuxAgentSession(
-            session_id=session_id, recipe=recipe, cwd=cwd, runner=self._runner
+            session_id=session_id,
+            driver=driver,
+            cwd=cwd,
+            native_session_id=native_session_id,
+            runner=self._runner,
         )
         # 重启后内存池为空，但同名 tmux 会话可能作为孤儿仍存活；直接 new-session
         # 会撞名 exit 1。先探测：存在则 kill 掉，保证 open() 能干净重建并重新注入
@@ -92,12 +97,17 @@ class WarmSessionPool:
         agent_type: str,
         session_id: str,
         cwd: str,
+        native_session_id: bool = False,
         timeout_s: float = 120.0,
         resume_hook: ResumeHook | None = None,
     ) -> TurnResult:
         """取活会话 → 投喂一轮；会话保活留待复用。"""
         session = self.acquire(
-            agent_type, session_id, cwd, resume_hook=resume_hook
+            agent_type,
+            session_id,
+            cwd,
+            native_session_id=native_session_id,
+            resume_hook=resume_hook,
         )
         return session.send(prompt, timeout_s=timeout_s)
 
@@ -109,6 +119,25 @@ class WarmSessionPool:
             return False
         self._safe_close(session)
         return True
+
+    def evict_idle(
+        self,
+        idle_age_fn: Callable[[TmuxAgentSession], float | None],
+        timeout_s: float,
+    ) -> list[str]:
+        """按空闲时长驱逐会话——叠加在数量 LRU 之上的时间维度回收。
+
+        ``idle_age_fn(session)`` 返回该会话「自上次实质停顿以来的秒数」；返回 None
+        表示无法判定空闲（仍在干活 / 无锚点），这类会话 NEVER 被回收。空闲秒数
+        严格大于 ``timeout_s`` 才驱逐。返回被驱逐的 session_id 列表。
+        """
+        evicted: list[str] = []
+        # 先快照再驱逐，避免在迭代中改字典。
+        for session_id, session in list(self._sessions.items()):
+            age = idle_age_fn(session)
+            if age is not None and age > timeout_s and self.evict(session_id):
+                evicted.append(session_id)
+        return evicted
 
     def shutdown(self) -> None:
         """关闭全部会话。"""

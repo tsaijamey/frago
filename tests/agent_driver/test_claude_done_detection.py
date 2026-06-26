@@ -1,4 +1,4 @@
-"""claude recipe 完成判定与答案抽取单测（当前 claude v2.1.x，提示符 ``❯``）。
+"""claude driver 完成判定与答案抽取单测（当前 claude v2.1.x，提示符 ``❯``）。
 
 覆盖三个根因修复：
   1. done = 提示符在 AND 非忙碌（思考期空输入框持续显示，不能只认提示符）。
@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
-import frago.agent_driver.recipes.claude  # noqa: F401  触发注册
-from frago.agent_driver import load_recipe
-from frago.agent_driver.recipes.claude import _BUSY, _DONE, _READY_BOX, _read_answer
+import frago.agent_driver.drivers.claude  # noqa: F401  触发注册
+from frago.agent_driver import load_driver
+from frago.agent_driver.drivers.claude import _BUSY, _DONE, _READY_BOX, _read_answer
 
 # 思考中：空输入框 ``❯ `` 已在，但 spinner 行在其上方 → 仍忙碌，未完成。
 _BUSY_PANE = """❯ Reply with exactly: PINGZ
@@ -88,4 +88,4 @@ def test_read_answer_handles_nbsp_in_prompt_echo() -> None:
 
 
 def test_recipe_wires_read_answer() -> None:
-    assert load_recipe("claude").read_answer is _read_answer
+    assert load_driver("claude").read_answer is _read_answer

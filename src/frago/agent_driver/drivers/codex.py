@@ -1,4 +1,4 @@
-"""codex (OpenAI Codex CLI) recipe —— Phase 1 占位。
+"""codex (OpenAI Codex CLI) driver —— Phase 1 占位。
 
 首版不做 codex 端到端打通（认证墙处理后补）。本占位的核心价值是：未登录时
 不静默挂起，而是经 ``needs_input_signal`` 命中 401/认证墙，把本轮判为 needs_input
@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import re
 
-from frago.agent_driver.recipe import (
-    AgentRecipe,
+from frago.agent_driver.driver import (
+    AgentDriver,
     LaunchCtx,
     PaneMatcher,
-    register_recipe,
+    register_driver,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
 
@@ -43,8 +43,8 @@ def _extract(delta: str) -> str:
     return "\n".join(ln.strip() for ln in lines).strip()
 
 
-register_recipe(
-    AgentRecipe(
+register_driver(
+    AgentDriver(
         agent_type="codex",
         launch_command=_launch,
         ready_signal=_READY,

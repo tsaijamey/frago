@@ -1,18 +1,18 @@
 """Phase 0 spike 单测：不拉真实 tmux，用 fake runner 驱动 driver。
 
-覆盖最大风险点——delta 取增量正确、done_signal 命中/超时兜底、recipe extract
-去 chrome、opencode 启动模态与双 Enter 提交由 recipe 自动处理。
+覆盖最大风险点——delta 取增量正确、done_signal 命中/超时兜底、driver extract
+去 chrome、opencode 启动模态与双 Enter 提交由 driver 自动处理。
 """
 
 from __future__ import annotations
 
 import pytest
 
-from frago.agent_driver.recipe import (
-    AgentRecipe,
+from frago.agent_driver.driver import (
+    AgentDriver,
     LaunchCtx,
     PaneMatcher,
-    load_recipe,
+    load_driver,
 )
 from frago.agent_driver.tmux_session import (
     TmuxAgentSession,
@@ -72,8 +72,8 @@ def test_pane_matcher_multiline() -> None:
 
 
 # ── send(): done 命中 + extract ────────────────────────────────────
-def _echo_recipe(done_pattern: str = r"^DONE$") -> AgentRecipe:
-    return AgentRecipe(
+def _echo_driver(done_pattern: str = r"^DONE$") -> AgentDriver:
+    return AgentDriver(
         agent_type="echo",
         launch_command=lambda _ctx: "echo-agent",
         ready_signal=PaneMatcher(name="ready", pattern=r"READY"),
@@ -95,7 +95,7 @@ def test_send_returns_ok_and_extracts_delta() -> None:
     ]
     fake = FakeTmux(panes)
     sess = TmuxAgentSession(
-        "s1", _echo_recipe(), cwd="/tmp", runner=fake, sleep=_no_sleep
+        "s1", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep
     )
     result = sess.send("hi", timeout_s=5)
     assert result.status == "ok"
@@ -109,7 +109,7 @@ def test_send_times_out_when_done_never_hits() -> None:
     fake = FakeTmux(["> ", "no done here", "no done here"])
     sess = TmuxAgentSession(
         "s2",
-        _echo_recipe(),
+        _echo_driver(),
         cwd="/tmp",
         runner=fake,
         sleep=_no_sleep,
@@ -119,23 +119,23 @@ def test_send_times_out_when_done_never_hits() -> None:
     assert result.status == "timeout"
 
 
-# ── recipe 注册表 ──────────────────────────────────────────────────
-def test_load_recipe_known_agents() -> None:
-    assert load_recipe("claude").agent_type == "claude"
-    assert load_recipe("opencode").agent_type == "opencode"
+# ── driver 注册表 ──────────────────────────────────────────────────
+def test_load_driver_known_agents() -> None:
+    assert load_driver("claude").agent_type == "claude"
+    assert load_driver("opencode").agent_type == "opencode"
 
 
-def test_load_recipe_unknown_raises() -> None:
+def test_load_driver_unknown_raises() -> None:
     with pytest.raises(KeyError):
-        load_recipe("nope")
+        load_driver("nope")
 
 
-# ── claude recipe ──────────────────────────────────────────────────
+# ── claude driver ──────────────────────────────────────────────────
 def test_claude_submit_single_enter() -> None:
-    recipe = load_recipe("claude")
+    driver = load_driver("claude")
     fake = FakeTmux(["pane"])
-    sess = TmuxAgentSession("c", recipe, cwd="/tmp", runner=fake, sleep=_no_sleep)
-    recipe.submit(sess, "hello")
+    sess = TmuxAgentSession("c", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    driver.submit(sess, "hello")
     keys = fake.sent_keys()
     assert ["tmux", "send-keys", "-t", sess.tmux_name, "-l", "--", "hello"] in keys
     enter_count = sum(1 for k in keys if k[-1] == "Enter")
@@ -143,33 +143,33 @@ def test_claude_submit_single_enter() -> None:
 
 
 def test_claude_extract_strips_border_chrome() -> None:
-    recipe = load_recipe("claude")
+    driver = load_driver("claude")
     delta = "╭─────╮\n│ > q │\nthe answer\n— for shortcuts"
-    assert recipe.extract(delta) == "the answer"
+    assert driver.extract(delta) == "the answer"
 
 
-# ── opencode recipe ────────────────────────────────────────────────
+# ── opencode driver ────────────────────────────────────────────────
 def test_opencode_double_enter_submit() -> None:
-    recipe = load_recipe("opencode")
+    driver = load_driver("opencode")
     fake = FakeTmux(["PONG42 typed into box"])
-    sess = TmuxAgentSession("o", recipe, cwd="/tmp", runner=fake, sleep=_no_sleep)
-    recipe.submit(sess, "PONG42 typed into box")
+    sess = TmuxAgentSession("o", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    driver.submit(sess, "PONG42 typed into box")
     enter_count = sum(1 for k in fake.sent_keys() if k[-1] == "Enter")
     assert enter_count == 2
 
 
 def test_opencode_done_signal_matches_build_footer() -> None:
-    recipe = load_recipe("opencode")
-    assert recipe.done_signal.matches("▣ Build · claude-opus · 3.7s")
-    assert not recipe.done_signal.matches("still working…")
+    driver = load_driver("opencode")
+    assert driver.done_signal.matches("▣ Build · claude-opus · 3.7s")
+    assert not driver.done_signal.matches("still working…")
 
 
 def test_opencode_update_modal_handler_sends_escape() -> None:
-    recipe = load_recipe("opencode")
-    handler = recipe.exception_handlers[0]
+    driver = load_driver("opencode")
+    handler = driver.exception_handlers[0]
     assert handler.trigger.matches("A new Update is available now")
     fake = FakeTmux(["pane"])
-    sess = TmuxAgentSession("o2", recipe, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess = TmuxAgentSession("o2", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
     handler.action(sess)
     assert any(k[-1] == "Escape" for k in fake.sent_keys())
 
@@ -182,8 +182,8 @@ def test_open_waits_ready_and_dismisses_modal() -> None:
         "Ask anything\nUpdate is available",  # exception_handlers capture
     ]
     fake = FakeTmux(panes)
-    recipe = load_recipe("opencode")
-    sess = TmuxAgentSession("o3", recipe, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    driver = load_driver("opencode")
+    sess = TmuxAgentSession("o3", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
     sess.open(ready_timeout_s=5)
     assert sess.status == "ready"
     assert any(k[-1] == "Escape" for k in fake.sent_keys())
@@ -193,7 +193,7 @@ def test_open_waits_ready_and_dismisses_modal() -> None:
 
 
 def test_launch_command_receives_ctx() -> None:
-    recipe = load_recipe("claude")
-    cmd = recipe.launch_command(LaunchCtx(cwd="/w", session_id="s"))
+    driver = load_driver("claude")
+    cmd = driver.launch_command(LaunchCtx(cwd="/w", session_id="s"))
     assert cmd.startswith("claude")
     assert "--dangerously-skip-permissions" in cmd

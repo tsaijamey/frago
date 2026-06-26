@@ -2,9 +2,9 @@
 
 封装 tmux 三件套（new-session / send-keys / capture-pane）与通用原语
 "发送前抓 pane 快照 → send-keys → 轮询到 done_signal → 抓全 scrollback → 取 delta"。
-主路径只管"取增量"这件通用的事，recipe 管"判完成 + 清 chrome"这件 agent 特异的事。
+主路径只管"取增量"这件通用的事，driver 管"判完成 + 清 chrome"这件 agent 特异的事。
 
-NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 AgentRecipe 注入。
+NEVER 在本文件出现 ``if agent == "claude"``；一切 agent 差异经 AgentDriver 注入。
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from frago.agent_driver.recipe import (
-    AgentRecipe,
+from frago.agent_driver.driver import (
+    AgentDriver,
     CompletionVerdict,
     LaunchCtx,
-    load_recipe,
+    load_driver,
 )
 
 # 注入点：测试以 fake runner 替换真实 tmux 调用，单测不拉真实 tmux。
@@ -76,9 +76,10 @@ class TmuxAgentSession:
     def __init__(
         self,
         session_id: str,
-        recipe: AgentRecipe,
+        driver: AgentDriver,
         cwd: str,
         *,
+        native_session_id: bool = False,
         width: int = 200,
         height: int = 50,
         runner: TmuxRunner | None = None,
@@ -87,7 +88,9 @@ class TmuxAgentSession:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.session_id = session_id
-        self.recipe = recipe
+        self.driver = driver
+        # session_id 是否已是 agent 原生真实会话 id（透传给 driver 决定是否跳过派生）。
+        self.native_session_id = native_session_id
         self.cwd = cwd
         self.width = width
         self.height = height
@@ -148,12 +151,16 @@ class TmuxAgentSession:
             "-c",
             self.cwd,
         )
-        ctx = LaunchCtx(cwd=self.cwd, session_id=self.session_id)
-        self.send_text(self.recipe.launch_command(ctx))
+        ctx = LaunchCtx(
+            cwd=self.cwd,
+            session_id=self.session_id,
+            native_session_id=self.native_session_id,
+        )
+        self.send_text(self.driver.launch_command(ctx))
         self.send_keys("Enter")
-        self._wait_for(self.recipe.ready_signal.matches, ready_timeout_s)
+        self._wait_for(self.driver.ready_signal.matches, ready_timeout_s)
         # 一次性异常处理（更新模态 → Esc 等），只在会话首启发生一次。
-        for handler in self.recipe.exception_handlers:
+        for handler in self.driver.exception_handlers:
             if handler.trigger.matches(self.capture_pane()):
                 handler.action(self)
         self.status = "ready"
@@ -178,17 +185,17 @@ class TmuxAgentSession:
         # 权威完成探针（如 claude 的 transcript JSONL）。在提交前先读一次取 baseline
         # marker：常驻多轮会话里，文件尾此刻仍是上一轮的 end_turn，本轮答完时 marker
         # 会推进，据此区分「答完的是本轮」而非误采上一轮残留。
-        probe = self.recipe.completion_probe
+        probe = self.driver.completion_probe
         baseline_marker: str | None = None
         if probe is not None:
             with contextlib.suppress(Exception):
                 pre = probe(self)
                 baseline_marker = pre.marker if pre else None
 
-        self.recipe.submit(self, prompt)
+        self.driver.submit(self, prompt)
 
         # 轮询直到本轮答完 / 撞上 needs_input 门（认证墙、权限门、澄清门）/ 超时。
-        needs_input = self.recipe.needs_input_signal
+        needs_input = self.driver.needs_input_signal
         # ok 判定：有探针时优先采信 JSONL 权威信号（marker 须推进过 baseline 才算
         # 本轮新完成）；探针不可用（返回 None / 抛错）当帧退回 pane done_signal，
         # 保证无 transcript 时与原行为一致、绝不卡死。pane 仍独占 needs_input 门。
@@ -196,13 +203,13 @@ class TmuxAgentSession:
 
         def _ok(pane: str) -> bool:
             if probe is None:
-                return self.recipe.done_signal.matches(pane)
+                return self.driver.done_signal.matches(pane)
             try:
                 verdict = probe(self)
             except Exception:
                 verdict = None
             if verdict is None:
-                return self.recipe.done_signal.matches(pane)
+                return self.driver.done_signal.matches(pane)
             if verdict.done and verdict.marker != baseline_marker:
                 probe_box["verdict"] = verdict
                 return True
@@ -220,17 +227,17 @@ class TmuxAgentSession:
         if outcome == "ok" and verdict is not None and verdict.text is not None:
             text = verdict.text
             raw_delta = verdict.text
-        # recipe 提供 read_answer 时，从完成时可见 pane 直接抽答案（claude 这类
+        # driver 提供 read_answer 时，从完成时可见 pane 直接抽答案（claude 这类
         # 固定底部输入框 + alt-screen 无 scrollback 的 TUI，通用 delta 锚点失效）；
         # 否则走通用"全 scrollback 减发送前快照"取 delta 的路径。
-        elif self.recipe.read_answer is not None:
+        elif self.driver.read_answer is not None:
             pane = self.capture_pane()
-            text = self.recipe.read_answer(pane, prompt)
+            text = self.driver.read_answer(pane, prompt)
             raw_delta = pane
         else:
             scrollback = self.capture_pane(full=True)
             raw_delta = _compute_delta(pre_snapshot, scrollback)
-            text = self.recipe.extract(raw_delta)
+            text = self.driver.extract(raw_delta)
         duration_ms = int((self._clock() - start) * 1000)
         self.status = "idle"
         status: Literal["ok", "timeout", "needs_input", "error"] = outcome or "timeout"
@@ -264,18 +271,27 @@ class TmuxAgentSession:
             self._sleep(self._poll_interval_s)
 
 
-class AgentSessionDriver:
-    """调用方入口：按 agent_type 加载 recipe、开会话、跑一轮。"""
+class SessionLauncher:
+    """调用方入口：按 agent_type 加载 driver、开会话、跑一轮。"""
 
     def __init__(self, *, runner: TmuxRunner | None = None) -> None:
         self._runner = runner
 
     def open_session(
-        self, agent_type: str, session_id: str, cwd: str
+        self,
+        agent_type: str,
+        session_id: str,
+        cwd: str,
+        *,
+        native_session_id: bool = False,
     ) -> TmuxAgentSession:
-        recipe = load_recipe(agent_type)
+        driver = load_driver(agent_type)
         session = TmuxAgentSession(
-            session_id=session_id, recipe=recipe, cwd=cwd, runner=self._runner
+            session_id=session_id,
+            driver=driver,
+            cwd=cwd,
+            native_session_id=native_session_id,
+            runner=self._runner,
         )
         session.open()
         return session
@@ -287,6 +303,7 @@ class AgentSessionDriver:
         agent_type: str,
         session_id: str,
         cwd: str,
+        native_session_id: bool = False,
         keep_alive: bool = False,
         timeout_s: float = 120.0,
     ) -> TurnResult:
@@ -295,7 +312,9 @@ class AgentSessionDriver:
         Phase 1 无 warm pool，默认每次开新会话并在结束后 kill；keep_alive=True
         时保活会话供后续复用（Phase 3 warm pool 的雏形）。
         """
-        session = self.open_session(agent_type, session_id, cwd)
+        session = self.open_session(
+            agent_type, session_id, cwd, native_session_id=native_session_id
+        )
         try:
             return session.send(prompt, timeout_s=timeout_s)
         finally:
