@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,21 @@ class TurnCompletion:
     pending_tool_use: bool           # tail still has a pending tool_use (stop_reason==tool_use)
     session_id: str | None
     source_path: str | None
+    last_terminal_ts: datetime | None = None  # terminal record's timestamp; idle clock anchor
+
+
+def _parse_ts(raw: Any) -> datetime | None:
+    """Parse a record's ISO8601 ``timestamp`` (e.g. ``2026-06-14T09:24:32.220Z``).
+
+    Returns a timezone-aware UTC datetime, or None when absent/unparseable —
+    the idle clock simply treats "no timestamp" as "no anchor".
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
 
 
 def _empty(session_id: str | None = None, source_path: str | None = None) -> TurnCompletion:
@@ -140,6 +156,7 @@ def evaluate_records(
         pending_tool_use=stop_reason == "tool_use",
         session_id=session_id or terminal.get("sessionId"),
         source_path=source_path,
+        last_terminal_ts=_parse_ts(terminal.get("timestamp")),
     )
 
 

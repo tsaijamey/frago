@@ -5,11 +5,25 @@ Provides endpoints for reading and updating user configuration.
 
 from fastapi import APIRouter, HTTPException
 
-from frago.server.models import ConfigUpdateRequest, UserConfigResponse
+from frago.init.config_manager import load_config
+from frago.server.models import (
+    ConfigUpdateRequest,
+    UserConfigResponse,
+    WebuiSessionsResponse,
+)
 from frago.server.services.config_service import ConfigService, ConfigValidationError
 from frago.server.state import StateManager
 
 router = APIRouter()
+
+
+def _webui_sessions_response() -> WebuiSessionsResponse:
+    """Read webui_sessions from ~/.frago/config.json (缺省自愈在 load_config 内完成)."""
+    ws = load_config().webui_sessions
+    return WebuiSessionsResponse(
+        max_resident=ws.max_resident,
+        idle_timeout_secs=ws.idle_timeout_secs,
+    )
 
 
 @router.get("/config", response_model=UserConfigResponse)
@@ -30,6 +44,7 @@ async def get_config() -> UserConfigResponse:
         max_history_items=config.get("max_history_items", 100),
         shortcuts=config.get("shortcuts", {}),
         ai_title_enabled=config.get("ai_title_enabled", False),
+        webui_sessions=_webui_sessions_response(),
     )
 
 
@@ -90,4 +105,5 @@ async def update_config(request: ConfigUpdateRequest) -> UserConfigResponse:
         max_history_items=result.get("max_history_items", 100),
         shortcuts=result.get("shortcuts", {}),
         ai_title_enabled=result.get("ai_title_enabled", False),
+        webui_sessions=_webui_sessions_response(),
     )
