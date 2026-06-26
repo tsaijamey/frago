@@ -26,6 +26,13 @@
         var clampedSize = Math.max(minFontSize, Math.min(maxFontSize, calculatedSize));
         var scale = clampedSize / baseFontSize;
 
+        // Readability boost: the resolution-derived scale alone left body text
+        // small (≈12px) for sustained reading. Lift everything ~15%.
+        var readabilityBoost = 1.15;
+        scale = scale * readabilityBoost;
+
+        // Inline style on <html> wins over the :root fallback in globals.css,
+        // so THIS is the effective font scale — tune it here, not in CSS.
         document.documentElement.style.setProperty('--font-scale', scale);
       })();
     </script>
@@ -128,6 +135,6 @@
         }
       };
     </script>
-    <script src="./assets/index-Bb6IO_Qa.js"></script>
+    <script src="./assets/index-B31icWIi.js"></script>
   </body>
 </html>
