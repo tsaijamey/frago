@@ -596,6 +596,7 @@ export type {
   ClaudeSessionMessage,
   ClaudeSessionBlock,
   ClaudeSessionDetail,
+  ClaudeSessionSendResponse,
 } from './client';
 
 export async function getClaudeSessions(options?: {
@@ -617,6 +618,16 @@ export async function getClaudeSessionDetail(
     throw new Error('Claude sessions API not available in pywebview mode');
   }
   return httpApi.getClaudeSessionDetail(sid, limit);
+}
+
+export async function sendClaudeSessionMessage(
+  sid: string,
+  text: string
+): Promise<httpApi.ClaudeSessionSendResponse> {
+  if (isPywebviewMode()) {
+    throw new Error('Claude sessions API not available in pywebview mode');
+  }
+  return httpApi.sendClaudeSessionMessage(sid, text);
 }
 
 // ============================================================

@@ -9,8 +9,9 @@
  * native in-app React page using the shared theme tokens.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import MarkdownContent from '../ui/MarkdownContent';
 import {
   RefreshCw,
   Copy,
@@ -26,9 +27,16 @@ import {
   Wrench,
   Terminal,
   Brain,
+  Send,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { getClaudeSessions, getClaudeSessionDetail } from '@/api';
+import {
+  getClaudeSessions,
+  getClaudeSessionDetail,
+  sendClaudeSessionMessage,
+} from '@/api';
 import type {
   ClaudeSessionItem,
   ClaudeSessionHuman,
@@ -39,7 +47,9 @@ import type {
 function MessageBlock({ block }: { block: ClaudeSessionBlock }) {
   switch (block.type) {
     case 'text':
-      return <div className="cs-msg-text">{block.text}</div>;
+      return (
+        <MarkdownContent content={block.text ?? ''} className="cs-msg-text cs-msg-markdown" />
+      );
     case 'thinking':
       return (
         <details className="cs-block cs-block--thinking">
@@ -122,6 +132,107 @@ export default function ClaudeSessionsPage() {
   const [detail, setDetail] = useState<ClaudeSessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Composer (send message into the resident tmux claude) + reply polling
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  // null = idle; 'activating' = cold start in progress; 'ready' = warm,
+  // awaiting reply. Drives the progress bar; cleared once the probe says done.
+  const [activation, setActivation] = useState<'activating' | 'ready' | null>(null);
+  // True when polling gave up before a new reply landed — surfaces a manual
+  // refresh hint so the user is never stranded waiting.
+  const [pollStalled, setPollStalled] = useState(false);
+
+  // Track the currently open session for poll callbacks (avoids stale closures
+  // and lets us drop responses that arrive after the user switched sessions).
+  const detailSidRef = useRef<string | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  // Marker (last terminal uuid) captured at send time. Polling waits for a
+  // *changed* marker so the prior turn's stale done can't stop us early.
+  const baselineMarkerRef = useRef<string | null>(null);
+  // Wall-clock deadline for the current poll cycle (ms epoch); past it we stop
+  // and show the refresh hint rather than spin forever.
+  const pollDeadlineRef = useRef<number>(0);
+
+  // Chat-style scroll: the message stream pins to the bottom (newest) on open
+  // and as new content arrives, but releases the pin the moment the user
+  // scrolls up to read history — and re-engages when they return to the bottom.
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const pinnedToBottomRef = useRef(true);
+
+  const scrollStreamToBottom = useCallback(() => {
+    const el = streamRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const handleStreamScroll = useCallback(() => {
+    const el = streamRef.current;
+    if (!el) return;
+    // Within 60px of the bottom counts as "at bottom" — re-pins; otherwise the
+    // user is reading history, so we let go of the pin.
+    pinnedToBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  }, []);
+
+  // Keep the view glued to the newest message whenever content changes (open,
+  // poll refresh, manual refresh) — but only while the user hasn't scrolled up.
+  useLayoutEffect(() => {
+    if (pinnedToBottomRef.current) scrollStreamToBottom();
+  }, [detail, detailLoading, scrollStreamToBottom]);
+
+  const clearPoll = useCallback(() => {
+    if (pollTimerRef.current != null) {
+      window.clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    detailSidRef.current = detailSid;
+  }, [detailSid]);
+
+  // Clean up the poll timer on unmount so a backgrounded page never leaks.
+  useEffect(() => clearPoll, [clearPoll]);
+
+  // Poll the detail endpoint until the transcript_completion probe reports the
+  // turn finished (done=true). Content is always taken from this endpoint's
+  // jsonl-derived payload — never from the send response. Backoff caps at 8s.
+  const pollReply = useCallback(
+    (sid: string, delay: number) => {
+      clearPoll();
+      pollTimerRef.current = window.setTimeout(async () => {
+        let finished = false;
+        try {
+          const d = await getClaudeSessionDetail(sid, 300);
+          if (detailSidRef.current !== sid) return; // user switched away
+          setDetail(d);
+          // Done alone isn't enough: the session may already have been done
+          // before we sent. Only stop once the marker advanced past the
+          // baseline captured at send time — that's *this* turn finishing.
+          const newReply =
+            d.done === true && (d.last_uuid ?? null) !== baselineMarkerRef.current;
+          if (newReply) {
+            finished = true;
+            setActivation(null);
+            setPollStalled(false);
+          }
+        } catch {
+          // transient read error — keep polling under backoff
+        }
+        if (finished || detailSidRef.current !== sid) return;
+        // Give up after the deadline rather than spinning forever; surface a
+        // manual-refresh hint so the user can re-check on demand.
+        if (Date.now() >= pollDeadlineRef.current) {
+          setActivation(null);
+          setPollStalled(true);
+          return;
+        }
+        pollReply(sid, Math.min(delay * 1.4, 8000));
+      }, delay);
+    },
+    [clearPoll]
+  );
+
   const fetchSessions = useCallback(async (lookbackDays: number) => {
     setLoading(true);
     setError(null);
@@ -183,22 +294,78 @@ export default function ClaudeSessionsPage() {
   );
 
   const openDetail = useCallback(async (sid: string) => {
+    clearPoll();
     setDetailSid(sid);
     setDetail(null);
     setDetailLoading(true);
+    setInput('');
+    setSending(false);
+    setSendError(null);
+    setActivation(null);
+    setPollStalled(false);
+    pinnedToBottomRef.current = true; // open at the newest message
     try {
       const d = await getClaudeSessionDetail(sid, 300);
-      setDetail(d);
+      if (detailSidRef.current === sid) setDetail(d);
     } catch {
-      setDetail(null);
+      if (detailSidRef.current === sid) setDetail(null);
     } finally {
-      setDetailLoading(false);
+      if (detailSidRef.current === sid) setDetailLoading(false);
     }
-  }, []);
+  }, [clearPoll]);
 
   const closeDetail = useCallback(() => {
+    clearPoll();
     setDetailSid(null);
     setDetail(null);
+    setInput('');
+    setSending(false);
+    setSendError(null);
+    setActivation(null);
+    setPollStalled(false);
+  }, [clearPoll]);
+
+  const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || !detailSid || sending) return;
+    setSending(true);
+    setSendError(null);
+    setPollStalled(false);
+    // Baseline the marker BEFORE the new turn so polling can tell the new reply
+    // apart from the (possibly already-done) prior turn.
+    baselineMarkerRef.current = detail?.last_uuid ?? null;
+    // Claude turns can run minutes; give the poll a generous deadline.
+    pollDeadlineRef.current = Date.now() + 6 * 60 * 1000;
+    try {
+      const res = await sendClaudeSessionMessage(detailSid, text);
+      setInput('');
+      // activating → cold start (show "waking up"); ready → warm, awaiting reply.
+      setActivation(res.status === 'activating' ? 'activating' : 'ready');
+      pollReply(detailSid, 1500);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }, [input, detailSid, sending, detail, pollReply]);
+
+  // Manual refresh: re-fetch the transcript on demand. Used by the refresh
+  // button and after the poll deadline lapses, so the user is never stuck.
+  const refreshDetail = useCallback(async () => {
+    const sid = detailSidRef.current;
+    if (!sid) return;
+    try {
+      const d = await getClaudeSessionDetail(sid, 300);
+      if (detailSidRef.current !== sid) return;
+      setDetail(d);
+      // If the awaited reply has now landed, clear the stalled hint.
+      if (d.done === true && (d.last_uuid ?? null) !== baselineMarkerRef.current) {
+        setPollStalled(false);
+        setActivation(null);
+      }
+    } catch {
+      // ignore — transient; user can retry.
+    }
   }, []);
 
   const toggleFilter = (key: ClaudeSessionHuman) =>
@@ -388,6 +555,15 @@ export default function ClaudeSessionsPage() {
                 <Copy size={14} />
                 <span>{t('claudeSessions.copyResume')}</span>
               </button>
+              <button
+                type="button"
+                className="cs-copy"
+                onClick={refreshDetail}
+                title={t('claudeSessions.refresh')}
+              >
+                <RefreshCw size={14} />
+                <span>{t('claudeSessions.refresh')}</span>
+              </button>
               {detail?.truncated && (
                 <span className="cs-drawer-trunc">
                   {t('claudeSessions.truncated', {
@@ -398,7 +574,7 @@ export default function ClaudeSessionsPage() {
               )}
             </div>
 
-            <div className="cs-drawer-stream">
+            <div className="cs-drawer-stream" ref={streamRef} onScroll={handleStreamScroll}>
               {detailLoading ? (
                 <div className="cs-drawer-loading">{t('claudeSessions.loadingDetail')}</div>
               ) : detail && detail.messages.length > 0 ? (
@@ -428,6 +604,69 @@ export default function ClaudeSessionsPage() {
               ) : (
                 <div className="cs-drawer-loading">{t('claudeSessions.noMessages')}</div>
               )}
+            </div>
+
+            {/* Activation / awaiting-reply progress bar (cold start or streaming) */}
+            {activation && (
+              <div className="cs-activation" role="status" aria-live="polite">
+                <Loader2 size={13} className="cs-spin" />
+                <span>
+                  {activation === 'activating'
+                    ? t('claudeSessions.activating')
+                    : t('claudeSessions.awaitingReply')}
+                </span>
+                <div className="cs-activation-bar">
+                  <div className="cs-activation-bar-fill" />
+                </div>
+              </div>
+            )}
+
+            {/* Poll gave up before the reply landed — let the user re-check. */}
+            {pollStalled && !activation && (
+              <div className="cs-activation cs-activation-stalled" role="status">
+                <AlertCircle size={13} />
+                <span>{t('claudeSessions.replyStalled')}</span>
+                <button type="button" className="cs-copy" onClick={refreshDetail}>
+                  <RefreshCw size={13} />
+                  <span>{t('claudeSessions.refresh')}</span>
+                </button>
+              </div>
+            )}
+
+            {/* Composer — forward input into the resident tmux claude */}
+            <div className="cs-composer">
+              {sendError && (
+                <div className="cs-composer-error">
+                  <AlertCircle size={13} />
+                  <span>{t('claudeSessions.sendFailed', { error: sendError })}</span>
+                </div>
+              )}
+              <div className="cs-composer-row">
+                <textarea
+                  className="cs-composer-input"
+                  value={input}
+                  rows={2}
+                  placeholder={t('claudeSessions.composerPlaceholder')}
+                  disabled={sending}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="cs-composer-send"
+                  disabled={sending || !input.trim()}
+                  onClick={handleSend}
+                  title={t('claudeSessions.send')}
+                  aria-label={t('claudeSessions.send')}
+                >
+                  {sending ? <Loader2 size={16} className="cs-spin" /> : <Send size={16} />}
+                </button>
+              </div>
             </div>
           </aside>
         </>

@@ -87,7 +87,9 @@
   /* Accent focus ring — keyboard/active emphasis */
   --focus-ring: 0 0 0 3px rgba(21, 179, 77, 0.32);
 
-  /* Font scale - set by JS based on screen resolution (1080p = 1.0) */
+  /* Fallback only — index.html's inline script overrides this on <html> with a
+     resolution-derived scale (× readabilityBoost). Tune the effective size
+     there, not here. */
   --font-scale: 1;
 
   /* Fonts - responsive sizing (1080p baseline, scaled by --font-scale) */
@@ -3219,6 +3221,20 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
+  /* Themed scrollbar (Firefox) */
+  scrollbar-color: var(--accent-primary) transparent;
+}
+
+/* Themed scrollbar (WebKit) — accent-colored thumb instead of the faint global one. */
+.cs-drawer-stream::-webkit-scrollbar-thumb {
+  background: var(--accent-primary);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+.cs-drawer-stream::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary-hover, var(--accent-primary));
+  background-clip: padding-box;
 }
 
 .cs-drawer-loading {
@@ -3226,6 +3242,114 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-size: var(--font-size-sm);
   text-align: center;
   padding: 24px;
+}
+
+/* Activation / awaiting-reply progress bar */
+.cs-activation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+  font-size: var(--font-size-xs);
+  color: var(--accent-primary);
+}
+
+.cs-activation-stalled {
+  color: var(--warning, #d6a544);
+}
+
+.cs-activation-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cs-activation-bar-fill {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  animation: cs-activation-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes cs-activation-slide {
+  0% { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
+
+/* Composer */
+.cs-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+}
+
+.cs-composer-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--accent-danger, var(--accent-warning));
+}
+
+.cs-composer-row {
+  position: relative;
+}
+
+.cs-composer-input {
+  width: 100%;
+  resize: none;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  /* reserve room so text never slides under the floating send button */
+  padding-right: 46px;
+}
+
+.cs-composer-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.cs-composer-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cs-composer-send {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--bg-base);
+  background: var(--accent-primary);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: filter 0.15s ease, transform 0.15s ease;
+}
+
+.cs-composer-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cs-composer-send:not(:disabled):hover {
+  filter: brightness(1.08);
 }
 
 .cs-msg {
@@ -3256,9 +3380,11 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 .cs-msg-text {
-  font-size: var(--font-size-sm);
+  /* Reading body — the most-read text in the drawer; lift off the smallest
+     token (sm) to base so it isn't the tiniest thing on screen. */
+  font-size: var(--font-size-base);
   color: var(--text-primary);
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
   padding: 8px 10px;
@@ -3266,6 +3392,60 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   border-radius: var(--radius-sm);
   border-left: 2px solid var(--border-color);
 }
+
+/* Markdown rendering inside a message bubble. The shared .markdown-content
+   styles apply, but its headings (h1=1.5em…) are oversized for a chat line —
+   scale them down here and tighten block spacing so a reply reads as prose,
+   not a document. em units keep everything proportional to --font-scale. */
+.cs-msg-markdown {
+  white-space: normal; /* react-markdown emits block elements; pre-wrap would double the gaps */
+}
+.cs-msg-markdown > :first-child { margin-top: 0; }
+.cs-msg-markdown > :last-child { margin-bottom: 0; }
+.cs-msg-markdown p { margin: 0.45em 0; line-height: 1.6; }
+.cs-msg-markdown h1,
+.cs-msg-markdown h2,
+.cs-msg-markdown h3,
+.cs-msg-markdown h4,
+.cs-msg-markdown h5,
+.cs-msg-markdown h6 {
+  margin: 0.7em 0 0.35em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.cs-msg-markdown h1 { font-size: 1.2em; }
+.cs-msg-markdown h2 { font-size: 1.1em; }
+.cs-msg-markdown h3 { font-size: 1.03em; }
+.cs-msg-markdown h4,
+.cs-msg-markdown h5,
+.cs-msg-markdown h6 { font-size: 1em; color: var(--text-secondary); }
+.cs-msg-markdown ul,
+.cs-msg-markdown ol { margin: 0.4em 0; padding-left: 1.5em; }
+.cs-msg-markdown ul { list-style: disc outside; }
+.cs-msg-markdown ol { list-style: decimal outside; }
+.cs-msg-markdown li { margin: 0.15em 0; display: list-item; }
+.cs-msg-markdown li::marker { color: var(--text-secondary); }
+.cs-msg-markdown li > p { margin: 0.2em 0; }
+/* Explicit bold — strong/b default to 700 but pin it so no cascade flattens it. */
+.cs-msg-markdown strong,
+.cs-msg-markdown b {
+  font-weight: 700;
+  /* PingFang SC (the CJK fallback) caps at Semibold(600), so font-weight alone
+     can't make Chinese bold visibly heavier. Thicken the glyph strokes to force
+     an unmistakable bold regardless of available font weights. */
+  -webkit-text-stroke: 0.4px currentColor;
+  color: var(--text-primary);
+}
+/* A paragraph that is ENTIRELY one bold run is the model's pseudo-heading
+   (e.g. **什么时候会触发**). Give it section-break spacing so it reads as a
+   subheading instead of being cramped against the paragraph above. */
+.cs-msg-markdown p:has(> strong:only-child) {
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+}
+.cs-msg-markdown > p:has(> strong:only-child):first-child { margin-top: 0; }
+.cs-msg-markdown em,
+.cs-msg-markdown i { font-style: italic; }
 
 .cs-msg-user .cs-msg-text {
   border-left-color: var(--accent-info);
