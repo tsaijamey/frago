@@ -95,7 +95,7 @@ def _check_server(base_url: str) -> bool:
 
 def _check_pa(base_url: str) -> bool:
     try:
-        resp = requests.get(f"{base_url}/api/pa/tasks?limit=1", timeout=3)
+        resp = requests.get(f"{base_url}/api/status", timeout=3)
         return resp.status_code == 200
     except Exception:
         return False

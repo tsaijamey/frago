@@ -3,9 +3,6 @@
 去账本后，本模块只剩"出去投递"这一个无状态薄动作：把 agent 的最终文本按 channel
 查 notify_recipe 推回去。reply_context 由调用方（入队消息 / PrimaryAgentService 的
 conv_key→reply_context 缓存）携带，不再 task_id→board.Task→reply_context。
-
-``list_active_agents`` 暂留给 ``frago task agents`` CLI（board 任务态查看器，[TBD]
-随账本读侧 viewer 一并迁移/下线）。
 """
 
 import json
@@ -18,47 +15,6 @@ logger = logging.getLogger(__name__)
 FRAGO_HOME = Path.home() / ".frago"
 PROJECTS_DIR = FRAGO_HOME / "projects"
 CONFIG_FILE = FRAGO_HOME / "config.json"
-
-
-def _pid_alive(pid: int) -> bool:
-    """Cross-platform liveness check via psutil."""
-    try:
-        import psutil
-        return psutil.pid_exists(pid)
-    except Exception:
-        return False
-
-
-def list_active_agents(board) -> list[dict[str, Any]]:
-    """Active (queued/executing) tasks joined with OS-verified process liveness.
-
-    [TBD] board 任务态查看器，随账本读侧 viewer 一并处理。仅 ``frago task agents``
-    CLI 调用；board 为 None 时返回空。
-    """
-    rows: list[dict[str, Any]] = []
-    if board is None:
-        return rows
-    for task in board.get_queued_tasks() + board.get_executing_tasks():
-        pid = task.session.pid if task.session else None
-        alive = bool(task.status == "executing" and pid and _pid_alive(pid))
-        msg = board.get_msg_for_task(task.task_id)
-        thread = board.get_thread_for_task(task.task_id)
-        rows.append(
-            {
-                "task_id": task.task_id,
-                "type": task.type,
-                "status": task.status,
-                "pid": pid,
-                "alive": alive,
-                "stale": task.status == "executing" and not alive,
-                "thread_id": thread.thread_id if thread else None,
-                "msg_id": msg.msg_id if msg else None,
-                "claude_session_id": (
-                    task.session.claude_session_id if task.session else None
-                ),
-            }
-        )
-    return rows
 
 
 class TaskLifecycle:

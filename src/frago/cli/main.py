@@ -47,8 +47,6 @@ from .server_command import server_group
 from .session_commands import session_group
 from .skill_commands import skill_group
 from .start_command import start
-from .task_commands import task_group
-from .timeline_commands import timeline_group
 from .todo_commands import todo_group
 from .update_command import update
 from .view_command import view
@@ -415,12 +413,6 @@ cli.add_command(hook_rules_group)
 
 # Schedule command group - manage scheduled tasks
 cli.add_command(schedule_group, name="schedule")
-
-# Timeline command group - unified timeline queries (spec 20260418-timeline-event-coverage)
-cli.add_command(timeline_group, name="timeline")
-
-# Task command group - hand-adjust task state via timeline-aware override
-cli.add_command(task_group, name="task")
 
 # Cloud commands - frago Cloud authentication, config, and market
 cli.add_command(login_cmd, name="login")
