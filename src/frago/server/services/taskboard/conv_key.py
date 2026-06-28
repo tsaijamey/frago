@@ -52,10 +52,19 @@ def _slack(_channel: str, reply_context: dict | None) -> ConvKey | None:
     return ConvKey("slack", str(channel_id)) if channel_id else None
 
 
+def _voice(_channel: str, reply_context: dict | None) -> ConvKey | None:
+    # 桌面语音是单用户本机来源（reply_context.sender_id 固定 "local"）。给它一个稳定
+    # conv_key 让它有自己的常驻会话——否则 conv_key=None 会落到 __fallback__，而转发器
+    # 跳过 fallback（无 conv 归属），导致语音回复产出却永不投递。
+    sid = (reply_context or {}).get("sender_id") or (reply_context or {}).get("sender") or "local"
+    return ConvKey("voice", str(sid))
+
+
 CONV_KEY_DERIVERS: dict[str, Callable[[str, dict | None], ConvKey | None]] = {
     "feishu": _feishu,
     "email": _email,
     "slack": _slack,
+    "voice": _voice,
 }
 
 

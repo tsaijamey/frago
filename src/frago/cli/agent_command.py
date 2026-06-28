@@ -262,7 +262,7 @@ def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
 # =============================================================================
 
 # 动词名 → frago agent 的常驻会话子命令（实现在 drive_command）。
-_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop"})
+_AGENT_SUBCOMMANDS = frozenset({"start", "send", "peek", "ls", "stop", "attach"})
 # 隐藏的默认命令名：承载原 `frago agent <prompt> [options]` 全部逻辑。
 _DEFAULT_RUN_CMD = "__run__"
 
@@ -803,6 +803,64 @@ def agent_status():
             click.echo("  [X] CCR not available")
             if info and info.get("error"):
                 click.echo(f"    Reason: {info['error']}")
+
+
+# =============================================================================
+# frago agent attach —— 交付即核心（spec 20260627 Phase 8）
+# =============================================================================
+@agent.command("attach")
+@click.option("--files", default=None, help='JSON array of file paths, e.g. \'["report.md","a.png"]\'.')
+@click.option("--dirs", default=None, help='JSON array of directory paths, e.g. \'["out/"]\'.')
+@click.option(
+    "--conv-key", "conv_key", default=None,
+    help="Override the conv to attach to; defaults to $FRAGO_CONV_KEY.",
+)
+def agent_attach(files: str | None, dirs: str | None, conv_key: str | None) -> None:
+    """Register produced file artifacts onto the current conv's outbox.
+
+    \b
+    交付层在转发 agent 文本前会 drain 该 conv 的 outbox，把登记的文件作为真附件
+    随回复一起送达。conv_key 默认从 ``FRAGO_CONV_KEY`` env 自解析（tmux 起会话时
+    注入），命令侧 NEVER 让 agent 瞎填——``--conv-key`` 只给非 agent 调用方覆盖。
+
+    \b
+      frago agent attach --files '["report.md"]'
+      frago agent attach --files '["chart.png"]' --dirs '["build/"]'
+    """
+    key = conv_key or os.environ.get("FRAGO_CONV_KEY")
+    if not key:
+        click.echo(
+            "Error: no conv_key — set $FRAGO_CONV_KEY (auto-injected in agent "
+            "sessions) or pass --conv-key.",
+            err=True,
+        )
+        sys.exit(1)
+
+    def _parse(label: str, raw: str | None) -> list[str]:
+        if not raw:
+            return []
+        try:
+            val = json.loads(raw)
+        except json.JSONDecodeError as e:
+            click.echo(f"Error: --{label} must be a JSON array: {e}", err=True)
+            sys.exit(1)
+        if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+            click.echo(f"Error: --{label} must be a JSON array of strings.", err=True)
+            sys.exit(1)
+        return val
+
+    file_list = _parse("files", files)
+    dir_list = _parse("dirs", dirs)
+    if not file_list and not dir_list:
+        click.echo("Error: nothing to attach — pass --files and/or --dirs.", err=True)
+        sys.exit(1)
+
+    from frago.server.services import pa_outbox
+
+    records = pa_outbox.append(key, files=file_list, dirs=dir_list)
+    click.echo(f"Attached {len(records)} artifact(s) to conv {key!r}.")
+    for rec in records:
+        click.echo(f"  {rec['kind']}\t{rec['path']}")
 
 
 # =============================================================================
