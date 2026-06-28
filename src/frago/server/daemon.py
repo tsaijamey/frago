@@ -456,6 +456,11 @@ def start_daemon() -> tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
+    from frago.server.launch_guard import assert_uv_posture, sanctioned_spawn_env
+
+    # Gate 2: inside the source checkout, demand entry via `uv run`.
+    assert_uv_posture()
+
     if _is_systemd_managed():
         result = _systemctl("start")
         if result.returncode == 0:
@@ -514,6 +519,7 @@ def start_daemon() -> tuple[bool, str]:
                 stdin=subprocess.DEVNULL,  # Critical: close stdin to avoid console
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=sanctioned_spawn_env(),  # Gate 1 token for the daemon child
                 **get_windows_subprocess_kwargs(detach=True),
             )
         else:
@@ -524,6 +530,7 @@ def start_daemon() -> tuple[bool, str]:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=sanctioned_spawn_env(),  # Gate 1 token for the daemon child
                 start_new_session=True,
             )
 
@@ -744,77 +751,16 @@ def _is_pid_alive(pid: int | None) -> bool:
 def check_active_tasks() -> dict[str, Any]:
     """Check if there are active tasks that would be killed by server stop/restart.
 
-    Reads board.get_executing_tasks() (single source: timeline.jsonl) and
-    verifies their PIDs are alive. Tasks whose PIDs are dead are auto-cleaned
-    to failed (zombie recovery) via board.mark_task_failed.
-
-    Returns dict with keys: has_active, executing_tasks, message.
+    Phase 3 (去账本): board run-type task 状态机已退役，sub-agent worker 由
+    `frago agent start` 常驻会话承载，不再由服务端 board 跟踪。restart guard 不再
+    阻断（始终返回无活跃任务）。常驻会话续接交给 claude 原生 transcript。
     """
-    from frago.server.services.taskboard import get_board
-
-    result: dict[str, Any] = {
-        "has_active": False,
-        "executing_tasks": [],
-        "message": "",
-    }
-    reasons: list[str] = []
-
-    # Check executing tasks, verify PID liveness
-    try:
-        board = get_board()
-        executing = board.get_executing_tasks()
-        zombie_count = 0
-        for task in executing:
-            pid = task.session.pid if task.session else None
-            msg = board.get_msg_for_task(task.task_id)
-            channel = msg.source.channel if msg else "unknown"
-            if _is_pid_alive(pid):
-                result["executing_tasks"].append({
-                    "id": task.task_id,
-                    "channel": channel,
-                })
-            else:
-                # PID dead — auto-clean zombie task
-                board.mark_task_failed(
-                    task.task_id,
-                    error="zombie: process not found at restart check",
-                    by="daemon",
-                )
-                zombie_count += 1
-        if result["executing_tasks"]:
-            result["has_active"] = True
-            reasons.append(f"{len(result['executing_tasks'])} task(s) executing")
-        if zombie_count:
-            reasons.append(f"{zombie_count} zombie task(s) auto-cleaned to FAILED")
-    except Exception:
-        pass  # board unreadable should not block guard
-
-    if reasons:
-        result["message"] = "Active tasks detected:\n" + "\n".join(
-            f"  • {r}" for r in reasons
-        )
-
-    return result
+    return {"has_active": False, "executing_tasks": [], "message": ""}
 
 
-def force_cleanup_active_tasks(report: dict[str, Any]) -> None:
-    """Graceful cleanup before forced stop/restart.
-
-    Marks executing tasks as failed via board.mark_task_failed.
-    """
-    from frago.server.services.taskboard import get_board
-
-    if report["executing_tasks"]:
-        try:
-            board = get_board()
-            for task_info in report["executing_tasks"]:
-                board.mark_task_failed(
-                    task_info["id"],
-                    error="server force stop/restart",
-                    by="daemon",
-                )
-        except Exception:
-            pass  # best-effort
+def force_cleanup_active_tasks(report: dict[str, Any]) -> None:  # noqa: ARG001 — kept for caller signature
+    """No-op (Phase 3 去账本): 无 board task 状态机要清理。"""
+    return
 
 
 def get_server_status() -> dict:

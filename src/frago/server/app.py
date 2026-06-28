@@ -165,26 +165,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     state_manager = StateManager.get_instance()
     await state_manager.initialize()
 
-    # Clean up zombie EXECUTING tasks from previous server lifecycle.
-    # Single source: board.timeline.jsonl. We read board.get_executing_tasks()
-    # and transition any whose pid is dead via board.mark_task_failed.
-    try:
-        from frago.server.daemon import _is_pid_alive
-        from frago.server.services.taskboard import get_board
-
-        board = get_board()
-        executing = board.get_executing_tasks()
-        for task in executing:
-            pid = task.session.pid if task.session else None
-            if not _is_pid_alive(pid):
-                board.mark_task_failed(
-                    task.task_id,
-                    error="zombie: process not found at server startup",
-                    by="server_startup",
-                )
-                logger.info("Cleaned zombie task %s (pid=%s)", task.task_id, pid)
-    except Exception as e:
-        logger.warning("Failed to clean zombie tasks: %s", e)
+    # Phase 3 (去账本): board EXECUTING-task zombie cleanup 已退役——sub-agent worker
+    # 由 `frago agent start` 常驻会话承载，不再有 board run-type task 状态机要回收。
 
     # Auto-sync official resources if enabled
     try:

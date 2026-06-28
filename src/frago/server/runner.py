@@ -367,11 +367,17 @@ def run_daemon_server() -> None:
     """
     from pathlib import Path
 
+    from frago.server.launch_guard import assert_sanctioned_spawn
+
     log_file = Path.home() / ".frago" / "server.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     log_config = _build_daemon_log_config(str(log_file))
     logging.config.dictConfig(log_config)
+
+    # Gate 1: refuse a raw `python -m frago.server.runner --daemon`. Must run
+    # after logging is configured so the rejection lands in server.log.
+    assert_sanctioned_spawn()
 
     # Route uncaught exceptions through the rotating handler instead of the
     # process's stderr (which is /dev/null in daemon mode).

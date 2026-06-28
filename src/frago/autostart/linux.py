@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from frago.server.launch_guard import SPAWN_TOKEN_ENV, SPAWN_TOKEN_VALUE
+
 from .base import AutostartManager
 
 
@@ -111,6 +113,10 @@ class LinuxAutostartManager(AutostartManager):
             "[Service]",
             "Type=exec",
             f"Environment=PATH={env_path}",
+            # Gate 1 token: the daemon entry refuses to start without it, so a
+            # bare `python -m frago.server.runner --daemon` cannot launch a
+            # server. systemd is a sanctioned spawner, hence it sets the token.
+            f"Environment={SPAWN_TOKEN_ENV}={SPAWN_TOKEN_VALUE}",
         ]
 
         # Add proxy environment variables

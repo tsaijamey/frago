@@ -139,6 +139,9 @@ def start_new_server() -> bool:
         # to the child would block rotation on Windows (rename-on-open) and
         # bypass rotation for any non-logging write (uvicorn StreamHandler,
         # raw print, child subprocess stdout).
+        from frago.server.launch_guard import sanctioned_spawn_env
+
+        spawn_env = sanctioned_spawn_env()  # Gate 1 token for the daemon child
         if platform.system() == "Windows":
             CREATE_NO_WINDOW = 0x08000000
             DETACHED_PROCESS = 0x00000008
@@ -147,6 +150,7 @@ def start_new_server() -> bool:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=spawn_env,
                 creationflags=CREATE_NO_WINDOW | DETACHED_PROCESS,
             )
         else:
@@ -155,6 +159,7 @@ def start_new_server() -> bool:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=spawn_env,
                 start_new_session=True,
             )
 
