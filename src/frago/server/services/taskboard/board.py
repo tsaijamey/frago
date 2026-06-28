@@ -69,12 +69,14 @@ class TaskBoard:
         - First pass: collect ``archived_thread_ids`` (data_type=='thread_archived')
         - Second pass: replay entries, skip those whose thread_id is in the set
 
-        Phase finish: 算法主体迁入 ``frago.server.services.taskboard.fold``;
-        本方法保留为 backward-compat 入口, 行为不变.
+        Phase 3 (去账本): board 不再从 timeline 重建——live 路径不再写 board，
+        ``fold``/``vacuum``/``migration`` 模块已删。返回空 board（旧 timeline.jsonl
+        留磁盘不读）。board.py 整包作为 [TBD] 只读 viewer 后端保留，待随账本读侧
+        endpoint 一并迁移到 transcript 后物理删除。
         """
-        from frago.server.services.taskboard.fold import fold as _fold
+        from frago.server.services.taskboard.timeline import Timeline
 
-        return _fold(timeline_path)
+        return cls(Timeline(timeline_path))
 
     def _apply_entry(self, entry: dict) -> None:
         """根据 data_type 把 timeline entry 转化为内存对象变更。
@@ -1193,48 +1195,14 @@ class TaskBoard:
 
 
 def boot(home: Path) -> TaskBoard:
-    """Server 启动序列: (可选 migration) → vacuum → fold → startup_fold_completed.
+    """Server 启动序列 (Phase 3 去账本): 直接返回空 board，不 migration/vacuum/fold。
 
-    Phase 0 范围: fold 两遍重建内存 + 写 4 字段 entry.
-    Phase 2 范围: vacuum bounded-progress 加入 + entry 扩展为 6 字段
-                  (vacuum_duration_ms / archived_threads_count).
-
-    Yi #92 锁定 Phase 2 字段集: {fold_duration_ms, vacuum_duration_ms,
-    entries_read, entries_skipped, timeline_bytes, archived_threads_count}.
+    live PA 路径不再写 board，这里只为残留的 [TBD] 只读 viewer (routes/pa /pa/tasks、
+    timeline_service.get_thread_context、cli task/timeline 组) 提供一个可导入、可查询
+    的空 board，待这些 viewer 迁移到 claude 原生 transcript 后整包删除 board.py。
     """
-    import time
-
-    from frago.server.services.taskboard import migration
-    from frago.server.services.taskboard import vacuum as vac
-
-    if migration.needs_migration(home):
-        migration.migrate(home)
-
     timeline_path = home / "timeline" / "timeline.jsonl"
     timeline_path.parent.mkdir(parents=True, exist_ok=True)
     if not timeline_path.exists():
         timeline_path.touch()
-
-    # Phase 2: bounded vacuum 在 fold 之前 (markers > 0 时实际处理).
-    vac_t0 = time.monotonic()
-    vac_report = vac.run_bounded_vacuum(home)
-    vacuum_ms = int((time.monotonic() - vac_t0) * 1000)
-
-    fold_t0 = time.monotonic()
-    board = TaskBoard.fold(timeline_path)
-    fold_ms = int((time.monotonic() - fold_t0) * 1000)
-    timeline_bytes = timeline_path.stat().st_size
-
-    board._timeline.append_entry(
-        data_type="startup_fold_completed",
-        by="boot",
-        data={
-            "fold_duration_ms": fold_ms,
-            "vacuum_duration_ms": vacuum_ms,
-            "entries_read": board.entries_read,
-            "entries_skipped": board.entries_skipped,
-            "timeline_bytes": timeline_bytes,
-            "archived_threads_count": vac_report.processed,
-        },
-    )
-    return board
+    return TaskBoard.fold(timeline_path)

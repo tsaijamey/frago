@@ -24,7 +24,7 @@ async def pa_chat(request: ChatRequest) -> dict:
     from frago.server.services.primary_agent_service import PrimaryAgentService
 
     pa = PrimaryAgentService.get_instance()
-    if not pa._sessions and pa._fallback_session is None:
+    if pa._queue_consumer_task is None or pa._queue_consumer_task.done():
         raise HTTPException(503, "PA is not running")
 
     msg_id = f"cli_{uuid4().hex[:8]}"

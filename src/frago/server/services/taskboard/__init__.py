@@ -30,8 +30,7 @@ _singleton_lock = threading.Lock()
 def get_board() -> TaskBoard:
     """Process-wide TaskBoard singleton. 首次调用 boot ~/.frago timeline。
 
-    生产路径 (ingestion/scheduler / executor / scheduler_service / reflection_tick)
-    共享同一 board, 单一 timeline.jsonl 源。
+    去账本后仅剩只读 viewer 引用（routes/pa.py / timeline_service / cli），boot 返回空 board。
     """
     global _board_singleton
     if _board_singleton is None:

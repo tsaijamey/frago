@@ -1,9 +1,11 @@
 """Primary Agent service — manages the lifecycle of frago's PID 1 agent.
 
-PA service reads from board.view_for_pa and dispatches PA decisions via
-DecisionApplier / ExecutionApplier / ResumeApplier / Ingestor. The single
-persistence layer is board.timeline.jsonl (spec 20260512 v1.2 freeze:
-TaskStore + ingested_tasks.json are gone).
+Phase 4 (spec 20260627-pa-deboard-resident-agent): the resident tmux agent is
+the PA, and the *only* backend — claude-p is gone. Inbound messages route to it
+near-raw by conv_key; its final natural-language text is delivered straight back
+to the source channel via ``deliver`` — no JSON decision protocol, no
+DecisionApplier, no board. The queue consumer is a single path: drain → group by
+conv_key → ``_dispatch_group_tmux`` serially.
 
 Key design properties:
 - Logically immortal: scheduling continuity across server restarts
@@ -16,6 +18,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +29,6 @@ from frago.server.services.pa_prompts import (
     PA_AGENT_FAILED_TEMPLATE,
     PA_MERGED_MESSAGES_TEMPLATE,
     PA_MESSAGE_TEMPLATE,
-    PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE,
     PA_QUEUE_GROUP_LINE_TEMPLATE,
     PA_QUEUE_LAST_STATUS_LINE_TEMPLATE,
     PA_QUEUE_LOGS_SECTION_TEMPLATE,
@@ -39,20 +41,80 @@ from frago.server.services.pa_prompts import (
     PA_REPLY_FAILED_TEMPLATE,
     PA_SCHEDULED_TASK_TEMPLATE,
     SUB_AGENT_PROMPT_TEMPLATE,
-    USER_PA_ONLINE_RESPAWN_TEMPLATE,
-    USER_PA_ONLINE_RESTART_TEMPLATE,
-    USER_PA_ONLINE_ROTATION_TEMPLATE,
 )
 from frago.server.services.pa_prompts import (
     PA_SYSTEM_PROMPT as PRIMARY_AGENT_SYSTEM_PROMPT,
 )
-from frago.server.services.pa_validators import validate_pa_output, validate_queue_message
 from frago.server.services.task_lifecycle import TaskLifecycle
-from frago.server.services.taskboard import get_board
-from frago.server.services.taskboard.decision_applier import DecisionApplier
-from frago.server.services.taskboard.resume_applier import ResumeApplier
 
 logger = logging.getLogger(__name__)
+
+# Queue message types PA accepts (Phase 2: the validator collapsed from
+# pa_validators.py to this minimal gate — only the enqueue path still needs it;
+# the JSON-output validator is gone with the decision protocol).
+VALID_QUEUE_MESSAGE_TYPES = {
+    "user_message",
+    "agent_completed", "agent_failed", "reply_failed",
+    "scheduled_task",
+    "recovered_failed_task",
+    "resume_failed",
+    "run_failed",
+    "schedule_failed",
+    # Phase 3 (去账本): worker（agent 用 `frago agent start` 起的 sub-agent）完成后
+    # 以一条新消息带 conv 归属重入队列，PA 下一轮组织最终回复。
+    "worker_done",
+}
+
+# Internal queue message types that have NO outbound user channel. When a turn
+# consumes one of these and produces text, that text must NOT be delivered as a
+# reply (there is nowhere to send it) and a failed delivery must NOT be re-fed as
+# a reply_failed message — doing so creates a self-sustaining loop (reply_failed
+# → deliver → no notify_recipe → reply_failed → ...).
+# Note: agent_completed / worker_done carry the original user's real channel in
+# their route, so they are deliverable and intentionally excluded here.
+NON_DELIVERABLE_CHANNELS = frozenset({
+    "reply_failed",
+    "resume_failed",
+    "run_failed",
+    "schedule_failed",
+})
+
+
+def _validate_queue_message(msg: dict[str, Any]) -> tuple[bool, str]:
+    """Minimal structural gate before a message enters the PA queue.
+
+    Returns (ok, error). Keeps the dirty-data-out-of-the-queue guarantee that
+    the old validate_queue_message gave, without the JSON decision machinery.
+    """
+    if not isinstance(msg, dict):
+        return False, f"Expected dict, got {type(msg).__name__}."
+    msg_type = msg.get("type")
+    if msg_type not in VALID_QUEUE_MESSAGE_TYPES:
+        return False, f'Invalid message type "{msg_type}".'
+    if msg_type == "user_message":
+        has_id = bool(msg.get("msg_id") or msg.get("task_id"))
+        missing = [f for f in ("channel", "prompt") if not msg.get(f)]
+        if not has_id:
+            missing.insert(0, "msg_id")
+        if missing:
+            return False, f'user_message missing required fields: {", ".join(missing)}.'
+    elif msg_type in ("agent_completed", "agent_failed"):
+        missing = [f for f in ("task_id", "channel") if not msg.get(f)]
+        if missing:
+            return False, f'{msg_type} missing required fields: {", ".join(missing)}.'
+    elif msg_type == "scheduled_task":
+        missing = [f for f in ("msg_id", "schedule_id", "prompt") if not msg.get(f)]
+        if missing:
+            return False, f'scheduled_task missing required fields: {", ".join(missing)}.'
+    elif msg_type == "recovered_failed_task":
+        missing = [f for f in ("task_id", "channel", "original_prompt") if not msg.get(f)]
+        if missing:
+            return False, f'recovered_failed_task missing required fields: {", ".join(missing)}.'
+    elif msg_type == "worker_done":
+        # conv 归属至少要有 conv_key 或 channel 之一，否则无从路由回会话/投递。
+        if not (msg.get("conv_key") or msg.get("channel")):
+            return False, "worker_done missing conv attribution (conv_key/channel)."
+    return True, ""
 
 FRAGO_HOME = Path.home() / ".frago"
 PROJECTS_DIR = FRAGO_HOME / "projects"
@@ -76,9 +138,29 @@ ROTATION_TOKEN_THRESHOLD = 500000
 # Task execution timeout (seconds)
 TASK_TIMEOUT_SECONDS = 900
 
+# Phase 6 (spec 20260627): transcript 持续转发器 + 真空闲回收/喂料门的节律默认值，
+# 可被 config.json 的 primary_agent.{watch,idle} 覆盖。
+WATCH_DEFAULTS = {
+    # 持续转发器轮询每个常驻会话 transcript 的间隔（秒）。~1.5s 足够贴 PA「先应一句
+    # 再异步续干」的节律，又不至于把 jsonl 读穿。
+    "watch_interval_seconds": 1.5,
+    # 真空闲的 transcript 静默判据：mtime 静默超过该秒数才算这一信号成立。
+    "idle_silence_seconds": 3.0,
+    # 喂料门最长等待真空闲的秒数；超过则记日志并放行（别死等一个永远不空闲的会话）。
+    "feeding_gate_max_seconds": 600.0,
+    # 喂料门 / wait-until-idle 的轮询间隔（秒）。
+    "idle_poll_seconds": 1.0,
+    # 空闲回收阈值：会话真空闲持续超过该秒数，由 heartbeat 周期 evict（关 tmux）。
+    # 配合 Phase 5 --resume：回收后再来消息按 transcript 接回，记忆不丢。
+    "idle_evict_seconds": 600.0,
+}
+
 # Resident-tmux session key used when a message has no bound thread (fallback).
 # Kept in sync with PaTmuxRunner.FALLBACK_KEY.
 PaTmuxRunner_FALLBACK = "__fallback__"
+
+# 滚动记录最近用过的 conv_key 上限——重启后据此预热常驻会话、消首句冷启动。
+WARM_CONVS_MAX = 10
 
 
 def _render_domain_peek(peek: dict[str, Any] | None) -> str:
@@ -129,12 +211,7 @@ class PrimaryAgentService:
     _instance: "PrimaryAgentService | None" = None
 
     def __init__(self) -> None:
-        # Per-thread PA sessions (Phase 3: one session per conversation unit)
-        self._sessions: dict[str, Any] = {}          # thread_id → AgentSession
-        self._session_ids: dict[str, str] = {}       # thread_id → claude session_id
-        self._pa_internal_ids: dict[str, str] = {}   # thread_id → internal_id
-
-        # Per-thread rotation counters
+        # Per-thread (conv_key) rotation counters for the resident tmux sessions.
         self._total_turns: dict[str, int] = {}
         self._accumulated_tokens: dict[str, int] = {}
         self._rotation_count: dict[str, int] = {}
@@ -142,10 +219,7 @@ class PrimaryAgentService:
         # Currently active thread (serial dispatch: one at a time)
         self._current_thread_id: str | None = None
 
-        # Server-level fallback session (schedule_failed etc. with no thread)
-        self._fallback_session: Any | None = None
-        self._fallback_session_id: str | None = None
-        self._fallback_internal_id: str | None = None
+        # Server-level fallback rotation counters (messages with no conv_key).
         self._fallback_total_turns: int = 0
         self._fallback_accumulated_tokens: int = 0
         self._fallback_rotation_count: int = 0
@@ -160,13 +234,35 @@ class PrimaryAgentService:
         self._busy: bool = False
         self._last_external_message_at: float | None = None
 
-        # JSON parse failure counter
-        self._consecutive_json_failures: int = 0
+        # Phase 2 (去 JSON 协议) → Phase 3 衔接点：conv → reply_context 内存缓存。
+        # 入队 user_message 时写入（reply_context 随消息带入），deliver 时读取，
+        # 让出去投递不再依赖 board task 查 reply_context。重启丢失无妨——下一条入站
+        # 消息会带着 reply_context 重建。Phase 2 暂以 channel 作 key（conv_key 派生在
+        # Phase 3 落地），board 作兜底。
+        self._reply_context_cache: dict[str, dict[str, Any]] = {}
 
-        # Non-blocking PA communication state
-        self._pa_output_buffer: str = ""
-        self._pa_input_len: int = 0
-        self._pa_waiting: bool = False
+        # Phase 6 (spec 20260627): transcript 持续转发器状态。
+        # _conv_route_cache: conv_key → 完整 route（channel + conv_key + reply_context），
+        #   入队时写入，转发器投递时按 conv_key 取它做 deliver 的 route。
+        # _last_delivered_marker: conv_key → 最近已投递的 transcript 终结 marker，
+        #   每个 marker 只投一次（去重）；喂 prompt 前由 on_ready 锚到 tail 做 baseline。
+        # _bootstrapping_convs: 正在注入 bootstrap 的 conv，转发器此窗口内跳过该 conv，
+        #   避免把 bootstrap 那一轮回复当新终答抢先投出（baseline 尚未锚定的竞态）。
+        self._conv_route_cache: dict[str, dict[str, Any]] = {}
+        self._last_delivered_marker: dict[str, str | None] = {}
+        # _watch_mtime: conv_key → 上拍看到的 transcript mtime。转发器每拍先 stat（微秒级），
+        #   mtime 没变就跳过全量解析——空闲会话（绝大多数时间）不再每 1.5s 重读重解几 MB。
+        self._watch_mtime: dict[str, float] = {}
+        self._bootstrapping_convs: set[str] = set()
+        # Phase 7 (token-rotation 改就地 /compact)：正在执行 /compact 的 conv 集合，
+        # 比照 _bootstrapping_convs——转发器 _watch_tick 在此窗口内跳过该 conv，避免把
+        # /compact 那一轮的 transcript 产出当新终答投到 channel（baseline 在 compact
+        # 完成后由 _seed_marker 重锚，双保险）。
+        self._compacting_convs: set[str] = set()
+        self._transcript_watch_task: asyncio.Task[None] | None = None
+        # 重启后预热 warm_convs 的后台任务（串行拉起常驻会话，消首句冷启动）。
+        self._preheat_task: asyncio.Task[None] | None = None
+        self._watch_config: dict[str, Any] = self._load_watch_config()
 
         # Message queue
         self._message_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -175,15 +271,17 @@ class PrimaryAgentService:
         # Track scheduled_task msg_id → schedule_id for PA result write-back
         self._schedule_msg_map: dict[str, str] = {}
 
-        # Phase 3 (tmux 后端): 常驻会话执行器，按 thread_id 复用 tmux claude TUI。
-        # 仅 backend=="tmux" 时使用；claude-p 路径不碰它。懒初始化。
+        # 常驻会话执行器：按 conv_key 复用 tmux claude TUI。懒初始化。这是唯一的
+        # PA 执行后端（Phase 4 删 claude-p 后队列消费收敛到此单路径）。
         self._pa_tmux_runner: Any | None = None
+
+        # Phase 1 (needs_input): convs 当前停在阻断门（认证墙 / 选择菜单）上的集合。
+        # 撞门后标记，会话原样停住、不重入队列、不 rotate；用户下一条消息透传进同一
+        # conv 把门推过后由 ok 分支清除。仅作可观测与防御性 guard，不驱动调度。
+        self._suspended_convs: set[str | None] = set()
 
         # Task lifecycle coordinator
         self._lifecycle = TaskLifecycle()
-
-        # Executor
-        self._executor: Any = None
 
         # Ingestion scheduler reference
         self._scheduler: Any = None
@@ -214,70 +312,38 @@ class PrimaryAgentService:
         (Phase 3: no single default session at startup).
         """
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
-
-        from frago.server.services.executor import Executor
-        self._executor = Executor(
-            board=get_board(),
-            pa_enqueue_message=self.enqueue_message,
-            broadcast_pa_event=self._broadcast_pa_event,
-        )
-        self._executor.start()
+        self._transcript_watch_task = asyncio.create_task(self._transcript_watch_loop())
+        # 后台预热最近用过的 conv（串行、不阻塞 server 启动），消首句冷启动。
+        self._preheat_task = asyncio.create_task(self._preheat_warm_convs())
 
         await self._start_heartbeat()
-        await self._start_reflection_tick()
-
-        # Phase 3: recover pending work by inspecting the board view.
-        await self._recover_pending_tasks()
-
-    async def _recover_pending_tasks(self) -> int:
-        """Phase 3: re-enqueue board msgs/tasks that are still in non-terminal states.
-
-        Reads board.view_for_pa() and finds:
-        - msgs with status ∈ {awaiting_decision, dispatched} that have no replied task
-        - tasks with status ∈ {queued, executing, resume_failed} that need PA attention
-
-        Returns the number of items recovered into the PA message queue.
-
-        TaskLifecycle.recover_pending_tasks still backs the rich field hydration
-        (reply_context / channel_message_id) until Phase 4 removes the store.
-        """
-        try:
-            messages = self._lifecycle.recover_pending_tasks()
-            if not messages:
-                return 0
-            for msg in messages:
-                await self.enqueue_message(msg)
-            logger.info("Recovered %d pending tasks into PA message queue", len(messages))
-            return len(messages)
-        except Exception:
-            logger.debug("Failed to recover pending tasks", exc_info=True)
-            return 0
+        # reflection tick 已退役：它是 taskboard/timeline 时代的设计，靠"扫 timeline +
+        # 活跃 thread"找主动事项；账本(Phase 3)与 JSON 决策(Phase 2)都删了之后它只会空跑、
+        # 还每轮 mint 一个垃圾 ULID 会话。
+        # Phase 3 (去账本): 不再 _recover_pending_tasks——跨重启的连续性交给 claude
+        # 原生 transcript + native_session_id 续接，重启前未答完的轮不复活。
 
     async def stop(self) -> None:
-        """Stop executor, queue consumer, heartbeat, and all PA sessions."""
-        if self._executor:
-            await self._executor.stop()
-
+        """Stop queue consumer, heartbeat, and all PA sessions."""
         if self._queue_consumer_task and not self._queue_consumer_task.done():
             self._queue_consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._queue_consumer_task
             self._queue_consumer_task = None
 
+        if self._transcript_watch_task and not self._transcript_watch_task.done():
+            self._transcript_watch_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._transcript_watch_task
+            self._transcript_watch_task = None
+
+        if self._preheat_task and not self._preheat_task.done():
+            self._preheat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._preheat_task
+            self._preheat_task = None
+
         await self._stop_heartbeat()
-        await self._stop_reflection_tick()
-        for tid, sess in list(self._sessions.items()):
-            try:
-                await sess.stop()
-            except Exception:
-                logger.debug("PA session stop error for thread %s", tid, exc_info=True)
-        self._sessions.clear()
-        if self._fallback_session:
-            try:
-                await self._fallback_session.stop()
-            except Exception:
-                logger.debug("Fallback session stop error", exc_info=True)
-            self._fallback_session = None
         if self._pa_tmux_runner is not None:
             try:
                 self._pa_tmux_runner.shutdown()
@@ -285,224 +351,37 @@ class PrimaryAgentService:
                 logger.debug("PA tmux runner shutdown error", exc_info=True)
             self._pa_tmux_runner = None
 
-    def get_session_id(self, thread_id: str | None = None) -> str | None:
-        """Get the Claude session_id for a given thread (or current, or fallback).
-
-        Phase 3: sessions are per-thread. ``thread_id=None`` returns the
-        currently active thread's session_id (or fallback if no active thread).
-        """
-        tid = thread_id or self._current_thread_id
-        if tid:
-            return self._session_ids.get(tid)
-        return self._fallback_session_id
-
     def set_busy(self, busy: bool) -> None:
         self._busy = busy
 
     def record_external_message(self) -> None:
         self._last_external_message_at = time.monotonic()
 
-    # -- PA session management --
-
-    async def _create_pa_session(self, *, thread_id: str | None = None, reason: str = "unknown") -> str:
-        """Create a new attached PA session with bootstrap context.
-
-        ``thread_id``: the conversation unit this session serves. When None,
-        the session is a fallback (server-level, no specific thread).
-
-        Returns the internal_id for the new session.
-        """
-        from frago.server.services.agent_service import AgentService
-
-        is_fallback = thread_id is None
-        tag = f"thread={thread_id}" if thread_id else "fallback"
-
-        logger.info("PA session creating (reason=%s, %s, seq=%d)", reason, tag, self._heartbeat_seq)
-
-        _, reborn_reason = self._build_bootstrap_prompt(thread_id=thread_id, create_reason=reason)
-
-        def _pa_prefix_provider() -> str:
-            latest_bootstrap, _ = self._build_bootstrap_prompt(thread_id=thread_id, create_reason="message_dispatch")
-            return PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + latest_bootstrap
-
-        result = await AgentService.start_task_attached(
-            prompt="",
-            project_path=str(Path.home()),
-            prefix_provider=_pa_prefix_provider,
-        )
-        if result.get("status") != "ok":
-            raise RuntimeError(
-                f"Failed to create PA session ({tag}): {result.get('error')}"
-            )
-
-        internal_id = result["internal_id"]
-        session = AgentService._attached_sessions.get(internal_id)
-
-        if session:
-            session._on_assistant_message = self._on_pa_message
-
-        session_id = await self._wait_for_session_id(internal_id)
-
-        if is_fallback:
-            self._fallback_session = session
-            self._fallback_session_id = session_id
-            self._fallback_internal_id = internal_id
-        else:
-            self._sessions[thread_id] = session
-            self._session_ids[thread_id] = session_id
-            self._pa_internal_ids[thread_id] = internal_id
-            get_board().bind_pa_session(thread_id, session_id, by="pa")
-
-        logger.info("PA session created: %s (%s)", session_id, tag)
-
-        # Online notification ("PA 回来了") is a server-level event, not a
-        # per-conversation one. Only the fallback (server-level) session emits it.
-        # Per-thread external sessions must NOT: a conversation unit's first
-        # session gets reborn_reason heuristically tagged "server_restart" (history
-        # exists), which would otherwise spam "PA 已重新上线" on every new thread —
-        # i.e. on every inbound user message to a fresh conversation.
-        #
-        # Default OFF: rotation/respawn/server_restart are internal self-healing
-        # events with no information value for the user, so the auto-broadcast is
-        # suppressed unless explicitly enabled via
-        # config.json -> primary_agent.reborn_notification.enabled = true.
-        # This only gates the reborn broadcast; real user-facing replies
-        # (reply / agent_completed) go through other paths and are unaffected.
-        if (
-            is_fallback
-            and reborn_reason in ("rotation", "server_restart", "respawn")
-            and self._reborn_notification_enabled()
-        ):
-            asyncio.create_task(self._send_online_notification(reborn_reason))
-
-        return internal_id
+    # -- PA session management (resident tmux backend only) --
 
     async def rotate_session(self, thread_id: str | None = None) -> None:
-        """Create a new session for a thread, rebuild from external state.
+        """Rotate a conversation's resident tmux session (token-driven).
 
-        ``thread_id=None`` rotates the fallback session.
+        Phase 7 (spec 20260627): token-rotation 不再 evict+resume（Phase 5 之后那是
+        白杀一次 + 全量重载、不压缩），改为驱动常驻会话就地执行 ``/compact`` 真压
+        上下文、会话保活不 kill。
         """
-        # Backend dispatch: the tmux backend has no subprocess to stop — rotation
-        # evicts the resident session instead of tearing down an AgentSession.
-        # This keeps _handle_pa_output's internal rotation call correct for tmux.
-        from frago.server.services.agent_service import resolve_backend
-        if resolve_backend() == "tmux":
-            await self._rotate_tmux_session(thread_id)
-            return
-
-        is_fallback = thread_id is None
-        tag = f"thread={thread_id}" if thread_id else "fallback"
-
-        if is_fallback:
-            turns = self._fallback_total_turns
-            tokens = self._fallback_accumulated_tokens
-            count = self._fallback_rotation_count
-        else:
-            turns = self._total_turns.get(thread_id, 0)
-            tokens = self._accumulated_tokens.get(thread_id, 0)
-            count = self._rotation_count.get(thread_id, 0)
-
-        logger.info(
-            "PA session rotation (%s, turns=%d, tokens=%d, rotation_count=%d)",
-            tag, turns, tokens, count,
-        )
-
-        if is_fallback:
-            if self._fallback_session:
-                try:
-                    await self._fallback_session.stop()
-                except Exception:
-                    logger.debug("Old fallback session stop error", exc_info=True)
-                self._fallback_session = None
-            if self._fallback_internal_id:
-                from frago.server.services.agent_service import AgentService
-                AgentService._attached_sessions.pop(self._fallback_internal_id, None)
-            self._fallback_internal_id = None
-            self._fallback_session_id = None
-        else:
-            old_sess = self._sessions.pop(thread_id, None)
-            if old_sess:
-                try:
-                    await old_sess.stop()
-                except Exception:
-                    logger.debug("Old PA session stop error for thread %s", thread_id, exc_info=True)
-            old_internal = self._pa_internal_ids.pop(thread_id, None)
-            if old_internal:
-                from frago.server.services.agent_service import AgentService
-                AgentService._attached_sessions.pop(old_internal, None)
-            self._session_ids.pop(thread_id, None)
-
-        await self._create_pa_session(thread_id=thread_id, reason="rotation")
-
-        if is_fallback:
-            self._fallback_total_turns = 0
-            self._fallback_accumulated_tokens = 0
-            self._fallback_rotation_count = count + 1
-        else:
-            self._total_turns[thread_id] = 0
-            self._accumulated_tokens[thread_id] = 0
-            self._rotation_count[thread_id] = count + 1
-
-        self._consecutive_json_failures = 0
-
-    # -- Phase 3: per-thread session routing --
-
-    async def _session_for(self, thread_id: str | None) -> Any | None:
-        """Get or create a PA session for ``thread_id``.
-
-        ``thread_id=None`` returns/creates the fallback session.
-        Returns the AgentSession (or None on failure).
-        """
-        if thread_id is None:
-            if self._fallback_session and self._fallback_session.is_running:
-                return self._fallback_session
-            try:
-                await self._create_pa_session(thread_id=None, reason="route")
-            except Exception:
-                logger.exception("Failed to create fallback PA session")
-                return None
-            return self._fallback_session
-
-        sess = self._sessions.get(thread_id)
-        if sess and sess.is_running:
-            return sess
-
-        try:
-            await self._create_pa_session(thread_id=thread_id, reason="route")
-        except Exception:
-            logger.exception("Failed to create PA session for thread %s", thread_id)
-            return None
-        return self._sessions.get(thread_id)
+        await self._compact_tmux_session(thread_id)
 
     @staticmethod
     def _resolve_thread_id(msg: dict) -> str | None:
-        """Resolve which dedicated session a queue message routes to.
+        """Resolve which resident session a queue message routes to (Phase 3: conv_key).
 
-        Spec §不做什么 4: only ``origin=external`` threads bind a dedicated
-        session. internal (reflection) / scheduled messages — and any thread_id
-        not backed by a live board thread — route to the fallback session
-        (return None). reflection intentionally creates no board thread, so
-        binding its thread_id would crash _create_pa_session via board
-        IllegalTransitionError(thread missing); fallback avoids that.
+        去账本后路由退化成纯 conv_key：入站消息在 ingestion 时已派生 ``conv_key``
+        并随消息携带；这里直接读它。无 conv_key（scheduled / internal / reflection
+        等无会话单元的消息）返回 None → 路由到 fallback 常驻会话。
         """
-        board = get_board()
+        conv_key = msg.get("conv_key")
+        if conv_key:
+            return str(conv_key)
+        # 兼容旧字段名 thread_id（worker_done / 内部消息可能仍带）。
         tid = msg.get("thread_id")
-        if not tid:
-            task_id = msg.get("task_id")
-            if task_id:
-                t = board.get_thread_for_task(task_id)
-                if t:
-                    tid = t.thread_id
-        if not tid:
-            msg_id = msg.get("msg_id")
-            if msg_id:
-                tid = board.thread_id_of_msg(msg_id)
-
-        if tid:
-            t = board.get_thread(tid)
-            if t and t.get("origin") == "external":
-                return tid
-        return None
+        return str(tid) if tid else None
 
     @staticmethod
     def _set_msg_thread_id(msg: dict, thread_id: str | None) -> None:
@@ -519,85 +398,6 @@ class PrimaryAgentService:
         from frago.server.services.pa_context_builder import build_bootstrap
 
         return build_bootstrap(self._rotation_count.get(thread_id, 0) if thread_id else self._fallback_rotation_count, create_reason=create_reason, thread_id=thread_id)
-
-    def _reborn_notification_enabled(self) -> bool:
-        """Whether the PA reborn/restart auto-notification should be broadcast.
-
-        Defaults to False: session rotation / subprocess respawn / server
-        restart are internal self-healing events that carry no information for
-        the user, so the "PA 已重新上线" broadcast is silenced by default. Opt in
-        via config.json -> primary_agent.reborn_notification.enabled = true.
-        """
-        try:
-            if CONFIG_FILE.exists():
-                raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-                cfg = (raw.get("primary_agent") or {}).get("reborn_notification") or {}
-                return bool(cfg.get("enabled", False))
-        except (json.JSONDecodeError, OSError):
-            pass
-        return False
-
-    async def _send_online_notification(self, reborn_reason: str) -> None:
-        """Send online notification to the most recently active channel.
-
-        Phase 3: looks up reply_context via board (channel→latest msg). If board
-        has the msg the routing info comes from the cached source on PA side.
-        """
-        try:
-            from frago.server.services.trace import get_last_active_channel
-
-            channel = get_last_active_channel()
-            if not channel:
-                logger.debug("No active channel found, skipping online notification")
-                return
-
-            if reborn_reason == "rotation":
-                text = USER_PA_ONLINE_ROTATION_TEMPLATE
-            elif reborn_reason == "respawn":
-                text = USER_PA_ONLINE_RESPAWN_TEMPLATE
-            else:
-                text = USER_PA_ONLINE_RESTART_TEMPLATE
-
-            reply_params: dict[str, Any] = {"text": text}
-            reply_context = self._lookup_recent_reply_context(channel)
-            if reply_context:
-                reply_params["reply_context"] = reply_context
-            else:
-                logger.info(
-                    "Skipping online notification to %s: no recent task with reply_context",
-                    channel,
-                )
-                return
-
-            self._lifecycle.reply(
-                task_id="",
-                channel=channel,
-                reply_params=reply_params,
-            )
-            logger.info("Online notification sent to %s", channel)
-        except Exception:
-            logger.warning("Failed to send online notification", exc_info=True)
-
-    def _lookup_recent_reply_context(self, channel: str) -> dict | None:
-        """Look up the most recent reply_context for ``channel`` from board.
-
-        Phase finish: view_for_pa now exposes msg.reply_context directly,
-        so this reads board only — no scheduler cache lookup.
-        """
-        try:
-            view = get_board().view_for_pa()
-            latest_ctx: dict | None = None
-            for t in view.get("threads", []):
-                if t.get("subkind") != channel:
-                    continue
-                for m in t.get("msgs", []):
-                    ctx = m.get("reply_context")
-                    if ctx:
-                        latest_ctx = ctx
-            return latest_ctx
-        except Exception:
-            logger.debug("reply_context board lookup failed", exc_info=True)
-            return None
 
     # -- PA event broadcast --
 
@@ -628,10 +428,33 @@ class PrimaryAgentService:
 
     async def enqueue_message(self, msg: dict[str, Any]) -> None:
         """Enqueue a message for PA consumption."""
-        result = validate_queue_message(msg)
-        if not result.ok:
-            logger.warning("Rejected invalid queue message: %s (msg: %s)", result.error, msg)
+        ok, error = _validate_queue_message(msg)
+        if not ok:
+            logger.warning("Rejected invalid queue message: %s (msg: %s)", error, msg)
             return
+
+        # Phase 3: cache the inbound reply_context keyed by conv_key (and by
+        # channel, for the by-channel online-notification lookup) so the outbound
+        # deliver path routes without any board read. Freshest message wins.
+        reply_ctx = msg.get("reply_context")
+        conv_key = msg.get("conv_key")
+        channel = msg.get("channel")
+        if reply_ctx:
+            if conv_key:
+                self._reply_context_cache[f"conv:{conv_key}"] = reply_ctx
+            if channel:
+                self._reply_context_cache[f"channel:{channel}"] = reply_ctx
+
+        # Phase 6: 持续转发器投递时需要一份完整 route（channel + conv_key +
+        # reply_context）。入队即缓存，转发器按 conv_key 取它做 deliver 的 route，
+        # 不必再回溯入队消息。最新消息覆盖（reply 目标随新消息更新）。
+        if conv_key and channel:
+            self._conv_route_cache[str(conv_key)] = {
+                "channel": channel,
+                "conv_key": str(conv_key),
+                "reply_context": reply_ctx or {},
+            }
+
         await self._message_queue.put(msg)
         logger.debug("Message enqueued: type=%s", msg.get("type", "unknown"))
 
@@ -643,9 +466,49 @@ class PrimaryAgentService:
                 "prompt": msg.get("prompt", ""),
             })
 
+    async def enqueue_worker_done(
+        self,
+        *,
+        conv_key: str | None,
+        channel: str,
+        result_summary: str,
+        status: str = "completed",
+        agent_type: str = "",
+        worker_id: str = "",
+        output_files: list[str] | None = None,
+        reply_context: dict[str, Any] | None = None,
+    ) -> None:
+        """Re-enqueue a finished worker's result as a new PA queue message (Phase 3).
+
+        spec item 5: worker（``frago agent start`` 起的 sub-agent）跑完，以一条带 conv
+        归属的 ``worker_done`` 消息重入队列，PA 下一轮组织最终回复。这是"复用完成回调
+        路径、把写 board 替换为 enqueue worker_done"的落点。
+
+        [TBD] 触发侧：常驻 ``frago agent start`` worker 由 PA agent 自己驱动（tmux
+        send/peek），目前服务端无统一的 worker 完成监听器；本方法提供重入入口，实际
+        由谁在 worker 退出时调用它待后续 wiring（旧 executor 板任务监听已随账本退役）。
+        """
+        await self.enqueue_message({
+            "type": "worker_done",
+            "conv_key": conv_key,
+            "channel": channel,
+            "status": status,
+            "result_summary": result_summary,
+            "agent_type": agent_type,
+            "worker_id": worker_id,
+            "output_files": output_files or [],
+            "reply_context": reply_context or {},
+            "received_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
     async def _queue_consumer_loop(self) -> None:
-        """Consumer loop: drain queue, resolve thread_id, group by thread, route per session (serial)."""
-        logger.info("PA queue consumer started (Phase 3: per-thread routing)")
+        """Consumer loop: drain queue, derive conv_key, group, dispatch via tmux (serial).
+
+        Phase 4 (删 claude-p): the resident tmux session IS the PA. The queue
+        consumer is now a single path — group by conv_key, then ``_dispatch_group_tmux``
+        one group at a time. There is no second backend and no subprocess to wait on.
+        """
+        logger.info("PA queue consumer started (resident tmux single path)")
         while True:
             try:
                 first = await self._message_queue.get()
@@ -658,7 +521,7 @@ class PrimaryAgentService:
                     except asyncio.QueueEmpty:
                         break
 
-                # Phase 3: resolve thread_id for each message, group by thread
+                # Resolve conv_key for each message, group by conv_key.
                 from collections import defaultdict
                 grouped: dict[str | None, list[dict]] = defaultdict(list)
                 for m in messages:
@@ -666,98 +529,10 @@ class PrimaryAgentService:
                     self._set_msg_thread_id(m, tid)
                     grouped[tid].append(m)
 
-                # Phase 3: choose execution backend once per drain cycle.
-                from frago.server.services.agent_service import resolve_backend
-                backend = resolve_backend()
-
-                # Serial dispatch: process each group one at a time
+                # Serial dispatch: one resident tmux turn per group at a time.
                 for tid, group in grouped.items():
                     self._current_thread_id = tid
-
-                    # backend=="tmux": resident tmux claude TUI, synchronous turn.
-                    # The claude-p path below is left exactly as-is for fallback.
-                    if backend == "tmux":
-                        await self._dispatch_group_tmux(tid, group)
-                        continue
-
-                    session = await self._session_for(tid)
-                    if not session:
-                        logger.error("No PA session available for thread=%s, dropping %d message(s)", tid, len(group))
-                        continue
-
-                    # Wait for session to be ready (no concurrent processing)
-                    _wait_start = asyncio.get_event_loop().time()
-                    while session.is_running:
-                        if asyncio.get_event_loop().time() - _wait_start > 120:
-                            logger.warning(
-                                "Queue consumer: timed out waiting for PA subprocess "
-                                "(is_running stuck, thread=%s), forcing rotation", tid,
-                            )
-                            await self.rotate_session(thread_id=tid)
-                            for m in group:
-                                await self._message_queue.put(m)
-                            logger.info(
-                                "Queue consumer: re-enqueued %d message(s) after timeout rotation",
-                                len(group),
-                            )
-                            break
-                        await asyncio.sleep(0.5)
-                    else:
-                        # Only process if we didn't break out of the timeout loop
-                        from frago.server.services.trace import trace_entry
-                        for _m in group:
-                            if not isinstance(_m, dict):
-                                continue
-                            _tid = _m.get("thread_id")
-                            _mtype = _m.get("type", "")
-                            _channel = _m.get("channel", "") or _mtype
-                            trace_entry(
-                                origin="internal",
-                                subkind="pa",
-                                data_type="message",
-                                thread_id=_tid,
-                                parent_id=None,
-                                task_id=_m.get("task_id"),
-                                data={"queue_msg_type": _mtype, "channel": _m.get("channel")},
-                                msg_id=_m.get("msg_id"),
-                                role="pa",
-                                event=f"收到消息队列: {_channel}",
-                            )
-
-                        merged = self._format_queue_messages(group)
-                        logger.info(
-                            "Queue consumer: sending %d merged messages to PA (thread=%s, %d chars)",
-                            len(group), tid, len(merged),
-                        )
-                        await self._send_to_pa(merged)
-
-                        while self._pa_waiting:
-                            sess = self._current_session()
-                            if sess and not sess.is_running:
-                                break
-                            await asyncio.sleep(0.5)
-
-                        if self._pa_waiting:
-                            self._pa_waiting = False
-                            if tid:
-                                self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
-                                estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
-                                self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
-                            else:
-                                self._fallback_total_turns += 1
-                                self._fallback_accumulated_tokens += (self._pa_input_len + len(self._pa_output_buffer)) // 4
-                            if self._pa_output_buffer.strip():
-                                logger.info("Queue consumer: processing PA response (%d chars, thread=%s)", len(self._pa_output_buffer), tid)
-                                await self._handle_pa_output(self._pa_output_buffer.strip())
-                            else:
-                                logger.warning("Queue consumer: PA produced no output (thread=%s)", tid)
-                                for m in group:
-                                    await self._message_queue.put(m)
-                                logger.info(
-                                    "Queue consumer: re-enqueued %d message(s) after PA no-output",
-                                    len(group),
-                                )
-                            self._pa_output_buffer = ""
+                    await self._dispatch_group_tmux(tid, group)
 
                 self._current_thread_id = None
 
@@ -878,16 +653,19 @@ class PrimaryAgentService:
                     original_prompt=msg.get("original_prompt", ""),
                 ))
 
-            elif msg_type == "internal_reflection":
-                from frago.server.services.pa_prompts import (
-                    PA_INTERNAL_REFLECTION_TEMPLATE,
+            elif msg_type == "worker_done":
+                # Phase 3: worker(frago agent start 起的 sub-agent)完成重入。带 conv
+                # 归属 + 结果摘要，PA 读完组织最终回复。无专用模板，用简洁自然语言块。
+                status = msg.get("status", "completed")
+                summary = msg.get("result_summary") or msg.get("summary") or "(无摘要)"
+                outputs = msg.get("output_files") or []
+                outputs_line = f"\n输出文件: {', '.join(outputs)}" if outputs else ""
+                msg_parts.append(
+                    f"[worker 完成] agent_type={msg.get('agent_type', '?')} "
+                    f"status={status} worker={msg.get('worker_id', '?')}\n"
+                    f"结果摘要:\n{summary}{outputs_line}\n"
+                    f"（这是你之前派出去的 worker 跑完后的回传，读完组织最终回复给用户。）"
                 )
-                msg_parts.append(PA_INTERNAL_REFLECTION_TEMPLATE.format(
-                    thread_id=msg.get("thread_id", "?"),
-                    ts=msg.get("ts", ""),
-                    reason=msg.get("reason", "scheduled"),
-                    prompt_hint=msg.get("prompt_hint", ""),
-                ))
 
             elif msg_type == "resume_failed":
                 from frago.server.services.pa_prompts import (
@@ -931,6 +709,18 @@ class PrimaryAgentService:
 
     # -- heartbeat --
 
+    def _load_watch_config(self) -> dict[str, Any]:
+        """Load Phase 6 transcript-watch / idle config from config.json."""
+        try:
+            if CONFIG_FILE.exists():
+                raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                pa = raw.get("primary_agent") or {}
+                user = {**(pa.get("watch") or {}), **(pa.get("idle") or {})}
+                return {**WATCH_DEFAULTS, **user}
+        except (json.JSONDecodeError, OSError):
+            pass
+        return dict(WATCH_DEFAULTS)
+
     def _load_heartbeat_config(self) -> dict[str, Any]:
         """Load heartbeat config from config.json."""
         try:
@@ -941,6 +731,110 @@ class PrimaryAgentService:
         except (json.JSONDecodeError, OSError):
             pass
         return dict(HEARTBEAT_DEFAULTS)
+
+    def _load_warm_convs(self) -> list[str]:
+        """读 config 里 primary_agent.warm_convs（最近在前的 conv_key 列表）。"""
+        try:
+            if CONFIG_FILE.exists():
+                raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                convs = (raw.get("primary_agent") or {}).get("warm_convs") or []
+                return [str(c) for c in convs if c]
+        except (json.JSONDecodeError, OSError):
+            pass
+        return []
+
+    def _record_warm_conv(self, conv_key: str) -> None:
+        """把 conv_key 提到 warm_convs 最前、去重、截断到上限，持久化回 config.json。
+
+        read-modify-write 只改 ``primary_agent.warm_convs`` 一个字段，NEVER 整体覆盖
+        把别的字段冲掉。列表无变化（已在最前）时不写盘，避免每次派发都打 IO。
+        """
+        if not conv_key or conv_key == PaTmuxRunner_FALLBACK:
+            return
+        # 只记真实 channel 会话：conv_key 形如 "<已注册channel>:<id>"（feishu:/voice:/
+        # email:/slack:）。内部消息的裸 ULID thread_id（反思 tick 等）和无 channel 前缀的
+        # 测试夹具值（thread-A）一律不记——否则 warm_convs 会被反思 ULID 持续刷满、把真实
+        # 会话挤出去，预热还会白拉一堆空会话。
+        from frago.server.services.taskboard.conv_key import CONV_KEY_DERIVERS
+
+        channel = conv_key.split(":", 1)[0] if ":" in conv_key else ""
+        if channel not in CONV_KEY_DERIVERS:
+            return
+        try:
+            raw = (
+                json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                if CONFIG_FILE.exists()
+                else {}
+            )
+        except (json.JSONDecodeError, OSError):
+            return
+        if not isinstance(raw, dict):
+            return
+        pa = raw.get("primary_agent")
+        if not isinstance(pa, dict):
+            pa = {}
+        old = [str(c) for c in (pa.get("warm_convs") or []) if c]
+        new = [conv_key] + [c for c in old if c != conv_key]
+        new = new[:WARM_CONVS_MAX]
+        if new == old:
+            return
+        pa["warm_convs"] = new
+        raw["primary_agent"] = pa
+        try:
+            CONFIG_FILE.write_text(
+                json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            logger.debug("warm_convs persist failed", exc_info=True)
+
+    async def _preheat_warm_convs(self) -> None:
+        """后台串行预热 warm_convs 里的常驻会话，消首句冷启动。NEVER 阻塞 server 启动。
+
+        逐个（串行，不并行 10 个一起拉，避免一次起 10 个 claude 打爆机器）调会话获取
+        路径把常驻 tmux 拉起来——走 acquire（--resume + bootstrap，Phase 5 保证 transcript
+        存在则 resume）。已活的跳过。每个预热前后记 info 日志。预热是一次完整且慢的会话
+        启动，所以放后台 + 串行。
+        """
+        convs = self._load_warm_convs()
+        if not convs:
+            return
+        logger.info("PA preheat: warming %d resident conv(s): %s", len(convs), convs)
+        runner = self._get_pa_tmux_runner()
+        for conv_key in convs:
+            if not conv_key or conv_key == PaTmuxRunner_FALLBACK:
+                continue
+            try:
+                logger.info("PA preheat: warming conv=%s ...", conv_key)
+                # 预热 MUST 把 bootstrap 那轮也跑掉（真实提交+等答完），NEVER 只 open 会话：
+                # 只 open 会让会话进池（has()=True），首条真实消息那轮便跳过 bootstrap，
+                # 成为刚 --resume、尚未可交互会话的第一次提交→回车被吞→卡死。详见 warm()。
+                bootstrap, _ = self._build_bootstrap_prompt(
+                    thread_id=conv_key, create_reason="preheat"
+                )
+                full_bootstrap = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
+                self._bootstrapping_convs.add(conv_key)
+
+                def _on_ready(_key: str, _ck: str = conv_key) -> None:
+                    self._seed_marker(_ck)
+                    self._bootstrapping_convs.discard(_ck)
+
+                try:
+                    created = await asyncio.to_thread(
+                        runner.warm, conv_key,
+                        bootstrap=full_bootstrap, on_ready=_on_ready,
+                    )
+                finally:
+                    self._bootstrapping_convs.discard(conv_key)
+                logger.info(
+                    "PA preheat: conv=%s %s",
+                    conv_key,
+                    "warmed (bootstrap injected)" if created else "already alive, skipped",
+                )
+            except asyncio.CancelledError:
+                logger.info("PA preheat cancelled")
+                raise
+            except Exception:
+                logger.exception("PA preheat: warming conv=%s failed", conv_key)
 
     async def _start_heartbeat(self) -> None:
         config = self._load_heartbeat_config()
@@ -967,31 +861,6 @@ class PrimaryAgentService:
         self._heartbeat_task = None
         logger.info("PA heartbeat stopped")
 
-    async def _start_reflection_tick(self) -> None:
-        from frago.server.services.reflection_tick import (
-            ReflectionTicker,
-            load_reflection_config,
-        )
-
-        config = load_reflection_config()
-        if not config.get("enabled", True):
-            logger.info("Reflection tick disabled by config")
-            self._reflection_ticker = None
-            return
-
-        self._reflection_ticker = ReflectionTicker(
-            enqueue=self.enqueue_message,
-            interval_min=int(config["interval_min"]),
-            initial_delay_sec=int(config["initial_delay_sec"]),
-            prompt_hint=str(config["prompt_hint"]),
-        )
-        await self._reflection_ticker.start()
-
-    async def _stop_reflection_tick(self) -> None:
-        ticker = getattr(self, "_reflection_ticker", None)
-        if ticker is not None:
-            await ticker.stop()
-            self._reflection_ticker = None
 
     async def _heartbeat_loop(self, interval: int, initial_delay: int) -> None:
         logger.info("Heartbeat loop: waiting %ds initial delay", initial_delay)
@@ -1011,11 +880,14 @@ class PrimaryAgentService:
                 continue
 
     async def _send_heartbeat(self) -> None:
-        """Heartbeat: idle detection + environment awareness + output collection.
+        """Heartbeat: keep the queue consumer alive + idle rotation check.
 
-        Phase 3: iterates over all per-thread sessions, checks rotation per-thread.
+        Phase 4: with the resident tmux backend as the sole path, turn accounting
+        and rotation happen inline in ``_dispatch_group_tmux``. The heartbeat only
+        resurrects a dead consumer task and triggers idle rotation for any conv
+        whose token window crossed the threshold while sitting quiet.
         """
-        logger.info("Heartbeat [%d]: tick (waiting=%s)", self._heartbeat_seq, self._pa_waiting)
+        logger.info("Heartbeat [%d]: tick", self._heartbeat_seq)
 
         if self._queue_consumer_task is None or self._queue_consumer_task.done():
             if self._queue_consumer_task and self._queue_consumer_task.done():
@@ -1031,322 +903,164 @@ class PrimaryAgentService:
             logger.debug("Heartbeat skipped: PA is busy")
             return
 
-        if self._pa_waiting:
-            sess = self._current_session()
-            if sess and sess.is_running:
-                logger.debug("Heartbeat [%d]: PA still processing, skip", self._heartbeat_seq)
-                return
-            self._pa_waiting = False
-            tid = self._current_thread_id
-            if tid:
-                self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
-                estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
-                self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
-            else:
-                self._fallback_total_turns += 1
-                self._fallback_accumulated_tokens += (self._pa_input_len + len(self._pa_output_buffer)) // 4
-            if self._pa_output_buffer.strip():
-                logger.info("Heartbeat [%d]: processing PA response (%d chars)", self._heartbeat_seq, len(self._pa_output_buffer))
-                await self._handle_pa_output(self._pa_output_buffer.strip())
-            self._pa_output_buffer = ""
-
-        # Per-thread rotation check: iterate all sessions
-        for tid in list(self._sessions.keys()):
+        # Idle rotation check: iterate all conv keys with accrued token counters.
+        for tid in list(self._accumulated_tokens.keys()):
             if self._should_rotate(tid):
-                await self.rotate_session(thread_id=tid)
+                await self._compact_tmux_session(tid)
         if self._should_rotate(None):
-            await self.rotate_session(thread_id=None)
+            await self._compact_tmux_session(None)
 
-        # Ensure at least one session exists if there are pending tasks
-        all_sessions = bool(self._sessions) or bool(self._fallback_session)
-        if not all_sessions:
-            recovered = await self._recover_pending_tasks()
-            if recovered:
-                logger.info(
-                    "Heartbeat [%d]: recovered %d pending tasks, sessions will be created on demand",
-                    self._heartbeat_seq, recovered,
-                )
+        # Phase 6: 周期回收真空闲超阈值的常驻会话（关 tmux）。仅当真空闲才参与回收，
+        # 在跑活的会话返回 None 永不回收；回收后再来消息走 Phase 5 --resume 接回。
+        await self._evict_idle_sessions()
 
-        if not self._pa_waiting and self._message_queue.empty():
-            recovered = await self._recover_pending_tasks()
-            if recovered:
-                logger.info(
-                    "Heartbeat [%d]: recovered %d pending tasks",
-                    self._heartbeat_seq, recovered,
-                )
-
-        if self._executor and (self._executor._loop_task is None or self._executor._loop_task.done()):
-            logger.warning("Heartbeat [%d]: executor loop died, restarting", self._heartbeat_seq)
-            self._executor.start()
-
+        # 去账本：不再 recover board pending tasks，也不再托管 executor 回路。
+        # 会话按需建；跨重启连续性交给 claude 原生 transcript。
         self._heartbeat_seq += 1
 
-    def _cleanup_terminal_tasks(self) -> None:
-        """Phase 3: terminal task archival is board-side (vacuum + thread_archived markers).
-        This helper now just logs the board's terminal task census for trace purposes.
-        Phase 4 will fully retire this method when ingestion.store is deleted.
+    async def _evict_idle_sessions(self) -> None:
+        """heartbeat 周期回收真空闲超阈值的常驻会话。
+
+        idle_age_fn：仅当会话真空闲（四信号成立）且能取到 transcript 终结时间戳时，
+        才以「自该时间戳起的静默秒数」计；仍在干活 / 无锚点返回 None → NEVER 回收。
         """
-        try:
-            board = get_board()
-            view = board.view_for_pa()
-            terminal = sum(
-                1 for t in view.get("threads", []) for m in t.get("msgs", [])
-                for tk in m.get("tasks", [])
-                if tk.get("status") in {"completed", "failed", "replied"}
-            )
-            if terminal:
-                logger.debug(
-                    "Heartbeat [%d]: board has %d terminal task(s)",
-                    self._heartbeat_seq, terminal,
-                )
-        except Exception:
-            logger.debug("Failed to read board terminal count", exc_info=True)
-
-    def _on_pa_message(self, text: str) -> None:
-        """Callback invoked by AgentSession when PA produces a complete text block."""
-        self._pa_output_buffer += text
-
-    async def _send_to_pa(self, message: str) -> None:
-        """Send message to PA via current thread's attached session. Non-blocking."""
-        session = self._current_session()
-        if not session:
-            logger.warning("Cannot send to PA: no session")
+        runner = self._pa_tmux_runner
+        if runner is None:
             return
+        from datetime import UTC
 
-        self._pa_output_buffer = ""
-        self._pa_input_len = len(message)
+        from frago.agent_driver.drivers.claude import is_truly_idle
 
-        try:
-            await session.send_message(message)
-            self._pa_waiting = True
-            logger.info("Heartbeat [%d]: sent message to PA (%d chars)", self._heartbeat_seq, len(message))
-        except RuntimeError as e:
-            logger.error("Failed to send to PA: %s", e)
-            tid = self._current_thread_id
-            self._current_thread_id = None
-            await self.rotate_session(thread_id=tid)
+        silence = float(self._watch_config["idle_silence_seconds"])
+        timeout_s = float(self._watch_config["idle_evict_seconds"])
+        now = datetime.now(UTC)
 
-    def _current_session(self) -> Any | None:
-        """Get the currently active PA session."""
-        if self._current_thread_id:
-            return self._sessions.get(self._current_thread_id)
-        return self._fallback_session
-
-    async def _send_and_wait_pa(self, message: str, timeout: float = 60.0) -> str | None:
-        """Send message to PA via current session and wait for response."""
-        await self._send_to_pa(message)
-
-        deadline = asyncio.get_event_loop().time() + timeout
-        while self._pa_waiting:
-            sess = self._current_session()
-            if sess and not sess.is_running:
-                break
-            if asyncio.get_event_loop().time() > deadline:
-                logger.warning("_send_and_wait_pa: timed out after %.0fs", timeout)
-                self._pa_waiting = False
+        def idle_age(session: Any) -> float | None:
+            if not is_truly_idle(session, silence_s=silence):
                 return None
-            await asyncio.sleep(0.5)
+            # idle 时长用「会话在本池里自己的最后活动时间」(open/send 刷新)，NEVER 用
+            # transcript 时间戳——预热是 --resume 一个旧 transcript，其最后记录可能几小时前，
+            # 那样会让刚预热的会话被秒判「闲了几小时」当场回收（预热与回收咬死）。
+            last = getattr(session, "last_active_at", None)
+            if last is None:
+                return None
+            return (now - last).total_seconds()
 
-        if self._pa_waiting:
-            self._pa_waiting = False
-            tid = self._current_thread_id
-            if tid:
-                self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
-                estimated_tokens = (self._pa_input_len + len(self._pa_output_buffer)) // 4
-                self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
-            else:
-                self._fallback_total_turns += 1
-                self._fallback_accumulated_tokens += (self._pa_input_len + len(self._pa_output_buffer)) // 4
-            output = self._pa_output_buffer.strip()
-            self._pa_output_buffer = ""
-            return output if output else None
-
-        return None
-
-    # -- PA output handling --
-
-    async def _handle_pa_output(self, output_text: str) -> None:
-        """Phase 3 (Yi #133): parse PA's JSON output and route via DecisionApplier.
-
-        Single dispatch path: DA.handle_pa_output routes all 4 actions
-        (run / reply / resume / dismiss) onto the board (single source of truth).
-        ``schedule`` action is intentionally not in the 4-action vocabulary and is
-        delegated to the schedule subsystem directly.
-
-        Side effects beyond board state (channel reply push, executor invocation,
-        run_failed feedback) are handled by per-action wrappers below.
-        """
-        result = validate_pa_output(output_text)
-
-        if not result.ok:
-            logger.warning("PA output validation failed: %s (raw: %r)", result.error, output_text)
-            self._consecutive_json_failures += 1
-
-            if self._consecutive_json_failures >= 2:
-                logger.error("2 consecutive validation failures after correction, rotating session")
-                await self.rotate_session(thread_id=self._current_thread_id)
-                return
-
-            correction_msg = PA_OUTPUT_FORMAT_CORRECTION_TEMPLATE.format(
-                error=result.error,
-                raw_output=output_text,
+        try:
+            evicted = await asyncio.to_thread(
+                runner._pool.evict_idle, idle_age, timeout_s
             )
-            await self._send_to_pa(correction_msg)
+        except Exception:
+            logger.debug("PA idle eviction error", exc_info=True)
             return
+        for sid in evicted:
+            logger.info("PA idle eviction: closed resident session conv=%s", sid)
+            # 重置该 key 的轮换计数（与 rotation 一致），下条消息触发干净重建 + resume。
+            self._total_turns.pop(sid, None)
+            self._accumulated_tokens.pop(sid, None)
+            self._last_delivered_marker.pop(sid, None)
+            self._watch_mtime.pop(sid, None)
 
-        self._consecutive_json_failures = 0
-        decisions = result.raw_data
+    # -- PA output handling (Phase 2: 透传，无 JSON 决策协议) --
 
-        if not decisions:
-            logger.info("PA decision: [] (idle)")
-            return
+    @staticmethod
+    def _route_for_group(group: list[dict]) -> dict[str, Any]:
+        """Pick the representative inbound message that carries the reply target.
 
-        logger.info("PA decision: %d action(s) → %s", len(decisions), [d.get("action") for d in decisions if isinstance(d, dict)])
+        Prefers a message with a ``channel``; falls back to the first dict.
+        Used as the ``route`` arg to ``deliver`` (channel + reply_context + ids).
+        """
+        for m in group:
+            if isinstance(m, dict) and m.get("channel"):
+                return m
+        return group[0] if group and isinstance(group[0], dict) else {}
 
-        # Phase 3 single-dispatch: 4-action set routed via DecisionApplier.
-        board = get_board()
-        da_decisions = [
-            d for d in decisions
-            if isinstance(d, dict) and d.get("action") in {"run", "reply", "resume", "dismiss"}
-        ]
-        # id(decision) → board outcome ({"ok", "reason", ...}). The board's
-        # append result is authoritative for whether a run will actually
-        # launch; the per-action loop below consults it instead of blindly
-        # reporting "dispatched ok" (which masked rejected runs as success —
-        # the sub-agent silently never started, see 2026-05-20 12:22).
-        outcome_by_decision: dict[int, dict[str, Any]] = {}
-        if da_decisions:
+    @staticmethod
+    def _warn_bareword_paths(
+        text: str, attachments: list[dict[str, Any]], conv_key: str,
+    ) -> None:
+        """兜底观测：扫正文里「像存在的文件路径却没进 outbox」的，记日志。
+
+        agent 漏调 ``frago agent attach`` 直接在正文写路径时，用户收到的还是路径
+        文字而非附件。这里只记日志（可观测 + 后续补救线索），NEVER 自动投递——
+        嗅探出的路径未必是要交付的制品（可能是引用的源码、日志等）。
+        """
+        import re
+
+        attached = {Path(a.get("path", "")).resolve() for a in attachments}
+        # 绝对路径 / ~ 起头 / 带至少一个目录分隔且含扩展名的相对路径。
+        candidates = set(re.findall(r"(?:~|/|\.{1,2}/)[\w./\-]+\.\w+", text))
+        missed: list[str] = []
+        for cand in candidates:
             try:
-                outcomes = DecisionApplier(board).handle_pa_output(da_decisions)
-                for dec, out in zip(da_decisions, outcomes, strict=True):
-                    outcome_by_decision[id(dec)] = out
-            except Exception:
-                logger.warning("DecisionApplier dispatch error", exc_info=True)
-
-        # Per-action side effects (channel push, executor.execute_resume, feedback).
-        for d in decisions:
-            if not isinstance(d, dict):
+                p = Path(cand).expanduser()
+            except (OSError, ValueError):
                 continue
-            action = d.get("action")
-            log_id = d.get("task_id") or d.get("msg_id") or "?"
-            _decision_data = {
-                "action": action or "",
-                "task_id": d.get("task_id", ""),
-                "msg_id": d.get("msg_id", ""),
-                "details": {k: v for k, v in d.items() if k not in ("action", "task_id", "msg_id")},
-            }
-            await self._broadcast_pa_event("pa_decision", _decision_data)
-            from frago.server.services.trace import trace as _trace
-            _desc = d.get("description") or d.get("text", "")
-            _trace(d.get("msg_id", ""), d.get("task_id"), "pa",
-                   f"决策 {action}: {str(_desc)[:80]}",
-                   data={"event_type": "pa_decision", **_decision_data})
-            try:
-                if action == "reply":
-                    logger.info("→ reply (id=%s, channel=%s)", log_id, d.get("channel"))
-                    await self._send_reply(d)
-                elif action == "run":
-                    logger.info("→ run (id=%s, desc=%s)", log_id, d.get("description", ""))
-                    out = outcome_by_decision.get(id(d))
-                    if out is not None and not out.get("ok", True):
-                        await self._enqueue_run(d, board_reason=out.get("reason"))
-                    else:
-                        await self._enqueue_run(d)
-                elif action == "resume":
-                    logger.info("→ resume (task=%s)", log_id)
-                    await self._handle_resume(d)
-                elif action == "dismiss":
-                    logger.info("→ dismiss (msg=%s)", log_id)
-                    # DA already marked msg dismissed on board; no side effect needed.
-                else:
-                    logger.warning("Unknown PA action: %s", action)
-            except Exception:
-                logger.exception("Failed to execute PA decision: %s", d)
+            if p.exists() and p.is_file() and p.resolve() not in attached:
+                missed.append(str(p))
+        if missed:
+            logger.warning(
+                "deliver: %d bareword path(s) in text exist but were not attached "
+                "(conv=%s) — agent should use `frago agent attach`: %s",
+                len(missed), conv_key, missed,
+            )
 
-        # Phase finish: deferred cache cleanup removed alongside _message_cache shim.
+    async def deliver(self, text: str, route: dict[str, Any]) -> None:
+        """Push the agent's natural-language text back to the source channel.
 
-        # Write back schedule results.
-        if self._scheduler_service:
-            referenced_schedule_msg_ids: set[str] = set()
-            for d in decisions:
-                if not isinstance(d, dict):
-                    continue
-                msg_id = d.get("msg_id", "")
-                schedule_id = self._schedule_msg_map.get(msg_id)
-                if not schedule_id:
-                    continue
-                referenced_schedule_msg_ids.add(msg_id)
-                action = d.get("action", "")
-                if action == "run":
-                    status = "dispatched"
-                elif action == "reply":
-                    status = "skipped"
-                else:
-                    status = action
-                task_id = d.get("task_id")
-                self._scheduler_service.update_schedule_result(schedule_id, status, task_id)
-                self._schedule_msg_map.pop(msg_id, None)
-
-            orphaned = {
-                mid: sid for mid, sid in self._schedule_msg_map.items()
-                if mid not in referenced_schedule_msg_ids
-            }
-            for msg_id, schedule_id in orphaned.items():
-                logger.warning(
-                    "[scheduler] PA did not reference scheduled_task %s (schedule %s) — marking skipped",
-                    msg_id, schedule_id,
-                )
-                self._scheduler_service.update_schedule_result(schedule_id, "skipped")
-                self._schedule_msg_map.pop(msg_id, None)
-
-    # -- per-action side-effect wrappers (Phase 3: dispatch goes through DA;
-    #    these handle channel push, executor.execute_resume, run_failed feedback) --
-
-    async def _send_reply(self, decision: dict[str, Any]) -> None:
-        """PA decided action:'reply' → push to channel.
-
-        DecisionApplier already marked the board task replied; here we still
-        need to push the text to the external channel via lifecycle.reply.
+        Phase 2: the resident agent's final text IS the reply content. ``route``
+        is the inbound queue message (carries channel + reply_context, optionally
+        task_id / msg_id for board fallback). Empty text is skipped — no empty
+        reply is pushed (Edge Cases: agent 最终输出为空 → 跳过、记日志、不重试).
         """
         from frago.server.services.trace import trace_entry
 
-        task_id: str = decision.get("task_id", "")
-        msg_id: str = decision.get("msg_id", "")
-        channel: str = decision.get("channel", "")
-        text: str = decision.get("text", "")
-        file_path: str = decision.get("file_path", "") or ""
-        image_path: str = decision.get("image_path", "") or ""
-
-        if not channel or not text:
-            logger.warning("reply decision missing channel or text")
-            trace_entry(
-                origin="internal", subkind="pa", data_type="action_result",
-                thread_id=None, task_id=task_id or None,
-                data={"action": "reply", "status": "failed",
-                      "reason": "missing_channel_or_text",
-                      "detail": f"channel={channel!r} text_len={len(text)}"},
-                msg_id=msg_id or None,
-                event="reply 失败: missing channel or text",
+        text = (text or "").strip()
+        channel = route.get("channel", "") or route.get("type", "")
+        if not text:
+            logger.info("deliver skipped: empty agent output (channel=%s)", channel)
+            return
+        if not channel:
+            logger.warning("deliver skipped: no channel on route (route keys=%s)", list(route))
+            return
+        if channel in NON_DELIVERABLE_CHANNELS:
+            logger.info(
+                "deliver skipped: internal channel %s has no outbound destination "
+                "(text dropped, no reply_failed re-enqueued)", channel,
             )
-            await self.enqueue_message({
-                "type": "reply_failed",
-                "task_id": task_id,
-                "channel": channel,
-                "error": "missing channel or text",
-                "original_text": text,
-            })
             return
 
-        reply_params: dict[str, Any] = {"text": text}
-        if file_path:
-            reply_params["file_path"] = file_path
-        if image_path:
-            reply_params["image_path"] = image_path
+        conv_key = route.get("conv_key")
+        reply_context = (
+            route.get("reply_context")
+            or (self._reply_context_cache.get(f"conv:{conv_key}") if conv_key else None)
+            or self._reply_context_cache.get(f"channel:{channel}")
+        )
+        task_id = route.get("task_id", "") or ""
+        msg_id = route.get("msg_id", "") or ""
+
+        # Phase 8（spec 20260627 交付即核心）：转发 pane 文本前 drain 该 conv 的
+        # outbox——agent 经 ``frago agent attach`` 登记的文件作真附件随文本一起送达。
+        # 兜底：扫正文里「像文件路径却没进 outbox」的，记日志（frago-core 现无 Stop
+        # 事件接「收尾校验」，先放交付层观测；自动补救为后续 follow-up）。
+        attachments: list[dict[str, Any]] = []
+        if conv_key:
+            from frago.server.services import pa_outbox
+
+            attachments = await asyncio.to_thread(pa_outbox.drain, conv_key)
+            self._warn_bareword_paths(text, attachments, conv_key)
+
         result = await asyncio.to_thread(
-            self._lifecycle.reply, task_id, channel, reply_params, msg_id=msg_id,
+            self._lifecycle.deliver,
+            channel,
+            {"text": text},
+            reply_context=reply_context,
+            attachments=attachments,
+            task_id=task_id,
+            msg_id=msg_id,
         )
 
-        if result["status"] == "ok":
+        if result.get("status") == "ok":
             _reply_data = {
                 "task_id": task_id or "",
                 "msg_id": msg_id or "",
@@ -1361,12 +1075,11 @@ class PrimaryAgentService:
                 origin="internal", subkind="pa", data_type="action_result",
                 thread_id=None, task_id=task_id or None,
                 data={"action": "reply", "status": "ok",
-                      "channel": channel, "text_len": len(text),
-                      "has_attachment": bool(file_path or image_path)},
+                      "channel": channel, "text_len": len(text)},
                 msg_id=msg_id or None,
                 event=f"reply 成功: {channel}",
             )
-        elif result["status"] == "error":
+        elif result.get("status") == "error":
             error_detail = result.get("error", "unknown")
             trace_entry(
                 origin="internal", subkind="pa", data_type="action_result",
@@ -1385,146 +1098,179 @@ class PrimaryAgentService:
                 "original_text": text,
             })
 
-    # Board rejection reason → human-readable detail fed back to the PA so it
-    # can self-correct (re-dispatch on a clean task, wait, or tell the user)
-    # instead of believing a silently-rejected run actually launched.
-    _RUN_REJECT_DETAIL = {
-        "illegal_transition": (
-            "board 拒绝 run：父 msg 已关闭/状态不允许 append（常见于 ack reply 先关了"
-            " msg）。子 agent 未启动。请用一条干净的任务（新 msg_id 或既有 task_id）重派。"
-        ),
-        "duplicate_run_inflight": (
-            "board 拒绝 run：该 msg 已有一个 run 在排队/执行中，拒绝重复派发。等它完成"
-            "再处理结果，不要重派。"
-        ),
-        "post_archive_append": (
-            "board 拒绝 run：所属 thread 已归档，无法再 append。子 agent 未启动。"
-        ),
-        "msg_not_found": (
-            "board 拒绝 run：找不到该 msg_id，run 无法落盘。子 agent 未启动。"
-        ),
-        "prompt_format_invalid": (
-            "board 拒绝 run：prompt 不符合「首行≤80 摘要 + 空行 + 正文」格式。子 agent 未启动。"
-        ),
-    }
+    def _writeback_schedules(self, group: list[dict]) -> None:
+        """Mark scheduled_task entries in this group as handled after a turn.
 
-    async def _enqueue_run(
-        self, decision: dict[str, Any], *, board_reason: str | None = None
-    ) -> None:
-        """PA decided action:'run'.
-
-        DecisionApplier already attempted to append the run task onto the
-        board. ``board_reason`` (set by the caller from the board outcome)
-        means the append was *rejected* — we surface it as a "run 失败" trace
-        plus run_failed feedback so the failure is loud and the PA can
-        self-correct, rather than the old blind "dispatched ok" that masked a
-        sub-agent that never launched. On success the executor's poll loop
-        picks up the queued board task. This wrapper also still catches
-        malformed PA decisions (missing prompt / both ids absent).
+        Phase 2: with the JSON decision protocol gone, schedule status no longer
+        keys off run/reply actions. A delivered turn that consumed a scheduled_task
+        marks that schedule ``dispatched`` so the scheduler doesn't see it as stuck.
         """
-        from frago.server.services.trace import trace_entry
-
-        task_id = decision.get("task_id", "")
-        msg_id = decision.get("msg_id", "")
-        description = decision.get("description", "")
-        prompt = decision.get("prompt", "")
-        channel = decision.get("channel", "")
-
-        async def _fail(reason: str, detail: str) -> None:
-            logger.warning("run %s failed: %s — %s", task_id or msg_id or "?", reason, detail)
-            trace_entry(
-                origin="internal", subkind="pa", data_type="action_result",
-                thread_id=None, task_id=task_id or None,
-                data={"action": "run", "status": "failed",
-                      "reason": reason, "detail": detail,
-                      "decision_msg_id": msg_id, "decision_task_id": task_id,
-                      "channel": channel},
-                msg_id=msg_id or None,
-                event=f"run 失败: {reason}",
-            )
-            await self.enqueue_message({
-                "type": "run_failed",
-                "msg_id": msg_id,
-                "task_id": task_id,
-                "channel": channel,
-                "reason": reason,
-                "detail": detail,
-            })
-
-        if board_reason:
-            await _fail(
-                board_reason,
-                self._RUN_REJECT_DETAIL.get(
-                    board_reason, f"board 拒绝 run：{board_reason}。子 agent 未启动。"
-                ),
-            )
+        if not self._scheduler_service:
             return
+        for m in group:
+            if not isinstance(m, dict):
+                continue
+            sid = self._schedule_msg_map.pop(m.get("msg_id", ""), None)
+            if sid:
+                self._scheduler_service.update_schedule_result(sid, "dispatched")
 
-        if not prompt:
-            await _fail("missing_prompt", "run 决策未提供 prompt 字段，无法派发任务。")
-            return
-
-        if not task_id and not msg_id:
-            await _fail(
-                "missing_id",
-                "run 决策必须提供 msg_id (新消息) 或 task_id (已有任务) 至少一个。",
-            )
-            return
-
-        trace_entry(
-            origin="internal", subkind="pa", data_type="action_result",
-            thread_id=None, task_id=task_id or None,
-            data={"action": "run", "status": "ok", "description": description[:120]},
-            msg_id=msg_id or None,
-            event=f"run dispatched (board): task={task_id or msg_id}",
-        )
-
-    async def _handle_resume(self, decision: dict[str, Any]) -> None:
-        """PA decided action:'resume' → ResumeApplier routes board state;
-        executor.execute_resume drives the hot injection into the live Claude
-        session. Failures emit resume_failed feedback.
-        """
-        task_id = decision.get("task_id")
-        prompt = decision.get("prompt", "")
-
-        async def _feedback_fail(reason: str, detail: str) -> None:
-            await self.enqueue_message({
-                "type": "resume_failed",
-                "task_id": task_id or "?",
-                "reason": reason,
-                "detail": detail,
-                "original_prompt": prompt or "",
-            })
-
-        if not task_id:
-            logger.warning("resume decision missing task_id")
-            await _feedback_fail("missing_task_id",
-                                 "PA 决策未提供 task_id，无法执行 resume。")
-            return
-        if not prompt:
-            logger.warning("resume decision missing prompt")
-            await _feedback_fail("missing_prompt",
-                                 f"PA 决策未提供 prompt，无法 resume task {task_id}。")
-            return
-
-        if not self._executor:
-            logger.warning("Executor not available for resume")
-            await _feedback_fail("executor_unavailable",
-                                 "Executor 未初始化，无法执行 resume。")
-            return
-
-        # Board side is handled by DecisionApplier+ResumeApplier; here we drive
-        # the actual hot-injection through executor.
-        result = await self._executor.execute_resume(task_id, prompt)
-        if result.get("status") != "ok":
-            await _feedback_fail(
-                result.get("reason", "unknown"),
-                result.get("detail", ""),
-            )
 
     # -- helpers --
 
     # -- Phase 3: tmux 常驻后端执行路径 --
+
+    # -- Phase 6: transcript 持续转发器（修「漏接真结果」根因）--
+
+    def _eval_conv_transcript(self, conv_key: str) -> Any | None:
+        """读该 conv 常驻会话的 claude transcript，返回 TurnCompletion（无则 None）。
+
+        定位走 ``locate_transcript(uuid5(conv_key), cwd=$HOME)``——与 claude driver
+        的 completion_probe 同一套派生，路径在起会话那刻就锁定。
+        """
+        from frago.agent_driver.drivers.claude import _claude_session_uuid
+        from frago.server.services.transcript_completion import (
+            evaluate_file,
+            locate_transcript,
+        )
+
+        sid = _claude_session_uuid(conv_key)
+        path = locate_transcript(sid, cwd=str(Path.home()))
+        if path is None:
+            return None
+        return evaluate_file(path)
+
+    def _watch_poll(
+        self, conv_key: str, since_mtime: float | None
+    ) -> tuple[float | None, Any | None]:
+        """转发器专用：stat transcript，mtime 没变就跳过全量解析（省每拍重读几 MB）。
+
+        返回 ``(mtime, TurnCompletion | None)``：mtime 与上拍相同 → ``(mtime, None)``
+        不解析；变了 / 首次 → 全量 ``evaluate_file``；文件不存在 → ``(None, None)``。
+        stat 是微秒级，evaluate 是 O(文件大小)（十几 MB ~ 几十 ms），故空闲期只付 stat。
+        """
+        import os as _os
+
+        from frago.agent_driver.drivers.claude import _claude_session_uuid
+        from frago.server.services.transcript_completion import (
+            evaluate_file,
+            locate_transcript,
+        )
+
+        sid = _claude_session_uuid(conv_key)
+        path = locate_transcript(sid, cwd=str(Path.home()))
+        if path is None:
+            return None, None
+        try:
+            mtime = _os.path.getmtime(path)
+        except OSError:
+            return None, None
+        if since_mtime is not None and mtime <= since_mtime:
+            return mtime, None  # 未变，跳过全量解析
+        return mtime, evaluate_file(path)
+
+    def _seed_marker(self, conv_key: str | None) -> None:
+        """把该 conv 的 last_delivered_marker 锚到 transcript 当前 tail（baseline）。
+
+        喂真实 prompt 之前调用：bootstrap 那一轮（及 --resume 载回的历史）的终结
+        marker 都落在 baseline 之内，转发器只投 baseline 之后新增的终答。
+        """
+        if not conv_key:
+            return
+        tc = self._eval_conv_transcript(conv_key)
+        self._last_delivered_marker[conv_key] = tc.last_uuid if tc else None
+
+    async def _transcript_watch_loop(self) -> None:
+        """每个常驻 PA 会话的 transcript 持续转发器（单任务轮询全部活会话）。
+
+        把「投递」从「喂的那一轮」解耦：PA 常「先回一句稍等、再用自己的 harness 异步
+        续干」，真正完整结果在第一个 end_turn 之后才写进同一 transcript。本循环持续
+        盯每个活会话的 transcript，每出现一条新的、答完的 assistant 终答就投递、推进
+        marker，每个 marker 只投一次。NEVER 转发 user 记录 / 工具调用 / thinking /
+        流式半截——只投 evaluate_file 判 done 的终答。
+        """
+        interval = float(self._watch_config["watch_interval_seconds"])
+        logger.info("PA transcript watcher started (interval=%.1fs)", interval)
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self._watch_tick()
+            except asyncio.CancelledError:
+                logger.info("PA transcript watcher cancelled")
+                raise
+            except Exception:
+                logger.exception("PA transcript watcher tick error")
+
+    async def _watch_tick(self) -> None:
+        """转发器一拍：遍历活会话，投递每条新终答。"""
+        runner = self._pa_tmux_runner
+        if runner is None:
+            return
+        for key in runner.active_session_keys():
+            if key == PaTmuxRunner_FALLBACK:
+                continue  # fallback 无 conv 归属，无处投递
+            conv_key = key
+            if conv_key in self._bootstrapping_convs or conv_key in self._compacting_convs:
+                continue  # baseline 未锚定 / 正在 /compact，跳过本拍避免误投该轮产出
+            route = self._conv_route_cache.get(conv_key)
+            if not route:
+                continue
+            since = self._watch_mtime.get(conv_key)
+            mtime, tc = await asyncio.to_thread(self._watch_poll, conv_key, since)
+            if mtime is not None:
+                self._watch_mtime[conv_key] = mtime
+            if tc is None or not tc.done:
+                continue  # 文件没变（stat 短路，未解析）/ 解析了但本轮未答完
+            marker = tc.last_uuid
+            if not marker or self._last_delivered_marker.get(conv_key) == marker:
+                continue  # 无新终答 / 已投过该 marker
+            # 推进 marker 后再投：投递失败不回退 marker，避免失败重投把同一终答刷屏。
+            self._last_delivered_marker[conv_key] = marker
+            text = (tc.final_text or "").strip()
+            if text:
+                logger.info(
+                    "Transcript watcher: delivering new终答 (%d chars, conv=%s)",
+                    len(text), conv_key,
+                )
+                await self.deliver(text, route)
+
+    # -- Phase 6: 真空闲判定（喂料门 + 回收共用）--
+
+    def _is_truly_idle(self, session_key: str) -> bool:
+        """该 key 的常驻会话当前是否真空闲（四信号缺一不可）。无活会话视为空闲。"""
+        runner = self._pa_tmux_runner
+        if runner is None:
+            return True
+        session = runner.session(session_key)
+        if session is None:
+            return True
+        from frago.agent_driver.drivers.claude import is_truly_idle
+
+        return is_truly_idle(
+            session, silence_s=float(self._watch_config["idle_silence_seconds"])
+        )
+
+    async def _wait_until_truly_idle(self, session_key: str) -> None:
+        """等到该会话真空闲再返回（喂料门 / 回合收尾用）。
+
+        给足够大的上限 + 超时日志，别死等一个永远不空闲的会话。无活会话立即返回。
+        """
+        runner = self._pa_tmux_runner
+        if runner is None or runner.session(session_key) is None:
+            return
+        max_wait = float(self._watch_config["feeding_gate_max_seconds"])
+        poll = float(self._watch_config["idle_poll_seconds"])
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max_wait
+        while True:
+            if await asyncio.to_thread(self._is_truly_idle, session_key):
+                return
+            if loop.time() >= deadline:
+                logger.warning(
+                    "feeding gate: waited %.0fs for conv=%s to go truly idle, "
+                    "proceeding anyway", max_wait, session_key,
+                )
+                return
+            await asyncio.sleep(poll)
 
     def _get_pa_tmux_runner(self) -> Any:
         """Lazily construct the resident-tmux PA executor (backend=="tmux")."""
@@ -1535,15 +1281,18 @@ class PrimaryAgentService:
         return self._pa_tmux_runner
 
     async def _dispatch_group_tmux(self, tid: str | None, group: list[dict]) -> None:
-        """Send a message group to PA via the resident tmux session, then route output.
+        """Feed a message group to PA's resident session; delivery is decoupled (Phase 6).
 
-        Synchronous from PA's view: run the resident claude TUI turn (blocking, in a
-        thread), get the full answer text, and feed it through the *same* output path
-        the claude-p backend uses (``_handle_pa_output`` → ``validate_pa_output`` →
-        DecisionApplier). reply/run/resume/dismiss persistence and push are untouched.
+        喂 prompt + 等到真空闲再 return——本方法不再负责投递。Phase 6（spec 20260627）
+        把「投递」从「喂的那一轮」解耦：PA 常「先回一句稍等、再用自己的 harness 异步
+        续干」，真结果在第一个 end_turn 之后才落进同一 transcript。投递的唯一来源是
+        transcript 持续转发器（``_transcript_watch_loop``），ok 分支 NEVER 再自己
+        ``deliver``（否则与转发器双投）。
 
-        Rotation is token-driven and evicts the resident session (no subprocess to
-        kill); on empty output the group is re-enqueued, mirroring the claude-p path.
+        本方法的职责收敛为三步：① 喂料门——喂之前等该会话真空闲，别插话打断在跑的活；
+        ② 喂 prompt（on_ready 锚定转发器 baseline，使本轮及其后台续干的终答都被转发）；
+        ③ 等到真空闲再 return——return 只为给下一组喂料让路。Phase 1 的 needs_input 分支
+        仍单独保留（它不是 transcript 终答，走 _deliver_needs_input）。
         """
         from frago.server.services.trace import trace_entry
 
@@ -1572,25 +1321,64 @@ class PrimaryAgentService:
         full_bootstrap = PRIMARY_AGENT_SYSTEM_PROMPT + "\n\n" + bootstrap
         session_key = tid or PaTmuxRunner_FALLBACK
 
+        # 真实 conv_key（非 None / 非 __fallback__）这条路径：把它提到 warm_convs 最前、
+        # 去重、截断到上限并持久化，供 server 重启后预热——消首句冷启动。
+        if tid:
+            self._record_warm_conv(tid)
+
         runner = self._get_pa_tmux_runner()
-        self._pa_input_len = len(merged)
+        input_len = len(merged)
         logger.info(
             "Queue consumer [tmux]: sending %d merged messages to PA (thread=%s, %d chars)",
             len(group), tid, len(merged),
         )
 
+        from frago.agent_driver.tmux_session import TmuxStartupError
+
+        # 喂料门：喂之前等该会话真空闲，避免插话打断在跑的后台 worker（杀掉它丢结果）。
+        # 首次创建（无活会话）立即返回，不阻塞。
+        await self._wait_until_truly_idle(session_key)
+
+        # on_ready：bootstrap 注入后、真实 prompt 提交前锚定转发器 baseline。期间把
+        # conv 标记 bootstrapping，转发器跳过该 conv，规避「bootstrap 回复被当新终答
+        # 抢先投出」的竞态；seed 完成即清标记，转发器恢复盯本轮终答。
+        if tid:
+            self._bootstrapping_convs.add(tid)
+
+        def _on_ready(_key: str) -> None:
+            self._seed_marker(tid)
+            if tid:
+                self._bootstrapping_convs.discard(tid)
+
         try:
-            text = await asyncio.to_thread(
-                runner.run, session_key, merged, bootstrap=full_bootstrap
+            result = await asyncio.to_thread(
+                runner.run, session_key, merged,
+                bootstrap=full_bootstrap, on_ready=_on_ready,
             )
+        except TmuxStartupError:
+            # 启动失败（认证墙 / 二进制缺失 / 撞 session-id 等），不是一轮超时。
+            # 重投只会让同一具死会话反复重启失败 → 无限 re-enqueue 空转。故丢弃该轮
+            # 并记 error；open() 已 kill 掉死壳、acquire 未把它放进池，不会留死会话被
+            # 当活会话复用。下一条入站消息会触发干净重建（撞 id 那类下次走 --resume）。
+            logger.exception(
+                "PA tmux session failed to start (thread=%s); dropping this round "
+                "to avoid infinite re-enqueue", tid,
+            )
+            if tid:
+                self._bootstrapping_convs.discard(tid)
+            return
         except Exception:
             logger.exception("PA tmux run failed (thread=%s), re-enqueueing group", tid)
+            if tid:
+                self._bootstrapping_convs.discard(tid)
             for m in group:
                 await self._message_queue.put(m)
             return
 
-        # Token accounting (same estimator as the claude-p path).
-        estimated_tokens = (self._pa_input_len + len(text or "")) // 4
+        text = result.text or ""
+
+        # Token accounting drives rotation (rough char/4 estimate).
+        estimated_tokens = (input_len + len(text)) // 4
         if tid:
             self._total_turns[tid] = self._total_turns.get(tid, 0) + 1
             self._accumulated_tokens[tid] = self._accumulated_tokens.get(tid, 0) + estimated_tokens
@@ -1598,27 +1386,157 @@ class PrimaryAgentService:
             self._fallback_total_turns += 1
             self._fallback_accumulated_tokens += estimated_tokens
 
-        if text and text.strip():
+        # Phase 1: 撞上阻断门（认证墙 / agent 自抛的选择菜单）。把当轮可见提示组织成
+        # "需要你选/确认…"投递回 chat，会话原样停在门上——NEVER 重入队列、NEVER
+        # rotate（rotate 会驱逐会话、丢掉这道门）。用户的回选作为普通入站消息透传进
+        # 同一 conv 把门推过，由 ok 分支清除挂起标记。
+        if result.status == "needs_input":
             logger.info(
-                "Queue consumer [tmux]: processing PA response (%d chars, thread=%s)",
-                len(text), tid,
+                "Queue consumer [tmux]: PA needs_input at blocking gate (thread=%s)", tid
             )
-            await self._handle_pa_output(text.strip())
-        else:
-            logger.warning("Queue consumer [tmux]: PA produced no output (thread=%s)", tid)
-            for m in group:
-                await self._message_queue.put(m)
+            self._suspended_convs.add(tid)
+            await self._deliver_needs_input(tid, group, result.raw_delta)
+            return
 
-        # Rotation is token-driven; evict the resident session and reset counters.
+        self._suspended_convs.discard(tid)
+
+        # Phase 6: ok 分支 NEVER 自己 deliver——投递已交给 transcript 持续转发器
+        # （runner.run 在第一个 end_turn 就返回，但 PA 可能还在异步续干；转发器持续盯
+        # transcript，本轮及后台续干产出的每条新终答它都会投）。这里只等到真空闲再
+        # return，让喂料门给下一组让路、且确认后台 worker 已收尾后才轮换/回收。
+        # 空输出不再重投：真结果可能稍后异步到达，重投会重复处理。
+        runner_text_logged = len(text)
+        logger.info(
+            "Queue consumer [tmux]: turn fed; delivery deferred to watcher "
+            "(first-end_turn %d chars, thread=%s)", runner_text_logged, tid,
+        )
+        self._writeback_schedules(group)
+
+        # 等到真空闲再收尾：确保本轮（含异步续干）全部落定、转发器已投，再考虑轮换。
+        await self._wait_until_truly_idle(session_key)
+
+        # Rotation is token-driven; Phase 7: 就地驱动 /compact 真压上下文、会话保活，
+        # 不再 evict+resume（那是白杀+全量重载、不压缩）。
         if self._should_rotate(tid):
-            await self._rotate_tmux_session(tid)
+            await self._compact_tmux_session(tid)
+
+    # Phase 1: 阻断门可见 pane → "需要你选/确认"回复文本。raw_delta 在 needs_input
+    # 分支下是整屏可见 pane（含 TUI 边框/页脚 chrome），抠掉纯装饰行只留菜单/问题。
+    _GATE_CHROME = re.compile(
+        r"^\s*(?:[╭╮╯╰│─┌┐└┘├┤┬┴┼]+\s*$|[╭╮╯╰┌┐└┘├┤┬┴┼].*"
+        r"|—\s*for shortcuts|esc to interrupt|⏵|\?\s+for shortcuts)",
+    )
+
+    @classmethod
+    def _format_needs_input_prompt(cls, raw_delta: str) -> str:
+        lines = [
+            ln.strip(" │").rstrip()
+            for ln in (raw_delta or "").splitlines()
+            if ln.strip() and not cls._GATE_CHROME.match(ln)
+        ]
+        menu = "\n".join(ln for ln in lines if ln).strip()
+        if not menu:
+            return "需要你确认才能继续，请回复你的选择。"
+        return f"需要你选择 / 确认才能继续：\n\n{menu}"
+
+    async def _deliver_needs_input(
+        self, tid: str | None, group: list[dict], raw_delta: str
+    ) -> None:
+        """把阻断门提示作为一条普通回复投递回触发该轮的渠道。"""
+        text = self._format_needs_input_prompt(raw_delta)
+        route = self._route_for_group(group)
+        channel = route.get("channel", "") or route.get("type", "")
+        if not channel:
+            logger.warning(
+                "needs_input gate hit but no channel to reply (thread=%s); dropping prompt", tid
+            )
+            return
+        await self.deliver(text, route)
+
+    async def _compact_tmux_session(self, thread_id: str | None = None) -> None:
+        """token-rotation 触发时就地驱动常驻会话执行 ``/compact`` 真压上下文（Phase 7）。
+
+        旧 ``_rotate_tmux_session`` 是 evict+resume：Phase 5 之后下条消息全量 ``--resume``
+        回原上下文，rotation 沦为「白杀一次 + 全量重载」、不压缩。真正压上下文的是
+        claude 自己的 ``/compact``。本方法据此把 rotation 改成「驱动会话就地 /compact、
+        会话保活 NEVER kill」：
+
+        a. 等真空闲才发 ``/compact``（busy 不插话；超时则跳过本次、NEVER 回退 kill）。
+        b. 标记该 conv compacting，转发器此窗口跳过它（避免把 /compact 那轮产出投出）。
+        c. 发 ``/compact`` + 提交。
+        d. 等 /compact 完成（再次真空闲）。
+        e. ``_seed_marker`` 重锚 baseline + 清 _watch_mtime + 清 compacting 标记（与 b
+           的转发器跳过共同构成「/compact 产出 NEVER 被投递」的双保险）。
+        f. 重置该 conv 的 token/轮次计数、rotation_count+1，会话保活。
+        """
+        is_fallback = thread_id is None
+        tag = f"thread={thread_id}" if thread_id else "fallback"
+        session_key = thread_id or PaTmuxRunner_FALLBACK
+
+        if is_fallback:
+            count = self._fallback_rotation_count
+        else:
+            count = self._rotation_count.get(thread_id, 0)
+
+        runner = self._get_pa_tmux_runner()
+
+        # 无活会话：无可压缩，直接复位计数（下条消息走 --resume 干净重建）。
+        if runner.session(session_key) is None:
+            logger.info(
+                "PA compact (%s): no live session, resetting counters only", tag
+            )
+            self._reset_rotation_counters(thread_id, count)
+            return
+
+        # a. 等真空闲——busy 不发 /compact；超时则跳过本次，NEVER 回退 kill。
+        await self._wait_until_truly_idle(session_key)
+        if not await asyncio.to_thread(self._is_truly_idle, session_key):
+            logger.warning(
+                "PA compact (%s): session not truly idle within window, "
+                "skipping this compact (NEVER fall back to kill)", tag,
+            )
+            return
+
+        logger.info("PA compact (%s, rotation_count=%d): driving /compact in place", tag, count)
+
+        # b. 标记 compacting，转发器跳过该 conv（fallback 无 conv 归属，转发器本就跳过）。
+        if thread_id:
+            self._compacting_convs.add(thread_id)
+        try:
+            # c. 发 /compact + 提交。
+            sent = await asyncio.to_thread(runner.compact, session_key)
+            if not sent:
+                logger.warning("PA compact (%s): session vanished before /compact", tag)
+                return
+            # d. 等 /compact 完成（再次真空闲）。
+            await self._wait_until_truly_idle(session_key)
+            # e. 重锚 baseline + 清 mtime（/compact 产出落在 baseline 之内、绝不转发）。
+            self._seed_marker(thread_id)
+            self._watch_mtime.pop(session_key, None)
+        finally:
+            if thread_id:
+                self._compacting_convs.discard(thread_id)
+
+        # f. 重置计数，会话保活（NEVER evict）。
+        self._reset_rotation_counters(thread_id, count)
+
+    def _reset_rotation_counters(self, thread_id: str | None, count: int) -> None:
+        """复位该 conv 的 token/轮次计数并 rotation_count+1（compact / rotation 共用）。"""
+        if thread_id is None:
+            self._fallback_total_turns = 0
+            self._fallback_accumulated_tokens = 0
+            self._fallback_rotation_count = count + 1
+        else:
+            self._total_turns[thread_id] = 0
+            self._accumulated_tokens[thread_id] = 0
+            self._rotation_count[thread_id] = count + 1
 
     async def _rotate_tmux_session(self, thread_id: str | None = None) -> None:
         """Rotate a resident-tmux PA session: evict it and reset that key's counters.
 
-        No subprocess exists in the tmux backend, so this NEVER touches
-        ``_sessions`` / ``_create_pa_session`` (the claude-p machinery). The next
-        ``run`` for this key re-injects bootstrap on a fresh resident session.
+        No subprocess exists in the tmux backend — rotation just evicts the
+        resident session from the warm pool. The next ``run`` for this key
+        re-injects bootstrap on a fresh resident session.
         """
         is_fallback = thread_id is None
         tag = f"thread={thread_id}" if thread_id else "fallback"
@@ -1644,8 +1562,6 @@ class PrimaryAgentService:
             self._total_turns[thread_id] = 0
             self._accumulated_tokens[thread_id] = 0
             self._rotation_count[thread_id] = count + 1
-
-        self._consecutive_json_failures = 0
 
     def _should_rotate(self, thread_id: str | None = None) -> bool:
         """Check if session rotation is needed for a given thread.
@@ -1689,40 +1605,6 @@ class PrimaryAgentService:
             related_section=related_section,
         )
 
-    # -- persistence --
-
-    @staticmethod
-    def _save_session_id(session_id: str) -> None:
-        try:
-            raw: dict[str, Any] = {}
-            if CONFIG_FILE.exists():
-                raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            if not isinstance(raw.get("primary_agent"), dict):
-                raw["primary_agent"] = {}
-            raw["primary_agent"]["session_id"] = session_id
-            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(
-                json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-        except OSError as e:
-            logger.error("Failed to save PA session_id: %s", e)
-
-    @staticmethod
-    async def _wait_for_session_id(internal_id: str, timeout: float = 30.0) -> str:
-        """Wait for AgentSession to resolve the real Claude session_id."""
-        from frago.server.services.agent_service import AgentService
-
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            info = AgentService.get_attached_session_info(internal_id)
-            if info and info.get("session_id"):
-                return str(info["session_id"])
-            await asyncio.sleep(0.5)
-
-        raise RuntimeError(
-            f"Timed out waiting for Claude session_id (internal_id={internal_id})"
-        )
-
     @staticmethod
     def _format_duration(seconds: int) -> str:
         if seconds < 60:
@@ -1734,9 +1616,3 @@ class PrimaryAgentService:
         if minutes:
             return f"{hours}小时{minutes}分钟"
         return f"{hours}小时"
-
-
-# Phase 3 housekeeping: keep ResumeApplier importable from this module so
-# legacy unit tests that monkeypatch primary_agent_service.ResumeApplier
-# still find the symbol; the actual dispatch happens via DA → board.
-_ = ResumeApplier

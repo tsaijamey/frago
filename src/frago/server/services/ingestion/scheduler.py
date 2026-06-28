@@ -53,6 +53,11 @@ class IngestionScheduler:
         self._channels = channels
         self._channel_tasks: dict[str, asyncio.Task[None]] = {}
         self._stop_event = asyncio.Event()
+        # Phase 3 (去账本): 渠道重投防御从 board.append_msg 线性扫描降级为轻量内存
+        # seen-set（够用——只防 lark WS / email re-poll 的 msg_id 重复）。FIFO 截断
+        # 防无界增长；重启丢失无妨（重启后渠道游标本就重置）。
+        self._seen_msg_ids: dict[str, None] = {}
+        self._seen_cap = 5000
         # Set by PrimaryAgentService after initialization
         self._pa_enqueue: asyncio.coroutines | None = None
         # Shared runner — avoids recreating RecipeRegistry + ExecutionStore per poll
@@ -153,31 +158,43 @@ class IngestionScheduler:
         if new_count:
             logger.info("Poll %s: %d new message(s) ingested into TaskBoard", ch.poll_recipe, new_count)
 
+    def _seen(self, msg_id: str) -> bool:
+        """Record msg_id; return True if it was already seen (FIFO-capped)."""
+        if msg_id in self._seen_msg_ids:
+            return True
+        self._seen_msg_ids[msg_id] = None
+        if len(self._seen_msg_ids) > self._seen_cap:
+            # drop oldest (insertion-ordered dict)
+            oldest = next(iter(self._seen_msg_ids))
+            self._seen_msg_ids.pop(oldest, None)
+        return False
+
     async def ingest_message(self, ch: ChannelConfig, msg: dict[str, Any]) -> bool:
-        """Classify + ingest a single message via TaskBoard.
+        """Classify + enqueue a single message to the PA queue (Phase 3: 去账本).
 
         Shared by poll mode (_poll_channel) and stream mode (_stream_loop).
-        Returns True if the message was newly ingested, False if skipped
-        (malformed payload or board-level dedup hit via duplicate_msg_ingest).
-
-        Dedup is TaskBoard's responsibility: ``board.append_msg`` of the same
-        msg_id writes a ``duplicate_msg_ingest`` timeline entry instead of
-        creating a second Msg.
+        瘦成 classify → conv_key → enqueue(QueueMessage with reply_context)；不再写
+        board / Ingestor / 账本 trace。Returns True if newly enqueued, False if
+        skipped (malformed payload or in-memory seen-set dedup hit).
         """
         msg_id = str(msg.get("id", ""))
         if not msg_id or "prompt" not in msg:
             logger.warning("Channel %s: message missing required fields, skipping", ch.name)
             return False
 
-        from frago.server.services.taskboard import get_board
-        from frago.server.services.taskboard.ingestor import Ingestor
+        # Channel redelivery defense: lark WS / email re-poll can deliver the same
+        # msg_id twice. Without this gate the second delivery produces a second PA
+        # round-trip and a second reply.
+        if self._seen(msg_id):
+            logger.info(
+                "Channel %s: duplicate msg %s (seen-set hit) — skip PA enqueue",
+                ch.name, msg_id,
+            )
+            return False
+
         from frago.server.services.taskboard.thread_classifier import (
             classify as thread_classify,
         )
-        from frago.server.services.taskboard.thread_classifier import (
-            ensure_thread,
-        )
-        from frago.server.services.trace import trace_entry
 
         reply_ctx = msg.get("reply_context") or {}
         sender = reply_ctx.get("sender_id") or reply_ctx.get("sender") or ""
@@ -186,74 +203,6 @@ class IngestionScheduler:
             sender=sender,
             content=msg["prompt"],
             reply_context=reply_ctx,
-        )
-        ensure_thread(
-            classify_result,
-            channel=ch.name,
-            sender=sender,
-            msg_id=msg_id,
-            root_summary=msg["prompt"][:80],
-            reply_context=reply_ctx,
-        )
-
-        # B-2a single source: write to TaskBoard via Ingestor. Dedup happens
-        # inside board.append_msg (same msg_id → duplicate_msg_ingest entry).
-        board = get_board()
-        # Ensure board.Thread exists (classifier wrote ThreadStore index but
-        # board is a separate object graph). create_thread is idempotent-by-
-        # caller-checking: we silently swallow IllegalTransitionError if a
-        # previous ingest already created it on this side.
-        import contextlib as _contextlib
-
-        from frago.server.services.taskboard.models import IllegalTransitionError
-        with _contextlib.suppress(IllegalTransitionError):
-            board.create_thread(
-                thread_id=classify_result.thread_id,
-                origin="external",
-                subkind=ch.name,
-                root_summary=msg["prompt"][:80],
-                by="IngestionScheduler",
-            )
-
-        ingestor = Ingestor(board)
-        _, is_new = ingestor.ingest_external(
-            channel=ch.name,
-            msg_id=msg_id,
-            sender_id=sender,
-            text=msg["prompt"],
-            parent_ref=classify_result.parent_ref,
-            received_at=datetime.now(),
-            reply_context=reply_ctx,
-            thread_id=classify_result.thread_id,
-        )
-
-        # Channel redelivery defense: lark WS / email re-poll can deliver the
-        # same msg_id twice. board.append_msg dedups (timeline duplicate_msg_ingest)
-        # but PA enqueue is a side-effect that must also be gated, otherwise the
-        # second delivery produces a second PA round-trip and a second reply.
-        if not is_new:
-            logger.info(
-                "Channel %s: duplicate msg %s (board dedup hit) — skip PA enqueue",
-                ch.name, msg_id,
-            )
-            return False
-
-        trace_entry(
-            origin="external",
-            subkind=ch.name,
-            data_type="message",
-            thread_id=classify_result.thread_id,
-            parent_id=None,
-            task_id=None,
-            data={
-                "event_type": "pa_ingestion",
-                "channel": ch.name,
-                "prompt": msg["prompt"],
-                "_classify_layer": classify_result.layer,
-            },
-            msg_id=msg_id,
-            role="scheduler",
-            event=f"收到 {ch.name} 消息: {msg['prompt'][:80]}",
         )
 
         if self._pa_enqueue:
@@ -264,13 +213,13 @@ class IngestionScheduler:
                     "channel": ch.name,
                     "channel_message_id": msg_id,
                     "prompt": msg["prompt"],
-                    "reply_context": msg.get("reply_context", {}),
-                    "thread_id": classify_result.thread_id,
+                    "reply_context": reply_ctx,
+                    "conv_key": classify_result.conv_key,
                     "received_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 })
                 logger.info(
-                    "Message %s enqueued to PA (thread=%s, layer=%s)",
-                    msg_id, classify_result.thread_id, classify_result.layer,
+                    "Message %s enqueued to PA (conv_key=%s, layer=%s)",
+                    msg_id, classify_result.conv_key, classify_result.layer,
                 )
             except Exception:
                 logger.exception("Failed to enqueue message %s to PA", msg_id)

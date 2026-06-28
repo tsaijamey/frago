@@ -1,20 +1,17 @@
-"""Task Lifecycle — coordination point for ingestion, reply, and recovery.
+"""Task Lifecycle — outbound delivery (spec 20260627 Phase 3: 去账本).
 
-Spec 20260512-msg-task-board-redesign v1.2 freeze: board.timeline.jsonl is
-the single source of persistence. TaskStore + ingested_tasks.json are gone.
+去账本后，本模块只剩"出去投递"这一个无状态薄动作：把 agent 的最终文本按 channel
+查 notify_recipe 推回去。reply_context 由调用方（入队消息 / PrimaryAgentService 的
+conv_key→reply_context 缓存）携带，不再 task_id→board.Task→reply_context。
 
-The lifecycle reads task / msg / thread context directly from board public
-methods (get_task / get_msg_for_task / get_thread_for_task / get_queued_tasks
-/ get_executing_tasks / increment_recovery_count / mark_task_failed).
+``list_active_agents`` 暂留给 ``frago task agents`` CLI（board 任务态查看器，[TBD]
+随账本读侧 viewer 一并迁移/下线）。
 """
 
 import json
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-from frago.server.services.taskboard import get_board
 
 logger = logging.getLogger(__name__)
 
@@ -23,33 +20,8 @@ PROJECTS_DIR = FRAGO_HOME / "projects"
 CONFIG_FILE = FRAGO_HOME / "config.json"
 
 
-@dataclass
-class TaskView:
-    """Read-only projection used by PA / reply paths.
-
-    Aggregates fields from board.Task + board.Msg + board.Thread so callers
-    do not need to navigate the live object graph. Returned by ``get_task``
-    and ``find_task_for_run``.
-    """
-
-    task_id: str
-    status: str
-    prompt: str
-    channel: str
-    channel_message_id: str
-    thread_id: str | None
-    reply_context: dict[str, Any] = field(default_factory=dict)
-    session_id: str | None = None
-    claude_session_id: str | None = None
-    pid: int | None = None
-    result_summary: str | None = None
-    error: str | None = None
-    recovery_count: int = 0
-
-
 def _pid_alive(pid: int) -> bool:
-    """Cross-platform liveness check. Uses psutil so Windows behaves the
-    same as POSIX (os.kill(pid, 0) is unreliable for signal 0 on Windows)."""
+    """Cross-platform liveness check via psutil."""
     try:
         import psutil
         return psutil.pid_exists(pid)
@@ -57,54 +29,15 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _board_task_to_view(board, task_id: str) -> TaskView | None:
-    task = board.get_task(task_id)
-    if task is None:
-        return None
-    msg = board.get_msg_for_task(task_id)
-    thread = board.get_thread_for_task(task_id)
-    if msg is None:
-        return None
-    channel = msg.source.channel
-    channel_msg_id = msg.msg_id
-    if channel_msg_id.startswith(f"{channel}:"):
-        channel_msg_id = channel_msg_id[len(channel) + 1:]
-    sess = task.session
-    res = task.result
-    return TaskView(
-        task_id=task.task_id,
-        status=task.status,
-        prompt=task.intent.prompt or msg.source.text,
-        channel=channel,
-        channel_message_id=channel_msg_id,
-        thread_id=thread.thread_id if thread else None,
-        reply_context=dict(msg.source.reply_context or {}),
-        session_id=sess.run_id if sess else None,
-        claude_session_id=sess.claude_session_id if sess else None,
-        pid=sess.pid if sess else None,
-        result_summary=res.summary if res else None,
-        error=res.error if res else None,
-        recovery_count=task.recovery_count,
-    )
-
-
 def list_active_agents(board) -> list[dict[str, Any]]:
     """Active (queued/executing) tasks joined with OS-verified process liveness.
 
-    One-shot ground truth for "are there truly-alive sub-agents right now",
-    so callers don't fall back to scanning ``ps`` by hand. ``frago session
-    list``'s "Running" and the board's ``executing`` status are inferred or
-    stored state — a task can read ``executing`` long after its claude
-    subprocess died because nothing reconciled the status against the OS. Here
-    every executing task's recorded pid is checked against the live process
-    table, so a dead-but-not-flipped task surfaces as ``alive=False`` /
-    ``stale=True`` instead of masquerading as live.
-
-    ``alive`` uses the exact definition the recovery path trusts (status ==
-    "executing" AND pid set AND pid exists). Queued tasks have no pid yet —
-    not launched — so they are never ``alive`` nor ``stale``.
+    [TBD] board 任务态查看器，随账本读侧 viewer 一并处理。仅 ``frago task agents``
+    CLI 调用；board 为 None 时返回空。
     """
     rows: list[dict[str, Any]] = []
+    if board is None:
+        return rows
     for task in board.get_queued_tasks() + board.get_executing_tasks():
         pid = task.session.pid if task.session else None
         alive = bool(task.status == "executing" and pid and _pid_alive(pid))
@@ -129,124 +62,19 @@ def list_active_agents(board) -> list[dict[str, Any]]:
 
 
 class TaskLifecycle:
-    """Single coordination point for task state transitions.
+    """Outbound delivery coordinator (Phase 3: stateless, no board).
 
     Not a singleton — instantiated by PrimaryAgentService.
     """
 
     def __init__(self) -> None:
-        # Per-run already-auto-sent image paths. Keyed by run_id because multiple
-        # tasks can reuse the same Run (shared outputs/ dir). Scoped to the
-        # lifecycle instance — not persisted across server restarts.
-        self._sent_image_paths: dict[str, set[str]] = {}
-
-    # -- ingestion --
-
-    def ingest(
-        self,
-        channel: str,
-        messages: list[dict[str, Any]],
-    ) -> list[str]:
-        """Ingest messages from a channel: dedup → create board msg/task.
-
-        Returns the list of board.Task ids appended this call (only the
-        tasks freshly created; dup msg_ids that already had tasks are skipped).
-        """
-        from datetime import datetime
-
-        from frago.server.services.taskboard.ingestor import Ingestor
-        from frago.server.services.taskboard.models import IllegalTransitionError
-
-        new_task_ids: list[str] = []
-        board = get_board()
-        for msg in messages:
-            msg_id = str(msg.get("id", ""))
-            if not msg_id or "prompt" not in msg:
-                logger.warning("Channel %s: message missing required fields, skipping", channel)
-                continue
-
-            # Dedup on the board (msg_id already known → duplicate_msg_ingest).
-            view = board.view_for_pa()
-            board_msg_id = f"{channel}:{msg_id}"
-            already_present = any(
-                m.get("id") == board_msg_id
-                for t in view.get("threads", [])
-                for m in t.get("msgs", [])
-            )
-            if already_present:
-                logger.debug("Channel %s: message %s already on board, skipping", channel, msg_id)
-                continue
-
-            # Thread attribution
-            from frago.server.services.taskboard.thread_classifier import (
-                classify as _thread_classify,
-            )
-            from frago.server.services.taskboard.thread_classifier import (
-                ensure_thread as _ensure_thread,
-            )
-
-            _reply_ctx = msg.get("reply_context", {})
-            _sender = _reply_ctx.get("sender_id") or _reply_ctx.get("sender") or ""
-            _classify = _thread_classify(
-                channel=channel,
-                sender=_sender,
-                content=msg["prompt"],
-                reply_context=_reply_ctx,
-            )
-            _ensure_thread(
-                _classify,
-                channel=channel,
-                sender=_sender,
-                msg_id=msg_id,
-                root_summary=msg["prompt"][:80],
-                reply_context=_reply_ctx,
-            )
-
-            # Mirror into board via Ingestor; dedup inside board.append_msg.
-            try:
-                import contextlib as _contextlib
-
-                with _contextlib.suppress(IllegalTransitionError):
-                    board.create_thread(
-                        thread_id=_classify.thread_id,
-                        origin="external",
-                        subkind=channel,
-                        root_summary=msg["prompt"][:80],
-                        by="TaskLifecycle",
-                    )
-                Ingestor(board).ingest_external(
-                    channel=channel,
-                    msg_id=msg_id,
-                    sender_id=_sender,
-                    text=msg["prompt"],
-                    parent_ref=_classify.parent_ref,
-                    received_at=datetime.now(),
-                    reply_context=_reply_ctx,
-                    thread_id=_classify.thread_id,
-                )
-            except Exception:
-                logger.debug("TaskLifecycle: TaskBoard ingest failed", exc_info=True)
-                continue
-
-            # Collect freshly appended task ids (tasks on the just-seen msg).
-            board_msg = board._find_msg(board_msg_id)  # noqa: SLF001 — internal lookup
-            if board_msg:
-                for tk in board_msg.tasks:
-                    new_task_ids.append(tk.task_id)
-
-        return new_task_ids
-
-    # -- reply --
+        pass
 
     @staticmethod
     def _merge_reply_context(
         reply_params: dict[str, Any], reply_context: dict[str, Any],
     ) -> dict[str, Any]:
-        """Build full notify-recipe params: text + reply_context + preserved attachments.
-
-        Attachment passthrough (html_body / file_path / image_path) was previously
-        dropped on the task path — see 2026-04-19 audit, problem 6.
-        """
+        """Build full notify-recipe params: text + reply_context + preserved attachments."""
         full = {
             "text": reply_params.get("text", ""),
             "reply_context": reply_context,
@@ -256,250 +84,133 @@ class TaskLifecycle:
                 full[k] = reply_params[k]
         return full
 
-    def reply(
+    @staticmethod
+    def _resolve_notify_recipe(channel: str) -> str | None:
+        """查 channel 的 notify_recipe（config.json）。无则 None。"""
+        raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        channels = (raw.get("task_ingestion") or {}).get("channels") or []
+        for ch in channels:
+            if ch.get("name") == channel:
+                return ch.get("notify_recipe")
+        return None
+
+    @staticmethod
+    def _attachment_params(
+        att: dict[str, Any], reply_context: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """把一条 outbox 制品记录转成 notify_recipe 的附件入参（对齐飞书 recipe）。
+
+        飞书 notify_recipe 按 ``file_path`` / ``image_path`` 单文件投递，模式
+        file > image > text，一次只发一个附件——故每条制品独立成一次 notify 调用。
+        目录先打成 zip 再当文件投。定位不到的路径返回 None（跳过 + 上层记日志）。
+        """
+        import shutil
+        import tempfile
+
+        kind = att.get("kind", "file")
+        raw_path = att.get("path", "")
+        if not raw_path:
+            return None
+        p = Path(raw_path).expanduser()
+        if not p.exists():
+            return None
+        params: dict[str, Any] = {}
+        if reply_context:
+            params["reply_context"] = reply_context
+        if kind == "dir":
+            staging = Path(tempfile.mkdtemp(prefix="frago-outbox-"))
+            archive = shutil.make_archive(str(staging / p.name), "zip", root_dir=str(p))
+            params["file_path"] = archive
+        elif kind == "image":
+            params["image_path"] = str(p)
+        else:
+            params["file_path"] = str(p)
+        return params
+
+    def deliver(
         self,
-        task_id: str,
         channel: str,
         reply_params: dict[str, Any],
         *,
-        msg_id: str = "",
+        reply_context: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        task_id: str = "",  # noqa: ARG002 — accepted for call-site compat, unused
+        msg_id: str = "",  # noqa: ARG002
     ) -> dict[str, Any]:
-        """Execute a reply via notify recipe. Returns {"status": "ok"/"error"}.
+        """Push text back to a channel via notify recipe. Returns {"status": ...}.
 
-        Enriches params with reply_context (from board.Msg.source.reply_context),
-        runs notify recipe. Caller (_send_reply) handles task status updates.
+        Phase 3: reply_context comes from the caller (inbound queue message or
+        PrimaryAgentService's conv_key→reply_context cache); no board lookup.
 
-        Resolution order for reply_context:
-        1. ``task_id`` non-empty → board task → task.reply_context
-        2. ``task_id`` empty and ``msg_id`` non-empty → board msg → msg.source.reply_context
-           (covers PA decisions that reply directly to a msg without creating a task)
+        Phase 8（spec 20260627 交付即核心）：``attachments`` 是该 conv outbox drain
+        出的制品（``{"kind","path"}`` 列表）。文本作一条消息先发，每条制品作为独立的
+        notify 调用随后发（飞书 recipe 单文件投递、模式 file>image>text），文本+制品
+        一起送达才算一次完整响应。
         """
         if channel == "cli":
             return {"status": "ok"}
 
-        # Enrich reply_params with reply_context from the board task
-        if task_id:
-            view = _board_task_to_view(get_board(), task_id)
+        if reply_context:
+            reply_params = self._merge_reply_context(reply_params, reply_context)
 
-            # Safety check: verify task_id matches the declared channel
-            if view and view.channel != channel:
-                logger.warning(
-                    "Channel mismatch: task %s belongs to channel '%s' but PA declared '%s'. "
-                    "Using task's actual channel to prevent cross-channel reply.",
-                    task_id, view.channel, channel,
-                )
-                channel = view.channel
-
-            if view and view.reply_context:
-                reply_params = self._merge_reply_context(reply_params, view.reply_context)
-        elif msg_id:
-            # Reply targets a msg directly (no task created). Board stores msg_id
-            # as f"{channel}:{msg_id}", PA decisions carry the bare id.
-            board = get_board()
-            board_msg_id = f"{channel}:{msg_id}"
-            board_msg = board._find_msg(board_msg_id)  # noqa: SLF001 — internal lookup
-            if board_msg and board_msg.source.reply_context:
-                reply_params = self._merge_reply_context(
-                    reply_params, board_msg.source.reply_context,
-                )
-
-        # Find and run notify recipe for channel
         try:
-            raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            channels = (raw.get("task_ingestion") or {}).get("channels") or []
-            notify_recipe = None
-            for ch in channels:
-                if ch.get("name") == channel:
-                    notify_recipe = ch.get("notify_recipe")
-                    break
-
+            notify_recipe = self._resolve_notify_recipe(channel)
             if not notify_recipe:
                 logger.warning("No notify_recipe configured for channel %s", channel)
                 return {"status": "error", "error": f"no notify_recipe for {channel}"}
 
             from frago.recipes.runner import RecipeRunner
             runner = RecipeRunner()
-            logger.info(
-                "Reply params for %s: %s",
-                notify_recipe,
-                json.dumps(reply_params, ensure_ascii=False, default=str),
-            )
-            runner.run(notify_recipe, params=reply_params)
-            logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
 
-            # Auto-send output image files for completed tasks
-            if task_id:
-                self._send_output_images(task_id, reply_params, notify_recipe, runner)
+            # 先发文本正文（非空时）。
+            if (reply_params.get("text") or "").strip():
+                logger.info(
+                    "Reply params for %s: %s",
+                    notify_recipe,
+                    json.dumps(reply_params, ensure_ascii=False, default=str),
+                )
+                runner.run(notify_recipe, params=reply_params)
+                logger.info("Reply sent via %s for channel %s", notify_recipe, channel)
 
+            # 再逐条发制品附件。
+            sent_attachments = 0
+            for att in attachments or []:
+                params = self._attachment_params(att, reply_context)
+                if params is None:
+                    logger.warning(
+                        "deliver: attachment skipped (missing/empty path): %s", att,
+                    )
+                    continue
+                logger.info(
+                    "Delivering attachment via %s: %s",
+                    notify_recipe,
+                    json.dumps(params, ensure_ascii=False, default=str),
+                )
+                runner.run(notify_recipe, params=params)
+                sent_attachments += 1
+            if attachments:
+                logger.info(
+                    "deliver: drained %d attachment(s), sent %d for channel %s",
+                    len(attachments), sent_attachments, channel,
+                )
             return {"status": "ok"}
 
         except Exception as e:
             logger.exception("Failed to send reply for channel %s", channel)
             return {"status": "error", "error": str(e)}
 
-    _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-
-    def _send_output_images(
+    def reply(
         self,
-        task_id: str,
+        task_id: str,  # noqa: ARG002 — legacy signature, task_id no longer board-resolved
+        channel: str,
         reply_params: dict[str, Any],
-        notify_recipe: str,
-        runner: Any,
-    ) -> None:
-        """Send image files from task outputs dir after text reply."""
-        view = _board_task_to_view(get_board(), task_id)
-        if not view:
-            return
-        run_id = view.session_id
-        if not run_id:
-            return
-        outputs_dir = PROJECTS_DIR / run_id / "outputs"
-        if not outputs_dir.is_dir():
-            return
+        *,
+        msg_id: str = "",  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Backward-compatible reply entrypoint → deliver().
 
-        chat_id = reply_params.get("chat_id") or reply_params.get("reply_context", {}).get("chat_id")
-        if not chat_id:
-            return
-
-        # Dedup: skip images already auto-sent for this run, and skip the image
-        # explicitly declared in this reply (feishu_send_message handles that).
-        sent = self._sent_image_paths.setdefault(run_id, set())
-        explicit = reply_params.get("image_path")
-        if explicit:
-            sent.add(str(explicit))
-
-        # Only broadcast images produced (or modified) after this task started,
-        # so we don't re-send historical PNGs left in a shared outputs/ dir by
-        # prior tasks in the same Run (root cause: dup_image_root_cause.md R1+R2).
-        task = get_board().get_task(task_id)
-        task_start_ts = (
-            task.created_at.timestamp() if task and task.created_at else 0
-        )
-        images = [
-            f for f in sorted(outputs_dir.iterdir())
-            if f.is_file()
-            and f.suffix.lower() in self._IMAGE_SUFFIXES
-            and str(f) not in sent
-            and f.stat().st_mtime >= task_start_ts
-        ]
-        for img in images:
-            try:
-                image_params = {"chat_id": chat_id, "image_path": str(img)}
-                logger.info("Auto-sending output image via %s: %s", notify_recipe, img.name)
-                runner.run(notify_recipe, params=image_params)
-                sent.add(str(img))
-                logger.info("Output image sent: %s", img.name)
-            except Exception:
-                logger.exception("Failed to send output image: %s", img.name)
-
-    def recover_pending_tasks(self) -> list[dict[str, Any]]:
-        """Scan the board for non-terminal msgs/tasks needing PA attention.
-
-        Returns a list of message payloads (user_message / recovered_failed_task)
-        for the caller to enqueue. Does NOT enqueue itself.
+        Retained for the server-level online-notification path. reply_context
+        must be carried in reply_params (no board fallback in Phase 3).
         """
-        board = get_board()
-        view = board.view_for_pa()
-
-        # Collect task ids whose board view indicates non-terminal work.
-        non_terminal_task_statuses = {"queued", "executing", "resume_failed"}
-        failed_task_ids: list[str] = []
-        pending_task_ids: list[str] = []
-        for t in view.get("threads", []):
-            for m in t.get("msgs", []):
-                for tk in m.get("tasks", []):
-                    if tk.get("status") in non_terminal_task_statuses:
-                        pending_task_ids.append(tk["id"])
-                    elif tk.get("status") == "failed":
-                        # Allow PA to retry a small number of failed tasks per
-                        # restart (matches legacy behaviour). Whether to retry
-                        # is decided after MAX_RECOVERY check below.
-                        failed_task_ids.append(tk["id"])
-
-        MAX_RECOVERY = 2
-
-        messages: list[dict[str, Any]] = []
-        for tid in pending_task_ids:
-            view_tk = _board_task_to_view(board, tid)
-            if view_tk is None:
-                continue
-            # An `executing` task whose sub-agent process is still alive is
-            # actively monitored by the executor — it is NOT orphaned. The old
-            # code recovered it anyway, incrementing recovery_count every
-            # heartbeat and marking it stale within ~2 ticks while the agent
-            # was still working (then the executor flipped it FAILED→COMPLETED
-            # on real exit, plus 8 min of "already recovered" log spam).
-            # Recovery is only for tasks orphaned by a crash, i.e. executing
-            # with no live PID. Skip live ones entirely.
-            if (
-                view_tk.status == "executing"
-                and view_tk.pid
-                and _pid_alive(view_tk.pid)
-            ):
-                continue
-            if view_tk.recovery_count >= MAX_RECOVERY:
-                logger.warning(
-                    "Task %s recovered %d times without completion — marking stale",
-                    tid, view_tk.recovery_count,
-                )
-                board.mark_task_failed(
-                    tid,
-                    error=f"stale: recovered {view_tk.recovery_count} times without resolution",
-                    by="lifecycle",
-                )
-                continue
-            board.increment_recovery_count(tid, by="lifecycle")
-            from datetime import datetime
-
-            task_obj = board.get_task(tid)
-            received_at = (
-                task_obj.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                if task_obj and task_obj.created_at else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-            messages.append({
-                "type": "user_message",
-                "task_id": tid,
-                "channel": view_tk.channel,
-                "channel_message_id": view_tk.channel_message_id,
-                "prompt": view_tk.prompt,
-                "reply_context": view_tk.reply_context,
-                "_recovered": True,
-                "received_at": received_at,
-            })
-
-        for tid in failed_task_ids:
-            view_tk = _board_task_to_view(board, tid)
-            if view_tk is None:
-                continue
-            # Safety: cap FAILED recovery (without this, a task that keeps
-            # dying mid-run oscillates failed ↔ pending forever).
-            if view_tk.recovery_count >= MAX_RECOVERY:
-                logger.warning(
-                    "FAILED task %s already recovered %d times — leaving as failed (stale)",
-                    tid, view_tk.recovery_count,
-                )
-                continue
-            board.increment_recovery_count(tid, by="lifecycle")
-            messages.append({
-                "type": "recovered_failed_task",
-                "task_id": tid,
-                "channel": view_tk.channel,
-                "channel_message_id": view_tk.channel_message_id,
-                "original_prompt": view_tk.prompt,
-                "original_error": view_tk.error or "unknown",
-                "reply_context": view_tk.reply_context,
-            })
-
-        return messages
-
-    def get_task(self, task_id: str) -> TaskView | None:
-        """Look up a task by id (exact match against board)."""
-        return _board_task_to_view(get_board(), task_id)
-
-    def find_task_for_run(self, run_id: str) -> TaskView | None:
-        """Find the TaskView associated with a run_id."""
-        board = get_board()
-        for task in board.get_executing_tasks():
-            if task.session and task.session.run_id == run_id:
-                return _board_task_to_view(board, task.task_id)
-        return None
+        reply_context = reply_params.pop("reply_context", None) if isinstance(reply_params, dict) else None
+        return self.deliver(channel, reply_params, reply_context=reply_context)

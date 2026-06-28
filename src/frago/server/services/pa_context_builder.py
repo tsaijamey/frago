@@ -165,148 +165,6 @@ def _build_conversation_history(per_channel_limit: int = 10) -> str | None:
     return "\n".join(lines)
 
 
-def _extract_recent_action_results(entries: list[dict], limit: int = 3) -> list[str]:
-    """Pull the last N action_result entries from a hot thread's entries.
-
-    Formats each as `ts | action=reply status=ok` or `... status=failed reason=...`
-    so PA can quickly scan for silent failures (e.g. resume that never consumed).
-    """
-    results: list[str] = []
-    for entry in reversed(entries):
-        if entry.get("data_type") != "action_result":
-            continue
-        data = entry.get("data") or {}
-        ts = (entry.get("ts") or "")[11:19]
-        action = data.get("action", "?")
-        status = data.get("status", "?")
-        line = f"{ts} action={action} status={status}"
-        if status != "ok":
-            reason = data.get("reason", "")
-            if reason:
-                line += f" reason={reason}"
-        results.append(line)
-        if len(results) >= limit:
-            break
-    results.reverse()
-    return results
-
-
-def _build_board_section(thread_id: str | None = None) -> str | None:
-    """TaskBoard view (spec 20260512-msg-task-board-redesign Phase 1).
-
-    B-2a: 直接读 board.view_for_pa() 拿到 (threads + recent_rejections), 渲染成
-    PA bootstrap 可见的简洁面板. board 是单一源 (timeline.jsonl), 状态新鲜度
-    与 ingestion 实时同步, 优于 legacy timeline_service.get_thread_context
-    (后者扫 trace.jsonl). Phase 2 vacuum 完成后 legacy section 可下线.
-
-    可选 ``thread_id``: 给定时只渲染该 thread (Phase 3 多会话路由用).
-    """
-    try:
-        from frago.server.services.taskboard import get_board
-        view = get_board().view_for_pa(thread_id=thread_id)
-    except Exception:
-        logger.debug("Failed to build board section", exc_info=True)
-        return None
-
-    threads = view.get("threads") or []
-    rejections = view.get("recent_rejections") or []
-    if not threads and not rejections:
-        return None
-
-    lines = ["## TaskBoard view (board.view_for_pa)"]
-    if threads:
-        lines.append(f"Threads: {len(threads)}")
-        for t in threads[:10]:
-            head = (
-                f"- [{t['id']}] {t.get('subkind','?')} "
-                f"(status={t.get('status','?')}) — {t.get('root_summary','')!r}"
-            )
-            lines.append(head)
-            for m in (t.get("msgs") or [])[-3:]:
-                lines.append(
-                    f"    msg [{m.get('id','?')}] status={m.get('status','?')} "
-                    f"tasks={len(m.get('tasks') or [])}"
-                )
-                for tk in (m.get("tasks") or [])[-3:]:
-                    lines.append(
-                        f"      task [{tk.get('id','?')}] type={tk.get('type','?')} "
-                        f"status={tk.get('status','?')}"
-                    )
-
-    if rejections:
-        lines.append("")
-        lines.append("### Recent rejections (board.recent_rejections, rolling window)")
-        for r in rejections:
-            lines.append(
-                f"- {r.get('ts','')[:19]} action={r.get('original_action','?')!r} "
-                f"reason={r.get('reason','?')} prompt_head={r.get('original_prompt_head','')!r}"
-            )
-
-    return "\n".join(lines)
-
-
-def _build_thread_section() -> str | None:
-    """Thread-aware folded view (spec 20260418-timeline-consumer-unification Phase 2).
-
-    Produces a compact text block showing hot threads expanded and warm threads
-    as summaries. PA is hinted to use `frago thread search/hydrate` for cold
-    threads not shown here.
-    """
-    try:
-        from frago.server.services.timeline_service import get_thread_context
-        ctx = get_thread_context()
-    except Exception:
-        logger.debug("Failed to build thread section", exc_info=True)
-        return None
-
-    if not ctx["hot"] and not ctx["warm"]:
-        return None
-
-    lines = ["## Active threads (timeline-folded view)"]
-    lines.append(
-        f"Hot: {ctx['counts']['hot']}, Warm: {ctx['counts']['warm']}, "
-        f"Total known: {ctx['counts']['total_known']}"
-    )
-
-    if ctx["hot"]:
-        lines.append("")
-        lines.append("### Hot threads (active in last 24h)")
-        for h in ctx["hot"]:
-            d = h["digest"]
-            head = (
-                f"- [{d['thread_id']}] {d['origin']}/{d['subkind']} "
-                f"— {d['root_summary']!r} (status={d['status']}, "
-                f"last={d['last_active_ts'][:19]}, entries={d['entry_count']})"
-            )
-            lines.append(head)
-            if d.get("task_status_summary"):
-                lines.append(f"    tasks: {d['task_status_summary']}")
-            if d.get("latest_event"):
-                lines.append(f"    latest: {d['latest_event']}")
-
-            # Surface recent action_result entries so PA can self-diagnose
-            # which of its prior decisions succeeded / failed (spec Level 3).
-            recent_actions = _extract_recent_action_results(h.get("entries") or [])
-            if recent_actions:
-                lines.append("    recent actions:")
-                for ar in recent_actions:
-                    lines.append(f"      - {ar}")
-
-    if ctx["warm"]:
-        lines.append("")
-        lines.append("### Warm threads (24h–7d, digest only)")
-        for d in ctx["warm"]:
-            lines.append(
-                f"- [{d['thread_id']}] {d['origin']}/{d['subkind']} "
-                f"— {d['root_summary']!r} (last={d['last_active_ts'][:19]})"
-            )
-
-    lines.append("")
-    lines.append(f"> {ctx['cold_hint']}")
-
-    return "\n".join(lines)
-
-
 def _build_knowledge_index() -> str | None:
     try:
         knowledge_file = Path(__file__).parent / "agent_knowledge.json"
@@ -342,21 +200,10 @@ def build_bootstrap(
     if reborn_info:
         sections.append(reborn_info)
 
-    # 不代入任务快照：重启后任务由 ingestion 自然驱动；
-    # 任务状态在消息触达 PA 时按需呈现，避免把"历史回顾"误当成"待办列表"。
-
-    # TaskBoard view (spec 20260512-msg-task-board-redesign, B-2a 接入)
-    board_section = _build_board_section(thread_id=thread_id)
-    if board_section:
-        sections.append(board_section)
-
-    # Thread-aware view (spec 20260418-timeline-consumer-unification Phase 2)
-    thread_section = _build_thread_section()
-    if thread_section:
-        sections.append(thread_section)
-
-    # Legacy conversation turns (kept as complementary user-PA pairing view;
-    # future: drop once thread view is proven sufficient).
+    # Phase 3 (去账本): 不再注入 board view / thread folded view——历史与任务状态由
+    # 常驻会话自带上下文 + claude 原生 transcript 承担。bootstrap 只留系统环境 +
+    # 人格(reborn) + 会话回顾 + 知识索引。``thread_id`` 形参保留以兼容调用方签名。
+    _ = thread_id
     conversation = _build_conversation_history()
     if conversation:
         sections.append(conversation)

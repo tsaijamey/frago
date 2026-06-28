@@ -186,7 +186,7 @@ def test_send_timeout_dumps_pane_and_tip(fake):
 def test_start_unknown_agent_type_lists_known():
     res = CliRunner().invoke(agent, ["start", "nope-agent"])
     assert res.exit_code == 1
-    assert "no recipe registered" in res.output
+    assert "no driver registered" in res.output
     assert "claude" in res.output
 
 

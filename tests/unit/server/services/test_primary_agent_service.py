@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,8 +16,29 @@ class TestPrimaryAgentService:
         svc.__init__()
         return svc
 
+    def test_enqueue_worker_done_renders_and_routes(self):
+        """Phase 3: enqueue_worker_done puts a worker_done msg that resolves to its conv_key
+        and renders the result summary into the merged PA text."""
+        svc = self._fresh_service()
+
+        async def run():
+            svc._broadcast_pa_event = AsyncMock()
+            await svc.enqueue_worker_done(
+                conv_key="feishu:oc_x",
+                channel="feishu",
+                result_summary="调研完成：找到 3 个候选方案",
+            )
+            msg = await svc._message_queue.get()
+            assert msg["type"] == "worker_done"
+            assert svc._resolve_thread_id(msg) == "feishu:oc_x"
+            rendered = svc._format_queue_messages([msg])
+            assert "调研完成：找到 3 个候选方案" in rendered
+            assert "worker 完成" in rendered
+
+        asyncio.run(run())
+
     def test_initialize_starts_heartbeat(self):
-        """Phase 3: initialize no longer creates a session — sessions are per-thread, created on demand."""
+        """initialize starts the queue consumer + heartbeat; no claude-p session is created."""
         svc = self._fresh_service()
 
         async def run():
@@ -26,63 +46,10 @@ class TestPrimaryAgentService:
                 svc, "_start_heartbeat", new_callable=AsyncMock
             ) as mock_hb:
                 await svc.initialize()
-                assert svc.get_session_id() is None  # no default session
+                assert svc._queue_consumer_task is not None
                 mock_hb.assert_called_once()
 
         asyncio.run(run())
-
-    def test_session_for_creates_and_caches_session(self):
-        """_session_for creates a session for a thread and caches it."""
-        svc = self._fresh_service()
-        svc._create_pa_session = AsyncMock(return_value="internal_001")
-
-        async def run():
-            board = MagicMock()
-            board.bind_pa_session = MagicMock()
-
-            with patch("frago.server.services.primary_agent_service.get_board", return_value=board):
-                from frago.server.services.agent_service import AgentService
-                AgentService._attached_sessions = {}
-
-                # Simulate a session that will be returned
-                fake_session = MagicMock()
-                fake_session.is_running = True
-                svc._sessions["thread_A"] = fake_session
-                svc._session_ids["thread_A"] = "sess_A"
-
-                sess = await svc._session_for("thread_A")
-                assert sess is fake_session
-                assert svc.get_session_id("thread_A") == "sess_A"
-
-        asyncio.run(run())
-
-    def test_get_session_id_by_thread(self):
-        """get_session_id(thread_id) returns that thread's session."""
-        svc = self._fresh_service()
-        svc._session_ids["thread_X"] = "sess_X"
-
-        assert svc.get_session_id("thread_X") == "sess_X"
-        assert svc.get_session_id("nonexistent") is None
-        assert svc.get_session_id() is None  # no current thread
-
-    def test_config_persistence_save(self):
-        """Save session_id to config.json."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
-            json.dump({}, f)
-            config_path = Path(f.name)
-
-        orig = mod.CONFIG_FILE
-        mod.CONFIG_FILE = config_path
-        try:
-            PrimaryAgentService._save_session_id("test-session-xyz")
-
-            # Verify config structure
-            raw = json.loads(config_path.read_text())
-            assert raw["primary_agent"]["session_id"] == "test-session-xyz"
-        finally:
-            mod.CONFIG_FILE = orig
 
 
 class TestHeartbeat:
@@ -195,43 +162,35 @@ class TestHeartbeat:
     def _make_svc_for_reply(self):
         svc = self._fresh_service()
         svc._lifecycle = MagicMock()
-        svc._lifecycle.reply = MagicMock(return_value={"status": "ok"})
-        svc._create_task_from_cache = MagicMock(return_value=None)
+        svc._lifecycle.deliver = MagicMock(return_value={"status": "ok"})
         svc._broadcast_pa_event = AsyncMock()
         return svc
 
-    def test_send_reply_text_only_excludes_file_image_keys(self):
+    def test_deliver_pushes_text_with_route_context(self):
+        """Phase 2: deliver(text, route) → lifecycle.deliver(channel, {text}, reply_context=...)."""
         svc = self._make_svc_for_reply()
-        decision = {"task_id": "t1", "channel": "feishu", "text": "hi"}
-        asyncio.run(svc._send_reply(decision))
-        args, _ = svc._lifecycle.reply.call_args
-        reply_params = args[2]
-        assert reply_params == {"text": "hi"}
-        assert "file_path" not in reply_params
-        assert "image_path" not in reply_params
+        route = {"channel": "feishu", "task_id": "t1", "reply_context": {"chat_id": "c1"}}
+        asyncio.run(svc.deliver("hi", route))
+        _, kwargs = svc._lifecycle.deliver.call_args
+        args = svc._lifecycle.deliver.call_args.args
+        assert args[0] == "feishu"
+        assert args[1] == {"text": "hi"}
+        assert kwargs["reply_context"] == {"chat_id": "c1"}
+        assert kwargs["task_id"] == "t1"
 
-    def test_send_reply_passes_file_path(self):
+    def test_deliver_skips_empty_text(self):
+        """空输出不推（Edge Cases: agent 最终输出为空 → 跳过）。"""
         svc = self._make_svc_for_reply()
-        decision = {
-            "task_id": "t1", "channel": "feishu", "text": "done",
-            "file_path": "/tmp/out.pdf",
-        }
-        asyncio.run(svc._send_reply(decision))
-        reply_params = svc._lifecycle.reply.call_args.args[2]
-        assert reply_params["file_path"] == "/tmp/out.pdf"
-        assert reply_params["text"] == "done"
-        assert "image_path" not in reply_params
+        asyncio.run(svc.deliver("   ", {"channel": "feishu"}))
+        svc._lifecycle.deliver.assert_not_called()
 
-    def test_send_reply_passes_image_path(self):
+    def test_deliver_uses_reply_context_cache_when_route_lacks_it(self):
+        """route 无 reply_context 时回落 conv→reply_context 缓存（按 channel: 前缀键）。"""
         svc = self._make_svc_for_reply()
-        decision = {
-            "task_id": "t1", "channel": "feishu", "text": "chart",
-            "image_path": "/tmp/chart.png",
-        }
-        asyncio.run(svc._send_reply(decision))
-        reply_params = svc._lifecycle.reply.call_args.args[2]
-        assert reply_params["image_path"] == "/tmp/chart.png"
-        assert "file_path" not in reply_params
+        svc._reply_context_cache["channel:feishu"] = {"chat_id": "cached"}
+        asyncio.run(svc.deliver("hi", {"channel": "feishu"}))
+        kwargs = svc._lifecycle.deliver.call_args.kwargs
+        assert kwargs["reply_context"] == {"chat_id": "cached"}
 
     def test_stop_calls_stop_heartbeat(self):
         svc = self._fresh_service()
@@ -244,30 +203,3 @@ class TestHeartbeat:
                 mock_stop.assert_called_once()
 
         asyncio.run(run())
-
-    def test_reborn_notification_disabled_by_default(self):
-        """No config / no flag -> reborn broadcast stays silent."""
-        svc = self._fresh_service()
-        with tempfile.TemporaryDirectory() as d:
-            missing = Path(d) / "config.json"
-            with patch.object(mod, "CONFIG_FILE", missing):
-                assert svc._reborn_notification_enabled() is False
-
-            # Config present but flag absent -> still off.
-            missing.write_text(json.dumps({"primary_agent": {}}), encoding="utf-8")
-            with patch.object(mod, "CONFIG_FILE", missing):
-                assert svc._reborn_notification_enabled() is False
-
-    def test_reborn_notification_opt_in(self):
-        """Explicit primary_agent.reborn_notification.enabled = true turns it on."""
-        svc = self._fresh_service()
-        with tempfile.TemporaryDirectory() as d:
-            cfg = Path(d) / "config.json"
-            cfg.write_text(
-                json.dumps(
-                    {"primary_agent": {"reborn_notification": {"enabled": True}}}
-                ),
-                encoding="utf-8",
-            )
-            with patch.object(mod, "CONFIG_FILE", cfg):
-                assert svc._reborn_notification_enabled() is True

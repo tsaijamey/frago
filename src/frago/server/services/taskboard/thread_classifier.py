@@ -1,113 +1,62 @@
-"""Thread attribution classifier (spec 20260418-thread-organization Phase 2).
+"""Thread attribution classifier — pure conv_key derivation (spec 20260627 Phase 3).
 
-Given an incoming external message, decide which thread it belongs to.
-Layered cost model:
+去账本后，分类退化为**纯函数**：一条入站消息确定性映射到一个常驻会话 key
+(``conv_key``)，不再依赖 board tag 索引、不再有 thread 对象要建。
 
-  L1 (free)  — channel-native reply reference (feishu parent_message_id,
-               email In-Reply-To, webhook conversation_id)
-  L2 (rules) — same channel + same sender, within time window, no new-topic keyword
-  L3 (LLM)   — PA classification (deferred, Phase 5)
-  L4 (user)  — user anchoring via `frago thread follow` (deferred, Phase 5)
+  L0 (free) — conversation-unit exact match：从 channel + reply_context 派生稳定
+              key（feishu chat_id / email 发件人 / slack channel_id），见 conv_key.py
+  L1 (free) — channel-native reply reference（feishu parent_message_id /
+              email In-Reply-To / webhook conversation_id），同样派生稳定 key
 
-If nothing matches, a new thread root is generated.
-
-B-2b: 替换 ThreadStore 调用为 TaskBoard 公有方法 (search_threads_by_tag /
-search_threads_by_sender / create_thread / add_tag / touch_thread). ThreadStore
-已物理删除, 此模块只依赖 TaskBoard.
+L2（同发件人时间窗启发式）随账本一起删除——它依赖 board 的 last_active 索引，
+且属于"模糊归并"，常驻会话模型下不需要。两层都不命中时返回 None，由调用方路由到
+fallback 常驻会话（scheduled / internal 等无会话单元的消息天然走这里）。
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
-from frago.server.services.taskboard import get_board
 from frago.server.services.taskboard.conv_key import derive_conv_key
-from frago.server.services.taskboard.timeline import ulid_new
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_WINDOW_MIN = 15
-NEW_TOPIC_KEYWORDS = (
-    "新问题",
-    "另一个",
-    "换个话题",
-    "新话题",
-    "new topic",
-    "another question",
-)
 
 
 @dataclass
 class ClassifyResult:
-    thread_id: str                  # existing or newly minted ulid
+    conv_key: str | None            # 稳定会话 key（None → 路由到 fallback 会话）
     parent_ref: str | None          # channel-native parent message id (for L1)
-    layer: str                      # "L0" | "L1" | "L2" | "new"
-    is_new: bool
+    layer: str                      # "L0" | "L1" | "none"
 
+    # Backward-compat alias: 老调用方读 ``thread_id``，语义即 conv_key。
+    @property
+    def thread_id(self) -> str | None:
+        return self.conv_key
 
-# ---------------------------------------------------------------------------
-# Tag conventions
-# ---------------------------------------------------------------------------
-
-def channel_ref_tag(channel: str, msg_id: str) -> str:
-    """Tag indicating this thread contains the channel message `msg_id`.
-
-    Used for L1 lookup: to find thread containing a replied-to message.
-    """
-    return f"channelref:{channel}:{msg_id}"
-
-
-def sender_tag(channel: str, sender: str) -> str:
-    """Tag indicating this thread was initiated by / continued by `sender`.
-
-    Used for L2 heuristic grouping.
-    """
-    return f"sender:{channel}:{sender}"
-
-
-def conv_tag(_channel: str, conv_key: str) -> str:
-    """Tag indicating this thread belongs to a conversation unit.
-
-    conv_key already contains the channel prefix (e.g. "feishu:oc_xxx").
-    ``_channel`` accepted for forward-compatibility with future channel types.
-    """
-    return f"conv:{conv_key}"
+    @property
+    def is_new(self) -> bool:  # 纯函数无"建/不建"概念，保留以兼容旧读取点
+        return False
 
 
 def _extract_conv_key(channel: str, reply_context: dict | None) -> str | None:
-    """Extract conversation unit key (without the ``conv:`` prefix) from reply_context.
-
-    Delegates per-channel derivation to ``derive_conv_key``. The returned string
-    is ``"{channel}:{native_id}"`` so the existing ``conv_tag`` wrapping (which
-    prepends ``conv:``) is unchanged; feishu behaviour is preserved exactly.
-    """
+    """派生会话单元 key（含 channel 前缀），无则 None。委托 conv_key.derive_conv_key。"""
     key = derive_conv_key(channel, reply_context)
     if key is None:
         return None
     return f"{key.channel}:{key.native_id}"
 
 
-# ---------------------------------------------------------------------------
-# Layer implementations
-# ---------------------------------------------------------------------------
-
 def _extract_parent_ref(channel: str, reply_context: dict) -> str | None:
     """Extract channel-native parent message id, if present."""
     if not reply_context:
         return None
 
-    # Feishu: parent_message_id is set when user replies in a thread.
-    # We intentionally don't use message_id (that's the current msg itself).
     if channel == "feishu":
         parent = reply_context.get("parent_message_id")
-        if parent:
-            return str(parent)
-        return None
+        return str(parent) if parent else None
 
     if channel == "email":
-        # RFC 5322: In-Reply-To / References (first entry)
         irt = reply_context.get("in_reply_to")
         if irt:
             return str(irt)
@@ -120,162 +69,35 @@ def _extract_parent_ref(channel: str, reply_context: dict) -> str | None:
 
     if channel in ("webhook", "ui_input"):
         cid = reply_context.get("conversation_id") or reply_context.get("thread_id")
-        if cid:
-            return str(cid)
-        return None
+        return str(cid) if cid else None
 
     return None
 
 
-def _is_new_topic_marker(text: str | None) -> bool:
-    if not text:
-        return False
-    low = text.lower()
-    return any(kw.lower() in low for kw in NEW_TOPIC_KEYWORDS)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def classify(
     *,
     channel: str,
-    sender: str,
-    content: str,
+    sender: str = "",  # noqa: ARG001 — kept for call-site signature compat
+    content: str = "",  # noqa: ARG001
     reply_context: dict | None = None,
-    now: datetime | None = None,
-    window_min: int = DEFAULT_WINDOW_MIN,
+    **_ignored: object,
 ) -> ClassifyResult:
-    """Determine thread_id for an incoming external message.
+    """Derive the resident-session conv_key for an incoming external message.
 
-    B-2b: 走 TaskBoard.search_threads_by_tag (L1) / search_threads_by_sender (L2).
+    纯函数：仅从 channel + reply_context 确定性派生，无 I/O、无 board。
     """
-    board = get_board()
     reply_context = reply_context or {}
-    now = now or datetime.now()
 
-    # ── Layer 0: conversation-unit exact match ──────────────────────────────
     conv_key = _extract_conv_key(channel, reply_context)
     if conv_key:
-        matches = board.search_threads_by_tag(conv_tag(channel, conv_key))
-        if matches:
-            logger.debug(
-                "classify L0 hit: conv_key=%s → thread=%s",
-                conv_key, matches[0]["thread_id"],
-            )
-            return ClassifyResult(
-                thread_id=matches[0]["thread_id"],
-                parent_ref=None,
-                layer="L0",
-                is_new=False,
-            )
+        logger.debug("classify L0: channel=%s → conv_key=%s", channel, conv_key)
+        return ClassifyResult(conv_key=conv_key, parent_ref=None, layer="L0")
 
-    # ── Layer 1: channel-native threading ──────────────────────────────────
     parent_ref = _extract_parent_ref(channel, reply_context)
     if parent_ref:
-        matches = board.search_threads_by_tag(channel_ref_tag(channel, parent_ref))
-        if matches:
-            logger.debug(
-                "classify L1 hit: channel=%s parent=%s → thread=%s",
-                channel, parent_ref, matches[0]["thread_id"],
-            )
-            return ClassifyResult(
-                thread_id=matches[0]["thread_id"],
-                parent_ref=parent_ref,
-                layer="L1",
-                is_new=False,
-            )
+        key = f"{channel}:ref:{parent_ref}"
+        logger.debug("classify L1: channel=%s parent=%s → conv_key=%s", channel, parent_ref, key)
+        return ClassifyResult(conv_key=key, parent_ref=parent_ref, layer="L1")
 
-    # ── Layer 2: heuristic (same sender, within window, no new-topic marker) ─
-    if sender and not _is_new_topic_marker(content):
-        cutoff = now - timedelta(minutes=window_min)
-        candidates = board.search_threads_by_sender(channel, sender, active_only=True)
-        for c in candidates:
-            last_raw = c.get("last_active_at", "")
-            try:
-                last = datetime.fromisoformat(last_raw)
-            except ValueError:
-                continue
-            # Strip tz to compare with caller-supplied naive `now` if needed
-            if last.tzinfo and not now.tzinfo:
-                last = last.replace(tzinfo=None)
-            elif now.tzinfo and not last.tzinfo:
-                last = last.replace(tzinfo=now.tzinfo)
-            if last >= cutoff:
-                logger.debug(
-                    "classify L2 hit: sender=%s last_active=%s → thread=%s",
-                    sender, last_raw, c["thread_id"],
-                )
-                return ClassifyResult(
-                    thread_id=c["thread_id"],
-                    parent_ref=None,
-                    layer="L2",
-                    is_new=False,
-                )
-
-    # ── New thread ─────────────────────────────────────────────────────────
-    new_tid = ulid_new()
-    logger.debug("classify: new thread %s for %s/%s", new_tid, channel, sender)
-    return ClassifyResult(
-        thread_id=new_tid,
-        parent_ref=None,
-        layer="new",
-        is_new=True,
-    )
-
-
-def ensure_thread(
-    result: ClassifyResult,
-    *,
-    channel: str,
-    sender: str,
-    msg_id: str,
-    root_summary: str,
-    reply_context: dict | None = None,
-) -> None:
-    """Create or touch the thread indicated by a classification result.
-
-    Adds channelref, sender, and conv tags so future messages can be grouped.
-
-    B-2b: 直接调 board.create_thread (含 tags 参数) / add_tag / touch_thread.
-    """
-    board = get_board()
-    tags = [channel_ref_tag(channel, msg_id)]
-    if sender:
-        tags.append(sender_tag(channel, sender))
-    conv_key = _extract_conv_key(channel, reply_context)
-    if not conv_key and result.layer in ("L1", "L2"):
-        existing = board.get_thread(result.thread_id)
-        if existing:
-            for t in existing.get("tags") or []:
-                if t.startswith("conv:"):
-                    conv_key = t.removeprefix("conv:")
-                    break
-    if conv_key:
-        tags.append(conv_tag(channel, conv_key))
-
-    # board.create_thread 在 thread_id 已存在时抛 IllegalTransitionError;
-    # classify 路径理论上 is_new=True 时 thread 不存在, 但 Ingestor 可能
-    # 并发已建; 用 get_thread 探测后选 path.
-    if result.is_new and board.get_thread(result.thread_id) is None:
-        try:
-            board.create_thread(
-                thread_id=result.thread_id,
-                origin="external",
-                subkind=channel,
-                root_summary=root_summary,
-                by="thread_classifier",
-                tags=tags,
-            )
-            return
-        except Exception:
-            logger.debug(
-                "classify ensure_thread create raced, falling through to tag/touch",
-                exc_info=True,
-            )
-    # Existing thread: append new channelref tag (so reply to THIS msg lands here)
-    # + sender tag (in case 历史 thread 尚未含此 sender tag) + touch.
-    for tag in tags:
-        board.add_tag(result.thread_id, tag, by="thread_classifier")
-    board.touch_thread(result.thread_id, by="thread_classifier")
+    logger.debug("classify: no conv unit for channel=%s → fallback session", channel)
+    return ClassifyResult(conv_key=None, parent_ref=None, layer="none")
