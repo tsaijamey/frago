@@ -268,6 +268,12 @@ class PrimaryAgentService:
         self._message_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queue_consumer_task: asyncio.Task[None] | None = None
 
+        # 按 conv_key 并发派发：router 把消息按 conv 路由到各自的子队列，每个 conv 一条
+        # 独立 worker 协程串行处理本 conv（保序）但跨 conv 并发——一个 conv 跑长回合
+        # （含后台 worker）不再冻结其他 conv 的回复。
+        self._conv_queues: dict[str | None, asyncio.Queue[list[dict[str, Any]]]] = {}
+        self._conv_workers: dict[str | None, asyncio.Task[None]] = {}
+
         # Track scheduled_task msg_id → schedule_id for PA result write-back
         self._schedule_msg_map: dict[str, str] = {}
 
@@ -311,6 +317,8 @@ class PrimaryAgentService:
         Per-thread PA sessions are created on demand when messages arrive
         (Phase 3: no single default session at startup).
         """
+        # 预构造常驻执行器，避免多个 conv worker 首次并发派发时竞争 lazy-init。
+        self._get_pa_tmux_runner()
         self._queue_consumer_task = asyncio.create_task(self._queue_consumer_loop())
         self._transcript_watch_task = asyncio.create_task(self._transcript_watch_loop())
         # 后台预热最近用过的 conv（串行、不阻塞 server 启动），消首句冷启动。
@@ -330,6 +338,15 @@ class PrimaryAgentService:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._queue_consumer_task
             self._queue_consumer_task = None
+
+        # 取消所有 per-conv worker 协程。
+        for t in list(self._conv_workers.values()):
+            if not t.done():
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+        self._conv_workers.clear()
+        self._conv_queues.clear()
 
         if self._transcript_watch_task and not self._transcript_watch_task.done():
             self._transcript_watch_task.cancel()
@@ -502,13 +519,15 @@ class PrimaryAgentService:
         })
 
     async def _queue_consumer_loop(self) -> None:
-        """Consumer loop: drain queue, derive conv_key, group, dispatch via tmux (serial).
+        """Router loop: drain queue, derive conv_key, fan out to per-conv workers.
 
-        Phase 4 (删 claude-p): the resident tmux session IS the PA. The queue
-        consumer is now a single path — group by conv_key, then ``_dispatch_group_tmux``
-        one group at a time. There is no second backend and no subprocess to wait on.
+        Phase 4 (删 claude-p): the resident tmux session IS the PA.去喂料门后这里
+        从「串行派发」改成「路由分发」：把每条消息按 conv_key 路由到各自的子队列，
+        每个 conv 一条独立 worker 协程串行处理（保序）但跨 conv 并发——一个 conv 跑
+        长回合（含「先回稍等、后台 worker 续干」）不再阻塞其他 conv 的派发与回复。
+        投递仍由 transcript 持续转发器逐 conv 独立完成，与本路由解耦。
         """
-        logger.info("PA queue consumer started (resident tmux single path)")
+        logger.info("PA queue router started (per-conv concurrent dispatch)")
         while True:
             try:
                 first = await self._message_queue.get()
@@ -529,18 +548,51 @@ class PrimaryAgentService:
                     self._set_msg_thread_id(m, tid)
                     grouped[tid].append(m)
 
-                # Serial dispatch: one resident tmux turn per group at a time.
+                # 路由到各 conv 的子队列，并确保该 conv 有 worker 在跑。
                 for tid, group in grouped.items():
-                    self._current_thread_id = tid
-                    await self._dispatch_group_tmux(tid, group)
-
-                self._current_thread_id = None
+                    q = self._conv_queues.get(tid)
+                    if q is None:
+                        q = asyncio.Queue()
+                        self._conv_queues[tid] = q
+                    q.put_nowait(group)
+                    self._ensure_conv_worker(tid)
 
             except asyncio.CancelledError:
-                logger.info("PA queue consumer cancelled")
+                logger.info("PA queue router cancelled")
                 raise
             except Exception:
-                logger.exception("Queue consumer error")
+                logger.exception("Queue router error")
+                await asyncio.sleep(1)
+
+    def _ensure_conv_worker(self, tid: str | None) -> None:
+        """确保该 conv 有一条活 worker 协程；已死/不存在则（重）建。"""
+        t = self._conv_workers.get(tid)
+        if t is None or t.done():
+            self._conv_workers[tid] = asyncio.create_task(self._conv_worker_loop(tid))
+
+    async def _conv_worker_loop(self, tid: str | None) -> None:
+        """单个 conv 的 worker：串行消费本 conv 子队列，逐组 ``_dispatch_group_tmux``。
+
+        闲置超阈值自行退出回收 worker，子队列保留供下条消息复用（NEVER 删队列，
+        避免与 router 的 put 竞态丢消息）；退出后下条路由到该 conv 时由
+        ``_ensure_conv_worker`` 的 done 分支重建。
+        """
+        q = self._conv_queues[tid]
+        idle_exit_s = 300.0
+        while True:
+            try:
+                try:
+                    group = await asyncio.wait_for(q.get(), timeout=idle_exit_s)
+                except TimeoutError:
+                    if q.empty():
+                        self._conv_workers.pop(tid, None)
+                        return
+                    continue
+                await self._dispatch_group_tmux(tid, group)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("conv worker error (thread=%s)", tid)
                 await asyncio.sleep(1)
 
     def _format_queue_messages(self, messages: list[dict[str, Any]]) -> str:
@@ -1335,9 +1387,10 @@ class PrimaryAgentService:
 
         from frago.agent_driver.tmux_session import TmuxStartupError
 
-        # 喂料门：喂之前等该会话真空闲，避免插话打断在跑的后台 worker（杀掉它丢结果）。
-        # 首次创建（无活会话）立即返回，不阻塞。
-        await self._wait_until_truly_idle(session_key)
+        # 前置喂料门已去除：真实 claude 客户端对提前输入是「进客户端自带消息队列、
+        # 不打断在跑回合」，无需等真空闲再喂；且同一 conv 的下一组派发由本方法末尾的
+        # 收尾 _wait_until_truly_idle 保证会话已空闲，前置门对同 conv 纯属冗余。跨 conv
+        # 不再共享等待——各 conv 由独立 worker 协程并发派发。
 
         # on_ready：bootstrap 注入后、真实 prompt 提交前锚定转发器 baseline。期间把
         # conv 标记 bootstrapping，转发器跳过该 conv，规避「bootstrap 回复被当新终答
