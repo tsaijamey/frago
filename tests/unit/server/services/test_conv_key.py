@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from frago.server.services.taskboard.conv_key import (
+from frago.server.services.routing.conv_key import (
     ConvKey,
     derive_conv_key,
 )

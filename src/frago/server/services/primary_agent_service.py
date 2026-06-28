@@ -755,7 +755,7 @@ class PrimaryAgentService:
         # email:/slack:）。内部消息的裸 ULID thread_id（反思 tick 等）和无 channel 前缀的
         # 测试夹具值（thread-A）一律不记——否则 warm_convs 会被反思 ULID 持续刷满、把真实
         # 会话挤出去，预热还会白拉一堆空会话。
-        from frago.server.services.taskboard.conv_key import CONV_KEY_DERIVERS
+        from frago.server.services.routing.conv_key import CONV_KEY_DERIVERS
 
         channel = conv_key.split(":", 1)[0] if ":" in conv_key else ""
         if channel not in CONV_KEY_DERIVERS:

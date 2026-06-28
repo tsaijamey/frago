@@ -192,7 +192,7 @@ class IngestionScheduler:
             )
             return False
 
-        from frago.server.services.taskboard.thread_classifier import (
+        from frago.server.services.routing.thread_classifier import (
             classify as thread_classify,
         )
 

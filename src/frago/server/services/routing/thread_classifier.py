@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from frago.server.services.taskboard.conv_key import derive_conv_key
+from frago.server.services.routing.conv_key import derive_conv_key
 
 logger = logging.getLogger(__name__)
 
