@@ -48,6 +48,10 @@ class WarmSessionPool:
     def has(self, session_id: str) -> bool:
         return session_id in self._sessions
 
+    def peek(self, session_id: str) -> TmuxAgentSession | None:
+        """取一个已常驻的会话对象（不触发重建 / 不刷新 LRU）。无则 None。"""
+        return self._sessions.get(session_id)
+
     def active_ids(self) -> list[str]:
         return list(self._sessions.keys())
 
@@ -59,6 +63,7 @@ class WarmSessionPool:
         cwd: str,
         *,
         native_session_id: bool = False,
+        conv_key: str | None = None,
         resume_hook: ResumeHook | None = None,
     ) -> TmuxAgentSession:
         existing = self._sessions.get(session_id)
@@ -75,6 +80,7 @@ class WarmSessionPool:
             driver=driver,
             cwd=cwd,
             native_session_id=native_session_id,
+            conv_key=conv_key,
             runner=self._runner,
         )
         # 重启后内存池为空，但同名 tmux 会话可能作为孤儿仍存活；直接 new-session
@@ -98,6 +104,7 @@ class WarmSessionPool:
         session_id: str,
         cwd: str,
         native_session_id: bool = False,
+        conv_key: str | None = None,
         timeout_s: float = 120.0,
         resume_hook: ResumeHook | None = None,
     ) -> TurnResult:
@@ -107,6 +114,7 @@ class WarmSessionPool:
             session_id,
             cwd,
             native_session_id=native_session_id,
+            conv_key=conv_key,
             resume_hook=resume_hook,
         )
         return session.send(prompt, timeout_s=timeout_s)

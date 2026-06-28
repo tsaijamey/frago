@@ -27,6 +27,42 @@ def test_launch_derives_uuid5_by_default() -> None:
     assert "thread-xyz" not in cmd  # 原始标识不直接出现
 
 
+def test_launch_resumes_when_transcript_exists(monkeypatch, tmp_path) -> None:
+    """非 native：派生 sid 的 transcript 已存在 → 走 --resume 续接（Phase 5）。
+
+    --session-id 撞已存在 transcript 会 'already in use' 退出；重启 / 空闲回收 /
+    token 轮换后同一 conv_key 重新拉起即属此情形，必须切 --resume。
+    """
+    import frago.server.services.transcript_completion as tc
+
+    derived = claude_driver._claude_session_uuid("thread-xyz")
+    fake = tmp_path / f"{derived}.jsonl"
+    fake.write_text("{}\n")
+
+    def _locate(session_id, cwd=None, projects_root=None):  # noqa: ARG001
+        return fake if session_id == derived else None
+
+    monkeypatch.setattr(tc, "locate_transcript", _locate)
+
+    driver = load_driver("claude")
+    cmd = driver.launch_command(LaunchCtx(cwd="/home/u", session_id="thread-xyz"))
+    assert f"--resume {derived}" in cmd
+    assert "--session-id" not in cmd
+
+
+def test_launch_session_id_when_transcript_absent(monkeypatch) -> None:
+    """非 native：派生 sid 的 transcript 不存在 → 首次创建走 --session-id。"""
+    import frago.server.services.transcript_completion as tc
+
+    monkeypatch.setattr(tc, "locate_transcript", lambda *_a, **_k: None)
+
+    driver = load_driver("claude")
+    derived = claude_driver._claude_session_uuid("thread-new")
+    cmd = driver.launch_command(LaunchCtx(cwd="/home/u", session_id="thread-new"))
+    assert f"--session-id {derived}" in cmd
+    assert "--resume" not in cmd
+
+
 def test_launch_resumes_raw_id_when_native() -> None:
     """native_session_id=True：用 --resume 原样带真实 id 续接已存在的 claude 会话。
 

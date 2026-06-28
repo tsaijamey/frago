@@ -192,6 +192,65 @@ def test_open_waits_ready_and_dismisses_modal() -> None:
     assert "-x" in new_sess and "-y" in new_sess
 
 
+def test_open_injects_conv_key_env_when_given() -> None:
+    """conv_key 给定时 new-session 注入 ``-e FRAGO_CONV_KEY=<干净 conv_key>``。
+
+    Phase 8（spec 20260627）：会话内 ``frago agent attach`` 据此 env 自解析归属哪个
+    conv。conv_key 是干净键（带冒号），原样进 env、NEVER sanitize。
+    """
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "k1",
+        _echo_driver(),
+        cwd="/tmp",
+        conv_key="feishu:oc_abc",
+        runner=fake,
+        sleep=_no_sleep,
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert "-e" in new_sess
+    assert "FRAGO_CONV_KEY=feishu:oc_abc" in new_sess
+
+
+def test_open_omits_conv_key_env_when_absent() -> None:
+    """conv_key 缺省（WebUI native 等非 PA 路径）时不注入 FRAGO_CONV_KEY。"""
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "k2", _echo_driver(), cwd="/tmp", runner=fake, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert not any("FRAGO_CONV_KEY" in tok for tok in new_sess)
+
+
+def test_open_raises_on_startup_failure_instead_of_blind_ready() -> None:
+    """ready_signal 永不命中 → open() 抛 TmuxStartupError，NEVER 盲标 ready。
+
+    旧行为：等不到就绪也无条件 status='ready'，死会话进池被当活会话复用→永久静默。
+    新行为：显式抛异常，带 pane 末尾便于排查，并 kill 掉这具半死的 tmux 壳。
+    """
+    from frago.agent_driver.tmux_session import TmuxStartupError
+
+    # ready 信号是 "READY"，所有 pane 都不含它 → 等待超时。
+    fake = FakeTmux(["booting…\nauth failed: invalid api key"])
+    clock = iter([0.0, 10.0, 10.0])  # deadline 锚点、超时判定、（兜底）
+    sess = TmuxAgentSession(
+        "fail1",
+        _echo_driver(),
+        cwd="/tmp",
+        runner=fake,
+        sleep=_no_sleep,
+        clock=lambda: next(clock),
+    )
+    with pytest.raises(TmuxStartupError) as ei:
+        sess.open(ready_timeout_s=1)
+    assert sess.status == "dead"
+    assert "invalid api key" in ei.value.tail
+    # 抛错前 kill 掉死壳，不留孤儿。
+    assert any(c[1:2] == ["kill-session"] for c in fake.commands)
+
+
 def test_launch_command_receives_ctx() -> None:
     driver = load_driver("claude")
     cmd = driver.launch_command(LaunchCtx(cwd="/w", session_id="s"))
