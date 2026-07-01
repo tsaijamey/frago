@@ -38,6 +38,7 @@ from .def_commands import def_group
 from .extension_commands import extension_group
 from .hook_rules_commands import hook_rules_group
 from .init_command import init  # New environment init command
+from .profile_commands import profile_group
 from .recipe_commands import recipe_group
 from .reply_command import reply_cmd
 from .run_commands import run_group
@@ -418,6 +419,7 @@ cli.add_command(schedule_group, name="schedule")
 cli.add_command(login_cmd, name="login")
 cli.add_command(logout_cmd, name="logout")
 cli.add_command(whoami_cmd, name="whoami")
+cli.add_command(profile_group, name="profile")
 cli.add_command(config_group, name="config")
 cli.add_command(market_group, name="market")
 cli.add_command(install_group, name="install")
