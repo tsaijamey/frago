@@ -8,6 +8,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, X, Globe, AlertCircle, ExternalLink, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { useAsync } from '@/hooks/useAsync';
 import * as api from '@/api';
 import CommunityRecipeCard from './CommunityRecipeCard';
 import EmptyState from '@/components/ui/EmptyState';
@@ -18,22 +19,12 @@ export default function CommunityRecipeList() {
   const { communityRecipes, loadCommunityRecipes, showToast } = useAppStore();
   const [search, setSearch] = useState('');
   const [installingRecipe, setInstallingRecipe] = useState<string | null>(null);
-  const [ghStatus, setGhStatus] = useState<GhCliStatus | null>(null);
-  const [ghLoading, setGhLoading] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
 
-  // Check GitHub CLI status
-  const checkGhStatus = async () => {
-    try {
-      setGhLoading(true);
-      const status = await api.checkGhCli();
-      setGhStatus(status);
-    } catch (err) {
-      console.error('Failed to check gh status:', err);
-    } finally {
-      setGhLoading(false);
-    }
-  };
+  // Check GitHub CLI status (loading/error handled by useAsync)
+  const { data: ghStatus, loading: ghLoading, run: checkGhStatus } = useAsync<GhCliStatus>(
+    api.checkGhCli
+  );
 
   // Handle GitHub login
   const handleLogin = async () => {
