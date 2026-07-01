@@ -9,6 +9,7 @@
 !.gitkeep
 !.env.example
 !.env.cdpREADME.pdf
+!.importlinter
 
 # ====================
 # Python
