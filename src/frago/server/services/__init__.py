@@ -5,8 +5,8 @@ gui_deprecated/api.py to support the HTTP-based server architecture.
 """
 
 from frago.server.services.agent_service import AgentService
-from frago.server.services.base import get_utf8_env, run_subprocess
-from frago.server.services.config_service import ConfigService
+from frago.server.services.subprocess_utils import get_utf8_env, run_subprocess
+from frago.config.config_service import ConfigService
 from frago.server.services.env_service import EnvService
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService

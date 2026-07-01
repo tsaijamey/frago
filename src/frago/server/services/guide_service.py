@@ -153,16 +153,18 @@ class GuideService:
         if not text.startswith("---\n"):
             return {}, text
 
-        # Find end of frontmatter
-        parts = text.split("\n---\n", 2)
+        # Strip the opening fence, then split on the closing fence so the
+        # frontmatter block (not the body) is what gets parsed as YAML.
+        body = text[len("---\n"):]
+        parts = body.split("\n---\n", 1)
         if len(parts) < 2:
             return {}, text
 
         # Parse YAML
         try:
-            metadata = yaml.safe_load(parts[1])
-            content = parts[2] if len(parts) > 2 else ""
-            return metadata or {}, content
+            metadata = yaml.safe_load(parts[0])
+            content = parts[1]
+            return (metadata if isinstance(metadata, dict) else {}), content
         except Exception:
             return {}, text
 

@@ -13,6 +13,8 @@ import threading
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
+from frago.server.state.broadcaster import StateBroadcaster
+from frago.server.state.loader import StateLoader
 from frago.server.state.models import (
     CommunityRecipe,
     Project,
@@ -40,7 +42,7 @@ class StateManager:
         self._state = ServerState()
         self._async_lock: Optional[asyncio.Lock] = None
         self._initialized = False
-        self._subscribers: List[Callable[[str, Any], None]] = []
+        self._broadcaster = StateBroadcaster()
 
     @classmethod
     def get_instance(cls) -> "StateManager":
@@ -129,102 +131,26 @@ class StateManager:
     # Data Loading (internal)
     # ============================================================
 
+    # 加载逻辑已抽到 state/loader.StateLoader；以下保留为门面委托，行为不变。
     def _load_recipes(self) -> List[Recipe]:
-        """Load recipes from storage."""
-        try:
-            from frago.server.services.recipe_service import RecipeService
-
-            raw_recipes = RecipeService.get_recipes(force_reload=True)
-            recipes = []
-            for r in raw_recipes:
-                recipes.append(
-                    Recipe(
-                        name=r.get("name", ""),
-                        description=r.get("description"),
-                        category=r.get("category", "atomic"),
-                        icon=r.get("icon"),
-                        tags=r.get("tags", []),
-                        path=r.get("path"),
-                        source=r.get("source"),
-                        runtime=r.get("runtime"),
-                    )
-                )
-            return recipes
-        except Exception as e:
-            logger.error(f"Failed to load recipes: {e}")
-            return []
+        """Load recipes from storage (delegates to StateLoader)."""
+        return StateLoader.load_recipes()
 
     def _load_skills(self) -> List[Skill]:
-        """Load skills from storage."""
-        try:
-            from frago.server.services.skill_service import SkillService
-
-            raw_skills = SkillService.get_skills(force_reload=True)
-            skills = []
-            for s in raw_skills:
-                skills.append(
-                    Skill(
-                        name=s.get("name", ""),
-                        description=s.get("description"),
-                        file_path=s.get("file_path"),
-                    )
-                )
-            return skills
-        except Exception as e:
-            logger.error(f"Failed to load skills: {e}")
-            return []
+        """Load skills from storage (delegates to StateLoader)."""
+        return StateLoader.load_skills()
 
     def _load_projects(self) -> List[Project]:
-        """Load projects from storage."""
-        try:
-            from datetime import datetime
-            from pathlib import Path
-
-            from frago.server.services.file_service import FileService
-
-            projects_dir = Path.home() / ".frago" / "projects"
-            raw_projects = FileService.list_projects()
-            projects = []
-            for p in raw_projects:
-                # Parse last_accessed from ISO format string to datetime
-                last_accessed = None
-                if p.last_accessed:
-                    try:
-                        last_accessed = datetime.fromisoformat(p.last_accessed)
-                    except (ValueError, TypeError):
-                        pass
-
-                projects.append(
-                    Project(
-                        path=str(projects_dir / p.run_id),
-                        name=p.theme_description or p.run_id,
-                        last_accessed=last_accessed,
-                    )
-                )
-            return projects
-        except Exception as e:
-            logger.error(f"Failed to load projects: {e}")
-            return []
+        """Load projects from storage (delegates to StateLoader)."""
+        return StateLoader.load_projects()
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load main config from storage."""
-        try:
-            from frago.server.services.main_config_service import MainConfigService
-
-            return MainConfigService.get_config()
-        except Exception as e:
-            logger.error(f"Failed to load config: {e}")
-            return {}
+        """Load main config from storage (delegates to StateLoader)."""
+        return StateLoader.load_config()
 
     def _load_gh_status(self) -> Dict[str, Any]:
-        """Load GitHub CLI status."""
-        try:
-            from frago.server.services.github_service import GitHubService
-
-            return GitHubService.check_gh_cli()
-        except Exception as e:
-            logger.error(f"Failed to load gh status: {e}")
-            return {"installed": False, "authenticated": False, "username": None}
+        """Load GitHub CLI status (delegates to StateLoader)."""
+        return StateLoader.load_gh_status()
 
     # ============================================================
     # Data Access (public)
@@ -427,57 +353,37 @@ class StateManager:
     # Subscription & Broadcast
     # ============================================================
 
+    # 订阅与 WS 传输已抽到 state/broadcaster.StateBroadcaster；以下为门面委托。
     def subscribe(self, callback: Callable[[str, Any], None]) -> None:
-        """Subscribe to state changes.
+        """Subscribe to state changes (delegates to StateBroadcaster).
 
         Args:
             callback: Function called with (data_type, data) on changes
         """
-        self._subscribers.append(callback)
+        self._broadcaster.subscribe(callback)
 
     def unsubscribe(self, callback: Callable[[str, Any], None]) -> None:
-        """Unsubscribe from state changes."""
-        if callback in self._subscribers:
-            self._subscribers.remove(callback)
+        """Unsubscribe from state changes (delegates to StateBroadcaster)."""
+        self._broadcaster.unsubscribe(callback)
 
     async def _broadcast(self, data_type: str, data: Any) -> None:
-        """Broadcast state change to WebSocket clients."""
-        try:
-            from frago.server.websocket import create_message, manager
+        """Broadcast state change to WebSocket clients.
 
-            # Convert data to dict based on data_type
-            # Note: data may be a list of dataclasses, not a dataclass itself
-            if data_type == "recipes":
-                payload = self._recipes_to_dict()
-            elif data_type == "skills":
-                payload = self._skills_to_dict()
-            elif data_type == "projects":
-                payload = self._projects_to_dict()
-            else:
-                payload = data
+        序列化在此（manager 持有 _*_to_dict），传输交给 broadcaster。
+        """
+        # Convert data to dict based on data_type
+        # Note: data may be a list of dataclasses, not a dataclass itself
+        if data_type == "recipes":
+            payload = self._recipes_to_dict()
+        elif data_type == "skills":
+            payload = self._skills_to_dict()
+        elif data_type == "projects":
+            payload = self._projects_to_dict()
+        else:
+            payload = data
 
-            message = create_message(
-                f"data_{data_type}", {"version": self._state.version, "data": payload}
-            )
-            await manager.broadcast(message)
-            logger.debug(f"Broadcast {data_type} to {manager.connection_count} clients")
-        except Exception as e:
-            logger.warning(f"Failed to broadcast {data_type}: {e}")
+        await self._broadcaster.broadcast(data_type, self._state.version, payload)
 
     async def _broadcast_raw(self, msg_type: str, data: Any) -> None:
-        """Broadcast raw data to WebSocket clients (for dict data)."""
-        try:
-            from frago.server.websocket import create_message, manager
-
-            message = create_message(msg_type, {"version": self._state.version, "data": data})
-            await manager.broadcast(message)
-            logger.debug(f"Broadcast {msg_type} to {manager.connection_count} clients")
-        except Exception as e:
-            logger.warning(f"Failed to broadcast {msg_type}: {e}")
-
-        # Notify local subscribers
-        for callback in self._subscribers:
-            try:
-                callback(msg_type, data)
-            except Exception as e:
-                logger.warning(f"Subscriber callback failed: {e}")
+        """Broadcast raw data to WebSocket clients (delegates to StateBroadcaster)."""
+        await self._broadcaster.broadcast_raw(msg_type, self._state.version, data)

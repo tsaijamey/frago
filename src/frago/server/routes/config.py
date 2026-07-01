@@ -11,7 +11,7 @@ from frago.server.models import (
     UserConfigResponse,
     WebuiSessionsResponse,
 )
-from frago.server.services.config_service import ConfigService, ConfigValidationError
+from frago.config.config_service import ConfigService, ConfigValidationError
 from frago.server.state import StateManager
 
 router = APIRouter()

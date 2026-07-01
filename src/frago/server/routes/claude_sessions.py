@@ -17,8 +17,8 @@ import json
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from frago.server.services import claude_sessions as svc
-from frago.server.services import transcript_completion as tc
+from frago.session import claude_sessions as svc
+from frago.session import transcript_completion as tc
 from frago.server.services.ui_session_runner import UiSessionRunner
 
 router = APIRouter()

@@ -222,7 +222,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         logger.warning("Failed to deploy hook binary: %s", e)
 
     # Cleanup old trace files
-    from frago.server.services.trace import cleanup_old_traces, register_broadcast_hook
+    from frago.telemetry.trace import cleanup_old_traces, register_broadcast_hook
     cleanup_old_traces()
 
     # Wire timeline entries → WS timeline_event (spec 20260418-timeline-consumer-unification Phase 3)

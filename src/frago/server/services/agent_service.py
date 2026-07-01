@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.base import (
+from frago.server.services.subprocess_utils import (
     get_utf8_env,
     run_subprocess_background,
     run_subprocess_interactive,
@@ -588,7 +588,7 @@ class AgentService:
             cwd = project_path or str(Path.home())
             env = None
             if env_extra:
-                from frago.server.services.base import get_utf8_env
+                from frago.server.services.subprocess_utils import get_utf8_env
                 env = get_utf8_env()
                 env.update(env_extra)
             with open(log_file, "w", encoding="utf-8") as f:

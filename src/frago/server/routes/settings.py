@@ -4,19 +4,17 @@ Provides endpoints for main config, environment variables, and GitHub integratio
 """
 
 import os
-import platform
-import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from frago.compat import get_windows_subprocess_kwargs
 from frago.server.state import StateManager
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
 from frago.server.services.recipe_secrets_service import RecipeSecretsService
+from frago.server.services.system_service import SystemService
 from frago.server.services.update_service import UpdateService
 from frago.server.services.version_service import VersionCheckService
 
@@ -246,65 +244,6 @@ async def update_main_config(request: MainConfigUpdateRequest) -> MainConfigResp
     )
 
 
-async def _apply_custom_auth(
-    endpoint_type: str,
-    api_key: str,
-    url: Optional[str],
-    default_model: Optional[str],
-    sonnet_model: Optional[str],
-    haiku_model: Optional[str],
-) -> None:
-    """Apply custom API auth configuration.
-
-    Shared between update_auth endpoint and profile activation.
-    Writes to ~/.claude/settings.json and updates frago config.
-    """
-    from frago.init.config_manager import load_config, save_config
-    from frago.init.configurator import (
-        build_claude_env_config,
-        ensure_claude_json_for_custom_auth,
-        save_claude_settings,
-    )
-
-    env_config = build_claude_env_config(
-        endpoint_type=endpoint_type,
-        api_key=api_key,
-        custom_url=url if endpoint_type == "custom" else None,
-        default_model=default_model,
-        sonnet_model=sonnet_model,
-        haiku_model=haiku_model,
-    )
-    ensure_claude_json_for_custom_auth()
-    save_claude_settings({"env": env_config})
-
-    config = load_config()
-    config.auth_method = "custom"
-    config.api_endpoint = None
-    save_config(config)
-
-    state_manager = StateManager.get_instance()
-    await state_manager.refresh_config(broadcast=True)
-
-
-async def _apply_official_auth() -> None:
-    """Switch back to official auth.
-
-    Shared between update_auth endpoint and profile deactivation.
-    """
-    from frago.init.config_manager import load_config, save_config
-    from frago.init.configurator import clear_api_env_from_settings
-
-    clear_api_env_from_settings()
-
-    config = load_config()
-    config.auth_method = "official"
-    config.api_endpoint = None
-    save_config(config)
-
-    state_manager = StateManager.get_instance()
-    await state_manager.refresh_config(broadcast=True)
-
-
 @router.post("/settings/update-auth", response_model=ApiResponse)
 async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
     """Update authentication method and API endpoint.
@@ -334,7 +273,7 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
                 else:
                     return ApiResponse(status="error", error="API key required for new custom auth configuration")
 
-            await _apply_custom_auth(
+            await MainConfigService.apply_custom_auth(
                 endpoint_type=endpoint.type,
                 api_key=api_key,
                 url=endpoint.url,
@@ -343,7 +282,7 @@ async def update_auth(request: AuthUpdateRequest) -> ApiResponse:
                 haiku_model=endpoint.haiku_model,
             )
         else:  # official
-            await _apply_official_auth()
+            await MainConfigService.apply_official_auth()
 
         return ApiResponse(status="ok", message="Authentication updated")
 
@@ -407,34 +346,7 @@ async def open_path(request: OpenPathRequest) -> ApiResponse:
         if not os.path.exists(path):
             return ApiResponse(status="error", error=f"Path does not exist: {path}")
 
-        system = platform.system()
-
-        if request.reveal:
-            # Reveal in file manager (select the file)
-            if system == "Darwin":
-                subprocess.run(["open", "-R", path], check=True)
-            elif system == "Linux":
-                # Linux: open parent directory
-                parent = os.path.dirname(path)
-                subprocess.run(["xdg-open", parent], check=True)
-            elif system == "Windows":
-                subprocess.run(
-                    ["explorer", "/select,", path],
-                    check=True,
-                    **get_windows_subprocess_kwargs(),
-                )
-            else:
-                return ApiResponse(status="error", error=f"Unsupported platform: {system}")
-        else:
-            # Open directly
-            if system == "Darwin":
-                subprocess.run(["open", path], check=True)
-            elif system == "Linux":
-                subprocess.run(["xdg-open", path], check=True)
-            elif system == "Windows":
-                os.startfile(path)  # type: ignore
-            else:
-                return ApiResponse(status="error", error=f"Unsupported platform: {system}")
+        SystemService.reveal_or_open(path, request.reveal)
 
         return ApiResponse(status="ok", message="Path opened")
     except subprocess.CalledProcessError as e:
@@ -456,15 +368,7 @@ async def open_working_directory() -> ApiResponse:
         if not os.path.exists(working_dir):
             return ApiResponse(status="error", error=f"Directory does not exist: {working_dir}")
 
-        system = platform.system()
-        if system == "Darwin":
-            subprocess.run(["open", working_dir], check=True)
-        elif system == "Linux":
-            subprocess.run(["xdg-open", working_dir], check=True)
-        elif system == "Windows":
-            os.startfile(working_dir)  # type: ignore
-        else:
-            return ApiResponse(status="error", error=f"Unsupported platform: {system}")
+        SystemService.open_directory(working_dir)
 
         return ApiResponse(status="ok", message="Working directory opened")
     except subprocess.CalledProcessError as e:
@@ -478,27 +382,6 @@ async def open_working_directory() -> ApiResponse:
 # ============================================================
 
 
-def _find_vscode() -> str | None:
-    """Find VSCode executable path.
-
-    Returns the path to use for opening files, or None if not found.
-    - macOS: checks PATH first, then /Applications/Visual Studio Code.app
-    - Linux/Windows: checks PATH
-    """
-    # First check if 'code' command is in PATH
-    code_path = shutil.which("code")
-    if code_path:
-        return code_path
-
-    # On macOS, check if VSCode.app exists
-    if platform.system() == "Darwin":
-        vscode_app = "/Applications/Visual Studio Code.app"
-        if os.path.exists(vscode_app):
-            return vscode_app
-
-    return None
-
-
 @router.get("/settings/vscode-status", response_model=VSCodeStatusResponse)
 async def check_vscode() -> VSCodeStatusResponse:
     """Check if VSCode is installed AND ~/.claude/settings.json exists.
@@ -506,7 +389,7 @@ async def check_vscode() -> VSCodeStatusResponse:
     The Edit button should only show when both conditions are met.
     ~/.claude/settings.json is created when user configures custom API endpoint.
     """
-    vscode_path = _find_vscode()
+    vscode_path = SystemService.find_vscode()
     settings_path = os.path.expanduser("~/.claude/settings.json")
     settings_exists = os.path.exists(settings_path)
 
@@ -522,20 +405,12 @@ async def open_in_vscode() -> ApiResponse:
         if not os.path.exists(settings_path):
             return ApiResponse(status="error", error="Settings file not found")
 
-        vscode_path = _find_vscode()
+        vscode_path = SystemService.find_vscode()
         if not vscode_path:
             return ApiResponse(status="error", error="VSCode not found")
 
         # Use Popen to avoid blocking the server
-        if vscode_path.endswith(".app"):
-            # macOS: use 'open -a' to open with the app
-            subprocess.Popen(["open", "-a", vscode_path, settings_path])
-        else:
-            # Linux/Windows: use the 'code' command directly
-            subprocess.Popen(
-                [vscode_path, settings_path],
-                **get_windows_subprocess_kwargs(),
-            )
+        SystemService.open_in_vscode(vscode_path, settings_path)
 
         return ApiResponse(status="ok", message="Opened in VSCode")
     except Exception as e:

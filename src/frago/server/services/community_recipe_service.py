@@ -97,7 +97,7 @@ class CommunityRecipeService:
     def _get_rate_limit_manager(self):
         """Get rate limit manager instance (lazy import)."""
         try:
-            from frago.server.services.github_rate_limit import GitHubRateLimitManager
+            from frago.recipes.github_rate_limit import GitHubRateLimitManager
             return GitHubRateLimitManager.get_instance()
         except ImportError:
             return None
