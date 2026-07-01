@@ -99,6 +99,7 @@ class TmuxAgentSession:
         *,
         native_session_id: bool = False,
         conv_key: str | None = None,
+        env: dict[str, str] | None = None,
         width: int = 200,
         height: int = 50,
         runner: TmuxRunner | None = None,
@@ -114,6 +115,10 @@ class TmuxAgentSession:
         # conv_key，但 WebUI native 路径是 claude uuid）：起会话时经 ``new-session -e``
         # 注入 FRAGO_CONV_KEY，让会话内的 ``frago agent attach`` 自解析自己归属哪个 conv。
         self.conv_key = conv_key
+        # 额外注入会话环境的 KEY=VAL（如 --use-profile 解析出的 ANTHROPIC_BASE_URL /
+        # ANTHROPIC_MODEL / ANTHROPIC_API_KEY）。经 new-session -e 注入，让会话内 claude
+        # TUI 用指定 profile 的 endpoint/model/key 运行。值必须是字符串（tmux -e 要求）。
+        self.env = env or {}
         self.cwd = cwd
         self.width = width
         self.height = height
@@ -188,6 +193,9 @@ class TmuxAgentSession:
         # 把产出文件登记进该 conv 的 outbox。conv_key 缺省（WebUI 等非 PA 路径）时不注入。
         if self.conv_key:
             argv += ["-e", f"FRAGO_CONV_KEY={self.conv_key}"]
+        # profile/自定义端点等注入的环境变量，同样经 new-session -e 落进会话环境。
+        for _k, _v in self.env.items():
+            argv += ["-e", f"{_k}={_v}"]
         self._tmux(*argv)
         ctx = LaunchCtx(
             cwd=self.cwd,
@@ -333,6 +341,7 @@ class SessionLauncher:
         *,
         native_session_id: bool = False,
         conv_key: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> TmuxAgentSession:
         driver = load_driver(agent_type)
         session = TmuxAgentSession(
@@ -341,6 +350,7 @@ class SessionLauncher:
             cwd=cwd,
             native_session_id=native_session_id,
             conv_key=conv_key,
+            env=env,
             runner=self._runner,
         )
         session.open()
@@ -355,6 +365,7 @@ class SessionLauncher:
         cwd: str,
         native_session_id: bool = False,
         conv_key: str | None = None,
+        env: dict[str, str] | None = None,
         keep_alive: bool = False,
         timeout_s: float = 120.0,
     ) -> TurnResult:
@@ -369,6 +380,7 @@ class SessionLauncher:
             cwd,
             native_session_id=native_session_id,
             conv_key=conv_key,
+            env=env,
         )
         try:
             return session.send(prompt, timeout_s=timeout_s)

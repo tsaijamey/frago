@@ -74,6 +74,40 @@ def find_claude_cli() -> str | None:
     return find_agent_cli("claude")
 
 
+def _resolve_profile_env(profile_name: str) -> dict[str, str]:
+    """把一个 profile 名（或 id）解析成 claude 的 ANTHROPIC_* 环境变量。
+
+    复用 init/WebUI 同一套翻译逻辑（build_claude_env_config），保证 CLI 起的 tmux
+    会话与激活 profile 写进 settings.json 的字段完全一致。tmux -e 要求值为字符串，
+    故统一 str() 化（顺带把 API_TIMEOUT_MS 等 int 值转为字符串）。
+    """
+    from frago.init.configurator import build_claude_env_config
+    from frago.init.profile_manager import load_profiles
+
+    store = load_profiles()
+    profile = next(
+        (p for p in store.profiles if p.name == profile_name or p.id == profile_name),
+        None,
+    )
+    if not profile:
+        available = ", ".join(p.name for p in store.profiles) or "(none)"
+        click.echo(
+            f"Error: profile {profile_name!r} not found. Available: {available}",
+            err=True,
+        )
+        sys.exit(1)
+
+    env = build_claude_env_config(
+        endpoint_type=profile.endpoint_type,
+        api_key=profile.api_key,
+        custom_url=profile.url if profile.endpoint_type == "custom" else None,
+        default_model=profile.default_model,
+        sonnet_model=profile.sonnet_model,
+        haiku_model=profile.haiku_model,
+    )
+    return {k: str(v) for k, v in env.items()}
+
+
 def _run_tmux_driver(
     prompt_text: str,
     *,
@@ -84,6 +118,7 @@ def _run_tmux_driver(
     quiet: bool,
     dry_run: bool,
     no_persist: bool = False,
+    env: dict[str, str] | None = None,
 ) -> None:
     """Drive a resident tmux TUI session via SessionLauncher (one turn).
 
@@ -107,6 +142,7 @@ def _run_tmux_driver(
             agent_type=agent_type,
             session_id=sid,
             cwd=cwd,
+            env=env,
             timeout_s=float(timeout),
         )
     except KeyError:
@@ -397,6 +433,13 @@ def agent() -> None:
     help="Override API key (ANTHROPIC_AUTH_TOKEN), takes precedence over profile/CCR"
 )
 @click.option(
+    "--use-profile",
+    type=str,
+    default=None,
+    help="Run with a saved API profile's endpoint/model/key (by profile name or id). "
+         "Injected into the session env; --endpoint/--api-key still override it."
+)
+@click.option(
     "--agent-type",
     type=str,
     default="claude",
@@ -426,6 +469,7 @@ def agent_run(
     passthrough: bool,
     endpoint: str | None,
     api_key: str | None,
+    use_profile: str | None,
     agent_type: str,
     driver: str,
 ):
@@ -455,6 +499,10 @@ def agent_run(
         click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
+    # Resolve --use-profile into ANTHROPIC_* env once, shared by both backends.
+    # CLI --endpoint/--api-key still override these below (claude-p path).
+    profile_env = _resolve_profile_env(use_profile) if use_profile else {}
+
     # tmux backend: resident TUI session driven by SessionLauncher.
     # Legacy claude -p path stays the default and is left fully intact below.
     if driver == "tmux":
@@ -467,6 +515,7 @@ def agent_run(
             quiet=quiet,
             dry_run=dry_run,
             no_persist=no_monitor,
+            env=profile_env or None,
         )
         return
 
@@ -516,6 +565,17 @@ def agent_run(
 
         if not passthrough:
             click.echo(f"[OK] Using CCR: http://{host}:{port}")
+
+    # --use-profile: inject the profile's ANTHROPIC_* into the claude env.
+    # Applied after CCR so an explicit profile wins over CCR, but before the
+    # --endpoint/--api-key overrides below so those still take highest priority.
+    if profile_env:
+        env.update(profile_env)
+        # A profile carries its own key; clear CCR's placeholder AUTH_TOKEN so
+        # ANTHROPIC_API_KEY from the profile actually authenticates.
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        if not passthrough:
+            click.echo(f"[OK] Using profile: {use_profile}")
 
     # CLI overrides (highest priority): --endpoint / --api-key win over profile/CCR
     if endpoint:
