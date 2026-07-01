@@ -9,15 +9,11 @@ Provides configuration loading, saving, and interactive configuration:
 """
 
 import json
-import os
-from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 import click
 
-from frago.init.models import Config, APIEndpoint
-
+from frago.init.models import Config
 
 # Preset endpoint configuration (for Claude Code settings.json env field)
 # All vendors provide Anthropic API compatible interfaces
@@ -59,6 +55,24 @@ PRESET_ENDPOINTS = {
         "API_TIMEOUT_MS": 3000000,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
     },
+    "tencent_maas": {
+        "display_name": "Tencent Cloud MaaS (Hunyuan)",
+        "ANTHROPIC_BASE_URL": "https://tokenhub.tencentmaas.com",
+        "ANTHROPIC_MODEL": "Hy3-dev0630",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "Hy3-dev0630",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Hy3-dev0630",
+        "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
+    "tencent_tokenplan": {
+        "display_name": "Tencent Cloud TokenPlan (Hunyuan)",
+        "ANTHROPIC_BASE_URL": "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+        "ANTHROPIC_MODEL": "Hy3-dev0630",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "Hy3-dev0630",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "Hy3-dev0630",
+        "API_TIMEOUT_MS": 600000,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    },
 }
 
 # Claude Code configuration file paths
@@ -71,6 +85,8 @@ ENDPOINT_URL_PATTERNS = {
     "aliyun": "dashscope.aliyuncs.com",
     "kimi": "api.moonshot.cn",
     "minimax": "api.minimaxi.com",
+    "tencent_maas": "tokenhub.tencentmaas.com",
+    "tencent_tokenplan": "api.lkeap.cloud.tencent.com",
 }
 
 # ~/.claude.json minimal configuration (to skip official login flow)
@@ -149,7 +165,7 @@ def prompt_endpoint_type() -> str:
     return answer.lower()
 
 
-def prompt_api_key(endpoint_name: Optional[str] = None) -> str:
+def prompt_api_key(endpoint_name: str | None = None) -> str:
     """
     Prompt user to enter API Key (hidden input)
 
@@ -205,9 +221,9 @@ def load_claude_settings() -> dict:
         return {}
 
     try:
-        with open(CLAUDE_SETTINGS_PATH, "r", encoding="utf-8") as f:
+        with open(CLAUDE_SETTINGS_PATH, encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
@@ -349,7 +365,7 @@ def _infer_endpoint_type_from_url(base_url: str) -> str:
     return "custom"
 
 
-def parse_api_config_from_claude_settings() -> Optional[dict]:
+def parse_api_config_from_claude_settings() -> dict | None:
     """
     Parse API configuration from ~/.claude/settings.json
 
@@ -410,9 +426,9 @@ def load_claude_json() -> dict:
         return {}
 
     try:
-        with open(CLAUDE_JSON_PATH, "r", encoding="utf-8") as f:
+        with open(CLAUDE_JSON_PATH, encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
@@ -452,7 +468,7 @@ def ensure_claude_json_for_custom_auth() -> bool:
                 click.echo("   [OK] Updated ~/.claude.json (added missing fields)")
 
             return True
-        except IOError as e:
+        except OSError as e:
             click.secho(f"   [WARN] Cannot write ~/.claude.json: {e}", fg="yellow")
             return False
 
@@ -532,7 +548,7 @@ def config_exists() -> bool:
 # DEPRECATED: load_config and save_config have been moved to config_manager.py
 # Import from frago.init.config_manager instead
 # These re-exports are kept for backward compatibility but will be removed in a future version
-from frago.init.config_manager import load_config, save_config  # noqa: F401
+from frago.init.config_manager import load_config, save_config  # noqa: F401, E402
 
 
 def prompt_auth_method() -> str:
@@ -564,7 +580,7 @@ def prompt_auth_method() -> str:
     return "official" if answer == "Default" else "custom"
 
 
-def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
+def configure_official_auth(existing_config: Config | None = None) -> Config:
     """
     Configure official authentication
 
@@ -585,7 +601,7 @@ def configure_official_auth(existing_config: Optional[Config] = None) -> Config:
         return Config(auth_method="official")
 
 
-def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Config:
+def configure_custom_endpoint(existing_config: Config | None = None) -> Config:
     """
     Configure custom API endpoint
 
@@ -636,7 +652,7 @@ def configure_custom_endpoint(existing_config: Optional[Config] = None) -> Confi
         click.echo(f"   ANTHROPIC_BASE_URL: {env_config.get('ANTHROPIC_BASE_URL')}")
         click.echo(f"   ANTHROPIC_DEFAULT_SONNET_MODEL: {env_config.get('ANTHROPIC_DEFAULT_SONNET_MODEL')}")
         click.echo(f"   ANTHROPIC_DEFAULT_HAIKU_MODEL: {env_config.get('ANTHROPIC_DEFAULT_HAIKU_MODEL')}")
-        click.echo(f"   ANTHROPIC_API_KEY: ****configured****")
+        click.echo("   ANTHROPIC_API_KEY: ****configured****")
 
     except Exception as e:
         click.echo(f"\n[ERROR] Failed to write config: {e}")
@@ -708,7 +724,7 @@ def prompt_config_update() -> bool:
     return click.confirm("Update configuration?", default=False)
 
 
-def select_config_items_to_update() -> List[str]:
+def select_config_items_to_update() -> list[str]:
     """
     Let user select configuration items to update
 
@@ -730,7 +746,7 @@ def select_config_items_to_update() -> List[str]:
     return [item.strip().lower() for item in choice.split(",")]
 
 
-def run_auth_configuration(existing_config: Optional[Config] = None) -> Config:
+def run_auth_configuration(existing_config: Config | None = None) -> Config:
     """
     Run authentication configuration workflow
 
