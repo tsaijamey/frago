@@ -1,15 +1,13 @@
-"""Tests for frago.server.services.base module.
+"""Tests for frago.server.services.subprocess_utils module.
 
 Tests cross-platform subprocess utilities.
 """
-import platform
 import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from frago.server.services.base import (
+from frago.server.services.subprocess_utils import (
     get_claude_command,
     get_gh_command,
     get_utf8_env,

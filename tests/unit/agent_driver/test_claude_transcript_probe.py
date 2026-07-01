@@ -167,7 +167,7 @@ def _assistant(stop_reason, text, *, uuid_="u1"):
 
 def test_claude_probe_reads_transcript(tmp_path, monkeypatch):
     from frago.agent_driver.drivers import claude as claude_driver
-    from frago.server.services import transcript_completion as tc
+    from frago.session import transcript_completion as tc
 
     monkeypatch.setattr(tc, "CLAUDE_PROJECTS_DIR", tmp_path)
 
@@ -198,7 +198,7 @@ def test_claude_probe_reads_transcript(tmp_path, monkeypatch):
 
 def test_claude_probe_missing_file_returns_none(tmp_path, monkeypatch):
     from frago.agent_driver.drivers import claude as claude_driver
-    from frago.server.services import transcript_completion as tc
+    from frago.session import transcript_completion as tc
 
     monkeypatch.setattr(tc, "CLAUDE_PROJECTS_DIR", tmp_path)
     session = TmuxAgentSession(

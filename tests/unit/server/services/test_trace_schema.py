@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from frago.server.services import trace as trace_mod
-from frago.server.services.trace import (
+from frago.telemetry import trace as trace_mod
+from frago.telemetry.trace import (
     KNOWN_DATA_TYPES,
     TimelineEntry,
     _infer_data_type,

@@ -87,13 +87,12 @@ def test_extension_detect_issues_no_rpc(monkeypatch):
     rec = _RpcRecorder()
     be = ExtensionChromeBackend()
     be._rpc = rec  # type: ignore[assignment]
-    from frago.chrome.cdp.commands.chrome import BrowserType
+    from frago.chrome.cdp.browser_detection import BrowserType
     fake = {BrowserType.CHROME: "/usr/bin/google-chrome",
             BrowserType.EDGE: None,
             BrowserType.CHROMIUM: None}
     monkeypatch.setattr(
-        "frago.chrome.backends.base.detect_available_browsers"
-        if False else "frago.chrome.cdp.commands.chrome.detect_available_browsers",
+        "frago.chrome.cdp.browser_detection.detect_available_browsers",
         lambda: fake)
     r = be.detect()
     assert rec.calls == []
@@ -112,9 +111,9 @@ def test_cdp_wait_is_local(monkeypatch):
 
 
 def test_cdp_detect_is_local(monkeypatch):
-    from frago.chrome.cdp.commands.chrome import BrowserType
+    from frago.chrome.cdp.browser_detection import BrowserType
     monkeypatch.setattr(
-        "frago.chrome.cdp.commands.chrome.detect_available_browsers",
+        "frago.chrome.cdp.browser_detection.detect_available_browsers",
         lambda: {BrowserType.CHROME: None, BrowserType.EDGE: None,
                  BrowserType.CHROMIUM: None})
     be = CDPChromeBackend()
@@ -124,12 +123,12 @@ def test_cdp_detect_is_local(monkeypatch):
 
 
 def test_both_backends_produce_same_detect_result(monkeypatch):
-    from frago.chrome.cdp.commands.chrome import BrowserType
+    from frago.chrome.cdp.browser_detection import BrowserType
     fake = {BrowserType.CHROME: "/x/chrome",
             BrowserType.EDGE: "/x/edge",
             BrowserType.CHROMIUM: None}
     monkeypatch.setattr(
-        "frago.chrome.cdp.commands.chrome.detect_available_browsers",
+        "frago.chrome.cdp.browser_detection.detect_available_browsers",
         lambda: fake)
     assert CDPChromeBackend().detect() == ExtensionChromeBackend().detect()
 

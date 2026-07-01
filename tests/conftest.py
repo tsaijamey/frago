@@ -118,8 +118,8 @@ def mock_subprocess():
 @pytest.fixture
 def mock_frago_subprocess():
     """Mock frago-specific subprocess calls via base.py."""
-    with patch("frago.server.services.base.run_subprocess") as mock_run, patch(
-        "frago.server.services.base.run_subprocess_background"
+    with patch("frago.server.services.subprocess_utils.run_subprocess") as mock_run, patch(
+        "frago.server.services.subprocess_utils.run_subprocess_background"
     ) as mock_bg:
         mock_run.return_value = MagicMock(returncode=0, stdout="{}", stderr="")
 

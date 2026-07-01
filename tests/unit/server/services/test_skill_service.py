@@ -2,9 +2,7 @@
 
 Tests skill loading from ~/.claude/skills/ directory.
 """
-from pathlib import Path
 
-import pytest
 
 from frago.server.services.skill_service import SkillService
 

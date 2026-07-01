@@ -77,7 +77,7 @@ def test_driver_run_closes_by_default() -> None:
 
 # ── 生产侧助手参数化 ────────────────────────────────────────────────
 def test_get_agent_command_non_claude_returns_bare_binary() -> None:
-    from frago.server.services.base import get_agent_command, get_claude_command
+    from frago.server.services.subprocess_utils import get_agent_command, get_claude_command
 
     assert get_agent_command("opencode") == ["opencode"]
     assert get_agent_command("codex") == ["codex"]

@@ -90,7 +90,7 @@ def test_watcher_new_marker_delivers_new_text():
 
 def test_watch_poll_short_circuits_on_unchanged_mtime(tmp_path, monkeypatch):
     """真实 _watch_poll：mtime 没变那拍只 stat、不调 evaluate_file（省全量重读）。"""
-    import frago.server.services.transcript_completion as tc_mod
+    import frago.session.transcript_completion as tc_mod
 
     f = tmp_path / "t.jsonl"
     f.write_text("{}\n", encoding="utf-8")

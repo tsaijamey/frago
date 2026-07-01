@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from frago.server.services.transcript_completion import (
+from frago.session.transcript_completion import (
     evaluate_file,
     evaluate_records,
     locate_transcript,

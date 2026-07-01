@@ -3,16 +3,12 @@
 Tests project file operations.
 """
 import json
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from frago.server.services.file_service import (
     FileInfo,
     FileService,
-    ProjectDetail,
     ProjectInfo,
 )
 
