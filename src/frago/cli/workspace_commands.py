@@ -37,7 +37,7 @@ def workspace_list():
     click.echo(f"Scan roots: {', '.join(scan_roots)}")
     click.echo("")
 
-    from frago.tools.workspace import (
+    from frago.cli.workspace import (
         WORKSPACES_DIR,
         _discover_projects,
         get_canonical_id,
@@ -114,7 +114,7 @@ def workspace_collect(dry_run: bool):
         click.echo("=== Preview Mode ===")
         click.echo("")
 
-    from frago.tools.workspace import collect_workspaces
+    from frago.cli.workspace import collect_workspaces
 
     result = collect_workspaces(scan_roots, exclude_patterns)
 
@@ -141,7 +141,7 @@ def workspace_pending():
     Shows workspace resources that were synced from another device
     but haven't been deployed to their target locations yet.
     """
-    from frago.tools.deployment_agent import DeploymentPlan, format_deployment_table
+    from frago.cli.deployment_agent import DeploymentPlan, format_deployment_table
 
     plan = DeploymentPlan.load()
     if plan is None:

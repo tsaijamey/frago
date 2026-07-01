@@ -59,7 +59,7 @@ def detect_browsers():
     Examples:
       frago chrome detect
     """
-    from ..chrome.cdp.commands.chrome import BrowserType, detect_available_browsers
+    from ..chrome.cdp.browser_detection import BrowserType, detect_available_browsers
 
     browsers = detect_available_browsers()
 

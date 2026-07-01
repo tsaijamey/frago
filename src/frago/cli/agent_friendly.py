@@ -7,10 +7,71 @@ Provide AI Agent with more friendly error messages and help output:
 """
 
 import difflib
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import click
 from click import Context
+
+# Layer 3 of the agent-friendly mechanism (FRAGO.md): a business-level failure
+# should not just say "Error: X" — it should hand the agent a copy-pasteable
+# command that fixes the situation. Historically each command group hand-rolled
+# this: chrome embeds "start with: uv run frago chrome start" inside its error
+# strings, recipe_commands echoes `[Fix] ...` lines manually. The helpers below
+# make that pattern a single shared, group-agnostic primitive so any command
+# group can attach executable fixes consistently.
+
+FIX_PREFIX = "[Fix]"
+
+
+def render_fix_lines(fixes: Sequence[str]) -> List[str]:
+    """Render executable fix commands as ``[Fix] <command>`` lines.
+
+    Returns one line per fix, matching the format already emitted by
+    recipe_commands (``[Fix] frago recipe plan ...``) so adopting this helper
+    leaves existing on-screen output byte-identical.
+    """
+    return [f"{FIX_PREFIX} {fix}" for fix in fixes if fix]
+
+
+def echo_business_error(message: str, *fixes: str) -> None:
+    """Print a business error plus its executable fix command(s) to stderr.
+
+    Usage in any command group::
+
+        echo_business_error("spec.md already exists", "frago recipe plan x --force")
+
+    Emits::
+
+        Error: spec.md already exists
+        [Fix] frago recipe plan x --force
+    """
+    click.echo(f"Error: {message}", err=True)
+    for line in render_fix_lines(fixes):
+        click.echo(line, err=True)
+
+
+class BusinessError(click.ClickException):
+    """A command business failure that carries optional executable fix command(s).
+
+    Group-agnostic layer-3 primitive: raising this anywhere inside a command
+    makes click exit with code 1 and render, on stderr::
+
+        Error: <message>
+        [Fix] <fix-1>
+        [Fix] <fix-2>
+
+    This replaces hand-rolled ``click.echo("[Fix] ...", err=True); sys.exit(1)``
+    blocks with a single raise, while keeping the rendered output identical.
+    """
+
+    def __init__(self, message: str, *fixes: str):
+        super().__init__(message)
+        self.fixes: Tuple[str, ...] = tuple(f for f in fixes if f)
+
+    def show(self, file=None) -> None:  # noqa: D401 - click hook
+        click.echo(f"Error: {self.format_message()}", err=True, file=file)
+        for line in render_fix_lines(self.fixes):
+            click.echo(line, err=True, file=file)
 
 
 def get_command_examples(cmd_name: str, group_prefix: str = "") -> List[str]:
@@ -163,7 +224,7 @@ class AgentFriendlyCommand(click.Command):
         except click.MissingParameter as e:
             self._enhance_error_with_examples(e, info_name, parent)
             raise
-        except click.BadParameter as e:
+        except click.BadParameter:
             # BadParameter usually has detailed information, no additional handling
             raise
 
