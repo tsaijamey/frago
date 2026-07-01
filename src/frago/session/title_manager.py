@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from frago.compat import find_claude_cli, get_windows_subprocess_kwargs
+from frago.config.config_service import ConfigService
 from frago.session.models import AgentType
 
 logger = logging.getLogger(__name__)
@@ -274,8 +275,6 @@ class TitleManager:
             return None, error_msg
 
         # Get user's language preference for AI output
-        from frago.server.services.config_service import ConfigService
-
         language = ConfigService.get_user_language()
         lang_instruction = (
             "Generate the title in Chinese (中文)."

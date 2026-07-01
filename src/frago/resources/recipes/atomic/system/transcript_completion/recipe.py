@@ -3,7 +3,7 @@
 Parse a Claude Code session JSONL and report whether the latest turn finished
 plus the assistant's final text, using the authoritative ``stop_reason`` signal.
 
-Two forms, sharing the Phase-1 pure core (``frago.server.services.transcript_completion``):
+Two forms, sharing the Phase-1 pure core (``frago.session.transcript_completion``):
   - mode=query (default): one-shot — emit a single JSON line for the tail verdict.
   - mode=watch: long-running — watch the file, emit an event line each time the
     "latest turn done" verdict flips. Runs forever; meant to be supervised by the
@@ -19,7 +19,7 @@ import json
 import os
 import sys
 
-from frago.server.services.transcript_completion import (
+from frago.session.transcript_completion import (
     TurnCompletion,
     evaluate_file,
     locate_transcript,

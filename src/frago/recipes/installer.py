@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 from frago.compat import get_windows_subprocess_kwargs
 
 from .exceptions import RecipeAlreadyExistsError, RecipeInstallError
+from .github_rate_limit import GitHubRateLimitManager
 from .metadata import parse_metadata_file, validate_metadata
 
 
@@ -213,12 +214,8 @@ class RecipeInstaller:
         return headers
 
     def _get_rate_limit_manager(self):
-        """Get rate limit manager instance (lazy import to avoid circular deps)."""
-        try:
-            from frago.server.services.github_rate_limit import GitHubRateLimitManager
-            return GitHubRateLimitManager.get_instance()
-        except ImportError:
-            return None
+        """Get rate limit manager instance."""
+        return GitHubRateLimitManager.get_instance()
 
     def _request_with_retry(
         self,

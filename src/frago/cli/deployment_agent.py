@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from frago.compat import get_windows_subprocess_kwargs
-from frago.tools.workspace import (
+from frago.cli.workspace import (
     CLAUDE_HOME,
     WORKSPACES_DIR,
     ProjectInfo,

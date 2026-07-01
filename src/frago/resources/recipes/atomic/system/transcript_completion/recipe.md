@@ -71,7 +71,7 @@ flow:
 
 # transcript_completion
 
-把 spec `20260624-transcript-completion-recipe` 的解析核心（`frago.server.services.transcript_completion`）封装成配方。完成判定的权威信号是 Claude Code 写进 session JSONL 的 `message.stop_reason`，不读屏。配方复用 `claude_sessions` / `monitor` / `parser` 的既有解析，自身不重写 JSONL 解析。
+把 spec `20260624-transcript-completion-recipe` 的解析核心（`frago.session.transcript_completion`）封装成配方。完成判定的权威信号是 Claude Code 写进 session JSONL 的 `message.stop_reason`，不读屏。配方复用 `claude_sessions` / `monitor` / `parser` 的既有解析，自身不重写 JSONL 解析。
 
 ## 两种形态
 
