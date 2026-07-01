@@ -12,7 +12,8 @@ import click
 from frago.recipes import OutputHandler, RecipeRegistry, RecipeRunner
 from frago.recipes.exceptions import MetadataParseError, RecipeError, RecipeValidationError
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
-from frago.tools.git_utils import _ensure_git_user_config
+from frago.recipes.schedule import parse_datetime, parse_interval
+from frago.cli.git_utils import _ensure_git_user_config
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 
@@ -64,16 +65,15 @@ def _run_frago_agent(
         prompt_file = f.name
 
     try:
-        # Resolve frago binary: prefer the entry point next to current Python interpreter,
-        # same strategy as server/services/agent_service.py::_get_frago_agent_command
-        venv_dir = Path(sys.executable).parent
-        frago_in_venv = shutil.which("frago", path=str(venv_dir))
-        if frago_in_venv:
-            frago_cmd = [frago_in_venv]
-        elif shutil.which("uv"):
-            frago_cmd = ["uv", "run", "frago"]
-        else:
-            frago_cmd = ["frago"]
+        # Resolve frago binary via the shared server helper (single source of
+        # truth for the venv-aware lookup). NOTE: the *execution model* stays
+        # CLI-local on purpose — this command must block until the agent exits
+        # and surface its returncode (with --quiet and a 600s timeout), whereas
+        # AgentService.start_task is fire-and-forget background that returns a
+        # task_id/pid immediately. Reusing start_task here would silently change
+        # this command's behavior, so only the binary resolution is shared.
+        from frago.server.services.agent_service import _resolve_frago_cmd
+        frago_cmd = _resolve_frago_cmd()
         cmd = [
             *frago_cmd, "agent", "--yes", "--quiet",
             "--agent-type", agent_type,
@@ -690,55 +690,6 @@ def run_recipe(
         sys.exit(1)
 
 
-def _parse_interval(value: str) -> int:
-    """Parse interval string to seconds.
-
-    Supports: "30s", "10m", "2h", "1h30m", "600" (pure number = seconds).
-    Minimum: 10 seconds.
-    """
-    import re
-    value = value.strip()
-
-    # Pure number → seconds
-    if value.isdigit():
-        seconds = int(value)
-    else:
-        match = re.fullmatch(r'(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', value)
-        if not match or not any(match.groups()):
-            raise click.BadParameter(f"Invalid interval format: '{value}'. Use e.g. 30s, 10m, 2h, 1h30m")
-        hours = int(match.group(1) or 0)
-        minutes = int(match.group(2) or 0)
-        secs = int(match.group(3) or 0)
-        seconds = hours * 3600 + minutes * 60 + secs
-
-    if seconds < 10:
-        raise click.BadParameter(f"Interval too short ({seconds}s). Minimum is 10 seconds.")
-    return seconds
-
-
-def _parse_datetime(value: str):  # -> datetime.datetime
-    """Parse datetime string. Supports ISO 8601 and HH:MM."""
-    from datetime import datetime, timedelta
-
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-
-    for fmt in ("%H:%M:%S", "%H:%M"):
-        try:
-            t = datetime.strptime(value, fmt).time()
-            today = datetime.now().replace(hour=t.hour, minute=t.minute, second=t.second, microsecond=0)
-            if today <= datetime.now():
-                today = today + timedelta(days=1)
-            return today
-        except ValueError:
-            continue
-
-    raise click.BadParameter(f"Cannot parse datetime: '{value}'. Use ISO 8601 or HH:MM format.")
-
-
 @recipe_group.command(name='schedule', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option('--interval', required=True, help='Run interval (e.g., 30s, 10m, 2h, 1h30m)')
@@ -779,7 +730,7 @@ def schedule_recipe(
     from datetime import datetime
 
     # Parse interval
-    interval_seconds = _parse_interval(interval)
+    interval_seconds = parse_interval(interval)
 
     # Parse params
     if params_file:
@@ -802,8 +753,8 @@ def schedule_recipe(
         env_overrides[key] = value
 
     # Parse time bounds
-    start_dt = _parse_datetime(start_at) if start_at else None
-    stop_dt = _parse_datetime(stop_at) if stop_at else None
+    start_dt = parse_datetime(start_at) if start_at else None
+    stop_dt = parse_datetime(stop_at) if stop_at else None
 
     # Wait for start_at
     if start_dt:

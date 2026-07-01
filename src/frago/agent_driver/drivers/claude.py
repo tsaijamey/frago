@@ -22,6 +22,7 @@ from frago.agent_driver.driver import (
     register_driver,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
+from frago.session import transcript_completion as tc_mod
 
 # 把 frago 自己的 session_id 确定性映射成一个合法 claude session uuid。launch 用它
 # 传 ``--session-id``，探针用它定位 jsonl——两端同一派生，路径在起会话那刻就锁定。
@@ -134,12 +135,10 @@ def _launch(ctx: LaunchCtx) -> str:
     # 退出（判的是 transcript 文件存在、非活锁）；同 id 换 ``--resume`` 则正常起且
     # 把整段历史载回上下文。重启 / 空闲回收 / token 轮换后同一 conv_key 重新拉起即属
     # 此情形——故按该 sid 的 transcript 是否已存在二分：存在 → ``--resume`` 续接，
-    # 不存在 → ``--session-id`` 首次创建。延迟导入定位核心（同 _completion_probe），
-    # 避免把 server 解析依赖拉进 agent_driver 导入面。
-    from frago.server.services.transcript_completion import locate_transcript
-
+    # 不存在 → ``--session-id`` 首次创建。定位核心已下沉 session/，agent_driver→session
+    # 是合法正向依赖，故顶层 eager 导入（消环后还原，不再需要延迟）。
     sid = _claude_session_uuid(ctx.session_id)
-    if locate_transcript(sid, cwd=ctx.cwd) is not None:
+    if tc_mod.locate_transcript(sid, cwd=ctx.cwd) is not None:
         return f"claude --dangerously-skip-permissions --resume {sid}"
     return f"claude --dangerously-skip-permissions --session-id {sid}"
 
@@ -148,16 +147,14 @@ def transcript_path_for(session: TmuxAgentSession) -> Path | None:
     """定位该会话的 claude transcript jsonl（探针 / 真空闲判定 / 持续转发器共用）。
 
     与 ``_launch`` 同一套规则：native 会话原样用真实 id 定位，否则按 uuid5 派生。
-    延迟导入解析核心，避免把 server 解析依赖拉进 agent_driver 的导入面。
+    解析核心已在 session/，顶层 eager 导入。
     """
-    from frago.server.services.transcript_completion import locate_transcript
-
     sid = (
         session.session_id
         if session.native_session_id
         else _claude_session_uuid(session.session_id)
     )
-    return locate_transcript(sid, cwd=session.cwd)
+    return tc_mod.locate_transcript(sid, cwd=session.cwd)
 
 
 def is_truly_idle(
@@ -199,19 +196,17 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     """权威完成探针：读 claude 的 session JSONL 判本轮是否答完 + 取最终文本。
 
     定位不到 transcript（jsonl 尚未生成 / 路径未知）时返回 None，由 driver 当帧
-    退回 pane 防抖——保证无 transcript 场景与原读屏行为一致。延迟导入解析核心，
-    避免把 server 解析依赖（watchdog 等）拉进 agent_driver 的导入面。
+    退回 pane 防抖——保证无 transcript 场景与原读屏行为一致。解析核心在 session/，
+    顶层 eager 导入。
     """
-    from frago.server.services.transcript_completion import evaluate_file
-
     path = transcript_path_for(session)
     if path is None:
         return None
-    tc = evaluate_file(path)
+    completion = tc_mod.evaluate_file(path)
     return CompletionVerdict(
-        done=tc.done,
-        text=tc.final_text if tc.done else None,
-        marker=tc.last_uuid,
+        done=completion.done,
+        text=completion.final_text if completion.done else None,
+        marker=completion.last_uuid,
     )
 
 

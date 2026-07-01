@@ -23,8 +23,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from frago.agent_driver.pool import WarmSessionPool
+
 if TYPE_CHECKING:
-    from frago.agent_driver.pool import WarmSessionPool
     from frago.agent_driver.tmux_session import TmuxAgentSession, TurnResult
 
 
@@ -41,8 +42,6 @@ class PaTmuxRunner:
         agent_type: str = "claude",
     ) -> None:
         if pool is None:
-            from frago.agent_driver.pool import WarmSessionPool
-
             pool = WarmSessionPool()
         self._pool = pool
         self._cwd = cwd or str(Path.home())

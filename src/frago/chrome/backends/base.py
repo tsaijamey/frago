@@ -151,7 +151,7 @@ class ChromeBackend(ABC):
 
     def detect(self) -> dict:
         """Scan PATH for Chromium-family browsers. Local-only; no RPC."""
-        from ..cdp.commands.chrome import BrowserType, detect_available_browsers
+        from ..cdp.browser_detection import BrowserType, detect_available_browsers
         browsers = detect_available_browsers()
         found = {bt.value: path for bt, path in browsers.items() if path}
         default = None

@@ -1,0 +1,143 @@
+# import-linter contracts — executable encoding of .claude/FRAGO.md IMPORT_RULES (L102-127).
+#
+# Phase 0: REPORT-ONLY baseline.
+#   The codebase currently violates several of these contracts (known dependency
+#   cycles maintained via lazy imports). Running `lint-imports` will report a
+#   non-zero violation count — this is EXPECTED. The violation count is the
+#   technical-debt baseline, not a CI gate. See scripts/check_arch.sh, which runs
+#   the linter with `|| true` so CI does not fail on the baseline. Phase 7 will
+#   flip this to enforced once the cycles are surgically removed.
+#
+# Source-of-truth: .claude/FRAGO.md "### 模块边界" IMPORT_RULES dict.
+
+[importlinter]
+root_package = frago
+
+# --- chrome/ subsystem boundaries -------------------------------------------
+
+[importlinter:contract:chrome-root]
+name = chrome/ NEVER imports server/, cli/, recipes/
+type = forbidden
+source_modules =
+    frago.chrome
+forbidden_modules =
+    frago.server
+    frago.cli
+    frago.recipes
+
+[importlinter:contract:chrome-cdp]
+name = chrome/cdp/ NEVER imports server/, cli/, recipes/, chrome/extension/
+type = forbidden
+source_modules =
+    frago.chrome.cdp
+forbidden_modules =
+    frago.server
+    frago.cli
+    frago.recipes
+    frago.chrome.extension
+
+[importlinter:contract:chrome-extension]
+name = chrome/extension/ NEVER imports server/, cli/, chrome/cdp/, chrome/backends/
+type = forbidden
+source_modules =
+    frago.chrome.extension
+forbidden_modules =
+    frago.server
+    frago.cli
+    frago.chrome.cdp
+    frago.chrome.backends
+
+[importlinter:contract:chrome-backends]
+name = chrome/backends/ NEVER imports server/, cli/, recipes/
+type = forbidden
+source_modules =
+    frago.chrome.backends
+forbidden_modules =
+    frago.server
+    frago.cli
+    frago.recipes
+
+# --- recipes/ ----------------------------------------------------------------
+# Split from the former single bundled `recipes` contract into two independent
+# contracts so each edge can be judged KEPT/BROKEN on its own:
+#   - recipes-server: the reverse cycle to be removed (KEPT once Phase 3 lands).
+#   - recipes-chrome: the open_url runtime lazy import — a PERMANENT known
+#     exception per FRAGO.md, long-term BROKEN/tolerated, NOT a cycle-removal goal.
+
+[importlinter:contract:recipes-server]
+name = recipes/ NEVER imports server/, cli/ (reverse cycle, removed by Phase 3)
+type = forbidden
+source_modules =
+    frago.recipes
+forbidden_modules =
+    frago.server
+    frago.cli
+
+[importlinter:contract:recipes-chrome]
+name = recipes/ NEVER imports chrome/ (open_url runtime lazy — permanent known exception, tolerated long-term)
+type = forbidden
+source_modules =
+    frago.recipes
+forbidden_modules =
+    frago.chrome
+
+# --- agent_driver/ -----------------------------------------------------------
+# agent_driver ↔ server is an invisible pure-lazy bidirectional cycle (both
+# directions have zero top-level imports, kept alive only by function-body lazy
+# imports). This contract makes that hidden cycle visible. Initially BROKEN
+# (baseline expansion, report-only); becomes KEPT after Phase 4 lands.
+
+[importlinter:contract:agent_driver]
+name = agent_driver/ NEVER imports server/, cli/ (pure-lazy cycle with server, removed by Phase 4)
+type = forbidden
+source_modules =
+    frago.agent_driver
+forbidden_modules =
+    frago.server
+    frago.cli
+
+# --- viewer/ -----------------------------------------------------------------
+# viewer is a server-dependent frontend feature layer (analogous to cli):
+# viewer→server is a LEGAL forward dependency, so NO forbidden→server contract is
+# set for it. Only the reverse-to-cli edge is forbidden (expected KEPT).
+
+[importlinter:contract:viewer]
+name = viewer/ NEVER imports cli/ (viewer→server is legal, not forbidden)
+type = forbidden
+source_modules =
+    frago.viewer
+forbidden_modules =
+    frago.cli
+
+# --- lower layers: session/, init/ -------------------------------------------
+
+[importlinter:contract:session]
+name = session/ NEVER imports server/, cli/ (pure lower layer — eager, zero reverse imports)
+type = forbidden
+source_modules =
+    frago.session
+forbidden_modules =
+    frago.server
+    frago.cli
+
+[importlinter:contract:init]
+name = init/ NEVER imports server/, cli/
+type = forbidden
+source_modules =
+    frago.init
+forbidden_modules =
+    frago.server
+    frago.cli
+
+# --- big-picture direction: only what FRAGO.md actually states ---------------
+# FRAGO.md 明确规定的方向只有 cli > server（cli 可 import server，反向禁止）。
+# 下层（recipes/session/init）彼此的相对顺序 FRAGO.md 未定义，故 NEVER 在此
+# 强加全序——它们对 server/cli 的"禁止反向"已由上面各 forbidden 契约覆盖。
+# 在 FRAGO.md 补出下层排序之前，这里不编码未声明的规则（避免把"未定规则"伪装成债务）。
+
+[importlinter:contract:layers]
+name = Layered dependency direction (cli > server, per FRAGO.md)
+type = layers
+layers =
+    frago.cli
+    frago.server

@@ -307,7 +307,7 @@ PA_SCHEDULED_TASK_TEMPLATE = """\
 <msg msg_id="{msg_id}" channel="{channel}" type="scheduled_task" fired_at="{fired_at}">
 [定时任务] {schedule_name} (id: {schedule_id})
 {prompt}
-{recipe_line}{last_status_line}触发次数: {run_count}
+{recipe_line}{params_line}{last_status_line}触发次数: {run_count}
 </msg>\
 """
 
@@ -369,6 +369,14 @@ PA_QUEUE_LOGS_SECTION_TEMPLATE = "执行日志 (最近):\n{logs_body}"
 # 可选字段，无 recipe 时 builder 跳过此行。
 # --------------------------------------------------------------------------
 PA_QUEUE_RECIPE_LINE_TEMPLATE = "建议 recipe: {recipe}\n"
+
+
+# --------------------------------------------------------------------------
+# [给 PA] [scheduled_task 投递时] [recipe 参数行]
+# 可选字段，无 params 时 builder 跳过此行。PA 执行 recipe 时 MUST 原样带上这些
+# 参数（如 chat_id），否则 recipe 会走内部兜底默认值，投递到错误目标。
+# --------------------------------------------------------------------------
+PA_QUEUE_PARAMS_LINE_TEMPLATE = "recipe 参数(执行时必须原样传入 --params): {params_json}\n"
 
 
 # --------------------------------------------------------------------------

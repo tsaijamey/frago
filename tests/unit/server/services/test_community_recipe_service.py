@@ -2,7 +2,6 @@
 
 Tests community recipe management with caching and periodic refresh.
 """
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

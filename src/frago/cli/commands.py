@@ -627,6 +627,111 @@ COMMAND_EXAMPLES = {
         "frago task mark <task_id> completed --reason \"manual cleanup\"",
         "frago task mark <task_id> failed --error \"zombie killed\"",
     ],
+    # init-dirs — user-level directory bootstrap (distinct from top-level `init`)
+    "init-dirs": [
+        "frago init-dirs",
+        "frago init-dirs --force",
+    ],
+    # Agent subcommands (the bare `agent` group default runs a one-shot prompt)
+    "agent/start": [
+        "frago agent start <agent_type>",
+        "frago agent start claude --name my-session",
+    ],
+    "agent/stop": [
+        "frago agent stop <name>",
+    ],
+    "agent/attach": [
+        "frago agent attach",
+        "frago agent attach --conv-key <key> --files a.py,b.py",
+    ],
+    "agent/send": [
+        "frago agent send <name> '<prompt>'",
+        "frago agent send my-session 'continue the task' --timeout 600",
+    ],
+    "agent/peek": [
+        "frago agent peek <name>",
+    ],
+    "agent/ls": [
+        "frago agent ls",
+    ],
+    # Daemon — supervised long-lived recipes
+    "daemon": [
+        "frago daemon <command>",
+        "frago daemon ls",
+        "frago daemon status",
+    ],
+    "daemon/enable": [
+        "frago daemon enable <recipe>",
+        "frago daemon enable <recipe> --restart-policy on-failure --max-backoff 60",
+    ],
+    "daemon/disable": [
+        "frago daemon disable <recipe>",
+    ],
+    "daemon/restart": [
+        "frago daemon restart <recipe>",
+    ],
+    "daemon/ls": [
+        "frago daemon ls",
+    ],
+    "daemon/status": [
+        "frago daemon status",
+    ],
+    # Todo — local todo store
+    "todo": [
+        "frago todo <command>",
+        "frago todo list",
+        "frago todo add '<title>'",
+    ],
+    "todo/add": [
+        "frago todo add '<title>'",
+        "frago todo add 'fix bug' --priority high --tag work",
+    ],
+    "todo/done": [
+        "frago todo done <ref>",
+    ],
+    "todo/edit": [
+        "frago todo edit <ref> --priority high",
+        "frago todo edit <ref> --status doing --tag urgent",
+    ],
+    "todo/rm": [
+        "frago todo rm <ref>",
+    ],
+    "todo/show": [
+        "frago todo show <ref>",
+    ],
+    "todo/list": [
+        "frago todo list",
+        "frago todo list --status active --priority high --tag work",
+    ],
+    "todo/next": [
+        "frago todo next",
+    ],
+    "todo/schema": [
+        "frago todo schema",
+    ],
+    # Extension — native messaging bridge internals (MVP aliases live under chrome)
+    "extension": [
+        "frago extension <command>",
+        "frago extension status",
+        "frago extension install",
+    ],
+    "extension/daemon": [
+        "frago extension daemon",
+        "frago extension daemon --sock /path/to/bridge.sock",
+    ],
+    "extension/native-host": [
+        "frago extension native-host",
+        "frago extension native-host --sock /path/to/bridge.sock",
+    ],
+    # Hook-rules additional maintenance subcommands
+    "hook-rules/prune": [
+        "frago hook-rules prune",
+        "frago hook-rules prune --dry-run",
+    ],
+    "hook-rules/stats": [
+        "frago hook-rules stats",
+        "frago hook-rules stats --source agent",
+    ],
 }
 
 
@@ -659,10 +764,15 @@ def print_usage(func):
         return func(*args, **kwargs)
     return wrapper
 
-from ..chrome.cdp.config import CDPConfig
 from ..chrome.cdp.exceptions import CDPError
 from ..chrome.cdp.session import CDPSession
-from ..chrome.cdp.tab_group_manager import CHROME_ERRORS, ChromeCommandError
+from ..chrome.cdp.tab_group_manager import (
+    ChromeCommandError,
+    build_group_index,
+    create_session,
+    route_tab_for_navigate,
+)
+from ..run import perception, run_log_adapter
 
 # =============================================================================
 # Custom parameter types (with friendly error messages and usage examples)
@@ -788,69 +898,6 @@ def _get_run_dir() -> Path:
         return tmp_dir
 
 
-def _get_run_logger():
-    """Get logger (run context or .tmp)"""
-    try:
-        from ..run.logger import RunLogger
-        run_dir = _get_run_dir()
-        return RunLogger(run_dir)
-    except Exception:
-        return None
-
-
-def _write_run_log(
-    step: str,
-    status: str,
-    action_type: str = "other",
-    data: Optional[Dict[str, Any]] = None
-) -> None:
-    """
-    Write to run log (if there's an active run context)
-
-    Args:
-        step: Step description
-        status: Status (success/error/warning)
-        action_type: Action type
-        data: Additional data
-    """
-    logger = _get_run_logger()
-    if not logger:
-        return
-
-    try:
-        from ..run.models import ActionType, ExecutionMethod, LogStatus
-
-        # Map status
-        status_map = {
-            "success": LogStatus.SUCCESS,
-            "error": LogStatus.ERROR,
-            "warning": LogStatus.WARNING,
-            "debug": LogStatus.SUCCESS,
-        }
-        log_status = status_map.get(status, LogStatus.SUCCESS)
-
-        # Map action type
-        action_map = {
-            "navigation": ActionType.NAVIGATION,
-            "interaction": ActionType.INTERACTION,
-            "screenshot": ActionType.SCREENSHOT,
-            "extraction": ActionType.EXTRACTION,
-            "other": ActionType.OTHER,
-        }
-        log_action = action_map.get(action_type, ActionType.OTHER)
-
-        logger.write_log(
-            step=step,
-            status=log_status,
-            action_type=log_action,
-            execution_method=ExecutionMethod.COMMAND,
-            data=data or {},
-        )
-    except Exception:
-        # Log write failure should not affect command execution
-        pass
-
-
 def _print_msg(
     status: str,
     message: str,
@@ -872,7 +919,7 @@ def _print_msg(
     click.echo(f"{_format_ts()}, {status}, {message}")
 
     # Auto write to run log
-    _write_run_log(message, status, action_type, log_data)
+    run_log_adapter.write_run_log(_get_run_dir(), message, status, action_type, log_data)
 
 
 def group_option(fn):
@@ -883,116 +930,6 @@ def group_option(fn):
         default=None,
         help='Tab group name (also reads FRAGO_CURRENT_RUN env)',
     )(fn)
-
-
-def create_session(ctx, *, group: str | None = None, require_group: bool = True) -> CDPSession:
-    """
-    Create CDP session.
-
-    When require_group=True (default), resolves target from the group's
-    current_target_id.  Raises ChromeCommandError("NO_GROUP") if no
-    group context is available.
-
-    Management commands (status, reset, group-close) pass require_group=False
-    to skip group enforcement — they don't operate on a specific tab.
-    """
-    target_id = ctx.obj.get('TARGET_ID')
-
-    # Auto-resolve target from tab group when no explicit target_id
-    if not target_id and require_group:
-        from ..chrome.cdp.tab_group_manager import ChromeCommandError, TabGroupManager
-        group_name = TabGroupManager.resolve_group_name(group)
-        if not group_name:
-            raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
-        tgm = TabGroupManager(
-            host=ctx.obj['HOST'],
-            port=ctx.obj['PORT'],
-        )
-        target_id = tgm.get_current_target(group_name)
-        # Store resolved group in ctx for downstream use
-        ctx.obj['_RESOLVED_GROUP'] = group_name
-
-    config = CDPConfig(
-        host=ctx.obj['HOST'],
-        port=ctx.obj['PORT'],
-        timeout=ctx.obj['TIMEOUT'],
-        debug=ctx.obj['DEBUG'],
-        proxy_host=ctx.obj.get('PROXY_HOST'),
-        proxy_port=ctx.obj.get('PROXY_PORT'),
-        proxy_username=ctx.obj.get('PROXY_USERNAME'),
-        proxy_password=ctx.obj.get('PROXY_PASSWORD'),
-        no_proxy=ctx.obj.get('NO_PROXY', False),
-        target_id=target_id,
-    )
-    return CDPSession(config)
-
-
-def _get_dom_features(session: CDPSession) -> dict:
-    """Extract page DOM features, focusing on current visible area content"""
-    script = """
-    (function() {
-        const body = document.body;
-        const features = {
-            title: document.title || '',
-            url: window.location.href,
-            body_class: body.className || '',
-            body_id: body.id || '',
-            forms: document.forms.length,
-            buttons: document.querySelectorAll('button, input[type="button"], input[type="submit"]').length,
-            links: document.querySelectorAll('a[href]').length,
-            inputs: document.querySelectorAll('input, textarea, select').length,
-            images: document.images.length,
-            headings: document.querySelectorAll('h1, h2, h3').length
-        };
-
-        // Get text content within current viewport
-        const viewportHeight = window.innerHeight;
-        const viewportWidth = window.innerWidth;
-
-        // Collect text from visible elements in viewport
-        const visibleTexts = [];
-        const walker = document.createTreeWalker(
-            document.body,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode: function(node) {
-                    const parent = node.parentElement;
-                    if (!parent) return NodeFilter.FILTER_REJECT;
-                    const style = window.getComputedStyle(parent);
-                    if (style.display === 'none' || style.visibility === 'hidden') {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    const rect = parent.getBoundingClientRect();
-                    // Check if element is within viewport
-                    if (rect.bottom < 0 || rect.top > viewportHeight ||
-                        rect.right < 0 || rect.left > viewportWidth) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    const text = node.textContent.trim();
-                    if (text.length < 2) return NodeFilter.FILTER_REJECT;
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-            }
-        );
-
-        let charCount = 0;
-        const maxChars = 300;
-        while (walker.nextNode() && charCount < maxChars) {
-            const text = walker.currentNode.textContent.trim();
-            if (text) {
-                visibleTexts.push(text);
-                charCount += text.length;
-            }
-        }
-
-        const visibleContent = visibleTexts.join(' ').replace(/\\s+/g, ' ').trim();
-        features.visible_content = visibleContent.substring(0, 300) + (visibleContent.length > 300 ? '...' : '');
-        features.scroll_y = Math.round(window.scrollY);
-
-        return features;
-    })()
-    """
-    return session.evaluate(script, return_by_value=True) or {}
 
 
 def _print_dom_features(features: dict) -> None:
@@ -1022,58 +959,9 @@ def _print_dom_features(features: dict) -> None:
         _print_msg("success", f"Visible content: {features['visible_content']}")
 
 
-def _take_perception_screenshot(session: CDPSession, description: str = "page") -> Optional[str]:
-    """
-    Take perception screenshot
-
-    Args:
-        session: CDP session
-        description: Screenshot description for filename generation
-
-    Returns:
-        Screenshot file path, None on failure
-    """
-    try:
-        import base64
-
-        from slugify import slugify
-
-        from ..run.screenshot import get_next_screenshot_number
-
-        screenshots_dir = _get_run_screenshots_dir()
-        seq = get_next_screenshot_number(screenshots_dir)
-        desc_slug = slugify(description or 'page', max_length=40)
-        filename = f"{seq:03d}_{desc_slug}.png"
-        file_path = screenshots_dir / filename
-
-        result = session.screenshot.capture()
-        screenshot_data = base64.b64decode(result.get("data", ""))
-        file_path.write_bytes(screenshot_data)
-
-        return str(file_path)
-    except Exception:
-        return None
-
-
-def _do_perception(session: CDPSession, action_desc: str, delay: float = 0) -> None:
-    """
-    Post-action perception: get DOM features
-
-    Note: No longer auto-screenshots. Screenshots should be explicitly called via screenshot command.
-    Reason: Reduce hints to model, avoid over-reliance on screenshots over structured data extraction.
-
-    Args:
-        session: CDP session
-        action_desc: Action description (kept for logging)
-        delay: Delay before getting DOM features (seconds), for waiting page load
-    """
-    # Optional delay
-    if delay > 0:
-        time.sleep(delay)
-
-    # Get and print DOM features
-    features = _get_dom_features(session)
-    _print_dom_features(features)
+# Post-action perception lives in run/perception.py; the CLI only injects
+# its output renderer.  Call sites keep using _do_perception(session, desc).
+_do_perception = functools.partial(perception.do_perception, printer=_print_dom_features)
 
 
 def _get_run_screenshots_dir() -> Path:
@@ -1110,45 +998,6 @@ def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) ->
     except Exception:
         pass
     return None
-
-
-def _build_group_index(host: str = "127.0.0.1", port: int = 9222) -> dict[str, str]:
-    """Build tab_id → group_name mapping for all groups. Returns empty dict on failure."""
-    try:
-        from ..chrome.cdp.tab_group_manager import TabGroupManager
-        tgm = TabGroupManager(host=host, port=port)
-        index: dict[str, str] = {}
-        for name, group in tgm.list_groups().items():
-            for tid in group.tabs:
-                index[tid] = name
-        return index
-    except Exception:
-        return {}
-
-
-def _route_tab_for_navigate(
-    ctx, session: CDPSession, url: str, group: Optional[str] = None
-) -> tuple[Optional[str], str]:
-    """Route to the correct tab for a URL within a group.
-
-    Group context is mandatory — resolved from explicit --group or
-    FRAGO_CURRENT_RUN env var.  Raises ChromeCommandError if missing.
-
-    Returns (target_id, resolved_group_name) tuple.
-    """
-    from ..chrome.cdp.tab_group_manager import ChromeCommandError, TabGroupManager
-
-    group_name = TabGroupManager.resolve_group_name(group)
-    if not group_name:
-        raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
-
-    tgm = TabGroupManager(
-        host=ctx.obj['HOST'],
-        port=ctx.obj['PORT'],
-    )
-    tgm.reconcile()
-    tid = tgm.get_or_create_tab(url, group_name, session) or None
-    return tid, group_name
 
 
 def _handle_chrome_command_error(e: ChromeCommandError) -> None:
@@ -1256,7 +1105,7 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
             # Tab routing: reuse tab by origin or create new (group enforced here)
             resolved_group = None
             if not ctx.obj.get('TARGET_ID'):
-                target_id, resolved_group = _route_tab_for_navigate(ctx, session, url, group=group)
+                target_id, resolved_group = route_tab_for_navigate(ctx, session, url, group=group)
                 if target_id:
                     current_id = _get_current_target_id(session)
                     if target_id != current_id:
@@ -2298,7 +2147,7 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     """
     from pathlib import Path
 
-    from ..chrome.cdp.commands.chrome import ChromeLauncher
+    from ..chrome.cdp.launcher import ChromeLauncher
 
     # Mode exclusivity check
     mode_count = sum([headless, void, app_mode])
@@ -2408,10 +2257,11 @@ def chrome_stop(port: int):
 
     Closes the Chrome CDP instance running on the specified port.
     """
-    from ..chrome.cdp.commands.chrome import ChromeLauncher
+    from ..chrome.cdp.launcher import ChromeLauncher
+    from ..chrome.cdp.process import kill_existing_chrome
 
     launcher = ChromeLauncher(port=port)
-    killed = launcher.kill_existing_chrome()
+    killed = kill_existing_chrome(launcher.debugging_port)
 
     if killed > 0:
         click.echo(f"[OK] Closed {killed} Chrome CDP process(es) (port {port})")
@@ -2628,7 +2478,7 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
                 pass
 
         # Load group membership
-        group_index = _build_group_index(host=host, port=port)
+        group_index = build_group_index(host=host, port=port)
 
         output = []
         for i, p in enumerate(pages):

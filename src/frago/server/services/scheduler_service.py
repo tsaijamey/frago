@@ -329,6 +329,7 @@ class SchedulerService:
         schedule_name = schedule.get("name", schedule.get("recipe_name", "unnamed"))
         prompt = schedule.get("prompt", "")
         recipe = schedule.get("recipe", schedule.get("recipe_name"))
+        params = schedule.get("params", {}) or {}
 
         # Overlap check: skip if previous trigger is still active
         overlap = schedule.get("overlap", "skip")
@@ -362,6 +363,7 @@ class SchedulerService:
             "schedule_name": schedule_name,
             "prompt": prompt,
             "recipe": recipe,
+            "params": params,
             "reply_context": schedule.get("reply_context", {}),
             "triggered_at": schedule["last_run_at"],
             "last_status": schedule.get("last_status"),

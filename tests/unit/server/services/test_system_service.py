@@ -2,11 +2,10 @@
 
 Tests system status and information.
 """
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from frago.server.services.system_service import SystemService
 

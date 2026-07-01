@@ -4,12 +4,22 @@ Provides functionality for checking system status and server information.
 """
 
 import logging
+import os
+import platform
+import shutil
+import subprocess
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import psutil
 
+from frago.compat import get_windows_subprocess_kwargs
+
 logger = logging.getLogger(__name__)
+
+
+class UnsupportedPlatformError(RuntimeError):
+    """Raised when an OS-level action is requested on an unsupported platform."""
 
 
 class SystemService:
@@ -42,7 +52,7 @@ class SystemService:
             chrome_available = False
             chrome_connected = False
             try:
-                from frago.chrome.cdp.commands.chrome import ChromeLauncher
+                from frago.chrome.cdp.launcher import ChromeLauncher
                 launcher = ChromeLauncher()
                 chrome_available = launcher.chrome_path is not None
                 status = launcher.get_status()
@@ -140,3 +150,87 @@ class SystemService:
             "port": port,
             "started_at": started_at,
         }
+
+    # ------------------------------------------------------------------
+    # OS-level actions (moved out of routes/settings.py — routes 不做 subprocess)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def reveal_or_open(path: str, reveal: bool) -> None:
+        """Open a path in the system file manager, optionally revealing it.
+
+        Raises UnsupportedPlatformError on unsupported platforms and propagates
+        subprocess.CalledProcessError on failure (callers map to API responses).
+        """
+        system = platform.system()
+
+        if reveal:
+            if system == "Darwin":
+                subprocess.run(["open", "-R", path], check=True)
+            elif system == "Linux":
+                parent = os.path.dirname(path)
+                subprocess.run(["xdg-open", parent], check=True)
+            elif system == "Windows":
+                subprocess.run(
+                    ["explorer", "/select,", path],
+                    check=True,
+                    **get_windows_subprocess_kwargs(),
+                )
+            else:
+                raise UnsupportedPlatformError(f"Unsupported platform: {system}")
+        else:
+            if system == "Darwin":
+                subprocess.run(["open", path], check=True)
+            elif system == "Linux":
+                subprocess.run(["xdg-open", path], check=True)
+            elif system == "Windows":
+                os.startfile(path)  # type: ignore
+            else:
+                raise UnsupportedPlatformError(f"Unsupported platform: {system}")
+
+    @staticmethod
+    def open_directory(directory: str) -> None:
+        """Open a directory in the system file manager.
+
+        Raises UnsupportedPlatformError on unsupported platforms and propagates
+        subprocess.CalledProcessError on failure.
+        """
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.run(["open", directory], check=True)
+        elif system == "Linux":
+            subprocess.run(["xdg-open", directory], check=True)
+        elif system == "Windows":
+            os.startfile(directory)  # type: ignore
+        else:
+            raise UnsupportedPlatformError(f"Unsupported platform: {system}")
+
+    @staticmethod
+    def find_vscode() -> Optional[str]:
+        """Find VSCode executable path.
+
+        Returns the path to use for opening files, or None if not found.
+        - macOS: checks PATH first, then /Applications/Visual Studio Code.app
+        - Linux/Windows: checks PATH
+        """
+        code_path = shutil.which("code")
+        if code_path:
+            return code_path
+
+        if platform.system() == "Darwin":
+            vscode_app = "/Applications/Visual Studio Code.app"
+            if os.path.exists(vscode_app):
+                return vscode_app
+
+        return None
+
+    @staticmethod
+    def open_in_vscode(vscode_path: str, settings_path: str) -> None:
+        """Open a file in VSCode using a non-blocking Popen."""
+        if vscode_path.endswith(".app"):
+            subprocess.Popen(["open", "-a", vscode_path, settings_path])
+        else:
+            subprocess.Popen(
+                [vscode_path, settings_path],
+                **get_windows_subprocess_kwargs(),
+            )

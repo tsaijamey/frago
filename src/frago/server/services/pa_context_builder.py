@@ -25,7 +25,7 @@ from frago.server.services.pa_prompts import (
     PA_BOOTSTRAP_TURN_PA_REPLY_LINE_TEMPLATE,
     PA_BOOTSTRAP_TURN_USER_LINE_TEMPLATE,
 )
-from frago.server.services.trace import (
+from frago.telemetry.trace import (
     ConversationTurn,
     load_conversation_turns,
     load_conversation_turns_by_channel,

@@ -132,7 +132,7 @@ class TestGetTimeline:
                 "data": {"event_type": "pa_ingestion", "channel": "feishu", "prompt": "hello"},
             }) + "\n"
         )
-        with patch("frago.server.services.trace.TRACE_DIR", trace_dir):
+        with patch("frago.telemetry.trace.TRACE_DIR", trace_dir):
             events = get_timeline(limit=10)
         assert len(events) == 1
         assert events[0]["event_type"] == "ingestion"
@@ -142,6 +142,6 @@ class TestGetTimeline:
     def test_empty_traces(self, tmp_path):
         trace_dir = tmp_path / "traces"
         trace_dir.mkdir()
-        with patch("frago.server.services.trace.TRACE_DIR", trace_dir):
+        with patch("frago.telemetry.trace.TRACE_DIR", trace_dir):
             events = get_timeline(limit=10)
         assert events == []

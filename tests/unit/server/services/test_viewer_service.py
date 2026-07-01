@@ -4,13 +4,10 @@ Tests content preview and viewer functionality.
 """
 import time
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 from frago.server.services.viewer_service import (
     AUDIO_EXTENSIONS,
-    CONTENT_DIR,
     IMAGE_EXTENSIONS,
     THREE_EXTENSIONS,
     VIDEO_EXTENSIONS,

@@ -26,6 +26,7 @@ from pathlib import Path
 import click
 
 from ..chrome.extension import native_host as nh
+from .agent_friendly import AgentFriendlyGroup
 
 
 _DEPRECATION_SHOWN = False
@@ -49,7 +50,7 @@ def _warn_if_mvp_alias(subcommand: str) -> None:
     )
 
 
-@click.group(name="extension")
+@click.group(name="extension", cls=AgentFriendlyGroup)
 @click.pass_context
 def extension_group(ctx):
     """Browser extension bridge management.

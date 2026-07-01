@@ -10,7 +10,7 @@ import subprocess
 import threading
 from typing import Any, Dict, Optional
 
-from frago.server.services.base import get_gh_command, run_subprocess
+from frago.server.services.subprocess_utils import get_gh_command, run_subprocess
 
 logger = logging.getLogger(__name__)
 

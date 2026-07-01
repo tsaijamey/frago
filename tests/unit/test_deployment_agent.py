@@ -1,21 +1,16 @@
 """Tests for deployment agent — change analysis, project matching, deploy execution."""
 
-import json
 import subprocess
-from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
-from frago.tools.deployment_agent import (
+from frago.cli.deployment_agent import (
     DeployAction,
     DeploymentAgent,
     DeploymentPlan,
-    ProjectMatch,
     execute_deployment,
     format_deployment_table,
 )
-from frago.tools.workspace import (
+from frago.cli.workspace import (
     WorkspaceChangeItem,
     WorkspaceChanges,
     detect_workspace_changes,
@@ -125,7 +120,7 @@ class TestSummarizeWorkspaceChanges:
 
 class TestDeploymentAgentAnalyze:
     def test_system_resource_targets_claude_home(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
 
         agent = DeploymentAgent(scan_roots=[], exclude_patterns=[])
         changes = WorkspaceChanges(items=[
@@ -149,7 +144,7 @@ class TestDeploymentAgentAnalyze:
             capture_output=True, check=True
         )
 
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
 
         agent = DeploymentAgent(
             scan_roots=[str(tmp_path / "repos")],
@@ -166,7 +161,7 @@ class TestDeploymentAgentAnalyze:
         assert str(project) == plan.actions[0].target
 
     def test_unmatched_project_is_pending(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
 
         agent = DeploymentAgent(scan_roots=[], exclude_patterns=[])
         changes = WorkspaceChanges(items=[
@@ -190,7 +185,7 @@ class TestDeploymentAgentAnalyze:
             capture_output=True, check=True
         )
 
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
 
         agent = DeploymentAgent(
             scan_roots=[str(tmp_path / "repos")],
@@ -207,7 +202,7 @@ class TestDeploymentAgentAnalyze:
         assert plan.actions[0].confidence == 0.5
 
     def test_groups_file_changes_into_resources(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
 
         agent = DeploymentAgent(scan_roots=[], exclude_patterns=[])
         changes = WorkspaceChanges(items=[
@@ -286,9 +281,9 @@ class TestExecuteDeployment:
         claude_home = tmp_path / ".claude"
         claude_home.mkdir()
 
-        monkeypatch.setattr("frago.tools.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.deployment_agent.PENDING_DEPLOYMENTS_FILE",
+        monkeypatch.setattr("frago.cli.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.deployment_agent.PENDING_DEPLOYMENTS_FILE",
                           tmp_path / ".pending.json")
 
         plan = DeploymentPlan(actions=[
@@ -308,15 +303,15 @@ class TestExecuteDeployment:
         claude_home = tmp_path / ".claude"
         claude_home.mkdir()
 
-        monkeypatch.setattr("frago.tools.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.deployment_agent.PENDING_DEPLOYMENTS_FILE",
+        monkeypatch.setattr("frago.cli.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.deployment_agent.PENDING_DEPLOYMENTS_FILE",
                           tmp_path / ".pending.json")
 
         plan = DeploymentPlan(actions=[
             DeployAction("skills/new-skill", "added", str(claude_home), "deploy", 1.0, "__system__"),
         ])
-        msgs = execute_deployment(plan)
+        execute_deployment(plan)
 
         assert (claude_home / "skills" / "new-skill" / "skill.md").read_text() == "new skill content"
 
@@ -332,16 +327,16 @@ class TestExecuteDeployment:
         project.mkdir(parents=True)
         (project / ".claude").mkdir()
 
-        monkeypatch.setattr("frago.tools.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
-        monkeypatch.setattr("frago.tools.deployment_agent.PENDING_DEPLOYMENTS_FILE",
+        monkeypatch.setattr("frago.cli.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.PENDING_DEPLOYMENTS_FILE",
                           tmp_path / ".pending.json")
 
         plan = DeploymentPlan(actions=[
             DeployAction(".claude/CLAUDE.md", "modified", str(project), "deploy", 1.0,
                         "github.com__user__proj"),
         ])
-        msgs = execute_deployment(plan)
+        execute_deployment(plan)
 
         assert (project / ".claude" / "CLAUDE.md").read_text() == "project rules"
 
@@ -357,27 +352,27 @@ class TestExecuteDeployment:
 
         claude_home = tmp_path / ".claude"
 
-        monkeypatch.setattr("frago.tools.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.deployment_agent.PENDING_DEPLOYMENTS_FILE",
+        monkeypatch.setattr("frago.cli.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.deployment_agent.PENDING_DEPLOYMENTS_FILE",
                           tmp_path / ".pending.json")
 
         plan = DeploymentPlan(actions=[
             DeployAction(".project-memory", "modified", str(project), "deploy", 1.0,
                         "github.com__user__proj"),
         ])
-        msgs = execute_deployment(plan)
+        execute_deployment(plan)
 
         # Should restore to Claude Code's encoded path
-        from frago.tools.workspace import _encode_project_path
+        from frago.cli.workspace import _encode_project_path
         encoded = _encode_project_path(project)
         memory_path = claude_home / "projects" / encoded / "memory" / "MEMORY.md"
         assert memory_path.read_text() == "project memory content"
 
     def test_skips_pending_actions(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("frago.tools.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
-        monkeypatch.setattr("frago.tools.deployment_agent.PENDING_DEPLOYMENTS_FILE",
+        monkeypatch.setattr("frago.cli.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.PENDING_DEPLOYMENTS_FILE",
                           tmp_path / ".pending.json")
 
         plan = DeploymentPlan(actions=[
@@ -391,9 +386,9 @@ class TestExecuteDeployment:
         (ws / ".claude").mkdir(parents=True)
         (ws / ".claude" / "CLAUDE.md").write_text("rules")
 
-        monkeypatch.setattr("frago.tools.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
-        monkeypatch.setattr("frago.tools.deployment_agent.PENDING_DEPLOYMENTS_FILE",
+        monkeypatch.setattr("frago.cli.deployment_agent.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.deployment_agent.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.deployment_agent.PENDING_DEPLOYMENTS_FILE",
                           tmp_path / ".pending.json")
 
         plan = DeploymentPlan(actions=[

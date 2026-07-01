@@ -24,8 +24,11 @@ from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from frago.agent_driver.pool import WarmSessionPool
+from frago.session import transcript_completion as tc_mod
+
 if TYPE_CHECKING:
-    from frago.agent_driver.pool import WarmSessionPool
+    from frago.agent_driver.tmux_session import TmuxAgentSession
 
 
 @dataclass
@@ -55,8 +58,6 @@ class UiSessionRunner:
         agent_type: str = "claude",
     ) -> None:
         if pool is None:
-            from frago.agent_driver.pool import WarmSessionPool
-
             if max_size is None:
                 # 上限取自 config.json -> webui_sessions.max_resident（缺省自愈保证存在）。
                 from frago.init.config_manager import load_config
@@ -107,23 +108,17 @@ class UiSessionRunner:
         """
         from datetime import datetime
 
-        from frago.agent_driver.tmux_session import TmuxAgentSession
-        from frago.server.services.transcript_completion import (
-            evaluate_file,
-            locate_transcript,
-        )
-
         now = datetime.now(UTC)
 
         def idle_age(session: TmuxAgentSession) -> float | None:
             # UI 会话是 native：session_id 即真实 claude jsonl id，原样定位。
-            path = locate_transcript(session.session_id, cwd=session.cwd)
+            path = tc_mod.locate_transcript(session.session_id, cwd=session.cwd)
             if path is None:
                 return None
-            tc = evaluate_file(path)
-            if not tc.done or tc.last_terminal_ts is None:
+            completion = tc_mod.evaluate_file(path)
+            if not completion.done or completion.last_terminal_ts is None:
                 return None  # 干活中或无锚点 → 不参与回收
-            return (now - tc.last_terminal_ts).total_seconds()
+            return (now - completion.last_terminal_ts).total_seconds()
 
         return self._pool.evict_idle(idle_age, timeout_s)
 

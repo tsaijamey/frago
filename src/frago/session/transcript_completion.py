@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.claude_sessions import (
+from frago.session.claude_sessions import (
     CLAUDE_PROJECTS_DIR,
     _extract_text,
     _find_session_file,

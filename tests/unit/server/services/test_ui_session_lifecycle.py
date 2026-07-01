@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-from frago.server.services import transcript_completion as tc
-from frago.server.services.transcript_completion import TurnCompletion
+from frago.session import transcript_completion as tc
+from frago.session.transcript_completion import TurnCompletion
 from frago.server.services.ui_session_runner import UiSessionRunner
 
 
@@ -115,3 +115,96 @@ def test_lifecycle_scan_uses_config_threshold(monkeypatch):
     asyncio.run(svc._scan_once())
 
     assert calls == [1234.0]
+
+
+def test_get_instance_is_singleton(monkeypatch):
+    from frago.server.services import ui_session_lifecycle as life
+
+    monkeypatch.setattr(life.UiSessionLifecycleService, "_instance", None)
+    a = life.UiSessionLifecycleService.get_instance()
+    b = life.UiSessionLifecycleService.get_instance()
+    assert a is b
+    assert isinstance(a, life.UiSessionLifecycleService)
+
+
+def test_start_is_idempotent_and_stop_cancels():
+    from frago.server.services import ui_session_lifecycle as life
+
+    async def scenario():
+        svc = life.UiSessionLifecycleService(scan_interval_s=100.0)
+        # No task before start.
+        assert svc._task is None
+        await svc.start()
+        first = svc._task
+        assert first is not None and not first.done()
+        # A second start must not spawn a new task.
+        await svc.start()
+        assert svc._task is first
+        # Stop cancels and clears.
+        await svc.stop()
+        assert svc._task is None
+        assert first.cancelled()
+
+    asyncio.run(scenario())
+
+
+def test_stop_is_noop_when_never_started():
+    from frago.server.services import ui_session_lifecycle as life
+
+    svc = life.UiSessionLifecycleService()
+    # Must not raise even though start was never called.
+    asyncio.run(svc.stop())
+    assert svc._task is None
+
+
+def test_start_after_done_task_spawns_new_one():
+    from frago.server.services import ui_session_lifecycle as life
+
+    async def scenario():
+        svc = life.UiSessionLifecycleService(scan_interval_s=100.0)
+
+        async def already_done():
+            return None
+
+        svc._task = asyncio.ensure_future(already_done())
+        await svc._task  # drive it to completion
+        assert svc._task.done()
+
+        await svc.start()
+        assert svc._task is not None and not svc._task.done()
+        await svc.stop()
+
+    asyncio.run(scenario())
+
+
+def test_loop_survives_scan_exception(monkeypatch):
+    """A failing _scan_once must be swallowed so the loop keeps running."""
+    from frago.server.services import ui_session_lifecycle as life
+
+    sleeps: list[float] = []
+    scans = {"n": 0}
+
+    async def fake_sleep(_secs):
+        sleeps.append(_secs)
+        # Let two iterations run, then cancel to break the infinite loop.
+        if len(sleeps) >= 2:
+            raise asyncio.CancelledError
+
+    async def boom(self):
+        scans["n"] += 1
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(life.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(life.UiSessionLifecycleService, "_scan_once", boom)
+
+    svc = life.UiSessionLifecycleService(scan_interval_s=7.0)
+
+    async def scenario():
+        with __import__("contextlib").suppress(asyncio.CancelledError):
+            await svc._loop()
+
+    asyncio.run(scenario())
+
+    # Scan was attempted and its exception did not propagate out of the loop.
+    assert scans["n"] >= 1
+    assert sleeps[0] == 7.0

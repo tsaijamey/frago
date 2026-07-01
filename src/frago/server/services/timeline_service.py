@@ -115,7 +115,7 @@ def get_timeline(since: str | None = None, limit: int = 50) -> list[dict]:
     since_dt = datetime.fromisoformat(since) if since else None
 
     try:
-        from frago.server.services.trace import load_trace_events
+        from frago.telemetry.trace import load_trace_events
         trace_events = load_trace_events(since=since_dt, limit=limit)
     except Exception as e:
         logger.debug("Failed to load trace events: %s", e)

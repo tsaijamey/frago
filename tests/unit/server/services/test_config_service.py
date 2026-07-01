@@ -1,14 +1,13 @@
-"""Tests for frago.server.services.config_service module.
+"""Tests for frago.config.config_service module.
 
 Tests user configuration management.
 """
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from frago.server.services.config_service import (
+from frago.config.config_service import (
     ConfigService,
     ConfigValidationError,
     UserConfig,
@@ -94,7 +93,7 @@ class TestConfigServiceGetConfig:
         # Patch the CONFIG_FILE to a non-existent path
         config_file = tmp_path / "nonexistent" / "gui_config.json"
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         result = ConfigService.get_config()
@@ -110,7 +109,7 @@ class TestConfigServiceGetConfig:
         config_file.write_text(json.dumps({"theme": "light", "language": "zh"}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         result = ConfigService.get_config()
@@ -126,7 +125,7 @@ class TestConfigServiceGetConfig:
         config_file.write_text("invalid json {{{")
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         result = ConfigService.get_config()
@@ -146,10 +145,10 @@ class TestConfigServiceUpdateConfig:
         config_file.write_text(json.dumps({}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_DIR", config_dir
+            "frago.config.config_service.CONFIG_DIR", config_dir
         )
 
         result = ConfigService.update_config({"theme": "light"})
@@ -167,10 +166,10 @@ class TestConfigServiceUpdateConfig:
         config_file.write_text(json.dumps({}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_DIR", config_dir
+            "frago.config.config_service.CONFIG_DIR", config_dir
         )
 
         with pytest.raises(ConfigValidationError) as exc_info:
@@ -186,10 +185,10 @@ class TestConfigServiceUpdateConfig:
         config_file.write_text(json.dumps({}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_DIR", config_dir
+            "frago.config.config_service.CONFIG_DIR", config_dir
         )
 
         result = ConfigService.update_config({"unknown_key": "value"})
@@ -207,7 +206,7 @@ class TestConfigServiceGetConfigValue:
         config_file.write_text(json.dumps({"theme": "light"}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         result = ConfigService.get_config_value("theme")
@@ -220,7 +219,7 @@ class TestConfigServiceGetConfigValue:
         config_file.write_text(json.dumps({}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         result = ConfigService.get_config_value("nonexistent", default="my_default")
@@ -237,7 +236,7 @@ class TestConfigServiceGetUserLanguage:
         config_file.write_text(json.dumps({"language": "zh"}))
 
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         result = ConfigService.get_user_language()
@@ -249,7 +248,7 @@ class TestConfigServiceGetUserLanguage:
         # Make config file unreadable
         config_file = tmp_path / "gui_config.json"
         monkeypatch.setattr(
-            "frago.server.services.config_service.CONFIG_FILE", config_file
+            "frago.config.config_service.CONFIG_FILE", config_file
         )
 
         with patch.object(

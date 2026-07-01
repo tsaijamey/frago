@@ -5,7 +5,6 @@ Tests recipe loading, caching, and execution.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from frago.server.services.recipe_service import RecipeService
 

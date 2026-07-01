@@ -4,7 +4,6 @@ Tests initialization wizard functionality.
 """
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from frago.server.services.init_service import InitService, _dependency_to_dict
 

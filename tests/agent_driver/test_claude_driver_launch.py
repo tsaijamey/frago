@@ -33,7 +33,7 @@ def test_launch_resumes_when_transcript_exists(monkeypatch, tmp_path) -> None:
     --session-id 撞已存在 transcript 会 'already in use' 退出；重启 / 空闲回收 /
     token 轮换后同一 conv_key 重新拉起即属此情形，必须切 --resume。
     """
-    import frago.server.services.transcript_completion as tc
+    import frago.session.transcript_completion as tc
 
     derived = claude_driver._claude_session_uuid("thread-xyz")
     fake = tmp_path / f"{derived}.jsonl"
@@ -52,7 +52,7 @@ def test_launch_resumes_when_transcript_exists(monkeypatch, tmp_path) -> None:
 
 def test_launch_session_id_when_transcript_absent(monkeypatch) -> None:
     """非 native：派生 sid 的 transcript 不存在 → 首次创建走 --session-id。"""
-    import frago.server.services.transcript_completion as tc
+    import frago.session.transcript_completion as tc
 
     monkeypatch.setattr(tc, "locate_transcript", lambda *_a, **_k: None)
 

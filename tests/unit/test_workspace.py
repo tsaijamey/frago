@@ -1,15 +1,10 @@
 """Tests for workspace resource management."""
 
 import json
-import shutil
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
-from frago.tools.workspace import (
-    CollectResult,
-    MIGRATION_FLAG,
+from frago.cli.workspace import (
     ProjectInfo,
     WorkspaceChangeItem,
     WorkspaceChanges,
@@ -352,8 +347,8 @@ class TestCollectSystemWorkspace:
 
         system_ws = tmp_path / "workspaces" / "__system__"
 
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE", system_ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE", system_ws)
 
         _collect_system_workspace(set())
 
@@ -367,8 +362,8 @@ class TestCollectSystemWorkspace:
 
         system_ws = tmp_path / "workspaces" / "__system__"
 
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE", system_ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE", system_ws)
 
         _collect_system_workspace(set())
 
@@ -382,8 +377,8 @@ class TestCollectSystemWorkspace:
 
         system_ws = tmp_path / "workspaces" / "__system__"
 
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE", system_ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE", system_ws)
 
         _collect_system_workspace(set())
 
@@ -407,8 +402,8 @@ class TestCollectProjectWorkspace:
         (docs / "arch.md").write_text("architecture")
 
         ws = tmp_path / "workspaces"
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", ws)
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", tmp_path / ".claude")
 
         _collect_project_workspace(
             ProjectInfo(path=project),
@@ -429,8 +424,8 @@ class TestCollectProjectWorkspace:
         (claude_dir / ".mcp.local.json").write_text("{}")
 
         ws = tmp_path / "workspaces"
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", ws)
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", tmp_path / ".claude")
 
         _collect_project_workspace(
             ProjectInfo(path=project),
@@ -454,8 +449,8 @@ class TestCollectProjectWorkspace:
         (memory_dir / "MEMORY.md").write_text("project memory")
 
         ws = tmp_path / "workspaces"
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", ws)
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", claude_home)
 
         result = _collect_project_workspace(
             ProjectInfo(path=project),
@@ -485,8 +480,8 @@ class TestCollectProjectWorkspace:
         (claude_dir / "rules" / "no-debug.md").write_text("rule")
 
         ws = tmp_path / "workspaces"
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", ws)
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", ws)
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", tmp_path / ".claude")
 
         _collect_project_workspace(
             ProjectInfo(path=project),
@@ -513,10 +508,10 @@ class TestMigrateLegacyClaudeDir:
         skills.mkdir(parents=True)
         (skills / "skill.md").write_text("test skill")
 
-        monkeypatch.setattr("frago.tools.workspace.FRAGO_HOME", frago_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE",
+        monkeypatch.setattr("frago.cli.workspace.FRAGO_HOME", frago_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE",
                           frago_home / "workspaces" / "__system__")
-        monkeypatch.setattr("frago.tools.workspace.MIGRATION_FLAG",
+        monkeypatch.setattr("frago.cli.workspace.MIGRATION_FLAG",
                           frago_home / ".workspace_migrated")
 
         assert migrate_legacy_claude_dir()
@@ -532,10 +527,10 @@ class TestMigrateLegacyClaudeDir:
         frago_home = tmp_path / ".frago"
         frago_home.mkdir()
 
-        monkeypatch.setattr("frago.tools.workspace.FRAGO_HOME", frago_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE",
+        monkeypatch.setattr("frago.cli.workspace.FRAGO_HOME", frago_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE",
                           frago_home / "workspaces" / "__system__")
-        monkeypatch.setattr("frago.tools.workspace.MIGRATION_FLAG",
+        monkeypatch.setattr("frago.cli.workspace.MIGRATION_FLAG",
                           frago_home / ".workspace_migrated")
 
         assert not migrate_legacy_claude_dir()
@@ -551,10 +546,10 @@ class TestMigrateLegacyClaudeDir:
         flag = frago_home / ".workspace_migrated"
         flag.write_text("migrated")
 
-        monkeypatch.setattr("frago.tools.workspace.FRAGO_HOME", frago_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE",
+        monkeypatch.setattr("frago.cli.workspace.FRAGO_HOME", frago_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE",
                           frago_home / "workspaces" / "__system__")
-        monkeypatch.setattr("frago.tools.workspace.MIGRATION_FLAG", flag)
+        monkeypatch.setattr("frago.cli.workspace.MIGRATION_FLAG", flag)
 
         assert not migrate_legacy_claude_dir()
         # Legacy should NOT be deleted (already migrated)
@@ -575,9 +570,9 @@ class TestMigrateLegacyClaudeDir:
         target_skills.mkdir(parents=True)
         (target_skills / "skill.md").write_text("test skill")
 
-        monkeypatch.setattr("frago.tools.workspace.FRAGO_HOME", frago_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE", target)
-        monkeypatch.setattr("frago.tools.workspace.MIGRATION_FLAG",
+        monkeypatch.setattr("frago.cli.workspace.FRAGO_HOME", frago_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE", target)
+        monkeypatch.setattr("frago.cli.workspace.MIGRATION_FLAG",
                           frago_home / ".workspace_migrated")
 
         assert migrate_legacy_claude_dir()
@@ -606,10 +601,10 @@ class TestMigrateLegacyClaudeDir:
         }
         (legacy / "sync_metadata.json").write_text(json.dumps(metadata))
 
-        monkeypatch.setattr("frago.tools.workspace.FRAGO_HOME", frago_home)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE",
+        monkeypatch.setattr("frago.cli.workspace.FRAGO_HOME", frago_home)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE",
                           frago_home / "workspaces" / "__system__")
-        monkeypatch.setattr("frago.tools.workspace.MIGRATION_FLAG",
+        monkeypatch.setattr("frago.cli.workspace.MIGRATION_FLAG",
                           frago_home / ".workspace_migrated")
 
         migrate_legacy_claude_dir()
@@ -629,12 +624,12 @@ class TestMigrateLegacyClaudeDir:
 
 class TestCollectWorkspaces:
     def test_empty_scan_roots(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", tmp_path / ".claude")
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", tmp_path / "workspaces")
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE",
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", tmp_path / ".claude")
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", tmp_path / "workspaces")
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE",
                           tmp_path / "workspaces" / "__system__")
         # Prevent auto-detection from scanning real ~/Repos etc.
-        monkeypatch.setattr("frago.tools.workspace._auto_detect_scan_roots", lambda: [])
+        monkeypatch.setattr("frago.cli.workspace._auto_detect_scan_roots", lambda: [])
 
         result = collect_workspaces([], [])
         assert result.system_collected
@@ -665,9 +660,9 @@ class TestCollectWorkspaces:
 
         ws_dir = tmp_path / "workspaces"
 
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", ws_dir)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE", ws_dir / "__system__")
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", ws_dir)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE", ws_dir / "__system__")
 
         result = collect_workspaces([str(scan_root)], [])
 
@@ -772,9 +767,9 @@ class TestCollectAndDetectRoundtrip:
 
         ws_dir = tmp_path / "workspaces"
 
-        monkeypatch.setattr("frago.tools.workspace.CLAUDE_HOME", claude_home)
-        monkeypatch.setattr("frago.tools.workspace.WORKSPACES_DIR", ws_dir)
-        monkeypatch.setattr("frago.tools.workspace.SYSTEM_WORKSPACE", ws_dir / "__system__")
+        monkeypatch.setattr("frago.cli.workspace.CLAUDE_HOME", claude_home)
+        monkeypatch.setattr("frago.cli.workspace.WORKSPACES_DIR", ws_dir)
+        monkeypatch.setattr("frago.cli.workspace.SYSTEM_WORKSPACE", ws_dir / "__system__")
 
         collect_workspaces([], [])
 
