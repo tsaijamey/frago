@@ -542,3 +542,89 @@ class TabGroupManager:
             return True
         except Exception:
             return False
+
+
+# =============================================================================
+# CLI session / routing helpers (relocated from cli/commands.py)
+#
+# These build CDP sessions and route tabs within a group.  They take the
+# click ctx (whose ctx.obj is a plain config dict) but contain no output or
+# formatting — that stays in the CLI layer.
+# =============================================================================
+
+def create_session(ctx, *, group: str | None = None, require_group: bool = True):
+    """
+    Create CDP session.
+
+    When require_group=True (default), resolves target from the group's
+    current_target_id.  Raises ChromeCommandError("NO_GROUP") if no
+    group context is available.
+
+    Management commands (status, reset, group-close) pass require_group=False
+    to skip group enforcement — they don't operate on a specific tab.
+    """
+    from .config import CDPConfig
+    from .session import CDPSession
+
+    target_id = ctx.obj.get('TARGET_ID')
+
+    # Auto-resolve target from tab group when no explicit target_id
+    if not target_id and require_group:
+        group_name = TabGroupManager.resolve_group_name(group)
+        if not group_name:
+            raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
+        tgm = TabGroupManager(
+            host=ctx.obj['HOST'],
+            port=ctx.obj['PORT'],
+        )
+        target_id = tgm.get_current_target(group_name)
+        # Store resolved group in ctx for downstream use
+        ctx.obj['_RESOLVED_GROUP'] = group_name
+
+    config = CDPConfig(
+        host=ctx.obj['HOST'],
+        port=ctx.obj['PORT'],
+        timeout=ctx.obj['TIMEOUT'],
+        debug=ctx.obj['DEBUG'],
+        proxy_host=ctx.obj.get('PROXY_HOST'),
+        proxy_port=ctx.obj.get('PROXY_PORT'),
+        proxy_username=ctx.obj.get('PROXY_USERNAME'),
+        proxy_password=ctx.obj.get('PROXY_PASSWORD'),
+        no_proxy=ctx.obj.get('NO_PROXY', False),
+        target_id=target_id,
+    )
+    return CDPSession(config)
+
+
+def build_group_index(host: str = "127.0.0.1", port: int = 9222) -> dict[str, str]:
+    """Build tab_id → group_name mapping for all groups. Returns empty dict on failure."""
+    try:
+        tgm = TabGroupManager(host=host, port=port)
+        index: dict[str, str] = {}
+        for name, group in tgm.list_groups().items():
+            for tid in group.tabs:
+                index[tid] = name
+        return index
+    except Exception:
+        return {}
+
+
+def route_tab_for_navigate(ctx, session, url: str, group=None):
+    """Route to the correct tab for a URL within a group.
+
+    Group context is mandatory — resolved from explicit --group or
+    FRAGO_CURRENT_RUN env var.  Raises ChromeCommandError if missing.
+
+    Returns (target_id, resolved_group_name) tuple.
+    """
+    group_name = TabGroupManager.resolve_group_name(group)
+    if not group_name:
+        raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
+
+    tgm = TabGroupManager(
+        host=ctx.obj['HOST'],
+        port=ctx.obj['PORT'],
+    )
+    tgm.reconcile()
+    tid = tgm.get_or_create_tab(url, group_name, session) or None
+    return tid, group_name

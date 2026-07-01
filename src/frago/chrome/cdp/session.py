@@ -7,11 +7,8 @@ Implements CDP session management with WebSocket connections.
 from __future__ import annotations
 
 import json
-import queue
-import threading
-import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
     from frago.chrome.cdp.commands.dom import DOMCommands
@@ -26,20 +23,24 @@ if TYPE_CHECKING:
     from frago.chrome.cdp.commands.wait import WaitCommands
     from frago.chrome.cdp.commands.zoom import ZoomCommands
 
-import websocket
-
 from .client import CDPClient
 from .config import CDPConfig
-from .exceptions import CDPError, ConnectionError, TimeoutError
-from .transport import cdp_get, cdp_ws_connect
-from .types import CDPRequest
+from .exceptions import CDPError
+from .transport import CDPTransport, cdp_get
 
 # Lazy import to avoid circular imports
 # from .commands import PageCommands, InputCommands, RuntimeCommands, DOMCommands
 
 
 class CDPSession(CDPClient):
-    """CDP session class"""
+    """CDP session class.
+
+    Facade over a :class:`CDPTransport` (WebSocket transport / request
+    forwarding / event multiplexing) plus the lazy-loaded command wrappers.
+    Transport-level operations (connect/disconnect/send_command/on_event) are
+    delegated to the transport; the convenience CLI methods and lazy properties
+    live here.
+    """
 
     def __init__(self, config: Optional[CDPConfig] = None):
         """
@@ -49,14 +50,7 @@ class CDPSession(CDPClient):
             config: CDP configuration, uses default config if None
         """
         super().__init__(config)
-        self.ws: websocket.WebSocket | None = None
-        self._request_id = 0
-        self._pending_requests: dict[int, dict] = {}
-        self._event_handlers: dict[str, Callable] = {}
-        self._message_queue: queue.Queue = queue.Queue()
-        self._listener_thread: threading.Thread | None = None
-        self._running = False
-        self._lock = threading.RLock()
+        self._transport = CDPTransport(self.config, self.logger)
 
         # Lazy initialization of command wrappers
         self._page: PageCommands | None = None
@@ -74,309 +68,32 @@ class CDPSession(CDPClient):
         # Auto viewport border indicator
         self.auto_viewport_border = True
 
-        # WebSocket URL used for the current connection
-        self._ws_url: Optional[str] = None
+    # ── Transport delegation ──────────────────────────────────────────────
+    @property
+    def connected(self) -> bool:
+        """Check if connected (delegated to transport)"""
+        return self._transport.connected
+
+    @property
+    def ws(self):
+        """Underlying WebSocket connection (delegated to transport)"""
+        return self._transport.ws
 
     def connect(self) -> None:
-        """Establish WebSocket connection
+        """Establish WebSocket connection (delegated to transport)"""
+        self._transport.connect()
 
-        Performance optimizations:
-        - Connection timeout defaults to 5 seconds (optimized for local connections)
-        - Unnecessary handshake checks disabled to speed up connection
-        - Supports fast-fail mechanism
-        """
-        try:
-            start_time = time.time()
-
-            # Dynamically get WebSocket URL
-            ws_url = self._get_websocket_url()
-            self.logger.info(f"Connecting to CDP at {ws_url}")
-
-            # Prepare WebSocket connection options (performance optimization)
-            ws_options = {
-                "timeout": 1.0,  # Receive message timeout set to 1 second for periodic _running check
-                "skip_utf8_validation": True,  # Skip UTF-8 validation for performance
-                "enable_multithread": True      # Enable multithreading support
-            }
-
-            # Create WebSocket connection (cdp_ws_connect always bypasses proxy)
-            self.ws = cdp_ws_connect(ws_url, **ws_options)
-            self._ws_url = ws_url
-
-            self._connected = True
-            self._running = True
-
-            # Log connection time
-            elapsed = (time.time() - start_time) * 1000  # Convert to milliseconds
-            self.logger.info(f"CDP connection established in {elapsed:.2f}ms")
-
-            # Start message listener thread
-            self._start_message_listener()
-
-        except Exception as e:
-            self._connected = False
-            self._running = False
-            elapsed = (time.time() - start_time) * 1000
-            self.logger.error(f"Connection failed after {elapsed:.2f}ms: {e}")
-            raise ConnectionError(f"Failed to connect to CDP: {e}")
-
-    def _get_websocket_url(self) -> str:
-        """Dynamically get WebSocket debug URL
-
-        If target_id is specified, connect to that tab; otherwise auto-select the first page-type tab.
-
-        Returns:
-            str: WebSocket URL
-        """
-        try:
-            # Get list of all targets
-            response = cdp_get(
-                f"{self.config.http_url}/json/list",
-                timeout=self.config.connect_timeout,
-            )
-            response.raise_for_status()
-            targets = response.json()
-
-            # If target_id specified, find the corresponding target
-            if self.config.target_id:
-                for target in targets:
-                    if target.get('id') == self.config.target_id:
-                        ws_url = target.get('webSocketDebuggerUrl')
-                        if ws_url:
-                            self.logger.debug(f"Using specified target: {target.get('title', 'Unknown')} (id: {self.config.target_id})")
-                            return ws_url
-                        else:
-                            raise ConnectionError(f"Target {self.config.target_id} has no WebSocket URL available")
-
-                # Specified target not found
-                raise ConnectionError(f"Target not found: {self.config.target_id}")
-
-            # No target_id specified, find first available page (skip landing page)
-            fallback_ws_url = None
-            for target in targets:
-                if target.get('type') != 'page' or not target.get('webSocketDebuggerUrl'):
-                    continue
-                target_url = target.get('url', '')
-                target_title = target.get('title', '')
-                # Skip landing page — identified by dashboard URL, data: URI, or title "frago"
-                if '/chrome/dashboard' in target_url or target_url.startswith('data:text/html') or target_title == 'frago':
-                    if fallback_ws_url is None:
-                        fallback_ws_url = target['webSocketDebuggerUrl']
-                    continue
-                self.logger.debug(f"Using page: {target.get('title', 'Unknown')}")
-                return target['webSocketDebuggerUrl']
-
-            # All pages are landing pages — use it as fallback
-            if fallback_ws_url:
-                self.logger.debug("Only landing page available, using it as fallback")
-                return fallback_ws_url
-
-            # If no page available, use browser endpoint
-            response = cdp_get(
-                f"{self.config.http_url}/json/version",
-                timeout=self.config.connect_timeout,
-            )
-            response.raise_for_status()
-            version_info = response.json()
-            return version_info['webSocketDebuggerUrl']
-        except ConnectionError:
-            # Re-raise ConnectionError, don't let it be caught by except below
-            raise
-        except Exception:
-            # Fallback to static URL
-            return self.config.websocket_url
-    
     def disconnect(self) -> None:
-        """Disconnect WebSocket connection"""
-        # Stop message listener thread
-        self._running = False
-
-        if self._listener_thread and self._listener_thread.is_alive():
-            self._listener_thread.join(timeout=5.0)
-
-        if self.ws:
-            try:
-                self.ws.close()
-                self.logger.info("CDP connection closed")
-            except Exception as e:
-                self.logger.warning(f"Error closing CDP connection: {e}")
-            finally:
-                self.ws = None
-                self._connected = False
+        """Disconnect WebSocket connection (delegated to transport)"""
+        self._transport.disconnect()
 
     def send_command(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Send CDP command
-
-        Args:
-            method: CDP method name
-            params: Command parameters
-
-        Returns:
-            Dict[str, Any]: Command result
-
-        Raises:
-            CDPError: Command execution failed
-        """
-        if not self.connected:
-            raise ConnectionError("CDP not connected")
-
-        # Generate request ID
-        with self._lock:
-            request_id = self._request_id
-            self._request_id += 1
-
-        # Build request
-        request: CDPRequest = {
-            "id": request_id,
-            "method": method,
-            "params": params or {}
-        }
-
-        # Send request
-        try:
-            self.ws.send(json.dumps(request))
-            self.logger.debug(f"Sent CDP command: {method} (id: {request_id})")
-        except Exception as e:
-            raise CDPError(f"Failed to send CDP command: {e}")
-
-        # Wait for response
-        return self._wait_for_response(request_id)
-    
-    def _validate_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Validate CDP response
-
-        Args:
-            response: CDP response
-
-        Returns:
-            Dict[str, Any]: Validated response
-
-        Raises:
-            CDPError: Response error
-        """
-        if "error" in response:
-            error = response["error"]
-            raise CDPError(f"CDP error: {error.get('message', 'Unknown error')} (code: {error.get('code')})")
-
-        return response
-
-    def _wait_for_response(self, request_id: int) -> Dict[str, Any]:
-        """
-        Wait for response with specified request ID
-
-        Args:
-            request_id: Request ID
-
-        Returns:
-            Dict[str, Any]: Response data
-
-        Raises:
-            TimeoutError: Timeout waiting
-            CDPError: Response error
-        """
-        start_time = time.time()
-        timeout = self.config.command_timeout
-
-        # Register as pending request
-        with self._lock:
-            self._pending_requests[request_id] = {
-                "start_time": start_time,
-                "timeout": timeout
-            }
-
-        try:
-            while time.time() - start_time < timeout:
-                # Check if our response is in message queue
-                try:
-                    # Non-blocking get
-                    message = self._message_queue.get_nowait()
-                    response = json.loads(message)
-
-                    # If this is the response we're waiting for
-                    if response.get("id") == request_id:
-                        return self._validate_response(response)
-
-                    # If event, call event handler
-                    elif "method" in response:
-                        self._handle_event(response)
-
-                except queue.Empty:
-                    # Queue empty, sleep briefly and continue
-                    time.sleep(0.01)
-                    continue
-                except Exception as e:
-                    self.logger.error(f"Error processing message: {e}")
-                    continue
-
-            raise TimeoutError(f"Command timeout after {timeout} seconds")
-
-        finally:
-            # Clean up pending request
-            with self._lock:
-                self._pending_requests.pop(request_id, None)
-    
-    def _start_message_listener(self) -> None:
-        """Start message listener thread"""
-        self._listener_thread = threading.Thread(
-            target=self._message_listener,
-            daemon=True,
-            name="CDPMessageListener"
-        )
-        self._listener_thread.start()
-
-    def _message_listener(self) -> None:
-        """Message listener thread main loop"""
-        while self._running and self.ws:
-            try:
-                # Receive message
-                message = self.ws.recv()
-
-                # Put into queue
-                self._message_queue.put(message)
-
-            except websocket.WebSocketConnectionClosedException:
-                self.logger.warning("WebSocket connection closed")
-                break
-            except websocket.WebSocketTimeoutException:
-                # Timeout is normal, used for periodic _running check, not an error
-                continue
-            except Exception as e:
-                self.logger.error(f"Message listener error: {e}")
-                # Brief sleep before continuing
-                time.sleep(0.1)
-
-    def _handle_event(self, event: Dict[str, Any]) -> None:
-        """
-        Handle CDP event
-
-        Args:
-            event: Event data
-        """
-        method = event.get("method")
-        params = event.get("params", {})
-
-        if method in self._event_handlers:
-            try:
-                self._event_handlers[method](params)
-            except Exception as e:
-                self.logger.error(f"Error in event handler for {method}: {e}")
+        """Send CDP command (delegated to transport)"""
+        return self._transport.send_command(method, params)
 
     def on_event(self, event_name: str) -> Callable:
-        """
-        Event handler decorator
-
-        Args:
-            event_name: Event name
-
-        Returns:
-            Callable: Decorator function
-        """
-        def decorator(handler: Callable) -> Callable:
-            self._event_handlers[event_name] = handler
-            return handler
-        return decorator
+        """Register a CDP event handler (delegated to transport)"""
+        return self._transport.on_event(event_name)
 
     def health_check(self) -> bool:
         """

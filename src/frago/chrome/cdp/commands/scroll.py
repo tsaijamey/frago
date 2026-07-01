@@ -4,7 +4,6 @@ Scroll-related CDP commands
 Encapsulates CDP commands for page scrolling functionality.
 """
 
-from typing import Dict, Any
 
 from ..logger import get_logger
 

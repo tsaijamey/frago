@@ -4,7 +4,6 @@ Zoom-related CDP commands
 Encapsulates CDP commands for page zoom functionality.
 """
 
-from typing import Dict, Any
 
 from ..logger import get_logger
 

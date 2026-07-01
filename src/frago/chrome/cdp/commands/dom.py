@@ -4,7 +4,7 @@ DOM-related CDP commands
 Encapsulates CDP commands for the DOM domain.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 from ..session import CDPSession
 from ..logger import get_logger

@@ -100,9 +100,10 @@ class CDPChromeBackend(ChromeBackend):
     # ─── Batch 1: tab management + simple element ops ─────────────────
 
     def stop(self) -> dict:
-        from ..cdp.commands.chrome import ChromeLauncher
+        from ..cdp.launcher import ChromeLauncher
+        from ..cdp.process import kill_existing_chrome
         launcher = ChromeLauncher(port=self.port)
-        killed = launcher.kill_existing_chrome()
+        killed = kill_existing_chrome(launcher.debugging_port)
         return {"backend": "cdp", "stopped": killed > 0,
                 "processes_killed": killed}
 

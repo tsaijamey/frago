@@ -4,7 +4,6 @@ CDP client base class
 Provides basic functionality for Chrome DevTools Protocol clients.
 """
 
-import json
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
