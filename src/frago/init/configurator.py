@@ -57,6 +57,7 @@ PRESET_ENDPOINTS = {
     },
     "tencent_maas": {
         "display_name": "Tencent Cloud MaaS (Hunyuan)",
+        "auth": "auth_token",
         "ANTHROPIC_BASE_URL": "https://tokenhub.tencentmaas.com",
         "ANTHROPIC_MODEL": "Hy3-dev0630",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "Hy3-dev0630",
@@ -66,6 +67,7 @@ PRESET_ENDPOINTS = {
     },
     "tencent_tokenplan": {
         "display_name": "Tencent Cloud TokenPlan (Hunyuan)",
+        "auth": "auth_token",
         "ANTHROPIC_BASE_URL": "https://api.lkeap.cloud.tencent.com/plan/anthropic",
         "ANTHROPIC_MODEL": "Hy3-dev0630",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "Hy3-dev0630",
@@ -296,6 +298,7 @@ def clear_api_env_from_settings() -> bool:
     # Keys to remove
     api_keys_to_remove = [
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_MODEL",
         "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -482,6 +485,7 @@ def build_claude_env_config(
     default_model: str = None,
     sonnet_model: str = None,
     haiku_model: str = None,
+    auth: str = None,
 ) -> dict:
     """
     Build env configuration for Claude Code settings.json
@@ -493,14 +497,20 @@ def build_claude_env_config(
         default_model: Override for ANTHROPIC_MODEL
         sonnet_model: Override for ANTHROPIC_DEFAULT_SONNET_MODEL
         haiku_model: Override for ANTHROPIC_DEFAULT_HAIKU_MODEL
+        auth: Auth mechanism, "auth_token" (Bearer, ANTHROPIC_AUTH_TOKEN) or
+            "api_key" (x-api-key, ANTHROPIC_API_KEY). Overrides the preset's own
+            declaration; falls back to the preset's "auth" field, else "api_key".
+            Tencent (MaaS/TokenPlan) and OpenRouter require "auth_token";
+            DeepSeek and the other Anthropic-native presets use "api_key".
 
     Returns:
         env configuration dictionary
     """
     if endpoint_type in PRESET_ENDPOINTS:
         env = PRESET_ENDPOINTS[endpoint_type].copy()
-        # Remove display_name (only for display, not written to config)
+        # Remove display_name / auth marker (config-only, not written to settings)
         env.pop("display_name", None)
+        preset_auth = env.pop("auth", None)
     else:
         # custom type - requires model configuration
         model = default_model or "gpt-4"
@@ -512,6 +522,7 @@ def build_claude_env_config(
             "API_TIMEOUT_MS": 600000,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
+        preset_auth = None
 
     # Override model names if explicitly provided (for preset endpoints too)
     if default_model:
@@ -521,7 +532,16 @@ def build_claude_env_config(
     if haiku_model:
         env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = haiku_model
 
-    env["ANTHROPIC_API_KEY"] = api_key
+    # Credential goes into the header the endpoint expects. Bearer-style
+    # endpoints (Tencent / OpenRouter) read ANTHROPIC_AUTH_TOKEN; x-api-key
+    # endpoints (DeepSeek etc.) read ANTHROPIC_API_KEY. Set only the one in
+    # use and blank the other so a stale value can't shadow it.
+    auth_style = auth or preset_auth or "api_key"
+    if auth_style == "auth_token":
+        env["ANTHROPIC_AUTH_TOKEN"] = api_key
+        env["ANTHROPIC_API_KEY"] = ""
+    else:
+        env["ANTHROPIC_API_KEY"] = api_key
     return env
 
 
