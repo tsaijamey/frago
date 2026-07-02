@@ -506,6 +506,29 @@ def agent_run(
     # tmux backend: resident TUI session driven by SessionLauncher.
     # Legacy claude -p path stays the default and is left fully intact below.
     if driver == "tmux":
+        # CCR env for the tmux session, same precedence as the claude-p path:
+        # CCR < profile < (no --endpoint/--api-key here; claude-p only).
+        tmux_env: dict[str, str] = {}
+        use_ccr_mode, ccr_info = should_use_ccr(load_frago_config(), use_ccr)
+        if use_ccr_mode:
+            if not ccr_info:
+                click.echo("Error: Invalid CCR configuration", err=True)
+                sys.exit(1)
+            host = ccr_info.get("host", "127.0.0.1")
+            port = ccr_info.get("port", 3456)
+            tmux_env.update({
+                "ANTHROPIC_AUTH_TOKEN": "test",
+                "ANTHROPIC_BASE_URL": f"http://{host}:{port}",
+                "NO_PROXY": "127.0.0.1",
+                "DISABLE_TELEMETRY": "true",
+            })
+            if not ccr_info.get("is_running"):
+                if not quiet:
+                    click.echo("Starting CCR service...")
+                subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True)
+            if not quiet:
+                click.echo(f"[OK] Using CCR: http://{host}:{port}")
+        tmux_env.update(profile_env)
         _run_tmux_driver(
             prompt_text,
             agent_type=agent_type,
@@ -515,7 +538,7 @@ def agent_run(
             quiet=quiet,
             dry_run=dry_run,
             no_persist=no_monitor,
-            env=profile_env or None,
+            env=tmux_env or None,
         )
         return
 
@@ -571,9 +594,11 @@ def agent_run(
     # --endpoint/--api-key overrides below so those still take highest priority.
     if profile_env:
         env.update(profile_env)
-        # A profile carries its own key; clear CCR's placeholder AUTH_TOKEN so
-        # ANTHROPIC_API_KEY from the profile actually authenticates.
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        # Bearer-style profiles carry the credential in ANTHROPIC_AUTH_TOKEN; only
+        # clear a leftover CCR placeholder when the profile itself doesn't set one
+        # (api-key-style profiles), otherwise we'd wipe the real token.
+        if "ANTHROPIC_AUTH_TOKEN" not in profile_env:
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
         if not passthrough:
             click.echo(f"[OK] Using profile: {use_profile}")
 
