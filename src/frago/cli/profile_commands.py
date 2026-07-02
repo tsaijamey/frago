@@ -16,15 +16,38 @@ _AGENT_USAGE = """# frago agent 用法
 
 frago agent 驱动 CLI agent（默认 claude）跑一轮任务。
 
-常用形态：
-  frago agent <prompt>                     # headless 跑一轮
-  frago agent <prompt> --driver tmux       # 起常驻 tmux TUI 会话跑
-  frago agent <prompt> --use-profile <名>  # 用保存的 API profile 的 endpoint/model/key 运行
-  frago agent attach --files '[...]' --dirs '[...]'  # 交付产出文件
+⚠ 你从 Bash 调 frago agent 一律是非交互（无 TTY），必须带 --yes：默认会弹
+  --dangerously-skip-permissions 的 y/N 确认，无 TTY 下读不到输入会直接 Abort（退出码 1）。
 
---use-profile 取 ~/.frago/profiles.json 里某条 profile（按 name 或 id），把它的 \
-endpoint/model/key（ANTHROPIC_BASE_URL / ANTHROPIC_MODEL / ANTHROPIC_API_KEY）注入会话；\
-tmux 后端经 new-session -e 注入，claude-p 后端并入进程环境。--endpoint / --api-key 仍优先覆盖它。"""
+常用形态（示例已含 --yes）：
+  frago agent <prompt> --yes                     # headless 跑一轮
+  frago agent <prompt> --yes --driver tmux       # 起常驻 tmux TUI 会话跑
+  frago agent <prompt> --yes --use-profile <名>  # 跑在某条保存的 profile 的模型上
+  frago agent <prompt> --yes --use-ccr           # 跑在 CCR 当前配置的模型上（见下方 CCR 状态）
+  frago agent attach --files '[...]' --dirs '[...]'  # 交付产出文件（attach 无需 --yes）
+
+想跑在非默认模型上有两条路：
+  --use-profile <名>：从 ~/.frago/profiles.json 取该 profile 的 endpoint/model/key \
+（ANTHROPIC_BASE_URL / ANTHROPIC_MODEL / ANTHROPIC_API_KEY）注入会话；tmux 后端经 new-session -e 注入，\
+claude-p 后端并入进程环境。
+  --use-ccr：走本地 CCR 代理，路由到 CCR 配置的那个模型（Anthropic↔OpenAI 协议转换由 CCR 负责）。\
+CCR 需在跑；若目标是国内端点，CCR 要直连（起 CCR 时清掉 HTTP(S)_PROXY/ALL_PROXY）。
+--endpoint / --api-key 仍优先覆盖以上二者。"""
+
+
+def _ccr_hint() -> str:
+    """一行 CCR 实况：--use-ccr 当前会路由到哪个模型、服务是否在跑。
+
+    model-agnostic —— 只反映 CCR 此刻配置指向的模型，不绑定任何具体品牌。
+    """
+    from frago.cli.agent_command import check_ccr_auth
+
+    ok, info = check_ccr_auth()
+    if not ok or not info or info.get("error"):
+        return "CCR 状态：未安装/未配置 → --use-ccr 暂不可用（需先装 ccr 并配 ~/.claude-code-router/config.json）。"
+    route = info.get("default_route", "unknown")
+    running = "运行中" if info.get("is_running") else "未启动（用 `ccr restart` 起）"
+    return f"CCR 状态：--use-ccr 当前路由到 [{route}]，服务{running}。"
 
 
 @click.group("profile", cls=AgentFriendlyGroup)
@@ -53,13 +76,15 @@ def profile_list(for_hook: bool):
         click.echo()
         if not profiles:
             click.echo("当前可用 profile：无（尚未在 WebUI 设置里创建任何 profile）。")
-            return
-        click.echo("当前可用 profile（--use-profile 可填 name）：")
-        for p in profiles:
-            active = "（激活中）" if p.id == store.active_profile_id else ""
-            click.echo(
-                f"  - {p.name}{active}  [{p.endpoint_type}]  model={p.default_model or '-'}"
-            )
+        else:
+            click.echo("当前可用 profile（--use-profile 可填 name）：")
+            for p in profiles:
+                active = "（激活中）" if p.id == store.active_profile_id else ""
+                click.echo(
+                    f"  - {p.name}{active}  [{p.endpoint_type}]  model={p.default_model or '-'}"
+                )
+        click.echo()
+        click.echo(_ccr_hint())
         return
 
     if not profiles:
