@@ -3531,6 +3531,171 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-muted);
 }
 
+/* --- Token calendar modal --- */
+.cs-cal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.cs-cal-card {
+  width: min(640px, calc(100vw - 2 * var(--spacing-lg)));
+  max-height: calc(100vh - 2 * var(--spacing-lg));
+  overflow: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.cs-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.cs-cal-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.cs-cal-month-label {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  min-width: 7em;
+  text-align: center;
+}
+
+.cs-cal-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.cs-cal-nav-btn:hover:not(:disabled) {
+  background: var(--accent-primary-10);
+  color: var(--accent-primary);
+}
+
+.cs-cal-nav-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.cs-cal-total {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.cs-cal-total strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+
+.cs-cal-actions {
+  display: inline-flex;
+  gap: var(--spacing-sm);
+}
+
+.cs-cal-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.cs-cal-progress-bar {
+  height: 100%;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--accent-primary);
+  animation: cs-cal-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes cs-cal-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.cs-cal-error {
+  font-size: var(--font-size-sm);
+  color: var(--accent-error, #e5484d);
+}
+
+.cs-cal-retry {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: inherit;
+}
+
+.cs-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cs-cal-weekday {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.cs-cal-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 2px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  min-height: 52px;
+}
+
+.cs-cal-cell-out {
+  opacity: 0.35;
+}
+
+.cs-cal-cell-today {
+  border-color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px var(--accent-primary);
+}
+
+.cs-cal-day {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.cs-cal-tokens {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
 /* === Recipe List — grid/list view toggle === */
 .rl-view-toggle {
   display: inline-flex;

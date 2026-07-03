@@ -68,7 +68,31 @@
     "awaitingReply": "正在等待回复…",
     "sendFailed": "发送失败：{{error}}",
     "refresh": "刷新",
-    "replyStalled": "回复时间较长——点刷新查看最新内容。"
+    "replyStalled": "回复时间较长——点刷新查看最新内容。",
+    "tokenCalendar": {
+      "open": "用量月历",
+      "title": "词元 (token) 用量月历",
+      "monthLabel": "{{year}}年{{month}}月",
+      "monthTotal": "当月总量",
+      "refresh": "刷新",
+      "close": "关闭",
+      "prevMonth": "上一月",
+      "nextMonth": "下一月",
+      "loading": "正在计算…",
+      "noData": "无数据",
+      "error": "加载失败：{{error}}",
+      "retry": "重试",
+      "cellTooltip": "输入 {{input}} · 输出 {{output}} · 缓存写入 {{cacheCreation}} · 缓存读取 {{cacheRead}}",
+      "weekday": {
+        "mon": "一",
+        "tue": "二",
+        "wed": "三",
+        "thu": "四",
+        "fri": "五",
+        "sat": "六",
+        "sun": "日"
+      }
+    }
   },
   "dashboard": {
     "title": "工作台",

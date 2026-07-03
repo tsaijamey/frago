@@ -648,3 +648,18 @@ export interface ClaudeSessionSendResponse {
   status: 'ready' | 'activating' | string;
   text: string;
 }
+
+export interface TokenDayBucket {
+  input: number;
+  output: number;
+  cache_creation: number;
+  cache_read: number;
+  total: number;
+}
+
+export interface TokenCalendarResponse {
+  month: string;
+  days: Record<string, TokenDayBucket>;
+  month_total: TokenDayBucket;
+  computed_at: string;
+}

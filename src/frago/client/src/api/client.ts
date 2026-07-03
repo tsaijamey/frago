@@ -82,6 +82,8 @@ import type {
   ClaudeSessionMessage,
   ClaudeSessionDetail,
   ClaudeSessionSendResponse,
+  TokenCalendarResponse,
+  TokenDayBucket,
 } from '@/types/api';
 
 export type {
@@ -157,6 +159,8 @@ export type {
   ClaudeSessionMessage,
   ClaudeSessionDetail,
   ClaudeSessionSendResponse,
+  TokenCalendarResponse,
+  TokenDayBucket,
 };
 
 // API base URL - defaults to same origin in production, configurable for dev
@@ -853,5 +857,11 @@ export async function sendClaudeSessionMessage(
       method: 'POST',
       body: JSON.stringify({ text }),
     }
+  );
+}
+
+export async function getTokenCalendar(month: string): Promise<TokenCalendarResponse> {
+  return fetchApi<TokenCalendarResponse>(
+    `/claude-sessions/token-calendar?month=${encodeURIComponent(month)}`
   );
 }

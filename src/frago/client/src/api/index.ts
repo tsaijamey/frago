@@ -577,6 +577,8 @@ export type {
   ClaudeSessionBlock,
   ClaudeSessionDetail,
   ClaudeSessionSendResponse,
+  TokenCalendarResponse,
+  TokenDayBucket,
 } from './client';
 
 export const getClaudeSessions = withMode(
@@ -603,6 +605,13 @@ export const getClaudeSessionDetail = withMode(
     _sid: string,
     _limit?: number
   ): Promise<httpApi.ClaudeSessionDetail> => {
+    throw new Error('Claude sessions API not available in pywebview mode');
+  },
+);
+
+export const getTokenCalendar = withMode(
+  (month: string): Promise<httpApi.TokenCalendarResponse> => httpApi.getTokenCalendar(month),
+  (_month: string): Promise<httpApi.TokenCalendarResponse> => {
     throw new Error('Claude sessions API not available in pywebview mode');
   },
 );

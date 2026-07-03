@@ -13,13 +13,17 @@ via the UI-only ``UiSessionRunner``), and the detail view carries a ``done`` fla
 import asyncio
 import contextlib
 import json
+import re
+import threading
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from frago.session import claude_sessions as svc
-from frago.session import transcript_completion as tc
 from frago.server.services.ui_session_runner import UiSessionRunner
+from frago.session import claude_sessions as svc
+from frago.session import token_calendar as tcal
+from frago.session import transcript_completion as tc
 
 router = APIRouter()
 
@@ -77,6 +81,47 @@ async def list_claude_sessions(
         return svc.scan_sessions(days=days, since=since, until=until)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid date range: {e}") from e
+
+
+# --- Token calendar -------------------------------------------------------
+# 同步增量计算：缓存命中时亚秒级返回。锁保证同一时刻只有一个 compute 在跑，
+# 第二个请求在 to_thread 里等锁；不做后台 job、不做轮询。
+_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+_calendar_lock = threading.Lock()
+
+
+def _compute_calendar_locked() -> dict:
+    with _calendar_lock:
+        return tcal.compute_calendar()
+
+
+@router.get("/claude-sessions/token-calendar")
+async def get_token_calendar(
+    month: str = Query(..., description="Target month, YYYY-MM"),
+) -> dict:
+    """Return the per-day token aggregation for one month.
+
+    Runs the (incremental, file-cache-backed) compute in a worker thread so the
+    event loop stays free; concurrent requests serialize on a module lock.
+    """
+    if not _MONTH_RE.match(month):
+        raise HTTPException(status_code=400, detail=f"Invalid month (want YYYY-MM): {month}")
+
+    daily = await asyncio.to_thread(_compute_calendar_locked)
+
+    days = {d: v for d, v in daily.items() if d.startswith(month + "-")}
+    month_total = {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "total": 0}
+    for bucket in days.values():
+        for field in month_total:
+            month_total[field] += int(bucket.get(field, 0))
+
+    return {
+        "month": month,
+        "days": days,
+        "month_total": month_total,
+        "computed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
 
 
 @router.get("/claude-sessions/{sid}")

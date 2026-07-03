@@ -68,7 +68,31 @@
     "awaitingReply": "Waiting for reply…",
     "sendFailed": "Send failed: {{error}}",
     "refresh": "Refresh",
-    "replyStalled": "The reply is taking a while — refresh to check."
+    "replyStalled": "The reply is taking a while — refresh to check.",
+    "tokenCalendar": {
+      "open": "Token calendar",
+      "title": "Token usage calendar",
+      "monthLabel": "{{year}}-{{month2}}",
+      "monthTotal": "Month total",
+      "refresh": "Refresh",
+      "close": "Close",
+      "prevMonth": "Previous month",
+      "nextMonth": "Next month",
+      "loading": "Computing…",
+      "noData": "No data",
+      "error": "Failed to load: {{error}}",
+      "retry": "Retry",
+      "cellTooltip": "Input {{input}} · Output {{output}} · Cache write {{cacheCreation}} · Cache read {{cacheRead}}",
+      "weekday": {
+        "mon": "Mon",
+        "tue": "Tue",
+        "wed": "Wed",
+        "thu": "Thu",
+        "fri": "Fri",
+        "sat": "Sat",
+        "sun": "Sun"
+      }
+    }
   },
   "dashboard": {
     "title": "Dashboard",

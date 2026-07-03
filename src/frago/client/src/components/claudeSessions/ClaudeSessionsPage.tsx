@@ -9,12 +9,14 @@
  * native in-app React page using the shared theme tokens.
  */
 
-import { RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { CalendarDays, RefreshCw } from 'lucide-react';
 import { useSessionsList } from './useSessionsList';
 import { useSessionDetail } from './useSessionDetail';
 import SessionsToolbar from './SessionsToolbar';
 import SessionList from './SessionList';
 import SessionDetailPanel from './SessionDetailPanel';
+import TokenCalendarModal from './TokenCalendarModal';
 
 export default function ClaudeSessionsPage() {
   const {
@@ -54,6 +56,8 @@ export default function ClaudeSessionsPage() {
     refreshDetail,
   } = useSessionDetail();
 
+  const [calendarOpen, setCalendarOpen] = useState(false);
+
   return (
     <div className="page-scroll" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
       {/* Header */}
@@ -62,17 +66,30 @@ export default function ClaudeSessionsPage() {
           <h1 className="cs-title">{t('claudeSessions.title')}</h1>
           <p className="cs-subtitle">{t('claudeSessions.subtitle')}</p>
         </div>
-        <button
-          type="button"
-          className="cs-refresh"
-          onClick={() => fetchSessions(days)}
-          disabled={loading}
-          title={t('claudeSessions.rescan')}
-        >
-          <RefreshCw size={15} className={loading ? 'cs-spin' : ''} />
-          <span>{t('claudeSessions.rescan')}</span>
-        </button>
+        <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
+          <button
+            type="button"
+            className="cs-refresh"
+            onClick={() => setCalendarOpen(true)}
+            title={t('claudeSessions.tokenCalendar.open')}
+          >
+            <CalendarDays size={15} />
+            <span>{t('claudeSessions.tokenCalendar.open')}</span>
+          </button>
+          <button
+            type="button"
+            className="cs-refresh"
+            onClick={() => fetchSessions(days)}
+            disabled={loading}
+            title={t('claudeSessions.rescan')}
+          >
+            <RefreshCw size={15} className={loading ? 'cs-spin' : ''} />
+            <span>{t('claudeSessions.rescan')}</span>
+          </button>
+        </div>
       </div>
+
+      {calendarOpen && <TokenCalendarModal t={t} onClose={() => setCalendarOpen(false)} />}
 
       <SessionsToolbar
         t={t}
