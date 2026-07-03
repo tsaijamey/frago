@@ -188,6 +188,7 @@ ensure_newline_before_comments = true
 
 [dependency-groups]
 dev = [
+    "httpx>=0.27.0",
     "xlwt>=1.3.0",
 ]
 
