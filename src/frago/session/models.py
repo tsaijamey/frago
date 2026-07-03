@@ -8,10 +8,9 @@ Defines all data structures required for Agent session monitoring, including:
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # ============================================================
 # Enum Types
@@ -85,12 +84,9 @@ class SessionStep(BaseModel):
         ..., description="Content (full content)"
     )
     raw_uuid: str = Field(..., description="UUID of the original record")
-    parent_uuid: Optional[str] = Field(None, description="UUID of the parent message")
-    tool_call_id: Optional[str] = Field(None, description="Tool call ID for pairing tool_call and tool_result")
-    tool_name: Optional[str] = Field(None, description="Tool name for tool_call steps")
-
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    parent_uuid: str | None = Field(None, description="UUID of the parent message")
+    tool_call_id: str | None = Field(None, description="Tool call ID for pairing tool_call and tool_result")
+    tool_name: str | None = Field(None, description="Tool name for tool_call steps")
 
 
 class ToolCallRecord(BaseModel):
@@ -105,15 +101,12 @@ class ToolCallRecord(BaseModel):
     tool_name: str = Field(..., description="Tool name")
     input_summary: str = Field(..., description="Input parameter summary")
     called_at: datetime = Field(..., description="Call time")
-    result_summary: Optional[str] = Field(None, description="Execution result summary")
-    completed_at: Optional[datetime] = Field(None, description="Completion time")
-    duration_ms: Optional[int] = Field(None, ge=0, description="Execution duration (milliseconds)")
+    result_summary: str | None = Field(None, description="Execution result summary")
+    completed_at: datetime | None = Field(None, description="Completion time")
+    duration_ms: int | None = Field(None, ge=0, description="Execution duration (milliseconds)")
     status: ToolCallStatus = Field(
         default=ToolCallStatus.PENDING, description="Call status"
     )
-
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class MonitoredSession(BaseModel):
@@ -125,10 +118,10 @@ class MonitoredSession(BaseModel):
     session_id: str = Field(..., description="Claude Code session ID")
     agent_type: AgentType = Field(..., description="Agent type identifier")
     project_path: str = Field(..., description="Project absolute path")
-    name: Optional[str] = Field(None, description="Session name from first user message")
+    name: str | None = Field(None, description="Session name from first user message")
     source_file: str = Field(..., description="Original session file path")
     started_at: datetime = Field(..., description="Monitoring start time")
-    ended_at: Optional[datetime] = Field(None, description="Monitoring end time")
+    ended_at: datetime | None = Field(None, description="Monitoring end time")
     status: SessionStatus = Field(
         default=SessionStatus.RUNNING, description="Session status"
     )
@@ -140,17 +133,14 @@ class MonitoredSession(BaseModel):
         description="Session source (terminal/web/unknown)",
     )
     # --- Phase 1 domain fields (run-as-domain-knowledge-base spec) ---
-    domain: Optional[str] = Field(
+    domain: str | None = Field(
         default=None,
         description="Frago domain this session is attached to (e.g. twitter / CROSS-twitter-feishu / misc)",
     )
-    source_jsonl: Optional[str] = Field(
+    source_jsonl: str | None = Field(
         default=None,
         description="Absolute path to the source ~/.claude/projects/.../{session_id}.jsonl file",
     )
-
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class ToolUsageStats(BaseModel):
@@ -173,14 +163,11 @@ class SessionSummary(BaseModel):
     tool_call_count: int = Field(default=0, ge=0, description="Total tool call count")
     tool_success_count: int = Field(default=0, ge=0, description="Successful tool call count")
     tool_error_count: int = Field(default=0, ge=0, description="Failed tool call count")
-    most_used_tools: List[ToolUsageStats] = Field(
+    most_used_tools: list[ToolUsageStats] = Field(
         default_factory=list, description="Most used tools (top 5)"
     )
-    model: Optional[str] = Field(None, description="Model used")
+    model: str | None = Field(None, description="Model used")
     final_status: SessionStatus = Field(..., description="Final status")
-
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 # ============================================================
@@ -188,7 +175,7 @@ class SessionSummary(BaseModel):
 # ============================================================
 
 
-def truncate_content(content: str, max_length: int = 0) -> str:
+def truncate_content(content: str, max_length: int = 0) -> str:  # noqa: ARG001 — deprecated param kept for caller compatibility
     """Return content (no longer truncates)
 
     Args:
@@ -201,7 +188,7 @@ def truncate_content(content: str, max_length: int = 0) -> str:
     return content
 
 
-def extract_tool_input_summary(input_data: Dict[str, Any]) -> str:
+def extract_tool_input_summary(input_data: dict[str, Any]) -> str:
     """Extract summary from tool input data
 
     Args:
