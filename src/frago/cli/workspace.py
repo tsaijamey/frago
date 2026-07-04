@@ -16,7 +16,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from frago.compat import get_windows_subprocess_kwargs
 
@@ -66,7 +65,7 @@ class WorkspaceChangeItem:
     change_type: str     # "added", "modified", "deleted"
 
     @property
-    def canonical_id(self) -> Optional[str]:
+    def canonical_id(self) -> str | None:
         """Convert dirname back to canonical ID, None for __system__."""
         if self.workspace == "__system__":
             return None
@@ -77,7 +76,7 @@ class WorkspaceChangeItem:
 class WorkspaceChanges:
     """Result of workspace change detection after sync."""
     items: list[WorkspaceChangeItem] = field(default_factory=list)
-    source_device: Optional[str] = None
+    source_device: str | None = None
 
     @property
     def has_changes(self) -> bool:
@@ -89,7 +88,7 @@ class WorkspaceChanges:
 # =============================================================================
 
 
-def get_canonical_id(project_path: Path) -> Optional[str]:
+def get_canonical_id(project_path: Path) -> str | None:
     """Extract canonical ID from a project directory.
 
     Uses git remote origin URL, normalized to a stable form:
@@ -150,7 +149,7 @@ def canonical_id_to_dirname(canonical_id: str) -> str:
     return canonical_id.replace("/", "__")
 
 
-def dirname_to_canonical_id(dirname: str) -> Optional[str]:
+def dirname_to_canonical_id(dirname: str) -> str | None:
     """Convert directory name back to canonical ID.
 
     github.com__user__repo → github.com/user/repo
@@ -160,7 +159,7 @@ def dirname_to_canonical_id(dirname: str) -> Optional[str]:
     return dirname.replace("__", "/")
 
 
-def find_project_by_canonical_id(canonical_id: str) -> Optional[Path]:
+def find_project_by_canonical_id(canonical_id: str) -> Path | None:
     """Find a project's local path by its canonical ID (git remote URL).
 
     Searches auto-detected scan roots for a project whose git remote
@@ -332,16 +331,22 @@ def _sync_file(src: Path, dst: Path) -> bool:
 # that have no business in workspace sync (e.g. nested git repos, node deps,
 # Python venvs, byte-compiled caches). Top-level callers can additionally
 # pass exclude_names for context-specific exclusions.
+#
+# Browser profiles: the new nested layout (~/.frago/profiles/<browser>/<port>)
+# is excluded wholesale. The legacy flat names (chrome_profile/edge_profile)
+# are kept during a transition window — a user's existing 7.2G legacy profile
+# still lives at the top level and must not be synced out until migrated.
 _RECURSIVE_HARD_EXCLUDE: set[str] = {
     ".git", "node_modules", ".venv", "venv", "__pycache__",
-    ".cache", ".tmp", "chrome_profile", "edge_profile",
+    ".cache", ".tmp", "profiles", "chrome_profile", "edge_profile",
+    "chromium_profile",
 }
 
 
 def _sync_dir(
     src: Path,
     dst: Path,
-    exclude_names: Optional[set[str]] = None,
+    exclude_names: set[str] | None = None,
     delete_extra: bool = True,
     _max_depth: int = 16,
 ) -> bool:
@@ -398,18 +403,14 @@ def _sync_dir(
 
         src_names.add(name)
 
-        if real_item.is_file():
-            if _sync_file(real_item, dst / name):
-                changed = True
-        elif real_item.is_dir():
-            if _sync_dir(
-                real_item,
-                dst / name,
-                exclude_names=exclude_names,
-                delete_extra=delete_extra,
-                _max_depth=_max_depth - 1,
-            ):
-                changed = True
+        if real_item.is_file() and _sync_file(real_item, dst / name) or real_item.is_dir() and _sync_dir(
+            real_item,
+            dst / name,
+            exclude_names=exclude_names,
+            delete_extra=delete_extra,
+            _max_depth=_max_depth - 1,
+        ):
+            changed = True
 
     # Remove entries in dst that no longer exist in src
     if delete_extra and dst.exists():
@@ -559,7 +560,7 @@ def _encoded_to_readable_name(encoded_name: str) -> str:
 def _collect_project_workspace(
     project: ProjectInfo,
     canonical_id: str,
-) -> Optional[str]:
+) -> str | None:
     """Collect project .claude/ → workspaces/<canonical-id>/ (bidirectional).
 
     1. Local → workspace: additive merge (don't delete workspace extras)
@@ -706,13 +707,10 @@ def summarize_workspace_changes(changes: WorkspaceChanges) -> list[dict]:
 
     for item in changes.items:
         # Determine resource-level path (top-level resource within workspace)
+        # e.g. skills/git-xxx/... → "skills/git-xxx"
+        # e.g. .claude/docs/arch.md → ".claude/docs"
         path_parts = item.path.split("/")
-        if len(path_parts) >= 2:
-            # e.g. skills/git-xxx/... → "skills/git-xxx"
-            # e.g. .claude/docs/arch.md → ".claude/docs"
-            resource = "/".join(path_parts[:2])
-        else:
-            resource = item.path
+        resource = "/".join(path_parts[:2]) if len(path_parts) >= 2 else item.path
 
         key = (item.workspace, resource)
         # Prefer "added" > "modified" > "deleted" when merging

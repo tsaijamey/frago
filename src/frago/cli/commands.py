@@ -11,10 +11,19 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import click
 
+from ..chrome.cdp.exceptions import CDPError
+from ..chrome.cdp.session import CDPSession
+from ..chrome.cdp.tab_group_manager import (
+    ChromeCommandError,
+    build_group_index,
+    create_session,
+    route_tab_for_navigate,
+)
+from ..run import perception, run_log_adapter
 from .agent_friendly import AgentFriendlyCommand
 
 # =============================================================================
@@ -764,16 +773,6 @@ def print_usage(func):
         return func(*args, **kwargs)
     return wrapper
 
-from ..chrome.cdp.exceptions import CDPError
-from ..chrome.cdp.session import CDPSession
-from ..chrome.cdp.tab_group_manager import (
-    ChromeCommandError,
-    build_group_index,
-    create_session,
-    route_tab_for_navigate,
-)
-from ..run import perception, run_log_adapter
-
 # =============================================================================
 # Custom parameter types (with friendly error messages and usage examples)
 # =============================================================================
@@ -902,7 +901,7 @@ def _print_msg(
     status: str,
     message: str,
     action_type: str = "other",
-    log_data: Optional[Dict[str, Any]] = None
+    log_data: dict[str, Any] | None = None
 ) -> None:
     """
     Print formatted message and automatically write to run log
@@ -976,7 +975,7 @@ def _get_run_screenshots_dir() -> Path:
 # Tab management helpers
 # =============================================================================
 
-def _get_current_target_id(session: CDPSession) -> Optional[str]:
+def _get_current_target_id(session: CDPSession) -> str | None:
     """Extract target ID from the current WebSocket connection URL."""
     ws_url = getattr(session, '_ws_url', None)
     if ws_url:
@@ -987,7 +986,7 @@ def _get_current_target_id(session: CDPSession) -> Optional[str]:
     return None
 
 
-def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) -> Optional[str]:
+def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) -> str | None:
     """Find which group a tab belongs to. Returns group name or None."""
     try:
         from ..chrome.cdp.tab_group_manager import TabGroupManager
@@ -1090,7 +1089,7 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
 )
 @click.pass_context
 @print_usage
-def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str] = None, load_timeout: float = 30, no_border: bool = False):
+def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = None, load_timeout: float = 30, no_border: bool = False):
     """Navigate to URL and get page features after loading"""
     try:
         # navigate does its own tab routing, so skip group enforcement here
@@ -1167,7 +1166,7 @@ def navigate(ctx, url: str, group: Optional[str] = None, wait_for: Optional[str]
 @group_option
 @click.pass_context
 @print_usage
-def click_element(ctx, selector: str, wait_timeout: int, precise: bool, group: Optional[str] = None):
+def click_element(ctx, selector: str, wait_timeout: int, precise: bool, group: str | None = None):
     """Click element by selector and get page features"""
     try:
         with create_session(ctx, group=group) as session:
@@ -1207,7 +1206,7 @@ def click_element(ctx, selector: str, wait_timeout: int, precise: bool, group: O
 @group_option
 @click.pass_context
 @print_usage
-def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: Optional[str] = None):
+def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: str | None = None):
     """
     Capture page screenshot
 
@@ -1261,7 +1260,7 @@ def screenshot(ctx, output_file: str, full_page: bool, quality: int, group: Opti
 @group_option
 @click.pass_context
 @print_usage
-def execute_javascript(ctx, script: str, return_value: bool, group: Optional[str] = None):
+def execute_javascript(ctx, script: str, return_value: bool, group: str | None = None):
     """
     Execute JavaScript code and automatically capture page features
 
@@ -1271,7 +1270,7 @@ def execute_javascript(ctx, script: str, return_value: bool, group: Optional[str
         # Check if it's a file path
         if os.path.exists(script) and os.path.isfile(script):
             try:
-                with open(script, 'r', encoding='utf-8') as f:
+                with open(script, encoding='utf-8') as f:
                     script_content = f.read()
                 if ctx.obj['DEBUG']:
                     _print_msg("debug", f"Loaded script from file: {script}", "interaction")
@@ -1305,7 +1304,7 @@ def execute_javascript(ctx, script: str, return_value: bool, group: Optional[str
 @group_option
 @click.pass_context
 @print_usage
-def get_title(ctx, group: Optional[str] = None):
+def get_title(ctx, group: str | None = None):
     """Get page title"""
     try:
         with create_session(ctx, group=group) as session:
@@ -1349,7 +1348,7 @@ def _get_next_output_number(outputs_dir: Path, ext: str = ".txt") -> int:
 @group_option
 @click.pass_context
 @print_usage
-def get_content(ctx, selector: str, desc: Optional[str], group: Optional[str] = None):
+def get_content(ctx, selector: str, desc: str | None, group: str | None = None):
     """
     Get text content from page or element
 
@@ -1493,7 +1492,7 @@ def status(ctx):
 @group_option
 @click.pass_context
 @print_usage
-def scroll(ctx, distance: int, group: Optional[str] = None):
+def scroll(ctx, distance: int, group: str | None = None):
     """
     Scroll page and automatically capture page features
 
@@ -1537,7 +1536,7 @@ def scroll(ctx, distance: int, group: Optional[str] = None):
 @group_option
 @click.pass_context
 @print_usage
-def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str, group: Optional[str] = None):
+def scroll_to(ctx, selector: str | None, text: str | None, block: str, group: str | None = None):
     """
     Scroll to specified element
 
@@ -1623,7 +1622,7 @@ def scroll_to(ctx, selector: Optional[str], text: Optional[str], block: str, gro
 @group_option
 @click.pass_context
 @print_usage
-def wait(ctx, seconds: float, group: Optional[str] = None):
+def wait(ctx, seconds: float, group: str | None = None):
     """Wait for specified seconds (supports decimals, e.g., 0.5)"""
     try:
         with create_session(ctx, group=group) as session:
@@ -1640,7 +1639,7 @@ def wait(ctx, seconds: float, group: Optional[str] = None):
 @group_option
 @click.pass_context
 @print_usage
-def zoom(ctx, factor: float, group: Optional[str] = None):
+def zoom(ctx, factor: float, group: str | None = None):
     """
     Set page zoom level and automatically capture page features
 
@@ -1669,7 +1668,7 @@ def zoom(ctx, factor: float, group: Optional[str] = None):
 @group_option
 @click.pass_context
 @print_usage
-def clear_effects(ctx, group: Optional[str] = None):
+def clear_effects(ctx, group: str | None = None):
     """Clear all visual effects"""
     try:
         with create_session(ctx, group=group) as session:
@@ -1711,7 +1710,7 @@ def clear_effects(ctx, group: Optional[str] = None):
 @group_option
 @click.pass_context
 @print_usage
-def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool, group: Optional[str] = None):
+def highlight(ctx, selector: str, color: str, width: int, life_time: int, longlife: bool, group: str | None = None):
     """Highlight specified element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
@@ -1742,7 +1741,7 @@ def highlight(ctx, selector: str, color: str, width: int, life_time: int, longli
 @group_option
 @click.pass_context
 @print_usage
-def pointer(ctx, selector: str, life_time: int, longlife: bool, group: Optional[str] = None):
+def pointer(ctx, selector: str, life_time: int, longlife: bool, group: str | None = None):
     """Show mouse pointer on element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
@@ -1773,7 +1772,7 @@ def pointer(ctx, selector: str, life_time: int, longlife: bool, group: Optional[
 @group_option
 @click.pass_context
 @print_usage
-def spotlight(ctx, selector: str, life_time: int, longlife: bool, group: Optional[str] = None):
+def spotlight(ctx, selector: str, life_time: int, longlife: bool, group: str | None = None):
     """Show element with spotlight effect"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
@@ -1811,7 +1810,7 @@ def spotlight(ctx, selector: str, life_time: int, longlife: bool, group: Optiona
 @group_option
 @click.pass_context
 @print_usage
-def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool, group: Optional[str] = None):
+def annotate(ctx, selector: str, text: str, position: str, life_time: int, longlife: bool, group: str | None = None):
     """Add annotation on element"""
     lifetime_ms = 0 if longlife else life_time * 1000
     try:
@@ -1865,7 +1864,7 @@ def annotate(ctx, selector: str, text: str, position: str, life_time: int, longl
 @group_option
 @click.pass_context
 @print_usage
-def underline(ctx, selector: Optional[str], text: Optional[str], color: str, width: int, duration: int, life_time: int, longlife: bool, group: Optional[str] = None):
+def underline(ctx, selector: str | None, text: str | None, color: str, width: int, duration: int, life_time: int, longlife: bool, group: str | None = None):
     """
     Draw line animation under element text line by line
 
@@ -2101,7 +2100,7 @@ def init(force: bool):
 @click.option(
     '--profile-dir',
     type=click.Path(),
-    help='Chrome user data directory (default ~/.frago/chrome_profile)'
+    help='Chrome user data directory (default ~/.frago/profiles/<browser>/<port>)'
 )
 @click.option(
     '--no-kill',
@@ -2167,9 +2166,6 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
 
     profile_path = Path(profile_dir) if profile_dir else None
 
-    # Detect if a non-default port was explicitly specified
-    use_port_suffix = (port != 9222) and (profile_dir is None)
-
     launcher = ChromeLauncher(
         headless=headless,
         void=void,
@@ -2181,7 +2177,6 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
         window_x=window_x,
         window_y=window_y,
         profile_dir=profile_path,
-        use_port_suffix=use_port_suffix,
         browser=browser,
     )
 
@@ -2559,10 +2554,11 @@ def switch_tab(ctx, tab_id: str):
         # Find matching tab
         target = None
         for t in targets:
-            if t.get('type') == 'page':
-                if t.get('id') == tab_id or t.get('id', '').startswith(tab_id):
-                    target = t
-                    break
+            if t.get('type') == 'page' and (
+                t.get('id') == tab_id or t.get('id', '').startswith(tab_id)
+            ):
+                target = t
+                break
 
         if not target:
             click.echo(f"No matching tab found: {tab_id}", err=True)
@@ -2639,10 +2635,11 @@ def close_tab(ctx, tab_id: str):
 
         target = None
         for t in targets:
-            if t.get('type') == 'page':
-                if t.get('id') == tab_id or t.get('id', '').startswith(tab_id):
-                    target = t
-                    break
+            if t.get('type') == 'page' and (
+                t.get('id') == tab_id or t.get('id', '').startswith(tab_id)
+            ):
+                target = t
+                break
 
         if not target:
             click.echo(f"No matching tab found: {tab_id}", err=True)

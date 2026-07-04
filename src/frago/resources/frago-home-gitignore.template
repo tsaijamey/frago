@@ -13,10 +13,15 @@ ingested_tasks.json
 message_cache.json
 traces/
 threads/
+# CDP browser profiles: new nested layout (profiles/<browser>/<port>)
+profiles/
+# Legacy flat names kept during transition (existing profiles still at top level)
 chrome_profile/
 chrome_profile_*/
 edge_profile/
 edge_profile_*/
+chromium_profile/
+chromium_profile_*/
 chrome/extension-profile/
 current_run
 projects/.tmp/

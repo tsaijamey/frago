@@ -11,8 +11,8 @@ import platform
 import shutil
 import subprocess
 import time
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Optional
 
 from frago.chrome.cdp.browser_detection import (
     BrowserType,
@@ -21,7 +21,6 @@ from frago.chrome.cdp.browser_detection import (
 )
 from frago.chrome.cdp.process import kill_existing_chrome
 from frago.chrome.cdp.transport import cdp_get, cdp_ws_connect
-
 
 # System profile directories (for syncing bookmarks, extensions, etc.)
 SYSTEM_PROFILE_DIRS: dict[str, dict[BrowserType, list[str]]] = {
@@ -42,12 +41,23 @@ SYSTEM_PROFILE_DIRS: dict[str, dict[BrowserType, list[str]]] = {
     },
 }
 
-# frago profile directory names
+# frago profile directory names (legacy flat layout).
+# Kept only to locate old directories for lazy migration; the new layout
+# derives paths from BrowserType.value + port (see _profile_dir_for).
 FRAGO_PROFILE_NAMES: dict[BrowserType, str] = {
     BrowserType.CHROME: "chrome_profile",
     BrowserType.EDGE: "edge_profile",
     BrowserType.CHROMIUM: "chromium_profile",
 }
+
+# New nested layout root: ~/.frago/profiles/<browser>/<port>/
+NEW_PROFILE_ROOT = Path.home() / ".frago" / "profiles"
+
+# Default CDP debugging port; always explicit in the new layout path.
+DEFAULT_CDP_PORT = 9222
+
+# Cross-platform migration lock lives at the layout root.
+_MIGRATE_LOCK = NEW_PROFILE_ROOT / ".migrate.lock"
 
 
 class ChromeLauncher:
@@ -59,15 +69,14 @@ class ChromeLauncher:
         void: bool = False,
         app_mode: bool = False,
         kiosk_mode: bool = False,
-        app_url: Optional[str] = None,
+        app_url: str | None = None,
         port: int = 9222,
         width: int = 1280,
         height: int = 960,
-        window_x: Optional[int] = None,
-        window_y: Optional[int] = None,
-        profile_dir: Optional[Path] = None,
-        use_port_suffix: bool = False,
-        browser: Optional[str] = None,
+        window_x: int | None = None,
+        window_y: int | None = None,
+        profile_dir: Path | None = None,
+        browser: str | None = None,
     ):
         self.system = platform.system()
 
@@ -84,7 +93,7 @@ class ChromeLauncher:
         self.app_mode = app_mode
         self.kiosk_mode = kiosk_mode
         self.app_url = app_url
-        self.browser_process: Optional[subprocess.Popen] = None
+        self.browser_process: subprocess.Popen | None = None
 
         # Validate app/kiosk mode parameters
         if (self.app_mode or self.kiosk_mode) and not self.app_url:
@@ -99,17 +108,19 @@ class ChromeLauncher:
 
         # Profile directory: use specified one first, otherwise use default location
         if profile_dir:
+            # User-supplied path bypasses the layout entirely; no migration.
             self.profile_dir = Path(profile_dir)
         else:
-            profile_name = FRAGO_PROFILE_NAMES.get(self.browser_type, "chrome_profile")
-            if use_port_suffix:
-                # For non-default ports, use directory name with port number to avoid conflicts
-                self.profile_dir = Path.home() / ".frago" / f"{profile_name}_{port}"
-            else:
-                # Default use ~/.frago/<browser>_profile
-                self.profile_dir = Path.home() / ".frago" / profile_name
+            # New nested layout: ~/.frago/profiles/<browser>/<port>/ — port is
+            # always explicit (default 9222 included), eliminating the old
+            # naming asymmetry. Migration of a legacy flat directory happens in
+            # launch(), after any old browser process is killed — merely
+            # constructing a launcher (stop/status paths) must never move a
+            # profile a live browser is still writing to.
+            self.profile_dir = NEW_PROFILE_ROOT / self.browser_type.value / str(port)
+        self._default_layout = profile_dir is None
 
-    def _resolve_browser(self, browser: Optional[str]) -> tuple[BrowserType, Optional[str]]:
+    def _resolve_browser(self, browser: str | None) -> tuple[BrowserType, str | None]:
         """
         Resolve browser type and path based on user preference.
 
@@ -135,29 +146,29 @@ class ChromeLauncher:
 
     # Keep chrome_path as alias for backward compatibility
     @property
-    def chrome_path(self) -> Optional[str]:
+    def chrome_path(self) -> str | None:
         return self.browser_path
 
     @chrome_path.setter
-    def chrome_path(self, value: Optional[str]) -> None:
+    def chrome_path(self, value: str | None) -> None:
         self.browser_path = value
 
     # Keep chrome_process as alias for backward compatibility
     @property
-    def chrome_process(self) -> Optional[subprocess.Popen]:
+    def chrome_process(self) -> subprocess.Popen | None:
         return self.browser_process
 
     @chrome_process.setter
-    def chrome_process(self, value: Optional[subprocess.Popen]) -> None:
+    def chrome_process(self, value: subprocess.Popen | None) -> None:
         self.browser_process = value
 
     # _find_chrome is deprecated, use find_browser() module function instead
-    def _find_chrome(self) -> Optional[str]:
+    def _find_chrome(self) -> str | None:
         """Deprecated: use find_browser() instead"""
         _, path = get_default_browser(self.system)
         return path
 
-    def _get_system_profile_dir(self) -> Optional[Path]:
+    def _get_system_profile_dir(self) -> Path | None:
         """Get system default browser user data directory based on browser type"""
         # Get profile paths for current browser type
         profile_paths = SYSTEM_PROFILE_DIRS.get(self.system, {}).get(self.browser_type, [])
@@ -170,6 +181,146 @@ class ChromeLauncher:
                 return path
 
         return None
+
+    def _legacy_profile_dir(self, browser_type: BrowserType, port: int) -> Path | None:
+        """Return the legacy flat directory to migrate from, if it exists.
+
+        Legacy names: ``<browser>_profile`` (default port 9222, no suffix) and
+        ``<browser>_profile_<port>`` (other ports). The default-port name has no
+        suffix, so it cannot be split on the literal ``_<port>`` pattern — it is
+        special-cased to the default port.
+        """
+        name = FRAGO_PROFILE_NAMES.get(browser_type)
+        if name is None:
+            return None
+        if port == DEFAULT_CDP_PORT:
+            candidate = Path.home() / ".frago" / name
+        else:
+            candidate = Path.home() / ".frago" / f"{name}_{port}"
+        return candidate if candidate.exists() else None
+
+    @contextmanager
+    def _migration_lock(self):
+        """Cross-platform advisory lock serializing the legacy migration step.
+
+        Unix uses ``fcntl``; Windows uses ``msvcrt``. Both guard the same lock
+        file so concurrent launches of the same target directory don't race.
+        """
+        _MIGRATE_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(_MIGRATE_LOCK), os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            if self.system == "Windows":
+                import msvcrt
+
+                # LK_NBLCK = 0x01: non-blocking lock; bail instead of spinning.
+                try:
+                    msvcrt.locking(fd, 1, 1)
+                except OSError as err:
+                    raise RuntimeError(
+                        "another frago process is migrating the browser profile"
+                    ) from err
+            else:
+                import fcntl
+
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as err:
+                    raise RuntimeError(
+                        "another frago process is migrating the browser profile"
+                    ) from err
+            yield
+        finally:
+            with suppress(OSError):
+                os.close(fd)
+
+    def _migrate_legacy_profile(
+        self, browser_type: BrowserType, port: int, profile_dir: Path
+    ) -> None:
+        """Lazily move a legacy flat profile into the new nested layout.
+
+        Only runs when the legacy directory exists and the new one does not.
+        ``shutil.move`` renames in place on the same filesystem (O(1) inode
+        move, never touching the 7.2G of login state) and transparently falls
+        back to copy+delete across filesystems. A successful move prints one
+        line so the user knows their data moved.
+
+        Skipped when something is still listening on the CDP port: a live
+        browser may be writing to the legacy directory, and moving it out from
+        under a running process would split the profile.
+        """
+        legacy_dir = self._legacy_profile_dir(browser_type, port)
+        # Nothing to migrate: either already migrated (target has real data),
+        # or never existed. A target with no files anywhere in its tree is a
+        # leftover mkdir (possibly with empty subdirs), handled under the lock.
+        if legacy_dir is None or self._has_profile_data(profile_dir):
+            return
+
+        if self._port_in_use(port):
+            print(
+                f"[frago] skipping profile migration: port {port} is in use, "
+                f"{legacy_dir} may still be open in a running browser"
+            )
+            return
+
+        with self._migration_lock():
+            # Re-check under the lock: another process may have migrated first.
+            # A target without profile data (leftover mkdir, possibly with
+            # empty subdirs) doesn't count as migrated — remove it, or
+            # shutil.move would nest the legacy dir inside it instead of
+            # replacing it.
+            if profile_dir.exists():
+                if self._has_profile_data(profile_dir):
+                    return
+                shutil.rmtree(profile_dir)
+            if not legacy_dir.exists():
+                return
+            profile_dir.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.move(str(legacy_dir), str(profile_dir))
+            except OSError:
+                # A cross-filesystem move that fails midway leaves a partial
+                # destination; remove it so the next launch can retry instead
+                # of silently adopting an incomplete profile.
+                if profile_dir.exists():
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+                raise
+            print(
+                f"[frago] migrated legacy profile {legacy_dir} → {profile_dir}"
+            )
+
+    @staticmethod
+    def _has_profile_data(profile_dir: Path) -> bool:
+        """True when the directory tree contains at least one file.
+
+        Empty directories (including nested empty ones like a bare Default/)
+        are launch leftovers, not a migrated profile.
+        """
+        if not profile_dir.exists():
+            return False
+        return any(p.is_file() for p in profile_dir.rglob("*"))
+
+    @classmethod
+    def _wait_port_free(cls, port: int, timeout: float = 15.0) -> bool:
+        """Wait (bounded) for the CDP port to stop accepting connections.
+
+        Returns True when the port is free, False when it is still busy after
+        the timeout (migration then skips via its own port guard).
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not cls._port_in_use(port):
+                return True
+            time.sleep(0.5)
+        return not cls._port_in_use(port)
+
+    @staticmethod
+    def _port_in_use(port: int) -> bool:
+        """Best-effort check whether something is listening on the CDP port."""
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
 
     def _init_profile_dir(self) -> None:
         """Initialize Chrome profile directory by syncing from system profile.
@@ -190,10 +341,8 @@ class ChromeLauncher:
                 local_state_src = system_profile / "Local State"
                 local_state_dst = self.profile_dir / "Local State"
                 if local_state_src.exists():
-                    try:
+                    with suppress(Exception):
                         shutil.copy2(local_state_src, local_state_dst)
-                    except Exception:
-                        pass
 
                 # Copy entire Default directory (excluding cache directories)
                 # This provides initial bookmarks, extensions, and settings
@@ -216,22 +365,18 @@ class ChromeLauncher:
                     "LOG.old",
                 }
 
-                def ignore_patterns(directory: str, files: list[str]) -> list[str]:
+                def ignore_patterns(_directory: str, files: list[str]) -> list[str]:
                     """Return list of files/dirs to ignore during copy"""
                     ignored = []
                     for f in files:
-                        if f in exclude_dirs or f in exclude_files:
-                            ignored.append(f)
-                        elif f.endswith(".log") or f.endswith(".lock"):
+                        if f in exclude_dirs or f in exclude_files or f.endswith(".log") or f.endswith(".lock"):
                             ignored.append(f)
                     return ignored
 
                 if default_src.exists():
-                    try:
+                    # Non-critical: continue with empty profile on failure
+                    with suppress(Exception):
                         shutil.copytree(default_src, default_dst, ignore=ignore_patterns)
-                    except Exception:
-                        # Non-critical: continue with empty profile
-                        pass
 
         # Set Chrome preferences to disable various UI prompts
         self._set_chrome_preferences()
@@ -246,7 +391,7 @@ class ChromeLauncher:
         # Load existing preferences if file exists
         if prefs_file.exists():
             try:
-                with open(prefs_file, "r", encoding="utf-8") as f:
+                with open(prefs_file, encoding="utf-8") as f:
                     prefs = json.load(f)
             except Exception:
                 prefs = {}
@@ -310,7 +455,7 @@ class ChromeLauncher:
             if not stealth_js_path.exists():
                 return False
 
-            with open(stealth_js_path, "r", encoding="utf-8") as f:
+            with open(stealth_js_path, encoding="utf-8") as f:
                 stealth_script = f.read()
 
             # Get first tab
@@ -411,6 +556,19 @@ class ChromeLauncher:
 
         if not self.chrome_path:
             return False
+
+        # Move a legacy flat profile into the nested layout now that any old
+        # browser process on this port has been killed. A browser with a large
+        # profile can take a while to release the port after terminate(), so
+        # wait (bounded) for it to free before the migration's port guard runs
+        # — otherwise the guard skips migration and _init_profile_dir would
+        # build a fresh profile, silently forfeiting the legacy login state.
+        # User-supplied --profile-dir bypasses the layout and never migrates.
+        if self._default_layout:
+            self._wait_port_free(self.debugging_port, timeout=15.0)
+            self._migrate_legacy_profile(
+                self.browser_type, self.debugging_port, self.profile_dir
+            )
 
         # Initialize profile directory
         self._init_profile_dir()
@@ -625,13 +783,11 @@ class ChromeLauncher:
 
             # Close all tabs except the first one
             for tab in page_tabs[1:]:
-                try:
+                with suppress(Exception):
                     cdp_get(
                         f"http://localhost:{self.debugging_port}/json/close/{tab['id']}",
                         timeout=2,
                     )
-                except Exception:
-                    pass
 
             # Navigate the remaining tab to the landing page
             kept_tab = page_tabs[0]
@@ -703,13 +859,11 @@ class ChromeLauncher:
                 if tid in managed_ids:
                     continue
                 # Orphan — close it
-                try:
+                with suppress(Exception):
                     cdp_get(
                         f"http://localhost:{self.debugging_port}/json/close/{tid}",
                         timeout=2,
                     )
-                except Exception:
-                    pass
         except Exception:
             pass  # Best-effort — don't block startup
 
