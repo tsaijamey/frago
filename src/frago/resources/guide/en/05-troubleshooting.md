@@ -73,11 +73,11 @@ tags:
    ```bash
    # Mac/Linux
    /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-     --remote-debugging-port=9222 --user-data-dir=~/.frago/chrome_profile
+     --remote-debugging-port=9222 --user-data-dir=~/.frago/profiles/chrome/9222
 
    # Windows
    "C:\Program Files\Google\Chrome\Application\chrome.exe" \
-     --remote-debugging-port=9222 --user-data-dir=%USERPROFILE%\.frago\chrome_profile
+     --remote-debugging-port=9222 --user-data-dir=%USERPROFILE%\.frago\profiles\chrome\9222
    ```
 
 **Related Questions**: Chrome not connected detailed troubleshooting (see next FAQ)
@@ -169,7 +169,7 @@ netstat -ano | findstr :9222
 
 ```bash
 # Backup old profile
-mv ~/.frago/chrome_profile ~/.frago/chrome_profile.bak
+mv ~/.frago/profiles/chrome/9222 ~/.frago/profiles/chrome/9222.bak
 
 # Restart Chrome
 uv run frago chrome start

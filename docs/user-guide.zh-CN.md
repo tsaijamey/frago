@@ -162,14 +162,14 @@ frago sync -m "message" # 自定义提交信息
 # 以 CDP 模式启动 Chrome
 # macOS
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-    --remote-debugging-port=9222 --user-data-dir=~/.frago/chrome_profile
+    --remote-debugging-port=9222 --user-data-dir=~/.frago/profiles/chrome/9222
 
 # Linux
 google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-debug
 
 # Windows
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-    --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\.frago\chrome_profile"
+    --remote-debugging-port=9222 --user-data-dir="$env:USERPROFILE\.frago\profiles\chrome\9222"
 
 # 验证
 curl http://localhost:9222/json/version

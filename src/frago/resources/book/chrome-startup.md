@@ -27,10 +27,10 @@
 ## 端口与多实例
 
 ```bash
-{{frago_launcher}} chrome start --port 9333    # 默认 9222；换端口 = 独立 profile（自动后缀）
+{{frago_launcher}} chrome start --port 9333    # 默认 9222；换端口 = 独立 profile
 ```
 
-要并行跑两个浏览器实例（如 Chrome + Edge）必须不同 `--port`。profile 目录自动派生为 `~/.frago/<browser>_profile_<port>`。
+要并行跑两个浏览器实例（如 Chrome + Edge）必须不同 `--port`。profile 目录自动派生为 `~/.frago/profiles/<browser>/<port>/`，端口始终显式出现在路径里。
 
 ## Profile 控制
 
@@ -38,7 +38,7 @@
 {{frago_launcher}} chrome start --profile-dir <path>    # 自定义 profile 目录（多账号场景）
 ```
 
-不指定时默认 `~/.frago/<browser>_profile`，首次启动从系统 profile 拷贝（详见 `frago book chrome-backend-choice` 的 Profile 隔离段）。
+不指定时默认 `~/.frago/profiles/<browser>/9222`，首次启动从系统 profile 拷贝（详见 `frago book chrome-backend-choice` 的 Profile 隔离段）。
 
 ## 进程管理
 

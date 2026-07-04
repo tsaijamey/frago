@@ -392,7 +392,7 @@ Generated with frago | Run ID: iphone-15-price-monitoring-abc123
 # Launch Chrome with CDP
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
   --remote-debugging-port=9222 \
-  --user-data-dir=./chrome_profile
+  --user-data-dir="$HOME/.frago/profiles/chrome/9222"
 
 # Navigate to page
 frago chrome navigate https://news.ycombinator.com/
@@ -546,7 +546,7 @@ lsof -i :9222
 # Launch Chrome if not running
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
   --remote-debugging-port=9222 \
-  --user-data-dir=./chrome_profile &
+  --user-data-dir="$HOME/.frago/profiles/chrome/9222" &
 
 # Test connection
 frago chrome status

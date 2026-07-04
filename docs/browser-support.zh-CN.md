@@ -217,11 +217,11 @@ frago chrome clear-effects
 
 | 浏览器 | Profile 目录 |
 |--------|--------------|
-| Chrome | `~/.frago/chrome_profile` |
-| Edge | `~/.frago/edge_profile` |
-| Chromium | `~/.frago/chromium_profile` |
+| Chrome | `~/.frago/profiles/chrome/9222` |
+| Edge | `~/.frago/profiles/edge/9222` |
+| Chromium | `~/.frago/profiles/chromium/9222` |
 
-Profile 会自动从系统浏览器 profile 初始化（书签、扩展、Cookie 等）。
+端口始终显式出现在路径里——非默认端口各有独立目录，例如 `~/.frago/profiles/chrome/9333`。Profile 会自动从系统浏览器 profile 初始化（书签、扩展、Cookie 等）。
 
 **自定义 Profile**：
 ```bash
@@ -231,7 +231,7 @@ frago chrome start --profile-dir /path/to/custom/profile
 **端口专用 Profile**（用于运行多个实例）：
 ```bash
 frago chrome start --port 9333
-# 使用 ~/.frago/chrome_profile_9333
+# 使用 ~/.frago/profiles/chrome/9333
 ```
 
 ---

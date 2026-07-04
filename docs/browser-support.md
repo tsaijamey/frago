@@ -217,11 +217,13 @@ Each browser type uses a separate profile directory:
 
 | Browser | Profile Directory |
 |---------|------------------|
-| Chrome | `~/.frago/chrome_profile` |
-| Edge | `~/.frago/edge_profile` |
-| Chromium | `~/.frago/chromium_profile` |
+| Chrome | `~/.frago/profiles/chrome/9222` |
+| Edge | `~/.frago/profiles/edge/9222` |
+| Chromium | `~/.frago/profiles/chromium/9222` |
 
-Profiles are automatically initialized from system browser profiles (bookmarks, extensions, cookies, etc.).
+The port is always explicit in the path — non-default ports get their own
+directory, e.g. `~/.frago/profiles/chrome/9333`. Profiles are automatically
+initialized from system browser profiles (bookmarks, extensions, cookies, etc.).
 
 **Custom Profile**:
 ```bash
@@ -231,7 +233,7 @@ frago chrome start --profile-dir /path/to/custom/profile
 **Port-specific Profile** (for running multiple instances):
 ```bash
 frago chrome start --port 9333
-# Uses ~/.frago/chrome_profile_9333
+# Uses ~/.frago/profiles/chrome/9333
 ```
 
 ---
