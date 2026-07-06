@@ -12,22 +12,23 @@ Contains all Pydantic models used by frago init command:
 - ResourceStatus: Resource installation status
 """
 
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional, List, Literal
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class APIEndpoint(BaseModel):
     """API endpoint configuration (nested in Config)"""
 
     type: Literal["deepseek", "aliyun", "kimi", "minimax", "custom"]
-    url: Optional[str] = None
+    url: str | None = None
     api_key: str
     # Model configuration (optional, uses preset defaults if not specified)
-    default_model: Optional[str] = None  # Maps to ANTHROPIC_MODEL
-    sonnet_model: Optional[str] = None   # Maps to ANTHROPIC_DEFAULT_SONNET_MODEL
-    haiku_model: Optional[str] = None    # Maps to ANTHROPIC_DEFAULT_HAIKU_MODEL
+    default_model: str | None = None  # Maps to ANTHROPIC_MODEL
+    sonnet_model: str | None = None  # Maps to ANTHROPIC_DEFAULT_SONNET_MODEL
+    haiku_model: str | None = None  # Maps to ANTHROPIC_DEFAULT_HAIKU_MODEL
 
     @model_validator(mode="after")
     def validate_url_for_custom(self) -> "APIEndpoint":
@@ -83,7 +84,7 @@ class TaskIngestionConfig(BaseModel):
     """
 
     enabled: bool = False
-    channels: List[TaskIngestionChannel] = Field(default_factory=list)
+    channels: list[TaskIngestionChannel] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _unique_names(self) -> "TaskIngestionConfig":
@@ -106,29 +107,59 @@ class WebuiSessionsConfig(BaseModel):
     idle_timeout_secs: int = 1800
 
 
+class DaemonItem(BaseModel):
+    """One declared recipe daemon（config.json -> daemons.items[]）。
+
+    字段与 cli/daemon_commands.py 的 raw JSON 写入、server/services/daemon_service.py
+    的读取保持一致；restart_policy 等可选覆盖项经 extra 透传，不在此穷举。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    recipe: str
+    enabled: bool = True
+
+
+class DaemonsConfig(BaseModel):
+    """Supervised recipe daemons（config.json -> daemons）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    items: list[DaemonItem] = Field(default_factory=list)
+
+
 class Config(BaseModel):
-    """Frago configuration entity (persisted to ~/.frago/config.json)"""
+    """Frago configuration entity (persisted to ~/.frago/config.json)
+
+    extra="allow"：config.json 是多方共写的文件（daemon_commands 等以 raw JSON
+    直写自己的段），本模型不认识的键 MUST 原样透传——否则任何
+    load_config→save_config round-trip 都会静默吃掉别人的段（20260704 曾因此
+    丢过 daemons 段，桌宠守护随重启消失）。
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     schema_version: str = "1.0"
 
     # Dependency information
-    node_version: Optional[str] = None
-    node_path: Optional[str] = None
-    npm_version: Optional[str] = None
-    claude_code_version: Optional[str] = None
-    claude_code_path: Optional[str] = None
+    node_version: str | None = None
+    node_path: str | None = None
+    npm_version: str | None = None
+    claude_code_version: str | None = None
+    claude_code_path: str | None = None
 
     # Authentication configuration (mutually exclusive)
     auth_method: Literal["official", "custom"] = "official"
-    api_endpoint: Optional[APIEndpoint] = None
+    api_endpoint: APIEndpoint | None = None
 
     # Optional features
     ccr_enabled: bool = False
-    ccr_config_path: Optional[str] = None
+    ccr_config_path: str | None = None
 
     # Workspace resource management
-    workspace_scan_roots: List[str] = Field(default_factory=list)  # e.g. ["~/repos/", "~/work/"]
-    workspace_exclude_patterns: List[str] = Field(
+    workspace_scan_roots: list[str] = Field(default_factory=list)  # e.g. ["~/repos/", "~/work/"]
+    workspace_exclude_patterns: list[str] = Field(
         default_factory=lambda: ["node_modules", ".venv", "__pycache__", ".git"]
     )
 
@@ -139,11 +170,11 @@ class Config(BaseModel):
     # bundles or installs official commands/skills/recipes. Fields kept so
     # older config.json files continue to deserialize; values are unread.
     official_resource_sync_enabled: bool = False
-    official_resource_last_sync: Optional[datetime] = None
-    official_resource_last_commit: Optional[str] = None
+    official_resource_last_sync: datetime | None = None
+    official_resource_last_commit: str | None = None
     resources_installed: bool = False
-    resources_version: Optional[str] = None
-    last_resource_update: Optional[datetime] = None
+    resources_version: str | None = None
+    last_resource_update: datetime | None = None
 
     # Task ingestion configuration (spec 20260422-channel-config-ui)
     task_ingestion: TaskIngestionConfig = Field(default_factory=TaskIngestionConfig)
@@ -153,6 +184,11 @@ class Config(BaseModel):
 
     # WebUI 会话集群生命周期配置 (spec 20260625-webui-session-lifecycle-mediator)
     webui_sessions: WebuiSessionsConfig = Field(default_factory=WebuiSessionsConfig)
+
+    # Supervised recipe daemons。声明由 `frago daemon enable`（raw JSON 直写）
+    # 维护；此处建模使 save_config round-trip 类型化保留该段。缺省 None = 段
+    # 不存在，与"空声明"（enabled=false, items=[]）区分。
+    daemons: DaemonsConfig | None = None
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.now)
@@ -172,17 +208,12 @@ class Config(BaseModel):
         # Note: custom mode no longer requires api_endpoint since it's stored in settings.json
         return self
 
-    class ConfigDict:
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
-
 
 class TemporaryState(BaseModel):
     """Temporary state (for Ctrl+C recovery, saved to ~/.frago/.init_state.json)"""
 
-    completed_steps: List[str] = Field(default_factory=list)
-    current_step: Optional[str] = None
+    completed_steps: list[str] = Field(default_factory=list)
+    current_step: str | None = None
     interrupted_at: datetime = Field(default_factory=datetime.now)
     recoverable: bool = True
 
@@ -219,10 +250,10 @@ class InstallationStep(BaseModel):
 
     name: str
     status: StepStatus = StepStatus.PENDING
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    error_code: Optional[int] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    error_code: int | None = None
 
     def start(self) -> None:
         """Mark step as started"""
@@ -252,11 +283,11 @@ class DependencyCheckResult(BaseModel):
 
     name: str
     installed: bool = False
-    version: Optional[str] = None
-    path: Optional[str] = None
+    version: str | None = None
+    path: str | None = None
     version_sufficient: bool = False
     required_version: str
-    error: Optional[str] = None
+    error: str | None = None
 
     def needs_install(self) -> bool:
         """Whether installation is needed"""
@@ -276,18 +307,18 @@ class ResourceType(str, Enum):
     """Resource type enumeration"""
 
     COMMAND = "command"  # Claude Code slash command
-    SKILL = "skill"      # Claude Code skill
-    RECIPE = "recipe"    # Example recipe
+    SKILL = "skill"  # Claude Code skill
+    RECIPE = "recipe"  # Example recipe
 
 
 class InstallResult(BaseModel):
     """Resource installation operation result"""
 
     resource_type: ResourceType
-    installed: List[str] = Field(default_factory=list)  # List of installed file paths
-    skipped: List[str] = Field(default_factory=list)    # List of skipped file paths (already exists)
-    backed_up: List[str] = Field(default_factory=list)  # List of backed up file paths
-    errors: List[str] = Field(default_factory=list)     # List of error messages
+    installed: list[str] = Field(default_factory=list)  # List of installed file paths
+    skipped: list[str] = Field(default_factory=list)  # List of skipped file paths (already exists)
+    backed_up: list[str] = Field(default_factory=list)  # List of backed up file paths
+    errors: list[str] = Field(default_factory=list)  # List of error messages
 
     @property
     def success(self) -> bool:
@@ -303,12 +334,12 @@ class InstallResult(BaseModel):
 class ResourceStatus(BaseModel):
     """Resource installation status (for --status display)"""
 
-    commands: Optional[InstallResult] = None
-    skills: Optional[InstallResult] = None
-    recipes: Optional[InstallResult] = None
-    hooks_installed: List[str] = Field(default_factory=list)
+    commands: InstallResult | None = None
+    skills: InstallResult | None = None
+    recipes: InstallResult | None = None
+    hooks_installed: list[str] = Field(default_factory=list)
     frago_version: str = ""
-    install_time: Optional[datetime] = None
+    install_time: datetime | None = None
 
     @property
     def all_success(self) -> bool:
