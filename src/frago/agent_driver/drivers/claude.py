@@ -32,6 +32,7 @@ _CLAUDE_SID_NS = uuid.UUID("6f4d2c1a-0b3e-4a5d-8c7b-9e0f1a2b3c4d")
 def _claude_session_uuid(frago_session_id: str) -> str:
     return str(uuid.uuid5(_CLAUDE_SID_NS, frago_session_id))
 
+
 # claude TUI 底部输入框提示符行。当前 claude 用 ``❯``，旧版本用 ``>``，两者都认。
 # 一轮答完回到此态。注意：scrollback 里 shell 回显的启动命令行（``❯ claude …``）也
 # 命中本式，故仅用于"完成"判定（叠加非忙碌条件兜底），NEVER 单独用于就绪判定。
@@ -101,6 +102,10 @@ _SHELL_RUNNING = re.compile(r"shells?\s+still\s+running", re.IGNORECASE)
 # done 检测在空窗里误触（彼时提示符已在、忙碌标记尚未出现）。生产按 session
 # 的 poll_interval 真实间隔轮询；单测注入 no-op sleep，N 次瞬间走完。
 _BUSY_CONFIRM_POLLS = 24
+
+# 粘贴突发结束到发 Enter 的静置秒数。claude TUI 把紧随粘贴到达的 Enter 当成粘贴
+# 内容里的换行而非提交，长消息会整段滞留输入框。单测注入 no-op sleep 不受影响。
+_PASTE_SETTLE_S = 2.0
 
 
 class _ClaudeDone:
@@ -212,6 +217,9 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
 
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
     session.send_text(prompt)
+    # claude TUI 的粘贴检测把紧随粘贴突发到达的 Enter 当成粘贴内容里的换行而非
+    # 提交，长消息会整段滞留输入框（PA 卡死的根因）。停 2 秒让突发先结束。
+    session._sleep(_PASTE_SETTLE_S)
     session.send_keys("Enter")
     # 确认已进入忙碌态再交还 driver 轮询完成，否则首帧落在提交后空窗里会误判完成。
     # 命中即返回；始终未命中（瞬时回复 / fake runner）则跨过 N 轮后放行。
