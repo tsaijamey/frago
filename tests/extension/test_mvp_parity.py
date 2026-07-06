@@ -8,29 +8,37 @@ chain that we can't build in unit tests. What we validate here:
 2. Daemon multiplexing: CLI client <-> daemon <-> mock extension.
 3. Both backends (CDP + Extension) implement the same 6 MVP methods.
 """
+
 from __future__ import annotations
 
 import asyncio
 import inspect
-import json
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from frago.chrome.extension import protocol
-from frago.chrome.extension.native_host import (
-    Daemon, encode_frame, read_frame_async,
-)
 from frago.chrome.backends.base import ChromeBackend
 from frago.chrome.backends.cdp import CDPChromeBackend
 from frago.chrome.backends.extension import ExtensionChromeBackend
-
+from frago.chrome.extension import protocol
+from frago.chrome.extension.native_host import (
+    Daemon,
+    encode_frame,
+    read_frame_async,
+)
 
 # ─────────────────────────── 1. protocol ───────────────────────────
 
+
 def test_frame_roundtrip():
-    msg = {"jsonrpc": "2.0", "id": "x", "method": "tab.navigate",
-           "params": {"url": "https://example.com", "group": "t"}}
+    msg = {
+        "jsonrpc": "2.0",
+        "id": "x",
+        "method": "tab.navigate",
+        "params": {"url": "https://example.com", "group": "t"},
+    }
     frame = encode_frame(msg)
     assert len(frame) > 4
     length = int.from_bytes(frame[:4], "little")
@@ -39,8 +47,7 @@ def test_frame_roundtrip():
 
 def test_rpc_dataclasses_serialize():
     req = protocol.RpcRequest(method="foo", params={"a": 1}, id="r1")
-    assert req.to_json() == {"jsonrpc": "2.0", "id": "r1",
-                             "method": "foo", "params": {"a": 1}}
+    assert req.to_json() == {"jsonrpc": "2.0", "id": "r1", "method": "foo", "params": {"a": 1}}
     err = protocol.RpcError(code=-32004, message="boom")
     resp = protocol.RpcResponse(id="r1", error=err)
     j = resp.to_json()
@@ -50,12 +57,15 @@ def test_rpc_dataclasses_serialize():
 
 # ────────────────────────── 2. daemon mux ──────────────────────────
 
+
 @pytest.mark.asyncio
-async def test_daemon_roundtrip(tmp_path):
-    sock = tmp_path / "t.sock"
+async def test_daemon_roundtrip():
+    # AF_UNIX socket 路径上限 104 字节（macOS）；pytest tmp_path 带完整测试名，
+    # 轻易超限。socket 放系统短临时目录。
+    sock_dir = tempfile.mkdtemp(prefix="fgx-")
+    sock = Path(sock_dir) / "t.sock"
     daemon = Daemon()
-    server = await asyncio.start_unix_server(daemon.handle_conn,
-                                             path=str(sock))
+    server = await asyncio.start_unix_server(daemon.handle_conn, path=str(sock))
 
     async def mock_extension_once():
         reader, writer = await asyncio.open_unix_connection(str(sock))
@@ -63,8 +73,7 @@ async def test_daemon_roundtrip(tmp_path):
         await writer.drain()
         # Handle exactly one request then exit cleanly.
         msg = await read_frame_async(reader)
-        resp = {"jsonrpc": "2.0", "id": msg["id"],
-                "result": {"echo": msg["params"]}}
+        resp = {"jsonrpc": "2.0", "id": msg["id"], "result": {"echo": msg["params"]}}
         writer.write(encode_frame(resp))
         await writer.drain()
         writer.close()
@@ -73,9 +82,12 @@ async def test_daemon_roundtrip(tmp_path):
         reader, writer = await asyncio.open_unix_connection(str(sock))
         writer.write(encode_frame({"role": "client"}))
         await writer.drain()
-        req = {"jsonrpc": "2.0", "id": "c1",
-               "method": "tab.navigate",
-               "params": {"url": "https://example.com", "group": "t"}}
+        req = {
+            "jsonrpc": "2.0",
+            "id": "c1",
+            "method": "tab.navigate",
+            "params": {"url": "https://example.com", "group": "t"},
+        }
         writer.write(encode_frame(req))
         await writer.drain()
         resp = await read_frame_async(reader)
@@ -94,9 +106,11 @@ async def test_daemon_roundtrip(tmp_path):
     finally:
         server.close()
         await server.wait_closed()
+        shutil.rmtree(sock_dir, ignore_errors=True)
 
 
 # ────────────────── 3. Both backends implement MVP ──────────────────
+
 
 def test_both_backends_implement_mvp():
     mvp = {"start", "navigate", "exec_js", "get_content", "click", "screenshot"}
@@ -114,15 +128,16 @@ def test_extension_backend_signatures_match_cdp():
         ext_sig = inspect.signature(getattr(ExtensionChromeBackend, method))
         cdp_params = [p for p in cdp_sig.parameters if p != "self"]
         ext_params = [p for p in ext_sig.parameters if p != "self"]
-        assert cdp_params == ext_params, \
-            f"{method}: cdp={cdp_params} ext={ext_params}"
+        assert cdp_params == ext_params, f"{method}: cdp={cdp_params} ext={ext_params}"
 
 
 # ────────────────── 4. `frago chrome --backend` wiring ──────────────────
 
+
 def test_chrome_group_exposes_backend_flag():
     """--backend option is registered on the chrome group itself."""
     from frago.cli.chrome_commands import chrome_group
+
     opts = {p.name for p in chrome_group.params}
     assert "backend" in opts, f"chrome group params: {opts}"
 
@@ -136,29 +151,37 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
     so we mock that instead.
     """
     from click.testing import CliRunner
-    from frago.cli import chrome_commands as cc
+
     from frago.chrome.extension import lifecycle as lc
+    from frago.cli import chrome_commands as cc
 
     calls: list[tuple] = []
 
     class FakeBackend:
-        def navigate(self, url, group, *, timeout=15.0):
+        def navigate(self, url, group, *, timeout=15.0):  # noqa: ARG002
             calls.append(("navigate", url, group))
             from frago.chrome.backends.base import NavigateResult
+
             return NavigateResult(tab_id=1, url=url, title="T")
 
     fake_startup = lc.BridgeStartupResult(
-        daemon_pid=42, daemon_was_already_running=False,
-        browser_pid=99, browser_path="/usr/bin/microsoft-edge",
-        browser_brand="edge", profile_dir="/tmp/p",
-        bundle_dir="/tmp/b", manifest_path="/tmp/m.json",
+        daemon_pid=42,
+        daemon_was_already_running=False,
+        browser_pid=99,
+        browser_path="/usr/bin/microsoft-edge",
+        browser_brand="edge",
+        profile_dir="/tmp/p",
+        bundle_dir="/tmp/b",
+        manifest_path="/tmp/m.json",
         extension_id="abc",
     )
 
     monkeypatch.setattr(cc, "_ext_backend", lambda: FakeBackend())
-    monkeypatch.setattr(lc, "start_extension_bridge",
-                        lambda **kwargs: (calls.append(("start", kwargs))
-                                          or fake_startup))
+    monkeypatch.setattr(
+        lc,
+        "start_extension_bridge",
+        lambda **kwargs: (calls.append(("start", kwargs)) or fake_startup),
+    )
 
     runner = CliRunner()
     r = runner.invoke(cc.chrome_group, ["--backend", "extension", "start"])
@@ -166,8 +189,8 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
     assert calls[0][0] == "start", calls
 
     calls.clear()
-    r = runner.invoke(cc.chrome_group, ["--backend", "extension",
-                                        "navigate", "https://x",
-                                        "--group", "t"])
+    r = runner.invoke(
+        cc.chrome_group, ["--backend", "extension", "navigate", "https://x", "--group", "t"]
+    )
     assert r.exit_code == 0, r.output
     assert calls[0][:2] == ("navigate", "https://x"), calls
