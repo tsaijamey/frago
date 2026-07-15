@@ -15,8 +15,9 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；用 cd 切换目
   → 本文其余规则都针对这种情况
 
   没有（claude code 人工直驱，无 FRAGO_CURRENT_RUN）
-  → 产出走 ~/.frago/data/<语义-slug>-<YYYYMMDD>/
-  → slug 用 kebab-case，日期后缀必带且必须是完整 8 位日期（如 power-seller-reg-audit-20260529）
+  → 产出走 ~/.frago/data/<YYYYMMDD>-<语义-slug>/
+  → slug 用 kebab-case，日期前缀必带且必须是完整 8 位日期（如 20260529-power-seller-reg-audit）
+  → 日期在最前面当排序键，目录列表天然按时间排列；NEVER 把日期放末尾
   → NEVER 用月份（202605）或自创其他日期粒度；日期取任务开始当天
   → 扁平存放，不按 domain 分层；哪怕主题命中已注册 domain 也仍落 data，不并入 projects
   → 若保留工作流水笔记，主文件固定叫 notebook.md（小写），别自创 session.md / log.md 之类的名字
