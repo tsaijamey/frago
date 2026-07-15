@@ -69,6 +69,15 @@
     "sendFailed": "Send failed: {{error}}",
     "refresh": "Refresh",
     "replyStalled": "The reply is taking a while — refresh to check.",
+    "tabs": {
+      "all": "Sessions",
+      "pa": "PA"
+    },
+    "pa": {
+      "summary": "{{count}} PA conversations",
+      "empty": "PA has no resident conversations yet",
+      "emptyHint": "This fills in once PA has replied to at least one message on a channel like Feishu."
+    },
     "tokenCalendar": {
       "open": "Token calendar",
       "title": "Token usage calendar",

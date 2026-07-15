@@ -69,6 +69,15 @@
     "sendFailed": "发送失败：{{error}}",
     "refresh": "刷新",
     "replyStalled": "回复时间较长——点刷新查看最新内容。",
+    "tabs": {
+      "all": "会话",
+      "pa": "PA"
+    },
+    "pa": {
+      "summary": "{{count}} 个 PA 会话",
+      "empty": "PA 目前没有常驻会话",
+      "emptyHint": "PA 在某个渠道(如飞书)至少回复过一条消息后，这里就会出现。"
+    },
     "tokenCalendar": {
       "open": "用量月历",
       "title": "词元 (token) 用量月历",

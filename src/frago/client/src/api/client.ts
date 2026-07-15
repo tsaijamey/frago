@@ -82,6 +82,9 @@ import type {
   ClaudeSessionMessage,
   ClaudeSessionDetail,
   ClaudeSessionSendResponse,
+  PaSessionItem,
+  PaSessionsResponse,
+  PaSessionSendResponse,
   TokenCalendarResponse,
   TokenDayBucket,
 } from '@/types/api';
@@ -159,6 +162,9 @@ export type {
   ClaudeSessionMessage,
   ClaudeSessionDetail,
   ClaudeSessionSendResponse,
+  PaSessionItem,
+  PaSessionsResponse,
+  PaSessionSendResponse,
   TokenCalendarResponse,
   TokenDayBucket,
 };
@@ -858,6 +864,20 @@ export async function sendClaudeSessionMessage(
       body: JSON.stringify({ text }),
     }
   );
+}
+
+export async function getPaSessions(): Promise<PaSessionsResponse> {
+  return fetchApi<PaSessionsResponse>('/pa/sessions');
+}
+
+export async function sendPaSessionMessage(
+  convKey: string,
+  text: string
+): Promise<PaSessionSendResponse> {
+  return fetchApi<PaSessionSendResponse>('/pa/sessions/send', {
+    method: 'POST',
+    body: JSON.stringify({ conv_key: convKey, text }),
+  });
 }
 
 export async function getTokenCalendar(month: string): Promise<TokenCalendarResponse> {

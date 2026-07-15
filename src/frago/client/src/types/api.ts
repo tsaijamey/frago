@@ -649,6 +649,29 @@ export interface ClaudeSessionSendResponse {
   text: string;
 }
 
+// PA (Primary Agent) resident sessions — the conversations PA itself is
+// holding open (one per conv_key, e.g. a Feishu chat), distinct from the
+// general ~/.claude/projects scan above. `sid` is the same uuid5-derived
+// claude session id the resident tmux session and transcript watcher use,
+// so it lines up with /api/claude-sessions/{sid} and `claude --resume`.
+export interface PaSessionItem {
+  conv_key: string;
+  channel: string;
+  group_name: string;
+  sid: string;
+  resume_command: string;
+}
+
+export interface PaSessionsResponse {
+  sessions: PaSessionItem[];
+}
+
+export interface PaSessionSendResponse {
+  sid: string;
+  status: 'ready' | 'activating' | string;
+  msg_id: string;
+}
+
 export interface TokenDayBucket {
   input: number;
   output: number;

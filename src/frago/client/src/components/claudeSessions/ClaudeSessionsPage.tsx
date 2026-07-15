@@ -12,13 +12,19 @@
 import { useState } from 'react';
 import { CalendarDays, RefreshCw } from 'lucide-react';
 import { useSessionsList } from './useSessionsList';
+import { usePaSessionsList } from './usePaSessionsList';
 import { useSessionDetail } from './useSessionDetail';
 import SessionsToolbar from './SessionsToolbar';
 import SessionList from './SessionList';
+import PaSessionList from './PaSessionList';
 import SessionDetailPanel from './SessionDetailPanel';
 import TokenCalendarModal from './TokenCalendarModal';
 
+type Tab = 'all' | 'pa';
+
 export default function ClaudeSessionsPage() {
+  const [tab, setTab] = useState<Tab>('all');
+
   const {
     t,
     sessions,
@@ -39,7 +45,18 @@ export default function ClaudeSessionsPage() {
   } = useSessionsList();
 
   const {
+    t: tPa,
+    sessions: paSessions,
+    loading: paLoading,
+    error: paError,
+    copiedSid: paCopiedSid,
+    fetchPaSessions,
+    handleCopy: handlePaCopy,
+  } = usePaSessionsList();
+
+  const {
     detailSid,
+    detailTitle,
     detail,
     detailLoading,
     input,
@@ -79,11 +96,11 @@ export default function ClaudeSessionsPage() {
           <button
             type="button"
             className="cs-refresh"
-            onClick={() => fetchSessions(days)}
-            disabled={loading}
+            onClick={() => (tab === 'pa' ? fetchPaSessions() : fetchSessions(days))}
+            disabled={tab === 'pa' ? paLoading : loading}
             title={t('claudeSessions.rescan')}
           >
-            <RefreshCw size={15} className={loading ? 'cs-spin' : ''} />
+            <RefreshCw size={15} className={(tab === 'pa' ? paLoading : loading) ? 'cs-spin' : ''} />
             <span>{t('claudeSessions.rescan')}</span>
           </button>
         </div>
@@ -91,29 +108,62 @@ export default function ClaudeSessionsPage() {
 
       {calendarOpen && <TokenCalendarModal t={t} onClose={() => setCalendarOpen(false)} />}
 
-      <SessionsToolbar
-        t={t}
-        days={days}
-        setDays={setDays}
-        search={search}
-        setSearch={setSearch}
-        filters={filters}
-        toggleFilter={toggleFilter}
-        counts={counts}
-      />
+      <div className="cs-segment" style={{ alignSelf: 'flex-start' }}>
+        <button
+          type="button"
+          className={`cs-segment-btn ${tab === 'all' ? 'active' : ''}`}
+          onClick={() => setTab('all')}
+        >
+          {t('claudeSessions.tabs.all')}
+        </button>
+        <button
+          type="button"
+          className={`cs-segment-btn ${tab === 'pa' ? 'active' : ''}`}
+          onClick={() => setTab('pa')}
+        >
+          {t('claudeSessions.tabs.pa')}
+        </button>
+      </div>
 
-      <SessionList
-        t={t}
-        loading={loading}
-        error={error}
-        visible={visible}
-        sessions={sessions}
-        scannedFiles={scannedFiles}
-        detailSid={detailSid}
-        copiedSid={copiedSid}
-        openDetail={openDetail}
-        handleCopy={handleCopy}
-      />
+      {tab === 'all' ? (
+        <>
+          <SessionsToolbar
+            t={t}
+            days={days}
+            setDays={setDays}
+            search={search}
+            setSearch={setSearch}
+            filters={filters}
+            toggleFilter={toggleFilter}
+            counts={counts}
+          />
+
+          <SessionList
+            t={t}
+            loading={loading}
+            error={error}
+            visible={visible}
+            sessions={sessions}
+            scannedFiles={scannedFiles}
+            detailSid={detailSid}
+            copiedSid={copiedSid}
+            openDetail={openDetail}
+            handleCopy={handleCopy}
+          />
+        </>
+      ) : (
+        <PaSessionList
+          t={tPa}
+          loading={paLoading}
+          error={paError}
+          sessions={paSessions}
+          detailSid={detailSid}
+          copiedSid={paCopiedSid}
+          onRefresh={fetchPaSessions}
+          openDetail={openDetail}
+          handleCopy={handlePaCopy}
+        />
+      )}
 
       {/* Detail side panel */}
       {detailSid && (
@@ -121,6 +171,7 @@ export default function ClaudeSessionsPage() {
           t={t}
           sessions={sessions}
           detailSid={detailSid}
+          detailTitle={detailTitle}
           detail={detail}
           detailLoading={detailLoading}
           input={input}

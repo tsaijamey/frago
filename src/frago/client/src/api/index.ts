@@ -577,6 +577,9 @@ export type {
   ClaudeSessionBlock,
   ClaudeSessionDetail,
   ClaudeSessionSendResponse,
+  PaSessionItem,
+  PaSessionsResponse,
+  PaSessionSendResponse,
   TokenCalendarResponse,
   TokenDayBucket,
 } from './client';
@@ -626,6 +629,26 @@ export const sendClaudeSessionMessage = withMode(
     _text: string
   ): Promise<httpApi.ClaudeSessionSendResponse> => {
     throw new Error('Claude sessions API not available in pywebview mode');
+  },
+);
+
+export const getPaSessions = withMode(
+  (): Promise<httpApi.PaSessionsResponse> => httpApi.getPaSessions(),
+  (): Promise<httpApi.PaSessionsResponse> => {
+    throw new Error('PA sessions API not available in pywebview mode');
+  },
+);
+
+export const sendPaSessionMessage = withMode(
+  (
+    convKey: string,
+    text: string
+  ): Promise<httpApi.PaSessionSendResponse> => httpApi.sendPaSessionMessage(convKey, text),
+  (
+    _convKey: string,
+    _text: string
+  ): Promise<httpApi.PaSessionSendResponse> => {
+    throw new Error('PA sessions API not available in pywebview mode');
   },
 );
 

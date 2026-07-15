@@ -17,6 +17,7 @@ interface SessionDetailPanelProps {
   t: TFunction;
   sessions: ClaudeSessionItem[];
   detailSid: string;
+  detailTitle?: string | null;
   detail: ClaudeSessionDetail | null;
   detailLoading: boolean;
   input: string;
@@ -37,6 +38,7 @@ export default function SessionDetailPanel({
   t,
   sessions,
   detailSid,
+  detailTitle,
   detail,
   detailLoading,
   input,
@@ -60,6 +62,7 @@ export default function SessionDetailPanel({
           <div className="cs-drawer-titlebar">
             <div className="cs-drawer-title">
               {(() => {
+                if (detailTitle) return detailTitle;
                 const s = sessions.find((x) => x.sid === detailSid);
                 return s ? s.title || s.name || s.ai_title || t('claudeSessions.unnamed') : detailSid;
               })()}

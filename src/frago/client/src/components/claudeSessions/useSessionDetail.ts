@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import {
   getClaudeSessionDetail,
   sendClaudeSessionMessage,
+  sendPaSessionMessage,
 } from '@/api';
 import type { ClaudeSessionDetail } from '@/api/client';
 
@@ -15,6 +16,12 @@ export function useSessionDetail() {
   const [detailSid, setDetailSid] = useState<string | null>(null);
   const [detail, setDetail] = useState<ClaudeSessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // Set only when opened from the PA-sessions tab: a group name (for the
+  // header, since this sid won't be in the general scan's `sessions` list)
+  // and the conv_key `handleSend` needs to route into PA's own resident
+  // session instead of the UI-only send endpoint.
+  const [detailTitle, setDetailTitle] = useState<string | null>(null);
+  const [detailConvKey, setDetailConvKey] = useState<string | null>(null);
 
   // Composer (send message into the resident tmux claude) + reply polling
   const [input, setInput] = useState('');
@@ -117,9 +124,11 @@ export function useSessionDetail() {
     [clearPoll]
   );
 
-  const openDetail = useCallback(async (sid: string) => {
+  const openDetail = useCallback(async (sid: string, opts?: { title?: string; convKey?: string }) => {
     clearPoll();
     setDetailSid(sid);
+    setDetailTitle(opts?.title ?? null);
+    setDetailConvKey(opts?.convKey ?? null);
     setDetail(null);
     setDetailLoading(true);
     setInput('');
@@ -141,6 +150,8 @@ export function useSessionDetail() {
   const closeDetail = useCallback(() => {
     clearPoll();
     setDetailSid(null);
+    setDetailTitle(null);
+    setDetailConvKey(null);
     setDetail(null);
     setInput('');
     setSending(false);
@@ -161,7 +172,12 @@ export function useSessionDetail() {
     // Claude turns can run minutes; give the poll a generous deadline.
     pollDeadlineRef.current = Date.now() + 6 * 60 * 1000;
     try {
-      const res = await sendClaudeSessionMessage(detailSid, text);
+      // PA-tab sessions route through PA's own resident session (conv_key) so
+      // sending never spins up a second tmux session racing PA's own pane;
+      // everything else uses the UI-only send endpoint as before.
+      const res = detailConvKey
+        ? await sendPaSessionMessage(detailConvKey, text)
+        : await sendClaudeSessionMessage(detailSid, text);
       setInput('');
       // activating → cold start (show "waking up"); ready → warm, awaiting reply.
       setActivation(res.status === 'activating' ? 'activating' : 'ready');
@@ -171,7 +187,7 @@ export function useSessionDetail() {
     } finally {
       setSending(false);
     }
-  }, [input, detailSid, sending, detail, pollReply]);
+  }, [input, detailSid, detailConvKey, sending, detail, pollReply]);
 
   // Manual refresh: re-fetch the transcript on demand. Used by the refresh
   // button and after the poll deadline lapses, so the user is never stuck.
@@ -194,6 +210,7 @@ export function useSessionDetail() {
 
   return {
     detailSid,
+    detailTitle,
     detail,
     detailLoading,
     input,
