@@ -1,7 +1,9 @@
 import type { TFunction } from 'i18next';
 import { Copy, Check, MessageSquare, FolderGit2, Clock } from 'lucide-react';
 import type { ClaudeSessionItem } from '@/api/client';
+import type { SessionActivity } from './useSessionActivity';
 import { HUMAN_META, relativeTime } from './sessionUtils';
+import ActivityBadge from './ActivityBadge';
 
 interface SessionListProps {
   t: TFunction;
@@ -12,6 +14,7 @@ interface SessionListProps {
   scannedFiles: number;
   detailSid: string | null;
   copiedSid: string | null;
+  activity: Record<string, SessionActivity>;
   openDetail: (sid: string) => void;
   handleCopy: (cmd: string, sid: string) => void;
 }
@@ -25,6 +28,7 @@ export default function SessionList({
   scannedFiles,
   detailSid,
   copiedSid,
+  activity,
   openDetail,
   handleCopy,
 }: SessionListProps) {
@@ -71,6 +75,7 @@ export default function SessionList({
 
                 <div className="cs-row-main">
                   <div className="cs-row-titleline">
+                    <ActivityBadge state={activity[s.sid]} />
                     <span className="cs-row-title">{primary}</span>
                     {s.name && s.title && <span className="cs-row-slug">{s.name}</span>}
                   </div>

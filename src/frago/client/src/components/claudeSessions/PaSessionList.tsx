@@ -1,6 +1,8 @@
 import type { TFunction } from 'i18next';
 import { Copy, Check, RefreshCw } from 'lucide-react';
 import type { PaSessionItem } from '@/api/client';
+import type { SessionActivity } from './useSessionActivity';
+import ActivityBadge from './ActivityBadge';
 
 interface PaSessionListProps {
   t: TFunction;
@@ -9,6 +11,7 @@ interface PaSessionListProps {
   sessions: PaSessionItem[];
   detailSid: string | null;
   copiedSid: string | null;
+  activity: Record<string, SessionActivity>;
   onRefresh: () => void;
   openDetail: (sid: string, opts?: { title?: string; convKey?: string }) => void;
   handleCopy: (cmd: string, sid: string) => void;
@@ -21,6 +24,7 @@ export default function PaSessionList({
   sessions,
   detailSid,
   copiedSid,
+  activity,
   onRefresh,
   openDetail,
   handleCopy,
@@ -66,6 +70,7 @@ export default function PaSessionList({
               >
                 <div className="cs-row-main">
                   <div className="cs-row-titleline">
+                    <ActivityBadge state={activity[s.sid]} />
                     <span className="cs-row-title">{s.group_name}</span>
                     <span className="cs-row-slug">{s.channel}</span>
                   </div>

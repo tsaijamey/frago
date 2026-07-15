@@ -14,6 +14,7 @@ import { CalendarDays, RefreshCw } from 'lucide-react';
 import { useSessionsList } from './useSessionsList';
 import { usePaSessionsList } from './usePaSessionsList';
 import { useSessionDetail } from './useSessionDetail';
+import { useSessionActivity } from './useSessionActivity';
 import SessionsToolbar from './SessionsToolbar';
 import SessionList from './SessionList';
 import PaSessionList from './PaSessionList';
@@ -54,6 +55,10 @@ export default function ClaudeSessionsPage() {
     handleCopy: handlePaCopy,
   } = usePaSessionsList();
 
+  // Shared multi-session background-keepalive engine: keeps every session the
+  // user has sent into alive in the background and flags unread replies.
+  const sessionActivity = useSessionActivity();
+
   const {
     detailSid,
     detailTitle,
@@ -74,7 +79,7 @@ export default function ClaudeSessionsPage() {
     closeDetail,
     handleSend,
     refreshDetail,
-  } = useSessionDetail();
+  } = useSessionDetail(sessionActivity);
 
   const [calendarOpen, setCalendarOpen] = useState(false);
 
@@ -150,6 +155,7 @@ export default function ClaudeSessionsPage() {
             scannedFiles={scannedFiles}
             detailSid={detailSid}
             copiedSid={copiedSid}
+            activity={sessionActivity.activity}
             openDetail={openDetail}
             handleCopy={handleCopy}
           />
@@ -162,6 +168,7 @@ export default function ClaudeSessionsPage() {
           sessions={paSessions}
           detailSid={detailSid}
           copiedSid={paCopiedSid}
+          activity={sessionActivity.activity}
           onRefresh={fetchPaSessions}
           openDetail={openDetail}
           handleCopy={handlePaCopy}

@@ -3065,6 +3065,27 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   color: var(--text-muted);
 }
 
+/* Multi-session activity badge on a list row (background-keepalive engine). */
+.cs-activity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.cs-activity--running {
+  color: var(--accent-primary);
+}
+
+.cs-activity--unread {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 25%, transparent);
+}
+
 .cs-row-preview {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

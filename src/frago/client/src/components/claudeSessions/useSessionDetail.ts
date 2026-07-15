@@ -25,12 +25,23 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** Subset of the activity engine the detail panel drives (see useSessionActivity). */
+export interface SessionActivityHandle {
+  track: (sid: string, baselineMarker: string | null) => void;
+  markRead: (sid: string) => void;
+  setOpenSid: (sid: string | null) => void;
+}
+
 /**
  * useSessionDetail — owns the detail side panel: transcript fetching,
  * chat-style bottom-pinned scroll, the composer that forwards input into
  * the resident tmux claude, and the reply-polling state machine.
+ *
+ * `activity` (optional) is the shared background-keepalive engine: the panel
+ * registers a session for background tracking on send and clears its unread
+ * badge on open, so switching away never drops an in-flight turn.
  */
-export function useSessionDetail() {
+export function useSessionDetail(activity?: SessionActivityHandle) {
   // Detail side panel
   const [detailSid, setDetailSid] = useState<string | null>(null);
   const [detail, setDetail] = useState<ClaudeSessionDetail | null>(null);
@@ -56,6 +67,11 @@ export function useSessionDetail() {
   // True when polling gave up before a new reply landed — surfaces a manual
   // refresh hint so the user is never stranded waiting.
   const [pollStalled, setPollStalled] = useState(false);
+
+  // Hold the (per-render fresh) activity handle in a ref so the callbacks below
+  // stay stable while always calling into the latest engine instance.
+  const activityRef = useRef<SessionActivityHandle | undefined>(activity);
+  activityRef.current = activity;
 
   // Track the currently open session for poll callbacks (avoids stale closures
   // and lets us drop responses that arrive after the user switched sessions).
@@ -170,6 +186,10 @@ export function useSessionDetail() {
   const openDetail = useCallback(async (sid: string, opts?: { title?: string; convKey?: string }) => {
     clearPoll();
     setDetailSid(sid);
+    // Tell the background engine this session is now foregrounded and clear its
+    // unread badge — the user is looking at it.
+    activityRef.current?.setOpenSid(sid);
+    activityRef.current?.markRead(sid);
     setDetailTitle(opts?.title ?? null);
     setDetailConvKey(opts?.convKey ?? null);
     setDetail(null);
@@ -193,6 +213,9 @@ export function useSessionDetail() {
 
   const closeDetail = useCallback(() => {
     clearPoll();
+    // No session foregrounded now; background tracking (if any) keeps running so
+    // an in-flight turn still lands as an unread badge.
+    activityRef.current?.setOpenSid(null);
     setDetailSid(null);
     setDetailTitle(null);
     setDetailConvKey(null);
@@ -229,6 +252,9 @@ export function useSessionDetail() {
       setImages([]);
       // activating → cold start (show "waking up"); ready → warm, awaiting reply.
       setActivation(res.status === 'activating' ? 'activating' : 'ready');
+      // Register for background keepalive: even if the user switches away before
+      // the reply lands, the shared engine keeps polling and flags it unread.
+      activityRef.current?.track(detailSid, baselineMarkerRef.current);
       pollReply(detailSid, 1500);
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e));
