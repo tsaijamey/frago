@@ -61,6 +61,9 @@ export default function ClaudeSessionsPage() {
     detailLoading,
     input,
     setInput,
+    images,
+    addImageFiles,
+    removeImage,
     sending,
     sendError,
     activation,
@@ -176,6 +179,9 @@ export default function ClaudeSessionsPage() {
           detailLoading={detailLoading}
           input={input}
           setInput={setInput}
+          images={images}
+          addImageFiles={addImageFiles}
+          removeImage={removeImage}
           sending={sending}
           sendError={sendError}
           activation={activation}

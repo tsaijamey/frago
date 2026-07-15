@@ -855,13 +855,14 @@ export async function getClaudeSessionDetail(
 
 export async function sendClaudeSessionMessage(
   sid: string,
-  text: string
+  text: string,
+  images: string[] = []
 ): Promise<ClaudeSessionSendResponse> {
   return fetchApi<ClaudeSessionSendResponse>(
     `/claude-sessions/${encodeURIComponent(sid)}/send`,
     {
       method: 'POST',
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, images }),
     }
   );
 }
@@ -872,11 +873,12 @@ export async function getPaSessions(): Promise<PaSessionsResponse> {
 
 export async function sendPaSessionMessage(
   convKey: string,
-  text: string
+  text: string,
+  images: string[] = []
 ): Promise<PaSessionSendResponse> {
   return fetchApi<PaSessionSendResponse>('/pa/sessions/send', {
     method: 'POST',
-    body: JSON.stringify({ conv_key: convKey, text }),
+    body: JSON.stringify({ conv_key: convKey, text, images }),
   });
 }
 

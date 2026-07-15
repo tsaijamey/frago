@@ -77,7 +77,9 @@ async def pa_chat(request: ChatRequest) -> dict:
 
 class PaSendRequest(BaseModel):
     conv_key: str
-    text: str
+    text: str = ""
+    # 可选 base64 图像（data URL 或裸 base64）。落盘后路径拼进 PA 注入的 prompt。
+    images: list[str] = []
 
 
 @router.get("/pa/sessions")
@@ -130,13 +132,28 @@ async def send_pa_session_message(request: PaSendRequest) -> dict:
     when none exists yet).
     """
     from frago.server.services.primary_agent_service import PrimaryAgentService
+    from frago.server.services.webui_uploads import (
+        ImageUploadError,
+        build_prompt_with_images,
+        save_uploaded_images,
+    )
 
-    if not request.text.strip():
-        raise HTTPException(400, "text must not be empty")
+    if not request.text.strip() and not request.images:
+        raise HTTPException(400, "text or images must be provided")
 
     pa = PrimaryAgentService.get_instance()
     if pa._queue_consumer_task is None or pa._queue_consumer_task.done():
         raise HTTPException(503, "PA is not running")
+
+    from frago.agent_driver.drivers.claude import _claude_session_uuid
+
+    # 图像落盘键用 conv 对应的 claude sid，和该 conv 的常驻会话、transcript 对齐。
+    sid = _claude_session_uuid(request.conv_key)
+    try:
+        image_paths = save_uploaded_images(request.images, sid)
+    except ImageUploadError as e:
+        raise HTTPException(400, f"image upload failed: {e}") from e
+    prompt = build_prompt_with_images(request.text, image_paths)
 
     was_warm = pa._get_pa_tmux_runner().session(request.conv_key) is not None
 
@@ -146,15 +163,13 @@ async def send_pa_session_message(request: PaSendRequest) -> dict:
         "msg_id": msg_id,
         "channel": "cli",
         "channel_message_id": msg_id,
-        "prompt": request.text,
+        "prompt": prompt,
         "conv_key": request.conv_key,
     }
     await pa.enqueue_message(msg)
 
-    from frago.agent_driver.drivers.claude import _claude_session_uuid
-
     return {
-        "sid": _claude_session_uuid(request.conv_key),
+        "sid": sid,
         "status": "ready" if was_warm else "activating",
         "msg_id": msg_id,
     }

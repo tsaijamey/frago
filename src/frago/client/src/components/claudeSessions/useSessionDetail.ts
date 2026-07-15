@@ -6,6 +6,25 @@ import {
 } from '@/api';
 import type { ClaudeSessionDetail } from '@/api/client';
 
+/** 一张已附加、待发送的图像：dataUrl 直接传后端，name 供预览 alt / 标题。 */
+export interface AttachedImage {
+  id: string;
+  dataUrl: string; // data:image/...;base64,....
+  name: string;
+}
+
+// composer 一次最多附 8 张（与后端 _MAX_COUNT 对齐），只收 image/* 文件。
+const MAX_ATTACHMENTS = 8;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
 /**
  * useSessionDetail — owns the detail side panel: transcript fetching,
  * chat-style bottom-pinned scroll, the composer that forwards input into
@@ -25,8 +44,12 @@ export function useSessionDetail() {
 
   // Composer (send message into the resident tmux claude) + reply polling
   const [input, setInput] = useState('');
+  const [images, setImages] = useState<AttachedImage[]>([]);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // 生成附件 id 不依赖 Date.now/random（够用即可）——单调自增计数器。
+  const attachCounterRef = useRef(0);
   // null = idle; 'activating' = cold start in progress; 'ready' = warm,
   // awaiting reply. Drives the progress bar; cleared once the probe says done.
   const [activation, setActivation] = useState<'activating' | 'ready' | null>(null);
@@ -124,6 +147,26 @@ export function useSessionDetail() {
     [clearPoll]
   );
 
+  // Attach image files (from picker / paste / drag-drop). Non-image files are
+  // ignored; the list is capped at MAX_ATTACHMENTS. Reads each into a data URL
+  // so `handleSend` can ship it as base64 the server saves to disk.
+  const addImageFiles = useCallback(async (files: FileList | File[]) => {
+    const picked = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (picked.length === 0) return;
+    const read = await Promise.all(
+      picked.map(async (f) => ({
+        id: `img-${attachCounterRef.current++}`,
+        dataUrl: await readFileAsDataUrl(f),
+        name: f.name || 'image',
+      }))
+    );
+    setImages((cur) => [...cur, ...read].slice(0, MAX_ATTACHMENTS));
+  }, []);
+
+  const removeImage = useCallback((id: string) => {
+    setImages((cur) => cur.filter((im) => im.id !== id));
+  }, []);
+
   const openDetail = useCallback(async (sid: string, opts?: { title?: string; convKey?: string }) => {
     clearPoll();
     setDetailSid(sid);
@@ -132,6 +175,7 @@ export function useSessionDetail() {
     setDetail(null);
     setDetailLoading(true);
     setInput('');
+    setImages([]);
     setSending(false);
     setSendError(null);
     setActivation(null);
@@ -154,6 +198,7 @@ export function useSessionDetail() {
     setDetailConvKey(null);
     setDetail(null);
     setInput('');
+    setImages([]);
     setSending(false);
     setSendError(null);
     setActivation(null);
@@ -162,7 +207,9 @@ export function useSessionDetail() {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || !detailSid || sending) return;
+    const imgUrls = images.map((im) => im.dataUrl);
+    // Allow text-only, image-only, or both — but never an empty turn.
+    if ((!text && imgUrls.length === 0) || !detailSid || sending) return;
     setSending(true);
     setSendError(null);
     setPollStalled(false);
@@ -176,9 +223,10 @@ export function useSessionDetail() {
       // sending never spins up a second tmux session racing PA's own pane;
       // everything else uses the UI-only send endpoint as before.
       const res = detailConvKey
-        ? await sendPaSessionMessage(detailConvKey, text)
-        : await sendClaudeSessionMessage(detailSid, text);
+        ? await sendPaSessionMessage(detailConvKey, text, imgUrls)
+        : await sendClaudeSessionMessage(detailSid, text, imgUrls);
       setInput('');
+      setImages([]);
       // activating → cold start (show "waking up"); ready → warm, awaiting reply.
       setActivation(res.status === 'activating' ? 'activating' : 'ready');
       pollReply(detailSid, 1500);
@@ -187,7 +235,7 @@ export function useSessionDetail() {
     } finally {
       setSending(false);
     }
-  }, [input, detailSid, detailConvKey, sending, detail, pollReply]);
+  }, [input, images, detailSid, detailConvKey, sending, detail, pollReply]);
 
   // Manual refresh: re-fetch the transcript on demand. Used by the refresh
   // button and after the poll deadline lapses, so the user is never stuck.
@@ -215,6 +263,9 @@ export function useSessionDetail() {
     detailLoading,
     input,
     setInput,
+    images,
+    addImageFiles,
+    removeImage,
     sending,
     sendError,
     activation,

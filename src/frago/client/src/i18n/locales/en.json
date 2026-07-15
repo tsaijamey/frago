@@ -64,6 +64,8 @@
     "truncated": "Showing latest {{shown}} of {{total}} messages",
     "send": "Send",
     "composerPlaceholder": "Message this session… (Enter to send, Shift+Enter for newline)",
+    "attachImage": "Attach image",
+    "removeImage": "Remove image",
     "activating": "Waking up session…",
     "awaitingReply": "Waiting for reply…",
     "sendFailed": "Send failed: {{error}}",

@@ -21,6 +21,11 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from frago.server.services.ui_session_runner import UiSessionRunner
+from frago.server.services.webui_uploads import (
+    ImageUploadError,
+    build_prompt_with_images,
+    save_uploaded_images,
+)
 from frago.session import claude_sessions as svc
 from frago.session import token_calendar as tcal
 from frago.session import transcript_completion as tc
@@ -40,9 +45,14 @@ def _get_runner() -> UiSessionRunner:
 
 
 class SendRequest(BaseModel):
-    """Request body for POST /api/claude-sessions/{sid}/send."""
+    """Request body for POST /api/claude-sessions/{sid}/send.
 
-    text: str
+    ``images`` 为可选的 base64 图像（data URL 或裸 base64），落盘后其绝对路径被拼进
+    注入 claude 的 prompt（claude 用 Read 按图像读取）。允许 text 为空但带图（纯发图）。
+    """
+
+    text: str = ""
+    images: list[str] = []
 
 
 def _session_cwd(sid: str) -> str | None:
@@ -156,14 +166,23 @@ async def send_to_claude_session(sid: str, request: SendRequest) -> dict:
     Reuses a warm session when present (context preserved); cold/evicted sessions
     are resumed and rebuilt by the pool. Returns the activation state so the
     front-end can show an "activating" progress bar on cold start.
+
+    带图时：先把 base64 图像落盘，再把绝对路径拼进注入 claude 的 prompt（claude 用
+    Read 按图像读取）。允许纯发图（text 空 + images 非空）。
     """
-    if not request.text.strip():
-        raise HTTPException(status_code=400, detail="text must not be empty")
+    if not request.text.strip() and not request.images:
+        raise HTTPException(status_code=400, detail="text or images must be provided")
+
+    try:
+        image_paths = save_uploaded_images(request.images, sid)
+    except ImageUploadError as e:
+        raise HTTPException(status_code=400, detail=f"image upload failed: {e}") from e
+    prompt = build_prompt_with_images(request.text, image_paths)
 
     runner = _get_runner()
     cwd = _session_cwd(sid)
     try:
-        activation = await asyncio.to_thread(runner.send, sid, request.text, cwd=cwd)
+        activation = await asyncio.to_thread(runner.send, sid, prompt, cwd=cwd)
     except Exception as e:  # noqa: BLE001 — surface drive failures as 500 with cause
         raise HTTPException(status_code=500, detail=f"send failed: {e}") from e
 

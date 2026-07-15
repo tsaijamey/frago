@@ -3352,6 +3352,91 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   filter: brightness(1.08);
 }
 
+/* Image attach button — sits just left of the send button inside the textarea. */
+.cs-composer-input {
+  /* two floating buttons now live at the bottom-right */
+  padding-right: 78px;
+}
+
+.cs-composer-attach {
+  position: absolute;
+  right: 43px;
+  bottom: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.cs-composer-attach:not(:disabled):hover {
+  color: var(--accent-primary);
+  background: var(--bg-secondary);
+}
+
+.cs-composer-attach:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Drag-over affordance on the whole composer. */
+.cs-composer--drag {
+  outline: 2px dashed var(--accent-primary);
+  outline-offset: -4px;
+  border-radius: var(--radius-sm);
+}
+
+/* Pending attachment thumbnails above the input. */
+.cs-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cs-attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.cs-attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cs-attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.cs-attachment-remove:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+
 .cs-msg {
   display: flex;
   flex-direction: column;

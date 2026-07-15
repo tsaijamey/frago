@@ -64,6 +64,8 @@
     "truncated": "显示最近 {{shown}} 条（共 {{total}} 条）",
     "send": "发送",
     "composerPlaceholder": "给该会话发消息…（Enter 发送，Shift+Enter 换行）",
+    "attachImage": "添加图片",
+    "removeImage": "移除图片",
     "activating": "正在唤醒会话…",
     "awaitingReply": "正在等待回复…",
     "sendFailed": "发送失败：{{error}}",

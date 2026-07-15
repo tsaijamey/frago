@@ -622,11 +622,13 @@ export const getTokenCalendar = withMode(
 export const sendClaudeSessionMessage = withMode(
   (
     sid: string,
-    text: string
-  ): Promise<httpApi.ClaudeSessionSendResponse> => httpApi.sendClaudeSessionMessage(sid, text),
+    text: string,
+    images: string[] = []
+  ): Promise<httpApi.ClaudeSessionSendResponse> => httpApi.sendClaudeSessionMessage(sid, text, images),
   (
     _sid: string,
-    _text: string
+    _text: string,
+    _images: string[] = []
   ): Promise<httpApi.ClaudeSessionSendResponse> => {
     throw new Error('Claude sessions API not available in pywebview mode');
   },
@@ -642,11 +644,13 @@ export const getPaSessions = withMode(
 export const sendPaSessionMessage = withMode(
   (
     convKey: string,
-    text: string
-  ): Promise<httpApi.PaSessionSendResponse> => httpApi.sendPaSessionMessage(convKey, text),
+    text: string,
+    images: string[] = []
+  ): Promise<httpApi.PaSessionSendResponse> => httpApi.sendPaSessionMessage(convKey, text, images),
   (
     _convKey: string,
-    _text: string
+    _text: string,
+    _images: string[] = []
   ): Promise<httpApi.PaSessionSendResponse> => {
     throw new Error('PA sessions API not available in pywebview mode');
   },

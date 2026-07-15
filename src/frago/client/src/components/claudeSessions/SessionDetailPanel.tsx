@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import type { TFunction } from 'i18next';
 import {
   RefreshCw,
@@ -9,8 +10,10 @@ import {
   Send,
   Loader2,
   AlertCircle,
+  ImagePlus,
 } from 'lucide-react';
 import type { ClaudeSessionItem, ClaudeSessionDetail } from '@/api/client';
+import type { AttachedImage } from './useSessionDetail';
 import MessageBlock from './MessageBlock';
 
 interface SessionDetailPanelProps {
@@ -22,6 +25,9 @@ interface SessionDetailPanelProps {
   detailLoading: boolean;
   input: string;
   setInput: (s: string) => void;
+  images: AttachedImage[];
+  addImageFiles: (files: FileList | File[]) => void;
+  removeImage: (id: string) => void;
   sending: boolean;
   sendError: string | null;
   activation: 'activating' | 'ready' | null;
@@ -43,6 +49,9 @@ export default function SessionDetailPanel({
   detailLoading,
   input,
   setInput,
+  images,
+  addImageFiles,
+  removeImage,
   sending,
   sendError,
   activation,
@@ -54,6 +63,9 @@ export default function SessionDetailPanel({
   refreshDetail,
   handleCopy,
 }: SessionDetailPanelProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const canSend = !sending && (!!input.trim() || images.length > 0);
   return (
     <>
       <div className="cs-drawer-backdrop" onClick={closeDetail} />
@@ -161,14 +173,50 @@ export default function SessionDetailPanel({
           </div>
         )}
 
-        {/* Composer — forward input into the resident tmux claude */}
-        <div className="cs-composer">
+        {/* Composer — forward text + images into the resident tmux claude */}
+        <div
+          className={`cs-composer ${dragOver ? 'cs-composer--drag' : ''}`}
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes('Files')) {
+              e.preventDefault();
+              setDragOver(true);
+            }
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            if (e.dataTransfer.files.length > 0) {
+              e.preventDefault();
+              addImageFiles(e.dataTransfer.files);
+            }
+            setDragOver(false);
+          }}
+        >
           {sendError && (
             <div className="cs-composer-error">
               <AlertCircle size={13} />
               <span>{t('claudeSessions.sendFailed', { error: sendError })}</span>
             </div>
           )}
+
+          {images.length > 0 && (
+            <div className="cs-composer-attachments">
+              {images.map((im) => (
+                <div key={im.id} className="cs-attachment" title={im.name}>
+                  <img src={im.dataUrl} alt={im.name} />
+                  <button
+                    type="button"
+                    className="cs-attachment-remove"
+                    onClick={() => removeImage(im.id)}
+                    aria-label={t('claudeSessions.removeImage')}
+                    title={t('claudeSessions.removeImage')}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="cs-composer-row">
             <textarea
               className="cs-composer-input"
@@ -177,6 +225,16 @@ export default function SessionDetailPanel({
               placeholder={t('claudeSessions.composerPlaceholder')}
               disabled={sending}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData.items)
+                  .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+                  .map((it) => it.getAsFile())
+                  .filter((f): f is File => f != null);
+                if (files.length > 0) {
+                  e.preventDefault();
+                  addImageFiles(files);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -186,8 +244,18 @@ export default function SessionDetailPanel({
             />
             <button
               type="button"
+              className="cs-composer-attach"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending}
+              title={t('claudeSessions.attachImage')}
+              aria-label={t('claudeSessions.attachImage')}
+            >
+              <ImagePlus size={16} />
+            </button>
+            <button
+              type="button"
               className="cs-composer-send"
-              disabled={sending || !input.trim()}
+              disabled={!canSend}
               onClick={handleSend}
               title={t('claudeSessions.send')}
               aria-label={t('claudeSessions.send')}
@@ -195,6 +263,20 @@ export default function SessionDetailPanel({
               {sending ? <Loader2 size={16} className="cs-spin" /> : <Send size={16} />}
             </button>
           </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                addImageFiles(e.target.files);
+              }
+              e.target.value = ''; // allow re-picking the same file
+            }}
+          />
         </div>
       </aside>
     </>
