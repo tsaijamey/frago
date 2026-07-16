@@ -2044,9 +2044,10 @@ def init(force: bool):
 
 @click.command('chrome', cls=AgentFriendlyCommand)
 @click.option(
-    '--browser', '-b',
+    '--browser',
     type=click.Choice(['chrome', 'edge', 'chromium'], case_sensitive=False),
-    help='Browser to use (auto-detect if not specified)'
+    help='Browser to use (auto-detect if not specified). '
+         'Long flag only: -b at the chrome group level means --backend.'
 )
 @click.option(
     '--headless',
@@ -2112,19 +2113,28 @@ def init(force: bool):
     is_flag=True,
     help='Keep running after launch until Ctrl+C'
 )
+@click.option(
+    '--reseed-profile',
+    is_flag=True,
+    help='Extension backend only: delete the extension-profile and re-seed '
+         'it from the system browser profile (fresh logins/cookies/bookmarks)'
+)
 @print_usage
 def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_url: str,
                  port: int, width: int, height: int, window_x: int, window_y: int,
-                 profile_dir: str, no_kill: bool, keep_alive: bool):
+                 profile_dir: str, no_kill: bool, keep_alive: bool,
+                 reseed_profile: bool):
     """
     Launch browser with CDP debugging support (Chrome, Edge, or Chromium)
 
     \b
-    Browser selection (--browser/-b):
+    Browser selection (--browser):
       chrome   - Google Chrome (default if available)
       edge     - Microsoft Edge
       chromium - Chromium browser
       (auto)   - Auto-detect: Chrome > Edge > Chromium
+      Note: --browser picks which Chromium-family browser to launch;
+      it does NOT change the backend (-b/--backend on the chrome group).
 
     \b
     Mode descriptions:
@@ -2135,18 +2145,22 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
 
     \b
     Examples:
-      frago chrome                              # Auto-detect browser
-      frago chrome --browser edge               # Use Edge browser
-      frago chrome -b chromium                  # Use Chromium
-      frago chrome --headless                   # Headless mode
-      frago chrome --void                       # Void mode
-      frago chrome --app --app-url https://...  # App mode
-      frago chrome --port 9333                  # Use different port
-      frago chrome --keep-alive                 # Keep running after launch
+      frago chrome start                              # Auto-detect browser
+      frago chrome start --browser edge               # Use Edge browser
+      frago chrome start --browser chromium           # Use Chromium
+      frago chrome start --headless                   # Headless mode
+      frago chrome start --void                       # Void mode
+      frago chrome start --app --app-url https://...  # App mode
+      frago chrome start --port 9333                  # Use different port
+      frago chrome start --keep-alive                 # Keep running after launch
     """
     from pathlib import Path
 
     from ..chrome.cdp.launcher import ChromeLauncher
+
+    if reseed_profile:
+        click.echo("Warning: --reseed-profile only applies to the extension "
+                   "backend (frago chrome -b extension start); ignored", err=True)
 
     # Mode exclusivity check
     mode_count = sum([headless, void, app_mode])

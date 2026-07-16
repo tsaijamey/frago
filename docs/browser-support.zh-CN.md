@@ -56,7 +56,7 @@ frago chrome start
 # 指定浏览器
 frago chrome start --browser chrome
 frago chrome start --browser edge
-frago chrome start -b chromium
+frago chrome start --browser chromium
 ```
 
 **启动模式**：

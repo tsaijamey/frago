@@ -7,11 +7,11 @@
 ```bash
 {{frago_launcher}} chrome start                    # auto-detect: Chrome > Edge > Chromium
 {{frago_launcher}} chrome start --browser edge     # 指定 Edge
-{{frago_launcher}} chrome start -b chromium        # 指定 Chromium（短形式）
+{{frago_launcher}} chrome start --browser chromium # 指定 Chromium
 {{frago_launcher}} chrome detect                   # 列出系统已装的浏览器
 ```
 
-注意 `--browser` 是 **start** 的 flag，不是 navigate / get-content 等命令的 flag。需要换浏览器时**重启**——一个 frago 实例同时只跑一个浏览器后端。
+注意 `--browser` 是 **start** 的 flag，不是 navigate / get-content 等命令的 flag。选 edge/chromium 只是换浏览器，不改变后端（后端选择是顶层 `-b/--backend`，见 `frago book chrome-backend-choice`）。需要换浏览器时**重启**——一个 frago 实例同时只跑一个浏览器后端。
 
 ## 启动模式（互斥四选一）
 

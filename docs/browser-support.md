@@ -56,7 +56,7 @@ frago chrome start
 # Specify browser explicitly
 frago chrome start --browser chrome
 frago chrome start --browser edge
-frago chrome start -b chromium
+frago chrome start --browser chromium
 ```
 
 **Launch Modes**:
