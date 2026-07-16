@@ -13,17 +13,19 @@ The orchestration is **idempotent**:
 """
 from __future__ import annotations
 
+import contextlib
 import socket
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from . import bundle_path
 from .native_host import (
-    SOCK_PATH, STABLE_EXTENSION_ID, install_manifest,
+    SOCK_PATH,
+    STABLE_EXTENSION_ID,
+    install_manifest,
 )
 
 
@@ -31,7 +33,7 @@ from .native_host import (
 class BridgeStartupResult:
     """What :func:`start_extension_bridge` returns on success."""
 
-    daemon_pid: Optional[int]            # None when reusing a pre-existing daemon
+    daemon_pid: int | None            # None when reusing a pre-existing daemon
     daemon_was_already_running: bool
     browser_pid: int
     browser_path: str
@@ -47,10 +49,10 @@ class BridgeStopResult:
     """What :func:`stop_extension_bridge` returns. Always returns successfully —
     a stop on an already-stopped bridge is not an error."""
 
-    browser_pid: Optional[int]            # None if no browser was found
+    browser_pid: int | None            # None if no browser was found
     browser_stopped: bool                  # True if we sent a kill signal
     browser_force_killed: bool             # True if SIGTERM didn't suffice
-    daemon_pid: Optional[int]              # None if no daemon was found
+    daemon_pid: int | None              # None if no daemon was found
     daemon_stopped: bool
     socket_removed: bool
     profile_dir: str
@@ -71,8 +73,8 @@ def _daemon_alive(sock_path: Path = SOCK_PATH) -> bool:
     except (FileNotFoundError, ConnectionRefusedError, OSError):
         return False
     finally:
-        try: s.close()
-        except OSError: pass
+        with contextlib.suppress(OSError):
+            s.close()
 
 
 def _wait_socket(sock_path: Path, timeout: float) -> None:
@@ -89,10 +91,11 @@ def _wait_bridge(timeout: float) -> dict:
     # Lazy import — backend imports DaemonClient which imports protocol; the
     # orchestration module shouldn't pull them eagerly.
     from ..backends.extension import (
-        ExtensionBackendError, ExtensionChromeBackend,
+        ExtensionBackendError,
+        ExtensionChromeBackend,
     )
     deadline = time.time() + timeout
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     while time.time() < deadline:
         try:
             return ExtensionChromeBackend().start()
@@ -102,15 +105,15 @@ def _wait_bridge(timeout: float) -> dict:
     raise TimeoutError(f"bridge did not come online: {last_err}")
 
 
-def _spawn_daemon(log_path: Optional[Path]) -> int:
+def _spawn_daemon(log_path: Path | None) -> int:
     """Spawn the singleton daemon detached. Returns its PID."""
     # Stale socket from prior crash blocks bind; remove pre-launch.
     if SOCK_PATH.exists():
-        try: SOCK_PATH.unlink()
-        except OSError: pass
+        with contextlib.suppress(OSError):
+            SOCK_PATH.unlink()
     if log_path:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        stdio = open(log_path, "wb")
+        stdio = open(log_path, "wb")  # noqa: SIM115 — handed to detached Popen
     else:
         stdio = subprocess.DEVNULL
     proc = subprocess.Popen(
@@ -138,7 +141,7 @@ def _ensure_native_host_launcher() -> Path:
     return launcher
 
 
-def _read_profile_lock_pid(profile_dir: Path) -> Optional[int]:
+def _read_profile_lock_pid(profile_dir: Path) -> int | None:
     """Return PID of the browser holding this profile, or None.
 
     Chromium writes ``SingletonLock`` as a symlink whose target name is
@@ -155,7 +158,7 @@ def _read_profile_lock_pid(profile_dir: Path) -> Optional[int]:
         return None
 
 
-def _find_daemon_pid() -> Optional[int]:
+def _find_daemon_pid() -> int | None:
     """Locate the singleton extension daemon by cmdline scan.
 
     Uses pgrep on Linux/macOS. Returns the first PID found. Multiple
@@ -243,13 +246,14 @@ def _profile_locked(profile_dir: Path) -> bool:
 
 def start_extension_bridge(
     *,
-    browser: Optional[str] = None,
-    chrome_binary: Optional[str] = None,
-    profile_dir: Optional[Path] = None,
-    bundle_dir: Optional[Path] = None,
-    daemon_log: Optional[Path] = None,
+    browser: str | None = None,
+    chrome_binary: str | None = None,
+    profile_dir: Path | None = None,
+    bundle_dir: Path | None = None,
+    daemon_log: Path | None = None,
     bridge_timeout: float = 30.0,
     socket_timeout: float = 5.0,
+    reseed_profile: bool = False,
 ) -> BridgeStartupResult:
     """Bring up the full extension bridge — daemon, manifest, browser, handshake.
 
@@ -268,6 +272,9 @@ def start_extension_bridge(
             ``~/.frago/server/extension-daemon.log``).
         bridge_timeout: Seconds to wait for the SW to connect.
         socket_timeout: Seconds to wait for the daemon socket to appear.
+        reseed_profile: Delete the frago-managed profile and re-seed it
+            from the system browser profile (fresh copy of logins,
+            cookies, bookmarks). Refuses while the profile is in use.
 
     Returns:
         :class:`BridgeStartupResult` with everything the caller might
@@ -309,6 +316,13 @@ def start_extension_bridge(
             f"already running on it. Run `frago chrome stop --backend "
             f"extension` first, or close the browser window manually."
         )
+    if reseed_profile:
+        # Lock check above guarantees no browser holds this profile.
+        # Wipe it so launch_chrome_with_extension's first-launch seeding
+        # re-copies the system profile from scratch.
+        import shutil as _shutil
+        _shutil.rmtree(profile, ignore_errors=True)
+        profile.mkdir(parents=True, exist_ok=True)
 
     # 3. Bundle dir
     bundle = bundle_dir or bundle_path()
@@ -320,7 +334,7 @@ def start_extension_bridge(
 
     # 4. Daemon
     daemon_was_running = _daemon_alive()
-    daemon_pid: Optional[int]
+    daemon_pid: int | None
     if daemon_was_running:
         daemon_pid = None
     else:
@@ -340,7 +354,7 @@ def start_extension_bridge(
     # 6. Browser launch
     from ..backends.extension import launch_chrome_with_extension
     browser_proc = launch_chrome_with_extension(
-        bundle, user_data_dir=profile, chrome_binary=binary,
+        bundle, user_data_dir=profile, chrome_binary=binary, brand=brand,
     )
 
     # 7. Bridge handshake
@@ -363,7 +377,7 @@ def start_extension_bridge(
 
 def stop_extension_bridge(
     *,
-    profile_dir: Optional[Path] = None,
+    profile_dir: Path | None = None,
     timeout: float = 10.0,
 ) -> BridgeStopResult:
     """Tear down the extension bridge.

@@ -7,17 +7,21 @@ browser must have the frago bridge extension loaded and connected.
 from __future__ import annotations
 
 import base64
+import platform as _platform
 import shutil
 import subprocess
-import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple
 
-from ..extension.native_host import DaemonClient, SOCK_PATH
-from ..extension.protocol import RPC_ERROR_CODES
+from ..extension.native_host import SOCK_PATH, DaemonClient
+from ..profile_seed import seed_profile_from_system, system_profile_dir
 from .base import (
-    ChromeBackend, ClickResult, ContentResult, ExecResult,
-    NavigateResult, ScreenshotResult,
+    ChromeBackend,
+    ClickResult,
+    ContentResult,
+    ExecResult,
+    NavigateResult,
+    ScreenshotResult,
 )
 
 
@@ -31,11 +35,11 @@ class ExtensionBackendError(RuntimeError):
 class ExtensionChromeBackend(ChromeBackend):
     name = "extension"
 
-    def __init__(self, *, sock_path: Optional[Path] = None,
+    def __init__(self, *, sock_path: Path | None = None,
                  timeout: float = 30.0) -> None:
         self.sock_path = sock_path or SOCK_PATH
         self.timeout = timeout
-        self._client: Optional[DaemonClient] = None
+        self._client: DaemonClient | None = None
 
     def _rpc(self, method: str, params: dict) -> Any:
         client = DaemonClient(self.sock_path)
@@ -75,7 +79,7 @@ class ExtensionChromeBackend(ChromeBackend):
         return ExecResult(value=r.get("value"))
 
     def get_content(self, group: str, *,
-                    selector: Optional[str] = None) -> ContentResult:
+                    selector: str | None = None) -> ContentResult:
         r = self._rpc("dom.get_content",
                       {"group": group, "selector": selector})
         return ContentResult(
@@ -88,7 +92,7 @@ class ExtensionChromeBackend(ChromeBackend):
         return ClickResult(success=bool(r.get("success")))
 
     def screenshot(self, group: str, *,
-                   output: Optional[str] = None) -> ScreenshotResult:
+                   output: str | None = None) -> ScreenshotResult:
         r = self._rpc("visual.screenshot", {"group": group, "output": output})
         b64 = r.get("png_base64")
         path = None
@@ -140,15 +144,15 @@ class ExtensionChromeBackend(ChromeBackend):
     def group_cleanup(self) -> dict:
         return self._rpc("groups.cleanup", {})
 
-    def reset(self, group: Optional[str] = None) -> dict:
+    def reset(self, group: str | None = None) -> dict:
         return self._rpc("tabs.reset", {"group": group})
 
     def scroll(self, distance: int, group: str) -> dict:
         return self._rpc("page.scroll",
                          {"distance": int(distance), "group": group})
 
-    def scroll_to(self, group: str, *, selector: Optional[str] = None,
-                  text: Optional[str] = None,
+    def scroll_to(self, group: str, *, selector: str | None = None,
+                  text: str | None = None,
                   block: str = "center") -> dict:
         if not selector and not text:
             raise ValueError("scroll_to: selector or text required")
@@ -254,10 +258,6 @@ def _coerce_tab_id(tab_id: Any) -> Any:
 #   Edge Stable > Chromium > Chrome Beta/Dev/Canary > Brave > Vivaldi
 
 
-import platform as _platform
-from typing import NamedTuple
-
-
 class BrowserChoice(NamedTuple):
     path: str   # absolute binary path
     brand: str  # "edge" | "edge-beta" | "edge-dev" | "chromium" | "chrome-beta"
@@ -346,7 +346,7 @@ def _windows_user_paths() -> list[tuple[str, str]]:
     ]
 
 
-def pick_browser_for_extension() -> Optional[BrowserChoice]:
+def pick_browser_for_extension() -> BrowserChoice | None:
     """Find the highest-priority Chromium-class browser usable for extension mode.
 
     Returns ``None`` if no compatible browser is installed.
@@ -411,19 +411,22 @@ def list_browsers_for_extension() -> list[BrowserChoice]:
 
 
 def launch_chrome_with_extension(bundle_dir: Path,
-                                 user_data_dir: Optional[Path] = None,
-                                 chrome_binary: Optional[str] = None,
-                                 log_path: Optional[Path] = None,
+                                 user_data_dir: Path | None = None,
+                                 chrome_binary: str | None = None,
+                                 log_path: Path | None = None,
+                                 brand: str | None = None,
                                  ) -> subprocess.Popen:
     """Launch Chrome with the unpacked bundle loaded.
 
     This is the ``start`` command for the extension backend. Chrome is
     detached so it survives the CLI process exit.
 
-    Browser selection: caller may pass ``chrome_binary`` to override.
-    Otherwise :func:`pick_browser_for_extension` picks the best-fit
-    Chromium-class browser. Chrome Stable is excluded by default because
-    its --load-extension flag is policy-blocked.
+    Browser selection: caller may pass ``chrome_binary`` to override
+    (then also pass ``brand`` so first-launch profile seeding can locate
+    the matching system profile). Otherwise
+    :func:`pick_browser_for_extension` picks the best-fit Chromium-class
+    browser. Chrome Stable is excluded by default because its
+    --load-extension flag is policy-blocked.
     """
     if chrome_binary:
         binary = chrome_binary
@@ -437,8 +440,14 @@ def launch_chrome_with_extension(bundle_dir: Path,
                 "--load-extension since v137."
             )
         binary = choice.path
+        brand = brand or choice.brand
     udd = user_data_dir or (Path.home() / ".frago" / "chrome" / "extension-profile")
     udd.mkdir(parents=True, exist_ok=True)
+    # First launch only: inherit the user's system profile (logins,
+    # cookies, passwords, bookmarks) — same isolated-copy mechanism as
+    # the CDP backend. Once Default/ exists this is a no-op.
+    if brand:
+        seed_profile_from_system(udd, system_profile_dir(brand))
     args = [
         binary,
         f"--user-data-dir={udd}",
@@ -454,6 +463,6 @@ def launch_chrome_with_extension(bundle_dir: Path,
     ]
     stdio = subprocess.DEVNULL
     if log_path:
-        stdio = open(log_path, "wb")
+        stdio = open(log_path, "wb")  # noqa: SIM115 — handed to detached Popen
     return subprocess.Popen(args, stdout=stdio, stderr=stdio,
                             start_new_session=True)

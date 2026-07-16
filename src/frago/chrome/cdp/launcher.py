@@ -21,25 +21,7 @@ from frago.chrome.cdp.browser_detection import (
 )
 from frago.chrome.cdp.process import kill_existing_chrome
 from frago.chrome.cdp.transport import cdp_get, cdp_ws_connect
-
-# System profile directories (for syncing bookmarks, extensions, etc.)
-SYSTEM_PROFILE_DIRS: dict[str, dict[BrowserType, list[str]]] = {
-    "Darwin": {
-        BrowserType.CHROME: ["~/Library/Application Support/Google/Chrome"],
-        BrowserType.EDGE: ["~/Library/Application Support/Microsoft Edge"],
-        BrowserType.CHROMIUM: ["~/Library/Application Support/Chromium"],
-    },
-    "Linux": {
-        BrowserType.CHROME: ["~/.config/google-chrome"],
-        BrowserType.EDGE: ["~/.config/microsoft-edge"],
-        BrowserType.CHROMIUM: ["~/.config/chromium"],
-    },
-    "Windows": {
-        BrowserType.CHROME: ["${LOCALAPPDATA}\\Google\\Chrome\\User Data"],
-        BrowserType.EDGE: ["${LOCALAPPDATA}\\Microsoft\\Edge\\User Data"],
-        BrowserType.CHROMIUM: ["${LOCALAPPDATA}\\Chromium\\User Data"],
-    },
-}
+from frago.chrome.profile_seed import seed_profile_from_system, system_profile_dir
 
 # frago profile directory names (legacy flat layout).
 # Kept only to locate old directories for lazy migration; the new layout
@@ -170,17 +152,7 @@ class ChromeLauncher:
 
     def _get_system_profile_dir(self) -> Path | None:
         """Get system default browser user data directory based on browser type"""
-        # Get profile paths for current browser type
-        profile_paths = SYSTEM_PROFILE_DIRS.get(self.system, {}).get(self.browser_type, [])
-
-        for path_str in profile_paths:
-            # Expand ~ and environment variables
-            expanded = os.path.expandvars(os.path.expanduser(path_str))
-            path = Path(expanded)
-            if path.exists():
-                return path
-
-        return None
+        return system_profile_dir(self.browser_type.value, self.system)
 
     def _legacy_profile_dir(self, browser_type: BrowserType, port: int) -> Path | None:
         """Return the legacy flat directory to migrate from, if it exists.
@@ -329,54 +301,7 @@ class ChromeLauncher:
         directory doesn't exist yet). Subsequent launches preserve the frago
         profile as-is, keeping login sessions and cookies intact.
         """
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
-
-        default_dst = self.profile_dir / "Default"
-
-        # Only sync from system profile if frago profile hasn't been initialized yet
-        if not default_dst.exists():
-            system_profile = self._get_system_profile_dir()
-            if system_profile:
-                # Copy Local State file
-                local_state_src = system_profile / "Local State"
-                local_state_dst = self.profile_dir / "Local State"
-                if local_state_src.exists():
-                    with suppress(Exception):
-                        shutil.copy2(local_state_src, local_state_dst)
-
-                # Copy entire Default directory (excluding cache directories)
-                # This provides initial bookmarks, extensions, and settings
-                default_src = system_profile / "Default"
-
-                # Directories to exclude (cache, logs, locks)
-                exclude_dirs = {
-                    "Cache",
-                    "Code Cache",
-                    "GPUCache",
-                    "DawnGraphiteCache",
-                    "DawnWebGPUCache",
-                    "Service Worker",  # Can be large and regenerates
-                    "File System",  # Can be large
-                    "blob_storage",  # Can be large
-                }
-                exclude_files = {
-                    "LOCK",
-                    "LOG",
-                    "LOG.old",
-                }
-
-                def ignore_patterns(_directory: str, files: list[str]) -> list[str]:
-                    """Return list of files/dirs to ignore during copy"""
-                    ignored = []
-                    for f in files:
-                        if f in exclude_dirs or f in exclude_files or f.endswith(".log") or f.endswith(".lock"):
-                            ignored.append(f)
-                    return ignored
-
-                if default_src.exists():
-                    # Non-critical: continue with empty profile on failure
-                    with suppress(Exception):
-                        shutil.copytree(default_src, default_dst, ignore=ignore_patterns)
+        seed_profile_from_system(self.profile_dir, self._get_system_profile_dir())
 
         # Set Chrome preferences to disable various UI prompts
         self._set_chrome_preferences()
