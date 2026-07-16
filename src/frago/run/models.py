@@ -5,9 +5,11 @@ Defines core data structures: RunInstance, LogEntry, Screenshot, CurrentRunConte
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
 
 
 class RunStatus(str, Enum):
@@ -79,10 +81,10 @@ class InsightEntry(BaseModel):
 
     insight_type: InsightType
     summary: str = Field(..., min_length=1, max_length=200)  # Brief summary
-    detail: Optional[str] = Field(default=None, max_length=1000)  # Detailed explanation
-    context: Optional[str] = Field(default=None, max_length=500)  # Occurrence scenario/context
+    detail: str | None = Field(default=None, max_length=1000)  # Detailed explanation
+    context: str | None = Field(default=None, max_length=500)  # Occurrence scenario/context
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         result = {
             "insight_type": self.insight_type.value,
@@ -95,14 +97,11 @@ class InsightEntry(BaseModel):
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "InsightEntry":
+    def from_dict(cls, data: dict[str, Any]) -> "InsightEntry":
         """Create instance from dictionary"""
         if isinstance(data.get("insight_type"), str):
             data["insight_type"] = InsightType(data["insight_type"])
         return cls(**data)
-
-
-from .constants import THEME_DESCRIPTION_MAX_LEN as THEME_DESC_MAX
 
 
 class RunInstance(BaseModel):
@@ -117,19 +116,17 @@ class RunInstance(BaseModel):
     last_accessed: datetime
     status: RunStatus = RunStatus.ACTIVE
     # --- Phase 1 domain fields ---
-    domain: Optional[str] = Field(default=None, description="Domain name (e.g. twitter, frago-meta)")
-    aliases: List[str] = Field(default_factory=list, description="Cached domain alias list (authoritative source: frago def domain_dict)")
+    domain: str | None = Field(default=None, description="Domain name (e.g. twitter, frago-meta)")
+    aliases: list[str] = Field(default_factory=list, description="Cached domain alias list (authoritative source: frago def domain_dict)")
     is_cross_domain: bool = Field(default=False, description="True when name has CROSS- prefix")
-    component_domains: List[str] = Field(default_factory=list, description="Component domains for cross-domain runs")
+    component_domains: list[str] = Field(default_factory=list, description="Component domains for cross-domain runs")
     session_count: int = Field(default=0, ge=0, description="Cumulative session count attached to this domain")
     insight_count: int = Field(default=0, ge=0, description="Cumulative insight entry count")
 
-    class Config:
-        """Pydantic configuration"""
-        extra = "allow"  # Allow extra fields for custom metadata
+    model_config = ConfigDict(extra="allow")  # Allow extra fields for custom metadata
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunInstance":
+    def from_dict(cls, data: dict[str, Any]) -> "RunInstance":
         """Create instance from dictionary (compatible with ISO 8601 timestamp strings)."""
         if isinstance(data.get("created_at"), str):
             data["created_at"] = datetime.fromisoformat(
@@ -147,7 +144,7 @@ class RunInstance(BaseModel):
             data["status"] = RunStatus(raw_status)
         return cls(**data)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary (ISO 8601 timestamps)"""
         # Use model_dump() to get all fields including extra fields
         result = self.model_dump()
@@ -168,20 +165,20 @@ class LogEntry(BaseModel):
     status: LogStatus
     action_type: ActionType
     execution_method: ExecutionMethod
-    data: Dict[str, Any] = Field(default_factory=dict)
-    insights: Optional[List["InsightEntry"]] = Field(default=None)  # [DEPRECATED Phase 2] use frago.run.insights.DomainInsight instead
+    data: dict[str, Any] = Field(default_factory=dict)
+    insights: list["InsightEntry"] | None = Field(default=None)  # [DEPRECATED Phase 2] use frago.run.insights.DomainInsight instead
     schema_version: str = "1.1"  # Schema version
 
     @field_validator("data")
     @classmethod
-    def validate_data(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_data(cls, v: dict[str, Any]) -> dict[str, Any]:
         """Validate data field constraints"""
         if not isinstance(v, dict):
             raise ValueError("data must be a valid JSON object")
         return v
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LogEntry":
+    def from_dict(cls, data: dict[str, Any]) -> "LogEntry":
         """Create instance from dictionary (compatible with ISO 8601 timestamp strings)"""
         if isinstance(data.get("timestamp"), str):
             data["timestamp"] = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
@@ -199,7 +196,7 @@ class LogEntry(BaseModel):
             ]
         return cls(**data)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary (ISO 8601 timestamps)"""
         result = {
             "timestamp": self.timestamp.isoformat(),
@@ -225,13 +222,13 @@ class Screenshot(BaseModel):
     timestamp: datetime
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Screenshot":
+    def from_dict(cls, data: dict[str, Any]) -> "Screenshot":
         """Create instance from dictionary"""
         if isinstance(data.get("timestamp"), str):
             data["timestamp"] = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
         return cls(**data)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         return {
             "sequence_number": self.sequence_number,
@@ -247,10 +244,10 @@ class CurrentRunContext(BaseModel):
     run_id: str = Field(..., min_length=1, max_length=100)
     last_accessed: datetime
     theme_description: str = Field(..., min_length=1, max_length=THEME_DESC_MAX)
-    projects_dir: Optional[str] = Field(default=None, description="projects directory absolute path")
+    projects_dir: str | None = Field(default=None, description="projects directory absolute path")
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CurrentRunContext":
+    def from_dict(cls, data: dict[str, Any]) -> "CurrentRunContext":
         """Create instance from dictionary"""
         if isinstance(data.get("last_accessed"), str):
             data["last_accessed"] = datetime.fromisoformat(
@@ -258,7 +255,7 @@ class CurrentRunContext(BaseModel):
             )
         return cls(**data)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         result = {
             "run_id": self.run_id,
