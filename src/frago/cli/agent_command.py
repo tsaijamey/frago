@@ -529,6 +529,8 @@ def agent_run(
             if not quiet:
                 click.echo(f"[OK] Using CCR: http://{host}:{port}")
         tmux_env.update(profile_env)
+        # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
+        tmux_env["FRAGO_AGENT_ROLE"] = "worker"
         _run_tmux_driver(
             prompt_text,
             agent_type=agent_type,
@@ -567,6 +569,8 @@ def agent_run(
 
     # Step 3: Determine whether to use CCR
     env = os.environ.copy()
+    # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
+    env["FRAGO_AGENT_ROLE"] = "worker"
     use_ccr_mode, ccr_info = should_use_ccr(frago_config, use_ccr)
 
     if use_ccr_mode:

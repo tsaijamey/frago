@@ -65,6 +65,7 @@ class WarmSessionPool:
         native_session_id: bool = False,
         conv_key: str | None = None,
         resume_hook: ResumeHook | None = None,
+        env: dict[str, str] | None = None,
     ) -> TmuxAgentSession:
         existing = self._sessions.get(session_id)
         if existing is not None:
@@ -82,6 +83,7 @@ class WarmSessionPool:
             native_session_id=native_session_id,
             conv_key=conv_key,
             runner=self._runner,
+            env=env,
         )
         # 重启后内存池为空，但同名 tmux 会话可能作为孤儿仍存活；直接 new-session
         # 会撞名 exit 1。先探测：存在则 kill 掉，保证 open() 能干净重建并重新注入
@@ -107,6 +109,7 @@ class WarmSessionPool:
         conv_key: str | None = None,
         timeout_s: float = 120.0,
         resume_hook: ResumeHook | None = None,
+        env: dict[str, str] | None = None,
     ) -> TurnResult:
         """取活会话 → 投喂一轮；会话保活留待复用。"""
         session = self.acquire(
@@ -116,6 +119,7 @@ class WarmSessionPool:
             native_session_id=native_session_id,
             conv_key=conv_key,
             resume_hook=resume_hook,
+            env=env,
         )
         return session.send(prompt, timeout_s=timeout_s)
 

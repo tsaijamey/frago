@@ -189,7 +189,10 @@ def drive_start(agent_type: str, name: str | None) -> None:
     runner = make_runner()
     pool = WarmSessionPool(runner=runner)
     try:
-        session = pool.acquire(agent_type, resolved, cwd)
+        # 子会话必须自知是 worker：CLAUDE.md 角色判定靠这个变量阻断 worker 再拉 worker 的递归。
+        session = pool.acquire(
+            agent_type, resolved, cwd, env={"FRAGO_AGENT_ROLE": "worker"}
+        )
     except FileNotFoundError:
         click.echo("Error: tmux not found. Please install tmux first (e.g. brew install tmux).", err=True)
         sys.exit(1)
