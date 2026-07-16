@@ -5,7 +5,7 @@
 ## 探针命令（仅 extension 后端）
 
 ```bash
-{{frago_launcher}} chrome detect --group <name> -b extension
+{{frago_launcher}} chrome -b extension detect --group <name>
 ```
 
 返回 JSON：
@@ -48,6 +48,7 @@ anti-bot 场景**必须**用 extension 后端：
 ## 链路示例
 
 ```bash
+{{frago_launcher}} chrome -b extension start   # 首次：自动选浏览器+加载扩展+拉起 daemon
 {{frago_launcher}} chrome -b extension navigate "https://target.com" --group t
 {{frago_launcher}} chrome -b extension detect --group t
 # {"challenge": true, "type": "invisible_or_static"}

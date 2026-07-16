@@ -50,11 +50,11 @@
 
 - name: chrome-backend-choice
   category: must
-  brief: "chrome 双后端 cdp/extension 决策表 + profile 隔离机制；anti-bot 必走 extension"
+  brief: "chrome 双后端 cdp/extension 决策表 + profile 隔离；extension start/stop 完整生命周期（自动选浏览器，Chrome Stable ≥v137 不可用）；anti-bot 必走 extension"
 
 - name: chrome-anti-bot
   category: available
-  brief: "Cloudflare/Datadome/captcha：detect 探针 + interactive/invisible/blocked 三档处理"
+  brief: "Cloudflare/Datadome/captcha：`-b extension detect --group <g>` 探针 + interactive/invisible/blocked 三档处理"
 
 - name: chrome-startup
   category: available

@@ -48,17 +48,30 @@ from .commands import (
 
 
 @click.command('detect', cls=AgentFriendlyCommand)
-def detect_browsers():
+@click.option('--group', '-g', default=None,
+              help='Probe the group\'s current page for anti-bot challenges '
+                   '(Cloudflare / captcha / block pages). Extension backend '
+                   'only. Without --group, detects installed browsers.')
+def detect_browsers(group):
     """
-    Detect available browsers on the system
+    Detect available browsers, or probe a page for anti-bot challenges
 
-    Shows which Chromium-based browsers are installed and their paths.
-    Supports Chrome, Edge, and Chromium.
+    Without --group: shows which Chromium-based browsers are installed
+    and their paths (Chrome, Edge, Chromium).
+
+    With --group (extension backend only): probes the group's current
+    page for anti-bot challenges and returns structured JSON
+    ({"challenge": bool, "type": ..., "needs_human": ...}).
 
     \b
     Examples:
       frago chrome detect
+      frago chrome -b extension detect --group research
     """
+    if group:
+        raise click.UsageError(
+            "anti-bot probe (--group) is only supported by the extension "
+            "backend. Use: frago chrome -b extension detect --group " + group)
     from ..chrome.cdp.browser_detection import BrowserType, detect_available_browsers
 
     browsers = detect_available_browsers()
@@ -184,10 +197,12 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     if name == "start":
         # Full bridge bring-up: pick browser, ensure daemon, install
         # manifest, launch browser, wait for handshake.
-        from ..chrome.extension.lifecycle import (
-            BridgeStartupResult, start_extension_bridge,
-        )
         from dataclasses import asdict
+
+        from ..chrome.extension.lifecycle import (
+            BridgeStartupResult,
+            start_extension_bridge,
+        )
 
         # CDP's --browser option uses "auto" to mean "let frago pick";
         # extension picker uses None for the same intent. Translate.
@@ -199,10 +214,13 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
             brand = None
 
         try:
-            result: BridgeStartupResult = start_extension_bridge(browser=brand)
+            result: BridgeStartupResult = start_extension_bridge(
+                browser=brand,
+                reseed_profile=bool(kwargs.get("reseed_profile")),
+            )
         except (RuntimeError, TimeoutError) as e:
             click.echo(json.dumps({"ok": False, "error": str(e)}), err=True)
-            raise click.exceptions.Exit(1)
+            raise click.exceptions.Exit(1) from e
         click.echo(json.dumps(asdict(result), indent=2, default=str))
         return
     if name not in NO_GROUP and not group:
@@ -220,19 +238,32 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     elif name == "screenshot":
         r = be.screenshot(group, output=kwargs.get("output_file") or
                           kwargs.get("output"))
+        # With an output path the PNG is already on disk — echoing the
+        # base64 payload too would dump hundreds of KB into stdout (and
+        # into an agent's context). Emit a small summary instead.
+        if r.path:
+            from pathlib import Path as _Path
+            click.echo(json.dumps({
+                "path": r.path,
+                "bytes": _Path(r.path).stat().st_size,
+                "tab_id": r.tab_id,
+            }, indent=2, ensure_ascii=False))
+            return
     # ─── Batch 1 ────────────────────────────────────────────────────
     elif name == "stop":
         # Mirror of `start`: tear down browser + daemon + socket.
         # CDP-only kwargs (--port etc.) are silently ignored.
-        from ..chrome.extension.lifecycle import (
-            BridgeStopResult, stop_extension_bridge,
-        )
         from dataclasses import asdict
+
+        from ..chrome.extension.lifecycle import (
+            BridgeStopResult,
+            stop_extension_bridge,
+        )
         try:
             stop_result: BridgeStopResult = stop_extension_bridge()
         except Exception as e:
             click.echo(json.dumps({"ok": False, "error": str(e)}), err=True)
-            raise click.exceptions.Exit(1)
+            raise click.exceptions.Exit(1) from e
         click.echo(json.dumps(asdict(stop_result), indent=2, default=str))
         return
     elif name == "status":
@@ -275,7 +306,12 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     elif name == "wait":
         r = be.wait(float(kwargs["seconds"]))
     elif name == "detect":
-        r = be.detect()
+        # --group switches semantics: anti-bot probe of the group's
+        # current page (extension-only). Without --group, keep the
+        # browser-detection meaning shared with CDP. Deliberately no
+        # FRAGO_CURRENT_RUN fallback — the probe must be explicit.
+        probe_group = kwargs.get("group")
+        r = be.detect_anti_bot(probe_group) if probe_group else be.detect()
     # ─── Visual effects (I) ──────────────────────────────────────────
     # Convert CLI's (life_time seconds, longlife flag) to lifetime ms.
     elif name in VISUAL_COMMANDS:
@@ -317,6 +353,31 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
                           indent=2, default=str, ensure_ascii=False))
 
 
+def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
+    """Dispatch to the extension backend, converting transport-layer
+    failures (bridge down, socket missing) into structured JSON errors
+    instead of raw tracebacks. Single choke point — individual commands
+    stay try/except-free."""
+    import json
+
+    from ..chrome.backends.extension import ExtensionBackendError
+    try:
+        return _dispatch_extension(name, kwargs)
+    except ExtensionBackendError as e:
+        err = {"ok": False, "code": e.code, "error": str(e),
+               "hint": "run: frago chrome -b extension start"}
+    except FileNotFoundError as e:
+        err = {"ok": False, "code": "socket-not-found",
+               "error": f"bridge socket not found: {e}",
+               "hint": "run: frago chrome -b extension start"}
+    except (ConnectionRefusedError, ConnectionResetError, TimeoutError) as e:
+        err = {"ok": False, "code": "bridge-unreachable",
+               "error": f"{type(e).__name__}: {e}",
+               "hint": "run: frago chrome -b extension start"}
+    click.echo(json.dumps(err, indent=2, ensure_ascii=False))
+    raise click.exceptions.Exit(1)
+
+
 def _wrap_mvp(cmd, name: str):
     """Wrap a click command so --backend extension reroutes to extension."""
     orig = cmd.callback
@@ -326,7 +387,7 @@ def _wrap_mvp(cmd, name: str):
     def wrapped(ctx, *args, **kwargs):
         backend = (ctx.obj or {}).get("BACKEND", "cdp")
         if backend == "extension":
-            return _dispatch_extension(name, kwargs)
+            return _dispatch_extension_safe(name, kwargs)
         # orig is the existing click callback. When it was decorated with
         # @click.pass_context, orig is a new_func that pulls ctx via
         # get_current_context() itself; passing ctx explicitly here would

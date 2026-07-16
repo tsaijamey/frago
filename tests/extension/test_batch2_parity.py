@@ -25,7 +25,6 @@ from frago.chrome.backends.cdp import CDPChromeBackend
 from frago.chrome.backends.extension import ExtensionChromeBackend
 from frago.cli import chrome_commands as cc
 
-
 BATCH2_METHODS = ["wait", "detect"]
 P3_1_DEFERRED = {"highlight", "pointer", "spotlight", "annotate",
                  "underline", "clear-effects"}
@@ -148,6 +147,10 @@ class _FakeBackend:
         self.calls.append(("detect",))
         return {"found": {}, "default": None, "all": {}}
 
+    def detect_anti_bot(self, group):
+        self.calls.append(("detect_anti_bot", group))
+        return {"challenge": False, "title": "t", "url": "u"}
+
 
 @pytest.fixture
 def fake_ext(monkeypatch):
@@ -175,6 +178,67 @@ def test_cli_backend_ext_routes_detect(fake_ext):
     assert r.exit_code == 0, r.output
     assert fake_ext.calls[0] == ("detect",)
     assert '"found"' in r.output
+
+
+# ─────────── anti-bot probe wiring (detect --group) ───────────
+
+def test_cli_ext_detect_with_group_probes_anti_bot(fake_ext):
+    r = _run("--backend", "extension", "detect", "--group", "g1")
+    assert r.exit_code == 0, r.output
+    assert fake_ext.calls[0] == ("detect_anti_bot", "g1")
+    assert '"challenge"' in r.output
+
+
+def test_cli_ext_detect_without_group_keeps_browser_detection(fake_ext):
+    """FRAGO_CURRENT_RUN must NOT silently switch detect to the probe."""
+    r = _run("--backend", "extension", "detect",
+             env_overrides={"FRAGO_CURRENT_RUN": "envrun"})
+    assert r.exit_code == 0, r.output
+    assert fake_ext.calls[0] == ("detect",)
+
+
+def test_cli_cdp_detect_with_group_errors_clearly(fake_ext):
+    r = _run("detect", "--group", "g1")
+    assert r.exit_code != 0
+    assert "extension" in r.output
+    assert fake_ext.calls == []
+
+
+# ─────────── structured errors when bridge is down ───────────
+
+def test_cli_ext_bridge_error_is_structured_json(monkeypatch):
+    import json
+
+    from frago.chrome.backends.extension import ExtensionBackendError
+
+    class DeadBackend:
+        def status(self):
+            raise ExtensionBackendError(-32003, "bridge not connected")
+
+    monkeypatch.setattr(cc, "_ext_backend", lambda: DeadBackend())
+    r = _run("--backend", "extension", "status")
+    assert r.exit_code != 0
+    payload = json.loads(r.output)
+    assert payload["ok"] is False
+    assert payload["code"] == -32003
+    assert "start" in payload["hint"]
+    assert "Traceback" not in r.output
+
+
+def test_cli_ext_socket_missing_is_structured_json(monkeypatch):
+    import json
+
+    class NoSocketBackend:
+        def status(self):
+            raise FileNotFoundError("/tmp/nope.sock")
+
+    monkeypatch.setattr(cc, "_ext_backend", lambda: NoSocketBackend())
+    r = _run("--backend", "extension", "status")
+    assert r.exit_code != 0
+    payload = json.loads(r.output)
+    assert payload["ok"] is False
+    assert payload["code"] == "socket-not-found"
+    assert "Traceback" not in r.output
 
 
 # ─────────────── 4. CDP path unchanged for Batch 2 ───────────────

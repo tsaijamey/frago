@@ -194,3 +194,34 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
     )
     assert r.exit_code == 0, r.output
     assert calls[0][:2] == ("navigate", "https://x"), calls
+
+
+def test_chrome_backend_extension_screenshot_output_omits_base64(monkeypatch, tmp_path):
+    """With an output path, stdout carries a small summary JSON — never
+    the base64 payload (which would flood an agent's context)."""
+    import json
+
+    from click.testing import CliRunner
+
+    from frago.chrome.backends.base import ScreenshotResult
+    from frago.cli import chrome_commands as cc
+
+    out = tmp_path / "shot.png"
+
+    class FakeBackend:
+        def screenshot(self, group, *, output=None):  # noqa: ARG002
+            Path(output).write_bytes(b"\x89PNG fake")
+            return ScreenshotResult(path=output, png_base64="QUJD" * 1000,
+                                    tab_id=7)
+
+    monkeypatch.setattr(cc, "_ext_backend", lambda: FakeBackend())
+    r = CliRunner().invoke(
+        cc.chrome_group,
+        ["--backend", "extension", "screenshot", str(out), "--group", "t"],
+    )
+    assert r.exit_code == 0, r.output
+    payload = json.loads(r.output)
+    assert payload["path"] == str(out)
+    assert payload["bytes"] == out.stat().st_size
+    assert "png_base64" not in r.output
+    assert "QUJD" not in r.output
