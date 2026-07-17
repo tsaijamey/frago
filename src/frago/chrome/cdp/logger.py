@@ -6,7 +6,6 @@ Configures structured logger for CDP operations logging.
 
 import logging
 import sys
-from typing import Optional
 
 
 class CDPLogger:
@@ -73,7 +72,7 @@ class CDPLogger:
     # T049: Proxy connection logging methods
     # ========================================
 
-    def log_proxy_config(self, proxy_info: Optional[dict]):
+    def log_proxy_config(self, proxy_info: dict | None):
         """
         Log proxy configuration information
 
@@ -175,7 +174,7 @@ class CDPLogger:
 
 
 # Global logger instance
-_logger: Optional[CDPLogger] = None
+_logger: CDPLogger | None = None
 
 
 def get_logger(name: str = "frago.chrome.cdp", level: str = "WARNING") -> CDPLogger:

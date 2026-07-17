@@ -19,6 +19,7 @@ part of the agent OS surface.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -27,7 +28,6 @@ import click
 
 from ..chrome.extension import native_host as nh
 from .agent_friendly import AgentFriendlyGroup
-
 
 _DEPRECATION_SHOWN = False
 
@@ -69,10 +69,8 @@ def extension_group(ctx):
 def daemon_cmd(sock):
     """Run the native messaging daemon (singleton)."""
     sock_path = sock or nh.SOCK_PATH
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(nh.run_daemon(sock_path))
-    except KeyboardInterrupt:
-        pass
 
 
 @extension_group.command("native-host")
@@ -148,7 +146,7 @@ def install_cmd(extension_id, executable, browser, target_dir):
             brand=chosen_brand or "edge",
         )
     except (NotImplementedError, ValueError) as e:
-        raise click.UsageError(str(e))
+        raise click.UsageError(str(e)) from e
 
     click.echo(json.dumps({
         "manifest": str(manifest_path),
@@ -161,7 +159,7 @@ def install_cmd(extension_id, executable, browser, target_dir):
 @extension_group.command("status")
 def status_cmd():
     """Ping the daemon + bridge."""
-    from ..chrome.backends.extension import ExtensionChromeBackend, ExtensionBackendError
+    from ..chrome.backends.extension import ExtensionBackendError, ExtensionChromeBackend
     try:
         info = ExtensionChromeBackend().start()
         click.echo(json.dumps(info, indent=2, default=str))

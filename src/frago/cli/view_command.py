@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 
@@ -35,11 +34,11 @@ from .agent_friendly import AgentFriendlyCommand
     help="Direct content string to display"
 )
 def view(
-    file: Optional[str],
+    file: str | None,
     theme: str,
-    title: Optional[str],
+    title: str | None,
     stdin: bool,
-    content: Optional[str],
+    content: str | None,
 ):
     """View content in Chrome browser with syntax highlighting and Mermaid support.
 

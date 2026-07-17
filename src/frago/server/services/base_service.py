@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from typing import ClassVar, Dict, Type
+from typing import ClassVar
 
 
 class BaseService(ABC):
@@ -33,7 +33,7 @@ class BaseService(ABC):
     """
 
     # 按具体子类登记单例，避免不同 service 共享同一个 _instance 串台。
-    _instances: ClassVar[Dict[Type["BaseService"], "BaseService"]] = {}
+    _instances: ClassVar[dict[type[BaseService], BaseService]] = {}
     _lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self) -> None:
@@ -41,7 +41,7 @@ class BaseService(ABC):
         self._initialized: bool = False
 
     @classmethod
-    def get_instance(cls) -> "BaseService":
+    def get_instance(cls) -> BaseService:
         """取本类单例。线程安全双检锁，与现有 service 风格一致。"""
         if cls not in BaseService._instances:
             with BaseService._lock:

@@ -12,14 +12,14 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from frago.compat import get_windows_subprocess_kwargs, prepare_command_for_windows
+from frago.compat import get_windows_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
 
-def get_agent_command(agent_type: str = "claude") -> List[str]:
+def get_agent_command(agent_type: str = "claude") -> list[str]:
     """Get the command to run a cli-agent without console window flash on Windows.
 
     On Windows, claude is installed as a .CMD file which causes console window flash;
@@ -65,12 +65,12 @@ def get_agent_command(agent_type: str = "claude") -> List[str]:
     return [str(node_exe), str(cli_js)]
 
 
-def get_claude_command() -> List[str]:
+def get_claude_command() -> list[str]:
     """Thin backward-compatible wrapper over get_agent_command("claude")."""
     return get_agent_command("claude")
 
 
-def get_gh_command() -> List[str]:
+def get_gh_command() -> list[str]:
     """Get the command to run gh CLI without console window flash on Windows.
 
     On Windows, gh might be installed as a .CMD file which causes console window flash.
@@ -101,7 +101,7 @@ def get_gh_command() -> List[str]:
     return [str(gh_path_obj)]
 
 
-def resolve_command_path(cmd: List[str]) -> List[str]:
+def resolve_command_path(cmd: list[str]) -> list[str]:
     """Resolve command to full path on all platforms.
 
     Ensures subprocess can find the executable regardless of PATH inheritance issues.
@@ -122,7 +122,7 @@ def resolve_command_path(cmd: List[str]) -> List[str]:
     return cmd
 
 
-def get_utf8_env() -> Dict[str, str]:
+def get_utf8_env() -> dict[str, str]:
     """Get environment variables with UTF-8 encoding for Windows compatibility.
 
     Returns:
@@ -137,12 +137,12 @@ def get_utf8_env() -> Dict[str, str]:
 
 
 def run_subprocess(
-    cmd: List[str],
+    cmd: list[str],
     timeout: int = 30,
     capture_output: bool = True,
     check: bool = False,
-    cwd: Optional[str] = None,
-    env: Optional[Dict[str, str]] = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run subprocess with Windows compatibility.
 
@@ -170,7 +170,7 @@ def run_subprocess(
     if env is None:
         env = get_utf8_env()
 
-    kwargs: Dict[str, Any] = {
+    kwargs: dict[str, Any] = {
         "capture_output": capture_output,
         "text": True,
         "encoding": "utf-8",
@@ -185,12 +185,12 @@ def run_subprocess(
 
 
 def run_subprocess_background(
-    cmd: List[str],
-    stdout: Optional[Any] = subprocess.DEVNULL,
-    stderr: Optional[Any] = subprocess.DEVNULL,
-    stdin: Optional[Any] = subprocess.DEVNULL,
-    cwd: Optional[str] = None,
-    env: Optional[Dict[str, str]] = None,
+    cmd: list[str],
+    stdout: Any | None = subprocess.DEVNULL,
+    stderr: Any | None = subprocess.DEVNULL,
+    stdin: Any | None = subprocess.DEVNULL,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
     start_new_session: bool = True,
 ) -> subprocess.Popen:
     """Start a subprocess in background (non-blocking).
@@ -213,7 +213,7 @@ def run_subprocess_background(
     if env is None:
         env = get_utf8_env()
 
-    kwargs: Dict[str, Any] = {
+    kwargs: dict[str, Any] = {
         "stdout": stdout,
         "stderr": stderr,
         "stdin": stdin,
@@ -230,9 +230,9 @@ def run_subprocess_background(
 
 
 def run_subprocess_interactive(
-    cmd: List[str],
-    cwd: Optional[str] = None,
-    env: Optional[Dict[str, str]] = None,
+    cmd: list[str],
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.Popen:
     """Start an interactive subprocess with stdin/stdout/stderr pipes.
 
@@ -250,7 +250,7 @@ def run_subprocess_interactive(
     if env is None:
         env = get_utf8_env()
 
-    kwargs: Dict[str, Any] = {
+    kwargs: dict[str, Any] = {
         "stdin": subprocess.PIPE,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,

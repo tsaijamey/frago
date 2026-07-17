@@ -29,10 +29,10 @@ class ScrollCommands:
             distance: Scroll distance (positive for down, negative for up)
         """
         self.logger.info(f"Scrolling by {distance} pixels")
-        
+
         script = f"window.scrollBy(0, {distance});"
         self.session.send_command("Runtime.evaluate", {"expression": script})
-    
+
     def scroll_to_top(self) -> None:
         """Scroll to page top"""
         self.logger.info("Scrolling to top")

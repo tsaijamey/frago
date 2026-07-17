@@ -12,7 +12,6 @@ Provides session data querying, viewing, and management functions:
 import json
 import sys
 from datetime import datetime
-from typing import Optional
 
 import click
 
@@ -197,25 +196,25 @@ def show_cmd(
     click.echo(f"Session ID: {session.session_id}")
     click.echo("=" * 60)
 
-    click.echo(f"\n[i] Basic Information")
+    click.echo("\n[i] Basic Information")
     click.echo(f"  Agent type: {session.agent_type.value}")
     click.echo(f"  Project path: {session.project_path}")
     click.echo(f"  Status: {_get_status_display(session.status)}")
 
-    click.echo(f"\n⏱️ Time Information")
+    click.echo("\n⏱️ Time Information")
     click.echo(f"  Started at: {session.started_at.strftime('%Y-%m-%d %H:%M:%S')}")
     if session.ended_at:
         click.echo(f"  Ended at: {session.ended_at.strftime('%Y-%m-%d %H:%M:%S')}")
     click.echo(f"  Last activity: {session.last_activity.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    click.echo(f"\n📊 Statistics")
+    click.echo("\n📊 Statistics")
     click.echo(f"  Total steps: {session.step_count}")
     click.echo(f"  Tool calls: {session.tool_call_count}")
 
     # Show summary
     summary = read_summary(session.session_id, agent)
     if summary:
-        click.echo(f"\n📈 Session Summary")
+        click.echo("\n📈 Session Summary")
         click.echo(f"  Total duration: {format_duration(summary.total_duration_ms)}")
         click.echo(f"  User messages: {summary.user_message_count}")
         click.echo(f"  Assistant messages: {summary.assistant_message_count}")
@@ -270,7 +269,7 @@ def _find_session_by_prefix(prefix: str, agent_type: AgentType):
     help="Agent type"
 )
 def watch_cmd(
-    session_id: Optional[str],
+    session_id: str | None,
     json_output: bool,
     agent_type: str
 ):
@@ -368,10 +367,9 @@ def clean_cmd(
             click.echo(f"  ... and {len(old_sessions) - 20} more")
         return
 
-    if not force:
-        if not click.confirm(f"Confirm deletion of {len(old_sessions)} sessions?"):
-            click.echo("Cancelled")
-            return
+    if not force and not click.confirm(f"Confirm deletion of {len(old_sessions)} sessions?"):
+        click.echo("Cancelled")
+        return
 
     # Execute deletion
     cleaned = 0
@@ -489,7 +487,7 @@ def sync_cmd(
         return
 
     # Text output
-    click.echo(f"\nSync completed:")
+    click.echo("\nSync completed:")
     click.echo(f"  Newly synced: {result.synced}")
     click.echo(f"  Updated: {result.updated}")
     click.echo(f"  Skipped: {result.skipped}")

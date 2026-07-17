@@ -7,7 +7,7 @@ Provide AI Agent with more friendly error messages and help output:
 """
 
 import difflib
-from typing import List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import click
 from click import Context
@@ -23,7 +23,7 @@ from click import Context
 FIX_PREFIX = "[Fix]"
 
 
-def render_fix_lines(fixes: Sequence[str]) -> List[str]:
+def render_fix_lines(fixes: Sequence[str]) -> list[str]:
     """Render executable fix commands as ``[Fix] <command>`` lines.
 
     Returns one line per fix, matching the format already emitted by
@@ -66,7 +66,7 @@ class BusinessError(click.ClickException):
 
     def __init__(self, message: str, *fixes: str):
         super().__init__(message)
-        self.fixes: Tuple[str, ...] = tuple(f for f in fixes if f)
+        self.fixes: tuple[str, ...] = tuple(f for f in fixes if f)
 
     def show(self, file=None) -> None:  # noqa: D401 - click hook
         click.echo(f"Error: {self.format_message()}", err=True, file=file)
@@ -74,7 +74,7 @@ class BusinessError(click.ClickException):
             click.echo(line, err=True, file=file)
 
 
-def get_command_examples(cmd_name: str, group_prefix: str = "") -> List[str]:
+def get_command_examples(cmd_name: str, group_prefix: str = "") -> list[str]:
     """Get command usage examples
 
     Args:
@@ -111,8 +111,8 @@ class AgentFriendlyGroup(click.Group):
     """
 
     def resolve_command(
-        self, ctx: Context, args: List[str]
-    ) -> Tuple[Optional[str], Optional[click.Command], List[str]]:
+        self, ctx: Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
         """Override command resolution to enhance error messages"""
         cmd_name = args[0] if args else None
 
@@ -157,9 +157,9 @@ class AgentFriendlyGroup(click.Group):
 
     def make_context(
         self,
-        info_name: Optional[str],
-        args: List[str],
-        parent: Optional[Context] = None,
+        info_name: str | None,
+        args: list[str],
+        parent: Context | None = None,
         **extra,
     ) -> Context:
         """Override context creation to capture and enhance parameter errors"""
@@ -177,8 +177,8 @@ class AgentFriendlyGroup(click.Group):
     def _enhance_missing_param_error(
         self,
         error: click.MissingParameter,
-        info_name: Optional[str],
-        parent: Optional[Context],
+        info_name: str | None,
+        parent: Context | None,
     ) -> None:
         """Enhance MissingParameter error message"""
         if not info_name:
@@ -196,8 +196,8 @@ class AgentFriendlyGroup(click.Group):
     def _enhance_bad_param_error(
         self,
         error: click.BadParameter,
-        info_name: Optional[str],
-        parent: Optional[Context],
+        info_name: str | None,
+        parent: Context | None,
     ) -> None:
         """Enhance BadParameter error message"""
         # BadParameter is usually handled well by custom ParamType
@@ -213,9 +213,9 @@ class AgentFriendlyCommand(click.Command):
 
     def make_context(
         self,
-        info_name: Optional[str],
-        args: List[str],
-        parent: Optional[Context] = None,
+        info_name: str | None,
+        args: list[str],
+        parent: Context | None = None,
         **extra,
     ) -> Context:
         """Override context creation to capture and enhance parameter errors"""
@@ -231,8 +231,8 @@ class AgentFriendlyCommand(click.Command):
     def _enhance_error_with_examples(
         self,
         error: click.MissingParameter,
-        info_name: Optional[str],
-        parent: Optional[Context],
+        info_name: str | None,
+        parent: Context | None,
     ) -> None:
         """Add usage examples to error"""
         if not info_name:

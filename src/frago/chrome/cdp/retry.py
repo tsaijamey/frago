@@ -4,12 +4,13 @@ CDP retry mechanism
 Implements exponential backoff retry strategy for handling CDP connection and command execution failures.
 """
 
-import time
 import random
-from typing import Callable, Any, Optional, Tuple, Type
+import time
+from collections.abc import Callable
+from typing import Any
 
+from .exceptions import ConnectionError, ProxyConnectionError, RetryExhaustedError
 from .logger import get_logger
-from .exceptions import RetryExhaustedError, ProxyConnectionError, ConnectionError
 
 
 class RetryPolicy:
@@ -22,7 +23,7 @@ class RetryPolicy:
         max_delay: float = 30.0,
         exponential_base: float = 2.0,
         jitter: bool = True,
-        retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None
+        retryable_exceptions: tuple[type[Exception], ...] | None = None
     ):
         """
         Initialize retry policy
@@ -42,7 +43,7 @@ class RetryPolicy:
         self.jitter = jitter
         self.retryable_exceptions = retryable_exceptions
         self.logger = get_logger()
-    
+
     def execute(self, func: Callable, *args, **kwargs) -> Any:
         """
         Execute function with retry
@@ -72,10 +73,11 @@ class RetryPolicy:
                 last_exception = e
 
                 # Check if exception is retryable
-                if self.retryable_exceptions is not None:
-                    if not isinstance(e, self.retryable_exceptions):
-                        self.logger.error(f"Non-retryable exception: {type(e).__name__}: {e}")
-                        raise
+                if self.retryable_exceptions is not None and not isinstance(
+                    e, self.retryable_exceptions
+                ):
+                    self.logger.error(f"Non-retryable exception: {type(e).__name__}: {e}")
+                    raise
 
                 # If this is the last attempt, don't retry
                 if attempt == self.max_retries:
@@ -130,7 +132,7 @@ class RetryPolicy:
 class RetryableOperation:
     """Retryable operation class"""
 
-    def __init__(self, policy: Optional[RetryPolicy] = None):
+    def __init__(self, policy: RetryPolicy | None = None):
         """
         Initialize retryable operation
 
@@ -187,7 +189,7 @@ def retryable(
     max_delay: float = 30.0,
     exponential_base: float = 2.0,
     jitter: bool = True,
-    retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None
+    retryable_exceptions: tuple[type[Exception], ...] | None = None
 ) -> Callable:
     """
     Retry decorator

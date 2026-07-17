@@ -4,7 +4,7 @@ Status check related CDP commands
 Encapsulates CDP status check functionality.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from ..logger import get_logger
 from ..transport import cdp_get
@@ -32,19 +32,19 @@ class StatusCommands:
         """
         try:
             self.logger.info("Performing health check")
-            
+
             result = self.session.send_command("Browser.getVersion")
-            
+
             if result:
                 self.logger.info(f"Browser version: {result.get('product', 'unknown')}")
                 return True
-            
+
             return False
         except Exception as e:
             self.logger.error(f"Health check failed: {e}")
             return False
-    
-    def get_pages(self) -> List[Dict[str, Any]]:
+
+    def get_pages(self) -> list[dict[str, Any]]:
         """
         Get all pages list
 
@@ -53,21 +53,21 @@ class StatusCommands:
         """
         try:
             self.logger.info("Getting pages list")
-            
+
             http_url = self.session.config.http_url
             response = cdp_get(f"{http_url}/json/list", timeout=10)
-            
+
             if response.status_code == 200:
                 pages = response.json()
                 self.logger.info(f"Found {len(pages)} pages")
                 return pages
-            
+
             return []
         except Exception as e:
             self.logger.error(f"Failed to get pages: {e}")
             return []
-    
-    def check_chrome_status(self) -> Dict[str, Any]:
+
+    def check_chrome_status(self) -> dict[str, Any]:
         """
         Check Chrome status
 
@@ -76,15 +76,15 @@ class StatusCommands:
         """
         try:
             self.logger.info("Checking Chrome status")
-            
+
             http_url = self.session.config.http_url
             response = cdp_get(f"{http_url}/json/version", timeout=10)
-            
+
             if response.status_code == 200:
                 version_info = response.json()
                 self.logger.info(f"Chrome is running: {version_info.get('Browser', 'unknown')}")
                 return version_info
-            
+
             return {"status": "unavailable"}
         except Exception as e:
             self.logger.error(f"Failed to check Chrome status: {e}")

@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 import requests
 import websocket
@@ -76,7 +76,7 @@ class CDPTransport:
     the lazy-property facade for itself.
     """
 
-    def __init__(self, config: "CDPConfig", logger: Any):
+    def __init__(self, config: CDPConfig, logger: Any):
         self.config = config
         self.logger = logger
         self.ws: websocket.WebSocket | None = None
@@ -90,7 +90,7 @@ class CDPTransport:
         self._lock = threading.RLock()
 
         # WebSocket URL used for the current connection
-        self._ws_url: Optional[str] = None
+        self._ws_url: str | None = None
 
     @property
     def connected(self) -> bool:
@@ -138,7 +138,7 @@ class CDPTransport:
             self._running = False
             elapsed = (time.time() - start_time) * 1000
             self.logger.error(f"Connection failed after {elapsed:.2f}ms: {e}")
-            raise ConnectionError(f"Failed to connect to CDP: {e}")
+            raise ConnectionError(f"Failed to connect to CDP: {e}") from e
 
     def _get_websocket_url(self) -> str:
         """Dynamically get WebSocket debug URL
@@ -224,7 +224,7 @@ class CDPTransport:
                 self.ws = None
                 self._connected = False
 
-    def send_command(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def send_command(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Send CDP command
 
@@ -258,12 +258,12 @@ class CDPTransport:
             self.ws.send(json.dumps(request))
             self.logger.debug(f"Sent CDP command: {method} (id: {request_id})")
         except Exception as e:
-            raise CDPError(f"Failed to send CDP command: {e}")
+            raise CDPError(f"Failed to send CDP command: {e}") from e
 
         # Wait for response
         return self._wait_for_response(request_id)
 
-    def _validate_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_response(self, response: dict[str, Any]) -> dict[str, Any]:
         """
         Validate CDP response
 
@@ -282,7 +282,7 @@ class CDPTransport:
 
         return response
 
-    def _wait_for_response(self, request_id: int) -> Dict[str, Any]:
+    def _wait_for_response(self, request_id: int) -> dict[str, Any]:
         """
         Wait for response with specified request ID
 
@@ -367,7 +367,7 @@ class CDPTransport:
                 # Brief sleep before continuing
                 time.sleep(0.1)
 
-    def _handle_event(self, event: Dict[str, Any]) -> None:
+    def _handle_event(self, event: dict[str, Any]) -> None:
         """
         Handle CDP event
 

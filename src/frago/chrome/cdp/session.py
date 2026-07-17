@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from frago.chrome.cdp.commands.dom import DOMCommands
@@ -42,7 +42,7 @@ class CDPSession(CDPClient):
     live here.
     """
 
-    def __init__(self, config: Optional[CDPConfig] = None):
+    def __init__(self, config: CDPConfig | None = None):
         """
         Initialize CDP session
 
@@ -87,7 +87,7 @@ class CDPSession(CDPClient):
         """Disconnect WebSocket connection (delegated to transport)"""
         self._transport.disconnect()
 
-    def send_command(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def send_command(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send CDP command (delegated to transport)"""
         return self._transport.send_command(method, params)
 
@@ -117,7 +117,7 @@ class CDPSession(CDPClient):
             return False
 
     # Landing page detection
-    def get_landing_page_target_id(self) -> Optional[str]:
+    def get_landing_page_target_id(self) -> str | None:
         """Identify the landing page tab by URL or title.
 
         Returns target_id of the landing page, or None if not found.
@@ -225,19 +225,6 @@ class CDPSession(CDPClient):
         """Get page title"""
         result = self.evaluate("document.title")
         return result or ""
-
-    def scroll(self, distance: int) -> None:
-        """Scroll page"""
-        self.evaluate(f"window.scrollBy(0, {distance})")
-
-    def wait(self, seconds: float) -> None:
-        """Wait for specified seconds"""
-        import time
-        time.sleep(seconds)
-
-    def zoom(self, factor: float) -> None:
-        """Set page zoom factor"""
-        self.evaluate(f"document.body.style.zoom = '{factor}'")
 
     def clear_effects(self) -> None:
         """Clear all visual effects"""
@@ -468,7 +455,7 @@ class CDPSession(CDPClient):
         """Remove the viewport border indicator."""
         self.visual_effects.clear_viewport_border()
 
-    def wait_for_selector(self, selector: str, timeout: Optional[float] = None) -> None:
+    def wait_for_selector(self, selector: str, timeout: float | None = None) -> None:
         """Wait for element matching selector"""
         self.page.wait_for_selector(selector, timeout=timeout)
 
@@ -508,42 +495,42 @@ class CDPSession(CDPClient):
             from .commands.dom import DOMCommands
             self._dom = DOMCommands(self)
         return self._dom
-    
+
     @property
     def screenshot(self):
         if self._screenshot is None:
             from .commands.screenshot import ScreenshotCommands
             self._screenshot = ScreenshotCommands(self)
         return self._screenshot
-    
+
     @property
     def scroll(self):
         if self._scroll is None:
             from .commands.scroll import ScrollCommands
             self._scroll = ScrollCommands(self)
         return self._scroll
-    
+
     @property
     def wait(self):
         if self._wait is None:
             from .commands.wait import WaitCommands
             self._wait = WaitCommands(self)
         return self._wait
-    
+
     @property
     def zoom(self):
         if self._zoom is None:
             from .commands.zoom import ZoomCommands
             self._zoom = ZoomCommands(self)
         return self._zoom
-    
+
     @property
     def status(self):
         if self._status is None:
             from .commands.status import StatusCommands
             self._status = StatusCommands(self)
         return self._status
-    
+
     @property
     def visual_effects(self):
         if self._visual_effects is None:

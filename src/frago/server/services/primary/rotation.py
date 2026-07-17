@@ -23,10 +23,7 @@ async def compact_tmux_session(
     tag = f"thread={thread_id}" if thread_id else "fallback"
     session_key = thread_id or fallback_key
 
-    if is_fallback:
-        count = svc._fallback_rotation_count
-    else:
-        count = svc._rotation_count.get(thread_id, 0)
+    count = svc._fallback_rotation_count if is_fallback else svc._rotation_count.get(thread_id, 0)
 
     runner = svc._get_pa_tmux_runner()
 
@@ -96,10 +93,7 @@ async def rotate_tmux_session(
     tag = f"thread={thread_id}" if thread_id else "fallback"
     session_key = thread_id or fallback_key
 
-    if is_fallback:
-        count = svc._fallback_rotation_count
-    else:
-        count = svc._rotation_count.get(thread_id, 0)
+    count = svc._fallback_rotation_count if is_fallback else svc._rotation_count.get(thread_id, 0)
 
     logger.info("PA tmux session rotation (%s, rotation_count=%d)", tag, count)
 

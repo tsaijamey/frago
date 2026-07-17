@@ -3,13 +3,14 @@
 Provides functionality for checking system status and server information.
 """
 
+import contextlib
 import logging
 import os
 import platform
 import shutil
 import subprocess
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 import psutil
 
@@ -26,7 +27,7 @@ class SystemService:
     """Service for system status and information."""
 
     @staticmethod
-    def get_status() -> Dict[str, Any]:
+    def get_status() -> dict[str, Any]:
         """Get system status.
 
         Returns:
@@ -97,7 +98,7 @@ class SystemService:
             }
 
     @staticmethod
-    def get_directories() -> Dict[str, Any]:
+    def get_directories() -> dict[str, Any]:
         """Get system default directories.
 
         Returns:
@@ -109,10 +110,8 @@ class SystemService:
 
         home = str(Path.home())
         cwd = None
-        try:
+        with contextlib.suppress(Exception):
             cwd = str(Path.cwd())
-        except Exception:
-            pass
 
         return {
             "home": home,
@@ -124,7 +123,7 @@ class SystemService:
         host: str = "127.0.0.1",
         port: int = 8080,
         started_at: str = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get server information.
 
         Args:
@@ -206,7 +205,7 @@ class SystemService:
             raise UnsupportedPlatformError(f"Unsupported platform: {system}")
 
     @staticmethod
-    def find_vscode() -> Optional[str]:
+    def find_vscode() -> str | None:
         """Find VSCode executable path.
 
         Returns the path to use for opening files, or None if not found.

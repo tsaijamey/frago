@@ -3,10 +3,9 @@
 Provides functionality for listing, viewing, and executing recipes.
 """
 
-import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +18,7 @@ class RecipeService:
     """
 
     @classmethod
-    def get_recipes(cls, force_reload: bool = False) -> List[Dict[str, Any]]:
+    def get_recipes(cls, force_reload: bool = False) -> list[dict[str, Any]]:  # noqa: ARG003 — kept for API compatibility
         """Get list of available recipes.
 
         Args:
@@ -31,7 +30,7 @@ class RecipeService:
         return cls._load_recipes()
 
     @classmethod
-    def _load_recipes(cls) -> List[Dict[str, Any]]:
+    def _load_recipes(cls) -> list[dict[str, Any]]:
         """Load recipes directly from RecipeRegistry.
 
         Uses Python module directly instead of CLI to avoid cmd.exe flash on Windows.
@@ -70,7 +69,7 @@ class RecipeService:
         return recipes
 
     @staticmethod
-    def _load_recipes_from_filesystem() -> List[Dict[str, Any]]:
+    def _load_recipes_from_filesystem() -> list[dict[str, Any]]:
         """Load recipes from filesystem as fallback.
 
         Returns:
@@ -107,7 +106,7 @@ class RecipeService:
         return recipes
 
     @classmethod
-    def get_recipe(cls, name: str) -> Optional[Dict[str, Any]]:
+    def get_recipe(cls, name: str) -> dict[str, Any] | None:
         """Get recipe details by name.
 
         Args:
@@ -169,9 +168,9 @@ class RecipeService:
     @staticmethod
     def run_recipe(
         name: str,
-        params: Optional[Dict[str, Any]] = None,
-        timeout: int = 300,
-    ) -> Dict[str, Any]:
+        params: dict[str, Any] | None = None,
+        timeout: int = 300,  # noqa: ARG004 — kept for API compatibility
+    ) -> dict[str, Any]:
         """Execute a recipe synchronously.
 
         This is a blocking method. Callers in async context
@@ -221,7 +220,7 @@ class RecipeService:
     @staticmethod
     def run_recipe_async(
         name: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         timeout: int = 300,
     ) -> str:
         """Execute a recipe asynchronously, return execution_id.
@@ -242,7 +241,7 @@ class RecipeService:
         return runner.run_async(name, params, timeout=timeout)
 
     @staticmethod
-    def get_execution(execution_id: str) -> Optional[Dict[str, Any]]:
+    def get_execution(execution_id: str) -> dict[str, Any] | None:
         """Get a single execution by ID."""
         from frago.recipes.execution_store import ExecutionStore
 
@@ -278,10 +277,10 @@ class RecipeService:
 
     @staticmethod
     def list_executions(
-        recipe_name: Optional[str] = None,
+        recipe_name: str | None = None,
         limit: int = 20,
-        status: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List recent executions."""
         from frago.recipes.execution import ExecutionStatus
         from frago.recipes.execution_store import ExecutionStore

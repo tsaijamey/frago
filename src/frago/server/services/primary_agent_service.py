@@ -23,10 +23,10 @@ from pathlib import Path
 from typing import Any
 
 from frago.server.services.pa_prompts import (
-    SUB_AGENT_PROMPT_TEMPLATE,
+    PA_SYSTEM_PROMPT as PRIMARY_AGENT_SYSTEM_PROMPT,
 )
 from frago.server.services.pa_prompts import (
-    PA_SYSTEM_PROMPT as PRIMARY_AGENT_SYSTEM_PROMPT,
+    SUB_AGENT_PROMPT_TEMPLATE,
 )
 from frago.server.services.task_lifecycle import TaskLifecycle
 

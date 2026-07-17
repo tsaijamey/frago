@@ -3,6 +3,7 @@
 Provides safe access to run instance directories in ~/.frago/projects/.
 """
 
+import contextlib
 import json
 import mimetypes
 import os
@@ -11,10 +12,8 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 from frago.compat import get_windows_subprocess_kwargs
-
 
 PROJECTS_DIR = Path.home() / ".frago" / "projects"
 
@@ -34,7 +33,7 @@ class ProjectDetail(ProjectInfo):
     """Detailed project information including file counts."""
     file_count: int
     total_size: int  # bytes
-    subdirectories: List[str]
+    subdirectories: list[str]
 
 
 @dataclass
@@ -45,14 +44,14 @@ class FileInfo:
     is_directory: bool
     size: int  # bytes, 0 for directories
     modified: str  # ISO format
-    mime_type: Optional[str]  # None for directories
+    mime_type: str | None  # None for directories
 
 
 class FileService:
     """Service for managing project file operations."""
 
     @staticmethod
-    def list_projects() -> List[ProjectInfo]:
+    def list_projects() -> list[ProjectInfo]:
         """List all run instances.
 
         Uses os.scandir() for better Windows performance.
@@ -100,7 +99,7 @@ class FileService:
         return projects
 
     @staticmethod
-    def get_project(run_id: str) -> Optional[ProjectDetail]:
+    def get_project(run_id: str) -> ProjectDetail | None:
         """Get detailed project information.
 
         Uses os.scandir() and os.walk() for better Windows performance.
@@ -119,10 +118,8 @@ class FileService:
         metadata_file = project_dir / ".metadata.json"
         metadata = {}
         if metadata_file.exists():
-            try:
+            with contextlib.suppress(json.JSONDecodeError, OSError, UnicodeDecodeError):
                 metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-                pass
 
         # Get subdirectories list (fast operation)
         subdirectories = []
@@ -147,11 +144,9 @@ class FileService:
                             continue
                         if entry.is_file():
                             file_count += 1
-                            try:
-                                # DirEntry.stat() is cached on Windows
+                            # DirEntry.stat() is cached on Windows
+                            with contextlib.suppress(OSError):
                                 total_size += entry.stat().st_size
-                            except OSError:
-                                pass
             except OSError:
                 pass
 
@@ -167,7 +162,7 @@ class FileService:
         )
 
     @staticmethod
-    def list_files(run_id: str, subpath: str = "") -> List[FileInfo]:
+    def list_files(run_id: str, subpath: str = "") -> list[FileInfo]:
         """List files and directories in a project path.
 
         Uses os.scandir() for better Windows performance.
@@ -228,7 +223,7 @@ class FileService:
         return files
 
     @staticmethod
-    def get_file_path(run_id: str, subpath: str) -> Optional[Path]:
+    def get_file_path(run_id: str, subpath: str) -> Path | None:
         """Get the absolute path to a file.
 
         Args:
@@ -278,7 +273,7 @@ class FileService:
             return False
 
     @staticmethod
-    def validate_path(run_id: str, subpath: str) -> Optional[Path]:
+    def validate_path(run_id: str, subpath: str) -> Path | None:
         """Validate and resolve a path safely.
 
         Prevents path traversal attacks by ensuring the resolved path
@@ -318,7 +313,7 @@ class FileService:
         return target
 
     @staticmethod
-    def get_project_dir(run_id: str) -> Optional[Path]:
+    def get_project_dir(run_id: str) -> Path | None:
         """Get the project directory path.
 
         Args:

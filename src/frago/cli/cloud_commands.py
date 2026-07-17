@@ -57,10 +57,10 @@ def login_cmd(no_browser: bool, timeout: int):
         )
     except AuthError as e:
         click.echo(f'登录失败: {e}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     except Exception as e:
         click.echo(f'登录失败: {e}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @click.command('logout', cls=AgentFriendlyCommand)
@@ -220,7 +220,7 @@ def market_search(keyword, author, runtime, min_rating, premium, page, page_size
 
     except MarketError as e:
         click.echo(f'搜索失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @market_group.command('info', cls=AgentFriendlyCommand)
@@ -241,7 +241,7 @@ def market_info(recipe_id):
 
     except MarketError as e:
         click.echo(f'获取详情失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @market_group.command('install', cls=AgentFriendlyCommand)
@@ -273,7 +273,7 @@ def market_install(recipe_id, version, force):
 
     except MarketError as e:
         click.echo(f'安装失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @market_group.command('list', cls=AgentFriendlyCommand)
@@ -304,7 +304,7 @@ def market_uninstall(name):
 
     except MarketError as e:
         click.echo(f'卸载失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 # ==================== Install 命令组 ====================
@@ -366,19 +366,19 @@ def install_claude_code(version, force, mirror_only, install_dir):
 
     except DownloadError as e:
         click.echo(f'下载失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     except VerificationError as e:
         click.echo(f'校验失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     except InstallError as e:
         click.echo(f'安装失败: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     except InstallerError as e:
         click.echo(f'错误: {e.message}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
     except Exception as e:
         click.echo(f'未知错误: {e}', err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @install_group.command('check-update', cls=AgentFriendlyCommand)

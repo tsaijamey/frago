@@ -5,17 +5,17 @@ Provides basic functionality for Chrome DevTools Protocol clients.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Any
 
 from .config import CDPConfig
-from .logger import get_logger
 from .exceptions import CDPError
+from .logger import get_logger
 
 
 class CDPClient(ABC):
     """CDP client base class"""
 
-    def __init__(self, config: Optional[CDPConfig] = None):
+    def __init__(self, config: CDPConfig | None = None):
         """
         Initialize CDP client
 
@@ -44,7 +44,7 @@ class CDPClient(ABC):
         pass
 
     @abstractmethod
-    def send_command(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def send_command(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Send CDP command
 
@@ -60,7 +60,7 @@ class CDPClient(ABC):
         """
         pass
 
-    def _validate_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_response(self, response: dict[str, Any]) -> dict[str, Any]:
         """
         Validate CDP response
 

@@ -5,10 +5,11 @@ with WebSocket broadcast when updates are available.
 """
 
 import asyncio
+import contextlib
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import requests
 
@@ -29,9 +30,9 @@ class VersionCheckService:
 
     def __init__(self) -> None:
         """Initialize the service."""
-        self._cache: Optional[Dict[str, Any]] = None
-        self._last_check_error: Optional[str] = None
-        self._task: Optional[asyncio.Task] = None
+        self._cache: dict[str, Any] | None = None
+        self._last_check_error: str | None = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
     @classmethod
@@ -109,10 +110,8 @@ class VersionCheckService:
         self._stop_event.set()
         self._task.cancel()
 
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
 
         self._task = None
         logger.info("Version check service stopped")
@@ -134,7 +133,7 @@ class VersionCheckService:
                 )
                 # If wait completes without timeout, stop was requested
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Timeout means continue to next check
                 continue
 
@@ -217,7 +216,7 @@ class VersionCheckService:
     async def _broadcast_update(self) -> None:
         """Broadcast version info update via WebSocket."""
         try:
-            from frago.server.websocket import manager, create_message
+            from frago.server.websocket import create_message, manager
 
             message = create_message("data_version", {
                 "data": self._cache,
@@ -230,7 +229,7 @@ class VersionCheckService:
         except Exception as e:
             logger.warning(f"Failed to broadcast version info: {e}")
 
-    async def get_version_info(self) -> Dict[str, Any]:
+    async def get_version_info(self) -> dict[str, Any]:
         """Get cached version info.
 
         Returns:
@@ -246,7 +245,7 @@ class VersionCheckService:
             "error": "Not checked yet",
         }
 
-    def get_last_error(self) -> Optional[str]:
+    def get_last_error(self) -> str | None:
         """Get the last check error if any.
 
         Returns:

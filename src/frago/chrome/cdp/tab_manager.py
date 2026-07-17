@@ -11,7 +11,6 @@ import json
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from .logger import get_logger
@@ -50,13 +49,13 @@ class TabManager:
         self.host = host
         self.port = port
         self.logger = get_logger()
-        self._state: Dict[str, TabEntry] = {}
+        self._state: dict[str, TabEntry] = {}
         self._load_state()
 
     # --- Origin Extraction ---
 
     @staticmethod
-    def extract_origin(url: str) -> Optional[str]:
+    def extract_origin(url: str) -> str | None:
         """Extract origin from URL.
 
         Returns None for unroutable URLs (about:blank, chrome://, data:, etc.).
@@ -120,7 +119,7 @@ class TabManager:
 
     # --- Live Tab Reconciliation ---
 
-    def _get_live_tabs(self) -> List[Dict]:
+    def _get_live_tabs(self) -> list[dict]:
         """Fetch current page tabs from Chrome via HTTP /json/list."""
         try:
             resp = cdp_get(
@@ -178,7 +177,7 @@ class TabManager:
 
     # --- Core Routing Logic ---
 
-    def find_tab_by_origin(self, origin: str) -> Optional[TabEntry]:
+    def find_tab_by_origin(self, origin: str) -> TabEntry | None:
         """Find the most recently used tab matching the given origin."""
         candidates = [
             e for e in self._state.values() if e.origin == origin
@@ -229,7 +228,7 @@ class TabManager:
 
     # --- LRU Eviction ---
 
-    def _evict_lru_tab(self, session) -> Optional[str]:
+    def _evict_lru_tab(self, session) -> str | None:
         """Close and remove the least recently used tab."""
         if not self._state:
             return None
@@ -274,7 +273,7 @@ class TabManager:
 
     # --- Query ---
 
-    def get_tracked_tabs(self) -> List[TabEntry]:
+    def get_tracked_tabs(self) -> list[TabEntry]:
         """All tracked tabs sorted by last_activity descending."""
         return sorted(
             self._state.values(),

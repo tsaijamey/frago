@@ -210,31 +210,39 @@ def drive_start(agent_type: str, name: str | None) -> None:
     click.echo(resolved)
 
 
-# Escape 清残留后重查 ready 的轮询次数。
+# 通用回退（driver 无 clear_input 时）：Escape 清残留后重查 ready 的轮询次数。
 _CLEAR_RESIDUAL_POLLS = 10
 
 
-def _try_clear_residual_input(session, driver, pane: str) -> str:
-    """输入框残留文本的自愈：Escape 清空后重查 ready，返回最新 pane。
+def _try_clear_residual_input(session, driver, pane: str) -> tuple[str, bool]:
+    """输入框残留文本的自愈。返回 (最新 pane, 是否确认已清空可继续 send)。
 
     ready 检查失败分两种：① 会话真在启动（pane 无空闲对话态，如仍带忙碌标记 /
     还在 shell 阶段加载）→ 原样返回，维持"still starting up"报错；② 会话已空闲
     但输入框滞留上一次未提交的文本（Enter 被粘贴检测吞掉的死锁态，_READY_BOX
-    要求空输入框故永不再匹配）→ 发 Escape 清残留，轮询到 ready 即自愈，send 得以
-    继续而非不可恢复地拒发。区分依据 done_signal：空闲滞留态提示符在且无忙碌标记，
-    done_signal 为真；TUI 启动加载中带忙碌标记，done_signal 为假。shell 回显阶段
-    （``❯ claude …``）done_signal 也为真，此时 Escape 落到 shell 是无害 no-op、
-    ready 复查照样失败，原报错不受影响。
+    要求空输入框故永不再匹配）→ 清空残留，send 得以继续而非不可恢复地拒发。
+    区分依据 done_signal：空闲滞留态提示符在且无忙碌标记，done_signal 为真；
+    TUI 启动加载中带忙碌标记，done_signal 为假。
+
+    清空动作优先走 driver.clear_input（claude：C-u + 探针重绘确认——其 TUI 懒
+    重绘，清空后 pane 仍显示旧文本，"读屏等空输入框"永远等不到，必须由 driver
+    以结构手段确认缓冲区状态，20260717 live 排查结论）。driver 未提供时回退
+    通用行为：Escape + 轮询 ready_signal。shell 回显阶段（``❯ claude …``）
+    done_signal 也为真，但 claude 的探针确认要求输入框的 nbsp 渲染特征，shell
+    下确认不了、healed=False，原报错不受影响。
     """
     if not driver.done_signal.matches(pane):
-        return pane
+        return pane, False
+    if driver.clear_input is not None:
+        healed = driver.clear_input(session)
+        return session.capture_pane(), healed
     session.send_keys("Escape")
     for _ in range(_CLEAR_RESIDUAL_POLLS):
         pane = session.capture_pane()
         if driver.ready_signal.matches(pane):
-            return pane
+            return pane, True
         session._sleep(session._poll_interval_s)
-    return pane
+    return pane, False
 
 
 @click.command("send")
@@ -256,11 +264,13 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
     driver = load_driver(entry.agent_type)
     session = _bind_session(entry, driver, runner)
 
-    # 会话尚未 ready 就 send → 先试自愈，仍不 ready 才报启动中 + 末屏（负反馈）。
+    # 会话尚未 ready 就 send → 先试自愈；自愈确认清空（healed）即可继续——claude
+    # 懒重绘下清空后 pane 仍显示旧文本，ready 复查读屏必然失败，采信 healed 而非读屏。
     pane = session.capture_pane()
+    healed = False
     if not driver.ready_signal.matches(pane):
-        pane = _try_clear_residual_input(session, driver, pane)
-    if not driver.ready_signal.matches(pane):
+        pane, healed = _try_clear_residual_input(session, driver, pane)
+    if not (healed or driver.ready_signal.matches(pane)):
         click.echo(
             f"[!] Session {name!r} is still starting up — not ready for input yet.", err=True
         )

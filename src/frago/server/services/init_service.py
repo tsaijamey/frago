@@ -9,7 +9,7 @@ Provides API methods for:
 
 import logging
 import platform
-from typing import Any, Dict, Optional
+from typing import Any
 
 from frago import __version__
 from frago.init.checker import (
@@ -17,7 +17,7 @@ from frago.init.checker import (
     DEFAULT_NODE_MIN_VERSION,
     parallel_dependency_check,
 )
-from frago.init.config_manager import load_config, save_config, update_config
+from frago.init.config_manager import load_config, update_config
 from frago.init.installer import (
     get_platform_node_install_guide,
     install_claude_code,
@@ -38,7 +38,7 @@ def _get_claude_code_install_guide() -> str:
     )
 
 
-def _dependency_to_dict(result: DependencyCheckResult) -> Dict[str, Any]:
+def _dependency_to_dict(result: DependencyCheckResult) -> dict[str, Any]:
     """Convert DependencyCheckResult to API response dictionary."""
     # Get installation guide based on dependency type
     if result.name == "node":
@@ -62,7 +62,7 @@ class InitService:
     """Service for initialization operations in web context."""
 
     @staticmethod
-    def get_init_status() -> Dict[str, Any]:
+    def get_init_status() -> dict[str, Any]:
         """Get comprehensive initialization status.
 
         Returns:
@@ -119,7 +119,7 @@ class InitService:
         }
 
     @staticmethod
-    def check_dependencies() -> Dict[str, Any]:
+    def check_dependencies() -> dict[str, Any]:
         """Run fresh dependency check.
 
         Returns:
@@ -169,7 +169,7 @@ class InitService:
         }
 
     @staticmethod
-    def install_dependency(name: str) -> Dict[str, Any]:
+    def install_dependency(name: str) -> dict[str, Any]:
         """Install a specific dependency.
 
         Args:
@@ -236,7 +236,7 @@ class InitService:
             }
 
     @staticmethod
-    def install_resources(force_update: bool = False) -> Dict[str, Any]:
+    def install_resources(force_update: bool = False) -> dict[str, Any]:
         """Install or update resources (commands, skills, recipes).
 
         Args:
@@ -328,7 +328,7 @@ class InitService:
             }
 
     @staticmethod
-    def mark_init_complete() -> Dict[str, Any]:
+    def mark_init_complete() -> dict[str, Any]:
         """Mark initialization as complete in config.
 
         Returns:
@@ -351,7 +351,7 @@ class InitService:
             }
 
     @staticmethod
-    def reset_init_status() -> Dict[str, Any]:
+    def reset_init_status() -> dict[str, Any]:
         """Reset initialization status (for re-running wizard).
 
         Returns:

@@ -9,9 +9,30 @@ Provides interactive environment initialization features:
 """
 
 import sys
-from typing import Dict, Optional
 
 import click
+
+from frago.init.checker import (
+    parallel_dependency_check,
+)
+from frago.init.config_manager import load_config, save_config
+from frago.init.configurator import (
+    config_exists,
+    display_config_summary,
+    get_config_path,
+    prompt_config_update,
+    run_auth_configuration,
+    warn_auth_switch,
+)
+from frago.init.exceptions import InitErrorCode
+from frago.init.installer import install_claude_code_auto
+from frago.init.models import Config, DependencyCheckResult
+from frago.init.ui import (
+    ProgressReporter,
+    print_section,
+    print_summary,
+    spinner_context,
+)
 
 from .agent_friendly import AgentFriendlyCommand
 
@@ -43,7 +64,7 @@ def _rgb_to_ansi(r: int, g: int, b: int) -> str:
 
 def _interpolate_color(color1: tuple, color2: tuple, t: float) -> tuple:
     """Linear interpolation between two colors"""
-    return tuple(int(c1 + (c2 - c1) * t) for c1, c2 in zip(color1, color2))
+    return tuple(int(c1 + (c2 - c1) * t) for c1, c2 in zip(color1, color2, strict=False))
 
 
 def _get_gradient_color(position: float) -> tuple:
@@ -79,28 +100,6 @@ def print_banner() -> None:
         reset_code = "\033[0m"
         click.echo(f"{color_code}{line}{reset_code}")
     click.echo()
-
-from frago.init.checker import (
-    parallel_dependency_check,
-)
-from frago.init.config_manager import load_config, save_config
-from frago.init.configurator import (
-    config_exists,
-    display_config_summary,
-    get_config_path,
-    prompt_config_update,
-    run_auth_configuration,
-    warn_auth_switch,
-)
-from frago.init.exceptions import InitErrorCode
-from frago.init.installer import install_claude_code_auto
-from frago.init.models import Config, DependencyCheckResult
-from frago.init.ui import (
-    ProgressReporter,
-    print_section,
-    print_summary,
-    spinner_context,
-)
 
 
 @click.command("init", cls=AgentFriendlyCommand)
@@ -373,7 +372,7 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
 
 
 def _handle_configuration(
-    existing_config: Optional[Config],
+    existing_config: Config | None,
     non_interactive: bool = False,
 ) -> Config:
     """
@@ -405,10 +404,11 @@ def _handle_configuration(
         current_method = existing_config.auth_method
         config = run_auth_configuration(existing_config)
 
-        if config.auth_method != current_method:
-            if not warn_auth_switch(current_method, config.auth_method):
-                click.secho("Configuration update cancelled", dim=True)
-                return existing_config
+        if config.auth_method != current_method and not warn_auth_switch(
+            current_method, config.auth_method
+        ):
+            click.secho("Configuration update cancelled", dim=True)
+            return existing_config
 
         return config
     else:
@@ -420,7 +420,7 @@ def _handle_configuration(
 
 
 def _handle_missing_dependencies(
-    results: Dict[str, DependencyCheckResult],
+    results: dict[str, DependencyCheckResult],
     missing: list[str],
     non_interactive: bool = False,
 ) -> None:

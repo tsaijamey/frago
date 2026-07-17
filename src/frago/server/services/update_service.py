@@ -12,7 +12,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ class UpdateService:
         self._status = UpdateStatus.IDLE
         self._progress = 0
         self._message = ""
-        self._error: Optional[str] = None
-        self._update_task: Optional[asyncio.Task] = None
+        self._error: str | None = None
+        self._update_task: asyncio.Task | None = None
 
     @classmethod
     def get_instance(cls) -> "UpdateService":
@@ -54,7 +54,7 @@ class UpdateService:
                     cls._instance = cls()
         return cls._instance
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current update status.
 
         Returns:
@@ -75,7 +75,7 @@ class UpdateService:
         """
         return self._status in (UpdateStatus.UPDATING, UpdateStatus.RESTARTING)
 
-    async def start_update(self) -> Dict[str, Any]:
+    async def start_update(self) -> dict[str, Any]:
         """Start the update process.
 
         Returns:
@@ -155,12 +155,9 @@ class UpdateService:
             Tuple of (success, output_or_error)
         """
         try:
-            # Find uv executable
-            if platform.system() == "Windows":
-                # On Windows, uv might be in PATH or in %USERPROFILE%\.local\bin
-                uv_cmd = "uv"
-            else:
-                uv_cmd = "uv"
+            # Find uv executable (on Windows, uv might be in PATH or in
+            # %USERPROFILE%\.local\bin — both resolve via PATH lookup)
+            uv_cmd = "uv"
 
             cmd = [uv_cmd, "tool", "install", "--reinstall", "frago-cli"]
             logger.info(f"Running upgrade command: {' '.join(cmd)}")
@@ -247,7 +244,7 @@ class UpdateService:
     async def _broadcast_status(self) -> None:
         """Broadcast update status via WebSocket."""
         try:
-            from frago.server.websocket import manager, create_message
+            from frago.server.websocket import create_message, manager
 
             message = create_message("data_update_status", {
                 "status": self._status,

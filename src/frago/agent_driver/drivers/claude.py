@@ -73,10 +73,14 @@ _CHROME_LINE = re.compile(
 #      行尾为空）与本轮答案正文：故要求 ``❯`` 后紧跟「数字 + ``.`` 或 ``)``」。
 # claude 有 transcript 完成探针，``_ok`` 采信 JSONL 权威信号；菜单/认证墙下本轮
 # transcript 不会推进，``_ok`` 为假，needs_input 才得以命中，不会被 pane done 抢先。
+# 注意 NEVER 放裸 ``/login``：claude 启动横幅有良性续期提示 ``⚠ Your login
+# expires in N days · run /login to renew``，横幅还在屏上时任何 send 都会被
+# 裸 ``/login`` 当帧误判成认证墙、提前以 needs_input 返回（20260717 live 排查：
+# send 返回的"答案"是横幅期 pane 里的 Tip 行）。只认带明确失败语义的组合。
 _AUTH_WALL_PAT = (
     r"invalid api key|api key.*(?:invalid|expired)|please run\s*/login"
     r"|not\s+logged\s+in|unauthorized|authentication\s+failed"
-    r"|credit balance is too low|/login\b|sign\s+in"
+    r"|credit balance is too low|sign\s+in\s+to\s+continue"
 )
 _SELECT_MENU_PAT = r"^\s*│?\s*❯\s+\d+[.)]\s"
 _NEEDS_INPUT = PaneMatcher(
@@ -109,10 +113,15 @@ _PASTE_SETTLE_S = 2.0
 
 # Enter 发出后验证"确已提交"的轮询次数与重发上限。静置 2 秒并不根治粘贴检测吞
 # Enter（偶发仍会把 Enter 当换行），文本一旦滞留输入框，_READY_BOX 永不再匹配，
-# 上层 ready 检查永远失败——会话不可恢复地死锁。故提交后轮询结构信号确认：输入框
-# 回空（_READY_BOX，文本已离开输入行）或忙碌标记出现（_BUSY，已开始思考）任一命中
-# 即算提交成功；若干轮都不见则判 Enter 被吞，重发一次再验，重试上限 2 次。
-_SUBMIT_VERIFY_POLLS = 8
+# 上层 ready 检查永远失败——会话不可恢复地死锁。验证信号分两档：
+#   1. transcript JSONL 可定位时采信权威信号——Enter 真落地 = 本轮用户消息被追加、
+#      文件立刻变长。pane 启发式（输入框回空 / 忙碌标记）在真实 TUI 有竞态：Enter
+#      被粘贴检测吞掉的同时 TUI 整框重绘，输入框短暂呈空、随即被余波填回，读屏
+#      恰落在空窗帧就误判"已提交"（20260717 live 复现的死锁根因之一）。
+#   2. transcript 定位不到（首启 jsonl 未生成 / 单测 fake runner）才退回 pane
+#      启发式：输入框回空（_READY_BOX）或忙碌标记出现（_BUSY）任一命中即算提交。
+# 若干轮都确认不了则判 Enter 被吞，重发一次再验，重试上限 2 次。
+_SUBMIT_VERIFY_POLLS = 12
 _ENTER_RETRIES = 2
 
 
@@ -228,19 +237,62 @@ def _submitted(pane: str) -> bool:
     return _READY_BOX.matches(pane) or _BUSY.search(pane) is not None
 
 
+# 清残留探针：C-u 清缓冲区后 TUI 懒重绘（pane 仍显示旧文本，直到下一个按键才
+# 刷新），读屏等空框验证不了"确已清空"。故敲一个探针字符强制重绘：输入框只剩
+# ``❯ x``（❯ 后是 nbsp \xa0——claude 输入框的渲染特征，shell 提示符/回显是普通
+# 空格，恰好排除"shell 阶段误判已清"）即证明缓冲区里只有探针，再退格删掉探针，
+# 缓冲区即空。显示层可能又留旧文本的 ghost，无妨：后续 submit 逐键输入会重绘，
+# 提交验证走 transcript 权威信号，不依赖读屏。
+_CLEAR_PROBE_CHAR = "x"
+_CLEAR_PROBE_ONLY = re.compile(rf"(?m)^\s*│?\s*[>❯]\xa0{_CLEAR_PROBE_CHAR}\s*$")
+_CLEAR_RETRIES = 3
+_CLEAR_PROBE_POLLS = 10
+
+
+def _clear_input(session: TmuxAgentSession) -> bool:
+    """清空输入框残留并结构化确认。返回 True = 缓冲区确已清空。"""
+    for _ in range(_CLEAR_RETRIES):
+        session.send_keys("C-u")
+        session.send_text(_CLEAR_PROBE_CHAR)
+        for _ in range(_CLEAR_PROBE_POLLS):
+            if _CLEAR_PROBE_ONLY.search(session.capture_pane()):
+                session.send_keys("BSpace")
+                return True
+            session._sleep(session._poll_interval_s)
+        # 探针没有独占输入框（C-u 未生效 / shell 阶段），退掉探针字符再试或放弃。
+        session.send_keys("BSpace")
+    return False
+
+
+def _transcript_size(path: Path | None) -> int | None:
+    if path is None:
+        return None
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
     session.send_text(prompt)
     # claude TUI 的粘贴检测把紧随粘贴突发到达的 Enter 当成粘贴内容里的换行而非
     # 提交，长消息会整段滞留输入框（PA 卡死的根因）。停 2 秒让突发先结束。
     session._sleep(_PASTE_SETTLE_S)
-    # 静置后仍偶发被吞：发 Enter 后轮询验证提交生效（文本离开输入行 / 出现忙碌
-    # 信号），滞留则重发 Enter 再验，重试上限 _ENTER_RETRIES 次。
+    # 静置后仍偶发被吞：发 Enter 后轮询验证提交生效，滞留则重发 Enter 再验，
+    # 重试上限 _ENTER_RETRIES 次。验证优先采信 transcript 增长（权威），无
+    # transcript 才退回 pane 启发式——理由见 _SUBMIT_VERIFY_POLLS 注释。
+    path = transcript_path_for(session)
+    baseline_size = _transcript_size(path)
     for _ in range(1 + _ENTER_RETRIES):
         session.send_keys("Enter")
         confirmed = False
         for _ in range(_SUBMIT_VERIFY_POLLS):
-            if _submitted(session.capture_pane()):
-                confirmed = True
+            if baseline_size is not None:
+                size = _transcript_size(path)
+                confirmed = size is not None and size > baseline_size
+            else:
+                confirmed = _submitted(session.capture_pane())
+            if confirmed:
                 break
             session._sleep(session._poll_interval_s)
         if confirmed:
@@ -318,5 +370,8 @@ register_driver(
         completion_probe=_completion_probe,
         needs_input_signal=_NEEDS_INPUT,
         exception_handlers=[],
+        # claude v2.1.x：Escape 不清输入框（20260717 live 实测无效），C-u 清行 +
+        # 探针强制重绘确认（懒重绘 TUI 读屏验证不可靠，见 _clear_input）。
+        clear_input=_clear_input,
     )
 )

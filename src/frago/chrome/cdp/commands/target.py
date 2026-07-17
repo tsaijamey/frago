@@ -5,7 +5,7 @@ Encapsulates CDP commands for the Target domain.
 Used for managing browser tabs/targets.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 from ..logger import get_logger
 
@@ -26,8 +26,8 @@ class TargetCommands:
     def create_target(
         self,
         url: str,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
+        width: int | None = None,
+        height: int | None = None,
         background: bool = False,
     ) -> str:
         """
@@ -44,7 +44,7 @@ class TargetCommands:
         """
         self.logger.info(f"Creating new tab with URL: {url}")
 
-        params: Dict[str, Any] = {"url": url}
+        params: dict[str, Any] = {"url": url}
         if width is not None:
             params["width"] = width
         if height is not None:
@@ -79,7 +79,7 @@ class TargetCommands:
         self.logger.debug(f"Close target result: {success}")
         return success
 
-    def get_targets(self) -> List[Dict[str, Any]]:
+    def get_targets(self) -> list[dict[str, Any]]:
         """
         Get list of all targets (tabs)
 

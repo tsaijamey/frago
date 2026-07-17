@@ -4,9 +4,9 @@ Screenshot-related CDP commands
 Encapsulates CDP commands for screenshot functionality.
 """
 
-from typing import Dict, Any, Optional
 import base64
 import os
+from typing import Any
 
 from ..logger import get_logger
 
@@ -26,11 +26,11 @@ class ScreenshotCommands:
 
     def capture(
         self,
-        output_file: Optional[str] = None,
+        output_file: str | None = None,
         full_page: bool = False,
         format: str = "png",
         quality: int = 80
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Capture page screenshot
 
@@ -44,15 +44,15 @@ class ScreenshotCommands:
             Dict[str, Any]: Screenshot result
         """
         self.logger.info(f"Taking screenshot (full_page={full_page}, format={format}, quality={quality})")
-        
+
         params = {
             "format": format,
             "captureBeyondViewport": full_page
         }
-        
+
         if format == "jpeg":
             params["quality"] = quality
-        
+
         response = self.session.send_command("Page.captureScreenshot", params)
 
         # CDP return format: {'id': ..., 'result': {'data': ...}}

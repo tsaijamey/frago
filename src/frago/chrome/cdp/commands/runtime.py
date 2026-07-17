@@ -4,10 +4,10 @@ Runtime-related CDP commands
 Encapsulates CDP commands for the Runtime domain.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
 
-from ..session import CDPSession
 from ..logger import get_logger
+from ..session import CDPSession
 
 
 class RuntimeCommands:
@@ -23,7 +23,7 @@ class RuntimeCommands:
         self.session = session
         self.logger = get_logger()
 
-    def evaluate(self, expression: str, return_by_value: bool = True) -> Dict[str, Any]:
+    def evaluate(self, expression: str, return_by_value: bool = True) -> dict[str, Any]:
         """
         Execute JavaScript expression in page context
 
@@ -35,7 +35,7 @@ class RuntimeCommands:
             Dict[str, Any]: Execution result
         """
         self.logger.debug(f"Evaluating expression: {expression}")
-        
+
         result = self.session.send_command(
             "Runtime.evaluate",
             {
@@ -44,16 +44,16 @@ class RuntimeCommands:
                 "awaitPromise": True
             }
         )
-        
+
         self.logger.debug(f"Evaluation result: {result}")
         return result
-    
+
     def call_function(
         self,
         function_declaration: str,
-        args: Optional[list] = None,
+        args: list | None = None,
         return_by_value: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Call JavaScript function
 
@@ -73,7 +73,7 @@ class RuntimeCommands:
 
         # Build function call expression
         call_expression = f"({function_declaration})({', '.join(map(repr, args))})"
-        
+
         result = self.session.send_command(
             "Runtime.evaluate",
             {
@@ -81,6 +81,6 @@ class RuntimeCommands:
                 "returnByValue": return_by_value
             }
         )
-        
+
         self.logger.debug(f"Function call result: {result}")
         return result

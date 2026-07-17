@@ -8,7 +8,7 @@ import hashlib
 import shutil
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 # Viewer directory structure
 VIEWER_DIR = Path.home() / ".frago" / "viewer"
@@ -58,13 +58,12 @@ class ViewerService:
             src = package_resources / res_dir
             dst = RESOURCES_DIR / res_dir
 
-            if src.exists():
-                # Copy if destination doesn't exist or source is newer
-                if not dst.exists():
-                    shutil.copytree(src, dst)
+            # Copy if destination doesn't exist
+            if src.exists() and not dst.exists():
+                shutil.copytree(src, dst)
 
     @staticmethod
-    def generate_content_id(content: str, file_path: Optional[Path] = None) -> str:
+    def generate_content_id(content: str, file_path: Path | None = None) -> str:
         """Generate a unique content ID based on content hash.
 
         Args:
@@ -87,7 +86,7 @@ class ViewerService:
         content: str | Path,
         mode: Literal["auto", "present", "doc"] = "auto",
         theme: str = "github-dark",
-        title: Optional[str] = None,
+        title: str | None = None,
     ) -> str:
         """Prepare content for viewing and return content_id.
 
@@ -177,7 +176,7 @@ class ViewerService:
         return content_id
 
     @staticmethod
-    def _detect_mode(file_path: Optional[Path], content_str: str) -> Literal["present", "doc"]:
+    def _detect_mode(file_path: Path | None, content_str: str) -> Literal["present", "doc"]:  # noqa: ARG004 — kept for API compatibility
         """Auto-detect the display mode based on content type."""
         if file_path:
             ext = file_path.suffix.lower()
@@ -191,7 +190,7 @@ class ViewerService:
         return "doc"
 
     @staticmethod
-    def _get_content_type(file_path: Optional[Path]) -> str:
+    def _get_content_type(file_path: Path | None) -> str:
         """Get the content type for routing to appropriate handler."""
         if file_path:
             ext = file_path.suffix.lower()
@@ -216,7 +215,7 @@ class ViewerService:
 
     @staticmethod
     def _render_present_html(
-        file_path: Optional[Path],
+        file_path: Path | None,
         content_str: str,
         is_file: bool,
         content_type: str,
@@ -241,7 +240,7 @@ class ViewerService:
 
     @staticmethod
     def _render_doc_html(
-        file_path: Optional[Path],
+        file_path: Path | None,
         content_str: str,
         is_file: bool,
         content_type: str,
@@ -278,10 +277,10 @@ class ViewerService:
         Copies source file to content directory and generates appropriate HTML.
         """
         from frago.viewer.modes.media import (
-            render_video,
-            render_image,
-            render_audio,
             render_3d,
+            render_audio,
+            render_image,
+            render_video,
         )
 
         # Copy source file to content directory
@@ -334,7 +333,7 @@ class ViewerService:
         return removed
 
     @staticmethod
-    def get_content_path(content_id: str) -> Optional[Path]:
+    def get_content_path(content_id: str) -> Path | None:
         """Get the path to a content directory.
 
         Args:

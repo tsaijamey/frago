@@ -9,11 +9,11 @@ from pathlib import Path
 
 import click
 
+from frago.cli.git_utils import _ensure_git_user_config
 from frago.recipes import OutputHandler, RecipeRegistry, RecipeRunner
 from frago.recipes.exceptions import MetadataParseError, RecipeError, RecipeValidationError
 from frago.recipes.metadata import parse_metadata_file, validate_metadata
 from frago.recipes.schedule import parse_datetime, parse_interval
-from frago.cli.git_utils import _ensure_git_user_config
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 

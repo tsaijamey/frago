@@ -28,7 +28,7 @@ def _load_channel_notify_recipe(channel_name: str) -> str:
     try:
         raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        raise click.ClickException(f"Error reading config: {e}")
+        raise click.ClickException(f"Error reading config: {e}") from e
 
     channels = (raw.get("task_ingestion") or {}).get("channels") or []
     matched = next(
@@ -67,7 +67,7 @@ def reply_cmd(channel: str, params_str: str):
     try:
         params = json.loads(params_str)
     except json.JSONDecodeError as e:
-        raise click.ClickException(f"Invalid params JSON: {e}")
+        raise click.ClickException(f"Invalid params JSON: {e}") from e
 
     from frago.recipes import RecipeRunner
 

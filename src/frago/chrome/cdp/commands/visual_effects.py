@@ -70,7 +70,7 @@ class VisualEffectsCommands:
                 overlay.style.zIndex = '999998';
                 overlay.style.pointerEvents = 'none';
                 document.body.appendChild(overlay);
-                
+
                 const rect = element.getBoundingClientRect();
                 element.style.position = 'relative';
                 element.style.zIndex = '999999';
@@ -117,7 +117,7 @@ class VisualEffectsCommands:
                 annotation.style.whiteSpace = 'nowrap';
                 annotation.style.zIndex = '999999';
                 annotation.style.pointerEvents = 'none';
-                
+
                 element.style.position = 'relative';
                 element.appendChild(annotation);
             }}
@@ -137,12 +137,12 @@ class VisualEffectsCommands:
                 el.style.outline = '';
                 el.removeAttribute('data-frago-highlight');
             });
-            
+
             ['frago-spotlight'].forEach(id => {
                 const element = document.getElementById(id);
                 if (element) element.remove();
             });
-            
+
             document.querySelectorAll('.frago-annotation').forEach(el => el.remove());
         })();
         """
@@ -152,7 +152,7 @@ class VisualEffectsCommands:
     def viewport_border(
         self,
         color: str = "80, 200, 120",
-        duration: float = 3.0,
+        duration: float = 3.0,  # noqa: ARG002 — kept for backward compatibility
     ) -> None:
         """
         Display a static border around the viewport to indicate automation control.

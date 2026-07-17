@@ -44,7 +44,7 @@ def client_status():
     click.echo("=" * 40)
 
     if status["installed"]:
-        click.echo(f"✓ Installed: Yes")
+        click.echo("✓ Installed: Yes")
         click.echo(f"  Version:   {status['installed_version']}")
         click.echo(f"  Location:  {status['client_path']}")
 
@@ -120,11 +120,11 @@ def client_update(version: str, force: bool):
     """
     status = client_manager.get_status()
 
-    if not force and not version:
-        # Check if update is needed
-        if status["installed"] and not status["update_available"]:
-            click.echo(f"Already up to date (v{status['installed_version']})")
-            return
+    # Check if update is needed
+    if (not force and not version
+            and status["installed"] and not status["update_available"]):
+        click.echo(f"Already up to date (v{status['installed_version']})")
+        return
 
     click.echo("Updating frago client...")
     if client_manager.download_client(version=version):

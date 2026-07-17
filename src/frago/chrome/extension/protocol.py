@@ -16,8 +16,7 @@ from __future__ import annotations
 import json
 import struct
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal, Optional
-
+from typing import Any, Literal
 
 RPC_ERROR_CODES = {
     "PARSE_ERROR":            -32700,
@@ -37,14 +36,14 @@ RPC_ERROR_CODES = {
 class RpcError:
     code: int
     message: str
-    data: Optional[dict] = None
+    data: dict | None = None
 
 
 @dataclass
 class RpcRequest:
     method: str
     params: dict = field(default_factory=dict)
-    id: Optional[str] = None
+    id: str | None = None
     jsonrpc: Literal["2.0"] = "2.0"
 
     def to_json(self) -> dict:
@@ -58,9 +57,9 @@ class RpcRequest:
 
 @dataclass
 class RpcResponse:
-    id: Optional[str]
+    id: str | None
     result: Any = None
-    error: Optional[RpcError] = None
+    error: RpcError | None = None
     jsonrpc: Literal["2.0"] = "2.0"
 
     def to_json(self) -> dict:
@@ -77,7 +76,7 @@ def encode_frame(obj: dict) -> bytes:
     return struct.pack("<I", len(payload)) + payload
 
 
-def read_frame_sync(stream) -> Optional[dict]:
+def read_frame_sync(stream) -> dict | None:
     """Blocking read of one frame from a binary stream; None on EOF."""
     header = stream.read(4)
     if not header or len(header) < 4:
@@ -89,7 +88,7 @@ def read_frame_sync(stream) -> Optional[dict]:
     return json.loads(body.decode("utf-8"))
 
 
-async def read_frame_async(reader) -> Optional[dict]:
+async def read_frame_async(reader) -> dict | None:
     """Async read of one frame from an asyncio StreamReader; None on EOF."""
     try:
         header = await reader.readexactly(4)

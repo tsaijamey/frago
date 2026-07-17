@@ -8,7 +8,7 @@ import platform
 import re
 import subprocess
 import threading
-from typing import Any, Dict, Optional
+from typing import Any
 
 from frago.server.services.subprocess_utils import get_gh_command, run_subprocess
 
@@ -22,7 +22,7 @@ class GitHubService:
     """Service for GitHub CLI operations."""
 
     @staticmethod
-    def check_gh_cli() -> Dict[str, Any]:
+    def check_gh_cli() -> dict[str, Any]:
         """Check gh CLI installation and login status.
 
         Returns:
@@ -80,7 +80,7 @@ class GitHubService:
         return result
 
     @staticmethod
-    def auth_login() -> Dict[str, Any]:
+    def auth_login() -> dict[str, Any]:
         """Execute gh auth login in external terminal.
 
         Opens a terminal window for the user to complete authentication.
@@ -108,7 +108,7 @@ class GitHubService:
             return {"status": "error", "error": str(e)}
 
     @staticmethod
-    def _auth_login_linux() -> Dict[str, Any]:
+    def _auth_login_linux() -> dict[str, Any]:
         """Open gh auth login on Linux."""
         # Try x-terminal-emulator first
         try:
@@ -136,7 +136,7 @@ class GitHubService:
         }
 
     @staticmethod
-    def _auth_login_macos() -> Dict[str, Any]:
+    def _auth_login_macos() -> dict[str, Any]:
         """Open gh auth login on macOS."""
         script = 'tell application "Terminal" to do script "gh auth login; exit"'
         subprocess.run(["osascript", "-e", script], check=False)
@@ -146,7 +146,7 @@ class GitHubService:
         }
 
     @staticmethod
-    def _auth_login_windows() -> Dict[str, Any]:
+    def _auth_login_windows() -> dict[str, Any]:
         """Open gh auth login on Windows."""
         # Prefer PowerShell (default in Windows 10/11)
         try:
@@ -180,7 +180,7 @@ class GitHubService:
     FRAGO_REPO = "tsaijamey/frago"
 
     @staticmethod
-    def check_starred() -> Dict[str, Any]:
+    def check_starred() -> dict[str, Any]:
         """Check if user has starred the frago repository.
 
         Returns:
@@ -229,7 +229,7 @@ class GitHubService:
             }
 
     @staticmethod
-    def toggle_star(star: bool) -> Dict[str, Any]:
+    def toggle_star(star: bool) -> dict[str, Any]:
         """Star or unstar the frago repository.
 
         Args:
@@ -313,7 +313,7 @@ class GitHubService:
         cls._token_checked = False
 
     @classmethod
-    def get_auth_headers(cls) -> Dict[str, str]:
+    def get_auth_headers(cls) -> dict[str, str]:
         """Get HTTP headers with GitHub authentication if available.
 
         Returns:
@@ -329,13 +329,13 @@ class GitHubService:
         return headers
 
     # Web login state management
-    _login_process: Optional[subprocess.Popen] = None
-    _login_code: Optional[str] = None
-    _login_url: Optional[str] = None
+    _login_process: subprocess.Popen | None = None
+    _login_code: str | None = None
+    _login_url: str | None = None
     _login_lock = threading.Lock()
 
     @classmethod
-    def auth_login_web(cls) -> Dict[str, Any]:
+    def auth_login_web(cls) -> dict[str, Any]:
         """Start web-based GitHub authentication and capture the device code.
 
         Executes `gh auth login --web --git-protocol https` and captures
@@ -385,7 +385,6 @@ class GitHubService:
 
             # Read output until we find both code and URL, or process ends
             # The gh CLI outputs the code and URL before blocking for auth
-            import select
             import time
 
             start_time = time.time()
@@ -483,7 +482,7 @@ class GitHubService:
             }
 
     @classmethod
-    def check_auth_login_complete(cls) -> Dict[str, Any]:
+    def check_auth_login_complete(cls) -> dict[str, Any]:
         """Check if the web login process has completed.
 
         Returns:
@@ -556,7 +555,7 @@ class GitHubService:
             }
 
     @classmethod
-    def cancel_auth_login(cls) -> Dict[str, Any]:
+    def cancel_auth_login(cls) -> dict[str, Any]:
         """Cancel any ongoing web login process.
 
         Returns:
@@ -578,7 +577,7 @@ class GitHubService:
         return {"status": "ok"}
 
     @classmethod
-    def get_current_user(cls) -> Dict[str, Any]:
+    def get_current_user(cls) -> dict[str, Any]:
         """Get the currently authenticated GitHub username.
 
         Returns:

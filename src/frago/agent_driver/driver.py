@@ -102,6 +102,12 @@ class AgentDriver:
     # 返回 CompletionVerdict；探针不可用（如 jsonl 尚未生成）时返回 None，driver
     # 当帧退回 pane done_signal。不设置时（opencode/codex）行为完全不变。
     completion_probe: Callable[[TmuxAgentSession], CompletionVerdict | None] | None = None
+    # 可选：清空输入框残留文本的自愈动作，返回"确已清空"与否。给 claude 这类
+    # 懒重绘 TUI 用——清行键（C-u）立即清空缓冲区，但 pane 不重绘、仍显示旧文本，
+    # "发键后读屏等空输入框"的通用验证注定失败，必须由 driver 自己用结构手段
+    # （探针字符强制重绘）确认缓冲区状态。不设置时上层退回通用行为（Escape +
+    # 轮询 ready_signal）。
+    clear_input: Callable[[TmuxAgentSession], bool] | None = None
 
 
 _REGISTRY: dict[str, AgentDriver] = {}

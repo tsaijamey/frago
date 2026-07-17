@@ -6,8 +6,8 @@ Manages Chrome DevTools Protocol connection configuration and parameters.
 
 import fnmatch
 import os
-from typing import Optional
 from urllib.parse import urlparse
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -27,14 +27,14 @@ class CDPConfig(BaseModel):
     debug: bool = Field(default=False, description="Whether to enable debug mode")
     timeout: int = Field(default=30, description="Operation timeout (seconds)")
 
-    proxy_host: Optional[str] = Field(default=None, description="Proxy server host address")
-    proxy_port: Optional[int] = Field(default=None, description="Proxy server port")
-    proxy_username: Optional[str] = Field(default=None, description="Proxy authentication username", repr=False)
-    proxy_password: Optional[str] = Field(default=None, description="Proxy authentication password", repr=False)
+    proxy_host: str | None = Field(default=None, description="Proxy server host address")
+    proxy_port: int | None = Field(default=None, description="Proxy server port")
+    proxy_username: str | None = Field(default=None, description="Proxy authentication username", repr=False)
+    proxy_password: str | None = Field(default=None, description="Proxy authentication password", repr=False)
     no_proxy: bool = Field(default=False, description="Whether to bypass proxy")
 
-    target_id: Optional[str] = Field(default=None, description="Specified target tab ID, auto-select first page if not specified")
-    
+    target_id: str | None = Field(default=None, description="Specified target tab ID, auto-select first page if not specified")
+
     @model_validator(mode='after')
     def load_proxy_from_env(self):
         """Load proxy configuration from environment variables (if not specified via parameters)
@@ -104,7 +104,7 @@ class CDPConfig(BaseModel):
         """Get HTTP debug URL"""
         return f"http://{self.host}:{self.port}"
 
-    def validate_proxy_config(self) -> tuple[bool, Optional[str]]:
+    def validate_proxy_config(self) -> tuple[bool, str | None]:
         """Validate proxy configuration validity
 
         Returns:
@@ -136,7 +136,7 @@ class CDPConfig(BaseModel):
 
         return True, None
 
-    def get_proxy_info(self) -> Optional[dict]:
+    def get_proxy_info(self) -> dict | None:
         """Get proxy configuration information (for logging)
 
         Note: This method does not return authentication information (username and password), only host, port and authentication status
@@ -168,7 +168,7 @@ class CDPConfig(BaseModel):
         return f"CDPConfig({config_dict})"
 
 
-def load_config(config_file: Optional[str] = None) -> CDPConfig:
+def load_config(config_file: str | None = None) -> CDPConfig:  # noqa: ARG001 — reserved for file-based config
     """
     Load CDP configuration
 

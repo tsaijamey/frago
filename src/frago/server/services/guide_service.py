@@ -4,7 +4,6 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional
 
 try:
     import frontmatter
@@ -46,7 +45,7 @@ class GuideService:
 
     @staticmethod
     @lru_cache(maxsize=1)
-    def load_meta() -> Dict:
+    def load_meta() -> dict:
         """Load guide metadata.
 
         Returns:
@@ -69,7 +68,7 @@ class GuideService:
 
     @staticmethod
     @lru_cache(maxsize=128)
-    def load_chapter(lang: str, chapter_id: str) -> Dict:
+    def load_chapter(lang: str, chapter_id: str) -> dict:
         """Load chapter content.
 
         Args:
@@ -115,7 +114,7 @@ class GuideService:
             content_text = file_path.read_text(encoding="utf-8")
             metadata, content = GuideService._parse_frontmatter_manual(content_text)
         else:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 post = frontmatter.load(f)
                 metadata = dict(post.metadata)
                 content = post.content
@@ -138,7 +137,7 @@ class GuideService:
         }
 
     @staticmethod
-    def _parse_frontmatter_manual(text: str) -> tuple[Dict, str]:
+    def _parse_frontmatter_manual(text: str) -> tuple[dict, str]:
         """Manually parse YAML frontmatter if python-frontmatter not available.
 
         Args:
@@ -169,7 +168,7 @@ class GuideService:
             return {}, text
 
     @staticmethod
-    def _extract_toc(content: str) -> List[Dict]:
+    def _extract_toc(content: str) -> list[dict]:
         """Extract table of contents from Markdown headings.
 
         Args:
@@ -221,7 +220,7 @@ class GuideService:
         return text.strip("-")
 
     @staticmethod
-    def search_content(query: str, lang: str) -> List[Dict]:
+    def search_content(query: str, lang: str) -> list[dict]:
         """Search guide content for keywords.
 
         Args:
@@ -246,19 +245,18 @@ class GuideService:
                 # Search in content by paragraphs
                 paragraphs = content_data["content"].split("\n\n")
                 for para in paragraphs:
-                    if query_lower in para.lower():
-                        # Extract question if this is a Q&A section
-                        if para.startswith("## Q:"):
-                            question = para.split("\n")[0].replace("## Q:", "").strip()
-                            snippet = GuideService._highlight_snippet(
-                                para, query, max_length=200
-                            )
-                            anchor = GuideService._slugify(para.split("\n")[0])
-                            matches.append({
-                                "question": question,
-                                "snippet": snippet,
-                                "anchor": anchor,
-                            })
+                    # Extract question if this is a matched Q&A section
+                    if query_lower in para.lower() and para.startswith("## Q:"):
+                        question = para.split("\n")[0].replace("## Q:", "").strip()
+                        snippet = GuideService._highlight_snippet(
+                            para, query, max_length=200
+                        )
+                        anchor = GuideService._slugify(para.split("\n")[0])
+                        matches.append({
+                            "question": question,
+                            "snippet": snippet,
+                            "anchor": anchor,
+                        })
 
                 if matches:
                     results.append({
@@ -275,7 +273,7 @@ class GuideService:
         return results
 
     @staticmethod
-    def _highlight_snippet(text: str, query: str, max_length: int = 200) -> str:
+    def _highlight_snippet(text: str, query: str, max_length: int = 200) -> str:  # noqa: ARG004 — documented API, truncation not yet implemented
         """Extract snippet with highlighted search keyword.
 
         Args:

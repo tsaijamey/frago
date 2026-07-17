@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 import urllib.request
-from typing import Optional
 
 import click
 
@@ -43,7 +42,7 @@ def get_current_version() -> str:
         return "unknown"
 
 
-def get_latest_version() -> Optional[str]:
+def get_latest_version() -> str | None:
     """Get latest version from PyPI"""
     try:
         with urllib.request.urlopen(PYPI_URL, timeout=10) as response:
@@ -106,7 +105,7 @@ def update(check_only: bool, from_repo: bool):
             else:
                 # Current version < PyPI version, update available
                 click.echo(f"New version found: v{latest}")
-                click.echo(f"Run 'frago update' to update")
+                click.echo("Run 'frago update' to update")
         else:
             click.echo("Unable to check for updates (network issue or package not published)")
         return

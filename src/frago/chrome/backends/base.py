@@ -9,9 +9,8 @@ the base fields as authoritative.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -41,8 +40,8 @@ class ClickResult:
 
 @dataclass
 class ScreenshotResult:
-    path: Optional[str] = None
-    png_base64: Optional[str] = None
+    path: str | None = None
+    png_base64: str | None = None
     tab_id: int | str | None = None
 
 
@@ -64,14 +63,14 @@ class ChromeBackend(ABC):
 
     @abstractmethod
     def get_content(self, group: str, *,
-                    selector: Optional[str] = None) -> ContentResult: ...
+                    selector: str | None = None) -> ContentResult: ...
 
     @abstractmethod
     def click(self, selector: str, group: str) -> ClickResult: ...
 
     @abstractmethod
     def screenshot(self, group: str, *,
-                   output: Optional[str] = None) -> ScreenshotResult: ...
+                   output: str | None = None) -> ScreenshotResult: ...
 
     # ─── P2 Batch 1: tab management + simple element ops ─────────────
 
@@ -111,7 +110,7 @@ class ChromeBackend(ABC):
         """Remove groups whose tabs no longer exist."""
         raise NotImplementedError
 
-    def reset(self, group: Optional[str] = None) -> dict:
+    def reset(self, group: str | None = None) -> dict:
         """Close all tabs (or one group's tabs) except the landing page."""
         raise NotImplementedError
 
@@ -119,8 +118,8 @@ class ChromeBackend(ABC):
         """Scroll by pixels. Positive=down."""
         raise NotImplementedError
 
-    def scroll_to(self, group: str, *, selector: Optional[str] = None,
-                  text: Optional[str] = None, block: str = "center") -> dict:
+    def scroll_to(self, group: str, *, selector: str | None = None,
+                  text: str | None = None, block: str = "center") -> dict:
         """Scroll element into view by selector or text."""
         raise NotImplementedError
 
@@ -168,5 +167,5 @@ class ChromeBackend(ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support raw commands")
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027 — intentional default no-op, not abstract
         """Release resources. Default no-op."""

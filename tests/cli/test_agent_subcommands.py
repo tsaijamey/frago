@@ -170,21 +170,27 @@ def test_send_not_ready_shows_starting(fake):
     assert res.exit_code == 1
     assert "still starting up" in res.output
     assert "working" in res.output
-    # 忙碌屏 = 真在启动/干活，不触发残留自愈，不发 Escape。
-    assert not any(c[-1] == "Escape" for c in fake.commands)
+    # 忙碌屏 = 真在启动/干活，不触发残留自愈，不发清行键（claude 是 C-u）。
+    assert not any(c[-1] == "C-u" for c in fake.commands)
 
 
-# ── 残留自愈：会话空闲但输入框滞留文本 → Escape 清空后继续 send ──────────────
+# ── 残留自愈：会话空闲但输入框滞留文本 → 清行键清空后继续 send ──────────────
 
 
 def test_send_clears_residual_input_then_sends(fake):
     _seed_entry("smoke", fake)
     # ready 检查首帧：提示符在、无忙碌标记，但输入框有残留文本（Enter 被吞的滞留态）。
-    fake.pane_script = ["⏺ old answer\n  ❯ leftover unsubmitted text\n"]
+    # 自愈协议（claude 懒重绘 TUI）：C-u 清行 → 探针字符 x 强制重绘 → 输入框只剩
+    # ``❯\xa0x``（nbsp 是 claude 输入框渲染特征）即确认缓冲区已清 → BSpace 删探针。
+    fake.pane_script = [
+        "⏺ old answer\n  ❯ leftover unsubmitted text\n",  # ready 检查首帧（滞留态）
+        "⏺ old answer\n  ❯\xa0x\n",  # C-u + 探针后：探针独占输入框
+    ]
     res = CliRunner().invoke(agent, ["send", "smoke", "hi"])
     assert res.exit_code == 0, res.output
     assert "DRIVE_OK" in res.output
-    assert ["tmux", "send-keys", "-t", "frago-agent-smoke", "Escape"] in fake.commands
+    assert ["tmux", "send-keys", "-t", "frago-agent-smoke", "C-u"] in fake.commands
+    assert ["tmux", "send-keys", "-t", "frago-agent-smoke", "BSpace"] in fake.commands
 
 
 # ── 负反馈 3：等不到 done_signal 超时 → timeout + 末屏 + 接管提示 ────────────

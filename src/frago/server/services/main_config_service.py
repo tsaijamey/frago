@@ -6,7 +6,7 @@ stored in ~/.frago/config.json.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class MainConfigService:
     """Service for main frago configuration management."""
 
     @staticmethod
-    def get_config() -> Dict[str, Any]:
+    def get_config() -> dict[str, Any]:
         """Get main configuration from ~/.frago/config.json.
 
         Returns:
@@ -39,7 +39,7 @@ class MainConfigService:
             return result
 
     @staticmethod
-    def update_config(updates: Dict[str, Any]) -> Dict[str, Any]:
+    def update_config(updates: dict[str, Any]) -> dict[str, Any]:
         """Update main configuration.
 
         Args:

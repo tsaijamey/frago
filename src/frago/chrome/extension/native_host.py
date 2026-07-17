@@ -20,19 +20,18 @@ the extension (id=None) are broadcast to all client peers.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import struct
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .protocol import (
     RPC_ERROR_CODES,
     encode_frame,
     read_frame_async,
 )
-
 
 SOCK_PATH = Path.home() / ".frago" / "chrome" / "extension.sock"
 
@@ -44,10 +43,10 @@ class Daemon:
     """Singleton multiplexer between extension stdio relay and CLI clients."""
 
     def __init__(self) -> None:
-        self._extension_writer: Optional[asyncio.StreamWriter] = None
+        self._extension_writer: asyncio.StreamWriter | None = None
         self._extension_ready = asyncio.Event()
         # pending[id_from_extension] = (client_writer, original_client_id)
-        self._pending: dict[str, tuple[asyncio.StreamWriter, Optional[str]]] = {}
+        self._pending: dict[str, tuple[asyncio.StreamWriter, str | None]] = {}
         self._clients: set[asyncio.StreamWriter] = set()
         self._next_id = 0
 
@@ -78,10 +77,8 @@ class Daemon:
             sys.stderr.write("[daemon] duplicate extension conn, dropping silently\n")
             sys.stderr.flush()
             writer.close()
-            try:
+            with contextlib.suppress(Exception):
                 await writer.wait_closed()
-            except Exception:
-                pass
             return
         self._extension_writer = writer
         self._extension_ready.set()
@@ -94,10 +91,8 @@ class Daemon:
         finally:
             self._extension_writer = None
             self._extension_ready.clear()
-            try:
+            with contextlib.suppress(Exception):
                 writer.close()
-            except Exception:
-                pass
 
     async def _handle_client(self, reader: asyncio.StreamReader,
                              writer: asyncio.StreamWriter) -> None:
@@ -110,10 +105,8 @@ class Daemon:
                 await self._route_from_client(msg, writer)
         finally:
             self._clients.discard(writer)
-            try:
+            with contextlib.suppress(Exception):
                 writer.close()
-            except Exception:
-                pass
 
     async def _route_from_client(self, msg: dict,
                                  client: asyncio.StreamWriter) -> None:
@@ -178,7 +171,7 @@ async def run_daemon(sock_path: Path = SOCK_PATH) -> None:
 # ═══════════════════════════ Relay ═══════════════════════════════
 
 
-def _read_stdio_frame() -> Optional[dict]:
+def _read_stdio_frame() -> dict | None:
     header = sys.stdin.buffer.read(4)
     if not header or len(header) < 4:
         return None
@@ -235,9 +228,9 @@ class DaemonClient:
 
     def __init__(self, sock_path: Path = SOCK_PATH) -> None:
         self.sock_path = sock_path
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._reader: Optional[asyncio.StreamReader] = None
-        self._writer: Optional[asyncio.StreamWriter] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
         self._next_id = 0
 
     async def _connect(self) -> None:
@@ -275,10 +268,8 @@ class DaemonClient:
             finally:
                 if self._writer is not None:
                     self._writer.close()
-                    try:
+                    with contextlib.suppress(Exception):
                         await self._writer.wait_closed()
-                    except Exception:
-                        pass
                     self._writer = None
                     self._reader = None
         return asyncio.run(_once())
@@ -393,7 +384,7 @@ def chrome_manifest_dir() -> Path:
 
 def install_manifest(executable: str,
                      extension_id: str = STABLE_EXTENSION_ID,
-                     target_dir: Optional[Path] = None,
+                     target_dir: Path | None = None,
                      brand: str = "edge") -> Path:
     """Write the native-messaging host manifest.
 

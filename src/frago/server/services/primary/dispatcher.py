@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re as _re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -260,8 +261,6 @@ async def dispatch_group_tmux(
 
 
 # ── conv_key 路由 + scheduled 回写 + needs_input 阻断门（Phase 4） ────────────
-
-import re as _re
 
 # Phase 1: 阻断门可见 pane → "需要你选/确认"回复文本。raw_delta 在 needs_input
 # 分支下是整屏可见 pane（含 TUI 边框/页脚 chrome），抠掉纯装饰行只留菜单/问题。

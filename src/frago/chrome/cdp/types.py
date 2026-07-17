@@ -4,32 +4,32 @@ CDP type definitions
 Defines type hints related to Chrome DevTools Protocol.
 """
 
-from typing import Dict, Any, Optional, Union, List, TypedDict
-
+from dataclasses import dataclass, field
+from typing import Any, TypedDict
 
 # CDP command related types
-CommandParams = Dict[str, Any]
-CommandResult = Dict[str, Any]
+CommandParams = dict[str, Any]
+CommandResult = dict[str, Any]
 
 
 class CDPResponse(TypedDict, total=False):
     """CDP response data structure"""
     id: int
-    result: Optional[CommandResult]
-    error: Optional[Dict[str, Any]]
-    method: Optional[str]
-    params: Optional[Dict[str, Any]]
+    result: CommandResult | None
+    error: dict[str, Any] | None
+    method: str | None
+    params: dict[str, Any] | None
 
 
 class CDPRequest(TypedDict):
     """CDP request data structure"""
     id: int
     method: str
-    params: Optional[CommandParams]
+    params: CommandParams | None
 
 
 # Connection related types
-WebSocketMessage = Union[str, bytes]
+WebSocketMessage = str | bytes
 
 
 # Retry related types
@@ -37,7 +37,7 @@ RetryCallback = Any  # Retry callback function type
 
 
 # Configuration related types
-ConfigDict = Dict[str, Any]
+ConfigDict = dict[str, Any]
 
 
 # Event related types
@@ -53,21 +53,18 @@ class SessionInfo(TypedDict):
     webSocketDebuggerUrl: str
 
 
-from dataclasses import dataclass, field
-
-
 @dataclass
 class ProxyConfig:
     """Proxy configuration data class"""
 
     enabled: bool = False
-    host: Optional[str] = None
-    port: Optional[int] = None
-    username: Optional[str] = None
-    password: Optional[str] = None
-    no_proxy_hosts: List[str] = field(default_factory=list)
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    password: str | None = None
+    no_proxy_hosts: list[str] = field(default_factory=list)
 
-    def get_websocket_proxy_config(self) -> Dict[str, Any]:
+    def get_websocket_proxy_config(self) -> dict[str, Any]:
         """Get WebSocket proxy configuration"""
         if not self.enabled or self.no_proxy:
             return {}

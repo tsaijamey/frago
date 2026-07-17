@@ -5,9 +5,10 @@ recipes from the community repository with periodic refresh.
 """
 
 import asyncio
+import contextlib
 import logging
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,9 @@ class CommunityRecipeService:
 
     def __init__(self) -> None:
         """Initialize the service."""
-        self._cache: Optional[List[Dict[str, Any]]] = None
-        self._last_fetch_error: Optional[str] = None
-        self._task: Optional[asyncio.Task] = None
+        self._cache: list[dict[str, Any]] | None = None
+        self._last_fetch_error: str | None = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
     @classmethod
@@ -86,10 +87,8 @@ class CommunityRecipeService:
         self._stop_event.set()
         self._task.cancel()
 
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
 
         self._task = None
         logger.info("Community recipe refresh stopped")
@@ -134,7 +133,7 @@ class CommunityRecipeService:
                 )
                 # If wait completes without timeout, stop was requested
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Timeout means continue to next refresh
                 continue
 
@@ -150,7 +149,7 @@ class CommunityRecipeService:
             await self._broadcast_update()
             logger.debug(f"Community recipes updated, count={len(new_data)}")
 
-    def _fetch_community_recipes(self) -> List[Dict[str, Any]]:
+    def _fetch_community_recipes(self) -> list[dict[str, Any]]:
         """Fetch from GitHub and enrich with install status.
 
         Returns:
@@ -214,7 +213,7 @@ class CommunityRecipeService:
             logger.warning(f"Failed to update StateManager: {e}")
 
         try:
-            from frago.server.websocket import manager, create_message
+            from frago.server.websocket import create_message, manager
 
             message = create_message("data_community_recipes", {
                 "data": self._cache,
@@ -227,7 +226,7 @@ class CommunityRecipeService:
         except Exception as e:
             logger.warning(f"Failed to broadcast community recipes: {e}")
 
-    async def get_recipes(self) -> List[Dict[str, Any]]:
+    async def get_recipes(self) -> list[dict[str, Any]]:
         """Get cached community recipes.
 
         Returns:
@@ -238,7 +237,7 @@ class CommunityRecipeService:
             await self._do_refresh()
         return self._cache or []
 
-    def install_recipe(self, name: str, force: bool = False) -> Dict[str, Any]:
+    def install_recipe(self, name: str, force: bool = False) -> dict[str, Any]:
         """Install a community recipe.
 
         Args:
@@ -303,7 +302,7 @@ class CommunityRecipeService:
                 "error": str(e),
             }
 
-    def update_recipe(self, name: str) -> Dict[str, Any]:
+    def update_recipe(self, name: str) -> dict[str, Any]:
         """Update an installed community recipe.
 
         Args:
@@ -331,7 +330,7 @@ class CommunityRecipeService:
                 "error": str(e),
             }
 
-    def uninstall_recipe(self, name: str) -> Dict[str, Any]:
+    def uninstall_recipe(self, name: str) -> dict[str, Any]:
         """Uninstall an installed community recipe.
 
         Args:
@@ -364,7 +363,7 @@ class CommunityRecipeService:
                 "error": str(e),
             }
 
-    def get_last_error(self) -> Optional[str]:
+    def get_last_error(self) -> str | None:
         """Get the last fetch error if any.
 
         Returns:

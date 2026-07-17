@@ -9,7 +9,6 @@ import os
 import platform
 import shutil
 from enum import Enum
-from typing import Optional
 
 
 class BrowserType(Enum):
@@ -88,7 +87,7 @@ REGISTRY_PATHS: dict[BrowserType, list[tuple[int, str]]] = {
 }
 
 
-def _find_browser_from_registry(browser_type: BrowserType) -> Optional[str]:
+def _find_browser_from_registry(browser_type: BrowserType) -> str | None:
     """Query Windows registry for browser installation path"""
     if platform.system() != "Windows":
         return None
@@ -110,7 +109,7 @@ def _find_browser_from_registry(browser_type: BrowserType) -> Optional[str]:
     return None
 
 
-def find_browser(browser_type: BrowserType, system: Optional[str] = None) -> Optional[str]:
+def find_browser(browser_type: BrowserType, system: str | None = None) -> str | None:
     """
     Find browser executable using three-layer detection strategy:
     1. shutil.which - User's PATH (highest priority, respects custom installations)
@@ -139,14 +138,13 @@ def find_browser(browser_type: BrowserType, system: Optional[str] = None) -> Opt
             return expanded
 
     # Layer 3: Windows registry query (last resort for non-standard installations)
-    if system == "Windows":
-        if path := _find_browser_from_registry(browser_type):
-            return path
+    if system == "Windows" and (path := _find_browser_from_registry(browser_type)):
+        return path
 
     return None
 
 
-def detect_available_browsers(system: Optional[str] = None) -> dict[BrowserType, Optional[str]]:
+def detect_available_browsers(system: str | None = None) -> dict[BrowserType, str | None]:
     """
     Detect all available browsers on the system.
 
@@ -159,7 +157,7 @@ def detect_available_browsers(system: Optional[str] = None) -> dict[BrowserType,
     }
 
 
-def get_default_browser(system: Optional[str] = None) -> tuple[Optional[BrowserType], Optional[str]]:
+def get_default_browser(system: str | None = None) -> tuple[BrowserType | None, str | None]:
     """
     Get the default browser (first available in priority order: Chrome > Edge > Chromium).
 

@@ -36,7 +36,7 @@ def enable():
 
     except NotImplementedError as e:
         click.echo(click.style("✗ ", fg="red") + str(e))
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @autostart_group.command("disable", cls=AgentFriendlyCommand)
@@ -54,7 +54,7 @@ def disable():
 
     except NotImplementedError as e:
         click.echo(click.style("✗ ", fg="red") + str(e))
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @autostart_group.command("status", cls=AgentFriendlyCommand)
@@ -75,4 +75,4 @@ def status():
 
     except NotImplementedError as e:
         click.echo(click.style("✗ ", fg="red") + str(e))
-        raise SystemExit(1)
+        raise SystemExit(1) from e

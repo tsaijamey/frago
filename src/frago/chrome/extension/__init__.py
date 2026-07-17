@@ -31,7 +31,7 @@ to it. See the README next to this module for setup.
 from importlib.resources import files
 from pathlib import Path
 
-from .protocol import RpcRequest, RpcResponse, RpcError, RPC_ERROR_CODES
+from .protocol import RPC_ERROR_CODES, RpcError, RpcRequest, RpcResponse
 
 
 def bundle_path() -> Path:

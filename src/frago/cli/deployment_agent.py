@@ -19,7 +19,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from frago.compat import get_windows_subprocess_kwargs
 from frago.cli.workspace import (
     CLAUDE_HOME,
     WORKSPACES_DIR,
@@ -31,6 +30,7 @@ from frago.cli.workspace import (
     _sync_file,
     get_canonical_id,
 )
+from frago.compat import get_windows_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 

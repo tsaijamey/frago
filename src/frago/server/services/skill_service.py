@@ -5,7 +5,7 @@ Provides functionality to list and load skills from ~/.claude/skills/ directory.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import frontmatter
 
@@ -20,7 +20,7 @@ class SkillService:
     """
 
     @staticmethod
-    def get_skills(force_reload: bool = False) -> List[Dict[str, Any]]:
+    def get_skills(force_reload: bool = False) -> list[dict[str, Any]]:  # noqa: ARG004 — kept for API compatibility
         """Get list of available skills.
 
         Args:
@@ -32,7 +32,7 @@ class SkillService:
         return SkillService._load_skills()
 
     @staticmethod
-    def _load_skills() -> List[Dict[str, Any]]:
+    def _load_skills() -> list[dict[str, Any]]:
         """Load skills from ~/.claude/skills/ directory.
 
         Skills are organized as directories with SKILL.md files containing

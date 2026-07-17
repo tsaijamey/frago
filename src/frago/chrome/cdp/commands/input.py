@@ -4,10 +4,10 @@ Input-related CDP commands
 Encapsulates CDP commands for the Input domain.
 """
 
-from typing import Dict, Any
+from typing import Any
 
-from ..session import CDPSession
 from ..logger import get_logger
+from ..session import CDPSession
 
 
 class InputCommands:
@@ -33,7 +33,7 @@ class InputCommands:
         self.session = session
         self.logger = get_logger()
 
-    def click(self, x: int, y: int, button: str = "left") -> Dict[str, Any]:
+    def click(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
         """
         Click at specified coordinates via Input.dispatchMouseEvent.
 
@@ -86,8 +86,8 @@ class InputCommands:
 
         self.logger.debug("Click completed")
         return result
-    
-    def type(self, text: str) -> Dict[str, Any]:
+
+    def type(self, text: str) -> dict[str, Any]:
         """
         Type text via Input.dispatchKeyEvent.
 
@@ -110,11 +110,11 @@ class InputCommands:
                     "text": char
                 }
             )
-        
+
         self.logger.debug("Typing completed")
         return {"status": "completed"}
-    
-    def scroll(self, x: int, y: int, delta_x: int, delta_y: int) -> Dict[str, Any]:
+
+    def scroll(self, x: int, y: int, delta_x: int, delta_y: int) -> dict[str, Any]:
         """
         Scroll page via Input.dispatchMouseEvent (mouseWheel).
 
@@ -131,7 +131,7 @@ class InputCommands:
             Dict[str, Any]: Scroll result
         """
         self.logger.info(f"Scrolling from ({x}, {y}) by ({delta_x}, {delta_y})")
-        
+
         result = self.session.send_command(
             "Input.dispatchMouseEvent",
             {
@@ -142,6 +142,6 @@ class InputCommands:
                 "deltaY": delta_y
             }
         )
-        
+
         self.logger.debug("Scroll completed")
         return result

@@ -5,10 +5,9 @@ Encapsulates CDP commands for wait functionality.
 """
 
 import time
-from typing import Optional
 
-from ..logger import get_logger
 from ..exceptions import TimeoutError as CDPTimeoutError
+from ..logger import get_logger
 
 
 class WaitCommands:
@@ -27,7 +26,7 @@ class WaitCommands:
     def wait_for_selector(
         self,
         selector: str,
-        timeout: Optional[float] = None
+        timeout: float | None = None
     ) -> None:
         """
         Wait for element matching selector to appear
@@ -41,25 +40,25 @@ class WaitCommands:
         """
         timeout = timeout or self.session.config.command_timeout
         self.logger.info(f"Waiting for selector: {selector} (timeout={timeout}s)")
-        
+
         start_time = time.time()
         check_script = f"document.querySelector('{selector}') !== null"
-        
+
         while True:
             result = self.session.send_command("Runtime.evaluate", {
                 "expression": check_script,
                 "returnByValue": True
             })
-            
+
             if result.get("result", {}).get("value") is True:
                 self.logger.info(f"Element found: {selector}")
                 return
-            
+
             if time.time() - start_time > timeout:
                 raise CDPTimeoutError(f"Timeout waiting for selector: {selector}")
-            
+
             time.sleep(0.5)
-    
+
     def wait(self, seconds: float) -> None:
         """
         Wait for specified seconds

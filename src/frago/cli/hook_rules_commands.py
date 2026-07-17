@@ -7,6 +7,7 @@ the shipped builtin rules. Subsequent writes mutate this file directly.
 See spec ``.claude/docs/spec-driven-plan/20260419-hook-rules-engine.md``.
 """
 
+import contextlib
 import json
 import logging
 import subprocess
@@ -58,7 +59,7 @@ def _load_user_file() -> dict:
     except json.JSONDecodeError as e:
         raise click.ClickException(
             f"{RULES_PATH} is not valid JSON: {e}. Fix or delete to reset."
-        )
+        ) from e
 
 
 def _load_merged() -> dict:
@@ -225,7 +226,7 @@ def hook_rules_add(rule_json: str, source: str):
     try:
         new_rule = json.loads(rule_json)
     except json.JSONDecodeError as e:
-        raise click.ClickException(f"--rule is not valid JSON: {e}")
+        raise click.ClickException(f"--rule is not valid JSON: {e}") from e
 
     if not isinstance(new_rule, dict) or "id" not in new_rule:
         raise click.ClickException("--rule must be a JSON object with an 'id' field.")
@@ -330,7 +331,7 @@ def hook_rules_validate():
     try:
         data = json.loads(RULES_PATH.read_text())
     except json.JSONDecodeError as e:
-        raise click.ClickException(f"Invalid JSON: {e}")
+        raise click.ClickException(f"Invalid JSON: {e}") from e
 
     errors: list[str] = []
 
@@ -505,10 +506,8 @@ def hook_rules_prune(dry_run: bool):
     # Archive (append)
     archive = {"version": SCHEMA_VERSION, "rules": []}
     if ARCHIVE_PATH.exists():
-        try:
+        with contextlib.suppress(json.JSONDecodeError):
             archive = json.loads(ARCHIVE_PATH.read_text())
-        except json.JSONDecodeError:
-            pass
     archive.setdefault("rules", []).extend(to_prune)
     ARCHIVE_PATH.write_text(json.dumps(archive, indent=2, ensure_ascii=False) + "\n")
 

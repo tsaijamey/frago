@@ -4,10 +4,10 @@ DOM-related CDP commands
 Encapsulates CDP commands for the DOM domain.
 """
 
-from typing import Dict, Any
+from typing import Any
 
-from ..session import CDPSession
 from ..logger import get_logger
+from ..session import CDPSession
 
 
 class DOMCommands:
@@ -23,7 +23,7 @@ class DOMCommands:
         self.session = session
         self.logger = get_logger()
 
-    def get_document(self) -> Dict[str, Any]:
+    def get_document(self) -> dict[str, Any]:
         """
         Get document root node
 
@@ -31,13 +31,13 @@ class DOMCommands:
             Dict[str, Any]: Document information
         """
         self.logger.info("Getting document")
-        
+
         result = self.session.send_command("DOM.getDocument")
-        
+
         self.logger.debug("Document retrieved")
         return result
-    
-    def query_selector(self, node_id: int, selector: str) -> Dict[str, Any]:
+
+    def query_selector(self, node_id: int, selector: str) -> dict[str, Any]:
         """
         Query for element matching selector in specified node
 
@@ -49,7 +49,7 @@ class DOMCommands:
             Dict[str, Any]: Query result
         """
         self.logger.info(f"Querying selector '{selector}' in node {node_id}")
-        
+
         result = self.session.send_command(
             "DOM.querySelector",
             {
@@ -57,11 +57,11 @@ class DOMCommands:
                 "selector": selector
             }
         )
-        
+
         self.logger.debug(f"Query selector result: {result}")
         return result
-    
-    def get_attributes(self, node_id: int) -> Dict[str, Any]:
+
+    def get_attributes(self, node_id: int) -> dict[str, Any]:
         """
         Get node attributes
 
@@ -72,16 +72,16 @@ class DOMCommands:
             Dict[str, Any]: Attribute information
         """
         self.logger.info(f"Getting attributes for node {node_id}")
-        
+
         result = self.session.send_command(
             "DOM.getAttributes",
             {"nodeId": node_id}
         )
-        
+
         self.logger.debug(f"Attributes result: {result}")
         return result
-    
-    def get_box_model(self, node_id: int) -> Dict[str, Any]:
+
+    def get_box_model(self, node_id: int) -> dict[str, Any]:
         """
         Get node box model
 
@@ -92,11 +92,11 @@ class DOMCommands:
             Dict[str, Any]: Box model information
         """
         self.logger.info(f"Getting box model for node {node_id}")
-        
+
         result = self.session.send_command(
             "DOM.getBoxModel",
             {"nodeId": node_id}
         )
-        
+
         self.logger.debug(f"Box model result: {result}")
         return result

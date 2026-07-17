@@ -15,7 +15,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def eval_conv_transcript(svc: Any, conv_key: str) -> Any | None:
+def eval_conv_transcript(svc: Any, conv_key: str) -> Any | None:  # noqa: ARG001 — uniform svc-first signature
     """读该 conv 常驻会话的 claude transcript，返回 TurnCompletion（无则 None）。
 
     定位走 ``locate_transcript(uuid5(conv_key), cwd=$HOME)``——与 claude driver
@@ -35,7 +35,7 @@ def eval_conv_transcript(svc: Any, conv_key: str) -> Any | None:
 
 
 def watch_poll(
-    svc: Any, conv_key: str, since_mtime: float | None
+    svc: Any, conv_key: str, since_mtime: float | None  # noqa: ARG001 — uniform svc-first signature
 ) -> tuple[float | None, Any | None]:
     """转发器专用：stat transcript，mtime 没变就跳过全量解析（省每拍重读几 MB）。
 

@@ -5,13 +5,16 @@ Preserves existing behavior for callers that go through the adapter.
 """
 from __future__ import annotations
 
-import base64
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .base import (
-    ChromeBackend, ClickResult, ContentResult, ExecResult,
-    NavigateResult, ScreenshotResult,
+    ChromeBackend,
+    ClickResult,
+    ContentResult,
+    ExecResult,
+    NavigateResult,
+    ScreenshotResult,
 )
 
 
@@ -28,8 +31,8 @@ class CDPChromeBackend(ChromeBackend):
     # --- internals -----------------------------------------------------
 
     def _session(self, group: str) -> Any:
-        from ..cdp.session import CDPSession
         from ..cdp.config import CDPConfig
+        from ..cdp.session import CDPSession
         from ..cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=self.host, port=self.port)
         target_id = tgm.get_current_target(group)
@@ -47,7 +50,7 @@ class CDPChromeBackend(ChromeBackend):
                 "groups": list(tgm.list_groups()) if hasattr(tgm, "list_groups") else []}
 
     def navigate(self, url: str, group: str, *,
-                 timeout: float = 15.0) -> NavigateResult:
+                 timeout: float = 15.0) -> NavigateResult:  # noqa: ARG002 — backend interface param
         from ..cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=self.host, port=self.port)
         tgm.ensure_group(group)
@@ -58,8 +61,8 @@ class CDPChromeBackend(ChromeBackend):
         return NavigateResult(tab_id=target_id, url=url, title=title)
 
     def _session_from_target(self, target_id: str) -> Any:
-        from ..cdp.session import CDPSession
         from ..cdp.config import CDPConfig
+        from ..cdp.session import CDPSession
         cfg = CDPConfig(host=self.host, port=self.port,
                         timeout=self.timeout, debug=self.debug,
                         target_id=target_id)
@@ -70,7 +73,7 @@ class CDPChromeBackend(ChromeBackend):
         return ExecResult(value=s.evaluate(script, return_by_value=True))
 
     def get_content(self, group: str, *,
-                    selector: Optional[str] = None) -> ContentResult:
+                    selector: str | None = None) -> ContentResult:
         s = self._session(group)
         if selector:
             js = (f"(() => {{ const el = document.querySelector({selector!r}); "
@@ -91,7 +94,7 @@ class CDPChromeBackend(ChromeBackend):
         return ClickResult(success=True)
 
     def screenshot(self, group: str, *,
-                   output: Optional[str] = None) -> ScreenshotResult:
+                   output: str | None = None) -> ScreenshotResult:
         s = self._session(group)
         out = output or str(Path.cwd() / "screenshot.png")
         s.take_screenshot(out)
@@ -128,6 +131,7 @@ class CDPChromeBackend(ChromeBackend):
 
     def switch_tab(self, tab_id: str) -> dict:
         import json
+
         import requests
         import websocket
         targets = requests.get(f"http://{self.host}:{self.port}/json/list",
@@ -141,7 +145,8 @@ class CDPChromeBackend(ChromeBackend):
         ws = websocket.create_connection(target["webSocketDebuggerUrl"])
         ws.send(json.dumps({"id": 1, "method": "Page.bringToFront",
                             "params": {}}))
-        ws.recv(); ws.close()
+        ws.recv()
+        ws.close()
         return {"tab_id": target["id"], "title": target.get("title", ""),
                 "url": target.get("url", "")}
 
@@ -196,7 +201,7 @@ class CDPChromeBackend(ChromeBackend):
         removed = tgm.cleanup_stale_groups()
         return {"removed": removed}
 
-    def reset(self, group: Optional[str] = None) -> dict:
+    def reset(self, group: str | None = None) -> dict:
         from ..cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=self.host, port=self.port)
         closed = []
@@ -220,8 +225,8 @@ class CDPChromeBackend(ChromeBackend):
                        return_by_value=True)
         return {"scrolled": int(distance)}
 
-    def scroll_to(self, group: str, *, selector: Optional[str] = None,
-                  text: Optional[str] = None, block: str = "center") -> dict:
+    def scroll_to(self, group: str, *, selector: str | None = None,
+                  text: str | None = None, block: str = "center") -> dict:
         if not selector and not text:
             raise ValueError("scroll_to: selector or text required")
         import json

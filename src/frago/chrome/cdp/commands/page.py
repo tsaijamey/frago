@@ -4,10 +4,10 @@ Page-related CDP commands
 Encapsulates CDP commands for the Page domain.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
 
-from ..session import CDPSession
 from ..logger import get_logger
+from ..session import CDPSession
 
 
 class PageCommands:
@@ -23,7 +23,7 @@ class PageCommands:
         self.session = session
         self.logger = get_logger()
 
-    def navigate(self, url: str) -> Dict[str, Any]:
+    def navigate(self, url: str) -> dict[str, Any]:
         """
         Navigate to specified URL
 
@@ -34,16 +34,16 @@ class PageCommands:
             Dict[str, Any]: Navigation result
         """
         self.logger.info(f"Navigating to: {url}")
-        
+
         result = self.session.send_command(
             "Page.navigate",
             {"url": url}
         )
-        
+
         self.logger.debug(f"Navigation result: {result}")
         return result
-    
-    def screenshot(self, format: str = "png", quality: Optional[int] = None) -> Dict[str, Any]:
+
+    def screenshot(self, format: str = "png", quality: int | None = None) -> dict[str, Any]:
         """
         Capture page screenshot
 
@@ -55,25 +55,25 @@ class PageCommands:
             Dict[str, Any]: Screenshot result, contains base64-encoded image data
         """
         self.logger.info(f"Taking screenshot with format: {format}")
-        
+
         params = {"format": format}
         if quality is not None:
             params["quality"] = quality
-        
+
         result = self.session.send_command(
             "Page.captureScreenshot",
             params
         )
-        
+
         self.logger.debug("Screenshot captured")
         return result
-    
+
     def wait_for_selector(
         self,
         selector: str,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         visible: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Wait for element matching selector to appear
 
@@ -96,7 +96,7 @@ class PageCommands:
                     resolve(true);
                     return;
                 }}
-                
+
                 const observer = new MutationObserver(() => {{
                     const element = document.querySelector('{selector}');
                     if (element && (!{str(visible).lower()} || element.offsetParent !== null)) {{
@@ -104,7 +104,7 @@ class PageCommands:
                         resolve(true);
                     }}
                 }});
-                
+
                 observer.observe(document.body, {{
                     childList: true,
                     subtree: true
@@ -118,7 +118,7 @@ class PageCommands:
             }});
         }})()
         """
-        
+
         result = self.session.send_command(
             "Runtime.evaluate",
             {
@@ -127,10 +127,10 @@ class PageCommands:
                 "returnByValue": True
             }
         )
-        
+
         self.logger.debug(f"Wait for selector result: {result}")
         return result
-    
+
     def get_title(self) -> str:
         """
         Get current page title
@@ -139,7 +139,7 @@ class PageCommands:
             str: Page title
         """
         self.logger.info("Getting page title")
-        
+
         script = "document.title"
         result = self.session.send_command(
             "Runtime.evaluate",
@@ -148,12 +148,12 @@ class PageCommands:
                 "returnByValue": True
             }
         )
-        
+
         title = result.get("result", {}).get("value", "")
         self.logger.debug(f"Page title: {title}")
         return title
-    
-    def get_content(self, selector: Optional[str] = None) -> str:
+
+    def get_content(self, selector: str | None = None) -> str:
         """
         Get text content of page or specified element
 
