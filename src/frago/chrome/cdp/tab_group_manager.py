@@ -199,6 +199,27 @@ class TabGroupManager:
         Returns:
             True if group was found and closed.
         """
+        return self._remove_group_and_close(group_name, session.target.close_target)
+
+    def close_group_http(self, group_name: str) -> bool:
+        """Close a group and all its tabs via HTTP GET /json/close/<tid>.
+
+        Same semantics as close_group(session) but needs no CDPSession.
+        Used by the server periodic service and the CLI fallback sweep.
+
+        Returns:
+            True if group was found and closed.
+        """
+        def close_tab(target_id: str) -> None:
+            cdp_get(
+                f"http://{self.host}:{self.port}/json/close/{target_id}",
+                timeout=5,
+            )
+
+        return self._remove_group_and_close(group_name, close_tab)
+
+    def _remove_group_and_close(self, group_name: str, close_tab_fn) -> bool:
+        """Remove a group from state and close its tabs via close_tab_fn."""
         group = self._state.pop(group_name, None)
         if not group:
             return False
@@ -209,9 +230,11 @@ class TabGroupManager:
         tab_count = len(group.tabs)
         for target_id in list(group.tabs):
             try:
-                session.target.close_target(target_id)
+                close_tab_fn(target_id)
             except Exception:
-                self.logger.debug(f"Failed to close tab {target_id}")
+                self.logger.warning(
+                    f"Failed to close tab {target_id}", exc_info=True
+                )
 
         self._save_state()
         self.logger.info(f"Closed group '{group_name}' ({tab_count} tabs)")
@@ -306,23 +329,43 @@ class TabGroupManager:
     def cleanup_expired_groups(self, session) -> int:
         """Close groups that have been inactive for longer than GROUP_TIMEOUT_SECONDS.
 
-        Called lazily during chrome command execution (no background thread needed).
-
         Args:
             session: CDPSession instance for closing tabs.
 
         Returns:
             Number of groups cleaned up.
         """
-        now = time.time()
-        expired = [
-            name for name, group in self._state.items()
-            if group.last_activity > 0 and now - group.last_activity > GROUP_TIMEOUT_SECONDS
-        ]
+        expired = self._expired_group_names(time.time())
         for name in expired:
             self.close_group(name, session)
             self.logger.info(f"Expired group '{name}' (inactive > {GROUP_TIMEOUT_SECONDS}s)")
         return len(expired)
+
+    def cleanup_expired_groups_http(self) -> int:
+        """Close expired groups via HTTP, without a CDPSession.
+
+        Same expiry predicate as cleanup_expired_groups(session); used by
+        the server periodic service and the CLI end-of-process fallback.
+
+        Returns:
+            Number of groups cleaned up.
+        """
+        expired = self._expired_group_names(time.time())
+        for name in expired:
+            self.close_group_http(name)
+            self.logger.info(f"Expired group '{name}' (inactive > {GROUP_TIMEOUT_SECONDS}s)")
+        return len(expired)
+
+    def _expired_group_names(self, now: float) -> list[str]:
+        """Groups whose last_activity exceeded GROUP_TIMEOUT_SECONDS.
+
+        Groups with last_activity == 0 (legacy never-touched state) are
+        excluded — reconcile / cleanup_stale_groups handles those.
+        """
+        return [
+            name for name, group in self._state.items()
+            if group.last_activity > 0 and now - group.last_activity > GROUP_TIMEOUT_SECONDS
+        ]
 
     # ------------------------------------------------------------------
     # Internal
@@ -336,7 +379,7 @@ class TabGroupManager:
         try:
             session.target.close_target(lru.target_id)
         except Exception:
-            self.logger.debug(f"Failed to close LRU tab {lru.target_id}")
+            self.logger.warning(f"Failed to close LRU tab {lru.target_id}", exc_info=True)
         del group.tabs[lru.target_id]
 
     def _get_live_target_ids(self) -> set[str]:

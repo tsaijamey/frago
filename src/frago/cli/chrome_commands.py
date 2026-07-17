@@ -149,6 +149,13 @@ def chrome_group(ctx, backend):
         ctx.obj = {}
     ctx.obj["BACKEND"] = chosen
 
+    # Single registration point for the end-of-process expired-group
+    # fallback sweep (runs after the command's output is done).
+    from .commands import _register_expiry_sweep
+    _register_expiry_sweep(
+        ctx.obj.get("HOST", "127.0.0.1"), ctx.obj.get("PORT", 9222)
+    )
+
 
 # ─────────────── Backend dispatch shim for MVP 6 commands ───────────────
 #

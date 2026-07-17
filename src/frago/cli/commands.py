@@ -5,6 +5,7 @@ Frago CLI command implementations
 Implements all CDP functionality CLI subcommands, maintaining compatibility with original shell scripts.
 """
 
+import atexit
 import functools
 import os
 import sys
@@ -16,6 +17,7 @@ from typing import Any
 import click
 
 from ..chrome.cdp.exceptions import CDPError
+from ..chrome.cdp.logger import get_logger
 from ..chrome.cdp.session import CDPSession
 from ..chrome.cdp.tab_group_manager import (
     ChromeCommandError,
@@ -1006,15 +1008,14 @@ def _handle_chrome_command_error(e: ChromeCommandError) -> None:
 
 
 def _check_landing_page_protection(session: CDPSession, ctx=None) -> None:
-    """Block operations on the landing page tab and trigger lazy group cleanup.
+    """Block operations on the landing page tab.
 
     Compares the session's current target_id against the landing page.
     Raises ChromeCommandError with LANDING_PAGE_PROTECTED if matched.
-    Also runs expired group cleanup as a side effect (lazy scan).
     """
-    # Lazy cleanup — runs on every protected command
+    # Landing page must exist for protection comparison (cheap check)
     if ctx:
-        _lazy_cleanup_expired_groups(session, ctx.obj['HOST'], ctx.obj['PORT'])
+        _ensure_landing_page(ctx.obj['HOST'], ctx.obj['PORT'])
 
     try:
         current_id = _get_current_target_id(session)
@@ -1032,25 +1033,61 @@ def _check_landing_page_protection(session: CDPSession, ctx=None) -> None:
         pass  # Best-effort — don't block if detection fails
 
 
-def _lazy_cleanup_expired_groups(session: CDPSession, host: str, port: int) -> None:
-    """Lazily clean up groups that have been inactive for >30 minutes.
-    Also ensures the landing page tab exists (auto-restore if missing).
-    """
+def _ensure_landing_page(host: str, port: int) -> None:
+    """Ensure the landing page tab exists (auto-restore if missing). Best-effort."""
     try:
         from ..chrome.cdp.tab_group_manager import TabGroupManager
-        tgm = TabGroupManager(host=host, port=port)
-        tgm.cleanup_expired_groups(session)
-        tgm.ensure_landing_page()
+        TabGroupManager(host=host, port=port).ensure_landing_page()
     except Exception:
-        pass
+        get_logger().warning("Failed to ensure landing page", exc_info=True)
+
+
+# Fallback sweep throttle: at most one expired-group scan per minute.
+EXPIRY_SWEEP_THROTTLE_SECONDS = 60
+
+_expiry_sweep_registered = False
+
+
+def _register_expiry_sweep(host: str, port: int) -> None:
+    """Register the end-of-process expired-group fallback sweep (once)."""
+    global _expiry_sweep_registered
+    if _expiry_sweep_registered:
+        return
+    _expiry_sweep_registered = True
+    atexit.register(_maybe_sweep_expired_groups, host, port)
+
+
+def _maybe_sweep_expired_groups(host: str, port: int) -> None:
+    """Reclaim expired groups at process exit, throttled to once per minute.
+
+    Fallback for when the frago server (whose TabCleanupService normally
+    handles this) is not running. Throttle marker is a file next to the
+    group state file; reading its mtime is cheaper than any HTTP call.
+    """
+    from ..chrome.cdp import tab_group_manager as tgm_mod
+
+    marker = tgm_mod.STATE_FILE.parent / "last_expiry_sweep"
+    try:
+        if time.time() - marker.stat().st_mtime < EXPIRY_SWEEP_THROTTLE_SECONDS:
+            return
+    except OSError:
+        pass  # No marker yet — proceed with the sweep
+
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except Exception:
+        # Better to over-scan than to skip: sweep anyway, but leave a trace.
+        get_logger().warning("Failed to update expiry sweep marker", exc_info=True)
+
+    try:
+        tgm_mod.TabGroupManager(host=host, port=port).cleanup_expired_groups_http()
+    except Exception:
+        get_logger().warning("Expired group sweep failed", exc_info=True)
 
 
 def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
-    """Update last_activity timestamp for the currently connected tab.
-
-    Also triggers lazy cleanup of expired groups.
-    """
-    _lazy_cleanup_expired_groups(session, host, port)
+    """Update last_activity timestamp for the currently connected tab."""
     try:
         from ..chrome.cdp.tab_manager import TabManager
         tab_id = _get_current_target_id(session)
@@ -1059,7 +1096,7 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
             tab_mgr.touch_tab(tab_id)
             tab_mgr._save_state()
     except Exception:
-        pass
+        get_logger().warning("Failed to touch active tab", exc_info=True)
 
 
 @click.command('navigate', cls=AgentFriendlyCommand)
@@ -1094,8 +1131,8 @@ def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = Non
     try:
         # navigate does its own tab routing, so skip group enforcement here
         with create_session(ctx, require_group=False) as session:
-            # Lazy cleanup of expired groups
-            _lazy_cleanup_expired_groups(session, ctx.obj['HOST'], ctx.obj['PORT'])
+            # Landing page must exist before tab routing (cheap check)
+            _ensure_landing_page(ctx.obj['HOST'], ctx.obj['PORT'])
 
             # Disable viewport border if requested
             if no_border:

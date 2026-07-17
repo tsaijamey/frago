@@ -240,6 +240,42 @@ def test_do_cleanup_swallows_close_errors():
             svc._do_cleanup()  # must not raise
 
 
+def test_do_cleanup_expires_groups_before_orphan_pass():
+    """Expired-group reclamation runs first, before reconcile/orphan close."""
+    svc = TabCleanupService()
+    events = []
+
+    tgm = MagicMock()
+    tgm.cleanup_expired_groups_http.side_effect = lambda: events.append("expired") or 2
+    tgm.reconcile.side_effect = lambda: events.append("reconcile")
+    tgm.list_groups.return_value = {}
+    tm = _make_tm([])
+
+    live_tabs = [
+        {"type": "page", "id": "orphan1", "url": "http://o1", "title": "O1"},
+    ]
+
+    def fake_get(url, timeout=None):
+        if url.endswith("/json/version"):
+            return _resp()
+        if url.endswith("/json/list"):
+            return _resp(json_data=live_tabs)
+        events.append("close:" + url.rsplit("/", 1)[1])
+        return _resp()
+
+    with _install_fake_cdp_modules(tgm, tm):
+        with patch(
+            "frago.server.services.tab_cleanup_service.requests"
+        ) as req:
+            req.get.side_effect = fake_get
+            svc._do_cleanup()
+
+    tgm.cleanup_expired_groups_http.assert_called_once()
+    assert events[0] == "expired"
+    assert events.index("expired") < events.index("reconcile")
+    assert events.index("expired") < events.index("close:orphan1")
+
+
 # ------------------------------------------------------------------
 # _cleanup_loop: exception in cleanup is swallowed; stop_event ends loop
 # ------------------------------------------------------------------

@@ -5,6 +5,7 @@ that are not tracked by any group and not the landing page.
 """
 
 import asyncio
+import contextlib
 import logging
 import threading
 from typing import Optional
@@ -27,7 +28,7 @@ class TabCleanupService:
     _lock = threading.Lock()
 
     def __init__(self) -> None:
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
     @classmethod
@@ -53,10 +54,8 @@ class TabCleanupService:
             return
         self._stop_event.set()
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await self._task
-        except asyncio.CancelledError:
-            pass
         self._task = None
         logger.info("Tab cleanup service stopped")
 
@@ -74,7 +73,7 @@ class TabCleanupService:
                     timeout=TAB_CLEANUP_INTERVAL_SECONDS,
                 )
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     def _do_cleanup(self) -> None:
@@ -91,6 +90,13 @@ class TabCleanupService:
             return  # Chrome not running, skip
 
         tgm = TabGroupManager(port=port)
+
+        # Reclaim expired groups first so their tabs are already gone
+        # when the orphan pass below inspects live tabs.
+        expired = tgm.cleanup_expired_groups_http()
+        if expired:
+            logger.info("Tab cleanup: expired %d group(s)", expired)
+
         tgm.reconcile()
 
         # Collect grouped target_ids
