@@ -107,6 +107,14 @@ _BUSY_CONFIRM_POLLS = 24
 # 内容里的换行而非提交，长消息会整段滞留输入框。单测注入 no-op sleep 不受影响。
 _PASTE_SETTLE_S = 2.0
 
+# Enter 发出后验证"确已提交"的轮询次数与重发上限。静置 2 秒并不根治粘贴检测吞
+# Enter（偶发仍会把 Enter 当换行），文本一旦滞留输入框，_READY_BOX 永不再匹配，
+# 上层 ready 检查永远失败——会话不可恢复地死锁。故提交后轮询结构信号确认：输入框
+# 回空（_READY_BOX，文本已离开输入行）或忙碌标记出现（_BUSY，已开始思考）任一命中
+# 即算提交成功；若干轮都不见则判 Enter 被吞，重发一次再验，重试上限 2 次。
+_SUBMIT_VERIFY_POLLS = 8
+_ENTER_RETRIES = 2
+
 
 class _ClaudeDone:
     """claude 完成判定：提示符框在 AND pane 不含忙碌标记。
@@ -215,12 +223,28 @@ def _completion_probe(session: TmuxAgentSession) -> CompletionVerdict | None:
     )
 
 
+def _submitted(pane: str) -> bool:
+    """Enter 确已生效的结构信号：输入框回空 或 忙碌标记出现，任一即真。"""
+    return _READY_BOX.matches(pane) or _BUSY.search(pane) is not None
+
+
 def _submit(session: TmuxAgentSession, prompt: str) -> None:
     session.send_text(prompt)
     # claude TUI 的粘贴检测把紧随粘贴突发到达的 Enter 当成粘贴内容里的换行而非
     # 提交，长消息会整段滞留输入框（PA 卡死的根因）。停 2 秒让突发先结束。
     session._sleep(_PASTE_SETTLE_S)
-    session.send_keys("Enter")
+    # 静置后仍偶发被吞：发 Enter 后轮询验证提交生效（文本离开输入行 / 出现忙碌
+    # 信号），滞留则重发 Enter 再验，重试上限 _ENTER_RETRIES 次。
+    for _ in range(1 + _ENTER_RETRIES):
+        session.send_keys("Enter")
+        confirmed = False
+        for _ in range(_SUBMIT_VERIFY_POLLS):
+            if _submitted(session.capture_pane()):
+                confirmed = True
+                break
+            session._sleep(session._poll_interval_s)
+        if confirmed:
+            break
     # 确认已进入忙碌态再交还 driver 轮询完成，否则首帧落在提交后空窗里会误判完成。
     # 命中即返回；始终未命中（瞬时回复 / fake runner）则跨过 N 轮后放行。
     for _ in range(_BUSY_CONFIRM_POLLS):
@@ -229,8 +253,19 @@ def _submit(session: TmuxAgentSession, prompt: str) -> None:
         session._sleep(session._poll_interval_s)
 
 
+# 首启横幅误提取：agent start 刚返回就 send 时，pane 里 shell 回显的启动命令行
+# （``❯ claude --dangerously-skip-permissions …``）会被当成答案文本带出。该行是
+# 命令回显、NEVER 是答案，提取时整行剔除。_read_answer 路径里它以 ``❯`` 起头、
+# 命中 _BLOCK_END 天然截断，这里只需管 _extract 的通用 delta 路径。
+_LAUNCH_ECHO = re.compile(r"claude\s+--dangerously-skip-permissions")
+
+
 def _extract(delta: str) -> str:
-    lines = [ln for ln in delta.splitlines() if not _CHROME_LINE.match(ln)]
+    lines = [
+        ln
+        for ln in delta.splitlines()
+        if not _CHROME_LINE.match(ln) and not _LAUNCH_ECHO.search(ln)
+    ]
     return "\n".join(ln.strip() for ln in lines).strip()
 
 

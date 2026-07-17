@@ -130,9 +130,7 @@ def _bind_session(
     entry: DriveEntry, driver: AgentDriver, runner: TmuxRunner | None
 ) -> TmuxAgentSession:
     """绑定到一个已存活的 tmux 会话，复用 TmuxAgentSession 原语（不再 open）。"""
-    return TmuxAgentSession(
-        session_id=entry.name, driver=driver, cwd=entry.cwd, runner=runner
-    )
+    return TmuxAgentSession(session_id=entry.name, driver=driver, cwd=entry.cwd, runner=runner)
 
 
 def _echo_active_sessions() -> None:
@@ -166,7 +164,9 @@ def _resolve_or_die(name: str) -> DriveEntry:
 
 @click.command("start")
 @click.argument("agent_type")
-@click.option("--name", default=None, help="Session name (default: agent_type, auto-suffixed if taken).")
+@click.option(
+    "--name", default=None, help="Session name (default: agent_type, auto-suffixed if taken)."
+)
 def drive_start(agent_type: str, name: str | None) -> None:
     """Start a resident session and wait until the driver's ready_signal fires."""
     # agent_type 无 driver → 列出已注册 agent_type（负反馈）。
@@ -190,11 +190,11 @@ def drive_start(agent_type: str, name: str | None) -> None:
     pool = WarmSessionPool(runner=runner)
     try:
         # 子会话必须自知是 worker：CLAUDE.md 角色判定靠这个变量阻断 worker 再拉 worker 的递归。
-        session = pool.acquire(
-            agent_type, resolved, cwd, env={"FRAGO_AGENT_ROLE": "worker"}
-        )
+        session = pool.acquire(agent_type, resolved, cwd, env={"FRAGO_AGENT_ROLE": "worker"})
     except FileNotFoundError:
-        click.echo("Error: tmux not found. Please install tmux first (e.g. brew install tmux).", err=True)
+        click.echo(
+            "Error: tmux not found. Please install tmux first (e.g. brew install tmux).", err=True
+        )
         sys.exit(1)
 
     _write_entry(
@@ -210,10 +210,39 @@ def drive_start(agent_type: str, name: str | None) -> None:
     click.echo(resolved)
 
 
+# Escape 清残留后重查 ready 的轮询次数。
+_CLEAR_RESIDUAL_POLLS = 10
+
+
+def _try_clear_residual_input(session, driver, pane: str) -> str:
+    """输入框残留文本的自愈：Escape 清空后重查 ready，返回最新 pane。
+
+    ready 检查失败分两种：① 会话真在启动（pane 无空闲对话态，如仍带忙碌标记 /
+    还在 shell 阶段加载）→ 原样返回，维持"still starting up"报错；② 会话已空闲
+    但输入框滞留上一次未提交的文本（Enter 被粘贴检测吞掉的死锁态，_READY_BOX
+    要求空输入框故永不再匹配）→ 发 Escape 清残留，轮询到 ready 即自愈，send 得以
+    继续而非不可恢复地拒发。区分依据 done_signal：空闲滞留态提示符在且无忙碌标记，
+    done_signal 为真；TUI 启动加载中带忙碌标记，done_signal 为假。shell 回显阶段
+    （``❯ claude …``）done_signal 也为真，此时 Escape 落到 shell 是无害 no-op、
+    ready 复查照样失败，原报错不受影响。
+    """
+    if not driver.done_signal.matches(pane):
+        return pane
+    session.send_keys("Escape")
+    for _ in range(_CLEAR_RESIDUAL_POLLS):
+        pane = session.capture_pane()
+        if driver.ready_signal.matches(pane):
+            return pane
+        session._sleep(session._poll_interval_s)
+    return pane
+
+
 @click.command("send")
 @click.argument("name")
 @click.argument("prompt")
-@click.option("--timeout", type=float, default=120.0, help="Seconds to wait for the turn to finish.")
+@click.option(
+    "--timeout", type=float, default=120.0, help="Seconds to wait for the turn to finish."
+)
 def drive_send(name: str, prompt: str, timeout: float) -> None:
     """Feed one turn to a live session and print the extracted answer (kept alive)."""
     entry = _resolve_or_die(name)
@@ -227,10 +256,14 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
     driver = load_driver(entry.agent_type)
     session = _bind_session(entry, driver, runner)
 
-    # 会话尚未 ready 就 send → 提示启动中 + 末屏（负反馈）。
+    # 会话尚未 ready 就 send → 先试自愈，仍不 ready 才报启动中 + 末屏（负反馈）。
     pane = session.capture_pane()
     if not driver.ready_signal.matches(pane):
-        click.echo(f"[!] Session {name!r} is still starting up — not ready for input yet.", err=True)
+        pane = _try_clear_residual_input(session, driver, pane)
+    if not driver.ready_signal.matches(pane):
+        click.echo(
+            f"[!] Session {name!r} is still starting up — not ready for input yet.", err=True
+        )
         click.echo("--- current pane ---", err=True)
         click.echo(pane, err=True)
         sys.exit(1)

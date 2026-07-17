@@ -132,14 +132,47 @@ def test_load_driver_unknown_raises() -> None:
 
 # ── claude driver ──────────────────────────────────────────────────
 def test_claude_submit_single_enter() -> None:
+    # 提交后 pane 立即出现忙碌标记 → 提交验证一次通过，只发 1 个 Enter。
     driver = load_driver("claude")
-    fake = FakeTmux(["pane"])
+    fake = FakeTmux(["(3s · esc to interrupt)"])
     sess = TmuxAgentSession("c", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
     driver.submit(sess, "hello")
     keys = fake.sent_keys()
     assert ["tmux", "send-keys", "-t", sess.tmux_name, "-l", "--", "hello"] in keys
     enter_count = sum(1 for k in keys if k[-1] == "Enter")
     assert enter_count == 1
+
+
+def test_claude_submit_resends_enter_when_text_stuck() -> None:
+    # 首个 Enter 被粘贴检测吞掉：8 轮验证里文本一直滞留输入框（非空、非忙），
+    # 重发 Enter 后输入框回空 → 共 2 个 Enter。
+    from frago.agent_driver.drivers.claude import _SUBMIT_VERIFY_POLLS
+
+    stuck = "  ❯ hello still in box"
+    panes = [stuck] * _SUBMIT_VERIFY_POLLS + ["  ❯ ", "(2s · esc to interrupt)"]
+    driver = load_driver("claude")
+    fake = FakeTmux(panes)
+    sess = TmuxAgentSession("c2", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    driver.submit(sess, "hello still in box")
+    enter_count = sum(1 for k in fake.sent_keys() if k[-1] == "Enter")
+    assert enter_count == 2
+
+
+def test_claude_submit_enter_retry_capped_at_two() -> None:
+    # 文本永远滞留（极端情况）：初始 1 次 + 重试上限 2 次 = 最多 3 个 Enter，不无限重发。
+    driver = load_driver("claude")
+    fake = FakeTmux(["  ❯ forever stuck"])
+    sess = TmuxAgentSession("c3", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    driver.submit(sess, "forever stuck")
+    enter_count = sum(1 for k in fake.sent_keys() if k[-1] == "Enter")
+    assert enter_count == 3
+
+
+def test_claude_extract_drops_launch_echo() -> None:
+    # 首启横幅的 shell 命令回显不是答案，整行剔除。
+    driver = load_driver("claude")
+    delta = "❯ claude --dangerously-skip-permissions --session-id abc\nthe answer"
+    assert driver.extract(delta) == "the answer"
 
 
 def test_claude_extract_strips_border_chrome() -> None:

@@ -29,6 +29,9 @@ class FakeTmux:
         self.alive: set[str] = set()
         # None = 所有 visible capture 都回就绪屏；int N = 仅前 N 次回就绪屏。
         self.prompt_until: int | None = None
+        # 优先级最高的 visible capture 脚本：非空时逐帧弹出（用于模拟残留文本等
+        # 特定首帧），弹完回落到 prompt_until 逻辑。
+        self.pane_script: list[str] = []
         self._vis_calls = 0
 
     def __call__(self, argv: list[str]) -> str:
@@ -48,6 +51,8 @@ class FakeTmux:
         if verb == "capture-pane":
             if "-S" in argv:
                 return _FULL
+            if self.pane_script:
+                return self.pane_script.pop(0)
             self._vis_calls += 1
             if self.prompt_until is None or self._vis_calls <= self.prompt_until:
                 return _PROMPT
@@ -165,6 +170,21 @@ def test_send_not_ready_shows_starting(fake):
     assert res.exit_code == 1
     assert "still starting up" in res.output
     assert "working" in res.output
+    # 忙碌屏 = 真在启动/干活，不触发残留自愈，不发 Escape。
+    assert not any(c[-1] == "Escape" for c in fake.commands)
+
+
+# ── 残留自愈：会话空闲但输入框滞留文本 → Escape 清空后继续 send ──────────────
+
+
+def test_send_clears_residual_input_then_sends(fake):
+    _seed_entry("smoke", fake)
+    # ready 检查首帧：提示符在、无忙碌标记，但输入框有残留文本（Enter 被吞的滞留态）。
+    fake.pane_script = ["⏺ old answer\n  ❯ leftover unsubmitted text\n"]
+    res = CliRunner().invoke(agent, ["send", "smoke", "hi"])
+    assert res.exit_code == 0, res.output
+    assert "DRIVE_OK" in res.output
+    assert ["tmux", "send-keys", "-t", "frago-agent-smoke", "Escape"] in fake.commands
 
 
 # ── 负反馈 3：等不到 done_signal 超时 → timeout + 末屏 + 接管提示 ────────────
