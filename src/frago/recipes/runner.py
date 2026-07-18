@@ -301,7 +301,7 @@ class RecipeRunner:
             # Handle open_url directive from recipe output
             data = result_data.get("data")
             if isinstance(data, dict) and data.get("open_url"):
-                self._handle_open_url(data["open_url"], group_name=execution_id)
+                self._handle_open_url(data["open_url"])
 
             # Complete Execution
             self.store.complete(
@@ -357,40 +357,20 @@ class RecipeRunner:
                 stderr=str(e)
             ) from e
 
-    def _handle_open_url(self, url: str, group_name: str | None = None) -> None:
-        """Open a URL in Chrome via CDP with tab group management.
+    def _handle_open_url(self, url: str) -> None:
+        """Open a URL in the user's default browser.
 
-        Called when recipe output contains open_url.
-        Uses TabGroupManager for tab routing (same as `frago chrome navigate`).
+        Called when recipe output contains open_url. The page is for the human
+        to look at, so it goes to the default browser rather than the CDP-driven
+        Chrome that `frago chrome` operates on.
         """
         try:
-            from frago.chrome.cdp.session import CDPConfig, CDPSession
-            from frago.chrome.cdp.tab_group_manager import TabGroupManager
+            import webbrowser
 
-            config = CDPConfig(host="127.0.0.1", port=9222)
-            session = CDPSession(config)
-            session.auto_viewport_border = False
-            session.connect()
-
-            # Use group for tab routing
-            resolved_group = group_name or "recipe"
-            tgm = TabGroupManager(host="127.0.0.1", port=9222)
-            tgm.reconcile()
-            target_id = tgm.get_or_create_tab(url, resolved_group, session)
-
-            if target_id:
-                current_id = session.config.target_id
-                if target_id != current_id:
-                    session.disconnect()
-                    session.config.target_id = target_id
-                    session.connect()
-
-            session.navigate(url)
-            session.wait_for_load(timeout=15)
-            session.disconnect()
-            logger.info("Opened URL via CDP (group=%s): %s", resolved_group, url)
+            webbrowser.open(url)
+            logger.info("Opened URL in default browser: %s", url)
         except Exception:
-            logger.exception("Failed to open URL via CDP: %s", url)
+            logger.exception("Failed to open URL in default browser: %s", url)
 
     def cancel(self, execution_id: str) -> bool:
         """Cancel a running execution.
@@ -600,7 +580,8 @@ class RecipeRunner:
                     runtime='chrome-js',
                     exit_code=result.returncode,
                     stdout=result.stdout,
-                    stderr=result.stderr
+                    stderr=result.stderr,
+                    detail=self._recipe_failure_reason(result.stdout, result.stderr),
                 )
 
             # Check output size (10MB limit)
@@ -630,6 +611,30 @@ class RecipeRunner:
                 exit_code=-1,
                 stderr=f"Execution timeout ({timeout}s)" if timeout else "Execution timeout"
             ) from e
+
+    @staticmethod
+    def _recipe_failure_reason(stdout: str, stderr: str) -> str:
+        """Extract the most human-readable reason a recipe failed.
+
+        Recipes conventionally print {"success": false, "error": "..."} to
+        stdout for a handled failure (e.g. missing params). Surface that error
+        string; otherwise fall back to the last non-empty stderr line. Returns
+        "" when nothing useful is found, leaving just the exit-code message.
+        """
+        if stdout:
+            try:
+                data = json.loads(stdout)
+            except (json.JSONDecodeError, ValueError):
+                data = None
+            if isinstance(data, dict):
+                err = data.get("error")
+                if isinstance(err, str) and err.strip():
+                    return err.strip()
+        if stderr and stderr.strip():
+            lines = [ln for ln in stderr.strip().splitlines() if ln.strip()]
+            if lines:
+                return lines[-1].strip()
+        return ""
 
     def _run_python(
         self,
@@ -699,7 +704,8 @@ class RecipeRunner:
                     runtime='python',
                     exit_code=result.returncode,
                     stdout=result.stdout,
-                    stderr=result.stderr
+                    stderr=result.stderr,
+                    detail=self._recipe_failure_reason(result.stdout, result.stderr),
                 )
 
             # Check output size (10MB limit)

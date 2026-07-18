@@ -206,7 +206,12 @@ class RecipeService:
 
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
-            error_msg = str(e)
+            from frago.recipes.exceptions import RecipeExecutionError
+            # Prefer the recipe's own reported reason so the user-facing message
+            # is a single clean line (e.g. "缺少必填参数：…") instead of the
+            # English exit-code boilerplate mixed with a localized reason.
+            detail = getattr(e, "detail", "") if isinstance(e, RecipeExecutionError) else ""
+            error_msg = detail or str(e)
             if "TimeoutExpired" in error_msg or "timed out" in error_msg.lower():
                 error_msg = "Execution timed out"
             logger.error("Recipe execution failed: %s", e)

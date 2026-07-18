@@ -27,15 +27,20 @@ class RecipeExecutionError(RecipeError):
         exit_code: int,
         stdout: str = "",
         stderr: str = "",
+        detail: str = "",
     ):
         self.recipe_name = recipe_name
         self.runtime = runtime
         self.exit_code = exit_code
         self.stdout = stdout
         self.stderr = stderr
+        self.detail = detail
         message = f"Recipe '{recipe_name}' execution failed (exit code: {exit_code})"
-        if stderr:
-            message += f"\nError: {stderr}"
+        # Prefer the recipe's own reported reason (detail) over raw stderr so the
+        # message stays a single readable line for users; fall back to stderr.
+        reason = detail or stderr
+        if reason:
+            message += f": {reason}"
         super().__init__(message)
 
 

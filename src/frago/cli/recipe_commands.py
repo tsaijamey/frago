@@ -991,6 +991,33 @@ def cancel_execution(execution_id: str):
         sys.exit(1)
 
 
+@recipe_group.command(name='open', cls=AgentFriendlyCommand)
+@click.argument('url')
+def open_ui(url: str):
+    """Open a recipe's UI page in the default browser.
+
+    Interactive recipes call this to show their result page to the human.
+    It uses the OS default browser, NOT the CDP-controlled Chrome that
+    `frago chrome` drives: the page is for a person to read, and opening it
+    here keeps the agent's CDP browser free and removes any dependency on
+    that browser being up. This is the single seam for "open a recipe page
+    for the human" — change the open behavior here, not in each recipe.
+    """
+    import webbrowser
+
+    try:
+        opened = webbrowser.open(url)
+    except Exception as e:
+        click.echo(f"Error: failed to open URL '{url}': {e}", err=True)
+        sys.exit(1)
+
+    if opened:
+        click.echo(f"Opened in default browser: {url}", err=True)
+    else:
+        click.echo(f"Error: no browser available to open URL '{url}'", err=True)
+        sys.exit(1)
+
+
 _SECRET_ENV_PATTERN = re.compile(
     r'''os\.environ(?:\.get)?\s*[\[(]\s*['"]([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY))['"]''',
     re.IGNORECASE,
