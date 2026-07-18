@@ -35,7 +35,7 @@ def runner() -> CliRunner:
 def _silence_run_log(monkeypatch):
     """_print_msg writes to the run log as a side effect — keep tests off disk."""
     monkeypatch.setattr(
-        commands.run_log_adapter, "write_run_log", lambda *a, **k: None
+        commands.run_log_adapter, "write_run_log", lambda *_a, **_k: None
     )
 
 
@@ -48,7 +48,7 @@ def _patch_session(monkeypatch, session: MagicMock) -> None:
 
     monkeypatch.setattr(commands, "create_session", fake_create_session)
     # Landing-page guard pokes the real session API; neutralize it.
-    monkeypatch.setattr(commands, "_check_landing_page_protection", lambda *a, **k: None)
+    monkeypatch.setattr(commands, "_check_landing_page_protection", lambda *_a, **_k: None)
 
 
 # ───────────────────────── Command面冻结: parse + help ─────────────────────────
