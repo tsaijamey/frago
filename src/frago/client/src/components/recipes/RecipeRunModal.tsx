@@ -107,7 +107,7 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
       const isInteractive = recipe?.tags?.includes('interactive');
       if (isInteractive) {
         await runRecipeAsync(recipeName, recipeParams);
-        showToast('配方已异步启动', 'success');
+        showToast('配方已启动', 'success');
       } else {
         const result = await runRecipe(recipeName, recipeParams);
         if (result.status === 'ok') {

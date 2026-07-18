@@ -278,7 +278,7 @@
     "enterJsonObject": "Enter JSON object, e.g. {\"key\": \"value\"}",
     "interactiveMode": "Interactive",
     "interactiveModeHint": "Enable for recipes that launch a UI or run continuously. The recipe will start in the background.",
-    "startedAsync": "Recipe started in background",
+    "startedAsync": "Recipe launched",
     "requiredToRun": "Required to run",
     "whatItDoes": "What this recipe does",
     "prepareToRun": "Prepare to run",

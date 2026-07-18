@@ -1634,24 +1634,40 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   cursor: pointer;
 }
 
+/* Status is carried by the whole card — a tinted fill, a full accent-tinted
+   border, and a leading round status dot. No single-side accent bar. */
+.toast::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--toast-accent, var(--text-secondary));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--toast-accent, var(--text-secondary)) 22%, transparent);
+}
+
 .toast-success {
-  border-left: 6px solid var(--accent-success);
-  background: color-mix(in srgb, var(--accent-success) 10%, var(--bg-tertiary));
+  --toast-accent: var(--accent-success);
+  border-color: color-mix(in srgb, var(--accent-success) 40%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-success) 12%, var(--bg-tertiary));
 }
 
 .toast-error {
-  border-left: 6px solid var(--accent-error);
-  background: color-mix(in srgb, var(--accent-error) 10%, var(--bg-tertiary));
+  --toast-accent: var(--accent-error);
+  border-color: color-mix(in srgb, var(--accent-error) 40%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-error) 12%, var(--bg-tertiary));
 }
 
 .toast-warning {
-  border-left: 6px solid var(--accent-warning);
-  background: color-mix(in srgb, var(--accent-warning) 10%, var(--bg-tertiary));
+  --toast-accent: var(--accent-warning);
+  border-color: color-mix(in srgb, var(--accent-warning) 40%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-warning) 12%, var(--bg-tertiary));
 }
 
 .toast-info {
-  border-left: 6px solid var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--bg-tertiary));
+  --toast-accent: var(--accent-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, var(--border-color));
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-tertiary));
 }
 
 @keyframes slideIn {

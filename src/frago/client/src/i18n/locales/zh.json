@@ -278,7 +278,7 @@
     "enterJsonObject": "输入 JSON 对象，例如 {\"key\": \"value\"}",
     "interactiveMode": "交互式",
     "interactiveModeHint": "用于启动 UI 或持续运行的配方。配方将在后台启动。",
-    "startedAsync": "配方已在后台启动",
+    "startedAsync": "配方已启动",
     "requiredToRun": "运行必填",
     "whatItDoes": "这个配方会做什么",
     "prepareToRun": "运行前要准备",
