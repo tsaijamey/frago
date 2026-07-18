@@ -49,13 +49,12 @@ def _run_frago_agent(
     prompt_text: str,
     *,
     agent_type: str = "claude",
-    driver: str | None = None,
 ) -> int:
     """Run frago agent as subprocess with the given prompt.
 
     ``agent_type`` defaults to claude (unchanged behavior); pass another agent
-    to drive a different cli-agent recipe. ``driver`` opts into the tmux backend
-    ("tmux") — None keeps the legacy claude -p default.
+    to drive a different cli-agent recipe. 后端只剩 tmux（spec 20260607 Phase 5），
+    故不再有 driver 选择。
 
     Returns the process exit code.
     """
@@ -75,12 +74,10 @@ def _run_frago_agent(
         from frago.server.services.agent_service import _resolve_frago_cmd
         frago_cmd = _resolve_frago_cmd()
         cmd = [
-            *frago_cmd, "agent", "--yes", "--quiet",
+            *frago_cmd, "agent", "--quiet",
             "--agent-type", agent_type,
             "--prompt-file", prompt_file,
         ]
-        if driver:
-            cmd += ["--driver", driver]
 
         result = subprocess.run(cmd, timeout=600)
         return result.returncode
@@ -1088,7 +1085,7 @@ def validate_recipe(path: str, output_format: str):
     if recipe_path.is_file():
         if recipe_path.name != 'recipe.md':
             click.echo(f"Error: Specified file is not recipe.md: {recipe_path.name}", err=True)
-            return
+            sys.exit(1)
         metadata_path = recipe_path
         recipe_dir = recipe_path.parent
     else:
@@ -1097,7 +1094,7 @@ def validate_recipe(path: str, output_format: str):
         recipe_dir = recipe_path
         if not metadata_path.exists():
             click.echo(f"Error: recipe.md not found in recipe directory: {recipe_dir}", err=True)
-            return
+            sys.exit(1)
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -1201,6 +1198,8 @@ def validate_recipe(path: str, output_format: str):
             "warnings": warnings,
         }
         click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        if not is_valid:
+            sys.exit(1)
     else:
         # text format
         if is_valid:
@@ -1225,6 +1224,7 @@ def validate_recipe(path: str, output_format: str):
                 click.echo("Warnings:")
                 for w in warnings:
                     click.echo(f"  - {w}")
+            sys.exit(1)
 
 
 @recipe_group.command(name='install', cls=AgentFriendlyCommand)
