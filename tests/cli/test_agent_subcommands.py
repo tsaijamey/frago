@@ -247,7 +247,7 @@ def test_help_lists_bare_usage_and_subcommands():
 def test_bare_prompt_routes_to_legacy_run():
     # 第一个 token 是 prompt（非子命令）→ 走隐藏默认命令；--dry-run 不真正执行。
     res = CliRunner().invoke(
-        agent, ["hello", "world", "--driver", "tmux", "--dry-run"]
+        agent, ["hello", "world", "--dry-run"]
     )
     assert res.exit_code == 0, res.output
     assert "Dry Run" in res.output
@@ -256,7 +256,7 @@ def test_bare_prompt_routes_to_legacy_run():
 def test_options_first_routes_to_legacy_run():
     # PA 路径形态：选项在前、无位置 prompt（prompt 经其它途径）。这里用 dry-run 验证路由。
     res = CliRunner().invoke(
-        agent, ["--driver", "tmux", "--dry-run", "--quiet", "do", "something"]
+        agent, ["--dry-run", "--quiet", "do", "something"]
     )
     assert res.exit_code == 0, res.output
     assert "Dry Run" in res.output

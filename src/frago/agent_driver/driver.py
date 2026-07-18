@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from frago.agent_driver.tmux_session import TmuxAgentSession
 
 
@@ -108,6 +110,13 @@ class AgentDriver:
     # （探针字符强制重绘）确认缓冲区状态。不设置时上层退回通用行为（Escape +
     # 轮询 ready_signal）。
     clear_input: Callable[[TmuxAgentSession], bool] | None = None
+    # 可选：定位该会话的 transcript 文件。给 claude 这类把结构化 transcript 写进
+    # session JSONL 的 agent 用——``TranscriptStreamer`` 据此 tail 出逐块的文本/
+    # 工具事件喂给 attached 流式（spec 20260607 Phase 6）。路径规则是 agent 特异性，
+    # 故归 driver；streamer 只管 tail，NEVER 自己认目录布局。返回 None 表示当前
+    # 定位不到（文件尚未生成）。不设置时（opencode/codex）该 agent 无 transcript
+    # 流式，行为不变。
+    transcript_path: Callable[[TmuxAgentSession], Path | None] | None = None
 
 
 _REGISTRY: dict[str, AgentDriver] = {}

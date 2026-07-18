@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Frago Agent Command - Execute non-interactive AI tasks via Claude CLI
+Frago Agent Command - Execute AI tasks in a resident tmux cli-agent session.
+
+tmux 是唯一后端（spec 20260607 Phase 5）：每次调用开一个常驻 TUI 会话、投一轮、
+按停机态退出。凭据经 ``new-session -e`` 注入会话环境。
 
 Authentication strategy:
 Based on ~/.frago/config.json configuration written by `frago init`:
@@ -15,9 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import click
@@ -108,6 +109,45 @@ def _resolve_profile_env(profile_name: str) -> dict[str, str]:
     return {k: str(v) for k, v in env.items()}
 
 
+# 停机态 → 退出码契约（spec 20260607 Phase 7）。调用方 Agent 靠它判断下一步，
+# NEVER 改动既有映射：ok 已答完；timeout 会话仍活可 `frago agent send` 续；
+# needs_input 撞上认证墙/权限门/澄清门，须真人介入；error 是 driver/tmux 层失败。
+_EXIT_CODES: dict[str, int] = {"ok": 0, "timeout": 1, "needs_input": 2, "error": 3}
+
+
+def _emit_and_exit(
+    *,
+    status: str,
+    text: str,
+    session_id: str,
+    tmux_name: str,
+    duration_ms: int,
+    human_note: str | None,
+    json_out: bool,
+) -> None:
+    """发射一次停机结果并按契约退出。
+
+    ``--json`` 时 stdout 只有那一个 JSON 对象，人类文案（含答案之外的一切提示）
+    一律走 stderr，调用方直接 ``json.loads(stdout)`` 即可，无需解析人类文案。
+    """
+    exit_code = _EXIT_CODES[status]
+    if json_out:
+        payload = {
+            "status": status,
+            "exit_code": exit_code,
+            "session_id": session_id,
+            "tmux_name": tmux_name,
+            "text": text,
+            "duration_ms": duration_ms,
+        }
+        click.echo(json.dumps(payload, ensure_ascii=False))
+    elif text:
+        click.echo(text)
+    if human_note:
+        click.echo(human_note, err=True)
+    sys.exit(exit_code)
+
+
 def _run_tmux_driver(
     prompt_text: str,
     *,
@@ -119,20 +159,25 @@ def _run_tmux_driver(
     dry_run: bool,
     no_persist: bool = False,
     env: dict[str, str] | None = None,
+    native_session_id: bool = False,
+    json_out: bool = False,
+    source: str = "terminal",
 ) -> None:
     """Drive a resident tmux TUI session via SessionLauncher (one turn).
 
-    Phase 1: no warm pool yet — opens a fresh session, sends one turn, closes.
-    The legacy claude -p backend remains the default; this path is opt-in via
-    --driver tmux and shares no code with it.
+    tmux 是唯一后端（spec 20260607 Phase 5，旧 headless 后端已整体退场）。无 warm pool：
+    开新会话、投一轮、关闭。停机时按 ``_EXIT_CODES`` 退出。
     """
     from frago.agent_driver import SessionLauncher
+    from frago.agent_driver.tmux_session import tmux_name_for
 
     sid = session_id or str(uuid.uuid4())
+    tmux_name = tmux_name_for(sid)
     if not quiet:
-        click.echo(f"[OK] tmux driver: agent={agent_type} session={sid}")
+        click.echo(f"[OK] tmux driver: agent={agent_type} session={sid}", err=json_out)
     if dry_run:
-        click.echo("[Dry Run] Skip actual execution")
+        # 诊断用途，没真跑过任何一轮 → NEVER 伪造一份停机摘要，只报到 stderr 后正常退出。
+        click.echo("[Dry Run] Skip actual execution", err=json_out)
         return
 
     launcher = SessionLauncher()
@@ -143,31 +188,55 @@ def _run_tmux_driver(
             session_id=sid,
             cwd=cwd,
             env=env,
+            native_session_id=native_session_id,
             timeout_s=float(timeout),
         )
     except KeyError:
-        click.echo(f"Error: no driver registered for agent-type {agent_type!r}", err=True)
-        sys.exit(1)
+        _emit_and_exit(
+            status="error", text="", session_id=sid, tmux_name=tmux_name,
+            duration_ms=0, json_out=json_out,
+            human_note=f"Error: no driver registered for agent-type {agent_type!r}",
+        )
+        return
     except FileNotFoundError:
-        click.echo("Error: tmux not found. Please install tmux first.", err=True)
-        sys.exit(1)
+        _emit_and_exit(
+            status="error", text="", session_id=sid, tmux_name=tmux_name,
+            duration_ms=0, json_out=json_out,
+            human_note="Error: tmux not found. Please install tmux first.",
+        )
+        return
+    except Exception as exc:
+        # driver/tmux 层的任何其它失败（如 TmuxStartupError：会话起了但等不到就绪
+        # 信号）同属 error=3。机器契约要求「必定落在四态之一」，故此处兜底，
+        # NEVER 让 traceback 顶穿成一个契约外的退出码。
+        _emit_and_exit(
+            status="error", text="", session_id=sid, tmux_name=tmux_name,
+            duration_ms=0, json_out=json_out,
+            human_note=f"Error: agent driver failed: {exc}",
+        )
+        return
 
     # Normalize this turn into the session subsystem (Web UI / session list).
     if not no_persist:
         with contextlib.suppress(Exception):
             from frago.agent_driver.transcript import write_turn
 
-            write_turn(sid, agent_type, cwd, prompt_text, result, source="terminal")
+            write_turn(sid, agent_type, cwd, prompt_text, result, source=source)
 
-    if result.status == "needs_input":
-        click.echo(result.text)
-        click.echo("[!] Agent needs input (auth wall / permission / clarification)", err=True)
-        sys.exit(2)
-    if result.status == "timeout":
-        click.echo(result.text)
-        click.echo(f"[!] Turn timed out after {timeout}s", err=True)
-        sys.exit(1)
-    click.echo(result.text)
+    notes = {
+        "needs_input": "[!] Agent needs input (auth wall / permission / clarification)",
+        "timeout": f"[!] Turn timed out after {timeout}s",
+        "error": "[!] Agent driver reported an error",
+    }
+    _emit_and_exit(
+        status=result.status,
+        text=result.text,
+        session_id=sid,
+        tmux_name=tmux_name,
+        duration_ms=result.duration_ms,
+        human_note=notes.get(result.status),
+        json_out=json_out,
+    )
 
 
 def check_ccr_auth() -> tuple[bool, dict | None]:
@@ -248,50 +317,6 @@ def should_use_ccr(config: dict | None, force_ccr: bool = False) -> tuple[bool, 
     return False, None
 
 
-def verify_claude_working(timeout: int = 30) -> tuple[bool, str]:
-    """
-    Verify Claude CLI is working by running a simple prompt
-
-    Args:
-        timeout: Timeout in seconds
-
-    Returns:
-        (is_working, error message or success message)
-    """
-    try:
-        result = subprocess.run(
-            prepare_command_for_windows(["claude", "-p", "Say 'OK'", "--output-format", "json"]),
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            timeout=timeout
-        )
-
-        if result.returncode == 0:
-            try:
-                response = json.loads(result.stdout)
-                if response.get("type") == "result":
-                    return True, "Claude CLI is working"
-            except json.JSONDecodeError:
-                pass
-            return True, "Claude CLI responded"
-
-        # Parse error message
-        error_msg = result.stderr or result.stdout or "Unknown error"
-        if "authentication" in error_msg.lower() or "unauthorized" in error_msg.lower():
-            return False, "Authentication failed - please run 'claude' and use /login"
-        if "rate limit" in error_msg.lower():
-            return False, "Rate limited - please wait and try again"
-
-        return False, f"Claude CLI error: {error_msg}"
-
-    except subprocess.TimeoutExpired:
-        return False, f"Claude CLI timed out after {timeout}s"
-    except FileNotFoundError:
-        return False, "Claude CLI not found"
-    except Exception as e:
-        return False, f"Unexpected error: {e}"
-
 
 # =============================================================================
 # CLI Commands
@@ -307,7 +332,7 @@ class AgentGroup(AgentFriendlyGroup):
     """``frago agent`` 命令组，向后兼容裸调用。
 
     历史上 ``frago agent`` 是单个 command，到处以
-    ``frago agent "<prompt>" [--options]`` 或 ``frago agent --yes --source web
+    ``frago agent "<prompt>" [--options]`` 或 ``frago agent --source web
     --prompt-file ...``（PA 路径，选项在前、无位置 prompt）的形式被调用。改成 group
     后，只有当第一个 token 明确是 start/send/peek/ls/stop（或 --help）时才走子命令分发；
     其余一切（选项开头、裸 prompt、空参）原样转交隐藏的默认命令，保证旧用法零破坏。
@@ -328,8 +353,9 @@ def agent() -> None:
     \b
     Bare-prompt usage (unchanged, backward compatible):
       frago agent Help me find Python jobs on Upwork
-      frago agent "fix the login bug" --model sonnet --yes
-      frago agent --yes --source web --prompt-file task.txt
+      frago agent "fix the login bug" --model sonnet
+      frago agent --source web --prompt-file task.txt
+      frago agent "summarize this" --json      # machine-readable shutdown summary
 
     \b
     Resident tmux-session subcommands:
@@ -372,19 +398,9 @@ def agent() -> None:
     help="Only show command that would be executed, don't actually run"
 )
 @click.option(
-    "--ask",
-    is_flag=True,
-    help="Enable permission confirmation (skip by default)"
-)
-@click.option(
     "--quiet", "-q",
     is_flag=True,
     help="Quiet mode, don't show real-time monitoring status"
-)
-@click.option(
-    "--json-status",
-    is_flag=True,
-    help="Output monitoring status in JSON format (for machine processing)"
 )
 @click.option(
     "--no-monitor",
@@ -392,9 +408,17 @@ def agent() -> None:
     help="Disable session monitoring (don't record session data)"
 )
 @click.option(
+    "--json", "json_out",
+    is_flag=True,
+    help="Emit a machine-readable shutdown summary on stdout (status / exit_code / "
+         "session_id / tmux_name / text / duration_ms). Human notes go to stderr."
+)
+@click.option(
     "--yes", "-y",
     is_flag=True,
-    help="Skip permission confirmation prompt, execute directly"
+    hidden=True,
+    help="DEPRECATED no-op, accepted and ignored. It only ever answered the "
+         "permission gate of the retired headless backend."
 )
 @click.option(
     "--source",
@@ -414,11 +438,6 @@ def agent() -> None:
     type=str,
     default=None,
     help="Resume an existing Claude Code session by UUID (uses claude --resume internally)."
-)
-@click.option(
-    "--passthrough",
-    is_flag=True,
-    help="Pass through raw stream-json output (for Web UI or machine consumption)"
 )
 @click.option(
     "--endpoint",
@@ -445,12 +464,6 @@ def agent() -> None:
     default="claude",
     help="Which cli-agent to drive (claude / opencode / codex). Default: claude"
 )
-@click.option(
-    "--driver",
-    type=click.Choice(["claude-p", "tmux"]),
-    default="claude-p",
-    help="Execution backend: claude-p (legacy headless, default) or tmux (resident TUI session)"
-)
 def agent_run(
     prompt: tuple,
     prompt_file,
@@ -458,33 +471,42 @@ def agent_run(
     timeout: int,
     use_ccr: bool,
     dry_run: bool,
-    ask: bool,
     quiet: bool,
-    json_status: bool,
     no_monitor: bool,
-    yes: bool,
+    json_out: bool,
+    yes: bool,  # noqa: ARG001 — deprecated no-op, accepted so legacy callers don't break
     source: str,
     session_id: str | None,
     resume_session_id: str | None,
-    passthrough: bool,
     endpoint: str | None,
     api_key: str | None,
     use_profile: str | None,
     agent_type: str,
-    driver: str,
 ):
     """
-    Intelligent Agent: Execute tasks via Claude Code session
+    Intelligent Agent: Execute one task turn in a resident tmux cli-agent session.
 
     \b
     Examples:
       frago agent Help me find Python jobs on Upwork
-      frago agent Research YouTube subtitle extraction API
-      frago agent Write a recipe to extract Twitter comments
+      frago agent "fix the login bug" --model sonnet
+      frago agent "summarize this" --json --timeout 300
+
+    \b
+    Exit codes (also reported as "status" under --json):
+      0 ok           answered; the answer is on stdout
+      1 timeout      turn timed out; session still alive, continue with `frago agent send`
+      2 needs_input  auth wall / permission gate / clarification — needs a human
+      3 error        driver or tmux layer failed
 
     \b
     Available models (--model):
       sonnet, opus, haiku or full model name
+
+    \b
+    Note: this command always launches the cli-agent with --dangerously-skip-permissions
+    (hardcoded in each driver's launch_command); there is no CLI switch to restore the
+    permission gate.
     """
     # Determine prompt source: --prompt-file has priority, otherwise use command line arguments
     if prompt_file:
@@ -499,330 +521,69 @@ def agent_run(
         click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
-    # Resolve --use-profile into ANTHROPIC_* env once, shared by both backends.
-    # CLI --endpoint/--api-key still override these below (claude-p path).
-    profile_env = _resolve_profile_env(use_profile) if use_profile else {}
-
-    # tmux backend: resident TUI session driven by SessionLauncher.
-    # Legacy claude -p path stays the default and is left fully intact below.
-    if driver == "tmux":
-        # CCR env for the tmux session, same precedence as the claude-p path:
-        # CCR < profile < (no --endpoint/--api-key here; claude-p only).
-        tmux_env: dict[str, str] = {}
-        use_ccr_mode, ccr_info = should_use_ccr(load_frago_config(), use_ccr)
-        if use_ccr_mode:
-            if not ccr_info:
-                click.echo("Error: Invalid CCR configuration", err=True)
-                sys.exit(1)
-            host = ccr_info.get("host", "127.0.0.1")
-            port = ccr_info.get("port", 3456)
-            tmux_env.update({
-                "ANTHROPIC_AUTH_TOKEN": "test",
-                "ANTHROPIC_BASE_URL": f"http://{host}:{port}",
-                "NO_PROXY": "127.0.0.1",
-                "DISABLE_TELEMETRY": "true",
-            })
-            if not ccr_info.get("is_running"):
-                if not quiet:
-                    click.echo("Starting CCR service...")
-                subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True)
-            if not quiet:
-                click.echo(f"[OK] Using CCR: http://{host}:{port}")
-        tmux_env.update(profile_env)
-        # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
-        tmux_env["FRAGO_AGENT_ROLE"] = "worker"
-        _run_tmux_driver(
-            prompt_text,
-            agent_type=agent_type,
-            session_id=session_id,
-            cwd=os.getcwd(),
-            timeout=timeout,
-            quiet=quiet,
-            dry_run=dry_run,
-            no_persist=no_monitor,
-            env=tmux_env or None,
-        )
-        return
-
-    # Step 1: Check if agent CLI exists
-    claude_path = find_agent_cli(agent_type)
-    if not claude_path:
-        click.echo(f"Error: {agent_type} CLI not found", err=True)
-        click.echo("Please install Claude Code first: https://claude.ai/code", err=True)
-        sys.exit(1)
-
-    if not passthrough:
-        click.echo(f"[OK] Claude CLI: {claude_path}")
-
-    # Step 2: Load frago configuration
-    frago_config = load_frago_config()
-    if not passthrough:
-        if frago_config:
-            auth_method = frago_config.get("auth_method", "official")
-            if auth_method == "official":
-                click.echo("[OK] Authentication: Claude CLI native")
-            else:
-                click.echo("[OK] Authentication: Custom API endpoint")
-        else:
-            click.echo("[!] Frago config not found, using Claude CLI default authentication")
-            click.echo("  Tip: Run 'frago init' to initialize configuration")
-
-    # Step 3: Determine whether to use CCR
-    env = os.environ.copy()
-    # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
-    env["FRAGO_AGENT_ROLE"] = "worker"
-    use_ccr_mode, ccr_info = should_use_ccr(frago_config, use_ccr)
-
-    if use_ccr_mode:
-        if not ccr_info:
-            click.echo("\nError: Invalid CCR configuration", err=True)
-            sys.exit(1)
-
-        host = ccr_info.get("host", "127.0.0.1")
-        port = ccr_info.get("port", 3456)
-        env["ANTHROPIC_AUTH_TOKEN"] = "test"
-        env["ANTHROPIC_BASE_URL"] = f"http://{host}:{port}"
-        env["NO_PROXY"] = "127.0.0.1"
-        env["DISABLE_TELEMETRY"] = "true"
-
-        if not ccr_info.get("is_running"):
-            if not passthrough:
-                click.echo("Starting CCR service...")
-            subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True, env=env)
-
-        if not passthrough:
-            click.echo(f"[OK] Using CCR: http://{host}:{port}")
-
-    # --use-profile: inject the profile's ANTHROPIC_* into the claude env.
-    # Applied after CCR so an explicit profile wins over CCR, but before the
-    # --endpoint/--api-key overrides below so those still take highest priority.
-    if profile_env:
-        env.update(profile_env)
-        # Bearer-style profiles carry the credential in ANTHROPIC_AUTH_TOKEN; only
-        # clear a leftover CCR placeholder when the profile itself doesn't set one
-        # (api-key-style profiles), otherwise we'd wipe the real token.
-        if "ANTHROPIC_AUTH_TOKEN" not in profile_env:
-            env.pop("ANTHROPIC_AUTH_TOKEN", None)
-        if not passthrough:
-            click.echo(f"[OK] Using profile: {use_profile}")
-
-    # CLI overrides (highest priority): --endpoint / --api-key win over profile/CCR
-    if endpoint:
-        env["ANTHROPIC_BASE_URL"] = endpoint
-        if not passthrough:
-            click.echo(f"[OK] Override endpoint: {endpoint}")
-    if api_key:
-        env["ANTHROPIC_API_KEY"] = api_key
-        # Clear AUTH_TOKEN set by CCR mode so API_KEY takes effect
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
-        if not passthrough:
-            click.echo("[OK] Override API key: (from --api-key)")
-
-    # Step 4: Permission confirmation (--yes skips confirmation)
-    # In passthrough mode, skip confirmation (Web UI handles this)
-    if not ask and not dry_run and not yes and not passthrough:
-        click.echo()
-        click.echo("[!] Will run in --dangerously-skip-permissions mode")
-        click.echo("  Claude will skip all permission confirmations and execute any operation directly")
-        if not click.confirm("Confirm to continue?", default=False):
-            click.echo("Cancelled")
-            sys.exit(0)
-
-    skip_permissions = not ask
-
-    # =========================================================================
-    # Single-phase execution: Let agent determine and execute directly
-    # =========================================================================
-
-    if not passthrough:
-        click.echo(f"\n[Execute] {prompt_text}")
-    execution_prompt = prompt_text
-
-    if dry_run:
-        click.echo("[Dry Run] Skip actual execution")
-        return
-
-    # Build final command - use stream-json for real-time output
-    # Note: stream-json must be used with --verbose
-    # Use "-p -" to read prompt from stdin, avoid Windows command line argument truncation of newlines
-    cmd = ["claude", "-p", "-", "--output-format", "stream-json", "--verbose"]
-
-    # In passthrough mode, enable bidirectional stream-json for Web UI
-    if passthrough:
-        cmd.extend([
-            "--input-format", "stream-json",
-            "--include-partial-messages",
-            "--replay-user-messages",
-        ])
-
-    # Resume mode vs new-session mode (mutually exclusive)
+    # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
+    # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。
     if session_id and resume_session_id:
         click.echo("Error: --session-id and --resume are mutually exclusive", err=True)
         raise click.Abort()
-    if resume_session_id:
-        target_session_id = resume_session_id
-        cmd.extend(["--resume", resume_session_id])
-    else:
-        target_session_id = session_id or str(uuid.uuid4())
-        cmd.extend(["--session-id", target_session_id])
 
+    # 会话 env 的优先级：CCR < profile < CLI(--endpoint/--api-key/--model)。
+    # 全部经 new-session -e 注入 tmux 会话。
+    tmux_env: dict[str, str] = {}
+    use_ccr_mode, ccr_info = should_use_ccr(load_frago_config(), use_ccr)
+    if use_ccr_mode:
+        if not ccr_info:
+            click.echo("Error: Invalid CCR configuration", err=True)
+            sys.exit(1)
+        host = ccr_info.get("host", "127.0.0.1")
+        port = ccr_info.get("port", 3456)
+        tmux_env.update({
+            "ANTHROPIC_AUTH_TOKEN": "test",
+            "ANTHROPIC_BASE_URL": f"http://{host}:{port}",
+            "NO_PROXY": "127.0.0.1",
+            "DISABLE_TELEMETRY": "true",
+        })
+        if not ccr_info.get("is_running"):
+            if not quiet:
+                click.echo("Starting CCR service...", err=json_out)
+            subprocess.run(prepare_command_for_windows(["ccr", "start"]), capture_output=True)
+        if not quiet:
+            click.echo(f"[OK] Using CCR: http://{host}:{port}", err=json_out)
+
+    # --use-profile 解析出的 ANTHROPIC_* 盖过 CCR，但让位于下面的显式 CLI 覆盖。
+    profile_env = _resolve_profile_env(use_profile) if use_profile else {}
+    tmux_env.update(profile_env)
+
+    # CLI 覆盖（最高优先级）。--model 走 ANTHROPIC_MODEL——profile 本就用该变量表达
+    # 模型覆盖，同源同义。
+    if endpoint:
+        tmux_env["ANTHROPIC_BASE_URL"] = endpoint
+    if api_key:
+        tmux_env["ANTHROPIC_API_KEY"] = api_key
+        # CCR 模式塞的 AUTH_TOKEN 会盖掉 API_KEY，清掉它才能让显式 key 生效。
+        tmux_env.pop("ANTHROPIC_AUTH_TOKEN", None)
     if model:
-        cmd.extend(["--model", model])
+        tmux_env["ANTHROPIC_MODEL"] = model
+    # 子会话必须自知是 worker，阻断 worker 再拉 worker 的角色递归（见 CLAUDE.md 任务执行模式）。
+    tmux_env["FRAGO_AGENT_ROLE"] = "worker"
 
-    if skip_permissions:
-        cmd.append("--dangerously-skip-permissions")
-
-    if not passthrough:
-        click.echo("-" * 60)
-
-    # Start session monitoring (if not disabled)
-    # Note: Even in passthrough mode, monitor is needed to sync sessions to ~/.frago/sessions/
-    # so watchdog can detect changes and update tasks list
-    monitor = None
-    monitor_enabled = not no_monitor and os.environ.get("FRAGO_MONITOR_ENABLED", "1") != "0"
-
-    if monitor_enabled:
-        try:
-            from frago.session.monitor import SessionMonitor
-
-            start_time = datetime.now()
-            project_path = os.getcwd()
-
-            from frago.session.models import SessionSource
-
-            # Convert source string to SessionSource enum
-            session_source = SessionSource.WEB if source.lower() == "web" else SessionSource.TERMINAL
-
-            monitor = SessionMonitor(
-                project_path=project_path,
-                start_time=start_time,
-                json_mode=json_status,
-                persist=True,
-                quiet=quiet,
-                target_session_id=target_session_id,  # Always pin to exact session ID
-                source=session_source,
-            )
-            monitor.start()
-        except ImportError as e:
-            # session module may not be installed, silently ignore
-            if not quiet:
-                click.echo(f"  [!] Session monitoring not enabled: {e}", err=True)
-        except Exception as e:
-            if not quiet:
-                click.echo(f"  [!] Failed to start monitoring: {e}", err=True)
-
-    # Execute command (real-time streaming output)
-    try:
-        process = subprocess.Popen(
-            prepare_command_for_windows(cmd),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding='utf-8',
-            env=env,
-            bufsize=1,
-        )
-
-        # Pass prompt via stdin (avoid Windows command line argument truncation of multi-line text)
-        if passthrough:
-            # In passthrough mode, send prompt as stream-json format
-            stdin_payload = json.dumps({
-                "type": "user",
-                "message": {
-                    "role": "user",
-                    "content": execution_prompt
-                }
-            }) + "\n"
-        else:
-            stdin_payload = execution_prompt
-
-        # Write stdin in a background thread so stdout reading can start concurrently.
-        # On Windows, pipe buffers are small and a synchronous large write blocks
-        # before the reader drains — causing BrokenPipe when claude exits.
-        def _write_stdin() -> None:
-            try:
-                process.stdin.write(stdin_payload)
-                process.stdin.close()
-            except (BrokenPipeError, OSError):
-                pass
-
-        stdin_thread = threading.Thread(target=_write_stdin, daemon=True)
-        stdin_thread.start()
-
-        if passthrough:
-            # Passthrough mode: output raw stream-json directly
-            for line in iter(process.stdout.readline, ""):
-                if line.strip():
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
-        else:
-            # Normal mode: Parse stream-json format and display in real-time
-            for line in iter(process.stdout.readline, ""):
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Parse stream-json and display key information
-                try:
-                    event = json.loads(line)
-                    event_type = event.get("type", "")
-
-                    if event_type == "assistant":
-                        message = event.get("message", {})
-                        content = message.get("content", [])
-                        for block in content:
-                            block_type = block.get("type")
-                            if block_type == "text":
-                                text = block.get("text", "")
-                                if text:
-                                    click.echo(text)
-                            elif block_type == "tool_use":
-                                tool_name = block.get("name", "unknown")
-                                tool_input = block.get("input", {})
-                                if tool_name == "Bash":
-                                    cmd_str = tool_input.get("command", "")
-                                    desc = tool_input.get("description", "")
-                                    click.echo(f"[Bash] {desc or cmd_str[:50]}")
-                                else:
-                                    click.echo(f"[{tool_name}]")
-                except json.JSONDecodeError:
-                    # Non-JSON lines output directly
-                    if not quiet:
-                        click.echo(line)
-
-        # Read stderr
-        stderr_output = process.stderr.read()
-        if stderr_output and not passthrough:
-            click.echo(f"\n[stderr] {stderr_output}", err=True)
-
-        process.wait(timeout=timeout)
-
-        if not passthrough:
-            click.echo("\n" + "-" * 60)
-
-            if process.returncode == 0:
-                click.echo("[OK] Execution completed")
-            else:
-                # Non-zero exit code doesn't force exit, Claude CLI will adaptively handle tool errors
-                click.echo(f"[!] Execution finished (exit code: {process.returncode})")
-
-    except subprocess.TimeoutExpired:
-        process.kill()
-        click.echo(f"\n[X] Execution timeout ({timeout}s)", err=True)
-    except KeyboardInterrupt:
-        process.kill()
-        click.echo("\n[X] User interrupted", err=True)
-    except Exception as e:
-        click.echo(f"\n[X] Execution error: {e}", err=True)
-    finally:
-        # Ensure stdin writer thread is reaped (daemon, but clean up eagerly)
-        with contextlib.suppress(Exception):
-            stdin_thread.join(timeout=1)
-        # Stop session monitoring
-        if monitor:
-            with contextlib.suppress(Exception):
-                monitor.stop()
+    # --resume <uuid> 的语义 = 用真实 id 续接既有会话，即 driver 侧的
+    # session_id=<uuid> + native_session_id=True（claude driver 据此走
+    # `--resume <id>` 原样带真实 id，不做 uuid5 派生）。
+    _run_tmux_driver(
+        prompt_text,
+        agent_type=agent_type,
+        session_id=resume_session_id or session_id,
+        native_session_id=bool(resume_session_id),
+        cwd=os.getcwd(),
+        timeout=timeout,
+        quiet=quiet,
+        dry_run=dry_run,
+        no_persist=no_monitor,
+        env=tmux_env or None,
+        json_out=json_out,
+        source=source,
+    )
 
 
 # =============================================================================

@@ -56,6 +56,17 @@ def _default_runner(argv: list[str]) -> str:
     return proc.stdout
 
 
+def tmux_name_for(session_id: str) -> str:
+    """把 session_id 映射成它的 tmux 会话名。
+
+    tmux 会话名禁止 ':' 和 '.'（它们是 tmux 的 session:window.pane 分隔符），故把非
+    [A-Za-z0-9_-] 的字符统一替换为 '_'。抽成模块级函数是因为调用方（如 CLI 的 --json
+    停机摘要）需要在不持有 session 对象时报出同一个名字——规则必须只有一处。
+    """
+    safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in session_id)
+    return f"frago-agent-{safe}"
+
+
 @dataclass
 class TurnResult:
     """一轮 send→done 的归一化结果。"""
@@ -122,12 +133,10 @@ class TmuxAgentSession:
         self.cwd = cwd
         self.width = width
         self.height = height
-        # tmux 会话名禁止 ':' 和 '.'（它们是 tmux 的 session:window.pane 分隔符）：
         # conv_key 形如 ``feishu:oc_xxx`` 带冒号，原样当会话名会让 new-session 退非零、
-        # 整条 channel 永远建不起会话。把非 [A-Za-z0-9_-] 的字符统一替换为 '_'，
-        # 每个 session_id 仍稳定映射到唯一的名字（claude --session-id 仍用原始 session_id 派生）。
-        _safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in session_id)
-        self.tmux_name = f"frago-agent-{_safe}"
+        # 整条 channel 永远建不起会话。每个 session_id 仍稳定映射到唯一的名字
+        # （claude --session-id 仍用原始 session_id 派生）。
+        self.tmux_name = tmux_name_for(session_id)
         self._run = runner or _default_runner
         self._poll_interval_s = poll_interval_s
         self._sleep = sleep

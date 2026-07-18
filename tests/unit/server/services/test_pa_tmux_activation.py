@@ -1,44 +1,20 @@
-"""Phase 1/3 单测：resolve_backend() 解析优先级 + PA 本体接常驻 tmux。
+"""Phase 3 单测：PA 本体接常驻 tmux。
 
-Phase 1: config.json primary_agent.agent_backend > env FRAGO_AGENT_DRIVER=tmux > 默认 tmux。
-Phase 3: PaTmuxRunner 会话复用 / bootstrap 注入语义、tmux 输出走 _handle_pa_output 路由、
-rotation 驱逐 resident 会话且不碰 claude-p 子进程机制。
+PaTmuxRunner 会话复用 / bootstrap 注入语义、tmux 输出走 _handle_pa_output 路由、
+rotation 驱逐 resident 会话。
+
+后端选择本身已无测点：Phase 5 起 tmux 是唯一后端，resolve_backend() 这个恒返回
+常量的函数随之删除（生产侧零调用方）。
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 
 import frago.server.services.primary_agent_service as pa_mod
 from frago.agent_driver.tmux_session import TurnResult
-from frago.server.services.agent_service import resolve_backend
 from frago.server.services.pa_tmux_runner import PaTmuxRunner
 from frago.server.services.primary_agent_service import PrimaryAgentService
-
-
-def test_default_is_tmux(monkeypatch, tmp_path):
-    monkeypatch.delenv("FRAGO_AGENT_DRIVER", raising=False)
-    monkeypatch.setattr(pa_mod, "CONFIG_FILE", tmp_path / "config.json")
-    assert resolve_backend() == "tmux"
-
-
-def test_backend_is_constant_tmux(monkeypatch, tmp_path):
-    """Phase 4: claude-p 删除后 resolve_backend 收敛为常量 tmux，config/env 不再左右它。"""
-    cfg = tmp_path / "config.json"
-    cfg.write_text(
-        json.dumps({"primary_agent": {"agent_backend": "claude-p"}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(pa_mod, "CONFIG_FILE", cfg)
-    assert resolve_backend() == "tmux"
-
-
-def test_env_tmux_takes_effect(monkeypatch, tmp_path):
-    monkeypatch.setenv("FRAGO_AGENT_DRIVER", "tmux")
-    monkeypatch.setattr(pa_mod, "CONFIG_FILE", tmp_path / "config.json")
-    assert resolve_backend() == "tmux"
-
 
 # ── Phase 3 helpers ──────────────────────────────────────────────────────────
 

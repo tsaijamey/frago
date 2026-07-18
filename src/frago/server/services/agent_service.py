@@ -6,7 +6,6 @@ Supports both detached (fire-and-forget) and attached (streaming) modes.
 
 import asyncio
 import contextlib
-import json
 import logging
 import shutil
 import subprocess
@@ -17,36 +16,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from frago.server.services.subprocess_utils import (
-    get_utf8_env,
-    run_subprocess_background,
-    run_subprocess_interactive,
-)
+from frago.server.services.subprocess_utils import run_subprocess_background
 from frago.server.websocket import manager
 
 logger = logging.getLogger(__name__)
 
 
-def _tmux_driver_enabled() -> bool:
-    """Gated opt-in: route spawned sub-agents through the tmux backend.
+_attached_pool: Any | None = None
 
-    Default off — claude -p stays the live path. Set FRAGO_AGENT_DRIVER=tmux
-    to opt in (Phase 3, spec 20260607). The deep server-resident warm pool is a
-    follow-up; this gate reuses the tested Phase 1 CLI tmux backend.
+
+def _get_attached_pool() -> Any:
+    """Lazily build the resident-session pool shared by attached sessions.
+
+    Lazy rather than module-level so importing this service never costs a pool
+    (and so tests can inject their own via ``AgentSession(pool=...)``).
     """
-    import os
+    global _attached_pool
+    if _attached_pool is None:
+        from frago.agent_driver.pool import WarmSessionPool
 
-    return os.environ.get("FRAGO_AGENT_DRIVER", "").strip().lower() == "tmux"
-
-
-def resolve_backend() -> str:
-    """Resolve the primary-agent backend identifier.
-
-    Phase 4 (删 claude-p): the resident tmux session is the only PA backend, so
-    this is a constant. Kept as a function (rather than inlined) so the single
-    "what backend?" question still has one named answer for callers/tests.
-    """
-    return "tmux"
+        _attached_pool = WarmSessionPool()
+    return _attached_pool
 
 
 def _resolve_frago_cmd() -> list[str]:
@@ -71,11 +61,19 @@ def _resolve_frago_cmd() -> list[str]:
 
 
 class AgentSession:
-    """Manages a single agent session with optional streaming support.
+    """Manages a single attached agent session backed by a resident tmux session.
 
-    In attached mode, holds a process handle and reads stdout for real-time
-    streaming. The process itself is independent — if server restarts,
-    the process continues running (degrades to detached mode).
+    Phase 6 (spec 20260607): the turn runs inside a resident tmux TUI acquired
+    from ``WarmSessionPool`` — the same mechanism PA already uses
+    (``pa_tmux_runner.py``) — and the WebSocket event stream is driven by
+    tailing the agent's transcript via ``TranscriptStreamer`` instead of
+    parsing the retired headless backend's JSON stream off stdout. The emitted
+    event names and field shapes are unchanged, so the frontend needs no
+    changes; only the granularity coarsens from token deltas to content blocks.
+
+    The session is resident: unlike the old subprocess model, ``send_message``
+    reuses the live TUI (which keeps its own conversational context) instead of
+    killing and respawning a fresh child.
     """
 
     def __init__(
@@ -84,60 +82,32 @@ class AgentSession:
         project_path: str,
         *,
         prefix_provider: Callable[[], str] | None = None,
+        agent_type: str = "claude",
+        pool: Any | None = None,
+        turn_timeout_s: float = 600.0,
     ):
         self.internal_id = internal_id
         self.project_path = project_path
-        self._process: subprocess.Popen | None = None
-        self._reader_task: asyncio.Task | None = None
-        self._watchdog_task: asyncio.Task | None = None
-        self._last_stream_activity: float | None = None
+        self.agent_type = agent_type
+        self._pool = pool
+        self._turn_timeout_s = turn_timeout_s
+        self._tmux_session: Any | None = None
+        self._streamer: Any | None = None
         self._attached = False
         self._running = False
         self._claude_session_id: str | None = None
-        self._current_assistant_message = ""
-        self._current_tool_input_json = ""
+        # One turn at a time per resident session: two concurrent send() calls
+        # would interleave keystrokes into the same TUI and garble both turns.
+        self._turn_lock = asyncio.Lock()
+        # tool_use id → tool name, harvested from assistant records so a later
+        # tool_result record (which carries only the id) can name its tool.
         self._pending_tool_calls: dict[str, dict[str, Any]] = {}
-        # Has a `text` content block appeared in the current message yet?
-        # Some non-Anthropic backends (DeepSeek under Claude Code passthrough)
-        # emit an early message_delta(stop_reason=end_turn) right after a
-        # thinking block, then keep streaming the real text 60–90s later.
-        # Suppressing premature termination until we've seen actual text
-        # avoids killing the subprocess mid-output.
-        self._saw_text_block_in_message = False
         # Optional callback for capturing complete assistant messages
         self._on_assistant_message: Any | None = None  # Callable[[str], None]
         # Session-bound prompt prefix (e.g., PA system prompt + bootstrap).
-        # Invoked on every (re)start so identity/context survives the restart
-        # that send_message performs. None for plain agent sessions.
+        # Invoked on every (re)start so identity/context survives a restart.
+        # None for plain agent sessions.
         self._prefix_provider = prefix_provider
-
-    def _get_frago_agent_command(self) -> list[str]:
-        """Get frago agent command for subprocess."""
-        return _resolve_frago_cmd() + ["agent"]
-
-    def _cleanup_old_process(self) -> None:
-        """Terminate old subprocess and reap it to prevent orphan/zombie leaks."""
-        if not self._process:
-            return
-
-        old_pid = self._process.pid
-        try:
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait(timeout=3)
-        except OSError:
-            pass  # already dead
-        finally:
-            # Close pipe FDs so the old process doesn't linger
-            for pipe in (self._process.stdin, self._process.stdout, self._process.stderr):
-                if pipe:
-                    with contextlib.suppress(OSError):
-                        pipe.close()
-            self._process = None
-            logger.info(f"Cleaned up old subprocess (PID: {old_pid})")
 
     def _assemble_prompt(self, message: str) -> str:
         """Prepend session-bound prefix to the caller-supplied message.
@@ -153,221 +123,168 @@ class AgentSession:
             return prefix
         return f"{prefix}\n\n{message}"
 
-    async def start(self, prompt: str) -> None:
-        """Start agent process in attached mode.
+    def _get_pool(self) -> Any:
+        """The resident-session pool this attached session draws from.
 
-        A fresh Claude session is started each time; per-turn user content
-        comes from ``prompt``, while any session-bound prefix (PA system
-        prompt + bootstrap, etc.) is supplied by ``prefix_provider`` and
-        re-attached on every (re)start.
+        Defaults to the module-level pool shared by all attached sessions, so
+        a reconnecting console reuses its warm TUI instead of cold-starting.
         """
-        # Kill old process before starting new one to prevent orphan leaks
-        self._cleanup_old_process()
+        if self._pool is None:
+            self._pool = _get_attached_pool()
+        return self._pool
 
-        cmd = self._get_frago_agent_command() + [
-            "--passthrough",
-            "--yes",
-            "--source", "web",
-        ]
+    async def _ensure_session(self) -> Any:
+        """Acquire (or reuse) this session's resident tmux TUI + its streamer.
 
-        # Write prompt to temp file
-        log_dir = Path.home() / ".frago" / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        prompt_file = log_dir / f"agent-attached-{self.internal_id}.txt"
-        prompt_file.write_text(self._assemble_prompt(prompt), encoding="utf-8")
-        cmd.extend(["--prompt-file", str(prompt_file)])
+        Acquisition is blocking (tmux + readiness polling), so it runs in a
+        worker thread. The streamer is created once per attached session and
+        anchored to the transcript tail *before* the first prompt: a resumed
+        session's transcript already holds its whole history, and replaying
+        that as "new" would dump the entire past conversation at the frontend.
+        """
+        if self._tmux_session is not None and self._tmux_session.is_alive():
+            return self._tmux_session
 
-        # FRAGO_PA marks this subprocess as a Primary Agent spawn so frago-hook
-        # can short-circuit SessionStart / PreToolUse injections that pollute
-        # PA's narrow JSON-action protocol with vanilla-agent guidance and
-        # markdown tutorials. See PA validator failure analysis (2026-05-03).
-        env = get_utf8_env()
-        env["FRAGO_PA"] = "1"
-        logger.info(f"Starting attached agent with command: {cmd} in {self.project_path}")
-        self._process = run_subprocess_interactive(cmd, cwd=self.project_path, env=env)
-
-        # Close stdin — prompt comes from --prompt-file
-        if self._process.stdin:
-            self._process.stdin.close()
-
-        self._attached = True
-        self._running = True
-        # Fresh subprocess → fresh message → text-block flag must start False
-        # (otherwise a prior turn's flag would leak across the kill+restart
-        # boundary and a stray early end_turn could terminate the new child
-        # before its first content block arrives).
-        self._saw_text_block_in_message = False
-        self._last_stream_activity = asyncio.get_event_loop().time()
-        self._reader_task = asyncio.create_task(self._read_stream())
-        self._watchdog_task = asyncio.create_task(self._activity_watchdog(timeout=60.0))
-
-        logger.info(
-            f"Attached agent session {self.internal_id} started (PID: {self._process.pid})"
+        # FRAGO_PA marks this as a Primary Agent spawn so frago-hook can
+        # short-circuit SessionStart / PreToolUse injections that pollute PA's
+        # narrow JSON-action protocol with vanilla-agent guidance and markdown
+        # tutorials. See PA validator failure analysis (2026-05-03). Injected
+        # into the tmux session env (new-session -e) rather than a subprocess
+        # env, since the CLI now runs inside the resident TUI.
+        pool = self._get_pool()
+        session = await asyncio.to_thread(
+            pool.acquire,
+            self.agent_type,
+            self.internal_id,
+            self.project_path,
+            env={"FRAGO_PA": "1"},
         )
+        self._tmux_session = session
+
+        if self._streamer is None:
+            from frago.agent_driver.streamer import TranscriptStreamer
+
+            driver = session.driver
+            path_fn = driver.transcript_path
+            if path_fn is None:
+                # This agent exposes no transcript (opencode/codex today):
+                # the turn still runs, it just streams no incremental events.
+                logger.info(
+                    "Agent %r exposes no transcript path — attached session %s "
+                    "will run without incremental streaming",
+                    self.agent_type, self.internal_id,
+                )
+            else:
+                self._streamer = TranscriptStreamer(
+                    self.agent_type, lambda: path_fn(session)
+                )
+                await asyncio.to_thread(self._streamer.seek_to_end)
+        return session
+
+    async def start(self, prompt: str) -> None:
+        """Start a turn in attached mode on the resident tmux session.
+
+        Per-turn user content comes from ``prompt``; any session-bound prefix
+        (PA system prompt + bootstrap, etc.) is supplied by ``prefix_provider``
+        and re-attached on every (re)start.
+        """
+        await self._ensure_session()
+        self._attached = True
+        await self._run_turn(self._assemble_prompt(prompt))
 
     async def send_message(self, message: str) -> None:
-        """Send a follow-up message by restarting the attached subprocess.
+        """Send a follow-up message into the live resident session.
 
-        Each call kills the existing claude child and launches a fresh
-        ``frago agent`` invocation. The new subprocess receives
-        ``prefix_provider() + message`` (when a prefix provider is set),
-        so session identity / bootstrap context survives the restart
-        without the caller having to re-attach it on every send.
-        Cross-message Claude-side conversational memory is still not
-        preserved at this layer.
+        Unlike the old subprocess model (which killed and respawned the child
+        on every message, losing Claude-side context), the TUI stays alive and
+        keeps its own conversational memory, so the raw message is enough — no
+        prefix re-attachment and no session-id reset.
         """
-        # Stop current reader task before starting new process
-        self._running = False
-        if self._reader_task:
-            self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._reader_task
-            self._reader_task = None
-
-        # Broadcast user message
         await manager.broadcast({
             "type": "agent_user_message",
             "internal_id": self.internal_id,
             "session_id": self._claude_session_id,
             "content": message,
         })
+        await self._ensure_session()
+        await self._run_turn(message)
 
-        # Drop the prior session id — fresh start has no continuation guarantee.
-        self._claude_session_id = None
+    async def _run_turn(self, text: str) -> None:
+        """Feed one turn and stream its transcript records until it completes.
 
-        # Start new process (start() will kill old process first)
-        await self.start(message)
-
-    async def stop(self) -> None:
-        """Stop the attached session."""
-        self._running = False
-
-        if self._watchdog_task:
-            self._watchdog_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._watchdog_task
-            self._watchdog_task = None
-
-        if self._reader_task:
-            self._reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._reader_task
-
-        self._cleanup_old_process()
-
-        logger.info(f"Attached agent session {self.internal_id} stopped")
-
-    async def _activity_watchdog(self, timeout: float) -> None:
-        """Kill the subprocess if stdout stays silent for ``timeout`` seconds.
-
-        Covers two failure modes with one mechanism:
-          1. Startup deadlock — child never produces the init event (stdin
-             write blocked on Windows pipe buffer before 514c061).
-          2. Mid-turn stall — child emitted init/progress then went silent
-             (observed during bootstraps that hang past 120s; without this
-             the queue consumer was the only backstop at 120s).
-
-        Any successful readline in ``_read_stream`` refreshes the activity
-        timestamp. Normal inter-event gaps (thinking, tool calls) are much
-        shorter than the timeout so legitimate work isn't killed.
+        The turn's end is decided by the driver's own completion probe inside
+        ``TmuxAgentSession.send`` (authoritative: it reads the transcript's
+        stop_reason), with ``turn_timeout_s`` as the backstop. The streamer
+        runs alongside and is drained once more after the turn returns so the
+        final records aren't lost to the poll interval.
         """
-        check_interval = 5.0
-        while True:
+        async with self._turn_lock:
+            self._running = True
+            session = self._tmux_session
+            stream_task: asyncio.Task | None = None
+            if self._streamer is not None:
+                stream_task = asyncio.create_task(self._streamer.run(self._emit_record))
             try:
-                await asyncio.sleep(check_interval)
-            except asyncio.CancelledError:
-                return
-            if not self._running:
-                return
-            if self._process is None or self._process.poll() is not None:
-                return
-            if self._last_stream_activity is None:
-                continue
-            idle = asyncio.get_event_loop().time() - self._last_stream_activity
-            if idle < timeout:
-                continue
-            logger.warning(
-                "Activity watchdog: PID %s silent for %.0fs (> %.0fs) — killing stuck child",
-                self._process.pid, idle, timeout,
-            )
-            self._cleanup_old_process()
+                await asyncio.to_thread(
+                    session.send, text, timeout_s=self._turn_timeout_s
+                )
+            except Exception as e:
+                logger.error("Attached turn failed: %s", e, exc_info=True)
+            finally:
+                if stream_task is not None:
+                    stream_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await stream_task
+                if self._streamer is not None:
+                    with contextlib.suppress(Exception):
+                        await self._streamer.drain(self._emit_record)
+                self._running = False
+                await manager.broadcast({
+                    "type": "agent_session_status",
+                    "internal_id": self.internal_id,
+                    "session_id": self._claude_session_id,
+                    "status": "completed",
+                })
+
+    async def _resolve_session_id(self) -> None:
+        """Announce the agent-native session id once the transcript appears.
+
+        The transcript's filename stem *is* the agent's native session id (the
+        id the driver launched the CLI with), which is what the retired headless
+        backend's ``system/init`` event carried. Derived from the path the driver handed
+        us, so this stays agent-agnostic.
+        """
+        if self._claude_session_id is not None or self._streamer is None:
             return
-
-    async def _read_stream(self) -> None:
-        """Read and parse stream-json output from Claude CLI."""
-        if not self._process or not self._process.stdout:
-            logger.error("No process or stdout available")
+        path = self._streamer.path
+        if path is None:
             return
+        self._claude_session_id = path.stem
+        logger.info(f"Agent session ID resolved: {self._claude_session_id}")
+        await manager.broadcast({
+            "type": "agent_session_resolved",
+            "internal_id": self.internal_id,
+            "session_id": self._claude_session_id,
+        })
 
-        logger.info(f"Starting stream reader for attached session {self.internal_id}")
-        line_count = 0
+    async def _emit_record(self, record: Any) -> None:
+        """Map one normalized transcript record onto the existing WS events.
 
-        try:
-            loop = asyncio.get_event_loop()
+        Event names and field shapes are unchanged from the headless-backend era —
+        the frontend is untouched. The only difference: text arrives as whole
+        content blocks rather than token deltas, and ``parameters`` is taken
+        straight from the record's complete ``tool_use.input`` instead of being
+        reassembled from ``input_json_delta`` fragments.
+        """
+        await self._resolve_session_id()
 
-            while self._running and self._process:
-                line = await loop.run_in_executor(None, self._process.stdout.readline)
-                self._last_stream_activity = loop.time()
+        role = record.role or record.record_type
 
-                if not line:
-                    logger.info(f"Attached process ended (read {line_count} lines)")
-                    break
-
-                line_count += 1
-                line = line.strip()
-                if not line:
-                    continue
-
-                logger.debug(f"Read line {line_count}: {line}")
-
-                try:
-                    event = json.loads(line)
-                    await self._handle_stream_event(event)
-                except json.JSONDecodeError:
-                    logger.warning(f"Non-JSON output: {line}")
-                    continue
-
-        except Exception as e:
-            logger.error(f"Error reading stream: {e}", exc_info=True)
-        finally:
-            self._running = False
-            await manager.broadcast({
-                "type": "agent_session_status",
-                "internal_id": self.internal_id,
-                "session_id": self._claude_session_id,
-                "status": "completed",
-            })
-
-    async def _handle_stream_event(self, event: dict[str, Any]) -> None:
-        """Parse and handle stream-json events from Claude CLI."""
-        event_type = event.get("type", "")
-
-        # Extract Claude session ID from system init event
-        if event_type == "system" and event.get("subtype") == "init":
-            self._claude_session_id = event.get("session_id")
-            logger.info(f"Claude session ID resolved: {self._claude_session_id}")
-
-            await manager.broadcast({
-                "type": "agent_session_resolved",
-                "internal_id": self.internal_id,
-                "session_id": self._claude_session_id,
-            })
-            return
-
-        # Unwrap stream_event wrapper
-        if event_type == "stream_event":
-            event = event.get("event", {})
-            event_type = event.get("type", "")
-
-        # Text streaming or tool input streaming
-        if event_type == "content_block_delta":
-            delta = event.get("delta", {})
-            delta_type = delta.get("type", "")
-
-            if delta_type == "text_delta":
-                text = delta.get("text", "")
-                self._current_assistant_message += text
-
+        if role == "assistant":
+            text = record.content_text
+            if text:
+                # done=False opens a new assistant bubble, done=True closes it —
+                # the pair the frontend's delta handler already expects.
                 await manager.broadcast({
                     "type": "agent_text_delta",
                     "internal_id": self.internal_id,
@@ -375,13 +292,6 @@ class AgentSession:
                     "content": text,
                     "done": False,
                 })
-
-            elif delta_type == "input_json_delta":
-                self._current_tool_input_json += delta.get("partial_json", "")
-
-        # Content block finished
-        elif event_type == "content_block_stop":
-            if self._current_assistant_message:
                 await manager.broadcast({
                     "type": "agent_text_delta",
                     "internal_id": self.internal_id,
@@ -389,119 +299,51 @@ class AgentSession:
                     "content": "",
                     "done": True,
                 })
-                # Notify callback with complete assistant message
                 if self._on_assistant_message:
                     with contextlib.suppress(Exception):
-                        self._on_assistant_message(self._current_assistant_message)
-                self._current_assistant_message = ""
+                        self._on_assistant_message(text)
 
-            # Flush accumulated tool input
-            if self._current_tool_input_json and self._pending_tool_calls:
-                tool_call_id = list(self._pending_tool_calls.keys())[-1]
-                tool_call = self._pending_tool_calls[tool_call_id]
-
-                try:
-                    tool_input = json.loads(self._current_tool_input_json)
-                except json.JSONDecodeError:
-                    tool_input = {"raw": self._current_tool_input_json}
-
-                tool_call["input"] = tool_input
-
+            for block in record.tool_calls:
+                tool_call_id = block.get("id", "")
+                tool_name = block.get("name", "")
+                self._pending_tool_calls[tool_call_id] = {
+                    "id": tool_call_id,
+                    "name": tool_name,
+                    "timestamp": datetime.now().isoformat(),
+                }
                 await manager.broadcast({
                     "type": "agent_tool_executing",
                     "internal_id": self.internal_id,
                     "session_id": self._claude_session_id,
                     "tool_call_id": tool_call_id,
-                    "tool_name": tool_call["name"],
-                    "parameters": tool_input,
+                    "tool_name": tool_name,
+                    "parameters": block.get("input") or {},
                 })
+            return
 
-                self._current_tool_input_json = ""
+        # User records carry tool results; their plain text is the echo of the
+        # prompt we just sent, which the frontend already rendered itself.
+        for block in record.tool_results:
+            tool_use_id = block.get("tool_use_id", "")
+            tool_call = self._pending_tool_calls.pop(tool_use_id, None)
+            await manager.broadcast({
+                "type": "agent_tool_result",
+                "internal_id": self.internal_id,
+                "session_id": self._claude_session_id,
+                "tool_call_id": tool_use_id,
+                "tool_name": tool_call["name"] if tool_call else "",
+                "success": not block.get("is_error", False),
+                "content": str(block.get("content", "")),
+            })
 
-        # Turn-end detection. Anthropic stream protocol emits message_delta
-        # with stop_reason at the end of every turn. stop_reason="tool_use"
-        # means the model wants its tool result fed back; the wrapper will
-        # then start another turn cycle. Any other stop_reason (end_turn /
-        # stop_sequence / max_tokens) means the model is done with this
-        # prompt — the wrapper SHOULD exit, but some wrappers (notably
-        # non-Anthropic backends in Claude Code passthrough mode) hang
-        # without closing stdout. Preempt the 60s activity watchdog by
-        # terminating proactively when we see a real end_turn marker.
-        #
-        # BUT: DeepSeek (and other non-Anthropic backends) sometimes emit
-        # message_delta(stop_reason=end_turn) right after a thinking block
-        # without having produced any text yet, then keep streaming the
-        # actual text 60–90s later. Terminating on the early signal kills
-        # the subprocess mid-output and the user's reply never reaches PA.
-        # Gate the proactive terminate on "we've seen real text in this
-        # message"; if only thinking has appeared, ignore the signal and
-        # let the activity watchdog handle a genuine hang.
-        elif event_type == "message_delta":
-            delta = event.get("delta", {})
-            stop_reason = delta.get("stop_reason")
-            if stop_reason and stop_reason != "tool_use":
-                if not self._saw_text_block_in_message:
-                    logger.info(
-                        "Stream end-of-turn (stop_reason=%s) seen before any "
-                        "text block for session %s — likely a thinking-block "
-                        "false signal from a non-Anthropic backend; deferring "
-                        "to activity watchdog instead of terminating now.",
-                        stop_reason, self.internal_id,
-                    )
-                else:
-                    logger.info(
-                        "Stream end-of-turn detected (stop_reason=%s) for "
-                        "session %s; terminating subprocess proactively",
-                        stop_reason, self.internal_id,
-                    )
-                    if self._process and self._process.poll() is None:
-                        with contextlib.suppress(Exception):
-                            self._process.terminate()
-
-        # New message starting (after tool_use roundtrip or follow-up turn).
-        # Reset the text-block flag so each message's end_turn is judged on
-        # its own content, not a previous message's text.
-        elif event_type == "message_start":
-            self._saw_text_block_in_message = False
-
-        # Tool use detected
-        elif event_type == "content_block_start":
-            block = event.get("content_block", {})
-            block_type = block.get("type")
-            if block_type == "text":
-                # Real user-facing text has begun — a subsequent end_turn
-                # is now meaningful (vs. a stray end_turn after thinking).
-                self._saw_text_block_in_message = True
-            elif block_type == "tool_use":
-                tool_call_id = block.get("id", "")
-                tool_name = block.get("name", "")
-
-                self._pending_tool_calls[tool_call_id] = {
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "input": {},
-                    "timestamp": datetime.now().isoformat(),
-                }
-                self._current_tool_input_json = ""
-
-        # Tool result
-        elif event_type == "message":
-            for content_block in event.get("content", []):
-                if content_block.get("type") == "tool_result":
-                    tool_use_id = content_block.get("tool_use_id", "")
-                    content = content_block.get("content", "")
-
-                    tool_call = self._pending_tool_calls.pop(tool_use_id, None)
-                    if tool_call:
-                        await manager.broadcast({
-                            "type": "agent_tool_result",
-                            "internal_id": self.internal_id,
-                            "session_id": self._claude_session_id,
-                            "tool_call_id": tool_use_id,
-                            "tool_name": tool_call["name"],
-                            "success": True,
-                            "content": str(content),
-                        })
+    async def stop(self) -> None:
+        """Stop the attached session and release its resident tmux session."""
+        self._running = False
+        pool = self._get_pool()
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(pool.evict, self.internal_id)
+        self._tmux_session = None
+        logger.info(f"Attached agent session {self.internal_id} stopped")
 
     @property
     def is_attached(self) -> bool:
@@ -509,15 +351,7 @@ class AgentSession:
 
     @property
     def is_running(self) -> bool:
-        if not self._running:
-            return False
-        # The reader task may still be in its readline executor when the
-        # subprocess has already exited; report the ground truth so the queue
-        # consumer isn't stalled waiting for _read_stream's finally block.
-        if self._process is None or self._process.poll() is not None:
-            self._running = False
-            return False
-        return True
+        return self._running
 
     @property
     def claude_session_id(self) -> str | None:
@@ -575,14 +409,11 @@ class AgentService:
             # Build command (uses venv-aware frago lookup so daemons without
             # .venv on PATH still find the right binary)
             cmd = _resolve_frago_cmd() + [
-                "agent", "--yes", "--source", "web",
+                "agent", "--source", "web",
                 "--agent-type", agent_type,
                 "--session-id", claude_session_id,
                 "--prompt-file", str(prompt_file),
             ]
-            # Gated opt-in: route through the tmux resident-session backend.
-            if _tmux_driver_enabled():
-                cmd += ["--driver", "tmux"]
 
             # Start process in background with correct cwd
             cwd = project_path or str(Path.home())

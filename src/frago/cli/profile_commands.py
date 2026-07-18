@@ -14,25 +14,36 @@ from frago.cli.agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 # 这里成为唯一出处，规则只负责跑命令注入 stdout。
 _AGENT_USAGE = """# frago agent 用法
 
-frago agent 驱动 CLI agent（默认 claude）跑一轮任务。
+frago agent 恒起一个 tmux 会话、在里面跑指定的 cli-agent（默认 claude）跑一轮任务。
+只有这一个后端：没有 headless 形态，没有 --driver 可选。
 
-⚠ 你从 Bash 调 frago agent 一律是非交互（无 TTY），必须带 --yes：默认会弹
-  --dangerously-skip-permissions 的 y/N 确认，无 TTY 下读不到输入会直接 Abort（退出码 1）。
+⚠ 从 Bash 调用 MUST 用后台执行（Bash 工具 run_in_background: true），NEVER 前台干等：
+  frago agent 阻塞到本轮跑完才退出，前台起等于把主控会话钉死在一个 worker 上。
+  后台起之后无需轮询、无需兜底定时器——harness 托管该进程，它退出即唤醒你。
+  NEVER 用 nohup / & 手动脱离：那样进程被摘出 harness 进程树，退出时永远不会唤醒你。
 
-常用形态（示例已含 --yes）：
-  frago agent <prompt> --yes                     # headless 跑一轮
-  frago agent <prompt> --yes --driver tmux       # 起常驻 tmux TUI 会话跑
-  frago agent <prompt> --yes --use-profile <名>  # 跑在某条保存的 profile 的模型上
-  frago agent <prompt> --yes --use-ccr           # 跑在 CCR 当前配置的模型上（见下方 CCR 状态）
-  frago agent attach --files '[...]' --dirs '[...]'  # 交付产出文件（attach 无需 --yes）
+常用形态：
+  frago agent <prompt>                        # 跑一轮，打印答案
+  frago agent --prompt-file <任务书.md>       # 任务书走文件，长 prompt 首选
+  frago agent <prompt> --json                 # 机器可读摘要，调用方判读用这个
+  frago agent <prompt> --agent-type opencode  # 换 cli-agent
+  frago agent <prompt> --resume <uuid>        # 续接既有会话
+  frago agent <prompt> --use-profile <名>     # 跑在某条保存的 profile 的模型上
+  frago agent <prompt> --use-ccr              # 跑在 CCR 当前配置的模型上（见下方 CCR 状态）
+  frago agent attach --files '[...]' --dirs '[...]'  # 交付产出文件
+
+--json 输出：{"status","exit_code","session_id","tmux_name","text","duration_ms"}
+退出码契约：0=ok / 1=timeout（会话仍活可 send 续）/ 2=needs_input（MUST 交真人）/ 3=error
+
+已退场，NEVER 再用：--driver、--ask、--passthrough（传了报错）；--yes/-y 已废弃降为
+no-op，收到即忽略（历史调用方不会因此炸掉），新代码 NEVER 写它。
 
 想跑在非默认模型上有两条路：
   --use-profile <名>：从 ~/.frago/profiles.json 取该 profile 的 endpoint/model/key \
-（ANTHROPIC_BASE_URL / ANTHROPIC_MODEL / ANTHROPIC_API_KEY）注入会话；tmux 后端经 new-session -e 注入，\
-claude-p 后端并入进程环境。
+（ANTHROPIC_BASE_URL / ANTHROPIC_MODEL / ANTHROPIC_API_KEY），经 tmux new-session -e 注入会话。
   --use-ccr：走本地 CCR 代理，路由到 CCR 配置的那个模型（Anthropic↔OpenAI 协议转换由 CCR 负责）。\
 CCR 需在跑；若目标是国内端点，CCR 要直连（起 CCR 时清掉 HTTP(S)_PROXY/ALL_PROXY）。
---endpoint / --api-key 仍优先覆盖以上二者。"""
+--endpoint / --api-key / --model 优先覆盖以上二者（同样经 new-session -e 注入）。"""
 
 
 def _ccr_hint() -> str:

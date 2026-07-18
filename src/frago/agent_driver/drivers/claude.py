@@ -373,5 +373,8 @@ register_driver(
         # claude v2.1.x：Escape 不清输入框（20260717 live 实测无效），C-u 清行 +
         # 探针强制重绘确认（懒重绘 TUI 读屏验证不可靠，见 _clear_input）。
         clear_input=_clear_input,
+        # attached 流式（Phase 6）据此 tail 本会话 jsonl；与 completion_probe /
+        # is_truly_idle 共用同一套定位规则，NEVER 各自派生一份。
+        transcript_path=transcript_path_for,
     )
 )

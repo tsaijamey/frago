@@ -1,6 +1,7 @@
 """Phase 4 单测：recipe plan/create 的 _run_frago_agent 透传 --agent-type。
 
-默认 claude、不加 --driver(行为不变)；显式指定时透传 agent_type 与 driver。
+默认 claude；显式指定时透传 agent_type。Phase 5 起 tmux 是唯一后端，
+_run_frago_agent 不再有 driver 参数，故一并断言命令行不含已退场的 --driver / --yes。
 """
 
 from __future__ import annotations
@@ -27,19 +28,25 @@ def captured(monkeypatch):
     return calls
 
 
-def test_default_agent_type_is_claude_no_driver(captured) -> None:
+def test_default_agent_type_is_claude(captured) -> None:
     rc = recipe_commands._run_frago_agent("hello")
     assert rc == 0
     cmd = captured["cmd"]
     assert cmd[cmd.index("--agent-type") + 1] == "claude"
-    assert "--driver" not in cmd
 
 
-def test_passthrough_agent_type_and_driver(captured) -> None:
-    recipe_commands._run_frago_agent("hi", agent_type="opencode", driver="tmux")
+def test_agent_type_passed_through(captured) -> None:
+    recipe_commands._run_frago_agent("hi", agent_type="opencode")
     cmd = captured["cmd"]
     assert cmd[cmd.index("--agent-type") + 1] == "opencode"
-    assert cmd[cmd.index("--driver") + 1] == "tmux"
+
+
+def test_retired_flags_are_not_spliced(captured) -> None:
+    """--driver 已从 CLI 删除：再拼上去会让 agent 以 usage error 直接退出。"""
+    recipe_commands._run_frago_agent("hi")
+    cmd = captured["cmd"]
+    assert "--driver" not in cmd
+    assert "--yes" not in cmd
 
 
 # ── opencode driver 端到端契约(Phase 0 实测坑全部进 driver) ──────────
