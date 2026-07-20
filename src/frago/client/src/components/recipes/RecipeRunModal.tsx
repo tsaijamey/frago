@@ -129,6 +129,7 @@ export default function RecipeRunModal({ recipeName, onClose }: RecipeRunModalPr
     if (recipe && (!recipe.inputs || Object.keys(recipe.inputs).length === 0)) {
       handleRun();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recipe]);
 
   if (isLoading) {

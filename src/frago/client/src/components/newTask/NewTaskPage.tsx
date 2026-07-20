@@ -51,6 +51,7 @@ export default function NewTaskPage() {
   // Save scroll position on unmount
   useEffect(() => {
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       const container = scrollContainerRef.current;
       if (container) {
         setConsoleScrollPosition(container.scrollTop);

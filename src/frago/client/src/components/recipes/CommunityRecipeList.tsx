@@ -56,6 +56,7 @@ export default function CommunityRecipeList() {
     if (communityRecipes.length === 0) {
       loadCommunityRecipes();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [communityRecipes.length, loadCommunityRecipes]);
 
   // Filter recipes by search

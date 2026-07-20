@@ -41,6 +41,7 @@ export function FileBrowser({ projectId }: FileBrowserProps) {
   useEffect(() => {
     loadProject();
     loadFiles('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   async function loadProject() {

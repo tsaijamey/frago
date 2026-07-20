@@ -149,6 +149,7 @@ export default function DirectoryAutocomplete({
 
     textarea.addEventListener('keydown', handleKeyDown);
     return () => textarea.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, selectedIndex, filteredDirectories, triggerPosition]);
 
   // Select a directory

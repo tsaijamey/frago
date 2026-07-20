@@ -48,7 +48,7 @@ export default function JsonContent({ content, className = '' }: JsonContentProp
 function tryParseJson(content: string): { parsed: unknown; isValid: boolean } {
   try {
     // Find JSON start
-    const jsonStart = content.search(/[{\[]/);
+    const jsonStart = content.search(/[{[]/);
     if (jsonStart === -1) {
       return { parsed: null, isValid: false };
     }
