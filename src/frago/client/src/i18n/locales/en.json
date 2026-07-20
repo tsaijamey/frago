@@ -40,6 +40,7 @@
     "title": "Claude Sessions",
     "subtitle": "Browse and resume your Claude Code conversations",
     "rescan": "Rescan",
+    "newSession": "New session",
     "scanning": "Scanning sessions…",
     "days_one": "{{count}}d",
     "days_other": "{{count}}d",

@@ -40,6 +40,7 @@
     "title": "Claude 会话",
     "subtitle": "浏览并恢复你的 Claude Code 对话",
     "rescan": "重新扫描",
+    "newSession": "新建会话",
     "scanning": "正在扫描会话…",
     "days_one": "{{count}} 天",
     "days_other": "{{count}} 天",

@@ -53,6 +53,10 @@ class SendRequest(BaseModel):
 
     text: str = ""
     images: list[str] = []
+    # Starting directory, sent only when the page is creating a brand-new
+    # session (its sid has no transcript yet, so there is no cwd to read back).
+    # Existing sessions ignore this and keep the cwd recorded in their jsonl.
+    cwd: str | None = None
 
 
 def _session_cwd(sid: str) -> str | None:
@@ -180,7 +184,14 @@ async def send_to_claude_session(sid: str, request: SendRequest) -> dict:
     prompt = build_prompt_with_images(request.text, image_paths)
 
     runner = _get_runner()
-    cwd = _session_cwd(sid)
+    # Existing session: trust the cwd recorded in its own transcript. Brand-new
+    # session: there is no transcript yet, so fall back to what the page picked
+    # and record that a person started this one — claude gives no slug to a
+    # session whose id we chose, so the scan cannot otherwise tell.
+    recorded_cwd = _session_cwd(sid)
+    cwd = recorded_cwd or request.cwd
+    if recorded_cwd is None and request.cwd:
+        svc.register_webui_session(sid)
     try:
         activation = await asyncio.to_thread(runner.send, sid, prompt, cwd=cwd)
     except Exception as e:  # noqa: BLE001 — surface drive failures as 500 with cause

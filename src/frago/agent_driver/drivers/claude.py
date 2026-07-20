@@ -145,12 +145,16 @@ def _launch(ctx: LaunchCtx) -> str:
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。
     if ctx.native_session_id:
-        # 续接一个**已存在**的真实 claude 会话（如 WebUI 点开页面上的某会话）：
-        # 必须用 ``--resume`` 原样带真实 id——claude 会续上原对话、把回复写回同一个
-        # ``<sid>.jsonl``（页面正读的那个）。NEVER 用 ``--session-id``：那是"用此 id
-        # 新建会话"，撞上已存在的会话直接 ``Error: Session ID ... is already in use``
-        # 并退出，链路断在启动那一刻。
-        return f"claude --dangerously-skip-permissions --resume {ctx.session_id}"
+        # 真实 claude 会话 id 原样使用，按 transcript 是否已存在二分——与下方非 native
+        # 分支同一套规则：
+        #   已存在（WebUI 点开页面上的某会话）→ ``--resume``，续上原对话并把回复写回
+        #     同一个 ``<sid>.jsonl``（页面正读的那个）。此时 NEVER 用 ``--session-id``：
+        #     撞上已存在的会话会直接 ``Error: Session ID ... is already in use`` 并退出。
+        #   不存在（WebUI「新建会话」先生成一个全新 uuid）→ ``--session-id`` 首次创建。
+        #     反过来对不存在的 id 用 ``--resume`` 同样起不来，故这个二分是必须的。
+        if tc_mod.locate_transcript(ctx.session_id, cwd=ctx.cwd) is not None:
+            return f"claude --dangerously-skip-permissions --resume {ctx.session_id}"
+        return f"claude --dangerously-skip-permissions --session-id {ctx.session_id}"
     # 非 native：frago 自己的标识经 uuid5 确定性映射成合法 claude 会话 id。
     # 关键分流（spec 20260627 Phase 5）：``--session-id`` 是"用此 id **新建**会话"，
     # 撞上已存在的 ``<sid>.jsonl`` 直接 ``Error: Session ID ... is already in use``

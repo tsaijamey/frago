@@ -135,14 +135,62 @@ def _extract_blocks(content: Any) -> list[dict[str, Any]]:
     return blocks
 
 
-def _classify_human(slug: str | None, first_user_text: str | None) -> tuple[str, str]:
+# Sessions the web UI created. Claude assigns no slug to a session whose id was
+# handed to it, so this registry is the only way to tell a user-started web
+# session apart from an agent-spawned one. Written by the send endpoint on
+# creation; read here on every scan.
+WEBUI_SESSIONS_FILE = Path.home() / ".frago" / "cache" / "webui_sessions.json"
+
+
+def register_webui_session(sid: str) -> None:
+    """Record that ``sid`` was started by a person from the web UI."""
+    try:
+        WEBUI_SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        known: list[str] = []
+        if WEBUI_SESSIONS_FILE.exists():
+            with contextlib.suppress(json.JSONDecodeError, ValueError, OSError):
+                loaded = json.loads(WEBUI_SESSIONS_FILE.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    known = [str(x) for x in loaded]
+        if sid in known:
+            return
+        known.append(sid)
+        # Keep the file bounded; oldest entries age out of the sessions list anyway.
+        WEBUI_SESSIONS_FILE.write_text(
+            json.dumps(known[-2000:], ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        # Registration is best-effort: failing it only costs the "human" label.
+        pass
+
+
+def _webui_created_sids() -> set[str]:
+    """Session ids started from the web UI. Empty set when unreadable."""
+    try:
+        if not WEBUI_SESSIONS_FILE.exists():
+            return set()
+        loaded = json.loads(WEBUI_SESSIONS_FILE.read_text(encoding="utf-8"))
+        return {str(x) for x in loaded} if isinstance(loaded, list) else set()
+    except (OSError, json.JSONDecodeError, ValueError):
+        return set()
+
+
+def _classify_human(
+    slug: str | None, first_user_text: str | None, sid: str | None = None
+) -> tuple[str, str]:
     """Return (classification, reason) where classification is human|maybe|agent.
 
-    A CLI-issued interactive session always carries a ``slug``. Without one we
-    fall back to matching the first user message against known agent templates.
+    A CLI-issued interactive session always carries a ``slug``. Sessions started
+    from the web UI never get one — claude only mints a slug for sessions whose
+    id it picked itself, and those are created with an explicit ``--session-id``
+    — so they are matched against the registry the send endpoint writes. Without
+    either signal, fall back to matching the first user message against known
+    agent templates.
     """
     if slug:
         return "human", "has slug (CLI-issued interactive session)"
+    if sid and sid in _webui_created_sids():
+        return "human", "created from the web UI"
     if first_user_text:
         for pat in _AGENT_PATTERNS:
             if pat.search(first_user_text[:200]):
@@ -322,7 +370,7 @@ def scan_sessions(
             if data is None:
                 continue
             sid = jsonl.stem
-            human, reason = _classify_human(data["slug"], data["first_user"])
+            human, reason = _classify_human(data["slug"], data["first_user"], sid)
             first_user_full = data["first_user"] or ""
             last_full = data["last_assistant"] or ""
             idx_entry = index.get(sid) or {}
