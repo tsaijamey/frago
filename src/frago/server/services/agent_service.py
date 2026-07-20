@@ -145,19 +145,18 @@ class AgentSession:
         if self._tmux_session is not None and self._tmux_session.is_alive():
             return self._tmux_session
 
-        # FRAGO_PA marks this as a Primary Agent spawn so frago-hook can
-        # short-circuit SessionStart / PreToolUse injections that pollute PA's
-        # narrow JSON-action protocol with vanilla-agent guidance and markdown
-        # tutorials. See PA validator failure analysis (2026-05-03). Injected
-        # into the tmux session env (new-session -e) rather than a subprocess
-        # env, since the CLI now runs inside the resident TUI.
+        # No FRAGO_PA marker here: this path now only ever serves WebUI
+        # "new session", which must behave exactly like typing `claude` in a
+        # terminal — including the SessionStart / PreToolUse hook injections.
+        # The marker dates from when PA itself came through here (see the
+        # 2026-05-03 validator analysis); PA has since moved to
+        # pa_tmux_runner.py, which acquires its own session and never set it.
         pool = self._get_pool()
         session = await asyncio.to_thread(
             pool.acquire,
             self.agent_type,
             self.internal_id,
             self.project_path,
-            env={"FRAGO_PA": "1"},
         )
         self._tmux_session = session
 
