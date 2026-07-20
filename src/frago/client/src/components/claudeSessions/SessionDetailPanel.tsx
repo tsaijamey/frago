@@ -68,7 +68,6 @@ export default function SessionDetailPanel({
   const canSend = !sending && (!!input.trim() || images.length > 0);
   return (
     <>
-      <div className="cs-drawer-backdrop" onClick={closeDetail} />
       <aside className="cs-drawer">
         <div className="cs-drawer-header">
           <div className="cs-drawer-titlebar">

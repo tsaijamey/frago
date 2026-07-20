@@ -10,7 +10,7 @@
  */
 
 import { useState } from 'react';
-import { CalendarDays, RefreshCw } from 'lucide-react';
+import { CalendarDays, RefreshCw, Plus } from 'lucide-react';
 import { useSessionsList } from './useSessionsList';
 import { usePaSessionsList } from './usePaSessionsList';
 import { useSessionDetail } from './useSessionDetail';
@@ -20,11 +20,13 @@ import SessionList from './SessionList';
 import PaSessionList from './PaSessionList';
 import SessionDetailPanel from './SessionDetailPanel';
 import TokenCalendarModal from './TokenCalendarModal';
+import NewSessionModal from './NewSessionModal';
 
 type Tab = 'all' | 'pa';
 
 export default function ClaudeSessionsPage() {
   const [tab, setTab] = useState<Tab>('all');
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
 
   const {
     t,
@@ -84,7 +86,7 @@ export default function ClaudeSessionsPage() {
   const [calendarOpen, setCalendarOpen] = useState(false);
 
   return (
-    <div className="page-scroll" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
+    <div className="cs-page">
       {/* Header */}
       <div className="cs-header">
         <div>
@@ -92,6 +94,17 @@ export default function ClaudeSessionsPage() {
           <p className="cs-subtitle">{t('claudeSessions.subtitle')}</p>
         </div>
         <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
+          {/* Creates an ordinary session in a chosen directory — it lands in
+              this same list and uses the same detail panel. */}
+          <button
+            type="button"
+            className="cs-refresh cs-refresh--primary"
+            onClick={() => setNewSessionOpen(true)}
+            title={t('claudeSessions.newSession')}
+          >
+            <Plus size={15} />
+            <span>{t('claudeSessions.newSession')}</span>
+          </button>
           <button
             type="button"
             className="cs-refresh"
@@ -116,6 +129,22 @@ export default function ClaudeSessionsPage() {
 
       {calendarOpen && <TokenCalendarModal t={t} onClose={() => setCalendarOpen(false)} />}
 
+      <NewSessionModal
+        isOpen={newSessionOpen}
+        onClose={() => setNewSessionOpen(false)}
+        onCreated={async (sid) => {
+          // Open the panel at once — it polls for the first reply on its own.
+          openDetail(sid);
+          // The row cannot appear until claude has written its transcript, which
+          // lags the click by a few seconds, so rescan on a short backoff rather
+          // than once. Cheap, and it stops the list looking empty meanwhile.
+          for (const delay of [1500, 3000, 6000, 12000]) {
+            await new Promise((r) => setTimeout(r, delay));
+            await fetchSessions(days);
+          }
+        }}
+      />
+
       <div className="cs-segment" style={{ alignSelf: 'flex-start' }}>
         <button
           type="button"
@@ -133,74 +162,81 @@ export default function ClaudeSessionsPage() {
         </button>
       </div>
 
-      {tab === 'all' ? (
-        <>
-          <SessionsToolbar
-            t={t}
-            days={days}
-            setDays={setDays}
-            search={search}
-            setSearch={setSearch}
-            filters={filters}
-            toggleFilter={toggleFilter}
-            counts={counts}
-          />
+      {/* Split view: the list keeps its own scroll on the left and stays
+          clickable while a session is open on the right. */}
+      <div className="cs-split">
+        <div className="cs-main">
+          {tab === 'all' ? (
+            <>
+              <SessionsToolbar
+                t={t}
+                days={days}
+                setDays={setDays}
+                search={search}
+                setSearch={setSearch}
+                filters={filters}
+                toggleFilter={toggleFilter}
+                counts={counts}
+              />
 
-          <SessionList
-            t={t}
-            loading={loading}
-            error={error}
-            visible={visible}
-            sessions={sessions}
-            scannedFiles={scannedFiles}
-            detailSid={detailSid}
-            copiedSid={copiedSid}
-            activity={sessionActivity.activity}
-            openDetail={openDetail}
-            handleCopy={handleCopy}
-          />
-        </>
-      ) : (
-        <PaSessionList
-          t={tPa}
-          loading={paLoading}
-          error={paError}
-          sessions={paSessions}
-          detailSid={detailSid}
-          copiedSid={paCopiedSid}
-          activity={sessionActivity.activity}
-          onRefresh={fetchPaSessions}
-          openDetail={openDetail}
-          handleCopy={handlePaCopy}
-        />
-      )}
+              <SessionList
+                t={t}
+                loading={loading}
+                error={error}
+                visible={visible}
+                sessions={sessions}
+                scannedFiles={scannedFiles}
+                detailSid={detailSid}
+                copiedSid={copiedSid}
+                activity={sessionActivity.activity}
+                openDetail={openDetail}
+                handleCopy={handleCopy}
+              />
+            </>
+          ) : (
+            <PaSessionList
+              t={tPa}
+              loading={paLoading}
+              error={paError}
+              sessions={paSessions}
+              detailSid={detailSid}
+              copiedSid={paCopiedSid}
+              activity={sessionActivity.activity}
+              onRefresh={fetchPaSessions}
+              openDetail={openDetail}
+              handleCopy={handlePaCopy}
+            />
+          )}
+        </div>
 
-      {/* Detail side panel */}
-      {detailSid && (
-        <SessionDetailPanel
-          t={t}
-          sessions={sessions}
-          detailSid={detailSid}
-          detailTitle={detailTitle}
-          detail={detail}
-          detailLoading={detailLoading}
-          input={input}
-          setInput={setInput}
-          images={images}
-          addImageFiles={addImageFiles}
-          removeImage={removeImage}
-          sending={sending}
-          sendError={sendError}
-          activation={activation}
-          pollStalled={pollStalled}
-          streamRef={streamRef}
-          handleStreamScroll={handleStreamScroll}
-          closeDetail={closeDetail}
-          handleSend={handleSend}
-          refreshDetail={refreshDetail}
-          handleCopy={handleCopy}
-        />
-      )}
+        {detailSid && (
+          <div className="cs-side">
+            <SessionDetailPanel
+              t={t}
+              sessions={sessions}
+              detailSid={detailSid}
+              detailTitle={detailTitle}
+              detail={detail}
+              detailLoading={detailLoading}
+              input={input}
+              setInput={setInput}
+              images={images}
+              addImageFiles={addImageFiles}
+              removeImage={removeImage}
+              sending={sending}
+              sendError={sendError}
+              activation={activation}
+              pollStalled={pollStalled}
+              streamRef={streamRef}
+              handleStreamScroll={handleStreamScroll}
+              closeDetail={closeDetail}
+              handleSend={handleSend}
+              refreshDetail={refreshDetail}
+              handleCopy={handleCopy}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -6,6 +6,17 @@ export default {
   ],
   theme: {
     extend: {
+      // Breakpoint system (single source of truth mirrored in globals.css header):
+      // phone ≤640px, tablet 641–1024px, desktop ≥1025px.
+      // MUST live under `extend` — declaring `screens` at theme level REPLACES
+      // Tailwind's defaults, which silently kills the existing
+      // `md:grid-cols-2` / `lg:flex` / `xl:grid-cols-3` grids in
+      // RecipeList / SkillList / CommunityRecipeList.
+      screens: {
+        phone: { max: '640px' },
+        tablet: { min: '641px', max: '1024px' },
+        desktop: { min: '1025px' },
+      },
       colors: {
         // Use CSS variables to support theme switching
         // Based on Next.js-inspired design language from FRONTEND_STYLE_GUIDE.md

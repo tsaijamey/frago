@@ -2,6 +2,18 @@
  * frago GUI Global Styles
  *
  * Based on GitHub Dark design style, supports dark/light theme switching
+ *
+ * === Breakpoint system (single source of truth) ===
+ * Three tiers only — every hand-written media query in this project MUST use
+ * exactly these pixel values (CSS custom properties cannot be used in media
+ * query conditions, so the raw numbers are the contract):
+ *
+ *   phone   : @media (max-width: 640px)
+ *   tablet  : @media (min-width: 641px) and (max-width: 1024px)
+ *   desktop : @media (min-width: 1025px)
+ *
+ * The same tiers are registered as Tailwind screens (phone/tablet/desktop)
+ * in tailwind.config.js for JSX responsive prefixes.
  */
 
 @tailwind base;
@@ -598,6 +610,22 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   font-size: 11px;
 }
 
+/* Phone tier: rail is hidden, so the content card no longer needs the
+   left slot; tighten margins and compress the topbar padding. */
+@media (max-width: 640px) {
+  .content-area {
+    margin: 8px;
+  }
+
+  .topbar {
+    padding: 0 14px;
+  }
+
+  .topbar-right {
+    gap: 12px;
+  }
+}
+
 .topbar-status {
   color: var(--text-muted);
   font-size: 12px;
@@ -795,6 +823,77 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   padding-left: 8px;
   margin: 4px 6px 0;
   border-top: 1px solid var(--border-color);
+}
+
+/* === Bottom Tab Bar (phone-tier primary navigation) === */
+/* Hidden by default; replaces the left rail at the phone breakpoint. */
+.tabbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .rail {
+    display: none;
+  }
+
+  .tabbar {
+    display: flex;
+    flex-shrink: 0;
+    align-items: stretch;
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    padding-bottom: env(safe-area-inset-bottom);
+    z-index: 50;
+  }
+
+  .tabbar-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    padding: 6px 4px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color var(--transition-fast);
+  }
+
+  .tabbar-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 26px;
+    border-radius: 13px;
+    transition: background var(--transition-fast);
+  }
+
+  /* Labels are always visible — no hover dependency on touch screens */
+  .tabbar-item-label {
+    font-size: 11px;
+    font-weight: var(--font-weight-medium);
+    line-height: 1;
+  }
+
+  /* Selected state: icon sits in a filled accent pill and the whole tab
+     takes the accent color — no single-edge accent bars anywhere. */
+  .tabbar-item--active {
+    color: var(--accent-primary);
+  }
+
+  .tabbar-item--active .tabbar-item-icon {
+    background: var(--accent-primary-10);
+    box-shadow: inset 0 0 0 1px var(--accent-primary-20);
+  }
+
+  .tabbar-item:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
 }
 
 .rail-status-dot {
@@ -1369,7 +1468,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   gap: 16px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 640px) {
   .dashboard-two-col {
     grid-template-columns: 1fr;
   }
@@ -2614,13 +2713,13 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* Responsive grid */
-@media (max-width: 768px) {
+@media (min-width: 641px) and (max-width: 1024px) {
   .welcome-examples-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
   .welcome-examples-grid {
     grid-template-columns: 1fr;
   }
@@ -2833,6 +2932,18 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   white-space: nowrap;
 }
 
+/* Starting a session is the page's primary action — solid, not tinted. */
+.cs-refresh--primary {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-accent);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.cs-refresh--primary:hover {
+  filter: brightness(1.08);
+}
+
 .cs-refresh:hover:not(:disabled) {
   background: var(--accent-primary-20);
 }
@@ -3007,20 +3118,12 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
               transform var(--transition-fast);
 }
 
-/* Accent edge indicator — grows in on hover/selection */
-.cs-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 3px;
-  height: 0;
-  transform: translateY(-50%);
-  background: var(--accent-primary);
-  border-radius: 0 3px 3px 0;
-  transition: height var(--transition-fast);
-}
-
+/* Selection is carried by the whole card plus the source tile — never by an
+   edge bar. A left rail used to grow in here; it is banned by the project
+   design rules, and in a list this long an edge bar also reads as decoration
+   rather than state. Lighting the tile keeps the indicator anchored to the
+   element that already means "where this session came from", and costs zero
+   layout shift while arrowing through the list. */
 .cs-row:hover {
   border-color: var(--border-accent);
   background: var(--bg-elevated);
@@ -3028,18 +3131,23 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   transform: translateY(-1px);
 }
 
-.cs-row:hover::before {
-  height: 60%;
-}
-
 .cs-row.selected {
   border-color: var(--border-accent);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 0 0 1px var(--accent-primary-20), var(--shadow-sm);
 }
 
-.cs-row.selected::before {
-  height: calc(100% - 20px);
+/* Source tile goes solid: the strongest signal in the row, fixed size. */
+.cs-row.selected .cs-row-mark {
+  color: var(--text-on-accent) !important;
+  background: var(--accent-primary);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 4px 14px -3px color-mix(in srgb, var(--accent-primary) 60%, transparent);
+}
+
+.cs-row.selected .cs-row-title {
+  color: var(--text-white);
 }
 
 .cs-row-mark {
@@ -3171,27 +3279,73 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* Detail drawer */
-.cs-drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(1px);
-  z-index: 1100;
+/* === Session workbench: split view ===
+   The detail used to be a fixed overlay with a full-screen backdrop, which
+   swallowed every click on the list — picking a second session meant closing
+   the first. It is now a real column: the page owns the height, list and
+   detail scroll independently, and the list stays live while a session is
+   open. Below the desktop tier there is not enough width for two columns, so
+   the detail falls back to a full-screen drill-down (see the media query). */
+.cs-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  overflow: hidden;
+}
+
+.cs-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+/* Left column — filters + list. Owns its own scroll. */
+.cs-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Right column — fixed width so the list never reflows as it opens/closes. */
+.cs-side {
+  flex: 0 0 520px;
+  min-width: 0;
+  display: flex;
 }
 
 .cs-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(560px, 92vw);
-  background: var(--bg-base);
-  border-left: 1px solid var(--border-color);
-  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
-  z-index: 1101;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  animation: cs-slide-in 0.2s ease;
+  overflow: hidden;
+  background: var(--bg-base);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+}
+
+/* Phone + tablet: no room for two columns — cover the page instead. */
+@media (max-width: 1024px) {
+  .cs-side {
+    position: fixed;
+    inset: 0;
+    z-index: 1101;
+    flex: none;
+  }
+
+  .cs-drawer {
+    border: none;
+    border-radius: 0;
+    animation: cs-slide-in 0.2s ease;
+  }
 }
 
 @keyframes cs-slide-in {
@@ -3891,7 +4045,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* Stack columns on narrow viewports */
-@media (max-width: 1000px) {
+@media (max-width: 1024px) {
   .rd-layout {
     flex-direction: column;
   }
@@ -4111,7 +4265,7 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
 }
 
 /* Narrow viewport: rail becomes a horizontal scroll strip above the panel */
-@media (max-width: 720px) {
+@media (max-width: 640px) {
   .settings-layout {
     flex-direction: column;
   }

@@ -10,33 +10,35 @@
 import { MessageSquare, LayoutGrid, Settings } from 'lucide-react';
 import { useAppStore, type PageType } from '@/stores/appStore';
 
-interface RailItem {
+export interface RailItem {
   id: PageType;
   label: string;
   icon: React.ReactNode;
 }
 
-const NAV_ITEMS: RailItem[] = [
+export const NAV_ITEMS: RailItem[] = [
   { id: 'claude_sessions', label: 'sessions', icon: <MessageSquare size={20} /> },
   { id: 'recipes', label: 'recipes', icon: <LayoutGrid size={20} /> },
 ];
 
-const CONFIG_ITEM: RailItem = {
+export const CONFIG_ITEM: RailItem = {
   id: 'settings',
   label: 'config',
   icon: <Settings size={20} />,
 };
 
+export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
+  if (id === 'claude_sessions') return currentPage === 'claude_sessions';
+  if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
+  if (id === 'settings') return currentPage === 'settings';
+  return false;
+}
+
 export default function Sidebar() {
   const { currentPage, switchPage, systemStatus } = useAppStore();
   const isRunning = systemStatus?.cpu_percent !== undefined;
 
-  const isActive = (id: PageType) => {
-    if (id === 'claude_sessions') return currentPage === 'claude_sessions';
-    if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
-    if (id === 'settings') return currentPage === 'settings';
-    return false;
-  };
+  const isActive = (id: PageType) => isNavItemActive(id, currentPage);
 
   const renderItem = (item: RailItem) => (
     <button

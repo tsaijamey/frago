@@ -8,6 +8,7 @@
 import { ReactNode } from 'react';
 import TopBar from './TopBar';
 import Sidebar from './Sidebar';
+import MobileTabBar from './MobileTabBar';
 import VersionBanner from './VersionBanner';
 
 interface MainLayoutProps {
@@ -34,6 +35,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
           </main>
         </div>
       </div>
+
+      {/* Phone-only bottom tab bar (rail is hidden ≤640px) */}
+      <MobileTabBar />
     </div>
   );
 }
