@@ -1,12 +1,11 @@
 """Launch guards that constrain *how* the frago server may be started.
 
-Only two invocation forms are sanctioned:
-
-  * Development (inside the source checkout): ``uv run frago server ...``
-  * Production (uv-tool install):             ``frago server ...``
-
-Anything else — most notably a bare ``python -m frago.server.runner --daemon``
-or running the repo's ``.venv`` interpreter directly without uv — is refused.
+The only sanctioned server runtime is the system-installed frago (uv tool
+install): ``frago server ...``. Running the server out of the repo's ``.venv``
+is never allowed — ``uv run frago server start`` in the source checkout first
+reinstalls the repo as the system frago and hands over to it (see
+``frago.cli.server_command``), so by the time the daemon spawns, the process
+must be the system install.
 
 Two independent gates enforce this:
 
@@ -16,11 +15,10 @@ we generate) set. A raw ``python -m frago.server.runner --daemon`` lacks it and
 is rejected. This is a guard against *accidental / habitual* misuse, not against
 a deliberate actor who hand-sets the token — code-level guards cannot stop that.
 
-Gate 2 (uv posture): when the CLI ``server start`` runs from inside the frago
-source checkout, it must have been entered through ``uv run`` (``VIRTUAL_ENV``
-pointing at the repo's ``.venv``). A bare ``.venv/bin/frago`` or a globally
-installed ``frago`` invoked from within the repo is refused with guidance to use
-``uv run``.
+Gate 2 (system install): the daemon spawner must NOT be running from the frago
+source checkout's venv. That would make the repo venv the server runtime,
+recreating the version split between the running server and the system frago
+that hooks hand to agents.
 """
 
 from __future__ import annotations
@@ -63,8 +61,7 @@ def assert_sanctioned_spawn() -> None:
         return
     msg = (
         "Refusing to start daemon: not launched through a sanctioned entry "
-        "point. Start the server with 'uv run frago server start' (in the "
-        "source checkout) or 'frago server start' (installed), never via "
+        "point. Start the server with 'frago server start', never via "
         "'python -m frago.server.runner --daemon' directly."
     )
     logger.critical(msg)
@@ -91,34 +88,25 @@ def source_checkout_root() -> Path | None:
     return None
 
 
-def assert_uv_posture() -> None:
-    """Gate 2: in a source checkout, require entry via ``uv run``.
+def assert_system_install() -> None:
+    """Gate 2: refuse to spawn the daemon from the repo venv.
 
-    No-op for a global / uv-tool install (``frago server ...`` is fine there).
-    Exits non-zero with guidance when run from the source tree without
-    ``VIRTUAL_ENV`` pointing at the repo's ``.venv``.
+    No-op for a global / uv-tool install — the only sanctioned server runtime.
+    Exits non-zero when the current interpreter belongs to the frago source
+    checkout's venv: the repo venv must never be the server runtime.
+    ``uv run frago server start`` in the checkout is still fine — the CLI
+    reinstalls the repo as the system frago and execs it *before* this gate
+    runs (see ``frago.cli.server_command``).
     """
     root = source_checkout_root()
     if root is None:
-        return  # production / global install — allowed
-
-    expected = (root / ".venv").resolve()
-    venv = os.environ.get("VIRTUAL_ENV")
-    actual = None
-    if venv:
-        try:
-            actual = Path(venv).resolve()
-        except Exception:
-            actual = None
-
-    if actual == expected:
-        return
+        return  # system / global install — the sanctioned runtime
 
     msg = (
-        f"Refusing to start: inside the frago source checkout at {root}, the "
-        f"server must be started with 'uv run frago server ...' (so it runs "
-        f"under uv). Detected VIRTUAL_ENV={venv!r}, expected {expected}. Never "
-        f"start it via a bare '.venv/bin/frago' or a global 'frago' from here."
+        f"Refusing to start: this frago runs from the source checkout venv at "
+        f"{root}, which must never be the server runtime. Use "
+        f"'uv run frago server start' (it reinstalls the repo as the system "
+        f"frago and hands over) or the system 'frago server start' directly."
     )
     print(msg, file=sys.stderr)
     sys.exit(1)

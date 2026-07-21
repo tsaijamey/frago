@@ -456,10 +456,10 @@ def start_daemon() -> tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
-    from frago.server.launch_guard import assert_uv_posture, sanctioned_spawn_env
+    from frago.server.launch_guard import assert_system_install, sanctioned_spawn_env
 
-    # Gate 2: inside the source checkout, demand entry via `uv run`.
-    assert_uv_posture()
+    # Gate 2: the daemon spawner must be the system install, never the repo venv.
+    assert_system_install()
 
     if _is_systemd_managed():
         result = _systemctl("start")

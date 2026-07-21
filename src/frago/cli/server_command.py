@@ -5,10 +5,128 @@ web service running as a background daemon process.
 """
 
 import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import click
 
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
+
+# Sentinel preventing infinite recursion: the re-exec'd system frago sees it
+# and skips the reinstall branch.
+REINSTALL_SENTINEL_ENV = "FRAGO_REINSTALL_DONE"
+
+
+def _bump_patch_version(pyproject: Path) -> str:
+    """Increment the patch segment of `version = "x.y.z"` in pyproject.toml.
+
+    Rewrites only the version line, leaving the rest of the file untouched.
+    Returns the new version string. Raises ClickException when the version is
+    not a plain three-segment x.y.z number.
+    """
+    text = pyproject.read_text(encoding="utf-8")
+    pattern = re.compile(r'^(version\s*=\s*")([^"]+)(")', flags=re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        raise click.ClickException(f"No version line found in {pyproject}")
+    current = match.group(2)
+    parts = current.split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        raise click.ClickException(
+            f"Version {current!r} in {pyproject} is not a plain x.y.z number; "
+            "refusing to guess."
+        )
+    new_version = f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
+    text = text[: match.start(2)] + new_version + text[match.end(2) :]
+    pyproject.write_text(text, encoding="utf-8")
+    return new_version
+
+
+def _system_frago_path(checkout_root: Path) -> str | None:
+    """Find the system-installed frago on PATH, skipping the repo venv's own.
+
+    Under `uv run` the repo's .venv/bin is prepended to PATH, so a plain
+    shutil.which("frago") would loop back into the checkout. Walk PATH entries
+    and return the first frago that lives outside the source checkout.
+    """
+    root = checkout_root.resolve()
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry) / "frago"
+        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            continue
+        try:
+            candidate.resolve().relative_to(root)
+        except ValueError:
+            return str(candidate)
+    return None
+
+
+def _reinstall_and_exec_if_source_checkout() -> None:
+    """From a source checkout: build + install the repo as the system frago, then exec it.
+
+    The repo venv's frago must never be the server runtime. When the CLI runs
+    from inside the frago source tree, bump the patch version, build a wheel,
+    `uv tool install --force` it, and hand the original argv over to the
+    system-installed frago via os.execv. No-op on a global/uv-tool install or
+    when the reinstall sentinel is already set (we ARE the re-exec'd process).
+    """
+    if os.environ.get(REINSTALL_SENTINEL_ENV) == "1":
+        return
+    from frago.server.launch_guard import source_checkout_root
+
+    root = source_checkout_root()
+    if root is None:
+        return  # already the system install — nothing to do
+
+    new_version = _bump_patch_version(root / "pyproject.toml")
+    click.echo(f"[reinstall] source checkout detected at {root}")
+    click.echo(f"[reinstall] bumped version to {new_version}")
+
+    with tempfile.TemporaryDirectory(prefix="frago-wheel-") as tmpdir:
+        click.echo(f"[reinstall] building wheel ({new_version}) ...")
+        build = subprocess.run(
+            ["uv", "build", "--wheel", "--out-dir", tmpdir],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if build.returncode != 0:
+            raise click.ClickException(f"uv build failed:\n{build.stderr.strip()}")
+
+        wheels = sorted(Path(tmpdir).glob("*.whl"))
+        if not wheels:
+            raise click.ClickException(f"uv build produced no wheel in {tmpdir}")
+        wheel = wheels[-1]
+
+        click.echo(f"[reinstall] installing {wheel.name} via uv tool install --force ...")
+        install = subprocess.run(
+            ["uv", "tool", "install", "--force", str(wheel)],
+            capture_output=True,
+            text=True,
+        )
+        if install.returncode != 0:
+            raise click.ClickException(
+                f"uv tool install failed:\n{install.stderr.strip()}"
+            )
+
+    system_frago = _system_frago_path(root)
+    if system_frago is None:
+        raise click.ClickException(
+            "System frago not found on PATH after uv tool install; "
+            "check that ~/.local/bin is on PATH."
+        )
+
+    args = [system_frago, *sys.argv[1:]]
+    click.echo(f"[reinstall] handing over to system frago: {' '.join(args)}")
+    os.environ[REINSTALL_SENTINEL_ENV] = "1"
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(system_frago, args)
 
 
 def _guard_sub_agent(action: str) -> None:
@@ -88,7 +206,12 @@ def start(debug: bool) -> None:
 
     Without --debug: Starts as background daemon, returns to prompt immediately.
     With --debug: Runs in foreground showing live logs (press Ctrl+C to stop).
+
+    When run from inside the frago source checkout, the repo is first built
+    and installed as the system frago (uv tool install --force), then the
+    command is handed over to that system install.
     """
+    _reinstall_and_exec_if_source_checkout()
     if debug:
         # Foreground mode with verbose logging
         _run_foreground()
@@ -171,6 +294,7 @@ def restart(force: bool) -> None:
     """
     _guard_sub_agent("restart")
     _guard_active_tasks(force, "restart")
+    _reinstall_and_exec_if_source_checkout()
     from frago.server.daemon import restart_daemon
 
     success, message = restart_daemon(force=force)
