@@ -26,7 +26,7 @@ This guide demonstrates how **Claude Code AI Agent** uses the new Recipe system.
 
 ```bash
 # AI invokes Bash tool
-uv run frago recipe list --format json
+frago recipe list --format json
 ```
 
 **JSON Response Received by AI**:
@@ -76,7 +76,7 @@ AI thinking process:
 
 ```bash
 # AI invokes Bash tool
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
   --output-file transcript.json
 ```
@@ -208,7 +208,7 @@ version: 1.0.0
 #### Step 4: AI Executes Workflow
 
 ```bash
-uv run frago recipe run upwork_batch_extract \
+frago recipe run upwork_batch_extract \
   --params '{"urls": ["https://...", "https://...", ...]}' \
   --output-file jobs.json
 ```
@@ -279,7 +279,7 @@ Read current content from Linux system clipboard (using xclip tool).
 ## Usage
 
 ```bash
-uv run frago recipe run clipboard_read
+frago recipe run clipboard_read
 ```
 
 ## Expected Output
@@ -305,10 +305,10 @@ EOF
 
 ```bash
 # View Recipe information
-uv run frago recipe info clipboard_read
+frago recipe info clipboard_read
 
 # Execute Recipe
-uv run frago recipe run clipboard_read
+frago recipe run clipboard_read
 ```
 
 ---
@@ -408,7 +408,7 @@ Batch call `youtube_extract_video_transcript` Recipe to extract subtitles from m
 ## Usage
 
 ```bash
-uv run frago recipe run youtube_batch_extract \
+frago recipe run youtube_batch_extract \
   --params '{"urls": ["https://youtube.com/watch?v=...", "..."]}'
 ```
 
@@ -431,7 +431,7 @@ EOF
 #### 3. Execute Workflow
 
 ```bash
-uv run frago recipe run youtube_batch_extract \
+frago recipe run youtube_batch_extract \
   --params '{
     "urls": [
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -447,7 +447,7 @@ uv run frago recipe run youtube_batch_extract \
 ### View Recipe Detailed Information
 
 ```bash
-uv run frago recipe info <recipe_name>
+frago recipe info <recipe_name>
 ```
 
 ### Use Parameter File
@@ -461,14 +461,14 @@ cat > params.json <<EOF
 EOF
 
 # Use parameter file
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params-file params.json
 ```
 
 ### Save Result to File
 
 ```bash
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output-file result.json
 ```
@@ -477,7 +477,7 @@ uv run frago recipe run youtube_extract_video_transcript \
 
 ```bash
 # Enable debug mode
-uv run frago --debug recipe run <recipe_name> --params '{...}'
+frago --debug recipe run <recipe_name> --params '{...}'
 ```
 
 **Output**:
@@ -644,12 +644,12 @@ Use `--env` or `-e` parameter to override at execution time:
 
 ```bash
 # Single environment variable
-uv run frago recipe run openai_chat \
+frago recipe run openai_chat \
   --params '{"prompt": "Hello"}' \
   -e OPENAI_API_KEY=sk-xxx
 
 # Multiple environment variables
-uv run frago recipe run openai_chat \
+frago recipe run openai_chat \
   --params '{"prompt": "Hello"}' \
   -e OPENAI_API_KEY=sk-xxx \
   -e MODEL_NAME=gpt-4 \
@@ -662,7 +662,7 @@ Export directly in shell:
 
 ```bash
 export OPENAI_API_KEY=sk-your-api-key
-uv run frago recipe run openai_chat --params '{"prompt": "Hello"}'
+frago recipe run openai_chat --params '{"prompt": "Hello"}'
 ```
 
 ### Priority Rules
@@ -778,10 +778,10 @@ print(json.dumps(result))
 
 ```bash
 # View Recipe details including env definitions
-uv run frago recipe info openai_chat
+frago recipe info openai_chat
 
 # JSON format output (includes env field)
-uv run frago recipe info openai_chat --format json
+frago recipe info openai_chat --format json
 ```
 
 **Output Example**:
@@ -841,7 +841,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 2. **Use new command**:
    ```bash
-   uv run frago recipe run upwork_extract_job_details_as_markdown \
+   frago recipe run upwork_extract_job_details_as_markdown \
      --params '{"url": "..."}'
    ```
 
@@ -866,7 +866,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 **Solution**:
 1. Check Recipe name spelling
-2. Run `uv run frago recipe list` to view available Recipes
+2. Run `frago recipe list` to view available Recipes
 3. Confirm metadata file `.md` exists
 
 ### Parameter Format Error
@@ -885,7 +885,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 **Solution**:
 ```bash
 # Install from community or create the dependent Recipe manually
-uv run frago recipe list
+frago recipe list
 ```
 
 ### Recipe Execution Timeout
@@ -908,7 +908,7 @@ uv run frago recipe list
 ```text
 1. User proposes task
    ↓
-2. AI invokes: uv run frago recipe list --format json
+2. AI invokes: frago recipe list --format json
    ↓
 3. AI analyzes metadata:
    - description: Quick understand functionality
@@ -919,7 +919,7 @@ uv run frago recipe list
    - Use existing Recipe → Execute
    - No suitable Recipe → Invoke /frago.recipe to generate new Recipe
    ↓
-5. AI executes: uv run frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
+5. AI executes: frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
    ↓
 6. AI processes result:
    - success: true → Report to user

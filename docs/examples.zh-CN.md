@@ -146,7 +146,7 @@ outputs:
 ## 使用方法
 
 ```bash
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 ```
@@ -236,7 +236,7 @@ outputs:
 ## 使用方法
 
 ```bash
-uv run frago recipe run test_inspect_tab
+frago recipe run test_inspect_tab
 ```
 
 ## 前置条件
@@ -453,7 +453,7 @@ echo "录制完成: shot_002.mp4"
 
 ```bash
 # 提取YouTube字幕
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "https://youtube.com/watch?v=..."}' \
     --output-file transcript.txt
 ```
@@ -463,7 +463,7 @@ uv run frago recipe run youtube_extract_video_transcript \
 ```bash
 # 循环提取多个视频的字幕
 for url in $(cat video_urls.txt); do
-  uv run frago recipe run youtube_extract_video_transcript \
+  frago recipe run youtube_extract_video_transcript \
       --params "{\"url\": \"$url\"}" \
       --output-file "transcripts/$(basename $url).txt"
 done
@@ -473,7 +473,7 @@ done
 
 ```bash
 # 在Pipeline的prepare阶段使用Recipe
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
     --params '{"url": "..."}' \
     --output-file research/video_transcript.txt
 

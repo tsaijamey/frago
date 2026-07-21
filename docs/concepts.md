@@ -118,7 +118,7 @@ frago is an agent OS — an operating system for AI agents. It provides the runt
 Use recipe: `volcengine_tts_with_emotion`
 
 ​```bash
-uv run frago recipe run volcengine_tts_with_emotion \
+frago recipe run volcengine_tts_with_emotion \
   --params '{"text": "[#excited]Awesome!", "output": "seg_001.wav"}'
 ​```
 ```

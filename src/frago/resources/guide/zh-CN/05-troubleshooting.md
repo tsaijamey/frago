@@ -62,7 +62,7 @@ tags:
 1. **启动Chrome**（推荐方法）:
    ```bash
    # 命令行启动（自动启用CDP）
-   uv run frago chrome start
+   frago chrome start
    ```
 
 2. **检查Chrome是否已启动**:
@@ -111,7 +111,7 @@ tags:
 
 **1. 使用frago命令启动Chrome**
 ```bash
-uv run frago chrome start
+frago chrome start
 ```
 
 这会自动：
@@ -137,7 +137,7 @@ ps aux | grep chrome | grep remote-debugging-port
 Get-Process chrome | Where-Object {$_.CommandLine -like "*remote-debugging-port*"}
 ```
 
-如果没有输出 → Chrome未以CDP模式启动，执行 `uv run frago chrome start`
+如果没有输出 → Chrome未以CDP模式启动，执行 `frago chrome start`
 
 ---
 
@@ -172,7 +172,7 @@ netstat -ano | findstr :9222
 mv ~/.frago/profiles/chrome/9222 ~/.frago/profiles/chrome/9222.bak
 
 # 重新启动Chrome
-uv run frago chrome start
+frago chrome start
 ```
 
 ---
@@ -323,7 +323,7 @@ CDP connection error
 
 ```bash
 # 命令行查看会话日志
-uv run frago session view [session_id]
+frago session view [session_id]
 ```
 
 **3. 简化任务重试**
@@ -366,7 +366,7 @@ uv run frago session view [session_id]
 1. **收集信息**:
    - 完整错误信息
    - 任务描述
-   - frago版本: `uv run frago --version`
+   - frago版本: `frago --version`
    - 操作系统
 
 2. **提交Issue**:

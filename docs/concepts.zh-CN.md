@@ -118,7 +118,7 @@ frago 不是发明了新概念，而是**将 Claude Code 的 skill 与 frago 的
 使用配方：`volcengine_tts_with_emotion`
 
 ​```bash
-uv run frago recipe run volcengine_tts_with_emotion \
+frago recipe run volcengine_tts_with_emotion \
   --params '{"text": "[#兴奋]太棒了！", "output": "seg_001.wav"}'
 ​```
 ```

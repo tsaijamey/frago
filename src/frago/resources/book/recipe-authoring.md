@@ -125,38 +125,17 @@ chrome-js runtime 不注入 FRAGO_SECRETS（浏览器环境无法访问）。如
 
 ## Recipe 内调 frago CLI（subprocess）
 
-recipe 子进程里要调 `frago chrome navigate` / `frago <domain> find` 等命令时，**禁止裸写 `["frago", ...]` 或 `["uv", "run", "frago", ...]`**——前者依赖 PATH，后者假设 uv 在 PATH 且 cwd 是 frago 项目，pip 安装或 systemd 派生场景都会失败无声。
-
-server 在启动时把 launcher argv 写进 `FRAGO_LAUNCHER` 环境变量（JSON 编码的 argv 列表，如 `["uv","run","--project","/abs/path","frago"]` 或 `["/abs/path/.venv/bin/frago"]`），子进程默认继承。recipe 这样调：
+recipe 子进程里要调 `frago chrome navigate` / `frago <domain> find` 等命令时，直接裸写 `frago`：
 
 ```python
-import json, os, shutil, subprocess
-from pathlib import Path
+import subprocess
 
-def _frago_argv() -> list:
-    raw = os.environ.get("FRAGO_LAUNCHER")
-    if raw:
-        try:
-            argv = json.loads(raw)
-            if isinstance(argv, list) and argv:
-                return argv
-        except json.JSONDecodeError:
-            pass
-    rt = Path.home() / ".frago" / "runtime.json"
-    if rt.exists():
-        try:
-            data = json.loads(rt.read_text(encoding="utf-8"))
-            argv = (data.get("launcher") or {}).get("command")
-            if isinstance(argv, list) and argv:
-                return argv
-        except (json.JSONDecodeError, OSError):
-            pass
-    return [shutil.which("frago") or "frago"]  # 最终兜底
-
-subprocess.run([*_frago_argv(), "chrome", "navigate", url, "--no-border"], ...)
+subprocess.run(["frago", "chrome", "navigate", url, "--no-border"], ...)
 ```
 
-**为什么需要 runtime.json 兜底**：CLI 启动的 recipe（`frago recipe run ...`）不经过 server，server 启动时塞进 env 的 `FRAGO_LAUNCHER` 在 CLI 进程视角下不存在。`runtime.json` 是任何一次 server 启动都会写的持久信息源，从磁盘读保证两条路径都能拿到 launcher。
+**禁止写 `["uv", "run", "frago", ...]`**——它假设 uv 在 PATH 且 cwd 是 frago 项目，还会把调用引回仓库虚拟环境里那份可能过时的代码。
+
+frago 只有一份，装在 uv tool 里、从 PATH 解析。仓库源码树永远不会用自己的 venv 跑 frago（见 `frago.server.launch_guard`），所以不需要探测、不需要 env 变量传递 argv、也不需要兜底链。
 
 ### 用户如何配置
 

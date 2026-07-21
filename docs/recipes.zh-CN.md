@@ -24,7 +24,7 @@
 
 ```bash
 # AI 调用 Bash 工具
-uv run frago recipe list --format json
+frago recipe list --format json
 ```
 
 **AI 接收到的 JSON 响应**:
@@ -74,7 +74,7 @@ AI 思考过程:
 
 ```bash
 # AI 调用 Bash 工具
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
   --output-file transcript.json
 ```
@@ -206,7 +206,7 @@ version: 1.0.0
 #### Step 4: AI 执行 Workflow
 
 ```bash
-uv run frago recipe run upwork_batch_extract \
+frago recipe run upwork_batch_extract \
   --params '{"urls": ["https://...", "https://...", ...]}' \
   --output-file jobs.json
 ```
@@ -277,7 +277,7 @@ description: "读取系统剪贴板内容"
 ## 使用方法
 
 ```bash
-uv run frago recipe run clipboard_read
+frago recipe run clipboard_read
 ```
 
 ## 预期输出
@@ -303,10 +303,10 @@ EOF
 
 ```bash
 # 查看 Recipe 信息
-uv run frago recipe info clipboard_read
+frago recipe info clipboard_read
 
 # 执行 Recipe
-uv run frago recipe run clipboard_read
+frago recipe run clipboard_read
 ```
 
 ---
@@ -406,7 +406,7 @@ description: "批量提取多个 YouTube 视频字幕"
 ## 使用方法
 
 ```bash
-uv run frago recipe run youtube_batch_extract \
+frago recipe run youtube_batch_extract \
   --params '{"urls": ["https://youtube.com/watch?v=...", "..."]}'
 ```
 
@@ -429,7 +429,7 @@ EOF
 #### 3. 执行 Workflow
 
 ```bash
-uv run frago recipe run youtube_batch_extract \
+frago recipe run youtube_batch_extract \
   --params '{
     "urls": [
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -445,7 +445,7 @@ uv run frago recipe run youtube_batch_extract \
 ### 查看 Recipe 详细信息
 
 ```bash
-uv run frago recipe info <recipe_name>
+frago recipe info <recipe_name>
 ```
 
 ### 使用参数文件
@@ -459,14 +459,14 @@ cat > params.json <<EOF
 EOF
 
 # 使用参数文件
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params-file params.json
 ```
 
 ### 将结果保存到文件
 
 ```bash
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output-file result.json
 ```
@@ -475,7 +475,7 @@ uv run frago recipe run youtube_extract_video_transcript \
 
 ```bash
 # 启用调试模式
-uv run frago --debug recipe run <recipe_name> --params '{...}'
+frago --debug recipe run <recipe_name> --params '{...}'
 ```
 
 **输出**:
@@ -642,12 +642,12 @@ DEBUG=true
 
 ```bash
 # 单个环境变量
-uv run frago recipe run openai_chat \
+frago recipe run openai_chat \
   --params '{"prompt": "Hello"}' \
   -e OPENAI_API_KEY=sk-xxx
 
 # 多个环境变量
-uv run frago recipe run openai_chat \
+frago recipe run openai_chat \
   --params '{"prompt": "Hello"}' \
   -e OPENAI_API_KEY=sk-xxx \
   -e MODEL_NAME=gpt-4 \
@@ -660,7 +660,7 @@ uv run frago recipe run openai_chat \
 
 ```bash
 export OPENAI_API_KEY=sk-your-api-key
-uv run frago recipe run openai_chat --params '{"prompt": "Hello"}'
+frago recipe run openai_chat --params '{"prompt": "Hello"}'
 ```
 
 ### 优先级规则
@@ -776,10 +776,10 @@ print(json.dumps(result))
 
 ```bash
 # 查看 Recipe 详情，包含环境变量定义
-uv run frago recipe info openai_chat
+frago recipe info openai_chat
 
 # JSON 格式输出（包含 env 字段）
-uv run frago recipe info openai_chat --format json
+frago recipe info openai_chat --format json
 ```
 
 **输出示例**：
@@ -834,7 +834,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 1. **使用新命令**:
    ```bash
-   uv run frago recipe run upwork_extract_job_details_as_markdown \
+   frago recipe run upwork_extract_job_details_as_markdown \
      --params '{"url": "..."}'
    ```
 
@@ -859,7 +859,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 
 **解决**:
 1. 检查 Recipe 名称拼写
-2. 运行 `uv run frago recipe list` 查看可用 Recipe
+2. 运行 `frago recipe list` 查看可用 Recipe
 3. 确认元数据文件 `.md` 存在
 
 ### 参数格式错误
@@ -901,7 +901,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
 ```text
 1. 用户提出任务
    ↓
-2. AI 调用: uv run frago recipe list --format json
+2. AI 调用: frago recipe list --format json
    ↓
 3. AI 分析元数据:
    - description: 快速理解功能
@@ -912,7 +912,7 @@ frago chrome exec-js src/frago/recipes/upwork_extract_job.js
    - 使用现有 Recipe → 执行
    - 无合适 Recipe → 调用 /frago.recipe 生成新 Recipe
    ↓
-5. AI 执行: uv run frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
+5. AI 执行: frago recipe run <name> --params '{...}' [--output-file/--output-clipboard]
    ↓
 6. AI 处理结果:
    - success: true → 向用户报告

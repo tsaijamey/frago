@@ -13,7 +13,7 @@ This document provides practical examples of using frago's three core systems (R
 ### Step 1: Create Run Instance
 
 ```bash
-uv run frago run init "Research YouTube subtitle extraction methods"
+frago run init "Research YouTube subtitle extraction methods"
 # Output: Created Run instance: youtube-subtitle-research-abc123
 ```
 
@@ -35,7 +35,7 @@ frago chrome exec-js 'document.querySelector("button[aria-label*=\"transcript\"]
 
 ```bash
 # Log successful selector discovery
-uv run frago run log \
+frago run log \
   --step "Located transcript button selector" \
   --status "success" \
   --action-type "dom_inspection" \
@@ -64,7 +64,7 @@ EOF
 ### Step 5: Review Complete History
 
 ```bash
-uv run frago run info youtube-subtitle-research-abc123
+frago run info youtube-subtitle-research-abc123
 ```
 
 **Output**:
@@ -149,7 +149,7 @@ Extract complete subtitle text from YouTube video page.
 
 ## Usage
 \`\`\`bash
-uv run frago recipe run youtube_extract_video_transcript \\
+frago recipe run youtube_extract_video_transcript \\
   --params '{"url": "https://youtube.com/watch?v=..."}' \\
   --output-file transcript.txt
 \`\`\`
@@ -183,18 +183,18 @@ AI will:
 
 ```bash
 # Discover available Recipes
-uv run frago recipe list
+frago recipe list
 
 # View Recipe details
-uv run frago recipe info youtube_extract_video_transcript
+frago recipe info youtube_extract_video_transcript
 
 # Execute Recipe
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' \
   --output-file transcript.txt
 
 # Output to clipboard
-uv run frago recipe run youtube_extract_video_transcript \
+frago recipe run youtube_extract_video_transcript \
   --params '{"url": "..."}' \
   --output-clipboard
 ```
@@ -302,8 +302,8 @@ cat > job_urls.json <<'EOF'
 EOF
 
 # Execute workflow within Run context
-uv run frago run init "Batch extract Python jobs from Upwork"
-uv run frago recipe run upwork_batch_extract \
+frago run init "Batch extract Python jobs from Upwork"
+frago recipe run upwork_batch_extract \
   --params-file job_urls.json \
   --output-file jobs.json
 ```
@@ -446,10 +446,10 @@ frago chrome exec-js 'document.querySelector(".pagetop") !== null' \
 
 ```bash
 # List all Run instances
-uv run frago run list
+frago run list
 
 # Resume a specific Run
-uv run frago run set-context youtube-subtitle-research-abc123
+frago run set-context youtube-subtitle-research-abc123
 ```
 
 ### Export Run Logs
@@ -474,7 +474,7 @@ EOF
 
 ```bash
 # Archive Run instance
-uv run frago run archive youtube-subtitle-research-abc123
+frago run archive youtube-subtitle-research-abc123
 
 # Archived Runs move to projects/.archive/
 ```
@@ -556,10 +556,10 @@ frago chrome status
 
 ```bash
 # List all available Recipes
-uv run frago recipe list
+frago recipe list
 
 # Check Recipe name (case-sensitive)
-uv run frago recipe info youtube_extract_video_transcript
+frago recipe info youtube_extract_video_transcript
 ```
 
 ### Example: Screenshot Path Issues
@@ -572,7 +572,7 @@ frago chrome screenshot screenshot.png
 frago chrome screenshot $(pwd)/screenshot.png
 
 # ✅ Correct: Within Run context
-uv run frago run init "My task"
+frago run init "My task"
 frago chrome screenshot screenshot.png  # Auto-saved to Run's screenshots/
 ```
 

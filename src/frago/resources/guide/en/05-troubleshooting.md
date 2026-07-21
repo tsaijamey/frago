@@ -62,7 +62,7 @@ tags:
 1. **Start Chrome** (recommended method):
    ```bash
    # Command line start (auto-enables CDP)
-   uv run frago chrome start
+   frago chrome start
    ```
 
 2. **Check if Chrome is started**:
@@ -111,7 +111,7 @@ tags:
 
 **1. Start Chrome using frago command**
 ```bash
-uv run frago chrome start
+frago chrome start
 ```
 
 This will automatically:
@@ -137,7 +137,7 @@ ps aux | grep chrome | grep remote-debugging-port
 Get-Process chrome | Where-Object {$_.CommandLine -like "*remote-debugging-port*"}
 ```
 
-If no output → Chrome not started in CDP mode, run `uv run frago chrome start`
+If no output → Chrome not started in CDP mode, run `frago chrome start`
 
 ---
 
@@ -172,7 +172,7 @@ netstat -ano | findstr :9222
 mv ~/.frago/profiles/chrome/9222 ~/.frago/profiles/chrome/9222.bak
 
 # Restart Chrome
-uv run frago chrome start
+frago chrome start
 ```
 
 ---
@@ -323,7 +323,7 @@ Please help me analyze the cause and provide solution
 
 ```bash
 # View session logs from command line
-uv run frago session view [session_id]
+frago session view [session_id]
 ```
 
 **3. Simplify and retry task**
@@ -366,7 +366,7 @@ If none of the above works:
 1. **Collect information**:
    - Complete error message
    - Task description
-   - frago version: `uv run frago --version`
+   - frago version: `frago --version`
    - Operating system
 
 2. **Submit Issue**:

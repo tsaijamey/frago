@@ -29,7 +29,7 @@ agent 在需要刷新后端时倾向于直接 `{{frago_launcher}} server restart
 
 ## server 进程管理的背景
 
-frago server 通过 systemd user service 管理。`{{frago_launcher}} server restart` 检测 systemd 状态后委托 `systemctl --user restart`。不要直接操作 systemctl，不要 kill 进程，不要用 daemon.py 的内部方法。
+server 运行时永远是系统级安装的 frago（uv tool install）。在 frago 源码仓库里执行 `uv run frago server start|restart` 时，会先自增补丁版本号、把当前代码打成 wheel 装到系统（`uv tool install --force`），再转交给系统 frago 完成启动——仓库 venv 里的 frago 从不作为 server 运行时。Linux 上 server 可由 systemd user service 管理，restart 检测 systemd 状态后委托 `systemctl --user restart`。不要直接操作 systemctl，不要 kill 进程，不要用 daemon.py 的内部方法。
 
 ## 不要做
 - 不要在有活跃任务时直接 restart — 任务会丢失
