@@ -26,6 +26,8 @@ import json
 import logging
 import os
 import shutil
+import signal
+import sys
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -185,12 +187,18 @@ class RecipeSupervisor:
         params_json = json.dumps(self._spec.params or {})
         cmd = [uv_bin, "run", "--quiet", str(recipe.script_path), params_json]
 
+        # POSIX: 起独立进程组（session），让 _terminate 能对整组发信号。
+        # 直接子进程是 ``uv run``，真正的配方 python 是它的孙进程；只 terminate/kill
+        # uv 会把孙进程遗留成孤儿（实测 voice_desktop_hud 窗口在 server 重启后残留）。
+        kwargs: dict = get_windows_subprocess_kwargs()
+        if sys.platform != "win32":
+            kwargs["start_new_session"] = True
         return await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
-            **get_windows_subprocess_kwargs(),
+            **kwargs,
         )
 
     async def _pump(self, proc: asyncio.subprocess.Process) -> None:
@@ -232,14 +240,38 @@ class RecipeSupervisor:
                 await stderr_task
 
     async def _terminate(self, proc: asyncio.subprocess.Process | None) -> None:
-        """Terminate a still-running subprocess: terminate → wait(5s) → kill."""
-        if proc is not None and proc.returncode is None:
+        """Terminate a still-running subprocess: terminate → wait(5s) → kill.
+
+        On POSIX the signal goes to the whole process group (the child is
+        spawned with ``start_new_session=True``), so grandchildren spawned by
+        ``uv run`` die with it instead of being orphaned.
+        """
+        if proc is None or proc.returncode is not None:
+            return
+        try:
+            self._signal_tree(proc, signal.SIGTERM)
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except (TimeoutError, ProcessLookupError):
             try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (TimeoutError, ProcessLookupError):
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
+                self._signal_tree(proc, signal.SIGKILL if sys.platform != "win32" else None)
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+
+    @staticmethod
+    def _signal_tree(proc: asyncio.subprocess.Process, sig: "signal.Signals | None") -> None:
+        """Send ``sig`` to the child's process group (POSIX) or terminate/kill it.
+
+        Falls back to per-process terminate/kill when the group is gone or on
+        Windows (where ``sig=None`` means kill).
+        """
+        if sys.platform != "win32" and sig is not None:
+            try:
+                os.killpg(proc.pid, sig)  # start_new_session → pgid == pid
+                return
+            except (ProcessLookupError, PermissionError, OSError):
+                pass  # 组已不存在/异常，退回单进程信号
+        if sig is signal.SIGTERM:
+            proc.terminate()
+        else:
+            proc.kill()
