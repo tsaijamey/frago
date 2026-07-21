@@ -33,7 +33,7 @@ from frago.cli.agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 _VALID_POLICIES = ("always", "on-failure", "never")
 
 _RESTART_HINT = (
-    "Restart server for changes to take effect:\n  uv run frago server restart"
+    "Restart server for changes to take effect:\n  frago server restart"
 )
 
 
@@ -238,7 +238,7 @@ def daemon_status() -> None:
 
     if not running:
         click.secho("Server is not running — no daemons are being supervised.", fg="yellow")
-        click.echo("Start it with: uv run frago server start")
+        click.echo("Start it with: frago server start")
     else:
         click.secho(f"Server is running (PID: {pid}); it supervises the declared daemons.", fg="green")
         click.echo("Live per-daemon pid/restarts are not yet exposed over the API.")
@@ -278,4 +278,4 @@ def daemon_restart(recipe: str) -> None:
         f"Daemon '{recipe}' is supervised inside the server process.", fg="cyan"
     )
     click.echo("To restart it, restart the server (reloads all daemons):")
-    click.echo("  uv run frago server restart")
+    click.echo("  frago server restart")

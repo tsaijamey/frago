@@ -62,7 +62,7 @@ else:
 ```
 
 **自己跑的典型场景**（短链路）：查磁盘 `df -h`、查进程 `ps aux | grep xxx`、
-重启 server `uv run frago server restart`、列 recipe `uv run frago recipe list`、读一个短文件。
+重启 server `frago server restart`、列 recipe `frago recipe list`、读一个短文件。
 
 **必须派 worker 的场景**：需要调研 / 跨多文件阅读、写或改代码 + 跑测试、生成文件
 （PPT/PDF/报告）、浏览器操作、步数不确定。
@@ -502,7 +502,7 @@ SUB_AGENT_PROMPT_TEMPLATE = """\
 Run 实例: {run_id}
 你的工作目录是 ~/.frago/projects/{run_id}/，产出物放在 outputs/ 子目录下。
 所属 domain: {run_id}（同名）。完成产出后 MUST 顺手:
-  uv run frago run insights --save --type <fact|decision|foreshadow|state|lesson> --payload '...' --confidence 0.8
+  frago run insights --save --type <fact|decision|foreshadow|state|lesson> --payload '...' --confidence 0.8
   # 自动落到 ${{FRAGO_DOMAIN}}={run_id}，无需显式 --domain
 沉淀的是跨 session 的领域级知识（事实/决策/伏笔/状态变量/失败教训），不是流水。
 {related_section}\

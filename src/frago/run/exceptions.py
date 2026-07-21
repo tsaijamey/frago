@@ -36,7 +36,7 @@ class ContextNotSetError(RunException):
     def __init__(self):
         super().__init__(
             "Current run context not set. "
-            "Run 'uv run frago run set-context <run_id>' first."
+            "Run 'frago run set-context <run_id>' first."
         )
 
 
@@ -50,8 +50,8 @@ class ContextAlreadySetError(RunException):
         self.existing_run_id = existing_run_id
         super().__init__(
             f"Another run '{existing_run_id}' is currently active. "
-            f"Run 'uv run frago run release' to release it first, "
-            f"or 'uv run frago run set-context {existing_run_id}' to continue it."
+            f"Run 'frago run release' to release it first, "
+            f"or 'frago run set-context {existing_run_id}' to continue it."
         )
 
 

@@ -43,11 +43,13 @@ def _resolve_frago_cmd() -> list[str]:
     """Return the base command used to invoke frago from the server process.
 
     Preference order:
-      1. ``frago`` in the same venv as the running server (most reliable when
-         the daemon's PATH doesn't include ``.venv/Scripts`` — common on
-         Windows and under systemd).
-      2. ``uv run frago`` if ``uv`` is available (dev environments).
-      3. Bare ``frago`` — last resort, only works when it happens to be on PATH.
+      1. ``frago`` in the same venv as the running server — the system
+         uv-tool install's own entry point (most reliable when the daemon's
+         PATH doesn't include the tool bin dir — common on Windows and under
+         systemd).
+      2. Bare ``frago`` resolved via PATH. Never ``uv run frago``: the server
+         runtime is always the system install, and ``uv run`` from a repo cwd
+         would silently switch back to checkout code.
 
     Callers append the subcommand and arguments (e.g. ``+ ["agent", ...]``).
     """
@@ -55,8 +57,6 @@ def _resolve_frago_cmd() -> list[str]:
     frago_in_venv = shutil.which("frago", path=str(venv_dir))
     if frago_in_venv:
         return [frago_in_venv]
-    if shutil.which("uv"):
-        return ["uv", "run", "frago"]
     return ["frago"]
 
 

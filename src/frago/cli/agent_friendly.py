@@ -15,7 +15,7 @@ from click import Context
 # Layer 3 of the agent-friendly mechanism (FRAGO.md): a business-level failure
 # should not just say "Error: X" — it should hand the agent a copy-pasteable
 # command that fixes the situation. Historically each command group hand-rolled
-# this: chrome embeds "start with: uv run frago chrome start" inside its error
+# this: chrome embeds "start with: frago chrome start" inside its error
 # strings, recipe_commands echoes `[Fix] ...` lines manually. The helpers below
 # make that pattern a single shared, group-agnostic primitive so any command
 # group can attach executable fixes consistently.

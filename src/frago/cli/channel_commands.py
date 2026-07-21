@@ -18,7 +18,7 @@ from frago.init.models import Config, TaskIngestionChannel
 from frago.recipes.lookup import list_recipe_names, validate_recipe_exists
 
 _RESTART_HINT = (
-    "Restart server for changes to take effect:\n  uv run frago server restart"
+    "Restart server for changes to take effect:\n  frago server restart"
 )
 
 

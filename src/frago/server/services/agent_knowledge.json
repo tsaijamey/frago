@@ -7,50 +7,50 @@
   },
   "capabilities": {
     "agent": {
-      "create": "uv run frago agent {prompt} — 启动 sub-agent",
+      "create": "frago agent {prompt} — 启动 sub-agent",
       "resume": "PA 决策 action:resume → executor 写 ResumeInbox，sub-agent 下次工具调用前自动注入新指令（无需重启进程）",
-      "list": "uv run frago session list — 查看所有会话",
-      "status": "uv run frago session show {session_id} — 查看会话详情"
+      "list": "frago session list — 查看所有会话",
+      "status": "frago session show {session_id} — 查看会话详情"
     },
     "recipe": {
-      "run": "uv run frago recipe run <name> --params '{...}' — 执行可复用自动化",
-      "list": "uv run frago recipe list — 查看所有可用 recipe",
-      "async": "uv run frago recipe run <name> --async — 异步执行，返回 execution_id"
+      "run": "frago recipe run <name> --params '{...}' — 执行可复用自动化",
+      "list": "frago recipe list — 查看所有可用 recipe",
+      "async": "frago recipe run <name> --async — 异步执行，返回 execution_id"
     },
     "run": {
-      "create": "uv run frago run init 'description' — 创建 Run 实例",
-      "log": "uv run frago run log --step '...' --status '...' — 记录执行步骤",
-      "list": "uv run frago run list — 查看所有 Run",
-      "info": "uv run frago run info <run_id> — 查看 Run 详情 + 统计"
+      "create": "frago run init 'description' — 创建 Run 实例",
+      "log": "frago run log --step '...' --status '...' — 记录执行步骤",
+      "list": "frago run list — 查看所有 Run",
+      "info": "frago run info <run_id> — 查看 Run 详情 + 统计"
     },
     "chrome": {
       "description": "CDP 浏览器自动化，25+ 命令",
-      "explore": "uv run frago chrome --help"
+      "explore": "frago chrome --help"
     },
     "schedule": {
-      "add_recipe": "uv run frago schedule add <recipe_name> --every 10m --name '名称' — 定时执行 recipe",
-      "add_cron": "uv run frago schedule add <recipe_name> --cron '0 8 * * *' --name '名称' — cron 定时",
-      "add_prompt": "uv run frago schedule add --prompt '任务描述' --cron '0 8 * * 1-5' --name '名称' — 纯 prompt 定时任务",
-      "list": "uv run frago schedule list — 查看所有 schedule",
-      "remove": "uv run frago schedule remove <id> — 删除",
-      "toggle": "uv run frago schedule toggle <id> — 启用/禁用",
-      "history": "uv run frago schedule history <id> — 执行历史",
-      "run_once": "uv run frago schedule run <id> — 手动触发一次",
+      "add_recipe": "frago schedule add <recipe_name> --every 10m --name '名称' — 定时执行 recipe",
+      "add_cron": "frago schedule add <recipe_name> --cron '0 8 * * *' --name '名称' — cron 定时",
+      "add_prompt": "frago schedule add --prompt '任务描述' --cron '0 8 * * 1-5' --name '名称' — 纯 prompt 定时任务",
+      "list": "frago schedule list — 查看所有 schedule",
+      "remove": "frago schedule remove <id> — 删除",
+      "toggle": "frago schedule toggle <id> — 启用/禁用",
+      "history": "frago schedule history <id> — 执行历史",
+      "run_once": "frago schedule run <id> — 手动触发一次",
       "note": "schedule 到期后投递 scheduled_task 消息给你决策，你决定 run/skip。发现用户有日常重复需求时，直接用 action:schedule 注册，不需要启动 sub-agent。CLI 命令供 sub-agent 或高级用户使用"
     },
     "reply": {
-      "send": "uv run frago reply --channel <name> --params '{...}' — 回复来源渠道"
+      "send": "frago reply --channel <name> --params '{...}' — 回复来源渠道"
     }
   },
   "downstream": {
-    "sub_agent_environment": "sub-agent 通过 uv run frago agent 启动，自带 CLAUDE.md + slash commands + 完整 frago CLI",
+    "sub_agent_environment": "sub-agent 通过 frago agent 启动，自带 CLAUDE.md + slash commands + 完整 frago CLI",
     "sub_agent_context": "sub-agent 在 Run 实例中工作，有独立的 logs/screenshots/outputs 目录",
     "recipe_execution": "recipe 有三种运行时：chrome-js（浏览器）、python、shell",
     "run_lifecycle": "Run 实例：创建 → 执行 → PID 退出 → executor 读 Claude JSONL stop_reason 判定成败 → 归档"
   },
   "verification": {
     "run_completion": "executor 通过 Claude JSONL 最后一条非 null stop_reason 判定：end_turn/stop_sequence=成功，其他=失败",
-    "session_status": "uv run frago session show {session_id} 查看会话状态",
+    "session_status": "frago session show {session_id} 查看会话状态",
     "task_status": "board.timeline.jsonl 中的 task_state entry: queued/executing/completed/failed/resume_failed/replied",
     "recipe_result": "recipe 返回 {success, data, error, execution_time}"
   },

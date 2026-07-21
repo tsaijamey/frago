@@ -164,7 +164,7 @@ def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: s
 任务：为 recipe '{name}' 撰写需求 spec。
 
 先运行以下命令获取规范：
-  uv run frago book recipe-spec-writing
+  frago book recipe-spec-writing
 
 用户需求：
 {prompt_text}
@@ -270,13 +270,13 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
 任务：根据 spec 创建 recipe '{name}'。
 
 先运行以下命令获取规范：
-  uv run frago book recipe-creation
+  frago book recipe-creation
 
 Spec 内容（位于 {resolved_spec}）：
 {spec_content}
 
 创建 recipe.md 和对应脚本文件到 {recipe_dir}/。
-创建完成后，运行 uv run frago recipe validate {recipe_dir}。
+创建完成后，运行 frago recipe validate {recipe_dir}。
 如果 validate 失败，根据错误信息修复后重试，最多 3 轮。
 """
     else:
@@ -285,14 +285,14 @@ Spec 内容（位于 {resolved_spec}）：
 任务：创建 recipe '{name}'。
 
 先运行以下命令获取规范：
-  uv run frago book recipe-spec-writing
-  uv run frago book recipe-creation
+  frago book recipe-spec-writing
+  frago book recipe-creation
 
 用户需求：
 {user_prompt}
 
 先在 {recipe_dir}/ 写 spec.md，再创建 recipe.md 和脚本文件。
-创建完成后，运行 uv run frago recipe validate {recipe_dir}。
+创建完成后，运行 frago recipe validate {recipe_dir}。
 如果 validate 失败，根据错误信息修复后重试，最多 3 轮。
 """
 

@@ -33,7 +33,7 @@ class ChromeCommandError(Exception):
 # Error code definitions
 CHROME_ERRORS = {
     "NO_GROUP": "no group context — add --group <name> to this command (or set FRAGO_CURRENT_RUN env in recipe)",
-    "BROWSER_NOT_RUNNING": "chrome is not running — start with: uv run frago chrome start",
+    "BROWSER_NOT_RUNNING": "chrome is not running — start with: frago chrome start",
     "TAB_NOT_IN_GROUP": "target tab does not belong to current group",
     "NAVIGATION_TIMEOUT": "page load timed out",
     "LANDING_PAGE_PROTECTED": "landing page is protected, cannot be operated on",
