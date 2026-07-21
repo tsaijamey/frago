@@ -1,70 +1,35 @@
 # chrome-startup
 
-`frago chrome start` 启动浏览器。默认参数适合大多数场景；下面的 flags 是真实存在的、容易遗漏的。
+`frago chrome start` 拉起 agent 专用浏览器 + 扩展桥。默认零参数即可，一条命令完成全链路。
 
-## 浏览器选择
+## 标准启动
 
 ```bash
-{{frago_launcher}} chrome start                    # auto-detect: Chrome > Edge > Chromium
-{{frago_launcher}} chrome start --browser edge     # 指定 Edge
-{{frago_launcher}} chrome start --browser chromium # 指定 Chromium
+{{frago_launcher}} chrome start                    # 自动选浏览器（优先 Edge），驱动其真实默认 profile
+{{frago_launcher}} chrome start --browser chromium # 指定浏览器品牌（edge / chromium / brave / vivaldi ...）
 {{frago_launcher}} chrome detect                   # 列出系统已装的浏览器
 ```
 
-注意 `--browser` 是 **start** 的 flag，不是 navigate / get-content 等命令的 flag。选 edge/chromium 只是换浏览器，不改变后端（后端选择是顶层 `-b/--backend`，见 `frago book chrome-backend-choice`）。需要换浏览器时**重启**——一个 frago 实例同时只跑一个浏览器后端。
+start 自动完成：选浏览器 → 拉起 native messaging daemon → 写 manifest → 加载 frago 扩展启动浏览器 → 等待桥握手。Chrome Stable 不可选（v137 起静默忽略 `--load-extension`）。
 
-## 启动模式（互斥四选一）
+`--browser` 是 **start** 的 flag，不是 navigate / get-content 等命令的 flag。
 
-```bash
-{{frago_launcher}} chrome start                              # default：可见窗口
-{{frago_launcher}} chrome start --headless                   # 无 UI（CI / 服务器适用）
-{{frago_launcher}} chrome start --void                       # 窗口移出屏幕外（保留 GPU/动画但不打扰桌面）
-{{frago_launcher}} chrome start --app --app-url <url>        # 无边框 app 模式（嵌入式场景）
-```
+## Profile
 
-`--void` 是 frago 特色：相比 headless 行为更接近真实浏览器（不少反爬只检查 headless），相比可见窗口又不抢用户桌面。
+使用所选浏览器**自己的默认 profile**，不拷贝、不隔离。用户在该浏览器里手动登录、存的密码，agent 立即可见。该浏览器专给 agent 用，日常浏览器是另一个品牌，互不干扰。
 
-## 端口与多实例
+同一 profile 同时只能有一个浏览器实例：start 撞锁会报错，先 `{{frago_launcher}} chrome stop` 或手动关窗口。
+
+## 启动后
 
 ```bash
-{{frago_launcher}} chrome start --port 9333    # 默认 9222；换端口 = 独立 profile
-```
-
-要并行跑两个浏览器实例（如 Chrome + Edge）必须不同 `--port`。profile 目录自动派生为 `~/.frago/profiles/<browser>/<port>/`，端口始终显式出现在路径里。
-
-## Profile 控制
-
-```bash
-{{frago_launcher}} chrome start --profile-dir <path>    # 自定义 profile 目录（多账号场景）
-```
-
-不指定时默认 `~/.frago/profiles/<browser>/9222`，首次启动从系统 profile 拷贝（详见 `frago book chrome-backend-choice` 的 Profile 隔离段）。
-
-## 进程管理
-
-```bash
-{{frago_launcher}} chrome start --no-kill        # 不杀已运行的浏览器进程，复用现有窗口
-{{frago_launcher}} chrome start --keep-alive     # 启动后阻塞前台，Ctrl+C 关闭（调试用）
-```
-
-默认 frago start 会 kill 同 profile 的旧实例后重启。`--no-kill` 适合"已经手动开了浏览器，让 frago 接上"的场景。
-
-## 窗口尺寸（CDP 后端）
-
-```bash
-{{frago_launcher}} chrome start --width 1920 --height 1080
-{{frago_launcher}} chrome start --app --window-x 100 --window-y 100   # app 模式定位
-```
-
-## 一次启动成功后
-
-```bash
-{{frago_launcher}} chrome status     # 健康检查（CDP 连接 + 浏览器版本）
+{{frago_launcher}} chrome status     # 健康检查（桥连接状态）
 {{frago_launcher}} chrome groups     # 看 group 状态
+{{frago_launcher}} chrome stop       # 关浏览器 + 停 daemon + 清 socket
 ```
 
 ## 反模式
 
 - `frago chrome navigate --browser edge`：`--browser` 不是 navigate 的 flag，会报 `No such option`
-- 同时启动两个浏览器但忘记换 `--port`：第二个会失败或挤掉第一个
-- 反爬场景用 `--headless`：headless 浏览器指纹明显，更易被识别——见 `frago book chrome-anti-bot`
+- 给命令加 `-b`/`--backend`：默认后端就是标准路径，不需要
+- `--headless` / `--void` / `--port` / `--profile-dir` / `--reseed-profile`：旧后端遗留选项，被忽略或已废弃

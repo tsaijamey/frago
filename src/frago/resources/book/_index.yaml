@@ -50,15 +50,15 @@
 
 - name: chrome-backend-choice
   category: must
-  brief: "chrome 双后端 cdp/extension 决策表 + profile 隔离；extension start/stop 完整生命周期（自动选浏览器，Chrome Stable ≥v137 不可用）；anti-bot 必走 extension"
+  brief: "chrome 唯一标准路径：extension 后端（默认，无 flag），驱动浏览器自己的真实 profile；start/stop 完整生命周期（自动选浏览器，Chrome Stable ≥v137 不可用）；anti-bot 天然过检"
 
 - name: chrome-anti-bot
   category: available
-  brief: "Cloudflare/Datadome/captcha：`-b extension detect --group <g>` 探针 + interactive/invisible/blocked 三档处理"
+  brief: "Cloudflare/Datadome/captcha：`chrome detect --group <g>` 探针 + interactive/invisible/blocked 三档处理"
 
 - name: chrome-startup
   category: available
-  brief: "chrome start 完整 flags：browser/headless/void/app/port/profile-dir/no-kill"
+  brief: "chrome start：零参数拉起浏览器+扩展桥，--browser 换品牌，使用浏览器自己的真实 profile"
 
 - name: must-no-auto-memory
   category: must

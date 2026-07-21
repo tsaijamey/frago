@@ -81,6 +81,6 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
 
 `chrome-usage` 只覆盖通用层。下列场景需要再拉对应 topic：
 
-- 选 cdp 还是 extension 后端、profile 隔离机制 → `{{frago_launcher}} book chrome-backend-choice`
+- 后端工作方式、profile 机制 → `{{frago_launcher}} book chrome-backend-choice`
 - 遇到 anti-bot / Cloudflare / captcha / 验证码 → `{{frago_launcher}} book chrome-anti-bot`
 - 启动浏览器换 browser/端口/headless/void/app 模式 → `{{frago_launcher}} book chrome-startup`
