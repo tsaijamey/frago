@@ -99,28 +99,6 @@ def run_server(
             logger.error("Port %d is already in use, exiting immediately", port)
             sys.exit(1)
 
-    # Detect and persist launcher info for frago-hook (Rust) to consume.
-    # MUST run in the parent process before uvicorn reload forks a child
-    # (child sys.argv[0] points to uvicorn internals, not the user command).
-    try:
-        from frago.init.launcher_detector import detect_launcher
-        from frago.init.runtime_state import update_launcher
-
-        launcher = detect_launcher()
-        if launcher:
-            update_launcher(launcher)
-            logger.info(
-                "Launcher detected: mode=%s command=%s",
-                launcher.mode,
-                launcher.command,
-            )
-        else:
-            logger.warning(
-                "Launcher detection failed; frago-hook will stay silent until next restart"
-            )
-    except Exception as e:
-        logger.warning("Failed to persist launcher info: %s", e)
-
     # Ensure Claude Code hooks are installed
     try:
         from frago.init.resources import ensure_hooks
@@ -367,7 +345,7 @@ def run_daemon_server() -> None:
     """
     from pathlib import Path
 
-    from frago.server.launch_guard import assert_sanctioned_spawn
+    from frago.server.launch_guard import assert_sanctioned_spawn, assert_system_install
 
     log_file = Path.home() / ".frago" / "server.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -378,6 +356,11 @@ def run_daemon_server() -> None:
     # Gate 1: refuse a raw `python -m frago.server.runner --daemon`. Must run
     # after logging is configured so the rejection lands in server.log.
     assert_sanctioned_spawn()
+
+    # Gate 2 also holds at the daemon itself: paths that skip start_daemon
+    # (e.g. a systemd unit generated from a repo venv) must still never run
+    # the server out of the source checkout.
+    assert_system_install()
 
     # Route uncaught exceptions through the rotating handler instead of the
     # process's stderr (which is /dev/null in daemon mode).
