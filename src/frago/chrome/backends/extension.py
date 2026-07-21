@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from ..extension.native_host import SOCK_PATH, DaemonClient
-from ..profile_seed import seed_profile_from_system, system_profile_dir
+from ..profile_seed import system_profile_dir
 from .base import (
     ChromeBackend,
     ClickResult,
@@ -410,6 +410,34 @@ def list_browsers_for_extension() -> list[BrowserChoice]:
 # ═════════════════════════ Browser launcher ═════════════════════════
 
 
+def extension_profile_dir(brand: str) -> Path:
+    """Default profile for the extension backend: the browser's own
+    system user-data directory.
+
+    The extension backend drives the real browser profile directly — no
+    isolated copy. Anything the user does in that browser by hand
+    (logins, saved passwords) is immediately visible to the agent, and
+    vice versa. The browser (Edge by default) is assumed to be dedicated
+    to agent use; the user's daily browser is a different brand.
+
+    Falls back to the expected default location when the browser is
+    installed but has never been run (the directory doesn't exist yet).
+    """
+    import os
+
+    found = system_profile_dir(brand)
+    if found is not None:
+        return found
+    from ..profile_seed import SYSTEM_PROFILE_DIRS_BY_BRAND
+    paths = SYSTEM_PROFILE_DIRS_BY_BRAND.get(_platform.system(), {}).get(brand)
+    if not paths:
+        raise RuntimeError(
+            f"no known system profile location for brand {brand!r} on "
+            f"{_platform.system()}; pass an explicit profile dir"
+        )
+    return Path(os.path.expandvars(os.path.expanduser(paths[0])))
+
+
 def launch_chrome_with_extension(bundle_dir: Path,
                                  user_data_dir: Path | None = None,
                                  chrome_binary: str | None = None,
@@ -441,18 +469,17 @@ def launch_chrome_with_extension(bundle_dir: Path,
             )
         binary = choice.path
         brand = brand or choice.brand
-    udd = user_data_dir or (Path.home() / ".frago" / "chrome" / "extension-profile")
+    if user_data_dir is None and brand is None:
+        raise RuntimeError(
+            "cannot derive a default profile without a brand — pass "
+            "user_data_dir or brand alongside chrome_binary"
+        )
+    udd = user_data_dir or extension_profile_dir(brand)
     udd.mkdir(parents=True, exist_ok=True)
-    # First launch only: inherit the user's system profile (logins,
-    # cookies, passwords, bookmarks) — same isolated-copy mechanism as
-    # the CDP backend. Once Default/ exists this is a no-op.
-    if brand:
-        seed_profile_from_system(udd, system_profile_dir(brand))
     args = [
         binary,
         f"--user-data-dir={udd}",
         f"--load-extension={bundle_dir}",
-        f"--disable-extensions-except={bundle_dir}",
         "--no-first-run",
         "--no-default-browser-check",
         "--enable-logging=stderr",

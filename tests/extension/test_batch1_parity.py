@@ -347,17 +347,18 @@ def test_ext_switch_tab_requires_tab_id():
 # ─────────────────── 5. backward compat: CDP path intact ───────────────────
 
 def test_cdp_path_unchanged_for_batch1(monkeypatch):
-    """Without --backend extension, Batch 1 cmds still use the CDP CLI
+    """With explicit --backend cdp, Batch 1 cmds still use the CDP CLI
     callback (which internally uses TabGroupManager / requests), not the
-    extension backend.
+    extension backend. (Extension is the default backend now, so the CDP
+    path requires the explicit flag.)
     """
     fb = _FakeBackend()
     monkeypatch.setattr(cc, "_ext_backend", lambda: fb)
 
-    # Invoke without --backend: should NOT hit the fake extension backend.
+    # Invoke with --backend cdp: should NOT hit the fake extension backend.
     # The CDP callback may fail because no Chrome is running, but what we
     # assert is that _ext_backend() is not called.
-    r = _run("list-tabs")
+    r = _run("--backend", "cdp", "list-tabs")
     # Regardless of exit code (CDP may error out without Chrome), the
     # extension path must not have been hit.
     assert fb.calls == [], f"CDP path leaked into extension backend: {fb.calls}"

@@ -30,15 +30,15 @@ def main() -> int:
                     help="Unpacked bundle dir. Default: the bundle that "
                          "ships with frago (resolved via importlib.resources).")
     ap.add_argument("--user-data-dir", type=Path, default=None,
-                    help="Chrome profile dir. "
-                         "Default: ~/.frago/chrome/extension-profile")
+                    help="Chrome profile dir. Default: the browser's own "
+                         "system user-data directory (real profile)")
     args = ap.parse_args()
 
     # Lazy import: keeps this script standalone-runnable even if the
     # frago package isn't installed system-wide (assuming PYTHONPATH or
     # `uv run` is doing the right thing).
-    from frago.chrome.extension import bundle_path
     from frago.chrome.backends.extension import launch_chrome_with_extension
+    from frago.chrome.extension import bundle_path
 
     bundle = args.bundle or bundle_path()
     if not (bundle / "manifest.json").exists():

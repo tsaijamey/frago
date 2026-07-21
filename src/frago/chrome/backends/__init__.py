@@ -2,7 +2,7 @@ from .base import ChromeBackend
 from .cdp import CDPChromeBackend
 from .extension import ExtensionChromeBackend
 
-DEFAULT_BACKEND = "cdp"
+DEFAULT_BACKEND = "extension"
 
 
 def get_backend(name: str = DEFAULT_BACKEND, **kwargs) -> ChromeBackend:

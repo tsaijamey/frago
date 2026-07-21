@@ -87,7 +87,7 @@ def test_get_title_delegates_to_session(runner, monkeypatch):
     session.get_title.return_value = "Hello World"
     _patch_session(monkeypatch, session)
 
-    result = runner.invoke(chrome_group, ["get-title", "--group", "research"])
+    result = runner.invoke(chrome_group, ["-b", "cdp", "get-title", "--group", "research"])
 
     assert result.exit_code == 0, result.output
     session.get_title.assert_called_once_with()
@@ -104,7 +104,7 @@ def test_status_delegates_to_session(runner, monkeypatch):
     }
     _patch_session(monkeypatch, session)
 
-    result = runner.invoke(chrome_group, ["status"])
+    result = runner.invoke(chrome_group, ["-b", "cdp", "status"])
 
     assert result.exit_code == 0, result.output
     session.status.health_check.assert_called_once_with()
@@ -117,7 +117,7 @@ def test_status_unhealthy_exits_nonzero(runner, monkeypatch):
     session.status.health_check.return_value = False
     _patch_session(monkeypatch, session)
 
-    result = runner.invoke(chrome_group, ["status"])
+    result = runner.invoke(chrome_group, ["-b", "cdp", "status"])
 
     assert result.exit_code != 0
     assert "CDP connection failed" in result.output
@@ -131,7 +131,7 @@ def test_detect_delegates_to_browser_detection(runner, monkeypatch):
         lambda: {bd.BrowserType.CHROME: "/usr/bin/google-chrome"},
     )
 
-    result = runner.invoke(chrome_group, ["detect"])
+    result = runner.invoke(chrome_group, ["-b", "cdp", "detect"])
 
     assert result.exit_code == 0, result.output
     assert "/usr/bin/google-chrome" in result.output
@@ -142,7 +142,7 @@ def test_detect_no_browsers(runner, monkeypatch):
 
     monkeypatch.setattr(bd, "detect_available_browsers", lambda: {})
 
-    result = runner.invoke(chrome_group, ["detect"])
+    result = runner.invoke(chrome_group, ["-b", "cdp", "detect"])
 
     assert result.exit_code == 0, result.output
     assert "No supported browsers found" in result.output

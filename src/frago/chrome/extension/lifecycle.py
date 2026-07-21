@@ -265,16 +265,16 @@ def start_extension_bridge(
             Required when ``chrome_binary`` is given. Otherwise the
             picker chooses and reports.
         chrome_binary: Explicit browser executable. Overrides picker.
-        profile_dir: Override frago-managed profile (default
-            ``~/.frago/chrome/extension-profile``).
+        profile_dir: Override the profile (default: the browser's own
+            system user-data directory — the real profile, no copy).
         bundle_dir: Override bundle location (default :func:`bundle_path`).
         daemon_log: Where to redirect the daemon's stdio (default
             ``~/.frago/server/extension-daemon.log``).
         bridge_timeout: Seconds to wait for the SW to connect.
         socket_timeout: Seconds to wait for the daemon socket to appear.
-        reseed_profile: Delete the frago-managed profile and re-seed it
-            from the system browser profile (fresh copy of logins,
-            cookies, bookmarks). Refuses while the profile is in use.
+        reseed_profile: Obsolete (the backend drives the browser's own
+            profile — there is nothing to re-seed). Ignored with a
+            warning.
 
     Returns:
         :class:`BridgeStartupResult` with everything the caller might
@@ -306,23 +306,23 @@ def start_extension_bridge(
         binary = choice.path
         brand = browser or choice.brand
 
-    # 2. Profile dir
-    profile = profile_dir or (Path.home() / ".frago" / "chrome" /
-                              "extension-profile")
+    # 2. Profile dir — the browser's own system profile. The extension
+    # backend drives the real browser directly; no isolated copy.
+    from ..backends.extension import extension_profile_dir
+    profile = profile_dir or extension_profile_dir(brand)
     profile.mkdir(parents=True, exist_ok=True)
     if _profile_locked(profile):
         raise RuntimeError(
             f"profile {profile} is locked — another browser instance is "
-            f"already running on it. Run `frago chrome stop --backend "
-            f"extension` first, or close the browser window manually."
+            f"already running on it. Run `frago chrome stop` first, or "
+            f"close the browser window manually."
         )
     if reseed_profile:
-        # Lock check above guarantees no browser holds this profile.
-        # Wipe it so launch_chrome_with_extension's first-launch seeding
-        # re-copies the system profile from scratch.
-        import shutil as _shutil
-        _shutil.rmtree(profile, ignore_errors=True)
-        profile.mkdir(parents=True, exist_ok=True)
+        # Obsolete: there is no frago-owned copy to wipe anymore, and
+        # deleting the real browser profile would destroy user data.
+        print("warning: --reseed-profile is obsolete — the extension "
+              "backend drives the browser's own profile; flag ignored",
+              file=sys.stderr)
 
     # 3. Bundle dir
     bundle = bundle_dir or bundle_path()
@@ -390,8 +390,29 @@ def stop_extension_bridge(
     Idempotent: stopping an already-stopped bridge is not an error;
     fields in the result reflect what was found.
     """
-    profile = profile_dir or (Path.home() / ".frago" / "chrome" /
-                              "extension-profile")
+    if profile_dir is not None:
+        profile = profile_dir
+    else:
+        # No brand context at stop time — re-run the deterministic picker
+        # to land on the same system profile `start` used. Older frago
+        # versions launched on frago-managed copies; keep those as
+        # fallbacks so a browser started pre-upgrade can still be stopped.
+        from ..backends.extension import (
+            extension_profile_dir,
+            pick_browser_for_extension,
+        )
+        legacy = [Path.home() / ".frago" / "chrome" / "extension-profile"]
+        choice = pick_browser_for_extension()
+        candidates = list(legacy)
+        if choice:
+            legacy_shared = (Path.home() / ".frago" / "profiles" /
+                             choice.brand / "9222")
+            candidates = [extension_profile_dir(choice.brand),
+                          legacy_shared, *legacy]
+        profile = next(
+            (p for p in candidates if _read_profile_lock_pid(p) is not None),
+            candidates[0],
+        )
 
     # 1. Browser
     browser_pid = _read_profile_lock_pid(profile)

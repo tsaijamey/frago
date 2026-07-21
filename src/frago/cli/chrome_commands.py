@@ -112,21 +112,18 @@ def detect_browsers(group):
     "--backend", "-b",
     type=click.Choice(["cdp", "extension"], case_sensitive=False),
     default=None,
-    help="Browser backend. Defaults to env FRAGO_CHROME_BACKEND or 'cdp'. "
-         "Extension backend supports MVP 6 (navigate, exec-js, get-content, "
-         "click, screenshot, start) + Batch 1 (stop, status, list-tabs, "
-         "switch-tab, close-tab, groups, group-info, group-close, "
-         "group-cleanup, reset, scroll, scroll-to, zoom, get-title) + "
-         "Batch 2 (wait, detect — local ops, identical across backends) "
-         "+ Visual effects (highlight, pointer, spotlight, annotate, "
-         "underline, clear-effects).",
+    help="Browser backend. Defaults to env FRAGO_CHROME_BACKEND or "
+         "'extension' (browser extension + native messaging, drives the "
+         "browser's own profile). 'cdp' is retained for legacy flows and "
+         "must be selected explicitly.",
 )
 @click.pass_context
 def chrome_group(ctx, backend):
     """
-    Chrome CDP browser automation
+    Chrome browser automation
 
-    Control browser through Chrome DevTools Protocol.
+    Control the browser through the frago extension bridge (default
+    backend). CDP remains available via an explicit -b cdp.
 
     \b
     Subcommand categories:
@@ -144,7 +141,7 @@ def chrome_group(ctx, backend):
       frago chrome click --group research "#button"        # Click
       frago chrome groups                                  # List groups
     """
-    chosen = (backend or os.environ.get("FRAGO_CHROME_BACKEND") or "cdp").lower()
+    chosen = (backend or os.environ.get("FRAGO_CHROME_BACKEND") or "extension").lower()
     if ctx.obj is None:
         ctx.obj = {}
     ctx.obj["BACKEND"] = chosen
@@ -372,15 +369,15 @@ def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
         return _dispatch_extension(name, kwargs)
     except ExtensionBackendError as e:
         err = {"ok": False, "code": e.code, "error": str(e),
-               "hint": "run: frago chrome -b extension start"}
+               "hint": "run: frago chrome start"}
     except FileNotFoundError as e:
         err = {"ok": False, "code": "socket-not-found",
                "error": f"bridge socket not found: {e}",
-               "hint": "run: frago chrome -b extension start"}
+               "hint": "run: frago chrome start"}
     except (ConnectionRefusedError, ConnectionResetError, TimeoutError) as e:
         err = {"ok": False, "code": "bridge-unreachable",
                "error": f"{type(e).__name__}: {e}",
-               "hint": "run: frago chrome -b extension start"}
+               "hint": "run: frago chrome start"}
     click.echo(json.dumps(err, indent=2, ensure_ascii=False))
     raise click.exceptions.Exit(1)
 
@@ -392,7 +389,7 @@ def _wrap_mvp(cmd, name: str):
     @functools.wraps(orig)
     @click.pass_context
     def wrapped(ctx, *args, **kwargs):
-        backend = (ctx.obj or {}).get("BACKEND", "cdp")
+        backend = (ctx.obj or {}).get("BACKEND", "extension")
         if backend == "extension":
             return _dispatch_extension_safe(name, kwargs)
         # orig is the existing click callback. When it was decorated with

@@ -2153,8 +2153,8 @@ def init(force: bool):
 @click.option(
     '--reseed-profile',
     is_flag=True,
-    help='Extension backend only: delete the extension-profile and re-seed '
-         'it from the system browser profile (fresh logins/cookies/bookmarks)'
+    help='Obsolete: the extension backend now drives the browser\'s own '
+         'profile directly; this flag is ignored'
 )
 @print_usage
 def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_url: str,
@@ -2196,8 +2196,8 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     from ..chrome.cdp.launcher import ChromeLauncher
 
     if reseed_profile:
-        click.echo("Warning: --reseed-profile only applies to the extension "
-                   "backend (frago chrome -b extension start); ignored", err=True)
+        click.echo("Warning: --reseed-profile is obsolete — the extension "
+                   "backend drives the browser's own profile; ignored", err=True)
 
     # Mode exclusivity check
     mode_count = sum([headless, void, app_mode])

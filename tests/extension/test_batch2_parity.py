@@ -198,7 +198,7 @@ def test_cli_ext_detect_without_group_keeps_browser_detection(fake_ext):
 
 
 def test_cli_cdp_detect_with_group_errors_clearly(fake_ext):
-    r = _run("detect", "--group", "g1")
+    r = _run("--backend", "cdp", "detect", "--group", "g1")
     assert r.exit_code != 0
     assert "extension" in r.output
     assert fake_ext.calls == []
@@ -244,19 +244,19 @@ def test_cli_ext_socket_missing_is_structured_json(monkeypatch):
 # ─────────────── 4. CDP path unchanged for Batch 2 ───────────────
 
 def test_cdp_wait_cli_does_not_touch_extension(monkeypatch):
-    """Default backend (no --backend) must not route wait to extension."""
+    """Explicit --backend cdp must not route wait to extension."""
     fb = _FakeBackend()
     monkeypatch.setattr(cc, "_ext_backend", lambda: fb)
     # Don't assert exit code (no Chrome running); only that extension
     # backend was never invoked.
-    _run("wait", "0.01")
+    _run("--backend", "cdp", "wait", "0.01")
     assert fb.calls == []
 
 
 def test_cdp_detect_cli_does_not_touch_extension(monkeypatch):
     fb = _FakeBackend()
     monkeypatch.setattr(cc, "_ext_backend", lambda: fb)
-    r = _run("detect")
+    r = _run("--backend", "cdp", "detect")
     # detect has no Chrome dependency — should always succeed on CDP path.
     assert r.exit_code == 0, r.output
     assert fb.calls == []
