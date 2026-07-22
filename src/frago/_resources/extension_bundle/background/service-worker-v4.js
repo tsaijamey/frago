@@ -110,10 +110,178 @@ async function dispatch(method, params) {
         case "visual.annotate":       return await visualAnnotate(params);
         case "visual.underline":      return await visualUnderline(params);
         case "visual.clear_effects":  return await visualClearEffects(params);
+        // ─── Batch 2: capture（screencast 帧流 / CDP 透传 / tab 录制） ───
+        //
+        // 【已开发，暂不启用】下面的 capture.* 处理函数全部实现完毕并实测通过
+        // （screencast 出帧、CDP 透传、tabCapture 录制），但当前 agent_os 走
+        // CDP 后端，扩展这条路径不投入使用。保留代码，关闭入口——调用方得到的
+        // 是明确的"未启用"错误，而不是静默失败或半可用状态。
+        // 启用方式：删掉下面这个 case 块，恢复被注释的五行路由。
+        case "capture.screencast_start":
+        case "capture.screencast_stop":
+        case "capture.cdp":
+        case "capture.record_start":
+        case "capture.record_stop":
+            throw { code: -32601, message:
+                `${method} 已开发但暂未启用：agent_os 当前使用 CDP 后端采集画面。` +
+                "处理函数保留在本文件中，恢复路由即可启用。" };
+        // case "capture.screencast_start": return await captureScreencastStart(params);
+        // case "capture.screencast_stop":  return await captureScreencastStop(params);
+        // case "capture.cdp":              return await captureCdp(params);
+        // case "capture.record_start":     return await captureRecordStart(params);
+        // case "capture.record_stop":      return await captureRecordStop(params);
         default:
             throw { code: -32601, message: `method not found: ${method}` };
     }
 }
+
+// ════════════ capture: debugger screencast / CDP / tabCapture ════════════
+//
+// 帧与录制块以 JSON-RPC notification（无 id）发往 native host，
+// daemon 会把无 id 消息广播给所有本地客户端——消费者在
+// ~/.frago/chrome/extension.sock 上监听 capture.frame / capture.chunk 即可。
+
+const DEBUGGER_VERSION = "1.3";
+const screencasts = new Set(); // 正在推帧的 tabId
+
+function sendEvent(method, params) {
+    port?.postMessage({ jsonrpc: "2.0", method, params });
+}
+
+chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (method !== "Page.screencastFrame") return;
+    chrome.debugger.sendCommand(source, "Page.screencastFrameAck",
+        { sessionId: params.sessionId }).catch(() => {});
+    if (screencasts.has(source.tabId)) {
+        sendEvent("capture.frame", {
+            tab_id: source.tabId, data: params.data, metadata: params.metadata,
+        });
+    }
+});
+
+chrome.debugger.onDetach.addListener((source) => {
+    if (screencasts.delete(source.tabId)) {
+        sendEvent("capture.detached", { tab_id: source.tabId });
+    }
+});
+
+async function ensureAttached(tabId) {
+    const targets = await chrome.debugger.getTargets();
+    const t = targets.find((x) => x.tabId === tabId);
+    if (!t || !t.attached) {
+        await chrome.debugger.attach({ tabId }, DEBUGGER_VERSION);
+    }
+}
+
+async function captureScreencastStart(params) {
+    const tabId = await resolveTab(params);
+    if (!tabId) throw { code: -32602, message: "need group or tab_id" };
+    // 后台标签不合成、不产帧（浏览器只渲染可见标签）——采集前必须置前；
+    // 窗口最小化/被遮挡时整窗合成器都停了，连窗口一起唤醒。
+    const tabInfo = await chrome.tabs.get(tabId);
+    await chrome.windows.update(tabInfo.windowId, { focused: true, state: "normal" });
+    await chrome.tabs.update(tabId, { active: true });
+    await ensureAttached(tabId);
+    await chrome.debugger.sendCommand({ tabId }, "Page.enable");
+    await chrome.debugger.sendCommand({ tabId }, "Page.startScreencast", {
+        format: "jpeg",
+        quality: params.quality ?? 80,
+        maxWidth: params.max_width ?? 1920,
+        maxHeight: params.max_height ?? 1080,
+        everyNthFrame: 1, // 恒为 1：它抽的是"已渲染帧"，抽稀必须在下游做
+    });
+    screencasts.add(tabId);
+    // 静止页面合成器闲置，startScreencast 可能连初始帧都不发。
+    // 注入一次瞬时 transform 制造合成损伤，逼出首帧。
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => {
+                const el = document.documentElement;
+                el.style.transform = "translateZ(0)";
+                requestAnimationFrame(() => { el.style.transform = ""; });
+            },
+        });
+    } catch (_) { /* chrome:// 等页面注入不了，随它 */ }
+    return { tab_id: tabId, streaming: true };
+}
+
+async function captureScreencastStop(params) {
+    const tabId = await resolveTab(params);
+    screencasts.delete(tabId);
+    try { await chrome.debugger.sendCommand({ tabId }, "Page.stopScreencast"); } catch (_) {}
+    try { await chrome.debugger.detach({ tabId }); } catch (_) {}
+    return { tab_id: tabId, streaming: false };
+}
+
+async function captureCdp(params) {
+    // 协议级透传：坐标输入（Input.dispatchMouseEvent）、导航等都走这里。
+    const tabId = await resolveTab(params);
+    if (!tabId) throw { code: -32602, message: "need group or tab_id" };
+    if (!params.method) throw { code: -32602, message: "need method" };
+    await ensureAttached(tabId);
+    const result = await chrome.debugger.sendCommand(
+        { tabId }, params.method, params.params || {});
+    return { tab_id: tabId, result };
+}
+
+// ─── tabCapture 录制：streamId 在 SW 取，采集与编码在 offscreen 文档 ───
+
+const OFFSCREEN_URL = "background/offscreen.html";
+let recordingTab = null;
+
+async function ensureOffscreen() {
+    const has = await chrome.offscreen.hasDocument();
+    if (has) return;
+    await chrome.offscreen.createDocument({
+        url: OFFSCREEN_URL,
+        reasons: ["USER_MEDIA"],
+        justification: "record a tab to video via tabCapture",
+    });
+}
+
+async function captureRecordStart(params) {
+    const tabId = await resolveTab(params);
+    if (!tabId) throw { code: -32602, message: "need group or tab_id" };
+    if (recordingTab != null) {
+        throw { code: -32004, message: `already recording tab ${recordingTab}` };
+    }
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    await ensureOffscreen();
+    const res = await chrome.runtime.sendMessage({
+        __frago_offscreen: "record_start",
+        streamId,
+        tabId,
+        videoBitsPerSecond: params.video_bps ?? 8_000_000,
+        timesliceMs: params.timeslice_ms ?? 500,
+    });
+    if (!res || !res.ok) {
+        throw { code: -32004, message: (res && res.error) || "offscreen start failed" };
+    }
+    recordingTab = tabId;
+    return { tab_id: tabId, recording: true };
+}
+
+async function captureRecordStop(_params) {
+    if (recordingTab == null) throw { code: -32004, message: "not recording" };
+    const res = await chrome.runtime.sendMessage({ __frago_offscreen: "record_stop" });
+    const tabId = recordingTab;
+    recordingTab = null;
+    if (!res || !res.ok) {
+        throw { code: -32004, message: (res && res.error) || "offscreen stop failed" };
+    }
+    return { tab_id: tabId, recording: false, chunks: res.chunks };
+}
+
+// offscreen 文档产出的录制块 → 转发给 native host（无 id 通知，daemon 广播）
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.__frago_chunk) {
+        sendEvent("capture.chunk", {
+            tab_id: msg.tabId, seq: msg.seq, data: msg.data,
+            mime: msg.mime, last: !!msg.last,
+        });
+    }
+});
 
 // ════════════════════════ handlers ════════════════════════
 

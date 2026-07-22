@@ -203,6 +203,149 @@ class ExtensionChromeBackend(ChromeBackend):
     def clear_effects(self, group: str) -> dict:
         return self._rpc("visual.clear_effects", {"group": group})
 
+    # ── capture：debugger screencast / CDP 透传 / tabCapture 录制 ──
+    #
+    # 这些能力让"取某个 tab 的画面流"和"把某个 tab 录成视频文件"
+    # 都发生在扩展驱动的浏览器里——不再需要单独拉起 CDP 实例。
+
+    def capture_cdp(self, method: str, params: dict | None = None, *,
+                    group: str | None = None, tab_id: int | None = None) -> Any:
+        p: dict[str, Any] = {"method": method, "params": params or {}}
+        if group:
+            p["group"] = group
+        if tab_id:
+            p["tab_id"] = tab_id
+        return self._rpc("capture.cdp", p)
+
+    def screencast_start(self, *, group: str | None = None,
+                         tab_id: int | None = None, quality: int = 80,
+                         max_width: int = 1920, max_height: int = 1080) -> dict:
+        p: dict[str, Any] = {"quality": quality, "max_width": max_width,
+                             "max_height": max_height}
+        if group:
+            p["group"] = group
+        if tab_id:
+            p["tab_id"] = tab_id
+        return self._rpc("capture.screencast_start", p)
+
+    def screencast_stop(self, *, group: str | None = None,
+                        tab_id: int | None = None) -> dict:
+        p: dict[str, Any] = {}
+        if group:
+            p["group"] = group
+        if tab_id:
+            p["tab_id"] = tab_id
+        return self._rpc("capture.screencast_stop", p)
+
+    def record_tab(self, output: Path, *, group: str | None = None,
+                   tab_id: int | None = None, duration: float = 10.0,
+                   fps: int = 30, timeout: float = 30.0) -> dict:
+        """把一个 tab 录成 mp4（debugger screencast 帧流 + ffmpeg 编码）。
+
+        为什么不用 tabCapture：`getMediaStreamId` 受 activeTab 手势门槛
+        约束（用户必须点过扩展图标），agent 程序化调用会被
+        "Extension has not been invoked" 拦下。debugger screencast 只要
+        manifest 有 debugger 权限即可，零手势。
+
+        双通道：一条裸连接只做监听（daemon 把扩展的无 id 通知广播给
+        所有客户端），指令走独立的 DaemonClient。帧按真实到达时刻编码，
+        静止页面不重绘不发帧，节奏靠时间戳还原。
+        """
+        import asyncio
+        import shutil as _shutil
+        import subprocess as _sp
+        import tempfile
+        import time as _time
+
+        if not _shutil.which("ffmpeg"):
+            raise ExtensionBackendError(-1, "本机没有 ffmpeg")
+
+        async def _run() -> dict:
+            from ..extension import native_host as nh
+            reader, writer = await asyncio.open_unix_connection(
+                str(self.sock_path))
+            writer.write(nh.encode_frame({"role": "client"}))
+            await writer.drain()
+
+            frames_dir = Path(tempfile.mkdtemp(prefix="frago-rec-"))
+            stamps: list[float] = []
+            target_tab: dict[str, Any] = {}
+
+            async def listen() -> None:
+                t0 = _time.time()
+                idx = 0
+                while True:
+                    msg = await nh.read_frame_async(reader)
+                    if msg is None:
+                        break
+                    if msg.get("method") != "capture.frame":
+                        continue
+                    p = msg.get("params") or {}
+                    if target_tab and p.get("tab_id") != target_tab.get("id"):
+                        continue
+                    (frames_dir / f"f{idx:06d}.jpg").write_bytes(
+                        base64.b64decode(p["data"]))
+                    stamps.append(_time.time() - t0)
+                    idx += 1
+
+            task = asyncio.create_task(listen())
+            client = DaemonClient(self.sock_path)
+            sel: dict[str, Any] = {}
+            if group:
+                sel["group"] = group
+            if tab_id:
+                sel["tab_id"] = tab_id
+            try:
+                resp = await client.call_async(
+                    "capture.screencast_start", sel, timeout)
+                if resp.get("error"):
+                    raise ExtensionBackendError(
+                        resp["error"].get("code", -1),
+                        resp["error"].get("message", "screencast_start failed"))
+                target_tab["id"] = resp["result"]["tab_id"]
+                await asyncio.sleep(duration)
+                await client.call_async("capture.screencast_stop", sel, timeout)
+                await asyncio.sleep(0.3)  # 收尾：在途帧落地
+            finally:
+                task.cancel()
+                await client.close_async()
+                writer.close()
+
+            if not stamps:
+                _shutil.rmtree(frames_dir, ignore_errors=True)
+                raise ExtensionBackendError(
+                    -1, "没有收到任何帧——页面全程静止或 screencast 未生效")
+
+            # 按帧的真实到达时刻编码（concat demuxer 逐帧写时长）
+            lines = []
+            for i, ts in enumerate(stamps):
+                # 尾帧撑到录制结束时刻：静态页面最后一帧之后不再重绘，
+                # 不撑的话 6 秒录制会缩成零点几秒。
+                nxt = (stamps[i + 1] if i + 1 < len(stamps)
+                       else max(ts + 1 / fps, duration))
+                lines.append(f"file '{frames_dir / f'f{i:06d}.jpg'}'")
+                lines.append(f"duration {max(nxt - ts, 1 / 120):.5f}")
+            lines.append(f"file '{frames_dir / f'f{len(stamps) - 1:06d}.jpg'}'")
+            listing = frames_dir / "frames.txt"
+            listing.write_text("\n".join(lines))
+            output.parent.mkdir(parents=True, exist_ok=True)
+            proc = _sp.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                 "-i", str(listing), "-vsync", "cfr", "-r", str(fps),
+                 "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                 "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                 "-pix_fmt", "yuv420p", str(output)],
+                capture_output=True, text=True)
+            _shutil.rmtree(frames_dir, ignore_errors=True)
+            if proc.returncode != 0:
+                raise ExtensionBackendError(
+                    -1, f"ffmpeg 失败: {proc.stderr[-800:]}")
+            return {"output": str(output), "frames": len(stamps),
+                    "duration_sec": round(stamps[-1], 2),
+                    "bytes": output.stat().st_size}
+
+        return asyncio.run(_run())
+
     def detect_anti_bot(self, group: str) -> dict:
         """Probe the current page for anti-bot challenge presence.
 

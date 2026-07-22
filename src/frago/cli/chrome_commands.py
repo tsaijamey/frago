@@ -12,6 +12,7 @@ Includes:
 
 import functools
 import os
+from pathlib import Path
 
 import click
 
@@ -444,3 +445,36 @@ chrome_group.add_command(_wrap_mvp(spotlight, "spotlight"), name="spotlight")
 chrome_group.add_command(_wrap_mvp(annotate, "annotate"), name="annotate")
 chrome_group.add_command(_wrap_mvp(underline, "underline"), name="underline")
 chrome_group.add_command(_wrap_mvp(clear_effects, "clear-effects"), name="clear-effects")
+
+
+# ─────────────── capture（P4）：extension 后端专属 ───────────────
+#
+# 录制/帧流发生在扩展驱动的浏览器里（debugger + tabCapture 权限），
+# 不拉起任何新浏览器实例、不产生任何新 profile。
+#
+# 【已开发，暂不启用】实现完整并实测通过（见 ExtensionChromeBackend.record_tab），
+# 但当前 agent_os 走 CDP 后端采集画面，这条入口不投入使用。
+# 命令注册已注释：`frago chrome record-tab` 会得到 click 的 "No such command"
+# 标准错误，与其它未注册命令表现一致，不做半可用状态。
+# 启用方式：取消下面 @chrome_group.command 一行的注释。
+# @chrome_group.command(name="record-tab")
+@click.argument("output", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--group", "-g", default=None, help="tab group（缺省读 FRAGO_CURRENT_RUN）")
+@click.option("--tab-id", type=int, default=None, help="直接指定 tabId")
+@click.option("--duration", "-d", type=float, default=10.0,
+              help="录制时长（秒），默认 10")
+@click.pass_context
+def record_tab(ctx, output: Path, group, tab_id, duration):
+    """把一个 tab 录成 webm（扩展 tabCapture，零新实例零新 profile）。"""
+    import json as _json
+
+    if (ctx.obj or {}).get("BACKEND") == "cdp":
+        raise click.ClickException("record-tab 只在 extension 后端可用")
+    group = group or os.environ.get("FRAGO_CURRENT_RUN")
+    if not group and tab_id is None:
+        raise click.ClickException("需要 --group 或 --tab-id")
+    from ..chrome.backends.extension import ExtensionChromeBackend
+    be = ExtensionChromeBackend()
+    result = be.record_tab(output.expanduser().resolve(), group=group,
+                           tab_id=tab_id, duration=duration)
+    click.echo(_json.dumps(result, ensure_ascii=False))
