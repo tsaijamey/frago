@@ -112,24 +112,13 @@ async function dispatch(method, params) {
         case "visual.clear_effects":  return await visualClearEffects(params);
         // ─── Batch 2: capture（screencast 帧流 / CDP 透传 / tab 录制） ───
         //
-        // 【已开发，暂不启用】下面的 capture.* 处理函数全部实现完毕并实测通过
-        // （screencast 出帧、CDP 透传、tabCapture 录制），但当前 agent_os 走
-        // CDP 后端，扩展这条路径不投入使用。保留代码，关闭入口——调用方得到的
-        // 是明确的"未启用"错误，而不是静默失败或半可用状态。
-        // 启用方式：删掉下面这个 case 块，恢复被注释的五行路由。
-        case "capture.screencast_start":
-        case "capture.screencast_stop":
-        case "capture.cdp":
-        case "capture.record_start":
-        case "capture.record_stop":
-            throw { code: -32601, message:
-                `${method} 已开发但暂未启用：agent_os 当前使用 CDP 后端采集画面。` +
-                "处理函数保留在本文件中，恢复路由即可启用。" };
-        // case "capture.screencast_start": return await captureScreencastStart(params);
-        // case "capture.screencast_stop":  return await captureScreencastStop(params);
-        // case "capture.cdp":              return await captureCdp(params);
-        // case "capture.record_start":     return await captureRecordStart(params);
-        // case "capture.record_stop":      return await captureRecordStop(params);
+        // 已启用。agent_os 的演员从独立 CDP 实例改成浏览器自己的真实标签页：
+        // 登录态本来就在 profile 里，不必再为登录另开一扇窗，反爬也天然过检。
+        case "capture.screencast_start": return await captureScreencastStart(params);
+        case "capture.screencast_stop":  return await captureScreencastStop(params);
+        case "capture.cdp":              return await captureCdp(params);
+        case "capture.record_start":     return await captureRecordStart(params);
+        case "capture.record_stop":      return await captureRecordStop(params);
         default:
             throw { code: -32601, message: `method not found: ${method}` };
     }
