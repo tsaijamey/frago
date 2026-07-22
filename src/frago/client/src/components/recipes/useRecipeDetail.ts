@@ -44,7 +44,10 @@ export function useRecipeDetail() {
       if (recipe.inputs) {
         const initialValues: Record<string, unknown> = {};
         Object.entries(recipe.inputs).forEach(([name, input]) => {
-          if (input.default !== undefined) {
+          // 后端把"没有默认值"序列化成 null，而 null !== undefined 为真。
+          // 只判 undefined 会让 array/object 字段被填进字面量 "null"，
+          // 用户什么都没输入却被判"必须是 JSON 数组"。
+          if (input.default !== undefined && input.default !== null) {
             if (input.type === 'array' || input.type === 'object') {
               initialValues[name] = typeof input.default === 'string'
                 ? input.default
@@ -102,7 +105,9 @@ export function useRecipeDetail() {
         return;
       }
 
-      if (input.type === 'number') {
+      // integer 也要按数字校验：配方里确实在用这个类型（如 video_story_studio 的 fps），
+      // 漏掉它等于该字段填任何字母都能通过前端进到后端。
+      if (input.type === 'number' || input.type === 'integer') {
         if (isNaN(Number(value))) {
           errors[name] = t('recipes.validation.invalidNumber');
         }
