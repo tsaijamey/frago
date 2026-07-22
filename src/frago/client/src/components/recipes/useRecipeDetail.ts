@@ -55,8 +55,13 @@ export function useRecipeDetail() {
             } else {
               initialValues[name] = input.default;
             }
+          } else if (input.type === 'boolean') {
+            // 配方没声明默认值时留空，让 prepareParameters 跳过这个参数，
+            // 由配方脚本自己的默认值生效。填 false 会被当成用户显式关闭发下去，
+            // 把描述里写着"默认 true"的开关强行关掉。
+            initialValues[name] = undefined;
           } else {
-            initialValues[name] = input.type === 'boolean' ? false : '';
+            initialValues[name] = '';
           }
         });
         setFormValues(initialValues);
