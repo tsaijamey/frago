@@ -13,7 +13,7 @@ import click
 from frago import __version__
 
 from .agent_command import agent, agent_status
-from .agent_friendly import AgentFriendlyGroup
+from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
 from .autostart_command import autostart_group
 from .book_commands import book_command
 from .channel_commands import channel_group
@@ -247,7 +247,8 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
     '--port',
     type=int,
     default=9222,
-    help='Chrome DevTools Protocol port, default 9222'
+    callback=validate_cdp_port,
+    help='Chrome DevTools Protocol port. Only 9222 is allowed.'
 )
 @click.option(
     '--proxy-host',

@@ -26,7 +26,7 @@ from ..chrome.cdp.tab_group_manager import (
     route_tab_for_navigate,
 )
 from ..run import perception, run_log_adapter
-from .agent_friendly import AgentFriendlyCommand
+from .agent_friendly import AgentFriendlyCommand, validate_cdp_port
 
 # =============================================================================
 # Command usage examples (Agent-friendly output)
@@ -119,11 +119,10 @@ COMMAND_EXAMPLES = {
         "frago chrome start",
         "frago chrome start --headless",
         "frago chrome start --void --keep-alive",
-        "frago chrome start --port 9333 --width 1920 --height 1080",
+        "frago chrome start --width 1920 --height 1080",
     ],
     "stop": [
         "frago chrome stop",
-        "frago chrome stop --port 9333",
     ],
     "list-tabs": [
         "frago chrome list-tabs",
@@ -2111,7 +2110,8 @@ def init(force: bool):
     '--port',
     type=int,
     default=9222,
-    help='CDP debug port, default 9222'
+    callback=validate_cdp_port,
+    help='CDP debug port. Only 9222 is allowed.'
 )
 @click.option(
     '--width',
@@ -2188,8 +2188,11 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
       frago chrome start --headless                   # Headless mode
       frago chrome start --void                       # Void mode
       frago chrome start --app --app-url https://...  # App mode
-      frago chrome start --port 9333                  # Use different port
       frago chrome start --keep-alive                 # Keep running after launch
+
+    CDP port is fixed at 9222 (the only whitelisted port); any other value
+    is rejected. Regular browsing goes through the extension backend and
+    needs no --port at all — see: frago book chrome-backend-choice
     """
     from pathlib import Path
 
@@ -2294,7 +2297,8 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     '--port',
     type=int,
     default=9222,
-    help='CDP debug port, default 9222'
+    callback=validate_cdp_port,
+    help='CDP debug port. Only 9222 is allowed.'
 )
 @print_usage
 def chrome_stop(port: int):

@@ -25,6 +25,14 @@ frago chrome 只有一种标准用法：extension 后端（默认，无需任何
 
 ## 不要做的事
 
+以下都是针对 **extension 后端的常规 chrome 操作**（本篇的全部范围）：
+
 - 不要给命令加 `-b`/`--backend` flag——默认后端就是唯一标准路径。
 - 不要用 `--headless` / `--void` / `--port` / `--profile-dir` / `--reseed-profile`：这些是旧后端遗留选项，extension 模式下被忽略或已废弃。
 - 不要手动管理 profile 目录：profile 就是浏览器自己的，frago 不拷贝、不清理。
+
+## 唯一例外：agent_os 的录制机位
+
+`--port` 的禁令**不适用于** agent_os 那套无头录制机位——它显式走 CDP 后端（`-b cdp`）、必须带 `--port 9222`，是与本篇并行的另一条路径，不是 extension 后端下的违规用法。
+
+判别方法：做的是常规浏览网页、抓内容、点击交互 → 本篇规则，禁用 `--port`；做的是 agent_os 录制机位 → 走 CDP、只用 9222，见 `{{frago_launcher}} book` 中的 CDP 端口白名单条目。9222 之外的任何端口在两条路径下都禁止自创。
