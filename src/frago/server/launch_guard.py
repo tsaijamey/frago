@@ -1,4 +1,15 @@
-"""Launch guards that constrain *how* the frago server may be started.
+"""Launch guards that constrain *how* frago may be run.
+
+Two separate concerns live here.
+
+The CLI guard (``assert_cli_not_source_checkout``) sits at the top-level
+command callback and covers *every* subcommand: running ``uv run frago <cmd>``
+inside the source checkout executes repo code against a system-installed
+server, an environment that exists on no user's machine. ``server`` is the sole
+exemption because it *is* the packaging path (it reinstalls the repo as the
+system frago and hands over).
+
+The server guards below constrain how the server daemon may be started.
 
 The only sanctioned server runtime is the system-installed frago (uv tool
 install): ``frago server ...``. Running the server out of the repo's ``.venv``
@@ -109,4 +120,53 @@ def assert_system_install() -> None:
         f"frago and hands over) or the system 'frago server start' directly."
     )
     print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+# --- CLI guard -------------------------------------------------------------
+
+# Subcommands still allowed from the source checkout. Only ``server``: it is the
+# packaging path — it builds the repo, installs it as the system frago and execs
+# that (see ``frago.cli.server_command``), so running it from the checkout is
+# the sanctioned way to publish local changes.
+CHECKOUT_ALLOWED_COMMANDS = frozenset({"server"})
+
+# Escape hatch for the test suite, which necessarily runs from the repo venv and
+# drives the CLI callback through click's CliRunner. Set in tests/conftest.py.
+CHECKOUT_OVERRIDE_ENV = "FRAGO_ALLOW_CHECKOUT_CLI"
+
+
+def assert_cli_not_source_checkout(subcommand: str | None) -> None:
+    """Refuse to run a non-``server`` command from the frago source checkout.
+
+    ``uv run frago <cmd>`` inside the checkout runs repo code while every other
+    part of the system — the server it talks to, the binary recipes shell out
+    to, the knowledge hooks hand to agents — is the system install. That mixed
+    pairing exists on no user's machine, so a command that "worked" there proves
+    nothing. The one command that legitimately starts in the checkout is
+    ``server``, which reinstalls the repo as the system frago first.
+
+    No-op for a global / uv-tool install, for ``--help`` (pure introspection,
+    no side effect) and when the test override env var is set.
+    """
+    if os.environ.get(CHECKOUT_OVERRIDE_ENV) == "1":
+        return
+    if subcommand in CHECKOUT_ALLOWED_COMMANDS:
+        return
+    if "--help" in sys.argv or "-h" in sys.argv:
+        return
+    root = source_checkout_root()
+    if root is None:
+        return  # system / uv-tool install — the sanctioned runtime
+
+    invocation = f"frago {subcommand}" if subcommand else "frago"
+    print(
+        f"Refusing to run: this frago comes from the source checkout at {root}.\n"
+        f"Repo code paired with the system-installed server is a combination no "
+        f"user ever runs, so anything it reports is untrustworthy.\n\n"
+        f"  Use:  {invocation} ...\n"
+        f"  To publish local changes first:  uv run frago server restart\n\n"
+        f"(Tests set {CHECKOUT_OVERRIDE_ENV}=1; that is the only intended bypass.)",
+        file=sys.stderr,
+    )
     sys.exit(1)

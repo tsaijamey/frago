@@ -1,10 +1,17 @@
 """Global test fixtures for frago."""
 import asyncio
+import os
 from pathlib import Path
 from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# The CLI refuses to run from the source checkout (frago.server.launch_guard),
+# but the suite necessarily does exactly that: it lives in the repo, runs in the
+# repo venv, and drives the top-level callback through click's CliRunner. This
+# is the guard's one sanctioned bypass.
+os.environ.setdefault("FRAGO_ALLOW_CHECKOUT_CLI", "1")
 
 
 # ============================================================

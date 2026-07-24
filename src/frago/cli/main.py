@@ -303,6 +303,12 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     # not `main`, so the wrapper in main() is bypassed).
     _force_utf8_stdio_on_windows()
 
+    # Every subcommand passes through here, which is the only place a single
+    # check can cover all of them: the repo venv's frago must not run anything
+    # but the packaging path (`server`). See frago.server.launch_guard.
+    from frago.server.launch_guard import assert_cli_not_source_checkout
+    assert_cli_not_source_checkout(ctx.invoked_subcommand)
+
     ctx.ensure_object(dict)
     ctx.obj['DEBUG'] = debug
     ctx.obj['TIMEOUT'] = timeout
