@@ -68,6 +68,10 @@
   category: must
   brief: "子任务用 {{frago_launcher}} agent 驱动 worker：--yes 一轮 / start-send-peek-stop 常驻；禁止手搓 tmux+claude（权限确认卡死+代批被平台拦截）"
 
+- name: must-system-frago
+  category: must
+  brief: "一切命令用 {{frago_launcher}}；`uv run frago` 唯一例外是打包入口 server start|restart，仓库版本配系统 server 是没人跑的组合"
+
 - name: prompt-form-protocol
   category: must
   brief: "prompt 形态判定协议：命令/真提问/反问/宣泄四形态各自义务、判不清按真提问、改状态动作须指向当轮明示指令"
