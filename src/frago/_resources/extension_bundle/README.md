@@ -31,17 +31,17 @@ bundle:
 
 ```bash
 # 1. Start the frago daemon.
-uv run frago extension daemon &
+frago extension daemon &
 
 # 2. Launch a fresh Chrome with this bundle loaded as unpacked.
 uv run python scripts/dev_launch_extension.py
 
 # 3. Read the dev extension ID from chrome://extensions and register
 #    the native messaging manifest with that ID:
-uv run frago extension install <dev_extension_id>
+frago extension install <dev_extension_id>
 
 # 4. Verify the bridge is up.
-uv run frago extension status
+frago extension status
 ```
 
 ## Stable extension ID

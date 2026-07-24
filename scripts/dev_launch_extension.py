@@ -11,10 +11,10 @@ Usage:
     uv run python scripts/dev_launch_extension.py --user-data-dir /tmp/profile
 
 Pair with the daemon so the bridge actually comes up:
-    Terminal 1:  uv run frago extension daemon
+    Terminal 1:  frago extension daemon
     Terminal 2:  uv run python scripts/dev_launch_extension.py
                  # then read the extension ID from chrome://extensions
-                 uv run frago extension install <extension_id>
+                 frago extension install <extension_id>
 """
 from __future__ import annotations
 

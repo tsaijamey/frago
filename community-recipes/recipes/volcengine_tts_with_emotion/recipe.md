@@ -115,7 +115,7 @@ version: "3.0.0"
 
 **带语气控制**（推荐）：
 ```bash
-uv run frago recipe run volcengine_tts_with_emotion \
+frago recipe run volcengine_tts_with_emotion \
   --params '{
     "text": "[#用兴奋激动的语气说]太棒了！我们成功了！",
     "output_file": "output.wav"
@@ -124,7 +124,7 @@ uv run frago recipe run volcengine_tts_with_emotion \
 
 **纯文本**：
 ```bash
-uv run frago recipe run volcengine_tts_with_emotion \
+frago recipe run volcengine_tts_with_emotion \
   --params '{
     "text": "你好，很高兴认识你。",
     "output_file": "output.wav"
@@ -133,7 +133,7 @@ uv run frago recipe run volcengine_tts_with_emotion \
 
 **SSML 精确控制发音**：
 ```bash
-uv run frago recipe run volcengine_tts_with_emotion \
+frago recipe run volcengine_tts_with_emotion \
   --params '{
     "text": "<speak>《<phoneme alphabet=\"py\" ph=\"xi1 xi1\">茜茜</phoneme>公主》</speak>",
     "output_file": "output.wav"

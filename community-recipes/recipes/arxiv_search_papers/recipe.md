@@ -64,12 +64,12 @@ version: "1.0.0"
 **推荐方式**（Recipe 系统）：
 ```bash
 # 基本搜索
-uv run frago recipe run arxiv_search_papers \
+frago recipe run arxiv_search_papers \
   --params '{"query": "machine learning"}' \
   --output-file arxiv_results.json
 
 # 指定返回数量
-uv run frago recipe run arxiv_search_papers \
+frago recipe run arxiv_search_papers \
   --params '{"query": "deep learning healthcare", "max_results": 20}' \
   --output-file results.json
 ```

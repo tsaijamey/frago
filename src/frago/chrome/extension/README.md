@@ -56,27 +56,27 @@ routed back. Events (id=None) are broadcast to all clients.
 
 ```bash
 # 1. Start the native messaging daemon. Add to autostart for persistence.
-uv run frago extension daemon &
+frago extension daemon &
 
 # 2. Tell Chrome how to spawn frago's native host. The default extension
 #    ID is the published one; pass an ID to override (e.g. for a dev build).
-uv run frago extension install
+frago extension install
 
 # 3. Verify the bridge is up.
-uv run frago extension status
+frago extension status
 
 # 4. Use it via the unified chrome CLI:
-uv run frago chrome navigate https://example.com --group demo --backend extension
+frago chrome navigate https://example.com --group demo --backend extension
 ```
 
 ## Dev setup (sideload an unpacked bundle)
 
 ```bash
-uv run frago extension daemon &
+frago extension daemon &
 uv run python scripts/dev_launch_extension.py
 # Read the dev extension ID from chrome://extensions, then:
-uv run frago extension install <dev_extension_id>
-uv run frago extension status
+frago extension install <dev_extension_id>
+frago extension status
 ```
 
 ## Status
