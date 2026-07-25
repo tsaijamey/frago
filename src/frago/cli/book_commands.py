@@ -77,9 +77,9 @@ def book_command(topic: str | None, brief: bool):
         # Scene not found — suggest available scenes
         scenes = _load_scenes()
         names = [f"scene-{s['name']}" for s in scenes]
-        click.echo(f"Scene not found: {topic}")
-        click.echo(f"\nAvailable scenes: {', '.join(names)}")
-        return
+        click.echo(f"Scene not found: {topic}", err=True)
+        click.echo(f"\nAvailable scenes: {', '.join(names)}", err=True)
+        raise SystemExit(1)
 
     # Find topic — match full name or short name (without category prefix)
     entry = next(
@@ -88,15 +88,15 @@ def book_command(topic: str | None, brief: bool):
     )
     if entry is None:
         _print_not_found(topic, entries)
-        return
+        raise SystemExit(1)
 
     # Output .md content — always use canonical name from index
     topic_name = entry["name"]
     md_path = BOOK_DIR / f"{topic_name}.md"
     if not md_path.is_file():
-        click.echo(f"{entry['brief']} [{CATEGORY_TAGS[entry['category']]}]")
-        click.echo(f"\nDetail content missing for topic: {topic_name}")
-        return
+        click.echo(f"{entry['brief']} [{CATEGORY_TAGS[entry['category']]}]", err=True)
+        click.echo(f"\nDetail content missing for topic: {topic_name}", err=True)
+        raise SystemExit(1)
 
     click.echo(md_path.read_text(encoding="utf-8"))
 
