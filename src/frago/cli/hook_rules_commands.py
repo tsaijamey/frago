@@ -102,6 +102,44 @@ def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _normalize_tool_name(rule: dict) -> str | None:
+    """Rewrite an opencode-flavoured ``tool_name_eq`` into the engine's vocabulary.
+
+    Rules are matched against Claude Code shaped events — the opencode bridge
+    plugin translates its own lowercase tool names before the engine ever sees
+    them. So a rule authored from an opencode session, where the agent sees
+    ``bash`` and ``read``, would match in neither runtime. Rather than teaching
+    the engine a second vocabulary, the name is corrected once at write time.
+
+    Returns:
+        A human-readable note when the rule was rewritten, else None.
+    """
+    match = rule.get("match")
+    if not isinstance(match, dict) or match.get("type") != "tool_name_eq":
+        return None
+    value = match.get("value")
+    if not isinstance(value, str) or not value:
+        return None
+
+    try:
+        from frago.init.opencode_plugin import get_tool_name_map
+
+        canonical = get_tool_name_map().get(value.lower())
+    except (OSError, ValueError, KeyError) as e:
+        logger.warning("Tool name map unavailable, skipping normalisation: %s", e)
+        return None
+
+    if not canonical or canonical == value:
+        return None
+
+    match["value"] = canonical
+    return (
+        f"Normalized match.value '{value}' → '{canonical}' "
+        f"(routing rules use Claude Code tool names; the opencode bridge "
+        f"translates '{value}' before the engine sees it)."
+    )
+
+
 # ── command group ────────────────────────────────────────────────────────
 
 
@@ -230,6 +268,10 @@ def hook_rules_add(rule_json: str, source: str):
 
     if not isinstance(new_rule, dict) or "id" not in new_rule:
         raise click.ClickException("--rule must be a JSON object with an 'id' field.")
+
+    note = _normalize_tool_name(new_rule)
+    if note:
+        click.echo(f"Note: {note}")
 
     new_rule.setdefault("source", source)
     new_rule.setdefault("created_at", _now_iso())
@@ -369,6 +411,13 @@ def hook_rules_validate():
         "SessionEnd",
     }
 
+    try:
+        from frago.init.opencode_plugin import get_tool_name_map
+
+        tool_names = get_tool_name_map()
+    except (OSError, ValueError, KeyError):
+        tool_names = {}
+
     seen_ids: set[str] = set()
     for i, r in enumerate(data.get("rules", [])):
         prefix = f"rules[{i}]"
@@ -388,6 +437,14 @@ def hook_rules_validate():
         a_type = r.get("action", {}).get("type")
         if a_type not in KNOWN_ACTION:
             errors.append(f"{prefix}.action: unknown type '{a_type}'")
+        if m_type == "tool_name_eq":
+            value = r.get("match", {}).get("value")
+            canonical = tool_names.get(value.lower()) if isinstance(value, str) else None
+            if canonical and canonical != value:
+                errors.append(
+                    f"{prefix}.match: tool name '{value}' never matches — "
+                    f"the engine sees '{canonical}'. Fix the value or re-add the rule."
+                )
 
     if errors:
         click.echo(f"Validation failed ({len(errors)} error(s)):", err=True)
