@@ -221,6 +221,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     except Exception as e:
         logger.warning("Failed to deploy hook binary: %s", e)
 
+    # Bridge the same hook binary into opencode, when opencode is installed
+    try:
+        from frago.init.opencode_plugin import deploy_opencode_plugin
+        plugin_path = deploy_opencode_plugin()
+        if plugin_path:
+            logger.info("opencode plugin ready: %s", plugin_path)
+    except Exception as e:
+        logger.warning("Failed to deploy opencode plugin: %s", e)
+
     # Cleanup old trace files
     from frago.telemetry.trace import cleanup_old_traces, register_broadcast_hook
     cleanup_old_traces()

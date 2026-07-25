@@ -1,0 +1,17 @@
+{
+  "_comment": "opencode tool name -> Claude Code tool name. Single source of truth, read by both the opencode bridge plugin (frago-hook.js) and `frago hook-rules add` normalisation. Routing rules are written in the Claude Code vocabulary; this table is how the opencode vocabulary reaches it.",
+  "map": {
+    "bash": "Bash",
+    "read": "Read",
+    "write": "Write",
+    "edit": "Edit",
+    "patch": "Edit",
+    "grep": "Grep",
+    "glob": "Glob",
+    "list": "LS",
+    "webfetch": "WebFetch",
+    "task": "Task",
+    "todowrite": "TodoWrite",
+    "todoread": "TodoRead"
+  }
+}
