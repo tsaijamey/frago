@@ -26,6 +26,9 @@ HITS_LOG_PATH = Path.home() / ".frago" / "hook-rules-hits.log"
 ARCHIVE_PATH = Path.home() / ".frago" / "hook-rules-archive.json"
 SCHEMA_VERSION = 1
 DEFAULT_AGENT_TTL_DAYS = 30
+# Year 2100 in unix seconds. Anything at or beyond this is a corrupt record,
+# not a clock skew.
+_TS_SANE_MAX = 4_102_444_800
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -459,21 +462,44 @@ def hook_rules_validate():
 
 
 def _read_hits() -> dict[str, dict]:
-    """Aggregate ~/.frago/hook-rules-hits.log into {rule_id: {count, last_ts}}."""
+    """Aggregate ~/.frago/hook-rules-hits.log per rule.
+
+    Returns {rule_id: {count, injected, deduped, empty, last_ts}}. ``count``
+    is every time the rule's match clause fired; the outcome counters say
+    what came of those matches. A rule with matches but no injections is
+    firing into the void — its action points at something broken.
+    """
     stats: dict[str, dict] = {}
     if not HITS_LOG_PATH.exists():
         return stats
     for line in HITS_LOG_PATH.read_text().splitlines():
         parts = line.split("\t")
-        if len(parts) != 3:
+        # Three fields is the pre-outcome format; those records were only ever
+        # written on successful injection.
+        if len(parts) == 3:
+            outcome = "injected"
+        elif len(parts) == 4:
+            outcome = parts[3]
+        else:
             continue
         try:
             ts = int(parts[0])
         except ValueError:
             continue
+        # Concurrent hooks used to interleave mid-record, yielding lines whose
+        # timestamp field is two timestamps concatenated. Such a value is far
+        # outside any real epoch and would raise OverflowError downstream, so
+        # drop the record instead of trusting it.
+        if not 0 < ts < _TS_SANE_MAX:
+            continue
         rule_id = parts[2]
-        entry = stats.setdefault(rule_id, {"count": 0, "last_ts": 0})
+        entry = stats.setdefault(
+            rule_id,
+            {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "last_ts": 0},
+        )
         entry["count"] += 1
+        if outcome in ("injected", "deduped", "empty"):
+            entry[outcome] += 1
         if ts > entry["last_ts"]:
             entry["last_ts"] = ts
     return stats
@@ -487,22 +513,40 @@ def hook_rules_stats(source: str | None):
     rules_by_id = {r["id"]: r for r in merged.get("rules", []) if r.get("id")}
     stats = _read_hits()
 
+    empty_stat = {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "last_ts": 0}
     rows = []
     for rid, info in rules_by_id.items():
         if source and info.get("source") != source:
             continue
-        s = stats.get(rid, {"count": 0, "last_ts": 0})
-        rows.append((rid, info.get("source", "?"), s["count"], s["last_ts"]))
+        s = stats.get(rid, empty_stat)
+        rows.append(
+            (rid, info.get("source", "?"), s["count"], s["injected"],
+             s["deduped"], s["empty"], s["last_ts"])
+        )
     rows.sort(key=lambda r: (-r[2], r[0]))
 
-    click.echo(f"\n  {'ID':<42s} {'SOURCE':<8s} {'HITS':>6s}   LAST HIT")
-    click.echo("  " + "-" * 80)
-    for rid, src, count, ts in rows:
+    click.echo(
+        f"\n  {'ID':<42s} {'SOURCE':<8s} {'MATCH':>6s} {'INJECT':>7s} "
+        f"{'DEDUP':>6s} {'EMPTY':>6s}   LAST HIT"
+    )
+    click.echo("  " + "-" * 100)
+    for rid, src, count, injected, deduped, empty, ts in rows:
         last = datetime.fromtimestamp(ts).isoformat(timespec="seconds") if ts else "-"
-        click.echo(f"  {rid:<42s} {src:<8s} {count:>6d}   {last}")
+        click.echo(
+            f"  {rid:<42s} {src:<8s} {count:>6d} {injected:>7d} "
+            f"{deduped:>6d} {empty:>6d}   {last}"
+        )
 
     zero = sum(1 for r in rows if r[2] == 0)
-    click.echo(f"\n({len(rows)} rules; {zero} with zero hits)")
+    broken = [r[0] for r in rows if r[5] > 0]
+    click.echo(f"\n({len(rows)} rules; {zero} never matched)")
+    if broken:
+        click.echo(
+            f"\n{len(broken)} rule(s) matched but produced no content — "
+            "their action points at something broken:"
+        )
+        for rid in broken:
+            click.echo(f"  ! {rid}")
 
 
 # ── prune ────────────────────────────────────────────────────────────────
