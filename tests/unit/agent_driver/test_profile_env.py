@@ -233,7 +233,7 @@ def test_opencode_api_key_endpoint_omits_authorization_header() -> None:
     config = _opencode_profile_config(_profile(endpoint_type="deepseek"))
     options = config["provider"]["frago-profile"]["options"]
     assert options["apiKey"] == "sk-test"
-    assert options["baseURL"] == "https://api.deepseek.com/anthropic"
+    assert options["baseURL"] == "https://api.deepseek.com/anthropic/v1"
     assert "headers" not in options
 
 
@@ -299,7 +299,70 @@ def test_opencode_custom_endpoint_uses_profile_url() -> None:
         _profile(endpoint_type="custom", url="https://example.test/anthropic")
     )
     options = config["provider"]["frago-profile"]["options"]
-    assert options["baseURL"] == "https://example.test/anthropic"
+    assert options["baseURL"] == "https://example.test/anthropic/v1"
+
+
+# ── 版本段补全 ─────────────────────────────────────────────────────
+def _opencode_base_url(profile: APIProfile) -> str:
+    config = _opencode_profile_config(profile)
+    return config["provider"]["frago-profile"]["options"]["baseURL"]
+
+
+def test_opencode_appends_version_segment_when_missing() -> None:
+    """opencode 的 SDK 只补 ``/messages``，地址不带版本段就会打到非 API 路径上
+    （OpenRouter 实测返回官网 HTML 且 200，整轮零 token 还不报错）。预设端点与
+    自定义端点各一条。"""
+    assert (
+        _opencode_base_url(_profile(endpoint_type="deepseek"))
+        == "https://api.deepseek.com/anthropic/v1"
+    )
+    assert (
+        _opencode_base_url(
+            _profile(endpoint_type="custom", url="https://openrouter.ai/api")
+        )
+        == "https://openrouter.ai/api/v1"
+    )
+    # 没有路径段的裸主机名也补
+    assert (
+        _opencode_base_url(_profile(endpoint_type="custom", url="https://example.test"))
+        == "https://example.test/v1"
+    )
+
+
+def test_opencode_never_duplicates_an_existing_version_segment() -> None:
+    """地址末尾已是版本段就原样用，带尾斜杠的写法同样不重复补。"""
+    for url in (
+        "https://openrouter.ai/api/v1",
+        "https://openrouter.ai/api/v1/",
+    ):
+        assert (
+            _opencode_base_url(_profile(endpoint_type="custom", url=url))
+            == "https://openrouter.ai/api/v1"
+        ), url
+    # 非 1 的版本号同样算数，不会补成 .../v2/v1
+    assert (
+        _opencode_base_url(
+            _profile(endpoint_type="custom", url="https://example.test/api/v2")
+        )
+        == "https://example.test/api/v2"
+    )
+
+
+def test_claude_base_url_keeps_profile_address_untouched() -> None:
+    """同一条 profile 在 claude 侧地址一个字不动：它自己补 ``/v1/messages``，
+    翻译层再补一次就成了 ``/v1/v1/messages``，会把现在正常的配置弄坏。"""
+    driver = load_driver("claude")
+    assert driver.profile_env is not None
+    for profile, expected in (
+        (_profile(endpoint_type="deepseek"), "https://api.deepseek.com/anthropic"),
+        (
+            _profile(endpoint_type="custom", url="https://openrouter.ai/api"),
+            "https://openrouter.ai/api",
+        ),
+    ):
+        base_url = driver.profile_env(profile)["ANTHROPIC_BASE_URL"]
+        assert base_url == expected
+        assert not base_url.endswith("/v1"), base_url
 
 
 # ── 真实 OpenRouter profile 端到端 ─────────────────────────────────
@@ -318,7 +381,8 @@ def test_opencode_openrouter_profile_gets_authorization_header() -> None:
     config = _opencode_profile_config(_openrouter_profile())
     options = config["provider"]["frago-profile"]["options"]
     assert options["headers"] == {"Authorization": "Bearer sk-or-v1-secret"}
-    assert options["baseURL"] == "https://openrouter.ai/api"
+    # 认证头不是病因：OpenRouter 两种头都接受，少的是版本段（实测取证）
+    assert options["baseURL"] == "https://openrouter.ai/api/v1"
 
 
 def test_claude_openrouter_profile_gets_authorization_variable() -> None:

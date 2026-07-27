@@ -578,6 +578,32 @@ _PERMISSION_ALLOW = {
 }
 
 
+# 端点地址的版本段：同一条 profile 事实，两个内核的补全约定不同，差异由翻译层消化。
+#   claude  自己补 ``/v1/messages``，所以 profile 里存的是**不带**版本段的地址；
+#   opencode 用的 ``@ai-sdk/anthropic`` 只补 ``/messages``，同一个地址就少了 ``/v1``。
+# 少这一段不会报错：实测 ``https://openrouter.ai/api/messages`` 两种认证头都返回
+# 200，正文却是官网 HTML 页面，opencode 解析不出任何内容——会话库里那条助手消息
+# token 全 0、成本 0、结束标记 unknown、正文为空，日志里一行错误都没有。补上版本段
+# 后 ``https://openrouter.ai/api/v1/messages`` 才是正常的 Anthropic 响应。
+# claude 侧的地址 NEVER 动：它的约定就是不带版本段，补了会把现在正常的配置弄坏。
+_VERSION_SEGMENT = re.compile(r"^v\d+", re.IGNORECASE)
+
+
+def _with_version_segment(url: str) -> str:
+    """把端点地址补成带版本段的形式：末尾已是版本段就原样用，否则补一个 ``/v1``。
+
+    预设端点（如 deepseek 的 ``.../anthropic``）补完是 ``.../anthropic/v1``，正是
+    claude 一直在用的有效地址，故安全；自定义端点 ``https://openrouter.ai/api``
+    补完是实测可用的 ``https://openrouter.ai/api/v1``。尾斜杠先剥掉，避免补出
+    ``.../v1//v1`` 或漏判已带版本段的 ``.../v1/``。
+    """
+    trimmed = url.rstrip("/")
+    last_segment = trimmed.rsplit("/", 1)[-1]
+    if _VERSION_SEGMENT.match(last_segment):
+        return trimmed
+    return f"{trimmed}/v1"
+
+
 def _base_config() -> dict[str, Any]:
     """注入配置的基线：只有权限放行。"""
     return {"permission": dict(_PERMISSION_ALLOW)}
@@ -596,7 +622,9 @@ def _profile_env(profile: APIProfile) -> dict[str, str]:
     """把一条 profile 翻成 opencode 的注入配置。
 
     provider 用 Anthropic 兼容的 SDK（profile 的端点本就是 Anthropic 协议端点），
-    ``baseURL`` / ``apiKey`` 进 ``options``；认证头的选择走 ``resolve_auth_style``
+    ``baseURL`` / ``apiKey`` 进 ``options``；地址先过 ``_with_version_segment`` 补出
+    版本段，因为这个 SDK 只补 ``/messages``，不像 claude 那样自带 ``/v1``——同一份
+    profile 事实，两个内核各按自己的约定补全，差异在这一层消化；认证头的选择走 ``resolve_auth_style``
     这个公共出口——判定为授权头时额外在 ``options.headers`` 里放
     ``Authorization: Bearer <key>``，密钥头端点则不放（SDK 自己发 ``x-api-key``）。
 
@@ -620,7 +648,7 @@ def _profile_env(profile: APIProfile) -> dict[str, str]:
 
     options: dict[str, Any] = {"apiKey": profile.api_key}
     if base_url:
-        options["baseURL"] = base_url
+        options["baseURL"] = _with_version_segment(base_url)
     # 密钥与端点 URL 一并交给公共出口：自定义端点没有预设声明可查，认证方式靠
     # 密钥前缀 / 主机名这两类结构化依据推断（OpenRouter 只认授权头，漏判就是零产出）。
     auth_style = resolve_auth_style(
