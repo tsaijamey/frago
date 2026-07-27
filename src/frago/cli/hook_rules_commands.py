@@ -394,6 +394,7 @@ def hook_rules_validate():
         "prompt_contains",
         "prompt_regex",
         "env_exists",
+        "env_ne",
         "always",
     }
     KNOWN_ACTION = {
