@@ -212,6 +212,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     ui_session_lifecycle = UiSessionLifecycleService.get_instance()
     await ui_session_lifecycle.start()
 
+    # Start hourly orphan recipe reaper (kills recipe daemon leftovers that no
+    # supervisor owns any more — e.g. a HUD surviving a SIGKILLed server).
+    from frago.server.services.orphan_recipe_cleanup_service import (
+        OrphanRecipeCleanupService,
+    )
+
+    orphan_cleanup = OrphanRecipeCleanupService.get_instance()
+    await orphan_cleanup.start()
+
     # Deploy frago-hook binary if missing or outdated, then sync event registration
     try:
         from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
@@ -280,6 +289,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         await ingestion_scheduler.stop()
     await tab_cleanup.stop()
     await ui_session_lifecycle.stop()
+    await orphan_cleanup.stop()
     await primary_agent.stop()
     await scheduler.stop()
     await version_service.stop()
