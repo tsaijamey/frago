@@ -15,6 +15,7 @@ import contextlib
 import json
 
 from frago.agent_driver.streamer import TranscriptStreamer
+from frago.agent_driver.transcript_source import JsonlTranscriptSource
 
 
 def _rec(uuid: str, role: str, content: list[dict]) -> str:
@@ -33,8 +34,12 @@ def _append(path, *lines: str) -> None:
             f.write(line + "\n")
 
 
+def _source(path) -> JsonlTranscriptSource:
+    return JsonlTranscriptSource("claude", lambda: path if path.exists() else None)
+
+
 def _streamer(path) -> TranscriptStreamer:
-    return TranscriptStreamer("claude", lambda: path if path.exists() else None)
+    return TranscriptStreamer(_source(path))
 
 
 def test_text_block_becomes_text_record(tmp_path):
@@ -126,7 +131,7 @@ def test_missing_file_does_not_raise(tmp_path):
     streamer = _streamer(path)
 
     assert streamer.poll_once() == []
-    assert streamer.path is None
+    assert streamer.native_session_id is None
     streamer.seek_to_end()  # 也不能崩
     assert streamer.poll_once() == []
 
@@ -154,6 +159,17 @@ def test_seek_to_end_skips_existing_history(tmp_path):
     assert [r.uuid for r in streamer.poll_once()] == ["new"]
 
 
+def test_native_session_id_is_the_file_stem(tmp_path):
+    """原生会话 id 从文件名来（claude 侧原本由 agent_service 读 path.stem 得到）。"""
+    path = tmp_path / "sess-1.jsonl"
+    streamer = _streamer(path)
+    assert streamer.native_session_id is None
+
+    _append(path, _rec("u1", "assistant", [{"type": "text", "text": "hi"}]))
+    streamer.poll_once()
+    assert streamer.native_session_id == "sess-1"
+
+
 def test_malformed_line_is_skipped_not_fatal(tmp_path):
     path = tmp_path / "sess-1.jsonl"
     _append(path, "{not json at all", _rec("u1", "assistant", [{"type": "text", "text": "ok"}]))
@@ -166,9 +182,7 @@ def test_run_emits_records_then_cancels(tmp_path):
     """异步循环：能被 asyncio 消费，发射后可 cancel 收尾。"""
     path = tmp_path / "sess-1.jsonl"
     _append(path, _rec("u1", "assistant", [{"type": "text", "text": "streamed"}]))
-    streamer = TranscriptStreamer(
-        "claude", lambda: path if path.exists() else None, poll_interval_s=0.01
-    )
+    streamer = TranscriptStreamer(_source(path), poll_interval_s=0.01)
     seen: list[str] = []
 
     async def scenario():
@@ -192,8 +206,7 @@ def test_run_backs_off_while_file_missing(tmp_path):
     """文件未生成时退避轮询：不死等（文件出现后接上）、也不立刻放弃。"""
     path = tmp_path / "sess-1.jsonl"
     streamer = TranscriptStreamer(
-        "claude",
-        lambda: path if path.exists() else None,
+        _source(path),
         poll_interval_s=0.01,
         missing_backoff_start_s=0.01,
         missing_backoff_max_s=0.05,

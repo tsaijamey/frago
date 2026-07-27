@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, NoReturn
 
 from frago.agent_driver.driver import (
     AgentDriver,
@@ -43,6 +43,21 @@ class TmuxStartupError(RuntimeError):
         super().__init__(
             f"tmux session {tmux_name!r} never reached ready signal; pane tail:\n{tail}"
         )
+
+
+class _SessionVanished(RuntimeError):
+    """抓屏失败且复核确认 tmux 会话已不存在。
+
+    模块内部信号，NEVER 逸出到调用方——open() 把它转成 TmuxStartupError、send()
+    把它转成 status='error' 的一轮结果。裸 CalledProcessError 穿透出去会绕开上层
+    已有的启动失败处置（末屏 + 清半死会话 + 登记），调用方只拿到一页调用栈。
+    """
+
+    def __init__(self, last_pane: str, saw_pane: bool) -> None:
+        self.last_pane = last_pane
+        # 是否曾成功抓到过至少一次 pane：决定错误消息里给不给末屏。
+        self.saw_pane = saw_pane
+        super().__init__("tmux session vanished")
 
 
 def _default_runner(argv: list[str]) -> str:
@@ -142,6 +157,9 @@ class TmuxAgentSession:
         self._sleep = sleep
         self._clock = clock
         self.status: Literal["starting", "ready", "busy", "idle", "dead"] = "starting"
+        # 最后一次成功抓到的可见 pane。抓屏偶发失败时顶上（本拍当作没有新内容），
+        # 会话确认消失时作为末屏证据随异常/错误结果上报。None = 一次都没抓到过。
+        self._last_pane: str | None = None
         # 该活会话在「本池实例」里自己的最后活动时间（wall clock）。open() 与每轮 send()
         # 结束时刷新。空闲回收据此算 idle 时长——NEVER 用 transcript 时间戳：--resume 一个
         # 旧 transcript 时它的最后记录可能是几小时前，会让刚预热的会话被秒判「闲了几小时」回收。
@@ -157,6 +175,24 @@ class TmuxAgentSession:
         if full:
             argv += ["-S", "-"]
         return self._tmux(*argv)
+
+    def _capture_resilient(self, *, full: bool = False) -> str:
+        """轮询专用读屏：把"抓不到"和"会话没了"分开。
+
+        `tmux capture-pane` 对已消失的会话退非零，而会话消失的原因可能是 agent 自己
+        崩了、也可能只是这一拍 tmux 忙。两者后果天差地别，故失败后必先复核会话是否
+        还活着：活着就沿用上一拍的 pane 当本拍内容继续轮询（NEVER 因一次瞬时失败判死），
+        确认已死才抛 _SessionVanished 交给上层收口。
+        """
+        try:
+            pane = self.capture_pane(full=full)
+        except Exception:
+            if self.is_alive():
+                return self._last_pane or ""
+            raise _SessionVanished(self._last_pane or "", self._last_pane is not None) from None
+        if not full:
+            self._last_pane = pane
+        return pane
 
     def send_keys(self, *keys: str) -> None:
         """投喂按键/文本。键名（如 "Enter" / "Escape"）由调用方给。"""
@@ -185,6 +221,11 @@ class TmuxAgentSession:
     # ── 生命周期 ───────────────────────────────────────────────────
     def open(self, *, ready_timeout_s: float = 30.0) -> None:
         """起 detached 会话、投喂启动命令、等就绪、跑一次性异常处理。"""
+        ctx = LaunchCtx(
+            cwd=self.cwd,
+            session_id=self.session_id,
+            native_session_id=self.native_session_id,
+        )
         argv = [
             "new-session",
             "-d",
@@ -202,32 +243,55 @@ class TmuxAgentSession:
         # 把产出文件登记进该 conv 的 outbox。conv_key 缺省（WebUI 等非 PA 路径）时不注入。
         if self.conv_key:
             argv += ["-e", f"FRAGO_CONV_KEY={self.conv_key}"]
+        # driver 自己声明的基线环境变量（如 opencode 的权限放行配置）先落，调用方
+        # 传进来的 env（profile 翻译结果、自定义端点等）后落、同名键覆盖它——profile
+        # 版本的配置自带权限放行，覆盖基线是预期行为。未声明 session_env 的 driver
+        # 行为完全不变。
+        merged_env: dict[str, str] = {}
+        if self.driver.session_env is not None:
+            with contextlib.suppress(Exception):
+                merged_env.update(self.driver.session_env(ctx))
+        merged_env.update(self.env)
         # profile/自定义端点等注入的环境变量，同样经 new-session -e 落进会话环境。
-        for _k, _v in self.env.items():
+        for _k, _v in merged_env.items():
             argv += ["-e", f"{_k}={_v}"]
         self._tmux(*argv)
-        ctx = LaunchCtx(
-            cwd=self.cwd,
-            session_id=self.session_id,
-            native_session_id=self.native_session_id,
-        )
         self.send_text(self.driver.launch_command(ctx))
         self.send_keys("Enter")
-        if not self._wait_for(self.driver.ready_signal.matches, ready_timeout_s):
+        try:
+            reached = self._wait_for(self.driver.ready_signal.matches, ready_timeout_s)
+        except _SessionVanished as vanished:
+            # agent 在就绪前自己退了（崩溃 / 启动失败 / 撞 id），tmux 会话随之消失。
+            # 这同样是启动失败，走与"等不到就绪"完全相同的处置，只是末屏取最后一份
+            # 还抓得到的内容；一份都没有时在消息里写明会话已消失。
+            tail = "\n".join(vanished.last_pane.splitlines()[-20:])
+            self._fail_startup(tail or "(会话在就绪前已消失，未留下任何屏幕内容)")
+        if not reached:
             # 等不到就绪 = 启动失败。NEVER 盲标 ready 让死会话进池被当活会话复用。
             # 抓 pane 末尾若干行随异常上抛便于排查（认证墙 / 二进制缺失 / 撞 id 等），
             # 并 kill 掉这具半死的 tmux 壳，不留孤儿会话累积。
-            tail = "\n".join(self.capture_pane().splitlines()[-20:])
+            tail = ""
             with contextlib.suppress(Exception):
-                self.close()
-            self.status = "dead"
-            raise TmuxStartupError(self.tmux_name, tail)
-        # 一次性异常处理（更新模态 → Esc 等），只在会话首启发生一次。
+                tail = "\n".join(self.capture_pane().splitlines()[-20:])
+            self._fail_startup(tail)
+        # 一次性异常处理（更新模态 → Esc 等），只在会话首启发生一次。逐个处理器各抓
+        # 一次屏（前一个处理器的动作会改变屏幕），抓不到就当本处理器不触发——就绪已
+        # 确认，这里再抓失败不值得把整次启动判失败。
         for handler in self.driver.exception_handlers:
-            if handler.trigger.matches(self.capture_pane()):
+            pane_now = ""
+            with contextlib.suppress(Exception):
+                pane_now = self.capture_pane()
+            if handler.trigger.matches(pane_now):
                 handler.action(self)
         self.status = "ready"
         self.last_active_at = datetime.now(UTC)
+
+    def _fail_startup(self, tail: str) -> NoReturn:
+        """启动失败的统一收口：清半死的 tmux 壳、标死、抛 TmuxStartupError。"""
+        with contextlib.suppress(Exception):
+            self.close()
+        self.status = "dead"
+        raise TmuxStartupError(self.tmux_name, tail)
 
     def close(self) -> None:
         self._tmux("kill-session", "-t", self.tmux_name)
@@ -244,7 +308,30 @@ class TmuxAgentSession:
     def send(self, prompt: str, *, timeout_s: float = 120.0) -> TurnResult:
         start = self._clock()
         self.status = "busy"
-        pre_snapshot = self.capture_pane()
+        try:
+            return self._send_turn(prompt, start=start, timeout_s=timeout_s)
+        except _SessionVanished as vanished:
+            # 会话在本轮途中消失（agent 崩溃 / 被外部 kill）。这一轮没有答案，但它是
+            # 一个可报告的结果而不是异常：调用方据 status='error' 走既有的失败分支，
+            # NEVER 把裸 CalledProcessError 抛给它。
+            self.status = "dead"
+            self.last_active_at = datetime.now(UTC)
+            tail = "\n".join(vanished.last_pane.splitlines()[-20:])
+            note = (
+                f"tmux session {self.tmux_name!r} disappeared mid-turn; "
+                "the agent process is gone and this turn produced no answer."
+            )
+            if tail:
+                note = f"{note}\n--- last pane ---\n{tail}"
+            return TurnResult(
+                text=note,
+                raw_delta=vanished.last_pane,
+                status="error",
+                duration_ms=int((self._clock() - start) * 1000),
+            )
+
+    def _send_turn(self, prompt: str, *, start: float, timeout_s: float) -> TurnResult:
+        pre_snapshot = self._capture_resilient()
 
         # 权威完成探针（如 claude 的 transcript JSONL）。在提交前先读一次取 baseline
         # marker：常驻多轮会话里，文件尾此刻仍是上一轮的 end_turn，本轮答完时 marker
@@ -256,7 +343,14 @@ class TmuxAgentSession:
                 pre = probe(self)
                 baseline_marker = pre.marker if pre else None
 
-        self.driver.submit(self, prompt)
+        try:
+            self.driver.submit(self, prompt)
+        except subprocess.CalledProcessError:
+            # 投喂本身退非零：会话若已消失，与轮询期消失同等处理；仍活着说明是别的
+            # tmux 故障，原样上抛不掩盖。
+            if self.is_alive():
+                raise
+            raise _SessionVanished(self._last_pane or "", self._last_pane is not None) from None
 
         # 轮询直到本轮答完 / 撞上 needs_input 门（认证墙、权限门、澄清门）/ 超时。
         needs_input = self.driver.needs_input_signal
@@ -295,17 +389,22 @@ class TmuxAgentSession:
         # 固定底部输入框 + alt-screen 无 scrollback 的 TUI，通用 delta 锚点失效）；
         # 否则走通用"全 scrollback 减发送前快照"取 delta 的路径。
         elif self.driver.read_answer is not None:
-            pane = self.capture_pane()
+            pane = self._capture_resilient()
             text = self.driver.read_answer(pane, prompt)
             raw_delta = pane
         else:
-            scrollback = self.capture_pane(full=True)
+            scrollback = self._capture_resilient(full=True)
             raw_delta = _compute_delta(pre_snapshot, scrollback)
             text = self.driver.extract(raw_delta)
         duration_ms = int((self._clock() - start) * 1000)
         self.status = "idle"
         self.last_active_at = datetime.now(UTC)
         status: Literal["ok", "timeout", "needs_input", "error"] = outcome or "timeout"
+        # 探针可以把一轮"结束了但结束得不正常"降级（如答完却零产出，通常是鉴权失败
+        # 或 provider 拒绝）。轮次确实终结了，所以轮询该停；但它 NEVER 是成功——
+        # 静默返回空答案会让调用方以为一切正常，而实际上什么都没发生。
+        if outcome == "ok" and verdict is not None and verdict.status != "ok":
+            status = verdict.status
         return TurnResult(
             text=text,
             raw_delta=raw_delta,
@@ -327,7 +426,7 @@ class TmuxAgentSession:
         """
         deadline = self._clock() + timeout_s
         while True:
-            pane = self.capture_pane()
+            pane = self._capture_resilient()
             for key, predicate in predicates.items():
                 if predicate(pane):
                     return key

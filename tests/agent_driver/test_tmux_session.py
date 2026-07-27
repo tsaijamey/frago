@@ -1,10 +1,12 @@
 """Phase 0 spike 单测：不拉真实 tmux，用 fake runner 驱动 driver。
 
 覆盖最大风险点——delta 取增量正确、done_signal 命中/超时兜底、driver extract
-去 chrome、opencode 启动模态与双 Enter 提交由 driver 自动处理。
+去 chrome、opencode 启动模态与单 Enter 提交由 driver 自动处理。
 """
 
 from __future__ import annotations
+
+import subprocess
 
 import pytest
 
@@ -182,13 +184,15 @@ def test_claude_extract_strips_border_chrome() -> None:
 
 
 # ── opencode driver ────────────────────────────────────────────────
-def test_opencode_double_enter_submit() -> None:
+def test_opencode_single_enter_submit() -> None:
+    # 当前 opencode（1.17.10 / 1.18.0 实测）单次 Enter 即提交；旧版的双 Enter 结论
+    # 已推翻——多敲的一次会落进下一轮输入框留下脏字符。
     driver = load_driver("opencode")
     fake = FakeTmux(["PONG42 typed into box"])
     sess = TmuxAgentSession("o", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
     driver.submit(sess, "PONG42 typed into box")
     enter_count = sum(1 for k in fake.sent_keys() if k[-1] == "Enter")
-    assert enter_count == 2
+    assert enter_count == 1
 
 
 def test_opencode_done_signal_matches_build_footer() -> None:
@@ -257,6 +261,62 @@ def test_open_omits_conv_key_env_when_absent() -> None:
     assert not any("FRAGO_CONV_KEY" in tok for tok in new_sess)
 
 
+def test_open_injects_driver_session_env() -> None:
+    """driver 声明的基线环境变量进 new-session -e（spec 20260725 Phase 4）。"""
+    import dataclasses
+
+    driver = dataclasses.replace(
+        _echo_driver(), session_env=lambda _ctx: {"BASELINE": "on"}
+    )
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession("e1", driver, cwd="/tmp", runner=fake, sleep=_no_sleep)
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert "BASELINE=on" in new_sess
+
+
+def test_open_caller_env_overrides_driver_session_env() -> None:
+    """调用方传的 env 覆盖 driver 基线的同名键——profile 版配置盖掉裸基线。"""
+    import dataclasses
+
+    driver = dataclasses.replace(
+        _echo_driver(),
+        session_env=lambda _ctx: {"CFG": "baseline", "ONLY_BASE": "1"},
+    )
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "e2",
+        driver,
+        cwd="/tmp",
+        env={"CFG": "from-profile"},
+        runner=fake,
+        sleep=_no_sleep,
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert "CFG=from-profile" in new_sess
+    assert "CFG=baseline" not in new_sess
+    # 调用方没覆盖的基线键照常注入。
+    assert "ONLY_BASE=1" in new_sess
+
+
+def test_open_without_session_env_unchanged() -> None:
+    """未声明 session_env 的 driver 行为完全不变：只有调用方给的 env。"""
+    fake = FakeTmux(["READY"])
+    sess = TmuxAgentSession(
+        "e3",
+        _echo_driver(),
+        cwd="/tmp",
+        env={"X": "1"},
+        runner=fake,
+        sleep=_no_sleep,
+    )
+    sess.open(ready_timeout_s=5)
+    new_sess = [c for c in fake.commands if c[1:2] == ["new-session"]][0]
+    assert new_sess.count("-e") == 1
+    assert "X=1" in new_sess
+
+
 def test_open_raises_on_startup_failure_instead_of_blind_ready() -> None:
     """ready_signal 永不命中 → open() 抛 TmuxStartupError，NEVER 盲标 ready。
 
@@ -289,3 +349,108 @@ def test_launch_command_receives_ctx() -> None:
     cmd = driver.launch_command(LaunchCtx(cwd="/w", session_id="s"))
     assert cmd.startswith("claude")
     assert "--dangerously-skip-permissions" in cmd
+
+
+# ── 会话中途消失：抓屏退非零 MUST 收口，NEVER 裸 CalledProcessError ────────
+# 现场：`frago agent start opencode --name k3trainer` 整页栈追踪，末行是
+# `tmux capture-pane ... returned non-zero exit status 1`。opencode 在等就绪期间
+# 自己退了，tmux 会话随之消失，轮询的抓屏退非零一路穿透，把已有的启动失败处置
+# （末屏 + 清半死会话 + 登记）整个绕开。
+
+_FLAKE = object()  # 这一拍抓屏失败，但会话仍活着
+_GONE = object()  # 这一拍抓屏失败，且会话已消失（此后 has-session 一律退非零）
+
+
+class MortalTmux:
+    """会死的 tmux 替身：抓屏按脚本吐文本或退非零，has-session 反映存活。"""
+
+    def __init__(self, script: list) -> None:
+        self._script = list(script)
+        self.alive = True
+        self.commands: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> str:
+        self.commands.append(argv)
+        verb = argv[1] if len(argv) > 1 else ""
+        if verb == "has-session":
+            if not self.alive:
+                raise subprocess.CalledProcessError(1, argv)
+            return ""
+        if verb == "capture-pane":
+            frame = self._script.pop(0) if len(self._script) > 1 else self._script[0]
+            if frame is _GONE:
+                self.alive = False
+                raise subprocess.CalledProcessError(1, argv)
+            if frame is _FLAKE:
+                raise subprocess.CalledProcessError(1, argv)
+            return frame
+        return ""
+
+    def capture_calls(self) -> int:
+        return len([c for c in self.commands if c[1:2] == ["capture-pane"]])
+
+
+def _mortal_session(name: str, script: list) -> TmuxAgentSession:
+    return TmuxAgentSession(
+        name,
+        _echo_driver(),
+        cwd="/tmp",
+        runner=MortalTmux(script),
+        sleep=_no_sleep,
+    )
+
+
+def test_open_converts_vanished_session_into_startup_error() -> None:
+    """就绪前会话消失 → TmuxStartupError（带最后一份末屏），NEVER 裸异常。"""
+    from frago.agent_driver.tmux_session import TmuxStartupError
+
+    sess = _mortal_session("k3trainer", ["booting…\nopencode: fatal: cannot start", _GONE])
+    with pytest.raises(TmuxStartupError) as ei:
+        sess.open(ready_timeout_s=5)
+    assert "fatal: cannot start" in ei.value.tail
+    assert sess.status == "dead"
+
+
+def test_open_vanished_without_any_pane_says_so() -> None:
+    """一帧都没抓到就消失 → 消息里写明会话在就绪前已消失。"""
+    from frago.agent_driver.tmux_session import TmuxStartupError
+
+    sess = _mortal_session("k3-instant", [_GONE])
+    with pytest.raises(TmuxStartupError) as ei:
+        sess.open(ready_timeout_s=5)
+    assert "会话在就绪前已消失" in ei.value.tail
+
+
+def test_open_survives_transient_capture_failures_while_alive() -> None:
+    """抓屏偶发失败但会话仍活 → 轮询照常继续，NEVER 误判为已死。"""
+    runner = MortalTmux(["booting…", _FLAKE, _FLAKE, "READY"])
+    sess = TmuxAgentSession(
+        "flaky", _echo_driver(), cwd="/tmp", runner=runner, sleep=_no_sleep
+    )
+    sess.open(ready_timeout_s=5)
+    assert sess.status == "ready"
+    # 失败的两拍确实复核过存活，且轮询没有提前收场。
+    assert any(c[1:2] == ["has-session"] for c in runner.commands)
+    assert runner.capture_calls() >= 4
+    # 清死壳的动作 NEVER 在会话仍活时发生。
+    assert not any(c[1:2] == ["kill-session"] for c in runner.commands)
+
+
+def test_send_returns_error_when_session_dies_mid_turn() -> None:
+    """send 途中会话消失 → 本轮 status='error'，NEVER 抛异常。"""
+    sess = _mortal_session("dies-mid-turn", ["> ", _GONE])
+    result = sess.send("hi", timeout_s=5)
+    assert result.status == "error"
+    assert "disappeared mid-turn" in result.text
+    assert sess.status == "dead"
+
+
+def test_send_survives_transient_capture_failure_and_completes() -> None:
+    """send 轮询期抓屏偶发失败但会话仍活 → 继续轮询到 done，照常返回 ok。"""
+    runner = MortalTmux(["> ", _FLAKE, "> hi\nhello world\nDONE", "> hi\nhello world\nDONE"])
+    sess = TmuxAgentSession(
+        "flaky-turn", _echo_driver(), cwd="/tmp", runner=runner, sleep=_no_sleep
+    )
+    result = sess.send("hi", timeout_s=5)
+    assert result.status == "ok"
+    assert result.text == "hello world"

@@ -56,7 +56,7 @@ def test_opencode_driver_encodes_all_three_quirks() -> None:
     assert any(h.name == "dismiss-update-modal" for h in driver.exception_handlers)
     # 2) ▣ Build 完成页脚作 done_signal。
     assert driver.done_signal.matches("▣ Build · m · 2.1s")
-    # 3) 双 Enter 提交：用 FakeTmux 数 Enter 次数。
+    # 3) 单 Enter 提交（1.17.10 / 1.18.0 实测；旧版双 Enter 结论已推翻）。
     from frago.agent_driver.tmux_session import TmuxAgentSession
     from tests.agent_driver.test_tmux_session import FakeTmux
 
@@ -66,4 +66,4 @@ def test_opencode_driver_encodes_all_three_quirks() -> None:
     enters = sum(
         1 for c in fake.commands if c[1:2] == ["send-keys"] and c[-1] == "Enter"
     )
-    assert enters == 2
+    assert enters == 1

@@ -13,6 +13,7 @@ import re
 import time
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from frago.agent_driver.driver import (
     AgentDriver,
@@ -22,7 +23,11 @@ from frago.agent_driver.driver import (
     register_driver,
 )
 from frago.agent_driver.tmux_session import TmuxAgentSession
+from frago.agent_driver.transcript_source import JsonlTranscriptSource
 from frago.session import transcript_completion as tc_mod
+
+if TYPE_CHECKING:
+    from frago.init.profile_manager import APIProfile
 
 # 把 frago 自己的 session_id 确定性映射成一个合法 claude session uuid。launch 用它
 # 传 ``--session-id``，探针用它定位 jsonl——两端同一派生，路径在起会话那刻就锁定。
@@ -362,6 +367,28 @@ def _read_answer(pane: str, prompt: str) -> str:
     return "\n".join(out).strip()
 
 
+def _profile_env(profile: APIProfile) -> dict[str, str]:
+    """把一条 profile 翻成 claude 的 ``ANTHROPIC_*`` 环境变量。
+
+    复用 init/WebUI 同一套翻译逻辑（``build_claude_env_config``），保证 tmux 会话与
+    激活 profile 写进 settings.json 的字段完全一致；认证头的选择由该函数内部走
+    ``configurator.resolve_auth_style`` 这个公共出口——密钥与自定义 URL 都已作为参数
+    交给它，自定义端点因此能用上按密钥前缀 / 主机名的结构化推断。tmux ``-e`` 要求值
+    为字符串，故统一 str() 化（顺带把 API_TIMEOUT_MS 等 int 值转为字符串）。
+    """
+    from frago.init.configurator import build_claude_env_config
+
+    env = build_claude_env_config(
+        endpoint_type=profile.endpoint_type,
+        api_key=profile.api_key,
+        custom_url=profile.url if profile.endpoint_type == "custom" else None,
+        default_model=profile.default_model,
+        sonnet_model=profile.sonnet_model,
+        haiku_model=profile.haiku_model,
+    )
+    return {k: str(v) for k, v in env.items()}
+
+
 register_driver(
     AgentDriver(
         agent_type="claude",
@@ -377,8 +404,14 @@ register_driver(
         # claude v2.1.x：Escape 不清输入框（20260717 live 实测无效），C-u 清行 +
         # 探针强制重绘确认（懒重绘 TUI 读屏验证不可靠，见 _clear_input）。
         clear_input=_clear_input,
-        # attached 流式（Phase 6）据此 tail 本会话 jsonl；与 completion_probe /
-        # is_truly_idle 共用同一套定位规则，NEVER 各自派生一份。
-        transcript_path=transcript_path_for,
+        # attached 流式（Phase 6）据此 tail 本会话 jsonl；定位规则与 completion_probe
+        # / is_truly_idle 共用同一个 ``transcript_path_for``，NEVER 各自派生一份。
+        # 字节偏移的增量读取逻辑在 JsonlTranscriptSource 里，driver 只负责给路径。
+        transcript_source=lambda s: JsonlTranscriptSource(
+            "claude", lambda: transcript_path_for(s)
+        ),
+        # profile → ANTHROPIC_*（spec 20260725 Phase 4）。claude 起会话不需要基线
+        # 环境变量（权限确认靠 --dangerously-skip-permissions），故不设 session_env。
+        profile_env=_profile_env,
     )
 )

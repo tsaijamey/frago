@@ -13,12 +13,12 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from frago.agent_driver.tmux_session import TmuxAgentSession
+    from frago.agent_driver.transcript_source import TranscriptSource
+    from frago.init.profile_manager import APIProfile
 
 
 @dataclass(frozen=True)
@@ -61,11 +61,17 @@ class CompletionVerdict:
     ``done`` 为最新一轮是否答完；``text`` 是该轮最终文本（已知时），未知时为 None；
     ``marker`` 是这一轮的去重锚点（如终结记录 uuid），driver 据此判断「答完的是
     *本轮* 而非常驻会话里残留的上一轮」。
+
+    ``status`` 是「这一轮虽然结束了，但结束得正不正常」。默认 ``ok``；探针发现本轮
+    以异常方式终结（如答完却一个字都没产出——通常是鉴权失败或 provider 拒绝）时改
+    成 ``needs_input`` / ``error``，上层据此把 TurnResult 标成同一档，NEVER 让一轮
+    什么都没发生的对话以成功姿态返回。``done`` 为假时这个字段无意义。
     """
 
     done: bool
     text: str | None = None
     marker: str | None = None
+    status: Literal["ok", "needs_input", "error"] = "ok"
 
 
 @dataclass(frozen=True)
@@ -110,13 +116,30 @@ class AgentDriver:
     # （探针字符强制重绘）确认缓冲区状态。不设置时上层退回通用行为（Escape +
     # 轮询 ready_signal）。
     clear_input: Callable[[TmuxAgentSession], bool] | None = None
-    # 可选：定位该会话的 transcript 文件。给 claude 这类把结构化 transcript 写进
-    # session JSONL 的 agent 用——``TranscriptStreamer`` 据此 tail 出逐块的文本/
-    # 工具事件喂给 attached 流式（spec 20260607 Phase 6）。路径规则是 agent 特异性，
-    # 故归 driver；streamer 只管 tail，NEVER 自己认目录布局。返回 None 表示当前
-    # 定位不到（文件尚未生成）。不设置时（opencode/codex）该 agent 无 transcript
-    # 流式，行为不变。
-    transcript_path: Callable[[TmuxAgentSession], Path | None] | None = None
+    # 可选：该会话记录的增量读取来源。``TranscriptStreamer`` 据此 tail 出逐块的
+    # 文本/工具事件喂给 attached 流式（spec 20260607 Phase 6）。
+    #
+    # 这里原先是 ``transcript_path``（一个返回 jsonl 路径的函数），换掉是因为那个
+    # 签名把"记录 = 一个文件 + 字节偏移"写进了共用契约。它只对 claude 成立：
+    # opencode 把记录存进 SQLite，既没有单一文件也没有字节偏移。改成来源对象后，
+    # 记录怎么存完全是 driver 自己的事（spec 20260725 Phase 2）。
+    # 返回 None 表示该 agent 没有可读的记录来源，此时 attached 不做增量流式，
+    # 本轮照常跑完。
+    transcript_source: (
+        Callable[[TmuxAgentSession], TranscriptSource | None] | None
+    ) = None
+    # 可选：该 agent 起会话时自己需要的基线环境变量（与 profile 无关）。
+    # ``TmuxAgentSession.open()`` 把它并进 ``new-session -e``，**调用方传入的 env
+    # 优先级更高、可覆盖同名键**。给 opencode 这类"没有等价启动开关、只能靠会话级
+    # 配置声明权限放行"的 agent 用：claude 靠 ``--dangerously-skip-permissions``
+    # 跳过权限确认，opencode 只能经 ``OPENCODE_CONFIG_CONTENT`` 声明，不放行的话
+    # 无人值守时会卡在权限询问上永不返回。不设置时行为完全不变。
+    session_env: Callable[[LaunchCtx], dict[str, str]] | None = None
+    # 可选：把一条 API profile 翻成该 agent 能消费的环境变量。
+    # claude 产出 ``ANTHROPIC_*``，opencode 产出 ``OPENCODE_CONFIG_CONTENT``。
+    # profile 语义只有一份（见 configurator.resolve_auth_style），翻译落在 driver。
+    # 不设置时上层保持原有行为，NEVER 因缺这个字段报错。
+    profile_env: Callable[[APIProfile], dict[str, str]] | None = None
 
 
 _REGISTRY: dict[str, AgentDriver] = {}
