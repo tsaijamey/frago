@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 RULES_PATH = Path.home() / ".frago" / "hook-rules.json"
 HITS_LOG_PATH = Path.home() / ".frago" / "hook-rules-hits.log"
+# The engine rotates the hits log at 8 MB and keeps one generation behind
+# under this name (see HITS_LOG_BACKUP_SUFFIX in frago-core's rules.rs). Both
+# have to be read, or on the day a rotation happens every rule's count would
+# appear to collapse.
+HITS_LOG_BACKUP_PATH = HITS_LOG_PATH.with_name(HITS_LOG_PATH.name + ".1")
 ARCHIVE_PATH = Path.home() / ".frago" / "hook-rules-archive.json"
 SCHEMA_VERSION = 1
 DEFAULT_AGENT_TTL_DAYS = 30
@@ -462,47 +467,66 @@ def hook_rules_validate():
 # ── stats ────────────────────────────────────────────────────────────────
 
 
+def _accumulate_hits(path: Path, stats: dict[str, dict]) -> None:
+    """Fold one generation of the hits log into ``stats`` in place.
+
+    Read a line at a time rather than slurping the file: the engine caps each
+    generation at 8 MB, but nothing here should depend on that cap holding.
+    """
+    try:
+        handle = path.open()
+    except OSError:
+        # Absent, or renamed out from under us by a hook rotating the log
+        # while we walk it. Either way there is nothing to fold in.
+        return
+    with handle:
+        for raw in handle:
+            parts = raw.rstrip("\n").split("\t")
+            # Three fields is the pre-outcome format; those records were only
+            # ever written on successful injection.
+            if len(parts) == 3:
+                outcome = "injected"
+            elif len(parts) == 4:
+                outcome = parts[3]
+            else:
+                continue
+            try:
+                ts = int(parts[0])
+            except ValueError:
+                continue
+            # Concurrent hooks used to interleave mid-record, yielding lines
+            # whose timestamp field is two timestamps concatenated. Such a
+            # value is far outside any real epoch and would raise
+            # OverflowError downstream, so drop the record instead of
+            # trusting it.
+            if not 0 < ts < _TS_SANE_MAX:
+                continue
+            rule_id = parts[2]
+            entry = stats.setdefault(
+                rule_id,
+                {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "last_ts": 0},
+            )
+            entry["count"] += 1
+            if outcome in ("injected", "deduped", "empty"):
+                entry[outcome] += 1
+            if ts > entry["last_ts"]:
+                entry["last_ts"] = ts
+
+
 def _read_hits() -> dict[str, dict]:
-    """Aggregate ~/.frago/hook-rules-hits.log per rule.
+    """Aggregate the hits log per rule, across both retained generations.
 
     Returns {rule_id: {count, injected, deduped, empty, last_ts}}. ``count``
     is every time the rule's match clause fired; the outcome counters say
     what came of those matches. A rule with matches but no injections is
     firing into the void — its action points at something broken.
+
+    The rotated generation is read first so the walk follows the order the
+    records were written.
     """
     stats: dict[str, dict] = {}
-    if not HITS_LOG_PATH.exists():
-        return stats
-    for line in HITS_LOG_PATH.read_text().splitlines():
-        parts = line.split("\t")
-        # Three fields is the pre-outcome format; those records were only ever
-        # written on successful injection.
-        if len(parts) == 3:
-            outcome = "injected"
-        elif len(parts) == 4:
-            outcome = parts[3]
-        else:
-            continue
-        try:
-            ts = int(parts[0])
-        except ValueError:
-            continue
-        # Concurrent hooks used to interleave mid-record, yielding lines whose
-        # timestamp field is two timestamps concatenated. Such a value is far
-        # outside any real epoch and would raise OverflowError downstream, so
-        # drop the record instead of trusting it.
-        if not 0 < ts < _TS_SANE_MAX:
-            continue
-        rule_id = parts[2]
-        entry = stats.setdefault(
-            rule_id,
-            {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "last_ts": 0},
-        )
-        entry["count"] += 1
-        if outcome in ("injected", "deduped", "empty"):
-            entry[outcome] += 1
-        if ts > entry["last_ts"]:
-            entry["last_ts"] = ts
+    for path in (HITS_LOG_BACKUP_PATH, HITS_LOG_PATH):
+        _accumulate_hits(path, stats)
     return stats
 
 
