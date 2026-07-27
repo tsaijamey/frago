@@ -11,10 +11,9 @@ migration window.
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from .exceptions import CorruptedLogError, FileSystemError
-from .models import ActionType, ExecutionMethod, InsightEntry, InsightType, LogEntry, LogStatus
+from .models import ActionType, ExecutionMethod, InsightEntry, LogEntry, LogStatus
 
 
 class RunLogger:
@@ -36,8 +35,8 @@ class RunLogger:
         status: LogStatus,
         action_type: ActionType,
         execution_method: ExecutionMethod,
-        data: Dict,
-        insights: Optional[List[InsightEntry]] = None,
+        data: dict,
+        insights: list[InsightEntry] | None = None,
     ) -> LogEntry:
         """Write log entry
 
@@ -78,53 +77,17 @@ class RunLogger:
                 f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
                 f.flush()  # Ensure data is written to disk
         except Exception as e:
-            raise FileSystemError("write", str(self.log_file), str(e))
+            raise FileSystemError("write", str(self.log_file), str(e)) from e
 
-        # Phase 2: also forward attached insights to the new domain insight
-        # store. Legacy InsightType values are mapped to the new schema so a
-        # single ``frago run log --insight ...`` call keeps working while the
-        # canonical sink shifts to ``insight.jsonl``.
-        if insights:
-            try:
-                self._forward_insights_to_domain(insights)
-            except Exception:
-                # Forwarding is best-effort during the migration window.
-                pass
-
+        # 2026-07-26: insight 形态退役后，这里不再把附带的 insight 转写进
+        # insight.jsonl。附带项仍留在本条 execution.jsonl 记录里（历史日志
+        # 保持可读），但不再派生第二份领域知识。CLI 层的 --insight 已直接
+        # 拒绝，这里是防止其他调用方绕过 CLI 的第二道闸。
         return entry
 
-    _LEGACY_INSIGHT_TYPE_MAP = {
-        InsightType.KEY_FACTOR: "fact",
-        InsightType.PITFALL: "lesson",
-        InsightType.LESSON: "lesson",
-        InsightType.WORKAROUND: "decision",
-    }
-
-    def _forward_insights_to_domain(self, insights: List[InsightEntry]) -> None:
-        """Translate legacy InsightEntry list into DomainInsight rows."""
-        from .insights import save_insight as save_domain_insight
-
-        # run_dir is ``~/.frago/projects/<domain>/`` — the parent ``projects``
-        # dir is what insights.py expects.
-        domain = self.run_dir.name
-        projects_dir = self.run_dir.parent
-        for legacy in insights:
-            new_type = self._LEGACY_INSIGHT_TYPE_MAP.get(legacy.insight_type, "lesson")
-            payload_parts = [legacy.summary]
-            if legacy.detail:
-                payload_parts.append(legacy.detail)
-            payload = " — ".join(payload_parts)
-            save_domain_insight(
-                projects_dir,
-                domain,
-                type=new_type,
-                payload=payload,
-                confidence=0.5,
-            )
-
     def read_logs(
-        self, limit: Optional[int] = None, skip_corrupted: bool = True
-    ) -> List[LogEntry]:
+        self, limit: int | None = None, skip_corrupted: bool = True
+    ) -> list[LogEntry]:
         """Read log entries
 
         Args:
@@ -140,7 +103,7 @@ class RunLogger:
         if not self.log_file.exists():
             return []
 
-        entries: List[LogEntry] = []
+        entries: list[LogEntry] = []
         corrupted_count = 0
 
         try:
@@ -157,11 +120,13 @@ class RunLogger:
                     except Exception as e:
                         corrupted_count += 1
                         if not skip_corrupted:
-                            raise CorruptedLogError(str(self.log_file), line_num, str(e))
+                            raise CorruptedLogError(
+                                str(self.log_file), line_num, str(e)
+                            ) from e
         except CorruptedLogError:
             raise
         except Exception as e:
-            raise FileSystemError("read", str(self.log_file), str(e))
+            raise FileSystemError("read", str(self.log_file), str(e)) from e
 
         # Return last N entries
         if limit:
@@ -184,7 +149,7 @@ class RunLogger:
         except Exception:
             return 0
 
-    def get_recent_logs(self, count: int = 5) -> List[LogEntry]:
+    def get_recent_logs(self, count: int = 5) -> list[LogEntry]:
         """Get recent N log entries
 
         Args:

@@ -3,7 +3,6 @@
 Provides run instance management, logging, screenshot and other commands
 """
 
-import builtins
 import json
 import sys
 from datetime import datetime
@@ -31,21 +30,13 @@ from ..run.insights import (
     query_insights as query_domain_insights,
 )
 from ..run.insights import (
-    save_insight as save_domain_insight,
-)
-from ..run.insights import (
     search_insights_across_domains,
-)
-from ..run.insights import (
-    update_insight as update_domain_insight,
 )
 from ..run.logger import RunLogger
 from ..run.manager import RunManager
 from ..run.models import (
     ActionType,
     ExecutionMethod,
-    InsightEntry,
-    InsightType,
     LogStatus,
     RunStatus,
 )
@@ -526,8 +517,8 @@ def archive(run_id: str):
 @click.option(
     "--insight",
     multiple=True,
-    hidden=True,  # Phase 2 deprecated: legacy log-attached insight, runtime warns to migrate.
-    help="(deprecated)",
+    hidden=True,  # Retired 2026-07-26: rejected at runtime, points to `frago <域> save`.
+    help="(retired)",
 )
 def log(step: str, status: str, action_type: str, execution_method: str, data: str, insight: tuple):
     """Record structured log entry
@@ -542,10 +533,9 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
           --data '{"command": "frago chrome navigate https://upwork.com"}'
 
     \b
-    Domain-level insight sinking lives in its own command:
-        frago run insights --save --type fact|decision|foreshadow|state|lesson \\
-          --payload "..." --confidence 0.x
-    See `frago book domain-insights` for the full guide.
+    Domain-level knowledge no longer lives here. insight 形态已退役，沉淀改用:
+        frago <域名> save --name=<文档名> --data='{...}'
+    See `frago def list` / `frago <域名> find`.
     """
     try:
         # Get current context
@@ -559,40 +549,10 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
             click.echo(f"Error: Invalid JSON in --data: {e}", err=True)
             sys.exit(2)
 
-        # Parse insights
+        # insight 形态已退役，这条 log 附带 insight 的老路一并封死。
         insights_list = None
         if insight:
-            click.echo(
-                "Warning: --insight is DEPRECATED. Domain-level insight sinking has moved to "
-                "`frago run insights --save` (new schema: fact/decision/foreshadow/state/lesson). "
-                "See `frago book domain-insights`. The old log-attached path is kept only for "
-                "Phase 2 migration compatibility.",
-                err=True,
-            )
-            insights_list = []
-            for i in insight:
-                try:
-                    # Try to parse JSON format
-                    if i.strip().startswith("{"):
-                        insight_data = json.loads(i)
-                        insights_list.append(InsightEntry.from_dict(insight_data))
-                    else:
-                        # Shorthand format: "type:summary"
-                        if ":" not in i:
-                            click.echo(f"Error: Invalid insight format '{i}'. Use 'type:summary' or JSON.", err=True)
-                            sys.exit(2)
-                        insight_type, summary = i.split(":", 1)
-                        insight_type = insight_type.strip().lower()
-                        if insight_type not in ["key_factor", "pitfall", "lesson", "workaround"]:
-                            click.echo(f"Error: Unknown insight type '{insight_type}'. Use: key_factor, pitfall, lesson, workaround", err=True)
-                            sys.exit(2)
-                        insights_list.append(InsightEntry(
-                            insight_type=InsightType(insight_type),
-                            summary=summary.strip(),
-                        ))
-                except json.JSONDecodeError as e:
-                    click.echo(f"Error: Invalid JSON in --insight: {e}", err=True)
-                    sys.exit(2)
+            raise click.UsageError(_INSIGHT_WRITE_RETIRED_MSG)
 
         # Write log
         run_dir = PROJECTS_DIR / context.run_id
@@ -747,6 +707,17 @@ def find(keyword: str, limit: int, fmt: str):
         handle_error(e)
 
 
+_INSIGHT_WRITE_RETIRED_MSG = (
+    "insight 写入已退役，本命令不再接受 --save / --update。\n"
+    "  唯一的知识沉淀形态是 def 领域文档：\n"
+    "    frago <域名> save --name=<文档名> --data='{...}'\n"
+    "  先看有哪些域：frago def list；看某域已有内容：frago <域名> find\n"
+    "  历史 insight 已于 2026-07-26 全量迁入 ~/.frago/books，原件存档在 "
+    "~/.frago/_archive/insight-migration-20260726-003044/。\n"
+    "  只读查询仍可用：frago run insights [--domain <域>] [--query <关键词>]"
+)
+
+
 def _resolve_insight_domain(explicit: str | None) -> str:
     """Resolve which domain insight CRUD applies to.
 
@@ -783,8 +754,21 @@ def _resolve_insight_domain(explicit: str | None) -> str:
 @run_group.command(cls=AgentFriendlyCommand)
 @click.option("--run-id", default=None, help="(legacy) full experience card for a run_id")
 @click.option("--domain", default=None, help="Domain name (default: current run context)")
-@click.option("--save", "save_mode", is_flag=True, default=False, help="Append a new insight")
-@click.option("--update", "update_id", default=None, help="Update an existing insight by id")
+@click.option(
+    "--save",
+    "save_mode",
+    is_flag=True,
+    default=False,
+    hidden=True,
+    help="(retired) insight 写入已退役，改用 frago <域> save",
+)
+@click.option(
+    "--update",
+    "update_id",
+    default=None,
+    hidden=True,
+    help="(retired) insight 写入已退役，改用 frago <域> save",
+)
 @click.option("--query", "query_text", default=None, help="Substring search insight payloads")
 @click.option(
     "--type",
@@ -826,7 +810,13 @@ def insights(
     limit: int,
     fmt: str,
 ):
-    """Domain-level insights — unified CRUD entry point (Phase 2).
+    """Domain-level insights — READ-ONLY archive view (write path retired).
+
+    \b
+    insight 形态已于 2026-07-26 退役。沉淀请用 def 领域文档：
+        frago def list                       # 有哪些知识域
+        frago <域名> find                     # 该域已有什么
+        frago <域名> save --name=... --data=... # 沉淀新知识
 
     \b
     READ (default — current domain):
@@ -836,14 +826,8 @@ def insights(
         frago run insights --domain twitter
 
     \b
-    SAVE:
-        frago run insights --save --type fact --payload "Tweet API v2 100/15min" --confidence 0.9
-        frago run insights --save --type lesson --payload "..." --related-sessions s1,s2
-
-    \b
-    UPDATE (append a new version, append-only jsonl):
-        frago run insights --update <id> --payload "revised text"
-        frago run insights --update <id> --confidence 0.95
+    RETIRED (rejected with guidance):
+        --save / --update
 
     \b
     LEGACY (run-scoped experience card; deprecated):
@@ -853,72 +837,20 @@ def insights(
         manager = get_manager()
         discovery = RunDiscovery(manager)
 
-        # SAVE mode -------------------------------------------------------
-        if save_mode:
-            if update_id:
-                raise click.UsageError("--save and --update are mutually exclusive")
-            if not insight_type:
-                raise click.UsageError(
-                    "--save requires --type (fact|decision|foreshadow|state|lesson)"
-                )
-            if insight_type not in DOMAIN_INSIGHT_TYPES:
-                raise click.UsageError(
-                    f"Invalid --type {insight_type!r}. Use one of: "
-                    f"{sorted(DOMAIN_INSIGHT_TYPES)}.\n"
-                    f"  Hint: frago run insights --save --type fact --payload '...'"
-                )
-            if not payload:
-                raise click.UsageError(
-                    "--save requires --payload '<text>'\n"
-                    "  Hint: frago run insights --save --type fact --payload 'concrete fact text'"
-                )
-            target_domain = _resolve_insight_domain(domain)
-            manager.ensure_domain(target_domain)
-            related = (
-                [s.strip() for s in related_sessions.split(",") if s.strip()]
-                if related_sessions
-                else []
-            )
-            entry = save_domain_insight(
-                PROJECTS_DIR,
-                target_domain,
-                type=insight_type,
-                payload=payload,
-                confidence=confidence if confidence is not None else 0.5,
-                related_session_ids=related,
-            )
-            manager.bump_insight_count(target_domain, delta=1)
-            output_json({"saved": entry.to_dict(), "domain": target_domain})
-            return
-
-        # UPDATE mode -----------------------------------------------------
-        if update_id:
-            target_domain = _resolve_insight_domain(domain)
-            update_related: builtins.list[str] | None = None
-            if related_sessions is not None:
-                update_related = [
-                    s.strip() for s in related_sessions.split(",") if s.strip()
-                ]
-            try:
-                entry = update_domain_insight(
-                    PROJECTS_DIR,
-                    target_domain,
-                    update_id,
-                    payload=payload,
-                    confidence=confidence,
-                    type=insight_type,
-                    related_session_ids=update_related,
-                )
-            except RunNotFoundError:
-                handle_error(
-                    RunNotFoundError(
-                        f"insight {update_id} not found in domain {target_domain}.\n"
-                        f"  Hint: frago run insights --domain {target_domain}"
-                    )
-                )
-                return
-            output_json({"updated": entry.to_dict(), "domain": target_domain})
-            return
+        # WRITE modes are retired ------------------------------------------
+        # insight 形态已于 2026-07-26 退役：全部历史知识已迁入 books，唯一的
+        # 沉淀形态是 `frago <域> save`。写入口保留会继续制造第二套散落知识，
+        # 故在 CLI 层封死；读取保留，旧数据不成孤儿。
+        # 任何带写意图的调用形态（含只给 payload/confidence/related-sessions
+        # 而漏了 --save 的）都在这里拦下，避免"看着成功其实没落盘"的错觉。
+        if (
+            save_mode
+            or update_id
+            or payload
+            or confidence is not None
+            or related_sessions
+        ):
+            raise click.UsageError(_INSIGHT_WRITE_RETIRED_MSG)
 
         # Legacy --run-id experience card --------------------------------
         if run_id:
