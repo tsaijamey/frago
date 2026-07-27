@@ -20,10 +20,11 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_FILENAME = "frago-hook.js"
 TOOL_NAME_MAP_FILENAME = "tool-name-map.json"
+INJECTION_MARKERS_FILENAME = "injection-markers.json"
 
-# The plugin reads the map from its own directory at load time, so both files
-# must land together.
-PLUGIN_FILES = (PLUGIN_FILENAME, TOOL_NAME_MAP_FILENAME)
+# The plugin reads both data files from its own directory at load time, so all
+# of them must land together.
+PLUGIN_FILES = (PLUGIN_FILENAME, TOOL_NAME_MAP_FILENAME, INJECTION_MARKERS_FILENAME)
 
 
 def get_opencode_config_dir() -> Path:
@@ -66,6 +67,19 @@ def get_tool_name_map() -> dict[str, str]:
     """
     raw = get_bundled_plugin_path(TOOL_NAME_MAP_FILENAME).read_text(encoding="utf-8")
     return json.loads(raw)["map"]
+
+
+def get_injection_markers() -> tuple[str, str]:
+    """Return the (begin, end) markers wrapping frago-hook injected context.
+
+    The bridge plugin wraps every injection it appends to an opencode user
+    message in this pair; the archive layer strips those spans back out so a
+    session's detail view shows what the user actually typed. Both sides read
+    this one file, so the markers can never drift apart.
+    """
+    raw = get_bundled_plugin_path(INJECTION_MARKERS_FILENAME).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    return data["begin"], data["end"]
 
 
 def deploy_opencode_plugin(force: bool = False) -> Path | None:

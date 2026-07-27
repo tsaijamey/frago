@@ -1,0 +1,5 @@
+{
+  "_comment": "Paired markers wrapping frago-hook injected context inside opencode messages. Single source of truth, read by both the opencode bridge plugin (frago-hook.js) and the archive layer (frago.session.opencode_store), which strips the wrapped span out of user text before it becomes an archived step. Changing them here changes both sides at once — NEVER restate the literals anywhere else.",
+  "begin": "<frago-hook>",
+  "end": "</frago-hook>"
+}

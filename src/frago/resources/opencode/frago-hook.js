@@ -33,8 +33,23 @@ import { fileURLToPath } from "node:url"
 
 const HOOK_TIMEOUT_MS = 10_000
 
-const BEGIN = "<frago-hook>"
-const END = "</frago-hook>"
+/**
+ * Paired markers wrapping every injection this bridge appends to a message.
+ * Read from disk rather than inlined because frago's archive layer strips the
+ * wrapped spans back out of user text — the two sides must agree exactly, so
+ * they share one file (injection-markers.json).
+ */
+const MARKERS = loadInjectionMarkers()
+
+function loadInjectionMarkers() {
+  try {
+    const data = JSON.parse(readResource("injection-markers.json"))
+    if (typeof data.begin === "string" && typeof data.end === "string") return data
+  } catch {}
+  // Unreadable markers mean an injection could not be told apart from the
+  // user's own words afterwards. Dropping the injection is the lesser harm.
+  return null
+}
 
 /**
  * opencode names its tools in lowercase and its arguments in camelCase;
@@ -49,10 +64,14 @@ const END = "</frago-hook>"
  */
 const TOOL_NAMES = loadToolNameMap()
 
+function readResource(filename) {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  return readFileSync(path.join(here, filename), "utf8")
+}
+
 function loadToolNameMap() {
   try {
-    const here = path.dirname(fileURLToPath(import.meta.url))
-    return JSON.parse(readFileSync(path.join(here, "tool-name-map.json"), "utf8")).map
+    return JSON.parse(readResource("tool-name-map.json")).map
   } catch {
     // Degrade to no mapping rather than taking the session down: PascalCase
     // fallback below still covers the common single-word tools.
@@ -136,9 +155,14 @@ function runHook(payload) {
   })
 }
 
-/** Wrap injected context so it reads as system-supplied, not user-authored. */
+/**
+ * Wrap injected context so it reads as system-supplied, not user-authored,
+ * and so the archive layer can strip it back out. Null when the markers are
+ * unavailable — the caller then injects nothing at all.
+ */
 function frame(context) {
-  return `${BEGIN}\n${context}\n${END}`
+  if (!MARKERS) return null
+  return `${MARKERS.begin}\n${context}\n${MARKERS.end}`
 }
 
 export const FragoHookPlugin = async ({ directory }) => {
@@ -182,10 +206,13 @@ export const FragoHookPlugin = async ({ directory }) => {
       // synthesising a new part is fragile across versions. Appending to the
       // trailing text part is the stable path and lands in the same place
       // Claude Code puts additionalContext: attached to the user's turn.
+      const framed = frame(contexts.join("\n\n"))
+      if (!framed) return
+
       const texts = (output.parts || []).filter((p) => p.type === "text")
       const target = texts[texts.length - 1]
       if (!target) return
-      target.text = `${target.text}\n\n${frame(contexts.join("\n\n"))}`
+      target.text = `${target.text}\n\n${framed}`
     },
 
     "tool.execute.before": async (input, output) => {
@@ -204,7 +231,9 @@ export const FragoHookPlugin = async ({ directory }) => {
       const context = pending.get(input.callID)
       if (!context) return
       pending.delete(input.callID)
-      output.output = `${frame(context)}\n\n${output.output ?? ""}`
+      const framed = frame(context)
+      if (!framed) return
+      output.output = `${framed}\n\n${output.output ?? ""}`
     },
   }
 }
