@@ -11,5 +11,6 @@
    {{frago_launcher}} book <topic>                         查看具体知识
 
 4. 任务完成后，把新场景经验结构化存档，供下次冷启动召回。
-   {{frago_launcher}} run insights                          查看历史经验洞察
-   {{frago_launcher}} def（开发中）                         结构化知识存取
+   {{frago_launcher}} def list                              有哪些知识域
+   {{frago_launcher}} <域名> find                            该域已沉淀了什么
+   {{frago_launcher}} <域名> save                            沉淀新知识（唯一形态）

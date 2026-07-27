@@ -5,7 +5,7 @@
 ## 解决什么问题
 agent 不清楚哪些日志自动记录、哪些需手动补充，导致 execution.jsonl 缺关键步骤、Recipe 生成时无据可凭。
 
-本章讲操作日志（execution.jsonl）。领域级知识沉淀（事实/决策/伏笔/状态/教训）走 `{{frago_launcher}} run insights`，详见 `{{frago_launcher}} book domain-insights`。
+本章讲操作日志（execution.jsonl）。领域级知识沉淀走 `{{frago_launcher}} <域名> save`（def 领域文档，唯一形态），详见 `{{frago_launcher}} book def-knowledge`；旧的 `run insights` 写入口已退役，见 `{{frago_launcher}} book domain-insights`。
 
 ## 自动日志 vs 手动日志
 

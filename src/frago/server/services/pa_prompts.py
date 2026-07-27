@@ -501,10 +501,14 @@ SUB_AGENT_PROMPT_TEMPLATE = """\
 
 Run 实例: {run_id}
 你的工作目录是 ~/.frago/projects/{run_id}/，产出物放在 outputs/ 子目录下。
-所属 domain: {run_id}（同名）。完成产出后 MUST 顺手:
-  frago run insights --save --type <fact|decision|foreshadow|state|lesson> --payload '...' --confidence 0.8
-  # 自动落到 ${{FRAGO_DOMAIN}}={run_id}，无需显式 --domain
-沉淀的是跨 session 的领域级知识（事实/决策/伏笔/状态变量/失败教训），不是流水。
+所属 domain: {run_id}（同名）。
+产出中若出现跨 session 可复用的领域知识（已验证的事实、关键取舍、踩过的坑），
+完成后 MUST 沉淀到 def 知识域——这是唯一的沉淀形态:
+  frago def list                                  # 先看有哪些域，选最贴近的那个
+  frago <域名> find                                # 看该域已有什么，避免重复
+  frago <域名> save --name=<文档名> --data='{{...}}'  # 沉淀
+沉淀的是领域知识，不是操作流水（流水走 frago run log）。
+旧的 `frago run insights --save` 已退役，敲了会报错。
 {related_section}\
 """
 # NOTE: 以下内容暂时移除，由 frago-hook 动态注入替代：

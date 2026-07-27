@@ -2,70 +2,53 @@
 
 分类: 效率（AVAILABLE）
 
-## 解决什么问题
-agent 完成任务时产生有价值的领域级知识——已验证的事实、关键决策、伏笔、状态快照、踩过的坑——但缺少标准沉淀路径。Phase 2 起，这些知识通过 `{{frago_launcher}} run insights` 写入 domain 级 `insight.jsonl`，跨 session 持久化、跨任务复用。
+## 一句话：这套形态已退役，别再用
 
-## 是什么
+`{{frago_launcher}} run insights --save` / `--update` 已于 2026-07-26 关闭，敲了会直接报错。
+知识沉淀的唯一形态是 def 领域文档。本章只保留退役说明和迁移指引。
 
-Domain insight = 一段绑定到 domain（= run instance）的结构化知识，存于 `~/.frago/projects/{domain}/insight.jsonl`。
+## 现在往哪沉淀
 
-不绑特定操作日志，跨 session 持久化、可独立追加和更新。一个 domain 下能积累任意多条 insight，构成这个领域的知识库。
+    {{frago_launcher}} def list                          # 有哪些知识域
+    {{frago_launcher}} <域名> find                        # 该域已沉淀了什么
+    {{frago_launcher}} <域名> find -- --name=<文档名>      # 看单篇详情
+    {{frago_launcher}} <域名> save --name=<文档名> --data='{...}'   # 沉淀新知识
 
-## 5 种 type 的语义边界
+详见 `{{frago_launcher}} book def-knowledge`。
 
-按"这条 insight **本质是什么**"判断，不是按内容主题：
+## 为什么退役
 
-| type | 语义 | 典型场景 | 反例 |
-|------|------|---------|------|
-| `fact` | 已验证的客观事实 | "Twitter API v2 限流为 100 req / 15min" | 主观判断、推测 |
-| `decision` | 关键设计/方案决策 | "选 CDP 而非 Playwright，因为 zero-deps" | 无背景的事实 |
-| `foreshadow` | 伏笔——未来可能用到 | "这站说 2026Q3 切 SSO，要预留改造窗口" | 立即可验证的事实 |
-| `state` | 当前状态快照 | "账号当前权限层级为 viewer" | 不会变的常量 |
-| `lesson` | 教训 / 踩过的坑 | "动态 class 不可靠，要用 data-testid" | 中性事实 |
+同一件事的知识过去被劈成两半：一半是 `<域> save` 写的 books 结构化文档，一半是
+`run insights` 写的 projects 流水。两套域名几乎不相交（30 个 def 域 vs 60 个 insight
+域，只有 8 个同名），谁也召不回谁。写入端有 hook 天天催记，读取端却没有任何自动通道，
+攒了几个月的知识没人读得到。
 
-选不准时，**confidence 设低（0.3-0.5）+ 偏向 fact**，后续可 update 改 type。
+留着两个写入口，就是持续制造第二套散落知识。所以收敛到一套，写入口封死。
 
-## 写入
+## 历史数据在哪
 
-  {{frago_launcher}} run insights --save \
-    --type fact \
-    --payload "Twitter API v2 限流 100/15min（2026 起）" \
-    --confidence 0.9 \
-    --related-sessions <session_id1>,<session_id2>
+1355 条历史 insight 里，797 条是 2026-04-26 一次性迁移脚本自动回填的
+`Legacy run: <run名>` 占位行（只是"某次跑过某任务"的存在标记，不是知识），
+真知识 558 条。
 
-- `--domain <name>` 指定 domain；省略时用当前 run context（`FRAGO_CURRENT_RUN`）
-- `--confidence` ∈ [0.0, 1.0]，默认 0.5
-- `--related-sessions` 关联到产生这条 insight 的 sub-agent session
+这 558 条已按主题聚类改写成 276 篇 def 文档，分布在 20 个域里，逐域经独立盲测验收。
+用 `{{frago_launcher}} <域名> find` 就能查到。
 
-## 更新（追加式版本化）
+原始文件三层留底，一个字节没删：
 
-  {{frago_launcher}} run insights --update <id> --confidence 0.95 --payload "..."
+    ~/.frago/_archive/insight-migration-20260726-003044/
 
-不修改原 jsonl 行，追加一条 `version+1` 新条目，旧版自动 `superseded=true`。读取时只暴露最新非 superseded 版本。
+## 只读入口仍然可用
 
-## 查询
+历史 jsonl 还在，需要查原文时：
 
-  {{frago_launcher}} run insights                                 # 当前 domain 全部
-  {{frago_launcher}} run insights --query "API 限流"               # payload 全文搜
-  {{frago_launcher}} run insights --type fact                      # 按 type 过滤
-  {{frago_launcher}} run insights --domain twitter --format json   # 跨 domain + JSON 输出
+    {{frago_launcher}} run insights                                  # 当前 domain 全部
+    {{frago_launcher}} run insights --query "API 限流"                # payload 全文搜
+    {{frago_launcher}} run insights --domain twitter --format json   # 指定域 + JSON
 
-跨 domain 全文搜 + run 名搜：`{{frago_launcher}} run find <keyword>`。
+跨 domain 全文搜：`{{frago_launcher}} run find <keyword>`。
 
-## 何时记 insight
+## 操作流水去哪了
 
-frago hook 在 Edit/Write 后会催 agent 记 insight。agent 自觉记录的场景：
-
-| 出现什么 | 选哪种 type |
-|---------|-----------|
-| 验证了一个非显然的事实 | `fact` |
-| 做了"为什么 A 不 B"的取舍 | `decision` |
-| 发现 6 个月内可能影响后续工作的预兆 | `foreshadow` |
-| 当前状态/权限/配置可能变化、值得快照 | `state` |
-| 调试中栽过的坑、找到的 workaround | `lesson` |
-
-**不记 insight 的场景**：
-- 操作流水（那是 `{{frago_launcher}} run log` 的事）
-- 一次性临时调试输出
-- 跟领域无关的项目内部细节
-
+没变。执行日志仍走 `{{frago_launcher}} run log` 写 `execution.jsonl`，
+详见 `{{frago_launcher}} book run-logging`。退役的只是领域知识那一层。

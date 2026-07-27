@@ -297,10 +297,9 @@ COMMAND_EXAMPLES = {
         "frago run discover",
     ],
     "run/insights": [
+        "# READ-ONLY: insight 写入已退役，沉淀改用 frago <域名> save",
         "frago run insights                                   # list current domain",
         "frago run insights --domain twitter --query 'API'     # search payloads",
-        "frago run insights --save --type fact --payload 'concrete fact' --confidence 0.9",
-        "frago run insights --update <id> --payload 'revised text'",
     ],
     "run/find": [
         "frago run find <keyword>",

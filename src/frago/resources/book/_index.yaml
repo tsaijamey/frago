@@ -116,7 +116,7 @@
 
 - name: domain-insights
   category: available
-  brief: "{{frago_launcher}} run insights 沉淀领域知识：5 种 type（fact/decision/foreshadow/state/lesson）语义边界、追加式版本化、跟旧 _insights 的关系"
+  brief: "【已退役】run insights 写入口已关闭，沉淀改用 {{frago_launcher}} <域名> save；本章只留迁移指引与历史数据位置"
 
 - name: recipe-spec-writing
   category: available
