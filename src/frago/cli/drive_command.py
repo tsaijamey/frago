@@ -167,7 +167,12 @@ def _resolve_or_die(name: str) -> DriveEntry:
 @click.option(
     "--name", default=None, help="Session name (default: agent_type, auto-suffixed if taken)."
 )
-def drive_start(agent_type: str, name: str | None) -> None:
+@click.option(
+    "--use-profile",
+    default=None,
+    help="Saved profile (name or id) whose endpoint/model this session runs on.",
+)
+def drive_start(agent_type: str, name: str | None, use_profile: str | None) -> None:
     """Start a resident session and wait until the driver's ready_signal fires."""
     # agent_type 无 driver → 列出已注册 agent_type（负反馈）。
     try:
@@ -176,6 +181,19 @@ def drive_start(agent_type: str, name: str | None) -> None:
         click.echo(f"Error: no driver registered for agent_type {agent_type!r}.", err=True)
         click.echo(f"  Known agent types: {', '.join(_known_agent_types()) or '<none>'}", err=True)
         sys.exit(1)
+
+    # profile 翻译与一次性路径同源（同一个 driver.profile_env），常驻会话因此能选模型。
+    # 局部导入：agent_command 反过来引用本模块的 DRIVE_SUBCOMMANDS，模块级会成环。
+    # profile 名不存在时 _resolve_profile_env 自己打可读错误并非零退出，NEVER 静默按
+    # 无 profile 起会话——那正是逼 agent 去改用户 opencode 配置的那个缺口。
+    session_env: dict[str, str] = {}
+    if use_profile:
+        from frago.cli.agent_command import _resolve_profile_env
+
+        session_env.update(_resolve_profile_env(use_profile, agent_type))
+    # 子会话必须自知是 worker：CLAUDE.md 角色判定靠这个变量阻断 worker 再拉 worker 的
+    # 递归。最后落键，profile 翻译结果 NEVER 覆盖它。
+    session_env["FRAGO_AGENT_ROLE"] = "worker"
 
     resolved = name or agent_type
     if _read_entry(resolved) is not None:
@@ -189,8 +207,7 @@ def drive_start(agent_type: str, name: str | None) -> None:
     runner = make_runner()
     pool = WarmSessionPool(runner=runner)
     try:
-        # 子会话必须自知是 worker：CLAUDE.md 角色判定靠这个变量阻断 worker 再拉 worker 的递归。
-        session = pool.acquire(agent_type, resolved, cwd, env={"FRAGO_AGENT_ROLE": "worker"})
+        session = pool.acquire(agent_type, resolved, cwd, env=session_env)
     except FileNotFoundError:
         click.echo(
             "Error: tmux not found. Please install tmux first (e.g. brew install tmux).", err=True

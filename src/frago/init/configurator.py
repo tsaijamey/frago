@@ -10,6 +10,7 @@ Provides configuration loading, saving, and interactive configuration:
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 import click
 
@@ -478,6 +479,97 @@ def ensure_claude_json_for_custom_auth() -> bool:
     return False
 
 
+AUTH_STYLE_AUTH_TOKEN = "auth_token"
+AUTH_STYLE_API_KEY = "api_key"
+
+# 自定义端点的认证方式推断表——只对不在 PRESET_ENDPOINTS 里的端点生效。
+#
+# 自定义端点没有预设声明可查，历史上一律按密钥头处理，撞上只认授权头的服务商就是
+# 静默鉴权失败：模型零产出，一轮跑满超时。这里把「哪些自定义端点其实要授权头」变成
+# 可查的结构化依据，判据只允许两类客观事实：
+#   key_prefixes —— 服务商自己规定的密钥格式前缀（sk-or- 是 OpenRouter 的密钥格式）
+#   hosts        —— 端点 URL 的主机名（含子域）
+# NEVER 拿模型名、profile 名称之类的自然语言去猜——那是不可验证的依据。
+#
+# 任一依据命中即判授权头；都不命中维持默认密钥头。将来遇到新的服务商**只加数据**，
+# NEVER 改判定逻辑。
+CUSTOM_AUTH_STYLE_HINTS: tuple[dict, ...] = (
+    {
+        "provider": "openrouter",
+        "auth": AUTH_STYLE_AUTH_TOKEN,
+        "key_prefixes": ("sk-or-",),
+        "hosts": ("openrouter.ai",),
+    },
+)
+
+
+def _endpoint_host(url: str | None) -> str:
+    """从端点 URL 里取出主机名（小写、去端口），取不到返回空串。"""
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url if "//" in url else f"//{url}")
+    except ValueError:
+        return ""
+    return (parsed.hostname or "").lower()
+
+
+def _matches_host(host: str, known: str) -> bool:
+    """主机名命中：完全相等，或是该域名的子域。"""
+    return host == known or host.endswith(f".{known}")
+
+
+def infer_custom_auth_style(
+    api_key: str | None = None, url: str | None = None
+) -> str | None:
+    """按密钥前缀 / 端点主机名推断自定义端点的认证方式，推不出返回 ``None``。
+
+    依据表是 ``CUSTOM_AUTH_STYLE_HINTS``，任一依据命中即算命中。
+    """
+    host = _endpoint_host(url)
+    for hint in CUSTOM_AUTH_STYLE_HINTS:
+        if api_key and any(api_key.startswith(p) for p in hint["key_prefixes"]):
+            return str(hint["auth"])
+        if host and any(_matches_host(host, known) for known in hint["hosts"]):
+            return str(hint["auth"])
+    return None
+
+
+def resolve_auth_style(
+    endpoint_type: str,
+    auth: str | None = None,
+    api_key: str | None = None,
+    url: str | None = None,
+) -> str:
+    """这个端点类型用哪种认证头——认证方式的唯一出处。
+
+    两档语义：``auth_token`` 走授权头（Bearer / ANTHROPIC_AUTH_TOKEN），
+    ``api_key`` 走密钥头（x-api-key / ANTHROPIC_API_KEY）。
+
+    回退链：显式参数 → 预设自己声明的 ``auth`` 字段 → 自定义端点的结构化推断
+    （``infer_custom_auth_style``，只在端点不属于 PRESET_ENDPOINTS 时参与）→ 默认密钥头。
+    预设端点的判定与改造前一字不差，推断绝不介入。
+
+    ``api_key`` / ``url`` 是推断所需的依据，不传就等于没有依据可查，行为与改造前完全
+    一致（自定义端点回落到密钥头）。
+
+    两个内核（claude 的设置写入、opencode 的 provider 注入）MUST 都从这里取，
+    NEVER 各自维护第二张对照表。
+    """
+    if auth:
+        return auth
+    preset = PRESET_ENDPOINTS.get(endpoint_type)
+    if preset:
+        declared = preset.get("auth")
+        if declared:
+            return str(declared)
+        return AUTH_STYLE_API_KEY
+    inferred = infer_custom_auth_style(api_key, url)
+    if inferred:
+        return inferred
+    return AUTH_STYLE_API_KEY
+
+
 def build_claude_env_config(
     endpoint_type: str,
     api_key: str,
@@ -510,7 +602,7 @@ def build_claude_env_config(
         env = PRESET_ENDPOINTS[endpoint_type].copy()
         # Remove display_name / auth marker (config-only, not written to settings)
         env.pop("display_name", None)
-        preset_auth = env.pop("auth", None)
+        env.pop("auth", None)
     else:
         # custom type - requires model configuration
         model = default_model or "gpt-4"
@@ -522,7 +614,6 @@ def build_claude_env_config(
             "API_TIMEOUT_MS": 600000,
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
-        preset_auth = None
 
     # Override model names if explicitly provided (for preset endpoints too)
     if default_model:
@@ -536,8 +627,12 @@ def build_claude_env_config(
     # endpoints (Tencent / OpenRouter) read ANTHROPIC_AUTH_TOKEN; x-api-key
     # endpoints (DeepSeek etc.) read ANTHROPIC_API_KEY. Set only the one in
     # use and blank the other so a stale value can't shadow it.
-    auth_style = auth or preset_auth or "api_key"
-    if auth_style == "auth_token":
+    # 认证方式从公共出口取。这里的 preset_auth 已被 pop 出来（不写进 settings），
+    # 但语义上它就是 resolve_auth_style 会查到的那一份，故直接把 endpoint_type
+    # 交给出口判定。密钥与 URL 一并交出去，好让自定义端点用得上结构化推断
+    # （预设端点走不到推断那一步，判定与改造前完全一致）。
+    auth_style = resolve_auth_style(endpoint_type, auth, api_key=api_key, url=custom_url)
+    if auth_style == AUTH_STYLE_AUTH_TOKEN:
         env["ANTHROPIC_AUTH_TOKEN"] = api_key
         env["ANTHROPIC_API_KEY"] = ""
     else:

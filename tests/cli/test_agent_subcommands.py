@@ -135,6 +135,86 @@ def test_stop_happy(fake):
     assert "frago-agent-smoke" not in fake.alive
 
 
+# ── start --use-profile：常驻会话也能选模型 ────────────────────────────────
+# 缺这个选项时，常驻会话这条路完全无法选模型；真实后果是 agent 为了绕开它，直接改
+# 用户的 ~/.config/opencode/opencode.json 把默认模型钉死。功能缺位会逼 agent 动用户的东西。
+
+
+@pytest.fixture
+def profiles(monkeypatch, tmp_path):
+    """一份临时 profiles.json，避免读用户真实档案。"""
+    from frago.init import profile_manager
+
+    path = tmp_path / "profiles.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "profiles": [
+                    {
+                        "id": "p1",
+                        "name": "OpenRouter Kimi K3",
+                        "endpoint_type": "kimi",
+                        "api_key": "sk-k3",
+                        "default_model": "kimi-k3",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(profile_manager, "PROFILES_PATH", path)
+    return path
+
+
+def _new_session_env(fake: FakeTmux) -> dict[str, str]:
+    """从 new-session 命令行里还原注入的会话环境变量。"""
+    argv = next(c for c in fake.commands if c[1:2] == ["new-session"])
+    pairs = [argv[i + 1] for i, tok in enumerate(argv) if tok == "-e"]
+    return dict(p.split("=", 1) for p in pairs)
+
+
+@pytest.mark.usefixtures("profiles")
+def test_start_use_profile_injects_translated_env(fake):
+    res = CliRunner().invoke(
+        agent, ["start", "claude", "--name", "k3", "--use-profile", "OpenRouter Kimi K3"]
+    )
+    assert res.exit_code == 0, res.output
+    env = _new_session_env(fake)
+    # profile 翻译结果进了会话（claude 侧是 ANTHROPIC_*）。
+    assert env["ANTHROPIC_API_KEY"] == "sk-k3"
+    assert env["ANTHROPIC_MODEL"] == "kimi-k3"
+    assert "moonshot" in env["ANTHROPIC_BASE_URL"]
+    # 角色变量仍在，且 NEVER 被 profile 覆盖。
+    assert env["FRAGO_AGENT_ROLE"] == "worker"
+
+
+@pytest.mark.usefixtures("profiles")
+def test_start_use_profile_by_id_also_works(fake):
+    res = CliRunner().invoke(agent, ["start", "claude", "--name", "k3id", "--use-profile", "p1"])
+    assert res.exit_code == 0, res.output
+    assert _new_session_env(fake)["ANTHROPIC_API_KEY"] == "sk-k3"
+
+
+def test_start_without_profile_keeps_role_only(fake):
+    res = CliRunner().invoke(agent, ["start", "claude", "--name", "plain"])
+    assert res.exit_code == 0, res.output
+    assert _new_session_env(fake) == {"FRAGO_AGENT_ROLE": "worker"}
+
+
+@pytest.mark.usefixtures("profiles")
+def test_start_unknown_profile_exits_nonzero_without_session(fake):
+    """profile 名不存在 → 可读错误 + 非零退出，NEVER 静默按无 profile 起会话。"""
+    res = CliRunner().invoke(
+        agent, ["start", "claude", "--name", "ghost", "--use-profile", "No Such Profile"]
+    )
+    assert res.exit_code == 1
+    assert "not found" in res.output
+    assert "OpenRouter Kimi K3" in res.output  # 列出可选项（负反馈）
+    assert not any(c[1:2] == ["new-session"] for c in fake.commands)
+    assert not drive_command._sidecar_path("ghost").exists()
+
+
 # ── 负反馈 1：send/peek/stop 到不存在的 name → 报错 + 活会话清单 ─────────────
 
 
