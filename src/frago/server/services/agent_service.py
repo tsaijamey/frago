@@ -39,6 +39,21 @@ def _get_attached_pool() -> Any:
     return _attached_pool
 
 
+def resolve_agent_type(agent_type: str | None) -> str:
+    """Which core actually runs a turn: explicit argument, else the configured
+    preference, else claude.
+
+    Both start paths (detached and attached) go through this, so the core
+    picked in the WebUI wizard governs every server-started session the same
+    way it governs a bare `frago agent` on the command line.
+    """
+    if agent_type:
+        return agent_type
+    from frago.init.config_manager import get_agent_core
+
+    return get_agent_core()
+
+
 def _resolve_frago_cmd() -> list[str]:
     """Return the base command used to invoke frago from the server process.
 
@@ -82,13 +97,15 @@ class AgentSession:
         project_path: str,
         *,
         prefix_provider: Callable[[], str] | None = None,
-        agent_type: str = "claude",
+        agent_type: str | None = None,
         pool: Any | None = None,
         turn_timeout_s: float = 600.0,
     ):
         self.internal_id = internal_id
         self.project_path = project_path
-        self.agent_type = agent_type
+        # None = "whatever the configured core preference says" (claude if
+        # unset). Resolved here so `self.agent_type` is always a concrete name.
+        self.agent_type = resolve_agent_type(agent_type)
         self._pool = pool
         self._turn_timeout_s = turn_timeout_s
         self._tmux_session: Any | None = None
@@ -164,19 +181,18 @@ class AgentSession:
             from frago.agent_driver.streamer import TranscriptStreamer
 
             driver = session.driver
-            path_fn = driver.transcript_path
-            if path_fn is None:
-                # This agent exposes no transcript (opencode/codex today):
-                # the turn still runs, it just streams no incremental events.
+            source_fn = driver.transcript_source
+            source = source_fn(session) if source_fn is not None else None
+            if source is None:
+                # This agent exposes no record source (codex today): the turn
+                # still runs, it just streams no incremental events.
                 logger.info(
-                    "Agent %r exposes no transcript path — attached session %s "
+                    "Agent %r exposes no transcript source — attached session %s "
                     "will run without incremental streaming",
                     self.agent_type, self.internal_id,
                 )
             else:
-                self._streamer = TranscriptStreamer(
-                    self.agent_type, lambda: path_fn(session)
-                )
+                self._streamer = TranscriptStreamer(source)
                 await asyncio.to_thread(self._streamer.seek_to_end)
         return session
 
@@ -246,19 +262,18 @@ class AgentSession:
                 })
 
     async def _resolve_session_id(self) -> None:
-        """Announce the agent-native session id once the transcript appears.
+        """Announce the agent-native session id once the record source knows it.
 
-        The transcript's filename stem *is* the agent's native session id (the
-        id the driver launched the CLI with), which is what the retired headless
-        backend's ``system/init`` event carried. Derived from the path the driver handed
-        us, so this stays agent-agnostic.
+        Which id that is, and when it becomes knowable, is the driver's business:
+        claude derives it from the transcript filename, opencode from the session
+        it claimed in its database. Asking the source keeps this agent-agnostic.
         """
         if self._claude_session_id is not None or self._streamer is None:
             return
-        path = self._streamer.path
-        if path is None:
+        native_id = self._streamer.native_session_id
+        if native_id is None:
             return
-        self._claude_session_id = path.stem
+        self._claude_session_id = native_id
         logger.info(f"Agent session ID resolved: {self._claude_session_id}")
         await manager.broadcast({
             "type": "agent_session_resolved",
@@ -372,7 +387,7 @@ class AgentService:
         project_path: str | None = None,
         env_extra: dict[str, str] | None = None,
         claude_session_id: str | None = None,
-        agent_type: str = "claude",
+        agent_type: str | None = None,
     ) -> dict[str, Any]:
         """Start agent task.
 
@@ -384,6 +399,8 @@ class AgentService:
             project_path: Optional project path context.
             env_extra: Additional environment variables for the subprocess.
             claude_session_id: Pre-generated UUID for Claude Code session traceability.
+            agent_type: Which cli-agent core to drive. None falls back to the
+                configured core preference (claude when unset).
 
         Returns:
             Dictionary with status, task_id, pid, claude_session_id, and message or error.
@@ -394,6 +411,7 @@ class AgentService:
         prompt = prompt.strip()
         task_id = str(uuid.uuid4())
         claude_session_id = claude_session_id or str(uuid.uuid4())
+        agent_type = resolve_agent_type(agent_type)
 
         try:
             # Prepare log directory
@@ -463,6 +481,7 @@ class AgentService:
         project_path: str | None = None,
         *,
         prefix_provider: Callable[[], str] | None = None,
+        agent_type: str | None = None,
     ) -> dict[str, Any]:
         """Start agent task in attached mode with real-time streaming.
 
@@ -473,6 +492,8 @@ class AgentService:
                 prefix re-evaluated on every (re)start. Use this to bind
                 a long-lived role (e.g. PA system prompt + bootstrap) to
                 the session — survives restarts triggered by send_message.
+            agent_type: Which cli-agent core to drive. None falls back to the
+                configured core preference (claude when unset).
 
         Returns:
             Dictionary with internal_id, status, and project_path.
@@ -486,7 +507,9 @@ class AgentService:
         internal_id = str(uuid.uuid4())
         cwd = project_path or str(Path.home())
 
-        session = AgentSession(internal_id, cwd, prefix_provider=prefix_provider)
+        session = AgentSession(
+            internal_id, cwd, prefix_provider=prefix_provider, agent_type=agent_type
+        )
 
         try:
             await session.start(prompt)

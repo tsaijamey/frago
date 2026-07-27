@@ -89,6 +89,19 @@ def load_config() -> Config:
         return Config()
 
 
+def get_agent_core() -> str:
+    """当前的默认内核（不显式指定 agent-type 时用谁）。
+
+    CLI 的 `--agent-type` 缺省值、HTTP 启动接口的缺省内核都从这里取，
+    所以界面上选的东西对两条入口同时生效。配置读不出来时落回 claude ——
+    内核偏好读失败 NEVER 阻断一次会话启动。
+    """
+    try:
+        return load_config().agent_core
+    except Exception:
+        return "claude"
+
+
 def save_config(config: Config) -> None:
     """Save configuration file
 

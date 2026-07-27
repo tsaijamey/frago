@@ -33,6 +33,13 @@ class AgentStartRequest(BaseModel):
     project_path: Optional[str] = Field(
         default=None, description="Project path context for the agent"
     )
+    agent_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which cli-agent core to drive (claude / opencode / codex). "
+            "Omit to use the configured core preference."
+        ),
+    )
 
 
 class AgentContinueRequest(BaseModel):
@@ -47,6 +54,13 @@ class AgentAttachedStartRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="Agent task prompt")
     project_path: Optional[str] = Field(
         default=None, description="Project path context for the agent"
+    )
+    agent_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Which cli-agent core to drive (claude / opencode / codex). "
+            "Omit to use the configured core preference."
+        ),
     )
 
 

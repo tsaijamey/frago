@@ -32,6 +32,7 @@ import type {
   ApiResponse,
   APIEndpointRequest,
   AuthUpdateRequest,
+  AgentCoreSettings,
   RecipeSecretsFieldHttp,
   RecipeSecretsResponseHttp,
   VSCodeStatus,
@@ -112,6 +113,7 @@ export type {
   ApiResponse,
   APIEndpointRequest,
   AuthUpdateRequest,
+  AgentCoreSettings,
   RecipeSecretsFieldHttp,
   RecipeSecretsResponseHttp,
   VSCodeStatus,
@@ -394,6 +396,17 @@ export async function updateAuth(request: AuthUpdateRequest): Promise<ApiRespons
   return fetchApi<ApiResponse>('/settings/update-auth', {
     method: 'POST',
     body: JSON.stringify(request),
+  });
+}
+
+export async function getAgentCore(): Promise<AgentCoreSettings> {
+  return fetchApi<AgentCoreSettings>('/settings/agent-core');
+}
+
+export async function updateAgentCore(agentCore: string): Promise<AgentCoreSettings> {
+  return fetchApi<AgentCoreSettings>('/settings/agent-core', {
+    method: 'PUT',
+    body: JSON.stringify({ agent_core: agentCore }),
   });
 }
 

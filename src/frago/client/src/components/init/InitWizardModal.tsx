@@ -9,7 +9,7 @@
  * 5. Complete - Finish initialization
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, CheckCircle, Circle, Loader2 } from 'lucide-react';
 import { CoreSelectionStep } from './CoreSelectionStep';
@@ -17,11 +17,11 @@ import { DependencyStep } from './DependencyStep';
 import { AuthMethodStep } from './AuthMethodStep';
 import { ResourceStep } from './ResourceStep';
 import { CompleteStep } from './CompleteStep';
+import { useCoreSelection } from './useCoreSelection';
 import type { InitStatus } from '../../api/client';
 import { getInitStatus, updateAuth } from '../../api/client';
 
 type WizardStep = 'core' | 'client' | 'auth' | 'resources' | 'complete';
-type CoreType = 'claude-code' | 'opencode' | null;
 
 interface InitWizardModalProps {
   isOpen: boolean;
@@ -35,7 +35,6 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
   const [initStatus, setInitStatus] = useState<InitStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [coreType, setCoreType] = useState<CoreType>(null);
 
   // Track step completion status
   const [stepsCompleted, setStepsCompleted] = useState({
@@ -45,6 +44,12 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
     resources: false,
     complete: false,
   });
+
+  // Core choice + its persistence live in one shared hook (see useCoreSelection)
+  // so this wizard and the full-page one can never drift apart.
+  const { coreType, setCoreType, coreError, selectCore } = useCoreSelection(() =>
+    handleStepComplete('core')
+  );
 
   // Dynamic step configuration based on core type
   const getStepLabel = (stepId: WizardStep): string => {
@@ -63,14 +68,10 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
 
   const STEPS: WizardStep[] = ['core', 'client', 'auth', 'resources', 'complete'];
 
-  // Load init status on mount
-  useEffect(() => {
-    if (isOpen) {
-      loadInitStatus();
-    }
-  }, [isOpen]);
-
-  const loadInitStatus = async () => {
+  // useCallback keeps this stable across renders so the open-effect below only
+  // fires on open (setCoreType now comes from a custom hook, which eslint
+  // cannot assume is stable on its own).
+  const loadInitStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -100,7 +101,14 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
     } finally {
       setLoading(false);
     }
-  };
+  }, [setCoreType]);
+
+  // Load init status when the modal opens
+  useEffect(() => {
+    if (isOpen) {
+      loadInitStatus();
+    }
+  }, [isOpen, loadInitStatus]);
 
   const handleStepComplete = (step: WizardStep) => {
     setStepsCompleted((prev) => ({ ...prev, [step]: true }));
@@ -111,10 +119,7 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
     }
   };
 
-  const handleCoreSelectionComplete = (selectedCoreType: 'claude-code' | 'opencode') => {
-    setCoreType(selectedCoreType);
-    handleStepComplete('core');
-  };
+  const handleCoreSelectionComplete = selectCore;
 
   const handleAuthMethodComplete = async (authMethod: 'official' | 'custom', endpointType?: string) => {
     try {
@@ -245,6 +250,9 @@ export function InitWizardModal({ isOpen, onClose, onComplete }: InitWizardModal
                   onComplete={handleCoreSelectionComplete}
                   onSkip={handleSkip}
                 />
+              )}
+              {coreError && (
+                <p className="mt-3 text-sm text-red-400 font-mono">{coreError}</p>
               )}
               {currentStep === 'client' && (
                 <DependencyStep

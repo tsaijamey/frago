@@ -894,6 +894,83 @@ async def put_task_ingestion(
     )
 
 
+# ============================================================
+# Agent Core Preference
+# (spec 20260725-opencode-core-support Phase 5)
+# ============================================================
+
+
+class AgentCoreResponse(BaseModel):
+    """当前内核偏好 + 各内核在本机是否可用，供向导据实置灰卡片。"""
+    agent_core: str
+    available: dict[str, bool]
+
+
+class AgentCoreUpdateRequest(BaseModel):
+    agent_core: str
+
+
+def _agent_core_availability() -> dict[str, bool]:
+    """本机装了哪些内核。探测复用既有出口，NEVER 新写一份。"""
+    from frago.compat import find_agent_cli
+    from frago.init.opencode_plugin import is_opencode_present
+
+    return {
+        "claude": find_agent_cli("claude") is not None,
+        "opencode": is_opencode_present(),
+    }
+
+
+@router.get("/settings/agent-core", response_model=AgentCoreResponse)
+async def get_agent_core_setting() -> AgentCoreResponse:
+    """Read the global cli-agent core preference."""
+    from frago.init.config_manager import get_agent_core
+
+    return AgentCoreResponse(
+        agent_core=get_agent_core(),
+        available=_agent_core_availability(),
+    )
+
+
+@router.put("/settings/agent-core", response_model=AgentCoreResponse)
+async def put_agent_core_setting(payload: AgentCoreUpdateRequest) -> AgentCoreResponse:
+    """Persist the global cli-agent core preference.
+
+    Rejects unknown values, and rejects picking a core that is not installed
+    on this machine — silently accepting it would leave every later
+    `frago agent` run failing at launch with no clue why.
+    """
+    from frago.init.config_manager import load_config, save_config
+    from frago.init.models import known_agent_cores
+
+    # 取值合法性走与 AgentType 对齐的那一份白名单（唯一判定处）。
+    allowed = known_agent_cores()
+    if payload.agent_core not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown agent core {payload.agent_core!r}; "
+                f"expected one of {sorted(allowed)}"
+            ),
+        )
+
+    available = _agent_core_availability()
+    if not available.get(payload.agent_core, False):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{payload.agent_core} is not installed on this machine; "
+                "install it before making it the default core"
+            ),
+        )
+
+    config = load_config()
+    config.agent_core = payload.agent_core
+    save_config(config)
+
+    return AgentCoreResponse(agent_core=config.agent_core, available=available)
+
+
 class RestartResponse(BaseModel):
     status: str
     message: str

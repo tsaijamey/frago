@@ -19,6 +19,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
+def known_agent_cores() -> set[str]:
+    """合法的内核取值，与 `session.models.AgentType` 对齐。
+
+    Config 的字段校验、HTTP 写接口、CLI 都从这里取，NEVER 各写一张白名单。
+    延迟 import 是为了不让 init/ 在模块加载期就拉起 session/。
+    """
+    from frago.session.models import AgentType
+
+    return {t.value for t in AgentType}
+
+
 class APIEndpoint(BaseModel):
     """API endpoint configuration (nested in Config)"""
 
@@ -153,6 +164,11 @@ class Config(BaseModel):
     auth_method: Literal["official", "custom"] = "official"
     api_endpoint: APIEndpoint | None = None
 
+    # 默认内核：不显式指定时用哪个 cli-agent 驱动会话。WebUI 向导写它，
+    # `frago agent --agent-type` 的缺省值读它（spec 20260725-opencode-core-support
+    # Phase 5）。缺省 claude —— 老用户升级后行为不变。
+    agent_core: str = "claude"
+
     # Optional features
     ccr_enabled: bool = False
     ccr_config_path: str | None = None
@@ -194,6 +210,17 @@ class Config(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     init_completed: bool = False
+
+    @field_validator("agent_core")
+    @classmethod
+    def _known_agent_core(cls, v: str) -> str:
+        """合法内核取值与 AgentType 对齐（见 `known_agent_cores`）。"""
+        allowed = known_agent_cores()
+        if v not in allowed:
+            raise ValueError(
+                f"Unknown agent core {v!r}; expected one of {sorted(allowed)}"
+            )
+        return v
 
     @model_validator(mode="after")
     def validate_auth_consistency(self) -> "Config":

@@ -41,6 +41,13 @@ class TestAgentServiceStartTask:
         """Should start task and return success."""
         # Set up home directory for logs
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # The core defaults to whatever config.json prefers; point that at an
+        # empty temp path so this asserts the built-in default, not this
+        # machine's preference (CONFIG_PATH is a module-level constant, so
+        # patching Path.home() alone does not redirect it).
+        from frago.init import config_manager
+
+        monkeypatch.setattr(config_manager, "CONFIG_PATH", tmp_path / "config.json")
 
         with (
             patch("shutil.which", return_value="/usr/bin/frago"),

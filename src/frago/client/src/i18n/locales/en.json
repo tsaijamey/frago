@@ -590,6 +590,8 @@
       "openCodeDesc": "Select your preferred third-party API provider",
       "recommended": "RECOMMENDED",
       "comingSoon": "Coming Soon",
+      "notInstalled": "Not Installed",
+      "openCodeNotDetected": "opencode not detected on this machine",
       "claudeCodeFeatures": "Official Claude models with full feature support. Best performance and latest capabilities.",
       "openCodeFeatures": "Connect to third-party API endpoints. Use your own API keys with compatible providers.",
       "fullFeatures": "full_feature_support",

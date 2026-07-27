@@ -53,6 +53,7 @@ async def start_agent(request: AgentStartRequest) -> TaskItemResponse:
     result = AgentService.start_task(
         prompt=request.prompt,
         project_path=request.project_path,
+        agent_type=request.agent_type,
     )
 
     # Check for error
@@ -107,6 +108,7 @@ async def start_agent_attached(
     result = await AgentService.start_task_attached(
         prompt=request.prompt,
         project_path=request.project_path,
+        agent_type=request.agent_type,
     )
 
     if result.get("status") == "error":

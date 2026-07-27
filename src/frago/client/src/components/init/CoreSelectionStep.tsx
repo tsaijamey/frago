@@ -1,11 +1,13 @@
 /**
  * CoreSelectionStep - Select Core Type for Init Wizard
  *
- * Select between Claude Code (official) or OpenCode (third-party)
- * OpenCode is currently disabled with "Coming Soon" badge
+ * Select between Claude Code (official) or OpenCode (third-party).
+ * Both cores are selectable; a card greys out only when that core is not
+ * installed on this machine. Installed-or-not comes from the backend —
+ * the browser has no way to know and MUST NEVER guess.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Check,
@@ -13,8 +15,8 @@ import {
   Globe,
   Terminal,
   ChevronRight,
-  Clock,
 } from 'lucide-react';
+import { getAgentCore } from '../../api/client';
 
 type CoreType = 'claude-code' | 'opencode' | null;
 
@@ -26,18 +28,52 @@ interface CoreSelectionStepProps {
 export function CoreSelectionStep({ onComplete, onSkip }: CoreSelectionStepProps) {
   const { t } = useTranslation();
   const [coreType, setCoreType] = useState<CoreType>(null);
+  // Until the probe answers, assume both are present: flashing "not detected"
+  // at a user who does have it installed is the worse failure.
+  const [available, setAvailable] = useState<Record<string, boolean>>({
+    claude: true,
+    opencode: true,
+  });
 
-  const handleCoreSelect = (type: CoreType) => {
-    // Only allow claude-code for now
-    if (type === 'claude-code') {
-      setCoreType(type);
-    }
+  useEffect(() => {
+    let cancelled = false;
+    getAgentCore()
+      .then((settings) => {
+        if (!cancelled) {
+          setAvailable(settings.available);
+          setCoreType(settings.agent_core === 'opencode' ? 'opencode' : 'claude-code');
+        }
+      })
+      .catch(() => {
+        /* Probe failed — leave both cards enabled rather than block setup. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const claudeAvailable = available.claude !== false;
+  const openCodeAvailable = available.opencode !== false;
+
+  const handleCoreSelect = (type: 'claude-code' | 'opencode') => {
+    if (type === 'claude-code' && !claudeAvailable) return;
+    if (type === 'opencode' && !openCodeAvailable) return;
+    setCoreType(type);
   };
 
   const handleContinue = () => {
     if (coreType) {
       onComplete(coreType);
     }
+  };
+
+  const cardClass = (type: 'claude-code' | 'opencode', installed: boolean) => {
+    if (!installed) {
+      return 'border-gray-700 bg-gray-800/30 opacity-60 cursor-not-allowed';
+    }
+    return coreType === type
+      ? 'border-green-500 bg-green-500/10'
+      : 'border-gray-700 bg-gray-800/50 hover:border-gray-600 hover:bg-gray-800';
   };
 
   return (
@@ -58,16 +94,22 @@ export function CoreSelectionStep({ onComplete, onSkip }: CoreSelectionStepProps
         <button
           type="button"
           onClick={() => handleCoreSelect('claude-code')}
-          className={`relative p-6 rounded-lg border-2 transition-all text-left ${
-            coreType === 'claude-code'
-              ? 'border-green-500 bg-green-500/10'
-              : 'border-gray-700 bg-gray-800/50 hover:border-gray-600 hover:bg-gray-800'
-          }`}
+          disabled={!claudeAvailable}
+          className={`relative p-6 rounded-lg border-2 transition-all text-left ${cardClass(
+            'claude-code',
+            claudeAvailable
+          )}`}
         >
-          {/* Recommended badge */}
-          <div className="absolute -top-2 -right-2 px-2 py-0.5 bg-green-500 text-black text-xs font-bold rounded font-mono">
-            {t('init.coreSelection.recommended')}
-          </div>
+          {/* Recommended / not-installed badge */}
+          {claudeAvailable ? (
+            <div className="absolute -top-2 -right-2 px-2 py-0.5 bg-green-500 text-black text-xs font-bold rounded font-mono">
+              {t('init.coreSelection.recommended')}
+            </div>
+          ) : (
+            <div className="absolute -top-2 -right-2 px-2 py-0.5 bg-gray-600 text-gray-300 text-xs font-bold rounded font-mono">
+              {t('init.coreSelection.notInstalled')}
+            </div>
+          )}
 
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
@@ -94,35 +136,50 @@ export function CoreSelectionStep({ onComplete, onSkip }: CoreSelectionStepProps
           </div>
         </button>
 
-        {/* OpenCode Card - Disabled */}
-        <div
-          className="relative p-6 rounded-lg border-2 border-gray-700 bg-gray-800/30 text-left opacity-60 cursor-not-allowed"
+        {/* OpenCode Card */}
+        <button
+          type="button"
+          onClick={() => handleCoreSelect('opencode')}
+          disabled={!openCodeAvailable}
+          className={`relative p-6 rounded-lg border-2 transition-all text-left ${cardClass(
+            'opencode',
+            openCodeAvailable
+          )}`}
         >
-          {/* Coming Soon badge */}
-          <div className="absolute -top-2 -right-2 px-2 py-0.5 bg-gray-600 text-gray-300 text-xs font-bold rounded font-mono flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            {t('init.coreSelection.comingSoon')}
-          </div>
+          {!openCodeAvailable && (
+            <div className="absolute -top-2 -right-2 px-2 py-0.5 bg-gray-600 text-gray-300 text-xs font-bold rounded font-mono">
+              {t('init.coreSelection.notInstalled')}
+            </div>
+          )}
 
           <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-400 to-purple-600 flex items-center justify-center">
               <Globe className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h4 className="text-gray-400 font-semibold font-mono">OpenCode</h4>
-              <p className="text-gray-500 text-xs font-mono">Open Ecosystem</p>
+              <h4 className="text-white font-semibold font-mono flex items-center gap-2">
+                OpenCode
+                {coreType === 'opencode' && (
+                  <Check className="w-4 h-4 text-green-400" />
+                )}
+              </h4>
+              <p className="text-gray-400 text-xs font-mono">Open Ecosystem</p>
             </div>
           </div>
 
-          <p className="text-gray-500 text-sm mb-4">
+          <p className="text-gray-300 text-sm mb-4">
             {t('init.coreSelection.openCodeFeatures')}
           </p>
 
-          <div className="flex items-center gap-2 text-gray-500 text-sm font-mono">
+          <div className="flex items-center gap-2 text-blue-400 text-sm font-mono">
             <Globe className="w-4 h-4" />
-            <span>{t('init.coreSelection.thirdPartyAPIs')}</span>
+            <span>
+              {openCodeAvailable
+                ? t('init.coreSelection.thirdPartyAPIs')
+                : t('init.coreSelection.openCodeNotDetected')}
+            </span>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Actions */}

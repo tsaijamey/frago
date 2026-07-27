@@ -188,6 +188,13 @@ export interface AuthUpdateRequest {
   api_endpoint?: APIEndpointRequest;
 }
 
+/** Global cli-agent core preference (spec 20260725-opencode-core-support). */
+export interface AgentCoreSettings {
+  agent_core: string;
+  /** Which cores are installed on this machine — the backend decides, never the UI. */
+  available: Record<string, boolean>;
+}
+
 export interface RecipeSecretsFieldHttp {
   key: string;
   type: string;

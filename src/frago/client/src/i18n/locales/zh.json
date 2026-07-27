@@ -590,6 +590,8 @@
       "openCodeDesc": "选择你偏好的第三方 API 提供商",
       "recommended": "推荐",
       "comingSoon": "即将推出",
+      "notInstalled": "未安装",
+      "openCodeNotDetected": "本机未检测到 opencode",
       "claudeCodeFeatures": "官方 Claude 模型，完整功能支持。最佳性能和最新能力。",
       "openCodeFeatures": "连接第三方 API 端点。使用你自己的 API 密钥与兼容的提供商。",
       "fullFeatures": "full_feature_support",

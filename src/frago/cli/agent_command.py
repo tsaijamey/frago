@@ -75,14 +75,14 @@ def find_claude_cli() -> str | None:
     return find_agent_cli("claude")
 
 
-def _resolve_profile_env(profile_name: str) -> dict[str, str]:
-    """把一个 profile 名（或 id）解析成 claude 的 ANTHROPIC_* 环境变量。
+def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
+    """把一个 profile 名（或 id）交给目标 agent 的 driver 翻成会话环境变量。
 
-    复用 init/WebUI 同一套翻译逻辑（build_claude_env_config），保证 CLI 起的 tmux
-    会话与激活 profile 写进 settings.json 的字段完全一致。tmux -e 要求值为字符串，
-    故统一 str() 化（顺带把 API_TIMEOUT_MS 等 int 值转为字符串）。
+    翻译规则住在 driver 里（claude 产出 ``ANTHROPIC_*``，opencode 产出
+    ``OPENCODE_CONFIG_CONTENT``），这里只负责按名字找到 profile 并派活。driver 没有
+    实现 ``profile_env`` 时返回空字典——本轮就当没指定 profile 跑，NEVER 因此报错。
     """
-    from frago.init.configurator import build_claude_env_config
+    from frago.agent_driver.driver import load_driver
     from frago.init.profile_manager import load_profiles
 
     store = load_profiles()
@@ -98,15 +98,10 @@ def _resolve_profile_env(profile_name: str) -> dict[str, str]:
         )
         sys.exit(1)
 
-    env = build_claude_env_config(
-        endpoint_type=profile.endpoint_type,
-        api_key=profile.api_key,
-        custom_url=profile.url if profile.endpoint_type == "custom" else None,
-        default_model=profile.default_model,
-        sonnet_model=profile.sonnet_model,
-        haiku_model=profile.haiku_model,
-    )
-    return {k: str(v) for k, v in env.items()}
+    driver = load_driver(agent_type)
+    if driver.profile_env is None:
+        return {}
+    return driver.profile_env(profile)
 
 
 # 停机态 → 退出码契约（spec 20260607 Phase 7）。调用方 Agent 靠它判断下一步，
@@ -461,8 +456,9 @@ def agent() -> None:
 @click.option(
     "--agent-type",
     type=str,
-    default="claude",
-    help="Which cli-agent to drive (claude / opencode / codex). Default: claude"
+    default=None,
+    help="Run this one turn on a specific cli-agent (claude / opencode / codex). "
+         "Omit to use the core selected in the WebUI wizard (claude when unset)."
 )
 def agent_run(
     prompt: tuple,
@@ -481,7 +477,7 @@ def agent_run(
     endpoint: str | None,
     api_key: str | None,
     use_profile: str | None,
-    agent_type: str,
+    agent_type: str | None,
 ):
     """
     Intelligent Agent: Execute one task turn in a resident tmux cli-agent session.
@@ -521,6 +517,12 @@ def agent_run(
         click.echo("Error: prompt cannot be empty", err=True)
         sys.exit(1)
 
+    # --agent-type 是"这一次破例用谁"，不带就用界面上选定的内核（缺省 claude）。
+    if not agent_type:
+        from frago.init.config_manager import get_agent_core
+
+        agent_type = get_agent_core()
+
     # --session-id / --resume 互斥：一个是让 driver 派生的 frago 侧标识，一个是原样
     # 续接的 agent 真实会话 id，同时给出无法判定该走哪条。
     if session_id and resume_session_id:
@@ -550,8 +552,9 @@ def agent_run(
         if not quiet:
             click.echo(f"[OK] Using CCR: http://{host}:{port}", err=json_out)
 
-    # --use-profile 解析出的 ANTHROPIC_* 盖过 CCR，但让位于下面的显式 CLI 覆盖。
-    profile_env = _resolve_profile_env(use_profile) if use_profile else {}
+    # --use-profile 解析出的变量盖过 CCR，但让位于下面的显式 CLI 覆盖。翻译由目标
+    # agent 的 driver 负责，故要把 agent_type 一起递进去。
+    profile_env = _resolve_profile_env(use_profile, agent_type) if use_profile else {}
     tmux_env.update(profile_env)
 
     # CLI 覆盖（最高优先级）。--model 走 ANTHROPIC_MODEL——profile 本就用该变量表达
