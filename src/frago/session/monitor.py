@@ -758,10 +758,31 @@ class TmuxDriverAdapter(AgentAdapter):
 
 
 class OpencodeAdapter(TmuxDriverAdapter):
-    """opencode adapter (tmux-driven)."""
+    """opencode adapter (tmux-driven, with a session-database record stream).
+
+    Beyond the plain text turns the base class handles, opencode's driver reads
+    its SQLite session log and hands over normalized dicts that may carry
+    ``tool_calls`` / ``tool_results`` (spec 20260725 Phase 2). Those keys are
+    attached here rather than in the base class on purpose: codex still rides
+    ``TmuxDriverAdapter`` and its behaviour must stay a pure text turn.
+    """
 
     def __init__(self):
         super().__init__(AgentType.OPENCODE)
+
+    def parse_record(self, data: dict) -> "ParsedRecord | None":
+        record = super().parse_record(data)
+        if record is None:
+            return None
+        tool_calls = data.get("tool_calls")
+        tool_results = data.get("tool_results")
+        if isinstance(tool_calls, list):
+            record.tool_calls = tool_calls
+        if isinstance(tool_results, list):
+            record.tool_results = tool_results
+        if tool_calls or tool_results:
+            record.raw_data = {**record.raw_data, "parts": data}
+        return record
 
 
 class CodexAdapter(TmuxDriverAdapter):

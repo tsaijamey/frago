@@ -46,7 +46,7 @@ def session_group():
 @session_group.command("list", cls=AgentFriendlyCommand)
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "cursor", "cline", "all"]),
+    type=click.Choice(["claude", "opencode", "cursor", "cline", "all"]),
     default="all",
     help="Filter by agent type"
 )
@@ -149,7 +149,7 @@ def _get_status_display(status: SessionStatus) -> str:
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -264,7 +264,7 @@ def _find_session_by_prefix(prefix: str, agent_type: AgentType):
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -311,7 +311,7 @@ def watch_cmd(
 )
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "cursor", "cline", "all"]),
+    type=click.Choice(["claude", "opencode", "cursor", "cline", "all"]),
     default="all",
     help="Filter by agent type"
 )
@@ -384,7 +384,7 @@ def clean_cmd(
 @click.argument("session_id")
 @click.option(
     "--agent-type", "-a",
-    type=click.Choice(["claude", "cursor", "cline"]),
+    type=click.Choice(["claude", "opencode", "cursor", "cline"]),
     default="claude",
     help="Agent type"
 )
@@ -451,10 +451,12 @@ def sync_cmd(
     json_output: bool
 ):
     """
-    Sync data from Claude session files
+    Sync data from agent session records
 
-    Syncs session files from ~/.claude/projects/ to ~/.frago/sessions/claude/.
-    By default, only syncs the project corresponding to the current working directory.
+    Claude sessions come from ~/.claude/projects/, opencode sessions from its
+    SQLite session database; both land in ~/.frago/sessions/{agent}/.
+    By default, only syncs the project corresponding to the current working directory
+    (opencode archives all of its sessions, its records are not project-scoped files).
 
     \b
     Examples:
@@ -464,6 +466,7 @@ def sync_cmd(
     """
     import os
 
+    from frago.session.opencode_sync import sync_opencode_sessions
     from frago.session.sync import sync_all_projects, sync_project_sessions
 
     if sync_all:
@@ -473,6 +476,17 @@ def sync_cmd(
         project_path = os.getcwd()
         click.echo(f"Syncing project: {project_path}")
         result = sync_project_sessions(project_path, force=force)
+
+    # opencode: archived from its session database. A failure here NEVER masks the
+    # claude result — it lands in the same errors list instead.
+    try:
+        opencode_result = sync_opencode_sessions()
+        result.synced += opencode_result.synced
+        result.updated += opencode_result.updated
+        result.skipped += opencode_result.skipped
+        result.errors.extend(opencode_result.errors)
+    except Exception as e:  # noqa: BLE001
+        result.errors.append(f"opencode: {e}")
 
     if json_output:
         import json as json_module

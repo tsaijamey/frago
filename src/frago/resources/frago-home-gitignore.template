@@ -40,6 +40,9 @@ projects/**/.cache/
 projects/**/.git/
 runtime.json
 runtime.json.bak.*
+# frago 会话标识 → opencode 原生会话 id 的映射。指向本机 opencode.db 里的行，
+# 换台设备毫无意义，故不同步。
+opencode-sessions.json
 
 # Cache directories (device-local, not synced)
 cache/

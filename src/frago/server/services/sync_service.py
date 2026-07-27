@@ -31,6 +31,10 @@ class SyncService:
         # Persists across sync cycles so unchanged sessions skip read_metadata entirely
         self._session_mtimes: dict[str, float] = {}
 
+        # opencode counterpart: session_id -> last-seen time_updated (ms).
+        # Same role as the mtime cache, keyed on the session database's own clock.
+        self._opencode_updated: dict[str, int] = {}
+
     @classmethod
     def get_instance(cls) -> "SyncService":
         """Get singleton instance.
@@ -106,19 +110,37 @@ class SyncService:
     def _do_sync(self) -> dict[str, Any]:
         """Perform synchronization (runs in thread pool).
 
+        Covers both cores; one failing NEVER stops the other.
+
         Returns:
             Sync result dictionary
         """
         from frago.session.sync import sync_all_projects
 
-        result = sync_all_projects(mtime_cache=self._session_mtimes)
+        totals = {"synced": 0, "updated": 0, "skipped": 0, "errors": []}
 
-        return {
-            "synced": result.synced,
-            "updated": result.updated,
-            "skipped": result.skipped,
-            "errors": result.errors,
-        }
+        for label, run in (
+            ("claude", lambda: sync_all_projects(mtime_cache=self._session_mtimes)),
+            ("opencode", self._sync_opencode),
+        ):
+            try:
+                result = run()
+            except Exception as e:
+                logger.warning(f"{label} session sync failed: {e}")
+                totals["errors"].append(f"{label}: {e}")
+                continue
+            totals["synced"] += result.synced
+            totals["updated"] += result.updated
+            totals["skipped"] += result.skipped
+            totals["errors"].extend(result.errors)
+
+        return totals
+
+    def _sync_opencode(self) -> Any:
+        """Archive opencode sessions from its SQLite log (spec 20260725 Phase 3)."""
+        from frago.session.opencode_sync import sync_opencode_sessions
+
+        return sync_opencode_sessions(since_updated_cache=self._opencode_updated)
 
     def get_last_result(self) -> dict[str, Any] | None:
         """Get the last sync result.
@@ -135,21 +157,33 @@ class SyncService:
         Returns:
             Sync result dictionary
         """
-        try:
-            from frago.session.sync import sync_all_projects
+        from frago.session.opencode_sync import sync_opencode_sessions
+        from frago.session.sync import sync_all_projects
 
-            result = sync_all_projects()
+        totals: dict[str, Any] = {
+            "success": False,
+            "synced": 0,
+            "updated": 0,
+            "skipped": 0,
+            "errors": [],
+        }
+        succeeded = False
 
-            return {
-                "success": True,
-                "synced": result.synced,
-                "updated": result.updated,
-                "skipped": result.skipped,
-                "errors": result.errors,
-            }
-        except Exception as e:
-            logger.error(f"Sync failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-            }
+        # Both cores run; one failing NEVER stops the other.
+        for label, run in (("claude", sync_all_projects), ("opencode", sync_opencode_sessions)):
+            try:
+                result = run()
+            except Exception as e:
+                logger.error(f"{label} sync failed: {e}")
+                totals["errors"].append(f"{label}: {e}")
+                continue
+            succeeded = True
+            totals["synced"] += result.synced
+            totals["updated"] += result.updated
+            totals["skipped"] += result.skipped
+            totals["errors"].extend(result.errors)
+
+        totals["success"] = succeeded
+        if not succeeded:
+            totals["error"] = "; ".join(totals["errors"])
+        return totals
