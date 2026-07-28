@@ -9,12 +9,10 @@ Provides general filesystem access for recipes and static HTML+JS:
 import base64
 import mimetypes
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-
 
 router = APIRouter()
 
@@ -23,18 +21,35 @@ class WriteFileRequest(BaseModel):
     """Request body for writing file content."""
 
     content: str
-    encoding: Optional[str] = None  # None for text, "base64" for binary
+    encoding: str | None = None  # None for text, "base64" for binary
 
 
 @router.get("/file")
-async def get_file(path: str = Query(..., description="Absolute path to file")):
+async def get_file(
+    path: str = Query(..., description="Absolute path to file"),
+    disposition: str | None = Query(
+        None,
+        description=(
+            "Set to 'inline' to serve the file for in-page rendering. "
+            "Default keeps the historical attachment disposition."
+        ),
+    ),
+):
     """Serve a file from the filesystem.
 
     Args:
         path: Absolute path to the file
+        disposition: "inline" to drop the Content-Disposition attachment header
 
     Returns:
         File content with appropriate MIME type
+
+    Note:
+        Passing filename= makes Starlette emit `Content-Disposition: attachment`,
+        which Chrome treats as a download and refuses to render in <video>/<audio>
+        elements. Interactive recipes that play project media through this route
+        must request disposition=inline. The default is left untouched so existing
+        callers keep getting the download behaviour they rely on.
     """
     file_path = Path(path)
 
@@ -43,13 +58,16 @@ async def get_file(path: str = Query(..., description="Absolute path to file")):
 
     try:
         resolved = file_path.resolve(strict=True)
-    except (FileNotFoundError, OSError):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except (FileNotFoundError, OSError) as err:
+        raise HTTPException(status_code=404, detail=f"File not found: {path}") from err
 
     if not resolved.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
     mime_type, _ = mimetypes.guess_type(str(resolved))
+
+    if disposition == "inline":
+        return FileResponse(resolved, media_type=mime_type or "application/octet-stream")
 
     return FileResponse(
         resolved,
@@ -85,7 +103,7 @@ async def write_file(
             binary_data = base64.b64decode(request.content)
             file_path.write_bytes(binary_data)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid base64 data: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid base64 data: {e}") from e
     else:
         # Write as text (default behavior)
         file_path.write_text(request.content, encoding="utf-8")
@@ -110,8 +128,8 @@ async def list_files(path: str = Query(..., description="Absolute path to direct
 
     try:
         resolved = dir_path.resolve(strict=True)
-    except (FileNotFoundError, OSError):
-        raise HTTPException(status_code=404, detail=f"Directory not found: {path}")
+    except (FileNotFoundError, OSError) as err:
+        raise HTTPException(status_code=404, detail=f"Directory not found: {path}") from err
 
     if not resolved.is_dir():
         raise HTTPException(status_code=400, detail="Path is not a directory")
