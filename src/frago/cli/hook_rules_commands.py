@@ -281,10 +281,12 @@ def hook_rules_add(rule_json: str, source: str):
     if note:
         click.echo(f"Note: {note}")
 
+    # NEVER seed per-rule hit counters here. Accounting lives in the hits log
+    # (HITS_LOG_PATH) and is aggregated by `stats` / `prune`; a counter field on
+    # the rule itself has no writer, so it would sit at 0 forever and read as
+    # "this rule never fired" to anyone who inspects the file.
     new_rule.setdefault("source", source)
     new_rule.setdefault("created_at", _now_iso())
-    new_rule.setdefault("hit_count", 0)
-    new_rule.setdefault("last_hit_at", None)
     if new_rule["source"] == "agent" and "ttl_days" not in new_rule:
         new_rule["ttl_days"] = DEFAULT_AGENT_TTL_DAYS
 
