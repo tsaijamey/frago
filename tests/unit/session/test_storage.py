@@ -2,8 +2,7 @@
 
 Tests session data persistence: directory management, metadata, steps, summary.
 """
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -30,10 +29,18 @@ class TestGetSessionBaseDir:
     """Test get_session_base_dir() function."""
 
     def test_default_directory(self, monkeypatch):
-        """Without env var, should return ~/.frago/sessions."""
+        """Without env var, should fall back to the module's default constant.
+
+        比的是模块常量本身，NEVER 在测试里重新拼一遍 `Path.home() / ...` ——
+        真人数据防护（见 tests/conftest.py）会把这类常量改指到临时目录，
+        自己拼真实家目录等于断言「防护没生效」。
+        """
+        from frago.session import storage
+
         monkeypatch.delenv("FRAGO_SESSION_DIR", raising=False)
         result = get_session_base_dir()
-        assert result == Path.home() / ".frago" / "sessions"
+        assert result == storage.DEFAULT_SESSION_DIR
+        assert result.parts[-2:] == (".frago", "sessions")
 
     def test_custom_directory_from_env(self, monkeypatch):
         """With FRAGO_SESSION_DIR set, should return custom path."""
@@ -97,8 +104,8 @@ class TestWriteAndReadMetadata:
             status=SessionStatus.RUNNING,
             project_path="/home/test/project",
             source_file="/home/test/.claude/projects/-home-test-project/session.jsonl",
-            started_at=datetime.now(timezone.utc),
-            last_activity=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
+            last_activity=datetime.now(UTC),
         )
 
     def test_write_creates_file(self, mock_home, sample_session):
@@ -143,7 +150,7 @@ class TestAppendAndReadSteps:
             step_id=1,
             session_id="steps-test-session",
             type=StepType.USER_MESSAGE,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             content_summary="Test user message",
             raw_uuid="uuid-123-456",
         )
@@ -163,7 +170,7 @@ class TestAppendAndReadSteps:
             step_id=2,
             session_id=sample_step.session_id,
             type=StepType.ASSISTANT_MESSAGE,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             content_summary="Test assistant response",
             raw_uuid="uuid-789-abc",
         )
@@ -196,7 +203,7 @@ class TestAppendAndReadSteps:
                 step_id=i + 1,
                 session_id=session_id,
                 type=StepType.USER_MESSAGE,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 content_summary=f"Message {i + 1}",
                 raw_uuid=f"uuid-{i}",
             )
@@ -220,7 +227,7 @@ class TestGenerateSummaryDuration:
 
         from frago.session.storage import generate_summary
 
-        aware = datetime.now(timezone.utc)
+        aware = datetime.now(UTC)
         naive_later = aware.replace(tzinfo=None) + timedelta(seconds=5)
         session = MonitoredSession(
             session_id="tz-mix-session",

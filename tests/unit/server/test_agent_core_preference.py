@@ -193,9 +193,13 @@ class TestStartEndpointsPassCore:
         assert seen["agent_type"] == "opencode"
 
     def test_detached_without_core_uses_preference(
-        self, agent_client: TestClient, monkeypatch: pytest.MonkeyPatch
+        self, agent_client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ):
         from frago.server.services import agent_service
+
+        # 这条路会把 prompt 落盘到 `Path.home()/.frago/logs`（运行期现算的路径，
+        # 不是模块常量），不打桩就写进真人的 logs 目录。
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         config_manager.save_config(Config(agent_core="opencode"))
         seen = {}

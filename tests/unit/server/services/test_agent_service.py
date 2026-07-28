@@ -23,8 +23,13 @@ class TestAgentServiceStartTask:
         assert result["status"] == "error"
         assert "empty" in result["error"].lower()
 
-    def test_returns_error_when_frago_not_found(self):
+    def test_returns_error_when_frago_not_found(self, tmp_path, monkeypatch):
         """Should return error when frago command not in PATH."""
+        # start_task 会把 prompt 落盘到 `Path.home()/.frago/logs`（运行期现算，
+        # 不是模块常量），不打桩就写进真人的 logs 目录 —— 同文件
+        # test_starts_task_successfully 早已这么打桩，这里补齐。
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
         with (
             patch("shutil.which", return_value=None),
             patch(
