@@ -81,6 +81,10 @@
   brief: "解释问题用业务语言：环节→坏在哪个点→具体表现→影响分层→为何没发现→修了什么；禁止拿函数名/变量名/行号当解释"
 
 # 偏好类 — 有更好的方式
+- name: better-recipe-gate
+  category: better
+  brief: "写临时脚本前先过判断闸：五问决定这段劳动要不要固化成 recipe；重复的东西分四条出路（hook/def/recipe/book）"
+
 - name: better-structured-data
   category: better
   brief: "结构化数据用 {{frago_launcher}} def 注册域、`<domain>` 存取，比手写 JSON 更规范"
