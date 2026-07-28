@@ -76,6 +76,10 @@
   category: must
   brief: "prompt 形态判定协议：命令/真提问/反问/宣泄四形态各自义务、判不清按真提问、改状态动作须指向当轮明示指令"
 
+- name: must-explain-in-business-language
+  category: must
+  brief: "解释问题用业务语言：环节→坏在哪个点→具体表现→影响分层→为何没发现→修了什么；禁止拿函数名/变量名/行号当解释"
+
 # 偏好类 — 有更好的方式
 - name: better-structured-data
   category: better
