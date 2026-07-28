@@ -33,6 +33,7 @@ from .commands import (
 from .commands import (
     status,
 )
+from .context_commands import context_command
 from .daemon_commands import daemon_group
 from .def_commands import def_group
 from .extension_commands import extension_group
@@ -55,7 +56,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "todo", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -64,6 +65,12 @@ COMMAND_GROUPS = OrderedDict([
 
 # Command groups to expand subcommands
 EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "session"]
+
+# Silent aliases: accepted on the command line, absent from --help. The session
+# group reads naturally in the plural ("search my sessions"), and an agent that
+# guesses `frago sessions search` should land on the command rather than on an
+# error page.
+COMMAND_ALIASES = {"sessions": "session"}
 
 # Chrome subcommand groups
 CHROME_SUBGROUPS = OrderedDict([
@@ -102,6 +109,13 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
         cmd = super().get_command(ctx, cmd_name)
         if cmd is not None:
             return cmd
+        # Resolve aliases silently. They deliberately stay out of list_commands:
+        # an alias that shows up in --help reads as a second, different command.
+        alias = COMMAND_ALIASES.get(cmd_name)
+        if alias:
+            aliased = super().get_command(ctx, alias)
+            if aliased is not None:
+                return aliased
         # Check if it's a registered domain
         try:
             from frago.def_.registry import load_registry
@@ -379,6 +393,9 @@ cli.add_command(agent_status)
 
 # Session management command group
 cli.add_command(session_group)
+
+# Context command - resolve a keyword into a stored context (data:<keyword>)
+cli.add_command(context_command)
 
 # View command - universal content viewer
 cli.add_command(view)

@@ -135,6 +135,176 @@ def _get_status_display(status: SessionStatus) -> str:
     return status_map.get(status, status.value)
 
 
+@session_group.command("search", cls=AgentFriendlyCommand)
+@click.argument("query")
+@click.option(
+    "--terms", "-t",
+    default=None,
+    help="Comma-separated literal terms; skips model-driven keyword expansion",
+)
+@click.option(
+    "--no-expand",
+    is_flag=True,
+    help="Skip the model entirely and tokenize the query literally (fast, dumber)",
+)
+@click.option("--days", "-d", type=int, default=None, help="Only search the last N days")
+@click.option("--top", "-n", type=int, default=10, help="Max sessions to report")
+@click.option("--model", default=None, help="Model for the keyword-expansion turn")
+@click.option(
+    "--agent-type",
+    default=None,
+    help="cli-agent to run the expansion turn on (claude / opencode / codex)",
+)
+@click.option(
+    "--expand-timeout",
+    type=int,
+    default=None,
+    help="Seconds allowed for the keyword-expansion turn (default 180)",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
+def search_cmd(
+    query: str,
+    terms: str | None,
+    no_expand: bool,
+    days: int | None,
+    top: int,
+    model: str | None,
+    agent_type: str | None,
+    expand_timeout: int | None,
+    json_output: bool,
+):
+    """Search raw session transcripts by meaning, across claude AND opencode.
+
+    A model first expands your sentence into literal search terms (synonyms,
+    Chinese/English variants, likely command names and error strings), then
+    ripgrep sweeps ``~/.claude/projects/**/*.jsonl`` and a read-only SQL pass
+    sweeps the opencode session database. Sessions rank by how many DISTINCT
+    terms they matched, then by hit density, then by recency.
+
+    \b
+    If the expansion turn fails or times out, the query is tokenized literally
+    and the search still runs — the fallback is reported in the output.
+
+    \b
+    Examples:
+      frago session search "上次把浏览器扩展桥接调通那回"
+      frago session search "flaky test in the recipe runner" --days 30
+      frago session search "opencode sqlite" --no-expand --top 5
+      frago session search "hook rules" --terms "hook-rules,builtin-rules.json"
+      frago session search "chrome anti-bot" --json
+    """
+    from frago.session.search import EXPAND_TIMEOUT_S, search_sessions
+
+    explicit = [t.strip() for t in terms.split(",") if t.strip()] if terms else None
+
+    if not json_output and explicit is None and not no_expand:
+        click.echo("正在让模型把这句话摊成关键词（可用 --no-expand 跳过）…", err=True)
+
+    result = search_sessions(
+        query,
+        terms=explicit,
+        expand=not no_expand,
+        days=days,
+        top=top,
+        agent_type=agent_type,
+        model=model,
+        expand_timeout_s=float(expand_timeout or EXPAND_TIMEOUT_S),
+    )
+
+    if json_output:
+        click.echo(json.dumps(_search_as_dict(result), ensure_ascii=False, indent=2))
+        return
+
+    click.echo(_render_search(result))
+    if not result.hits:
+        sys.exit(1)
+
+
+_SOURCE_LABEL = {"agent": "模型扩展", "explicit": "调用方指定", "literal": "原句切词"}
+
+
+def _search_as_dict(result) -> dict:
+    return {
+        "query": result.query,
+        "terms": result.plan.terms,
+        "terms_source": result.plan.source,
+        "terms_note": result.plan.note,
+        "scanned_claude_files": result.scanned_claude_files,
+        "opencode_available": result.opencode_available,
+        "duration_ms": result.duration_ms,
+        "warnings": result.warnings,
+        "hits": [
+            {
+                "source": h.source,
+                "session_id": h.session_id,
+                "title": h.title,
+                "cwd": h.cwd,
+                "last_activity": datetime.fromtimestamp(h.last_activity).isoformat()
+                if h.last_activity
+                else None,
+                "matched_terms": h.matched_terms,
+                "hit_records": h.hit_lines,
+                "capped": h.capped,
+                "location": h.location,
+                "resume_command": h.resume_command,
+                "snippets": [{"term": s.term, "text": s.text} for s in h.snippets],
+            }
+            for h in result.hits
+        ],
+    }
+
+
+def _render_search(result) -> str:
+    plan = result.plan
+    lines = [
+        f"检索：{result.query}",
+        f"关键词（{_SOURCE_LABEL.get(plan.source, plan.source)}，{len(plan.terms)} 个）："
+        + "、".join(plan.terms),
+    ]
+    if plan.note:
+        lines.append(f"扩展思路：{plan.note}")
+    lines.append(
+        f"扫过 claude 会话文件 {result.scanned_claude_files} 个；"
+        f"opencode 会话库{'已搜' if result.opencode_available else '未搜'}；"
+        f"耗时 {result.duration_ms / 1000:.1f}s"
+    )
+    for warning in result.warnings:
+        lines.append(f"[!] {warning}")
+
+    lines.append("")
+    if not result.hits:
+        lines.append("没有命中。换更具体的说法，或用 --terms 直接给字面量再试一次。")
+        return "\n".join(lines)
+
+    lines.append(f"{'#':<3} {'来源':<9} {'会话':<38} {'命中词':<8} {'记录':<6} {'最后活动':<12} 标题")
+    lines.append("-" * 108)
+    for i, hit in enumerate(result.hits, start=1):
+        stamp = (
+            datetime.fromtimestamp(hit.last_activity).strftime("%m-%d %H:%M")
+            if hit.last_activity
+            else "-"
+        )
+        records = f"{hit.hit_lines}+" if hit.capped else str(hit.hit_lines)
+        coverage = f"{len(hit.matched_terms)}/{len(plan.terms)}"
+        title = (hit.title or "-")[:36]
+        lines.append(
+            f"{i:<3} {hit.source:<9} {hit.session_id:<38} "
+            f"{coverage:<8} {records:<6} {stamp:<12} {title}"
+        )
+
+    for i, hit in enumerate(result.hits, start=1):
+        lines.append("")
+        lines.append(f"[{i}] {hit.resume_command}")
+        lines.append(f"    命中词：{'、'.join(hit.matched_terms)}")
+        if hit.cwd:
+            lines.append(f"    工作目录：{hit.cwd}")
+        lines.append(f"    原始记录：{hit.location}")
+        for snippet in hit.snippets:
+            lines.append(f"    · ({snippet.term}) {snippet.text}")
+
+    return "\n".join(lines)
+
+
 @session_group.command("show", cls=AgentFriendlyCommand)
 @click.argument("session_id")
 @click.option(
