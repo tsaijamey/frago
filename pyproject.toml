@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "1.2.33"
+version = "1.2.34"
 description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -150,6 +150,12 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["frago"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest 用函数参数声明 fixture 依赖，不少 fixture 只要副作用（如 mock_home
+# 打桩家目录、isolated_config 改配置路径），用例体里并不引用它。那是依赖声明，
+# 不是「忘了用的参数」，ARG002 在测试目录里只会制造噪音。
+"tests/**/*.py" = ["ARG002"]
 
 [tool.mypy]
 python_version = "3.13"
