@@ -102,6 +102,14 @@
   brief: "观察到重复路由模式时用 {{frago_launcher}} hook-rules add 沉淀为数据化规则，不改 Rust"
 
 # 效率类 — 你可能不知道有这个
+- name: context-recall
+  category: available
+  brief: "关键词召回落盘上下文：{{frago_launcher}} context data:<关键词>，模糊匹配 ~/.frago/data 目录并吐出索引型小文件全文"
+
+- name: session-search
+  category: available
+  brief: "跨 claude/opencode 原始会话检索：{{frago_launcher}} session search \"<一句话>\"，模型扩关键词 + 双库全扫，答不上「上次怎么定的」时用它"
+
 - name: recipe-execution
   category: available
   brief: "{{frago_launcher}} recipe list/run 查询和执行已有 recipe"
