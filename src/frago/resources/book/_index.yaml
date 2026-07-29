@@ -40,9 +40,9 @@
   category: must
   brief: "不假设意图、不停在计划、工具驱动、结果优先、建议而非擅自决定"
 
-- name: must-projects-dir
+- name: must-data-dir
   category: must
-  brief: "产出物放 ~/.frago/projects/<id>/、单 Run 排他、禁止 cd、路径用绝对路径"
+  brief: "产出一律落 ~/.frago/data/<YYYYMMDD>-<slug>/、projects 是 run 系统账本 agent 不写、禁止 cd、路径用绝对路径"
 
 - name: chrome-usage
   category: must
@@ -104,7 +104,7 @@
 # 效率类 — 你可能不知道有这个
 - name: context-recall
   category: available
-  brief: "关键词召回落盘上下文：{{frago_launcher}} context data:<关键词>，模糊匹配 ~/.frago/data 目录并吐出索引型小文件全文"
+  brief: "关键词召回落盘上下文：{{frago_launcher}} context data:<关键词>，模糊匹配 ~/.frago/data 只报命中落在哪儿，读哪个由你定"
 
 - name: session-search
   category: available

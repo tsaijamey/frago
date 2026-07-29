@@ -11,9 +11,8 @@
   topics:
     - must-browser-search
     - must-browser-fetch
-    - must-content-extraction
-    - must-navigation
-    - must-projects-dir
+    - chrome-usage
+    - must-data-dir
     - run-logging
 
 - name: form-automation
@@ -25,10 +24,8 @@
     - "注册"
     - "登录"
   topics:
-    - must-navigation
-    - must-tab-creation
-    - chrome-click
-    - selector-priority
+    - chrome-usage
+    - chrome-anti-bot
     - recipe-execution
 
 - name: data-extraction
@@ -40,10 +37,9 @@
     - "导出数据"
     - "批量获取"
   topics:
-    - must-content-extraction
+    - chrome-usage
     - must-browser-fetch
-    - selector-priority
-    - chrome-scroll
+    - must-data-dir
     - recipe-execution
     - better-structured-data
 
@@ -55,7 +51,7 @@
     - "生成视频"
     - "制作内容"
   topics:
-    - must-projects-dir
+    - must-data-dir
     - must-execution-principles
     - run-logging
 
@@ -72,7 +68,7 @@
     - recipe-fields
     - recipe-authoring
     - recipe-execution
-    - selector-priority
+    - chrome-usage
     - interactive-recipe
     - run-logging
     - must-tool-priority
@@ -85,9 +81,6 @@
     - "跨页面"
     - "流程操作"
   topics:
-    - must-tab-creation
-    - must-navigation
-    - chrome-click
-    - chrome-scroll
-    - visual-effects
+    - chrome-usage
+    - chrome-startup
     - recipe-execution

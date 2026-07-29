@@ -22,10 +22,8 @@
   6. 每次切换后 get-content 确认页面状态
 
 ## 关键约束
-- must-tab-creation — 打开新 URL 用 {{frago_launcher}} chrome navigate
-- must-navigation — 不猜测页面间的跳转 URL
-- chrome-click — 点击可能触发新标签页打开
-- visual-effects — 在复杂页面中高亮定位目标元素
+- chrome-usage — 打开新 URL 一律走 chrome navigate；不猜页面间跳转 URL；点击可能开新标签；复杂页面用 highlight 定位
+- chrome-startup — 跨页面流程依赖同一个浏览器实例，别中途换后端
 
 ## 常见陷阱
 - 不查 list-tabs → 不知道当前有哪些标签页

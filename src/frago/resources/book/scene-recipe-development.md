@@ -25,7 +25,7 @@
 
 ## 关键约束
 - recipe-fields — 必填字段、schema 规范
-- selector-priority — JS recipe 中的选择器稳定性
+- chrome-usage — JS recipe 中的选择器稳定性与交互规范
 - must-tool-priority — Recipe 在工具优先级最高层
 - interactive-recipe — 需要人机协作时的架构模式
 

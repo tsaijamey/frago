@@ -30,7 +30,7 @@ agent 执行任务时常犯：假设用户意图、提供交互菜单（auto-app
 | 交互 | click, hover, scroll, navigate |
 
 ### 4. 过程存储
-所有生成的文件/记录必须放在 workspace（~/.frago/projects/<id>/）。
+所有生成的文件/记录必须放在 `~/.frago/data/<YYYYMMDD>-<slug>/` 内。NEVER 写 `~/.frago/projects/`，那是 run 系统的内部账本。详见 must-data-dir。
 
 ### 5. 试错记录
 尝试 → 记录成功/失败 → 反复失败时换方法。

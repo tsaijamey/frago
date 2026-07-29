@@ -58,7 +58,7 @@ CDP 自动：navigation, extraction, interaction, screenshot
 ## 脚本文件处理
 
 - 简单命令：直接用 {{frago_launcher}} <command>，记为 execution_method: command
-- 复杂脚本（>30 行）：保存为 scripts/<name>.{py,js,sh}，记为 execution_method: file
+- 复杂脚本（>30 行）：保存为 ~/.frago/data/<YYYYMMDD>-<slug>/scripts/<name>.{py,js,sh}（绝对路径，见 must-data-dir），记为 execution_method: file
 
 file 类型的 data 必须包含 file 字段，代码不要内联到日志。
 

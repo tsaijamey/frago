@@ -494,13 +494,15 @@ USER_PA_ONLINE_RESPAWN_TEMPLATE = "PA 已重新上线（subprocess 异常后自�
 # - NEVER 暴露消息渠道信息（channel、chat_id、message_id）— agent 不直接回复用户
 # - NEVER 要求 agent 发送消息 — 所有用户回复由 PA 通过 action:reply 统一发送
 # - agent 的职责是产出结果，由 PA 读取结果后决定如何回复用户
-# - Run 实例目录由 frago-hook 通过 FRAGO_CURRENT_RUN 环境变量 + must-projects-dir 知识注入
+# - 产出落点（~/.frago/data/）由 frago-hook 通过 must-data-dir 知识注入；
+#   FRAGO_CURRENT_RUN 只决定日志归属，不决定文件写哪儿
 # --------------------------------------------------------------------------
 SUB_AGENT_PROMPT_TEMPLATE = """\
 {task_prompt}
 
-Run 实例: {run_id}
-你的工作目录是 ~/.frago/projects/{run_id}/，产出物放在 outputs/ 子目录下。
+Run 实例: {run_id}（决定日志归属，不决定文件写哪儿）
+产出一律落 ~/.frago/data/<YYYYMMDD>-<语义-slug>/，命名与内容组织见 frago book must-data-dir。
+NEVER 往 ~/.frago/projects/ 写产出——那是 run 系统的内部账本，由 frago 自己维护。
 所属 domain: {run_id}（同名）。
 产出中若出现跨 session 可复用的领域知识（已验证的事实、关键取舍、踩过的坑），
 完成后 MUST 沉淀到 def 知识域——这是唯一的沉淀形态:

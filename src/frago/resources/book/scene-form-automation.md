@@ -19,12 +19,11 @@
   3. {{frago_launcher}} chrome get-content                  # 了解页面结构
   4. {{frago_launcher}} chrome exec-js "提取表单字段" --return-value
   5. 逐字段填写，每步验证
-  6. {{frago_launcher}} chrome screenshot verify.png        # 提交前截图确认
+  6. {{frago_launcher}} chrome screenshot ~/.frago/data/<YYYYMMDD>-<slug>/verify.png   # 提交前截图确认
 
 ## 关键约束
-- selector-priority — 优先 aria-label/data-testid，避免脆弱 class
-- chrome-click — React 等框架需要 JS 赋值 + 触发 input 事件
-- must-navigation — 不要猜测表单提交后的跳转 URL
+- chrome-usage — 选择器优先 aria-label/data-testid 避免脆弱 class；React 等框架要 JS 赋值 + 触发 input 事件；不猜提交后的跳转 URL
+- chrome-anti-bot — 提交类页面容易撞验证码，先探针再决定怎么过
 
 ## 常见陷阱
 - 直接 setValue 不触发 React onChange → 表单验证失败
