@@ -184,3 +184,78 @@ class TestReinstallHandoff:
         )
         with pytest.raises(click.ClickException, match="uv build failed"):
             _reinstall_and_exec_if_source_checkout()
+
+
+class TestDropCheckoutVenvFromPath:
+    """The checkout's virtualenv must not follow the server into its lifetime.
+
+    ``uv run frago server start`` puts it first on PATH so the build step works.
+    Replacing the process keeps the environment, so without this cleanup the
+    server — and every recipe it spawns — resolves plain ``frago`` to the
+    checkout copy, which refuses to run anything but ``server``. The recipe then
+    fails with a message about source checkouts while the server looks healthy.
+    """
+
+    def test_checkout_venv_entry_is_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        venv_bin = tmp_path / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        monkeypatch.setenv(
+            "PATH", os.pathsep.join([str(venv_bin), "/usr/bin", "/bin"])
+        )
+        server_command._drop_checkout_venv_from_path(tmp_path)
+        assert str(venv_bin) not in os.environ["PATH"].split(os.pathsep)
+
+    def test_everything_else_survives_in_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        venv_bin = tmp_path / ".venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        monkeypatch.setenv(
+            "PATH",
+            os.pathsep.join([str(venv_bin), "/usr/local/bin", "/usr/bin", "/bin"]),
+        )
+        server_command._drop_checkout_venv_from_path(tmp_path)
+        assert os.environ["PATH"].split(os.pathsep) == [
+            "/usr/local/bin", "/usr/bin", "/bin",
+        ]
+
+    def test_other_virtualenvs_are_left_alone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only this checkout's venv goes. A user's own active venv is theirs."""
+        (tmp_path / ".venv" / "bin").mkdir(parents=True)
+        other = tmp_path / "other-project" / ".venv" / "bin"
+        other.mkdir(parents=True)
+        monkeypatch.setenv(
+            "PATH", os.pathsep.join([str(other), str(tmp_path / ".venv" / "bin")])
+        )
+        server_command._drop_checkout_venv_from_path(tmp_path)
+        assert os.environ["PATH"] == str(other)
+
+    def test_stale_virtual_env_pointer_is_cleared(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Leaving it set points readers at an environment no longer on PATH."""
+        (tmp_path / ".venv" / "bin").mkdir(parents=True)
+        monkeypatch.setenv("PATH", str(tmp_path / ".venv" / "bin"))
+        monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / ".venv"))
+        server_command._drop_checkout_venv_from_path(tmp_path)
+        assert "VIRTUAL_ENV" not in os.environ
+
+    def test_unrelated_virtual_env_pointer_is_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / ".venv" / "bin").mkdir(parents=True)
+        monkeypatch.setenv("PATH", str(tmp_path / ".venv" / "bin"))
+        monkeypatch.setenv("VIRTUAL_ENV", "/somewhere/else/.venv")
+        server_command._drop_checkout_venv_from_path(tmp_path)
+        assert os.environ["VIRTUAL_ENV"] == "/somewhere/else/.venv"
+
+    def test_no_checkout_venv_on_path_is_a_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PATH", os.pathsep.join(["/usr/bin", "/bin"]))
+        server_command._drop_checkout_venv_from_path(tmp_path)
+        assert os.environ["PATH"] == os.pathsep.join(["/usr/bin", "/bin"])

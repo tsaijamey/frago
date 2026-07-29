@@ -124,9 +124,41 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     args = [system_frago, *sys.argv[1:]]
     click.echo(f"[reinstall] handing over to system frago: {' '.join(args)}")
     os.environ[REINSTALL_SENTINEL_ENV] = "1"
+    _drop_checkout_venv_from_path(root)
     sys.stdout.flush()
     sys.stderr.flush()
     os.execv(system_frago, args)
+
+
+def _drop_checkout_venv_from_path(root: Path) -> None:
+    """Stop the checkout's virtualenv from following the server around.
+
+    ``uv run frago server start`` puts the checkout's ``.venv/bin`` first on
+    PATH — that is how uv runs a project command, and it is what makes the
+    build-and-install step above possible. Replacing the process does not reset
+    the environment, so without this the server keeps that entry, and so does
+    every recipe it spawns.
+
+    The consequence is not obvious from the symptom. A recipe that shells out to
+    plain ``frago`` resolves it to the checkout copy, which refuses to run
+    anything but ``server`` — so the recipe fails with "Refusing to run: this
+    frago comes from the source checkout" while everything about the server
+    itself looks fine. It cost the virtual desktop's supervisor a full cycle of
+    silent failures before the reason showed up in a log line.
+
+    Only the checkout's own venv is removed. ``VIRTUAL_ENV`` goes with it: a
+    stale pointer to an environment no longer on PATH misleads anything that
+    reads it to decide which interpreter to use.
+    """
+    venv_bin = str((root / ".venv" / "bin").resolve())
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    kept = [e for e in entries if e and Path(e).resolve(strict=False).as_posix()
+            != Path(venv_bin).as_posix()]
+    if len(kept) != len(entries):
+        os.environ["PATH"] = os.pathsep.join(kept)
+        click.echo("[reinstall] dropped checkout venv from PATH for the server")
+    if os.environ.get("VIRTUAL_ENV", "").startswith(str(root)):
+        os.environ.pop("VIRTUAL_ENV", None)
 
 
 def _guard_sub_agent(action: str) -> None:
