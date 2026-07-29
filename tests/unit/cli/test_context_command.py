@@ -98,8 +98,15 @@ class TestConsentGate:
         assert "app-state/kline-blind" in result.output
 
     def test_warning_states_the_cost_before_asking(self, runner, home, tty):
+        """慢和脏两笔账都要摆出来，否则这道确认就是走过场。
+
+        时间那一笔单独钉住：文案曾经写"实测数秒"，那是只扫名字那一版量的；
+        后来加了全文检索，行为变了却没回头重量，确认闸开始低估四倍。报少了
+        比不报还糟——调用方是按这个数字决定要不要走的。
+        """
         result = runner.invoke(context_command, ["kline-blind"], input="n\n")
-        # 慢和脏两笔账都要摆出来，否则这道确认就是走过场
+        assert "秒" in result.output, "必须给出时间代价"
+        assert "全文检索" in result.output, "必须说清楚慢在哪一步"
         assert "几十 GB" in result.output
         assert "浏览器 profile" in result.output
         assert "data:<关键词>" in result.output
