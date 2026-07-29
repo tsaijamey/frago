@@ -988,6 +988,47 @@ def cancel_execution(execution_id: str):
         sys.exit(1)
 
 
+@recipe_group.command(name='publish', cls=AgentFriendlyCommand)
+@click.argument('name')
+@click.option('--slot', default='default', show_default=True,
+              help='Which slot to publish to. Recipes that hold several projects '
+                   'or sessions open at once give each one its own slot.')
+@click.option('--state-file', type=click.Path(exists=True, dir_okay=False),
+              help='Read the state JSON from this file instead of stdin.')
+def publish_state(name: str, slot: str, state_file: str | None):
+    """Publish the state a recipe's page should show, then print the page URL.
+
+    An interactive recipe calls this at the end of a run instead of copying its
+    assets somewhere and writing a config.json next to them. The page lives at a
+    fixed address — /app/<name> — and this command decides what that address
+    serves. Running the recipe again republishes; the address never changes.
+
+    State arrives as JSON on stdin (or via --state-file, for recipes whose state
+    is too large to pipe comfortably). Recipes run under their own interpreter
+    and cannot import frago, so this command is how they reach the state layer.
+    """
+    from frago.recipes.app_state import InvalidSlotName, page_url, publish
+
+    raw = Path(state_file).read_text(encoding='utf-8') if state_file else sys.stdin.read()
+    try:
+        state = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as e:
+        click.echo(f"Error: state is not valid JSON: {e}", err=True)
+        sys.exit(1)
+
+    if not isinstance(state, dict):
+        click.echo("Error: state must be a JSON object", err=True)
+        sys.exit(1)
+
+    try:
+        publish(name, state, slot)
+    except InvalidSlotName as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(page_url(name, slot))
+
+
 @recipe_group.command(name='open', cls=AgentFriendlyCommand)
 @click.argument('url')
 def open_ui(url: str):

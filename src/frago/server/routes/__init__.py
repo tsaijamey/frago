@@ -12,10 +12,12 @@ This package contains FastAPI routers for different API domains:
 - github_star: Star/unstar the frago repository
 - init: Web-based initialization (dependency check, resource install)
 - viewer: Content preview file serving
+- app_pages: Recipe UIs at /app/<recipe-name>, served from the recipe's own assets/
 - guide: Tutorial and FAQ content
 """
 
 from frago.server.routes.agent import router as agent_router
+from frago.server.routes.app_pages import router as app_pages_router
 from frago.server.routes.chrome_dashboard import router as chrome_dashboard_router
 from frago.server.routes.claude_sessions import router as claude_sessions_router
 from frago.server.routes.config import router as config_router
@@ -41,6 +43,7 @@ __all__ = [
     "github_star_router",
     "init_router",
     "viewer_router",
+    "app_pages_router",
     "files_router",
     "workspace_router",
     "guide_router",

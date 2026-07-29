@@ -30,6 +30,11 @@ class RecipeMetadata:
     restart_policy: str = "on-failure"  # Default daemon restart policy (config.json daemons may override)
     warnings: list[dict[str, str]] = field(default_factory=list)  # Security warnings for UI display
     flow: list[dict[str, Any]] = field(default_factory=list)  # Workflow execution flow
+    # Name of another recipe whose assets/ holds this recipe's web page. Set it
+    # only when one front end genuinely serves several recipes — otherwise a
+    # recipe's page belongs in its own assets/, where it ships and versions
+    # together with the script that answers its requests.
+    ui_from: str | None = None
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
@@ -90,6 +95,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             restart_policy=data.get('restart_policy', 'on-failure'),
             warnings=data.get('warnings', []),
             flow=data.get('flow', []),
+            ui_from=data.get('ui_from'),
         )
     except KeyError as e:
         raise MetadataParseError(str(path), f"Missing required field: {e}") from e

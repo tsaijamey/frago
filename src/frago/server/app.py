@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from frago.server.routes import (
     agent_router,
+    app_pages_router,
     chrome_dashboard_router,
     config_router,
     files_router,
@@ -464,6 +465,7 @@ def create_app(
 
     # Viewer routes for content preview (not under /api)
     app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
+    app.include_router(app_pages_router, prefix="/app", tags=["app_pages"])
 
     # Chrome landing page dashboard (not under /api)
     app.include_router(chrome_dashboard_router, prefix="/chrome", tags=["chrome"])
@@ -558,8 +560,13 @@ def create_app(
         This enables client-side routing by serving index.html
         for any path that doesn't match an API route.
         """
-        # Don't serve SPA for API or viewer routes (they should 404 naturally)
-        if full_path.startswith("api/") or full_path.startswith("viewer/"):
+        # Don't serve SPA for API, viewer or recipe-app routes (they should 404 naturally)
+        if (
+            full_path.startswith("api/")
+            or full_path.startswith("viewer/")
+            or full_path == "app"
+            or full_path.startswith("app/")
+        ):
             from fastapi import HTTPException
 
             raise HTTPException(status_code=404, detail="Endpoint not found")
