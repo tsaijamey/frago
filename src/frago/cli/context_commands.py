@@ -1,36 +1,103 @@
-"""``frago context`` —— 按关键词把一段落盘的上下文加载进当前会话。"""
+"""``frago context`` —— 按关键词找出上下文落在哪儿。
+
+这一层只做 click 的事：收参数、把无 scheme 的全盘搜索拦在确认闸后、挑输出格式。
+真正的检索与呈现规则在 :mod:`frago.context`，命令层不重复实现任何一条。
+"""
 
 from __future__ import annotations
 
 import json
+import sys
 
 import click
 
-from frago.context import ContextError, render, resolve_ref
+from frago.context import ContextError, render, resolve_ref, scheme_help, split_ref
 
 from .agent_friendly import AgentFriendlyCommand, BusinessError
 
+# 没给 scheme 前缀时摆在调用方面前的两笔账。量级写实测口径而不是"可能比较慢"，
+# 否则这道确认就成了走过场；真实规模因机器而异，所以说的是数量级不是定值。
+_WHOLE_HOME_WARNING = """\
+{ref!r} 没有 scheme 前缀。
 
-def _as_json(result) -> str:
+带前缀是精确查找，只翻一处：
+{schemes}
+
+不带前缀只能把整个 ~/.frago 翻一遍。那是上万个目录、几十 GB 的量级，其中绝大多数
+是机器用的——浏览器 profile、HTTP 缓存、recipe 的依赖树、日志轮转。所以这一趟既慢
+（实测数秒，冷缓存下更久），命中也脏（那些目录的名字照样会跟关键词撞上，但没一个
+是上下文）。\
+"""
+
+
+def _stdin_is_tty() -> bool:
+    """当前是否有真人坐在终端前。
+
+    单独成函数是因为它决定确认闸走哪一支，而 ``sys.stdin`` 在测试与各种宿主
+    环境下会被整个换掉——判定逻辑要有个稳定的名字才谈得上打桩和验证。
+    """
+    return sys.stdin.isatty()
+
+
+def _confirm_whole_home(ref: str, key: str) -> None:
+    """全盘搜索前的确认闸。不是交互终端就拒绝，NEVER 挂在那儿等一个不会来的回车。"""
+    click.echo(_WHOLE_HOME_WARNING.format(ref=ref, schemes=scheme_help()), err=True)
+    if not _stdin_is_tty():
+        raise BusinessError(
+            "全盘搜索需要确认，而当前不是交互终端。",
+            f"frago context data:{key}",
+            f"frago context {key} --yes",
+        )
+    if not click.confirm("要翻整个 ~/.frago 吗？", default=False, err=True):
+        raise BusinessError("已取消。", f"frago context data:{key}")
+
+
+def _as_json(report) -> str:
     return json.dumps(
         {
-            "ref": result.ref,
-            "path": str(result.path),
-            "matched_by": result.matched_by,
-            "total_files": result.total_files,
-            "total_bytes": result.total_bytes,
-            "omitted_from_listing": result.omitted_from_listing,
-            "also_matched": [c.name for c in result.also_matched],
-            "files": [
-                {
-                    "rel": e.rel,
-                    "size": e.size,
-                    "mtime": e.mtime,
-                    "text": e.text,
-                    "skip_reason": e.skip_reason,
-                }
-                for e in result.entries
-            ],
+            "ref": report.ref,
+            "root": str(report.root),
+            "keyword": report.keyword,
+            "duration_ms": report.duration_ms,
+            "scanned_dirs": report.scanned_dirs,
+            "skipped_dirs": report.skipped_dirs,
+            "notes": report.notes,
+            "dir_hits": {
+                "total": report.dir_total,
+                "listed": [
+                    {
+                        "rel": h.rel,
+                        "path": str(h.path),
+                        "file_count": h.file_count,
+                        "total_bytes": h.total_bytes,
+                        "mtime": h.mtime,
+                        "reason": h.reason,
+                        "score": h.score,
+                    }
+                    for h in report.dir_hits
+                ],
+            },
+            "file_hits": {
+                "total": report.file_total,
+                "listed": [
+                    {
+                        "rel": h.rel,
+                        "size": h.size,
+                        "mtime": h.mtime,
+                        "reason": h.reason,
+                        "score": h.score,
+                    }
+                    for h in report.file_hits
+                ],
+            },
+            "content_hits": {
+                "total": report.content_total,
+                "machine_format_files": report.machine_total,
+                "listed": [
+                    {"rel": h.rel, "count": h.count, "snippet": h.snippet}
+                    for h in report.content_hits
+                ],
+            },
         },
         ensure_ascii=False,
         indent=2,
@@ -41,43 +108,52 @@ def _as_json(result) -> str:
 @click.argument("ref")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 @click.option(
-    "--paths-only",
+    "--yes",
+    "-y",
+    "assume_yes",
     is_flag=True,
-    help="Only the path + file listing, skip inlining any file contents",
+    help="Skip the confirmation prompt for a scheme-less (whole ~/.frago) search",
 )
-def context_command(ref: str, json_output: bool, paths_only: bool) -> None:
-    """Load a stored context by keyword: ``frago context data:<keyword>``.
+def context_command(ref: str, json_output: bool, assume_yes: bool) -> None:
+    """Find where a keyword lives: ``frago context data:<keyword>``.
 
-    Fuzzy-matches ``<keyword>`` against directory names under ``~/.frago/data``,
-    then prints the directory listing plus the full text of small index-type
-    files (notebook.md / README.md / spec.md / …). Large files are listed by
-    path only — read them on demand.
+    Reports hits in three tiers and prints NO file contents — you decide what
+    is worth reading, because you are the one paying for the context.
 
     \b
-    Matching is layered, most certain first:
+      directory hits   directory names matching the keyword
+      filename hits    file names matching the keyword
+      content hits     readable documents containing it, ranked by hit count
+
+    \b
+    Name matching is layered, most certain first:
       exact name > name prefix > substring > all keyword words present >
       character subsequence (abbreviation) > difflib similarity (typos)
 
     \b
-    When several directories match and none is an exact name, the command
-    refuses to guess: it lists the candidates and exits 1, so you can come
-    back with a sharper keyword.
+    Content search covers human-authored formats only (md / txt / yaml / csv
+    / …). Machine formats (json / jsonl / html) are counted but not listed —
+    their hits land on paths and identifiers, not on prose.
+
+    \b
+    A bare keyword (no ``<scheme>:`` prefix) is NOT shorthand for ``data:``.
+    It means "search the whole ~/.frago" — tens of thousands of directories,
+    most of them machinery. That is slow and noisy, so it asks first. Pass
+    ``--yes`` to skip the prompt; non-interactive callers must pass it.
 
     \b
     Examples:
       frago context data:cxmt-ipo
-      frago context data:session-workbench
-      frago context data:etf --paths-only
+      frago context data:lenovo
       frago context data:etf --json
+      frago context kline-blind --yes        # whole ~/.frago, no prompt
     """
     try:
-        result = resolve_ref(ref)
+        scheme, key = split_ref(ref)
+        if scheme is None and not assume_yes:
+            _confirm_whole_home(ref, key)
+        report = resolve_ref(ref, allow_whole_home=True)
     except ContextError as exc:
         raise BusinessError(exc.message, *exc.fixes) from exc
 
-    if paths_only:
-        for entry in result.entries:
-            entry.text = None
-            entry.skip_reason = entry.skip_reason or "--paths-only"
-
-    click.echo(_as_json(result) if json_output else render(result))
+    click.echo(_as_json(report) if json_output else render(report))
