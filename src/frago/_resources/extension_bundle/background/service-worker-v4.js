@@ -154,6 +154,51 @@ chrome.debugger.onDetach.addListener((source) => {
     }
 });
 
+// ════════════ tab lifecycle: report, don't wait to be asked ════════════
+//
+// A closed tab and a detached debugger look identical downstream: frames
+// simply stop arriving. Consumers that only see "no more frames" reopen the
+// stream, fail, and leave the last frame on screen forever — the picture is
+// frozen but nothing anywhere says so. Only the browser knows which of the two
+// happened, so the browser says it.
+//
+// Group bindings are cleaned up here too: a group pointing at a tab that no
+// longer exists hands out a dead tab id to the next caller.
+
+chrome.tabs.onRemoved.addListener((tabId, info) => {
+    const groups = [];
+    for (const [g, id] of groupToTab) {
+        if (id === tabId) groups.push(g);
+    }
+    for (const g of groups) groupToTab.delete(g);
+    if (groups.length) saveGroups();
+    screencasts.delete(tabId);
+    sendEvent("tab.removed", {
+        tab_id: tabId,
+        groups,
+        window_closing: !!(info && info.isWindowClosing),
+    });
+});
+
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+    sendEvent("tab.activated", { tab_id: tabId, window_id: windowId });
+});
+
+// A tab that navigates away is still alive, but whoever is mirroring its title
+// and address bar needs to know. onUpdated also fires for favicon and audio
+// changes, so only the fields that matter are forwarded.
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+    if (change.status === undefined && change.url === undefined
+        && change.title === undefined) return;
+    sendEvent("tab.updated", {
+        tab_id: tabId,
+        url: change.url !== undefined ? change.url : tab.url,
+        title: change.title !== undefined ? change.title : tab.title,
+        loading: change.status === "loading",
+        active: !!tab.active,
+    });
+});
+
 async function ensureAttached(tabId) {
     const targets = await chrome.debugger.getTargets();
     const t = targets.find((x) => x.tabId === tabId);
