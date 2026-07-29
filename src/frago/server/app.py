@@ -213,6 +213,14 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     ui_session_lifecycle = UiSessionLifecycleService.get_instance()
     await ui_session_lifecycle.start()
 
+    # Keep the virtual desktop up whenever a person wants it there. Deliberately
+    # not a DaemonService entry: that one restarts on any non-zero exit, which
+    # would resurrect a desktop the operator just shut down.
+    from frago.server.services.virtual_os_lifecycle import VirtualOsLifecycleService
+
+    virtual_os = VirtualOsLifecycleService.get_instance()
+    await virtual_os.start()
+
     # Start hourly orphan recipe reaper (kills recipe daemon leftovers that no
     # supervisor owns any more — e.g. a HUD surviving a SIGKILLed server).
     from frago.server.services.orphan_recipe_cleanup_service import (
@@ -290,6 +298,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         await ingestion_scheduler.stop()
     await tab_cleanup.stop()
     await ui_session_lifecycle.stop()
+    await virtual_os.stop()
     await orphan_cleanup.stop()
     await primary_agent.stop()
     await scheduler.stop()
