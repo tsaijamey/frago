@@ -2,6 +2,8 @@
 
 frago chrome 操作完整指南。所有浏览器操作通过 frago chrome 命令执行，不直接调用 CDP 或浏览器 API。
 
+唯一例外是把配方页面交给人看：那种页面用 `{{frago_launcher}} recipe open <url>` 开在用户的系统默认浏览器里，与本文讲的受控浏览器无关，agent 也控制不了它（见 `{{frago_launcher}} book interactive-recipe`）。除此之外，凡是 agent 自己要读、要点、要抓的页面，都走下面的命令。
+
 ## Group（前提）
 
 每条 tab 操作命令 MUST 带 `--group` 参数指定 group 上下文，否则报错 `NO_GROUP`。

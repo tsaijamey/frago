@@ -133,6 +133,14 @@ import subprocess
 subprocess.run(["frago", "chrome", "navigate", url, "--no-border"], ...)
 ```
 
+配方要把自己的页面交给人看时，这里换成 `frago recipe open`——它开在用户的系统默认浏览器里，跟 `frago chrome` 驱动的那个受控浏览器是两回事，NEVER 用 `chrome navigate` 代替：
+
+```python
+subprocess.run(["frago", "recipe", "open", url], ...)
+```
+
+带界面的配方完整写法见 `{{frago_launcher}} book interactive-recipe`。
+
 **禁止写 `["uv", "run", "frago", ...]`**——它假设 uv 在 PATH 且 cwd 是 frago 项目，还会把调用引回仓库虚拟环境里那份可能过时的代码。
 
 frago 只有一份，装在 uv tool 里、从 PATH 解析。仓库源码树永远不会用自己的 venv 跑 frago（见 `frago.server.launch_guard`），所以不需要探测、不需要 env 变量传递 argv、也不需要兜底链。
