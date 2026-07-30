@@ -3,50 +3,46 @@
 分类: 替代（MUST）
 
 ## 解决什么问题
-agent 把产出文件散落在 /tmp、Desktop 等随机位置；或者写进 `~/.frago/projects/`——那里是 run 系统自己的记账区，不是事务数据该去的地方；以及用 cd 切目录导致 frago 命令失败。
+agent 把产出文件散落在 /tmp、Desktop 等随机位置；目录起名各凭想象，下次谁也找不回来；或者写进 `~/.frago/projects/`——那是 frago 自动维护的会话账本，不是事务数据该去的地方。
 
 ## 唯一落点：~/.frago/data/
 
 一切事务产出、过程文件、笔记、交付物都走 `~/.frago/data/`。
 
-`~/.frago/projects/` 是 run 系统的内部账本——run 实例元数据、`logs/execution.jsonl`、域级 `insight.jsonl` 都由 frago 自己写入维护。**agent NEVER 直接往 projects 里创建或修改文件**，无论有没有 `FRAGO_CURRENT_RUN` 环境变量，无论主题是否命中已注册 domain。看到自己正要写 `~/.frago/projects/<任何路径>`，停下改道 data。
-
-注: `~/.frago/data/` 是 agent 工作产出的工作区（2026-05-24 起纳入同步）。
-    旧定位"recipe 缓存数据用"已作废，别混。
+`~/.frago/projects/` 是 frago 自己的会话账本：一个知识域一个目录，域下按会话 id 存放同步下来的会话记录（`metadata.json`、`steps.jsonl`、`summary.json`、`summary.md`），连域目录带 `_domain.json` 一起都由 frago 在同步时写入。**agent NEVER 直接往 projects 里创建或修改文件**，无论有没有 `FRAGO_CURRENT_RUN` 环境变量，无论主题是否命中已注册域。看到自己正要写 `~/.frago/projects/<任何路径>`，停下改道 data。读它不受限。
 
 ## 目录怎么起名
 
-**动手前先看有没有现成的地方收**。同一件事的续做、或者归属于某个已有主体的新任务，落进已有目录，别另起一个：
-
-  {{frago_launcher}} context data:<关键词>      # 一步拿到落在哪儿，别 ls 目录挨个猜
-
-命中已有事务目录就在里面继续（session-id.yaml 追加自己的 id）；命中某个主体容器（如 `lenovo/`）就在它下面新建事务目录。查不到才走下面的新建流程。
-
-一次性事务直接落一层：
-
-  ~/.frago/data/<YYYYMMDD>-<语义-slug>/
-
-  → slug 用 kebab-case，日期前缀必带且必须是完整 8 位日期（如 20260529-power-seller-reg-audit）
-  → 日期在最前面当排序键，目录列表天然按时间排列；NEVER 把日期放末尾
-  → NEVER 用月份（202605）或自创其他日期粒度；日期取任务开始当天
-
-长期主体（客户、公司、跨月的长跑项目）才配一层容器目录：
+唯一合法形态，两层，缺一不可：
 
   ~/.frago/data/<主体>/<YYYYMMDD>-<语义-slug>/
 
-  → 主体名用不带日期的 kebab-case 短词（lenovo、nanxin），它是稳定的归属而不是一件事
-  → 容器层只允许一层，NEVER 再往下嵌第二层主体
-  → 同一主体下每件事仍是完整的 <YYYYMMDD>-<slug>，命名规则与上面一致
-  → 已经存在的容器优先用，别在顶层另起一个同主体的目录
-  → 没有现成容器又拿不准算不算长期主体，就别新建容器，直接落顶层——事后并入容器比拆散容易
+  → 第一层是主体：这件事归属于谁、归属于哪个长期对象。不带日期的 kebab 短词（lenovo、nanxin）
+  → 第二层是事务：完整 8 位日期前缀 + kebab-case 语义 slug（20260716-apexp-progress-board）
+  → 日期在最前面当排序键；NEVER 放末尾，NEVER 用月份（202605）或自创粒度；取任务开始当天
+  → 主体容器只允许一层，NEVER 再往下嵌第二层主体
+  → 事务目录 NEVER 直接建在 data 根下。`~/.frago/data/20260729-xxx/` 是非法的，无论这件事看起来多一次性
+  → 主体容器下 NEVER 直接放文件，它只装事务目录
 
-顶层目录名带不带 8 位日期前缀，就是事务目录与主体容器的分界。存量里有一批更早的目录两样都不占（`articles`、`agent_os` 这类没有日期前缀但直接装文件的），它们是历史遗留，当反例不当先例；不必顺手改名，各自的事做完就不再增长。
+**动手前先查现成落点**，别自己拍脑袋造主体：
+
+  frago context data:<关键词>      # 一步拿到落在哪儿，别 ls 目录挨个猜
+
+命中已有事务目录就在里面继续（session-id.yaml 追加自己的 id）；命中某个主体容器就在它下面新建事务目录。两样都没命中，才需要新建主体容器——取这件事归属的那个稳定对象（客户、公司、产品、长期项目、生活领域），拿不准就问用户，NEVER 用一件事的名字当主体名。
+
+日期是分层的标记：第一层是主体，永远不带日期；第二层是事务，永远带日期。
+
+  ✅ ~/.frago/data/lenovo/20260716-apexp-progress-board/
+  ❌ ~/.frago/data/20260716-apexp-progress-board/     # 事务落在主体那一层
+  ❌ ~/.frago/data/lenovo/apexp-progress-board/       # 事务那一层没有日期
+  ❌ ~/.frago/data/lenovo/apexp/20260716-board/       # 主体嵌了两层
+  ❌ ~/.frago/data/lenovo/report.md                   # 主体层直接放文件
 
 ## 内容怎么组织
 
 每个事务目录内部（样板见 `~/.frago/data/lenovo/20260716-apexp-progress-board/`）：
 
-  <YYYYMMDD>-<slug>/
+  <主体>/<YYYYMMDD>-<slug>/
   ├── session-id.yaml       # 必备。落第一个文件时就写，追加不覆盖
   ├── notebook.md           # 有可复用的方法或纪律时才写，名字固定
   ├── scripts/              # 这件事专用的脚本，跑完还要再跑的放这儿
@@ -66,16 +62,16 @@ session-id.yaml 格式：
 
 ## 产出物隔离
 
-  # ✅ 正确：产出在 data/<YYYYMMDD>-<slug>/ 内
-  {{frago_launcher}} recipe run video_produce_from_script \
-    --params '{"script_file": "~/.frago/data/20260729-demo-video/script.json", "output_dir": "~/.frago/data/20260729-demo-video/video"}'
+  # ✅ 正确：产出在 data/<主体>/<YYYYMMDD>-<slug>/ 内
+  frago recipe run video_produce_from_script \
+    --params '{"script_file": "~/.frago/data/lenovo/20260729-demo-video/script.json", "output_dir": "~/.frago/data/lenovo/20260729-demo-video/video"}'
 
   # ❌ 错误：使用外部目录
-  {{frago_launcher}} recipe run video_produce_from_script \
+  frago recipe run video_produce_from_script \
     --params '{"script_file": "~/Desktop/script.json"}'
 
 禁止把**产出**留在 Desktop、/tmp、Downloads 等外部位置——那些地方没有备份、不进同步、下次找不回来。
-Recipe 调用时必须显式指定 output_dir 到 `~/.frago/data/<目录>/` 内。
+Recipe 调用时必须显式指定 output_dir 到 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/` 内。
 
 不算产出、因而不受这条约束的东西：会话 scratchpad 里的中间文件与一次性脚本、按个人守则写给用户看的审计 jsonl。判据是这件事做完之后还需不需要它——需要就是产出，落 data。
 
@@ -83,25 +79,20 @@ Recipe 调用时必须显式指定 output_dir 到 `~/.frago/data/<目录>/` 内�
 
 Executor 启动 sub-agent 时通过环境变量 FRAGO_CURRENT_RUN 自动注入 run_id，它决定日志记到哪个 run 名下。NEVER 用它来决定文件写哪儿——文件永远在 data。
 
-NEVER 手动调用 {{frago_launcher}} run set-context 或 {{frago_launcher}} run release。
+NEVER 手动调用 frago run set-context 或 frago run release。
 这些命令仅供 CLI 手动调试使用，sub-agent 不需要也不应该调用。
 
-## 禁止使用 cd
+## 路径一律写绝对路径
 
-所有命令从项目根目录执行，用绝对路径访问文件。
+每次 Bash 调用结束后工作目录都会重置回项目根，cd 只在当次调用内有效，靠它建立的相对路径下一条命令就失效。
 
-  # ✅ 正确
-  uv run python ~/.frago/data/20260729-demo-video/scripts/filter_jobs.py
-  cat ~/.frago/data/20260729-demo-video/result.json
-
-  # ❌ 错误：cd 后 frago 命令会失败
-  cd ~/.frago/data/20260729-demo-video
-  {{frago_launcher}} run log ...                            # 会报错
+  frago recipe run job_filter \
+    --params '{"input": "~/.frago/data/lenovo/20260729-demo-video/jobs.json"}'
 
 ## 找回旧产出
 
 别列 `~/.frago/data` 目录挨个猜，用关键词直接定位：
 
-  {{frago_launcher}} context data:<关键词>
+  frago context data:<关键词>
 
 详见 context-recall。

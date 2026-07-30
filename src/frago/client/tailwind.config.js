@@ -33,11 +33,19 @@ export default {
         'text-link': 'var(--text-link)',
         'border-color': 'var(--border-color)',
         'border-primary': 'var(--border-primary)',
+        'border-accent': 'var(--border-accent)',
         'accent-primary': 'var(--accent-primary)',
+        // The two brand-green washes already defined per theme in globals.css.
+        // Exposed as tokens because Tailwind's `/opacity` modifier cannot dilute
+        // a hex-valued CSS variable — without these, brand tints would have to
+        // be hardcoded hexes, which breaks the light theme.
+        'accent-primary-10': 'var(--accent-primary-10)',
+        'accent-primary-20': 'var(--accent-primary-20)',
         'accent-secondary': 'var(--accent-secondary)',
         'accent-success': 'var(--accent-success)',
         'accent-warning': 'var(--accent-warning)',
         'accent-error': 'var(--accent-error)',
+        'accent-info': 'var(--accent-info)',
       },
       backgroundImage: {
         'gradient-title': 'linear-gradient(180deg, #FFFFFF 0%, #ADADAD 100%)',

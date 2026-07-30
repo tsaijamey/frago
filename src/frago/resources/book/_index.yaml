@@ -42,7 +42,7 @@
 
 - name: must-data-dir
   category: must
-  brief: "产出一律落 ~/.frago/data/<YYYYMMDD>-<slug>/、projects 是 run 系统账本 agent 不写、禁止 cd、路径用绝对路径"
+  brief: "产出一律落 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/，两层缺一不可，事务 NEVER 直接建在 data 根下；建目录前先 frago context data:<关键词> 查现成落点；projects 是 frago 的会话账本 agent 不写；路径一律绝对路径"
 
 - name: chrome-usage
   category: must

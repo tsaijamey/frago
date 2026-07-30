@@ -9,7 +9,7 @@ Provides WebSocket broadcast capability for:
 import asyncio
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from fastapi import WebSocket
 
@@ -18,7 +18,7 @@ class ConnectionManager:
     """Manages WebSocket connections and message broadcasting."""
 
     def __init__(self):
-        self.active_connections: Set[WebSocket] = set()
+        self.active_connections: set[WebSocket] = set()
         self._lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket) -> None:
@@ -40,7 +40,7 @@ class ConnectionManager:
         async with self._lock:
             self.active_connections.discard(websocket)
 
-    async def broadcast(self, message: Dict[str, Any]) -> None:
+    async def broadcast(self, message: dict[str, Any]) -> None:
         """Send a message to all connected clients.
 
         Args:
@@ -50,7 +50,7 @@ class ConnectionManager:
             return
 
         message_json = json.dumps(message, default=str)
-        dead_connections: List[WebSocket] = []
+        dead_connections: list[WebSocket] = []
 
         async with self._lock:
             for connection in self.active_connections:
@@ -64,7 +64,7 @@ class ConnectionManager:
             await self.disconnect(conn)
 
     async def send_personal(
-        self, websocket: WebSocket, message: Dict[str, Any]
+        self, websocket: WebSocket, message: dict[str, Any]
     ) -> None:
         """Send a message to a specific client.
 
@@ -107,6 +107,10 @@ class MessageType:
     SESSION_CREATED = "session_created"
     SESSION_UPDATED = "session_updated"
 
+    # Workbench session streaming (replaces 5s record polling)
+    SESSION_RECORDS_APPEND = "session_records_append"
+    SESSION_TURN_DONE = "session_turn_done"
+
     # Recipe events
     RECIPE_STARTED = "recipe_started"
     RECIPE_COMPLETED = "recipe_completed"
@@ -147,9 +151,9 @@ class MessageType:
 
 def create_message(
     msg_type: str,
-    data: Optional[Dict[str, Any]] = None,
-    task_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    data: dict[str, Any] | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
     """Create a WebSocket message.
 
     Args:
@@ -177,7 +181,7 @@ def create_message(
 async def broadcast_task_update(
     task_id: str,
     status: str,
-    data: Optional[Dict[str, Any]] = None,
+    data: dict[str, Any] | None = None,
 ) -> None:
     """Broadcast a task status update.
 
@@ -197,7 +201,7 @@ async def broadcast_task_update(
     await manager.broadcast(message)
 
 
-async def broadcast_session_sync(sessions: List[Dict[str, Any]]) -> None:
+async def broadcast_session_sync(sessions: list[dict[str, Any]]) -> None:
     """Broadcast session sync update.
 
     Args:

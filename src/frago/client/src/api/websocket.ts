@@ -26,6 +26,10 @@ export const MessageType = {
   SESSION_CREATED: 'session_created',
   SESSION_UPDATED: 'session_updated',
 
+  // Workbench session streaming (replaces 5s record polling)
+  SESSION_RECORDS_APPEND: 'session_records_append',
+  SESSION_TURN_DONE: 'session_turn_done',
+
   // Recipe events
   RECIPE_STARTED: 'recipe_started',
   RECIPE_COMPLETED: 'recipe_completed',

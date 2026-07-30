@@ -9,11 +9,10 @@ Provides incremental parsing capabilities for Claude Code session files, support
 
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any
 
 from frago.session.models import (
     SessionStep,
@@ -43,25 +42,25 @@ class ParsedRecord:
     session_id: str
     timestamp: datetime
     record_type: str  # user, assistant, system, file-history-snapshot
-    parent_uuid: Optional[str] = None
+    parent_uuid: str | None = None
 
     # Message content
-    role: Optional[str] = None  # user, assistant
-    content_text: Optional[str] = None  # Text content
-    model: Optional[str] = None  # Model identifier
+    role: str | None = None  # user, assistant
+    content_text: str | None = None  # Text content
+    model: str | None = None  # Model identifier
 
     # Tool call information (assistant messages may contain)
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
     # Tool result information (user messages may contain)
-    tool_results: List[Dict[str, Any]] = field(default_factory=list)
+    tool_results: list[dict[str, Any]] = field(default_factory=list)
 
     # Sidechain identifier (agent subthread)
     is_sidechain: bool = False
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
 
     # Raw data
-    raw_data: Dict[str, Any] = field(default_factory=dict)
+    raw_data: dict[str, Any] = field(default_factory=dict)
 
 
 # ============================================================
@@ -83,10 +82,10 @@ class IncrementalParser:
         """
         self.file_path = Path(file_path)
         self.offset: int = 0  # Current file offset
-        self._session_id: Optional[str] = None  # Cached session ID
+        self._session_id: str | None = None  # Cached session ID
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         """Get session ID (extracted from file records)
 
         Note: The first line of the file may be file-history-snapshot or other records without sessionId,
@@ -94,7 +93,7 @@ class IncrementalParser:
         """
         if self._session_id is None and self.file_path.exists():
             try:
-                with open(self.file_path, "r", encoding="utf-8") as f:
+                with open(self.file_path, encoding="utf-8") as f:
                     for _ in range(10):  # Read at most 10 lines
                         line = f.readline().strip()
                         if not line:
@@ -108,7 +107,7 @@ class IncrementalParser:
                 logger.warning(f"Unable to extract session_id from file: {e}")
         return self._session_id
 
-    def parse_new_records(self) -> List[ParsedRecord]:
+    def parse_new_records(self) -> list[ParsedRecord]:
         """Parse records added since last time
 
         Returns:
@@ -119,7 +118,7 @@ class IncrementalParser:
 
         records = []
         try:
-            with open(self.file_path, "r", encoding="utf-8") as f:
+            with open(self.file_path, encoding="utf-8") as f:
                 # Seek to last read position
                 f.seek(self.offset)
 
@@ -145,7 +144,7 @@ class IncrementalParser:
 
         return records
 
-    def _parse_record(self, data: Dict[str, Any]) -> Optional[ParsedRecord]:
+    def _parse_record(self, data: dict[str, Any]) -> ParsedRecord | None:
         """Parse a single record
 
         Uses defensive parsing strategy:
@@ -181,7 +180,7 @@ class IncrementalParser:
                 # Convert to user-like record for processing
                 record_type = "user"
             else:
-                logger.debug(f"Skipping queue-operation without content")
+                logger.debug("Skipping queue-operation without content")
                 return None
 
         if not uuid:
@@ -269,7 +268,7 @@ class IncrementalParser:
 
 def record_to_step(
     record: ParsedRecord, step_id: int
-) -> Tuple[Optional[SessionStep], List[ToolCallRecord]]:
+) -> tuple[SessionStep | None, list[ToolCallRecord]]:
     """Convert parsed record to SessionStep and ToolCallRecord
 
     Args:
@@ -350,7 +349,7 @@ def record_to_step(
     return step, tool_records
 
 
-def _summarize_tool_calls(tool_calls: List[Dict[str, Any]]) -> str:
+def _summarize_tool_calls(tool_calls: list[dict[str, Any]]) -> str:
     """Summarize tool call information
 
     Args:
@@ -371,7 +370,7 @@ def _summarize_tool_calls(tool_calls: List[Dict[str, Any]]) -> str:
         return f"[{', '.join(tool_names)}]"
 
 
-def _summarize_tool_results(tool_results: List[Dict[str, Any]]) -> str:
+def _summarize_tool_results(tool_results: list[dict[str, Any]]) -> str:
     """Summarize tool result information
 
     Args:
@@ -386,7 +385,6 @@ def _summarize_tool_results(tool_results: List[Dict[str, Any]]) -> str:
     # Extract result summaries
     summaries = []
     for tr in tool_results:
-        tool_use_id = tr.get("tool_use_id", "?")
         content = tr.get("content", "")
         if isinstance(content, str):
             summaries.append(truncate_content(content, 50))
@@ -405,9 +403,9 @@ def _summarize_tool_results(tool_results: List[Dict[str, Any]]) -> str:
 
 
 def update_tool_call_status(
-    pending_calls: Dict[str, ToolCallRecord],
+    pending_calls: dict[str, ToolCallRecord],
     record: ParsedRecord,
-) -> List[ToolCallRecord]:
+) -> list[ToolCallRecord]:
     """Update pending tool call status based on tool results
 
     Args:

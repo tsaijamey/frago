@@ -1,6 +1,5 @@
 {
   "sidebar": {
-    "claudeSessions": "会话",
     "dashboard": "仪表盘",
     "newTask": "新任务",
     "tasks": "任务",
@@ -32,79 +31,33 @@
       "loading": "加载中..."
     }
   },
+  "tokenCalendar": {
+    "open": "用量月历",
+    "title": "词元 (token) 用量月历",
+    "monthLabel": "{{year}}年{{month}}月",
+    "monthTotal": "当月总量",
+    "refresh": "刷新",
+    "close": "关闭",
+    "prevMonth": "上一月",
+    "nextMonth": "下一月",
+    "loading": "正在计算…",
+    "noData": "无数据",
+    "error": "加载失败：{{error}}",
+    "retry": "重试",
+    "cellTooltip": "输入 {{input}} · 输出 {{output}} · 缓存写入 {{cacheCreation}} · 缓存读取 {{cacheRead}}",
+    "weekday": {
+      "mon": "一",
+      "tue": "二",
+      "wed": "三",
+      "thu": "四",
+      "fri": "五",
+      "sat": "六",
+      "sun": "日"
+    }
+  },
   "status": {
     "connected": "已连接",
     "disconnected": "已断开"
-  },
-  "claudeSessions": {
-    "title": "Claude 会话",
-    "subtitle": "浏览并恢复你的 Claude Code 对话",
-    "rescan": "重新扫描",
-    "newSession": "新建会话",
-    "scanning": "正在扫描会话…",
-    "days_one": "{{count}} 天",
-    "days_other": "{{count}} 天",
-    "searchPlaceholder": "搜索标题、提示词、项目…",
-    "summary": "{{total}} 个会话中显示 {{visible}} 个 · 已扫描 {{files}} 个文件",
-    "filter": {
-      "human": "人工",
-      "maybe": "疑似",
-      "agent": "Agent"
-    },
-    "resume": "恢复",
-    "copyResume": "复制恢复命令",
-    "copiedShort": "已复制",
-    "copied": "恢复命令已复制",
-    "copyFailed": "复制失败",
-    "unnamed": "(未命名)",
-    "empty": "该时间范围内没有会话",
-    "emptyHint": "试试扩大日期范围，或开启 Agent 过滤。",
-    "error": "加载会话失败",
-    "loadingDetail": "正在加载会话…",
-    "noMessages": "该会话没有可读消息",
-    "truncated": "显示最近 {{shown}} 条（共 {{total}} 条）",
-    "send": "发送",
-    "composerPlaceholder": "给该会话发消息…（Enter 发送，Shift+Enter 换行）",
-    "attachImage": "添加图片",
-    "removeImage": "移除图片",
-    "activating": "正在唤醒会话…",
-    "awaitingReply": "正在等待回复…",
-    "sendFailed": "发送失败：{{error}}",
-    "refresh": "刷新",
-    "replyStalled": "回复时间较长——点刷新查看最新内容。",
-    "tabs": {
-      "all": "会话",
-      "pa": "PA"
-    },
-    "pa": {
-      "summary": "{{count}} 个 PA 会话",
-      "empty": "PA 目前没有常驻会话",
-      "emptyHint": "PA 在某个渠道(如飞书)至少回复过一条消息后，这里就会出现。"
-    },
-    "tokenCalendar": {
-      "open": "用量月历",
-      "title": "词元 (token) 用量月历",
-      "monthLabel": "{{year}}年{{month}}月",
-      "monthTotal": "当月总量",
-      "refresh": "刷新",
-      "close": "关闭",
-      "prevMonth": "上一月",
-      "nextMonth": "下一月",
-      "loading": "正在计算…",
-      "noData": "无数据",
-      "error": "加载失败：{{error}}",
-      "retry": "重试",
-      "cellTooltip": "输入 {{input}} · 输出 {{output}} · 缓存写入 {{cacheCreation}} · 缓存读取 {{cacheRead}}",
-      "weekday": {
-        "mon": "一",
-        "tue": "二",
-        "wed": "三",
-        "thu": "四",
-        "fri": "五",
-        "sat": "六",
-        "sun": "日"
-      }
-    }
   },
   "dashboard": {
     "title": "工作台",

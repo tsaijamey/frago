@@ -10,7 +10,7 @@ import { create } from 'zustand';
 // Page type - Updated for new admin panel layout
 export type PageType =
   | 'live'
-  | 'claude_sessions'
+  | 'session_workbench'
   | 'dashboard'
   | 'tasks'
   | 'task_detail'
@@ -33,8 +33,8 @@ export interface PageSlice {
 }
 
 export const usePageStore = create<PageSlice>((set) => ({
-  // Initial state - default to Claude session management homepage
-  currentPage: 'claude_sessions',
+  // Initial state - the session page is the homepage
+  currentPage: 'session_workbench',
   currentTaskId: null,
   currentRecipeName: null,
   currentProjectId: null,

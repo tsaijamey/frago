@@ -16,7 +16,7 @@ interface DockItem {
 }
 
 const DOCK_ITEMS: DockItem[] = [
-  { id: 'claude_sessions', label: 'sessions', icon: <MessageSquare size={22} /> },
+  { id: 'session_workbench', label: 'sessions', icon: <MessageSquare size={22} /> },
   { id: 'recipes', label: 'recipe', icon: <LayoutGrid size={22} /> },
 ];
 
@@ -30,7 +30,7 @@ export default function BottomDock() {
   const { currentPage, switchPage } = useAppStore();
 
   const isActive = (id: PageType) => {
-    if (id === 'claude_sessions') return currentPage === 'claude_sessions';
+    if (id === 'session_workbench') return currentPage === 'session_workbench';
     if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
     if (id === 'settings') return currentPage === 'settings';
     return false;

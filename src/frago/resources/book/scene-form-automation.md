@@ -19,7 +19,7 @@
   3. {{frago_launcher}} chrome get-content                  # 了解页面结构
   4. {{frago_launcher}} chrome exec-js "提取表单字段" --return-value
   5. 逐字段填写，每步验证
-  6. {{frago_launcher}} chrome screenshot ~/.frago/data/<YYYYMMDD>-<slug>/verify.png   # 提交前截图确认
+  6. {{frago_launcher}} chrome screenshot ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/verify.png   # 提交前截图确认
 
 ## 关键约束
 - chrome-usage — 选择器优先 aria-label/data-testid 避免脆弱 class；React 等框架要 JS 赋值 + 触发 input 事件；不猜提交后的跳转 URL

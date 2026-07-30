@@ -31,6 +31,7 @@ from frago.server.routes.settings import router as settings_router
 from frago.server.routes.skills import router as skills_router
 from frago.server.routes.system import router as system_router
 from frago.server.routes.viewer import router as viewer_router
+from frago.server.routes.workbench import router as workbench_router
 from frago.server.routes.workspace import router as workspace_router
 
 __all__ = [
@@ -50,4 +51,5 @@ __all__ = [
     "pa_router",
     "chrome_dashboard_router",
     "claude_sessions_router",
+    "workbench_router",
 ]

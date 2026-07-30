@@ -8,7 +8,7 @@ import { useDataSync } from '@/hooks/useDataSync';
 import MainLayout from '@/components/layout/MainLayout';
 
 // Pages
-import ClaudeSessionsPage from '@/components/claudeSessions/ClaudeSessionsPage';
+import SessionWorkbenchPage from '@/components/sessionWorkbench/SessionWorkbenchPage';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
 import SkillList from '@/components/skills/SkillList';
@@ -92,8 +92,8 @@ function App() {
   // Default page is 'live' (timeline, set in appStore)
   const renderPage = () => {
     switch (currentPage) {
-      case 'claude_sessions':
-        return <ClaudeSessionsPage />;
+      case 'session_workbench':
+        return <SessionWorkbenchPage />;
       case 'recipes':
         return <RecipeList />;
       case 'recipe_detail':
@@ -110,7 +110,7 @@ function App() {
       case 'project_detail':
         return <WorkspacePage />;
       default:
-        return <ClaudeSessionsPage />;
+        return <SessionWorkbenchPage />;
     }
   };
 

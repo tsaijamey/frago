@@ -12,12 +12,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
-
-from watchdog.events import FileModifiedEvent, FileSystemEventHandler
-from watchdog.observers import Observer
 
 from frago.session.formatter import JsonFormatter, TerminalFormatter, create_formatter
 from frago.session.models import (
@@ -25,8 +22,6 @@ from frago.session.models import (
     MonitoredSession,
     SessionSource,
     SessionStatus,
-    SessionStep,
-    SessionSummary,
     ToolCallRecord,
 )
 from frago.session.parser import (
@@ -42,6 +37,7 @@ from frago.session.storage import (
     write_metadata,
     write_summary,
 )
+from frago.watcher import FileEvent, WatchdogObserverService, WatchTarget
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +93,18 @@ def encode_project_path(project_path: str) -> str:
 # ============================================================
 
 
-class SessionFileHandler(FileSystemEventHandler):
-    """Session file change handler"""
+class SessionFileHandler:
+    """Per-file incremental-parser tracker.
+
+    No longer subclasses ``FileSystemEventHandler`` — the shared
+    ``WatchdogObserverService`` owns the single Observer, and this class only
+    holds per-file ``IncrementalParser`` state.
+    """
 
     def __init__(
         self,
-        on_new_records: Callable[[str, List[ParsedRecord]], None],
-        target_file: Optional[str] = None,
+        on_new_records: Callable[[str, list[ParsedRecord]], None],
+        target_file: str | None = None,
     ):
         """Initialize handler
 
@@ -111,30 +112,12 @@ class SessionFileHandler(FileSystemEventHandler):
             on_new_records: Callback function when new records arrive
             target_file: Only monitor specific file (optional)
         """
-        super().__init__()
         self.on_new_records = on_new_records
         self.target_file = target_file
-        self._parsers: Dict[str, IncrementalParser] = {}
+        self._parsers: dict[str, IncrementalParser] = {}
         self._lock = threading.Lock()
 
-    def on_modified(self, event: FileModifiedEvent) -> None:
-        """Handle file modification event"""
-        if event.is_directory:
-            return
-
-        file_path = str(event.src_path)
-
-        # Only process .jsonl files
-        if not file_path.endswith(".jsonl"):
-            return
-
-        # If target file specified, only process that file
-        if self.target_file and file_path != self.target_file:
-            return
-
-        self._process_file(file_path)
-
-    def _process_file(self, file_path: str) -> None:
+    def process(self, file_path: str) -> None:
         """Process file update
 
         Args:
@@ -167,12 +150,12 @@ class SessionMonitor:
     def __init__(
         self,
         project_path: str,
-        start_time: Optional[datetime] = None,
+        start_time: datetime | None = None,
         agent_type: AgentType = AgentType.CLAUDE,
         json_mode: bool = False,
         persist: bool = True,
         quiet: bool = False,
-        target_session_id: Optional[str] = None,
+        target_session_id: str | None = None,
         source: SessionSource = SessionSource.TERMINAL,
     ):
         """Initialize monitor
@@ -197,32 +180,31 @@ class SessionMonitor:
         self.source = source
 
         # Session state
-        self._session: Optional[MonitoredSession] = None
+        self._session: MonitoredSession | None = None
         self._step_id = 0
-        self._pending_tool_calls: Dict[str, ToolCallRecord] = {}
-        self._completed_tool_calls: List[ToolCallRecord] = []
-        self._matched_file: Optional[str] = None
+        self._pending_tool_calls: dict[str, ToolCallRecord] = {}
+        self._completed_tool_calls: list[ToolCallRecord] = []
+        self._matched_file: str | None = None
 
         # Monitor state
-        self._observer: Optional[Observer] = None
+        self._watcher_target: WatchTarget | None = None
+        self._handler: SessionFileHandler | None = None
         self._running = False
         self._lock = threading.Lock()
 
         # Formatter
         if not quiet:
-            self._formatter: Optional[
-                Union[TerminalFormatter, JsonFormatter]
-            ] = create_formatter(json_mode=json_mode)
+            self._formatter: TerminalFormatter | JsonFormatter | None = create_formatter(json_mode=json_mode)
         else:
             self._formatter = None
 
     @property
-    def session(self) -> Optional[MonitoredSession]:
+    def session(self) -> MonitoredSession | None:
         """Get current session"""
         return self._session
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         """Get current session ID"""
         return self._session.session_id if self._session else None
 
@@ -269,19 +251,26 @@ class SessionMonitor:
             else:
                 logger.warning(f"Specified session file does not exist: {target_file}")
 
-        # Create file monitoring
+        # Create file handler
         handler = SessionFileHandler(
             on_new_records=self._on_new_records,
             target_file=self._matched_file,
         )
+        self._handler = handler
 
-        try:
-            self._observer = Observer()
-            self._observer.schedule(handler, str(watch_dir), recursive=False)
-            self._observer.start()
-        except Exception as e:
-            logger.error(f"Failed to start file monitoring: {e}")
-            raise
+        # Register with shared watcher (one Observer for the whole process)
+        target = WatchTarget(
+            path=str(watch_dir),
+            patterns=["*.jsonl"],
+            on_created=lambda fe: self._on_watcher_event(fe, handler),
+            on_modified=lambda fe: self._on_watcher_event(fe, handler),
+            recursive=False,
+        )
+
+        svc = WatchdogObserverService.get_instance()
+        svc.add(target)
+        svc.start()
+        self._watcher_target = target
 
         self._running = True
         logger.debug(f"Started monitoring directory: {watch_dir}")
@@ -291,16 +280,24 @@ class SessionMonitor:
         if not self._running:
             return
 
-        if self._observer:
-            self._observer.stop()
-            self._observer.join(timeout=2)
-            self._observer = None
+        if self._watcher_target is not None:
+            svc = WatchdogObserverService.get_instance()
+            svc.remove(self._watcher_target)
+            self._watcher_target = None
 
+        self._handler = None
         self._running = False
 
         # Finalize session
         if self._session:
             self._finalize_session()
+
+    @staticmethod
+    def _on_watcher_event(event: FileEvent, handler: SessionFileHandler) -> None:
+        """Bridge from shared watcher → per-file IncrementalParser."""
+        if event.is_directory:
+            return
+        handler.process(event.path)
 
     def wait_for_session(self, timeout: float = 30.0) -> bool:
         """Wait for session association
@@ -320,7 +317,7 @@ class SessionMonitor:
 
     def wait_for_completion(
         self,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         inactivity_timeout: float = INACTIVITY_TIMEOUT_SECONDS,
     ) -> bool:
         """Wait for session completion
@@ -358,7 +355,7 @@ class SessionMonitor:
 
             time.sleep(0.5)
 
-    def _on_new_records(self, file_path: str, records: List[ParsedRecord]) -> None:
+    def _on_new_records(self, file_path: str, records: list[ParsedRecord]) -> None:
         """Handle new record arrival
 
         Args:
@@ -555,7 +552,7 @@ def watch_session(
         agent_type: Agent type
         json_mode: Whether to use JSON format output
     """
-    from frago.session.storage import get_session_dir, read_metadata
+    from frago.session.storage import read_metadata
 
     # Get session info
     session = read_metadata(session_id, agent_type)
@@ -659,7 +656,7 @@ class AgentAdapter:
         """
         raise NotImplementedError
 
-    def parse_record(self, data: Dict) -> Optional[ParsedRecord]:
+    def parse_record(self, data: dict) -> ParsedRecord | None:
         """Parse raw record
 
         Args:
@@ -678,7 +675,7 @@ class AgentAdapter:
         session_id: str,
         uuid: str,
         timestamp: datetime,
-        parent_uuid: Optional[str] = None,
+        parent_uuid: str | None = None,
     ) -> ParsedRecord:
         """Build a ParsedRecord from one already-normalized turn half.
 
@@ -717,7 +714,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         """Claude Code uses hyphens to encode paths"""
         return project_path.replace("/", "-")
 
-    def parse_record(self, data: Dict) -> Optional[ParsedRecord]:
+    def parse_record(self, data: dict) -> ParsedRecord | None:
         """Parse Claude Code record using parser module"""
         from frago.session.parser import IncrementalParser
 
@@ -734,7 +731,7 @@ class TmuxDriverAdapter(AgentAdapter):
     ``parse_record`` accepts the same normalized dict the driver emits.
     """
 
-    def get_session_dir(self, project_path: str) -> Path:
+    def get_session_dir(self, project_path: str) -> Path:  # noqa: ARG002 — 接口签名要求，本实现不按项目分目录
         # tmux-driven sessions persist under ~/.frago/sessions/{agent_type}/ via
         # storage.py, not under a project-encoded directory.
         from frago.session.storage import get_session_base_dir
@@ -744,7 +741,7 @@ class TmuxDriverAdapter(AgentAdapter):
     def encode_project_path(self, project_path: str) -> str:
         return project_path.replace("/", "-")
 
-    def parse_record(self, data: Dict) -> Optional[ParsedRecord]:
+    def parse_record(self, data: dict) -> ParsedRecord | None:
         role = data.get("role") or data.get("record_type") or "assistant"
         content = data.get("content") or data.get("content_text") or ""
         return self.parse_turn(
@@ -793,14 +790,14 @@ class CodexAdapter(TmuxDriverAdapter):
 
 
 # Adapter registry
-_adapters: Dict[AgentType, AgentAdapter] = {
+_adapters: dict[AgentType, AgentAdapter] = {
     AgentType.CLAUDE: ClaudeCodeAdapter(),
     AgentType.OPENCODE: OpencodeAdapter(),
     AgentType.CODEX: CodexAdapter(),
 }
 
 
-def get_adapter(agent_type: AgentType) -> Optional[AgentAdapter]:
+def get_adapter(agent_type: AgentType) -> AgentAdapter | None:
     """Get adapter for specified Agent type
 
     Args:

@@ -10,7 +10,7 @@ Provides terminal display formatting capabilities for session monitoring data, i
 import json
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TextIO
+from typing import Any, TextIO
 
 from frago.session.models import (
     MonitoredSession,
@@ -21,7 +21,6 @@ from frago.session.models import (
     ToolCallRecord,
     ToolCallStatus,
 )
-
 
 # ============================================================
 # Icon Definitions
@@ -165,7 +164,7 @@ class TerminalFormatter:
         return f"[{ts}] {icon} Session started (session: {short_id}...)"
 
     def format_session_end(
-        self, session: MonitoredSession, summary: Optional[SessionSummary] = None
+        self, session: MonitoredSession, summary: SessionSummary | None = None
     ) -> str:
         """Format session end message
 
@@ -233,7 +232,7 @@ class TerminalFormatter:
         self.print(self.format_session_start(session))
 
     def print_session_end(
-        self, session: MonitoredSession, summary: Optional[SessionSummary] = None
+        self, session: MonitoredSession, summary: SessionSummary | None = None
     ) -> None:
         """Output session end message"""
         self.print(self.format_session_end(session, summary))
@@ -266,7 +265,7 @@ class JsonFormatter:
         """
         self.output = output
 
-    def _output(self, event_type: str, data: Dict[str, Any]) -> None:
+    def _output(self, event_type: str, data: dict[str, Any]) -> None:
         """Output JSON event
 
         Args:
@@ -289,7 +288,7 @@ class JsonFormatter:
         )
 
     def emit_session_end(
-        self, session: MonitoredSession, summary: Optional[SessionSummary] = None
+        self, session: MonitoredSession, summary: SessionSummary | None = None
     ) -> None:
         """Output session end event"""
         data = {
@@ -336,7 +335,7 @@ class JsonFormatter:
 
 def create_formatter(
     json_mode: bool = False,
-    output: Optional[TextIO] = None,
+    output: TextIO | None = None,
     use_icons: bool = True,
 ):
     """Create formatter

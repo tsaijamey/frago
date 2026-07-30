@@ -55,7 +55,7 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
       <div
         className="cs-cal-card"
         role="dialog"
-        aria-label={t('claudeSessions.tokenCalendar.title')}
+        aria-label={t('tokenCalendar.title')}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="cs-cal-header">
@@ -64,12 +64,12 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
               type="button"
               className="cs-cal-nav-btn"
               onClick={() => setMonth((cur) => shiftMonth(cur, -1))}
-              aria-label={t('claudeSessions.tokenCalendar.prevMonth')}
+              aria-label={t('tokenCalendar.prevMonth')}
             >
               <ChevronLeft size={16} />
             </button>
             <span className="cs-cal-month-label">
-              {t('claudeSessions.tokenCalendar.monthLabel', {
+              {t('tokenCalendar.monthLabel', {
                 year: y,
                 month: m,
                 month2: String(m).padStart(2, '0'),
@@ -79,13 +79,13 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
               type="button"
               className="cs-cal-nav-btn"
               onClick={() => setMonth((cur) => shiftMonth(cur, 1))}
-              aria-label={t('claudeSessions.tokenCalendar.nextMonth')}
+              aria-label={t('tokenCalendar.nextMonth')}
             >
               <ChevronRight size={16} />
             </button>
           </div>
           <div className="cs-cal-total">
-            {t('claudeSessions.tokenCalendar.monthTotal')}:{' '}
+            {t('tokenCalendar.monthTotal')}:{' '}
             <strong>{data ? formatTokens(data.month_total.total) : '—'}</strong>
           </div>
           <div className="cs-cal-actions">
@@ -94,7 +94,7 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
               className="cs-cal-nav-btn"
               onClick={() => fetchMonth(month)}
               disabled={loading}
-              title={t('claudeSessions.tokenCalendar.refresh')}
+              title={t('tokenCalendar.refresh')}
             >
               <RefreshCw size={14} className={loading ? 'cs-spin' : ''} />
             </button>
@@ -102,7 +102,7 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
               type="button"
               className="cs-cal-nav-btn"
               onClick={onClose}
-              aria-label={t('claudeSessions.tokenCalendar.close')}
+              aria-label={t('tokenCalendar.close')}
             >
               <X size={16} />
             </button>
@@ -112,9 +112,9 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
         {loading && <div className="cs-cal-progress"><div className="cs-cal-progress-bar" /></div>}
         {error && (
           <div className="cs-cal-error">
-            {t('claudeSessions.tokenCalendar.error', { error })}{' '}
+            {t('tokenCalendar.error', { error })}{' '}
             <button type="button" className="cs-cal-retry" onClick={() => fetchMonth(month)}>
-              {t('claudeSessions.tokenCalendar.retry')}
+              {t('tokenCalendar.retry')}
             </button>
           </div>
         )}
@@ -122,7 +122,7 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
         <div className="cs-cal-grid">
           {weekdayKeys.map((k) => (
             <div key={k} className="cs-cal-weekday">
-              {t(`claudeSessions.tokenCalendar.weekday.${k}`)}
+              {t(`tokenCalendar.weekday.${k}`)}
             </div>
           ))}
           {weeks.flat().map((cell) => {
@@ -137,7 +137,7 @@ export default function TokenCalendarModal({ t, onClose }: Props) {
                 ].join(' ').trim()}
                 title={
                   bucket
-                    ? t('claudeSessions.tokenCalendar.cellTooltip', {
+                    ? t('tokenCalendar.cellTooltip', {
                         input: formatTokens(bucket.input),
                         output: formatTokens(bucket.output),
                         cacheCreation: formatTokens(bucket.cache_creation),

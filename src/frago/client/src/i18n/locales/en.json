@@ -1,6 +1,5 @@
 {
   "sidebar": {
-    "claudeSessions": "Sessions",
     "dashboard": "Dashboard",
     "newTask": "New Task",
     "tasks": "Tasks",
@@ -32,79 +31,33 @@
       "loading": "Loading..."
     }
   },
+  "tokenCalendar": {
+    "open": "Token calendar",
+    "title": "Token usage calendar",
+    "monthLabel": "{{year}}-{{month2}}",
+    "monthTotal": "Month total",
+    "refresh": "Refresh",
+    "close": "Close",
+    "prevMonth": "Previous month",
+    "nextMonth": "Next month",
+    "loading": "Computing…",
+    "noData": "No data",
+    "error": "Failed to load: {{error}}",
+    "retry": "Retry",
+    "cellTooltip": "Input {{input}} · Output {{output}} · Cache write {{cacheCreation}} · Cache read {{cacheRead}}",
+    "weekday": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    }
+  },
   "status": {
     "connected": "Connected",
     "disconnected": "Disconnected"
-  },
-  "claudeSessions": {
-    "title": "Claude Sessions",
-    "subtitle": "Browse and resume your Claude Code conversations",
-    "rescan": "Rescan",
-    "newSession": "New session",
-    "scanning": "Scanning sessions…",
-    "days_one": "{{count}}d",
-    "days_other": "{{count}}d",
-    "searchPlaceholder": "Search title, prompt, project…",
-    "summary": "{{visible}} of {{total}} sessions · {{files}} files scanned",
-    "filter": {
-      "human": "Human",
-      "maybe": "Maybe",
-      "agent": "Agent"
-    },
-    "resume": "Resume",
-    "copyResume": "Copy resume command",
-    "copiedShort": "Copied",
-    "copied": "Resume command copied",
-    "copyFailed": "Copy failed",
-    "unnamed": "(unnamed)",
-    "empty": "No sessions in this range",
-    "emptyHint": "Try a wider date range, or enable the Agent filter.",
-    "error": "Failed to load sessions",
-    "loadingDetail": "Loading session…",
-    "noMessages": "No readable messages in this session",
-    "truncated": "Showing latest {{shown}} of {{total}} messages",
-    "send": "Send",
-    "composerPlaceholder": "Message this session… (Enter to send, Shift+Enter for newline)",
-    "attachImage": "Attach image",
-    "removeImage": "Remove image",
-    "activating": "Waking up session…",
-    "awaitingReply": "Waiting for reply…",
-    "sendFailed": "Send failed: {{error}}",
-    "refresh": "Refresh",
-    "replyStalled": "The reply is taking a while — refresh to check.",
-    "tabs": {
-      "all": "Sessions",
-      "pa": "PA"
-    },
-    "pa": {
-      "summary": "{{count}} PA conversations",
-      "empty": "PA has no resident conversations yet",
-      "emptyHint": "This fills in once PA has replied to at least one message on a channel like Feishu."
-    },
-    "tokenCalendar": {
-      "open": "Token calendar",
-      "title": "Token usage calendar",
-      "monthLabel": "{{year}}-{{month2}}",
-      "monthTotal": "Month total",
-      "refresh": "Refresh",
-      "close": "Close",
-      "prevMonth": "Previous month",
-      "nextMonth": "Next month",
-      "loading": "Computing…",
-      "noData": "No data",
-      "error": "Failed to load: {{error}}",
-      "retry": "Retry",
-      "cellTooltip": "Input {{input}} · Output {{output}} · Cache write {{cacheCreation}} · Cache read {{cacheRead}}",
-      "weekday": {
-        "mon": "Mon",
-        "tue": "Tue",
-        "wed": "Wed",
-        "thu": "Thu",
-        "fri": "Fri",
-        "sat": "Sat",
-        "sun": "Sun"
-      }
-    }
   },
   "dashboard": {
     "title": "Dashboard",

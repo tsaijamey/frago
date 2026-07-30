@@ -224,6 +224,8 @@ def _fmt_action(a: dict) -> str:
         return f"{t}({' '.join(a['command'])[:40]})"
     if "text" in a:
         return f"{t}({a['text'][:30]!r}...)"
+    if "reason" in a:
+        return f"{t}({a['reason'][:30]!r}...)"
     return t
 
 
@@ -395,6 +397,7 @@ def hook_rules_validate():
         "tool_name_eq",
         "bash_contains",
         "bash_contains_all",
+        "bash_regex",
         "path_contains",
         "path_contains_all",
         "path_regex",
@@ -408,6 +411,7 @@ def hook_rules_validate():
         "inject_book_topic",
         "inject_literal",
         "run_command_and_inject_stdout",
+        "deny_tool_call",
         "spawn_recipe_async",
     }
     KNOWN_EVENT = {
@@ -506,10 +510,10 @@ def _accumulate_hits(path: Path, stats: dict[str, dict]) -> None:
             rule_id = parts[2]
             entry = stats.setdefault(
                 rule_id,
-                {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "last_ts": 0},
+                {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "denied": 0, "last_ts": 0},
             )
             entry["count"] += 1
-            if outcome in ("injected", "deduped", "empty"):
+            if outcome in ("injected", "deduped", "empty", "denied"):
                 entry[outcome] += 1
             if ts > entry["last_ts"]:
                 entry["last_ts"] = ts
@@ -540,7 +544,7 @@ def hook_rules_stats(source: str | None):
     rules_by_id = {r["id"]: r for r in merged.get("rules", []) if r.get("id")}
     stats = _read_hits()
 
-    empty_stat = {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "last_ts": 0}
+    empty_stat = {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "denied": 0, "last_ts": 0}
     rows = []
     for rid, info in rules_by_id.items():
         if source and info.get("source") != source:
@@ -548,23 +552,25 @@ def hook_rules_stats(source: str | None):
         s = stats.get(rid, empty_stat)
         rows.append(
             (rid, info.get("source", "?"), s["count"], s["injected"],
-             s["deduped"], s["empty"], s["last_ts"])
+             s["deduped"], s["empty"], s["denied"], s["last_ts"])
         )
     rows.sort(key=lambda r: (-r[2], r[0]))
 
     click.echo(
         f"\n  {'ID':<42s} {'SOURCE':<8s} {'MATCH':>6s} {'INJECT':>7s} "
-        f"{'DEDUP':>6s} {'EMPTY':>6s}   LAST HIT"
+        f"{'DEDUP':>6s} {'EMPTY':>6s} {'DENY':>5s}   LAST HIT"
     )
-    click.echo("  " + "-" * 100)
-    for rid, src, count, injected, deduped, empty, ts in rows:
+    click.echo("  " + "-" * 106)
+    for rid, src, count, injected, deduped, empty, denied, ts in rows:
         last = datetime.fromtimestamp(ts).isoformat(timespec="seconds") if ts else "-"
         click.echo(
             f"  {rid:<42s} {src:<8s} {count:>6d} {injected:>7d} "
-            f"{deduped:>6d} {empty:>6d}   {last}"
+            f"{deduped:>6d} {empty:>6d} {denied:>5d}   {last}"
         )
 
     zero = sum(1 for r in rows if r[2] == 0)
+    # A deny rule injects nothing by design, so judge "fired into the void" on
+    # the empty counter alone — otherwise every refusal would read as broken.
     broken = [r[0] for r in rows if r[5] > 0]
     click.echo(f"\n({len(rows)} rules; {zero} never matched)")
     if broken:

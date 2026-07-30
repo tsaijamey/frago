@@ -289,6 +289,16 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     primary_agent.set_scheduler_service(scheduler)
     await scheduler.start()
 
+    # Initialize workbench stream bridge (lazy — starts watching when a
+    # session is first viewed, pushes record deltas via WebSocket).
+    import asyncio
+
+    from frago.server.services.workbench_stream_bridge import WorkbenchStreamBridge
+
+    loop = asyncio.get_running_loop()
+    bridge = WorkbenchStreamBridge.get_instance(loop)
+    logger.info("WorkbenchStreamBridge initialized (loop=%s)", loop is not None)
+
     yield
 
     # Shutdown
@@ -305,6 +315,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     await version_service.stop()
     await community_service.stop()
     await sync_service.stop()
+
+    # Stop workbench stream bridge
+    WorkbenchStreamBridge.reset_instance()
 
 
 async def _start_ingestion_scheduler(logger):
@@ -486,6 +499,9 @@ def create_app(
 
     from frago.server.routes.claude_sessions import router as claude_sessions_router
     app.include_router(claude_sessions_router, prefix="/api", tags=["claude_sessions"])
+
+    from frago.server.routes.workbench import router as workbench_router
+    app.include_router(workbench_router, prefix="/api", tags=["workbench"])
 
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")

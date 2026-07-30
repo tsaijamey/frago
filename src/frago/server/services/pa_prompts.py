@@ -501,7 +501,7 @@ SUB_AGENT_PROMPT_TEMPLATE = """\
 {task_prompt}
 
 Run 实例: {run_id}（决定日志归属，不决定文件写哪儿）
-产出一律落 ~/.frago/data/<YYYYMMDD>-<语义-slug>/，命名与内容组织见 frago book must-data-dir。
+产出一律落 ~/.frago/data/；建目录前先 frago context data:<关键词> 查现成落点，起名与内容组织见 frago book must-data-dir。
 NEVER 往 ~/.frago/projects/ 写产出——那是 run 系统的内部账本，由 frago 自己维护。
 所属 domain: {run_id}（同名）。
 产出中若出现跨 session 可复用的领域知识（已验证的事实、关键取舍、踩过的坑），

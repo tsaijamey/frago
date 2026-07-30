@@ -22,10 +22,10 @@
   6. {{frago_launcher}} chrome highlight "选择器"           # 高亮验证
   7. {{frago_launcher}} chrome exec-js "批量提取" --return-value
   8. 如需翻页：{{frago_launcher}} chrome scroll / click 下一页
-  9. 结果存入 ~/.frago/data/<YYYYMMDD>-<slug>/
+  9. 结果存入 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
 
 ## 关键约束
-- must-data-dir — 产出落 ~/.frago/data/<YYYYMMDD>-<slug>/，NEVER 写 ~/.frago/projects/
+- must-data-dir — 产出落 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/，NEVER 写 ~/.frago/projects/
 - chrome-usage — 用 get-content + exec-js 提取不截图读字；选稳定选择器并写 fallback；懒加载页面靠滚动触发
 - better-structured-data — 提取结果用 {{frago_launcher}} def 存档（开发中）
 

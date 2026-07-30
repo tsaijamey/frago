@@ -15,7 +15,7 @@ import os
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from frago.session.models import (
     AgentType,
@@ -74,7 +74,7 @@ def _domain_session_dir(domain: str, session_id: str) -> Path:
 def get_session_dir(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    domain: Optional[str] = None,
+    domain: str | None = None,
 ) -> Path:
     """Get session storage directory path.
 
@@ -91,7 +91,7 @@ def get_session_dir(
 def create_session_dir(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    domain: Optional[str] = None,
+    domain: str | None = None,
 ) -> Path:
     """Create session storage directory."""
     session_dir = get_session_dir(session_id, agent_type, domain)
@@ -100,7 +100,7 @@ def create_session_dir(
     return session_dir
 
 
-def _scan_domain_session_dir(session_id: str) -> Optional[Path]:
+def _scan_domain_session_dir(session_id: str) -> Path | None:
     """Scan ~/.frago/projects/*/{session_id}/ to find a domain-scoped session.
 
     Returns the path of the first match, or None.
@@ -146,8 +146,8 @@ def write_metadata(session: MonitoredSession) -> Path:
 def read_metadata(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    domain: Optional[str] = None,
-) -> Optional[MonitoredSession]:
+    domain: str | None = None,
+) -> MonitoredSession | None:
     """Read session metadata.
 
     Resolution order:
@@ -157,7 +157,7 @@ def read_metadata(
     3. Fall back to the legacy ``~/.frago/sessions/{agent_type}/{session_id}/``
        path.
     """
-    metadata_path: Optional[Path] = None
+    metadata_path: Path | None = None
 
     if domain:
         metadata_path = _domain_session_dir(domain, session_id) / "metadata.json"
@@ -180,7 +180,7 @@ def read_metadata(
         return None
 
     try:
-        with open(metadata_path, "r", encoding="utf-8") as f:
+        with open(metadata_path, encoding="utf-8") as f:
             data = json.load(f)
         return MonitoredSession.model_validate(data)
     except Exception as e:
@@ -192,7 +192,7 @@ def update_metadata(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
     **updates: Any,
-) -> Optional[MonitoredSession]:
+) -> MonitoredSession | None:
     """Update session metadata
 
     Args:
@@ -224,7 +224,7 @@ def update_metadata(
 def append_step(
     step: SessionStep,
     agent_type: AgentType = AgentType.CLAUDE,
-    domain: Optional[str] = None,
+    domain: str | None = None,
 ) -> Path:
     """Append write step record.
 
@@ -249,7 +249,7 @@ def append_step(
 def _resolve_existing_or_legacy_dir(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    domain: Optional[str] = None,
+    domain: str | None = None,
 ) -> Path:
     """Resolve a session directory, preferring the new domain layout.
 
@@ -268,8 +268,8 @@ def _resolve_existing_or_legacy_dir(
 def read_steps(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    domain: Optional[str] = None,
-) -> List[SessionStep]:
+    domain: str | None = None,
+) -> list[SessionStep]:
     """Read all step records."""
     session_dir = _resolve_existing_or_legacy_dir(session_id, agent_type, domain)
     steps_path = session_dir / "steps.jsonl"
@@ -279,7 +279,7 @@ def read_steps(
 
     steps = []
     try:
-        with open(steps_path, "r", encoding="utf-8") as f:
+        with open(steps_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -299,9 +299,9 @@ def read_steps(
 def generate_summary(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    tool_calls: Optional[List[ToolCallRecord]] = None,
-    domain: Optional[str] = None,
-) -> Optional[SessionSummary]:
+    tool_calls: list[ToolCallRecord] | None = None,
+    domain: str | None = None,
+) -> SessionSummary | None:
     """Generate session summary
 
     Args:
@@ -382,9 +382,9 @@ def generate_summary(
 def write_summary(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    tool_calls: Optional[List[ToolCallRecord]] = None,
-    domain: Optional[str] = None,
-) -> Optional[Path]:
+    tool_calls: list[ToolCallRecord] | None = None,
+    domain: str | None = None,
+) -> Path | None:
     """Generate and write session summary.
 
     Phase 1: also produces a sibling ``summary.md`` (human-readable) when
@@ -422,9 +422,9 @@ def write_summary(
 def write_summary_md(
     session_id: str,
     agent_type: AgentType = AgentType.CLAUDE,
-    summary: Optional[SessionSummary] = None,
-    domain: Optional[str] = None,
-) -> Optional[Path]:
+    summary: SessionSummary | None = None,
+    domain: str | None = None,
+) -> Path | None:
     """Render the session summary as human-readable markdown.
 
     Args:
@@ -471,7 +471,7 @@ def write_summary_md(
 
 def read_summary(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
-) -> Optional[SessionSummary]:
+) -> SessionSummary | None:
     """Read session summary
 
     Args:
@@ -488,7 +488,7 @@ def read_summary(
         return None
 
     try:
-        with open(summary_path, "r", encoding="utf-8") as f:
+        with open(summary_path, encoding="utf-8") as f:
             data = json.load(f)
         return SessionSummary.model_validate(data)
     except Exception as e:
@@ -515,7 +515,7 @@ def _count_jsonl_lines(file_path: Path) -> int:
     """
     count = 0
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     count += 1
@@ -530,7 +530,7 @@ def read_steps_paginated(
     limit: int = 50,
     offset: int = 0,
     from_end: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read session steps with pagination.
 
     For small files (<100KB), loads entire file (fast enough).
@@ -605,9 +605,9 @@ def read_steps_paginated(
         start_line = offset
         end_line = min(offset + limit, total)
 
-    steps: List[SessionStep] = []
+    steps: list[SessionStep] = []
     try:
-        with open(steps_path, "r", encoding="utf-8") as f:
+        with open(steps_path, encoding="utf-8") as f:
             for i, line in enumerate(f):
                 if i >= end_line:
                     break
@@ -635,8 +635,8 @@ def read_steps_paginated(
 
 
 def count_sessions(
-    agent_type: Optional[AgentType] = None,
-    status: Optional[SessionStatus] = None,
+    agent_type: AgentType | None = None,
+    status: SessionStatus | None = None,
 ) -> int:
     """Count sessions
 
@@ -675,7 +675,7 @@ def count_sessions(
             # If status filtering needed, read metadata
             if status:
                 try:
-                    with open(metadata_path, "r", encoding="utf-8") as f:
+                    with open(metadata_path, encoding="utf-8") as f:
                         data = json.load(f)
                     session_status = SessionStatus(data.get("status", "running"))
                     if session_status != status:
@@ -689,10 +689,10 @@ def count_sessions(
 
 
 def list_sessions(
-    agent_type: Optional[AgentType] = None,
+    agent_type: AgentType | None = None,
     limit: int = 20,
-    status: Optional[SessionStatus] = None,
-) -> List[MonitoredSession]:
+    status: SessionStatus | None = None,
+) -> list[MonitoredSession]:
     """List sessions
 
     Args:
@@ -745,7 +745,7 @@ def list_sessions(
     for _mtime, session_dir in candidates[:read_budget]:
         metadata_path = session_dir / "metadata.json"
         try:
-            with open(metadata_path, "r", encoding="utf-8") as f:
+            with open(metadata_path, encoding="utf-8") as f:
                 data = json.load(f)
             session = MonitoredSession.model_validate(data)
 
@@ -770,7 +770,7 @@ def list_sessions(
 
 def get_session_data(
     session_id: str, agent_type: AgentType = AgentType.CLAUDE
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Get complete session data
 
     Args:
@@ -821,7 +821,7 @@ def delete_session(
 
 def clean_old_sessions(
     max_age_days: int = 30,
-    agent_type: Optional[AgentType] = None,
+    agent_type: AgentType | None = None,
 ) -> int:
     """Clean expired sessions
 
@@ -839,9 +839,10 @@ def clean_old_sessions(
 
     cleaned = 0
     for session in sessions:
-        if session.last_activity < cutoff:
-            if delete_session(session.session_id, session.agent_type):
-                cleaned += 1
+        if session.last_activity < cutoff and delete_session(
+            session.session_id, session.agent_type
+        ):
+            cleaned += 1
 
     logger.info(f"Cleaned {cleaned} expired sessions")
     return cleaned

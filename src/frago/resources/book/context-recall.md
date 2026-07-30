@@ -2,7 +2,7 @@
 
 分类: 效率（AVAILABLE）
 
-你每次启动都是零记忆。而过去的工作产出都落在 `~/.frago/data/<语义目录>/` 下：一次调研的笔记、一份 spec、一个 notebook 账本、几份中间数据。
+你每次启动都是零记忆。而过去的工作产出都落在 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/` 下：一次调研的笔记、一份 spec、一个 notebook 账本、几份中间数据。
 
 你记得的通常只是一个关键词（"cxmt 那个视频"、"session workbench"），而目录名带日期前缀、带连字符、带你没记住的限定词。列一遍目录再挨个猜哪个是，等于每次回到旧任务都要先付一轮探索。
 
@@ -77,4 +77,4 @@ recipe 的依赖树、日志轮转。它们的名字照样会跟关键词撞上�
 
 ## 与沉淀侧的关系
 
-`save-conversation` 那类技能把经验写进 `~/.frago/data/<目录>/notebook.md`，这条命令是它的读回口。做完一件事沉淀下来，下次冷启动一句 `{{frago_launcher}} context data:<关键词>` 就能找回来——闭环的两端要配套用。
+`save-conversation` 那类技能把经验写进 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/notebook.md`，这条命令是它的读回口。做完一件事沉淀下来，下次冷启动一句 `{{frago_launcher}} context data:<关键词>` 就能找回来——闭环的两端要配套用。

@@ -10,11 +10,10 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from frago.compat import find_claude_cli, get_windows_subprocess_kwargs
 from frago.config.config_service import ConfigService
@@ -33,21 +32,21 @@ class TitleManager:
     """Manages AI-generated session titles."""
 
     def __init__(self):
-        self._cache: Optional[Dict[str, Any]] = None
+        self._cache: dict[str, Any] | None = None
 
-    def _load_sessions_json(self) -> Dict[str, Any]:
+    def _load_sessions_json(self) -> dict[str, Any]:
         """Load sessions.json, create if not exists."""
         if self._cache is not None:
             return self._cache
 
         if SESSIONS_JSON_PATH.exists():
             try:
-                with open(SESSIONS_JSON_PATH, "r", encoding="utf-8") as f:
+                with open(SESSIONS_JSON_PATH, encoding="utf-8") as f:
                     self._cache = json.load(f)
                 # Validate schema
                 if not isinstance(self._cache, dict):
                     self._cache = self._create_default()
-            except (json.JSONDecodeError, IOError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to load sessions.json: {e}")
                 self._cache = self._create_default()
         else:
@@ -55,7 +54,7 @@ class TitleManager:
 
         return self._cache
 
-    def _create_default(self) -> Dict[str, Any]:
+    def _create_default(self) -> dict[str, Any]:
         """Create default sessions.json structure."""
         return {
             "schema_version": SCHEMA_VERSION,
@@ -75,8 +74,8 @@ class TitleManager:
     def get_title(
         self,
         session_id: str,
-        fallback_name: Optional[str] = None
-    ) -> Optional[str]:
+        fallback_name: str | None = None
+    ) -> str | None:
         """Get title for session.
 
         Returns cached title or fallback.
@@ -107,7 +106,7 @@ class TitleManager:
         session_id: str,
         agent_type: AgentType = AgentType.CLAUDE,
         force: bool = False
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Generate title for session if not already generated.
 
         Uses haiku model via Claude Code CLI.
@@ -161,7 +160,7 @@ class TitleManager:
         session_id: str,
         agent_type: AgentType = AgentType.CLAUDE,
         force: bool = False
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         """Async version of generate_title_if_needed.
 
         Runs the blocking subprocess call in a thread pool executor.
@@ -222,7 +221,7 @@ class TitleManager:
         self,
         session_id: str,
         agent_type: AgentType
-    ) -> Optional[str]:
+    ) -> str | None:
         """Extract first 5000 chars of session content."""
         try:
             from frago.session.storage import read_steps
@@ -254,7 +253,7 @@ class TitleManager:
         """Generate hash of content for change detection."""
         return hashlib.sha256(content.encode()).hexdigest()[:12]
 
-    def _call_haiku_for_title(self, content: str) -> tuple[Optional[str], Optional[str]]:
+    def _call_haiku_for_title(self, content: str) -> tuple[str | None, str | None]:
         """Call Claude CLI with haiku model to generate title.
 
         Args:
@@ -389,7 +388,7 @@ Title:'''
 
 
 # Global singleton instance
-_title_manager: Optional[TitleManager] = None
+_title_manager: TitleManager | None = None
 
 
 def get_title_manager() -> TitleManager:

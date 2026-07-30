@@ -3,7 +3,7 @@ import { usePageStore } from '../pageStore';
 
 function reset() {
   usePageStore.setState({
-    currentPage: 'claude_sessions',
+    currentPage: 'session_workbench',
     currentTaskId: null,
     currentRecipeName: null,
     currentProjectId: null,
@@ -13,9 +13,9 @@ function reset() {
 describe('pageStore', () => {
   beforeEach(reset);
 
-  it('starts on the claude_sessions homepage with no contextual ids', () => {
+  it('starts on the session homepage with no contextual ids', () => {
     const s = usePageStore.getState();
-    expect(s.currentPage).toBe('claude_sessions');
+    expect(s.currentPage).toBe('session_workbench');
     expect(s.currentTaskId).toBeNull();
     expect(s.currentRecipeName).toBeNull();
     expect(s.currentProjectId).toBeNull();

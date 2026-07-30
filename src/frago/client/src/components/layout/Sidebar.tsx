@@ -17,7 +17,8 @@ export interface RailItem {
 }
 
 export const NAV_ITEMS: RailItem[] = [
-  { id: 'claude_sessions', label: 'sessions', icon: <MessageSquare size={20} /> },
+  // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 sessions。
+  { id: 'session_workbench', label: 'sessions', icon: <MessageSquare size={20} /> },
   { id: 'recipes', label: 'recipes', icon: <LayoutGrid size={20} /> },
 ];
 
@@ -28,7 +29,7 @@ export const CONFIG_ITEM: RailItem = {
 };
 
 export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
-  if (id === 'claude_sessions') return currentPage === 'claude_sessions';
+  if (id === 'session_workbench') return currentPage === 'session_workbench';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
   if (id === 'settings') return currentPage === 'settings';
   return false;
