@@ -124,6 +124,28 @@
         checkServerReady();
       });
 
+      // Prefetch session data in parallel with bundle download
+      (function () {
+        var prefetched = {sessions: null, fetchedAt: null};
+        try {
+          fetch('/api/workbench/sessions')
+            .then(function (res) {
+              if (res.ok) return res.json();
+              throw new Error('Prefetch failed');
+            })
+            .then(function (data) {
+              prefetched.sessions = data;
+              prefetched.fetchedAt = Date.now();
+            })
+            .catch(function () {
+              // Silently fail — React will retry on mount
+            });
+        } catch (_) {
+          // Silently fail
+        }
+        window.__frago_prefetched__ = prefetched;
+      })();
+
       // Hide loading when React app is mounted
       window.fragoHideLoading = function() {
         var loadingEl = document.getElementById('frago-loading');
