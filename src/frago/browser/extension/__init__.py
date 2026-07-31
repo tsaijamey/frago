@@ -13,7 +13,7 @@ Architecture (P1):
          │ unix socket          │ stdio (native messaging)
          ▼                      ▼
     ┌───────────────────────────────┐
-    │   native host daemon          │ ~/.frago/chrome/extension.sock
+    │   native host daemon          │ ~/.frago/browser/extension.sock
     │   (frago extension daemon)    │
     └───────────────────────────────┘
               ▲

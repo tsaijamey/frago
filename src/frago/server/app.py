@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from frago.server.routes import (
     agent_router,
     app_pages_router,
-    chrome_dashboard_router,
+    browser_dashboard_router,
     config_router,
     files_router,
     github_star_router,
@@ -490,7 +490,7 @@ def create_app(
     app.include_router(app_pages_router, prefix="/app", tags=["app_pages"])
 
     # Chrome landing page dashboard (not under /api)
-    app.include_router(chrome_dashboard_router, prefix="/chrome", tags=["chrome"])
+    app.include_router(browser_dashboard_router, prefix="/browser", tags=["browser"])
     app.include_router(files_router, prefix="/api", tags=["files"])
     app.include_router(workspace_router, prefix="/api", tags=["workspace"])
 

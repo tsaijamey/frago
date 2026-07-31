@@ -2,14 +2,14 @@
 
 One-shot ``start`` orchestration: pick browser → ensure daemon →
 write manifest → launch browser → wait for bridge handshake. Used by
-``frago chrome start --backend extension``.
+``frago browser start --backend extension``.
 
 The orchestration is **idempotent**:
 
 - Daemon: if a healthy daemon is already running, reuse it.
 - Manifest: write unconditionally (small file, content-deterministic).
 - Browser: launch fresh; if profile is already locked by another Chrome
-  instance, fail loud pointing the caller at ``frago chrome stop``.
+  instance, fail loud pointing the caller at ``frago browser stop``.
 """
 from __future__ import annotations
 
@@ -314,7 +314,7 @@ def start_extension_bridge(
     if _profile_locked(profile):
         raise RuntimeError(
             f"profile {profile} is locked — another browser instance is "
-            f"already running on it. Run `frago chrome stop` first, or "
+            f"already running on it. Run `frago browser stop` first, or "
             f"close the browser window manually."
         )
     if reseed_profile:

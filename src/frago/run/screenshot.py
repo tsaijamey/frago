@@ -10,7 +10,7 @@ from typing import Tuple
 
 from slugify import slugify
 
-from ..chrome.cdp.session import CDPSession
+from ..browser.cdp.session import CDPSession
 from .exceptions import FileSystemError
 from .utils import ensure_directory_exists
 

@@ -25,7 +25,7 @@
     },
     "chrome": {
       "description": "CDP 浏览器自动化，25+ 命令",
-      "explore": "frago chrome --help"
+      "explore": "frago browser --help"
     },
     "schedule": {
       "add_recipe": "frago schedule add <recipe_name> --every 10m --name '名称' — 定时执行 recipe",

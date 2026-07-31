@@ -1,6 +1,6 @@
-"""Chrome landing page dashboard.
+"""Browser landing page dashboard.
 
-Serves a lightweight HTML dashboard at /chrome/dashboard that shows
+Serves a lightweight HTML dashboard at /browser/dashboard that shows
 the current tab group state. The page auto-refreshes via polling
 the tab group state file.
 """
@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 router = APIRouter()
 
-STATE_FILE = Path.home() / ".frago" / "chrome" / "tab_groups.json"
+STATE_FILE = Path.home() / ".frago" / "browser" / "tab_groups.json"
 
 DASHBOARD_HTML = """\
 <!DOCTYPE html>
@@ -32,7 +32,7 @@ h1{font-size:36px;font-weight:700;margin-bottom:8px}
 </style></head>
 <body>
 <h1>frago</h1>
-<p class="subtitle">is controlling your Chrome</p>
+<p class="subtitle">is controlling your Browser</p>
 <div id="groups"><p class="empty">No active tab groups</p></div>
 <script>
 function render(data) {
@@ -60,7 +60,7 @@ window.__frago_update_dashboard__ = render;
 // Poll for updates every 3s
 async function poll() {
   try {
-    var resp = await fetch('/chrome/dashboard/state');
+    var resp = await fetch('/browser/dashboard/state');
     if (resp.ok) render(await resp.json());
   } catch(e) {}
   setTimeout(poll, 3000);
@@ -71,13 +71,13 @@ poll();
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def chrome_dashboard():
-    """Serve the Chrome tab group dashboard page."""
+async def browser_dashboard():
+    """Serve the Browser tab group dashboard page."""
     return DASHBOARD_HTML
 
 
 @router.get("/dashboard/state")
-async def chrome_dashboard_state():
+async def browser_dashboard_state():
     """Return current tab group state as JSON."""
     if not STATE_FILE.exists():
         return JSONResponse({"groups": {}})

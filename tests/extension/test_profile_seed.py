@@ -1,4 +1,4 @@
-"""Unit tests for first-launch profile seeding (frago.chrome.profile_seed).
+"""Unit tests for first-launch profile seeding (frago.browser.profile_seed).
 
 Simulates a system browser profile in a temp directory and asserts the
 copy semantics both backends rely on: Local State + Default/ copied,
@@ -6,7 +6,7 @@ cache directories excluded, second call is a no-op.
 """
 from pathlib import Path
 
-from frago.chrome.profile_seed import (
+from frago.browser.profile_seed import (
     seed_profile_from_system,
     system_profile_dir,
 )

@@ -17,8 +17,8 @@ for the full design.
 ## Layout
 
     src/frago/_resources/extension_bundle/        ← MV3 extension (independent project, own README)
-    src/frago/extension/            ← this package: daemon, relay, JSON-RPC types
-    src/frago/chrome/backends/      ← CDP and Extension backend adapters
+    src/frago/browser/extension/    ← this package: daemon, relay, JSON-RPC types
+    src/frago/browser/backends/      ← CDP and Extension backend adapters
     src/frago/cli/extension_commands.py  ← `frago extension` CLI group
     scripts/dev_launch_extension.py ← dev-only sideloader (not part of agent OS surface)
     tests/extension/                ← unit + parity tests
@@ -30,7 +30,7 @@ for the full design.
     frago process                   Chrome browser
          │                                │
          │ unix socket                    │ stdio (native messaging)
-         │ ~/.frago/chrome/               │
+         │ ~/.frago/browser/               │
          │   extension.sock               │
          ▼                                ▼
     ┌────────────────────────────────────────┐
@@ -47,7 +47,7 @@ for the full design.
 ```
 
 The **daemon** is a singleton. Both frago CLI clients (e.g. recipes
-running `frago chrome navigate --backend extension`) and Chrome (via
+running `frago browser navigate --backend extension`) and Chrome (via
 the relay) connect to the same unix socket. Requests are rewritten
 with internal IDs, forwarded to the extension, and the response is
 routed back. Events (id=None) are broadcast to all clients.
@@ -65,8 +65,8 @@ frago extension install
 # 3. Verify the bridge is up.
 frago extension status
 
-# 4. Use it via the unified chrome CLI:
-frago chrome navigate https://example.com --group demo --backend extension
+# 4. Use it via the unified browser CLI:
+frago browser navigate https://example.com --group demo --backend extension
 ```
 
 ## Dev setup (sideload an unpacked bundle)
@@ -85,12 +85,13 @@ frago extension status
 |---|---|
 | Native messaging protocol (JSON-RPC 2.0, length-prefixed) | ✅ done |
 | Daemon + relay (multi-client multiplexer) | ✅ done |
-| Backend abstraction `frago.chrome.backends` (CDP + Extension) | ✅ done |
-| `frago chrome <cmd> --backend extension` switch | ✅ landed in P1.5 |
+| Backend abstraction `frago.browser.backends` (CDP + Extension) | ✅ done |
+| `frago browser <cmd> --backend extension` switch | ✅ landed in P1.5 |
 | Legacy `frago extension <mvp-cmd>` aliases | ⚠️ deprecated (notice on first use), removal in P2 |
 | Unit tests: protocol, daemon roundtrip, backend parity | ✅ passing |
-| End-to-end against live Chrome | ⚠️ blocked by Chrome Stable's `--load-extension` policy on this host; mock e2e covers SW-adjacent half |
-| Firefox / Edge / Brave support | ❌ not in scope (P2+) |
+| End-to-end against live Chrome | ⚠️ blocked by Chrome Stable's `--load-extension` policy (v137+); default browser is now Edge, mock e2e covers SW-adjacent half |
+| Edge / Chromium / Brave / Vivaldi support | ✅ picked automatically, Edge first (see `pick_browser_for_extension`) |
+| Firefox support | ❌ not in scope (non-Chromium) |
 
 ## FAQ
 
@@ -122,8 +123,8 @@ Not in MVP. The daemon rejects a second extension connection with
 |---|---|
 | `protocol.py` | JSON-RPC types, frame encoding |
 | `native_host.py` | Daemon, relay, DaemonClient, manifest installer |
-| `../chrome/backends/base.py` | `ChromeBackend` ABC + result dataclasses |
-| `../chrome/backends/cdp.py` | Wraps existing `CDPSession` |
-| `../chrome/backends/extension.py` | RPC client + (dev-only) browser launcher helper |
+| `../browser/backends/base.py` | `ChromeBackend` ABC + result dataclasses |
+| `../browser/backends/cdp.py` | Wraps existing `CDPSession` |
+| `../browser/backends/extension.py` | RPC client + (dev-only) browser launcher helper |
 | `../cli/extension_commands.py` | `frago extension` CLI group |
 | `../../../tests/extension/test_mvp_parity.py` | Protocol + daemon + backend shape tests |

@@ -165,7 +165,7 @@ class ResourceCounts:
 class DashboardStatus:
     """System status for dashboard footer."""
 
-    chrome_connected: bool = False
+    browser_connected: bool = False
     tab_count: int = 0
     error_count: int = 0
     last_synced_at: Optional[str] = None

@@ -35,14 +35,14 @@ import tempfile
 import time
 from pathlib import Path
 
-from frago.chrome.extension.native_host import SOCK_PATH, STABLE_EXTENSION_ID, install_manifest, chrome_manifest_dir, HOST_NAME
-from frago.chrome.backends.extension import (
+from frago.browser.extension.native_host import SOCK_PATH, STABLE_EXTENSION_ID, install_manifest, chrome_manifest_dir, HOST_NAME
+from frago.browser.backends.extension import (
     ExtensionBackendError, ExtensionChromeBackend, launch_chrome_with_extension,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-from frago.chrome.extension import bundle_path
+from frago.browser.extension import bundle_path
 BUNDLE_DIR = bundle_path()
 STARTUP_TIMEOUT = float(os.environ.get("FRAGO_E2E_STARTUP_TIMEOUT", "20"))
 

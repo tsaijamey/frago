@@ -1,11 +1,11 @@
-# chrome-anti-bot
+# browser-anti-bot
 
 遇到 Cloudflare / Datadome / PerimeterX / Akamai / captcha / "verify you are human" / 403 / 重定向到验证页 时，**禁止盲目重试 click 或 navigate**。
 
 ## 探针命令
 
 ```bash
-{{frago_launcher}} chrome detect --group <name>
+{{frago_launcher}} browser detect --group <name>
 ```
 
 返回 JSON：
@@ -23,12 +23,12 @@
 | type | 含义 | 正确处理 |
 |------|------|----------|
 | `interactive` | 需要点击复选框、拖拽、点图（hCaptcha / Turnstile checkbox / reCAPTCHA challenge） | **停下，告知用户需要人工干预**，不要自动 click——脚本化点击会被识别为 bot 加重封锁 |
-| `invisible_or_static` | 不可见挑战或静态等待（CF "checking your browser..." 5s 自动放行）| `frago chrome wait 8` 后再 detect 一次；最多重试 2 次 |
+| `invisible_or_static` | 不可见挑战或静态等待（CF "checking your browser..." 5s 自动放行）| `frago browser wait 8` 后再 detect 一次；最多重试 2 次 |
 | `blocked` | 已被拒（403、IP 黑名单）| **失败**：换 IP / 换账号 / 用真人浏览器手动开。不再自动重试 |
 
 ## 为什么过检率高
 
-frago chrome 运行在真实用户浏览器环境（扩展 + 真实 profile），没有自动化调试通道的指纹，多数 anti-bot 检测直接放行。这是默认行为，不需要任何额外 flag。
+frago browser 运行在真实用户浏览器环境（扩展 + 真实 profile），没有自动化调试通道的指纹，多数 anti-bot 检测直接放行。这是默认行为，不需要任何额外 flag。
 
 ## 反模式（NEVER）
 
@@ -39,12 +39,12 @@ frago chrome 运行在真实用户浏览器环境（扩展 + 真实 profile）�
 ## 链路示例
 
 ```bash
-{{frago_launcher}} chrome start   # 首次：自动选浏览器+加载扩展+拉起 daemon
-{{frago_launcher}} chrome navigate "https://target.com" --group t
-{{frago_launcher}} chrome detect --group t
+{{frago_launcher}} browser start   # 首次：自动选浏览器+加载扩展+拉起 daemon
+{{frago_launcher}} browser navigate "https://target.com" --group t
+{{frago_launcher}} browser detect --group t
 # {"challenge": true, "type": "invisible_or_static"}
-{{frago_launcher}} chrome wait 8 --group t
-{{frago_launcher}} chrome detect --group t
+{{frago_launcher}} browser wait 8 --group t
+{{frago_launcher}} browser detect --group t
 # {"challenge": false} → 继续后续操作
 ```
 

@@ -27,8 +27,8 @@ class TestSystemServiceGetStatus:
 
         assert "cpu_percent" in result
         assert "memory_percent" in result
-        assert "chrome_available" in result
-        assert "chrome_connected" in result
+        assert "browser_available" in result
+        assert "browser_connected" in result
         assert "tasks_running" in result
 
     def test_returns_cpu_and_memory_percent(self):

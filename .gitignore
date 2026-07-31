@@ -51,7 +51,7 @@ nul
 # ====================
 # Frago Runtime
 # ====================
-chrome_profile/*
+browser_profile/*
 projects/
 
 # Chromium spellcheck dictionaries downloaded by Chrome automation

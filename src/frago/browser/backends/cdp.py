@@ -1,6 +1,6 @@
 """CDP-backed ChromeBackend.
 
-Thin wrapper around :class:`frago.chrome.cdp.session.CDPSession` + TabGroupManager.
+Thin wrapper around :class:`frago.browser.cdp.session.CDPSession` + TabGroupManager.
 Preserves existing behavior for callers that go through the adapter.
 """
 from __future__ import annotations

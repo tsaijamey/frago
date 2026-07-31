@@ -13,7 +13,7 @@ verify:
 2. ExtensionChromeBackend serializes each Batch 1 call to the expected
    JSON-RPC method name + params, and decodes the response shape used by
    the CLI dispatch layer.
-3. `frago chrome --backend extension <batch1-cmd>` routes to the
+3. `frago browser --backend extension <batch1-cmd>` routes to the
    extension backend (not the CDP CLI callback).
 """
 from __future__ import annotations
@@ -25,10 +25,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from frago.chrome.backends.base import ChromeBackend
-from frago.chrome.backends.cdp import CDPChromeBackend
-from frago.chrome.backends.extension import ExtensionChromeBackend
-from frago.cli import chrome_commands as cc
+from frago.browser.backends.base import ChromeBackend
+from frago.browser.backends.cdp import CDPChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
+from frago.cli import browser_commands as cc
 
 
 BATCH1_METHODS = [
@@ -219,17 +219,17 @@ def fake_ext(monkeypatch):
 def _run(*args, env_overrides=None):
     # Clear run-context env vars so --group requirement is honored and
     # reset() sees a None group by default.
-    env = {"FRAGO_CURRENT_RUN": "", "FRAGO_CHROME_BACKEND": ""}
+    env = {"FRAGO_CURRENT_RUN": "", "FRAGO_BROWSER_BACKEND": ""}
     if env_overrides:
         env.update(env_overrides)
-    return CliRunner().invoke(cc.chrome_group, list(args), env=env)
+    return CliRunner().invoke(cc.browser_group, list(args), env=env)
 
 
 def test_cli_backend_ext_routes_stop(fake_ext, monkeypatch):
-    """`frago chrome stop --backend extension` goes through the lifecycle
+    """`frago browser stop --backend extension` goes through the lifecycle
     orchestrator (F task), not directly through ExtensionChromeBackend.stop().
     Mock the orchestrator to avoid touching real processes."""
-    from frago.chrome.extension import lifecycle as lc
+    from frago.browser.extension import lifecycle as lc
 
     fake_result = lc.BridgeStopResult(
         browser_pid=None, browser_stopped=False, browser_force_killed=False,

@@ -1,4 +1,4 @@
-"""View command - Universal content viewer CLI using Chrome browser."""
+"""View command - Universal content viewer CLI using the browser."""
 
 import sys
 from pathlib import Path
@@ -40,10 +40,10 @@ def view(
     stdin: bool,
     content: str | None,
 ):
-    """View content in Chrome browser with syntax highlighting and Mermaid support.
+    """View content in the browser with syntax highlighting and Mermaid support.
 
-    Opens content in a new Chrome tab. Automatically starts frago server and
-    Chrome if not already running.
+    Opens content in a new browser tab. Automatically starts frago server and
+    the browser if not already running.
 
     \b
     Supported formats:
@@ -83,9 +83,9 @@ def view(
 
     # Import and run viewer
     try:
-        from frago.viewer.chrome import ChromeViewer
+        from frago.viewer.browser import BrowserViewer
 
-        viewer = ChromeViewer(
+        viewer = BrowserViewer(
             content=content_input,
             mode="auto",
             theme=theme,

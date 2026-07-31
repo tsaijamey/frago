@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from frago.chrome.extension import native_host as nh
+from frago.browser.extension import native_host as nh
 
 
 def test_default_manifest_dir_linux_edge():

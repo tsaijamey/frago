@@ -30,7 +30,7 @@ def _resolve_recipe_dir(name: str, type_: str | None, runtime: str | None) -> Pa
     if type_ == 'workflow':
         return base / 'workflows' / name
     if runtime == 'chrome-js':
-        return base / 'atomic' / 'chrome' / name
+        return base / 'atomic' / 'browser' / name
     return base / 'atomic' / 'system' / name
 
 
@@ -38,7 +38,7 @@ def _find_recipe_dir_by_name(name: str) -> Path | None:
     """Find existing recipe directory by name from registry or filesystem."""
     base = Path.home() / '.frago' / 'recipes'
     # Check known locations
-    for subdir in ['atomic/system', 'atomic/chrome', 'workflows']:
+    for subdir in ['atomic/system', 'atomic/browser', 'workflows']:
         candidate = base / subdir / name
         if candidate.exists():
             return candidate
@@ -1036,7 +1036,7 @@ def open_ui(url: str):
 
     Interactive recipes call this to show their result page to the human.
     It uses the OS default browser, NOT the CDP-controlled Chrome that
-    `frago chrome` drives: the page is for a person to read, and opening it
+    `frago browser` drives: the page is for a person to read, and opening it
     here keeps the agent's CDP browser free and removes any dependency on
     that browser being up. This is the single seam for "open a recipe page
     for the human" — change the open behavior here, not in each recipe.

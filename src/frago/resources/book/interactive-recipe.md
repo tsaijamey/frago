@@ -13,12 +13,12 @@ agent 要做人机协作的配方（用户审核、标注、选择），需要�
 
   {{frago_launcher}} recipe open <url>
 
-NEVER 用 `{{frago_launcher}} chrome navigate` 打开配方页面。那条命令驱动的是 agent 自己的受控浏览器，用途是抓网页、做自动化；配方页面走它既没有意义，也会让 agent 误以为页面在自己手里。两条路的分工如下：
+NEVER 用 `{{frago_launcher}} browser navigate` 打开配方页面。那条命令驱动的是 agent 自己的受控浏览器，用途是抓网页、做自动化；配方页面走它既没有意义，也会让 agent 误以为页面在自己手里。两条路的分工如下：
 
 | 命令 | 开在哪个浏览器 | 谁在看 | agent 能否控制 |
 |------|---------------|--------|---------------|
 | `{{frago_launcher}} recipe open <url>` | 系统默认浏览器 | 人 | 不能 |
-| `{{frago_launcher}} chrome navigate <url> --group <g>` | frago 驱动的受控浏览器 | agent | 能 |
+| `{{frago_launcher}} browser navigate <url> --group <g>` | frago 驱动的受控浏览器 | agent | 能 |
 
 批量跑一个带界面的配方前先想清楚：跑 50 次就是往用户浏览器里推 50 个标签页，而 agent 收不回来。批量场景用配方的非界面模式（多数带界面的配方都留了只出数据的入参），或者一次只跑一局。
 
@@ -239,7 +239,7 @@ inputs 里通常有工作目录之类的入参。outputs 里给 `url`，需要�
 1. frago server 运行中：`{{frago_launcher}} server`（端口 8093）
 2. 工作目录存在，脚本启动时自行校验
 
-不需要 `{{frago_launcher}} chrome start`。配方页面与那个受控浏览器没有关系，把它写进前置条件会让后来的 agent 以为页面归自己管。
+不需要 `{{frago_launcher}} browser start`。配方页面与那个受控浏览器没有关系，把它写进前置条件会让后来的 agent 以为页面归自己管。
 
 ## 创建检查清单
 
@@ -258,7 +258,7 @@ inputs 里通常有工作目录之类的入参。outputs 里给 `url`，需要�
 
 ## 不要做
 
-- 不要用 `{{frago_launcher}} chrome navigate` 打开配方页面
+- 不要用 `{{frago_launcher}} browser navigate` 打开配方页面
 - 不要复制 `assets/`，不要往磁盘写 `config.json`
 - 不要用哈希拼 `content_id`，不要再提 `viewer/content/<哈希>/`
 - 不要把接口基地址写死成 `http://127.0.0.1:8093/api`

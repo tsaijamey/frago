@@ -26,13 +26,13 @@ from pathlib import Path
 
 import click
 
-from ..chrome.extension import native_host as nh
+from ..browser.extension import native_host as nh
 from .agent_friendly import AgentFriendlyGroup
 
 _DEPRECATION_SHOWN = False
 
 # MVP commands that were temporarily aliased under `frago extension`
-# during P1; they now live on `frago chrome <cmd> --backend extension`
+# during P1; they now live on `frago browser <cmd> --backend extension`
 # and emit a deprecation notice when invoked via the legacy path.
 _MVP_ALIASES = {"navigate", "exec-js", "get-content", "click", "screenshot"}
 
@@ -45,7 +45,7 @@ def _warn_if_mvp_alias(subcommand: str) -> None:
     _DEPRECATION_SHOWN = True
     click.echo(
         f"[DEPRECATED] `frago extension {subcommand}` will be removed in P2. "
-        f"Use `frago chrome {subcommand} --backend extension` instead.",
+        f"Use `frago browser {subcommand} --backend extension` instead.",
         err=True,
     )
 
@@ -56,7 +56,7 @@ def extension_group(ctx):
     """Browser extension bridge management.
 
     P1.5: the MVP 6 commands (navigate/exec-js/get-content/click/
-    screenshot) are now available on ``frago chrome`` via
+    screenshot) are now available on ``frago browser`` via
     ``--backend extension``. These aliases remain for backwards
     compatibility and emit a deprecation notice when used.
     """
@@ -89,7 +89,7 @@ def native_host_cmd(sock):
 @click.argument("extension_id", required=False)
 @click.option("--executable", default=None,
               help="Absolute path to the native-host launcher. "
-                   "Defaults to a wrapper script under ~/.frago/chrome/.")
+                   "Defaults to a wrapper script under ~/.frago/browser/.")
 @click.option("--browser", "-b", default=None,
               help="Target browser brand (edge, chromium, chrome, brave, "
                    "vivaldi, edge-beta, chrome-beta, chrome-dev, chrome-canary). "
@@ -130,7 +130,7 @@ def install_cmd(extension_id, executable, browser, target_dir):
     # Resolve brand when caller didn't specify and didn't override target_dir.
     chosen_brand = browser
     if target_dir is None and chosen_brand is None:
-        from ..chrome.backends.extension import pick_browser_for_extension
+        from ..browser.backends.extension import pick_browser_for_extension
         choice = pick_browser_for_extension()
         if not choice:
             raise click.UsageError(
@@ -159,7 +159,7 @@ def install_cmd(extension_id, executable, browser, target_dir):
 @extension_group.command("status")
 def status_cmd():
     """Ping the daemon + bridge."""
-    from ..chrome.backends.extension import ExtensionBackendError, ExtensionChromeBackend
+    from ..browser.backends.extension import ExtensionBackendError, ExtensionChromeBackend
     try:
         info = ExtensionChromeBackend().start()
         click.echo(json.dumps(info, indent=2, default=str))
@@ -179,7 +179,7 @@ def status_cmd():
 
 
 def _be():
-    from ..chrome.backends.extension import ExtensionChromeBackend
+    from ..browser.backends.extension import ExtensionChromeBackend
     return ExtensionChromeBackend()
 
 

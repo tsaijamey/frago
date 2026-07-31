@@ -16,15 +16,15 @@
   1. {{frago_launcher}} run find <调研关键词>                # 搜索历史类似任务
   2. {{frago_launcher}} run init "调研主题描述"
   3. {{frago_launcher}} recipe list | grep research        # 检查已有调研 recipe
-  4. {{frago_launcher}} chrome navigate "https://google.com/search?q=关键词"
-  5. {{frago_launcher}} chrome get-content --selector "#search"
+  4. {{frago_launcher}} browser navigate "https://google.com/search?q=关键词"
+  5. {{frago_launcher}} browser get-content --selector "#search"
   6. 逐层深入链接（禁止猜测 URL）
   7. {{frago_launcher}} run log --step "发现" --data '{"_insights": [...]}'
   8. 整理产出到 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
 
 ## 关键约束
-- must-browser-search — 搜索必须走 {{frago_launcher}} chrome navigate google
-- chrome-usage — 读内容用 get-content 不截图读字；不猜 URL，从搜索结果逐层探索
+- must-browser-search — 搜索必须走 {{frago_launcher}} browser navigate google
+- browser-usage — 读内容用 get-content 不截图读字；不猜 URL，从搜索结果逐层探索
 - must-data-dir — 所有产出放 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/ 内
 - run-logging — 每 5 条日志至少 1 条含 _insights
 

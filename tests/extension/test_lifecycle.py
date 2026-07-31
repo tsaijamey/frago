@@ -12,13 +12,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from frago.chrome.extension import lifecycle as lc
+from frago.browser.extension import lifecycle as lc
 
 
 def test_no_browser_raises():
     """When picker returns None, orchestration fails loud."""
     with patch.object(lc, "bundle_path", return_value=Path("/fake/bundle")), \
-         patch("frago.chrome.backends.extension.pick_browser_for_extension",
+         patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=None):
         with pytest.raises(RuntimeError, match="no Chromium-class browser"):
             lc.start_extension_bridge()
@@ -35,7 +35,7 @@ def test_profile_lock_blocks_start(tmp_path):
     profile = tmp_path / "profile"
     profile.mkdir()
     with patch.object(lc, "bundle_path", return_value=tmp_path / "bundle"), \
-         patch("frago.chrome.backends.extension.pick_browser_for_extension",
+         patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=MagicMock(path="/usr/bin/microsoft-edge",
                                        brand="edge")), \
          patch.object(lc, "_profile_locked", return_value=True):
@@ -48,7 +48,7 @@ def test_missing_bundle_manifest_raises(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()  # but no manifest.json inside
     profile = tmp_path / "profile"
-    with patch("frago.chrome.backends.extension.pick_browser_for_extension",
+    with patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=MagicMock(path="/usr/bin/microsoft-edge",
                                        brand="edge")), \
          patch.object(lc, "_profile_locked", return_value=False):
@@ -73,11 +73,11 @@ def test_idempotent_daemon_reuse(tmp_path):
                       return_value=Path("/tmp/fake-launcher.sh")), \
          patch.object(lc, "install_manifest",
                       return_value=Path("/tmp/manifest.json")), \
-         patch("frago.chrome.backends.extension.launch_chrome_with_extension",
+         patch("frago.browser.backends.extension.launch_chrome_with_extension",
                return_value=fake_browser_proc), \
          patch.object(lc, "_wait_bridge",
                       return_value={"bridge": {"extensionId": "xyz"}}), \
-         patch("frago.chrome.backends.extension.pick_browser_for_extension",
+         patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=MagicMock(path="/usr/bin/microsoft-edge",
                                        brand="edge")):
         result = lc.start_extension_bridge(
@@ -104,11 +104,11 @@ def test_brand_override_wins_over_picker(tmp_path):
                       return_value=Path("/tmp/launcher.sh")), \
          patch.object(lc, "install_manifest",
                       return_value=Path("/tmp/m.json")), \
-         patch("frago.chrome.backends.extension.launch_chrome_with_extension",
+         patch("frago.browser.backends.extension.launch_chrome_with_extension",
                return_value=fake_browser_proc), \
          patch.object(lc, "_wait_bridge",
                       return_value={"bridge": {"extensionId": "xyz"}}), \
-         patch("frago.chrome.backends.extension.pick_browser_for_extension",
+         patch("frago.browser.backends.extension.pick_browser_for_extension",
                return_value=MagicMock(path="/usr/bin/microsoft-edge",
                                        brand="edge")):
         result = lc.start_extension_bridge(
@@ -139,7 +139,7 @@ def test_stop_when_nothing_running(tmp_path):
     profile = tmp_path / "profile"
     profile.mkdir()
     with patch.object(lc, "_find_daemon_pid", return_value=None), \
-         patch("frago.chrome.extension.lifecycle.SOCK_PATH", tmp_path / "no.sock"):
+         patch("frago.browser.extension.lifecycle.SOCK_PATH", tmp_path / "no.sock"):
         result = lc.stop_extension_bridge(profile_dir=profile)
     assert result.browser_pid is None
     assert result.browser_stopped is False
@@ -163,7 +163,7 @@ def test_stop_kills_browser_and_daemon(tmp_path):
     with patch.object(lc, "_read_profile_lock_pid", return_value=4321), \
          patch.object(lc, "_find_daemon_pid", return_value=1234), \
          patch.object(lc, "_kill_with_grace", side_effect=fake_kill_with_grace), \
-         patch("frago.chrome.extension.lifecycle.SOCK_PATH", sock):
+         patch("frago.browser.extension.lifecycle.SOCK_PATH", sock):
         result = lc.stop_extension_bridge(profile_dir=profile)
     assert kills == [4321, 1234]
     assert result.browser_pid == 4321
@@ -186,7 +186,7 @@ def test_stop_cleans_singleton_lock(tmp_path):
     with patch.object(lc, "_read_profile_lock_pid", return_value=99999), \
          patch.object(lc, "_kill_with_grace", return_value=(True, False)), \
          patch.object(lc, "_find_daemon_pid", return_value=None), \
-         patch("frago.chrome.extension.lifecycle.SOCK_PATH",
+         patch("frago.browser.extension.lifecycle.SOCK_PATH",
                tmp_path / "no-sock"):
         lc.stop_extension_bridge(profile_dir=profile)
     assert not (profile / "SingletonLock").exists()
@@ -205,7 +205,7 @@ def test_stop_then_start_cycle_unblocks_lock(tmp_path):
     with patch.object(lc, "_read_profile_lock_pid", return_value=99999), \
          patch.object(lc, "_kill_with_grace", return_value=(True, False)), \
          patch.object(lc, "_find_daemon_pid", return_value=None), \
-         patch("frago.chrome.extension.lifecycle.SOCK_PATH",
+         patch("frago.browser.extension.lifecycle.SOCK_PATH",
                tmp_path / "no-sock"):
         lc.stop_extension_bridge(profile_dir=profile)
 

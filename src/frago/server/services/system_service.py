@@ -32,8 +32,8 @@ class SystemService:
 
         Returns:
             Dictionary with:
-            - chrome_available: Whether Chrome is available
-            - chrome_connected: Whether Chrome is connected
+            - browser_available: Whether a CDP-capable browser is installed
+            - browser_connected: Whether that browser is currently running
             - projects_count: Number of monitored projects
             - tasks_running: Number of running tasks
         """
@@ -49,15 +49,15 @@ class SystemService:
             )
             tasks_running = len(running_sessions)
 
-            # Check Chrome status via CDP
-            chrome_available = False
-            chrome_connected = False
+            # Check browser status via CDP
+            browser_available = False
+            browser_connected = False
             try:
-                from frago.chrome.cdp.launcher import ChromeLauncher
+                from frago.browser.cdp.launcher import ChromeLauncher
                 launcher = ChromeLauncher()
-                chrome_available = launcher.chrome_path is not None
+                browser_available = launcher.chrome_path is not None
                 status = launcher.get_status()
-                chrome_connected = status.get("running", False)
+                browser_connected = status.get("running", False)
             except Exception:
                 pass
 
@@ -69,7 +69,7 @@ class SystemService:
             # Get tab count from TabManager
             tab_count = 0
             try:
-                from frago.chrome.cdp.tab_manager import TabManager
+                from frago.browser.cdp.tab_manager import TabManager
                 tm = TabManager()
                 tab_count = len(tm._state)
             except Exception:
@@ -78,8 +78,8 @@ class SystemService:
             return {
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory_percent,
-                "chrome_available": chrome_available,
-                "chrome_connected": chrome_connected,
+                "browser_available": browser_available,
+                "browser_connected": browser_connected,
                 "projects_count": 0,  # TODO: implement project counting
                 "tasks_running": tasks_running,
                 "tab_count": tab_count,
@@ -90,8 +90,8 @@ class SystemService:
             return {
                 "cpu_percent": 0.0,
                 "memory_percent": 0.0,
-                "chrome_available": False,
-                "chrome_connected": False,
+                "browser_available": False,
+                "browser_connected": False,
                 "projects_count": 0,
                 "tasks_running": 0,
                 "tab_count": 0,

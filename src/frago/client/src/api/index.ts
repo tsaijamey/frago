@@ -284,7 +284,7 @@ export const getSystemStatus = withMode(
     return {
       cpu_percent: status.cpu_percent ?? 0,
       memory_percent: status.memory_percent ?? 0,
-      chrome_connected: status.chrome_connected ?? false,
+      browser_connected: status.browser_connected ?? false,
     };
   },
   (): Promise<SystemStatus> => pywebviewApi.getSystemStatus(),

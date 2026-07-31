@@ -14,14 +14,14 @@ import time
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
-from frago.chrome.cdp.browser_detection import (
+from frago.browser.cdp.browser_detection import (
     BrowserType,
     find_browser,
     get_default_browser,
 )
-from frago.chrome.cdp.process import kill_existing_chrome
-from frago.chrome.cdp.transport import cdp_get, cdp_ws_connect
-from frago.chrome.profile_seed import seed_profile_from_system, system_profile_dir
+from frago.browser.cdp.process import kill_existing_chrome
+from frago.browser.cdp.transport import cdp_get, cdp_ws_connect
+from frago.browser.profile_seed import seed_profile_from_system, system_profile_dir
 
 # frago profile directory names (legacy flat layout).
 # Kept only to locate old directories for lazy migration; the new layout

@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from frago.chrome.backends.base import ChromeBackend
-from frago.chrome.backends.cdp import CDPChromeBackend
-from frago.chrome.backends.extension import ExtensionChromeBackend
-from frago.chrome.extension import protocol
-from frago.chrome.extension.native_host import (
+from frago.browser.backends.base import ChromeBackend
+from frago.browser.backends.cdp import CDPChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
+from frago.browser.extension import protocol
+from frago.browser.extension.native_host import (
     Daemon,
     encode_frame,
     read_frame_async,
@@ -131,19 +131,19 @@ def test_extension_backend_signatures_match_cdp():
         assert cdp_params == ext_params, f"{method}: cdp={cdp_params} ext={ext_params}"
 
 
-# ────────────────── 4. `frago chrome --backend` wiring ──────────────────
+# ────────────────── 4. `frago browser --backend` wiring ──────────────────
 
 
-def test_chrome_group_exposes_backend_flag():
+def test_browser_group_exposes_backend_flag():
     """--backend option is registered on the chrome group itself."""
-    from frago.cli.chrome_commands import chrome_group
+    from frago.cli.browser_commands import browser_group
 
-    opts = {p.name for p in chrome_group.params}
+    opts = {p.name for p in browser_group.params}
     assert "backend" in opts, f"chrome group params: {opts}"
 
 
 def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
-    """`frago chrome --backend extension <mvp-cmd>` dispatches to extension backend.
+    """`frago browser --backend extension <mvp-cmd>` dispatches to extension backend.
 
     For most commands this means calling FakeBackend methods directly.
     For ``start`` the dispatch goes through the orchestration function
@@ -152,15 +152,15 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
     """
     from click.testing import CliRunner
 
-    from frago.chrome.extension import lifecycle as lc
-    from frago.cli import chrome_commands as cc
+    from frago.browser.extension import lifecycle as lc
+    from frago.cli import browser_commands as cc
 
     calls: list[tuple] = []
 
     class FakeBackend:
         def navigate(self, url, group, *, timeout=15.0):  # noqa: ARG002
             calls.append(("navigate", url, group))
-            from frago.chrome.backends.base import NavigateResult
+            from frago.browser.backends.base import NavigateResult
 
             return NavigateResult(tab_id=1, url=url, title="T")
 
@@ -184,13 +184,13 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
     )
 
     runner = CliRunner()
-    r = runner.invoke(cc.chrome_group, ["--backend", "extension", "start"])
+    r = runner.invoke(cc.browser_group, ["--backend", "extension", "start"])
     assert r.exit_code == 0, r.output
     assert calls[0][0] == "start", calls
 
     calls.clear()
     r = runner.invoke(
-        cc.chrome_group, ["--backend", "extension", "navigate", "https://x", "--group", "t"]
+        cc.browser_group, ["--backend", "extension", "navigate", "https://x", "--group", "t"]
     )
     assert r.exit_code == 0, r.output
     assert calls[0][:2] == ("navigate", "https://x"), calls
@@ -203,8 +203,8 @@ def test_chrome_backend_extension_screenshot_output_omits_base64(monkeypatch, tm
 
     from click.testing import CliRunner
 
-    from frago.chrome.backends.base import ScreenshotResult
-    from frago.cli import chrome_commands as cc
+    from frago.browser.backends.base import ScreenshotResult
+    from frago.cli import browser_commands as cc
 
     out = tmp_path / "shot.png"
 
@@ -216,7 +216,7 @@ def test_chrome_backend_extension_screenshot_output_omits_base64(monkeypatch, tm
 
     monkeypatch.setattr(cc, "_ext_backend", lambda: FakeBackend())
     r = CliRunner().invoke(
-        cc.chrome_group,
+        cc.browser_group,
         ["--backend", "extension", "screenshot", str(out), "--group", "t"],
     )
     assert r.exit_code == 0, r.output

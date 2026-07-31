@@ -11,17 +11,17 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from frago.chrome.cdp.commands.dom import DOMCommands
-    from frago.chrome.cdp.commands.input import InputCommands
-    from frago.chrome.cdp.commands.page import PageCommands
-    from frago.chrome.cdp.commands.runtime import RuntimeCommands
-    from frago.chrome.cdp.commands.screenshot import ScreenshotCommands
-    from frago.chrome.cdp.commands.scroll import ScrollCommands
-    from frago.chrome.cdp.commands.status import StatusCommands
-    from frago.chrome.cdp.commands.target import TargetCommands
-    from frago.chrome.cdp.commands.visual_effects import VisualEffectsCommands
-    from frago.chrome.cdp.commands.wait import WaitCommands
-    from frago.chrome.cdp.commands.zoom import ZoomCommands
+    from frago.browser.cdp.commands.dom import DOMCommands
+    from frago.browser.cdp.commands.input import InputCommands
+    from frago.browser.cdp.commands.page import PageCommands
+    from frago.browser.cdp.commands.runtime import RuntimeCommands
+    from frago.browser.cdp.commands.screenshot import ScreenshotCommands
+    from frago.browser.cdp.commands.scroll import ScrollCommands
+    from frago.browser.cdp.commands.status import StatusCommands
+    from frago.browser.cdp.commands.target import TargetCommands
+    from frago.browser.cdp.commands.visual_effects import VisualEffectsCommands
+    from frago.browser.cdp.commands.wait import WaitCommands
+    from frago.browser.cdp.commands.zoom import ZoomCommands
 
 from .client import CDPClient
 from .config import CDPConfig

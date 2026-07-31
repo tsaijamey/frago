@@ -99,16 +99,16 @@ async def _immediate_loop():
 
 
 def _install_fake_cdp_modules(tgm, tm):
-    """Inject fake frago.chrome.cdp.* modules so the inner imports resolve."""
-    tab_group_mod = types.ModuleType("frago.chrome.cdp.tab_group_manager")
+    """Inject fake frago.browser.cdp.* modules so the inner imports resolve."""
+    tab_group_mod = types.ModuleType("frago.browser.cdp.tab_group_manager")
     tab_group_mod.TabGroupManager = MagicMock(return_value=tgm)
-    tab_mod = types.ModuleType("frago.chrome.cdp.tab_manager")
+    tab_mod = types.ModuleType("frago.browser.cdp.tab_manager")
     tab_mod.TabManager = MagicMock(return_value=tm)
     return patch.dict(
         sys.modules,
         {
-            "frago.chrome.cdp.tab_group_manager": tab_group_mod,
-            "frago.chrome.cdp.tab_manager": tab_mod,
+            "frago.browser.cdp.tab_group_manager": tab_group_mod,
+            "frago.browser.cdp.tab_manager": tab_mod,
         },
     )
 

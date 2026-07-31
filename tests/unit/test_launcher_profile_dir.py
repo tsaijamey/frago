@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from frago.chrome.cdp.launcher import ChromeLauncher
+from frago.browser.cdp.launcher import ChromeLauncher
 
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def isolated_launcher(mock_home):
     at import time (when ``Path.home()`` was still the real home), so they are
     re-pointed at the isolated home here to keep tests off the real ~/.frago.
     """
-    import frago.chrome.cdp.launcher as launcher_mod
-    from frago.chrome.cdp.browser_detection import BrowserType
+    import frago.browser.cdp.launcher as launcher_mod
+    from frago.browser.cdp.browser_detection import BrowserType
 
     def _fake_resolve(browser):
         # Mirror the browser→BrowserType mapping; default to chrome.
@@ -189,7 +189,7 @@ def test_lock_contention_raises():
     """A held migration lock makes the second migrator bail with RuntimeError."""
     import fcntl
 
-    import frago.chrome.cdp.launcher as launcher_mod
+    import frago.browser.cdp.launcher as launcher_mod
 
     frago = Path.home() / ".frago"
     legacy = frago / "chrome_profile"

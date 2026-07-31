@@ -16,10 +16,10 @@ agent 面对多种工具时选错优先级，导致功能重复、效率低下�
 
 | 场景 | 正确做法 | 禁止做法 |
 |------|----------|----------|
-| 搜索信息 | {{frago_launcher}} chrome navigate google 搜索 | WebSearch（桌面模式会崩溃） |
-| 查看网页 | {{frago_launcher}} chrome navigate + get-content | WebFetch |
-| 打开 URL（agent 自己要读要操作） | {{frago_launcher}} chrome navigate | window.open / raw CDP |
-| 打开配方页面给人看 | {{frago_launcher}} recipe open | {{frago_launcher}} chrome navigate（那是 agent 自己的受控浏览器） |
+| 搜索信息 | {{frago_launcher}} browser navigate google 搜索 | WebSearch（桌面模式会崩溃） |
+| 查看网页 | {{frago_launcher}} browser navigate + get-content | WebFetch |
+| 打开 URL（agent 自己要读要操作） | {{frago_launcher}} browser navigate | window.open / raw CDP |
+| 打开配方页面给人看 | {{frago_launcher}} recipe open | {{frago_launcher}} browser navigate（那是 agent 自己的受控浏览器） |
 | 提取数据 | 先查 {{frago_launcher}} recipe list | 从头手写 JS |
 | 文件操作 | Claude Code Read/Write/Edit | 手动 cat/echo |
 

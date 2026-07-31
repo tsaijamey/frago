@@ -197,7 +197,7 @@ export interface UserConfig {
 export interface SystemStatus {
   cpu_percent: number;
   memory_percent: number;
-  chrome_connected: boolean;
+  browser_connected: boolean;
 }
 
 export interface ConnectionStatus {

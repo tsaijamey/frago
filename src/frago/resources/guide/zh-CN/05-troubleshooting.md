@@ -62,7 +62,7 @@ tags:
 1. **启动Chrome**（推荐方法）:
    ```bash
    # 命令行启动（自动启用CDP）
-   frago chrome start
+   frago browser start
    ```
 
 2. **检查Chrome是否已启动**:
@@ -111,7 +111,7 @@ tags:
 
 **1. 使用frago命令启动Chrome**
 ```bash
-frago chrome start
+frago browser start
 ```
 
 这会自动：
@@ -137,7 +137,7 @@ ps aux | grep chrome | grep remote-debugging-port
 Get-Process chrome | Where-Object {$_.CommandLine -like "*remote-debugging-port*"}
 ```
 
-如果没有输出 → Chrome未以CDP模式启动，执行 `frago chrome start`
+如果没有输出 → Chrome未以CDP模式启动，执行 `frago browser start`
 
 ---
 
@@ -172,7 +172,7 @@ netstat -ano | findstr :9222
 mv ~/.frago/profiles/chrome/9222 ~/.frago/profiles/chrome/9222.bak
 
 # 重新启动Chrome
-frago chrome start
+frago browser start
 ```
 
 ---
@@ -198,7 +198,7 @@ frago chrome start
 
 | 错误信息 | 原因 | 解决 |
 |----------|------|------|
-| `Connection refused` | Chrome未启动 | `frago chrome start` |
+| `Connection refused` | Chrome未启动 | `frago browser start` |
 | `Port 9222 in use` | 端口被占用 | 杀死占用进程或换端口 |
 | `Timeout connecting` | 防火墙阻止 | 检查防火墙设置 |
 | `Protocol error` | Chrome版本太旧 | 更新Chrome到最新版 |
@@ -353,7 +353,7 @@ frago session view [session_id]
 | `PermissionError` | 无权限 | 改Working Directory |
 | `selector not found` | 元素未找到 | 重新探索页面 |
 | `ConnectionError` | 网络问题 | 检查网络 |
-| `chrome not connected` | CDP未连接 | `frago chrome start` |
+| `chrome not connected` | CDP未连接 | `frago browser start` |
 | `Authentication failed` | API Key错误 | 重新配置Key |
 | `TimeoutError` | 等待超时 | 增加等待时间或检查网页 |
 

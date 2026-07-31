@@ -32,7 +32,7 @@ agent 自己用 Read / Bash 拼装同样的功能，会多烧几倍 token，且�
 例子：
 - `frago <domain> find` 比 `Read ~/.frago/books/*.md` 省 token、更结构化
 - `frago recipe run` 比 `python script.py` 自带参数校验、错误捕获、日志归档
-- `frago chrome get-content` 比 `WebFetch` 走代理、保持 session、不被反爬
+- `frago browser get-content` 比 `WebFetch` 走代理、保持 session、不被反爬
 
 ### 3. frago 命令的语义贴 agent 视角
 

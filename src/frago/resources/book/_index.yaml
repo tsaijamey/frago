@@ -26,7 +26,7 @@
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "搜索用 {{frago_launcher}} chrome navigate google，禁止 WebSearch"
+  brief: "搜索用 {{frago_launcher}} browser navigate google，禁止 WebSearch"
 
 - name: must-browser-fetch
   category: must
@@ -44,19 +44,19 @@
   category: must
   brief: "产出一律落 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/，两层缺一不可，事务 NEVER 直接建在 data 根下；建目录前先 frago context data:<关键词> 查现成落点；projects 是 frago 的会话账本 agent 不写；路径一律绝对路径"
 
-- name: chrome-usage
+- name: browser-usage
   category: must
   brief: "chrome 操作完整指南：group 必选、导航规则、内容提取、交互、选择器、视觉辅助"
 
-- name: chrome-backend-choice
+- name: browser-backend-choice
   category: must
   brief: "chrome 唯一标准路径：extension 后端（默认，无 flag），驱动浏览器自己的真实 profile；start/stop 完整生命周期（自动选浏览器，Chrome Stable ≥v137 不可用）；anti-bot 天然过检"
 
-- name: chrome-anti-bot
+- name: browser-anti-bot
   category: available
   brief: "Cloudflare/Datadome/captcha：`chrome detect --group <g>` 探针 + interactive/invisible/blocked 三档处理"
 
-- name: chrome-startup
+- name: browser-startup
   category: available
   brief: "chrome start：零参数拉起浏览器+扩展桥，--browser 换品牌，使用浏览器自己的真实 profile"
 

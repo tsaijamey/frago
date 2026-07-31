@@ -145,7 +145,7 @@ Workspace让你可以直接在Web UI中浏览这些文件，不需要打开文�
 | **本质** | 标准化配方定义 | Markdown文档 |
 | **执行** | 可直接运行 | 不可执行，仅供阅读 |
 | **作用** | 自动化重复任务 | 指导AI的决策过程 |
-| **示例** | screenshot_tab.py | frago-chrome-navigation.md |
+| **示例** | screenshot_tab.py | frago-browser-navigation.md |
 | **用户** | 所有用户 | 进阶用户 |
 
 **什么时候需要Skill？**

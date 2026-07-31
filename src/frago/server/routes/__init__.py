@@ -18,7 +18,7 @@ This package contains FastAPI routers for different API domains:
 
 from frago.server.routes.agent import router as agent_router
 from frago.server.routes.app_pages import router as app_pages_router
-from frago.server.routes.chrome_dashboard import router as chrome_dashboard_router
+from frago.server.routes.browser_dashboard import router as browser_dashboard_router
 from frago.server.routes.claude_sessions import router as claude_sessions_router
 from frago.server.routes.config import router as config_router
 from frago.server.routes.files import router as files_router
@@ -49,7 +49,7 @@ __all__ = [
     "workspace_router",
     "guide_router",
     "pa_router",
-    "chrome_dashboard_router",
+    "browser_dashboard_router",
     "claude_sessions_router",
     "workbench_router",
 ]

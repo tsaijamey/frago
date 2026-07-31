@@ -1,6 +1,8 @@
-"""chrome command group - Chromium-based browser CDP automation
+"""browser command group - browser automation via extension bridge
 
-Supports Chrome, Edge, and Chromium browsers via Chrome DevTools Protocol.
+Supports Edge, Chrome, Chromium, Brave, and Vivaldi browsers.
+Default: Edge via extension bridge (Chrome Stable excluded, v137+
+anti-sideload hardening blocks --load-extension).
 
 Includes:
   - Lifecycle: start, stop, status, detect
@@ -19,9 +21,9 @@ import click
 from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 from .commands import (
     annotate,
-    chrome_reset,
-    chrome_start,
-    chrome_stop,
+    browser_reset,
+    browser_start,
+    browser_stop,
     clear_effects,
     click_element,
     close_tab,
@@ -66,14 +68,14 @@ def detect_browsers(group):
 
     \b
     Examples:
-      frago chrome detect
-      frago chrome -b extension detect --group research
+      frago browser detect
+      frago browser -b extension detect --group research
     """
     if group:
         raise click.UsageError(
             "anti-bot probe (--group) is only supported by the extension "
-            "backend. Use: frago chrome -b extension detect --group " + group)
-    from ..chrome.cdp.browser_detection import BrowserType, detect_available_browsers
+            "backend. Use: frago browser -b extension detect --group " + group)
+    from ..browser.cdp.browser_detection import BrowserType, detect_available_browsers
 
     browsers = detect_available_browsers()
 
@@ -108,23 +110,24 @@ def detect_browsers(group):
         click.echo("Please install Chrome, Edge, or Chromium.")
 
 
-@click.group(name="chrome", cls=AgentFriendlyGroup)
+@click.group(name="browser", cls=AgentFriendlyGroup)
 @click.option(
     "--backend", "-b",
     type=click.Choice(["cdp", "extension"], case_sensitive=False),
     default=None,
-    help="Browser backend. Defaults to env FRAGO_CHROME_BACKEND or "
+    help="Browser backend. Defaults to env FRAGO_BROWSER_BACKEND or "
          "'extension' (browser extension + native messaging, drives the "
          "browser's own profile). 'cdp' is retained for legacy flows and "
          "must be selected explicitly.",
 )
 @click.pass_context
-def chrome_group(ctx, backend):
+def browser_group(ctx, backend):
     """
-    Chrome browser automation
+    Browser automation
 
     Control the browser through the frago extension bridge (default
-    backend). CDP remains available via an explicit -b cdp.
+    backend), using the browser's own real profile. CDP remains
+    available via an explicit -b cdp.
 
     \b
     Subcommand categories:
@@ -136,13 +139,13 @@ def chrome_group(ctx, backend):
 
     \b
     Examples:
-      frago chrome start                    # Start Chrome
-      frago chrome navigate https://... --group research  # Navigate
-      frago chrome get-content --group research            # Get content
-      frago chrome click --group research "#button"        # Click
-      frago chrome groups                                  # List groups
+      frago browser start                              # Start browser
+      frago browser navigate https://... --group r     # Navigate
+      frago browser get-content --group r              # Get content
+      frago browser click --group r "#button"          # Click
+      frago browser groups                             # List groups
     """
-    chosen = (backend or os.environ.get("FRAGO_CHROME_BACKEND") or "extension").lower()
+    chosen = (backend or os.environ.get("FRAGO_BROWSER_BACKEND") or "extension").lower()
     if ctx.obj is None:
         ctx.obj = {}
     ctx.obj["BACKEND"] = chosen
@@ -185,7 +188,7 @@ VISUAL_COMMANDS = {"highlight", "pointer", "spotlight", "annotate",
 
 
 def _ext_backend():
-    from ..chrome.backends.extension import ExtensionChromeBackend
+    from ..browser.backends.extension import ExtensionChromeBackend
     return ExtensionChromeBackend()
 
 
@@ -204,7 +207,7 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
         # manifest, launch browser, wait for handshake.
         from dataclasses import asdict
 
-        from ..chrome.extension.lifecycle import (
+        from ..browser.extension.lifecycle import (
             BridgeStartupResult,
             start_extension_bridge,
         )
@@ -260,7 +263,7 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
         # CDP-only kwargs (--port etc.) are silently ignored.
         from dataclasses import asdict
 
-        from ..chrome.extension.lifecycle import (
+        from ..browser.extension.lifecycle import (
             BridgeStopResult,
             stop_extension_bridge,
         )
@@ -365,20 +368,20 @@ def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
     stay try/except-free."""
     import json
 
-    from ..chrome.backends.extension import ExtensionBackendError
+    from ..browser.backends.extension import ExtensionBackendError
     try:
         return _dispatch_extension(name, kwargs)
     except ExtensionBackendError as e:
         err = {"ok": False, "code": e.code, "error": str(e),
-               "hint": "run: frago chrome start"}
+               "hint": "run: frago browser start"}
     except FileNotFoundError as e:
         err = {"ok": False, "code": "socket-not-found",
                "error": f"bridge socket not found: {e}",
-               "hint": "run: frago chrome start"}
+               "hint": "run: frago browser start"}
     except (ConnectionRefusedError, ConnectionResetError, TimeoutError) as e:
         err = {"ok": False, "code": "bridge-unreachable",
                "error": f"{type(e).__name__}: {e}",
-               "hint": "run: frago chrome start"}
+               "hint": "run: frago browser start"}
     click.echo(json.dumps(err, indent=2, ensure_ascii=False))
     raise click.exceptions.Exit(1)
 
@@ -406,45 +409,198 @@ def _wrap_mvp(cmd, name: str):
 
 
 # Lifecycle
-chrome_group.add_command(_wrap_mvp(chrome_start, "start"), name="start")
-chrome_group.add_command(_wrap_mvp(chrome_stop, "stop"), name="stop")
-chrome_group.add_command(_wrap_mvp(status, "status"), name="status")
-chrome_group.add_command(_wrap_mvp(detect_browsers, "detect"), name="detect")
+browser_group.add_command(_wrap_mvp(browser_start, "start"), name="start")
+browser_group.add_command(_wrap_mvp(browser_stop, "stop"), name="stop")
+browser_group.add_command(_wrap_mvp(status, "status"), name="status")
+browser_group.add_command(_wrap_mvp(detect_browsers, "detect"), name="detect")
+
+# check is a pure diagnostic — no backend dispatch needed
+@browser_group.command(name="check", cls=AgentFriendlyCommand)
+def check_browsers():
+    """Check which browsers are available and their status for frago automation.
+
+    \b
+    Columns:
+      BROWSER   — browser name and brand
+      AVAILABLE — ✓ installed, ✗ not found
+      BACKEND   — extension (ext), CDP (cdp), or both
+      RUNNING   — whether the browser process is currently running
+
+    \b
+    Example:
+      frago browser check
+    """
+    import platform as _platform
+    import subprocess
+
+    system = _platform.system()
+
+    # ── Process check helper ────────────────────────────────────────
+    def _is_running(proc_names: list[str]) -> bool:
+        for name in proc_names:
+            try:
+                if system in ("Darwin", "Linux"):
+                    r = subprocess.run(
+                        ["pgrep", "-f", name], capture_output=True, text=True, timeout=3)
+                    if r.returncode == 0 and r.stdout.strip():
+                        return True
+                elif system == "Windows":
+                    r = subprocess.run(
+                        ["tasklist", "/FI", f"IMAGENAME eq {name}"],
+                        capture_output=True, text=True, timeout=5)
+                    if name.lower() in r.stdout.lower():
+                        return True
+            except Exception:
+                pass
+        return False
+
+    # ── Backend support ─────────────────────────────────────────────
+    from ..browser.backends.extension import list_browsers_for_extension
+    from ..browser.cdp.browser_detection import BrowserType
+    from ..browser.cdp.browser_detection import detect_available_browsers as cdp_available
+
+    cdp_map = cdp_available()
+    ext_list = list_browsers_for_extension()
+
+    # ── Browser catalogue ───────────────────────────────────────────
+    _CHROME_STABLE_PATH = _CHROME_BETA_PATH = _CHROME_DEV_PATH = ""
+    _CHROME_CANARY_PATH = _EDGE_PATH = _EDGE_BETA_PATH = _EDGE_DEV_PATH = ""
+    _CHROMIUM_PATH = _BRAVE_PATH = _VIVALDI_PATH = ""
+
+    for bc in ext_list:
+        if bc.brand == "chrome-beta":
+            _CHROME_BETA_PATH = bc.path
+        elif bc.brand == "chrome-dev":
+            _CHROME_DEV_PATH = bc.path
+        elif bc.brand == "chrome-canary":
+            _CHROME_CANARY_PATH = bc.path
+        elif bc.brand == "edge":
+            _EDGE_PATH = bc.path
+        elif bc.brand == "edge-beta":
+            _EDGE_BETA_PATH = bc.path
+        elif bc.brand == "edge-dev":
+            _EDGE_DEV_PATH = bc.path
+        elif bc.brand == "chromium":
+            _CHROMIUM_PATH = bc.path
+        elif bc.brand == "brave":
+            _BRAVE_PATH = bc.path
+        elif bc.brand == "vivaldi":
+            _VIVALDI_PATH = bc.path
+
+    # Chrome Stable is excluded from extension list, check CDP
+    chrome_cdp = cdp_map.get(BrowserType.CHROME)
+    if chrome_cdp:
+        _CHROME_STABLE_PATH = chrome_cdp
+
+    # Extension detection misses Edge/Chromium if only CDP found them
+    if not _EDGE_PATH and cdp_map.get(BrowserType.EDGE):
+        _EDGE_PATH = cdp_map[BrowserType.EDGE]
+    if not _CHROMIUM_PATH and cdp_map.get(BrowserType.CHROMIUM):
+        _CHROMIUM_PATH = cdp_map[BrowserType.CHROMIUM]
+
+    # ── Build rows ──────────────────────────────────────────────────
+    rows: list[dict] = []
+
+    def _add(name: str, path: str, ext_ok: bool, cdp_ok: bool,
+             proc_names: list[str]):
+        if path:
+            available = "✓"
+            running = "✓" if _is_running(proc_names) else "—"
+            backends = []
+            if ext_ok:
+                backends.append("ext")
+            if cdp_ok:
+                backends.append("cdp")
+            backend = "/".join(backends)
+        else:
+            available = "✗"
+            running = "—"
+            backends = []
+            if ext_ok:
+                backends.append("ext")
+            if cdp_ok:
+                backends.append("cdp")
+            backend = "/".join(backends) if backends else "—"
+        rows.append({
+            "browser": name,
+            "available": available,
+            "backend": backend,
+            "running": running,
+        })
+
+    # Format: (display_name, path, ext_ok, cdp_ok, proc_names)
+    _add("Chrome",          _CHROME_STABLE_PATH, False, True,  ["Google Chrome", "chrome.exe"])
+    _add("Chrome Beta",     _CHROME_BETA_PATH,   True,  True,  ["Google Chrome Beta", "chrome.exe"])
+    _add("Chrome Dev",      _CHROME_DEV_PATH,    True,  True,  ["Google Chrome Dev", "chrome.exe"])
+    _add("Chrome Canary",   _CHROME_CANARY_PATH, True,  True,  ["Google Chrome Canary", "chrome.exe"])
+    _add("Edge",            _EDGE_PATH,          True,  True,  ["Microsoft Edge", "msedge.exe"])
+    _add("Edge Beta",       _EDGE_BETA_PATH,     True,  True,  ["Microsoft Edge Beta", "msedge.exe"])
+    _add("Edge Dev",        _EDGE_DEV_PATH,      True,  True,  ["Microsoft Edge Dev", "msedge.exe"])
+    _add("Chromium",        _CHROMIUM_PATH,      True,  True,  ["Chromium", "chrome.exe"])
+    _add("Brave",           _BRAVE_PATH,         True,  True,  ["Brave Browser", "brave.exe"])
+    _add("Vivaldi",         _VIVALDI_PATH,       True,  True,  ["Vivaldi", "vivaldi.exe"])
+
+    # ── Format table ────────────────────────────────────────────────
+    bw = max(len(r["browser"]) for r in rows) + 2
+    aw = 10
+    be = 8
+    rw = 8
+
+    header = f"{'BROWSER':<{bw}} {'AVAILABLE':<{aw}} {'BACKEND':<{be}} {'RUNNING':<{rw}}"
+    sep = f"{'─'*bw} {'─'*aw} {'─'*be} {'─'*rw}"
+
+    lines = [header, sep]
+    for r in rows:
+        lines.append(
+            f"{r['browser']:<{bw}} "
+            f"{r['available']:<{aw}} "
+            f"{r['backend']:<{be}} "
+            f"{r['running']:<{rw}}"
+        )
+
+    # Determine default
+    from ..browser.backends.extension import pick_browser_for_extension
+    default_choice = pick_browser_for_extension()
+    if default_choice:
+        lines.append("")
+        lines.append(f"Default: {default_choice.brand} ({default_choice.path})")
+
+    click.echo("\n".join(lines))
 
 # Tab management
-chrome_group.add_command(_wrap_mvp(list_tabs, "list-tabs"), name="list-tabs")
-chrome_group.add_command(_wrap_mvp(switch_tab, "switch-tab"), name="switch-tab")
-chrome_group.add_command(_wrap_mvp(close_tab, "close-tab"), name="close-tab")
+browser_group.add_command(_wrap_mvp(list_tabs, "list-tabs"), name="list-tabs")
+browser_group.add_command(_wrap_mvp(switch_tab, "switch-tab"), name="switch-tab")
+browser_group.add_command(_wrap_mvp(close_tab, "close-tab"), name="close-tab")
 
 # Page operations
-chrome_group.add_command(_wrap_mvp(navigate, "navigate"), name="navigate")
-chrome_group.add_command(_wrap_mvp(scroll, "scroll"), name="scroll")
-chrome_group.add_command(_wrap_mvp(scroll_to, "scroll-to"), name="scroll-to")
-chrome_group.add_command(_wrap_mvp(zoom, "zoom"), name="zoom")
-chrome_group.add_command(_wrap_mvp(wait, "wait"), name="wait")
+browser_group.add_command(_wrap_mvp(navigate, "navigate"), name="navigate")
+browser_group.add_command(_wrap_mvp(scroll, "scroll"), name="scroll")
+browser_group.add_command(_wrap_mvp(scroll_to, "scroll-to"), name="scroll-to")
+browser_group.add_command(_wrap_mvp(zoom, "zoom"), name="zoom")
+browser_group.add_command(_wrap_mvp(wait, "wait"), name="wait")
 
 # Element interaction
-chrome_group.add_command(_wrap_mvp(click_element, "click"), name="click")
-chrome_group.add_command(_wrap_mvp(execute_javascript, "exec-js"), name="exec-js")
-chrome_group.add_command(_wrap_mvp(get_title, "get-title"), name="get-title")
-chrome_group.add_command(_wrap_mvp(get_content, "get-content"), name="get-content")
+browser_group.add_command(_wrap_mvp(click_element, "click"), name="click")
+browser_group.add_command(_wrap_mvp(execute_javascript, "exec-js"), name="exec-js")
+browser_group.add_command(_wrap_mvp(get_title, "get-title"), name="get-title")
+browser_group.add_command(_wrap_mvp(get_content, "get-content"), name="get-content")
 
 # Tab groups
-chrome_group.add_command(_wrap_mvp(tab_groups, "groups"), name="groups")
-chrome_group.add_command(_wrap_mvp(tab_group_info, "group-info"), name="group-info")
-chrome_group.add_command(_wrap_mvp(tab_group_close, "group-close"), name="group-close")
-chrome_group.add_command(_wrap_mvp(tab_group_cleanup, "group-cleanup"),
+browser_group.add_command(_wrap_mvp(tab_groups, "groups"), name="groups")
+browser_group.add_command(_wrap_mvp(tab_group_info, "group-info"), name="group-info")
+browser_group.add_command(_wrap_mvp(tab_group_close, "group-close"), name="group-close")
+browser_group.add_command(_wrap_mvp(tab_group_cleanup, "group-cleanup"),
                          name="group-cleanup")
-chrome_group.add_command(_wrap_mvp(chrome_reset, "reset"), name="reset")
+browser_group.add_command(_wrap_mvp(browser_reset, "reset"), name="reset")
 
 # Visual effects
-chrome_group.add_command(_wrap_mvp(screenshot, "screenshot"), name="screenshot")
-chrome_group.add_command(_wrap_mvp(highlight, "highlight"), name="highlight")
-chrome_group.add_command(_wrap_mvp(pointer, "pointer"), name="pointer")
-chrome_group.add_command(_wrap_mvp(spotlight, "spotlight"), name="spotlight")
-chrome_group.add_command(_wrap_mvp(annotate, "annotate"), name="annotate")
-chrome_group.add_command(_wrap_mvp(underline, "underline"), name="underline")
-chrome_group.add_command(_wrap_mvp(clear_effects, "clear-effects"), name="clear-effects")
+browser_group.add_command(_wrap_mvp(screenshot, "screenshot"), name="screenshot")
+browser_group.add_command(_wrap_mvp(highlight, "highlight"), name="highlight")
+browser_group.add_command(_wrap_mvp(pointer, "pointer"), name="pointer")
+browser_group.add_command(_wrap_mvp(spotlight, "spotlight"), name="spotlight")
+browser_group.add_command(_wrap_mvp(annotate, "annotate"), name="annotate")
+browser_group.add_command(_wrap_mvp(underline, "underline"), name="underline")
+browser_group.add_command(_wrap_mvp(clear_effects, "clear-effects"), name="clear-effects")
 
 
 # ─────────────── capture（P4）：extension 后端专属 ───────────────
@@ -454,10 +610,10 @@ chrome_group.add_command(_wrap_mvp(clear_effects, "clear-effects"), name="clear-
 #
 # 【已开发，暂不启用】实现完整并实测通过（见 ExtensionChromeBackend.record_tab），
 # 但当前 agent_os 走 CDP 后端采集画面，这条入口不投入使用。
-# 命令注册已注释：`frago chrome record-tab` 会得到 click 的 "No such command"
+# 命令注册已注释：`frago browser record-tab` 会得到 click 的 "No such command"
 # 标准错误，与其它未注册命令表现一致，不做半可用状态。
-# 启用方式：取消下面 @chrome_group.command 一行的注释。
-# @chrome_group.command(name="record-tab")
+# 启用方式：取消下面 @browser_group.command 一行的注释。
+# @browser_group.command(name="record-tab")
 @click.argument("output", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--group", "-g", default=None, help="tab group（缺省读 FRAGO_CURRENT_RUN）")
 @click.option("--tab-id", type=int, default=None, help="直接指定 tabId")
@@ -473,7 +629,7 @@ def record_tab(ctx, output: Path, group, tab_id, duration):
     group = group or os.environ.get("FRAGO_CURRENT_RUN")
     if not group and tab_id is None:
         raise click.ClickException("需要 --group 或 --tab-id")
-    from ..chrome.backends.extension import ExtensionChromeBackend
+    from ..browser.backends.extension import ExtensionChromeBackend
     be = ExtensionChromeBackend()
     result = be.record_tab(output.expanduser().resolve(), group=group,
                            tab_id=tab_id, duration=duration)

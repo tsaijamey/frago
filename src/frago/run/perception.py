@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from ..chrome.cdp.session import CDPSession
+from ..browser.cdp.session import CDPSession
 
 
 def get_dom_features(session: CDPSession) -> dict:

@@ -125,7 +125,7 @@ chrome-js runtime 不注入 FRAGO_SECRETS（浏览器环境无法访问）。如
 
 ## Recipe 内调 frago CLI（subprocess）
 
-recipe 子进程里要调 `frago chrome navigate` / `frago <domain> find` 等命令时，直接裸写 `frago`：
+recipe 子进程里要调 `frago browser navigate` / `frago <domain> find` 等命令时，直接裸写 `frago`：
 
 ```python
 import subprocess
@@ -133,7 +133,7 @@ import subprocess
 subprocess.run(["frago", "chrome", "navigate", url, "--no-border"], ...)
 ```
 
-配方要把自己的页面交给人看时，这里换成 `frago recipe open`——它开在用户的系统默认浏览器里，跟 `frago chrome` 驱动的那个受控浏览器是两回事，NEVER 用 `chrome navigate` 代替：
+配方要把自己的页面交给人看时，这里换成 `frago recipe open`——它开在用户的系统默认浏览器里，跟 `frago browser` 驱动的那个受控浏览器是两回事，NEVER 用 `chrome navigate` 代替：
 
 ```python
 subprocess.run(["frago", "recipe", "open", url], ...)

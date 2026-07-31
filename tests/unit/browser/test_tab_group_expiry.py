@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import frago.chrome.cdp.tab_group_manager as tgm_mod
-from frago.chrome.cdp.tab_group_manager import (
+import frago.browser.cdp.tab_group_manager as tgm_mod
+from frago.browser.cdp.tab_group_manager import (
     GROUP_TIMEOUT_SECONDS,
     TabGroupManager,
 )
@@ -192,7 +192,7 @@ def test_tab_cleanup_service_reclaims_expired_group(isolated_state):
     with patch.object(tgm_mod, "cdp_get") as fake_cdp_get, patch(
         "frago.server.services.tab_cleanup_service.requests"
     ) as req, patch(
-        "frago.chrome.cdp.tab_manager.TabManager", return_value=fake_tm
+        "frago.browser.cdp.tab_manager.TabManager", return_value=fake_tm
     ):
         fake_cdp_get.return_value.json.return_value = []
         req.get.side_effect = fake_requests_get

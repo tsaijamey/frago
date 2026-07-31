@@ -18,8 +18,8 @@ export interface ServerInfo {
 export interface ServerStatus {
   cpu_percent: number;
   memory_percent: number;
-  chrome_available: boolean;
-  chrome_connected: boolean;
+  browser_available: boolean;
+  browser_connected: boolean;
   projects_count: number;
   tasks_running: number;
 }
@@ -249,7 +249,7 @@ export interface DashboardResourceCounts {
 }
 
 export interface DashboardStatus {
-  chrome_connected: boolean;
+  browser_connected: boolean;
   tab_count: number;
   error_count: number;
   last_synced_at: string | null;

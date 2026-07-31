@@ -530,7 +530,7 @@ def log(step: str, status: str, action_type: str, execution_method: str, data: s
           --status "success" \\
           --action-type "navigation" \\
           --execution-method "command" \\
-          --data '{"command": "frago chrome navigate https://upwork.com"}'
+          --data '{"command": "frago browser navigate https://upwork.com"}'
 
     \b
     Domain-level knowledge no longer lives here. insight 形态已退役，沉淀改用:

@@ -78,8 +78,8 @@ class TabCleanupService:
 
     def _do_cleanup(self) -> None:
         """Reconcile groups and close orphan tabs (runs in thread pool)."""
-        from frago.chrome.cdp.tab_group_manager import TabGroupManager
-        from frago.chrome.cdp.tab_manager import TabManager
+        from frago.browser.cdp.tab_group_manager import TabGroupManager
+        from frago.browser.cdp.tab_manager import TabManager
 
         port = DEFAULT_CDP_PORT
 

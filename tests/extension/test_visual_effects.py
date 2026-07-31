@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from frago.chrome.backends.extension import ExtensionChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
 
 
 def _be():
@@ -73,7 +73,7 @@ def test_lifetime_zero_means_permanent():
 
 def test_visual_commands_in_chrome_command_set():
     """Make sure VISUAL_COMMANDS includes everything we expose."""
-    from frago.cli.chrome_commands import VISUAL_COMMANDS
+    from frago.cli.browser_commands import VISUAL_COMMANDS
     assert VISUAL_COMMANDS == {
         "highlight", "pointer", "spotlight", "annotate",
         "underline", "clear-effects",

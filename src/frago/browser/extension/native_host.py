@@ -3,7 +3,7 @@
 Two roles, chosen by CLI flag:
 
 * ``frago extension daemon`` — long-running singleton. Listens on a unix
-  socket at ``~/.frago/chrome/extension.sock``. Multiplexes between two
+  socket at ``~/.frago/browser/extension.sock``. Multiplexes between two
   kinds of peers:
     - exactly one *extension peer* (the relay child of Chrome);
     - any number of *client peers* (CLI invocations that want to send

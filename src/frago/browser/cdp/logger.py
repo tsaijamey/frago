@@ -11,7 +11,7 @@ import sys
 class CDPLogger:
     """CDP logger manager"""
 
-    def __init__(self, name: str = "frago.chrome.cdp", level: str = "INFO"):
+    def __init__(self, name: str = "frago.browser.cdp", level: str = "INFO"):
         """
         Initialize logger manager
 
@@ -177,7 +177,7 @@ class CDPLogger:
 _logger: CDPLogger | None = None
 
 
-def get_logger(name: str = "frago.chrome.cdp", level: str = "WARNING") -> CDPLogger:
+def get_logger(name: str = "frago.browser.cdp", level: str = "WARNING") -> CDPLogger:
     """
     Get CDP logger
 

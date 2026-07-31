@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from frago.chrome.backends.extension import ExtensionChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
 
 
 def _be_with_rpc(response):
@@ -78,7 +78,7 @@ def test_detect_anti_bot_blocked():
 
 def test_detect_anti_bot_propagates_rpc_error():
     """RPC layer errors (extension not connected, etc.) bubble up."""
-    from frago.chrome.backends.extension import ExtensionBackendError
+    from frago.browser.backends.extension import ExtensionBackendError
 
     be = ExtensionChromeBackend()
     be._rpc = MagicMock(side_effect=ExtensionBackendError(-32003, "extension not connected"))

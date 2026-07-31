@@ -15,7 +15,7 @@ from click import Context
 # Layer 3 of the agent-friendly mechanism (FRAGO.md): a business-level failure
 # should not just say "Error: X" — it should hand the agent a copy-pasteable
 # command that fixes the situation. Historically each command group hand-rolled
-# this: chrome embeds "start with: frago chrome start" inside its error
+# this: browser embeds "start with: frago browser start" inside its error
 # strings, recipe_commands echoes `[Fix] ...` lines manually. The helpers below
 # make that pattern a single shared, group-agnostic primitive so any command
 # group can attach executable fixes consistently.
@@ -79,7 +79,7 @@ def get_command_examples(cmd_name: str, group_prefix: str = "") -> list[str]:
 
     Args:
         cmd_name: Command name
-        group_prefix: Command group prefix (e.g. "chrome")
+        group_prefix: Command group prefix (e.g. "browser")
 
     Returns:
         List of examples
@@ -150,7 +150,7 @@ class AgentFriendlyGroup(click.Group):
         return super().resolve_command(ctx, args)
 
     def _get_group_prefix(self, ctx: Context) -> str:
-        """Get current command group prefix (e.g. 'chrome')"""
+        """Get current command group prefix (e.g. 'browser')"""
         if ctx.info_name:
             return ctx.info_name
         return ""
@@ -269,7 +269,7 @@ def validate_cdp_port(ctx: Context, param: object, value: int | None) -> int | N
         f"CDP 端口白名单只有 {ALLOWED_CDP_PORT}，收到 {value}。\n"
         f"  自创端口会在 ~/.frago/profiles/chrome/{value}/ 生成垃圾 profile 目录。\n"
         f"  常规浏览器操作走 extension 后端，本就不需要 --port（见 frago book "
-        f"chrome-backend-choice）；只有 agent_os 录制机位走 CDP，固定用 "
+        f"browser-backend-choice）；只有 agent_os 录制机位走 CDP，固定用 "
         f"{ALLOWED_CDP_PORT}。",
         ctx=ctx,
         param=param if isinstance(param, click.Parameter) else None,

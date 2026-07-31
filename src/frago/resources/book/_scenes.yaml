@@ -11,7 +11,7 @@
   topics:
     - must-browser-search
     - must-browser-fetch
-    - chrome-usage
+    - browser-usage
     - must-data-dir
     - run-logging
 
@@ -24,8 +24,8 @@
     - "注册"
     - "登录"
   topics:
-    - chrome-usage
-    - chrome-anti-bot
+    - browser-usage
+    - browser-anti-bot
     - recipe-execution
 
 - name: data-extraction
@@ -37,7 +37,7 @@
     - "导出数据"
     - "批量获取"
   topics:
-    - chrome-usage
+    - browser-usage
     - must-browser-fetch
     - must-data-dir
     - recipe-execution
@@ -68,7 +68,7 @@
     - recipe-fields
     - recipe-authoring
     - recipe-execution
-    - chrome-usage
+    - browser-usage
     - interactive-recipe
     - run-logging
     - must-tool-priority
@@ -81,6 +81,6 @@
     - "跨页面"
     - "流程操作"
   topics:
-    - chrome-usage
-    - chrome-startup
+    - browser-usage
+    - browser-startup
     - recipe-execution

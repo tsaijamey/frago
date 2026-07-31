@@ -233,7 +233,7 @@ class RecipeRunner:
                               "http_proxy", "https_proxy", "all_proxy"):
                 resolved_env.pop(proxy_key, None)
 
-        # Bind recipe subprocess to a chrome tab group so `frago chrome ...`
+        # Bind recipe subprocess to a chrome tab group so `frago browser ...`
         # inside the recipe resolves a group context without needing --group.
         # Priority: existing env (agent/executor already injected) → current
         # run instance (CLI with active run context) → execution_id fallback
@@ -338,7 +338,7 @@ class RecipeRunner:
 
         Called when recipe output contains open_url. The page is for the human
         to look at, so it goes to the default browser rather than the CDP-driven
-        Chrome that `frago chrome` operates on.
+        Chrome that `frago browser` operates on.
         """
         try:
             import webbrowser

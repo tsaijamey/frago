@@ -22,10 +22,10 @@ import sys
 import time
 from pathlib import Path
 
-from frago.chrome.extension.native_host import (
+from frago.browser.extension.native_host import (
     SOCK_PATH, STABLE_EXTENSION_ID, encode_frame, read_frame_async,
 )
-from frago.chrome.backends.extension import ExtensionChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

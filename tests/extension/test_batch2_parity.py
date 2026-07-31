@@ -6,7 +6,7 @@ implementation; the "alignment" here is surface uniformity:
 
 1. Both backends expose wait/detect with matching signatures.
 2. Neither backend issues any JSON-RPC round-trip for these calls.
-3. `frago chrome --backend extension <batch2-cmd>` routes to the
+3. `frago browser --backend extension <batch2-cmd>` routes to the
    extension backend (same dispatch layer as MVP + Batch 1).
 4. The 6 visual-effect commands remain CDP-only and are documented as
    deferred to P3.1.
@@ -20,10 +20,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from frago.chrome.backends.base import ChromeBackend
-from frago.chrome.backends.cdp import CDPChromeBackend
-from frago.chrome.backends.extension import ExtensionChromeBackend
-from frago.cli import chrome_commands as cc
+from frago.browser.backends.base import ChromeBackend
+from frago.browser.backends.cdp import CDPChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
+from frago.cli import browser_commands as cc
 
 BATCH2_METHODS = ["wait", "detect"]
 P3_1_DEFERRED = {"highlight", "pointer", "spotlight", "annotate",
@@ -86,12 +86,12 @@ def test_extension_detect_issues_no_rpc(monkeypatch):
     rec = _RpcRecorder()
     be = ExtensionChromeBackend()
     be._rpc = rec  # type: ignore[assignment]
-    from frago.chrome.cdp.browser_detection import BrowserType
+    from frago.browser.cdp.browser_detection import BrowserType
     fake = {BrowserType.CHROME: "/usr/bin/google-chrome",
             BrowserType.EDGE: None,
             BrowserType.CHROMIUM: None}
     monkeypatch.setattr(
-        "frago.chrome.cdp.browser_detection.detect_available_browsers",
+        "frago.browser.cdp.browser_detection.detect_available_browsers",
         lambda: fake)
     r = be.detect()
     assert rec.calls == []
@@ -110,9 +110,9 @@ def test_cdp_wait_is_local(monkeypatch):
 
 
 def test_cdp_detect_is_local(monkeypatch):
-    from frago.chrome.cdp.browser_detection import BrowserType
+    from frago.browser.cdp.browser_detection import BrowserType
     monkeypatch.setattr(
-        "frago.chrome.cdp.browser_detection.detect_available_browsers",
+        "frago.browser.cdp.browser_detection.detect_available_browsers",
         lambda: {BrowserType.CHROME: None, BrowserType.EDGE: None,
                  BrowserType.CHROMIUM: None})
     be = CDPChromeBackend()
@@ -122,12 +122,12 @@ def test_cdp_detect_is_local(monkeypatch):
 
 
 def test_both_backends_produce_same_detect_result(monkeypatch):
-    from frago.chrome.cdp.browser_detection import BrowserType
+    from frago.browser.cdp.browser_detection import BrowserType
     fake = {BrowserType.CHROME: "/x/chrome",
             BrowserType.EDGE: "/x/edge",
             BrowserType.CHROMIUM: None}
     monkeypatch.setattr(
-        "frago.chrome.cdp.browser_detection.detect_available_browsers",
+        "frago.browser.cdp.browser_detection.detect_available_browsers",
         lambda: fake)
     assert CDPChromeBackend().detect() == ExtensionChromeBackend().detect()
 
@@ -160,10 +160,10 @@ def fake_ext(monkeypatch):
 
 
 def _run(*args, env_overrides=None):
-    env = {"FRAGO_CURRENT_RUN": "", "FRAGO_CHROME_BACKEND": ""}
+    env = {"FRAGO_CURRENT_RUN": "", "FRAGO_BROWSER_BACKEND": ""}
     if env_overrides:
         env.update(env_overrides)
-    return CliRunner().invoke(cc.chrome_group, list(args), env=env)
+    return CliRunner().invoke(cc.browser_group, list(args), env=env)
 
 
 def test_cli_backend_ext_routes_wait(fake_ext):
@@ -209,7 +209,7 @@ def test_cli_cdp_detect_with_group_errors_clearly(fake_ext):
 def test_cli_ext_bridge_error_is_structured_json(monkeypatch):
     import json
 
-    from frago.chrome.backends.extension import ExtensionBackendError
+    from frago.browser.backends.extension import ExtensionBackendError
 
     class DeadBackend:
         def status(self):
@@ -281,7 +281,7 @@ def test_extension_dispatch_supports_visual_effects(monkeypatch):
     After I, the dispatch routes to ExtensionChromeBackend.highlight which
     does an RPC. We mock the backend so the test doesn't need a daemon.)
     """
-    import frago.cli.chrome_commands as _cc
+    import frago.cli.browser_commands as _cc
 
     calls: list[tuple] = []
 
@@ -303,7 +303,7 @@ def test_extension_dispatch_supports_visual_effects(monkeypatch):
 # ─────────────── 6. Batch 2 appears in backend-option help ───────────
 
 def test_backend_help_mentions_batch2():
-    r = CliRunner().invoke(cc.chrome_group, ["--help"])
+    r = CliRunner().invoke(cc.browser_group, ["--help"])
     assert r.exit_code == 0
     assert "wait" in r.output and "detect" in r.output
     # I task: visual effects are now in the supported list.

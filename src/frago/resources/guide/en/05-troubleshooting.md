@@ -62,7 +62,7 @@ tags:
 1. **Start Chrome** (recommended method):
    ```bash
    # Command line start (auto-enables CDP)
-   frago chrome start
+   frago browser start
    ```
 
 2. **Check if Chrome is started**:
@@ -111,7 +111,7 @@ tags:
 
 **1. Start Chrome using frago command**
 ```bash
-frago chrome start
+frago browser start
 ```
 
 This will automatically:
@@ -137,7 +137,7 @@ ps aux | grep chrome | grep remote-debugging-port
 Get-Process chrome | Where-Object {$_.CommandLine -like "*remote-debugging-port*"}
 ```
 
-If no output → Chrome not started in CDP mode, run `frago chrome start`
+If no output → Chrome not started in CDP mode, run `frago browser start`
 
 ---
 
@@ -172,7 +172,7 @@ netstat -ano | findstr :9222
 mv ~/.frago/profiles/chrome/9222 ~/.frago/profiles/chrome/9222.bak
 
 # Restart Chrome
-frago chrome start
+frago browser start
 ```
 
 ---
@@ -198,7 +198,7 @@ Then restart frago service.
 
 | Error Message | Cause | Solution |
 |---------------|-------|----------|
-| `Connection refused` | Chrome not started | `frago chrome start` |
+| `Connection refused` | Chrome not started | `frago browser start` |
 | `Port 9222 in use` | Port occupied | Kill process or change port |
 | `Timeout connecting` | Firewall blocking | Check firewall settings |
 | `Protocol error` | Chrome version too old | Update Chrome to latest |
@@ -353,7 +353,7 @@ Split:
 | `PermissionError` | No permission | Change Working Directory |
 | `selector not found` | Element not found | Re-explore page |
 | `ConnectionError` | Network issue | Check network |
-| `chrome not connected` | CDP not connected | `frago chrome start` |
+| `chrome not connected` | CDP not connected | `frago browser start` |
 | `Authentication failed` | API Key error | Reconfigure Key |
 | `TimeoutError` | Wait timeout | Increase wait time or check webpage |
 

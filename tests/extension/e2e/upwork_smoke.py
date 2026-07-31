@@ -28,11 +28,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-from frago.chrome.extension import bundle_path
-from frago.chrome.extension.native_host import (
+from frago.browser.extension import bundle_path
+from frago.browser.extension.native_host import (
     SOCK_PATH, install_manifest,
 )
-from frago.chrome.backends.extension import (
+from frago.browser.backends.extension import (
     ExtensionBackendError, ExtensionChromeBackend,
 )
 

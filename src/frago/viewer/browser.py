@@ -1,7 +1,7 @@
-"""ChromeViewer - Display content in Chrome browser.
+"""BrowserViewer - Display content in the browser.
 
-Replaces pywebview-based ViewerWindow with Chrome browser integration.
-Uses the frago server for content serving and CDP for Chrome control.
+Replaces pywebview-based ViewerWindow with browser integration.
+Uses the frago server for content serving and CDP for browser control.
 """
 
 import time
@@ -16,13 +16,13 @@ SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8093
 
 
-class ChromeViewer:
-    """Chrome-based content viewer.
+class BrowserViewer:
+    """Browser-based content viewer.
 
     Displays content by:
     1. Preparing content via ViewerService
     2. Ensuring frago server is running
-    3. Ensuring Chrome is running
+    3. Ensuring the browser is running
     4. Opening a new tab with the content URL
     """
 
@@ -34,7 +34,7 @@ class ChromeViewer:
         title: Optional[str] = None,
         anchor: Optional[str] = None,
     ):
-        """Initialize the Chrome viewer.
+        """Initialize the browser viewer.
 
         Args:
             content: File path or raw content string
@@ -50,10 +50,10 @@ class ChromeViewer:
         self.anchor = anchor
 
     def show(self) -> str:
-        """Display the content in Chrome browser.
+        """Display the content in the browser.
 
         Returns:
-            The URL opened in Chrome
+            The URL opened in the browser
         """
         # 1. Prepare content
         content_id = ViewerService.prepare_content(
@@ -71,8 +71,8 @@ class ChromeViewer:
         if self.anchor:
             url = f"{url}#{self.anchor}"
 
-        # 4. Ensure Chrome is running and open new tab
-        self._open_in_chrome(url)
+        # 4. Ensure the browser is running and open new tab
+        self._open_in_browser(url)
 
         return url
 
@@ -88,27 +88,27 @@ class ChromeViewer:
             # Wait a moment for server to be ready
             time.sleep(0.5)
 
-    def _ensure_chrome_running(self) -> None:
-        """Ensure Chrome is running with CDP enabled."""
-        from frago.chrome.cdp.launcher import ChromeLauncher
+    def _ensure_browser_running(self) -> None:
+        """Ensure the browser is running with CDP enabled."""
+        from frago.browser.cdp.launcher import ChromeLauncher
 
         launcher = ChromeLauncher()
         status = launcher.get_status()
 
         if not status.get("running"):
             launcher.launch(kill_existing=False)
-            # Wait for Chrome to be ready
+            # Wait for the browser to be ready
             launcher.wait_for_cdp(timeout=10)
 
-    def _open_in_chrome(self, url: str) -> None:
-        """Open URL in a new Chrome tab.
+    def _open_in_browser(self, url: str) -> None:
+        """Open URL in a new browser tab.
 
         Args:
             url: URL to open
         """
-        self._ensure_chrome_running()
+        self._ensure_browser_running()
 
-        from frago.chrome.cdp import CDPSession
+        from frago.browser.cdp import CDPSession
 
         session = CDPSession()
         try:
@@ -126,7 +126,7 @@ def show_content(
     title: Optional[str] = None,
     anchor: Optional[str] = None,
 ) -> str:
-    """Convenience function to show content in Chrome.
+    """Convenience function to show content in the browser.
 
     Args:
         content: File path or raw content string
@@ -136,9 +136,9 @@ def show_content(
         anchor: Optional anchor ID to scroll to
 
     Returns:
-        The URL opened in Chrome
+        The URL opened in the browser
     """
-    viewer = ChromeViewer(
+    viewer = BrowserViewer(
         content=content,
         mode=mode,
         theme=theme,

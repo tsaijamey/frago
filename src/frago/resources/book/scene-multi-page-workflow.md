@@ -15,15 +15,15 @@
 
   1. {{frago_launcher}} run find <workflow 关键词>           # 搜索历史类似任务
   2. {{frago_launcher}} recipe list | grep workflow        # 检查已有 workflow recipe
-  2. {{frago_launcher}} chrome navigate <第一个页面>
-  3. {{frago_launcher}} chrome list-tabs                    # 查看当前标签页
-  4. {{frago_launcher}} chrome navigate <第二个页面>        # 自动在新标签打开或复用
-  5. {{frago_launcher}} chrome switch-tab <tab_id>          # 在标签页间切换
+  2. {{frago_launcher}} browser navigate <第一个页面>
+  3. {{frago_launcher}} browser list-tabs                    # 查看当前标签页
+  4. {{frago_launcher}} browser navigate <第二个页面>        # 自动在新标签打开或复用
+  5. {{frago_launcher}} browser switch-tab <tab_id>          # 在标签页间切换
   6. 每次切换后 get-content 确认页面状态
 
 ## 关键约束
-- chrome-usage — 打开新 URL 一律走 chrome navigate；不猜页面间跳转 URL；点击可能开新标签；复杂页面用 highlight 定位
-- chrome-startup — 跨页面流程依赖同一个浏览器实例，别中途换后端
+- browser-usage — 打开新 URL 一律走 chrome navigate；不猜页面间跳转 URL；点击可能开新标签；复杂页面用 highlight 定位
+- browser-startup — 跨页面流程依赖同一个浏览器实例，别中途换后端
 
 ## 常见陷阱
 - 不查 list-tabs → 不知道当前有哪些标签页

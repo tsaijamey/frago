@@ -24,8 +24,8 @@ import sys
 import time
 from pathlib import Path
 
-from frago.chrome.backends.cdp import CDPChromeBackend
-from frago.chrome.backends.extension import ExtensionChromeBackend
+from frago.browser.backends.cdp import CDPChromeBackend
+from frago.browser.backends.extension import ExtensionChromeBackend
 
 
 def _default_out_dir() -> Path:

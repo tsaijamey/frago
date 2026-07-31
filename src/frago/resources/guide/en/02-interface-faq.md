@@ -145,7 +145,7 @@ Workspace lets you browse these files directly in the Web UI without opening a f
 | **Nature** | Standardized recipe definition | Markdown document |
 | **Execution** | Can run directly | Not executable, read-only |
 | **Purpose** | Automate repetitive tasks | Guide AI's decision-making process |
-| **Example** | screenshot_tab.py | frago-chrome-navigation.md |
+| **Example** | screenshot_tab.py | frago-browser-navigation.md |
 | **Users** | All users | Advanced users |
 
 **When do you need Skills?**

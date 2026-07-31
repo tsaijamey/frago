@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Frago CLI - Chrome DevTools Protocol command-line interface
+Frago CLI - agent OS command-line interface
 
 Provides backward-compatible CLI interface supporting all original shell script features.
 """
@@ -16,8 +16,8 @@ from .agent_command import agent, agent_status
 from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
 from .autostart_command import autostart_group
 from .book_commands import book_command
+from .browser_commands import browser_group
 from .channel_commands import channel_group
-from .chrome_commands import chrome_group
 from .client_commands import client_group
 from .cloud_commands import (
     config_group,
@@ -56,7 +56,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "chrome", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "browser", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -64,7 +64,7 @@ COMMAND_GROUPS = OrderedDict([
 ])
 
 # Command groups to expand subcommands
-EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "session"]
+EXPAND_SUBCOMMANDS = ["browser", "recipe", "run", "dev", "session"]
 
 # Silent aliases: accepted on the command line, absent from --help. The session
 # group reads naturally in the plural ("search my sessions"), and an agent that
@@ -73,7 +73,7 @@ EXPAND_SUBCOMMANDS = ["chrome", "recipe", "run", "dev", "session"]
 COMMAND_ALIASES = {"sessions": "session"}
 
 # Chrome subcommand groups
-CHROME_SUBGROUPS = OrderedDict([
+BROWSER_SUBGROUPS = OrderedDict([
     ("Lifecycle", ["start", "stop", "status"]),
     ("Tab Management", ["list-tabs", "switch-tab", "close-tab"]),
     ("Tab Groups", ["groups", "group-info", "group-close", "group-cleanup", "reset"]),
@@ -207,8 +207,8 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
                 subcmds[subcmd_name] = subcmd
 
             # Chrome command group uses grouped display
-            if group_name == "chrome" and CHROME_SUBGROUPS:
-                for subgroup_name, subgroup_cmds in CHROME_SUBGROUPS.items():
+            if group_name == "browser" and BROWSER_SUBGROUPS:
+                for subgroup_name, subgroup_cmds in BROWSER_SUBGROUPS.items():
                     # Add group label
                     rows.append((f"  [{subgroup_name}]", ""))
                     for subcmd_name in subgroup_cmds:
@@ -306,7 +306,7 @@ def cli(ctx, gui: bool, gui_background: bool, debug: bool, timeout: int, host: s
     Three Core Systems:
       - Run System    Persistent task context, records complete exploration process
       - Recipe System Metadata-driven reusable automation scripts
-      - Chrome CDP    Browser automation low-level capabilities
+      - browser automation    Browser automation low-level capabilities
 
     \b
     GUI Mode (deprecated):
@@ -375,7 +375,7 @@ cli.add_command(status)  # CDP connection status (kept at top level for quick ch
 cli.add_command(update)  # Self-update command
 
 # Command groups
-cli.add_command(chrome_group)  # Chrome CDP command group
+cli.add_command(browser_group)  # browser automation command group
 cli.add_command(extension_group, name="extension")  # Browser extension bridge (P1 MVP)
 
 # Recipe management command group

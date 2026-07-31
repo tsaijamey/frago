@@ -16,10 +16,10 @@ from typing import Any
 
 import click
 
-from ..chrome.cdp.exceptions import CDPError
-from ..chrome.cdp.logger import get_logger
-from ..chrome.cdp.session import CDPSession
-from ..chrome.cdp.tab_group_manager import (
+from ..browser.cdp.exceptions import CDPError
+from ..browser.cdp.logger import get_logger
+from ..browser.cdp.session import CDPSession
+from ..browser.cdp.tab_group_manager import (
     ChromeCommandError,
     build_group_index,
     create_session,
@@ -35,106 +35,106 @@ from .agent_friendly import AgentFriendlyCommand, validate_cdp_port
 COMMAND_EXAMPLES = {
     # Chrome subcommands — all tab-operating commands require --group (or FRAGO_CURRENT_RUN env)
     "navigate": [
-        "frago chrome navigate <url> --group <name>",
-        "frago chrome navigate https://example.com --group research",
-        "frago chrome navigate https://example.com --group research --wait-for '.content-loaded'",
+        "frago browser navigate <url> --group <name>",
+        "frago browser navigate https://example.com --group research",
+        "frago browser navigate https://example.com --group research --wait-for '.content-loaded'",
     ],
     "click": [
-        "frago chrome click --group <name> <selector>",
-        "frago chrome click --group research 'button.submit'",
-        "frago chrome click --group research '#login-btn' --wait-timeout 15",
+        "frago browser click --group <name> <selector>",
+        "frago browser click --group research 'button.submit'",
+        "frago browser click --group research '#login-btn' --wait-timeout 15",
     ],
     "screenshot": [
-        "frago chrome screenshot --group <name> <output_file>",
-        "frago chrome screenshot --group research page.png",
-        "frago chrome screenshot --group research full.png --full-page --quality 90",
+        "frago browser screenshot --group <name> <output_file>",
+        "frago browser screenshot --group research page.png",
+        "frago browser screenshot --group research full.png --full-page --quality 90",
     ],
     "exec-js": [
-        "frago chrome exec-js --group <name> <script>",
-        "frago chrome exec-js --group research 'document.title'",
-        "frago chrome exec-js --group research 'return window.scrollY' --return-value",
-        "frago chrome exec-js --group research ./script.js  # Load from file",
+        "frago browser exec-js --group <name> <script>",
+        "frago browser exec-js --group research 'document.title'",
+        "frago browser exec-js --group research 'return window.scrollY' --return-value",
+        "frago browser exec-js --group research ./script.js  # Load from file",
     ],
     "get-title": [
-        "frago chrome get-title --group <name>",
-        "frago chrome get-title --group research",
+        "frago browser get-title --group <name>",
+        "frago browser get-title --group research",
     ],
     "get-content": [
-        "frago chrome get-content --group <name> [selector]",
-        "frago chrome get-content --group research",
-        "frago chrome get-content --group research 'article.main' --desc 'article-content'",
+        "frago browser get-content --group <name> [selector]",
+        "frago browser get-content --group research",
+        "frago browser get-content --group research 'article.main' --desc 'article-content'",
     ],
     "scroll": [
-        "frago chrome scroll --group <name> <distance>",
-        "frago chrome scroll --group research 500",
-        "frago chrome scroll --group research down",
-        "frago chrome scroll --group research up",
+        "frago browser scroll --group <name> <distance>",
+        "frago browser scroll --group research 500",
+        "frago browser scroll --group research down",
+        "frago browser scroll --group research up",
     ],
     "scroll-to": [
-        "frago chrome scroll-to --group <name> <selector>",
-        "frago chrome scroll-to --group research 'article'",
-        "frago chrome scroll-to --group research --text 'Section Title'",
+        "frago browser scroll-to --group <name> <selector>",
+        "frago browser scroll-to --group research 'article'",
+        "frago browser scroll-to --group research --text 'Section Title'",
     ],
     "wait": [
-        "frago chrome wait --group <name> <seconds>",
-        "frago chrome wait --group research 2",
+        "frago browser wait --group <name> <seconds>",
+        "frago browser wait --group research 2",
     ],
     "zoom": [
-        "frago chrome zoom --group <name> <factor>",
-        "frago chrome zoom --group research 1.5",
-        "frago chrome zoom --group research 1     # Reset to original size",
+        "frago browser zoom --group <name> <factor>",
+        "frago browser zoom --group research 1.5",
+        "frago browser zoom --group research 1     # Reset to original size",
     ],
     "clear-effects": [
-        "frago chrome clear-effects --group <name>",
-        "frago chrome clear-effects --group research",
+        "frago browser clear-effects --group <name>",
+        "frago browser clear-effects --group research",
     ],
     "highlight": [
-        "frago chrome highlight --group <name> <selector>",
-        "frago chrome highlight --group research 'button.primary'",
-        "frago chrome highlight --group research '#target' --color red --width 5",
+        "frago browser highlight --group <name> <selector>",
+        "frago browser highlight --group research 'button.primary'",
+        "frago browser highlight --group research '#target' --color red --width 5",
     ],
     "pointer": [
-        "frago chrome pointer --group <name> <selector>",
-        "frago chrome pointer --group research 'button.submit'",
+        "frago browser pointer --group <name> <selector>",
+        "frago browser pointer --group research 'button.submit'",
     ],
     "spotlight": [
-        "frago chrome spotlight --group <name> <selector>",
-        "frago chrome spotlight --group research '.highlight-me'",
+        "frago browser spotlight --group <name> <selector>",
+        "frago browser spotlight --group research '.highlight-me'",
     ],
     "annotate": [
-        "frago chrome annotate --group <name> <selector> <text>",
-        "frago chrome annotate --group research 'button' 'Click here'",
-        "frago chrome annotate --group research '#form' 'Fill this' --position bottom",
+        "frago browser annotate --group <name> <selector> <text>",
+        "frago browser annotate --group research 'button' 'Click here'",
+        "frago browser annotate --group research '#form' 'Fill this' --position bottom",
     ],
     "underline": [
-        "frago chrome underline --group <name> <selector>",
-        "frago chrome underline --group research 'article p'",
-        "frago chrome underline --group research --text 'Important text'",
+        "frago browser underline --group <name> <selector>",
+        "frago browser underline --group research 'article p'",
+        "frago browser underline --group research --text 'Important text'",
     ],
     "groups": [
-        "frago chrome groups",
-        "frago chrome groups --json",
+        "frago browser groups",
+        "frago browser groups --json",
     ],
     "start": [
-        "frago chrome start",
-        "frago chrome start --headless",
-        "frago chrome start --void --keep-alive",
-        "frago chrome start --width 1920 --height 1080",
+        "frago browser start",
+        "frago browser start --headless",
+        "frago browser start --void --keep-alive",
+        "frago browser start --width 1920 --height 1080",
     ],
     "stop": [
-        "frago chrome stop",
+        "frago browser stop",
     ],
     "list-tabs": [
-        "frago chrome list-tabs",
+        "frago browser list-tabs",
     ],
     "switch-tab": [
-        "frago chrome switch-tab <tab_id>",
-        "frago chrome switch-tab ABC123  # Supports partial ID matching",
+        "frago browser switch-tab <tab_id>",
+        "frago browser switch-tab ABC123  # Supports partial ID matching",
     ],
     # Top-level commands
     "status": [
         "frago status",
-        "frago chrome status  # Equivalent",
+        "frago browser status  # Equivalent",
     ],
     "init": [
         "frago init",
@@ -142,38 +142,38 @@ COMMAND_EXAMPLES = {
     ],
     # Chrome command group itself (showing subcommand overview)
     "chrome": [
-        "frago chrome <command>",
-        "frago chrome start      # Start browser",
-        "frago chrome navigate   # Navigate to URL",
-        "frago chrome groups     # List tab groups",
-        "frago chrome click      # Click element",
-        "frago chrome screenshot # Take screenshot",
+        "frago browser <command>",
+        "frago browser start      # Start browser",
+        "frago browser navigate   # Navigate to URL",
+        "frago browser groups     # List tab groups",
+        "frago browser click      # Click element",
+        "frago browser screenshot # Take screenshot",
     ],
     # Frago top-level commands
     "frago": [
         "frago <command>",
-        "frago chrome start      # Start browser",
+        "frago browser start      # Start browser",
         "frago status            # Check CDP connection status",
         "frago server            # Start web server",
     ],
     # Chrome additional
     "close-tab": [
-        "frago chrome close-tab <tab_id>",
+        "frago browser close-tab <tab_id>",
     ],
     "detect": [
-        "frago chrome detect",
+        "frago browser detect",
     ],
     "group-info": [
-        "frago chrome group-info <group_name>",
+        "frago browser group-info <group_name>",
     ],
     "group-close": [
-        "frago chrome group-close <group_name>",
+        "frago browser group-close <group_name>",
     ],
     "group-cleanup": [
-        "frago chrome group-cleanup",
+        "frago browser group-cleanup",
     ],
     "reset": [
-        "frago chrome reset",
+        "frago browser reset",
     ],
     # Server
     "server": [
@@ -758,7 +758,7 @@ def print_usage(func):
         name_map = {
             "click-element": "click",
             "execute-javascript": "exec-js",
-            "chrome-start": "chrome",
+            "browser-start": "browser",
             "init-dirs": "init",
         }
         cmd_name = name_map.get(cmd_name, cmd_name)
@@ -989,7 +989,7 @@ def _get_current_target_id(session: CDPSession) -> str | None:
 def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) -> str | None:
     """Find which group a tab belongs to. Returns group name or None."""
     try:
-        from ..chrome.cdp.tab_group_manager import TabGroupManager
+        from ..browser.cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=host, port=port)
         for name, group in tgm.list_groups().items():
             if tab_id in group.tabs:
@@ -1034,7 +1034,7 @@ def _check_landing_page_protection(session: CDPSession, ctx=None) -> None:
 def _ensure_landing_page(host: str, port: int) -> None:
     """Ensure the landing page tab exists (auto-restore if missing). Best-effort."""
     try:
-        from ..chrome.cdp.tab_group_manager import TabGroupManager
+        from ..browser.cdp.tab_group_manager import TabGroupManager
         TabGroupManager(host=host, port=port).ensure_landing_page()
     except Exception:
         get_logger().warning("Failed to ensure landing page", exc_info=True)
@@ -1062,7 +1062,7 @@ def _maybe_sweep_expired_groups(host: str, port: int) -> None:
     handles this) is not running. Throttle marker is a file next to the
     group state file; reading its mtime is cheaper than any HTTP call.
     """
-    from ..chrome.cdp import tab_group_manager as tgm_mod
+    from ..browser.cdp import tab_group_manager as tgm_mod
 
     marker = tgm_mod.STATE_FILE.parent / "last_expiry_sweep"
     try:
@@ -1087,7 +1087,7 @@ def _maybe_sweep_expired_groups(host: str, port: int) -> None:
 def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
     """Update last_activity timestamp for the currently connected tab."""
     try:
-        from ..chrome.cdp.tab_manager import TabManager
+        from ..browser.cdp.tab_manager import TabManager
         tab_id = _get_current_target_id(session)
         if tab_id:
             tab_mgr = TabManager(host=host, port=port)
@@ -1154,7 +1154,7 @@ def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = Non
             # Persist current target_id for non-navigate commands
             if resolved_group:
                 try:
-                    from ..chrome.cdp.tab_group_manager import TabGroupManager
+                    from ..browser.cdp.tab_group_manager import TabGroupManager
                     tgm = TabGroupManager(host=ctx.obj['HOST'], port=ctx.obj['PORT'])
                     actual_target = _get_current_target_id(session)
                     if actual_target:
@@ -2156,7 +2156,7 @@ def init(force: bool):
          'profile directly; this flag is ignored'
 )
 @print_usage
-def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_url: str,
+def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_url: str,
                  port: int, width: int, height: int, window_x: int, window_y: int,
                  profile_dir: str, no_kill: bool, keep_alive: bool,
                  reseed_profile: bool):
@@ -2181,13 +2181,13 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
 
     \b
     Examples:
-      frago chrome start                              # Auto-detect browser
-      frago chrome start --browser edge               # Use Edge browser
-      frago chrome start --browser chromium           # Use Chromium
-      frago chrome start --headless                   # Headless mode
-      frago chrome start --void                       # Void mode
-      frago chrome start --app --app-url https://...  # App mode
-      frago chrome start --keep-alive                 # Keep running after launch
+      frago browser start                              # Auto-detect browser
+      frago browser start --browser edge               # Use Edge browser
+      frago browser start --browser chromium           # Use Chromium
+      frago browser start --headless                   # Headless mode
+      frago browser start --void                       # Void mode
+      frago browser start --app --app-url https://...  # App mode
+      frago browser start --keep-alive                 # Keep running after launch
 
     CDP port is fixed at 9222 (the only whitelisted port); any other value
     is rejected. Regular browsing goes through the extension backend and
@@ -2195,7 +2195,7 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     """
     from pathlib import Path
 
-    from ..chrome.cdp.launcher import ChromeLauncher
+    from ..browser.cdp.launcher import ChromeLauncher
 
     if reseed_profile:
         click.echo("Warning: --reseed-profile is obsolete — the extension "
@@ -2210,7 +2210,7 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     # App mode requires URL
     if app_mode and not app_url:
         click.echo("Error: --app mode requires --app-url to be specified", err=True)
-        click.echo("Example: frago chrome start --app --app-url http://localhost:8093/viewer/...", err=True)
+        click.echo("Example: frago browser start --app --app-url http://localhost:8093/viewer/...", err=True)
         return
 
     # Window position only used for app mode
@@ -2291,7 +2291,7 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
         click.echo("[X] Failed to launch browser", err=True)
 
 
-@click.command('chrome-stop', cls=AgentFriendlyCommand)
+@click.command('browser-stop', cls=AgentFriendlyCommand)
 @click.option(
     '--port',
     type=int,
@@ -2300,14 +2300,14 @@ def chrome_start(browser: str, headless: bool, void: bool, app_mode: bool, app_u
     help='CDP debug port. Only 9222 is allowed.'
 )
 @print_usage
-def chrome_stop(port: int):
+def browser_stop(port: int):
     """
     Stop Chrome CDP process
 
     Closes the Chrome CDP instance running on the specified port.
     """
-    from ..chrome.cdp.launcher import ChromeLauncher
-    from ..chrome.cdp.process import kill_existing_chrome
+    from ..browser.cdp.launcher import ChromeLauncher
+    from ..browser.cdp.process import kill_existing_chrome
 
     launcher = ChromeLauncher(port=port)
     killed = kill_existing_chrome(launcher.debugging_port)
@@ -2330,7 +2330,7 @@ def tab_groups(ctx, as_json: bool):
     """List all tab groups and their tab counts"""
     import json as _json
 
-    from ..chrome.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2366,7 +2366,7 @@ def tab_group_info(ctx, group_name: str):
     """Show details of a tab group"""
     from datetime import datetime
 
-    from ..chrome.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2395,7 +2395,7 @@ def tab_group_info(ctx, group_name: str):
 @print_usage
 def tab_group_close(ctx, group_name: str):
     """Close a tab group and all its tabs"""
-    from ..chrome.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2414,7 +2414,7 @@ def tab_group_close(ctx, group_name: str):
 @print_usage
 def tab_group_cleanup(ctx):
     """Remove stale groups whose tabs no longer exist"""
-    from ..chrome.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2426,7 +2426,7 @@ def tab_group_cleanup(ctx):
 @click.command('reset', cls=AgentFriendlyCommand)
 @click.pass_context
 @print_usage
-def chrome_reset(ctx):
+def browser_reset(ctx):
     """Close all tabs except the landing page
 
     With FRAGO_CURRENT_RUN set: only closes that agent's group.
@@ -2436,7 +2436,7 @@ def chrome_reset(ctx):
 
     import requests as _requests
 
-    from ..chrome.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import TabGroupManager
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2519,7 +2519,7 @@ def list_tabs(ctx, tracked: bool, as_json: bool):
         tracking = {}
         if tracked:
             try:
-                from ..chrome.cdp.tab_manager import TabManager
+                from ..browser.cdp.tab_manager import TabManager
                 tab_mgr = TabManager(host=host, port=port)
                 tab_mgr.reconcile()
                 tracking = {e.tab_id: e for e in tab_mgr.get_tracked_tabs()}
@@ -2637,7 +2637,7 @@ def switch_tab(ctx, tab_id: str):
         # Update tab activity tracking
         full_id = target.get('id')
         try:
-            from ..chrome.cdp.tab_manager import TabManager
+            from ..browser.cdp.tab_manager import TabManager
             tab_mgr = TabManager(host=host, port=port)
             tab_mgr.touch_tab(full_id)
             tab_mgr._save_state()
@@ -2648,7 +2648,7 @@ def switch_tab(ctx, tab_id: str):
         # Update group's current_target_id so subsequent commands follow
         if tab_group:
             try:
-                from ..chrome.cdp.tab_group_manager import TabGroupManager
+                from ..browser.cdp.tab_group_manager import TabGroupManager
                 tgm = TabGroupManager(host=host, port=port)
                 tgm.set_current_target(tab_group, full_id)
             except Exception:
@@ -2712,7 +2712,7 @@ def close_tab(ctx, tab_id: str):
         if success:
             # Remove from TabManager state (best-effort)
             try:
-                from ..chrome.cdp.tab_manager import TabManager
+                from ..browser.cdp.tab_manager import TabManager
                 tab_mgr = TabManager(host=host, port=port)
                 tab_mgr.untrack_tab(full_id)
                 tab_mgr._save_state()
@@ -2722,7 +2722,7 @@ def close_tab(ctx, tab_id: str):
             # Remove from TabGroupManager if it was grouped
             if tab_group:
                 try:
-                    from ..chrome.cdp.tab_group_manager import TabGroupManager
+                    from ..browser.cdp.tab_group_manager import TabGroupManager
                     tgm = TabGroupManager(host=host, port=port)
                     grp = tgm.get_group(tab_group)
                     if grp and full_id in grp.tabs:
