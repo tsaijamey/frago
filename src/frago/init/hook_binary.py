@@ -1,12 +1,19 @@
 """
-Hook binary deployment for Claude Code.
+Hook binary deployment.
 
 Detects the current OS/arch, locates the matching precompiled binary
-shipped inside the frago package, and copies it to ~/.claude/hooks/frago/.
-Also syncs hook event registration in settings.json based on what
-the binary reports via --supported-events.
+shipped inside the frago package (site-packages/frago/bin/), and copies it
+to ~/.frago/bin/. Also syncs hook event registration in settings.json based
+on what the binary reports via --supported-events.
+
+The binary lives in frago's own runtime dir (~/.frago/bin/) rather than
+~/.claude/hooks/frago/ because frago-core is frago's runtime component, not
+a Claude Code plugin. The wheel bundles all four platform binaries, so
+upgrading frago-cli upgrades them automatically; deploy just syncs the
+right one to the stable path settings.json points at.
 """
 
+import contextlib
 import filecmp
 import json
 import logging
@@ -74,14 +81,18 @@ def get_bundled_binary_path() -> Path:
 
 
 def get_hook_deploy_dir() -> Path:
-    """Return ~/.claude/hooks/frago/, creating it if needed."""
-    deploy_dir = Path.home() / ".claude" / "hooks" / "frago"
+    """Return ~/.frago/bin/, creating it if needed."""
+    deploy_dir = Path.home() / ".frago" / "bin"
     deploy_dir.mkdir(parents=True, exist_ok=True)
     return deploy_dir
 
 
 def deploy_hook_binary(force: bool = False) -> Path:
-    """Copy the platform-appropriate binary to ~/.claude/hooks/frago/.
+    """Copy the platform-appropriate binary to ~/.frago/bin/.
+
+    Also removes the legacy ~/.claude/hooks/frago/ copy so an upgraded
+    install never runs a stale binary (the runtime path changed once;
+    leftover copies there are dead weight and a drift hazard).
 
     Args:
         force: Overwrite even if the target already exists and has the same size.
@@ -96,6 +107,12 @@ def deploy_hook_binary(force: bool = False) -> Path:
     src = get_bundled_binary_path()
     dst_dir = get_hook_deploy_dir()
     dst = dst_dir / get_binary_name()
+
+    # Clean the legacy copy before the idempotency early-return: the cleanup
+    # must happen on every deploy, not only when the binary actually changes.
+    # Otherwise a second server start with an already-current binary would
+    # skip it and a leftover ~/.claude/hooks/frago/frago-hook would survive.
+    cleanup_legacy_hook_copy()
 
     if dst.exists() and not force and filecmp.cmp(src, dst, shallow=False):
         return dst
@@ -116,6 +133,31 @@ def get_hook_binary_path() -> str:
     """
     deploy_dir = get_hook_deploy_dir()
     return str(deploy_dir / get_binary_name())
+
+
+def get_legacy_hook_dir() -> Path:
+    """Return the historical ~/.claude/hooks/frago/ directory, if present."""
+    return Path.home() / ".claude" / "hooks" / "frago"
+
+
+def cleanup_legacy_hook_copy() -> None:
+    """Remove the pre-1.2.x hook binary from ~/.claude/hooks/frago/.
+
+    The runtime copy used to live there; it now lives in ~/.frago/bin/.
+    The legacy binary is dead weight and, worse, a drift hazard: if a
+    settings.json still points at it, an upgraded frago would keep running
+    the stale binary. Deleting it forces any stale reference to surface
+    loudly rather than silently run an old hook.
+
+    Best-effort: a missing legacy copy is normal (fresh install); the
+    session-start-book.sh script that also lives in that directory is left
+    untouched — it is a Claude Code integration layer, not the binary.
+    """
+    legacy = get_legacy_hook_dir() / get_binary_name()
+    with contextlib.suppress(OSError):
+        if legacy.exists():
+            legacy.unlink()
+            logger.info("Removed legacy hook binary: %s", legacy)
 
 
 # ---------------------------------------------------------------------------

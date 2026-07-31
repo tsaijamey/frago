@@ -98,7 +98,7 @@ function toClaudeToolInput(args) {
 
 function hookBinaryPath() {
   const name = process.platform === "win32" ? "frago-hook.exe" : "frago-hook"
-  return path.join(os.homedir(), ".claude", "hooks", "frago", name)
+  return path.join(os.homedir(), ".frago", "bin", name)
 }
 
 /**
