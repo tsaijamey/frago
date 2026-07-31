@@ -1,6 +1,6 @@
 [project]
 name = "frago-cli"
-version = "1.2.57"
+version = "1.2.61"
 description = "frago - Agent OS for AI agents: runtime, resource management, environment sync, and GUI for non-technical users"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -8,7 +8,7 @@ license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Jamey Tsai", email = "caijia@frago.ai"}
 ]
-keywords = ["agent-os", "ai-agent", "automation", "cdp", "chrome", "recipe"]
+keywords = ["agent-os", "ai-agent", "automation", "cdp", "browser", "recipe"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
