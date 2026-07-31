@@ -90,32 +90,13 @@ def test_idempotent_daemon_reuse(tmp_path):
     assert result.extension_id == "xyz"
 
 
-def test_brand_override_wins_over_picker(tmp_path):
-    """Caller's --browser brand overrides what picker would have chosen."""
-    bundle = tmp_path / "bundle"
-    bundle.mkdir()
-    (bundle / "manifest.json").write_text("{}")
-    profile = tmp_path / "profile"
-    fake_browser_proc = MagicMock(pid=999)
-
-    with patch.object(lc, "_daemon_alive", return_value=True), \
-         patch.object(lc, "_profile_locked", return_value=False), \
-         patch.object(lc, "_ensure_native_host_launcher",
-                      return_value=Path("/tmp/launcher.sh")), \
-         patch.object(lc, "install_manifest",
-                      return_value=Path("/tmp/m.json")), \
-         patch("frago.browser.backends.extension.launch_chrome_with_extension",
-               return_value=fake_browser_proc), \
-         patch.object(lc, "_wait_bridge",
-                      return_value={"bridge": {"extensionId": "xyz"}}), \
-         patch("frago.browser.backends.extension.pick_browser_for_extension",
-               return_value=MagicMock(path="/usr/bin/microsoft-edge",
-                                       brand="edge")):
-        result = lc.start_extension_bridge(
-            browser="brave", profile_dir=profile, bundle_dir=bundle,
-        )
-    # Picker still ran (returned edge), but caller's brand override stuck.
-    assert result.browser_brand == "brave"
+def test_brand_without_binary_rejected():
+    """A brand alone cannot choose the binary — it would only misdirect
+    the profile, launching the picker's browser against another brand's
+    user-data dir. Reject the combination instead of silently doing that.
+    """
+    with pytest.raises(RuntimeError, match="cannot pick the browser here"):
+        lc.start_extension_bridge(browser="brave")
 
 
 def test_profile_locked_helper_with_no_lock(tmp_path):

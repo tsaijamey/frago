@@ -2081,8 +2081,11 @@ def init(force: bool):
 @click.option(
     '--browser',
     type=click.Choice(['chrome', 'edge', 'chromium'], case_sensitive=False),
-    help='Browser to use (auto-detect if not specified). '
-         'Long flag only: -b at the chrome group level means --backend.'
+    help='CDP backend only. Under the default extension backend this does '
+         'NOT pick the browser (the picker still decides) — it only '
+         'redirects the profile directory, so you drive one browser '
+         "against another's profile. Leave it unset. "
+         'Long flag only: -b at the browser group level means --backend.'
 )
 @click.option(
     '--headless',
@@ -2161,37 +2164,38 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
                  profile_dir: str, no_kill: bool, keep_alive: bool,
                  reseed_profile: bool):
     """
-    Launch browser with CDP debugging support (Chrome, Edge, or Chromium)
+    Launch the agent browser and bring up the extension bridge
 
     \b
-    Browser selection (--browser):
-      chrome   - Google Chrome (default if available)
-      edge     - Microsoft Edge
-      chromium - Chromium browser
-      (auto)   - Auto-detect: Chrome > Edge > Chromium
-      Note: --browser picks which Chromium-family browser to launch;
-      it does NOT change the backend (-b/--backend on the chrome group).
+    Default (extension backend) — just run it with no options:
+      frago browser start
 
     \b
-    Mode descriptions:
-      default    - Normal window mode
-      --headless - Run without UI
-      --void     - Window hidden off-screen
-      --app      - App mode: borderless window (requires --app-url)
+    It picks a browser automatically, in this fixed order, taking the
+    first one installed:
+      Edge > Edge Beta > Edge Dev > Chromium
+        > Chrome Beta > Chrome Dev > Chrome Canary > Brave > Vivaldi
+    Chrome Stable is excluded on purpose: since v137 it silently ignores
+    --load-extension. Use `frago browser check` to see what's available.
 
     \b
-    Examples:
-      frago browser start                              # Auto-detect browser
-      frago browser start --browser edge               # Use Edge browser
-      frago browser start --browser chromium           # Use Chromium
-      frago browser start --headless                   # Headless mode
-      frago browser start --void                       # Void mode
-      frago browser start --app --app-url https://...  # App mode
-      frago browser start --keep-alive                 # Keep running after launch
+    Options below are CDP-backend options. Under the default extension
+    backend they are silently dropped and do nothing:
+      --headless --void --app --app-url --port --profile-dir
+      --width --height --window-x --window-y --no-kill --keep-alive
+    They take effect only when you explicitly select CDP:
+      frago browser -b cdp start --headless
+
+    \b
+    Do NOT pass --browser. Under the default backend it does not change
+    which browser launches (the picker still decides) — it only changes
+    which profile directory is used, so you end up driving one browser
+    against another browser's profile. --browser chrome is the worst
+    case: that is the user's everyday Chrome profile.
 
     CDP port is fixed at 9222 (the only whitelisted port); any other value
-    is rejected. Regular browsing goes through the extension backend and
-    needs no --port at all — see: frago book chrome-backend-choice
+    is rejected. Regular browsing needs no --port at all.
+    See: frago book browser-backend-choice
     """
     from pathlib import Path
 
@@ -2302,9 +2306,11 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
 @print_usage
 def browser_stop(port: int):
     """
-    Stop Chrome CDP process
+    Stop the agent browser
 
-    Closes the Chrome CDP instance running on the specified port.
+    Under the default extension backend: closes the browser, stops the
+    native-messaging daemon and clears the socket. Under -b cdp: closes
+    the CDP instance running on the given port.
     """
     from ..browser.cdp.launcher import ChromeLauncher
     from ..browser.cdp.process import kill_existing_chrome

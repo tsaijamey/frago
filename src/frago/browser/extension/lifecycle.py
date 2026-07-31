@@ -261,9 +261,11 @@ def start_extension_bridge(
     (e.g., daemon left running but browser closed).
 
     Args:
-        browser: Brand override (``edge``, ``chromium``, ``brave``, ...).
-            Required when ``chrome_binary`` is given. Otherwise the
-            picker chooses and reports.
+        browser: Brand of ``chrome_binary`` (``edge``, ``chromium``,
+            ``brave``, ...), used to resolve the manifest/profile path.
+            Required when ``chrome_binary`` is given, and rejected
+            without it — on its own it cannot choose the binary, it
+            would only misdirect the profile.
         chrome_binary: Explicit browser executable. Overrides picker.
         profile_dir: Override the profile (default: the browser's own
             system user-data directory — the real profile, no copy).
@@ -294,6 +296,16 @@ def start_extension_bridge(
         binary = chrome_binary
         brand = browser
     else:
+        if browser:
+            raise RuntimeError(
+                f"--browser {browser!r} cannot pick the browser here: the "
+                f"picker decides which binary launches, so this would only "
+                f"redirect the profile directory and drive the launched "
+                f"browser against {browser!r}'s profile. Drop --browser and "
+                f"let the picker choose (`frago browser check` lists what is "
+                f"available), or pass an explicit binary together with its "
+                f"brand."
+            )
         from ..backends.extension import pick_browser_for_extension
         choice = pick_browser_for_extension()
         if not choice:
@@ -304,7 +316,7 @@ def start_extension_bridge(
                 "--load-extension since v137."
             )
         binary = choice.path
-        brand = browser or choice.brand
+        brand = choice.brand
 
     # 2. Profile dir — the browser's own system profile. The extension
     # backend drives the real browser directly; no isolated copy.

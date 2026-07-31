@@ -220,6 +220,15 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
         brand = kwargs.get("browser")
         if brand in (None, "", "auto"):
             brand = None
+        if brand is not None:
+            raise click.UsageError(
+                f"--browser {brand} has no effect on this backend and is "
+                f"unsafe: the browser that launches is chosen automatically, "
+                f"and --browser would only point the profile directory at "
+                f"{brand}, driving the launched browser against {brand}'s "
+                f"profile. Run `frago browser start` with no options; use "
+                f"`frago browser check` to see which browsers are available."
+            )
 
         try:
             result: BridgeStartupResult = start_extension_bridge(
