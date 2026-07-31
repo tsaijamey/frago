@@ -472,6 +472,14 @@ def hook_rules_validate():
 
 # ── stats ────────────────────────────────────────────────────────────────
 
+# Outcome markers the engine writes as the fourth column of the hits log; must
+# stay in step with the HIT_* constants in frago-core/src/rules.rs. "dupcont"
+# means another rule had already put the same text in front of the agent, which
+# is a different problem from a rule deduping against itself and so gets its
+# own counter.
+_OUTCOMES = ("injected", "deduped", "dup-content", "empty", "denied")
+_EMPTY_STAT: dict[str, int] = {"count": 0, **{o: 0 for o in _OUTCOMES}, "last_ts": 0}
+
 
 def _accumulate_hits(path: Path, stats: dict[str, dict]) -> None:
     """Fold one generation of the hits log into ``stats`` in place.
@@ -508,12 +516,9 @@ def _accumulate_hits(path: Path, stats: dict[str, dict]) -> None:
             if not 0 < ts < _TS_SANE_MAX:
                 continue
             rule_id = parts[2]
-            entry = stats.setdefault(
-                rule_id,
-                {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "denied": 0, "last_ts": 0},
-            )
+            entry = stats.setdefault(rule_id, dict(_EMPTY_STAT))
             entry["count"] += 1
-            if outcome in ("injected", "deduped", "empty", "denied"):
+            if outcome in _OUTCOMES:
                 entry[outcome] += 1
             if ts > entry["last_ts"]:
                 entry["last_ts"] = ts
@@ -544,35 +549,45 @@ def hook_rules_stats(source: str | None):
     rules_by_id = {r["id"]: r for r in merged.get("rules", []) if r.get("id")}
     stats = _read_hits()
 
-    empty_stat = {"count": 0, "injected": 0, "deduped": 0, "empty": 0, "denied": 0, "last_ts": 0}
     rows = []
     for rid, info in rules_by_id.items():
         if source and info.get("source") != source:
             continue
-        s = stats.get(rid, empty_stat)
+        s = stats.get(rid, _EMPTY_STAT)
         rows.append(
-            (rid, info.get("source", "?"), s["count"], s["injected"],
-             s["deduped"], s["empty"], s["denied"], s["last_ts"])
+            (rid, info.get("source", "?"), s["count"], s["injected"], s["deduped"],
+             s["dup-content"], s["empty"], s["denied"], s["last_ts"])
         )
     rows.sort(key=lambda r: (-r[2], r[0]))
 
     click.echo(
         f"\n  {'ID':<42s} {'SOURCE':<8s} {'MATCH':>6s} {'INJECT':>7s} "
-        f"{'DEDUP':>6s} {'EMPTY':>6s} {'DENY':>5s}   LAST HIT"
+        f"{'DEDUP':>6s} {'DUPTXT':>7s} {'EMPTY':>6s} {'DENY':>5s}   LAST HIT"
     )
-    click.echo("  " + "-" * 106)
-    for rid, src, count, injected, deduped, empty, denied, ts in rows:
+    click.echo("  " + "-" * 114)
+    for rid, src, count, injected, deduped, dupcont, empty, denied, ts in rows:
         last = datetime.fromtimestamp(ts).isoformat(timespec="seconds") if ts else "-"
         click.echo(
             f"  {rid:<42s} {src:<8s} {count:>6d} {injected:>7d} "
-            f"{deduped:>6d} {empty:>6d} {denied:>5d}   {last}"
+            f"{deduped:>6d} {dupcont:>7d} {empty:>6d} {denied:>5d}   {last}"
         )
 
     zero = sum(1 for r in rows if r[2] == 0)
     # A deny rule injects nothing by design, so judge "fired into the void" on
     # the empty counter alone — otherwise every refusal would read as broken.
-    broken = [r[0] for r in rows if r[5] > 0]
+    broken = [r[0] for r in rows if r[6] > 0]
+    # A rule that only ever loses to a neighbour is saying nothing the agent
+    # was not already told. Surfaced separately from "broken" because the fix
+    # is to delete the rule, not to repair what it points at.
+    redundant = [r[0] for r in rows if r[5] > 0 and r[3] == 0]
     click.echo(f"\n({len(rows)} rules; {zero} never matched)")
+    if redundant:
+        click.echo(
+            f"\n{len(redundant)} rule(s) only ever repeated text another rule had "
+            "already injected — candidates for removal:"
+        )
+        for rid in redundant:
+            click.echo(f"  ! {rid}")
     if broken:
         click.echo(
             f"\n{len(broken)} rule(s) matched but produced no content — "
