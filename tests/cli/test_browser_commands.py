@@ -56,7 +56,7 @@ def _patch_session(monkeypatch, session: MagicMock) -> None:
 def test_browser_group_help(runner):
     result = runner.invoke(browser_group, ["--help"])
     assert result.exit_code == 0, result.output
-    assert "Chrome" in result.output
+    assert "Browser automation" in result.output
 
 
 @pytest.mark.parametrize("name", sorted(browser_group.commands.keys()))
