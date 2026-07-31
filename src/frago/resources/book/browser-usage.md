@@ -18,7 +18,14 @@ recipe/run 环境中 `FRAGO_CURRENT_RUN` 环境变量作为 fallback，此时可
 
 group 保证：同 group 内所有命令自动跟随同一 tab；不同 group 互不干扰；30 分钟不活跃自动清理。
 
-管理类命令（start/stop/status/groups/list-tabs 等）不需要 `--group`。
+下面这些命令不需要 `--group`（管理类，或自己就是全局操作）：
+
+  start  stop  status  check  detect  wait  reset
+  list-tabs  switch-tab  close-tab
+  groups  group-info  group-close  group-cleanup
+
+除此之外的每一条都必须有 group，缺了会报 `--group/-g required`。
+`detect` 和 `wait` 两条可带可不带：`detect` 带上就从「列已装浏览器」变成「探测当前页反爬」，`wait` 带上才等在该 group 的页面上。
 
 ## Group 查询
 
@@ -26,6 +33,8 @@ group 保证：同 group 内所有命令自动跟随同一 tab；不同 group �
   {{frago_launcher}} browser groups --json        # JSON 格式
   {{frago_launcher}} browser group-info <name>    # group 详情
   {{frago_launcher}} browser group-close <name>   # 关闭 group
+  {{frago_launcher}} browser group-cleanup        # 清掉 tab 已不存在的僵尸 group
+  {{frago_launcher}} browser reset                # 关掉除落地页外的所有 tab（有 FRAGO_CURRENT_RUN 时只清本 group）
 
 ## 导航
 
@@ -40,9 +49,20 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
 ## 内容提取
 
   {{frago_launcher}} browser get-content --group <name> [selector]       # 提取文字和链接
+  {{frago_launcher}} browser get-title --group <name>                    # 只要标题
   {{frago_launcher}} browser exec-js --group <name> <js> --return-value  # 提取结构化数据
 
+选择器是位置参数，`get-content` 没有 `--selector` 这个 flag。
+
+抓回来的内容如果是 "Just a moment…" / "verify you are human" / 403 / 内容明显缺失，那是撞上反爬了，不是页面没加载好。**不要重试 navigate 或 click**，先 `{{frago_launcher}} browser detect --group <name>` 判档，处理办法见 `{{frago_launcher}} book browser-anti-bot`。
+
 截图不用于阅读内容，仅用于验证状态和调试。
+
+## 页面状态
+
+  {{frago_launcher}} browser wait --group <name> 2        # 等待秒数，支持小数
+  {{frago_launcher}} browser zoom --group <name> 0.8      # 缩放，1 为原始大小
+  {{frago_launcher}} browser check                        # 各浏览器是否可用、走哪个后端、是否在跑
 
 ## 交互
 
@@ -64,6 +84,7 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
   {{frago_launcher}} browser pointer --group <name> <selector>           # 指针标记
   {{frago_launcher}} browser spotlight --group <name> <selector>         # 聚光灯
   {{frago_launcher}} browser annotate --group <name> <selector> --text "说明"
+  {{frago_launcher}} browser underline --group <name> <selector>         # 文字逐行下划线动画
   {{frago_launcher}} browser clear-effects --group <name>                # 清除所有效果
 
 ## Tab 管理
@@ -85,4 +106,4 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
 
 - 后端工作方式、profile 机制 → `{{frago_launcher}} book browser-backend-choice`
 - 遇到 anti-bot / Cloudflare / captcha / 验证码 → `{{frago_launcher}} book browser-anti-bot`
-- 启动浏览器换 browser/端口/headless/void/app 模式 → `{{frago_launcher}} book browser-startup`
+- 启动浏览器、start 撞锁、以及为什么不要碰 `--browser` / `--port` / `--headless` → `{{frago_launcher}} book browser-startup`

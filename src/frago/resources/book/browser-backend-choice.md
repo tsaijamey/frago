@@ -1,6 +1,6 @@
 # browser-backend-choice
 
-frago browser 只有一种标准用法：extension 后端（默认，无需任何 flag）。所有 chrome 子命令直接跑即可，不存在"什么场景选什么后端"的判断。
+frago browser 只有一种标准用法：extension 后端（默认，无需任何 flag）。所有 browser 子命令直接跑即可，不存在"什么场景选什么后端"的判断。
 
 ## 工作方式
 
@@ -12,7 +12,7 @@ frago browser 只有一种标准用法：extension 后端（默认，无需任�
 
 控制通道是浏览器扩展 + native messaging，运行在真实浏览器环境里：
 
-- 自动挑选浏览器：优先 Edge，其次 Chromium / Chrome Beta+ / Brave / Vivaldi。Chrome Stable 被刻意排除——v137 起它静默忽略 `--load-extension`。
+- 自动挑选浏览器，顺序固定：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi，取第一个装了的。Chrome Stable 被刻意排除——v137 起它静默忽略 `--load-extension`。
 - **直接使用所选浏览器自己的默认 profile**（如 Edge 的 `~/Library/Application Support/Microsoft Edge`），不做隔离拷贝。该浏览器是专给 agent 用的（用户日常浏览器是另一个品牌）；用户在这个浏览器里手动登录、保存的密码，agent 立即可见，反之亦然。
 - 真实浏览器环境天然过 anti-bot 检测（Cloudflare / Datadome / Akamai），`detect --group <g>` 探针可用（见 `{{frago_launcher}} book browser-anti-bot`）。
 - 同一时刻该 profile 只能有一个浏览器实例；start 撞锁会报错并提示先 stop。
@@ -25,10 +25,11 @@ frago browser 只有一种标准用法：extension 后端（默认，无需任�
 
 ## 不要做的事
 
-以下都是针对 **extension 后端的常规 chrome 操作**（本篇的全部范围）：
+以下都是针对 **extension 后端的常规 browser 操作**（本篇的全部范围）：
 
 - 不要给命令加 `-b`/`--backend` flag——默认后端就是唯一标准路径。
-- 不要用 `--headless` / `--void` / `--port` / `--profile-dir` / `--reseed-profile`：这些是旧后端遗留选项，extension 模式下被忽略或已废弃。
+- 不要给 start 加 `--browser`：默认后端下它**不换浏览器**，只把 profile 目录换成该品牌的目录，启动的仍是自动挑中的那个浏览器。结果是拿 A 浏览器去开 B 浏览器的数据目录。让它自动挑。
+- 不要用 `--headless` / `--void` / `--app` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，默认后端下被静默丢弃，写了也不生效。
 - 不要手动管理 profile 目录：profile 就是浏览器自己的，frago 不拷贝、不清理。
 
 ## 唯一例外：agent_os 的录制机位

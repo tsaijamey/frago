@@ -133,7 +133,7 @@ import subprocess
 subprocess.run(["frago", "chrome", "navigate", url, "--no-border"], ...)
 ```
 
-配方要把自己的页面交给人看时，这里换成 `frago recipe open`——它开在用户的系统默认浏览器里，跟 `frago browser` 驱动的那个受控浏览器是两回事，NEVER 用 `chrome navigate` 代替：
+配方要把自己的页面交给人看时，这里换成 `frago recipe open`——它开在用户的系统默认浏览器里，跟 `frago browser` 驱动的那个受控浏览器是两回事，NEVER 用 `browser navigate` 代替：
 
 ```python
 subprocess.run(["frago", "recipe", "open", url], ...)

@@ -22,7 +22,7 @@
   6. 每次切换后 get-content 确认页面状态
 
 ## 关键约束
-- browser-usage — 打开新 URL 一律走 chrome navigate；不猜页面间跳转 URL；点击可能开新标签；复杂页面用 highlight 定位
+- browser-usage — 打开新 URL 一律走 browser navigate；不猜页面间跳转 URL；点击可能开新标签；复杂页面用 highlight 定位
 - browser-startup — 跨页面流程依赖同一个浏览器实例，别中途换后端
 
 ## 常见陷阱

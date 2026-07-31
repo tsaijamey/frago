@@ -16,8 +16,8 @@
   1. {{frago_launcher}} run find <调研关键词>                # 搜索历史类似任务
   2. {{frago_launcher}} run init "调研主题描述"
   3. {{frago_launcher}} recipe list | grep research        # 检查已有调研 recipe
-  4. {{frago_launcher}} browser navigate "https://google.com/search?q=关键词"
-  5. {{frago_launcher}} browser get-content --selector "#search"
+  4. {{frago_launcher}} browser navigate "https://google.com/search?q=关键词" --group <name>
+  5. {{frago_launcher}} browser get-content --group <name> "#search"
   6. 逐层深入链接（禁止猜测 URL）
   7. {{frago_launcher}} run log --step "发现" --data '{"_insights": [...]}'
   8. 整理产出到 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
