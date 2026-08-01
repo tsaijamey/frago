@@ -487,14 +487,14 @@ USER_PA_ONLINE_RESPAWN_TEMPLATE = "PA 已重新上线（subprocess 异常后自�
 
 # --------------------------------------------------------------------------
 # [给 sub-agent] [PA 决策 action:"run" 时] [任务 prompt + 运行上下文]
-# sub-agent 通过 frago-hook SessionStart 获取 frago 能力索引，
+# sub-agent 通过 frago-core SessionStart 获取 frago 能力索引，
 # 通过 PreToolUse hook 获取操作规范。这里只注入任务内容和运行上下文。
 #
 # 设计原则：
 # - NEVER 暴露消息渠道信息（channel、chat_id、message_id）— agent 不直接回复用户
 # - NEVER 要求 agent 发送消息 — 所有用户回复由 PA 通过 action:reply 统一发送
 # - agent 的职责是产出结果，由 PA 读取结果后决定如何回复用户
-# - 产出落点（~/.frago/data/）由 frago-hook 通过 must-data-dir 知识注入；
+# - 产出落点（~/.frago/data/）由 frago-core 通过 must-data-dir 知识注入；
 #   FRAGO_CURRENT_RUN 只决定日志归属，不决定文件写哪儿
 # --------------------------------------------------------------------------
 SUB_AGENT_PROMPT_TEMPLATE = """\
@@ -513,7 +513,7 @@ NEVER 往 ~/.frago/projects/ 写产出——那是 run 系统的内部账本，�
 旧的 `frago run insights --save` 已退役，敲了会报错。
 {related_section}\
 """
-# NOTE: 以下内容暂时移除，由 frago-hook 动态注入替代：
+# NOTE: 以下内容暂时移除，由 frago-core 动态注入替代：
 # - {knowledge_section} (agent_knowledge.json) → hook SessionStart 注入 frago book --brief
 # - /frago.run slash command trigger → 已从 ~/.claude/commands/ 移走
 # - 完成标记 → Executor 通过 Claude JSONL stop_reason 自动检测，无需 agent 标记

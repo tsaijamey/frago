@@ -523,7 +523,7 @@ COMMAND_EXAMPLES = {
     "def/remove": [
         "frago def remove <name>",
     ],
-    # Hook-rules — frago-hook routing rules engine (spec 20260419-hook-rules-engine)
+    # Hook-rules — frago-core routing rules engine (spec 20260419-hook-rules-engine)
     "hook-rules": [
         "frago hook-rules <command>",
         "frago hook-rules list",

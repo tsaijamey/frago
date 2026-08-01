@@ -230,7 +230,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     orphan_cleanup = OrphanRecipeCleanupService.get_instance()
     await orphan_cleanup.start()
 
-    # Deploy frago-hook binary if missing or outdated, then sync event registration
+    # Deploy frago-core binary if missing or outdated, then sync event registration
     try:
         from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
         hook_path = deploy_hook_binary()
@@ -296,7 +296,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     from frago.server.services.workbench_stream_bridge import WorkbenchStreamBridge
 
     loop = asyncio.get_running_loop()
-    bridge = WorkbenchStreamBridge.get_instance(loop)
+    WorkbenchStreamBridge.get_instance(loop)
     logger.info("WorkbenchStreamBridge initialized (loop=%s)", loop is not None)
 
     yield

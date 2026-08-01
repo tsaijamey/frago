@@ -433,7 +433,7 @@ cli.add_command(def_group)
 # Todo command group - standardized CRUD over ~/.frago/todo/ (one JSON per todo)
 cli.add_command(todo_group, name="todo")
 
-# Hook-rules command group - manage frago-hook's data-driven routing rules
+# Hook-rules command group - manage frago-core's data-driven routing rules
 cli.add_command(hook_rules_group)
 
 # Schedule command group - manage scheduled tasks

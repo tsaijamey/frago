@@ -15,7 +15,7 @@ frago 不造 agent。agent 指 Claude Code / Codex 等外部 agent，frago 为�
 
 | 能力维度 | frago 提供 |
 |---------|-----------|
-| agent 知道怎么做（行为约束、路由、规则）        | frago-hook |
+| agent 知道怎么做（行为约束、路由、规则）        | frago-core |
 | agent 用什么操作（标准化命令入口）              | frago 系列命令（chrome / recipe / server / sync / run / view ...） |
 | agent 如何扩展操作能力（结构化知识 + 自定义命令） | frago def / frago def 定义的命令 |
 | agent 如何沉淀和复用工作流                      | frago recipe |

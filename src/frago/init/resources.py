@@ -2,7 +2,7 @@
 
 After spec 20260422-init-flow-modernization, init no longer copies Claude
 Code commands, skills, or example recipes from the package into the user's
-home directory. Only hook scripts (consumed by frago-hook) still need to be
+home directory. Only hook scripts (consumed by frago-core) still need to be
 materialised — that's what `ensure_hooks()` does.
 
 The `install_*` and `install_all_resources` functions remain as stubs so
@@ -71,7 +71,7 @@ def install_recipes() -> InstallResult:
 
 
 def ensure_hooks() -> list[str]:
-    """Copy frago-hook scripts into ~/.claude/hooks/frago/ and register them
+    """Copy frago-core scripts into ~/.claude/hooks/frago/ and register them
     in ~/.claude/settings.json.
 
     Returns the list of newly installed hook descriptions. Safe to call

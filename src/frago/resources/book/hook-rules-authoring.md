@@ -2,7 +2,7 @@
 
 分类: 偏好（BETTER）
 
-frago-hook 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察到"一类事件应该触发一类知识注入"的重复模式时，MUST 用 `{{frago_launcher}} hook-rules add` 沉淀为规则——不要改 Rust，不要靠提醒用户。
+frago-core 的路由规则数据化在 `~/.frago/hook-rules.json`。当你观察到"一类事件应该触发一类知识注入"的重复模式时，MUST 用 `{{frago_launcher}} hook-rules add` 沉淀为规则——不要改 Rust，不要靠提醒用户。
 
 ## 何时该写规则
 

@@ -2,7 +2,7 @@
 
 profile 的增删改激活目前走 WebUI 设置（见 server/routes/settings.py）；此处只提供
 一个只读的 list，专治「agent 知道有 --use-profile 参数、却不知道能填哪些名字」的
-先验缺口。--for-hook 输出用法 + 活名单，供 frago-hook 的 builtin-bash-frago-agent
+先验缺口。--for-hook 输出用法 + 活名单，供 frago-core 的 builtin-bash-frago-agent
 规则动态注入。
 """
 

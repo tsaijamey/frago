@@ -58,8 +58,19 @@ def get_platform_key() -> str:
 def get_binary_name() -> str:
     """Return the binary filename for the current OS."""
     if platform.system().lower() == "windows":
-        return "frago-hook.exe"
-    return "frago-hook"
+        return "frago-core.exe"
+    return "frago-core"
+
+
+def get_engine_argv() -> list[str]:
+    """Return the argv prefix that selects the hook (engine) entry.
+
+    frago-core runs two entries in one binary: the default (no args) is the
+    agentic kernel; ``--engine`` selects the hook router that Claude Code /
+    opencode invoke per event. Every hook command must carry it, or a hook
+    invocation would silently launch the kernel instead.
+    """
+    return ["--engine"]
 
 
 def get_bundled_binary_path() -> Path:
@@ -111,7 +122,7 @@ def deploy_hook_binary(force: bool = False) -> Path:
     # Clean the legacy copy before the idempotency early-return: the cleanup
     # must happen on every deploy, not only when the binary actually changes.
     # Otherwise a second server start with an already-current binary would
-    # skip it and a leftover ~/.claude/hooks/frago/frago-hook would survive.
+    # skip it and leftover legacy copies would survive.
     cleanup_legacy_hook_copy()
 
     if dst.exists() and not force and filecmp.cmp(src, dst, shallow=False):
@@ -141,23 +152,31 @@ def get_legacy_hook_dir() -> Path:
 
 
 def cleanup_legacy_hook_copy() -> None:
-    """Remove the pre-1.2.x hook binary from ~/.claude/hooks/frago/.
+    """Remove stale binaries left by previous deploy layouts.
 
-    The runtime copy used to live there; it now lives in ~/.frago/bin/.
-    The legacy binary is dead weight and, worse, a drift hazard: if a
-    settings.json still points at it, an upgraded frago would keep running
-    the stale binary. Deleting it forces any stale reference to surface
-    loudly rather than silently run an old hook.
+    Two generations of leftovers can exist:
+    - ~/.claude/hooks/frago/frago-hook (pre-1.2.x runtime location)
+    - ~/.frago/bin/frago-hook (pre-renaming runtime copy)
 
-    Best-effort: a missing legacy copy is normal (fresh install); the
-    session-start-book.sh script that also lives in that directory is left
-    untouched — it is a Claude Code integration layer, not the binary.
+    The current layout is ~/.frago/bin/frago-core. Stale copies are dead
+    weight and, worse, a drift hazard: if a settings.json still points at one,
+    an upgraded frago would keep running the stale binary. Deleting them
+    forces any stale reference to surface loudly rather than silently run an
+    old hook.
+
+    Best-effort: missing copies are normal (fresh install); the
+    session-start-book.sh script in ~/.claude/hooks/frago/ is left untouched
+    — it is a Claude Code integration layer, not the binary.
     """
-    legacy = get_legacy_hook_dir() / get_binary_name()
-    with contextlib.suppress(OSError):
-        if legacy.exists():
-            legacy.unlink()
-            logger.info("Removed legacy hook binary: %s", legacy)
+    candidates = [
+        get_legacy_hook_dir() / "frago-hook",
+        get_hook_deploy_dir() / "frago-hook",
+    ]
+    for stale in candidates:
+        with contextlib.suppress(OSError):
+            if stale.exists():
+                stale.unlink()
+                logger.info("Removed legacy hook binary: %s", stale)
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +185,7 @@ def cleanup_legacy_hook_copy() -> None:
 
 
 def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
-    """Call frago-hook --supported-events and return event descriptors.
+    """Call frago-core --supported-events and return event descriptors.
 
     Returns:
         List of dicts like [{"event": "SessionStart", "matcher": ""}, ...]
@@ -193,16 +212,16 @@ def query_supported_events(hook_path: str) -> list[dict[str, Any]]:
 
 
 def sync_hook_events(hook_path: str) -> None:
-    """Ensure settings.json hook registrations match what frago-hook supports.
+    """Ensure settings.json hook registrations match what frago-core supports.
 
-    Only touches frago-hook entries — other hooks are left untouched.
-    Matcher values come from frago-hook itself (source of truth).
+    Only touches frago entries — other hooks are left untouched.
+    Matcher values come from frago-core itself (source of truth).
     """
     from frago.init.configurator import CLAUDE_SETTINGS_PATH, load_claude_settings
 
     supported = query_supported_events(hook_path)
     if not supported:
-        logger.warning("No supported events from frago-hook, skipping sync")
+        logger.warning("No supported events from frago-core, skipping sync")
         return
 
     # Claude Code on Windows launches hooks via Git Bash (/usr/bin/bash);
@@ -215,9 +234,14 @@ def sync_hook_events(hook_path: str) -> None:
     settings = load_claude_settings()
     hooks = settings.setdefault("hooks", {})
 
+    # The hook command is "<binary> --engine": the default (no-arg) entry of
+    # frago-core is the agentic kernel, and a bare path would launch that
+    # instead of routing the event. The engine flag keeps hook invocations
+    # on the hook entry no matter what the binary's default becomes.
+    command = " ".join([hook_path, *get_engine_argv()])
     frago_entry = {
         "type": "command",
-        "command": hook_path,
+        "command": command,
         "timeout": 10,
     }
 
@@ -227,13 +251,13 @@ def sync_hook_events(hook_path: str) -> None:
     for desc in supported:
         event = desc["event"]
         matcher = desc["matcher"]
-        if not _has_frago_hook_with_command(hooks, event, matcher, hook_path):
+        if not _has_frago_hook_with_command(hooks, event, matcher, command):
             # Stale entry (wrong matcher or wrong command path) → remove + re-add
             _remove_frago_hook(hooks, event)
             _ensure_frago_hook(hooks, event, matcher, frago_entry)
             changed = True
 
-    # Remove frago-hook from events it no longer supports
+    # Remove frago from events it no longer supports
     for event in list(hooks.keys()):
         if event not in supported_event_names and _remove_frago_hook(hooks, event):
             changed = True
@@ -250,14 +274,23 @@ def sync_hook_events(hook_path: str) -> None:
 
 
 def _is_frago_hook(entry: dict[str, Any]) -> bool:
-    """Check if a hook entry belongs to frago-hook."""
-    return entry.get("type") == "command" and "frago-hook" in entry.get("command", "")
+    """Check if a hook entry belongs to frago.
+
+    Matches both the pre-renaming ``frago-hook`` (stale settings.json from an
+    older install) and the current ``frago-core`` binary. A stale entry must
+    still be recognised so the sync pass can replace it rather than leave a
+    second copy of the event running.
+    """
+    return entry.get("type") == "command" and (
+        "frago-core" in entry.get("command", "")
+        or "frago-hook" in entry.get("command", "")
+    )
 
 
 def _has_frago_hook_with_command(
     hooks: dict[str, Any], event: str, matcher: str, command: str
 ) -> bool:
-    """Check if an event has a frago-hook entry with the expected matcher AND command."""
+    """Check if an event has a frago entry with the expected matcher AND command."""
     for group in hooks.get(event, []):
         if group.get("matcher", "") != matcher:
             continue
@@ -270,14 +303,14 @@ def _has_frago_hook_with_command(
 def _ensure_frago_hook(
     hooks: dict[str, Any], event: str, matcher: str, entry: dict[str, Any]
 ) -> None:
-    """Add a frago-hook entry to an event with the specified matcher."""
+    """Add a frago entry to an event with the specified matcher."""
     if event not in hooks:
         hooks[event] = []
     hooks[event].append({"matcher": matcher, "hooks": [entry]})
 
 
 def _remove_frago_hook(hooks: dict[str, Any], event: str) -> bool:
-    """Remove frago-hook entries from an event. Returns True if anything was removed."""
+    """Remove frago entries from an event. Returns True if anything was removed."""
     if event not in hooks:
         return False
     removed = False
