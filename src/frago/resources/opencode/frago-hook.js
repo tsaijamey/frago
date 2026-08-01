@@ -1,8 +1,8 @@
 /**
- * frago-hook bridge for opencode.
+ * frago-core bridge for opencode.
  *
- * Feeds opencode's plugin events into the same `frago-hook` binary that
- * Claude Code drives, so both runtimes surface identical knowledge
+ * Feeds opencode's plugin events into the same `frago-core --engine` entry
+ * that Claude Code drives, so both runtimes surface identical knowledge
  * injections from the same `~/.frago/hook-rules.json`.
  *
  * The binary is runtime-agnostic: it reads a Claude Code shaped hook event
@@ -20,6 +20,14 @@
  * context is held and prepended to that same call's result in
  * `tool.execute.after`. The model still sees it attached to the tool it
  * belongs to, one step later than under Claude Code.
+ *
+ * That same gap used to void denials outright. Claude Code refuses the call
+ * on a `permissionDecision: deny`; opencode has no equivalent, so a rule that
+ * blocks an install still watched it run and only complained afterwards —
+ * with the software already on the machine. Rewriting is the lever that does
+ * exist: a denied command is swapped for one that reports the refusal and
+ * exits non-zero, so the original never runs. Verified against opencode
+ * 1.18.5. Denials of tool calls that carry no command remain unenforceable.
  *
  * Deployed by frago.init.opencode_plugin. Do not edit in place — edit the
  * packaged copy under src/frago/resources/opencode/.
@@ -97,12 +105,20 @@ function toClaudeToolInput(args) {
 }
 
 function hookBinaryPath() {
-  const name = process.platform === "win32" ? "frago-hook.exe" : "frago-hook"
+  const name = process.platform === "win32" ? "frago-core.exe" : "frago-core"
   return path.join(os.homedir(), ".frago", "bin", name)
 }
 
 /**
- * Run the frago-hook binary against one event payload.
+ * Run the frago-core binary against one event payload.
+ *
+ * --engine selects the hook entry: the default (no-arg) entry of frago-core is
+ * the agentic kernel, and invoking it bare would launch that instead of
+ * routing this event.
+ *
+ * Resolves to the engine's `hookSpecificOutput` object, or null. Callers pick
+ * the field they need: injections read `additionalContext`, the PreToolUse
+ * path also reads `permissionDecision`.
  *
  * Every failure mode (missing binary, non-zero exit, unparseable stdout,
  * timeout) resolves to null. A knowledge-injection layer must never be able
@@ -112,7 +128,7 @@ function runHook(payload) {
   return new Promise((resolve) => {
     let child
     try {
-      child = spawn(hookBinaryPath(), [], { stdio: ["pipe", "pipe", "ignore"] })
+      child = spawn(hookBinaryPath(), ["--engine"], { stdio: ["pipe", "pipe", "ignore"] })
     } catch {
       return resolve(null)
     }
@@ -139,8 +155,10 @@ function runHook(payload) {
     })
     child.on("close", () => {
       try {
-        const ctx = JSON.parse(stdout).hookSpecificOutput?.additionalContext
-        finish(typeof ctx === "string" && ctx.trim() ? ctx : null)
+        const out = JSON.parse(stdout).hookSpecificOutput
+        const hasContext = typeof out?.additionalContext === "string" && out.additionalContext.trim()
+        const hasDecision = typeof out?.permissionDecision === "string"
+        finish(hasContext || hasDecision ? out : null)
       } catch {
         finish(null)
       }
@@ -162,7 +180,57 @@ function runHook(payload) {
  */
 function frame(context) {
   if (!MARKERS) return null
-  return `${MARKERS.begin}\n${context}\n${MARKERS.end}`
+  // The preamble states whose words these are. Without it an injection reads
+  // as something the user typed, and gets weighed as chatter rather than as a
+  // rule. Absent or blank in the data file, the span still ships — a missing
+  // sentence is no reason to withhold the knowledge itself.
+  const preamble =
+    typeof MARKERS.preamble === "string" && MARKERS.preamble.trim()
+      ? `${MARKERS.preamble.trim()}\n\n`
+      : ""
+  return `${MARKERS.begin}\n${preamble}${context}\n${MARKERS.end}`
+}
+
+/** The engine's injected text, or null when this response carries none. */
+function injectionOf(result) {
+  const ctx = result?.additionalContext
+  return typeof ctx === "string" && ctx.trim() ? ctx : null
+}
+
+/** Wrap an arbitrary string as one POSIX single-quoted shell word. */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * Build the command that replaces a denied one.
+ *
+ * opencode never asks a plugin whether a tool call should run — it only offers
+ * a chance to rewrite the arguments before it does. Swapping the command for
+ * one that merely reports the refusal is therefore the only way to stop a
+ * denied command here, and the original never executes.
+ *
+ * Measured against deepseek-v4-flash, two details are not optional:
+ *
+ * - A non-zero exit does not read as "refused" to the model. It saw only the
+ *   stderr text and treated it as ordinary output. The reason has to say what
+ *   happened in full; the exit status carries none of that meaning.
+ * - It retried the identical command four times before giving up, and on one
+ *   of those turns it copied the replacement command and ran that instead.
+ *   Hence the explicit no-retry line, and hence the replacement itself must
+ *   stay harmless when executed on its own.
+ */
+function denialCommand(reason, original) {
+  const body = [
+    "【本次调用已被 frago 规则拦截，命令未执行】",
+    "",
+    reason,
+    "",
+    `被拦下的原命令：${original}`,
+    "",
+    "重试同一条命令不会有不同结果，NEVER 重试；NEVER 换一种写法或另一个工具绕过。",
+  ].join("\n")
+  return `printf '%s\\n' ${shellQuote(body)} >&2; exit 1`
 }
 
 export const FragoHookPlugin = async ({ directory }) => {
@@ -199,31 +267,56 @@ export const FragoHookPlugin = async ({ directory }) => {
         cwd: directory,
       })
 
-      const contexts = (await Promise.all(events.map(runHook))).filter(Boolean)
+      const contexts = (await Promise.all(events.map(runHook))).map(injectionOf).filter(Boolean)
       if (!contexts.length) return
 
       // opencode validates message parts against a schema on the way in, so
-      // synthesising a new part is fragile across versions. Appending to the
-      // trailing text part is the stable path and lands in the same place
-      // Claude Code puts additionalContext: attached to the user's turn.
+      // synthesising a new part is fragile across versions. Editing an
+      // existing text part in place is the stable path.
+      //
+      // The span goes in front of what the user wrote, not after it. Order
+      // decides what the model has in hand while it reads the request: rules
+      // first means it interprets the task already knowing the boundaries;
+      // rules last means it has formed an approach and must then talk itself
+      // out of it. The failure this addresses is exactly that shape — a build
+      // fails, the model concludes a tool is missing, and by the time the
+      // rule saying "install nothing" arrives it is already reaching for the
+      // package manager.
       const framed = frame(contexts.join("\n\n"))
       if (!framed) return
 
       const texts = (output.parts || []).filter((p) => p.type === "text")
-      const target = texts[texts.length - 1]
+      const target = texts[0]
       if (!target) return
-      target.text = `${target.text}\n\n${framed}`
+      target.text = `${framed}\n\n${target.text}`
     },
 
     "tool.execute.before": async (input, output) => {
       if (!input.sessionID || !input.tool) return
-      const context = await runHook({
+      const result = await runHook({
         session_id: input.sessionID,
         hook_event_name: "PreToolUse",
         tool_name: toClaudeToolName(input.tool),
         tool_input: toClaudeToolInput(output.args),
         cwd: directory,
       })
+      if (!result) return
+
+      // A denial only takes effect on tool calls that carry a command to
+      // swap. Rules that deny anything else (a write, a fetch) still cannot
+      // be enforced here; those fall through to the injection path below, so
+      // the model at least reads the reason one step later.
+      const original = output?.args?.command
+      if (result.permissionDecision === "deny" && typeof original === "string") {
+        const reason =
+          typeof result.permissionDecisionReason === "string" && result.permissionDecisionReason.trim()
+            ? result.permissionDecisionReason
+            : "该命令被规则拒绝执行。"
+        output.args.command = denialCommand(reason, original)
+        return
+      }
+
+      const context = injectionOf(result)
       if (context) pending.set(input.callID, context)
     },
 

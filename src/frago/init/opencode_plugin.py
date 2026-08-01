@@ -1,11 +1,11 @@
 """
 opencode plugin deployment.
 
-Copies the bundled frago-hook bridge plugin into opencode's global plugin
+Copies the bundled frago-core bridge plugin into opencode's global plugin
 directory so opencode sessions get the same knowledge injections that
 Claude Code gets from ~/.claude/settings.json hook registrations.
 
-The plugin shells out to the frago-hook binary deployed by
+The plugin shells out to the frago-core binary deployed by
 frago.init.hook_binary, so this module only moves one JS file — there is no
 second copy of the binary and no separate rule set.
 """
@@ -70,7 +70,7 @@ def get_tool_name_map() -> dict[str, str]:
 
 
 def get_injection_markers() -> tuple[str, str]:
-    """Return the (begin, end) markers wrapping frago-hook injected context.
+    """Return the (begin, end) markers wrapping frago injected context.
 
     The bridge plugin wraps every injection it appends to an opencode user
     message in this pair; the archive layer strips those spans back out so a
@@ -82,8 +82,26 @@ def get_injection_markers() -> tuple[str, str]:
     return data["begin"], data["end"]
 
 
+def get_all_injection_markers() -> list[tuple[str, str]]:
+    """Return the current marker pair plus every pair shipped before it.
+
+    Only the current pair is ever written. Retired pairs still sit in sessions
+    archived while they were current, and those sessions are read forever — so
+    stripping has to recognise all of them or old transcripts start showing
+    injected text as though the user had typed it.
+    """
+    raw = get_bundled_plugin_path(INJECTION_MARKERS_FILENAME).read_text(encoding="utf-8")
+    data = json.loads(raw)
+    pairs = [(data["begin"], data["end"])]
+    for entry in data.get("legacy", []):
+        begin, end = entry.get("begin"), entry.get("end")
+        if isinstance(begin, str) and isinstance(end, str):
+            pairs.append((begin, end))
+    return pairs
+
+
 def deploy_opencode_plugin(force: bool = False) -> Path | None:
-    """Install the frago-hook bridge into ~/.config/opencode/plugin/.
+    """Install the frago-core bridge into ~/.config/opencode/plugin/.
 
     Args:
         force: Copy even when the deployed file is already identical.

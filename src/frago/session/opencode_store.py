@@ -406,15 +406,23 @@ def _hook_injection_pattern() -> re.Pattern[str] | None:
     标记从打包资源里取——桥接插件读的是同一个文件，NEVER 在这边另写一份字面量，
     否则改一处就漏另一处，剥离会静默失效。资源读不出来时返回 None（不剥），
     因为那时也无从判断哪段是注入。
+
+    历史上用过的标记一并认：改名那天之前归档的会话里存的是旧标记，只认当前这对
+    的话，那些会话的详情页会把注入内容当成用户自己打的字显示出来。
     """
-    from frago.init.opencode_plugin import get_injection_markers
+    from frago.init.opencode_plugin import get_all_injection_markers
 
     try:
-        begin, end = get_injection_markers()
+        pairs = get_all_injection_markers()
     except (OSError, ValueError, KeyError) as exc:
-        logger.warning("frago-hook injection markers unavailable: %s", exc)
+        logger.warning("frago injection markers unavailable: %s", exc)
         return None
-    return re.compile(f"{re.escape(begin)}.*?{re.escape(end)}", re.DOTALL)
+    if not pairs:
+        return None
+    alternatives = "|".join(
+        f"{re.escape(begin)}.*?{re.escape(end)}" for begin, end in pairs
+    )
+    return re.compile(alternatives, re.DOTALL)
 
 
 def strip_hook_injection(text: str) -> str:

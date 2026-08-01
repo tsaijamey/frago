@@ -716,14 +716,14 @@ def test_bash_raw_output_kept_apart_from_model_view(build) -> None:  # type: ign
         _tool_part(
             "bash",
             "bash_1",
-            output="<frago-hook>规则</frago-hook>\n真实输出",
+            output="<frago-NOTICE>规则</frago-NOTICE>\n真实输出",
             metadata={"output": "真实输出", "exit": 0, "truncated": False},
         ),
     )
     builder.close()
 
     result = _by_kind(opencode_records.to_unified(SESSION), "tool.result")[0]
-    assert result.payload["body"].startswith("<frago-hook>")
+    assert result.payload["body"].startswith("<frago-NOTICE>")
     assert result.payload["raw_output"] == "真实输出"
 
 
