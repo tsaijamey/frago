@@ -186,9 +186,11 @@ def build_command_group(domain_name: str, definition: dict) -> click.Group:
     @click.option("--desc", is_flag=True, help="Descending sort order")
     @click.option("--limit", type=int, default=None, help="Max results")
     @click.option("--count", is_flag=True, help="Only show count")
+    @click.option("--full", is_flag=True,
+                  help="Print columns at full width instead of capping them")
     @click.argument("filters", nargs=-1)
     @click.pass_context
-    def find_cmd(ctx, fields, sort_by, desc, limit, count, filters):
+    def find_cmd(ctx, fields, sort_by, desc, limit, count, full, filters):
         """Query documents in this domain."""
         from frago.def_.query_engine import find
         from frago.def_.registry import get_domain_dir
@@ -209,6 +211,7 @@ def build_command_group(domain_name: str, definition: dict) -> click.Group:
             desc=desc,
             limit=limit,
             count_only=count,
+            full=full,
         )
         click.echo(result)
 

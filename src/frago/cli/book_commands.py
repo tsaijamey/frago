@@ -48,10 +48,60 @@ def _load_scenes() -> list[dict]:
     return raw if raw else []
 
 
+def _split_sections(text: str) -> list[tuple[str, str]]:
+    """Split a page into ``(heading, body)`` pairs on its ``##`` headings.
+
+    Whatever precedes the first ``##`` — the page title and its opening
+    paragraph — comes back as one pair with an empty heading. It is the page's
+    own framing, so a caller asking for a single section can prepend it and
+    hand over a fragment that still says what it is about.
+    """
+    out: list[tuple[str, str]] = []
+    heading = ""
+    buf: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            out.append((heading, "\n".join(buf).strip()))
+            heading = line[3:].strip()
+            buf = []
+        else:
+            buf.append(line)
+    out.append((heading, "\n".join(buf).strip()))
+    return [(h, b) for h, b in out if h or b]
+
+
+def _section_key(s: str) -> str:
+    """Fold a heading down to what a rule author would plausibly type."""
+    return "".join(c.lower() for c in s if c.isalnum())
+
+
+def _find_section(sections: list[tuple[str, str]], wanted: str) -> tuple[str, str] | None:
+    """Pick a section by name, tolerating how it is written.
+
+    Headings are written for people — they carry punctuation, parentheses and
+    the occasional English word. Demanding an exact string would make every
+    rule that points at a section fragile against a copy-edit of the heading,
+    so matching narrows in steps: exact, prefix, then substring.
+    """
+    key = _section_key(wanted)
+    if not key:
+        return None
+    keyed = [(_section_key(h), (h, b)) for h, b in sections if h]
+    for pred in (lambda k: k == key, lambda k: k.startswith(key), lambda k: key in k):
+        hits = [sec for k, sec in keyed if pred(k)]
+        if len(hits) >= 1:
+            return hits[0]
+    return None
+
+
 @click.command("book", cls=AgentFriendlyCommand)
 @click.argument("topic", required=False)
 @click.option("--brief", is_flag=True, help="One-line summary for each topic")
-def book_command(topic: str | None, brief: bool):
+@click.option("--sections", "list_sections", is_flag=True,
+              help="List a topic's sections and their sizes instead of its text")
+@click.option("--section", "section", default=None,
+              help="Print one section of a topic instead of the whole page")
+def book_command(topic: str | None, brief: bool, list_sections: bool, section: str | None):
     """frago built-in knowledge book."""
     entries = _load_index()
 
@@ -98,7 +148,35 @@ def book_command(topic: str | None, brief: bool):
         click.echo(f"\nDetail content missing for topic: {topic_name}", err=True)
         raise SystemExit(1)
 
-    click.echo(md_path.read_text(encoding="utf-8"))
+    text = md_path.read_text(encoding="utf-8")
+
+    if list_sections or section:
+        sections = _split_sections(text)
+        if list_sections:
+            _print_section_list(topic_name, sections)
+            return
+        found = _find_section(sections, section)
+        if found is None:
+            click.echo(f"Section not found in '{topic_name}': {section}", err=True)
+            _print_section_list(topic_name, sections, err=True)
+            raise SystemExit(1)
+        # Carry the page's own framing so the fragment still says what it is
+        # about; a section injected on its own reads as orphaned otherwise.
+        preamble = next((b for h, b in sections if not h), "").splitlines()
+        locator = preamble[0] if preamble else f"# {topic_name}"
+        click.echo(f"{locator}\n\n## {found[0]}\n\n{found[1]}")
+        return
+
+    click.echo(text)
+
+
+def _print_section_list(topic_name: str, sections: list[tuple[str, str]], err: bool = False):
+    click.echo(f"\n{topic_name} — {sum(1 for h, _ in sections if h)} sections\n", err=err)
+    for h, b in sections:
+        if not h:
+            continue
+        click.echo(f"  {round(len(b) / 2.2):>5} tok  {h}", err=err)
+    click.echo(f"\n取其中一节: frago book {topic_name} --section '<小标题>'", err=err)
 
 
 def _print_index(entries: list[dict]):

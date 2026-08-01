@@ -15,6 +15,11 @@ from .schema_validator import validate
 
 logger = logging.getLogger(__name__)
 
+# Widest any one column may grow in a listing. Sized so a name, a tag list and
+# the opening clause of a summary all stay readable while a runaway paragraph
+# cannot set the width for every other row.
+_MAX_COL_WIDTH = 60
+
 
 def find(
     domain_dir: Path,
@@ -25,6 +30,7 @@ def find(
     desc: bool = False,
     limit: int | None = None,
     count_only: bool = False,
+    full: bool = False,
 ) -> str:
     """Query documents in a domain directory.
 
@@ -65,7 +71,7 @@ def find(
         return _format_single_doc(docs[0])
 
     # Multiple documents: table
-    return _format_docs(docs, fields, shown=len(docs), total=total)
+    return _format_docs(docs, fields, shown=len(docs), total=total, full=full)
 
 
 def save(
@@ -296,6 +302,7 @@ def _format_docs(
     fields: list[str] | None,
     shown: int,
     total: int,
+    full: bool = False,
 ) -> str:
     """Format documents as a compact table."""
     if not docs:
@@ -327,29 +334,49 @@ def _format_docs(
                 row[col] = str(val)
         rows.append(row)
 
-    # Calculate column widths
+    # Cap every column, then pad to the capped width.
+    #
+    # Widths used to be "as wide as the longest value present", which turns one
+    # document with a paragraph-length summary into a column that wide — and
+    # every other row gets padded out to meet it. On the frago-recipe-ops
+    # domain that produced a 32-row listing of 23,815 characters, 70% of them
+    # spaces. A listing is an index; the full text of one document comes from
+    # ``find -- --name=<doc>``, and ``--full`` brings back the old behaviour.
     col_widths = {}
     for col in columns:
-        col_widths[col] = max(
-            len(col.upper()),
-            max((len(row.get(col, "")) for row in rows), default=0),
-        )
+        widest = max((len(row.get(col, "")) for row in rows), default=0)
+        cap = widest if full else min(widest, _MAX_COL_WIDTH)
+        col_widths[col] = max(len(col.upper()), cap)
 
-    # Format header
-    header = "  ".join(col.upper().ljust(col_widths[col]) for col in columns)
-    separator = "  ".join("-" * col_widths[col] for col in columns)
-
-    # Format rows
-    lines = [header, separator]
+    shortened = 0
     for row in rows:
-        line = "  ".join(row.get(col, "-").ljust(col_widths[col]) for col in columns)
-        lines.append(line)
+        for col in columns:
+            val = row.get(col, "-")
+            if len(val) > col_widths[col]:
+                row[col] = val[: col_widths[col] - 1] + "…"
+                shortened += 1
+
+    # The last column is never padded — trailing spaces align nothing.
+    def render(cells: list[str]) -> str:
+        padded = [c.ljust(col_widths[col]) for c, col in zip(cells[:-1], columns[:-1])]
+        return "  ".join([*padded, cells[-1]])
+
+    lines = [
+        render([col.upper() for col in columns]),
+        render(["-" * col_widths[col] for col in columns]),
+    ]
+    for row in rows:
+        lines.append(render([row.get(col, "-") for col in columns]))
 
     # Footer
     if shown < total:
         lines.append(f"({shown} of {total})")
     else:
         lines.append(f"({total} documents)")
+    if shortened:
+        lines.append(
+            f"{shortened} 处过长已截断 — 看全文: find -- --name=<doc>，看整表原样: find --full"
+        )
 
     return "\n".join(lines)
 

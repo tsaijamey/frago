@@ -1,7 +1,7 @@
 """frago hook-rules — manage the rules engine's user-editable rule set.
 
 Storage: ``~/.frago/hook-rules.json``. On first write, the file is seeded by
-invoking ``frago-hook --dump-builtin-rules`` so the user's copy starts with
+invoking ``frago-core --dump-builtin-rules`` so the user's copy starts with
 the shipped builtin rules. Subsequent writes mutate this file directly.
 
 See spec ``.claude/docs/spec-driven-plan/20260419-hook-rules-engine.md``.
@@ -40,7 +40,7 @@ _TS_SANE_MAX = 4_102_444_800
 
 
 def _dump_builtin() -> dict:
-    """Invoke ``frago-hook --dump-builtin-rules`` and return the parsed JSON.
+    """Invoke ``frago-core --dump-builtin-rules`` and return the parsed JSON.
 
     The engine's single source of truth for builtin rules is the Rust binary.
     Python shells out instead of carrying its own copy to avoid drift.
@@ -154,7 +154,7 @@ def _normalize_tool_name(rule: dict) -> str | None:
 @click.group(name="hook-rules", cls=AgentFriendlyGroup, invoke_without_command=True)
 @click.pass_context
 def hook_rules_group(ctx):
-    """Manage data-driven routing rules for the frago-hook engine."""
+    """Manage data-driven routing rules for the frago-core engine."""
     if ctx.invoked_subcommand is not None:
         return
     # Bare invocation → list
@@ -393,6 +393,50 @@ def hook_rules_validate():
     if version != SCHEMA_VERSION:
         errors.append(f"unsupported version: {version} (expected {SCHEMA_VERSION})")
 
+    def _check_match(m, where, errs, known, composite, tool_names):
+        """Validate one clause, descending into composites.
+
+        Checking only the outermost clause would wave through a typo nested
+        inside an all_of, and the engine drops any rule it cannot read — so the
+        author would see "OK" here and silence in practice.
+        """
+        t = m.get("type") if isinstance(m, dict) else None
+        if t not in known:
+            errs.append(f"{where}: unknown type '{t}'")
+            return
+        if t in composite:
+            children = [m.get("clause")] if t == "not" else m.get("clauses") or []
+            if not children or any(c is None for c in children):
+                errs.append(f"{where}: '{t}' needs "
+                            f"{'a clause' if t == 'not' else 'a non-empty clauses list'}")
+                return
+            for j, c in enumerate(children):
+                _check_match(c, f"{where}.{t}[{j}]", errs, known, composite, tool_names)
+            return
+        if t == "tool_name_eq":
+            value = m.get("value")
+            canonical = tool_names.get(value.lower()) if isinstance(value, str) else None
+            if canonical and canonical != value:
+                errs.append(
+                    f"{where}: tool name '{value}' never matches — "
+                    f"the engine sees '{canonical}'. Fix the value or re-add the rule."
+                )
+
+    def _check_dedup_scope(raw, prefix, errs):
+        # "none" predates the documented vocabulary and behaves exactly like
+        # "always" in the engine — no rule-level suppression. Accepted rather
+        # than flagged, since rejecting it would fail a live file over a
+        # spelling that changes nothing.
+        if raw is None or raw in ("session", "always", "none", "once-per-tool-call"):
+            return
+        if isinstance(raw, str) and raw.startswith("cooldown:"):
+            n = raw.split(":", 1)[1].strip()
+            if n.isdigit() and int(n) > 0:
+                return
+            errs.append(f"{prefix}: dedup_scope '{raw}' — cooldown needs a positive turn count")
+            return
+        errs.append(f"{prefix}: unknown dedup_scope '{raw}'")
+
     KNOWN_MATCH = {
         "tool_name_eq",
         "bash_contains",
@@ -406,9 +450,16 @@ def hook_rules_validate():
         "env_exists",
         "env_ne",
         "always",
+        # Composites. They nest, so their children are checked recursively
+        # below rather than by this flat set.
+        "all_of",
+        "any_of",
+        "not",
     }
+    COMPOSITE_MATCH = {"all_of", "any_of", "not"}
     KNOWN_ACTION = {
         "inject_book_topic",
+        "inject_book_section",
         "inject_literal",
         "run_command_and_inject_stdout",
         "deny_tool_call",
@@ -446,20 +497,14 @@ def hook_rules_validate():
             seen_ids.add(rid)
         if r.get("event") not in KNOWN_EVENT:
             errors.append(f"{prefix}: unknown event '{r.get('event')}'")
-        m_type = r.get("match", {}).get("type")
-        if m_type not in KNOWN_MATCH:
-            errors.append(f"{prefix}.match: unknown type '{m_type}'")
+        _check_match(r.get("match", {}), f"{prefix}.match", errors,
+                     KNOWN_MATCH, COMPOSITE_MATCH, tool_names)
         a_type = r.get("action", {}).get("type")
         if a_type not in KNOWN_ACTION:
             errors.append(f"{prefix}.action: unknown type '{a_type}'")
-        if m_type == "tool_name_eq":
-            value = r.get("match", {}).get("value")
-            canonical = tool_names.get(value.lower()) if isinstance(value, str) else None
-            if canonical and canonical != value:
-                errors.append(
-                    f"{prefix}.match: tool name '{value}' never matches — "
-                    f"the engine sees '{canonical}'. Fix the value or re-add the rule."
-                )
+        if a_type == "inject_book_section" and not r.get("action", {}).get("section"):
+            errors.append(f"{prefix}.action: inject_book_section needs a 'section'")
+        _check_dedup_scope(r.get("dedup_scope"), prefix, errors)
 
     if errors:
         click.echo(f"Validation failed ({len(errors)} error(s)):", err=True)
@@ -478,7 +523,7 @@ def hook_rules_validate():
 # is a different problem from a rule deduping against itself and so gets its
 # own counter.
 _OUTCOMES = ("injected", "deduped", "dup-content", "empty", "denied")
-_EMPTY_STAT: dict[str, int] = {"count": 0, **{o: 0 for o in _OUTCOMES}, "last_ts": 0}
+_EMPTY_STAT: dict[str, int] = {"count": 0, **dict.fromkeys(_OUTCOMES, 0), "last_ts": 0}
 
 
 def _accumulate_hits(path: Path, stats: dict[str, dict]) -> None:
