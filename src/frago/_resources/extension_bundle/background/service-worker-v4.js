@@ -207,6 +207,31 @@ async function ensureAttached(tabId) {
     }
 }
 
+// 唤醒被 Chrome 冻结的隐藏 tab，且不激活窗口、不抢焦点。
+//
+// Chrome 会把长时间隐藏的 tab 挂起（freeze）：渲染进程主线程暂停，
+// scripting.executeScript 发过去的消息排不上队，表现为命令无限期挂住
+// （实测后台 tab 上 exec-js 200s+ 无响应）。以往只能 switch-tab 切前台
+// 解冻——人机协作时每次切 tab 都抢一次焦点，很吵。
+//
+// 解法：经 debugger 通道发 Page.setWebLifecycleState(state="active")，
+// 只把 tab 的生命周期状态从 frozen 唤醒到 active，窗口焦点和 tab 的
+// active 属性都不动。唤醒后立即 detach，避免长期挂着 debugger 被页面
+// 或反爬感知（screencast 进行中的 tab 除外——那里要保持 attach）。
+async function wakeHiddenTab(tabId) {
+    let tab;
+    try { tab = await chrome.tabs.get(tabId); } catch (_) { return; }
+    if (tab.active) return;               // 活动 tab 不会被冻结
+    try {
+        await ensureAttached(tabId);
+        await chrome.debugger.sendCommand(
+            { tabId }, "Page.setWebLifecycleState", { state: "active" });
+        if (!screencasts.has(tabId)) {
+            try { await chrome.debugger.detach({ tabId }); } catch (_) {}
+        }
+    } catch (_) { /* chrome:// 等不可调试页面，忽略 */ }
+}
+
 async function captureScreencastStart(params) {
     const tabId = await resolveTab(params);
     if (!tabId) throw { code: -32602, message: "need group or tab_id" };
@@ -371,6 +396,7 @@ async function tabNavigate({ url, group, tab_id, timeout = 15_000 }) {
 async function domExecJs({ script, group, tab_id }) {
     if (!script) throw { code: -32602, message: "script required" };
     const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         world: "MAIN",
@@ -392,6 +418,7 @@ async function domExecJs({ script, group, tab_id }) {
 
 async function domGetContent({ selector, group, tab_id }) {
     const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         func: (sel) => {
@@ -414,6 +441,7 @@ async function domGetContent({ selector, group, tab_id }) {
 async function domClick({ selector, group, tab_id }) {
     if (!selector) throw { code: -32602, message: "selector required" };
     const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         func: (sel) => {
@@ -459,48 +487,68 @@ async function visualScreenshot({ group, tab_id, output = null }) {
     //    caller didn't explicitly wait. Skipped instantly if already complete.
     await waitTabReady(id);
 
-    // captureVisibleTab snaps the foreground tab in the window. Our tabs
-    // are created with active:false to avoid stealing user focus, so we
-    // must activate the target tab first, then restore the previously-
-    // active tab. Without this, the snapshot is whatever tab the user
-    // had on top (typically about:blank).
-    const tab = await chrome.tabs.get(id);
-    let prevActiveId = null;
-    if (!tab.active) {
-        const [prev] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-        prevActiveId = prev?.id ?? null;
-        await chrome.tabs.update(id, { active: true });
+    // 2. 冻结唤醒：captureVisibleTab 时代必须先激活目标 tab 才能截前台
+    //    画面（旧实现截图后会恢复 tab 但窗口焦点留在最前，人机协作很吵）。
+    //    现在优先走 debugger 通道的 Page.captureScreenshot——它直接渲染
+    //    目标 tab，不需要 tab 在前台、不需要窗口在前台。先唤醒冻结 tab
+    //    确保渲染帧是最新的（且全程不抢焦点）。
+    await wakeHiddenTab(id);
+
+    // 3. debugger 通道直截。attach → capture → detach 一次完成，
+    //    不改变 tab.active，不移动窗口焦点。
+    let dataUrl = null;
+    try {
+        await ensureAttached(id);
+        await chrome.debugger.sendCommand({ tabId: id }, "Page.enable");
+        const shot = await chrome.debugger.sendCommand(
+            { tabId: id }, "Page.captureScreenshot", { format: "png" });
+        dataUrl = shot && shot.data ? `data:image/png;base64,${shot.data}` : null;
+        if (!screencasts.has(id)) {
+            try { await chrome.debugger.detach({ tabId: id }); } catch (_) {}
+        }
+    } catch (e) {
+        dataUrl = null;   // chrome:// 等不可 attach 的页面 → 走旧路径回退
     }
 
-    // 2. Compositor settle: chrome.tabs.update({active:true}) resolves
-    //    before the freshly-active tab finishes rendering. captureVisibleTab
-    //    drives a GPU readback; if compositing is mid-frame, readback fails
-    //    with "image readback failed" (heavy pages like Upwork).
-    await new Promise(r => setTimeout(r, 150));
-
-    // 3. Retry transient GPU failures with backoff.
-    let dataUrl, lastErr;
-    try {
-        for (let i = 0; i < 3; i++) {
-            try {
-                dataUrl = await chrome.tabs.captureVisibleTab(
-                    tab.windowId, { format: "png" });
-                break;
-            } catch (e) {
-                lastErr = e;
-                if (i < 2) await new Promise(r => setTimeout(r, 200 * (i + 1)));
+    // 4. 回退路径（debugger 不可用）：临时激活目标 tab → captureVisibleTab
+    //    → 恢复先前活动 tab。只在这个 fallback 里才允许动 tab.active。
+    if (!dataUrl) {
+        const tab = await chrome.tabs.get(id);
+        let prevActiveId = null;
+        if (!tab.active) {
+            const [prev] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+            prevActiveId = prev?.id ?? null;
+            await chrome.tabs.update(id, { active: true });
+        }
+        // Compositor settle: chrome.tabs.update({active:true}) resolves
+        // before the freshly-active tab finishes rendering. captureVisibleTab
+        // drives a GPU readback; if compositing is mid-frame, readback fails
+        // with "image readback failed" (heavy pages like Upwork).
+        await new Promise(r => setTimeout(r, 150));
+        let lastErr;
+        try {
+            for (let i = 0; i < 3; i++) {
+                try {
+                    dataUrl = await chrome.tabs.captureVisibleTab(
+                        tab.windowId, { format: "png" });
+                    break;
+                } catch (e) {
+                    lastErr = e;
+                    if (i < 2) await new Promise(r => setTimeout(r, 200 * (i + 1)));
+                }
+            }
+        } finally {
+            if (prevActiveId != null && prevActiveId !== id) {
+                try { await chrome.tabs.update(prevActiveId, { active: true }); }
+                catch (_) { /* prev tab may have closed */ }
             }
         }
-    } finally {
-        if (prevActiveId != null && prevActiveId !== id) {
-            try { await chrome.tabs.update(prevActiveId, { active: true }); }
-            catch (_) { /* prev tab may have closed */ }
+        if (!dataUrl) {
+            throw { code: -32004,
+                    message: `screenshot failed after retries: ${lastErr?.message || lastErr}` };
         }
     }
-    if (!dataUrl) {
-        throw { code: -32004,
-                message: `screenshot failed after retries: ${lastErr?.message || lastErr}` };
-    }
+
     const b64 = dataUrl.split(",")[1] || "";
     return { tab_id: id, png_base64: b64, output };
 }
@@ -601,6 +649,7 @@ async function groupsCleanup() {
 
 async function pageScroll({ distance, group, tab_id }) {
     const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         func: (d) => { window.scrollBy(0, d); return { scrolled: d }; },
@@ -611,6 +660,7 @@ async function pageScroll({ distance, group, tab_id }) {
 
 async function pageScrollTo({ group, tab_id, selector, text, block }) {
     const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         func: (sel, txt, blk) => {
@@ -668,6 +718,7 @@ async function pageGetTitle({ group, tab_id }) {
 
 async function detectAntiBot({ group, tab_id }) {
     const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         func: () => {
@@ -751,6 +802,7 @@ async function detectAntiBot({ group, tab_id }) {
 // permanent (cleared only by visual.clear_effects).
 
 async function _runInTab(id, func, args) {
+    await wakeHiddenTab(id);
     const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: id },
         world: "MAIN",
