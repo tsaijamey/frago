@@ -190,24 +190,60 @@ function visionApplies(modelKey) {
 }
 
 /**
- * Describe the images through the vision recipe.
+ * Spill a data URL to a temp file and return its path; pass other URLs through.
  *
- * Params travel through a temp file rather than argv: a pasted screenshot is
- * ~160KB of base64 per image, and several of them on one command line would
- * run into the platform's argument limit.
+ * The picture must never travel inside the parameters. Recipe parameters reach
+ * the recipe script as one command-line argument, and an inlined screenshot
+ * blows past the operating system's limit on how long a command may be — the
+ * recipe then dies before it starts, with an "argument list too long" that says
+ * nothing about images. A path is a few dozen characters no matter how large
+ * the screenshot is, and the recipe reads and encodes the file itself.
+ */
+/** Delete the staged images and parameter file; failures are not worth acting on. */
+function cleanupTemps(paths) {
+  for (const p of paths) {
+    try {
+      unlinkSync(p)
+    } catch {}
+  }
+}
+
+function spillImage(url, index) {
+  if (!url.startsWith("data:")) return { value: url, temp: null }
+  const comma = url.indexOf(",")
+  if (comma < 0) return null
+  const header = url.slice(5, comma)
+  const ext = (header.split(";")[0].split("/")[1] || "png").replace(/[^a-z0-9]/gi, "")
+  const file = path.join(os.tmpdir(), `frago-vision-${process.pid}-${Date.now()}-${index}.${ext}`)
+  try {
+    writeFileSync(file, Buffer.from(url.slice(comma + 1), "base64"))
+  } catch (e) {
+    logError(`vision could not stage image: ${e}`)
+    return null
+  }
+  return { value: file, temp: file }
+}
+
+/**
+ * Describe the images through the vision recipe.
  *
  * Resolves to the description text, or null on any failure — an unreadable
  * image must cost the user nothing but the wait already spent.
  */
 function describeImages(urls) {
   const capped = urls.slice(0, VISION.max_images ?? 3)
+  const staged = capped.map((url, i) => spillImage(url, i)).filter(Boolean)
+  const temps = staged.map((s) => s.temp).filter(Boolean)
+  if (!staged.length) return Promise.resolve(null)
+
   const paramsPath = path.join(os.tmpdir(), `frago-vision-${process.pid}-${Date.now()}.json`)
+  temps.push(paramsPath)
   try {
     writeFileSync(
       paramsPath,
       JSON.stringify({
         prompt: VISION.prompt,
-        image_input: capped,
+        image_input: staged.map((s) => s.value),
         model: VISION.model,
         max_tokens: VISION.max_tokens,
         retries: VISION.retries,
@@ -217,16 +253,13 @@ function describeImages(urls) {
       }),
     )
   } catch {
+    cleanupTemps(temps)
     return Promise.resolve(null)
   }
 
   return new Promise((resolve) => {
     let child
-    const cleanup = () => {
-      try {
-        unlinkSync(paramsPath)
-      } catch {}
-    }
+    const cleanup = () => cleanupTemps(temps)
     try {
       child = spawn(fragoLauncher(), ["recipe", "run", VISION.recipe, "--params-file", paramsPath], {
         stdio: ["ignore", "pipe", "pipe"],

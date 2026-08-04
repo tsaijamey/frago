@@ -56,7 +56,10 @@ process.stdout.write(
 STUB = (
     "#!/bin/sh\n"
     'echo "$@" >> "$FRAGO_STUB_CALLS"\n'
-    "cat \"$FRAGO_STUB_REPLY\"\n"
+    'for arg in "$@"; do\n'
+    '  case "$arg" in *.json) cp "$arg" "$FRAGO_STUB_PARAMS" ;; esac\n'
+    "done\n"
+    'cat "$FRAGO_STUB_REPLY"\n'
 )
 
 
@@ -115,6 +118,7 @@ def bridge(tmp_path):
     calls = tmp_path / "calls.txt"
     reply = tmp_path / "reply.json"
     reply.write_text(json.dumps({"success": True, "raw_text": STUB_DESCRIPTION}), encoding="utf-8")
+    seen_params = tmp_path / "seen-params.json"
 
     def run(payload):
         payload_path = tmp_path / "payload.json"
@@ -124,6 +128,7 @@ def bridge(tmp_path):
             "FRAGO_LAUNCHER": str(stub),
             "FRAGO_STUB_CALLS": str(calls),
             "FRAGO_STUB_REPLY": str(reply),
+            "FRAGO_STUB_PARAMS": str(seen_params),
         }
         proc = subprocess.run(
             ["node", str(driver), str(plugin_dir / "frago-hook.js"), str(payload_path)],
@@ -134,6 +139,8 @@ def bridge(tmp_path):
         )
         assert proc.returncode == 0, proc.stderr
         result = json.loads(proc.stdout)
+        if seen_params.exists():
+            result["params"] = json.loads(seen_params.read_text(encoding="utf-8"))
         return result, calls.read_text(encoding="utf-8") if calls.exists() else ""
 
     return run
@@ -159,6 +166,23 @@ def test_description_lands_on_the_users_own_words(bridge):
     assert STUB_DESCRIPTION not in narration
     user_text = next(t["text"] for t in texts if not t["synthetic"])
     assert user_text.endswith("这张图里有什么？")
+
+
+def test_image_travels_as_a_path_not_as_its_bytes(bridge):
+    """The picture must not ride inside the recipe parameters.
+
+    Recipe parameters reach the recipe script as one command-line argument. An
+    inlined full-screen screenshot exceeds the operating system's limit on
+    command length, and the recipe dies before it starts with "argument list
+    too long" — which says nothing about images, so the session just silently
+    goes back to the model seeing nothing.
+    """
+    result, _ = bridge(_payload("deepseek-v4-flash-free"))
+
+    images = result["params"]["image_input"]
+    assert images and not any(i.startswith("data:") for i in images)
+    # Small enough to survive any platform's argument limit.
+    assert len(json.dumps(result["params"])) < 4000
 
 
 def test_seeing_model_pays_nothing(bridge):
