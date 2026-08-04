@@ -26,11 +26,11 @@
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "搜索用 {{frago_launcher}} browser navigate google，禁止 WebSearch"
+  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 {{frago_launcher}} browser；禁止 WebSearch，禁止自起浏览器进程"
 
 - name: must-browser-fetch
   category: must
-  brief: "网页内容用 navigate + get-content，禁止 WebFetch"
+  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch，禁止 chrome --headless 自截图"
 
 - name: must-tool-priority
   category: must
