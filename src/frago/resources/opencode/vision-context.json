@@ -1,0 +1,12 @@
+{
+  "_note": "opencode 专属：prompt 里带图且当前模型看不见图时，先让多模态模型读一遍图，把描述作为前置上下文塞进这条消息。改这个文件即可调参，无需动 frago-hook.js；enabled 置 false 即整体关闭。model_gate 是对 '<providerID>/<modelID>' 全小写串做的正则，deepseek 哪天支持视觉了就把这条删掉。",
+  "enabled": true,
+  "model_gate": "deepseek",
+  "recipe": "openrouter_vision_classify",
+  "model": "qwen/qwen3.7-flash",
+  "max_tokens": 700,
+  "retries": 2,
+  "timeout_ms": 45000,
+  "max_images": 3,
+  "prompt": "详细描述这张图片的内容，供一个看不见图的助手理解。若是界面截图，说清有哪些区域、每块里的文字与控件、报错或异常状态、数字与状态标识；若是照片说清主体与场景；若是图表说清坐标轴、量级与走向；若含代码或日志，原样转录关键行。只输出描述本身，不要开场白，不要评价，不要猜测用户意图。"
+}

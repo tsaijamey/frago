@@ -21,10 +21,23 @@ logger = logging.getLogger(__name__)
 PLUGIN_FILENAME = "frago-hook.js"
 TOOL_NAME_MAP_FILENAME = "tool-name-map.json"
 INJECTION_MARKERS_FILENAME = "injection-markers.json"
+VISION_CONTEXT_FILENAME = "vision-context.json"
 
-# The plugin reads both data files from its own directory at load time, so all
+# The plugin reads every data file from its own directory at load time, so all
 # of them must land together.
-PLUGIN_FILES = (PLUGIN_FILENAME, TOOL_NAME_MAP_FILENAME, INJECTION_MARKERS_FILENAME)
+PLUGIN_FILES = (
+    PLUGIN_FILENAME,
+    TOOL_NAME_MAP_FILENAME,
+    INJECTION_MARKERS_FILENAME,
+    VISION_CONTEXT_FILENAME,
+)
+
+# Files the user is meant to edit in place. They ship with defaults but are
+# never refreshed over an existing copy: the vision settings carry a model
+# choice, a spend-limiting gate and an on/off switch, and silently restoring
+# those to factory values on the next server start would undo a deliberate
+# decision — including someone's decision to turn the feature off.
+USER_TUNABLE_FILES = (VISION_CONTEXT_FILENAME,)
 
 
 def get_opencode_config_dir() -> Path:
@@ -104,7 +117,8 @@ def deploy_opencode_plugin(force: bool = False) -> Path | None:
     """Install the frago-core bridge into ~/.config/opencode/plugin/.
 
     Args:
-        force: Copy even when the deployed file is already identical.
+        force: Copy even when the deployed file is already identical, and
+            overwrite user-tunable files that would otherwise be left alone.
 
     Returns:
         Path to the deployed plugin, or None if opencode is not installed.
@@ -122,8 +136,11 @@ def deploy_opencode_plugin(force: bool = False) -> Path | None:
     for filename in PLUGIN_FILES:
         src = get_bundled_plugin_path(filename)
         dst = dst_dir / filename
-        if dst.exists() and not force and filecmp.cmp(src, dst, shallow=False):
-            continue
+        if dst.exists() and not force:
+            if filename in USER_TUNABLE_FILES:
+                continue
+            if filecmp.cmp(src, dst, shallow=False):
+                continue
         shutil.copy2(src, dst)
         logger.info("opencode plugin file deployed: %s", dst)
 

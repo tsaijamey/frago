@@ -1,5 +1,6 @@
 """Tests for opencode plugin deployment."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from frago.init.opencode_plugin import (
     PLUGIN_FILENAME,
     PLUGIN_FILES,
     TOOL_NAME_MAP_FILENAME,
+    VISION_CONTEXT_FILENAME,
     deploy_opencode_plugin,
     get_bundled_plugin_path,
     get_tool_name_map,
@@ -64,6 +66,47 @@ def test_tool_name_map_covers_the_core_tools():
     # case-insensitive comparison would not have been enough.
     assert mapping["list"] == "LS"
     assert mapping["webfetch"] == "WebFetch"
+
+
+def test_vision_config_ships_with_usable_defaults():
+    """The image-reading feature is configured entirely from this file."""
+    cfg = json.loads(get_bundled_plugin_path(VISION_CONTEXT_FILENAME).read_text(encoding="utf-8"))
+    assert cfg["enabled"] is True
+    assert cfg["recipe"] == "openrouter_vision_classify"
+    assert cfg["prompt"].strip()
+    # The gate is what keeps the spend narrow: models that can already see an
+    # image must not pay for a second model to describe it.
+    assert "deepseek" in cfg["model_gate"]
+    assert cfg["timeout_ms"] >= 20_000
+
+
+def test_bundled_plugin_reads_images_through_the_recipe():
+    """The vision call goes through frago's recipe layer, not a raw endpoint.
+
+    Credentials, model defaults and retry policy live in the recipe; a direct
+    HTTP call from the bridge would fork all three.
+    """
+    body = get_bundled_plugin_path().read_text(encoding="utf-8")
+    assert VISION_CONTEXT_FILENAME in body
+    assert '"recipe", "run"' in body
+    assert "openrouter.ai" not in body
+    assert "api_key" not in body
+
+
+def test_user_edits_to_vision_config_survive_redeploy(fake_home, monkeypatch):
+    """Turning the feature off must not be undone by the next server start."""
+    monkeypatch.setattr(opencode_plugin.shutil, "which", lambda _: "/usr/local/bin/opencode")
+    deploy_opencode_plugin()
+    dst = fake_home / ".config" / "opencode" / "plugin" / VISION_CONTEXT_FILENAME
+    dst.write_text(json.dumps({"enabled": False}), encoding="utf-8")
+
+    deploy_opencode_plugin()
+
+    assert json.loads(dst.read_text(encoding="utf-8"))["enabled"] is False
+
+    # force is the deliberate way back to the shipped defaults.
+    deploy_opencode_plugin(force=True)
+    assert json.loads(dst.read_text(encoding="utf-8"))["enabled"] is True
 
 
 def test_both_plugin_files_are_deployed(fake_home, monkeypatch):

@@ -29,12 +29,15 @@
  * exits non-zero, so the original never runs. Verified against opencode
  * 1.18.5. Denials of tool calls that carry no command remain unenforceable.
  *
+ * On top of the routing bridge, this plugin also reads images on behalf of
+ * models that cannot see them — see the vision-context section further down.
+ *
  * Deployed by frago.init.opencode_plugin. Do not edit in place — edit the
  * packaged copy under src/frago/resources/opencode/.
  */
 
 import { spawn } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -102,6 +105,206 @@ function toClaudeToolInput(args) {
     input.file_path = input.filePath
   }
   return input
+}
+
+/**
+ * Record why something was skipped, into the same log the Rust engine writes.
+ *
+ * Every failure path here degrades to silence on purpose — a knowledge layer
+ * must not be able to break the session it advises. The cost is that a feature
+ * which quietly stops working looks exactly like one that had nothing to say.
+ * This is the seam where the difference is written down.
+ */
+function logError(msg) {
+  try {
+    appendFileSync(path.join(os.homedir(), ".frago", "hook-errors.log"), `[${Math.floor(Date.now() / 1000)}] bridge: ${msg}\n`)
+  } catch {}
+}
+
+/**
+ * Vision context: read images for models that cannot see them.
+ *
+ * A model without vision receives an attached screenshot as nothing at all —
+ * deepseek answers "this model cannot read images" and the turn is wasted.
+ * When one arrives, the image is handed to a multimodal model first and its
+ * description is prepended to the message, so the blind model reads words
+ * instead of missing a picture.
+ *
+ * Every knob lives in vision-context.json, including the gate deciding which
+ * models this applies to. It is deliberately narrow: models that can already
+ * see get nothing, because for them the call would be pure cost and pure
+ * delay. And the delay is the whole design constraint — opencode holds the
+ * message until this hook returns, so the user watches an idle prompt for as
+ * long as the vision model takes. Measured on a 594x858 screenshot through
+ * qwen/qwen3.7-flash: ~20s for a 500-token description, and the shared free
+ * pool rate-limits often enough that retries are the norm, not the exception.
+ * Hence the hard ceiling below — past it the description is abandoned and the
+ * message goes out as the user wrote it, which is the correct failure: a slow
+ * courtesy must never become a stuck session.
+ */
+const VISION = loadVisionConfig()
+
+function loadVisionConfig() {
+  try {
+    const cfg = JSON.parse(readResource("vision-context.json"))
+    if (cfg && cfg.enabled === true && typeof cfg.prompt === "string" && cfg.prompt.trim()) return cfg
+  } catch {}
+  // Missing or malformed config disables the feature. Guessing defaults here
+  // would mean spending money on a model nobody configured.
+  return null
+}
+
+/** Image attachments on this message, as data/http URLs the recipe accepts. */
+function imageUrlsOf(parts) {
+  return (parts || [])
+    .filter(
+      (p) => p?.type === "file" && typeof p.mime === "string" && p.mime.startsWith("image/") && typeof p.url === "string",
+    )
+    .map((p) => p.url)
+}
+
+/**
+ * The model this message is headed for, as `providerID/modelID` lowercased.
+ *
+ * The same model reaches opencode under several provider prefixes
+ * (opencode/deepseek-v4-flash-free, deepseek/deepseek-v4-pro,
+ * openrouter/deepseek/…), so the gate matches the joined string rather than
+ * either field alone.
+ */
+function modelKeyOf(input, output) {
+  const model = input?.model ?? output?.message?.model
+  if (!model) return null
+  const provider = typeof model.providerID === "string" ? model.providerID : ""
+  const id = typeof model.modelID === "string" ? model.modelID : ""
+  if (!provider && !id) return null
+  return `${provider}/${id}`.toLowerCase()
+}
+
+function visionApplies(modelKey) {
+  if (!VISION || !modelKey) return false
+  try {
+    return new RegExp(VISION.model_gate ?? "", "i").test(modelKey)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Describe the images through the vision recipe.
+ *
+ * Params travel through a temp file rather than argv: a pasted screenshot is
+ * ~160KB of base64 per image, and several of them on one command line would
+ * run into the platform's argument limit.
+ *
+ * Resolves to the description text, or null on any failure — an unreadable
+ * image must cost the user nothing but the wait already spent.
+ */
+function describeImages(urls) {
+  const capped = urls.slice(0, VISION.max_images ?? 3)
+  const paramsPath = path.join(os.tmpdir(), `frago-vision-${process.pid}-${Date.now()}.json`)
+  try {
+    writeFileSync(
+      paramsPath,
+      JSON.stringify({
+        prompt: VISION.prompt,
+        image_input: capped,
+        model: VISION.model,
+        max_tokens: VISION.max_tokens,
+        retries: VISION.retries,
+        // Reasoning models burn the whole output budget thinking and return an
+        // empty description; this task needs none.
+        reasoning_enabled: false,
+      }),
+    )
+  } catch {
+    return Promise.resolve(null)
+  }
+
+  return new Promise((resolve) => {
+    let child
+    const cleanup = () => {
+      try {
+        unlinkSync(paramsPath)
+      } catch {}
+    }
+    try {
+      child = spawn(fragoLauncher(), ["recipe", "run", VISION.recipe, "--params-file", paramsPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+      })
+    } catch (e) {
+      logError(`vision spawn failed: ${e}`)
+      cleanup()
+      return resolve(null)
+    }
+
+    let stdout = ""
+    let stderr = ""
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      cleanup()
+      resolve(value)
+    }
+    const timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {}
+      logError(`vision recipe timed out after ${VISION.timeout_ms ?? 45_000}ms`)
+      finish(null)
+    }, VISION.timeout_ms ?? 45_000)
+
+    child.on("error", (e) => {
+      logError(`vision recipe error: ${e}`)
+      finish(null)
+    })
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    child.on("close", (code) => {
+      const text = recipeText(stdout)
+      if (!text || !text.trim()) {
+        logError(`vision recipe produced no description (exit=${code}) ${stderr.slice(-400).replace(/\n/g, " ")}`)
+        return finish(null)
+      }
+      finish(text.trim())
+    })
+  })
+}
+
+/** Pull `raw_text` out of the recipe's stdout, tolerating leading noise. */
+function recipeText(stdout) {
+  const attempt = (s) => {
+    try {
+      const data = JSON.parse(s)
+      return data?.success === true && typeof data.raw_text === "string" ? data.raw_text : null
+    } catch {
+      return null
+    }
+  }
+  const direct = attempt(stdout.trim())
+  if (direct) return direct
+  const start = stdout.indexOf("{")
+  const end = stdout.lastIndexOf("}")
+  return start >= 0 && end > start ? attempt(stdout.slice(start, end + 1)) : null
+}
+
+/**
+ * The frago CLI.
+ *
+ * uv installs it at ~/.local/bin, which is on the PATH of a shell but not
+ * necessarily of an opencode launched from the desktop. The absolute path is
+ * preferred when it exists so the feature does not quietly stop working
+ * depending on how the editor was started.
+ */
+function fragoLauncher() {
+  if (process.env.FRAGO_LAUNCHER) return process.env.FRAGO_LAUNCHER
+  const installed = path.join(os.homedir(), ".local", "bin", "frago")
+  return existsSync(installed) ? installed : "frago"
 }
 
 function hookBinaryPath() {
@@ -191,6 +394,27 @@ function frame(context) {
   return `${MARKERS.begin}\n${preamble}${context}\n${MARKERS.end}`
 }
 
+/**
+ * Present the description as what it is: a stand-in read by another model,
+ * not the image itself. Without that framing a blind model answers as though
+ * it had looked, and quotes the description back as its own observation.
+ *
+ * `origin` says where the image came from, because the two cases read very
+ * differently to the model: one is an attachment the user put on the message,
+ * the other is a file the model itself just opened.
+ */
+function visionBlock(count, description, origin = "message") {
+  const where = origin === "tool" ? "你刚读取的" : "这条消息附带的"
+  const subject = count > 1 ? `${where} ${count} 张图片` : `${where}图片`
+  return [
+    `【${subject}，你的模型看不见，已由多模态模型代读，以下是转述】`,
+    "",
+    description,
+    "",
+    "转述可能遗漏细节。据此作答时说明依据的是转述，NEVER 声称自己看到了图片。",
+  ].join("\n")
+}
+
 /** The engine's injected text, or null when this response carries none. */
 function injectionOf(result) {
   const ctx = result?.additionalContext
@@ -239,16 +463,27 @@ export const FragoHookPlugin = async ({ directory }) => {
   const started = new Set()
   // callID -> context awaiting attachment to that call's result.
   const pending = new Map()
+  // sessionID -> `provider/model`. Tool hooks are told which session they
+  // belong to but not which model is driving it, and the vision gate needs
+  // the model; the message hook sees both, and always fires first.
+  const sessionModel = new Map()
+  // Descriptions already paid for in this process, keyed by path and size.
+  // An agent re-reading the same screenshot would otherwise wait out the
+  // vision model a second time for an answer it already has.
+  const described = new Map()
 
   return {
     "chat.message": async (input, output) => {
       const sessionID = input.sessionID
       if (!sessionID) return
 
-      const prompt = (output.parts || [])
-        .filter((p) => p.type === "text" && typeof p.text === "string")
-        .map((p) => p.text)
-        .join("\n")
+      // Synthetic parts are opencode's own narration of an attachment ("Called
+      // the Read tool with…"), not words the user typed. Feeding them to the
+      // rules engine would have prompt rules matching on tool echo.
+      const userTexts = (output.parts || []).filter(
+        (p) => p.type === "text" && typeof p.text === "string" && p.synthetic !== true,
+      )
+      const prompt = userTexts.map((p) => p.text).join("\n")
 
       const events = []
       if (!started.has(sessionID)) {
@@ -267,7 +502,21 @@ export const FragoHookPlugin = async ({ directory }) => {
         cwd: directory,
       })
 
-      const contexts = (await Promise.all(events.map(runHook))).map(injectionOf).filter(Boolean)
+      // The image description runs alongside the routing lookups rather than
+      // after them: it is the slow one by two orders of magnitude, and making
+      // the fast lookups wait behind it would add seconds to every turn.
+      const modelKey = modelKeyOf(input, output)
+      if (modelKey) sessionModel.set(sessionID, modelKey)
+
+      const images = imageUrlsOf(output.parts)
+      const wantsVision = images.length > 0 && visionApplies(modelKey)
+      const [hookResults, description] = await Promise.all([
+        Promise.all(events.map(runHook)),
+        wantsVision ? describeImages(images) : Promise.resolve(null),
+      ])
+
+      const contexts = hookResults.map(injectionOf).filter(Boolean)
+      if (description) contexts.push(visionBlock(images.length, description))
       if (!contexts.length) return
 
       // opencode validates message parts against a schema on the way in, so
@@ -285,8 +534,11 @@ export const FragoHookPlugin = async ({ directory }) => {
       const framed = frame(contexts.join("\n\n"))
       if (!framed) return
 
-      const texts = (output.parts || []).filter((p) => p.type === "text")
-      const target = texts[0]
+      // Attachments push opencode's own narration ahead of the user's words as
+      // earlier text parts. Prepending to that one would bury the injection in
+      // a tool echo the model skims past, so the user's own first text part is
+      // the target whenever there is one.
+      const target = userTexts[0] ?? (output.parts || []).find((p) => p.type === "text")
       if (!target) return
       target.text = `${framed}\n\n${target.text}`
     },
@@ -321,10 +573,38 @@ export const FragoHookPlugin = async ({ directory }) => {
     },
 
     "tool.execute.after": async (input, output) => {
+      const blocks = []
       const context = pending.get(input.callID)
-      if (!context) return
-      pending.delete(input.callID)
-      const framed = frame(context)
+      if (context) {
+        pending.delete(input.callID)
+        blocks.push(context)
+      }
+
+      // An image the model opened itself. opencode hands the picture back as
+      // an attachment on the tool result, which a model without vision cannot
+      // use: it reads "Image read successfully", sees nothing, and reports
+      // that it cannot look at the file. Describing it here puts the contents
+      // where such a model can actually read them.
+      const images = imageUrlsOf(output?.attachments)
+      if (images.length && visionApplies(sessionModel.get(input.sessionID))) {
+        const key = `${input.args?.filePath ?? ""}|${images.map((u) => u.length).join(",")}`
+        let description = described.get(key)
+        if (description === undefined) {
+          description = await describeImages(images)
+          // Only successes are remembered. A failure here is usually the
+          // vision model being rate-limited for a moment, and caching that
+          // would make one bad minute mean this file can never be read again
+          // for the rest of the session.
+          if (description) {
+            if (described.size >= 32) described.clear()
+            described.set(key, description)
+          }
+        }
+        if (description) blocks.push(visionBlock(images.length, description, "tool"))
+      }
+
+      if (!blocks.length) return
+      const framed = frame(blocks.join("\n\n"))
       if (!framed) return
       output.output = `${framed}\n\n${output.output ?? ""}`
     },
