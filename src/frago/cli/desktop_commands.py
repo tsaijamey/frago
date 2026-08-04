@@ -24,6 +24,7 @@ book 里有常驻章节；而 ``aos`` 埋在配方目录里，agent 只有先知
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -75,11 +76,23 @@ def desktop_group(args: tuple[str, ...]) -> None:
     resources, or see `frago book desktop-usage` for the full path.
     """
     if not AOS.exists():
-        click.echo(
-            '{"ok": false, "error": "虚拟桌面配方未安装", '
-            f'"expected": "{AOS}", '
-            '"hint": "先装上 agent_os 配方（frago init 或从配方源同步）"}',
-        )
+        # 这里曾经写着"用 frago init 装配方"，那是假的：包里只随分发
+        # transcript_completion 与 openrouter_vision_classify 两个配方，
+        # agent_os 不在其中。init 会正常跑完、报告成功，然后这条命令依然
+        # 找不到舞台——一个会跑完、会报成功、却什么也没解决的指引，比没有
+        # 指引更坏。所以这里只说实话：它不随包走，得从配方来源同步。
+        # 回执用 json.dumps 生成，不手拼字符串：这段里有中文、有路径、有引号，
+        # 手拼出非法 JSON 的话，调用方（多半是 agent）拿到的是解析异常，
+        # 而真正的原因「配方不在」一个字都传不到。
+        click.echo(json.dumps({
+            "ok": False,
+            "error": "本机没有虚拟桌面配方，frago desktop 无法工作",
+            "expected": str(AOS),
+            "note": "agent_os 与 agent_os_ui 两个配方不随 frago 包分发，"
+                    "frago init 装不来它们",
+            "hint": "从配方来源同步这两份到 ~/.frago/recipes/：",
+            "need": ["workflows/agent_os", "atomic/system/agent_os_ui"],
+        }, ensure_ascii=False))
         sys.exit(2)
 
     # 直接把子进程的输出接到自己的 stdout/stderr 上，不做缓冲、不做转写：
