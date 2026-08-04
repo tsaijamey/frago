@@ -1,0 +1,91 @@
+"""``frago desktop`` —— 虚拟桌面舞台的一等入口。
+
+为什么要有这一层
+----------------
+舞台的能力一直都在（配方 ``agent_os`` 里那个 ``aos`` 脚本），缺的是**被看见**。
+同样是驱动一块外部界面，``frago browser`` 在 PATH 上、``--help`` 一把列全动词、
+book 里有常驻章节；而 ``aos`` 埋在配方目录里，agent 只有先知道"有这么个文件"
+才谈得上用它。结果是 agent 知道"有虚拟桌面这回事"，却不知道 ``aos status``
+和 ``aos up`` 存在——这两条本来就在那儿。
+
+2026-08-04 实测过这个失败：让 agent 去桌面上演示一个动作，它翻注册表、探端口、
+读源码，走了四五步才拼出"舞台没在跑"，然后反过来问人要不要启动。而正确动作只有
+三步：查状态、拉起来、演示。信息全在，只是没落在它看得见的地方。
+
+这一层只做转发
+--------------
+真正干活的仍是配方里那份 ``aos``：动词、参数、回执格式一个字不改，这里不复制
+任何语义。复制会立刻产生第二份真相——配方改了动词，CLI 这边不跟，agent 拿到的
+帮助就是错的，而这种错比没有帮助更伤。
+
+所以这里刻意做成**透明管道**：拿到什么原样递过去，stdout / stderr / 退出码
+原样带回来。``frago desktop`` 与 ``aos`` 永远等价。
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import click
+
+from .agent_friendly import AgentFriendlyCommand
+
+# 舞台脚本的位置。跟 virtual_os_lifecycle 用的是同一条路径约定：
+# 配方装在用户目录下，不随 frago 包分发。
+AOS = Path.home() / ".frago" / "recipes" / "workflows" / "agent_os" / "aos"
+
+
+@click.command(
+    name="desktop",
+    cls=AgentFriendlyCommand,
+    context_settings={
+        # 舞台自己解析参数。这里不能让 click 插手：它会把 --zoom、--ref 这类
+        # 它不认识的选项当成错误挡下来，而那些正是舞台的正常用法。
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def desktop_group(args: tuple[str, ...]) -> None:
+    """Drive the virtual desktop stage (recording / demo).
+
+    A fake macOS desktop whose two windows show a real tmux session and a real
+    Chrome tab. Everything on it is scriptable, so a workflow can be replayed
+    as a video take.
+
+    \b
+    Always start here:
+      frago desktop status          # is the stage running? (like `browser status`)
+      frago desktop up              # bring it up; the desktop page reconnects itself
+      frago desktop down            # stop it — intent is remembered, it stays down
+
+    \b
+    Then drive it:
+      frago desktop browser open <url>
+      frago desktop browser click --text "Sign in"
+      frago desktop term run "ls -la"
+      frago desktop camera focus --ref page:"Explore" --zoom 1.8
+      frago desktop say "旁白一句"
+
+    \b
+    Every verb, flag and receipt is the stage's own — this command forwards
+    verbatim and returns its exit code unchanged. Run it bare to list the
+    resources, or see `frago book desktop-usage` for the full path.
+    """
+    if not AOS.exists():
+        click.echo(
+            '{"ok": false, "error": "虚拟桌面配方未安装", '
+            f'"expected": "{AOS}", '
+            '"hint": "先装上 agent_os 配方（frago init 或从配方源同步）"}',
+        )
+        sys.exit(2)
+
+    # 直接把子进程的输出接到自己的 stdout/stderr 上，不做缓冲、不做转写：
+    # 舞台的回执恒为单行 JSON，调用方（多半是 agent）要拿它原样解析。
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, str(AOS), *args],
+        check=False,
+    )
+    sys.exit(proc.returncode)

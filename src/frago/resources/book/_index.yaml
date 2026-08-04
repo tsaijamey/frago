@@ -44,6 +44,10 @@
   category: must
   brief: "产出一律落 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/，两层缺一不可，事务 NEVER 直接建在 data 根下；建目录前先 frago context data:<关键词> 查现成落点；projects 是 frago 的会话账本 agent 不写；路径一律绝对路径"
 
+- name: desktop-usage
+  category: must
+  brief: "虚拟桌面（录屏/演示）：{{frago_launcher}} desktop，标准路径 status → up → 驱动；停了就是停了，守护不自动拉起"
+
 - name: browser-usage
   category: must
   brief: "browser 操作完整指南：group 必选（附免 group 命令清单）、导航规则、内容提取、交互、选择器、视觉辅助"

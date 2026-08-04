@@ -17,6 +17,7 @@ from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
 from .autostart_command import autostart_group
 from .book_commands import book_command
 from .browser_commands import browser_group
+from .desktop_commands import desktop_group
 from .channel_commands import channel_group
 from .client_commands import client_group
 from .cloud_commands import (
@@ -56,7 +57,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "browser", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -376,6 +377,7 @@ cli.add_command(update)  # Self-update command
 
 # Command groups
 cli.add_command(browser_group)  # browser automation command group
+cli.add_command(desktop_group)  # virtual desktop stage (forwards to the agent_os recipe)
 cli.add_command(extension_group, name="extension")  # Browser extension bridge (P1 MVP)
 
 # Recipe management command group
