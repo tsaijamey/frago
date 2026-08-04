@@ -6,13 +6,13 @@
 
 你记得的通常只是一个关键词（"cxmt 那个视频"、"session workbench"），而目录名带日期前缀、带连字符、带你没记住的限定词。列一遍目录再挨个猜哪个是，等于每次回到旧任务都要先付一轮探索。
 
-`{{frago_launcher}} context` 告诉你这个词落在哪儿——**它不会打印任何文件正文**，读什么由你定。
+`frago context` 告诉你这个词落在哪儿——**它不会打印任何文件正文**，读什么由你定。
 
 ## 用法
 
 ```bash
-{{frago_launcher}} context data:<关键词>          # 在 ~/.frago/data 下找
-{{frago_launcher}} context data:<关键词> --json   # 机器可读
+frago context data:<关键词>          # 在 ~/.frago/data 下找
+frago context data:<关键词> --json   # 机器可读
 ```
 
 `data:` 是命名空间前缀，指 `~/.frago/data`——那一层的每个目录都是一件工作的产出，
@@ -36,7 +36,7 @@
 
 ## 不带前缀是另一回事，不是简写
 
-`{{frago_launcher}} context <关键词>` 不等于 `data:<关键词>`。它的含义是"我不知道
+`frago context <关键词>` 不等于 `data:<关键词>`。它的含义是"我不知道
 在哪儿，把整个 `~/.frago` 翻一遍"。
 
 它要先扫一遍全部目录名与文件名，再对其中每一个文本文件做一次全文检索。本机实测
@@ -49,7 +49,7 @@ recipe 的依赖树、日志轮转。它们的名字照样会跟关键词撞上�
 拒绝并告诉你两条出路：带上前缀，或者显式 `--yes`。
 
 ```bash
-{{frago_launcher}} context <关键词> --yes   # 确认全盘搜索
+frago context <关键词> --yes   # 确认全盘搜索
 ```
 
 结果里会报出扫过多少目录、跳过多少构建产物目录，扫描范围始终可见。
@@ -77,4 +77,4 @@ recipe 的依赖树、日志轮转。它们的名字照样会跟关键词撞上�
 
 ## 与沉淀侧的关系
 
-`save-conversation` 那类技能把经验写进 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/notebook.md`，这条命令是它的读回口。做完一件事沉淀下来，下次冷启动一句 `{{frago_launcher}} context data:<关键词>` 就能找回来——闭环的两端要配套用。
+`save-conversation` 那类技能把经验写进 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/notebook.md`，这条命令是它的读回口。做完一件事沉淀下来，下次冷启动一句 `frago context data:<关键词>` 就能找回来——闭环的两端要配套用。

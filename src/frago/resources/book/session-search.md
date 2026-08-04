@@ -7,10 +7,10 @@
 这时候 NEVER 回答"我不记得了"，也 NEVER 自己去 grep 原始会话库。用这条命令。
 
 ```bash
-{{frago_launcher}} session search "<一句话说清你要找什么>"
+frago session search "<一句话说清你要找什么>"
 ```
 
-`{{frago_launcher}} sessions search` 是同一条命令的别名，两种写法都认。
+`frago sessions search` 是同一条命令的别名，两种写法都认。
 
 ## 它做了什么
 
@@ -25,11 +25,11 @@
 ## 常用参数
 
 ```bash
-{{frago_launcher}} session search "<一句话>" --days 30      # 只搜最近 N 天
-{{frago_launcher}} session search "<一句话>" --top 5        # 只要前 N 场
-{{frago_launcher}} session search "<一句话>" --no-expand    # 跳过模型，按原句切词（快，但笨）
-{{frago_launcher}} session search "<一句话>" --terms "a,b"  # 你自己给关键词，跳过模型
-{{frago_launcher}} session search "<一句话>" --json         # 机器可读
+frago session search "<一句话>" --days 30      # 只搜最近 N 天
+frago session search "<一句话>" --top 5        # 只要前 N 场
+frago session search "<一句话>" --no-expand    # 跳过模型，按原句切词（快，但笨）
+frago session search "<一句话>" --terms "a,b"  # 你自己给关键词，跳过模型
+frago session search "<一句话>" --json         # 机器可读
 ```
 
 模型扩展要起一轮子会话，几十秒量级。**已经知道该搜哪几个字面量时用 `--terms` 直接给**，省掉这一轮。心里没数、只有一句话时才让模型扩。
@@ -50,4 +50,4 @@
 - 你需要一个过去做过的决定的依据，而当前上下文里没有
 - 排查问题时想知道同样的现象以前出现过没有
 
-不适用的：找**产出物**（报告、spec、数据文件）用 `{{frago_launcher}} context data:<关键词>`；找**已沉淀的结构化知识**用 `{{frago_launcher}} <域名> find`。这条命令翻的是原始对话过程本身。
+不适用的：找**产出物**（报告、spec、数据文件）用 `frago context data:<关键词>`；找**已沉淀的结构化知识**用 `frago <域名> find`。这条命令翻的是原始对话过程本身。

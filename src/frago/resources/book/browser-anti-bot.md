@@ -5,7 +5,7 @@
 ## 探针命令
 
 ```bash
-{{frago_launcher}} browser detect --group <name>
+frago browser detect --group <name>
 ```
 
 返回 JSON：
@@ -39,12 +39,12 @@ frago browser 运行在真实用户浏览器环境（扩展 + 真实 profile）�
 ## 链路示例
 
 ```bash
-{{frago_launcher}} browser start   # 首次：自动选浏览器+加载扩展+拉起 daemon
-{{frago_launcher}} browser navigate "https://target.com" --group t
-{{frago_launcher}} browser detect --group t
+frago browser start   # 首次：自动选浏览器+加载扩展+拉起 daemon
+frago browser navigate "https://target.com" --group t
+frago browser detect --group t
 # {"challenge": true, "type": "invisible_or_static"}
-{{frago_launcher}} browser wait 8 --group t
-{{frago_launcher}} browser detect --group t
+frago browser wait 8 --group t
+frago browser detect --group t
 # {"challenge": false} → 继续后续操作
 ```
 

@@ -13,12 +13,12 @@
 
 ## 推荐路径
 
-  1. {{frago_launcher}} run find <创作关键词>                # 搜索历史类似任务
-  2. {{frago_launcher}} run init "内容创作主题"
+  1. frago run find <创作关键词>                # 搜索历史类似任务
+  2. frago run init "内容创作主题"
   2. 素材调研阶段（参考 scene-web-research）
-  3. {{frago_launcher}} run log --step "素材整理" --data '{"_insights": [...]}'
+  3. frago run log --step "素材整理" --data '{"_insights": [...]}'
   4. 创作阶段：产出文件写入 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
-  5. {{frago_launcher}} view ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/result.md   # 预览产出
+  5. frago view ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/result.md   # 预览产出
 
 ## 关键约束
 - must-data-dir — 所有产出文件在 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/ 内

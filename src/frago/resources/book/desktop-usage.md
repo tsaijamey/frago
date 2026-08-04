@@ -6,21 +6,21 @@
 
 一块假 macOS 桌面，上面两扇窗口装的是**真东西**：左边是一个真实 tmux 会话，右边是一个真实 Chrome 标签页。整块桌面可脚本操控——鼠标移动、点击、窗口层级、镜头推拉都能下指令，所以一段自动化流程可以被演成"人在操作"的样子录下来。
 
-入口是 `{{frago_launcher}} desktop`，与 `{{frago_launcher}} browser` 同级：一个驱动真实浏览器，一个驱动这块舞台。
+入口是 `frago desktop`，与 `frago browser` 同级：一个驱动真实浏览器，一个驱动这块舞台。
 
 ## 怎么用
 
 **标准路径三步，顺序不能省。** 和用浏览器前先 `browser status` 是同一个道理：
 
 ```
-{{frago_launcher}} desktop status                       # 舞台在跑吗
-{{frago_launcher}} desktop up                           # 不在就拉起来
-{{frago_launcher}} desktop browser open https://...     # 然后才是干活
+frago desktop status                       # 舞台在跑吗
+frago desktop up                           # 不在就拉起来
+frago desktop browser open https://...     # 然后才是干活
 ```
 
 `status` 回执里 `ok: false` 且 `error` 写着"没在运行"，就是该 `up` 的信号，`hint` 里有现成的命令可以照抄。
 
-动词地图（裸跑 `{{frago_launcher}} desktop` 也会列出来）：
+动词地图（裸跑 `frago desktop` 也会列出来）：
 
 | 资源 | 动词 |
 |---|---|
@@ -47,6 +47,10 @@
 
 ## 关键约定
 
+**这条命令依赖本机装了配方，没有配方就完全不可用。** `frago desktop` 随 frago 包分发，但它驱动的舞台不随包走——真正干活的 `agent_os` 与 `agent_os_ui` 两个配方住在 `~/.frago/recipes/` 下。所以换一台机器，命令在、能力可能不在，而且 `frago init` **装不来**它们（包里只带另外两个配方，init 会正常跑完并报告成功，然后这条命令依然找不到舞台）。
+
+缺配方时命令会明确说出来——回执写 `error: 本机没有虚拟桌面配方`，并列出缺哪两份。看到这条别去排查端口或进程，那是另一回事：配方不在，连"舞台没在跑"都还谈不上。
+
 **停了就是停了。** `down` 之后有一个守护服务**不会**把它拉回来——注册表里记的是"人想不想让它跑"，`down` 把这个意图改成了"不想"。所以看到桌面页面空着、状态是 stopped，那不是故障，是上一次有人停过它。`up` 会把意图改回来。
 
 **指向窗口的动作自动把那扇窗口提到最前。** `browser open`、`browser click`、`tab switch`、`mouse to --ref page:...`、`camera focus` 落在页面上——这些都会先激活浏览器窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里。反过来，纯观察（`wait`、`term read`）不动焦点。
@@ -55,7 +59,7 @@
 
 ## 不要做
 
-- 不要直接跑配方目录里的 `aos` 脚本——`{{frago_launcher}} desktop` 是同一份实现的正式入口，回执里的提示也按这个名字写
+- 不要直接跑配方目录里的 `aos` 脚本——`frago desktop` 是同一份实现的正式入口，回执里的提示也按这个名字写
 - 不要手拼 JSON POST 到 broker 的 8770 端口
 - 不要不查 `status` 就直接发指令：舞台没跑时任何指令都没有接收方，而错误信息只会告诉你连不上某个端口，不会告诉你原因
 - 不要为了换焦点而手动补 `focus`，它是自动的；显式 `focus` 只在"人明确要换窗口"这个语义下用

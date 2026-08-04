@@ -11,14 +11,14 @@ agent 要做人机协作的配方（用户审核、标注、选择），需要�
 
 打开它只用一条命令：
 
-  {{frago_launcher}} recipe open <url>
+  frago recipe open <url>
 
-NEVER 用 `{{frago_launcher}} browser navigate` 打开配方页面。那条命令驱动的是 agent 自己的受控浏览器，用途是抓网页、做自动化；配方页面走它既没有意义，也会让 agent 误以为页面在自己手里。两条路的分工如下：
+NEVER 用 `frago browser navigate` 打开配方页面。那条命令驱动的是 agent 自己的受控浏览器，用途是抓网页、做自动化；配方页面走它既没有意义，也会让 agent 误以为页面在自己手里。两条路的分工如下：
 
 | 命令 | 开在哪个浏览器 | 谁在看 | agent 能否控制 |
 |------|---------------|--------|---------------|
-| `{{frago_launcher}} recipe open <url>` | 系统默认浏览器 | 人 | 不能 |
-| `{{frago_launcher}} browser navigate <url> --group <g>` | frago 驱动的受控浏览器 | agent | 能 |
+| `frago recipe open <url>` | 系统默认浏览器 | 人 | 不能 |
+| `frago browser navigate <url> --group <g>` | frago 驱动的受控浏览器 | agent | 能 |
 
 批量跑一个带界面的配方前先想清楚：跑 50 次就是往用户浏览器里推 50 个标签页，而 agent 收不回来。批量场景用配方的非界面模式（多数带界面的配方都留了只出数据的入参），或者一次只跑一局。
 
@@ -66,10 +66,10 @@ NEVER 用 `{{frago_launcher}} browser navigate` 打开配方页面。那条命�
 
 页面开出来要显示什么，由配方在每次运行结束时发布。状态是一个 JSON 对象，从标准输入进去，命令回一个页面地址：
 
-  {{frago_launcher}} recipe publish <配方名> [--slot <槽位>]
+  frago recipe publish <配方名> [--slot <槽位>]
 
   # 状态过大不好用管道时
-  {{frago_launcher}} recipe publish <配方名> --state-file /path/to/state.json
+  frago recipe publish <配方名> --state-file /path/to/state.json
 
 Python 里的写法：
 
@@ -108,7 +108,7 @@ publish_page({
 
 ### 把页面交给人
 
-  {{frago_launcher}} recipe open <url>
+  frago recipe open <url>
 
 ```python
 def open_browser(url: str) -> bool:
@@ -236,18 +236,18 @@ inputs 里通常有工作目录之类的入参。outputs 里给 `url`，需要�
 
 ## 前置条件
 
-1. frago server 运行中：`{{frago_launcher}} server`（端口 8093）
+1. frago server 运行中：`frago server`（端口 8093）
 2. 工作目录存在，脚本启动时自行校验
 
-不需要 `{{frago_launcher}} browser start`。配方页面与那个受控浏览器没有关系，把它写进前置条件会让后来的 agent 以为页面归自己管。
+不需要 `frago browser start`。配方页面与那个受控浏览器没有关系，把它写进前置条件会让后来的 agent 以为页面归自己管。
 
 ## 创建检查清单
 
 - recipe.md 含 interactive 标签
 - 前端文件留在配方 `assets/` 里，不复制到任何地方
-- 脚本用 `{{frago_launcher}} recipe publish` 发布状态，取回地址
+- 脚本用 `frago recipe publish` 发布状态，取回地址
 - 运行期数据在状态里声明 `dataDir`，前端走 `data/` 读
-- 脚本用 `{{frago_launcher}} recipe open` 打开页面，失败时照样把地址吐给人
+- 脚本用 `frago recipe open` 打开页面，失败时照样把地址吐给人
 - 页面用相对路径 `fetch('config.json')` 取配置，用 `cfg.apiBase` 拼接接口
 - 页面实现自动保存，常用操作配快捷键
 - 页面要调的子配方声明在 dependencies 里
@@ -258,7 +258,7 @@ inputs 里通常有工作目录之类的入参。outputs 里给 `url`，需要�
 
 ## 不要做
 
-- 不要用 `{{frago_launcher}} browser navigate` 打开配方页面
+- 不要用 `frago browser navigate` 打开配方页面
 - 不要复制 `assets/`，不要往磁盘写 `config.json`
 - 不要用哈希拼 `content_id`，不要再提 `viewer/content/<哈希>/`
 - 不要把接口基地址写死成 `http://127.0.0.1:8093/api`

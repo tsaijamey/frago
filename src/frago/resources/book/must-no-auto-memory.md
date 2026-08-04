@@ -4,7 +4,7 @@
 
 ## 规则
 
-本项目禁用 Claude Code 的 auto memory 系统。所有跨会话结构化沉淀 MUST 走 `{{frago_launcher}} <domain> save`，所有跨会话召回 MUST 走 `{{frago_launcher}} <domain> find`。
+本项目禁用 Claude Code 的 auto memory 系统。所有跨会话结构化沉淀 MUST 走 `frago <domain> save`，所有跨会话召回 MUST 走 `frago <domain> find`。
 
 ## 为什么禁用
 
@@ -31,25 +31,25 @@ auto memory 的系统 prompt 指令（"save memories"、"write to memory files"�
 
 ```bash
 # 查看可用领域
-{{frago_launcher}} def list
+frago def list
 
 # 沉淀到已有领域
-{{frago_launcher}} <domain> save --name=<name> --content='["<content>"]'
+frago <domain> save --name=<name> --content='["<content>"]'
 
 # 如果没有合适领域，先注册
-{{frago_launcher}} def add <name> --purpose "..." --schema '{"fields":[...]}'
+frago def add <name> --purpose "..." --schema '{"fields":[...]}'
 
 # 召回已有知识
-{{frago_launcher}} <domain> find
-{{frago_launcher}} <domain> find --name=<name>
+frago <domain> find
+frago <domain> find --name=<name>
 ```
 
 ## 常见反模式
 
 | 错误做法 | 正确做法 |
 |---------|---------|
-| 把用户偏好写到 `memory/user_preferences.md` | `{{frago_launcher}} <domain> save --name=user-prefs --content='["..."]'` |
-| 把 bug 修复笔记写到 `memory/feedback_xxx.md` | `{{frago_launcher}} <domain> save --name=bugfix-notes --content='["..."]'` |
-| 读 MEMORY.md 里的旧条目作为行为参考 | `{{frago_launcher}} <domain> find` 查询结构化知识 |
-| 更新 MEMORY.md 索引添加新条目 | 不需要索引文件，`{{frago_launcher}} def list` 就是索引 |
-| 用 Bash `echo >> MEMORY.md` 追加记录 | `{{frago_launcher}} <domain> save` |
+| 把用户偏好写到 `memory/user_preferences.md` | `frago <domain> save --name=user-prefs --content='["..."]'` |
+| 把 bug 修复笔记写到 `memory/feedback_xxx.md` | `frago <domain> save --name=bugfix-notes --content='["..."]'` |
+| 读 MEMORY.md 里的旧条目作为行为参考 | `frago <domain> find` 查询结构化知识 |
+| 更新 MEMORY.md 索引添加新条目 | 不需要索引文件，`frago def list` 就是索引 |
+| 用 Bash `echo >> MEMORY.md` 追加记录 | `frago <domain> save` |

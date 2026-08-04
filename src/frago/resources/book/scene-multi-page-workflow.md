@@ -13,12 +13,12 @@
 
 ## 推荐路径
 
-  1. {{frago_launcher}} run find <workflow 关键词>           # 搜索历史类似任务
-  2. {{frago_launcher}} recipe list | grep workflow        # 检查已有 workflow recipe
-  2. {{frago_launcher}} browser navigate <第一个页面>
-  3. {{frago_launcher}} browser list-tabs                    # 查看当前标签页
-  4. {{frago_launcher}} browser navigate <第二个页面>        # 自动在新标签打开或复用
-  5. {{frago_launcher}} browser switch-tab <tab_id>          # 在标签页间切换
+  1. frago run find <workflow 关键词>           # 搜索历史类似任务
+  2. frago recipe list | grep workflow        # 检查已有 workflow recipe
+  2. frago browser navigate <第一个页面>
+  3. frago browser list-tabs                    # 查看当前标签页
+  4. frago browser navigate <第二个页面>        # 自动在新标签打开或复用
+  5. frago browser switch-tab <tab_id>          # 在标签页间切换
   6. 每次切换后 get-content 确认页面状态
 
 ## 关键约束

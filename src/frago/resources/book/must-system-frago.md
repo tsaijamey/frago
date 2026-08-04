@@ -10,7 +10,7 @@
 
 ## 规则
 
-一切 frago 命令用 `{{frago_launcher}} <命令>`。
+一切 frago 命令用 `frago <命令>`。
 
 唯一例外是打包入口：
 
@@ -21,7 +21,7 @@
 
 ## 两道闸门
 
-CLI 顶层拦截：从源码仓库跑任何非 `server` 命令直接拒绝并退出，提示改用 `{{frago_launcher}}`。`--help` 放行（纯查询无副作用），测试套件通过 `FRAGO_ALLOW_CHECKOUT_CLI=1` 绕过——那是唯一预期的绕过口。
+CLI 顶层拦截：从源码仓库跑任何非 `server` 命令直接拒绝并退出，提示改用 `frago`。`--help` 放行（纯查询无副作用），测试套件通过 `FRAGO_ALLOW_CHECKOUT_CLI=1` 绕过——那是唯一预期的绕过口。
 
 server 自身另有两道独立的闸门，管的是别的入口：绕过 CLI 直接执行守护进程模块、以及 systemd 从仓库 venv 拉起 server。两者不重合，都要留。
 
@@ -37,4 +37,4 @@ server 自身另有两道独立的闸门，管的是别的入口：绕过 CLI �
 
 ## 相关
 
-`{{frago_launcher}} book better-server-restart` — restart 前的活跃任务检查
+`frago book better-server-restart` — restart 前的活跃任务检查

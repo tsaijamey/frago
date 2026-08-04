@@ -31,7 +31,7 @@ agent 有了 spec 之后，需要把需求映射为 recipe.md 元数据 + 脚本
 ## recipe.md YAML frontmatter
 
 详细字段规范查阅：
-  {{frago_launcher}} book recipe-fields
+  frago book recipe-fields
 
 必填字段速查：
   ---
@@ -49,7 +49,7 @@ agent 有了 spec 之后，需要把需求映射为 recipe.md 元数据 + 脚本
 ## 脚本编写规范
 
 详细脚本规范查阅：
-  {{frago_launcher}} book recipe-authoring
+  frago book recipe-authoring
 
 关键要点：
   - Python: 参数从 sys.argv[1] 读取 JSON，输出 print(json.dumps(...))
@@ -61,7 +61,7 @@ agent 有了 spec 之后，需要把需求映射为 recipe.md 元数据 + 脚本
 ## 创建后必须验证
 
 创建完 recipe.md 和脚本后，立即执行：
-  {{frago_launcher}} recipe validate <recipe_dir>
+  frago recipe validate <recipe_dir>
 
 ## validate 失败常见原因和修复
 
@@ -81,5 +81,5 @@ agent 有了 spec 之后，需要把需求映射为 recipe.md 元数据 + 脚本
   □ 脚本文件与 runtime 匹配（.py/.js/.sh）
   □ 脚本能正确接收 JSON 参数
   □ 脚本输出有效 JSON
-  □ {{frago_launcher}} recipe validate 通过
+  □ frago recipe validate 通过
   □ spec.md 中的测试用例能执行通过

@@ -3,7 +3,7 @@
 分类: 偏好（BETTER）
 
 ## 解决什么问题
-agent 在需要刷新后端时倾向于直接 `{{frago_launcher}} server restart`，不检查是否有活跃任务。server 重启会杀掉所有 sub-agent 子进程，导致运行中的任务丢失、状态不一致。`--force` 更危险——跳过保护直接 kill。
+agent 在需要刷新后端时倾向于直接 `frago server restart`，不检查是否有活跃任务。server 重启会杀掉所有 sub-agent 子进程，导致运行中的任务丢失、状态不一致。`--force` 更危险——跳过保护直接 kill。
 
 ## 执行前必须确认的问题
 
@@ -11,17 +11,17 @@ agent 在需要刷新后端时倾向于直接 `{{frago_launcher}} server restart
 是否有任务正在运行？
 ├─ 有 → 不要 restart，等任务完成或向用户确认
 ├─ 没有 → 可以 restart
-└─ 不确定 → 先 {{frago_launcher}} server status 检查
+└─ 不确定 → 先 frago server status 检查
 ```
 
 ## 正确做法
 
 ```bash
 # Step 1: 检查 server 状态和活跃任务
-{{frago_launcher}} server status
+frago server status
 
 # Step 2: 无活跃任务时重启
-{{frago_launcher}} server restart
+frago server restart
 
 # Step 3: 有活跃任务时，向用户确认后才 --force
 # NEVER 自行决定 --force

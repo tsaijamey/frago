@@ -5,7 +5,7 @@
 ## 解决什么问题
 agent 不清楚哪些日志自动记录、哪些需手动补充，导致 execution.jsonl 缺关键步骤、Recipe 生成时无据可凭。
 
-本章讲操作日志（execution.jsonl）。领域级知识沉淀走 `{{frago_launcher}} <域名> save`（def 领域文档，唯一形态），详见 `{{frago_launcher}} book def-knowledge`；旧的 `run insights` 写入口已退役，见 `{{frago_launcher}} book domain-insights`。
+本章讲操作日志（execution.jsonl）。领域级知识沉淀走 `frago <域名> save`（def 领域文档，唯一形态），详见 `frago book def-knowledge`；旧的 `run insights` 写入口已退役，见 `frago book domain-insights`。
 
 ## 自动日志 vs 手动日志
 
@@ -34,7 +34,7 @@ agent 不清楚哪些日志自动记录、哪些需手动补充，导致 executi
 
 ## 手动日志命令格式
 
-  {{frago_launcher}} run log \
+  frago run log \
     --step "步骤描述" \
     --status "success|error|warning" \
     --action-type "<见下方>" \
@@ -57,7 +57,7 @@ CDP 自动：navigation, extraction, interaction, screenshot
 
 ## 脚本文件处理
 
-- 简单命令：直接用 {{frago_launcher}} <command>，记为 execution_method: command
+- 简单命令：直接用 frago <command>，记为 execution_method: command
 - 复杂脚本（>30 行）：保存为 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/scripts/<name>.{py,js,sh}（绝对路径，见 must-data-dir），记为 execution_method: file
 
 file 类型的 data 必须包含 file 字段，代码不要内联到日志。

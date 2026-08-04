@@ -4,17 +4,17 @@
 
 ## 一句话：这套形态已退役，别再用
 
-`{{frago_launcher}} run insights --save` / `--update` 已于 2026-07-26 关闭，敲了会直接报错。
+`frago run insights --save` / `--update` 已于 2026-07-26 关闭，敲了会直接报错。
 知识沉淀的唯一形态是 def 领域文档。本章只保留退役说明和迁移指引。
 
 ## 现在往哪沉淀
 
-    {{frago_launcher}} def list                          # 有哪些知识域
-    {{frago_launcher}} <域名> find                        # 该域已沉淀了什么
-    {{frago_launcher}} <域名> find -- --name=<文档名>      # 看单篇详情
-    {{frago_launcher}} <域名> save --name=<文档名> --data='{...}'   # 沉淀新知识
+    frago def list                          # 有哪些知识域
+    frago <域名> find                        # 该域已沉淀了什么
+    frago <域名> find -- --name=<文档名>      # 看单篇详情
+    frago <域名> save --name=<文档名> --data='{...}'   # 沉淀新知识
 
-详见 `{{frago_launcher}} book def-knowledge`。
+详见 `frago book def-knowledge`。
 
 ## 为什么退役
 
@@ -32,7 +32,7 @@
 真知识 558 条。
 
 这 558 条已按主题聚类改写成 276 篇 def 文档，分布在 20 个域里，逐域经独立盲测验收。
-用 `{{frago_launcher}} <域名> find` 就能查到。
+用 `frago <域名> find` 就能查到。
 
 原始文件三层留底，一个字节没删：
 
@@ -42,13 +42,13 @@
 
 历史 jsonl 还在，需要查原文时：
 
-    {{frago_launcher}} run insights                                  # 当前 domain 全部
-    {{frago_launcher}} run insights --query "API 限流"                # payload 全文搜
-    {{frago_launcher}} run insights --domain twitter --format json   # 指定域 + JSON
+    frago run insights                                  # 当前 domain 全部
+    frago run insights --query "API 限流"                # payload 全文搜
+    frago run insights --domain twitter --format json   # 指定域 + JSON
 
-跨 domain 全文搜：`{{frago_launcher}} run find <keyword>`。
+跨 domain 全文搜：`frago run find <keyword>`。
 
 ## 操作流水去哪了
 
-没变。执行日志仍走 `{{frago_launcher}} run log` 写 `execution.jsonl`，
-详见 `{{frago_launcher}} book run-logging`。退役的只是领域知识那一层。
+没变。执行日志仍走 `frago run log` 写 `execution.jsonl`，
+详见 `frago book run-logging`。退役的只是领域知识那一层。

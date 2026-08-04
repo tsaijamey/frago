@@ -7,12 +7,12 @@ frago def 是结构化知识系统。你可以定义知识领域（domain），�
 ## 查看已有知识
 
 ```bash
-{{frago_launcher}} def list                           # 列出所有领域及文档数
-{{frago_launcher}} <domain> find                      # 列出领域下所有文档（多文档=表格）
-{{frago_launcher}} <domain> find -- --name=<doc>      # 查看单文档完整内容（自动展开 entries）
-{{frago_launcher}} <domain> find -- --tags=<value>    # 按标签筛选
-{{frago_launcher}} <domain> find --count              # 只看数量
-{{frago_launcher}} <domain> schema                    # 查看字段定义
+frago def list                           # 列出所有领域及文档数
+frago <domain> find                      # 列出领域下所有文档（多文档=表格）
+frago <domain> find -- --name=<doc>      # 查看单文档完整内容（自动展开 entries）
+frago <domain> find -- --tags=<value>    # 按标签筛选
+frago <domain> find --count              # 只看数量
+frago <domain> schema                    # 查看字段定义
 ```
 
 ## 保存知识
@@ -26,7 +26,7 @@ frago def 是结构化知识系统。你可以定义知识领域（domain），�
 - `[[[constraint]]][[A]][[B]]` — A 的限制/约束是 B
 
 ```bash
-{{frago_launcher}} <domain> save --name=<doc-name> \
+frago <domain> save --name=<doc-name> \
   --data='{"tags": ["tag1", "tag2"]}' \
   --content '["[[[cause]]][[ProseMirror 拦截 DOM 变更]][[innerHTML 赋值不触发]]", "[[[sequence]]][[focus 元素]][[Input.insertText]]"]'
 ```
@@ -38,12 +38,12 @@ frago def 是结构化知识系统。你可以定义知识领域（domain），�
 ## 注册新领域
 
 ```bash
-{{frago_launcher}} def add <name> \
+frago def add <name> \
   --purpose "领域用途描述" \
   --schema '{"fields": [{"name": "name", "type": "string", "required": true, "description": "主题名"}, {"name": "tags", "type": "list", "required": false, "description": "标签"}]}'
 ```
 
 ## 规则
 - 查询知识用 frago def 命令，NEVER 直接 Read ~/.frago/books/ 下的文件
-- 保存前先 `{{frago_launcher}} def list` + `{{frago_launcher}} <domain> find` 确认已有内容，避免重复
+- 保存前先 `frago def list` + `frago <domain> find` 确认已有内容，避免重复
 - 能归入已有领域就不新建领域

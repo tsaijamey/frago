@@ -5,9 +5,9 @@
 ## 标准启动
 
 ```bash
-{{frago_launcher}} browser start     # 零参数，自动选浏览器，驱动其真实默认 profile
-{{frago_launcher}} browser check     # 看哪些浏览器可用、支持哪个后端、是否正在运行
-{{frago_launcher}} browser detect    # 只列系统已装的浏览器及路径（带 --group 时改为探测反爬，见 browser-anti-bot）
+frago browser start     # 零参数，自动选浏览器，驱动其真实默认 profile
+frago browser check     # 看哪些浏览器可用、支持哪个后端、是否正在运行
+frago browser detect    # 只列系统已装的浏览器及路径（带 --group 时改为探测反爬，见 browser-anti-bot）
 ```
 
 start 自动完成：选浏览器 → 拉起 native messaging daemon → 写 manifest → 加载 frago 扩展启动浏览器 → 等待桥握手。
@@ -20,14 +20,14 @@ start 自动完成：选浏览器 → 拉起 native messaging daemon → 写 man
 
 使用所选浏览器**自己的默认 profile**，不拷贝、不隔离。用户在该浏览器里手动登录、存的密码，agent 立即可见。该浏览器专给 agent 用，日常浏览器是另一个品牌，互不干扰。
 
-同一 profile 同时只能有一个浏览器实例：start 撞锁会报错，先 `{{frago_launcher}} browser stop` 或手动关窗口。
+同一 profile 同时只能有一个浏览器实例：start 撞锁会报错，先 `frago browser stop` 或手动关窗口。
 
 ## 启动后
 
 ```bash
-{{frago_launcher}} browser status     # 健康检查（桥连接状态）
-{{frago_launcher}} browser groups     # 看 group 状态
-{{frago_launcher}} browser stop       # 关浏览器 + 停 daemon + 清 socket
+frago browser status     # 健康检查（桥连接状态）
+frago browser groups     # 看 group 状态
+frago browser stop       # 关浏览器 + 停 daemon + 清 socket
 ```
 
 ## 反模式

@@ -11,12 +11,12 @@
 ## 一轮任务
 
 ```bash
-{{frago_launcher}} agent "<prompt>"                        # 起 tmux 会话跑完一轮，打印答案
-{{frago_launcher}} agent --prompt-file <任务书.md>         # 任务书走文件，长 prompt 首选
-{{frago_launcher}} agent "<prompt>" --json                 # 机器可读摘要，调用方判读用这个
-{{frago_launcher}} agent "<prompt>" --model sonnet         # 指定模型
-{{frago_launcher}} agent "<prompt>" --agent-type opencode  # 换 cli-agent
-{{frago_launcher}} agent "<prompt>" --resume <uuid>        # 续接既有会话
+frago agent "<prompt>"                        # 起 tmux 会话跑完一轮，打印答案
+frago agent --prompt-file <任务书.md>         # 任务书走文件，长 prompt 首选
+frago agent "<prompt>" --json                 # 机器可读摘要，调用方判读用这个
+frago agent "<prompt>" --model sonnet         # 指定模型
+frago agent "<prompt>" --agent-type opencode  # 换 cli-agent
+frago agent "<prompt>" --resume <uuid>        # 续接既有会话
 ```
 
 只有一个后端：**恒起一个 tmux 会话，在里面跑指定的 cli-agent**。没有 headless 形态，没有 `--driver` 可选。
@@ -36,7 +36,7 @@
 
 ```bash
 # 主控：Bash 工具带 run_in_background: true
-{{frago_launcher}} agent --prompt-file <任务书.md> --timeout 1800
+frago agent --prompt-file <任务书.md> --timeout 1800
 ```
 
 NEVER 用 `nohup` / `&` 手动脱离。那样起的进程被摘出 harness 的进程树，harness 不知道它存在，**退出时永远不会唤醒你**——这条路必然停摆，只能靠定时器猜时间回来看一眼。这不是没做好，是原理上就通知不了。
@@ -55,11 +55,11 @@ NEVER 用 `nohup` / `&` 手动脱离。那样起的进程被摘出 harness 的�
 ## 常驻会话（多轮交互）
 
 ```bash
-{{frago_launcher}} agent start claude --name mywork    # 起会话，等 TUI ready 后返回会话名
-{{frago_launcher}} agent send mywork "<prompt>"        # 投喂一轮，阻塞到回答产出并打印提取的答案
-{{frago_launcher}} agent peek mywork                   # 抓当前 pane 画面（不打扰会话）
-{{frago_launcher}} agent ls                            # 列出活会话（name / agent_type / pid / alive）
-{{frago_launcher}} agent stop mywork                   # 杀会话并清理 sidecar
+frago agent start claude --name mywork    # 起会话，等 TUI ready 后返回会话名
+frago agent send mywork "<prompt>"        # 投喂一轮，阻塞到回答产出并打印提取的答案
+frago agent peek mywork                   # 抓当前 pane 画面（不打扰会话）
+frago agent ls                            # 列出活会话（name / agent_type / pid / alive）
+frago agent stop mywork                   # 杀会话并清理 sidecar
 ```
 
 agent_type 支持 claude / codex / opencode，各自有 driver 处理 ready 信号、完成检测、答案提取。
@@ -75,5 +75,5 @@ driver 能识别 worker 停在认证墙 / 澄清问题上（`send` 会提示 "Ag
 ## 产出交付
 
 ```bash
-{{frago_launcher}} agent attach --files '["<abs_path>", ...]'    # 把产出文件注册到当前 conv 的 outbox
+frago agent attach --files '["<abs_path>", ...]'    # 把产出文件注册到当前 conv 的 outbox
 ```

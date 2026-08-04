@@ -21,12 +21,12 @@
 
 - name: frago-principle-extend
   category: better
-  brief: "重复路由→{{frago_launcher}} hook-rules add；重复知识→{{frago_launcher}} <domain> save；重复工作流→recipe；不要硬编码进 Rust"
+  brief: "重复路由→frago hook-rules add；重复知识→frago <domain> save；重复工作流→recipe；不要硬编码进 Rust"
 
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 {{frago_launcher}} browser；禁止 WebSearch，禁止自起浏览器进程"
+  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch，禁止自起浏览器进程"
 
 - name: must-browser-fetch
   category: must
@@ -46,7 +46,7 @@
 
 - name: desktop-usage
   category: must
-  brief: "虚拟桌面（录屏/演示）：{{frago_launcher}} desktop，标准路径 status → up → 驱动；停了就是停了，守护不自动拉起"
+  brief: "虚拟桌面（录屏/演示）：frago desktop，标准路径 status → up → 驱动；停了就是停了，守护不自动拉起"
 
 - name: browser-usage
   category: must
@@ -66,15 +66,15 @@
 
 - name: must-no-auto-memory
   category: must
-  brief: "禁用 Claude Code auto memory，结构化沉淀走 {{frago_launcher}} <domain> save，忽略 MEMORY.md"
+  brief: "禁用 Claude Code auto memory，结构化沉淀走 frago <domain> save，忽略 MEMORY.md"
 
 - name: agent-worker-driving
   category: must
-  brief: "子任务用 {{frago_launcher}} agent 驱动 worker：--yes 一轮 / start-send-peek-stop 常驻；禁止手搓 tmux+claude（权限确认卡死+代批被平台拦截）"
+  brief: "子任务用 frago agent 驱动 worker：--yes 一轮 / start-send-peek-stop 常驻；禁止手搓 tmux+claude（权限确认卡死+代批被平台拦截）"
 
 - name: must-system-frago
   category: must
-  brief: "一切命令用 {{frago_launcher}}；`uv run frago` 唯一例外是打包入口 server start|restart，仓库版本配系统 server 是没人跑的组合"
+  brief: "一切命令用 frago；`uv run frago` 唯一例外是打包入口 server start|restart，仓库版本配系统 server 是没人跑的组合"
 
 - name: prompt-form-protocol
   category: must
@@ -91,7 +91,7 @@
 
 - name: better-structured-data
   category: better
-  brief: "结构化数据用 {{frago_launcher}} def 注册域、`<domain>` 存取，比手写 JSON 更规范"
+  brief: "结构化数据用 frago def 注册域、`<domain>` 存取，比手写 JSON 更规范"
 
 - name: better-git-checkout
   category: better
@@ -103,20 +103,20 @@
 
 - name: hook-rules-authoring
   category: better
-  brief: "观察到重复路由模式时用 {{frago_launcher}} hook-rules add 沉淀为数据化规则，不改 Rust"
+  brief: "观察到重复路由模式时用 frago hook-rules add 沉淀为数据化规则，不改 Rust"
 
 # 效率类 — 你可能不知道有这个
 - name: context-recall
   category: available
-  brief: "关键词召回落盘上下文：{{frago_launcher}} context data:<关键词>，模糊匹配 ~/.frago/data 只报命中落在哪儿，读哪个由你定"
+  brief: "关键词召回落盘上下文：frago context data:<关键词>，模糊匹配 ~/.frago/data 只报命中落在哪儿，读哪个由你定"
 
 - name: session-search
   category: available
-  brief: "跨 claude/opencode 原始会话检索：{{frago_launcher}} session search \"<一句话>\"，模型扩关键词 + 双库全扫，答不上「上次怎么定的」时用它"
+  brief: "跨 claude/opencode 原始会话检索：frago session search \"<一句话>\"，模型扩关键词 + 双库全扫，答不上「上次怎么定的」时用它"
 
 - name: recipe-execution
   category: available
-  brief: "{{frago_launcher}} recipe list/run 查询和执行已有 recipe"
+  brief: "frago recipe list/run 查询和执行已有 recipe"
 
 - name: interactive-recipe
   category: available
@@ -136,7 +136,7 @@
 
 - name: domain-insights
   category: available
-  brief: "【已退役】run insights 写入口已关闭，沉淀改用 {{frago_launcher}} <域名> save；本章只留迁移指引与历史数据位置"
+  brief: "【已退役】run insights 写入口已关闭，沉淀改用 frago <域名> save；本章只留迁移指引与历史数据位置"
 
 - name: recipe-spec-writing
   category: available
@@ -148,4 +148,4 @@
 
 - name: def-knowledge
   category: available
-  brief: "{{frago_launcher}} def 结构化知识系统：domain 注册、`<domain>` find 查询、`<domain>` save 沉淀"
+  brief: "frago def 结构化知识系统：domain 注册、`<domain>` find 查询、`<domain>` save 沉淀"
