@@ -13,45 +13,45 @@
 [importlinter]
 root_package = frago
 
-# --- chrome/ subsystem boundaries -------------------------------------------
+# --- browser/ subsystem boundaries -------------------------------------------
 
-[importlinter:contract:chrome-root]
-name = chrome/ NEVER imports server/, cli/, recipes/
+[importlinter:contract:browser-root]
+name = browser/ NEVER imports server/, cli/, recipes/
 type = forbidden
 source_modules =
-    frago.chrome
+    frago.browser
 forbidden_modules =
     frago.server
     frago.cli
     frago.recipes
 
-[importlinter:contract:chrome-cdp]
-name = chrome/cdp/ NEVER imports server/, cli/, recipes/, chrome/extension/
+[importlinter:contract:browser-cdp]
+name = browser/cdp/ NEVER imports server/, cli/, recipes/, browser/extension/
 type = forbidden
 source_modules =
-    frago.chrome.cdp
+    frago.browser.cdp
 forbidden_modules =
     frago.server
     frago.cli
     frago.recipes
-    frago.chrome.extension
+    frago.browser.extension
 
-[importlinter:contract:chrome-extension]
-name = chrome/extension/ NEVER imports server/, cli/, chrome/cdp/, chrome/backends/
+[importlinter:contract:browser-extension]
+name = browser/extension/ NEVER imports server/, cli/, browser/cdp/, browser/backends/
 type = forbidden
 source_modules =
-    frago.chrome.extension
+    frago.browser.extension
 forbidden_modules =
     frago.server
     frago.cli
-    frago.chrome.cdp
-    frago.chrome.backends
+    frago.browser.cdp
+    frago.browser.backends
 
-[importlinter:contract:chrome-backends]
-name = chrome/backends/ NEVER imports server/, cli/, recipes/
+[importlinter:contract:browser-backends]
+name = browser/backends/ NEVER imports server/, cli/, recipes/
 type = forbidden
 source_modules =
-    frago.chrome.backends
+    frago.browser.backends
 forbidden_modules =
     frago.server
     frago.cli
@@ -61,7 +61,7 @@ forbidden_modules =
 # Split from the former single bundled `recipes` contract into two independent
 # contracts so each edge can be judged KEPT/BROKEN on its own:
 #   - recipes-server: the reverse cycle to be removed (KEPT once Phase 3 lands).
-#   - recipes-chrome: the open_url runtime lazy import — a PERMANENT known
+#   - recipes-browser: the open_url runtime lazy import — a PERMANENT known
 #     exception per FRAGO.md, long-term BROKEN/tolerated, NOT a cycle-removal goal.
 
 [importlinter:contract:recipes-server]
@@ -73,13 +73,13 @@ forbidden_modules =
     frago.server
     frago.cli
 
-[importlinter:contract:recipes-chrome]
-name = recipes/ NEVER imports chrome/ (open_url runtime lazy — permanent known exception, tolerated long-term)
+[importlinter:contract:recipes-browser]
+name = recipes/ NEVER imports browser/ (open_url runtime lazy — permanent known exception, tolerated long-term)
 type = forbidden
 source_modules =
     frago.recipes
 forbidden_modules =
-    frago.chrome
+    frago.browser
 
 # --- agent_driver/ -----------------------------------------------------------
 # agent_driver ↔ server is an invisible pure-lazy bidirectional cycle (both
