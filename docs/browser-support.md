@@ -2,291 +2,272 @@
 
 # Browser Support
 
-frago uses the Chrome DevTools Protocol (CDP) to control Chromium-based browsers. This document describes supported browsers and how to use them.
+frago drives Chromium-based browsers through two backends:
+
+- **extension (default)** — a browser extension + native-messaging bridge
+  drives the browser's **own real profile**. No flags needed; this is the
+  standard path for all page operations.
+- **cdp** — the legacy Chrome DevTools Protocol path, selected explicitly
+  with `-b cdp`. Kept for headless/recording workflows (e.g. the
+  `agent_os` screen-record rig) that need a dedicated CDP instance on the
+  fixed port 9222.
+
+This document covers the default extension backend unless stated otherwise.
+Full command reference and anti-bot guidance live in the built-in books:
+`frago book browser-usage`, `frago book browser-backend-choice`,
+`frago book browser-anti-bot`.
 
 ## Supported Browsers
 
 | Browser | Support | Notes |
 |---------|---------|-------|
-| **Chrome** | ✅ Full | Default choice, recommended |
-| **Edge** | ✅ Full | Same CDP protocol as Chrome |
-| **Chromium** | ✅ Full | Open-source base |
+| **Edge** | ✅ Default | Picked first when installed (Stable > Beta > Dev) |
+| **Chromium** | ✅ | Open-source base |
+| **Chrome** | ✅ (non-Stable) | Beta/Dev/Canary; Stable is excluded (v137+ silently ignores `--load-extension`) |
+| **Brave / Vivaldi** | ✅ | Also auto-detectable |
 | **Firefox** | ❌ None | CDP removed in Firefox 141 (2025) |
 | **Safari** | ❌ None | No CDP support |
 
-All supported browsers use the same CDP protocol, so commands work identically across Chrome, Edge, and Chromium.
-
----
+The picker takes the first installed browser in this fixed order:
+Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev →
+Chrome Canary → Brave → Vivaldi. Do **not** pass `--browser`: it does not
+change which browser launches, only which profile directory is used.
 
 ## Browser Detection
 
-frago automatically detects installed browsers using a three-layer strategy:
+```bash
+# List installed browsers and which one frago would pick
+frago browser detect
 
-1. **PATH lookup** - Checks if browser command exists in system PATH (highest priority)
-2. **Default paths** - Checks platform-specific installation locations
-3. **Registry query** - Windows only, queries App Paths registry for non-standard installations
+# Per-browser capability + running status
+frago browser check
+```
 
-### Check Available Browsers
+## Browser Lifecycle
 
 ```bash
-frago chrome detect
+# Start: picks a browser, launches the extension bridge, opens its real profile
+frago browser start
+
+# Health check
+frago browser status
+
+# Stop browser + daemon + socket
+frago browser stop
 ```
 
-Example output:
-```
-Available browsers:
+`start` runs the whole chain: pick browser → launch native-messaging
+daemon → write manifest → launch browser with the extension → wait for the
+bridge handshake. No manual preparation needed.
 
-  Chrome     ✓  /usr/bin/google-chrome
-  Edge       ✓  /usr/bin/microsoft-edge
-  Chromium   ✗  not found
+The browser runs on its **own default profile** (logins, saved passwords and
+cookies are visible to the agent, and vice versa). One instance per profile —
+if `start` hits a lock it errors and tells you to `stop` first.
 
-Default: chrome (first available)
-```
+### CDP-only launch options
 
----
-
-## Browser Lifecycle Commands
-
-### Start Browser
+`--headless`, `--void`, `--app/--app-url`, `--width`, `--height`, `--port`,
+`--profile-dir`, `--no-kill`, `--keep-alive` and `--reseed-profile` are
+**CDP-backend options**. Under the default extension backend they are silently
+dropped. To use them, select CDP explicitly:
 
 ```bash
-# Auto-detect browser (priority: Chrome > Edge > Chromium)
-frago chrome start
-
-# Specify browser explicitly
-frago chrome start --browser chrome
-frago chrome start --browser edge
-frago chrome start --browser chromium
+frago browser -b cdp start --headless          # headless CDP instance (port 9222)
+frago browser -b cdp start --void --keep-alive # off-screen, keep running
 ```
 
-**Launch Modes**:
-
-| Mode | Flag | Description |
-|------|------|-------------|
-| Normal | (default) | Standard browser window |
-| Headless | `--headless` | No UI, for server-side automation |
-| Void | `--void` | Window moved off-screen |
-| App | `--app --app-url URL` | Borderless window for specific URL |
-
-```bash
-# Headless mode (no window)
-frago chrome start --headless
-
-# Void mode (window hidden off-screen)
-frago chrome start --void
-
-# App mode (borderless window)
-frago chrome start --app --app-url http://localhost:8080
-```
-
-**Additional Options**:
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--port` | 9222 | CDP debugging port |
-| `--width` | 1280 | Window width |
-| `--height` | 960 | Window height |
-| `--profile-dir` | auto | User data directory |
-| `--no-kill` | false | Don't kill existing CDP processes |
-| `--keep-alive` | false | Keep running until Ctrl+C |
-
-### Check Status
-
-```bash
-frago chrome status
-```
-
-### Stop Browser
-
-```bash
-frago chrome stop
-
-# Stop browser on specific port
-frago chrome stop --port 9333
-```
-
----
+CDP port is fixed at **9222** — the only whitelisted port. Any other value is
+rejected; never invent ports (see `frago book` CDP-port-whitelist).
 
 ## Page Operations
 
-All page operations work identically across supported browsers.
+All page operations work on the default backend; `--group <name>` scopes a
+tab group for isolation (`FRAGO_CURRENT_RUN` is read when omitted).
 
 ### Navigation
 
 ```bash
-# Navigate to URL
-frago chrome navigate https://example.com
+# Navigate to URL and wait for load
+frago browser navigate https://example.com
 
-# Wait for page load
-frago chrome wait 2000
+# Wait for a selector before returning
+frago browser navigate https://example.com --wait-for '.content-loaded'
+
+# Wait N seconds (decimals ok)
+frago browser wait 2
 ```
 
 ### Element Interaction
 
 ```bash
 # Click element
-frago chrome click "#submit-button"
-frago chrome click "button[type=submit]"
+frago browser click "#submit-button"
+frago browser click "button[type=submit]" --wait-timeout 15
 
-# Execute JavaScript
-frago chrome exec-js "document.title"
-frago chrome exec-js "return document.querySelectorAll('a').length"
+# Execute JavaScript (return value with --return-value)
+frago browser exec-js "document.title"
+frago browser exec-js "return document.querySelectorAll('a').length" --return-value
 ```
 
 ### Page Content
 
 ```bash
 # Get page title
-frago chrome get-title
+frago browser get-title
 
-# Get page content (HTML or text)
-frago chrome get-content
-frago chrome get-content --format text
+# Get text content from page or element (selector defaults to body)
+frago browser get-content
+frago browser get-content "#main-content"
 ```
 
 ### Screenshots
 
 ```bash
-# Full page screenshot
-frago chrome screenshot output.png
+# Page screenshot (default: current viewport)
+frago browser screenshot output.png
 
-# Element screenshot
-frago chrome screenshot element.png --selector "#main-content"
+# Full-page screenshot
+frago browser screenshot page.png --full-page --quality 90
 ```
 
 ### Scrolling
 
 ```bash
-# Scroll by pixels
-frago chrome scroll 500
+# Scroll by pixels (positive down, negative up) or alias
+frago browser scroll 500
+frago browser scroll down
+frago browser scroll page-down
 
-# Scroll to element
-frago chrome scroll-to "#footer"
+# Scroll to element (or by text)
+frago browser scroll-to "#footer"
+frago browser scroll-to --text "Load more"
 ```
 
 ### Zoom
 
 ```bash
 # Set zoom level (1.0 = 100%)
-frago chrome zoom 1.5
+frago browser zoom 1.5
 ```
-
----
 
 ## Tab Management
 
 ```bash
 # List all tabs
-frago chrome list-tabs
+frago browser list-tabs
 
-# Switch to specific tab
-frago chrome switch-tab 0
+# Switch to a tab by id (partial ids match)
+frago browser switch-tab ABC123
+
+# Close a tab
+frago browser close-tab ABC123
+
+# Tab groups
+frago browser groups
+frago browser group-info <group_name>
+frago browser group-close <group_name>
+frago browser group-cleanup
 ```
-
----
 
 ## Visual Effects
 
-These commands add visual markers for debugging and demonstration purposes.
+Visual markers for debugging and demonstration; they work on both backends
+and `clear-effects` removes effects left by either backend.
 
 ```bash
-# Highlight element
-frago chrome highlight "#target-element"
-
-# Add pointer indicator
-frago chrome pointer <selector>
-
-# Spotlight element (dim everything else)
-frago chrome spotlight "#focus-element"
-
-# Add text annotation
-frago chrome annotate "#element" "This is important"
-
-# Underline text
-frago chrome underline "#text-element"
-
-# Clear all visual effects
-frago chrome clear-effects
+frago browser highlight "#target-element" --color "#FF6B6B"
+frago browser pointer "#target-element"
+frago browser spotlight "#focus-element" --life-time 5
+frago browser annotate "#element" "This is important" --position top
+frago browser underline "#text-element"
+frago browser clear-effects
 ```
-
----
 
 ## Profile Management
 
-Each browser type uses a separate profile directory:
+- **extension backend** — uses the browser's own default profile. frago does
+  not copy, isolate or clean it.
+- **cdp backend** — uses a dedicated profile per browser per port:
+  `~/.frago/profiles/<browser>/<port>/` (e.g. `~/.frago/profiles/edge/9222`),
+  seeded from the system browser profile. Port is always explicit in the path.
 
-| Browser | Profile Directory |
-|---------|------------------|
-| Chrome | `~/.frago/profiles/chrome/9222` |
-| Edge | `~/.frago/profiles/edge/9222` |
-| Chromium | `~/.frago/profiles/chromium/9222` |
-
-The port is always explicit in the path — non-default ports get their own
-directory, e.g. `~/.frago/profiles/chrome/9333`. Profiles are automatically
-initialized from system browser profiles (bookmarks, extensions, cookies, etc.).
-
-**Custom Profile**:
 ```bash
-frago chrome start --profile-dir /path/to/custom/profile
+# CDP instance against a custom profile (port stays 9222)
+frago browser -b cdp start --profile-dir /path/to/custom/profile
 ```
 
-**Port-specific Profile** (for running multiple instances):
+## Anti-Bot
+
+The extension backend runs a real browser environment, so it passes
+Cloudflare/Datadome/Akamai checks naturally. Probe a group's current page for
+challenges:
+
 ```bash
-frago chrome start --port 9333
-# Uses ~/.frago/profiles/chrome/9333
+frago browser detect --group research
 ```
 
----
+See `frago book browser-anti-bot` for the interactive / invisible / blocked
+three-tier handling.
 
 ## Platform-Specific Notes
 
 ### Linux
 
-- Wayland sessions automatically use XWayland for void mode
-- Root user automatically disables sandbox (`--no-sandbox`)
+- Wayland sessions automatically use XWayland for void mode.
+- Root user automatically disables sandbox (`--no-sandbox`).
 
 ### Windows
 
-- Browser detection includes registry lookup for non-standard installations
-- Edge is pre-installed on Windows 10/11
+- Browser detection includes a registry lookup for non-standard installations.
+- Edge is pre-installed on Windows 10/11.
 
 ### macOS
 
-- Browsers detected in `/Applications/` directory
-- Edge requires manual installation
-
----
+- Browsers are detected in `/Applications/`.
+- Edge may need manual installation.
 
 ## Troubleshooting
 
 ### Browser Not Found
 
 ```bash
-# Check available browsers
-frago chrome detect
+# Check available browsers and what would be picked
+frago browser detect
+frago browser check
 
-# Verify browser is in PATH
-which google-chrome
+# Verify browser binary is in PATH
 which microsoft-edge
+which google-chrome
+```
+
+### Bridge Not Connected
+
+```bash
+# Status first — if not connected, start and retry
+frago browser status
+frago browser start
+
+# Bridge errors are structured JSON with a hint: {"ok": false, "code": ..., "hint": "run: frago browser start"}
 ```
 
 ### CDP Connection Failed
 
 ```bash
-# Check if CDP port is in use
-lsof -i :9222  # Linux/macOS
-netstat -an | findstr 9222  # Windows
+# CDP port is fixed at 9222 — check who owns it
+lsof -i :9222   # Linux/macOS
+netstat -an | findstr 9222   # Windows
 
-# Stop existing browser and restart
-frago chrome stop
-frago chrome start
+# Stop the existing CDP instance and restart
+frago browser -b cdp stop
+frago browser -b cdp start
 ```
 
 ### Permission Denied (Linux)
 
-Running as root requires disabling sandbox:
+Running as root requires disabling the sandbox — frago handles this
+automatically, but you can set it explicitly:
+
 ```bash
-# frago handles this automatically, but you can also set:
 export FRAGO_NO_SANDBOX=1
-frago chrome start
+frago browser -b cdp start
 ```

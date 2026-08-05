@@ -3,7 +3,7 @@
 This script is **not** part of the agent OS surface. It exists for
 people debugging the extension during development. End users do not run
 this — they get the bundle as part of the frago install and use the
-unified `frago chrome start --backend extension` command.
+unified `frago browser start` command.
 
 Usage:
     uv run python scripts/dev_launch_extension.py
@@ -37,8 +37,8 @@ def main() -> int:
     # Lazy import: keeps this script standalone-runnable even if the
     # frago package isn't installed system-wide (assuming PYTHONPATH or
     # `uv run` is doing the right thing).
-    from frago.chrome.backends.extension import launch_chrome_with_extension
-    from frago.chrome.extension import bundle_path
+    from frago.browser.backends.extension import launch_chrome_with_extension
+    from frago.browser.extension import bundle_path
 
     bundle = args.bundle or bundle_path()
     if not (bundle / "manifest.json").exists():

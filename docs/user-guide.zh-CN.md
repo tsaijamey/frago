@@ -4,28 +4,28 @@
 
 ## CDP 命令
 
-所有浏览器控制通过 `frago chrome <command>`：
+所有浏览器控制通过 `frago browser <command>`：
 
 ```bash
 # 导航
-frago chrome navigate <url>
-frago chrome status
+frago browser navigate <url>
+frago browser status
 
 # 交互
-frago chrome click <selector>
-frago chrome scroll <distance>
-frago chrome wait <seconds>
+frago browser click <selector>
+frago browser scroll <distance>
+frago browser wait <seconds>
 
 # JavaScript
-frago chrome exec-js <expression> --return-value
+frago browser exec-js <expression> --return-value
 
 # 截图
-frago chrome screenshot <output_file>
+frago browser screenshot <output_file>
 
 # 视觉效果
-frago chrome spotlight <selector> --life-time 3
-frago chrome highlight <selector> --color "#FF6B6B"
-frago chrome annotate <selector> "text" --position top
+frago browser spotlight <selector> --life-time 3
+frago browser highlight <selector> --color "#FF6B6B"
+frago browser annotate <selector> "text" --position top
 ```
 
 ### 代理配置

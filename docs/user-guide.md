@@ -4,28 +4,28 @@
 
 ## CDP Commands
 
-All browser control through `frago chrome <command>`:
+All browser control through `frago browser <command>`:
 
 ```bash
 # Navigation
-frago chrome navigate <url>
-frago chrome status
+frago browser navigate <url>
+frago browser status
 
 # Interaction
-frago chrome click <selector>
-frago chrome scroll <distance>
-frago chrome wait <seconds>
+frago browser click <selector>
+frago browser scroll <distance>
+frago browser wait <seconds>
 
 # JavaScript
-frago chrome exec-js <expression> --return-value
+frago browser exec-js <expression> --return-value
 
 # Screenshots
-frago chrome screenshot <output_file>
+frago browser screenshot <output_file>
 
 # Visual effects
-frago chrome spotlight <selector> --life-time 3
-frago chrome highlight <selector> --color "#FF6B6B"
-frago chrome annotate <selector> "text" --position top
+frago browser spotlight <selector> --life-time 3
+frago browser highlight <selector> --color "#FF6B6B"
+frago browser annotate <selector> "text" --position top
 ```
 
 ### Proxy Configuration

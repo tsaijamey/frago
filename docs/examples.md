@@ -21,14 +21,14 @@ frago run init "Research YouTube subtitle extraction methods"
 
 ```bash
 # Navigate to YouTube video
-frago chrome navigate https://www.youtube.com/watch?v=dQw4w9WgXcQ
+frago browser navigate https://www.youtube.com/watch?v=dQw4w9WgXcQ
 
 # Take initial screenshot
-frago chrome screenshot initial_page.png
+frago browser screenshot initial_page.png
 # Saved to: projects/youtube-subtitle-research-abc123/screenshots/
 
 # Inspect page structure
-frago chrome exec-js 'document.querySelector("button[aria-label*=\"transcript\"]")' --return-value
+frago browser exec-js 'document.querySelector("button[aria-label*=\"transcript\"]")' --return-value
 ```
 
 ### Step 3: Record Findings
@@ -42,8 +42,8 @@ frago run log \
   --data '{"selector": "button[aria-label*=\"transcript\"]", "reliable": true}'
 
 # Click button and verify
-frago chrome click 'button[aria-label*="transcript"]'
-frago chrome screenshot transcript_opened.png
+frago browser click 'button[aria-label*="transcript"]'
+frago browser screenshot transcript_opened.png
 ```
 
 ### Step 4: Save Validated Script
@@ -395,46 +395,46 @@ Generated with frago | Run ID: iphone-15-price-monitoring-abc123
   --user-data-dir="$HOME/.frago/profiles/chrome/9222"
 
 # Navigate to page
-frago chrome navigate https://news.ycombinator.com/
+frago browser navigate https://news.ycombinator.com/
 
 # Wait for page load
-frago chrome wait 2
+frago browser wait 2
 
 # Click element
-frago chrome click 'a.titlelink:first-child'
+frago browser click 'a.titlelink:first-child'
 
 # Get page title
-frago chrome exec-js 'document.title' --return-value
+frago browser exec-js 'document.title' --return-value
 ```
 
 ### Screenshots and Visual Effects
 
 ```bash
 # Take full page screenshot
-frago chrome screenshot hackernews_page.png
+frago browser screenshot hackernews_page.png
 
 # Highlight specific element
-frago chrome highlight '.storylink' --color "#FF6B6B" --life-time 3
+frago browser highlight '.storylink' --color "#FF6B6B" --life-time 3
 
 # Spotlight effect (dim surroundings)
-frago chrome spotlight '.athing:first-child' --life-time 5
+frago browser spotlight '.athing:first-child' --life-time 5
 
 # Add annotation
-frago chrome annotate '.score' "Top story" --position top
+frago browser annotate '.score' "Top story" --position top
 ```
 
 ### JavaScript Execution
 
 ```bash
 # Extract all links
-frago chrome exec-js 'Array.from(document.querySelectorAll("a")).map(a => a.href)' \
+frago browser exec-js 'Array.from(document.querySelectorAll("a")).map(a => a.href)' \
   --return-value
 
 # Scroll to bottom
-frago chrome exec-js 'window.scrollTo(0, document.body.scrollHeight)'
+frago browser exec-js 'window.scrollTo(0, document.body.scrollHeight)'
 
 # Check element existence
-frago chrome exec-js 'document.querySelector(".pagetop") !== null' \
+frago browser exec-js 'document.querySelector(".pagetop") !== null' \
   --return-value
 ```
 
@@ -549,7 +549,7 @@ lsof -i :9222
   --user-data-dir="$HOME/.frago/profiles/chrome/9222" &
 
 # Test connection
-frago chrome status
+frago browser status
 ```
 
 ### Example: Recipe Not Found
@@ -566,14 +566,14 @@ frago recipe info youtube_extract_video_transcript
 
 ```bash
 # ❌ Wrong: Relative path
-frago chrome screenshot screenshot.png
+frago browser screenshot screenshot.png
 
 # ✅ Correct: Absolute path
-frago chrome screenshot $(pwd)/screenshot.png
+frago browser screenshot $(pwd)/screenshot.png
 
 # ✅ Correct: Within Run context
 frago run init "My task"
-frago chrome screenshot screenshot.png  # Auto-saved to Run's screenshots/
+frago browser screenshot screenshot.png  # Auto-saved to Run's screenshots/
 ```
 
 ---

@@ -43,14 +43,14 @@ YouTube的"内容转文字"功能会将视频语音内容转换为带时间戳�
 
 ## 使用方法
 
-**配方执行器说明**：生成的配方本质上是JavaScript代码，通过CDP的Runtime.evaluate接口注入到浏览器中执行。因此，执行配方的标准方式是使用 `frago chrome exec-js` 命令。
+**配方执行器说明**：生成的配方本质上是JavaScript代码，通过CDP的Runtime.evaluate接口注入到浏览器中执行。因此，执行配方的标准方式是使用 `frago browser exec-js` 命令。
 
 1. 在浏览器中打开目标YouTube视频页面（必须是长视频，不能是Shorts）
 2. 确认浏览器界面语言与视频语音语言不同（例如中文界面+英文视频）
 3. 执行配方：
    ```bash
    # 将配方JS文件内容作为脚本注入浏览器执行
-   frago chrome exec-js src/frago/recipes/youtube_extract_video_transcript.js --return-value
+   frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js --return-value
    ```
 4. 查看控制台输出的JSON格式转录文本
 

@@ -507,7 +507,7 @@ class RecipeRunner:
         if params:
             params_json = json.dumps(params)
             inject_cmd = [
-                *_frago_argv(), 'chrome', 'exec-js',
+                *_frago_argv(), 'browser', 'exec-js',
                 f'window.__FRAGO_PARAMS__ = {params_json}'
             ]
             try:
@@ -537,9 +537,9 @@ class RecipeRunner:
                     stderr="Parameter injection timeout"
                 ) from e
 
-        # Build command: <frago_launcher> chrome exec-js <script_path> --return-value
+        # Build command: <frago_launcher> browser exec-js <script_path> --return-value
         cmd = [
-            *_frago_argv(), 'chrome', 'exec-js',
+            *_frago_argv(), 'browser', 'exec-js',
             str(script_path),
             '--return-value'
         ]

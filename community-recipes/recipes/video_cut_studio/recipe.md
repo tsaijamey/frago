@@ -130,7 +130,7 @@ frago recipe run video_cut_studio '{"dir": "/path/to/video/clips"}'
 3. 复制 UI 资源到 viewer content 目录
 4. 生成 config.json 配置文件
 5. 创建必要的子目录（tts/, output/, temp/）
-6. 调用 `frago chrome navigate` 打开 Web UI
+6. 调用 `frago browser navigate` 打开 Web UI
 
 ## 数据文件
 
@@ -169,7 +169,7 @@ frago recipe run video_cut_studio '{"dir": "/path/to/video/clips"}'
 ## 前置条件
 
 1. **frago server 运行中**：`frago server`
-2. **Chrome 已启动 CDP**：`frago chrome start`
+2. **Chrome 已启动 CDP**：`frago browser start`
 3. **TTS 环境变量配置**（如需使用 TTS 功能）：
    - `X_APP_ID`
    - `X_ACCESS_TOKEN`
