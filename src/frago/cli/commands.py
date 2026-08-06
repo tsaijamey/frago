@@ -1525,9 +1525,16 @@ def status(ctx):
 @click.command('scroll', cls=AgentFriendlyCommand)
 @click.argument('distance', type=SCROLL_DISTANCE)
 @group_option
+@click.option('--activate', is_flag=True, default=False,
+              help="Allow bringing the target tab to front inside its "
+                   "own window when the page renders nothing while "
+                   "hidden (x.com's timeline does). Off by default: "
+                   "scrolling never changes what a person sees on "
+                   "screen, it just reports that it could not move.")
 @click.pass_context
 @print_usage
-def scroll(ctx, distance: int, group: str | None = None):
+def scroll(ctx, distance: int, group: str | None = None,
+           activate: bool = False):
     """
     Scroll page and automatically capture page features
 
@@ -1535,16 +1542,36 @@ def scroll(ctx, distance: int, group: str | None = None):
     DISTANCE can be:
       - Pixel value: positive for down, negative for up
       - Alias: down, up, page-down, page-up
+
+    \b
+    Returns the measured movement, not the requested one: `scrolled` is
+    how far the page actually went, `at_bottom` says there is nothing
+    left, `hidden` says the page considers itself invisible — a
+    visibility-gated site (x.com's timeline) renders nothing there, so
+    there is nothing to scroll. Scrolling never changes what is on
+    screen unless you ask for it with --activate.
     """
+    # CDP 驱动的 tab 没有"窗口当前 tab"这回事，无从置前，参数只为
+    # 与 extension 后端签名对齐。
+    del activate
     try:
         with create_session(ctx, group=group) as session:
             _check_landing_page_protection(session, ctx)
             _touch_active_tab(session, ctx.obj['HOST'], ctx.obj['PORT'])
-            session.scroll.scroll(distance)
-            _print_msg("success", f"Scrolled {distance} pixels", "interaction", {"distance": distance})
-
-            # Brief wait after scroll
-            time.sleep(0.3)
+            r = session.scroll.scroll(distance)
+            moved = r.get("scrolled")
+            if moved == 0:
+                msg = (f"Requested {distance}px but the page did not move"
+                       + (" (already at the bottom)" if r.get("at_bottom")
+                          else "")
+                       + (" — page reports itself hidden, so a "
+                          "visibility-gated site renders nothing here"
+                          if r.get("hidden") else ""))
+                _print_msg("warning", msg, "interaction", r)
+            else:
+                _print_msg("success",
+                           f"Scrolled {moved} pixels (requested {distance})",
+                           "interaction", r)
 
             # Perception: capture DOM features
             _do_perception(session, f"scroll-{distance}px")
@@ -1569,9 +1596,14 @@ def scroll(ctx, distance: int, group: str | None = None):
     help='Vertical alignment (default: center)'
 )
 @group_option
+@click.option('--activate', is_flag=True, default=False,
+              help='Allow bringing the target tab to front when the '
+                   'element is missing only because the page renders '
+                   'nothing while hidden. Off by default.')
 @click.pass_context
 @print_usage
-def scroll_to(ctx, selector: str | None, text: str | None, block: str, group: str | None = None):
+def scroll_to(ctx, selector: str | None, text: str | None, block: str,
+              group: str | None = None, activate: bool = False):
     """
     Scroll to specified element
 
@@ -1583,6 +1615,8 @@ def scroll_to(ctx, selector: str | None, text: str | None, block: str, group: st
       frago scroll-to --text "Just canceled"       # Find by text
     """
     import json
+
+    del activate  # CDP path has no tab to bring to front
 
     if not selector and not text:
         click.echo("Error: must provide SELECTOR or --text parameter", err=True)

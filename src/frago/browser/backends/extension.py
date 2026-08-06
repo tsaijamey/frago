@@ -69,10 +69,17 @@ class ExtensionChromeBackend(ChromeBackend):
 
     def navigate(self, url: str, group: str, *,
                  timeout: float = 15.0) -> NavigateResult:
+        """Navigate the group's tab; open one if the group has none.
+
+        To open a *second* tab, navigate under a different group name —
+        a group names exactly one tab, so there is no coherent way to
+        hold two under the same name.
+        """
         r = self._rpc("tab.navigate",
                       {"url": url, "group": group,
                        "timeout": int(timeout * 1000)})
-        return NavigateResult(tab_id=r["tab_id"], url=r["url"], title=r["title"])
+        return NavigateResult(tab_id=r["tab_id"], url=r["url"],
+                              title=r["title"])
 
     def exec_js(self, script: str, group: str) -> ExecResult:
         r = self._rpc("dom.exec_js", {"script": script, "group": group})
@@ -147,18 +154,41 @@ class ExtensionChromeBackend(ChromeBackend):
     def reset(self, group: str | None = None) -> dict:
         return self._rpc("tabs.reset", {"group": group})
 
-    def scroll(self, distance: int, group: str) -> dict:
-        return self._rpc("page.scroll",
-                         {"distance": int(distance), "group": group})
+    def scroll(self, distance: int, group: str, *,
+               activate: bool = False) -> dict:
+        """Scroll and report the *actual* movement.
+
+        Returns ``requested`` / ``scrolled`` / ``y`` / ``max_y`` /
+        ``at_bottom`` / ``hidden`` / ``activated``, plus a ``hint`` when
+        the page could not move. ``scrolled`` is the measured delta, so
+        "page could not move" is distinguishable from "page moved N px"
+        — the old contract echoed the request and made both identical.
+
+        Nothing about the browser's visible state changes by default:
+        the agent works in the background while a person may be looking
+        at that very window. Visibility-gated sites (x.com's timeline)
+        render nothing while their tab is not the active tab of its
+        window; that shows up as ``scrolled: 0`` with ``hidden: true``
+        and a hint, not as a silent success. Pass ``activate`` to allow
+        bringing the tab to front inside its own window (no window or
+        app focus steal) and retrying once — ``activated`` says whether
+        it happened.
+        """
+        params: dict = {"distance": int(distance), "group": group}
+        if activate:
+            params["activate"] = True
+        return self._rpc("page.scroll", params)
 
     def scroll_to(self, group: str, *, selector: str | None = None,
-                  text: str | None = None,
-                  block: str = "center") -> dict:
+                  text: str | None = None, block: str = "center",
+                  activate: bool = False) -> dict:
         if not selector and not text:
             raise ValueError("scroll_to: selector or text required")
-        return self._rpc("page.scroll_to",
-                         {"group": group, "selector": selector,
-                          "text": text, "block": block})
+        params: dict = {"group": group, "selector": selector,
+                        "text": text, "block": block}
+        if activate:
+            params["activate"] = True
+        return self._rpc("page.scroll_to", params)
 
     def zoom(self, factor: float, group: str) -> dict:
         return self._rpc("page.zoom",
@@ -617,6 +647,7 @@ def launch_chrome_with_extension(bundle_dir: Path,
             "cannot derive a default profile without a brand — pass "
             "user_data_dir or brand alongside chrome_binary"
         )
+    assert brand is not None, "brand guaranteed non-None above"
     udd = user_data_dir or extension_profile_dir(brand)
     udd.mkdir(parents=True, exist_ok=True)
     args = [

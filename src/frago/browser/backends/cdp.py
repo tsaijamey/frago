@@ -215,18 +215,58 @@ class CDPChromeBackend(ChromeBackend):
                 closed.append(name)
         return {"group": group, "closed": closed}
 
-    def scroll(self, distance: int, group: str) -> dict:
+    def scroll(self, distance: int, group: str, *,
+               activate: bool = False) -> dict:
+        """Scroll and report the measured movement, mirroring the
+        extension backend's contract.
+
+        ``activate`` is accepted for signature parity and ignored: a
+        CDP-driven tab has no "active tab of its window" notion to fix
+        up — see the visibility note in the extension backend.
+        """
+        del activate
         s = self._session(group)
-        if hasattr(s, "scroll"):
-            s.scroll.scroll(int(distance)) if hasattr(s.scroll, "scroll") \
-                else s.scroll(int(distance))
-        else:
-            s.evaluate(f"window.scrollBy(0, {int(distance)})",
-                       return_by_value=True)
-        return {"scrolled": int(distance)}
+        dist = int(distance)
+        # 单趟往返里读前值、滚、等动画稳定、读后值。平滑滚动的站点
+        # 滚完立刻读会读到中途值，这里轮询到位置不再变化为止。
+        js = f"""
+        (async () => {{
+            const doc = document.documentElement;
+            const read = () => ({{
+                y: Math.round(window.scrollY),
+                max: Math.round(Math.max(
+                    0, doc.scrollHeight - window.innerHeight)),
+            }});
+            const y0 = read().y;
+            window.scrollBy(0, {dist});
+            let prev = -1, cur = read();
+            for (let i = 0; i < 15 && cur.y !== prev; i++) {{
+                prev = cur.y;
+                await new Promise(r => setTimeout(r, 100));
+                cur = read();
+            }}
+            return JSON.stringify({{y0, y: cur.y, max: cur.max,
+                                    hidden: document.hidden}});
+        }})()
+        """
+        # Runtime.evaluate 这一层已固定 awaitPromise=True，异步表达式
+        # 会等 resolve 后再回值。
+        raw = s.evaluate(js, return_by_value=True)
+        try:
+            import json as _json
+            r = _json.loads(raw if isinstance(raw, str) else str(raw))
+        except Exception:
+            return {"requested": dist, "scrolled": None,
+                    "note": f"unparsable evaluate result: {raw!r}"}
+        return {"requested": dist, "scrolled": r["y"] - r["y0"],
+                "y": r["y"], "max_y": r["max"],
+                "at_bottom": r["max"] - r["y"] <= 2,
+                "hidden": r["hidden"], "activated": False}
 
     def scroll_to(self, group: str, *, selector: str | None = None,
-                  text: str | None = None, block: str = "center") -> dict:
+                  text: str | None = None, block: str = "center",
+                  activate: bool = False) -> dict:
+        del activate  # signature parity; see scroll()
         if not selector and not text:
             raise ValueError("scroll_to: selector or text required")
         import json

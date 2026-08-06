@@ -304,13 +304,15 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     elif name == "scroll":
         if not group:
             raise click.UsageError("--group required")
-        r = be.scroll(int(kwargs["distance"]), group)
+        r = be.scroll(int(kwargs["distance"]), group,
+                      activate=bool(kwargs.get("activate")))
     elif name == "scroll-to":
         if not group:
             raise click.UsageError("--group required")
         r = be.scroll_to(group, selector=kwargs.get("selector"),
                          text=kwargs.get("text"),
-                         block=kwargs.get("block") or "center")
+                         block=kwargs.get("block") or "center",
+                         activate=bool(kwargs.get("activate")))
     elif name == "zoom":
         if not group:
             raise click.UsageError("--group required")

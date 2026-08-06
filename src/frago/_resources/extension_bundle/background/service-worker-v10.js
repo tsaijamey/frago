@@ -344,6 +344,58 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // ════════════════════════ handlers ════════════════════════
 
+// ══════════ 浏览器标签组：agent 开的页面收进一个折叠的分组 ══════════
+//
+// 这里说的"标签组"是标签栏上那个带颜色、能折叠的分组，跟 frago 的
+// --group 是同名的两回事：后者是逻辑隔离账本（group → tab id），浏览器
+// 里根本看不见。所以"所有 agent 页面进同一个分组"和"每个任务一套隔离"
+// 不冲突，不用二选一——隔离照旧由 frago 自己的账本维持。
+//
+// 为什么要收：agent 开的页面是给 agent 自己用的，平铺在标签栏上会把人
+// 自己的标签挤出视野。收进一个折叠的组，占一格。
+const AUTO_GROUP_TITLE = "auto";
+
+async function fileIntoAutoGroup(tabId) {
+    // 分组能力缺失（旧浏览器、权限未授予）绝不能连累导航本身。
+    if (!chrome.tabGroups || !chrome.tabs.group) return;
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        // 已经在某个组里就别抢——可能是人自己归的类。
+        if (tab.groupId != null &&
+            tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
+
+        const existing = await chrome.tabGroups.query(
+            { title: AUTO_GROUP_TITLE, windowId: tab.windowId });
+        let gid;
+        // 折不折叠以人的意愿为准：组已存在就沿用它当前的状态——人若把它
+        // 展开着，说明正在看，agent 不该每开一个页面就把它折回去。只有
+        // 组是这次新建的才默认折叠。
+        let wantCollapsed;
+        if (existing.length) {
+            wantCollapsed = !!existing[0].collapsed;
+            gid = await chrome.tabs.group(
+                { groupId: existing[0].id, tabIds: tabId });
+        } else {
+            wantCollapsed = true;
+            gid = await chrome.tabs.group(
+                { tabIds: tabId, createProperties: { windowId: tab.windowId } });
+            await chrome.tabGroups.update(
+                gid, { title: AUTO_GROUP_TITLE, color: "grey" });
+        }
+
+        // 组里含当前活动标签时一律不折：那是人正看着的页面，
+        // 何况 Chrome 本来也不允许折叠含活动标签的组。
+        const active = await chrome.tabs.query(
+            { active: true, windowId: tab.windowId });
+        const holdsActive = active.length && active[0].groupId === gid;
+        if (wantCollapsed && !holdsActive) {
+            await chrome.tabGroups.update(gid, { collapsed: true });
+        }
+    } catch (e) {
+        console.warn("[frago] auto tab group failed:", e);
+    }
+}
+
 async function resolveTab(params, { create = false, url = null } = {}) {
     const { group, tab_id } = params;
     if (tab_id) return tab_id;
@@ -354,6 +406,7 @@ async function resolveTab(params, { create = false, url = null } = {}) {
     }
     if (create && url) {
         const tab = await chrome.tabs.create({ url, active: false });
+        await fileIntoAutoGroup(tab.id);
         if (group) { groupToTab.set(group, tab.id); await saveGroups(); }
         return tab.id;
     }
@@ -377,6 +430,12 @@ function waitForLoad(tabId, timeoutMs = 15_000) {
     });
 }
 
+// 想新开一个标签，就换一个 group 名来导航：group 没有绑定时这里本来
+// 就会新建。不设"另开一个标签"的开关——账本一个 group 只记一个标签，
+// 同一个 group 下开第二个标签，账本只能二选一：要么指着旧的（导航回报
+// 新标签、后续带 group 的命令却全作用在旧页面上，且不报错），要么改指
+// 新的（旧标签没人跟随，从命令行再也够不着）。两种都是净损失，而换个
+// group 名一样能开出新标签，一个牺牲品都不产生。
 async function tabNavigate({ url, group, tab_id, timeout = 15_000 }) {
     if (!url) throw { code: -32602, message: "url required" };
     let id;
@@ -386,6 +445,7 @@ async function tabNavigate({ url, group, tab_id, timeout = 15_000 }) {
     } else {
         const tab = await chrome.tabs.create({ url, active: false });
         id = tab.id;
+        await fileIntoAutoGroup(id);
         if (group) { groupToTab.set(group, id); await saveGroups(); }
     }
     await waitForLoad(id, timeout);
@@ -592,10 +652,30 @@ async function visualScreenshot({ group, tab_id, output = null }) {
 
 async function tabsList(_params) {
     const tabs = await chrome.tabs.query({});
-    const out = tabs.map((t, i) => ({
-        index: i, id: t.id, title: t.title || "", url: t.url || "",
-        active: !!t.active, windowId: t.windowId,
-    }));
+    // 标签组信息一并带出：agent 自己开的页面收在折叠的 auto 组里，
+    // 不报出来的话，"我的页面到底归到哪儿了"就只能靠人去看标签栏。
+    const titles = new Map();
+    const collapsed = new Map();
+    if (chrome.tabGroups) {
+        try {
+            for (const g of await chrome.tabGroups.query({})) {
+                titles.set(g.id, g.title || "");
+                collapsed.set(g.id, !!g.collapsed);
+            }
+        } catch (_) { /* 不支持标签组就不报这两个字段 */ }
+    }
+    const NONE = chrome.tabGroups?.TAB_GROUP_ID_NONE ?? -1;
+    const out = tabs.map((t, i) => {
+        const row = {
+            index: i, id: t.id, title: t.title || "", url: t.url || "",
+            active: !!t.active, windowId: t.windowId,
+        };
+        if (t.groupId != null && t.groupId !== NONE) {
+            row.tab_group = titles.get(t.groupId) ?? String(t.groupId);
+            row.tab_group_collapsed = collapsed.get(t.groupId) ?? null;
+        }
+        return row;
+    });
     return { tabs: out };
 }
 
@@ -682,23 +762,97 @@ async function groupsCleanup() {
     return { removed };
 }
 
-async function pageScroll({ distance, group, tab_id }) {
-    const id = await resolveTab({ group, tab_id });
-    await wakeHiddenTab(id);
+// 滚一次并等位置稳定下来，回报真实位移而不是请求值。
+//
+// 两件事以前是猜的：一是站点可能带 scroll-behavior:smooth，滚动是
+// 动画，滚完立刻读位置读到的是中途值；二是页面可能根本没得滚（已到
+// 底、或后台 tab 里内容没铺开），旧实现把请求距离原样回吐，一律"成功"。
+async function scrollStep(tabId, dist) {
     const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: id },
-        func: (d) => { window.scrollBy(0, d); return { scrolled: d }; },
-        args: [Number(distance) || 0],
+        target: { tabId },
+        func: async (d) => {
+            const doc = document.documentElement;
+            const read = () => ({
+                y: Math.round(window.scrollY),
+                max: Math.round(Math.max(
+                    0, doc.scrollHeight - window.innerHeight)),
+            });
+            const y0 = read().y;
+            window.scrollBy(0, d);
+            let prev = -1;
+            let cur = read();
+            for (let i = 0; i < 15 && cur.y !== prev; i++) {
+                prev = cur.y;
+                await new Promise((r) => setTimeout(r, 100));
+                cur = read();
+            }
+            return { y0, y: cur.y, max: cur.max, hidden: document.hidden };
+        },
+        args: [dist],
     });
     return result;
 }
 
-async function pageScrollTo({ group, tab_id, selector, text, block }) {
+// 运行条件：目标 tab 必须是它所在窗口的当前 tab。
+//
+// x.com 这类按可见性渲染的站点，在后台 tab 里整条线程根本不铺开
+// （实测：后台时整页可滚余量 53px、只渲染 1 条推文；同一页置前后
+// 立刻 4854px、28 条，且随滚动继续续载）。此时滚动无处可滚，旧实现
+// 却照样回报滚了。wakeHiddenTab 只把冻结的渲染主线程解冻、刻意不碰
+// 可见性，救不了这一类。
+//
+// 默认绝不动 tab 的可见性：agent 常年在后台干活，人可能正盯着这个
+// 窗口，把他眼前的页面换掉是不能默认发生的事。滚不动就如实报，并在
+// hint 里指出该怎么办。要置前必须显式传 activate —— 那时才调
+// tabs.update 换该窗口内的当前 tab（仍不动窗口焦点、不抢应用焦点，
+// 这点与 switch-tab 不同，后者语义上就是要激活窗口）。
+//
+// 窗口若被最小化，页面照样自认不可见，置前也救不回来，hint 会说明。
+async function pageScroll({ distance, group, tab_id, activate = false }) {
     const id = await resolveTab({ group, tab_id });
     await wakeHiddenTab(id);
+    const dist = Number(distance) || 0;
+
+    let r = await scrollStep(id, dist);
+    const y0 = r.y0;
+    let activated = false;
+    const stuck = () => Math.abs(r.y - r.y0) < Math.abs(dist);
+    if (activate && r.hidden && stuck()) {
+        try {
+            await chrome.tabs.update(id, { active: true });
+            await new Promise((res) => setTimeout(res, 400));
+            activated = true;
+            r = await scrollStep(id, dist);
+        } catch (_) { /* tab 可能已关闭 */ }
+    }
+    const out = {
+        requested: dist,
+        scrolled: r.y - y0,
+        y: r.y,
+        max_y: r.max,
+        at_bottom: r.max - r.y <= 2,
+        hidden: r.hidden,
+        activated,
+    };
+    if (r.hidden && Math.abs(out.scrolled) < Math.abs(dist)) {
+        out.hint = activated
+            ? "still hidden after activating the tab — the window is "
+              + "minimized or fully covered; a person has to restore it"
+            : "page is hidden: this tab is not the active tab of its "
+              + "window, and visibility-gated sites (x.com's timeline) "
+              + "render nothing there. Retry with activate to bring the "
+              + "tab to front inside its own window (no app focus steal)";
+    }
+    return out;
+}
+
+// 与 pageScroll 同一套运行条件：找不到元素时，先分清是"页面没渲染"
+// 还是"确实没这个元素"——后台 tab 上按可见性渲染的站点属前者，置前
+// 重试一次即可，返回值里说明是否置前过。
+async function scrollToStep(tabId, selector, text, block) {
     const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: id },
-        func: (sel, txt, blk) => {
+        target: { tabId },
+        func: async (sel, txt, blk) => {
             let el = null;
             if (sel) el = document.querySelector(sel);
             if (!el && txt) {
@@ -709,14 +863,59 @@ async function pageScrollTo({ group, tab_id, selector, text, block }) {
                 const node = walker.nextNode();
                 if (node) el = node.parentElement;
             }
-            if (!el) return { ok: false, error: "element not found" };
+            if (!el) {
+                return { ok: false, error: "element not found",
+                         hidden: document.hidden };
+            }
             el.scrollIntoView({ behavior: "smooth", block: blk || "center" });
-            return { ok: true };
+            // 平滑滚动是动画，等位置稳定再判断元素是否真进了视口
+            let prev = -1;
+            let cur = Math.round(window.scrollY);
+            for (let i = 0; i < 15 && cur !== prev; i++) {
+                prev = cur;
+                await new Promise((r) => setTimeout(r, 100));
+                cur = Math.round(window.scrollY);
+            }
+            const box = el.getBoundingClientRect();
+            return {
+                ok: true,
+                y: cur,
+                in_viewport: box.bottom > 0 && box.top < window.innerHeight,
+                hidden: document.hidden,
+            };
         },
         args: [selector || null, text || null, block || "center"],
     });
-    if (!result?.ok) throw { code: -32004, message: result?.error || "scroll_to failed" };
-    return { success: true };
+    return result;
+}
+
+async function pageScrollTo({ group, tab_id, selector, text, block,
+                              activate = false }) {
+    const id = await resolveTab({ group, tab_id });
+    await wakeHiddenTab(id);
+    let result = await scrollToStep(id, selector, text, block);
+    let activated = false;
+    // 与 pageScroll 同一条纪律：默认不动 tab 可见性，置前要显式要。
+    if (activate && !result?.ok && result?.hidden) {
+        try {
+            await chrome.tabs.update(id, { active: true });
+            await new Promise((res) => setTimeout(res, 400));
+            activated = true;
+            result = await scrollToStep(id, selector, text, block);
+        } catch (_) { /* tab 可能已关闭 */ }
+    }
+    if (!result?.ok) {
+        const hint = result?.hidden && !activated
+            ? "page is hidden: this tab is not the active tab of its "
+              + "window, so a visibility-gated site may not have "
+              + "rendered the element at all. Retry with activate."
+            : undefined;
+        throw { code: -32004,
+                message: result?.error || "scroll_to failed",
+                data: { hidden: result?.hidden, activated, hint } };
+    }
+    return { success: true, y: result.y, in_viewport: result.in_viewport,
+             hidden: result.hidden, activated };
 }
 
 async function pageZoom({ factor, group, tab_id }) {

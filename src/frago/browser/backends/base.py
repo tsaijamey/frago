@@ -114,12 +114,22 @@ class ChromeBackend(ABC):
         """Close all tabs (or one group's tabs) except the landing page."""
         raise NotImplementedError
 
-    def scroll(self, distance: int, group: str) -> dict:
-        """Scroll by pixels. Positive=down."""
+    def scroll(self, distance: int, group: str, *,
+               activate: bool = False) -> dict:
+        """Scroll by pixels. Positive=down.
+
+        Reports the *measured* movement (``scrolled``), plus ``y`` /
+        ``max_y`` / ``at_bottom`` / ``hidden``, so "the page could not
+        move" is never reported as a successful scroll. The browser's
+        visible state is left alone unless ``activate`` is passed: only
+        then may a backend bring the target tab to front (inside its own
+        window) when the page renders nothing while hidden.
+        """
         raise NotImplementedError
 
     def scroll_to(self, group: str, *, selector: str | None = None,
-                  text: str | None = None, block: str = "center") -> dict:
+                  text: str | None = None, block: str = "center",
+                  activate: bool = False) -> dict:
         """Scroll element into view by selector or text."""
         raise NotImplementedError
 

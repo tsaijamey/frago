@@ -192,12 +192,14 @@ class _FakeBackend:
         self.calls.append(("reset", group))
         return {"group": group, "closed": []}
 
-    def scroll(self, distance, group):
-        self.calls.append(("scroll", distance, group))
-        return {"scrolled": distance}
+    def scroll(self, distance, group, *, activate=False):
+        self.calls.append(("scroll", distance, group, activate))
+        return {"requested": distance, "scrolled": distance}
 
-    def scroll_to(self, group, *, selector=None, text=None, block="center"):
-        self.calls.append(("scroll_to", group, selector, text, block))
+    def scroll_to(self, group, *, selector=None, text=None, block="center",
+                  activate=False):
+        self.calls.append(("scroll_to", group, selector, text, block,
+                           activate))
         return {"success": True}
 
     def zoom(self, factor, group):
@@ -303,13 +305,21 @@ def test_cli_backend_ext_routes_reset_global(fake_ext):
 def test_cli_backend_ext_routes_scroll(fake_ext):
     r = _run("--backend", "extension", "scroll", "500", "--group", "g1")
     assert r.exit_code == 0, r.output
-    assert fake_ext.calls[0] == ("scroll", 500, "g1")
+    assert fake_ext.calls[0] == ("scroll", 500, "g1", False)
+
+
+def test_cli_backend_ext_routes_scroll_activate(fake_ext):
+    r = _run("--backend", "extension", "scroll", "500", "--group", "g1",
+             "--activate")
+    assert r.exit_code == 0, r.output
+    assert fake_ext.calls[0] == ("scroll", 500, "g1", True)
 
 
 def test_cli_backend_ext_routes_scroll_to(fake_ext):
     r = _run("--backend", "extension", "scroll-to", "h1", "--group", "g1")
     assert r.exit_code == 0, r.output
     assert fake_ext.calls[0][:3] == ("scroll_to", "g1", "h1")
+    assert fake_ext.calls[0][5] is False
 
 
 def test_cli_backend_ext_routes_zoom(fake_ext):
