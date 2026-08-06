@@ -6,6 +6,7 @@ web service running as a background daemon process.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,10 @@ from .agent_friendly import AgentFriendlyCommand, AgentFriendlyGroup
 # Sentinel preventing infinite recursion: the re-exec'd system frago sees it
 # and skips the reinstall branch.
 REINSTALL_SENTINEL_ENV = "FRAGO_REINSTALL_DONE"
+
+# Windows raises this when Code Integrity refuses to load an image — in practice,
+# Smart App Control rejecting an unsigned binary with no cloud reputation.
+WINDOWS_APP_CONTROL_ERROR = 4551
 
 
 def _bump_patch_version(pyproject: Path) -> str:
@@ -45,25 +50,70 @@ def _bump_patch_version(pyproject: Path) -> str:
     return new_version
 
 
+def _is_inside(path: Path, root: Path) -> bool:
+    """True when ``path`` lies within ``root``, comparing the way the OS does.
+
+    ``normcase`` is what makes this correct on Windows, where ``C:\\Users`` and
+    ``c:\\users`` name the same directory but compare unequal as strings.
+    """
+    try:
+        resolved = Path(os.path.normcase(str(path.resolve(strict=False))))
+        resolved.relative_to(Path(os.path.normcase(str(root))))
+    except ValueError:
+        return False
+    return True
+
+
 def _system_frago_path(checkout_root: Path) -> str | None:
     """Find the system-installed frago on PATH, skipping the repo venv's own.
 
-    Under `uv run` the repo's .venv/bin is prepended to PATH, so a plain
-    shutil.which("frago") would loop back into the checkout. Walk PATH entries
-    and return the first frago that lives outside the source checkout.
+    Under `uv run` the repo's venv bin directory is prepended to PATH, so a
+    plain ``shutil.which("frago")`` would loop back into the checkout. Drop
+    every PATH entry inside the checkout first, then let ``shutil.which`` do the
+    lookup — it applies PATHEXT, which is what finds ``frago.exe`` on Windows
+    where a bare ``frago`` file never exists.
     """
     root = checkout_root.resolve()
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
-        if not entry:
-            continue
-        candidate = Path(entry) / "frago"
-        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
-            continue
-        try:
-            candidate.resolve().relative_to(root)
-        except ValueError:
-            return str(candidate)
-    return None
+    outside = [
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and not _is_inside(Path(entry), root)
+    ]
+    found = shutil.which("frago", path=os.pathsep.join(outside))
+    # shutil.which prepends the current directory on Windows; a hit there could
+    # still be the checkout's own.
+    if found is None or _is_inside(Path(found), root):
+        return None
+    if os.name == "nt":
+        # which() spells the suffix the way PATHEXT does, so a file stored as
+        # frago.exe comes back as frago.EXE. Same file, but it is the string we
+        # echo and hand to the child, so restore what is actually on disk.
+        # POSIX is left alone: resolving there would follow a symlink and change
+        # which binary runs.
+        return str(Path(found).resolve())
+    return found
+
+
+def _handover_failed(target: str, version: str, exc: OSError) -> click.ClickException:
+    """Explain a handover that could not start, and say what is already done.
+
+    By this point the build and the install have succeeded — only launching the
+    new binary failed. Saying so keeps the reader from re-running the whole
+    thing and bumping the version again for nothing.
+    """
+    done = f"frago {version} is installed; only the handover failed."
+    if getattr(exc, "winerror", None) != WINDOWS_APP_CONTROL_ERROR:
+        return click.ClickException(f"Could not run {target}: {exc}\n{done}")
+    return click.ClickException(
+        f"Windows Smart App Control blocked {target}.\n{done}\n"
+        "It admits only signed or cloud-reputable binaries, and every reinstall "
+        "mints a fresh unsigned launcher that can never earn reputation, so "
+        "this recurs on every restart. Turn it off under Windows Security > "
+        "App & browser control > Smart App Control — Windows presents that "
+        "switch as permanent and may refuse to re-enable it without a reset.\n"
+        "Blocks are logged in Event Viewer under "
+        "Microsoft-Windows-CodeIntegrity/Operational."
+    )
 
 
 def _reinstall_and_exec_if_source_checkout() -> None:
@@ -72,8 +122,10 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     The repo venv's frago must never be the server runtime. When the CLI runs
     from inside the frago source tree, bump the patch version, build a wheel,
     `uv tool install --force` it, and hand the original argv over to the
-    system-installed frago via os.execv. No-op on a global/uv-tool install or
-    when the reinstall sentinel is already set (we ARE the re-exec'd process).
+    system-installed frago — by ``os.execv`` where that exists, as a child
+    process whose status we adopt on Windows where it does not. No-op on a
+    global/uv-tool install or when the reinstall sentinel is already set (we ARE
+    the re-exec'd process).
     """
     if os.environ.get(REINSTALL_SENTINEL_ENV) == "1":
         return
@@ -117,8 +169,9 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     system_frago = _system_frago_path(root)
     if system_frago is None:
         raise click.ClickException(
-            "System frago not found on PATH after uv tool install; "
-            "check that ~/.local/bin is on PATH."
+            "System frago not found on PATH after uv tool install. "
+            "Run 'uv tool update-shell' and open a new shell so the uv tool bin "
+            "directory (~/.local/bin) is on PATH."
         )
 
     args = [system_frago, *sys.argv[1:]]
@@ -127,17 +180,31 @@ def _reinstall_and_exec_if_source_checkout() -> None:
     _drop_checkout_venv_from_path(root)
     sys.stdout.flush()
     sys.stderr.flush()
-    os.execv(system_frago, args)
+    if os.name == "nt":
+        # Windows has no exec. os.execv there spawns a child and terminates the
+        # caller, so the shell takes back the prompt while the handover is still
+        # running and its exit status is lost. Run it as a child and mirror the
+        # status instead, which is what a real exec would have given the caller.
+        try:
+            completed = subprocess.run(args)
+        except OSError as exc:
+            raise _handover_failed(system_frago, new_version, exc) from exc
+        sys.exit(completed.returncode)
+    try:
+        os.execv(system_frago, args)
+    except OSError as exc:
+        raise _handover_failed(system_frago, new_version, exc) from exc
 
 
 def _drop_checkout_venv_from_path(root: Path) -> None:
     """Stop the checkout's virtualenv from following the server around.
 
-    ``uv run frago server start`` puts the checkout's ``.venv/bin`` first on
-    PATH — that is how uv runs a project command, and it is what makes the
-    build-and-install step above possible. Replacing the process does not reset
-    the environment, so without this the server keeps that entry, and so does
-    every recipe it spawns.
+    ``uv run frago server start`` puts the checkout's venv bin directory first
+    on PATH — ``.venv/bin`` on POSIX, ``.venv\\Scripts`` on Windows. That is how
+    uv runs a project command, and it is what makes the build-and-install step
+    above possible. Replacing the process does not reset the environment, so
+    without this the server keeps that entry, and so does every recipe it
+    spawns.
 
     The consequence is not obvious from the symptom. A recipe that shells out to
     plain ``frago`` resolves it to the checkout copy, which refuses to run
@@ -150,14 +217,24 @@ def _drop_checkout_venv_from_path(root: Path) -> None:
     stale pointer to an environment no longer on PATH misleads anything that
     reads it to decide which interpreter to use.
     """
-    venv_bin = str((root / ".venv" / "bin").resolve())
+    # Both layout names, so the check does not depend on which platform created
+    # the venv; the one that does not exist simply never matches.
+    venv_bins = {
+        os.path.normcase(str((root / ".venv" / name).resolve(strict=False)))
+        for name in ("bin", "Scripts")
+    }
     entries = os.environ.get("PATH", "").split(os.pathsep)
-    kept = [e for e in entries if e and Path(e).resolve(strict=False).as_posix()
-            != Path(venv_bin).as_posix()]
+    kept = [
+        e
+        for e in entries
+        if e
+        and os.path.normcase(str(Path(e).resolve(strict=False))) not in venv_bins
+    ]
     if len(kept) != len(entries):
         os.environ["PATH"] = os.pathsep.join(kept)
         click.echo("[reinstall] dropped checkout venv from PATH for the server")
-    if os.environ.get("VIRTUAL_ENV", "").startswith(str(root)):
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    if virtual_env and _is_inside(Path(virtual_env), root):
         os.environ.pop("VIRTUAL_ENV", None)
 
 
