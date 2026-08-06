@@ -412,8 +412,43 @@ async function domExecJs({ script, group, tab_id }) {
         },
         args: [script],
     });
-    if (!result?.ok) throw { code: -32004, message: result?.error || "exec failed" };
-    return { value: result.value };
+    if (result?.ok) return { value: result.value };
+
+    // 页面 CSP 禁 unsafe-eval（x.com 等）时，MAIN world 的 new Function
+    // 会被拒。降级通道：经 chrome.debugger 走 Runtime.evaluate —— DevTools
+    // 协议由浏览器端执行，天然绕过页面 CSP，行为等价于 CDP 后端。
+    const err = result?.error || "exec failed";
+    if (isCspUnsafeEval(err)) {
+        try {
+            return await execJsViaDebugger(id, script, err);
+        } catch (e) {
+            throw { code: -32004, message: `[DBG-FALLBACK] ${e.message || err}` };
+        }
+    }
+    throw { code: -32004, message: err };
+}
+
+function isCspUnsafeEval(msg) {
+    return /unsafe-eval|Refused to evaluate a string as JavaScript/.test(msg);
+}
+
+async function execJsViaDebugger(id, script, fallbackError) {
+    try {
+        await ensureAttached(id);
+        const resp = await chrome.debugger.sendCommand(
+            { tabId: id }, "Runtime.evaluate",
+            { expression: script, returnByValue: true, awaitPromise: true });
+        if (resp?.exceptionDetails) {
+            const desc = resp.exceptionDetails.exception?.description
+                || resp.exceptionDetails.text || fallbackError;
+            throw { code: -32004, message: desc };
+        }
+        return { value: resp?.result?.value };
+    } finally {
+        if (!screencasts.has(id)) {
+            try { await chrome.debugger.detach({ tabId: id }); } catch (_) {}
+        }
+    }
 }
 
 async function domGetContent({ selector, group, tab_id }) {
