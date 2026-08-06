@@ -40,6 +40,10 @@ group 保证：同 group 内所有命令自动跟随同一 tab；不同 group �
 
   frago browser navigate <url> --group <name>
 
+导航的是这个 group 当前跟着的那个标签。**要新开一个标签，就换一个 group 名**
+——group 还没有绑定标签时，导航本身就会新建一个。一个 group 只记一个标签，
+所以别指望在同一个 group 下攒出第二个标签。
+
 URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输出。禁止凭记忆构造 URL。
 
 不确定 URL 时，洋葱剥皮：先导航到已知首页 → exec-js 提取链接 → 用真实链接导航。
@@ -68,9 +72,33 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
 
   frago browser click --group <name> <selector>             # JS-first，自动 fallback 坐标点击
   frago browser click --group <name> <selector> --precise   # 强制坐标级（canvas、拖拽起点）
-  frago browser scroll --group <name> down|up               # 按页滚动
-  frago browser scroll --group <name> down --pixels 500     # 按像素
+  frago browser scroll --group <name> 800                   # 按像素，负数向上
+  frago browser scroll --group <name> down|up               # 别名，等于 ±500
+  frago browser scroll --group <name> page-down|page-up     # 别名，等于 ±800
   frago browser scroll-to --group <name> <selector>         # 滚动到元素
+
+scroll 回报的是**实际位移**不是你要的距离，别拿请求值当结果：
+
+  scrolled   真的滚了多少像素，0 就是一步没动
+  at_bottom  已经到底，再滚也没有
+  hidden     页面自认不可见——这是滚不动的头号原因，见下
+  activated  这次有没有把 tab 置前（只有你显式要求才可能为 true）
+  hint       滚不动时告诉你卡在哪、下一步该怎么办
+
+**运行条件：目标 tab 必须是它所在窗口的当前 tab。** x.com 这类按可见性
+渲染的站点，在后台 tab 里整条推文流根本不铺开（实测：后台时整页可滚余量
+53px、只渲染 1 条推文；置前后立刻 4854px、28 条，且随滚动继续续载）。
+
+**默认不动浏览器的可见状态。** 页面在后台滚不动就如实返回 `scrolled: 0`
+外加 hint，不会擅自把人眼前的页面换掉。确实需要时显式加 `--activate`：
+
+  frago browser scroll --group <name> 800 --activate
+
+它只把该 tab 切成它自己窗口内的当前 tab，不动窗口焦点、不抢应用焦点
+（这点与 switch-tab 不同，后者语义上就是要激活窗口）。`scroll-to` 同款开关。
+
+窗口被最小化时页面同样自认不可见：已经铺开的内容还能滚，但不再续载新内容，
+此时 `--activate` 也没用，只能靠人恢复窗口——hint 会这么说。
 
 ## 选择器
 
@@ -92,6 +120,16 @@ URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输
   frago browser list-tabs                    # 查看所有 tab
   frago browser switch-tab <id>              # 切换 tab（自动更新 group 的跟随目标）
   frago browser close-tab <id>               # 关闭 tab
+
+agent 开的页面一律收进浏览器里一个叫 **auto 的标签组**，默认折叠——这些页面是
+给 agent 自己用的，平铺在标签栏上会把人自己的标签挤走。`list-tabs` 里的
+`tab_group` / `tab_group_collapsed` 两个字段会告诉你页面归到哪儿、是否折着。
+
+注意这跟 `--group` 是同名的两回事：`--group` 是 frago 的逻辑隔离账本，浏览器
+里看不见；auto 是标签栏上那个能折叠的分组。所有 agent 页面进同一个 auto 分组，
+不影响 `--group` 的隔离——两个并行 worker 的页面照旧各跟各的 tab。
+
+人手动展开 auto 组之后，agent 不会再把它折回去；组里正显示着页面时也不折。
 
 ## 禁止
 
