@@ -24,6 +24,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from frago.init.app_control import smart_app_control_warning
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,14 @@ def deploy_hook_binary(force: bool = False) -> Path:
         FileNotFoundError: If no binary is bundled for this platform.
         RuntimeError: If the platform is not supported.
     """
+    # Say this before copying anything. A blocked hook binary produces no error
+    # of its own — the deploy succeeds, the file is in place, and the routing
+    # just never happens. Without this line the log gives no reason to suspect
+    # the platform.
+    warning = smart_app_control_warning()
+    if warning:
+        logger.warning("Hook binary may not load:\n%s", warning)
+
     src = get_bundled_binary_path()
     dst_dir = get_hook_deploy_dir()
     dst = dst_dir / get_binary_name()
@@ -164,13 +174,21 @@ def cleanup_legacy_hook_copy() -> None:
     forces any stale reference to surface loudly rather than silently run an
     old hook.
 
+    The ``.exe`` suffix is part of the name on Windows. Omitting it made this
+    function a no-op there, so ``~/.claude/hooks/frago/frago-hook.exe`` survived
+    every deploy — and a settings.json still pointing at it kept running the
+    pre-rename binary indefinitely, which is exactly the drift this is meant to
+    prevent.
+
     Best-effort: missing copies are normal (fresh install); the
     session-start-book.sh script in ~/.claude/hooks/frago/ is left untouched
     — it is a Claude Code integration layer, not the binary.
     """
+    suffix = ".exe" if platform.system().lower() == "windows" else ""
+    legacy_name = f"frago-hook{suffix}"
     candidates = [
-        get_legacy_hook_dir() / "frago-hook",
-        get_hook_deploy_dir() / "frago-hook",
+        get_legacy_hook_dir() / legacy_name,
+        get_hook_deploy_dir() / legacy_name,
     ]
     for stale in candidates:
         with contextlib.suppress(OSError):

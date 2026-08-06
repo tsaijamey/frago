@@ -12,6 +12,7 @@ import sys
 
 import click
 
+from frago.init.app_control import smart_app_control_warning
 from frago.init.checker import (
     parallel_dependency_check,
 )
@@ -46,8 +47,10 @@ FRAGO_BANNER = """\
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝
 """
 
+RGB = tuple[int, int, int]
+
 # Gradient color configuration: transition from cyan to blue to purple
-GRADIENT_COLORS = [
+GRADIENT_COLORS: list[RGB] = [
     (0, 255, 255),    # cyan
     (0, 191, 255),    # deep sky blue
     (65, 105, 225),   # royal blue
@@ -62,12 +65,13 @@ def _rgb_to_ansi(r: int, g: int, b: int) -> str:
     return f"\033[38;2;{r};{g};{b}m"
 
 
-def _interpolate_color(color1: tuple, color2: tuple, t: float) -> tuple:
+def _interpolate_color(color1: RGB, color2: RGB, t: float) -> RGB:
     """Linear interpolation between two colors"""
-    return tuple(int(c1 + (c2 - c1) * t) for c1, c2 in zip(color1, color2, strict=False))
+    r, g, b = (int(c1 + (c2 - c1) * t) for c1, c2 in zip(color1, color2, strict=False))
+    return r, g, b
 
 
-def _get_gradient_color(position: float) -> tuple:
+def _get_gradient_color(position: float) -> RGB:
     """Get gradient color based on position (0-1)"""
     if position >= 1.0:
         return GRADIENT_COLORS[-1]
@@ -359,6 +363,13 @@ def _check_and_install_dependencies(non_interactive: bool = False) -> bool:
             reporter.item_error("claude-code", "not found")
 
     click.echo()
+
+    # A platform setting frago cannot install its way around, and one that
+    # would otherwise announce itself only as frago mysteriously under-working.
+    app_control_warning = smart_app_control_warning()
+    if app_control_warning:
+        click.secho(app_control_warning, fg="yellow")
+        click.echo()
 
     # Get missing dependencies - only consider Claude Code
     missing = []
