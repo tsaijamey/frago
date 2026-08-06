@@ -53,8 +53,15 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _wait_for_healthy(timeout: int = 30) -> tuple[bool, str]:
+def _wait_for_healthy(
+    timeout: int = 30, proc: "subprocess.Popen[bytes] | None" = None
+) -> tuple[bool, str]:
     """Poll /api/status until server responds 200 or timeout.
+
+    Pass ``proc`` when the caller spawned the daemon: a child that exits before
+    answering ends the wait at once. There is nothing left that could become
+    healthy, and spending the full timeout on a process already gone only delays
+    a report the caller could have had immediately.
 
     Returns (success, detail_message).
     """
@@ -76,6 +83,8 @@ def _wait_for_healthy(timeout: int = 30) -> tuple[bool, str]:
             conn.close()
         except (ConnectionRefusedError, OSError, http.client.HTTPException) as e:
             last_error = str(e)
+        if proc is not None and (exit_code := proc.poll()) is not None:
+            return False, f"process exited with code {exit_code} ({last_error})"
         time.sleep(1)
     return False, f"timeout after {timeout}s ({last_error})"
 
@@ -536,6 +545,20 @@ def start_daemon() -> tuple[bool, str]:
 
         # Write PID file
         write_pid(proc.pid)
+
+        # Popen returning a pid proves only that the launcher started. The
+        # daemon can still die before it serves anything — a blocked
+        # interpreter, an import error, a port lost to a race — and reporting
+        # "started (PID: n)" for a process that no longer exists sends the
+        # reader hunting for a server that was never there, with a stale PID
+        # file backing up the lie.
+        healthy, detail = _wait_for_healthy(proc=proc)
+        if not healthy:
+            clear_pid()
+            return False, (
+                f"Server process was spawned but never answered on port "
+                f"{get_server_port()}: {detail}. See {get_log_file()}."
+            )
 
         urls = ", ".join(get_accessible_urls())
         return True, f"Frago server started on {urls} (PID: {proc.pid})"
