@@ -27,8 +27,8 @@ TITLE_MAX = 20
 DESC_MAX = 1000
 IMG_MAX = 20
 
-# 图片 base64 全量塞进一次 exec-js 参数。ARG_MAX 上限 1MB（macOS），留余量给其他参数和 env。
-# 超过这个量直接报错，不静默截断。
+# 图片 base64 走 exec-js 参数传进页面，受 ARG_MAX 限制（macOS 1MB），留余量给其他参数和 env。
+# 这是**单次调用**的上限，不是总量上限：超过就分批喂，20 张的上限才是真的能用到 20 张。
 B64_ARG_LIMIT = 500_000
 
 # 上传完成（含 formatList 补宽高）需要的时间，单位秒。
@@ -81,22 +81,30 @@ _INJECTOR = r"""function() {
         return j;
       });
   }
-  function addImages(items) {
+  // 分三步：begin 清场 → addBatch 逐批追加（可调多次）→ finish 收尾。
+  // 拆开是因为图片 base64 一次塞不进 exec-js 的参数长度，只能分批喂；
+  // 而清空旧图和 uploadAllComplete 各自只能发生一次，不能跟着每批重复。
+  function begin() {
     var api = window.__fragoTietu;
     api.result = { state: 'running', uploaded: [], error: null };
+    api.seq = 0;
     var vm;
-    try { vm = vmOf(); } catch (e) { api.result = { state: 'error', error: '' + e }; return; }
+    try { vm = vmOf(); } catch (e) { api.result = { state: 'error', error: '' + e }; return 'error'; }
     // 替换语义：传了图就先清空现有图片，再传新的。更新草稿时旧图不会残留成重复。
     // 不带图更新（只改文字）不会走到这里，旧图保留。
     vm.innerList = [];
     vm.selected = null;
-    if (items.length > 20) {
-      api.result = { state: 'error', error: '超过 20 张上限' };
-      return;
-    }
+    return 'ok';
+  }
+  function addBatch(items) {
+    var api = window.__fragoTietu;
+    api.batch = { state: 'running', error: null, n: 0 };
+    var vm;
+    try { vm = vmOf(); } catch (e) { api.batch = { state: 'error', error: '' + e }; return 'error'; }
     var chain = Promise.resolve();
-    items.forEach(function (it, idx) {
+    items.forEach(function (it) {
       chain = chain.then(function () {
+        var idx = api.seq++;                     // 全局递增，tmpId 跨批不会撞
         var file = b64ToFile(it.b64, it.name || ('img' + idx + '.png'), it.type);
         return readSize(file).then(function (sz) {
           return uploadOne(vm, file).then(function (resp) {
@@ -106,11 +114,23 @@ _INJECTOR = r"""function() {
               width: sz.width, height: sz.height });
             vm.uploadComplete({ id: tmpId }, { content: resp.content, cdn_url: resp.cdn_url });
             api.result.uploaded.push({ file_id: resp.content, cdn_url: resp.cdn_url, w: sz.width, h: sz.height });
+            api.batch.n++;
           });
         });
       });
     });
-    chain.then(function () {
+    chain.then(function () { api.batch.state = 'done'; })
+         .catch(function (e) {
+           api.batch.state = 'error';
+           api.batch.error = '' + (e && e.message ? e.message : e);
+         });
+    return 'kicked';
+  }
+  function finish() {
+    var api = window.__fragoTietu;
+    var vm;
+    try { vm = vmOf(); } catch (e) { api.result = { state: 'error', error: '' + e }; return 'error'; }
+    Promise.resolve().then(function () {
       vm.uploadAllComplete();
       return new Promise(function (r) { setTimeout(r, 1500); });
     }).then(function () {
@@ -123,8 +143,10 @@ _INJECTOR = r"""function() {
       api.result.state = 'error';
       api.result.error = '' + (e && e.message ? e.message : e);
     });
+    return 'kicked';
   }
-  window.__fragoTietu = { addImages: addImages, result: null };
+  window.__fragoTietu = { begin: begin, addBatch: addBatch, finish: finish,
+                          result: null, batch: null, seq: 0 };
   return 'ready';
 }"""
 
@@ -306,41 +328,79 @@ def upload_images(image_paths, group):
             "name": os.path.basename(path),
             "type": "image/png" if ext == "png" else "image/jpeg",
         })
-    total_b64 = sum(len(it["b64"]) for it in items)
-    if total_b64 > B64_ARG_LIMIT:
-        die(f"图片 base64 共 {total_b64} 字符，超过 {B64_ARG_LIMIT} 上限",
-            "图片可能过大，或一次传的图太多。单张控制在几百 KB 内，或分批调用。")
     if len(items) > IMG_MAX:
         die(f"一次最多 {IMG_MAX} 张图，收到 {len(items)} 张")
 
-    payload = json.dumps(items, ensure_ascii=False)
+    batches = _split_batches(items)
+
     code = ("(function(){ var ready=(%s)();"
-            "window.__fragoTietu.addImages(%s); return 'kicked'; })()"
-            % (_INJECTOR, payload))
+            "return window.__fragoTietu.begin(); })()" % _INJECTOR)
     if ejs(code, group) is None:
         die("上传脚本没跑起来", "图片注入脚本执行失败，页面可能已失效。")
 
-    deadline = time.time() + 60 + 5 * len(items)
+    if len(batches) > 1:
+        log(f"    单次参数装不下，分 {len(batches)} 批喂")
+
+    for i, batch in enumerate(batches):
+        if i:
+            time.sleep(GAP_BETWEEN_UPLOADS)      # 批之间留口气，避开后台频控
+        payload = json.dumps(batch, ensure_ascii=False)
+        if ejs("(function(){ return window.__fragoTietu.addBatch(%s); })()" % payload,
+               group) is None:
+            die(f"第 {i + 1} 批图没喂进去", "页面可能已失效。")
+        _await_state("batch", 30 + 8 * len(batch), group,
+                     f"第 {i + 1}/{len(batches)} 批上传")
+        if len(batches) > 1:
+            log(f"    第 {i + 1}/{len(batches)} 批完成（{len(batch)} 张）")
+
+    if ejs("(function(){ return window.__fragoTietu.finish(); })()", group) is None:
+        die("上传收尾没跑起来", "页面可能已失效。")
+    last = _await_state("result", 60, group, "上传收尾")
+
+    got = last.get("innerList") or []
+    if len(got) != len(items):
+        die(f"图片进了 {len(got)} 张，预期 {len(items)} 张",
+            "改版会导致静默失败：上传成功但图不进 innerList。请人工打开编辑器确认。")
+    log(f"    {len(got)} 张图已进编辑器（file_id: "
+        + ", ".join(str(x.get("file_id")) for x in got) + "）")
+    return got, last.get("uploaded") or []
+
+
+def _split_batches(items):
+    """按 base64 体积切批，每批不超过单次 exec-js 参数上限。"""
+    batches, cur, cur_n = [], [], 0
+    for it in items:
+        n = len(it["b64"])
+        if n > B64_ARG_LIMIT:
+            die(f"单张图 {it['name']} base64 {n} 字符，一次就塞不进（上限 {B64_ARG_LIMIT}）",
+                "把这一张压小，几百 KB 以内。")
+        if cur and cur_n + n > B64_ARG_LIMIT:
+            batches.append(cur)
+            cur, cur_n = [], 0
+        cur.append(it)
+        cur_n += n
+    if cur:
+        batches.append(cur)
+    return batches
+
+
+def _await_state(key, timeout, group, what):
+    """轮询页面里 window.__fragoTietu[key].state，直到 done；error 或超时都直接 die。"""
+    deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
         time.sleep(1.0)
-        last = ejs_json("(()=>JSON.stringify(window.__fragoTietu&&window.__fragoTietu.result||null))()",
-                        group)
+        last = ejs_json(
+            "(()=>JSON.stringify(window.__fragoTietu&&window.__fragoTietu.%s||null))()" % key,
+            group)
         if isinstance(last, dict):
             if last.get("state") == "error":
-                die("图片上传失败：" + str(last.get("error")),
+                die(f"{what}失败：" + str(last.get("error")),
                     "上传素材库接口可能频控（稍后重试）或登录态已失效。")
             if last.get("state") == "done":
-                got = last.get("innerList") or []
-                if len(got) != len(items):
-                    die(f"图片进了 {len(got)} 张，预期 {len(items)} 张",
-                        "改版会导致静默失败：上传成功但图不进 innerList。请人工打开编辑器确认。")
-                log(f"    {len(got)} 张图已进编辑器（file_id: "
-                    + ", ".join(str(x.get("file_id")) for x in got) + "）")
-                return got, last.get("uploaded") or []
-    die("图片上传超时", f"最后状态：{last}")
-
-    return [], []  # unreachable
+                return last
+    die(f"{what}超时", f"最后状态：{last}")
+    return {}  # unreachable
 
 
 def read_state(group):
