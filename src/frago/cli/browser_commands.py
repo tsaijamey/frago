@@ -117,8 +117,10 @@ def detect_browsers(group):
     default=None,
     help="Browser backend. Defaults to env FRAGO_BROWSER_BACKEND or "
          "'extension' (browser extension + native messaging, drives the "
-         "browser's own profile). 'cdp' is retained for legacy flows and "
-         "must be selected explicitly.",
+         "browser's own profile) — the standard path. Fall back to 'cdp' "
+         "explicitly when the default cannot do the job: true headless, a "
+         "separate instance, or --void/--app/--profile-dir. Never launch a "
+         "browser process yourself.",
 )
 @click.pass_context
 def browser_group(ctx, backend):
@@ -126,8 +128,10 @@ def browser_group(ctx, backend):
     Browser automation
 
     Control the browser through the frago extension bridge (default
-    backend), using the browser's own real profile. CDP remains
-    available via an explicit -b cdp.
+    backend), using the browser's own real profile. When the default
+    backend cannot do the job (true headless, a separate instance,
+    --void/--app), fall back to an explicit -b cdp. Launching a browser
+    process yourself is never an option.
 
     \b
     Subcommand categories:

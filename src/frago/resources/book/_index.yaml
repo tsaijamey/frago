@@ -26,11 +26,11 @@
 # 替代类 — 不遵守会出错
 - name: must-browser-search
   category: must
-  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch，禁止自起浏览器进程"
+  brief: "与搜索有关、与使用浏览器有关、与使用网页或网页数据有关的一切行为，一律走 frago browser；禁止 WebSearch；三层优先级 默认 > -b cdp（无头/独立实例）> 自起进程（禁止）"
 
 - name: must-browser-fetch
   category: must
-  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch，禁止 chrome --headless 自截图"
+  brief: "渲染/截图/读取任何网页（含 file:// 本地 html）都用 navigate + get-content + screenshot；禁止 WebFetch；要无头走 frago browser -b cdp，NEVER 自起 chrome --headless"
 
 - name: must-tool-priority
   category: must
@@ -54,7 +54,7 @@
 
 - name: browser-backend-choice
   category: must
-  brief: "browser 唯一标准路径：extension 后端（默认，无 flag），驱动浏览器自己的真实 profile；start/stop 完整生命周期（自动选浏览器，Chrome Stable ≥v137 不可用）；anti-bot 天然过检"
+  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动浏览器真实 profile，anti-bot 天然过检）> -b cdp（真无头/独立实例/--void/--app，端口固定 9222）> 自起进程（禁止）"
 
 - name: browser-anti-bot
   category: available

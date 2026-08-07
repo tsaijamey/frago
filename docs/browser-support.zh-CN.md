@@ -5,7 +5,9 @@
 frago 通过两个后端驱动基于 Chromium 的浏览器：
 
 - **extension（默认）** — 浏览器扩展 + native messaging 桥，驱动浏览器**自己的真实 profile**。无需任何 flag，是所有页面操作的标准路径。
-- **cdp** — 旧版 Chrome DevTools Protocol 路径，需显式 `-b cdp` 选择。留给需要独立 CDP 实例（固定 9222 端口）的无头 / 录屏工作流（如 `agent_os` 录制机位）。
+- **cdp** — Chrome DevTools Protocol 路径，需显式 `-b cdp` 选择。默认后端做不到时的降级路线：真无头、需要与常驻浏览器互不干扰的独立实例（固定 9222 端口）、`--void` / `--app` / `--profile-dir` 这类启动形态（如 `agent_os` 录制机位）。
+
+优先级固定为 **默认 extension > `-b cdp` > 自起浏览器进程（禁止）**。`chrome --headless`、`--remote-debugging-port`、自己连原生 CDP 一律不在选项里——无头与独立实例的需求由 `-b cdp` 覆盖。
 
 本文档默认讲 extension 后端。完整命令参考与反爬指南见内置 book：`frago book browser-usage`、`frago book browser-backend-choice`、`frago book browser-anti-bot`。
 

@@ -254,7 +254,8 @@ class AgentFriendlyCommand(click.Command):
 
 
 
-# CDP 端口白名单：只剩 9222，给 agent_os 的无头录制机位用。
+# CDP 端口白名单：只剩 9222，给需要独立 CDP 实例的场景用（真无头、
+# agent_os 录制机位、--void/--app 等默认 extension 后端做不到的形态）。
 # 任何其他端口都会在 ~/.frago/profiles/chrome/<port>/ 下留一个垃圾 profile 目录，
 # 用户明确要求禁止自创端口。此前只有 hook 注入文字提醒，属于建议、拦不住，
 # 这里改成 CLI 层硬校验（2026-07-23）。
@@ -268,9 +269,9 @@ def validate_cdp_port(ctx: Context, param: object, value: int | None) -> int | N
     raise click.BadParameter(
         f"CDP 端口白名单只有 {ALLOWED_CDP_PORT}，收到 {value}。\n"
         f"  自创端口会在 ~/.frago/profiles/chrome/{value}/ 生成垃圾 profile 目录。\n"
-        f"  常规浏览器操作走 extension 后端，本就不需要 --port（见 frago book "
-        f"browser-backend-choice）；只有 agent_os 录制机位走 CDP，固定用 "
-        f"{ALLOWED_CDP_PORT}。",
+        f"  常规浏览器操作走默认 extension 后端，本就不需要 --port；需要真无头 / "
+        f"独立实例时降级到 `frago browser -b cdp`，端口固定 {ALLOWED_CDP_PORT}，"
+        f"不用传 --port（见 frago book browser-backend-choice）。",
         ctx=ctx,
         param=param if isinstance(param, click.Parameter) else None,
     )

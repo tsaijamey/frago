@@ -7,10 +7,16 @@ frago drives Chromium-based browsers through two backends:
 - **extension (default)** — a browser extension + native-messaging bridge
   drives the browser's **own real profile**. No flags needed; this is the
   standard path for all page operations.
-- **cdp** — the legacy Chrome DevTools Protocol path, selected explicitly
-  with `-b cdp`. Kept for headless/recording workflows (e.g. the
-  `agent_os` screen-record rig) that need a dedicated CDP instance on the
-  fixed port 9222.
+- **cdp** — the Chrome DevTools Protocol path, selected explicitly with
+  `-b cdp`. This is the fallback when the default backend cannot do the
+  job: true headless, a dedicated instance that must not disturb the
+  standing browser (e.g. the `agent_os` screen-record rig), or
+  `--void` / `--app` / `--profile-dir` startup shapes. Fixed port 9222.
+
+The order is fixed: **default extension > `-b cdp` > launching a browser
+yourself (forbidden)**. `chrome --headless`, `--remote-debugging-port`,
+and hand-rolled raw-CDP connections are never an option — `-b cdp`
+already covers the headless and dedicated-instance needs.
 
 This document covers the default extension backend unless stated otherwise.
 Full command reference and anti-bot guidance live in the built-in books:

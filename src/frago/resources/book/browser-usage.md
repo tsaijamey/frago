@@ -145,3 +145,4 @@ agent 开的页面一律收进浏览器里一个叫 **auto 的标签组**，默�
 - 后端工作方式、profile 机制 → `frago book browser-backend-choice`
 - 遇到 anti-bot / Cloudflare / captcha / 验证码 → `frago book browser-anti-bot`
 - 启动浏览器、start 撞锁、以及为什么不要碰 `--browser` / `--port` / `--headless` → `frago book browser-startup`
+- 需要真无头 / 独立实例（默认后端做不到的场景）→ `frago browser -b cdp`，判据见 `frago book browser-backend-choice`；NEVER 自起 chrome 进程

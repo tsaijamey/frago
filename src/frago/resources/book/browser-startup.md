@@ -34,5 +34,6 @@ frago browser stop       # 关浏览器 + 停 daemon + 清 socket
 
 - `frago browser start --browser <任意值>`：默认后端下换不了浏览器，只会让 profile 目录错位（见上）
 - `frago browser navigate --browser edge`：`--browser` 只有 start 有，别的命令会报 `No such option`
-- 给命令加 `-b`/`--backend`：默认后端就是标准路径，不需要
-- `--headless` / `--void` / `--app` / `--port` / `--profile-dir` / `--reseed-profile`：CDP 后端的选项，默认后端下被静默丢弃，写了不生效
+- 无理由加 `-b`/`--backend`：默认后端就是标准路径；有理由时（真无头、独立实例、`--void`/`--app`）才显式降到 `-b cdp`
+- 在默认后端下写 `--headless` / `--void` / `--app` / `--port` / `--profile-dir` / `--reseed-profile`：这些是 CDP 后端的选项，会被静默丢弃，写了不生效——要用就 `frago browser -b cdp start --headless`
+- 自己起浏览器进程（`chrome --headless`、`--remote-debugging-port`）：一律禁止，上面那条降级路线已经覆盖这些需求，见 `frago book browser-backend-choice`
