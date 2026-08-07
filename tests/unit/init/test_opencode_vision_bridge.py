@@ -157,6 +157,35 @@ def test_blind_model_gets_the_image_described(bridge):
     assert "recipe run openrouter_vision_classify" in calls
 
 
+def test_description_ships_in_its_own_markers_not_the_notice(bridge):
+    """The description must not ride inside the frago-NOTICE span.
+
+    The notice's preamble frames everything in it as rules to follow, and a
+    model weighs rules as background chatter — the description is the actual
+    content and would be skipped along with them. It gets its own pair so it
+    reads as material.
+    """
+    from frago.init.opencode_plugin import get_all_injection_markers
+
+    pairs = dict(get_all_injection_markers())
+    img_begin = "<image-file-desc>"
+    img_end = pairs[img_begin]
+    notice_begin = "<frago-NOTICE>"
+    notice_end = pairs[notice_begin]
+
+    result, _ = bridge(_payload("deepseek-v4-flash-free"))
+    user_text = next(t["text"] for t in result["texts"] if not t["synthetic"])
+
+    assert f"{img_begin}\n" in user_text
+    assert f"\n{img_end}" in user_text
+    between = user_text.split(img_begin, 1)[1].split(img_end, 1)[0]
+    assert STUB_DESCRIPTION in between
+    # The description must never sit between the notice markers.
+    if notice_begin in user_text:
+        inside_notice = user_text.split(notice_begin, 1)[1].split(notice_end, 1)[0]
+        assert STUB_DESCRIPTION not in inside_notice
+
+
 def test_description_lands_on_the_users_own_words(bridge):
     """Attachments prepend opencode's narration; injecting there buries it."""
     result, _ = bridge(_payload("deepseek-v4-flash-free"))
@@ -215,6 +244,30 @@ def test_image_the_model_reads_itself_is_described(bridge):
     assert "你刚读取的" in result["toolResults"][0]
     assert "Image read successfully" in result["toolResults"][0]
     assert calls.count("recipe run") == 1
+
+
+def test_tool_description_gets_its_own_markers(bridge):
+    """The tool path must keep the description out of the notice span too."""
+    from frago.init.opencode_plugin import get_all_injection_markers
+
+    pairs = dict(get_all_injection_markers())
+    img_begin = "<image-file-desc>"
+    img_end = pairs[img_begin]
+    notice_begin = "<frago-NOTICE>"
+    notice_end = pairs[notice_begin]
+
+    result, _ = bridge(
+        _payload("deepseek-v4-flash-free", with_image=False, tool_calls=[_image_read_call()])
+    )
+    tool_output = result["toolResults"][0]
+
+    assert f"{img_begin}\n" in tool_output
+    assert f"\n{img_end}" in tool_output
+    between = tool_output.split(img_begin, 1)[1].split(img_end, 1)[0]
+    assert STUB_DESCRIPTION in between
+    if notice_begin in tool_output:
+        inside_notice = tool_output.split(notice_begin, 1)[1].split(notice_end, 1)[0]
+        assert STUB_DESCRIPTION not in inside_notice
 
 
 def test_reading_the_same_image_twice_pays_once(bridge):

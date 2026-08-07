@@ -175,6 +175,21 @@ COMMAND_EXAMPLES = {
     "reset": [
         "frago browser reset",
     ],
+    # Apps - built-in delivery capabilities
+    "apps": [
+        "frago apps list",
+        "frago apps use mermaid '<mermaid 文本>'",
+        "frago apps use mermaid --output out.svg '<mermaid 文本>'",
+    ],
+    "apps/list": [
+        "frago apps list",
+        "frago apps list --format json",
+    ],
+    "apps/use": [
+        "frago apps use <app> '<输入>'",
+        "frago apps use mermaid 'flowchart TD\\n  A --> B'",
+        "frago apps use mermaid --output out.svg 'flowchart TD\\n  A --> B'",
+    ],
     # Server
     "server": [
         "frago server",

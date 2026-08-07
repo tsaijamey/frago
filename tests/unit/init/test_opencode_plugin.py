@@ -93,6 +93,26 @@ def test_bundled_plugin_reads_images_through_the_recipe():
     assert "api_key" not in body
 
 
+def test_all_injection_markers_include_image_desc_pair():
+    """The archive strip layer must know the image-description markers too.
+
+    Descriptions are injected by the bridge, not typed by the user, so an
+    archived session would otherwise show them as the user's own words.
+    """
+    from frago.init.opencode_plugin import get_all_injection_markers
+
+    pairs = dict(get_all_injection_markers())
+    assert pairs["<image-file-desc>"] == "</image-file-desc>"
+    assert pairs["<frago-NOTICE>"] == "</frago-NOTICE>"
+    # The image pair rides alongside the notice pair in the same file, so the
+    # plugin and the archive layer share one source of truth for both.
+    markers = json.loads(
+        get_bundled_plugin_path("injection-markers.json").read_text(encoding="utf-8")
+    )
+    assert markers["image_file_desc_begin"] == "<image-file-desc>"
+    assert markers["image_file_desc_end"] == "</image-file-desc>"
+
+
 def test_user_edits_to_vision_config_survive_redeploy(fake_home, monkeypatch):
     """Turning the feature off must not be undone by the next server start."""
     monkeypatch.setattr(opencode_plugin.shutil, "which", lambda _: "/usr/local/bin/opencode")

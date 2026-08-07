@@ -51,6 +51,7 @@ const HOOK_TIMEOUT_MS = 10_000
  * they share one file (injection-markers.json).
  */
 const MARKERS = loadInjectionMarkers()
+const IMAGE_MARKERS = loadImageMarkers()
 
 function loadInjectionMarkers() {
   try {
@@ -59,6 +60,25 @@ function loadInjectionMarkers() {
   } catch {}
   // Unreadable markers mean an injection could not be told apart from the
   // user's own words afterwards. Dropping the injection is the lesser harm.
+  return null
+}
+
+/**
+ * The pair wrapping image descriptions, or null when the data file predates
+ * it. Unlike the main pair there is no preamble: the description is content,
+ * and framing it as rules would make a model skip it exactly like the notice
+ * it used to live in. A missing pair disables the framing (see frameImage).
+ */
+function loadImageMarkers() {
+  try {
+    const data = JSON.parse(readResource("injection-markers.json"))
+    if (
+      typeof data.image_file_desc_begin === "string" &&
+      typeof data.image_file_desc_end === "string"
+    ) {
+      return { begin: data.image_file_desc_begin, end: data.image_file_desc_end }
+    }
+  } catch {}
   return null
 }
 
@@ -428,6 +448,17 @@ function frame(context) {
 }
 
 /**
+ * Wrap an image description in its own marker pair, deliberately separate
+ * from the notice span. If the pair is unavailable the block is left unwrapped
+ * rather than folded into the notice — the notice's preamble reads as rules
+ * to skip, and the whole point of the description is that it is content.
+ */
+function frameImage(context) {
+  if (!IMAGE_MARKERS) return context
+  return `${IMAGE_MARKERS.begin}\n${context}\n${IMAGE_MARKERS.end}`
+}
+
+/**
  * Present the description as what it is: a stand-in read by another model,
  * not the image itself. Without that framing a blind model answers as though
  * it had looked, and quotes the description back as its own observation.
@@ -549,14 +580,13 @@ export const FragoHookPlugin = async ({ directory }) => {
       ])
 
       const contexts = hookResults.map(injectionOf).filter(Boolean)
-      if (description) contexts.push(visionBlock(images.length, description))
-      if (!contexts.length) return
+      if (!contexts.length && !description) return
 
       // opencode validates message parts against a schema on the way in, so
       // synthesising a new part is fragile across versions. Editing an
       // existing text part in place is the stable path.
       //
-      // The span goes in front of what the user wrote, not after it. Order
+      // The spans go in front of what the user wrote, not after it. Order
       // decides what the model has in hand while it reads the request: rules
       // first means it interprets the task already knowing the boundaries;
       // rules last means it has formed an approach and must then talk itself
@@ -564,8 +594,14 @@ export const FragoHookPlugin = async ({ directory }) => {
       // fails, the model concludes a tool is missing, and by the time the
       // rule saying "install nothing" arrives it is already reaching for the
       // package manager.
-      const framed = frame(contexts.join("\n\n"))
-      if (!framed) return
+      //
+      // The image description is NOT folded into the notice span: a model
+      // skips the notice as rules, and the description is the actual content
+      // standing in for a picture it cannot see. It ships in its own pair so
+      // it reads as material, not as a directive.
+      const framed = contexts.length ? frame(contexts.join("\n\n")) : null
+      const visionText = description ? frameImage(visionBlock(images.length, description)) : null
+      if (!framed && !visionText) return
 
       // Attachments push opencode's own narration ahead of the user's words as
       // earlier text parts. Prepending to that one would bury the injection in
@@ -573,7 +609,8 @@ export const FragoHookPlugin = async ({ directory }) => {
       // the target whenever there is one.
       const target = userTexts[0] ?? (output.parts || []).find((p) => p.type === "text")
       if (!target) return
-      target.text = `${framed}\n\n${target.text}`
+      const prefix = [framed, visionText].filter(Boolean).join("\n\n")
+      target.text = `${prefix}\n\n${target.text}`
     },
 
     "tool.execute.before": async (input, output) => {
@@ -606,11 +643,11 @@ export const FragoHookPlugin = async ({ directory }) => {
     },
 
     "tool.execute.after": async (input, output) => {
-      const blocks = []
+      const notices = []
       const context = pending.get(input.callID)
       if (context) {
         pending.delete(input.callID)
-        blocks.push(context)
+        notices.push(context)
       }
 
       // An image the model opened itself. opencode hands the picture back as
@@ -618,6 +655,7 @@ export const FragoHookPlugin = async ({ directory }) => {
       // use: it reads "Image read successfully", sees nothing, and reports
       // that it cannot look at the file. Describing it here puts the contents
       // where such a model can actually read them.
+      let visionText = null
       const images = imageUrlsOf(output?.attachments)
       if (images.length && visionApplies(sessionModel.get(input.sessionID))) {
         const key = `${input.args?.filePath ?? ""}|${images.map((u) => u.length).join(",")}`
@@ -633,13 +671,13 @@ export const FragoHookPlugin = async ({ directory }) => {
             described.set(key, description)
           }
         }
-        if (description) blocks.push(visionBlock(images.length, description, "tool"))
+        if (description) visionText = frameImage(visionBlock(images.length, description, "tool"))
       }
 
-      if (!blocks.length) return
-      const framed = frame(blocks.join("\n\n"))
-      if (!framed) return
-      output.output = `${framed}\n\n${output.output ?? ""}`
+      if (!notices.length && !visionText) return
+      const framed = notices.length ? frame(notices.join("\n\n")) : null
+      const prefix = [framed, visionText].filter(Boolean).join("\n\n")
+      output.output = `${prefix}\n\n${output.output ?? ""}`
     },
   }
 }

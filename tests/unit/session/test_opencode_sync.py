@@ -411,6 +411,35 @@ def test_assistant_text_with_the_same_markers_is_kept(env: Path) -> None:
     assert steps[1].content_summary == f"标记长这样：{_BEGIN}示例{_END}"
 
 
+def test_image_description_markers_are_stripped_too(env: Path) -> None:
+    """视觉转述走独立标记，归档层 MUST 同样剥掉——它不是用户打的字。"""
+    from frago.init.opencode_plugin import get_all_injection_markers
+
+    pairs = dict(get_all_injection_markers())
+    img_begin, img_end = "<image-file-desc>", pairs["<image-file-desc>"]
+
+    _add_session(env)
+    _add_message(env, "m_u", _T0 + 10, "user")
+    _add_part(
+        env,
+        "p_u",
+        "m_u",
+        _T0 + 11,
+        {
+            "type": "text",
+            "text": f"\n\n{img_begin}\n转述内容\n{img_end}\n\n真的提问",
+        },
+    )
+    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
+    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
+
+    opencode_sync.sync_opencode_sessions()
+
+    steps = read_steps("ses_a", AgentType.OPENCODE)
+    assert [s.content_summary for s in steps] == ["真的提问", "pong"]
+    assert all("转述内容" not in s.content_summary for s in steps)
+
+
 # ── 标题刷新 ────────────────────────────────────────────────────────
 def test_placeholder_title_is_refreshed_on_resync(env: Path) -> None:
     """opencode 事后把占位标题改写成语义标题，归档 MUST 跟着变。"""

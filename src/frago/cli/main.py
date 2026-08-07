@@ -14,10 +14,10 @@ from frago import __version__
 
 from .agent_command import agent, agent_status
 from .agent_friendly import AgentFriendlyGroup, validate_cdp_port
+from .apps_commands import apps_group
 from .autostart_command import autostart_group
 from .book_commands import book_command
 from .browser_commands import browser_group
-from .desktop_commands import desktop_group
 from .channel_commands import channel_group
 from .client_commands import client_group
 from .cloud_commands import (
@@ -37,6 +37,7 @@ from .commands import (
 from .context_commands import context_command
 from .daemon_commands import daemon_group
 from .def_commands import def_group
+from .desktop_commands import desktop_group
 from .extension_commands import extension_group
 from .hook_rules_commands import hook_rules_group
 from .init_command import init  # New environment init command
@@ -57,7 +58,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve"]),
+    ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -385,6 +386,9 @@ cli.add_command(recipe_group)
 
 # Skill management command group
 cli.add_command(skill_group)
+
+# Apps command group - built-in delivery capabilities
+cli.add_command(apps_group)
 
 # Run command system
 cli.add_command(run_group)

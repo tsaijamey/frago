@@ -4,6 +4,9 @@
   "end": "</frago-NOTICE>",
   "preamble_comment": "First lines inside every injected span. opencode has no system-level channel, so an injection arrives inside the user's own message and reads as something the user typed — which is why models treat it as background chatter and skip it. This preamble is the only place the injection can state whose words these are. It lives here rather than in the plugin so the wording can change without touching code. Stripping removes the whole span, preamble included, so the archive layer never needs to know about it.",
   "preamble": "以下内容不是用户输入的文字，是 frago 规则系统按你当前这一步操作精准推送的——它出现在这里，就是因为你正要做的事命中了它。\n默认全部适用，MUST 严格遵守，它优先于你自己的习惯做法。\n只有确实与用户当前请求无关的条目才降为参考，而降级需要你说得出它为什么无关；说不出就是相关。\nNEVER 因为它不是用户亲口说的就略过，NEVER 声称遵守了却仍按老办法做。\n\n用户本人的请求在本段之后。",
+  "image_file_desc_comment": "Independent pair wrapping image descriptions read on behalf of blind models. These MUST ship as their own block, never inside the frago-NOTICE span: that span's preamble frames everything in it as rules, and a model skips rules as background chatter — the description is actual content and would be ignored with them. Read by the plugin and by the archive strip layer like the main pair.",
+  "image_file_desc_begin": "<image-file-desc>",
+  "image_file_desc_end": "</image-file-desc>",
   "legacy": [
     {
       "begin": "<frago-hook>",

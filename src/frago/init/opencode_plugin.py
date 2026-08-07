@@ -96,16 +96,25 @@ def get_injection_markers() -> tuple[str, str]:
 
 
 def get_all_injection_markers() -> list[tuple[str, str]]:
-    """Return the current marker pair plus every pair shipped before it.
+    """Return every marker pair the bridge can write, plus every pair shipped
+    before it.
 
-    Only the current pair is ever written. Retired pairs still sit in sessions
+    Only the current pairs are ever written. Retired pairs still sit in sessions
     archived while they were current, and those sessions are read forever — so
     stripping has to recognise all of them or old transcripts start showing
     injected text as though the user had typed it.
+
+    The image-file-desc pair is a current pair like the main one: descriptions
+    are injected by the bridge, not words the user typed, so they must be
+    stripped from archived user text exactly like the notice span.
     """
     raw = get_bundled_plugin_path(INJECTION_MARKERS_FILENAME).read_text(encoding="utf-8")
     data = json.loads(raw)
     pairs = [(data["begin"], data["end"])]
+    if isinstance(data.get("image_file_desc_begin"), str) and isinstance(
+        data.get("image_file_desc_end"), str
+    ):
+        pairs.append((data["image_file_desc_begin"], data["image_file_desc_end"]))
     for entry in data.get("legacy", []):
         begin, end = entry.get("begin"), entry.get("end")
         if isinstance(begin, str) and isinstance(end, str):
