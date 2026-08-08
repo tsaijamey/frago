@@ -19,9 +19,9 @@ const DATA = [
           ["status", "检查 CDP 连接状态。", "Check CDP connection status."],
         ]},
         { zh: "标签管理", en: "Tab Management", items: [
-          ["list-tabs", "列出所有打开的浏览器标签。", "List all open browser tabs."],
-          ["switch-tab", "切换到指定浏览器标签。", "Switch to specified browser tab."],
-          ["close-tab", "按 ID 关闭浏览器标签。", "Close a browser tab by ID."],
+          ["list-tabs", "列出本 group 自己的标签（必须带 --group）。", "List the tabs of one group (--group required)."],
+          ["switch-tab", "把后续命令切到本 group 的某个标签；--activate 才切到前台。", "Point the group at one of its own tabs; --activate also brings it on screen."],
+          ["close-tab", "关掉本 group 自己的一个标签（组满时靠它腾位置）。", "Close one of the group's own tabs (this is how you make room)."],
         ]},
         { zh: "标签分组", en: "Tab Groups", items: [
           ["groups", "列出所有标签分组及其标签数。", "List all tab groups and their tab counts."],
@@ -31,7 +31,7 @@ const DATA = [
           ["reset", "关闭除着陆页外的所有标签。", "Close all tabs except the landing page."],
         ]},
         { zh: "页面控制", en: "Page Control", items: [
-          ["navigate", "导航到 URL 并在加载后获取页面特征。", "Navigate to URL and get page features after loading."],
+          ["navigate", "导航到 URL：默认替换本 group 的当前标签，--new 才新开一页。", "Navigate: replaces the group's current tab; --new opens another one."],
           ["scroll", "滚动页面并自动捕获页面特征。", "Scroll page and automatically capture page features."],
           ["scroll-to", "滚动到指定元素。", "Scroll to specified element."],
           ["zoom", "设置页面缩放级别并自动捕获页面特征。", "Set page zoom level and automatically capture page features."],
