@@ -21,7 +21,6 @@ from ..browser.cdp.logger import get_logger
 from ..browser.cdp.session import CDPSession
 from ..browser.cdp.tab_group_manager import (
     ChromeCommandError,
-    build_group_index,
     create_session,
     route_tab_for_navigate,
 )
@@ -35,7 +34,8 @@ from .agent_friendly import AgentFriendlyCommand, validate_cdp_port
 COMMAND_EXAMPLES = {
     # Chrome subcommands — all tab-operating commands require --group (or FRAGO_CURRENT_RUN env)
     "navigate": [
-        "frago browser navigate <url> --group <name>",
+        "frago browser navigate <url> --group <name>          # reuse the group's current tab",
+        "frago browser navigate <url> --group <name> --new    # open another tab in the group",
         "frago browser navigate https://example.com --group research",
         "frago browser navigate https://example.com --group research --wait-for '.content-loaded'",
     ],
@@ -125,11 +125,13 @@ COMMAND_EXAMPLES = {
         "frago browser stop",
     ],
     "list-tabs": [
-        "frago browser list-tabs",
+        "frago browser list-tabs --group <name>",
+        "frago browser list-tabs --group research --json",
     ],
     "switch-tab": [
-        "frago browser switch-tab <tab_id>",
-        "frago browser switch-tab ABC123  # Supports partial ID matching",
+        "frago browser switch-tab --group <name> <tab_id>",
+        "frago browser switch-tab --group research ABC123             # point the group at that tab",
+        "frago browser switch-tab --group research ABC123 --activate  # and bring it on screen",
     ],
     # Top-level commands
     "status": [
@@ -158,7 +160,7 @@ COMMAND_EXAMPLES = {
     ],
     # Chrome additional
     "close-tab": [
-        "frago browser close-tab <tab_id>",
+        "frago browser close-tab --group <name> <tab_id>",
     ],
     "detect": [
         "frago browser detect",
@@ -1001,22 +1003,38 @@ def _get_current_target_id(session: CDPSession) -> str | None:
     return None
 
 
-def _lookup_tab_group(tab_id: str, host: str = "127.0.0.1", port: int = 9222) -> str | None:
-    """Find which group a tab belongs to. Returns group name or None."""
+def _group_occupancy(ctx, group_name: str) -> str:
+    """"3/5 tabs" for a group — how close it is to its ceiling.
+
+    Printed on every navigate so an agent sees the ceiling coming
+    instead of being surprised by it on the call that fails.
+    """
     try:
         from ..browser.cdp.tab_group_manager import TabGroupManager
-        tgm = TabGroupManager(host=host, port=port)
-        for name, group in tgm.list_groups().items():
-            if tab_id in group.tabs:
-                return name
+        tgm = TabGroupManager(host=ctx.obj['HOST'], port=ctx.obj['PORT'])
+        g = tgm.get_group(group_name)
+        if not g:
+            return "new group"
+        return f"{len(g.tabs)}/{g.max_tabs} tabs"
     except Exception:
-        pass
-    return None
+        return "?"
 
 
 def _handle_chrome_command_error(e: ChromeCommandError) -> None:
-    """Format and print a ChromeCommandError, then exit."""
+    """Format and print a ChromeCommandError, then exit.
+
+    The context is printed, not just logged: for GROUP_TAB_LIMIT it
+    carries the list of tabs that are in the way and the exact commands
+    that clear it. An error an agent cannot act on is a dead end.
+    """
     _print_msg("error", f"{e.code}: {e.message}", "chrome", e.context)
+    for tab in e.context.get("tabs", []):
+        if isinstance(tab, dict):
+            mark = "*" if tab.get("current") else " "
+            tid = str(tab.get("tab_id", ""))
+            click.echo(f"  {mark} [{tid[:12]}] {tab.get('title') or tab.get('url', '')}")
+    for line in e.context.get("remedies", []):
+        click.echo(f"  → {line}")
     sys.exit(1)
 
 
@@ -1137,10 +1155,25 @@ def _touch_active_tab(session: CDPSession, host: str, port: int) -> None:
     default=False,
     help='Disable viewport border indicator (for interactive UIs)'
 )
+@click.option(
+    '--new', '-n', 'open_new',
+    is_flag=True,
+    default=False,
+    help="Open another tab inside this group instead of reusing its "
+         "current one. A group holds at most 5 tabs; past that the "
+         "command fails and lists what is open so you can close one."
+)
 @click.pass_context
 @print_usage
-def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = None, load_timeout: float = 30, no_border: bool = False):
-    """Navigate to URL and get page features after loading"""
+def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = None, load_timeout: float = 30, no_border: bool = False, open_new: bool = False):
+    """Navigate to URL and get page features after loading
+
+    \b
+    Without --new the group's *current* tab is reused — the last tab this
+    group navigated or switched to, not whatever tab the browser happens
+    to be showing. A person may be looking at their own page while the
+    agent works; that page is never the one that gets replaced.
+    """
     try:
         # navigate does its own tab routing, so skip group enforcement here
         with create_session(ctx, require_group=False) as session:
@@ -1151,10 +1184,12 @@ def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = Non
             if no_border:
                 session.auto_viewport_border = False
 
-            # Tab routing: reuse tab by origin or create new (group enforced here)
+            # Tab routing: reuse the group's current tab, or open a new
+            # one in the same group (group enforced here)
             resolved_group = None
             if not ctx.obj.get('TARGET_ID'):
-                target_id, resolved_group = route_tab_for_navigate(ctx, session, url, group=group)
+                target_id, resolved_group = route_tab_for_navigate(
+                    ctx, session, url, group=group, new=open_new)
                 if target_id:
                     current_id = _get_current_target_id(session)
                     if target_id != current_id:
@@ -1178,7 +1213,11 @@ def navigate(ctx, url: str, group: str | None = None, wait_for: str | None = Non
                     pass
 
             # Print group context (always present — enforced by _route_tab_for_navigate)
-            _print_msg("success", f"Tab group: {resolved_group}", "navigation", {"group": resolved_group})
+            if resolved_group:
+                _print_msg("success",
+                           f"Tab group: {resolved_group} "
+                           f"({_group_occupancy(ctx, resolved_group)})",
+                           "navigation", {"group": resolved_group})
 
             # 2. Wait for page load
             session.wait_for_load(timeout=load_timeout)
@@ -2382,22 +2421,32 @@ def browser_stop(port: int):
 @click.pass_context
 @print_usage
 def tab_groups(ctx, as_json: bool):
-    """List all tab groups and their tab counts"""
+    """List all tab groups, how full they are and when they expire"""
     import json as _json
 
-    from ..browser.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import (
+        GROUP_TIMEOUT_SECONDS,
+        TabGroupManager,
+    )
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
     tgm = TabGroupManager(host=host, port=port)
     tgm.reconcile()
 
+    now = time.time()
     groups = tgm.list_groups()
     if as_json:
         out = {
             name: {
                 "tabs": len(g.tabs),
+                "limit": g.max_tabs,
+                "current": g.current_target_id,
                 "created_at": g.created_at,
+                "last_activity": g.last_activity,
+                "idle_seconds": int(now - g.last_activity),
+                "expires_in_seconds": max(
+                    0, int(g.last_activity + GROUP_TIMEOUT_SECONDS - now)),
                 "agent_session": g.agent_session,
             }
             for name, g in groups.items()
@@ -2410,7 +2459,9 @@ def tab_groups(ctx, as_json: bool):
         return
 
     for name, g in groups.items():
-        click.echo(f"  {name}  ({len(g.tabs)} tabs)")
+        left = max(0, int(g.last_activity + GROUP_TIMEOUT_SECONDS - now))
+        click.echo(f"  {name}  ({len(g.tabs)}/{g.max_tabs} tabs, "
+                   f"auto-closes in {left // 60}m if left alone)")
 
 
 @click.command('group-info', cls=AgentFriendlyCommand)
@@ -2421,7 +2472,10 @@ def tab_group_info(ctx, group_name: str):
     """Show details of a tab group"""
     from datetime import datetime
 
-    from ..browser.cdp.tab_group_manager import TabGroupManager
+    from ..browser.cdp.tab_group_manager import (
+        GROUP_TIMEOUT_SECONDS,
+        TabGroupManager,
+    )
 
     host = ctx.obj.get('HOST', '127.0.0.1')
     port = ctx.obj.get('PORT', 9222)
@@ -2433,15 +2487,23 @@ def tab_group_info(ctx, group_name: str):
         click.echo(f"Group '{group_name}' not found", err=True)
         sys.exit(1)
 
+    now = time.time()
     created = datetime.fromtimestamp(group.created_at).strftime("%Y-%m-%d %H:%M:%S")
+    left = max(0, int(group.last_activity + GROUP_TIMEOUT_SECONDS - now))
     click.echo(f"Group: {group_name}")
     click.echo(f"Agent session: {group.agent_session}")
     click.echo(f"Created: {created}")
+    click.echo(f"Idle: {int(now - group.last_activity)}s "
+               f"(auto-closes after {GROUP_TIMEOUT_SECONDS // 60}m of "
+               f"silence — {left // 60}m left)")
     click.echo(f"Tabs ({len(group.tabs)}/{group.max_tabs}):")
 
     for tab in sorted(group.tabs.values(), key=lambda t: t.last_activity, reverse=True):
         title = tab.title or tab.url
-        click.echo(f"  [{tab.target_id[:8]}] {title}  ({tab.origin})")
+        mark = "*" if tab.target_id == group.current_target_id else " "
+        click.echo(f" {mark} [{tab.target_id[:8]}] {title}  ({tab.origin})")
+    if group.tabs:
+        click.echo("  (* = current tab: where this group's commands land)")
 
 
 @click.command('group-close', cls=AgentFriendlyCommand)
@@ -2537,266 +2599,213 @@ def browser_reset(ctx):
 
 
 @click.command('list-tabs', cls=AgentFriendlyCommand)
-@click.option('--tracked', is_flag=True, default=False, help='Show tab tracking info (origin, last activity)')
+@group_option
 @click.option('--json', 'as_json', is_flag=True, default=False, help='Output as JSON for programmatic use')
 @click.pass_context
 @print_usage
-def list_tabs(ctx, tracked: bool, as_json: bool):
+def list_tabs(ctx, as_json: bool, group: str | None = None):
     """
-    List all open browser tabs
+    List the tabs of one group
 
-    Shows each tab's ID, title and URL, for use with switch-tab and close-tab commands.
-    Use --tracked to see origin routing and activity information.
-    Use --json for machine-readable output.
+    \b
+    Only this group's tabs — other agents' pages and the person's own
+    pages are none of its business. The tab marked ``*`` is the current
+    one: where this group's next command lands.
+
+    Use the printed IDs with switch-tab and close-tab (also --group).
     """
     import json
 
-    import requests
+    from ..browser.cdp.tab_group_manager import (
+        CHROME_ERRORS,
+        TabGroupManager,
+    )
 
-    config = ctx.obj or {}
-    host = config.get('host', GLOBAL_OPTIONS['host'])
-    port = config.get('port', GLOBAL_OPTIONS['port'])
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
 
     try:
-        response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
-        targets = response.json()
+        group_name = TabGroupManager.resolve_group_name(group)
+        if not group_name:
+            raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
 
-        pages = [t for t in targets if t.get('type') == 'page']
+        tgm = TabGroupManager(host=host, port=port)
+        tgm.reconcile()
+        g = tgm.get_group(group_name)
+        if not g:
+            raise ChromeCommandError(
+                "NO_TAB_IN_GROUP",
+                f"group '{group_name}' does not exist — navigate first: "
+                f"frago browser navigate <url> --group {group_name}",
+                {"group": group_name},
+            )
+        tgm.touch_group(group_name)
 
-        if not pages:
-            if as_json:
-                click.echo(json.dumps([]))
-            else:
-                click.echo("No open tabs found")
-            return
-
-        # Load tracking info if requested
-        tracking = {}
-        if tracked:
-            try:
-                from ..browser.cdp.tab_manager import TabManager
-                tab_mgr = TabManager(host=host, port=port)
-                tab_mgr.reconcile()
-                tracking = {e.tab_id: e for e in tab_mgr.get_tracked_tabs()}
-            except Exception:
-                pass
-
-        # Load group membership
-        group_index = build_group_index(host=host, port=port)
-
-        output = []
-        for i, p in enumerate(pages):
-            tab_id = p.get('id', '')
-            title = p.get('title', 'No Title')
-            url = p.get('url', '')
-
-            tab_info = {
-                "index": i,
-                "id": tab_id,
-                "title": title,
-                "url": url,
-            }
-
-            if tab_id in group_index:
-                tab_info["group"] = group_index[tab_id]
-
-            if tracked and tab_id in tracking:
-                entry = tracking[tab_id]
-                tab_info["origin"] = entry.origin
-                tab_info["last_activity"] = entry.last_activity
-
-            output.append(tab_info)
+        tabs = [
+            {"tab_id": t.target_id, "title": t.title or "", "url": t.url,
+             "origin": t.origin, "last_activity": t.last_activity,
+             "current": t.target_id == g.current_target_id}
+            for t in tgm.get_group_tabs(group_name)
+        ]
 
         if as_json:
-            click.echo(json.dumps(output, ensure_ascii=False, indent=2))
-        else:
-            for item in output:
-                tab_id = item["id"]
-                display_title = item["title"][:50]
+            click.echo(json.dumps({
+                "group": group_name, "tabs": tabs,
+                "current": g.current_target_id,
+                "count": len(tabs), "limit": g.max_tabs,
+            }, ensure_ascii=False, indent=2))
+            return
 
-                suffix = ""
-                group_part = ""
-                if "group" in item:
-                    group_part = f" group:{item['group']}"
-                if "origin" in item:
-                    origin_part = f" [{item['origin']}]" if item["origin"] else ""
-                    age = time.time() - item["last_activity"]
-                    if age < 60:
-                        age_part = f" (active {int(age)}s ago)"
-                    elif age < 3600:
-                        age_part = f" (active {int(age / 60)}m ago)"
-                    else:
-                        age_part = f" (active {int(age / 3600)}h ago)"
-                    suffix = f"{origin_part}{age_part}"
+        click.echo(f"Group {group_name}: {len(tabs)}/{g.max_tabs} tabs")
+        for i, item in enumerate(tabs):
+            mark = "*" if item["current"] else " "
+            age = int(time.time() - item["last_activity"])
+            age_part = (f"{age}s ago" if age < 60
+                        else f"{age // 60}m ago" if age < 3600
+                        else f"{age // 3600}h ago")
+            click.echo(f"{i}.{mark}[{item['tab_id'][:8]}...] "
+                       f"({age_part}) {item['title'][:50]}")
+            click.echo(f"    {item['url']}")
+        if tabs:
+            click.echo("(* = current tab: where this group's commands land)")
 
-                click.echo(f"{item['index']}. [{tab_id[:8]}...]{group_part}{suffix} {display_title}")
-                click.echo(f"   {item['url']}")
-
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except Exception as e:
         click.echo(f"Failed to get tabs list: {e}", err=True)
+        sys.exit(1)
 
 
 @click.command('switch-tab', cls=AgentFriendlyCommand)
 @click.argument('tab_id')
+@group_option
+@click.option('--activate', is_flag=True, default=False,
+              help="Also bring the tab on screen. Off by default: "
+                   "switching says where this group's commands land, "
+                   "not what the person is looking at.")
 @click.pass_context
 @print_usage
-def switch_tab(ctx, tab_id: str):
+def switch_tab(ctx, tab_id: str, group: str | None = None,
+               activate: bool = False):
     """
-    Switch to specified browser tab
+    Point the group at one of its own tabs
 
-    TAB_ID can be the complete target ID or partial match (e.g., first 8 characters).
-    Use list-tabs command to view available tab IDs.
+    \b
+    TAB_ID is the full target ID or a unique prefix (list-tabs prints
+    them). The tab must belong to this group — a group can only reach
+    its own tabs.
+
+    By default this only changes which tab subsequent commands act on.
+    Pass --activate to also bring it to front.
     """
-    import json
+    from ..browser.cdp.tab_group_manager import (
+        CHROME_ERRORS,
+        TabGroupManager,
+    )
 
-    import requests
-    import websocket
-
-    config = ctx.obj or {}
-    host = config.get('host', GLOBAL_OPTIONS['host'])
-    port = config.get('port', GLOBAL_OPTIONS['port'])
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
 
     try:
-        response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
-        targets = response.json()
+        group_name = TabGroupManager.resolve_group_name(group)
+        if not group_name:
+            raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
 
-        # Find matching tab
-        target = None
-        for t in targets:
-            if t.get('type') == 'page' and (
-                t.get('id') == tab_id or t.get('id', '').startswith(tab_id)
-            ):
-                target = t
-                break
+        tgm = TabGroupManager(host=host, port=port)
+        tgm.reconcile()
+        full_id = tgm.switch_tab(group_name, tab_id)
 
-        if not target:
-            click.echo(f"No matching tab found: {tab_id}", err=True)
-            click.echo("Use list-tabs command to view available tabs")
-            return
+        if activate:
+            import json
 
-        ws_url = target.get('webSocketDebuggerUrl')
-        if not ws_url:
-            click.echo(f"Tab {tab_id} has no available WebSocket URL", err=True)
-            return
+            import requests
+            import websocket
+            targets = requests.get(
+                f'http://{host}:{port}/json/list', timeout=5).json()
+            target = next((t for t in targets if t.get('id') == full_id), None)
+            ws_url = target.get('webSocketDebuggerUrl') if target else None
+            if ws_url:
+                ws = websocket.create_connection(ws_url)
+                ws.send(json.dumps({'id': 1, 'method': 'Page.bringToFront',
+                                    'params': {}}))
+                ws.recv()
+                ws.close()
 
-        # Send Page.bringToFront command
-        ws = websocket.create_connection(ws_url)
-        ws.send(json.dumps({'id': 1, 'method': 'Page.bringToFront', 'params': {}}))
-        result = json.loads(ws.recv())
-        ws.close()
+        grp = tgm.get_group(group_name)
+        entry = grp.tabs.get(full_id) if grp else None
+        _print_msg("success",
+                   f"Group '{group_name}' now acts on tab "
+                   f"{full_id[:8]}: {entry.title or entry.url if entry else ''}"
+                   + (" (brought to front)" if activate else ""),
+                   "tab_switch",
+                   {"tab_id": full_id, "group": group_name,
+                    "activated": activate})
 
-        if 'error' in result:
-            click.echo(f"Switch failed: {result['error']}", err=True)
-            return
-
-        # Update tab activity tracking
-        full_id = target.get('id')
-        try:
-            from ..browser.cdp.tab_manager import TabManager
-            tab_mgr = TabManager(host=host, port=port)
-            tab_mgr.touch_tab(full_id)
-            tab_mgr._save_state()
-        except Exception:
-            pass
-
-        tab_group = _lookup_tab_group(full_id, host=host, port=port)
-        # Update group's current_target_id so subsequent commands follow
-        if tab_group:
-            try:
-                from ..browser.cdp.tab_group_manager import TabGroupManager
-                tgm = TabGroupManager(host=host, port=port)
-                tgm.set_current_target(tab_group, full_id)
-            except Exception:
-                pass
-        group_info = f" (group: {tab_group})" if tab_group else ""
-        _print_msg("success", f"Switched to tab: {target.get('title', 'Unknown')}{group_info}", "tab_switch", {
-            "tab_id": full_id,
-            "title": target.get('title'),
-            "url": target.get('url'),
-            "group": tab_group,
-        })
-
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except Exception as e:
         click.echo(f"Failed to switch tab: {e}", err=True)
+        sys.exit(1)
 
 
 @click.command('close-tab', cls=AgentFriendlyCommand)
 @click.argument('tab_id')
+@group_option
 @click.pass_context
 @print_usage
-def close_tab(ctx, tab_id: str):
+def close_tab(ctx, tab_id: str, group: str | None = None):
     """
-    Close a browser tab by ID
+    Close one of the group's own tabs
 
-    TAB_ID can be the complete target ID or partial match (e.g., first 8 characters).
-    Use list-tabs command to view available tab IDs.
+    \b
+    TAB_ID is the full target ID or a unique prefix (list-tabs prints
+    them). A group may only close its own tabs — closing someone else's
+    page, agent or person, is never this command's business.
+
+    This is how you make room when a group hits its 5-tab ceiling.
     """
-    import requests
+    from ..browser.cdp.tab_group_manager import (
+        CHROME_ERRORS,
+        TabGroupManager,
+    )
 
-    config = ctx.obj or {}
-    host = config.get('host', GLOBAL_OPTIONS['host'])
-    port = config.get('port', GLOBAL_OPTIONS['port'])
+    host = ctx.obj.get('HOST', '127.0.0.1')
+    port = ctx.obj.get('PORT', 9222)
 
     try:
-        # Find matching tab via HTTP (no session needed for listing)
-        response = requests.get(f'http://{host}:{port}/json/list', timeout=5)
-        targets = response.json()
+        group_name = TabGroupManager.resolve_group_name(group)
+        if not group_name:
+            raise ChromeCommandError("NO_GROUP", CHROME_ERRORS["NO_GROUP"])
 
-        target = None
-        for t in targets:
-            if t.get('type') == 'page' and (
-                t.get('id') == tab_id or t.get('id', '').startswith(tab_id)
-            ):
-                target = t
-                break
+        tgm = TabGroupManager(host=host, port=port)
+        tgm.reconcile()
 
-        if not target:
-            click.echo(f"No matching tab found: {tab_id}", err=True)
-            click.echo("Use list-tabs command to view available tabs")
-            return
-
-        full_id = target.get('id')
-
-        # Check group membership before closing
-        tab_group = _lookup_tab_group(full_id, host=host, port=port)
-
-        # Close via TargetCommands CDP command
         with create_session(ctx, require_group=False) as session:
-            success = session.target.close_target(full_id)
+            full_id = tgm.close_tab(group_name, tab_id, session)
 
-        if success:
-            # Remove from TabManager state (best-effort)
-            try:
-                from ..browser.cdp.tab_manager import TabManager
-                tab_mgr = TabManager(host=host, port=port)
-                tab_mgr.untrack_tab(full_id)
-                tab_mgr._save_state()
-            except Exception:
-                pass
+        # Keep TabManager's own bookkeeping from pointing at a dead tab.
+        try:
+            from ..browser.cdp.tab_manager import TabManager
+            tab_mgr = TabManager(host=host, port=port)
+            tab_mgr.untrack_tab(full_id)
+            tab_mgr._save_state()
+        except Exception:
+            get_logger().warning("Failed to untrack closed tab", exc_info=True)
 
-            # Remove from TabGroupManager if it was grouped
-            if tab_group:
-                try:
-                    from ..browser.cdp.tab_group_manager import TabGroupManager
-                    tgm = TabGroupManager(host=host, port=port)
-                    grp = tgm.get_group(tab_group)
-                    if grp and full_id in grp.tabs:
-                        del grp.tabs[full_id]
-                        tgm._save_state()
-                except Exception:
-                    pass
+        grp = tgm.get_group(group_name)
+        remaining = len(grp.tabs) if grp else 0
+        _print_msg("success",
+                   f"Closed tab {full_id[:8]} from group '{group_name}' "
+                   f"({remaining}/{grp.max_tabs if grp else 0} tabs left)",
+                   "tab_close",
+                   {"tab_id": full_id, "group": group_name,
+                    "remaining": remaining})
 
-            group_info = f" (removed from group: {tab_group})" if tab_group else ""
-            _print_msg("success", f"Closed tab: {target.get('title', 'Unknown')}{group_info}", "tab_close", {
-                "tab_id": full_id,
-                "title": target.get('title'),
-                "url": target.get('url'),
-                "group": tab_group,
-            })
-        else:
-            click.echo(f"Failed to close tab: {full_id}", err=True)
-
+    except ChromeCommandError as e:
+        _handle_chrome_command_error(e)
     except CDPError as e:
         click.echo(f"Failed to close tab: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Failed to close tab: {e}", err=True)
+        sys.exit(1)

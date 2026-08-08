@@ -12,12 +12,26 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+# A group may hold at most this many tabs. Past it, opening another one
+# fails and names the tabs already there — the agent decides what to drop.
+# Silently evicting the oldest is worse than any error: the agent goes on
+# believing a page is open and the next command lands somewhere else.
+MAX_TABS_PER_GROUP = 5
+
+# Total silence — no command, no tab activation, no scrolling inside the
+# pages — that closes a group on its own.
+GROUP_IDLE_SECONDS = 30 * 60
+
 
 @dataclass
 class NavigateResult:
     tab_id: int | str
     url: str
     title: str
+    group: str | None = None
+    opened_new: bool = False
+    tabs_in_group: int | None = None
+    tab_limit: int = MAX_TABS_PER_GROUP
 
 
 @dataclass
@@ -56,7 +70,16 @@ class ChromeBackend(ABC):
 
     @abstractmethod
     def navigate(self, url: str, group: str, *,
-                 timeout: float = 15.0) -> NavigateResult: ...
+                 timeout: float = 15.0,
+                 new: bool = False) -> NavigateResult:
+        """Open ``url`` inside ``group``.
+
+        Without ``new`` the group's current tab — the last one navigated
+        or switched to, not whatever tab the browser happens to be
+        showing — is reused. With ``new`` a second tab joins the group,
+        up to :data:`MAX_TABS_PER_GROUP`; past that the call fails and
+        lists the tabs already open so the caller can pick one to close.
+        """
 
     @abstractmethod
     def exec_js(self, script: str, group: str) -> ExecResult: ...
@@ -82,16 +105,27 @@ class ChromeBackend(ABC):
         """Health check; returns backend-specific diagnostic dict."""
         raise NotImplementedError
 
-    def list_tabs(self) -> list[dict]:
-        """All open page tabs: [{id, title, url, index}]."""
+    def list_tabs(self, group: str) -> dict:
+        """The tabs of one group — never the whole browser.
+
+        Returns ``{group, tabs, current, count, limit}``. Other groups'
+        pages, and the person's own pages, are none of this group's
+        business.
+        """
         raise NotImplementedError
 
-    def switch_tab(self, tab_id: str) -> dict:
-        """Bring the given tab to front."""
+    def switch_tab(self, group: str, tab_id: str, *,
+                   activate: bool = False) -> dict:
+        """Point the group at one of its own tabs.
+
+        This changes which tab subsequent commands act on. It does not
+        change what is on screen unless ``activate`` is passed — the
+        person may be looking at something else entirely.
+        """
         raise NotImplementedError
 
-    def close_tab(self, tab_id: str) -> dict:
-        """Close the given tab."""
+    def close_tab(self, group: str, tab_id: str) -> dict:
+        """Close one of the group's own tabs."""
         raise NotImplementedError
 
     def list_groups(self) -> dict:
@@ -160,17 +194,18 @@ class ChromeBackend(ABC):
 
     def detect(self) -> dict:
         """Scan PATH for Chromium-family browsers. Local-only; no RPC."""
-        from ..cdp.browser_detection import BrowserType, detect_available_browsers
+        from ..cdp.browser_detection import (
+            BROWSER_PRIORITY,
+            detect_available_browsers,
+        )
         browsers = detect_available_browsers()
         found = {bt.value: path for bt, path in browsers.items() if path}
-        default = None
-        for bt in (BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM):
-            if browsers.get(bt):
-                default = bt.value
-                break
+        default = next((bt.value for bt in BROWSER_PRIORITY
+                        if browsers.get(bt)), None)
         return {"found": found, "default": default,
-                "all": {bt.value: browsers.get(bt) for bt in
-                        (BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM)}}
+                "priority": [bt.value for bt in BROWSER_PRIORITY],
+                "all": {bt.value: browsers.get(bt)
+                        for bt in BROWSER_PRIORITY}}
 
     # Generic low-level escape hatch; backends may override.
     def send_command(self, method: str, params: dict) -> Any:

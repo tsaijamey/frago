@@ -62,106 +62,136 @@ frago browser -b cdp start --void --keep-alive # 移出屏幕、保持运行
 
 CDP 端口固定为 **9222**——唯一白名单端口。传其它值会被拒绝；禁止自创端口（见 `frago book` 中 CDP 端口白名单条目）。
 
-## 页面操作
+## Tab 组
 
-所有页面操作都走默认后端；`--group <name>` 把操作限定到某个 tab 组（缺省读 `FRAGO_CURRENT_RUN`）。
+**一个 group 就是浏览器标签栏上一个真的标签组**——带颜色、能折叠、组名
+写在上面。agent 开的每个页面都进它自己的组，两个 agent 同时干活也碰不到
+彼此的页面，人扫一眼标签栏就知道这几页是谁开的。
+
+每条页面命令都带 `--group <name>`（缺省读 `FRAGO_CURRENT_RUN`）。整个模型
+就四条规矩：
+
+1. **一组最多 5 个标签。** 开第 6 个会失败，并把挡路的那 5 个列出来，让
+   调用方自己决定关掉哪个。不会静默踢掉最旧的——agent 以为页面还在、下一
+   条命令却落在别的页上，这种错没有任何地方会提醒它。
+2. **navigate 默认替换，不新开。** 替换的是这个 group 的**当前标签**（最后
+   一次 navigate 或 switch-tab 指到的那个），不是浏览器里正显示的那个。人
+   正在读的页面不会被换掉。
+3. **`--new` 是唯一的开页方式。**
+4. **用完 `group-close`。** 整整 30 分钟没有任何动静（命令、切换激活、页面
+   内滚动都算），整组自动关掉——那是兜底，不是流程。
+
+```bash
+frago browser groups                    # 所有 group：用了几个标签、还有多久过期
+frago browser group-info <name>         # 标签清单、当前标签、闲置时长
+frago browser group-close <name>        # 用完了就关
+frago browser group-cleanup             # 清掉标签已不存在的僵尸 group
+```
+
+## 页面操作
 
 ### 导航
 
 ```bash
-# 导航到 URL 并等页面加载
-frago browser navigate https://example.com
+# 替换 group 的当前标签
+frago browser navigate https://example.com --group research
+
+# 在同一个 group 里新开一个标签（最多 5 个）
+frago browser navigate https://example.com/b --group research --new
 
 # 等选择器出现再返回
-frago browser navigate https://example.com --wait-for '.content-loaded'
+frago browser navigate https://example.com --group research --wait-for '.content-loaded'
 
 # 等 N 秒（支持小数）
-frago browser wait 2
+frago browser wait --group research 2
 ```
 
 ### 元素交互
 
 ```bash
 # 点击元素
-frago browser click "#submit-button"
-frago browser click "button[type=submit]" --wait-timeout 15
+frago browser click --group research "#submit-button"
+frago browser click --group research "button[type=submit]" --wait-timeout 15
 
 # 执行 JavaScript（加 --return-value 取回返回值）
-frago browser exec-js "document.title"
-frago browser exec-js "return document.querySelectorAll('a').length" --return-value
+frago browser exec-js --group research "document.title"
+frago browser exec-js --group research "document.querySelectorAll('a').length" --return-value
 ```
 
 ### 页面内容
 
 ```bash
 # 获取页面标题
-frago browser get-title
+frago browser get-title --group research
 
 # 获取页面或元素的文本内容（选择器缺省 body）
-frago browser get-content
-frago browser get-content "#main-content"
+frago browser get-content --group research
+frago browser get-content --group research "#main-content"
 ```
 
 ### 截图
 
 ```bash
 # 页面截图（默认当前视口）
-frago browser screenshot output.png
+frago browser screenshot --group research output.png
 
 # 整页截图
-frago browser screenshot page.png --full-page --quality 90
+frago browser screenshot --group research page.png --full-page --quality 90
 ```
 
 ### 滚动
 
 ```bash
 # 按像素滚动（正向下、负向上）或别名
-frago browser scroll 500
-frago browser scroll down
-frago browser scroll page-down
+frago browser scroll --group research 500
+frago browser scroll --group research down
+frago browser scroll --group research page-down
 
 # 滚动到元素（或按文本）
-frago browser scroll-to "#footer"
-frago browser scroll-to --text "Load more"
+frago browser scroll-to --group research "#footer"
+frago browser scroll-to --group research --text "Load more"
 ```
 
 ### 缩放
 
 ```bash
 # 设置缩放（1.0 = 100%）
-frago browser zoom 1.5
+frago browser zoom --group research 1.5
 ```
 
 ## Tab 管理
 
+tab 命令一律在 group **之内**生效：一个 group 只看得见、也只动得了自己的标签。
+
 ```bash
-# 列出所有标签
-frago browser list-tabs
+# 本组的标签清单，带 * 的那个是命令落点
+frago browser list-tabs --group research
 
-# 按 id 切换标签（支持部分匹配）
-frago browser switch-tab ABC123
+# 让后续命令改落在某一页（id 支持前缀匹配）。
+# 它只改命令落点，不动浏览器的可见状态。
+frago browser switch-tab --group research ABC123
 
-# 关闭标签
-frago browser close-tab ABC123
+# ……顺便把它切到人眼前
+frago browser switch-tab --group research ABC123 --activate
 
-# Tab 组
-frago browser groups
-frago browser group-info <group_name>
-frago browser group-close <group_name>
-frago browser group-cleanup
+# 关掉本组的一页——组满了就靠它腾位置
+frago browser close-tab --group research ABC123
 ```
+
+CDP 后端的规则完全一样，只有一处做不到：CDP 碰不到浏览器的标签组界面，
+所以那边的 group 只是账本，标签不会在标签栏上并成一条。
 
 ## 视觉辅助
 
 调试与演示用的视觉标记；两个后端都可用，`clear-effects` 能清掉任一后端留下的效果。
 
 ```bash
-frago browser highlight "#target-element" --color "#FF6B6B"
-frago browser pointer "#target-element"
-frago browser spotlight "#focus-element" --life-time 5
-frago browser annotate "#element" "This is important" --position top
-frago browser underline "#text-element"
-frago browser clear-effects
+frago browser highlight --group research "#target-element" --color "#FF6B6B"
+frago browser pointer --group research "#target-element"
+frago browser spotlight --group research "#focus-element" --life-time 5
+frago browser annotate --group research "#element" "This is important" --position top
+frago browser underline --group research "#text-element"
+frago browser clear-effects --group research
 ```
 
 ## Profile 管理

@@ -4,7 +4,7 @@
 //   - Maintain a long-lived native messaging port to `com.frago.bridge`.
 //   - Route JSON-RPC requests to the right handler (tab.*, dom.*, visual.*).
 //   - Dispatch dom.* into the target tab's content script.
-//   - Persist minimal state (group → tab_id) in chrome.storage.session.
+//   - Own the group model: one frago group == one real browser tab group.
 
 const HOST_NAME = "com.frago.bridge";
 const KEEPALIVE_MS = 20_000;
@@ -12,16 +12,167 @@ const KEEPALIVE_MS = 20_000;
 let port = null;
 let keepaliveTimer = null;
 
-// In-memory group→tab map; mirrored to chrome.storage.session.
-const groupToTab = new Map();
+// ════════════════════════ the group model ════════════════════════
+//
+// One frago group is one real browser tab group. Not a bookkeeping
+// analogy — the same thing the person sees on the tab strip, with the
+// group's name on it. Everything an agent opens lands inside its own
+// group, so two agents working at the same time never touch each
+// other's pages and a person can tell at a glance whose pages these are.
+//
+// A group holds up to MAX_TABS_PER_GROUP tabs. That ceiling is not a
+// convenience — an agent that opens tabs without ever closing them
+// buries the person's own tabs. When the ceiling is hit, the call fails
+// and says which tabs are there, so the agent decides what to drop.
+//
+// `current` is the tab the group's commands act on: the last one the
+// agent navigated or switched to. Deliberately not "the tab that is
+// active in the browser" — the person may be looking at anything.
+
+const MAX_TABS_PER_GROUP = 5;
+const GROUP_IDLE_MS = 30 * 60 * 1000;   // silence that closes a group
+const EXPIRY_ALARM = "frago-group-expiry";
+
+// name → {tabs: [tabId], current: tabId|null, tabGroupId: number|null,
+//         createdAt: ms, lastActivity: ms}
+const groups = new Map();
+
+// The service worker is killed and restarted at will, so the table above
+// starts empty every time. `ready` is the one promise everything else
+// waits on before reading it — see the bootstrap section at the bottom.
+let ready;
+
+// Chrome's tab-group palette. Picked by name hash so a group keeps the
+// same color across service-worker restarts — the person learns to
+// recognize it.
+const GROUP_COLORS = ["blue", "cyan", "green", "yellow",
+                      "orange", "pink", "purple", "red"];
+
+function colorForGroup(name) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+    return GROUP_COLORS[Math.abs(h) % GROUP_COLORS.length];
+}
+
+function serializeGroups() {
+    const obj = {};
+    for (const [name, g] of groups) {
+        obj[name] = {
+            tabs: [...g.tabs], current: g.current,
+            tabGroupId: g.tabGroupId,
+            createdAt: g.createdAt, lastActivity: g.lastActivity,
+        };
+    }
+    return obj;
+}
 
 async function loadGroups() {
-    const { groupBindings = {} } = await chrome.storage.session.get("groupBindings");
-    for (const [g, id] of Object.entries(groupBindings)) groupToTab.set(g, id);
+    const store = await chrome.storage.session.get(
+        ["fragoGroups", "groupBindings"]);
+    groups.clear();
+    const saved = store.fragoGroups;
+    if (saved && typeof saved === "object") {
+        for (const [name, g] of Object.entries(saved)) {
+            groups.set(name, {
+                tabs: Array.isArray(g.tabs) ? [...g.tabs] : [],
+                current: g.current ?? null,
+                tabGroupId: g.tabGroupId ?? null,
+                createdAt: g.createdAt || Date.now(),
+                lastActivity: g.lastActivity || Date.now(),
+            });
+        }
+        return;
+    }
+    // Upgrade path: the old model bound one tab per group name. Carry
+    // those bindings over so a browser session that spans the upgrade
+    // doesn't lose track of pages already open.
+    const legacy = store.groupBindings;
+    if (legacy && typeof legacy === "object") {
+        const now = Date.now();
+        for (const [name, id] of Object.entries(legacy)) {
+            groups.set(name, {
+                tabs: [id], current: id, tabGroupId: null,
+                createdAt: now, lastActivity: now,
+            });
+        }
+        await saveGroups();
+    }
 }
+
 async function saveGroups() {
-    const obj = Object.fromEntries(groupToTab);
-    await chrome.storage.session.set({ groupBindings: obj });
+    await chrome.storage.session.set({ fragoGroups: serializeGroups() });
+}
+
+// Every command that touches a group resets its idle clock, and so does
+// anything the person does inside its tabs (activating, navigating,
+// scrolling). Thirty minutes of total silence is what closes a group.
+function touchGroup(name) {
+    const g = groups.get(name);
+    if (g) g.lastActivity = Date.now();
+}
+
+function groupOwning(tabId) {
+    for (const [name, g] of groups) {
+        if (g.tabs.includes(tabId)) return name;
+    }
+    return null;
+}
+
+function requireGroupName(group) {
+    if (!group) {
+        throw { code: -32602,
+                message: "group required — pass --group <name>" };
+    }
+    return group;
+}
+
+// Tabs die without telling the bookkeeping (person closes one, a
+// crash takes it). Drop the dead ones before answering any question
+// about what a group holds.
+async function pruneGroup(name) {
+    const g = groups.get(name);
+    if (!g) return null;
+    const alive = [];
+    for (const id of g.tabs) {
+        try { await chrome.tabs.get(id); alive.push(id); }
+        catch (_) { /* gone */ }
+    }
+    const changed = alive.length !== g.tabs.length;
+    g.tabs = alive;
+    if (g.current != null && !alive.includes(g.current)) {
+        g.current = alive.length ? alive[alive.length - 1] : null;
+    }
+    if (changed) await saveGroups();
+    return g;
+}
+
+function ensureGroupState(name) {
+    let g = groups.get(name);
+    if (!g) {
+        const now = Date.now();
+        g = { tabs: [], current: null, tabGroupId: null,
+              createdAt: now, lastActivity: now };
+        groups.set(name, g);
+    }
+    return g;
+}
+
+async function tabSummary(id, current) {
+    try {
+        const t = await chrome.tabs.get(id);
+        return { tab_id: id, title: t.title || "", url: t.url || "",
+                 current: id === current, active: !!t.active,
+                 window_id: t.windowId };
+    } catch (_) {
+        return { tab_id: id, title: "", url: "", current: id === current,
+                 active: false, window_id: null };
+    }
+}
+
+async function groupTabSummaries(name) {
+    const g = groups.get(name);
+    if (!g) return [];
+    return await Promise.all(g.tabs.map((id) => tabSummary(id, g.current)));
 }
 
 function connectHost() {
@@ -70,6 +221,11 @@ async function onHostMessage(msg) {
     const { id, method, params } = msg || {};
     if (!method) return; // response from host (e.g. pong) — ignore
     try {
+        // The service worker is killed and restarted at will. Nothing may
+        // read the group table before it has been rehydrated from session
+        // storage, or the first command after a restart would decide the
+        // group has no tabs and open a duplicate.
+        await ready;
         const result = await dispatch(method, params || {});
         if (id != null) sendResponse(id, result);
     } catch (e) {
@@ -94,7 +250,7 @@ async function dispatch(method, params) {
         case "tabs.switch":        return await tabsSwitch(params);
         case "tabs.close":         return await tabsClose(params);
         case "tabs.reset":         return await tabsReset(params);
-        case "groups.list":        return groupsList();
+        case "groups.list":        return await groupsList();
         case "groups.info":        return await groupsInfo(params);
         case "groups.close":       return await groupsClose(params);
         case "groups.cleanup":     return await groupsCleanup();
@@ -165,31 +321,45 @@ chrome.debugger.onDetach.addListener((source) => {
 // Group bindings are cleaned up here too: a group pointing at a tab that no
 // longer exists hands out a dead tab id to the next caller.
 
-chrome.tabs.onRemoved.addListener((tabId, info) => {
-    const groups = [];
-    for (const [g, id] of groupToTab) {
-        if (id === tabId) groups.push(g);
+chrome.tabs.onRemoved.addListener(async (tabId, info) => {
+    await ready;
+    const owners = [];
+    for (const [name, g] of groups) {
+        const i = g.tabs.indexOf(tabId);
+        if (i === -1) continue;
+        owners.push(name);
+        g.tabs.splice(i, 1);
+        if (g.current === tabId) {
+            g.current = g.tabs.length ? g.tabs[g.tabs.length - 1] : null;
+        }
     }
-    for (const g of groups) groupToTab.delete(g);
-    if (groups.length) saveGroups();
+    if (owners.length) await saveGroups();
     screencasts.delete(tabId);
     sendEvent("tab.removed", {
         tab_id: tabId,
-        groups,
+        groups: owners,
         window_closing: !!(info && info.isWindowClosing),
     });
 });
 
-chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+    await ready;
+    // Someone brought one of a group's tabs to front — that group is in
+    // use, whoever did it. Its idle clock restarts.
+    const owner = groupOwning(tabId);
+    if (owner) { touchGroup(owner); saveGroups(); }
     sendEvent("tab.activated", { tab_id: tabId, window_id: windowId });
 });
 
 // A tab that navigates away is still alive, but whoever is mirroring its title
 // and address bar needs to know. onUpdated also fires for favicon and audio
 // changes, so only the fields that matter are forwarded.
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
     if (change.status === undefined && change.url === undefined
         && change.title === undefined) return;
+    await ready;
+    const owner = groupOwning(tabId);
+    if (owner) { touchGroup(owner); saveGroups(); }
     sendEvent("tab.updated", {
         tab_id: tabId,
         url: change.url !== undefined ? change.url : tab.url,
@@ -344,73 +514,123 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // ════════════════════════ handlers ════════════════════════
 
-// ══════════ 浏览器标签组：agent 开的页面收进一个折叠的分组 ══════════
+// ══════════ 把 tab 收进这个 group 自己的浏览器标签组 ══════════
 //
-// 这里说的"标签组"是标签栏上那个带颜色、能折叠的分组，跟 frago 的
-// --group 是同名的两回事：后者是逻辑隔离账本（group → tab id），浏览器
-// 里根本看不见。所以"所有 agent 页面进同一个分组"和"每个任务一套隔离"
-// 不冲突，不用二选一——隔离照旧由 frago 自己的账本维持。
+// 标签组的标题就是 group 名，所以人扫一眼标签栏就知道哪几页是哪个
+// agent 开的，而 service worker 重启后也能靠标题把组重新认回来。
+// 默认折叠：agent 的页面是给 agent 自己用的，平铺会把人的标签挤走。
+// 人手动展开之后不再折回去——展开就是"我正在看"。
 //
-// 为什么要收：agent 开的页面是给 agent 自己用的，平铺在标签栏上会把人
-// 自己的标签挤出视野。收进一个折叠的组，占一格。
-const AUTO_GROUP_TITLE = "auto";
+// 分组能力缺失（旧浏览器、权限未授予）绝不能连累导航本身：收不进去
+// 就算了，group 的隔离账本照常生效。
 
-async function fileIntoAutoGroup(tabId) {
-    // 分组能力缺失（旧浏览器、权限未授予）绝不能连累导航本身。
-    if (!chrome.tabGroups || !chrome.tabs.group) return;
+async function fileIntoGroup(name, tabId) {
+    if (!chrome.tabGroups || !chrome.tabs.group) return null;
+    const state = ensureGroupState(name);
     try {
         const tab = await chrome.tabs.get(tabId);
-        // 已经在某个组里就别抢——可能是人自己归的类。
-        if (tab.groupId != null &&
-            tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) return;
 
-        const existing = await chrome.tabGroups.query(
-            { title: AUTO_GROUP_TITLE, windowId: tab.windowId });
-        let gid;
-        // 折不折叠以人的意愿为准：组已存在就沿用它当前的状态——人若把它
-        // 展开着，说明正在看，agent 不该每开一个页面就把它折回去。只有
-        // 组是这次新建的才默认折叠。
-        let wantCollapsed;
-        if (existing.length) {
-            wantCollapsed = !!existing[0].collapsed;
-            gid = await chrome.tabs.group(
-                { groupId: existing[0].id, tabIds: tabId });
+        // 已有的浏览器组还在吗？（人可能整组关掉了）
+        let gid = state.tabGroupId;
+        if (gid != null) {
+            try { await chrome.tabGroups.get(gid); }
+            catch (_) { gid = null; }
+        }
+        // 认回同名的组：SW 重启后账本里的 id 可能已经丢了。
+        if (gid == null) {
+            const existing = await chrome.tabGroups.query({ title: name });
+            if (existing.length) gid = existing[0].id;
+        }
+
+        let created = false;
+        if (gid != null) {
+            gid = await chrome.tabs.group({ groupId: gid, tabIds: tabId });
         } else {
-            wantCollapsed = true;
             gid = await chrome.tabs.group(
                 { tabIds: tabId, createProperties: { windowId: tab.windowId } });
             await chrome.tabGroups.update(
-                gid, { title: AUTO_GROUP_TITLE, color: "grey" });
+                gid, { title: name, color: colorForGroup(name) });
+            created = true;
         }
+        state.tabGroupId = gid;
 
-        // 组里含当前活动标签时一律不折：那是人正看着的页面，
-        // 何况 Chrome 本来也不允许折叠含活动标签的组。
-        const active = await chrome.tabs.query(
-            { active: true, windowId: tab.windowId });
-        const holdsActive = active.length && active[0].groupId === gid;
-        if (wantCollapsed && !holdsActive) {
-            await chrome.tabGroups.update(gid, { collapsed: true });
+        // 折不折以人的意愿为准：组是这次新建的才默认折叠；已存在的组
+        // 沿用它当前状态。组里含当前活动标签时一律不折——那是人正看着
+        // 的页面，何况 Chrome 本来也不允许折叠含活动标签的组。
+        let wantCollapsed = created;
+        if (!created) {
+            try { wantCollapsed = !!(await chrome.tabGroups.get(gid)).collapsed; }
+            catch (_) { wantCollapsed = false; }
         }
+        if (wantCollapsed) {
+            const active = await chrome.tabs.query(
+                { active: true, windowId: tab.windowId });
+            const holdsActive = active.length && active[0].groupId === gid;
+            if (!holdsActive) {
+                await chrome.tabGroups.update(gid, { collapsed: true });
+            }
+        }
+        return gid;
     } catch (e) {
-        console.warn("[frago] auto tab group failed:", e);
+        console.warn("[frago] tab group filing failed:", e);
+        return null;
     }
 }
 
+// 到顶了就拒绝，并且把组里现有的页面一并回报——agent 得据此决定关掉
+// 哪个、或者改成替换。悄悄踢掉最旧的那个才是最坏的做法：agent 以为
+// 页面还在，下一条命令作用在别的页面上，还不报错。
+async function assertRoomInGroup(name) {
+    const g = await pruneGroup(name) || ensureGroupState(name);
+    if (g.tabs.length < MAX_TABS_PER_GROUP) return g;
+    throw {
+        code: -32010,
+        message: `group '${name}' already holds ${g.tabs.length} tabs `
+               + `(limit ${MAX_TABS_PER_GROUP}). Close one you no longer `
+               + `need, or navigate without --new to reuse the current tab.`,
+        data: {
+            group: name,
+            limit: MAX_TABS_PER_GROUP,
+            tabs: await groupTabSummaries(name),
+            remedies: [
+                `frago browser close-tab --group ${name} <tab_id>`,
+                `frago browser navigate <url> --group ${name}   # replaces the current tab`,
+                `frago browser group-close ${name}              # done with this group`,
+            ],
+        },
+    };
+}
+
+async function openTabInGroup(name, url) {
+    const g = await assertRoomInGroup(name);
+    const tab = await chrome.tabs.create({ url, active: false });
+    g.tabs.push(tab.id);
+    g.current = tab.id;
+    touchGroup(name);
+    await fileIntoGroup(name, tab.id);
+    await saveGroups();
+    return tab.id;
+}
+
+// group 内所有命令都落在 current 上——最后一次 navigate/switch-tab 指到
+// 的那个标签，而不是浏览器里正激活的那个。人在另一个窗口看别的页面时，
+// agent 的命令不该跟着人的视线跑。
 async function resolveTab(params, { create = false, url = null } = {}) {
     const { group, tab_id } = params;
     if (tab_id) return tab_id;
-    if (group && groupToTab.has(group)) {
-        const id = groupToTab.get(group);
-        try { await chrome.tabs.get(id); return id; }
-        catch { groupToTab.delete(group); await saveGroups(); }
+    requireGroupName(group);
+    const g = await pruneGroup(group);
+    if (g && g.current != null) {
+        touchGroup(group);
+        return g.current;
     }
-    if (create && url) {
-        const tab = await chrome.tabs.create({ url, active: false });
-        await fileIntoAutoGroup(tab.id);
-        if (group) { groupToTab.set(group, tab.id); await saveGroups(); }
-        return tab.id;
-    }
-    throw { code: -32002, message: "no tab for group", data: { group } };
+    if (create && url) return await openTabInGroup(group, url);
+    throw {
+        code: -32002,
+        message: `group '${group}' has no open tab — navigate first: `
+               + `frago browser navigate <url> --group ${group}`,
+        data: { group },
+    };
 }
 
 function waitForLoad(tabId, timeoutMs = 15_000) {
@@ -430,27 +650,41 @@ function waitForLoad(tabId, timeoutMs = 15_000) {
     });
 }
 
-// 想新开一个标签，就换一个 group 名来导航：group 没有绑定时这里本来
-// 就会新建。不设"另开一个标签"的开关——账本一个 group 只记一个标签，
-// 同一个 group 下开第二个标签，账本只能二选一：要么指着旧的（导航回报
-// 新标签、后续带 group 的命令却全作用在旧页面上，且不报错），要么改指
-// 新的（旧标签没人跟随，从命令行再也够不着）。两种都是净损失，而换个
-// group 名一样能开出新标签，一个牺牲品都不产生。
-async function tabNavigate({ url, group, tab_id, timeout = 15_000 }) {
+// 两种开页方式，由 `new` 决定：
+//   带 new  → 在本 group 里新开一个标签（到 5 个上限就报错，不静默踢人）
+//   不带    → 替换 group 内最后用过的那个标签（current），不是浏览器
+//             激活的那个——人正看着的页面不会被 agent 换掉
+async function tabNavigate({ url, group, tab_id, timeout = 15_000,
+                             new: openNew = false }) {
     if (!url) throw { code: -32602, message: "url required" };
     let id;
-    if (tab_id || groupToTab.has(group)) {
-        id = await resolveTab({ group, tab_id });
+    let openedNew = false;
+    if (tab_id) {
+        id = tab_id;
         await chrome.tabs.update(id, { url });
     } else {
-        const tab = await chrome.tabs.create({ url, active: false });
-        id = tab.id;
-        await fileIntoAutoGroup(id);
-        if (group) { groupToTab.set(group, id); await saveGroups(); }
+        requireGroupName(group);
+        const g = await pruneGroup(group);
+        if (!openNew && g && g.current != null) {
+            id = g.current;
+            await chrome.tabs.update(id, { url });
+            touchGroup(group);
+            await saveGroups();
+        } else {
+            id = await openTabInGroup(group, url);
+            openedNew = true;
+        }
     }
     await waitForLoad(id, timeout);
     const tab = await chrome.tabs.get(id);
-    return { tab_id: id, url: tab.url, title: tab.title };
+    const state = group ? groups.get(group) : null;
+    return {
+        tab_id: id, url: tab.url, title: tab.title,
+        group: group || null,
+        opened_new: openedNew,
+        tabs_in_group: state ? state.tabs.length : null,
+        tab_limit: MAX_TABS_PER_GROUP,
+    };
 }
 
 async function domExecJs({ script, group, tab_id }) {
@@ -650,117 +884,183 @@ async function visualScreenshot({ group, tab_id, output = null }) {
 
 // ════════════════════════ batch 1: tabs / groups / page ════════════════════════
 
-async function tabsList(_params) {
-    const tabs = await chrome.tabs.query({});
-    // 标签组信息一并带出：agent 自己开的页面收在折叠的 auto 组里，
-    // 不报出来的话，"我的页面到底归到哪儿了"就只能靠人去看标签栏。
-    const titles = new Map();
-    const collapsed = new Map();
-    if (chrome.tabGroups) {
-        try {
-            for (const g of await chrome.tabGroups.query({})) {
-                titles.set(g.id, g.title || "");
-                collapsed.set(g.id, !!g.collapsed);
-            }
-        } catch (_) { /* 不支持标签组就不报这两个字段 */ }
+// list-tabs 只报本 group 的标签，不再是整个浏览器的清单：别的 group
+// 的页面不归你管，人自己的页面更不归你管。
+async function tabsList({ group }) {
+    requireGroupName(group);
+    const g = await pruneGroup(group);
+    if (!g) {
+        throw { code: -32002,
+                message: `group '${group}' does not exist — navigate first`,
+                data: { group } };
     }
-    const NONE = chrome.tabGroups?.TAB_GROUP_ID_NONE ?? -1;
-    const out = tabs.map((t, i) => {
-        const row = {
-            index: i, id: t.id, title: t.title || "", url: t.url || "",
-            active: !!t.active, windowId: t.windowId,
-        };
-        if (t.groupId != null && t.groupId !== NONE) {
-            row.tab_group = titles.get(t.groupId) ?? String(t.groupId);
-            row.tab_group_collapsed = collapsed.get(t.groupId) ?? null;
-        }
-        return row;
-    });
-    return { tabs: out };
-}
-
-async function tabsSwitch({ tab_id }) {
-    if (tab_id == null) throw { code: -32602, message: "tab_id required" };
-    const tab = await chrome.tabs.update(tab_id, { active: true });
-    try { await chrome.windows.update(tab.windowId, { focused: true }); }
-    catch (_) { /* ignore; headless etc. */ }
-    return { tab_id, title: tab.title || "", url: tab.url || "" };
-}
-
-async function tabsClose({ tab_id }) {
-    if (tab_id == null) throw { code: -32602, message: "tab_id required" };
-    await chrome.tabs.remove(tab_id);
-    // Also drop any group binding pointing at this tab.
-    for (const [g, id] of groupToTab.entries()) {
-        if (id === tab_id) groupToTab.delete(g);
-    }
+    touchGroup(group);
     await saveGroups();
-    return { tab_id, closed: true };
+    let collapsed = null;
+    if (g.tabGroupId != null && chrome.tabGroups) {
+        try { collapsed = !!(await chrome.tabGroups.get(g.tabGroupId)).collapsed; }
+        catch (_) { /* 组已不在 */ }
+    }
+    return {
+        group, tabs: await groupTabSummaries(group),
+        current: g.current, count: g.tabs.length,
+        limit: MAX_TABS_PER_GROUP,
+        tab_group_collapsed: collapsed,
+    };
+}
+
+// group 内的 switch-tab 换的是"接下来的命令作用在哪一页"，默认不动
+// 浏览器的可见状态——人可能正看着别的东西。要真的切到眼前，显式带
+// activate。
+async function tabsSwitch({ group, tab_id, activate = false }) {
+    requireGroupName(group);
+    if (tab_id == null) throw { code: -32602, message: "tab_id required" };
+    const g = await pruneGroup(group);
+    if (!g || !g.tabs.includes(tab_id)) {
+        throw { code: -32003,
+                message: `tab ${tab_id} is not in group '${group}'`,
+                data: { group, tabs: await groupTabSummaries(group) } };
+    }
+    g.current = tab_id;
+    touchGroup(group);
+    await saveGroups();
+    let activated = false;
+    if (activate) {
+        const tab = await chrome.tabs.update(tab_id, { active: true });
+        try { await chrome.windows.update(tab.windowId, { focused: true }); }
+        catch (_) { /* headless 等场景没有窗口可聚焦 */ }
+        activated = true;
+    }
+    const tab = await chrome.tabs.get(tab_id);
+    return { group, tab_id, title: tab.title || "", url: tab.url || "",
+             current: true, activated };
+}
+
+async function tabsClose({ group, tab_id }) {
+    requireGroupName(group);
+    if (tab_id == null) throw { code: -32602, message: "tab_id required" };
+    const g = await pruneGroup(group);
+    if (!g || !g.tabs.includes(tab_id)) {
+        throw { code: -32003,
+                message: `tab ${tab_id} is not in group '${group}' — a group `
+                       + `may only close its own tabs`,
+                data: { group, tabs: await groupTabSummaries(group) } };
+    }
+    try { await chrome.tabs.remove(tab_id); } catch (_) { /* 已经没了 */ }
+    g.tabs = g.tabs.filter((id) => id !== tab_id);
+    if (g.current === tab_id) {
+        g.current = g.tabs.length ? g.tabs[g.tabs.length - 1] : null;
+    }
+    touchGroup(group);
+    await saveGroups();
+    return { group, tab_id, closed: true, remaining: g.tabs.length,
+             current: g.current, limit: MAX_TABS_PER_GROUP };
 }
 
 async function tabsReset({ group }) {
+    if (group) return await groupsClose({ name: group });
     const closed = [];
-    if (group) {
-        const id = groupToTab.get(group);
-        if (id != null) {
-            try { await chrome.tabs.remove(id); closed.push(id); }
-            catch (_) { /* tab already gone */ }
-            groupToTab.delete(group);
-            await saveGroups();
-        }
-        return { group, closed };
+    for (const name of [...groups.keys()]) {
+        const r = await groupsClose({ name });
+        closed.push(...(r.tab_ids || []));
     }
-    // Global reset: close all group tabs; leave other tabs alone.
-    for (const [g, id] of groupToTab.entries()) {
-        try { await chrome.tabs.remove(id); closed.push(id); }
-        catch (_) { /* ignore */ }
-    }
-    groupToTab.clear();
-    await saveGroups();
     return { group: null, closed };
 }
 
-function groupsList() {
+async function groupsList() {
     const out = {};
-    for (const [name, id] of groupToTab.entries()) {
-        out[name] = { tab_id: id, tabs: 1 };
+    const now = Date.now();
+    for (const name of [...groups.keys()]) {
+        const g = await pruneGroup(name);
+        if (!g) continue;
+        out[name] = {
+            tabs: g.tabs.length, current: g.current,
+            limit: MAX_TABS_PER_GROUP,
+            created_at: g.createdAt, last_activity: g.lastActivity,
+            idle_seconds: Math.round((now - g.lastActivity) / 1000),
+            expires_in_seconds: Math.max(
+                0, Math.round((g.lastActivity + GROUP_IDLE_MS - now) / 1000)),
+            tab_group_id: g.tabGroupId,
+        };
     }
     return { groups: out };
 }
 
 async function groupsInfo({ name }) {
     if (!name) throw { code: -32602, message: "name required" };
-    const id = groupToTab.get(name);
-    if (id == null) throw { code: -32002, message: `group not found: ${name}` };
-    let tab;
-    try { tab = await chrome.tabs.get(id); }
-    catch (_) {
-        groupToTab.delete(name); await saveGroups();
-        throw { code: -32002, message: `group tab missing: ${name}` };
-    }
-    return { name, tab_id: id, url: tab.url || "", title: tab.title || "",
-             tabs: 1 };
+    const g = await pruneGroup(name);
+    if (!g) throw { code: -32002, message: `group not found: ${name}` };
+    const now = Date.now();
+    return {
+        name, tabs: await groupTabSummaries(name), current: g.current,
+        count: g.tabs.length, limit: MAX_TABS_PER_GROUP,
+        created_at: g.createdAt, last_activity: g.lastActivity,
+        idle_seconds: Math.round((now - g.lastActivity) / 1000),
+        expires_in_seconds: Math.max(
+            0, Math.round((g.lastActivity + GROUP_IDLE_MS - now) / 1000)),
+        tab_group_id: g.tabGroupId,
+    };
 }
 
-async function groupsClose({ name }) {
+// 关 group = 关掉它名下的所有标签。最后一个标签走掉时浏览器会把空的
+// 标签组一并收走，所以不用单独删组。
+async function groupsClose({ name, reason = "explicit" }) {
     if (!name) throw { code: -32602, message: "name required" };
-    const id = groupToTab.get(name);
-    if (id == null) return { name, closed: false };
-    try { await chrome.tabs.remove(id); } catch (_) { /* ignore */ }
-    groupToTab.delete(name);
+    const g = groups.get(name);
+    if (!g) return { name, closed: false, tab_ids: [] };
+    const ids = [...g.tabs];
+    for (const id of ids) {
+        try { await chrome.tabs.remove(id); } catch (_) { /* 已经没了 */ }
+    }
+    groups.delete(name);
     await saveGroups();
-    return { name, closed: true, tab_id: id };
+    sendEvent("group.closed", { group: name, tab_ids: ids, reason });
+    return { name, closed: true, tab_ids: ids, tabs: ids.length, reason };
 }
 
 async function groupsCleanup() {
-    let removed = 0;
-    for (const [name, id] of [...groupToTab.entries()]) {
-        try { await chrome.tabs.get(id); }
-        catch (_) { groupToTab.delete(name); removed++; }
+    let pruned = 0;
+    const removed = [];
+    for (const name of [...groups.keys()]) {
+        const before = groups.get(name).tabs.length;
+        const g = await pruneGroup(name);
+        pruned += before - g.tabs.length;
+        if (!g.tabs.length) { groups.delete(name); removed.push(name); }
     }
-    if (removed) await saveGroups();
-    return { removed };
+    if (removed.length || pruned) await saveGroups();
+    return { removed: removed.length, removed_groups: removed,
+             pruned_tabs: pruned };
 }
+
+// ══════════ 生命周期：静默 30 分钟自动关组 ══════════
+//
+// agent 用完应当自己 group-close。但 agent 会崩、会被打断、会忘，
+// 而没人收拾的标签组会一直堆在人的标签栏上。所以组自己会过期：任何
+// 操作——命令、切换激活、页面内滚动——都重置计时，整整 30 分钟没有
+// 任何动静，整组关掉。
+//
+// 用 chrome.alarms 而不是 setTimeout：MV3 的 service worker 随时会被
+// 杀掉，setTimeout 跟着一起消失，alarm 不会。
+
+async function expireIdleGroups() {
+    const now = Date.now();
+    const expired = [];
+    for (const [name, g] of [...groups]) {
+        if (now - g.lastActivity > GROUP_IDLE_MS) expired.push(name);
+    }
+    for (const name of expired) {
+        await groupsClose({ name, reason: "idle-timeout" });
+        console.log(`[frago] group '${name}' closed after `
+                    + `${GROUP_IDLE_MS / 60000} min of silence`);
+    }
+    return expired;
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== EXPIRY_ALARM) return;
+    await ready;
+    await expireIdleGroups();
+});
 
 // 滚一次并等位置稳定下来，回报真实位移而不是请求值。
 //
@@ -1254,18 +1554,41 @@ async function visualClearEffects({ group, tab_id }) {
 // the native host port is alive. Synchronous response — no async work
 // needed; just inspect the module-level ``port``.
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "frago.popup.status") {
         sendResponse({ ok: !!port, extensionId: chrome.runtime.id });
+        return false;  // synchronous response
     }
-    return false;  // synchronous response
+    // 页面内的动静（滚动、点击、按键）也算这个 group 在被使用。
+    // 只认自己 group 名下的标签，别的页面发来的一概不理。
+    if (msg?.type === "frago.activity" && sender?.tab?.id != null) {
+        const tabId = sender.tab.id;
+        ready.then(() => {
+            const owner = groupOwning(tabId);
+            if (owner) { touchGroup(owner); saveGroups(); }
+        });
+        return false;
+    }
+    return false;
 });
 
 // ════════════════════════ bootstrap ════════════════════════
 
-chrome.runtime.onInstalled.addListener(() => { connectHost(); });
-chrome.runtime.onStartup.addListener(() => { connectHost(); });
-self.addEventListener("activate", () => { loadGroups(); connectHost(); });
+// 组表必须先从 session storage 复活，任何读它的代码都得等这个 promise。
+ready = loadGroups();
+
+function bootstrap() {
+    ready.then(() => {
+        connectHost();
+        // 幂等：同名 alarm 重复 create 只是覆盖周期。
+        chrome.alarms.create(EXPIRY_ALARM, { periodInMinutes: 1 });
+        return expireIdleGroups();
+    }).catch((e) => console.warn("[frago] bootstrap failed:", e));
+}
+
+chrome.runtime.onInstalled.addListener(bootstrap);
+chrome.runtime.onStartup.addListener(bootstrap);
+self.addEventListener("activate", bootstrap);
 
 // Connect eagerly on SW wake.
-loadGroups().then(connectHost);
+bootstrap();

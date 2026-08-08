@@ -18,6 +18,24 @@ class BrowserType(Enum):
     CHROMIUM = "chromium"
 
 
+# The order frago picks a browser in, and the order every listing shows.
+#
+# Edge first, always. It is the browser frago drives: it ships with
+# Windows, installs cleanly everywhere else, and — unlike Chrome Stable
+# since v137 — still honors --load-extension, which the default
+# (extension) backend cannot work without. Keeping the two backends on
+# the same browser also means one profile holds all the agent's logins.
+#
+# Chrome Stable comes last on purpose. Not only can the extension
+# backend not use it, it is usually the person's everyday browser, and
+# an agent driving that profile is not a place to end up by default.
+BROWSER_PRIORITY: tuple[BrowserType, ...] = (
+    BrowserType.EDGE,
+    BrowserType.CHROMIUM,
+    BrowserType.CHROME,
+)
+
+
 # Commands to try with shutil.which (highest priority)
 BROWSER_COMMANDS: dict[BrowserType, list[str]] = {
     BrowserType.CHROME: ["google-chrome", "google-chrome-stable", "chrome"],
@@ -159,12 +177,13 @@ def detect_available_browsers(system: str | None = None) -> dict[BrowserType, st
 
 def get_default_browser(system: str | None = None) -> tuple[BrowserType | None, str | None]:
     """
-    Get the default browser (first available in priority order: Chrome > Edge > Chromium).
+    Get the default browser: first installed in :data:`BROWSER_PRIORITY`
+    (Edge > Chromium > Chrome).
 
     Returns:
         Tuple of (BrowserType, path) or (None, None) if no browser found
     """
-    for browser_type in [BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM]:
+    for browser_type in BROWSER_PRIORITY:
         if path := find_browser(browser_type, system):
             return browser_type, path
     return None, None

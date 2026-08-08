@@ -50,11 +50,11 @@
 
 - name: browser-usage
   category: must
-  brief: "browser 操作完整指南：group 必选（附免 group 命令清单）、导航规则、内容提取、交互、选择器、视觉辅助"
+  brief: "browser 操作完整指南：一个 group = 浏览器里一个真标签组、最多 5 页、navigate 默认替换当前页、--new 才开新页、tab 命令只碰本组、用完 group-close（30 分钟静默兜底）"
 
 - name: browser-backend-choice
   category: must
-  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动浏览器真实 profile，anti-bot 天然过检）> -b cdp（真无头/独立实例/--void/--app，端口固定 9222）> 自起进程（禁止）"
+  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动 Edge 的真实 profile，anti-bot 天然过检）> -b cdp（真无头/独立实例/--void/--app，端口固定 9222）> 自起进程（禁止）；group 规则两端一致"
 
 - name: browser-anti-bot
   category: available
@@ -62,7 +62,7 @@
 
 - name: browser-startup
   category: available
-  brief: "browser start：零参数拉起浏览器+扩展桥，使用浏览器自己的真实 profile；NEVER 传 --browser（换不了浏览器，只会让 profile 目录错位）"
+  brief: "browser start：零参数拉起浏览器+扩展桥，Edge 是 frago 的默认浏览器（两个后端同序），使用浏览器自己的真实 profile；NEVER 传 --browser（换不了浏览器，只会让 profile 目录错位）"
 
 - name: must-no-auto-memory
   category: must

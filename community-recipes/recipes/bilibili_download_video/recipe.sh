@@ -64,7 +64,11 @@ OUTPUT_DIR=$(echo "$INPUT" | jq -r '.output_dir // "."')
 QUALITY=$(echo "$INPUT" | jq -r '.quality // "1080p"')
 WITH_SUBS=$(echo "$INPUT" | jq -r '.with_subs // true')
 SUBS_ONLY=$(echo "$INPUT" | jq -r '.subs_only // false')
-BROWSER=$(echo "$INPUT" | jq -r '.browser // "chrome"')
+# Cookies come from Edge by default: that is the browser frago drives, so
+# it is where the agent's B 站 login actually lives. Chrome is usually the
+# person's own browser and would be the wrong place to look (and the wrong
+# place to reach into).
+BROWSER=$(echo "$INPUT" | jq -r '.browser // "edge"')
 BROWSER_PROFILE=$(echo "$INPUT" | jq -r '.browser_profile // empty')
 
 # 验证必需参数

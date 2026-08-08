@@ -158,11 +158,12 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
     calls: list[tuple] = []
 
     class FakeBackend:
-        def navigate(self, url, group, *, timeout=15.0):  # noqa: ARG002
-            calls.append(("navigate", url, group))
+        def navigate(self, url, group, *, timeout=15.0, new=False):  # noqa: ARG002
+            calls.append(("navigate", url, group, new))
             from frago.browser.backends.base import NavigateResult
 
-            return NavigateResult(tab_id=1, url=url, title="T")
+            return NavigateResult(tab_id=1, url=url, title="T", group=group,
+                                  opened_new=new, tabs_in_group=1)
 
     fake_startup = lc.BridgeStartupResult(
         daemon_pid=42,
@@ -193,7 +194,17 @@ def test_chrome_backend_extension_routes_to_extension_backend(monkeypatch):
         cc.browser_group, ["--backend", "extension", "navigate", "https://x", "--group", "t"]
     )
     assert r.exit_code == 0, r.output
-    assert calls[0][:2] == ("navigate", "https://x"), calls
+    assert calls[0] == ("navigate", "https://x", "t", False), calls
+
+    # --new asks for a second tab inside the same group.
+    calls.clear()
+    r = runner.invoke(
+        cc.browser_group,
+        ["--backend", "extension", "navigate", "https://x", "--group", "t",
+         "--new"],
+    )
+    assert r.exit_code == 0, r.output
+    assert calls[0] == ("navigate", "https://x", "t", True), calls
 
 
 def test_chrome_backend_extension_screenshot_output_omits_base64(monkeypatch, tmp_path):

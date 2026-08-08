@@ -19,7 +19,6 @@ verify:
 from __future__ import annotations
 
 import inspect
-import json
 from typing import Any
 
 import pytest
@@ -29,7 +28,6 @@ from frago.browser.backends.base import ChromeBackend
 from frago.browser.backends.cdp import CDPChromeBackend
 from frago.browser.backends.extension import ExtensionChromeBackend
 from frago.cli import browser_commands as cc
-
 
 BATCH1_METHODS = [
     "stop", "status", "list_tabs", "switch_tab", "close_tab",
@@ -49,15 +47,17 @@ def test_both_backends_implement_batch1():
 
 def test_batch1_signatures_align():
     # Pure no-arg methods first.
-    for m in ("stop", "status", "list_tabs", "list_groups", "group_cleanup"):
+    for m in ("stop", "status", "list_groups", "group_cleanup"):
         cdp_sig = inspect.signature(getattr(CDPChromeBackend, m))
         ext_sig = inspect.signature(getattr(ExtensionChromeBackend, m))
         cdp_params = [p for p in cdp_sig.parameters if p != "self"]
         ext_params = [p for p in ext_sig.parameters if p != "self"]
         assert cdp_params == ext_params, f"{m}: cdp={cdp_params} ext={ext_params}"
-    # Parametric ones.
-    for m in ("switch_tab", "close_tab", "group_info", "group_close",
-              "reset", "scroll", "scroll_to", "zoom", "get_title"):
+    # Parametric ones. list_tabs / switch_tab / close_tab all lead with
+    # `group`: a tab command only ever reaches its own group's tabs.
+    for m in ("list_tabs", "switch_tab", "close_tab", "group_info",
+              "group_close", "reset", "scroll", "scroll_to", "zoom",
+              "get_title"):
         cdp_sig = inspect.signature(getattr(CDPChromeBackend, m))
         ext_sig = inspect.signature(getattr(ExtensionChromeBackend, m))
         cdp_params = [p for p in cdp_sig.parameters if p != "self"]
@@ -87,10 +87,15 @@ def _ext_with_rpc(rec: _RpcRecorder) -> ExtensionChromeBackend:
 @pytest.mark.parametrize("call, expected_method, expected_params", [
     # (callable_fn, rpc_method, rpc_params)
     (lambda be: be.status(), "system.info", {}),
-    (lambda be: be.list_tabs(), "tabs.list", {}),
-    (lambda be: be.switch_tab(42), "tabs.switch", {"tab_id": 42}),
-    (lambda be: be.switch_tab("42"), "tabs.switch", {"tab_id": 42}),
-    (lambda be: be.close_tab(7), "tabs.close", {"tab_id": 7}),
+    (lambda be: be.list_tabs("g1"), "tabs.list", {"group": "g1"}),
+    (lambda be: be.switch_tab("g1", 42), "tabs.switch",
+     {"group": "g1", "tab_id": 42, "activate": False}),
+    (lambda be: be.switch_tab("g1", "42"), "tabs.switch",
+     {"group": "g1", "tab_id": 42, "activate": False}),
+    (lambda be: be.switch_tab("g1", 42, activate=True), "tabs.switch",
+     {"group": "g1", "tab_id": 42, "activate": True}),
+    (lambda be: be.close_tab("g1", 7), "tabs.close",
+     {"group": "g1", "tab_id": 7}),
     (lambda be: be.list_groups(), "groups.list", {}),
     (lambda be: be.group_info("research"), "groups.info", {"name": "research"}),
     (lambda be: be.group_close("research"), "groups.close", {"name": "research"}),
@@ -160,17 +165,19 @@ class _FakeBackend:
         self.calls.append(("status",))
         return {"ok": True}
 
-    def list_tabs(self):
-        self.calls.append(("list_tabs",))
-        return [{"id": "abc", "title": "t", "url": "u", "index": 0}]
+    def list_tabs(self, group):
+        self.calls.append(("list_tabs", group))
+        return {"group": group, "current": "abc", "count": 1, "limit": 5,
+                "tabs": [{"tab_id": "abc", "title": "t", "url": "u",
+                          "current": True}]}
 
-    def switch_tab(self, tab_id):
-        self.calls.append(("switch_tab", tab_id))
-        return {"tab_id": tab_id}
+    def switch_tab(self, group, tab_id, *, activate=False):
+        self.calls.append(("switch_tab", group, tab_id, activate))
+        return {"group": group, "tab_id": tab_id, "activated": activate}
 
-    def close_tab(self, tab_id):
-        self.calls.append(("close_tab", tab_id))
-        return {"tab_id": tab_id, "closed": True}
+    def close_tab(self, group, tab_id):
+        self.calls.append(("close_tab", group, tab_id))
+        return {"group": group, "tab_id": tab_id, "closed": True}
 
     def list_groups(self):
         self.calls.append(("list_groups",))
@@ -227,7 +234,8 @@ def _run(*args, env_overrides=None):
     return CliRunner().invoke(cc.browser_group, list(args), env=env)
 
 
-def test_cli_backend_ext_routes_stop(fake_ext, monkeypatch):
+@pytest.mark.usefixtures("fake_ext")
+def test_cli_backend_ext_routes_stop(monkeypatch):
     """`frago browser stop --backend extension` goes through the lifecycle
     orchestrator (F task), not directly through ExtensionChromeBackend.stop().
     Mock the orchestrator to avoid touching real processes."""
@@ -254,22 +262,43 @@ def test_cli_backend_ext_routes_status(fake_ext):
 
 
 def test_cli_backend_ext_routes_list_tabs(fake_ext):
-    r = _run("--backend", "extension", "list-tabs")
+    r = _run("--backend", "extension", "list-tabs", "--group", "g1")
     assert r.exit_code == 0, r.output
-    assert fake_ext.calls[0] == ("list_tabs",)
+    assert fake_ext.calls[0] == ("list_tabs", "g1")
     assert '"tabs"' in r.output
 
 
 def test_cli_backend_ext_routes_switch_tab(fake_ext):
-    r = _run("--backend", "extension", "switch-tab", "42")
+    r = _run("--backend", "extension", "switch-tab", "42", "--group", "g1")
     assert r.exit_code == 0, r.output
-    assert fake_ext.calls[0] == ("switch_tab", "42")
+    assert fake_ext.calls[0] == ("switch_tab", "g1", "42", False)
+
+
+def test_cli_backend_ext_routes_switch_tab_activate(fake_ext):
+    r = _run("--backend", "extension", "switch-tab", "42", "--group", "g1",
+             "--activate")
+    assert r.exit_code == 0, r.output
+    assert fake_ext.calls[0] == ("switch_tab", "g1", "42", True)
 
 
 def test_cli_backend_ext_routes_close_tab(fake_ext):
-    r = _run("--backend", "extension", "close-tab", "7")
+    r = _run("--backend", "extension", "close-tab", "7", "--group", "g1")
     assert r.exit_code == 0, r.output
-    assert fake_ext.calls[0] == ("close_tab", "7")
+    assert fake_ext.calls[0] == ("close_tab", "g1", "7")
+
+
+# A tab command without a group would be reaching into the whole browser —
+# other agents' pages and the person's own pages included. It must not run.
+@pytest.mark.parametrize("argv", [
+    ("list-tabs",),
+    ("switch-tab", "42"),
+    ("close-tab", "7"),
+])
+def test_ext_tab_commands_require_group(fake_ext, argv):
+    r = _run("--backend", "extension", *argv)
+    assert r.exit_code != 0
+    assert "group" in r.output.lower()
+    assert fake_ext.calls == []
 
 
 def test_cli_backend_ext_routes_groups(fake_ext):
@@ -336,13 +365,15 @@ def test_cli_backend_ext_routes_get_title(fake_ext):
 
 # ─────────────────── 4. --backend extension error paths ───────────────────
 
-def test_ext_scroll_without_group_errors(fake_ext):
+@pytest.mark.usefixtures("fake_ext")
+def test_ext_scroll_without_group_errors():
     r = _run("--backend", "extension", "scroll", "100")
     assert r.exit_code != 0
     assert "group" in r.output.lower()
 
 
-def test_ext_zoom_without_group_errors(fake_ext):
+@pytest.mark.usefixtures("fake_ext")
+def test_ext_zoom_without_group_errors():
     r = _run("--backend", "extension", "zoom", "1.5")
     assert r.exit_code != 0
     assert "group" in r.output.lower()
@@ -368,7 +399,7 @@ def test_cdp_path_unchanged_for_batch1(monkeypatch):
     # Invoke with --backend cdp: should NOT hit the fake extension backend.
     # The CDP callback may fail because no Chrome is running, but what we
     # assert is that _ext_backend() is not called.
-    r = _run("--backend", "cdp", "list-tabs")
+    _run("--backend", "cdp", "list-tabs", "--group", "g1")
     # Regardless of exit code (CDP may error out without Chrome), the
     # extension path must not have been hit.
     assert fb.calls == [], f"CDP path leaked into extension backend: {fb.calls}"

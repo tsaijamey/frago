@@ -50,7 +50,10 @@ YouTube的"内容转文字"功能会将视频语音内容转换为带时间戳�
 3. 执行配方：
    ```bash
    # 将配方JS文件内容作为脚本注入浏览器执行
-   frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js --return-value
+   # --group 必带：页面开在哪个 group 里，就在哪个 group 里求值
+   frago browser navigate "<视频地址>" --group yt
+   frago browser exec-js --group yt src/frago/recipes/youtube_extract_video_transcript.js --return-value
+   frago browser group-close yt
    ```
 4. 查看控制台输出的JSON格式转录文本
 

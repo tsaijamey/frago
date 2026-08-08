@@ -85,95 +85,131 @@ frago browser -b cdp start --void --keep-alive # off-screen, keep running
 CDP port is fixed at **9222** — the only whitelisted port. Any other value is
 rejected; never invent ports (see `frago book` CDP-port-whitelist).
 
-## Page Operations
+## Tab Groups
 
-All page operations work on the default backend; `--group <name>` scopes a
-tab group for isolation (`FRAGO_CURRENT_RUN` is read when omitted).
+**A group is a real browser tab group** — the banded, collapsible thing on
+the tab strip, with the group's name written on it. Everything an agent
+opens lands in its own group, so two agents working at the same time never
+touch each other's pages, and a person can see at a glance whose pages
+these are.
+
+Every page command takes `--group <name>` (or reads `FRAGO_CURRENT_RUN`).
+Four rules govern the whole model:
+
+1. **Five tabs per group.** Opening a sixth fails and lists the five that
+   are in the way, so the caller picks one to close. Nothing is evicted
+   silently — an agent that believes a page is still open, and finds its
+   next command on a different page, has no way to notice.
+2. **`navigate` replaces, it does not open.** It replaces the group's
+   *current* tab — the last one it navigated or switched to — never the
+   tab the browser happens to be showing. A person reading their own page
+   keeps it.
+3. **`--new` is the only way to open a tab.**
+4. **`group-close` when done.** A group with no activity at all for 30
+   minutes — no command, no tab activation, no scrolling inside its pages
+   — closes itself. That is a backstop, not the workflow.
+
+```bash
+frago browser groups                    # every group: tabs used, time left
+frago browser group-info <name>         # tab list, current tab, idle time
+frago browser group-close <name>        # done with it
+frago browser group-cleanup             # drop groups whose tabs are gone
+```
+
+## Page Operations
 
 ### Navigation
 
 ```bash
-# Navigate to URL and wait for load
-frago browser navigate https://example.com
+# Replace the group's current tab
+frago browser navigate https://example.com --group research
+
+# Open another tab inside the same group (max 5)
+frago browser navigate https://example.com/b --group research --new
 
 # Wait for a selector before returning
-frago browser navigate https://example.com --wait-for '.content-loaded'
+frago browser navigate https://example.com --group research --wait-for '.content-loaded'
 
 # Wait N seconds (decimals ok)
-frago browser wait 2
+frago browser wait --group research 2
 ```
 
 ### Element Interaction
 
 ```bash
 # Click element
-frago browser click "#submit-button"
-frago browser click "button[type=submit]" --wait-timeout 15
+frago browser click --group research "#submit-button"
+frago browser click --group research "button[type=submit]" --wait-timeout 15
 
 # Execute JavaScript (return value with --return-value)
-frago browser exec-js "document.title"
-frago browser exec-js "return document.querySelectorAll('a').length" --return-value
+frago browser exec-js --group research "document.title"
+frago browser exec-js --group research "document.querySelectorAll('a').length" --return-value
 ```
 
 ### Page Content
 
 ```bash
 # Get page title
-frago browser get-title
+frago browser get-title --group research
 
 # Get text content from page or element (selector defaults to body)
-frago browser get-content
-frago browser get-content "#main-content"
+frago browser get-content --group research
+frago browser get-content --group research "#main-content"
 ```
 
 ### Screenshots
 
 ```bash
 # Page screenshot (default: current viewport)
-frago browser screenshot output.png
+frago browser screenshot --group research output.png
 
 # Full-page screenshot
-frago browser screenshot page.png --full-page --quality 90
+frago browser screenshot --group research page.png --full-page --quality 90
 ```
 
 ### Scrolling
 
 ```bash
 # Scroll by pixels (positive down, negative up) or alias
-frago browser scroll 500
-frago browser scroll down
-frago browser scroll page-down
+frago browser scroll --group research 500
+frago browser scroll --group research down
+frago browser scroll --group research page-down
 
 # Scroll to element (or by text)
-frago browser scroll-to "#footer"
-frago browser scroll-to --text "Load more"
+frago browser scroll-to --group research "#footer"
+frago browser scroll-to --group research --text "Load more"
 ```
 
 ### Zoom
 
 ```bash
 # Set zoom level (1.0 = 100%)
-frago browser zoom 1.5
+frago browser zoom --group research 1.5
 ```
 
 ## Tab Management
 
+Tab commands act **inside** a group. A group only ever sees, and only ever
+touches, its own tabs.
+
 ```bash
-# List all tabs
-frago browser list-tabs
+# The group's own tabs; the one marked * is where commands land
+frago browser list-tabs --group research
 
-# Switch to a tab by id (partial ids match)
-frago browser switch-tab ABC123
+# Point the group at one of its tabs (partial ids match).
+# This changes where commands land — not what is on screen.
+frago browser switch-tab --group research ABC123
 
-# Close a tab
-frago browser close-tab ABC123
+# ...and bring it on screen too
+frago browser switch-tab --group research ABC123 --activate
 
-# Tab groups
-frago browser groups
-frago browser group-info <group_name>
-frago browser group-close <group_name>
-frago browser group-cleanup
+# Close one of the group's own tabs — this is how you make room
+frago browser close-tab --group research ABC123
 ```
+
+The CDP backend enforces the same rules, with one thing it cannot do: CDP
+has no access to the browser's tab-group UI, so there a group is
+bookkeeping only and its tabs are not banded together on the tab strip.
 
 ## Visual Effects
 
@@ -181,12 +217,12 @@ Visual markers for debugging and demonstration; they work on both backends
 and `clear-effects` removes effects left by either backend.
 
 ```bash
-frago browser highlight "#target-element" --color "#FF6B6B"
-frago browser pointer "#target-element"
-frago browser spotlight "#focus-element" --life-time 5
-frago browser annotate "#element" "This is important" --position top
-frago browser underline "#text-element"
-frago browser clear-effects
+frago browser highlight --group research "#target-element" --color "#FF6B6B"
+frago browser pointer --group research "#target-element"
+frago browser spotlight --group research "#focus-element" --life-time 5
+frago browser annotate --group research "#element" "This is important" --position top
+frago browser underline --group research "#text-element"
+frago browser clear-effects --group research
 ```
 
 ## Profile Management
