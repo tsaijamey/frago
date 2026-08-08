@@ -20,7 +20,7 @@
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "background/service-worker-v10.js",
+    "service_worker": "background/service-worker-v11.js",
     "type": "module"
   },
   "content_scripts": [
