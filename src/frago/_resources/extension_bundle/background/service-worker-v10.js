@@ -106,9 +106,18 @@ async function saveGroups() {
 // Every command that touches a group resets its idle clock, and so does
 // anything the person does inside its tabs (activating, navigating,
 // scrolling). Thirty minutes of total silence is what closes a group.
-function touchGroup(name) {
+//
+// The reset has to reach session storage, not just this copy of the
+// table. The service worker is torn down within seconds of going idle,
+// and the next one reloads the table from storage — an in-memory-only
+// reset would vanish with it, and a group being used every few minutes
+// would still be carrying a half-hour-old timestamp when the expiry
+// alarm next looked at it.
+async function touchGroup(name) {
     const g = groups.get(name);
-    if (g) g.lastActivity = Date.now();
+    if (!g) return;
+    g.lastActivity = Date.now();
+    await saveGroups();
 }
 
 function groupOwning(tabId) {
@@ -347,7 +356,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
     // Someone brought one of a group's tabs to front — that group is in
     // use, whoever did it. Its idle clock restarts.
     const owner = groupOwning(tabId);
-    if (owner) { touchGroup(owner); saveGroups(); }
+    if (owner) await touchGroup(owner);
     sendEvent("tab.activated", { tab_id: tabId, window_id: windowId });
 });
 
@@ -359,7 +368,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, change, tab) => {
         && change.title === undefined) return;
     await ready;
     const owner = groupOwning(tabId);
-    if (owner) { touchGroup(owner); saveGroups(); }
+    if (owner) await touchGroup(owner);
     sendEvent("tab.updated", {
         tab_id: tabId,
         url: change.url !== undefined ? change.url : tab.url,
@@ -606,7 +615,7 @@ async function openTabInGroup(name, url) {
     const tab = await chrome.tabs.create({ url, active: false });
     g.tabs.push(tab.id);
     g.current = tab.id;
-    touchGroup(name);
+    g.lastActivity = Date.now();
     await fileIntoGroup(name, tab.id);
     await saveGroups();
     return tab.id;
@@ -621,7 +630,7 @@ async function resolveTab(params, { create = false, url = null } = {}) {
     requireGroupName(group);
     const g = await pruneGroup(group);
     if (g && g.current != null) {
-        touchGroup(group);
+        await touchGroup(group);
         return g.current;
     }
     if (create && url) return await openTabInGroup(group, url);
@@ -668,8 +677,7 @@ async function tabNavigate({ url, group, tab_id, timeout = 15_000,
         if (!openNew && g && g.current != null) {
             id = g.current;
             await chrome.tabs.update(id, { url });
-            touchGroup(group);
-            await saveGroups();
+            await touchGroup(group);
         } else {
             id = await openTabInGroup(group, url);
             openedNew = true;
@@ -894,8 +902,7 @@ async function tabsList({ group }) {
                 message: `group '${group}' does not exist — navigate first`,
                 data: { group } };
     }
-    touchGroup(group);
-    await saveGroups();
+    await touchGroup(group);
     let collapsed = null;
     if (g.tabGroupId != null && chrome.tabGroups) {
         try { collapsed = !!(await chrome.tabGroups.get(g.tabGroupId)).collapsed; }
@@ -922,8 +929,7 @@ async function tabsSwitch({ group, tab_id, activate = false }) {
                 data: { group, tabs: await groupTabSummaries(group) } };
     }
     g.current = tab_id;
-    touchGroup(group);
-    await saveGroups();
+    await touchGroup(group);
     let activated = false;
     if (activate) {
         const tab = await chrome.tabs.update(tab_id, { active: true });
@@ -951,8 +957,7 @@ async function tabsClose({ group, tab_id }) {
     if (g.current === tab_id) {
         g.current = g.tabs.length ? g.tabs[g.tabs.length - 1] : null;
     }
-    touchGroup(group);
-    await saveGroups();
+    await touchGroup(group);
     return { group, tab_id, closed: true, remaining: g.tabs.length,
              current: g.current, limit: MAX_TABS_PER_GROUP };
 }
@@ -1563,10 +1568,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // 只认自己 group 名下的标签，别的页面发来的一概不理。
     if (msg?.type === "frago.activity" && sender?.tab?.id != null) {
         const tabId = sender.tab.id;
-        ready.then(() => {
+        // Fire-and-forget: the page is not waiting on an answer, and a
+        // failed heartbeat must never surface in the page it came from.
+        ready.then(async () => {
             const owner = groupOwning(tabId);
-            if (owner) { touchGroup(owner); saveGroups(); }
-        });
+            if (owner) await touchGroup(owner);
+        }).catch(() => {});
         return false;
     }
     return false;
