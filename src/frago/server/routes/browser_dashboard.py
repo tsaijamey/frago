@@ -6,14 +6,17 @@ the tab group state file.
 """
 
 import json
-from pathlib import Path
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
-router = APIRouter()
+# Read the file the group manager actually writes. This used to be a
+# hand-written ~/.frago/browser/tab_groups.json — a directory nothing
+# creates — so the dashboard reported "No active tab groups" no matter
+# how many were open.
+from frago.browser.cdp.tab_group_manager import STATE_FILE
 
-STATE_FILE = Path.home() / ".frago" / "browser" / "tab_groups.json"
+router = APIRouter()
 
 DASHBOARD_HTML = """\
 <!DOCTYPE html>
