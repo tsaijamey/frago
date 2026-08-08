@@ -302,6 +302,97 @@ def test_service_worker_ceiling_matches_the_python_one():
     assert eval(idle.group(1).replace("_", "")) == GROUP_TIMEOUT_SECONDS * 1000
 
 
+def test_group_errors_are_reported_by_name_with_a_usable_way_out():
+    """An error an agent cannot act on is a dead end.
+
+    Two things went wrong here before and both are worth a test. The
+    bridge reported bare numbers (`-32003`) while the books documented
+    `TAB_NOT_IN_GROUP`, so an agent matching what the docs promised
+    never matched anything. And every bridge error carried the hint
+    "run: frago browser start" — advice that, for a tab-in-the-wrong-
+    group error, tears down the browser and closes every other group's
+    pages to fix nothing.
+    """
+    from click.testing import CliRunner
+
+    from frago.browser.backends.extension import ExtensionBackendError
+    from frago.cli import browser_commands as cc
+
+    class _Exploding:
+        def list_tabs(self, group):
+            raise ExtensionBackendError(
+                -32003,
+                f"TAB_NOT_IN_GROUP: tab 7 is not in group '{group}'",
+                {"code": "TAB_NOT_IN_GROUP", "group": group,
+                 "remedies": [f"frago browser list-tabs --group {group}"]},
+            )
+
+    runner = CliRunner()
+    with patch.object(cc, "_ext_backend", lambda: _Exploding()):
+        r = runner.invoke(
+            cc.browser_group,
+            ["--backend", "extension", "list-tabs", "--group", "g1"],
+            env={"FRAGO_CURRENT_RUN": "", "FRAGO_BROWSER_BACKEND": ""},
+        )
+
+    assert r.exit_code != 0
+    payload = json.loads(r.output)
+    assert payload["code"] == "TAB_NOT_IN_GROUP", \
+        "the named code is what the books document; a bare number is unusable"
+    assert "-32003" not in payload["error"], \
+        "the transport number does not belong in the agent-facing message"
+    assert payload["hint"] == ["frago browser list-tabs --group g1"]
+    assert "frago browser start" not in json.dumps(payload), \
+        "the bridge answered, so restarting the browser fixes nothing " \
+        "and closes everyone else's tabs"
+
+
+def test_bridge_down_still_says_to_start_the_browser():
+    """The restart hint is right exactly once: when nothing answered."""
+    from click.testing import CliRunner
+
+    from frago.cli import browser_commands as cc
+
+    class _Unreachable:
+        def list_tabs(self, group):
+            raise ConnectionRefusedError("no socket")
+
+    runner = CliRunner()
+    with patch.object(cc, "_ext_backend", lambda: _Unreachable()):
+        r = runner.invoke(
+            cc.browser_group,
+            ["--backend", "extension", "list-tabs", "--group", "g1"],
+            env={"FRAGO_CURRENT_RUN": "", "FRAGO_BROWSER_BACKEND": ""},
+        )
+
+    assert r.exit_code != 0
+    assert "frago browser start" in json.loads(r.output)["hint"]
+
+
+def test_service_worker_names_every_group_error():
+    """The bridge's group errors must all carry a documented name.
+
+    Kept as a source check because these throws live in the browser and
+    no Python test can reach them.
+    """
+    import re
+    from pathlib import Path
+
+    import frago
+    sw = (Path(frago.__file__).parent / "_resources" / "extension_bundle"
+          / "background" / "service-worker-v11.js").read_text(encoding="utf-8")
+
+    named = set(re.findall(r'groupError\(\s*-?\d+,\s*"([A-Z_]+)"', sw))
+    assert {"NO_GROUP", "GROUP_TAB_LIMIT", "TAB_NOT_IN_GROUP",
+            "NO_TAB_IN_GROUP"} <= named, f"unnamed group errors remain: {named}"
+
+    from frago.browser.cdp.tab_group_manager import CHROME_ERRORS
+    unknown = named - set(CHROME_ERRORS)
+    assert not unknown, (
+        f"{unknown} is reported by the extension backend but unknown to the "
+        f"CDP backend — one vocabulary, or agents learn two")
+
+
 def test_extension_manifest_grants_what_groups_need():
     """Tab groups need `tabGroups`; the 30-minute timer needs `alarms`.
 

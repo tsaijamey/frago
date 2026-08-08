@@ -392,16 +392,27 @@ def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
     try:
         return _dispatch_extension(name, kwargs)
     except ExtensionBackendError as e:
-        # `data` carries what makes the error actionable — for a full
-        # group it is the list of open tabs plus the commands that clear
-        # it. Dropping it would leave the agent with "no" and no way out.
-        err = {"ok": False, "code": e.code, "error": str(e)}
-        if e.data:
-            err["data"] = e.data
-            hints = (e.data or {}).get("remedies") if isinstance(e.data, dict) else None
-            if hints:
-                err["hint"] = hints
-        err.setdefault("hint", "run: frago browser start")
+        # Report the error by name. The numeric JSON-RPC code is a
+        # transport detail — the books document `GROUP_TAB_LIMIT`, and an
+        # agent matching what the docs promise must actually find it.
+        data = e.data if isinstance(e.data, dict) else None
+        err = {"ok": False,
+               "code": (data or {}).get("code") or e.code,
+               "error": e.message}
+        if data:
+            # `data` carries what makes the error actionable — for a full
+            # group, the list of open tabs plus the commands that clear
+            # it. Dropping it leaves the agent with "no" and no way out.
+            err["data"] = data
+            if data.get("remedies"):
+                err["hint"] = data["remedies"]
+        if "hint" not in err and not (data or {}).get("code"):
+            # Restarting is the right advice for exactly one situation:
+            # nothing answered. A *named* error means the extension did
+            # answer and refused on purpose — telling an agent to restart
+            # the browser because a tab was in the wrong group would tear
+            # down every other group's pages to fix nothing.
+            err["hint"] = "run: frago browser start"
     except FileNotFoundError as e:
         err = {"ok": False, "code": "socket-not-found",
                "error": f"bridge socket not found: {e}",

@@ -42,6 +42,7 @@ CHROME_ERRORS = {
     "TAB_NOT_IN_GROUP": "target tab does not belong to current group",
     "GROUP_TAB_LIMIT": "group is full — close a tab before opening another",
     "NO_TAB_IN_GROUP": "group has no open tab yet — navigate first",
+    "GROUP_NOT_FOUND": "no group by that name is open",
     "NAVIGATION_TIMEOUT": "page load timed out",
     "LANDING_PAGE_PROTECTED": "landing page is protected, cannot be operated on",
 }

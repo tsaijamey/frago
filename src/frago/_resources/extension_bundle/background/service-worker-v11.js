@@ -127,10 +127,28 @@ function groupOwning(tabId) {
     return null;
 }
 
+// Errors carry a name, not just a number.
+//
+// JSON-RPC's numeric codes are for the transport; -32003 tells an agent
+// nothing and is not what the docs promise it will see. Every group
+// error therefore names itself, in the same vocabulary the CDP backend
+// already uses, so an agent reads one error format regardless of which
+// backend answered.
+//
+// `remedies` is the other half: an error an agent cannot act on is a
+// dead end. Anything that names a way out puts the exact commands here.
+function groupError(code, name, message, extra = {}) {
+    return {
+        code,
+        message: `${name}: ${message}`,
+        data: { code: name, ...extra },
+    };
+}
+
 function requireGroupName(group) {
     if (!group) {
-        throw { code: -32602,
-                message: "group required — pass --group <name>" };
+        throw groupError(-32602, "NO_GROUP",
+                         "group required — pass --group <name>");
     }
     return group;
 }
@@ -592,12 +610,12 @@ async function fileIntoGroup(name, tabId) {
 async function assertRoomInGroup(name) {
     const g = await pruneGroup(name) || ensureGroupState(name);
     if (g.tabs.length < MAX_TABS_PER_GROUP) return g;
-    throw {
-        code: -32010,
-        message: `group '${name}' already holds ${g.tabs.length} tabs `
-               + `(limit ${MAX_TABS_PER_GROUP}). Close one you no longer `
-               + `need, or navigate without --new to reuse the current tab.`,
-        data: {
+    throw groupError(
+        -32010, "GROUP_TAB_LIMIT",
+        `group '${name}' already holds ${g.tabs.length} tabs `
+        + `(limit ${MAX_TABS_PER_GROUP}). Close one you no longer need, `
+        + `or navigate without --new to reuse the current tab.`,
+        {
             group: name,
             limit: MAX_TABS_PER_GROUP,
             tabs: await groupTabSummaries(name),
@@ -606,8 +624,7 @@ async function assertRoomInGroup(name) {
                 `frago browser navigate <url> --group ${name}   # replaces the current tab`,
                 `frago browser group-close ${name}              # done with this group`,
             ],
-        },
-    };
+        });
 }
 
 async function openTabInGroup(name, url) {
@@ -634,12 +651,15 @@ async function resolveTab(params, { create = false, url = null } = {}) {
         return g.current;
     }
     if (create && url) return await openTabInGroup(group, url);
-    throw {
-        code: -32002,
-        message: `group '${group}' has no open tab — navigate first: `
-               + `frago browser navigate <url> --group ${group}`,
-        data: { group },
-    };
+    throw groupError(
+        -32002, "NO_TAB_IN_GROUP",
+        `group '${group}' has no open tab yet`,
+        {
+            group,
+            remedies: [
+                `frago browser navigate <url> --group ${group}`,
+            ],
+        });
 }
 
 function waitForLoad(tabId, timeoutMs = 15_000) {
@@ -898,9 +918,11 @@ async function tabsList({ group }) {
     requireGroupName(group);
     const g = await pruneGroup(group);
     if (!g) {
-        throw { code: -32002,
-                message: `group '${group}' does not exist — navigate first`,
-                data: { group } };
+        throw groupError(
+            -32002, "NO_TAB_IN_GROUP",
+            `group '${group}' does not exist yet`,
+            { group,
+              remedies: [`frago browser navigate <url> --group ${group}`] });
     }
     await touchGroup(group);
     let collapsed = null;
@@ -924,9 +946,12 @@ async function tabsSwitch({ group, tab_id, activate = false }) {
     if (tab_id == null) throw { code: -32602, message: "tab_id required" };
     const g = await pruneGroup(group);
     if (!g || !g.tabs.includes(tab_id)) {
-        throw { code: -32003,
-                message: `tab ${tab_id} is not in group '${group}'`,
-                data: { group, tabs: await groupTabSummaries(group) } };
+        throw groupError(
+            -32003, "TAB_NOT_IN_GROUP",
+            `tab ${tab_id} is not in group '${group}' — a group may only `
+            + `reach its own tabs`,
+            { group, tabs: await groupTabSummaries(group),
+              remedies: [`frago browser list-tabs --group ${group}`] });
     }
     g.current = tab_id;
     await touchGroup(group);
@@ -947,10 +972,12 @@ async function tabsClose({ group, tab_id }) {
     if (tab_id == null) throw { code: -32602, message: "tab_id required" };
     const g = await pruneGroup(group);
     if (!g || !g.tabs.includes(tab_id)) {
-        throw { code: -32003,
-                message: `tab ${tab_id} is not in group '${group}' — a group `
-                       + `may only close its own tabs`,
-                data: { group, tabs: await groupTabSummaries(group) } };
+        throw groupError(
+            -32003, "TAB_NOT_IN_GROUP",
+            `tab ${tab_id} is not in group '${group}' — a group may only `
+            + `close its own tabs`,
+            { group, tabs: await groupTabSummaries(group),
+              remedies: [`frago browser list-tabs --group ${group}`] });
     }
     try { await chrome.tabs.remove(tab_id); } catch (_) { /* 已经没了 */ }
     g.tabs = g.tabs.filter((id) => id !== tab_id);
@@ -994,7 +1021,10 @@ async function groupsList() {
 async function groupsInfo({ name }) {
     if (!name) throw { code: -32602, message: "name required" };
     const g = await pruneGroup(name);
-    if (!g) throw { code: -32002, message: `group not found: ${name}` };
+    if (!g) {
+        throw groupError(-32002, "GROUP_NOT_FOUND",
+                         `no group named '${name}' is open`, { group: name });
+    }
     const now = Date.now();
     return {
         name, tabs: await groupTabSummaries(name), current: g.current,

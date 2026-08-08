@@ -27,9 +27,17 @@ from .base import (
 
 
 class ExtensionBackendError(RuntimeError):
+    """An error the bridge answered with — the bridge itself is fine.
+
+    ``code`` is the numeric JSON-RPC code; group errors also carry a
+    named code in ``data["code"]`` (``GROUP_TAB_LIMIT`` and friends),
+    which is the one the books document and the CLI reports.
+    """
+
     def __init__(self, code: int, message: str, data: Any = None) -> None:
         super().__init__(f"[{code}] {message}")
         self.code = code
+        self.message = message
         self.data = data
 
 
