@@ -19,7 +19,7 @@ agent 面对多种工具时选错优先级，导致功能重复、效率低下�
 | 搜索信息 | frago browser navigate google 搜索 | WebSearch（桌面模式会崩溃） |
 | 查看网页 | frago browser navigate + get-content | WebFetch |
 | 打开 URL（agent 自己要读要操作） | frago browser navigate | window.open / raw CDP |
-| 打开配方页面给人看 | frago recipe open | frago browser navigate（那是 agent 自己的受控浏览器） |
+| 打开配方页面给人看 | frago recipe open <配方名>（也收完整地址） | frago browser navigate（那是 agent 自己的受控浏览器） |
 | 提取数据 | 先查 frago recipe list | 从头手写 JS |
 | 文件操作 | Claude Code Read/Write/Edit | 手动 cat/echo |
 
