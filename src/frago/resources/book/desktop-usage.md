@@ -28,8 +28,10 @@ frago desktop browser open https://...     # 然后才是干活
 | 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read` |
 | 标签页 | `tab open <url>` / `tab switch <n>` / `tab close <n>` |
 | 终端窗口 | `term run "<命令>"` / `term read` |
+| 图片浏览器 | `image open <本地图片路径>` |
 | 鼠标 | `mouse to --ref <ref>` / `mouse drift` / `mouse click` |
-| 窗口 | `window min\|max\|restore\|move` / `focus term\|browser` |
+| 开关程序 | `window open\|close --target term\|browser\|image` |
+| 窗口 | `window min\|max\|restore\|move` / `focus term\|browser\|image` |
 | 镜头 | `camera focus --ref <ref> --zoom <k>` / `camera pan` / `camera reset` / `camera up\|down` |
 | 录制 | `rec start --name <n>` / `rec stop` |
 | 讲解 | `say "<旁白>"` / `overlay` |
@@ -55,7 +57,13 @@ frago desktop browser open https://...     # 然后才是干活
 
 **指向窗口的动作自动把那扇窗口提到最前。** `browser open`、`browser click`、`tab switch`、`mouse to --ref page:...`、`camera focus` 落在页面上——这些都会先激活浏览器窗口再动作，不需要先发 `focus`。激活如实写在回执的 `effect.focus` 里。反过来，纯观察（`wait`、`term read`）不动焦点。
 
-**桌面页面是只读显示器。** 它自己不产生任何操作，画面变化全部来自指令。页面断线会自行重连，重连后补发最近状态，所以录制中抖一下不会永久黑屏。
+**关掉程序和收起窗口是两件事。** `window close --target term` 让终端离开桌面——窗口缩着淡出、dock 上那颗灯灭掉；`window min` 只是把窗口飞进 dock，程序还在跑、灯还亮着。两者在画面上刻意长得不一样，因为观众要分得出"退出了"和"收起来了"。三扇窗（term / browser / image）走的是同一条 `window open|close`，图片浏览器没有自己的关法。
+
+**关掉不动载体。** tmux 会话照常在跑、演员标签照常在收画面、已经装进图片浏览器的那张图留着，所以 `window open` 叫回来的是原样，不是一个新开的空程序。看到窗口没了别去查会话被谁杀了——回执里的 `carrier_kept` 就是说这件事。
+
+**指向某个程序的动作会把它重新打开。** 终端关着时 `term run` 的正确结果是终端回来并执行，不是报一句"你得先打开它"；发生了就在回执的 `effect.launched` 里写着。要拍空桌面，别发这类指令就是了——三个程序全关掉是合法状态，那时 `focus` 是 `null`，键盘输入没有接收方，`type` / `key` 会明确报错。
+
+**桌面页面是只读显示器。** 它自己不产生任何操作，画面变化全部来自指令。页面断线会自行重连，重连后补发最近状态，所以录制中抖一下不会永久黑屏。标题栏上那三颗红黄绿是纯装饰，**点不了**——它们不在可寻址元素名单里，关窗口一律走 `window close`。
 
 ## 不要做
 
