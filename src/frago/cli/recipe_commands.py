@@ -1029,19 +1029,86 @@ def publish_state(name: str, slot: str, state_file: str | None):
     click.echo(page_url(name, slot))
 
 
-@recipe_group.command(name='open', cls=AgentFriendlyCommand)
-@click.argument('url')
-def open_ui(url: str):
-    """Open a recipe's UI page in the default browser.
+_OPENABLE_SCHEMES = {'http', 'https', 'file'}
 
-    Interactive recipes call this to show their result page to the human.
+
+def _resolve_open_target(target: str, slot: str | None) -> str:
+    """Turn what the caller typed into the address to hand the browser.
+
+    Two spellings are accepted on purpose. A recipe that just published its
+    state already holds the full address and passes that. A person or an agent
+    standing outside a run only has the recipe's name, and asking them to
+    remember `http://localhost:8093/app/<name>` is how they end up passing the
+    bare name to something that expects a URL — so the bare name is spelled
+    out here instead of failing silently in the browser.
+
+    Anything else — a scheme we cannot open, a bare host:port, a path — is an
+    error. Handing those to the browser produces a blank page, not a refusal.
+    """
+    from urllib.parse import urlsplit
+
+    from frago.recipes.app_state import DEFAULT_SLOT, InvalidSlotName, list_slots, page_url
+
+    scheme = urlsplit(target).scheme
+    if scheme:
+        if scheme not in _OPENABLE_SCHEMES:
+            raise click.ClickException(
+                f"cannot open {target!r}: only {'/'.join(sorted(_OPENABLE_SCHEMES))} addresses "
+                f"can be opened"
+            )
+        if slot:
+            raise click.ClickException(
+                "--slot applies to a recipe name, not a full address; put ?key=<slot> in the URL"
+            )
+        return target
+
+    try:
+        page = page_url(target, slot or DEFAULT_SLOT)
+    except InvalidSlotName:
+        raise click.ClickException(
+            f"{target!r} is neither a recipe name nor an address frago can open. "
+            f"Pass a recipe name (frago recipe open my_recipe) or a full URL "
+            f"(frago recipe open http://localhost:8093/app/my_recipe)."
+        ) from None
+
+    published = list_slots(target)
+    if not published:
+        raise click.ClickException(
+            f"recipe {target!r} has never published a page, so it would open blank. "
+            f"Run it first: frago recipe run {target}"
+        )
+    if (slot or DEFAULT_SLOT) not in published:
+        raise click.ClickException(
+            f"recipe {target!r} has no slot {slot or DEFAULT_SLOT!r}. "
+            f"Published slots: {', '.join(published)}"
+        )
+    return page
+
+
+@recipe_group.command(name='open', cls=AgentFriendlyCommand)
+@click.argument('target', metavar='RECIPE_NAME_OR_URL')
+@click.option('--slot', default=None, help='Which published slot to show (default: "default")')
+def open_ui(target: str, slot: str | None):
+    """Open a recipe's page for a human: `frago recipe open <recipe-name|url>`.
+
+    Takes either the recipe's name or the page's full address; the name is
+    expanded to http://localhost:8093/app/<name>. Interactive recipes call
+    this with the address publish already handed them; people and agents
+    outside a run have only the name, so both spellings work.
+
     It uses the OS default browser, NOT the CDP-controlled Chrome that
     `frago browser` drives: the page is for a person to read, and opening it
     here keeps the agent's CDP browser free and removes any dependency on
     that browser being up. This is the single seam for "open a recipe page
     for the human" — change the open behavior here, not in each recipe.
+
+    A target that is not a known recipe or an openable address is refused
+    rather than handed to the browser, because the browser answers a bad
+    address with a blank page and no error.
     """
     import webbrowser
+
+    url = _resolve_open_target(target, slot)
 
     try:
         opened = webbrowser.open(url)

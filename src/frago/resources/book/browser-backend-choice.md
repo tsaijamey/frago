@@ -3,7 +3,7 @@
 使用浏览器的优先级只有三层，从上往下降级：
 
 1. **`frago browser <cmd>`** —— extension 后端（默认，无需任何 flag）。标准路径，绝大多数场景直接跑，不需要做后端选择。
-2. **`frago browser -b cdp <cmd>`** —— 默认后端做不到时的合法降级：需要真无头、需要与 agent 浏览器互不干扰的独立实例、需要 `--void` / `--app` / `--profile-dir` 这类启动形态（agent_os 的录制机位就走这条）。
+2. **`frago browser -b cdp <cmd>`** —— 默认后端做不到时的合法降级：需要真无头、需要与 agent 浏览器互不干扰的独立实例、需要 `--void` / `--app` / `--profile-dir` 这类启动形态（agent_os 的舞台浏览器与录制机位都走这条）。
 3. **自起浏览器进程**（`chrome --headless`、`--remote-debugging-port`、自己连原生 CDP）—— 禁止，没有例外。
 
 先默认，做不到再 `-b cdp`；两条都在 `frago browser` 之内，任何绕过 frago 直连浏览器的做法都不在选项里。
@@ -42,12 +42,12 @@ frago browser stop         # 对称拆除
 
 什么时候降级——满足任一条即可：
 
-- 要**真无头**（不弹窗口、不占屏幕）
+- 要**真无头**（不弹窗口、不占屏幕）。extension 后端只给**前台**标签产帧，要连续拿画面就得让那个标签一直占着人的屏幕——agent_os 的舞台浏览器正是因为这一条从 extension 换回了 `-b cdp`。
 - 要一个**独立实例**，不能占用/干扰 agent 那个常驻浏览器（如 agent_os 的录制机位）
 - 要 `--void`（移出屏幕）/ `--app`（无边框窗口）/ `--profile-dir`（指定 profile）这类只有 CDP 后端提供的启动形态
 
 ```bash
-frago browser -b cdp start --headless          # 独立无头实例，端口固定 9222
+frago browser -b cdp start --headless          # 独立无头实例，端口默认 9222
 frago browser -b cdp start --void --keep-alive # 移出屏幕、保持运行
 frago browser -b cdp navigate "file:///abs/path/page.html" --group <name>
 frago browser -b cdp screenshot out.png --full-page
@@ -56,14 +56,19 @@ frago browser -b cdp stop                      # 对称拆除
 
 `-b` 是 `browser` 组级 flag，位置在子命令之前，所有子命令通用。
 
-CDP 后端的 profile 是独立的：`~/.frago/profiles/<浏览器>/9222/`，从系统浏览器 profile 初始化——首次启动要整棵拷贝，慢且占盘，这也是"能用默认就别降级"的实际代价。
+CDP 后端的 profile 是独立的：`~/.frago/profiles/<浏览器>/9222/`，从系统浏览器 profile 初始化——首次启动要整棵拷贝，慢且占盘，这也是"能用默认就别降级"的实际代价。这份 profile 已经攒了一批站点的登录态，是 9222 值钱的地方。
 
 group 的规则两个后端完全一致：一组最多 5 个标签、navigate 默认替换当前
 标签、`--new` 才开新页、tab 命令只能碰本组的标签、30 分钟静默自动关组。
 唯一差别是 CDP 碰不到浏览器的标签组界面，所以那边的 group 只是账本，标签
-不会在标签栏上并成一条带名字的组。
+不会在标签栏上并成一条带名字的组。这不是没实现，是 CDP 协议里没有这个东西：
+向浏览器要 `/json/protocol`，57 个域里 `tabGroup` 出现 0 次，标签组只有
+`chrome.tabGroups` 这一个入口，而那是扩展 API。
 
-**端口只有 9222。** 9222 是唯一白名单值，传别的会被 CLI 直接拒（`frago book` 中的 CDP 端口白名单条目）；自创端口会在 `~/.frago/profiles/chrome/<port>/` 留下垃圾 profile 目录、数据分叉。
+**端口只有 9222 与 9223 两个，你自己用的永远是 9222。** 传别的数会被 CLI 直接拒；自创端口会在 `~/.frago/profiles/<浏览器>/<port>/` 留下垃圾 profile 目录、数据分叉。
+
+- **9222** 默认值，不用传 `--port`。agent_os 的舞台浏览器（演员）也常驻在这一台上，就是为了复用那份登录态——所以你在 9222 上开的标签会出现在虚拟桌面的标签条里，舞台跑着的时候尽量别拿它开新标签。
+- **9223** agent_os 的录制机位专用，只在录制期间存在，你没有理由自己去用它。它必须与演员分开：停录时机位会 `-b cdp stop` 收走自己，共用端口那一下会把演员连同登录态一起带走。
 
 ## 第三层：禁止
 

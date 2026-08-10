@@ -2201,7 +2201,7 @@ def init(force: bool):
     type=int,
     default=9222,
     callback=validate_cdp_port,
-    help='CDP debug port. Only 9222 is allowed.'
+    help='CDP debug port. Only 9222 (default) and 9223 (agent_os recorder) are allowed.'
 )
 @click.option(
     '--width',
@@ -2281,8 +2281,9 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
     against another browser's profile. --browser chrome is the worst
     case: that is the user's everyday Chrome profile.
 
-    CDP port is fixed at 9222 (the only whitelisted port); any other value
-    is rejected. Regular browsing needs no --port at all.
+    CDP port defaults to 9222; only 9222 and 9223 (the agent_os recorder)
+    are whitelisted, any other value is rejected. Regular browsing needs
+    no --port at all.
     See: frago book browser-backend-choice
     """
     from pathlib import Path
@@ -2389,7 +2390,7 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
     type=int,
     default=9222,
     callback=validate_cdp_port,
-    help='CDP debug port. Only 9222 is allowed.'
+    help='CDP debug port. Only 9222 (default) and 9223 (agent_os recorder) are allowed.'
 )
 @print_usage
 def browser_stop(port: int):
