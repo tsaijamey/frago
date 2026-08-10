@@ -26,7 +26,7 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(tgm_mod, "STATE_FILE", state_file)
     monkeypatch.setattr(tgm_mod, "LOCK_FILE", lock_file)
     monkeypatch.setattr(
-        TabGroupManager, "_push_to_landing_page", lambda self, data: None
+        TabGroupManager, "_push_to_landing_page", lambda *_a, **_kw: None
     )
     return state_file
 
@@ -102,7 +102,8 @@ def test_close_group_http_closes_tabs_and_removes_state(isolated_state):
     assert "g1" not in on_disk["groups"]
 
 
-def test_close_group_http_missing_group_returns_false(isolated_state):
+@pytest.mark.usefixtures("isolated_state")
+def test_close_group_http_missing_group_returns_false():
     tgm = TabGroupManager()
     with patch.object(tgm_mod, "cdp_get") as fake_get:
         assert tgm.close_group_http("nope") is False
@@ -117,7 +118,7 @@ def test_close_group_http_failure_logs_warning_and_still_removes(isolated_state)
     tgm = TabGroupManager()
     tgm.logger = MagicMock()
 
-    def flaky_get(url, **kwargs):
+    def flaky_get(url, **_kwargs):
         if "dead_tab" in url:
             raise Exception("tab already gone")
         return MagicMock()
@@ -181,7 +182,7 @@ def test_tab_cleanup_service_reclaims_expired_group(isolated_state):
         "expiry-test": _group_data(now - GROUP_TIMEOUT_SECONDS - 60, ["old_tab"]),
     })
 
-    def fake_requests_get(url, timeout=None):
+    def fake_requests_get(url, timeout=None):  # noqa: ARG001 — signature must match requests.get
         r = MagicMock()
         if url.endswith("/json/list"):
             r.json.return_value = []

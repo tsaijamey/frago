@@ -16,6 +16,7 @@ from typing import Any, NamedTuple
 from ..extension.native_host import SOCK_PATH, DaemonClient
 from ..profile_seed import system_profile_dir
 from .base import (
+    MAX_TABS_PER_GROUP,
     ChromeBackend,
     ClickResult,
     ContentResult,
@@ -26,9 +27,17 @@ from .base import (
 
 
 class ExtensionBackendError(RuntimeError):
+    """An error the bridge answered with — the bridge itself is fine.
+
+    ``code`` is the numeric JSON-RPC code; group errors also carry a
+    named code in ``data["code"]`` (``GROUP_TAB_LIMIT`` and friends),
+    which is the one the books document and the CLI reports.
+    """
+
     def __init__(self, code: int, message: str, data: Any = None) -> None:
         super().__init__(f"[{code}] {message}")
         self.code = code
+        self.message = message
         self.data = data
 
 
@@ -68,18 +77,24 @@ class ExtensionChromeBackend(ChromeBackend):
         return {"backend": "extension", "bridge": info}
 
     def navigate(self, url: str, group: str, *,
-                 timeout: float = 15.0) -> NavigateResult:
-        """Navigate the group's tab; open one if the group has none.
+                 timeout: float = 15.0,
+                 new: bool = False) -> NavigateResult:
+        """Open ``url`` in the group — reusing its current tab, or in a
+        new tab of the same group when ``new`` is set.
 
-        To open a *second* tab, navigate under a different group name —
-        a group names exactly one tab, so there is no coherent way to
-        hold two under the same name.
+        The reused tab is the group's *current* one (last navigated or
+        switched to), never the browser's active tab: a person may be
+        looking at their own page while the agent works.
         """
         r = self._rpc("tab.navigate",
-                      {"url": url, "group": group,
+                      {"url": url, "group": group, "new": bool(new),
                        "timeout": int(timeout * 1000)})
         return NavigateResult(tab_id=r["tab_id"], url=r["url"],
-                              title=r["title"])
+                              title=r["title"], group=r.get("group", group),
+                              opened_new=bool(r.get("opened_new")),
+                              tabs_in_group=r.get("tabs_in_group"),
+                              tab_limit=r.get("tab_limit",
+                                              MAX_TABS_PER_GROUP))
 
     def exec_js(self, script: str, group: str) -> ExecResult:
         r = self._rpc("dom.exec_js", {"script": script, "group": group})
@@ -128,15 +143,18 @@ class ExtensionChromeBackend(ChromeBackend):
         info = self._rpc("system.info", {})
         return {"backend": "extension", "ok": True, "bridge": info}
 
-    def list_tabs(self) -> list[dict]:
-        r = self._rpc("tabs.list", {})
-        return list(r.get("tabs", []))
+    def list_tabs(self, group: str) -> dict:
+        return self._rpc("tabs.list", {"group": group})
 
-    def switch_tab(self, tab_id: str) -> dict:
-        return self._rpc("tabs.switch", {"tab_id": _coerce_tab_id(tab_id)})
+    def switch_tab(self, group: str, tab_id: str, *,
+                   activate: bool = False) -> dict:
+        return self._rpc("tabs.switch",
+                         {"group": group, "tab_id": _coerce_tab_id(tab_id),
+                          "activate": bool(activate)})
 
-    def close_tab(self, tab_id: str) -> dict:
-        return self._rpc("tabs.close", {"tab_id": _coerce_tab_id(tab_id)})
+    def close_tab(self, group: str, tab_id: str) -> dict:
+        return self._rpc("tabs.close",
+                         {"group": group, "tab_id": _coerce_tab_id(tab_id)})
 
     def list_groups(self) -> dict:
         r = self._rpc("groups.list", {})

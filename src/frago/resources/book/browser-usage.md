@@ -4,9 +4,13 @@ frago browser 操作完整指南。所有浏览器操作通过 frago browser 命
 
 唯一例外是把配方页面交给人看：那种页面用 `frago recipe open <url>` 开在用户的系统默认浏览器里，与本文讲的受控浏览器无关，agent 也控制不了它（见 `frago book interactive-recipe`）。除此之外，凡是 agent 自己要读、要点、要抓的页面，都走下面的命令。
 
-## Group（前提）
+## Group：你自己的那一格浏览器
 
-每条 tab 操作命令 MUST 带 `--group` 参数指定 group 上下文，否则报错 `NO_GROUP`。
+**一个 group 就是浏览器标签栏上一个真的标签组**，组名写在上面，人扫一眼
+就知道这几页是谁开的。你开的每一个页面都进这个组，别的 agent 开的页面
+在别的组里——两边看不见彼此，也碰不到彼此。
+
+每条 tab 操作命令 MUST 带 `--group`，否则报错 `NO_GROUP`。
 
   frago browser navigate <url> --group <name>
   frago browser get-content --group <name> [selector]
@@ -16,33 +20,57 @@ frago browser 操作完整指南。所有浏览器操作通过 frago browser 命
 
 recipe/run 环境中 `FRAGO_CURRENT_RUN` 环境变量作为 fallback，此时可省略 `--group`。
 
-group 保证：同 group 内所有命令自动跟随同一 tab；不同 group 互不干扰；30 分钟不活跃自动清理。
+四条规矩，记住这四条就够了：
+
+1. **一个 group 最多 5 个标签。** 满了再开会失败，并把组里现有的 5 个
+   页面列给你，让你自己决定关掉哪个——不会偷偷替你关掉最旧的那个。
+2. **navigate 默认替换，不新开。** 替换的是这个 group「当前的那个标签」
+   （最后一次 navigate 或 switch-tab 指到的），不是浏览器里正在显示的
+   那个——人可能正看着自己的页面，那页永远不会被你换掉。
+3. **要新开一页就加 `--new`。** 这是唯一的开页方式。
+4. **用完 `group-close`。** 忘了也有兜底：整整 30 分钟没有任何动静
+   （命令、切换激活、页面内滚动都算动静），整组自动关掉。
 
 下面这些命令不需要 `--group`（管理类，或自己就是全局操作）：
 
   start  stop  status  check  detect  wait  reset
-  list-tabs  switch-tab  close-tab
   groups  group-info  group-close  group-cleanup
 
 除此之外的每一条都必须有 group，缺了会报 `--group/-g required`。
+**注意 `list-tabs` / `switch-tab` / `close-tab` 现在也必须带 group**——它们
+只看得见、也只动得了本 group 的标签。
 `detect` 和 `wait` 两条可带可不带：`detect` 带上就从「列已装浏览器」变成「探测当前页反爬」，`wait` 带上才等在该 group 的页面上。
 
-## Group 查询
+## Group 查询与收尾
 
-  frago browser groups               # 列出所有 group
+  frago browser groups               # 所有 group：几个标签、还有多久过期
   frago browser groups --json        # JSON 格式
-  frago browser group-info <name>    # group 详情
-  frago browser group-close <name>   # 关闭 group
-  frago browser group-cleanup        # 清掉 tab 已不存在的僵尸 group
+  frago browser group-info <name>    # group 详情：标签清单、当前标签、闲置时长
+  frago browser group-close <name>   # 用完了就关——这是你的收尾动作
+  frago browser group-cleanup        # 清掉标签已不存在的僵尸 group
   frago browser reset                # 关掉除落地页外的所有 tab（有 FRAGO_CURRENT_RUN 时只清本 group）
 
 ## 导航
 
-  frago browser navigate <url> --group <name>
+  frago browser navigate <url> --group <name>          # 替换 group 当前标签
+  frago browser navigate <url> --group <name> --new    # 在 group 里新开一个标签
 
-导航的是这个 group 当前跟着的那个标签。**要新开一个标签，就换一个 group 名**
-——group 还没有绑定标签时，导航本身就会新建一个。一个 group 只记一个标签，
-所以别指望在同一个 group 下攒出第二个标签。
+不带 `--new` 时导航的是这个 group 的**当前标签**：最后一次 navigate 或
+switch-tab 指到的那一个。它不是「浏览器里激活的那个标签」——agent 常年在
+后台干活，人眼前的页面不归你换。
+
+带 `--new` 就在同一个 group 里再开一页，最多 5 页。到顶了会这样告诉你：
+
+  GROUP_TAB_LIMIT: group 'research' already holds 5 tabs (limit 5).
+    * [1234] 某某页面
+      [1235] 另一个页面
+      ...
+    → frago browser close-tab --group research <tab_id>
+    → frago browser navigate <url> --group research   # 替换当前标签
+    → frago browser group-close research
+
+看到这个不要换个 group 名绕过去——那只会在标签栏上堆出第二个组。按提示
+关掉一个不再需要的标签，或者改成替换。
 
 URL 来源必须可信：用户提供、页面提取、搜索结果、recipe 输出。禁止凭记忆构造 URL。
 
@@ -115,28 +143,38 @@ scroll 回报的是**实际位移**不是你要的距离，别拿请求值当结
   frago browser underline --group <name> <selector>         # 文字逐行下划线动画
   frago browser clear-effects --group <name>                # 清除所有效果
 
-## Tab 管理
+## Tab 管理（全部在 group 内）
 
-  frago browser list-tabs                    # 查看所有 tab
-  frago browser switch-tab <id>              # 切换 tab（自动更新 group 的跟随目标）
-  frago browser close-tab <id>               # 关闭 tab
+  frago browser list-tabs --group <name>                  # 本组的标签清单
+  frago browser switch-tab --group <name> <id>            # 让后续命令改落在这一页
+  frago browser switch-tab --group <name> <id> --activate # 顺便把它切到人眼前
+  frago browser close-tab --group <name> <id>             # 关掉本组的一页
 
-agent 开的页面一律收进浏览器里一个叫 **auto 的标签组**，默认折叠——这些页面是
-给 agent 自己用的，平铺在标签栏上会把人自己的标签挤走。`list-tabs` 里的
-`tab_group` / `tab_group_collapsed` 两个字段会告诉你页面归到哪儿、是否折着。
+`list-tabs` 只列本 group 的标签，带 `*` 的那个是**当前标签**——你不带 `--new`
+的 navigate、你的 click / get-content / screenshot，全落在它上面。
+`<id>` 可以只写前几位。
 
-注意这跟 `--group` 是同名的两回事：`--group` 是 frago 的逻辑隔离账本，浏览器
-里看不见；auto 是标签栏上那个能折叠的分组。所有 agent 页面进同一个 auto 分组，
-不影响 `--group` 的隔离——两个并行 worker 的页面照旧各跟各的 tab。
+`switch-tab` 换的是「接下来的命令作用在哪一页」，默认**不动**浏览器的可见
+状态：人可能正看着别的东西。真要切到人眼前，显式加 `--activate`。
 
-人手动展开 auto 组之后，agent 不会再把它折回去；组里正显示着页面时也不折。
+`close-tab` 只能关本 group 的标签。关别人的页面——不管是别的 agent 的还是
+人自己的——这条命令一概拒绝。组满了要腾位置，靠的就是它。
+
+标签组默认是折叠的：你的页面是给你自己用的，平铺会把人的标签挤走。人手动
+展开之后不会再被折回去（展开就是「我正在看」），组里含当前活动标签时也不折。
+
+CDP 后端（`-b cdp`）的隔离规则完全一样，只有一处做不到：CDP 碰不到浏览器的
+标签组界面，所以那边的 group 只是账本，标签不会在标签栏上并成一条。这也是
+默认走扩展后端的又一个理由。
 
 ## 禁止
 
-- 禁止 window.open() / raw CDP Target.createTarget 开 tab
+- 禁止 window.open() / raw CDP Target.createTarget 开 tab；开页只有 `--new`
+- 禁止靠「换个 group 名」来绕开 5 个标签的上限——那是在标签栏上堆组
 - 禁止 exec-js 手写 scrollBy / element.click() 替代专用命令
 - 禁止截图当阅读工具
 - 禁止凭记忆猜测 URL
+- 用完不 `group-close` 不算禁止，但等 30 分钟自动清理是兜底不是流程
 
 ## 进一步阅读
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import (
+    MAX_TABS_PER_GROUP,
     ChromeBackend,
     ClickResult,
     ContentResult,
@@ -50,15 +51,25 @@ class CDPChromeBackend(ChromeBackend):
                 "groups": list(tgm.list_groups()) if hasattr(tgm, "list_groups") else []}
 
     def navigate(self, url: str, group: str, *,
-                 timeout: float = 15.0) -> NavigateResult:  # noqa: ARG002 — backend interface param
+                 timeout: float = 15.0,  # noqa: ARG002 — backend interface param
+                 new: bool = False) -> NavigateResult:
         from ..cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=self.host, port=self.port)
         tgm.ensure_group(group)
-        target_id = tgm.get_or_create_tab(url, group, group)
+        # A fresh session on the group's current tab; creating the tab
+        # needs a session with TargetCommands, which _session() gives us.
+        target_id = tgm.get_or_create_tab(url, group, self._session(group),
+                                          new=new)
         cfg_session = self._session_from_target(target_id)
         cfg_session.navigate(url)
         title = cfg_session.get_title() if hasattr(cfg_session, "get_title") else ""
-        return NavigateResult(tab_id=target_id, url=url, title=title)
+        state = tgm.get_group(group)
+        return NavigateResult(
+            tab_id=target_id, url=url, title=title, group=group,
+            opened_new=bool(new),
+            tabs_in_group=len(state.tabs) if state else None,
+            tab_limit=state.max_tabs if state else MAX_TABS_PER_GROUP,
+        )
 
     def _session_from_target(self, target_id: str) -> Any:
         from ..cdp.config import CDPConfig
@@ -120,73 +131,103 @@ class CDPChromeBackend(ChromeBackend):
         except Exception as e:
             return {"backend": "cdp", "ok": False, "error": str(e)}
 
-    def list_tabs(self) -> list[dict]:
-        import requests
-        resp = requests.get(f"http://{self.host}:{self.port}/json/list",
-                            timeout=5)
-        pages = [t for t in resp.json() if t.get("type") == "page"]
-        return [{"index": i, "id": p.get("id", ""),
-                 "title": p.get("title", ""), "url": p.get("url", "")}
-                for i, p in enumerate(pages)]
+    def list_tabs(self, group: str) -> dict:
+        from ..cdp.tab_group_manager import TabGroupManager
+        tgm = TabGroupManager(host=self.host, port=self.port)
+        tgm.reconcile()
+        g = tgm.get_group(group)
+        if not g:
+            raise RuntimeError(
+                f"group '{group}' does not exist — navigate first")
+        return {
+            "group": group,
+            "tabs": [{"tab_id": t.target_id, "title": t.title, "url": t.url,
+                      "current": t.target_id == g.current_target_id}
+                     for t in tgm.get_group_tabs(group)],
+            "current": g.current_target_id,
+            "count": len(g.tabs),
+            "limit": g.max_tabs,
+        }
 
-    def switch_tab(self, tab_id: str) -> dict:
+    def switch_tab(self, group: str, tab_id: str, *,
+                   activate: bool = False) -> dict:
         import json
 
         import requests
         import websocket
-        targets = requests.get(f"http://{self.host}:{self.port}/json/list",
-                               timeout=5).json()
-        target = next((t for t in targets
-                       if t.get("type") == "page"
-                       and (t.get("id") == tab_id
-                            or t.get("id", "").startswith(str(tab_id)))), None)
-        if not target:
-            raise RuntimeError(f"no matching tab: {tab_id}")
-        ws = websocket.create_connection(target["webSocketDebuggerUrl"])
-        ws.send(json.dumps({"id": 1, "method": "Page.bringToFront",
-                            "params": {}}))
-        ws.recv()
-        ws.close()
-        return {"tab_id": target["id"], "title": target.get("title", ""),
-                "url": target.get("url", "")}
 
-    def close_tab(self, tab_id: str) -> dict:
-        import requests
-        # Match list-tabs CLI behavior (prefix match).
-        targets = requests.get(f"http://{self.host}:{self.port}/json/list",
-                               timeout=5).json()
-        target = next((t for t in targets
-                       if t.get("type") == "page"
-                       and (t.get("id") == tab_id
-                            or t.get("id", "").startswith(str(tab_id)))), None)
-        if not target:
-            raise RuntimeError(f"no matching tab: {tab_id}")
-        requests.get(
-            f"http://{self.host}:{self.port}/json/close/{target['id']}",
-            timeout=5)
-        return {"tab_id": target["id"], "closed": True}
-
-    def list_groups(self) -> dict:
         from ..cdp.tab_group_manager import TabGroupManager
         tgm = TabGroupManager(host=self.host, port=self.port)
+        full = tgm.switch_tab(group, str(tab_id))
+        if activate:
+            targets = requests.get(
+                f"http://{self.host}:{self.port}/json/list", timeout=5).json()
+            target = next((t for t in targets if t.get("id") == full), None)
+            if target and target.get("webSocketDebuggerUrl"):
+                ws = websocket.create_connection(
+                    target["webSocketDebuggerUrl"])
+                ws.send(json.dumps({"id": 1, "method": "Page.bringToFront",
+                                    "params": {}}))
+                ws.recv()
+                ws.close()
+        return {"group": group, "tab_id": full, "current": True,
+                "activated": bool(activate)}
+
+    def close_tab(self, group: str, tab_id: str) -> dict:
+        from ..cdp.tab_group_manager import TabGroupManager
+        tgm = TabGroupManager(host=self.host, port=self.port)
+        full = tgm.close_tab(group, str(tab_id), self._session(group))
+        g = tgm.get_group(group)
+        return {"group": group, "tab_id": full, "closed": True,
+                "remaining": len(g.tabs) if g else 0,
+                "current": g.current_target_id if g else None}
+
+    def list_groups(self) -> dict:
+        import time
+
+        from ..cdp.tab_group_manager import (
+            GROUP_TIMEOUT_SECONDS,
+            TabGroupManager,
+        )
+        tgm = TabGroupManager(host=self.host, port=self.port)
         tgm.reconcile()
+        now = time.time()
         return {name: {"tabs": len(g.tabs),
+                       "current": g.current_target_id,
+                       "limit": g.max_tabs,
                        "created_at": g.created_at,
+                       "last_activity": g.last_activity,
+                       "idle_seconds": int(now - g.last_activity),
+                       "expires_in_seconds": max(
+                           0, int(g.last_activity + GROUP_TIMEOUT_SECONDS - now)),
                        "agent_session": g.agent_session}
                 for name, g in tgm.list_groups().items()}
 
     def group_info(self, name: str) -> dict:
-        from ..cdp.tab_group_manager import TabGroupManager
+        import time
+
+        from ..cdp.tab_group_manager import (
+            GROUP_TIMEOUT_SECONDS,
+            TabGroupManager,
+        )
         tgm = TabGroupManager(host=self.host, port=self.port)
         tgm.reconcile()
         g = tgm.get_group(name)
         if not g:
             return {}
+        now = time.time()
         return {"name": name, "agent_session": g.agent_session,
                 "created_at": g.created_at,
-                "tabs": [{"id": t.target_id, "title": t.title,
-                          "url": t.url, "origin": t.origin}
-                         for t in g.tabs.values()]}
+                "last_activity": g.last_activity,
+                "idle_seconds": int(now - g.last_activity),
+                "expires_in_seconds": max(
+                    0, int(g.last_activity + GROUP_TIMEOUT_SECONDS - now)),
+                "current": g.current_target_id,
+                "count": len(g.tabs), "limit": g.max_tabs,
+                "tabs": [{"tab_id": t.target_id, "title": t.title,
+                          "url": t.url, "origin": t.origin,
+                          "current": t.target_id == g.current_target_id}
+                         for t in tgm.get_group_tabs(name)]}
 
     def group_close(self, name: str) -> dict:
         from ..cdp.tab_group_manager import TabGroupManager

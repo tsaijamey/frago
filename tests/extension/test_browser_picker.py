@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from frago.browser.backends.extension import (
     BrowserChoice,
     list_browsers_for_extension,
@@ -30,11 +28,41 @@ def test_picker_prefers_edge_over_chromium_when_both_present():
     assert result == BrowserChoice("/usr/bin/microsoft-edge", "edge")
 
 
+def test_cdp_backend_also_prefers_edge():
+    """Both backends land on the same browser.
+
+    The extension picker has always put Edge first. The CDP path used to
+    put Chrome first, which meant `-b cdp` quietly drove a different
+    browser — and, worse, the person's everyday Chrome profile. One
+    browser for the agent means one place its logins live.
+    """
+    from frago.browser.cdp.browser_detection import (
+        BROWSER_PRIORITY,
+        BrowserType,
+        get_default_browser,
+    )
+
+    assert BROWSER_PRIORITY[0] is BrowserType.EDGE
+    assert BROWSER_PRIORITY[-1] is BrowserType.CHROME, \
+        "Chrome Stable last: it cannot load the extension and is usually " \
+        "the person's own browser"
+
+    installed = {"/usr/bin/microsoft-edge", "/usr/bin/google-chrome"}
+    with patch("frago.browser.cdp.browser_detection.platform.system",
+               return_value="Linux"), \
+         patch("frago.browser.cdp.browser_detection.shutil.which",
+               return_value=None), \
+         patch("frago.browser.cdp.browser_detection.os.path.exists",
+               side_effect=lambda p: p in installed):
+        browser_type, path = get_default_browser("Linux")
+    assert (browser_type, path) == (BrowserType.EDGE, "/usr/bin/microsoft-edge")
+
+
 def test_picker_returns_none_when_nothing_installed():
     with patch("frago.browser.backends.extension._platform.system",
                return_value="Linux"), \
          patch("pathlib.Path.exists", autospec=True,
-               side_effect=lambda self: False), \
+               side_effect=lambda *_a: False), \
          patch("frago.browser.backends.extension.shutil.which",
                return_value=None):
         assert pick_browser_for_extension() is None
@@ -44,7 +72,7 @@ def test_picker_falls_back_to_path_lookup():
     with patch("frago.browser.backends.extension._platform.system",
                return_value="Linux"), \
          patch("pathlib.Path.exists", autospec=True,
-               side_effect=lambda self: False):
+               side_effect=lambda *_a: False):
         # PATH has only chromium-browser
         def fake_which(name):
             return "/opt/chromium/chromium-browser" if name == "chromium-browser" else None

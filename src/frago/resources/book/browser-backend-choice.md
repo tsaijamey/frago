@@ -18,7 +18,7 @@ frago browser stop         # 对称拆除
 
 控制通道是浏览器扩展 + native messaging，运行在真实浏览器环境里：
 
-- 自动挑选浏览器，顺序固定：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi，取第一个装了的。Chrome Stable 被刻意排除——v137 起它静默忽略 `--load-extension`。
+- **Edge 是 frago 的浏览器。** 自动挑选顺序固定，取第一个装了的：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi。Chrome Stable 被刻意排除——v137 起它静默忽略 `--load-extension`。`-b cdp` 那条路也是同一个优先级（Edge → Chromium → Chrome），两条路落在同一个浏览器上，agent 的登录态才只有一份。
 - **直接使用所选浏览器自己的默认 profile**（如 Edge 的 `~/Library/Application Support/Microsoft Edge`），不做隔离拷贝。该浏览器是专给 agent 用的（用户日常浏览器是另一个品牌）；用户在这个浏览器里手动登录、保存的密码，agent 立即可见，反之亦然。
 - 真实浏览器环境天然过 anti-bot 检测（Cloudflare / Datadome / Akamai），`detect --group <g>` 探针可用（见 `frago book browser-anti-bot`）。
 - 同一时刻该 profile 只能有一个浏览器实例；start 撞锁会报错并提示先 stop。
@@ -58,7 +58,14 @@ frago browser -b cdp stop                      # 对称拆除
 
 CDP 后端的 profile 是独立的：`~/.frago/profiles/<浏览器>/9222/`，从系统浏览器 profile 初始化——首次启动要整棵拷贝，慢且占盘，这也是"能用默认就别降级"的实际代价。这份 profile 已经攒了一批站点的登录态，是 9222 值钱的地方。
 
-**端口只有 9222 与 9223 两个，你自己用的永远是 9222。** 传别的数会被 CLI 直接拒；自创端口会在 `~/.frago/profiles/chrome/<port>/` 留下垃圾 profile 目录、数据分叉。
+group 的规则两个后端完全一致：一组最多 5 个标签、navigate 默认替换当前
+标签、`--new` 才开新页、tab 命令只能碰本组的标签、30 分钟静默自动关组。
+唯一差别是 CDP 碰不到浏览器的标签组界面，所以那边的 group 只是账本，标签
+不会在标签栏上并成一条带名字的组。这不是没实现，是 CDP 协议里没有这个东西：
+向浏览器要 `/json/protocol`，57 个域里 `tabGroup` 出现 0 次，标签组只有
+`chrome.tabGroups` 这一个入口，而那是扩展 API。
+
+**端口只有 9222 与 9223 两个，你自己用的永远是 9222。** 传别的数会被 CLI 直接拒；自创端口会在 `~/.frago/profiles/<浏览器>/<port>/` 留下垃圾 profile 目录、数据分叉。
 
 - **9222** 默认值，不用传 `--port`。agent_os 的舞台浏览器（演员）也常驻在这一台上，就是为了复用那份登录态——所以你在 9222 上开的标签会出现在虚拟桌面的标签条里，舞台跑着的时候尽量别拿它开新标签。
 - **9223** agent_os 的录制机位专用，只在录制期间存在，你没有理由自己去用它。它必须与演员分开：停录时机位会 `-b cdp stop` 收走自己，共用端口那一下会把演员连同登录态一起带走。

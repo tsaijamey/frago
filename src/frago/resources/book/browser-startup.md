@@ -12,7 +12,7 @@ frago browser detect    # 只列系统已装的浏览器及路径（带 --group 
 
 start 自动完成：选浏览器 → 拉起 native messaging daemon → 写 manifest → 加载 frago 扩展启动浏览器 → 等待桥握手。
 
-选浏览器的顺序固定：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi，取第一个装了的。Chrome Stable 被排除（v137 起静默忽略 `--load-extension`）。
+**Edge 是 frago 的默认浏览器**，两个后端都一样。选浏览器的顺序固定：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi，取第一个装了的。Chrome Stable 排在最后且被扩展后端排除：v137 起它静默忽略 `--load-extension`，而且它通常是用户自己天天在用的那个浏览器，agent 不该默认闯进去。`-b cdp` 的顺序同理：Edge → Chromium → Chrome。
 
 **不要传 `--browser`。** 默认后端下它换不了浏览器：启动的仍是自动挑中的那个，它只把 profile 目录改成你写的品牌的目录，等于拿 A 浏览器去开 B 浏览器的数据目录。而且它只认 `chrome` / `edge` / `chromium` 三个值，其余（brave、vivaldi 等）会被直接拒；其中 `chrome` 尤其危险——那是用户日常浏览器的数据目录。
 

@@ -1,12 +1,17 @@
 """
-Tab Group Manager - Agent-isolated tab routing in shared Chrome browser
+Tab Group Manager — agent-isolated tab pools for the CDP backend.
 
-Adds a group dimension on top of TabManager's origin-based routing.
-Each group has its own tab pool — agents in different groups never
-share or collide on tabs, even for the same origin.
+Same contract as the extension backend's groups: a group owns up to
+:data:`DEFAULT_MAX_TABS_PER_GROUP` tabs, ``navigate`` reuses the group's
+current tab unless asked for a new one, tab commands only ever reach the
+group's own tabs, and a group with nothing happening in it for
+:data:`GROUP_TIMEOUT_SECONDS` closes itself.
 
-No Chrome extension. No browser-level WebSocket. Pure logical isolation
-backed by a JSON state file, using existing CDPSession + TargetCommands.
+One difference that cannot be papered over: CDP has no access to the
+browser's tab-group UI (that API is extension-only), so here a group is
+bookkeeping alone — the tabs are not visually banded together on the tab
+strip. Isolation is identical; only the visible grouping is missing.
+That is one more reason the extension backend is the default.
 """
 
 import json
@@ -35,6 +40,9 @@ CHROME_ERRORS = {
     "NO_GROUP": "no group context — add --group <name> to this command (or set FRAGO_CURRENT_RUN env in recipe)",
     "BROWSER_NOT_RUNNING": "chrome is not running — start with: frago browser start",
     "TAB_NOT_IN_GROUP": "target tab does not belong to current group",
+    "GROUP_TAB_LIMIT": "group is full — close a tab before opening another",
+    "NO_TAB_IN_GROUP": "group has no open tab yet — navigate first",
+    "GROUP_NOT_FOUND": "no group by that name is open",
     "NAVIGATION_TIMEOUT": "page load timed out",
     "LANDING_PAGE_PROTECTED": "landing page is protected, cannot be operated on",
 }
@@ -43,8 +51,10 @@ CHROME_ERRORS = {
 STATE_FILE = Path.home() / ".frago" / "chrome" / "tab_groups.json"
 LOCK_FILE = Path.home() / ".frago" / "chrome" / "tab_groups.lock"
 SCHEMA_VERSION = "1.0"
-DEFAULT_MAX_TABS_PER_GROUP = 10
-GROUP_TIMEOUT_SECONDS = 30 * 60  # 30 minutes
+# Kept in step with the extension backend's ceiling — an agent must not
+# have to learn two different limits depending on which backend is up.
+DEFAULT_MAX_TABS_PER_GROUP = 5
+GROUP_TIMEOUT_SECONDS = 30 * 60  # 30 minutes of total silence
 
 
 @dataclass
@@ -133,43 +143,34 @@ class TabGroupManager:
         self.logger.info(f"Created group '{group_name}'")
         return group
 
-    def get_or_create_tab(self, url: str, group_name: str, session) -> str:
-        """Get or create a tab within a group for the given URL.
+    def get_or_create_tab(self, url: str, group_name: str, session, *,
+                          new: bool = False) -> str:
+        """Return the target_id ``url`` should be loaded into.
 
-        Uses origin-based routing scoped to the group.
+        Without ``new``: the group's current tab — the last one this
+        group navigated or switched to. Not the browser's active tab: a
+        person may be looking at their own page while the agent works.
 
-        Args:
-            url: URL to navigate to.
-            group_name: Group name.
-            session: CDPSession instance (for TargetCommands).
-
-        Returns:
-            target_id of the tab to use.
+        With ``new``: another tab joins the group, up to
+        ``group.max_tabs``. At the ceiling this raises
+        ``GROUP_TAB_LIMIT`` listing the tabs already open, rather than
+        quietly closing the oldest — an agent that believes a page is
+        still open and finds its next command on a different page has no
+        way to notice anything went wrong.
         """
         group = self.ensure_group(group_name)
-        origin = TabManager.extract_origin(url)
+        self._prune_dead_tabs(group)
 
-        if origin is None and group.tabs:
-            # Unroutable URL — use most recent tab in group
-            tab = max(group.tabs.values(), key=lambda t: t.last_activity)
+        if not new and group.current_target_id in group.tabs:
+            tab = group.tabs[group.current_target_id]
+            tab.origin = TabManager.extract_origin(url) or tab.origin
+            tab.url = url
             tab.touch()
             group.touch()
             self._save_state()
             return tab.target_id
 
-        # Find existing tab with same origin in this group
-        if origin:
-            candidates = [t for t in group.tabs.values() if t.origin == origin]
-            if candidates:
-                tab = max(candidates, key=lambda t: t.last_activity)
-                tab.touch()
-                group.touch()
-                self._save_state()
-                return tab.target_id
-
-        # Need new tab — evict if at capacity
-        if len(group.tabs) >= group.max_tabs:
-            self._evict_lru_tab(group, session)
+        self._assert_room(group_name, group)
 
         # Create tab via existing TargetCommands (background to avoid stealing focus)
         target_id = session.target.create_target(url, background=True)
@@ -179,15 +180,136 @@ class TabGroupManager:
         now = time.time()
         group.tabs[target_id] = GroupTabEntry(
             target_id=target_id,
-            origin=origin or "",
+            origin=TabManager.extract_origin(url) or "",
             url=url,
             title="",
             last_activity=now,
             created_at=now,
         )
+        group.current_target_id = target_id
         group.touch()
         self._save_state()
         return target_id
+
+    def _assert_room(self, group_name: str, group: TabGroupState) -> None:
+        """Raise GROUP_TAB_LIMIT when the group cannot hold another tab."""
+        if len(group.tabs) < group.max_tabs:
+            return
+        raise ChromeCommandError(
+            "GROUP_TAB_LIMIT",
+            f"group '{group_name}' already holds {len(group.tabs)} tabs "
+            f"(limit {group.max_tabs}). Close one you no longer need, or "
+            f"navigate without --new to reuse the current tab.",
+            {
+                "group": group_name,
+                "limit": group.max_tabs,
+                "tabs": [
+                    {"tab_id": t.target_id, "title": t.title, "url": t.url,
+                     "current": t.target_id == group.current_target_id}
+                    for t in self.get_group_tabs(group_name)
+                ],
+                "remedies": [
+                    f"frago browser close-tab --group {group_name} <tab_id>",
+                    f"frago browser navigate <url> --group {group_name}",
+                    f"frago browser group-close {group_name}",
+                ],
+            },
+        )
+
+    def _prune_dead_tabs(self, group: TabGroupState) -> None:
+        """Drop tabs the browser no longer has (person closed one, crash)."""
+        live = self._get_live_target_ids()
+        if not live:
+            return
+        dead = [tid for tid in group.tabs if tid not in live]
+        if not dead:
+            return
+        for tid in dead:
+            del group.tabs[tid]
+        if group.current_target_id not in group.tabs:
+            group.current_target_id = (
+                max(group.tabs.values(), key=lambda t: t.last_activity).target_id
+                if group.tabs else None
+            )
+        self._save_state()
+
+    # ------------------------------------------------------------------
+    # Group-scoped tab operations
+    # ------------------------------------------------------------------
+
+    def require_tab_in_group(self, group_name: str, tab_id: str) -> str:
+        """Resolve ``tab_id`` (full or prefix) against one group's tabs.
+
+        A group may only touch its own tabs — that is the whole point of
+        the isolation. Raises TAB_NOT_IN_GROUP otherwise, listing what
+        the group does hold.
+        """
+        group = self._state.get(group_name)
+        if not group:
+            raise ChromeCommandError(
+                "NO_TAB_IN_GROUP",
+                f"group '{group_name}' does not exist — navigate first",
+                {"group": group_name},
+            )
+        self._prune_dead_tabs(group)
+        matches = [tid for tid in group.tabs
+                   if tid == tab_id or tid.startswith(tab_id)]
+        if len(matches) == 1:
+            return matches[0]
+        if not matches:
+            raise ChromeCommandError(
+                "TAB_NOT_IN_GROUP",
+                f"tab {tab_id} is not in group '{group_name}' — a group may "
+                f"only operate on its own tabs",
+                {"group": group_name,
+                 "tabs": [t.target_id for t in self.get_group_tabs(group_name)]},
+            )
+        raise ChromeCommandError(
+            "TAB_NOT_IN_GROUP",
+            f"tab id '{tab_id}' is ambiguous in group '{group_name}'",
+            {"group": group_name, "matches": matches},
+        )
+
+    def switch_tab(self, group_name: str, tab_id: str) -> str:
+        """Point the group at one of its own tabs. Returns the full id."""
+        full = self.require_tab_in_group(group_name, tab_id)
+        group = self._state[group_name]
+        group.current_target_id = full
+        group.tabs[full].touch()
+        group.touch()
+        self._dirty_groups.add(group_name)
+        self._save_state()
+        return full
+
+    def close_tab(self, group_name: str, tab_id: str, session) -> str:
+        """Close one of the group's own tabs. Returns the full id."""
+        full = self.require_tab_in_group(group_name, tab_id)
+        group = self._state[group_name]
+        try:
+            session.target.close_target(full)
+        except Exception:
+            self.logger.warning(f"Failed to close tab {full}", exc_info=True)
+        del group.tabs[full]
+        if group.current_target_id == full:
+            group.current_target_id = (
+                max(group.tabs.values(), key=lambda t: t.last_activity).target_id
+                if group.tabs else None
+            )
+        group.touch()
+        self._dirty_groups.add(group_name)
+        self._save_state()
+        return full
+
+    def touch_group(self, group_name: str) -> None:
+        """Reset a group's idle clock. Any command on it counts as use."""
+        group = self._state.get(group_name)
+        if not group:
+            return
+        group.touch()
+        if group.current_target_id in group.tabs:
+            group.tabs[group.current_target_id].touch()
+        self._dirty_groups.add(group_name)
+        self._save_state()
 
     def close_group(self, group_name: str, session) -> bool:
         """Close a group and all its tabs.
@@ -296,6 +418,12 @@ class TabGroupManager:
             for tid in dead:
                 del group.tabs[tid]
                 changed = True
+            if dead and group.current_target_id not in group.tabs:
+                group.current_target_id = (
+                    max(group.tabs.values(),
+                        key=lambda t: t.last_activity).target_id
+                    if group.tabs else None
+                )
             if not group.tabs:
                 empty_groups.append(name)
 
@@ -371,17 +499,6 @@ class TabGroupManager:
     # Internal
     # ------------------------------------------------------------------
 
-    def _evict_lru_tab(self, group: TabGroupState, session) -> None:
-        """Evict the least recently used tab from a group."""
-        if not group.tabs:
-            return
-        lru = min(group.tabs.values(), key=lambda t: t.last_activity)
-        try:
-            session.target.close_target(lru.target_id)
-        except Exception:
-            self.logger.warning(f"Failed to close LRU tab {lru.target_id}", exc_info=True)
-        del group.tabs[lru.target_id]
-
     def _get_live_target_ids(self) -> set[str]:
         """Fetch current page target IDs from Chrome via HTTP."""
         try:
@@ -438,7 +555,12 @@ class TabGroupManager:
         for name, gdata in data.get("groups", {}).items():
             tabs_raw = gdata.pop("tabs", {})
             tabs = {tid: GroupTabEntry(**td) for tid, td in tabs_raw.items()}
-            result[name] = TabGroupState(tabs=tabs, **gdata)
+            group = TabGroupState(tabs=tabs, **gdata)
+            # State written before the ceiling dropped to 5 carries the old
+            # number. Left alone, a group that survived the upgrade would
+            # keep a different limit from every group created after it.
+            group.max_tabs = min(group.max_tabs, DEFAULT_MAX_TABS_PER_GROUP)
+            result[name] = group
         return result
 
     def _save_state(self) -> None:
@@ -621,6 +743,15 @@ def create_session(ctx, *, group: str | None = None, require_group: bool = True)
             port=ctx.obj['PORT'],
         )
         target_id = tgm.get_current_target(group_name)
+        if not target_id:
+            raise ChromeCommandError(
+                "NO_TAB_IN_GROUP",
+                f"group '{group_name}' has no open tab — navigate first: "
+                f"frago browser navigate <url> --group {group_name}",
+                {"group": group_name},
+            )
+        # Any command on a group is proof it is in use; restart its clock.
+        tgm.touch_group(group_name)
         # Store resolved group in ctx for downstream use
         ctx.obj['_RESOLVED_GROUP'] = group_name
 
@@ -652,11 +783,15 @@ def build_group_index(host: str = "127.0.0.1", port: int = 9222) -> dict[str, st
         return {}
 
 
-def route_tab_for_navigate(ctx, session, url: str, group=None):
+def route_tab_for_navigate(ctx, session, url: str, group=None, *,
+                           new: bool = False):
     """Route to the correct tab for a URL within a group.
 
     Group context is mandatory — resolved from explicit --group or
     FRAGO_CURRENT_RUN env var.  Raises ChromeCommandError if missing.
+
+    ``new`` opens another tab inside the group instead of reusing its
+    current one; at the group's ceiling it raises GROUP_TAB_LIMIT.
 
     Returns (target_id, resolved_group_name) tuple.
     """
@@ -669,5 +804,5 @@ def route_tab_for_navigate(ctx, session, url: str, group=None):
         port=ctx.obj['PORT'],
     )
     tgm.reconcile()
-    tid = tgm.get_or_create_tab(url, group_name, session) or None
+    tid = tgm.get_or_create_tab(url, group_name, session, new=new) or None
     return tid, group_name

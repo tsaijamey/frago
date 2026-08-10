@@ -30,7 +30,10 @@ WARNINGS = []
 
 # 浏览器扩展桥只对当前活动的标签页求值，对非活动标签页会一直挂住不返回。
 # 别的标签页一抢焦点，本配方的求值就全卡死。这里记住自己的标签页，必要时切回来。
+#
+# 切回去要连 group 一起报：tab 命令只在本 group 内生效，光有 tab_id 不够。
 _TAB_ID = None
+_GROUP = None
 _ALWAYS_ACTIVATE = False
 EJS_TIMEOUT = 20
 
@@ -70,19 +73,26 @@ def browser(args, timeout=120):
 
 
 def navigate(url, group):
-    global _TAB_ID
+    """导航。全程只用一个标签页——不传 --new，每次都替换本 group 的当前页。"""
+    global _TAB_ID, _GROUP
     ok, res = browser(["navigate", url, "--group", group])
     if not ok:
         die(f"导航失败：{url}", str(res)[:300])
+    _GROUP = group
     if isinstance(res, dict) and res.get("tab_id"):
         _TAB_ID = res["tab_id"]
     return res
 
 
 def activate():
-    """把自己的标签页切回前台。扩展桥只服务活动标签页。"""
-    if _TAB_ID:
-        browser(["switch-tab", str(_TAB_ID)], timeout=20)
+    """把自己的标签页切回前台。扩展桥只服务活动标签页。
+
+    switch-tab 默认只改「后续命令落在哪一页」，不动浏览器的可见状态，
+    所以这里必须显式带 --activate 才真的切到前台。
+    """
+    if _TAB_ID and _GROUP:
+        browser(["switch-tab", "--group", _GROUP, str(_TAB_ID), "--activate"],
+                timeout=20)
 
 
 def ejs(code, group, timeout=EJS_TIMEOUT):

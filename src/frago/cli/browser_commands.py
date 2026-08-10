@@ -75,15 +75,18 @@ def detect_browsers(group):
         raise click.UsageError(
             "anti-bot probe (--group) is only supported by the extension "
             "backend. Use: frago browser -b extension detect --group " + group)
-    from ..browser.cdp.browser_detection import BrowserType, detect_available_browsers
+    from ..browser.cdp.browser_detection import (
+        BROWSER_PRIORITY,
+        detect_available_browsers,
+    )
 
     browsers = detect_available_browsers()
 
-    click.echo("Available browsers:")
+    click.echo("Available browsers (in the order frago picks them):")
     click.echo()
 
     found_any = False
-    for browser_type in [BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM]:
+    for browser_type in BROWSER_PRIORITY:
         path = browsers.get(browser_type)
         name = browser_type.value.title()
 
@@ -96,18 +99,17 @@ def detect_browsers(group):
     click.echo()
 
     if found_any:
-        # Show which would be selected by default
-        default_type = None
-        for bt in [BrowserType.CHROME, BrowserType.EDGE, BrowserType.CHROMIUM]:
-            if browsers.get(bt):
-                default_type = bt
-                break
-
+        default_type = next((bt for bt in BROWSER_PRIORITY
+                             if browsers.get(bt)), None)
         if default_type:
             click.echo(f"Default: {default_type.value} (first available)")
+        click.echo("Edge is frago's browser of choice: it is the one both "
+                   "backends can drive, and it keeps the agent out of the "
+                   "everyday Chrome profile.")
     else:
         click.echo("No supported browsers found.")
-        click.echo("Please install Chrome, Edge, or Chromium.")
+        click.echo("Please install Microsoft Edge (preferred), Chromium, "
+                   "or Chrome.")
 
 
 @click.group(name="browser", cls=AgentFriendlyGroup)
@@ -202,10 +204,11 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     from dataclasses import asdict, is_dataclass
     be = _ext_backend()
     group = kwargs.get("group") or os.environ.get("FRAGO_CURRENT_RUN")
-    # Management-class commands don't need a group.
-    NO_GROUP = {"start", "stop", "status", "list-tabs", "switch-tab",
-                "close-tab", "groups", "group-info", "group-close",
-                "group-cleanup", "reset", "wait", "detect"}
+    # Management-class commands don't need a group. Tab commands do:
+    # list-tabs / switch-tab / close-tab all act *inside* a group now —
+    # a group only ever sees and touches its own tabs.
+    NO_GROUP = {"start", "stop", "status", "groups", "group-info",
+                "group-close", "group-cleanup", "reset", "wait", "detect"}
     if name == "start":
         # Full bridge bring-up: pick browser, ensure daemon, install
         # manifest, launch browser, wait for handshake.
@@ -249,7 +252,8 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     if name == "navigate":
         r = be.navigate(kwargs["url"], group,
                         timeout=float(kwargs.get("load_timeout") or
-                                      kwargs.get("timeout") or 15.0))
+                                      kwargs.get("timeout") or 15.0),
+                        new=bool(kwargs.get("open_new")))
     elif name == "exec-js":
         r = be.exec_js(kwargs["script"], group)
     elif name == "get-content":
@@ -290,11 +294,12 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
     elif name == "status":
         r = be.status()
     elif name == "list-tabs":
-        r = {"tabs": be.list_tabs()}
+        r = be.list_tabs(group)
     elif name == "switch-tab":
-        r = be.switch_tab(kwargs["tab_id"])
+        r = be.switch_tab(group, kwargs["tab_id"],
+                          activate=bool(kwargs.get("activate")))
     elif name == "close-tab":
-        r = be.close_tab(kwargs["tab_id"])
+        r = be.close_tab(group, kwargs["tab_id"])
     elif name == "groups":
         r = {"groups": be.list_groups()}
     elif name == "group-info":
@@ -387,8 +392,27 @@ def _dispatch_extension_safe(name: str, kwargs: dict) -> None:
     try:
         return _dispatch_extension(name, kwargs)
     except ExtensionBackendError as e:
-        err = {"ok": False, "code": e.code, "error": str(e),
-               "hint": "run: frago browser start"}
+        # Report the error by name. The numeric JSON-RPC code is a
+        # transport detail — the books document `GROUP_TAB_LIMIT`, and an
+        # agent matching what the docs promise must actually find it.
+        data = e.data if isinstance(e.data, dict) else None
+        err = {"ok": False,
+               "code": (data or {}).get("code") or e.code,
+               "error": e.message}
+        if data:
+            # `data` carries what makes the error actionable — for a full
+            # group, the list of open tabs plus the commands that clear
+            # it. Dropping it leaves the agent with "no" and no way out.
+            err["data"] = data
+            if data.get("remedies"):
+                err["hint"] = data["remedies"]
+        if "hint" not in err and not (data or {}).get("code"):
+            # Restarting is the right advice for exactly one situation:
+            # nothing answered. A *named* error means the extension did
+            # answer and refused on purpose — telling an agent to restart
+            # the browser because a tab was in the wrong group would tear
+            # down every other group's pages to fix nothing.
+            err["hint"] = "run: frago browser start"
     except FileNotFoundError as e:
         err = {"ok": False, "code": "socket-not-found",
                "error": f"bridge socket not found: {e}",

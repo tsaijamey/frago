@@ -40,7 +40,7 @@ inputs:
   browser:
     type: string
     required: false
-    description: "浏览器类型：chrome/firefox/chromium，默认 chrome"
+    description: "取 cookie 的浏览器：edge/chrome/firefox/chromium，默认 edge——那是 frago 驱动的浏览器，登录态在那里"
   browser_profile:
     type: string
     required: false
