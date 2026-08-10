@@ -264,7 +264,7 @@ class AgentFriendlyGroupedGroup(AgentFriendlyGroup):
     type=int,
     default=9222,
     callback=validate_cdp_port,
-    help='Chrome DevTools Protocol port. Only 9222 is allowed.'
+    help='Chrome DevTools Protocol port. Only 9222 (default) and 9223 (agent_os recorder) are allowed.'
 )
 @click.option(
     '--proxy-host',

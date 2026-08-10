@@ -254,24 +254,34 @@ class AgentFriendlyCommand(click.Command):
 
 
 
-# CDP 端口白名单：只剩 9222，给需要独立 CDP 实例的场景用（真无头、
-# agent_os 录制机位、--void/--app 等默认 extension 后端做不到的形态）。
+# CDP 端口白名单：两个，给需要独立 CDP 实例的场景用（真无头、
+# --void/--app 等默认 extension 后端做不到的形态）。
+#
+#   9222 —— 默认值，不用传 --port。它的 profile
+#           (~/.frago/profiles/<浏览器>/9222/) 里攒着一批站点的登录态，
+#           agent_os 的舞台浏览器（演员）也占这一台，就是为了复用那份登录态。
+#   9223 —— agent_os 的录制机位专用。它必须与演员分开：停录时机位要
+#           `-b cdp stop` 收走自己，共用端口那一下会把演员连同登录态一起带走。
+#
 # 任何其他端口都会在 ~/.frago/profiles/chrome/<port>/ 下留一个垃圾 profile 目录，
 # 用户明确要求禁止自创端口。此前只有 hook 注入文字提醒，属于建议、拦不住，
 # 这里改成 CLI 层硬校验（2026-07-23）。
-ALLOWED_CDP_PORT = 9222
+DEFAULT_CDP_PORT = 9222
+RECORDER_CDP_PORT = 9223
+ALLOWED_CDP_PORTS = (DEFAULT_CDP_PORT, RECORDER_CDP_PORT)
 
 
 def validate_cdp_port(ctx: Context, param: object, value: int | None) -> int | None:
-    """Reject any CDP port other than the single whitelisted one."""
-    if value is None or value == ALLOWED_CDP_PORT:
+    """Reject any CDP port outside the two whitelisted ones."""
+    if value is None or value in ALLOWED_CDP_PORTS:
         return value
     raise click.BadParameter(
-        f"CDP 端口白名单只有 {ALLOWED_CDP_PORT}，收到 {value}。\n"
+        f"CDP 端口白名单只有 {DEFAULT_CDP_PORT}（默认，含现成登录态）与 "
+        f"{RECORDER_CDP_PORT}（agent_os 录制机位专用），收到 {value}。\n"
         f"  自创端口会在 ~/.frago/profiles/chrome/{value}/ 生成垃圾 profile 目录。\n"
         f"  常规浏览器操作走默认 extension 后端，本就不需要 --port；需要真无头 / "
-        f"独立实例时降级到 `frago browser -b cdp`，端口固定 {ALLOWED_CDP_PORT}，"
-        f"不用传 --port（见 frago book browser-backend-choice）。",
+        f"独立实例时降级到 `frago browser -b cdp`，端口默认就是 "
+        f"{DEFAULT_CDP_PORT}，不用传 --port（见 frago book browser-backend-choice）。",
         ctx=ctx,
         param=param if isinstance(param, click.Parameter) else None,
     )

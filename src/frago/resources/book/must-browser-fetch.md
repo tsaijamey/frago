@@ -30,12 +30,12 @@
 
 降级路线长这样（`-b` 是 `browser` 组级 flag，所有子命令通用）：
 
-  frago browser -b cdp start --headless                              # 独立无头实例，端口固定 9222
+  frago browser -b cdp start --headless                              # 独立无头实例，端口默认 9222
   frago browser -b cdp navigate "file:///abs/path/page.html" --group <name>
   frago browser -b cdp screenshot out.png --full-page
   frago browser -b cdp stop
 
-CDP 后端端口只有 9222 一个白名单值，profile 落在 `~/.frago/profiles/<浏览器>/9222/`（从系统 profile 初始化）。选后端的判据见 `frago book browser-backend-choice`。
+CDP 后端你用的端口永远是 9222（默认值，不用传 `--port`），profile 落在 `~/.frago/profiles/<浏览器>/9222/`（从系统 profile 初始化）。白名单里还有一个 9223，那是 agent_os 录制机位专用的，你没有理由碰它。选后端的判据见 `frago book browser-backend-choice`。
 
 ## 不要做
 - 不要使用 WebFetch 工具
