@@ -445,6 +445,8 @@ def hook_rules_validate():
         "path_contains",
         "path_contains_all",
         "path_regex",
+        "tool_input_contains",
+        "tool_input_regex",
         "prompt_contains",
         "prompt_regex",
         "env_exists",
