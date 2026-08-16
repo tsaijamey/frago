@@ -5,7 +5,7 @@
 frago 通过两个后端驱动基于 Chromium 的浏览器：
 
 - **extension（默认）** — 浏览器扩展 + native messaging 桥，驱动浏览器**自己的真实 profile**。无需任何 flag，是所有页面操作的标准路径。
-- **cdp** — Chrome DevTools Protocol 路径，需显式 `-b cdp` 选择。默认后端做不到时的降级路线：真无头、需要与常驻浏览器互不干扰的独立实例（固定 9222 端口）、`--void` / `--app` / `--profile-dir` 这类启动形态（如 `agent_os` 录制机位）。
+- **cdp** — Chrome DevTools Protocol 路径，需显式 `-b cdp` 选择。默认后端做不到时的降级路线：真无头、需要与常驻浏览器互不干扰的独立实例、`--void` / `--app` / `--profile-dir` 这类启动形态。CDP 端口是白名单制：**9222**（默认）与 **9223**（agent_os 录制机位）。
 
 优先级固定为 **默认 extension > `-b cdp` > 自起浏览器进程（禁止）**。`chrome --headless`、`--remote-debugging-port`、自己连原生 CDP 一律不在选项里——无头与独立实例的需求由 `-b cdp` 覆盖。
 
@@ -22,7 +22,9 @@ frago 通过两个后端驱动基于 Chromium 的浏览器：
 | **Firefox** | ❌ 不支持 | Firefox 141 (2025) 已移除 CDP |
 | **Safari** | ❌ 不支持 | 无 CDP 支持 |
 
-选择器按固定顺序取第一个已安装：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi。**不要传 `--browser`**：默认后端下它不换浏览器，只换 profile 目录指向。
+选择器按固定顺序取第一个已安装：Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev → Chrome Canary → Brave → Vivaldi。
+
+**`--browser` 在不同后端下含义不同。** extension 后端下它不换浏览器——只改 profile 目录指向；`-b cdp` 下它是真的换浏览器，profile 路径跟着走（`--browser chrome` → `~/.frago/profiles/chrome/9222/`）。frago 自己只有在 agent_os 舞台拉起演员与机位时才显式钉 `--browser edge`；其余场合都让选择器自动挑。
 
 ## 浏览器探测
 
@@ -60,7 +62,7 @@ frago browser -b cdp start --headless          # 无头 CDP 实例（9222 端口
 frago browser -b cdp start --void --keep-alive # 移出屏幕、保持运行
 ```
 
-CDP 端口固定为 **9222**——唯一白名单端口。传其它值会被拒绝；禁止自创端口（见 `frago book` 中 CDP 端口白名单条目）。
+CDP 端口白名单只有 **9222**（默认）与 **9223**（agent_os 录制机位），传别的值会被拒绝，禁止自创端口。**9222 是公用的**：虚拟桌面舞台在跑时，它的演员就住在这台实例上，为的是复用播种来的登录 profile——而 `-b cdp start` 默认会顶掉端口上已有的实例（除非加 `--no-kill`）。起之前先 `frago desktop status` 看舞台在不在跑（见 `frago book browser-backend-choice`）。
 
 ## Tab 组
 
@@ -204,6 +206,20 @@ frago browser clear-effects --group research
 frago browser -b cdp start --profile-dir /path/to/custom/profile
 ```
 
+## 虚拟桌面舞台
+
+`frago desktop` 驱动一块可脚本操控的假桌面（一个真实 tmux 会话、一个真实
+浏览器标签页、一张本地图片），供 `agent_os` 配方录制回放。舞台在跑时，
+两个 CDP 端口都归它：
+
+- **9222** — 舞台**演员**：一台无头 Edge，profile 从你真实的 Edge 登录态
+  播种而来。它和独立 `frago browser -b cdp start` 会瞄准的是同一台实例，
+  所以舞台在跑时不要起、也不要停 CDP 实例。
+- **9223** — **机位**：`camera up`（或 `rec start` 自动架机位）时创建，
+  `rec stop` / `camera down` 时整台收走。
+
+动手前先 `frago desktop status`。完整用法见 `frago book desktop-usage`。
+
 ## 反爬
 
 extension 后端是真实浏览器环境，天然过 Cloudflare / Datadome / Akamai 检测。探测某个 group 当前页是否反爬挑战：
@@ -258,11 +274,14 @@ frago browser start
 ### CDP 连接失败
 
 ```bash
-# CDP 端口固定 9222 —— 看谁占着
-lsof -i :9222   # Linux/macOS
+# 端口是白名单制：9222（默认）与 9223（agent_os 机位）
+lsof -i :9222 -i :9223   # Linux/macOS
 netstat -an | findstr 9222   # Windows
 
-# 停掉现有 CDP 实例再重启
+# 舞台在跑时，演员占着 9222——别碰它
+frago desktop status
+
+# 否则停掉现有 CDP 实例再重启
 frago browser -b cdp stop
 frago browser -b cdp start
 ```

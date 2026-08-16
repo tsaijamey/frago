@@ -19,11 +19,15 @@
 2. `~/.frago/community-recipes/` - 社区级
 3. 内置 - 官方级
 
-**结构**：
+**结构**（用户配方位于 `~/.frago/recipes/` 下）：
 ```
-recipe_name/
-├── recipe.md    # 元数据（YAML frontmatter）
-└── recipe.js    # 执行脚本（或 .py / .sh）
+atomic/system/<name>/      # Python / shell 配方
+├── recipe.md              # 元数据（YAML frontmatter）
+└── recipe.py              # 执行脚本
+atomic/browser/<name>/     # Chrome-js 配方（浏览器自动化）
+└── recipe.js
+workflows/<name>/          # 编排型工作流
+└── recipe.py
 ```
 
 **元数据示例**：
@@ -44,24 +48,50 @@ use_cases:
 - AI 可通过元数据自动发现和选择
 - 支持多运行时（chrome-js、python、shell）
 
-### Run（任务实例）
+### 事务目录与知识域
 
-**本质**：一次探索任务的完整记录。
+> 早先的 **Run（任务实例）**已退役。它的两件事——存产出、留经验——现在各有归属，
+> `~/.frago/projects/` 也已转为 frago 自己的会话账本，agent 不再往里写。
 
-**存放位置**：`projects/<run-name>/`
+**存产出**：一律落在 `~/.frago/data/<主体>/<YYYYMMDD>-<slug>/`，两层缺一不可。
 
-**结构**：
 ```
-projects/youtube-transcript-research/
-├── .metadata.json          # Run 元数据
+~/.frago/data/research/20260812-youtube-transcript/
 ├── scripts/                # 验证过的脚本
-└── (logs/, screenshots/, outputs/ 按需创建)
+├── outputs/                # 结果文件
+└── screenshots/
+```
+
+建目录之前先查现成落点，别另起炉灶：
+
+```bash
+frago context data:<关键词>        # 模糊匹配，只报命中落在哪儿
+```
+
+**留经验**：走知识域，干活途中就存，不等事后补。
+
+```bash
+frago def list                     # 有哪些域
+frago <域名> find                  # 域里已有什么
+frago <域名> save --name=<文档名> --data='{"tags":["..."]}' --content='[...]'
 ```
 
 **特点**：
-- 持久化任务上下文
-- 记录探索过程中的每一步
-- 可审计、可回溯
+- 产出和经验分开存，各自可检索
+- 经验按域组织，跨会话、跨事务复用
+- 路径有硬约定，换台机器也找得到
+
+### 提示注入（Prompting）
+
+frago 在每次提交 prompt 时给 agent 注入提示，分两层：
+
+- **静态规则**——编译进 `frago-core` 二进制的路由规则，叠加
+  `~/.frago/hook-rules.json` 里的用户规则。毫秒级匹配、不需要配置、常驻
+  生效，用 `frago hook-rules` 管理。
+- **轻量 AI**——把最近几轮会话连同规则 / book / 经验域索引交给一个便宜
+  模型，换回一句该注入的提示。这一层要有可用的模型 profile 才存在；开关
+  在 `~/.frago/config.json` → `hook_review.enabled`（段缺失视为开），
+  `FRAGO_REVIEW=off` 可作会话级压过。设置页会展示两层此刻的实际状态。
 
 ---
 
@@ -71,7 +101,8 @@ projects/youtube-transcript-research/
 
 ### Skill（方法论）
 
-Skill 是 Claude Code 的文档架构设计，存放在 `.claude/skills/` 目录下。
+Skill 是 Claude Code 的文档架构设计，存放在 agent 的技能目录下（默认
+`~/.claude/skills/`；其他 agent 使用各自的技能目录）。
 
 **本质**：告诉 AI "如何做某类事情"的方法论文档。
 
@@ -92,7 +123,9 @@ Claude Code 的 slash 命令机制，存放在 `.claude/commands/` 目录下。
 
 **本质**：快捷入口，触发特定的 AI 行为。
 
-**示例**：`/frago.run`、`/frago.recipe`、`/frago.test`
+> frago 早期依赖用户自己敲 `/frago.run`、`/frago.recipe`、`/frago.test` 来触发，**现在不是了**。
+> 该出现的知识由 hook 按事件自动推给 agent，不需要人记住该敲哪条；
+> 配方的起草与验证走 `frago recipe plan` / `create` / `validate`，见下。
 
 ---
 
@@ -125,20 +158,23 @@ frago recipe run volcengine_tts_with_emotion \
 
 ### 探索 → 固化 → 执行 闭环
 
-frago 提供三个 slash command 支持这一工作流：
+这一闭环由 recipe 命令面承担：
 
 ```
-/frago.run     探索研究，积累经验（产出：Run 实例）
+agent 干活，边干边 frago <域名> save    探索研究，经验当场入库
      ↓
-/frago.recipe  将经验固化为配方（产出：Recipe，需手动触发）
-/frago.test    验证配方正确性（趁上下文还在）
+frago recipe plan                       把经验起草成配方规格
+     ↓
+frago recipe create                     按规格生成配方
+     ↓
+frago recipe validate + run             验证配方，趁上下文还在
 ```
 
 **核心价值**：
-- 第一次：AI 替你探索，记录过程
+- 第一次：AI 替你探索，经验当场沉淀
 - 之后：直接调用配方，不再重复探索
 
-> 注：固化步骤（`/frago.recipe`）目前需要手动调用，自动 Run → Recipe 转换为规划中功能。
+> 注：固化这一步需要你手动发起，frago 不会替你决定哪段探索值得变成配方。
 
 ---
 
@@ -177,7 +213,7 @@ frago 提供三个 slash command 支持这一工作流：
 
 **特点**：
 - 通过文件系统监控实时监控
-- 架构上支持多种 Agent 类型（当前监控 Claude Code）
+- 监控多种 Agent 类型——Claude Code、opencode、Cursor、Cline——统一规整为一种记录格式
 - 支持 Agent 行为的事后分析
 
 ---

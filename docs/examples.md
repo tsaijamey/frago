@@ -2,54 +2,49 @@
 
 # frago Example Reference
 
-This document provides practical examples of using frago's three core systems (Run + Recipe + CDP) for various automation tasks.
+This document provides practical examples of using frago's core capabilities (browser automation + Recipe + knowledge domains) for various automation tasks.
 
 ---
 
-## Example 1: Interactive Exploration with Run System
+## Example 1: Interactive Exploration, Then Capture What You Learned
 
-**Goal**: Explore YouTube subtitle extraction step-by-step while maintaining full context.
+**Goal**: Explore YouTube subtitle extraction step-by-step, land the artifacts in a task directory, and store the lessons in a knowledge domain.
 
-### Step 1: Create Run Instance
+### Step 1: Look for an Existing Landing Spot, Then Create the Task Directory
 
 ```bash
-frago run init "Research YouTube subtitle extraction methods"
-# Output: Created Run instance: youtube-subtitle-research-abc123
+# Check whether this work already has a home — don't invent a directory
+frago context data:youtube
+
+# Nothing matched, so create one. Both levels are mandatory: <subject>/<YYYYMMDD>-<slug>
+mkdir -p ~/.frago/data/youtube/20260813-subtitle-extraction/scripts
 ```
 
 ### Step 2: Navigate and Explore
 
 ```bash
 # Navigate to YouTube video
-frago browser navigate https://www.youtube.com/watch?v=dQw4w9WgXcQ
+frago browser navigate https://www.youtube.com/watch?v=dQw4w9WgXcQ --group youtube-subtitle
 
-# Take initial screenshot
-frago browser screenshot initial_page.png
-# Saved to: projects/youtube-subtitle-research-abc123/screenshots/
+# Take initial screenshot — absolute path, straight into the task directory
+frago browser screenshot ~/.frago/data/youtube/20260813-subtitle-extraction/initial_page.png --group youtube-subtitle
 
 # Inspect page structure
-frago browser exec-js 'document.querySelector("button[aria-label*=\"transcript\"]")' --return-value
+frago browser exec-js 'document.querySelector("button[aria-label*=\"transcript\"]")' --return-value --group youtube-subtitle
 ```
 
-### Step 3: Record Findings
+### Step 3: Verify the Selector Works
 
 ```bash
-# Log successful selector discovery
-frago run log \
-  --step "Located transcript button selector" \
-  --status "success" \
-  --action-type "dom_inspection" \
-  --data '{"selector": "button[aria-label*=\"transcript\"]", "reliable": true}'
-
 # Click button and verify
-frago browser click 'button[aria-label*="transcript"]'
-frago browser screenshot transcript_opened.png
+frago browser click 'button[aria-label*="transcript"]' --group youtube-subtitle
+frago browser screenshot ~/.frago/data/youtube/20260813-subtitle-extraction/transcript_opened.png --group youtube-subtitle
 ```
 
 ### Step 4: Save Validated Script
 
 ```bash
-cat > projects/youtube-subtitle-research-abc123/scripts/extract_transcript.js <<'EOF'
+cat > ~/.frago/data/youtube/20260813-subtitle-extraction/scripts/extract_transcript.js <<'EOF'
 (async () => {
   const button = document.querySelector('button[aria-label*="transcript"]');
   if (button) button.click();
@@ -61,32 +56,32 @@ cat > projects/youtube-subtitle-research-abc123/scripts/extract_transcript.js <<
 EOF
 ```
 
-### Step 5: Review Complete History
+### Step 5: Store the Lessons in a Knowledge Domain
 
 ```bash
-frago run info youtube-subtitle-research-abc123
+# See which domains exist and what is already in one — don't store duplicates
+frago def list
+frago browser-automation find
+
+# Save as a document; saving the same name again updates it
+frago browser-automation save \
+  --name=youtube-transcript-extraction \
+  --data='{"tags": ["youtube", "transcript", "dom"]}' \
+  --content='["[[[sequence]]][[Click the transcript button]][[Wait 1s, then read .ytd-transcript-segment-renderer nodes]]", "[[[constraint]]][[The YouTube transcript panel is lazy-loaded]][[Querying without waiting returns an empty list]]"]'
 ```
 
-**Output**:
+**Where the artifacts land**:
 ```
-Run Instance: youtube-subtitle-research-abc123
-Topic: Research YouTube subtitle extraction methods
-Created: 2025-01-24 14:30:22
-Status: Active
-
-Files:
-  - logs/execution.jsonl (15 operations)
-  - screenshots/initial_page.png
-  - screenshots/transcript_opened.png
-  - scripts/extract_transcript.js
-
-Recent Operations:
-  [14:30:22] navigate → https://youtube.com/... (success)
-  [14:30:25] screenshot → initial_page.png (success)
-  [14:30:28] exec-js → Found button element (success)
-  [14:30:30] log → Located transcript button selector (success)
-  [14:30:33] click → button[aria-label*="transcript"] (success)
+~/.frago/data/youtube/20260813-subtitle-extraction/
+├── session-id.yaml          # Written when the first file lands; append, never overwrite
+├── initial_page.png
+├── transcript_opened.png
+└── scripts/
+    └── extract_transcript.js
 ```
+
+Next time the same problem comes up: `frago context data:youtube` finds this directory,
+`frago browser-automation find` pulls up what you learned.
 
 ---
 
@@ -97,11 +92,12 @@ Recent Operations:
 ### Using CLI
 
 ```bash
-# After completing exploration in Run instance
+# After the exploration is done
 # Extract validated logic and create Recipe files
 
 # 1. Create Recipe script
-cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.js <<'EOF'
+mkdir -p ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript
+cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.js <<'EOF'
 (async () => {
   const button = document.querySelector('button[aria-label*="transcript"]');
   if (button) {
@@ -117,7 +113,7 @@ cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.js <<'EOF'
 EOF
 
 # 2. Create Recipe metadata
-cat > ~/.frago/recipes/atomic/chrome/youtube_extract_video_transcript.md <<'EOF'
+cat > ~/.frago/recipes/atomic/browser/youtube_extract_video_transcript/recipe.md <<'EOF'
 ---
 name: youtube_extract_video_transcript
 type: atomic
@@ -155,7 +151,7 @@ frago recipe run youtube_extract_video_transcript \\
 \`\`\`
 
 ## Prerequisites
-- Chrome launched via CDP (port 9222)
+- A browser backend is running — the default extension backend, or `frago browser -b cdp start`
 - Navigated to YouTube video page
 - Video must have subtitles available
 EOF
@@ -164,11 +160,11 @@ EOF
 ### Using Claude Code
 
 ```
-/frago.recipe create "Extract YouTube video subtitles" from run youtube-subtitle-research-abc123
+/frago.recipe create "Extract YouTube video subtitles" from ~/.frago/data/youtube/20260813-subtitle-extraction/
 ```
 
 AI will:
-1. Review Run instance logs and scripts
+1. Review the scripts/ directory and artifacts in the task directory
 2. Extract validated selectors
 3. Generate Recipe files (.js + .md)
 4. Test Recipe execution
@@ -214,26 +210,26 @@ AI automatically:
 
 ## Example 4: Batch Processing with Workflow Recipe
 
-**Goal**: Extract job details from multiple Upwork listings.
+**Goal**: Extract subtitles from multiple YouTube videos.
 
 ### Create Workflow Recipe
 
 ```python
-# ~/.frago/recipes/workflows/upwork_batch_extract.py
+# ~/.frago/recipes/workflows/youtube_batch_extract/recipe.py
 import sys, json
 from frago.recipes import RecipeRunner
 
 def main():
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
-    job_urls = params.get('urls', [])
+    urls = params.get('urls', [])
 
     runner = RecipeRunner()
     results = []
 
-    for i, url in enumerate(job_urls, 1):
-        print(f"Processing {i}/{len(job_urls)}...", file=sys.stderr)
+    for i, url in enumerate(urls, 1):
+        print(f"Processing {i}/{len(urls)}...", file=sys.stderr)
         try:
-            result = runner.run('upwork_extract_job_details_as_markdown', {'url': url})
+            result = runner.run('youtube_extract_video_transcript', {'url': url})
             results.append({
                 'url': url,
                 'data': result['data'],
@@ -247,7 +243,7 @@ def main():
             })
 
     output = {
-        'total': len(job_urls),
+        'total': len(urls),
         'success': sum(1 for r in results if r['status'] == 'success'),
         'failed': sum(1 for r in results if r['status'] == 'failed'),
         'results': results
@@ -262,53 +258,53 @@ if __name__ == '__main__':
 
 ```yaml
 ---
-# ~/.frago/recipes/workflows/upwork_batch_extract.md
-name: upwork_batch_extract
+# ~/.frago/recipes/workflows/youtube_batch_extract/recipe.md
+name: youtube_batch_extract
 type: workflow
 runtime: python
 version: "1.0.0"
-description: "Batch extract job details from multiple Upwork listings"
+description: "Batch extract subtitles from multiple YouTube videos"
 use_cases:
-  - "Analyze job market trends"
-  - "Build job database"
-tags: ["upwork", "batch", "workflow"]
+  - "Batch transcript extraction"
+  - "Build a subtitle archive"
+tags: ["youtube", "batch", "workflow"]
 output_targets: [stdout, file]
 inputs:
   urls:
     type: array
-    description: "List of Upwork job URLs"
+    description: "List of YouTube video URLs"
     required: true
 outputs:
   results:
     type: array
-    description: "Array of job details"
+    description: "Array of transcripts"
 dependencies:
-  - upwork_extract_job_details_as_markdown
+  - youtube_extract_video_transcript
 ---
 ```
 
 ### Execute Workflow
 
 ```bash
-# Create URL list
-cat > job_urls.json <<'EOF'
+# Create the task directory and the URL list
+mkdir -p ~/.frago/data/youtube/20260813-batch-subtitles
+cat > ~/.frago/data/youtube/20260813-batch-subtitles/video_urls.json <<'EOF'
 {
   "urls": [
-    "https://www.upwork.com/freelance-jobs/apply/...",
-    "https://www.upwork.com/freelance-jobs/apply/...",
-    "https://www.upwork.com/freelance-jobs/apply/..."
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com/watch?v=oHg5SJYRHA0",
+    "https://www.youtube.com/watch?v=..."
   ]
 }
 EOF
 
-# Execute workflow within Run context
-frago run init "Batch extract Python jobs from Upwork"
-frago recipe run upwork_batch_extract \
-  --params-file job_urls.json \
-  --output-file jobs.json
+# Run the workflow directly, pointing the output explicitly at the task directory
+frago recipe run youtube_batch_extract \
+  --params-file ~/.frago/data/youtube/20260813-batch-subtitles/video_urls.json \
+  --output-file ~/.frago/data/youtube/20260813-batch-subtitles/subtitles.json
 ```
 
-**Output** (`jobs.json`):
+**Output** (`subtitles.json`):
 ```json
 {
   "total": 3,
@@ -316,11 +312,11 @@ frago recipe run upwork_batch_extract \
   "failed": 0,
   "results": [
     {
-      "url": "https://www.upwork.com/...",
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       "data": {
-        "title": "Python Developer Needed",
-        "budget": "$1000-$2000",
-        "description": "..."
+        "title": "Rick Astley - Never Gonna Give You Up",
+        "transcript": "...",
+        "language": "en"
       },
       "status": "success"
     }
@@ -343,7 +339,7 @@ frago recipe run upwork_batch_extract \
 ```
 
 AI will:
-1. Create Run instance: `iphone-15-price-monitoring-abc123`
+1. Create the task directory: `~/.frago/data/iphone/20260813-price-monitor/`
 2. Discover or create Recipes:
    - `amazon_search_product`
    - `ebay_search_product`
@@ -355,10 +351,9 @@ AI will:
    ├─ Extract price data → $749
    └─ Generate comparison report
    ```
-4. Log all operations to JSONL
-5. Generate Markdown report
+4. Generate Markdown report
 
-**Generated Report** (`outputs/price_comparison.md`):
+**Generated Report** (`~/.frago/data/iphone/20260813-price-monitor/price_comparison.md`):
 ```markdown
 # iPhone 15 Price Comparison
 
@@ -379,7 +374,7 @@ eBay offers $50 savings, but consider condition and shipping costs.
 Total eBay cost: $764 (still $35 cheaper)
 
 ---
-Generated with frago | Run ID: iphone-15-price-monitoring-abc123
+Generated with frago | ~/.frago/data/iphone/20260813-price-monitor/
 ```
 
 ---
@@ -389,38 +384,39 @@ Generated with frago | Run ID: iphone-15-price-monitoring-abc123
 ### Basic Navigation and Interaction
 
 ```bash
-# Launch Chrome with CDP
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.frago/profiles/chrome/9222"
+# Start a dedicated headless CDP instance (port 9222)
+frago browser -b cdp start --headless
 
 # Navigate to page
-frago browser navigate https://news.ycombinator.com/
+frago browser navigate https://news.ycombinator.com/ --group hn
 
 # Wait for page load
-frago browser wait 2
+frago browser wait --group hn 2
 
 # Click element
-frago browser click 'a.titlelink:first-child'
+frago browser click 'a.titlelink:first-child' --group hn
 
 # Get page title
-frago browser exec-js 'document.title' --return-value
+frago browser exec-js 'document.title' --return-value --group hn
+
+# Tear the instance down when done
+frago browser -b cdp stop
 ```
 
 ### Screenshots and Visual Effects
 
 ```bash
 # Take full page screenshot
-frago browser screenshot hackernews_page.png
+frago browser screenshot hackernews_page.png --group hn --full-page
 
 # Highlight specific element
-frago browser highlight '.storylink' --color "#FF6B6B" --life-time 3
+frago browser highlight '.storylink' --color "#FF6B6B" --life-time 3 --group hn
 
 # Spotlight effect (dim surroundings)
-frago browser spotlight '.athing:first-child' --life-time 5
+frago browser spotlight '.athing:first-child' --life-time 5 --group hn
 
 # Add annotation
-frago browser annotate '.score' "Top story" --position top
+frago browser annotate '.score' "Top story" --position top --group hn
 ```
 
 ### JavaScript Execution
@@ -428,55 +424,70 @@ frago browser annotate '.score' "Top story" --position top
 ```bash
 # Extract all links
 frago browser exec-js 'Array.from(document.querySelectorAll("a")).map(a => a.href)' \
-  --return-value
+  --return-value --group hn
 
 # Scroll to bottom
-frago browser exec-js 'window.scrollTo(0, document.body.scrollHeight)'
+frago browser exec-js 'window.scrollTo(0, document.body.scrollHeight)' --group hn
 
 # Check element existence
 frago browser exec-js 'document.querySelector(".pagetop") !== null' \
-  --return-value
+  --return-value --group hn
 ```
 
 ---
 
-## Example 7: Run System Advanced Usage
+## Example 7: Finding Work You Did Earlier
 
-### Resume Previous Exploration
+Three separate paths: find the **artifacts**, replay the **raw conversation**, look up the **captured lessons**.
+
+### Where Did That Thing End Up?
 
 ```bash
-# List all Run instances
-frago run list
+# Locate it by keyword — don't list directories and guess
+frago context data:youtube
 
-# Resume a specific Run
-frago run set-context youtube-subtitle-research-abc123
+# The data: prefix searches only ~/.frago/data; without a prefix it sweeps all of
+# ~/.frago, which is slow and noisy, so it asks for confirmation
+frago context youtube --yes
+
+# Machine-readable
+frago context data:iphone --json
 ```
 
-### Export Run Logs
+Hits print in three tiers: directory-name hits, filename hits, and content hits in readable documents.
+The command reports paths only and prints no file contents — you decide what is worth reading.
+
+### Replay What You Did Before
 
 ```bash
-# View execution log
-cat projects/youtube-subtitle-research-abc123/logs/execution.jsonl
+# Describe it in one sentence; a model expands it into terms, then both the claude
+# and opencode session stores are swept
+frago session search "that time we researched YouTube subtitle extraction"
 
-# Parse log programmatically
-uv run python <<'EOF'
-import json
+# When you already know the literal terms, pass them and skip the model turn
+frago session search "subtitle extraction" --terms "transcript,ytd-transcript-segment-renderer" --days 30
 
-with open('projects/youtube-subtitle-research-abc123/logs/execution.jsonl') as f:
-    for line in f:
-        log = json.loads(line)
-        if log['status'] == 'failure':
-            print(f"Error at {log['timestamp']}: {log.get('error', {}).get('message')}")
-EOF
+# Just the most relevant sessions
+frago session search "CDP won't connect" --top 5
 ```
 
-### Archive Completed Runs
+Sessions rank by how many **distinct** terms they matched. Each hit reports the session id,
+matching excerpts, and a ready-to-run command to resume that session.
+
+### Look Up Captured Lessons
 
 ```bash
-# Archive Run instance
-frago run archive youtube-subtitle-research-abc123
+# Which knowledge domains exist
+frago def list
 
-# Archived Runs move to projects/.archive/
+# What is stored in one domain
+frago browser-automation find
+
+# Read a single document in full
+frago browser-automation find -- --name=youtube-transcript-extraction
+
+# Filter by tag
+frago browser-automation find -- --tags=youtube
 ```
 
 ---
@@ -486,9 +497,9 @@ frago run archive youtube-subtitle-research-abc123
 ### Pattern 1: Exploration → Recipe → Automation
 
 ```
-1. Create Run instance
-2. Explore page interactively (CDP commands)
-3. Log successful approaches
+1. frago context data:<keyword> to find an existing landing spot; create a task directory if none
+2. Explore page interactively (browser commands)
+3. Save scripts under the task directory's scripts/, lessons via frago <domain> save
 4. Create Recipe from validated scripts
 5. Reuse Recipe for similar tasks
 ```
@@ -540,16 +551,16 @@ def main():
 ### Example: CDP Connection Issues
 
 ```bash
-# Check if Chrome CDP is running
+# CDP ports are whitelisted: 9222 (default) and 9223 (agent_os recorder)
 lsof -i :9222
 
-# Launch Chrome if not running
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.frago/profiles/chrome/9222" &
+# If the virtual desktop stage is up, its actor owns 9222 — leave it alone
+frago desktop status
 
-# Test connection
+# Start / check / stop the frago-managed CDP instance
+frago browser -b cdp start --headless
 frago browser status
+frago browser -b cdp stop
 ```
 
 ### Example: Recipe Not Found
@@ -562,18 +573,17 @@ frago recipe list
 frago recipe info youtube_extract_video_transcript
 ```
 
-### Example: Screenshot Path Issues
+### Example: Where Screenshots Land
 
 ```bash
-# ❌ Wrong: Relative path
-frago browser screenshot screenshot.png
+# ❌ Wrong: relative path — lands in whatever the shell's working directory was, unfindable later
+frago browser screenshot screenshot.png --group my-task
 
-# ✅ Correct: Absolute path
-frago browser screenshot $(pwd)/screenshot.png
+# ❌ Wrong: task directory sitting directly under the data root, missing the subject level
+frago browser screenshot ~/.frago/data/20260813-subtitle-extraction/screenshot.png --group my-task
 
-# ✅ Correct: Within Run context
-frago run init "My task"
-frago browser screenshot screenshot.png  # Auto-saved to Run's screenshots/
+# ✅ Correct: absolute path with both levels, <subject>/<YYYYMMDD>-<slug>
+frago browser screenshot ~/.frago/data/youtube/20260813-subtitle-extraction/screenshot.png --group my-task
 ```
 
 ---

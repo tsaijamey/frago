@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" width="1200" height="470" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <linearGradient id="runtime" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#16241c"/>
+      <stop offset="100%" stop-color="#101b15"/>
+    </linearGradient>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#3f8f5d"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#12a150"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="470" rx="14" fill="#0c1116"/>
+
+  <!-- 1. you -->
+  <rect x="44" y="150" width="196" height="88" rx="12" fill="#151c23" stroke="#2b3641"/>
+  <text x="142" y="185" text-anchor="middle" fill="#e6edf3" font-size="19" font-weight="600">你说一句话</text>
+  <text x="142" y="211" text-anchor="middle" fill="#7d8896" font-size="14">“把这批页面整理成表”</text>
+
+  <path d="M248 194 H300" stroke="#3f8f5d" stroke-width="2" fill="none" marker-end="url(#a)"/>
+
+  <!-- 2. runtime -->
+  <rect x="308" y="86" width="330" height="216" rx="14" fill="url(#runtime)" stroke="#12a150" stroke-width="1.5"/>
+  <text x="473" y="120" text-anchor="middle" fill="#12a150" font-size="13" font-weight="700" letter-spacing="1.6">FRAGO 运行时</text>
+  <text x="473" y="150" text-anchor="middle" fill="#e6edf3" font-size="19" font-weight="600">agent 在你的电脑上干活</text>
+
+  <g font-size="14" fill="#aab4c0">
+    <rect x="336" y="170" width="128" height="34" rx="8" fill="#1b2530"/>
+    <text x="400" y="192" text-anchor="middle">真实浏览器</text>
+    <rect x="482" y="170" width="128" height="34" rx="8" fill="#1b2530"/>
+    <text x="546" y="192" text-anchor="middle">真实文件</text>
+    <rect x="336" y="216" width="128" height="34" rx="8" fill="#1b2530"/>
+    <text x="400" y="238" text-anchor="middle">真实屏幕</text>
+    <rect x="482" y="216" width="128" height="34" rx="8" fill="#1b2530"/>
+    <text x="546" y="238" text-anchor="middle">真实会话</text>
+  </g>
+  <text x="473" y="278" text-anchor="middle" fill="#12a150" font-size="14">每一个操作都当场回执 ✓</text>
+
+  <path d="M646 194 H700" stroke="#12a150" stroke-width="2" fill="none" marker-end="url(#ag)"/>
+
+  <!-- 3. recipe -->
+  <rect x="708" y="128" width="240" height="132" rx="12" fill="#151c23" stroke="#2b3641"/>
+  <text x="828" y="162" text-anchor="middle" fill="#e6edf3" font-size="19" font-weight="600">走通了 → Recipe</text>
+  <text x="828" y="192" text-anchor="middle" fill="#7d8896" font-size="14">agent 给自己造的工具</text>
+  <text x="828" y="216" text-anchor="middle" fill="#7d8896" font-size="14">确定性代码，不是提示词</text>
+  <text x="828" y="242" text-anchor="middle" fill="#12a150" font-size="14">下次一键重放 · 不烧 token</text>
+
+  <path d="M956 194 H1010" stroke="#3f8f5d" stroke-width="2" fill="none" marker-end="url(#a)"/>
+
+  <!-- 4. ui, optional -->
+  <rect x="1018" y="140" width="138" height="108" rx="12" fill="#151c23" stroke="#2b3641" stroke-dasharray="5 4"/>
+  <text x="1087" y="174" text-anchor="middle" fill="#e6edf3" font-size="16" font-weight="600">顺手一扇窗</text>
+  <text x="1087" y="199" text-anchor="middle" fill="#7d8896" font-size="13">给人看的 UI</text>
+  <text x="1087" y="221" text-anchor="middle" fill="#5d6875" font-size="12">可选 · 多数配方</text>
+  <text x="1087" y="238" text-anchor="middle" fill="#5d6875" font-size="12">全程无界面</text>
+
+  <!-- companion band -->
+  <rect x="44" y="342" width="1112" height="86" rx="12" fill="#12191f" stroke="#243040"/>
+  <circle cx="92" cy="385" r="17" fill="#0d2a1a" stroke="#12a150"/>
+  <text x="92" y="391" text-anchor="middle" fill="#12a150" font-size="15">◎</text>
+  <text x="126" y="378" fill="#e6edf3" font-size="17" font-weight="600">会话伴侣 · 全程在线</text>
+  <text x="126" y="404" fill="#7d8896" font-size="14">frago-core 静态规则毫秒命中，不经过模型 ｜ 轻量 AI 按你的标准补一句上下文 ｜ 费用低到可以一直开着</text>
+  <path d="M473 342 V308" stroke="#2f6b48" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+  <path d="M828 342 V266" stroke="#2f6b48" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+</svg>

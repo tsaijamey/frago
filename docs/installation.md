@@ -29,7 +29,7 @@ The command-line interface to frago — like a shell to an OS. Everything the de
 |------------|---------|---------|
 | **Python** | 3.13+ | Core runtime |
 | **Node.js** | 20+ | Claude Code integration |
-| **Chrome** | Latest | Browser automation |
+| **Microsoft Edge** | Latest | Default browser for automation (Chromium/Chrome non-Stable also work as fallbacks) |
 
 ### Quick Install
 
@@ -83,16 +83,19 @@ uv tool uninstall frago-cli  # Uninstall
 ```bash
 # Ubuntu/Debian
 sudo apt update && sudo apt install -y python3 python3-pip curl git
-wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo dpkg -i google-chrome-stable_current_amd64.deb && sudo apt -f install
+curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/edge stable main" | sudo tee /etc/apt/sources.list.d/microsoft-edge.list
+sudo apt update && sudo apt install -y microsoft-edge-stable
 
 # Fedora/RHEL
 sudo dnf install -y python3 python3-pip curl git
-sudo dnf install https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
+sudo dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/edge
+sudo dnf install -y microsoft-edge-stable
 
 # Arch Linux
 sudo pacman -S python python-pip curl git
-yay -S google-chrome
+yay -S microsoft-edge-stable
 ```
 
 </details>
@@ -104,7 +107,7 @@ yay -S google-chrome
 # Install Xcode Command Line Tools
 xcode-select --install
 
-# Chrome is typically pre-installed or download from google.com/chrome
+# Edge may need manual installation — microsoft.com/edge
 ```
 
 </details>
@@ -121,8 +124,8 @@ winget install Python.Python.3.13
 # Install Node.js (REQUIRED before frago init)
 winget install OpenJS.NodeJS.LTS
 
-# Install Chrome
-winget install Google.Chrome
+# Edge ships with Windows 10/11; install it explicitly if removed
+winget install Microsoft.Edge
 ```
 
 </details>
@@ -131,10 +134,13 @@ winget install Google.Chrome
 
 ## What `frago init` Does
 
-1. **Checks dependencies** — Node.js 20+, Claude Code CLI
+1. **Checks dependencies** — Python 3.13+, Node.js 20+, Claude Code CLI, browser
 2. **Auto-installs** — Node.js via nvm (macOS/Linux only), Claude Code via npm
-3. **Configures auth** — Default or custom API endpoint
-4. **Installs resources** — Slash commands to `~/.claude/commands/`, recipes to `~/.frago/recipes/`
+3. **Configures a model profile** — official endpoint or custom (DeepSeek, proxies, local models)
+4. **Installs the prompting engine** — deploys `frago-core` and registers hooks
+   (static rules + lightweight AI) for Claude Code and opencode
+5. **Installs resources** — slash commands to `~/.claude/commands/`, recipes to
+   `~/.frago/recipes/`
 
 ### Init Options
 
@@ -142,7 +148,7 @@ winget install Google.Chrome
 frago init --show-config      # Show current config
 frago init --reset            # Reset and re-initialize
 frago init --skip-deps        # Skip dependency checks
-frago init --update-resources # Force update resources
+frago init --non-interactive  # Non-interactive mode (defaults, CI/CD friendly)
 ```
 
 ## Development Setup

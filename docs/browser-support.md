@@ -11,7 +11,8 @@ frago drives Chromium-based browsers through two backends:
   `-b cdp`. This is the fallback when the default backend cannot do the
   job: true headless, a dedicated instance that must not disturb the
   standing browser (e.g. the `agent_os` screen-record rig), or
-  `--void` / `--app` / `--profile-dir` startup shapes. Fixed port 9222.
+  `--void` / `--app` / `--profile-dir` startup shapes. CDP ports are
+  whitelisted to **9222** (default) and **9223** (the agent_os recorder).
 
 The order is fixed: **default extension > `-b cdp` > launching a browser
 yourself (forbidden)**. `chrome --headless`, `--remote-debugging-port`,
@@ -36,8 +37,15 @@ Full command reference and anti-bot guidance live in the built-in books:
 
 The picker takes the first installed browser in this fixed order:
 Edge Stable → Edge Beta → Edge Dev → Chromium → Chrome Beta → Chrome Dev →
-Chrome Canary → Brave → Vivaldi. Do **not** pass `--browser`: it does not
-change which browser launches, only which profile directory is used.
+Chrome Canary → Brave → Vivaldi.
+
+**`--browser` means different things per backend.** Under the extension
+backend it does not change which browser launches — it only redirects the
+profile directory. Under `-b cdp` it switches the browser for real, and the
+profile path follows along (`--browser chrome` →
+`~/.frago/profiles/chrome/9222/`). frago itself only ever pins `--browser`
+when the agent_os stage brings up its actor and recorder (`edge`); anywhere
+else, let the picker choose.
 
 ## Browser Detection
 
@@ -82,8 +90,12 @@ frago browser -b cdp start --headless          # headless CDP instance (port 922
 frago browser -b cdp start --void --keep-alive # off-screen, keep running
 ```
 
-CDP port is fixed at **9222** — the only whitelisted port. Any other value is
-rejected; never invent ports (see `frago book` CDP-port-whitelist).
+CDP ports are whitelisted to **9222** (default) and **9223** (the agent_os
+recorder). Any other value is rejected; never invent ports. **9222 is
+shared**: while the virtual desktop stage is running, its actor lives on
+that port to reuse the seeded login profile — and `-b cdp start` replaces
+whatever is already there unless you pass `--no-kill`. Check
+`frago desktop status` before starting (see `frago book browser-backend-choice`).
 
 ## Tab Groups
 
@@ -238,6 +250,22 @@ frago browser clear-effects --group research
 frago browser -b cdp start --profile-dir /path/to/custom/profile
 ```
 
+## Virtual Desktop Stage
+
+`frago desktop` drives a scriptable fake desktop (a real tmux session, a real
+browser tab, and a local image) used by the `agent_os` workflow to record
+replays. It owns both CDP ports while it is up:
+
+- **9222** — the stage **actor**, a headless Edge whose profile was seeded
+  from your real Edge logins. It is the same instance a standalone
+  `frago browser -b cdp start` would target, so do not start or stop a CDP
+  instance while the stage is running.
+- **9223** — the **recorder**, created when the camera comes up (`camera up`
+  or `rec start`) and torn down by `rec stop` / `camera down`.
+
+Always check first: `frago desktop status`. Full usage lives in
+`frago book desktop-usage`.
+
 ## Anti-Bot
 
 The extension backend runs a real browser environment, so it passes
@@ -295,11 +323,14 @@ frago browser start
 ### CDP Connection Failed
 
 ```bash
-# CDP port is fixed at 9222 — check who owns it
-lsof -i :9222   # Linux/macOS
+# Ports are whitelisted: 9222 (default) and 9223 (agent_os recorder)
+lsof -i :9222 -i :9223   # Linux/macOS
 netstat -an | findstr 9222   # Windows
 
-# Stop the existing CDP instance and restart
+# If the virtual desktop stage is up, its actor owns 9222 — leave it alone
+frago desktop status
+
+# Otherwise stop the existing CDP instance and restart
 frago browser -b cdp stop
 frago browser -b cdp start
 ```

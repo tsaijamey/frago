@@ -43,21 +43,21 @@ frago recipe list --format json
     "tags": ["web-scraping", "youtube", "transcript"],
     "output_targets": ["stdout", "file"],
     "version": "1.2.0",
-    "source": "Official"
+    "source": "Community"
   },
   {
-    "name": "upwork_extract_job_details_as_markdown",
+    "name": "arxiv_search_papers",
     "type": "atomic",
-    "runtime": "chrome-js",
-    "description": "从 Upwork 职位详情页提取完整信息并格式化为 Markdown",
+    "runtime": "python",
+    "description": "在 arXiv 学术数据库中搜索论文",
     "use_cases": [
-      "分析市场上的职位需求",
-      "批量收集职位信息"
+      "查找最新的计算机科学论文",
+      "构建文献综述的数据源"
     ],
-    "tags": ["web-scraping", "upwork"],
+    "tags": ["academic-search", "arxiv"],
     "output_targets": ["stdout", "file"],
     "version": "1.0.0",
-    "source": "Official"
+    "source": "Community"
   }
 ]
 ```
@@ -129,25 +129,24 @@ frago recipe run youtube_extract_video_transcript \
 
 ### 场景 3: AI 自动生成 Workflow Recipe
 
-**用户意图**: "批量提取 10 个 Upwork 职位并保存为 JSON 文件"
+**用户意图**: "在 arXiv 上批量搜索 10 个研究主题，并把结果保存为 JSON 文件"
 
 **AI 执行流程**:
 
 #### Step 1: AI 调用 `/frago.recipe` 命令
 
 ```
-/frago.recipe create workflow "批量提取 10 个 Upwork 职位并保存为 JSON"
+/frago.recipe create workflow "在 arXiv 批量搜索 10 个主题并保存为 JSON"
 ```
 
 #### Step 2: AI 自动生成 Workflow 脚本
 
-AI 生成的文件: `~/.frago/recipes/workflows/upwork_batch_extract.py`
+AI 生成的文件: `~/.frago/recipes/workflows/arxiv_batch_search/recipe.py`
 
 ```python
 #!/usr/bin/env python3
 """
-Workflow: 批量提取 Upwork 职位
-生成时间: 2025-11-20
+Workflow: 批量搜索 arXiv
 由 Claude Code 自动生成
 """
 import sys, json
@@ -155,24 +154,24 @@ from frago.recipes import RecipeRunner
 
 def main():
     params = json.loads(sys.argv[1] if len(sys.argv) > 1 else '{}')
-    urls = params.get('urls', [])
+    queries = params.get('queries', [])
 
-    if not urls:
-        print(json.dumps({"error": "Missing 'urls' parameter"}), file=sys.stderr)
+    if not queries:
+        print(json.dumps({"error": "Missing 'queries' parameter"}), file=sys.stderr)
         sys.exit(1)
 
     runner = RecipeRunner()
     results = []
 
-    for i, url in enumerate(urls[:10], 1):
+    for i, query in enumerate(queries[:10], 1):
         try:
-            print(f"处理第 {i}/10 个职位...", file=sys.stderr)
-            result = runner.run('upwork_extract_job_details_as_markdown', {'url': url})
-            results.append(result['data'])
+            print(f"正在搜索第 {i}/10 个主题...", file=sys.stderr)
+            result = runner.run('arxiv_search_papers', {'query': query})
+            results.append({"query": query, "papers": result['data']})
         except Exception as e:
-            results.append({"url": url, "error": str(e)})
+            results.append({"query": query, "error": str(e)})
 
-    print(json.dumps({"success": True, "jobs": results}, ensure_ascii=False))
+    print(json.dumps({"success": True, "results": results}, ensure_ascii=False))
 
 if __name__ == '__main__':
     main()
@@ -180,25 +179,25 @@ if __name__ == '__main__':
 
 #### Step 3: AI 生成元数据文件
 
-`~/.frago/recipes/workflows/upwork_batch_extract.md`:
+`~/.frago/recipes/workflows/arxiv_batch_search/recipe.md`:
 
 ```yaml
 ---
-name: upwork_batch_extract
+name: arxiv_batch_search
 type: workflow
 runtime: python
-description: "批量提取多个 Upwork 职位并保存为 JSON"
+description: "在 arXiv 上按多个主题批量搜索并把结果保存为 JSON"
 use_cases:
-  - "批量收集职位数据"
-  - "市场分析"
+  - "批量文献检索"
+  - "跨主题构建阅读清单"
 tags:
-  - upwork
+  - arxiv
   - batch-processing
 output_targets:
   - stdout
   - file
 dependencies:
-  - upwork_extract_job_details_as_markdown
+  - arxiv_search_papers
 version: 1.0.0
 ---
 ```
@@ -206,9 +205,9 @@ version: 1.0.0
 #### Step 4: AI 执行 Workflow
 
 ```bash
-frago recipe run upwork_batch_extract \
-  --params '{"urls": ["https://...", "https://...", ...]}' \
-  --output-file jobs.json
+frago recipe run arxiv_batch_search \
+  --params '{"queries": ["multi-agent systems", "diffusion models", "..."]}' \
+  --output-file papers.json
 ```
 
 ---
@@ -221,7 +220,8 @@ frago recipe run upwork_batch_extract \
 
 ```bash
 # 创建 Python 脚本
-cat > ~/.frago/recipes/atomic/system/clipboard_read.py <<'EOF'
+mkdir -p ~/.frago/recipes/atomic/system/clipboard_read
+cat > ~/.frago/recipes/atomic/system/clipboard_read/recipe.py <<'EOF'
 #!/usr/bin/env python3
 import sys
 import json
@@ -243,13 +243,13 @@ print(json.dumps(output, ensure_ascii=False))
 EOF
 
 # 添加执行权限（Python 脚本不强制，但推荐）
-chmod +x ~/.frago/recipes/atomic/system/clipboard_read.py
+chmod +x ~/.frago/recipes/atomic/system/clipboard_read/recipe.py
 ```
 
 #### 2. 创建元数据文件
 
 ```bash
-cat > ~/.frago/recipes/atomic/system/clipboard_read.md <<'EOF'
+cat > ~/.frago/recipes/atomic/system/clipboard_read/recipe.md <<'EOF'
 ---
 name: clipboard_read
 type: atomic
@@ -318,7 +318,8 @@ frago recipe run clipboard_read
 #### 1. 创建 Workflow 脚本
 
 ```bash
-cat > ~/.frago/recipes/workflows/youtube_batch_extract.py <<'EOF'
+mkdir -p ~/.frago/recipes/workflows/youtube_batch_extract
+cat > ~/.frago/recipes/workflows/youtube_batch_extract/recipe.py <<'EOF'
 #!/usr/bin/env python3
 import sys
 import json
@@ -371,13 +372,13 @@ if __name__ == '__main__':
     main()
 EOF
 
-chmod +x ~/.frago/recipes/workflows/youtube_batch_extract.py
+chmod +x ~/.frago/recipes/workflows/youtube_batch_extract/recipe.py
 ```
 
 #### 2. 创建元数据文件
 
 ```bash
-cat > ~/.frago/recipes/workflows/youtube_batch_extract.md <<'EOF'
+cat > ~/.frago/recipes/workflows/youtube_batch_extract/recipe.md <<'EOF'
 ---
 name: youtube_batch_extract
 type: workflow
@@ -492,6 +493,42 @@ frago --debug recipe run <recipe_name> --params '{...}'
 ```
 
 ---
+
+## Recipe 命令参考
+
+完整的命令面（细节用 `frago recipe <command> --help`）：
+
+| 命令 | 用途 |
+|------|------|
+| `plan` | 从 spec 或 prompt 起草配方（agent 辅助） |
+| `create` | 从 spec 或 prompt 创建配方 |
+| `list` | 列出配方（`--source user\|community\|official`、`--type atomic\|workflow`、`--format table\|json\|names`） |
+| `info` | 查看元数据、参数与 env 定义 |
+| `run` | 执行（`--params`、`--params-file`、`--env`、`--output-file`、`--output-clipboard`、`--timeout`、`--async`） |
+| `schedule` | 定时执行（`--interval 30s/10m/2h`、`--max-runs`、`--start-at/--stop-at`） |
+| `executions` / `execution` | 列出 / 查看历史执行 |
+| `cancel` | 取消正在运行的执行 |
+| `publish` | 查看某个已发布配方槽位 |
+| `open` | 按配方名或 URL 打开 |
+| `validate` | 校验配方元数据 |
+| `install` / `update` / `uninstall` | 管理社区配方 |
+| `search` | 按关键字搜索配方 |
+| `share` | 分享配方 |
+
+### 配方存放位置
+
+```
+~/.frago/recipes/                  # 用户级（最高优先级）
+├── atomic/system/<name>/          # Python / shell
+├── atomic/browser/<name>/         # Chrome-js
+└── workflows/<name>/              # 工作流
+~/.frago/community-recipes/        # 已安装的社区配方
+内置包资源                          # 官方配方
+```
+
+每个配方是一个目录：`recipe.md`（YAML frontmatter 元数据）+ 执行脚本；
+`spec.md` 设计文档可选。社区配方通过
+`frago recipe install community:<name>` 装进 `~/.frago/community-recipes/`。
 
 ## 最佳实践
 
@@ -827,14 +864,20 @@ Recipe: openai_chat
 #### 旧方式（直接调用 `exec-js`）
 
 ```bash
-frago browser exec-js src/frago/recipes/upwork_extract_job.js
+frago browser exec-js src/frago/recipes/youtube_extract_video_transcript.js
 ```
 
 #### 新方式
 
-1. **使用新命令**:
+1. **把脚本和元数据收进一个目录**:
    ```bash
-   frago recipe run upwork_extract_job_details_as_markdown \
+   #   ~/.frago/recipes/atomic/browser/<name>/recipe.md
+   #   ~/.frago/recipes/atomic/browser/<name>/recipe.js
+   ```
+
+2. **使用新命令**:
+   ```bash
+   frago recipe run youtube_extract_video_transcript \
      --params '{"url": "..."}'
    ```
 

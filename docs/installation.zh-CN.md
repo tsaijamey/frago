@@ -29,7 +29,7 @@ frago 的命令行界面——相当于操作系统的 shell。桌面客户端�
 |------|------|------|
 | **Python** | 3.13+ | 核心运行时 |
 | **Node.js** | 20+ | Claude Code 集成 |
-| **Chrome** | 最新版 | 浏览器自动化 |
+| **Microsoft Edge** | 最新版 | 自动化默认浏览器（Chromium / 非 Stable 的 Chrome 可作为后备） |
 
 ### 快速安装
 
@@ -83,16 +83,19 @@ uv tool uninstall frago-cli  # 卸载
 ```bash
 # Ubuntu/Debian
 sudo apt update && sudo apt install -y python3 python3-pip curl git
-wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo dpkg -i google-chrome-stable_current_amd64.deb && sudo apt -f install
+curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/edge stable main" | sudo tee /etc/apt/sources.list.d/microsoft-edge.list
+sudo apt update && sudo apt install -y microsoft-edge-stable
 
 # Fedora/RHEL
 sudo dnf install -y python3 python3-pip curl git
-sudo dnf install https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm
+sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
+sudo dnf config-manager --add-repo https://packages.microsoft.com/yumrepos/edge
+sudo dnf install -y microsoft-edge-stable
 
 # Arch Linux
 sudo pacman -S python python-pip curl git
-yay -S google-chrome
+yay -S microsoft-edge-stable
 ```
 
 </details>
@@ -104,7 +107,7 @@ yay -S google-chrome
 # 安装 Xcode 命令行工具
 xcode-select --install
 
-# Chrome 通常已预装，或从 google.com/chrome 下载
+# Edge 可能需要手动安装——microsoft.com/edge
 ```
 
 </details>
@@ -121,8 +124,8 @@ winget install Python.Python.3.13
 # 安装 Node.js（frago init 之前必须安装）
 winget install OpenJS.NodeJS.LTS
 
-# 安装 Chrome
-winget install Google.Chrome
+# Edge 随 Windows 10/11 预装；被卸载过就显式装回来
+winget install Microsoft.Edge
 ```
 
 </details>
@@ -131,10 +134,12 @@ winget install Google.Chrome
 
 ## `frago init` 做了什么
 
-1. **检查依赖** — Node.js 20+、Claude Code CLI
+1. **检查依赖** — Python 3.13+、Node.js 20+、Claude Code CLI、浏览器
 2. **自动安装** — 通过 nvm 安装 Node.js（仅 macOS/Linux）、通过 npm 安装 Claude Code
-3. **配置认证** — 默认或自定义 API 端点
-4. **安装资源** — Slash 命令到 `~/.claude/commands/`，配方到 `~/.frago/recipes/`
+3. **配置模型 profile** — 官方端点或自定义端点（DeepSeek、代理、本地模型）
+4. **安装提示引擎** — 部署 `frago-core` 并为 Claude Code / opencode 注册 hook
+   （静态规则 + 轻量 AI）
+5. **安装资源** — Slash 命令到 `~/.claude/commands/`，配方到 `~/.frago/recipes/`
 
 ### init 选项
 
@@ -142,7 +147,7 @@ winget install Google.Chrome
 frago init --show-config      # 显示当前配置
 frago init --reset            # 重置并重新初始化
 frago init --skip-deps        # 跳过依赖检查
-frago init --update-resources # 强制更新资源
+frago init --non-interactive  # 非交互模式（全部走默认值，适合 CI/CD）
 ```
 
 ## 开发环境

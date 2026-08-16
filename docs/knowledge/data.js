@@ -1,5 +1,5 @@
 // frago CLI 命令数据(双语)
-// 英文取自 `frago --help` 原文,中文为对照译文。version 0.49.1,核实日期 2026-05-24。
+// 英文取自 `frago --help` 原文,中文为对照译文。version 1.2.101,核实日期 2026-08-12。
 // 结构:每个命令 { name, zh, en, leaf?, note?, sub?[[name,zh,en]...], subgroups?[{zh,en,items}] }
 const DATA = [
   {
@@ -12,10 +12,10 @@ const DATA = [
         ["uninstall", "卸载已安装的桌面客户端。", "Remove the installed desktop client."],
         ["update", "将桌面客户端更新到最新版本。", "Update the desktop client to the latest version."],
       ]},
-      { name: "chrome", zh: "Chrome CDP 浏览器自动化。", en: "Chrome CDP browser automation.", subgroups: [
+      { name: "browser", zh: "浏览器自动化（extension / CDP 双后端）。", en: "Browser automation (extension / CDP backends).", subgroups: [
         { zh: "生命周期", en: "Lifecycle", items: [
           ["start", "启动带 CDP 调试支持的浏览器。", "Launch browser with CDP debugging support."],
-          ["stop", "停止 Chrome CDP 进程。", "Stop Chrome CDP process."],
+          ["stop", "停止 CDP 浏览器实例。", "Stop the CDP browser instance."],
           ["status", "检查 CDP 连接状态。", "Check CDP connection status."],
         ]},
         { zh: "标签管理", en: "Tab Management", items: [

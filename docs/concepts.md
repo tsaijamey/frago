@@ -12,7 +12,9 @@ The following concepts come from [Claude Code](https://docs.anthropic.com/en/doc
 
 ### Skill (Methodology)
 
-Skill is Claude Code's documentation architecture design, stored in the `.claude/skills/` directory.
+Skill is Claude Code's documentation architecture design, stored in the
+agent's skills directory (default `~/.claude/skills/`; other agents use their
+own skill directories).
 
 **Essence**: Methodology documents that tell AI "how to do a certain type of task".
 
@@ -33,7 +35,10 @@ Claude Code's slash command mechanism, stored in the `.claude/commands/` directo
 
 **Essence**: Quick entry points that trigger specific AI behaviors.
 
-**Examples**: `/frago.run`, `/frago.recipe`, `/frago.test`
+> frago used to rely on you typing `/frago.run`, `/frago.recipe` or `/frago.test` to trigger things.
+> **It doesn't any more.** Knowledge that should surface is pushed to the agent by hooks, per event,
+> so nobody has to remember which command to type; drafting and checking recipes runs on
+> `frago recipe plan` / `create` / `validate`, below.
 
 ---
 
@@ -50,11 +55,15 @@ The following concepts are original designs from the frago project.
 2. `~/.frago/community-recipes/` - Community level
 3. Built-in package resources - Official level
 
-**Structure**:
+**Structure** (user recipes live under `~/.frago/recipes/`):
 ```
-recipe_name/
-├── recipe.md    # Metadata (YAML frontmatter)
-└── recipe.js    # Execution script (or .py / .sh)
+atomic/system/<name>/      # Python / shell recipes
+├── recipe.md              # Metadata (YAML frontmatter)
+└── recipe.py              # Execution script
+atomic/browser/<name>/     # Chrome-js recipes (browser automation)
+└── recipe.js
+workflows/<name>/          # Orchestrated workflows
+└── recipe.py
 ```
 
 **Metadata example**:
@@ -75,24 +84,55 @@ use_cases:
 - AI can automatically discover and select through metadata
 - Supports multiple runtimes (chrome-js, python, shell)
 
-### Run (Task Instance)
+### Work directories and knowledge domains
 
-**Essence**: Complete record of an exploration task.
+> The earlier **Run (task instance)** concept is retired. Its two jobs — holding output and
+> keeping what was learned — now belong to separate places, and `~/.frago/projects/` has become
+> frago's own session ledger, which agents no longer write to.
 
-**Storage location**: `projects/<run-name>/`
+**Output** always lands in `~/.frago/data/<subject>/<YYYYMMDD>-<slug>/`. Both levels are required.
 
-**Structure**:
 ```
-projects/youtube-transcript-research/
-├── .metadata.json          # Run metadata
+~/.frago/data/research/20260812-youtube-transcript/
 ├── scripts/                # Validated scripts
-└── (logs/, screenshots/, outputs/ created as needed)
+├── outputs/                # Result files
+└── screenshots/
+```
+
+Look for an existing home before creating one:
+
+```bash
+frago context data:<keyword>       # Fuzzy match; reports where matches live
+```
+
+**What was learned** goes into a knowledge domain, saved while the work happens rather than after.
+
+```bash
+frago def list                     # Which domains exist
+frago <domain> find                # What the domain already holds
+frago <domain> save --name=<doc> --data='{"tags":["..."]}' --content='[...]'
 ```
 
 **Characteristics**:
-- Persistent task context
-- Records every step during exploration
-- Auditable and traceable
+- Output and knowledge are stored separately, each searchable on its own terms
+- Knowledge is organized by domain, reusable across sessions and tasks
+- Paths follow a hard convention, so things stay findable on another machine
+
+### Prompting (Hint Injection)
+
+frago injects guidance into the agent on every prompt submission, in two
+layers:
+
+- **Static rules** — routing rules compiled into the `frago-core` binary,
+  combined with user rules in `~/.frago/hook-rules.json`. They match events
+  in milliseconds, need no configuration, and are always in effect. Manage
+  them with `frago hook-rules`.
+- **Lightweight AI** — the last few turns of the conversation, together with
+  the rule/book/domain indexes, are sent to a cheap model; its one-line
+  verdict is injected back. This layer only exists once a model profile is
+  configured. The switch lives in `~/.frago/config.json` →
+  `hook_review.enabled` (missing section = on), with `FRAGO_REVIEW=off` as a
+  session-scoped override. The settings page shows both layers' live state.
 
 ---
 
@@ -125,20 +165,24 @@ frago recipe run volcengine_tts_with_emotion \
 
 ### Explore → Solidify → Execute Loop
 
-frago provides three slash commands that support this workflow:
+The recipe command surface carries this loop:
 
 ```
-/frago.run     Explore and research, accumulate experience (Output: Run instance)
+the agent works, saving as it goes    explore and research, banked on the spot
+  via frago <domain> save
      ↓
-/frago.recipe  Solidify experience into recipes (Output: Recipe, manually triggered)
-/frago.test    Validate recipe correctness (while context is fresh)
+frago recipe plan                     draft a recipe spec from what was learned
+     ↓
+frago recipe create                   generate the recipe from that spec
+     ↓
+frago recipe validate + run           check it while the context is still fresh
 ```
 
 **Core value**:
-- First time: AI explores for you, records the process
+- First time: AI explores for you, and what it learns is banked as it happens
 - After that: Directly call recipes, no repeated exploration
 
-> Note: The solidification step (`/frago.recipe`) currently requires manual invocation. Automatic Run → Recipe conversion is planned.
+> Note: Solidifying is something you start deliberately — frago won't decide for you which piece of exploration deserves to become a recipe.
 
 ---
 
@@ -177,7 +221,8 @@ frago provides three slash commands that support this workflow:
 
 **Characteristics**:
 - Real-time monitoring via file system watching
-- Designed for multiple agent types (currently monitors Claude Code)
+- Monitors multiple agent types — Claude Code, opencode, Cursor, Cline —
+  normalized into one record format
 - Enables post-hoc analysis of agent behavior
 
 ---
