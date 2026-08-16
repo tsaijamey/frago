@@ -84,6 +84,68 @@ class TestCleanupLegacyHookCopy:
         hook_binary.cleanup_legacy_hook_copy()  # a fresh install has none
 
 
+class TestEventRegistrationRecognisesADrift:
+    """What counts as "already registered the way we want it".
+
+    The comparison used to look at the matcher and the command only. On a machine
+    where the hook was already registered, a timeout changed in frago's code
+    therefore never arrived: the command was identical, the entry was left alone,
+    and nothing reported that the new value had not been applied. The timeout is
+    what keeps the runtime from killing a long-running hook — and when it does,
+    the agent loses every injection the hook had already computed — so a change
+    to it has to be treated as drift.
+    """
+
+    @staticmethod
+    def registered(timeout: int) -> dict[str, list[dict[str, object]]]:
+        return {
+            "UserPromptSubmit": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "/x/frago-core --engine",
+                            "timeout": timeout,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def wanted(self, timeout: int) -> dict[str, object]:
+        return {"type": "command", "command": "/x/frago-core --engine", "timeout": timeout}
+
+    def test_same_command_and_timeout_is_in_sync(self) -> None:
+        assert hook_binary._has_frago_hook_with_matching_entry(
+            self.registered(20), "UserPromptSubmit", "", self.wanted(20)
+        )
+
+    def test_a_changed_timeout_counts_as_drift(self) -> None:
+        assert not hook_binary._has_frago_hook_with_matching_entry(
+            self.registered(10), "UserPromptSubmit", "", self.wanted(20)
+        )
+
+    def test_a_changed_command_still_counts_as_drift(self) -> None:
+        assert not hook_binary._has_frago_hook_with_matching_entry(
+            self.registered(20), "UserPromptSubmit", "", {
+                "type": "command",
+                "command": "/elsewhere/frago-core --engine",
+                "timeout": 20,
+            }
+        )
+
+    def test_a_different_matcher_is_not_the_same_registration(self) -> None:
+        assert not hook_binary._has_frago_hook_with_matching_entry(
+            self.registered(20), "UserPromptSubmit", "Bash", self.wanted(20)
+        )
+
+    def test_an_unregistered_event_is_drift(self) -> None:
+        assert not hook_binary._has_frago_hook_with_matching_entry(
+            {}, "UserPromptSubmit", "", self.wanted(20)
+        )
+
+
 class TestDeployAnnouncesAppControl:
     def test_blocked_binary_gets_a_reason_in_the_log(
         self,

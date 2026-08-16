@@ -257,10 +257,17 @@ def sync_hook_events(hook_path: str) -> None:
     # instead of routing the event. The engine flag keeps hook invocations
     # on the hook entry no matter what the binary's default becomes.
     command = " ".join([hook_path, *get_engine_argv()])
+    # 20s, not 10s. Matching rules answer in milliseconds, but the prompt-time
+    # review pass calls a model, and measured against the live rule set its slow
+    # tail reaches ten seconds. When the runtime kills the hook for running long
+    # the agent loses everything the hook would have said — including the
+    # instant, deterministic rule injections that had already been computed. The
+    # review pass has its own, much shorter deadline and gives up on its own; the
+    # headroom here exists so that giving up costs only the review pass.
     frago_entry = {
         "type": "command",
         "command": command,
-        "timeout": 10,
+        "timeout": 20,
     }
 
     changed = False
@@ -269,8 +276,8 @@ def sync_hook_events(hook_path: str) -> None:
     for desc in supported:
         event = desc["event"]
         matcher = desc["matcher"]
-        if not _has_frago_hook_with_command(hooks, event, matcher, command):
-            # Stale entry (wrong matcher or wrong command path) → remove + re-add
+        if not _has_frago_hook_with_matching_entry(hooks, event, matcher, frago_entry):
+            # Stale entry (wrong matcher, command path, or timeout) → remove + re-add
             _remove_frago_hook(hooks, event)
             _ensure_frago_hook(hooks, event, matcher, frago_entry)
             changed = True
@@ -305,15 +312,27 @@ def _is_frago_hook(entry: dict[str, Any]) -> bool:
     )
 
 
-def _has_frago_hook_with_command(
-    hooks: dict[str, Any], event: str, matcher: str, command: str
+def _has_frago_hook_with_matching_entry(
+    hooks: dict[str, Any], event: str, matcher: str, entry: dict[str, Any]
 ) -> bool:
-    """Check if an event has a frago entry with the expected matcher AND command."""
+    """Is this event already registered exactly the way we want it?
+
+    Compares the timeout as well as the matcher and command. It used to compare
+    only the latter two, which meant a timeout changed in frago's code never
+    reached a machine that already had the hook registered: the command was
+    unchanged, so the whole entry was left alone and the new value silently never
+    applied. The timeout is what stops the runtime from killing a hook mid-run,
+    so a change to it has to propagate.
+    """
     for group in hooks.get(event, []):
         if group.get("matcher", "") != matcher:
             continue
         for hook in group.get("hooks", []):
-            if _is_frago_hook(hook) and hook.get("command") == command:
+            if (
+                _is_frago_hook(hook)
+                and hook.get("command") == entry.get("command")
+                and hook.get("timeout") == entry.get("timeout")
+            ):
                 return True
     return False
 

@@ -42,7 +42,18 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-const HOOK_TIMEOUT_MS = 10_000
+/**
+ * How long to wait for frago-core before giving up on it.
+ *
+ * 20s, matching what frago registers for Claude Code's hooks. Rule matching
+ * answers in milliseconds — measured here, 0.02s to 0.4s — but the prompt-time
+ * review pass calls a model and its own deadline is ten seconds. At a 10s
+ * ceiling this bridge would kill that call just as it was about to answer, and
+ * killing it costs more than the review: `runHook` resolves to null, so the
+ * instant rule injections computed in the same process are discarded too.
+ * The review pass gives up on its own well inside this.
+ */
+const HOOK_TIMEOUT_MS = 20_000
 
 /**
  * Paired markers wrapping every injection this bridge appends to a message.
@@ -360,7 +371,14 @@ function fragoLauncher() {
   return existsSync(installed) ? installed : "frago"
 }
 
+/**
+ * The engine binary. `FRAGO_HOOK_BINARY` overrides the deployed location, which
+ * is how the bridge's own behaviour is testable: the payload it sends is not
+ * observable from the outside otherwise, so a test points this at a stub that
+ * records what arrived.
+ */
 function hookBinaryPath() {
+  if (process.env.FRAGO_HOOK_BINARY) return process.env.FRAGO_HOOK_BINARY
   const name = process.platform === "win32" ? "frago-core.exe" : "frago-core"
   return path.join(os.homedir(), ".frago", "bin", name)
 }
@@ -485,6 +503,49 @@ function injectionOf(result) {
   return typeof ctx === "string" && ctx.trim() ? ctx : null
 }
 
+/**
+ * Recent turns, kept per session so the prompt-time review pass has something
+ * to reason about.
+ *
+ * Claude Code writes a transcript file and frago-core reads it directly.
+ * opencode keeps its conversation in a database instead, and reading that from
+ * the engine would mean a new native dependency in a binary that cross-compiles
+ * to four platforms. This bridge is already told every message and every tool
+ * call as they happen, so it remembers them and hands them over — the same
+ * information, from the side that already has it.
+ *
+ * What is missing here that a transcript has: the assistant's own prose. The
+ * plugin API reports what the user said and what tools were asked for, not what
+ * the model wrote between them. So the picture is "what was asked, and what was
+ * done" — the two things the review pass actually judges against.
+ */
+const HISTORY_TURNS = 12
+const HISTORY_TURN_CHARS = 300
+
+function rememberTurn(history, sessionID, line) {
+  if (!sessionID || !line) return
+  const turns = history.get(sessionID) ?? []
+  turns.push(line.length > HISTORY_TURN_CHARS ? `${line.slice(0, HISTORY_TURN_CHARS)}…` : line)
+  // Oldest out first: the review pass is asked about the present.
+  while (turns.length > HISTORY_TURNS) turns.shift()
+  history.set(sessionID, turns)
+  // A long-lived editor visits many sessions; without a ceiling this map is a
+  // slow leak.
+  if (history.size > 64) {
+    for (const key of history.keys()) {
+      if (key !== sessionID) {
+        history.delete(key)
+        break
+      }
+    }
+  }
+}
+
+function recentTurnsOf(history, sessionID) {
+  const turns = history.get(sessionID)
+  return turns && turns.length ? turns.join("\n") : undefined
+}
+
 /** Wrap an arbitrary string as one POSIX single-quoted shell word. */
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`
@@ -535,6 +596,8 @@ export const FragoHookPlugin = async ({ directory }) => {
   // An agent re-reading the same screenshot would otherwise wait out the
   // vision model a second time for an answer it already has.
   const described = new Map()
+  // sessionID -> recent turns, for the review pass. See rememberTurn.
+  const history = new Map()
 
   return {
     "chat.message": async (input, output) => {
@@ -559,12 +622,17 @@ export const FragoHookPlugin = async ({ directory }) => {
           cwd: directory,
         })
       }
+      // The turns so far, i.e. before this message: the prompt itself travels
+      // in its own field, and repeating it as history would have the review pass
+      // reading the same sentence twice.
       events.push({
         session_id: sessionID,
         hook_event_name: "UserPromptSubmit",
         prompt,
         cwd: directory,
+        recent_turns: recentTurnsOf(history, sessionID),
       })
+      if (prompt.trim()) rememberTurn(history, sessionID, `[用户] ${prompt.trim()}`)
 
       // The image description runs alongside the routing lookups rather than
       // after them: it is the slow one by two orders of magnitude, and making
@@ -615,13 +683,25 @@ export const FragoHookPlugin = async ({ directory }) => {
 
     "tool.execute.before": async (input, output) => {
       if (!input.sessionID || !input.tool) return
+      const toolName = toClaudeToolName(input.tool)
+      const toolInput = toClaudeToolInput(output.args)
       const result = await runHook({
         session_id: input.sessionID,
         hook_event_name: "PreToolUse",
-        tool_name: toClaudeToolName(input.tool),
-        tool_input: toClaudeToolInput(output.args),
+        tool_name: toolName,
+        tool_input: toolInput,
         cwd: directory,
+        recent_turns: recentTurnsOf(history, input.sessionID),
       })
+      // Recorded whatever the verdict: a call that was refused is still part of
+      // what just happened, and the next turn's review pass should see that it
+      // was attempted.
+      const target = toolInput.command ?? toolInput.file_path ?? toolInput.url ?? ""
+      rememberTurn(
+        history,
+        input.sessionID,
+        `[调用] ${toolName}${target ? `: ${target}` : ""}`,
+      )
       if (!result) return
 
       // A denial only takes effect on tool calls that carry a command to
