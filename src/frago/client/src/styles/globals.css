@@ -4264,6 +4264,316 @@ a:not(.btn):not(.nav-tab):not(.sidebar-github-link):hover {
   max-width: 640px;
 }
 
+/* === Settings ▸ Prompting capability (two-layer status) ===
+   State is carried by the whole card — an even glow ring all the way round,
+   a rounded body, and a slight shift in ground colour. NEVER an edge bar:
+   a single-sided accent is banned by the project design rules, and here it
+   would also read as decoration next to a badge that already names the state. */
+.settings-cap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.settings-cap-intro {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.settings-cap-loading,
+.settings-cap-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg) 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.settings-cap-error {
+  justify-content: flex-start;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+.settings-cap-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+/* One tone per state. Each is the full ring + ground pair, never a stripe. */
+.settings-cap-card.is-ok {
+  border-color: var(--border-accent);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px var(--accent-primary-20),
+    0 0 0 4px color-mix(in srgb, var(--accent-primary) 8%, transparent), var(--shadow-sm);
+}
+
+.settings-cap-card.is-warn {
+  border-color: color-mix(in srgb, var(--accent-warning) 34%, transparent);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-warning) 20%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--accent-warning) 9%, transparent), var(--shadow-sm);
+}
+
+.settings-cap-card.is-alert {
+  border-color: color-mix(in srgb, var(--accent-error) 38%, transparent);
+  background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-error) 22%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--accent-error) 11%, transparent), var(--shadow-md);
+}
+
+.settings-cap-card.is-off {
+  border-color: var(--border-color);
+  background: var(--bg-subtle);
+  box-shadow: none;
+}
+
+.settings-cap-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.settings-cap-mark {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+.settings-cap-card.is-ok .settings-cap-mark {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 4px 14px -3px color-mix(in srgb, var(--accent-primary) 60%, transparent);
+}
+
+.settings-cap-card.is-warn .settings-cap-mark {
+  background: color-mix(in srgb, var(--accent-warning) 20%, transparent);
+  color: var(--accent-warning);
+}
+
+.settings-cap-card.is-alert .settings-cap-mark {
+  background: color-mix(in srgb, var(--accent-error) 22%, transparent);
+  color: var(--accent-error);
+}
+
+.settings-cap-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-cap-name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.settings-cap-lede {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 3px 0 0;
+}
+
+.settings-cap-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.settings-cap-badge.is-ok {
+  background: var(--status-completed-bg);
+  color: var(--accent-primary);
+}
+
+.settings-cap-badge.is-warn {
+  background: var(--status-running-bg);
+  color: var(--accent-warning);
+}
+
+.settings-cap-badge.is-alert {
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+.settings-cap-badge.is-off {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.settings-cap-body {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.75;
+  margin: 0;
+}
+
+/* The "what you lose" line. Loud enough to be read before the button. */
+.settings-cap-consequence {
+  padding: var(--spacing-sm) 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.settings-cap-card.is-alert .settings-cap-consequence {
+  background: var(--status-error-bg);
+  color: var(--accent-error);
+}
+
+.settings-cap-detail {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  word-break: break-all;
+  margin: 0;
+}
+
+.settings-cap-note {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.settings-cap-note code,
+.settings-cap-body code,
+.settings-cap-consequence code {
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.settings-cap-cta {
+  align-self: flex-start;
+}
+
+.settings-cap-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding-top: var(--spacing-sm);
+  margin-top: 2px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-cap-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-cap-switch-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.settings-cap-switch-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.settings-cap-toggle {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.settings-cap-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-cap-toggle-track {
+  position: relative;
+  display: block;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  transition: background var(--transition-fast);
+}
+
+.settings-cap-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform var(--transition-fast), background var(--transition-fast);
+}
+
+.settings-cap-toggle input:checked + .settings-cap-toggle-track {
+  background: var(--accent-primary);
+}
+
+.settings-cap-toggle input:checked + .settings-cap-toggle-track::after {
+  background: var(--text-on-accent);
+  transform: translateX(18px);
+}
+
+.settings-cap-toggle input:focus-visible + .settings-cap-toggle-track {
+  box-shadow: var(--focus-ring);
+}
+
+.settings-cap-toggle input:disabled + .settings-cap-toggle-track {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .settings-cap-head {
+    flex-wrap: wrap;
+  }
+
+  .settings-cap-badge {
+    order: 3;
+  }
+}
+
 /* Narrow viewport: rail becomes a horizontal scroll strip above the panel */
 @media (max-width: 640px) {
   .settings-layout {

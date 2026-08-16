@@ -118,6 +118,22 @@ class WebuiSessionsConfig(BaseModel):
     idle_timeout_secs: int = 1800
 
 
+class HookReviewConfig(BaseModel):
+    """轻量 ai 这一层的开关（config.json -> hook_review）。
+
+    这一层是 frago-core 在每次 UserPromptSubmit 时把最近几轮会话交给便宜模型、
+    换回一句注入提示。它原本只能靠环境变量 `FRAGO_REVIEW=off` 关掉，而那条说明
+    只存在于 `frago-core --help` 里——等于开关有了、说明书锁在没人会开的抽屉。
+    开关因此搬到用户看得见、改得动的地方。
+
+    段缺失 = 开（见 frago-core review.rs `enabled_in`）：已经配好模型的用户
+    理应享有他为之配置的那一层，不该因为升级前没有这个字段而被静默关掉。
+    所以 Config.hook_review 默认 None，只有用户真的拨过开关才落盘。
+    """
+
+    enabled: bool = True
+
+
 class DaemonItem(BaseModel):
     """One declared recipe daemon（config.json -> daemons.items[]）。
 
@@ -200,6 +216,11 @@ class Config(BaseModel):
 
     # WebUI 会话集群生命周期配置 (spec 20260625-webui-session-lifecycle-mediator)
     webui_sessions: WebuiSessionsConfig = Field(default_factory=WebuiSessionsConfig)
+
+    # 轻量 ai 这一层开关。缺省 None = 段不存在 = 开（引擎侧同解，见
+    # HookReviewConfig 的注释）。NEVER 改成 default_factory —— 那会让每次
+    # save_config 都给没碰过开关的用户凭空写一段。
+    hook_review: HookReviewConfig | None = None
 
     # Supervised recipe daemons。声明由 `frago daemon enable`（raw JSON 直写）
     # 维护；此处建模使 save_config round-trip 类型化保留该段。缺省 None = 段

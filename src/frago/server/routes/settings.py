@@ -524,6 +524,82 @@ async def set_official_sync_enabled(request: OfficialSyncEnableRequest) -> ApiRe
 
 
 # ============================================================
+# Prompting Capability Endpoints (static rules + lightweight AI)
+# ============================================================
+
+
+class StaticRulesResponse(BaseModel):
+    """Static routing rules layer status.
+
+    ``count`` is None when the rule set could not be counted; the UI then says
+    "in effect" without a number rather than showing a fabricated one.
+    """
+    available: bool = True
+    count: Optional[int] = None
+
+
+class LightweightAiResponse(BaseModel):
+    """Lightweight AI layer status.
+
+    ``status`` is one of ``enabled`` / ``disabled`` / ``not_configured`` /
+    ``no_key`` — see HookReviewService for how the four are told apart.
+    """
+    status: str
+    profile_name: Optional[str] = None
+    model: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class HookReviewStatusResponse(BaseModel):
+    """Both prompting layers, plus the lightweight AI switch."""
+    enabled: bool
+    env_off: bool = False
+    static_rules: StaticRulesResponse
+    lightweight_ai: LightweightAiResponse
+
+
+class HookReviewEnableRequest(BaseModel):
+    """Flip the lightweight AI switch."""
+    enabled: bool
+
+
+@router.get("/settings/hook-review", response_model=HookReviewStatusResponse)
+async def get_hook_review_status() -> HookReviewStatusResponse:
+    """Status of frago's two prompting layers.
+
+    Read-only. The switch itself lives in ~/.frago/config.json -> hook_review.
+    """
+    from frago.server.services.hook_review_service import HookReviewService
+
+    return HookReviewStatusResponse(**HookReviewService.get_status())
+
+
+@router.put("/settings/hook-review", response_model=HookReviewStatusResponse)
+async def set_hook_review_enabled(
+    request: HookReviewEnableRequest,
+) -> HookReviewStatusResponse:
+    """Turn the lightweight AI layer on or off.
+
+    Persists to ~/.frago/config.json so the engine picks it up on the next hook
+    event — no environment variable, no restart. Returns the recomputed status
+    so the caller never has to guess what the flip resolved to.
+    """
+    from frago.server.services.hook_review_service import HookReviewService
+
+    try:
+        status = HookReviewService.set_enabled(request.enabled)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # config.json changed under the server's cache; refresh so every other
+    # reader sees the same file the engine will read.
+    state_manager = StateManager.get_instance()
+    await state_manager.refresh_config(broadcast=True)
+
+    return HookReviewStatusResponse(**status)
+
+
+# ============================================================
 # Version Check Endpoints
 # ============================================================
 

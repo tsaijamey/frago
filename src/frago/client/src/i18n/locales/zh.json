@@ -373,6 +373,7 @@
     "title": "设置",
     "description": "配置 frago 功能",
     "tabs": {
+      "capability": "提示能力",
       "general": "通用",
       "channels": "任务通道",
       "resources": "官方资源",
@@ -381,12 +382,56 @@
       "about": "关于"
     },
     "tabDesc": {
+      "capability": "静态规则与轻量 ai 此刻的状态",
       "general": "认证与工作目录",
       "channels": "任务接入通道",
       "resources": "官方命令与技能同步",
       "appearance": "语言与行为",
       "init": "初始化状态与向导",
       "about": "版本与许可"
+    },
+    "capability": {
+      "intro": "frago 在每次提交 prompt 时给 agent 注入提示，分两层：静态规则 (static rules) 常驻生效，轻量 ai (lightweight ai) 需要一个模型 profile 才存在。下面是两层此刻的实际状态。",
+      "loadFailed": "读取提示能力状态失败。",
+      "saveFailed": "开关没有写入成功，配置保持原样。",
+      "static": {
+        "name": "静态规则 (static rules)",
+        "lede": "编译进 frago-core 二进制的路由规则，按事件匹配后直接注入，不经过模型。",
+        "badge": "已生效",
+        "count": "内置规则与用户规则合并后共 {{total}} 条参与匹配，判定在几十毫秒内完成。",
+        "countUnknown": "规则条数暂时读不出来，匹配本身照常进行。",
+        "noConfigNeeded": "这一层不需要任何配置，也不消耗模型额度。"
+      },
+      "ai": {
+        "name": "轻量 ai (lightweight ai)",
+        "lede": "每次提交 prompt 时，把最近几轮会话连同规则、book、经验域的索引交给一个便宜模型，换回一句该注入的提示。",
+        "unknownModel": "未知模型",
+        "unnamedProfile": "未命名 profile",
+        "badge": {
+          "enabled": "运行中",
+          "disabled": "已关闭",
+          "not_configured": "未配置",
+          "no_key": "缺少 api key"
+        },
+        "body": {
+          "enabled": "当前使用模型 {{model}}，每次提交 prompt 会多一次该模型的调用。",
+          "disabled": "这一层被手动关闭了，不是出故障。重新打开下面的开关即可恢复。",
+          "not_configured": "没有找到可用的模型 profile，所以这一层从未被调用过。",
+          "no_key": "profile {{profile}} 的 api key 是空的，这一层调不动模型。"
+        },
+        "consequence": {
+          "not_configured": "后果：会话里不会出现按最近几轮内容生成的提示。静态规则不受影响，照常工作。",
+          "no_key": "后果：这一层完全不工作，而它本来只差一个 key。引擎发现 key 为空会直接跳过，不发请求。静态规则不受影响。"
+        },
+        "cta": {
+          "not_configured": "去配置模型 profile",
+          "no_key": "去填 api key"
+        },
+        "switch": "启用轻量 ai",
+        "switchDesc": "关掉后 frago 不再为提示调用模型，静态规则继续工作。",
+        "persistence": "开关写入 <c>~/.frago/config.json</c> 的 <c>hook_review.enabled</c>，引擎读的是同一个字段；这一段缺失时视为开启。",
+        "envOff": "环境变量 <c>FRAGO_REVIEW=off</c> 正在生效，它压过这里的开关：当前环境下轻量 ai 一律不运行，界面开关暂时不起作用。"
+      }
     },
     "general": {
       "title": "通用配置",
@@ -429,7 +474,11 @@
       "usingOfficialApi": "正在使用 Claude Code 官方 API",
       "usingCustomApi": "正在使用自定义 API 端点",
       "endpoint": "端点",
-      "model": "模型"
+      "model": "模型",
+      "openInFileManager": "在文件管理器里打开",
+      "claudeSettingsFile": "Claude Code 配置文件",
+      "claudeSettingsFileDesc": "这是 Claude Code 自己的配置，不是 frago 的工作目录。",
+      "openInVSCode": "用 VSCode 打开"
     },
     "profiles": {
       "title": "管理 API 配置",
@@ -654,7 +703,8 @@
     "saveFailed": "保存失败",
     "apiKeyEmpty": "API 密钥不能为空",
     "customEndpointRequired": "自定义端点需要 API 地址",
-    "customEndpointModelRequired": "自定义端点需要主模型名称"
+    "customEndpointModelRequired": "自定义端点需要主模型名称",
+    "deactivateFailed": "切换到官方 API 失败"
   },
   "timeline": {
     "waitingForEvents": "等待事件...",

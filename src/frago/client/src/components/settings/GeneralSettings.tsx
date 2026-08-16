@@ -14,7 +14,17 @@ import AuthStatusCard from '@/components/settings/AuthStatusCard';
 import ActiveProfileCard from '@/components/settings/ActiveProfileCard';
 import Modal from '@/components/ui/Modal';
 
-export default function GeneralSettings() {
+interface GeneralSettingsProps {
+  /**
+   * Incremented by the capability panel when the user clicks through to
+   * configure a model. Landing on this panel is not enough — the profile
+   * editor is behind a dialog, so arriving without it open would drop the
+   * user one step short of where they asked to go.
+   */
+  openProfilesSignal?: number;
+}
+
+export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSettingsProps = {}) {
   const { t } = useTranslation();
   const [config, setConfig] = useState<MainConfig | null>(null);
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
@@ -29,6 +39,13 @@ export default function GeneralSettings() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 0 is the initial value, i.e. "nobody asked" — only a bump opens the dialog.
+  useEffect(() => {
+    if (openProfilesSignal > 0) {
+      setShowProfileManager(true);
+    }
+  }, [openProfilesSignal]);
 
   const loadData = async () => {
     try {
@@ -142,21 +159,10 @@ export default function GeneralSettings() {
 
       {/* Working Directory Card */}
       <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border-color)] p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="mb-3">
           <label className="text-sm font-medium text-[var(--text-primary)]">
             {t('settings.general.workingDirectory')}
           </label>
-          {vscodeInstalled && (
-            <button
-              type="button"
-              onClick={handleOpenInVSCode}
-              className="btn btn-ghost btn-sm flex items-center gap-1"
-              title="Edit ~/.claude/settings.json in VSCode"
-            >
-              <Code size={16} />
-              {t('settings.general.edit')}
-            </button>
-          )}
         </div>
 
         <div className="flex gap-2 items-center">
@@ -169,13 +175,47 @@ export default function GeneralSettings() {
             type="button"
             onClick={handleOpenWorkingDirectory}
             className="btn btn-ghost btn-sm flex items-center gap-1 shrink-0"
-            title="Open in file manager"
+            title={t('settings.general.openInFileManager')}
           >
             <FolderOpen size={16} />
             {t('settings.general.open')}
           </button>
         </div>
       </div>
+
+      {/* Claude Code settings file — its own card.
+          This edit button used to live in the working-directory card above,
+          where it read as "edit the working directory". It edits neither that
+          directory nor anything of frago's: it opens Claude Code's own settings
+          file, which is a separate subject and now says so. */}
+      {vscodeInstalled && (
+        <div className="bg-[var(--bg-card)] rounded-lg border border-[var(--border-color)] p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <label className="text-sm font-medium text-[var(--text-primary)]">
+                {t('settings.general.claudeSettingsFile')}
+              </label>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                {t('settings.general.claudeSettingsFileDesc')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenInVSCode}
+              className="btn btn-ghost btn-sm flex items-center gap-1 shrink-0"
+              title={t('settings.general.openInVSCode')}
+            >
+              <Code size={16} />
+              {t('settings.general.edit')}
+            </button>
+          </div>
+          <div className="bg-[var(--bg-subtle)] rounded-md px-3 py-2 overflow-x-auto">
+            <span className="text-[var(--text-secondary)] font-mono text-sm whitespace-nowrap">
+              ~/.claude/settings.json
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Deactivate Confirmation Dialog */}
       <Modal

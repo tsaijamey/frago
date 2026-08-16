@@ -433,6 +433,43 @@ export async function openPath(path: string, reveal: boolean = false): Promise<A
 }
 
 // ============================================================
+// Prompting Capability API (static rules + lightweight AI)
+// ============================================================
+
+/** Which of the four lightweight-AI states the backend resolved to. */
+export type LightweightAiStatus = 'enabled' | 'disabled' | 'not_configured' | 'no_key';
+
+export interface HookReviewStatus {
+  /** The switch as persisted in ~/.frago/config.json -> hook_review.enabled. */
+  enabled: boolean;
+  /** FRAGO_REVIEW=off is present in the server's environment — a session-scoped
+   *  override that beats the persisted switch. */
+  env_off: boolean;
+  static_rules: {
+    available: boolean;
+    /** null when the rule set could not be counted — render "in effect" with no number. */
+    count: number | null;
+  };
+  lightweight_ai: {
+    status: LightweightAiStatus;
+    profile_name: string | null;
+    model: string | null;
+    detail: string | null;
+  };
+}
+
+export async function getHookReviewStatus(): Promise<HookReviewStatus> {
+  return fetchApi<HookReviewStatus>('/settings/hook-review');
+}
+
+export async function setHookReviewEnabled(enabled: boolean): Promise<HookReviewStatus> {
+  return fetchApi<HookReviewStatus>('/settings/hook-review', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+// ============================================================
 // VSCode Integration API
 // ============================================================
 

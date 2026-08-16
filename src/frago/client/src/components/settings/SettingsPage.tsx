@@ -16,6 +16,7 @@ import {
   Palette,
   Rocket,
   Info,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -25,21 +26,44 @@ import AboutSettings from './AboutSettings';
 import { InitSettings } from './InitSettings';
 import TaskIngestionPanel from './TaskIngestionPanel';
 import OfficialResourceSettings from './OfficialResourceSettings';
+import PromptCapabilitySettings from './PromptCapabilitySettings';
 
 interface SettingsPageProps {
   onOpenInitWizard?: () => void;
 }
 
-type TabId = 'general' | 'channels' | 'resources' | 'appearance' | 'init' | 'about';
+type TabId = 'capability' | 'general' | 'channels' | 'resources' | 'appearance' | 'init' | 'about';
+
+/** What each panel gets to render with — page props plus the cross-panel wiring. */
+interface PanelContext extends SettingsPageProps {
+  /** Jump to the model-profile editor, which lives in the general panel. */
+  onConfigureProfile: () => void;
+  /** Bumped each time that jump happens, so the general panel can open its
+   *  profile dialog on arrival instead of leaving the user to find it. */
+  profileSignal: number;
+}
 
 interface TabDef {
   id: TabId;
   Icon: LucideIcon;
-  render: (props: SettingsPageProps) => JSX.Element;
+  render: (ctx: PanelContext) => JSX.Element;
 }
 
+// Capability leads, and is the default panel: the settings page's first answer
+// should be "is frago working right now", not "here is a pile to manage".
 const TABS: TabDef[] = [
-  { id: 'general', Icon: KeyRound, render: () => <GeneralSettings /> },
+  {
+    id: 'capability',
+    Icon: Sparkles,
+    render: ({ onConfigureProfile }) => (
+      <PromptCapabilitySettings onConfigureProfile={onConfigureProfile} />
+    ),
+  },
+  {
+    id: 'general',
+    Icon: KeyRound,
+    render: ({ profileSignal }) => <GeneralSettings openProfilesSignal={profileSignal} />,
+  },
   { id: 'channels', Icon: Inbox, render: () => <TaskIngestionPanel /> },
   { id: 'resources', Icon: RefreshCw, render: () => <OfficialResourceSettings /> },
   { id: 'appearance', Icon: Palette, render: () => <AppearanceSettings /> },
@@ -55,7 +79,13 @@ const TABS: TabDef[] = [
 
 export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
   const { t } = useTranslation();
-  const [active, setActive] = useState<TabId>('general');
+  const [active, setActive] = useState<TabId>('capability');
+  const [profileSignal, setProfileSignal] = useState(0);
+
+  const handleConfigureProfile = () => {
+    setProfileSignal((n) => n + 1);
+    setActive('general');
+  };
 
   const activeTab = TABS.find((tab) => tab.id === active) ?? TABS[0];
 
@@ -97,7 +127,11 @@ export default function SettingsPage({ onOpenInitWizard }: SettingsPageProps) {
             </div>
           </div>
           <div className="settings-panel-body">
-            {activeTab.render({ onOpenInitWizard })}
+            {activeTab.render({
+              onOpenInitWizard,
+              onConfigureProfile: handleConfigureProfile,
+              profileSignal,
+            })}
           </div>
         </section>
       </div>

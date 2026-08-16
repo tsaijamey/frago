@@ -551,6 +551,36 @@ export const openTutorial = withMode(
 );
 
 // ============================================================
+// Prompting Capability API (static rules + lightweight AI)
+// ============================================================
+
+export type { HookReviewStatus, LightweightAiStatus } from './client';
+
+/**
+ * pywebview mode has no backend for this, and guessing would be worse than
+ * saying nothing: reporting "in effect" for a layer that may not be running is
+ * exactly the silent-failure this panel exists to end. So it reports the
+ * lightweight layer as unconfigured and leaves the rule count blank.
+ */
+const HOOK_REVIEW_UNAVAILABLE: httpApi.HookReviewStatus = {
+  enabled: true,
+  env_off: false,
+  static_rules: { available: true, count: null },
+  lightweight_ai: { status: 'not_configured', profile_name: null, model: null, detail: null },
+};
+
+export const getHookReviewStatus = withMode(
+  (): Promise<httpApi.HookReviewStatus> => httpApi.getHookReviewStatus(),
+  (): Promise<httpApi.HookReviewStatus> => Promise.resolve(HOOK_REVIEW_UNAVAILABLE),
+);
+
+export const setHookReviewEnabled = withMode(
+  (enabled: boolean): Promise<httpApi.HookReviewStatus> => httpApi.setHookReviewEnabled(enabled),
+  (enabled: boolean): Promise<httpApi.HookReviewStatus> =>
+    Promise.resolve({ ...HOOK_REVIEW_UNAVAILABLE, enabled }),
+);
+
+// ============================================================
 // VSCode Integration API
 // ============================================================
 

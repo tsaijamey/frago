@@ -373,6 +373,7 @@
     "title": "Settings",
     "description": "Configure frago features",
     "tabs": {
+      "capability": "Prompting",
       "general": "General",
       "channels": "Channels",
       "resources": "Resources",
@@ -381,12 +382,56 @@
       "about": "About"
     },
     "tabDesc": {
+      "capability": "Current state of static rules and lightweight ai",
       "general": "Authentication and working directory",
       "channels": "Task ingestion channels",
       "resources": "Official commands & skills sync",
       "appearance": "Language and behavior",
       "init": "Setup status and wizard",
       "about": "Version and license"
+    },
+    "capability": {
+      "intro": "frago injects guidance into the agent on every prompt submission, in two layers: static rules are always in effect, while lightweight ai only exists once a model profile is configured. Below is what each layer is actually doing right now.",
+      "loadFailed": "Failed to read prompting capability status.",
+      "saveFailed": "The switch was not saved; the configuration is unchanged.",
+      "static": {
+        "name": "Static rules",
+        "lede": "Routing rules compiled into the frago-core binary, matched by event and injected directly, with no model involved.",
+        "badge": "In effect",
+        "count": "{{total}} rules are matching, built-in and user rules combined; the decision takes tens of milliseconds.",
+        "countUnknown": "The rule count could not be read right now; matching itself is unaffected.",
+        "noConfigNeeded": "This layer needs no configuration and consumes no model quota."
+      },
+      "ai": {
+        "name": "Lightweight ai",
+        "lede": "On every prompt submission, the last few turns of the conversation are sent to a cheap model along with the rule, book, and knowledge-domain indexes, which returns one line of guidance to inject.",
+        "unknownModel": "unknown model",
+        "unnamedProfile": "unnamed profile",
+        "badge": {
+          "enabled": "Running",
+          "disabled": "Turned off",
+          "not_configured": "Not configured",
+          "no_key": "No api key"
+        },
+        "body": {
+          "enabled": "Currently using {{model}}. Each prompt submission adds one call to that model.",
+          "disabled": "This layer was turned off by hand — nothing is broken. Flip the switch below to bring it back.",
+          "not_configured": "No usable model profile was found, so this layer has never been called.",
+          "no_key": "The api key on profile {{profile}} is empty, so this layer cannot reach a model."
+        },
+        "consequence": {
+          "not_configured": "Consequence: no guidance generated from your recent turns will appear in the session. Static rules are unaffected and keep working.",
+          "no_key": "Consequence: this layer does nothing at all, and it is only one key short of working. The engine skips it outright when the key is empty — no request is sent. Static rules are unaffected."
+        },
+        "cta": {
+          "not_configured": "Configure a model profile",
+          "no_key": "Add an api key"
+        },
+        "switch": "Enable lightweight ai",
+        "switchDesc": "When off, frago no longer calls a model for guidance; static rules keep working.",
+        "persistence": "The switch is written to <c>hook_review.enabled</c> in <c>~/.frago/config.json</c>, the same field the engine reads; a missing section counts as on.",
+        "envOff": "The environment variable <c>FRAGO_REVIEW=off</c> is in effect and overrides this switch: lightweight ai will not run in this environment, and the switch above has no effect for now."
+      }
     },
     "general": {
       "title": "General Configuration",
@@ -429,7 +474,11 @@
       "usingOfficialApi": "Using Claude Code Official API",
       "usingCustomApi": "Using Custom API Endpoint",
       "endpoint": "Endpoint",
-      "model": "Model"
+      "model": "Model",
+      "openInFileManager": "Open in file manager",
+      "claudeSettingsFile": "Claude Code settings file",
+      "claudeSettingsFileDesc": "This is Claude Code's own configuration, not frago's working directory.",
+      "openInVSCode": "Open in VSCode"
     },
     "profiles": {
       "title": "Manage API Profiles",
@@ -654,7 +703,8 @@
     "saveFailed": "Failed to save",
     "apiKeyEmpty": "API Key cannot be empty",
     "customEndpointRequired": "Custom endpoint requires API URL",
-    "customEndpointModelRequired": "Custom endpoint requires a main model name"
+    "customEndpointModelRequired": "Custom endpoint requires a main model name",
+    "deactivateFailed": "Failed to switch to the official API"
   },
   "timeline": {
     "waitingForEvents": "Waiting for events...",
