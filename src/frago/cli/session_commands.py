@@ -177,9 +177,15 @@ def search_cmd(
 
     A model first expands your sentence into literal search terms (synonyms,
     Chinese/English variants, likely command names and error strings), then
-    ripgrep sweeps ``~/.claude/projects/**/*.jsonl`` and a read-only SQL pass
-    sweeps the opencode session database. Sessions rank by how many DISTINCT
-    terms they matched, then by hit density, then by recency.
+    ripgrep sweeps the frago session backup at ``~/.frago/sessions``. That
+    backup is the corpus on purpose: Claude Code rolls old transcripts out of
+    ``~/.claude/projects``, while the backup only ever grows. Sessions rank by
+    how many DISTINCT terms they matched, then by hit density, then by recency.
+
+    \b
+    ``--days`` reads the timestamps carried inside the records themselves, not
+    file mtimes — a backup file's mtime says when it was copied, not when the
+    session happened.
 
     \b
     If the expansion turn fails or times out, the query is tokenized literally
@@ -229,8 +235,8 @@ def _search_as_dict(result) -> dict:
         "terms": result.plan.terms,
         "terms_source": result.plan.source,
         "terms_note": result.plan.note,
-        "scanned_claude_files": result.scanned_claude_files,
-        "opencode_available": result.opencode_available,
+        "corpus_root": result.corpus_root,
+        "scanned_sessions": result.scanned_sessions,
         "duration_ms": result.duration_ms,
         "warnings": result.warnings,
         "hits": [
@@ -245,6 +251,7 @@ def _search_as_dict(result) -> dict:
                 "matched_terms": h.matched_terms,
                 "hit_records": h.hit_lines,
                 "capped": h.capped,
+                "degraded": h.degraded,
                 "location": h.location,
                 "resume_command": h.resume_command,
                 "snippets": [{"term": s.term, "text": s.text} for s in h.snippets],
@@ -264,8 +271,7 @@ def _render_search(result) -> str:
     if plan.note:
         lines.append(f"扩展思路：{plan.note}")
     lines.append(
-        f"扫过 claude 会话文件 {result.scanned_claude_files} 个；"
-        f"opencode 会话库{'已搜' if result.opencode_available else '未搜'}；"
+        f"语料：{result.corpus_root}（{result.scanned_sessions} 场会话）；"
         f"耗时 {result.duration_ms / 1000:.1f}s"
     )
     for warning in result.warnings:
@@ -296,6 +302,8 @@ def _render_search(result) -> str:
         lines.append("")
         lines.append(f"[{i}] {hit.resume_command}")
         lines.append(f"    命中词：{'、'.join(hit.matched_terms)}")
+        if hit.degraded:
+            lines.append("    [!] 只剩早期加工副本，工具返回值等内容不在里面")
         if hit.cwd:
             lines.append(f"    工作目录：{hit.cwd}")
         lines.append(f"    原始记录：{hit.location}")

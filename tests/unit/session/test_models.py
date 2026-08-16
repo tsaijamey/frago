@@ -2,7 +2,7 @@
 
 Tests data models: enums, SessionStep, MonitoredSession, etc.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -86,7 +86,7 @@ class TestSessionStep:
             step_id=1,
             session_id="test-session",
             type=StepType.USER_MESSAGE,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             content_summary="Test content",
             raw_uuid="uuid-123",
         )
@@ -101,7 +101,7 @@ class TestSessionStep:
             step_id=1,
             session_id="test-session",
             type=StepType.USER_MESSAGE,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             content_summary="Test",
             raw_uuid="uuid-123",
         )
@@ -116,7 +116,7 @@ class TestSessionStep:
             step_id=2,
             session_id="test-session",
             type=StepType.TOOL_CALL,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             content_summary="Reading file...",
             raw_uuid="uuid-456",
             tool_call_id="tc-123",
@@ -133,14 +133,14 @@ class TestSessionStep:
                 step_id=0,
                 session_id="test",
                 type=StepType.USER_MESSAGE,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 content_summary="Test",
                 raw_uuid="uuid",
             )
 
     def test_json_serialization(self):
         """Should serialize datetime to ISO format."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         step = SessionStep(
             step_id=1,
             session_id="test",
@@ -165,8 +165,8 @@ class TestMonitoredSession:
             agent_type=AgentType.CLAUDE,
             project_path="/home/test/project",
             source_file="/home/test/.claude/projects/-home-test-project/session.jsonl",
-            started_at=datetime.now(timezone.utc),
-            last_activity=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
+            last_activity=datetime.now(UTC),
         )
 
         assert session.session_id == "test-123"
@@ -180,8 +180,8 @@ class TestMonitoredSession:
             agent_type=AgentType.CLAUDE,
             project_path="/home/test",
             source_file="/home/test/.claude/projects/-home-test/session.jsonl",
-            started_at=datetime.now(timezone.utc),
-            last_activity=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
+            last_activity=datetime.now(UTC),
         )
 
         assert session.ended_at is None
@@ -197,8 +197,8 @@ class TestMonitoredSession:
             status=SessionStatus.COMPLETED,
             project_path="/home/test",
             source_file="/home/test/.claude/projects/-home-test/session.jsonl",
-            started_at=datetime.now(timezone.utc),
-            last_activity=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
+            last_activity=datetime.now(UTC),
             name="Test Session",
             step_count=10,
         )

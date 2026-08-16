@@ -1,24 +1,42 @@
-"""跨 claude / opencode 两个原始会话库的语义检索。
+"""跨 claude / opencode 两套会话备份的语义检索。
 
 ## 解决什么问题
 
-"上个月那次把浏览器扩展桥接调通的会话"——人记得的是这么一句话，而两个会话库里
-存的是 JSONL 记录和 SQLite 片段。一句话和一堆记录之间隔着一步：得先想清楚这件事
-在当时的会话里会以哪些字面量出现（``extension bridge``、``桥接``、``chrome
-extension``、``ws://``、报错原文……），才谈得上检索。
+"上个月那次把浏览器扩展桥接调通的会话"——人记得的是这么一句话，而备份里存的是
+一堆 JSONL 记录。一句话和一堆记录之间隔着一步：得先想清楚这件事在当时的会话里
+会以哪些字面量出现（``extension bridge``、``桥接``、``chrome extension``、
+``ws://``、报错原文……），才谈得上检索。
 
 这一步恰恰是代码做不好而模型做得好的。所以分工是：**模型负责把一句话摊成关键词
-组合，代码负责拿着关键词把两个库翻个底朝天**。反过来（让模型自己去 grep）会退化成
+组合，代码负责拿着关键词把备份翻个底朝天**。反过来（让模型自己去 grep）会退化成
 一轮一轮的试探，慢且不可复现。
 
-## 两个库的差别
+## 为什么搜备份而不搜 Claude 自己的目录
 
-claude 的会话是 ``~/.claude/projects/<项目>/<会话 id>.jsonl``，一条记录一行，
-2.6 GB 量级——ripgrep 扫一遍不到一秒，Python 逐行读要几分钟，所以搜索这一步交给
-ripgrep，只有排进前几名的那几个文件才由 Python 打开取元数据和上下文。
+``~/.claude/projects`` 会随时间滚动删除旧会话——那里现存的只是历史的一小截，
+搜它等于宣布几个月前的事没发生过。``~/.frago/sessions`` 是 frago 的备份，只增
+不减，30 秒一轮跟到最新，对还活着的会话与源文件逐字节相等。所以检索的语料是
+备份，不是原目录。
 
-opencode 的会话在 SQLite 里（``part`` 表一行一个片段），30 MB 量级，直接
-``LIKE`` 查询即可，只读打开，NEVER 写。
+备份里有两代格式，都搜：
+
+  ``<核>/<会话 id>/raw.jsonl``     原文逐字节副本，claude 侧是原转录、
+                                  opencode 侧是一行一个原始片段
+  ``<核>/<会话 id>/steps.jsonl``   早期的加工副本，工具返回值等内容已被摘掉
+
+老会话往往只剩 steps.jsonl，而它们的原文已随 Claude 的滚动删除永久消失。这类
+会话在结果里标 ``摘要副本``——在那儿搜不到 NEVER 等于那件事没发生过。
+
+## 时间从记录里取，不看文件时间
+
+备份文件的 mtime 是"什么时候备的"，批量回填过的文件全是同一个时刻，跟会话什么
+时候发生的毫无关系。所以 ``--days`` 读的是记录自己带的时间：claude 记录是
+``timestamp``，opencode 片段是 ``time.start/end``。从文件尾往回扫，遇到第一条
+带时间的就停——实测中位数退 2 条记录、p99 退 5 条。
+
+极少数会话（只有 ``mode`` / ``permission-mode`` 这类元数据记录的空壳）文件里
+根本没有时间。给了 ``--days`` 时它们被排除，并在告警里报数——NEVER 让"判不出
+时间"悄悄消失成"不在范围内"。
 
 ## 计数口径
 
@@ -42,11 +60,12 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR, _scan_file
-from frago.session.opencode_store import _connect, db_path
+from frago.session.claude_sessions import _scan_file
+from frago.session.storage import get_session_base_dir
 
 logger = logging.getLogger(__name__)
 
@@ -54,18 +73,17 @@ logger = logging.getLogger(__name__)
 # 每一行都吐出来。触顶会在结果里标注。
 RG_MAX_LINES_PER_FILE = 40
 
-# 一次 ripgrep 调用最多带多少个文件路径，超出就分批。命令行长度有上限，
-# 而这里的路径列表可以上千条。
-RG_PATH_CHUNK = 400
-
-# opencode 侧每个关键词最多取多少个片段。
-OPENCODE_PART_LIMIT = 3000
-
 # 每个会话最多留几段上下文。
 MAX_SNIPPETS_PER_SESSION = 3
 
 # 一段上下文在命中词两侧各取多少字符。
 SNIPPET_RADIUS = 140
+
+# 从文件尾往回找时间戳，一次读多少字节。实测一个块就覆盖 p99。
+TAIL_BLOCK_BYTES = 64 * 1024
+
+# 往回找的总上限。超过这个还没找到，就当这个文件没有时间。
+TAIL_MAX_BYTES = 4 * 1024 * 1024
 
 # 关键词扩展这一轮给模型多少秒。扩展只是产出十来个词，超时说明这条路不通，
 # 退回字面量而不是干等。
@@ -75,11 +93,19 @@ EXPAND_TIMEOUT_S = 180
 MIN_TERM_LEN_ASCII = 3
 MIN_TERM_LEN_CJK = 2
 
+# 备份里的两代文件名。两个都搜。
+RAW_FILENAME = "raw.jsonl"
+STEPS_FILENAME = "steps.jsonl"
+
+# 备份根下的一级目录 → 会话所属的核。``claude-misc`` 是早期归档出来的一批
+# claude 会话，同源同格式，归到 claude 下。
+_CORE_DIRS = {"claude": "claude", "claude-misc": "claude", "opencode": "opencode"}
+
 _ASCII_ONLY = re.compile(r"^[\x00-\x7f]+$")
 
 _EXPAND_PROMPT = """\
-你是关键词扩展器。把下面这句自然语言检索意图，扩展成用于 ripgrep 与 SQL LIKE \
-的**字面量子串**，用来在我本地的 AI 编程会话记录里做全文检索。
+你是关键词扩展器。把下面这句自然语言检索意图，扩展成用于 ripgrep 的**字面量\
+子串**，用来在我本地的 AI 编程会话记录里做全文检索。
 
 检索意图：{query}
 
@@ -123,7 +149,7 @@ class SessionHit:
     title: str | None
     cwd: str | None
     last_activity: float
-    """最后活动时刻（epoch 秒）。"""
+    """最后活动时刻（epoch 秒），从记录自己带的时间取；判不出时为 0。"""
 
     matched_terms: list[str]
     hit_lines: int
@@ -133,6 +159,9 @@ class SessionHit:
     resume_command: str
     capped: bool = False
     """该会话触到了每文件计数上限，实际命中量只多不少。"""
+
+    degraded: bool = False
+    """这场只剩早期的加工副本，工具返回值等内容已被摘掉，搜不到 NEVER 等于没发生。"""
 
     snippets: list[Snippet] = field(default_factory=list)
 
@@ -147,8 +176,8 @@ class SearchResult:
     query: str
     plan: KeywordPlan
     hits: list[SessionHit]
-    scanned_claude_files: int
-    opencode_available: bool
+    corpus_root: str
+    scanned_sessions: int
     duration_ms: int
     warnings: list[str] = field(default_factory=list)
 
@@ -259,28 +288,172 @@ def expand_query(
     return KeywordPlan(terms, note, "agent")
 
 
-# ── claude 侧：ripgrep ──────────────────────────────────────────────
-def _claude_files(root: Path, since_ts: float | None) -> list[Path]:
-    """待搜的会话文件，按最后修改时间倒序（新的先排）。"""
-    if not root.exists():
+# ── 记录里的时间 ────────────────────────────────────────────────────
+def _record_epoch(record: dict[str, Any]) -> float | None:
+    """一条记录自己带的时刻（epoch 秒）。取不到返回 None。
+
+    claude 转录用 ``timestamp``（ISO-8601，带 Z 或不带时区）；opencode 片段用
+    ``time``，是 ``{"start": 毫秒, "end": 毫秒}``。早期加工副本沿用 ``timestamp``，
+    写的是不带时区的本地时间，按本地时区解释正是它的原意。
+    """
+    stamp = record.get("timestamp")
+    if isinstance(stamp, str) and stamp:
+        try:
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    moment = record.get("time")
+    if isinstance(moment, dict):
+        value = moment.get("end") or moment.get("start")
+        if isinstance(value, (int, float)) and value:
+            return value / 1000
+    elif isinstance(moment, (int, float)) and moment:
+        return moment / 1000
+    return None
+
+
+def last_activity_of(path: Path) -> float | None:
+    """这个会话文件里最后一条带时间的记录是什么时候。
+
+    从尾往回读块，每块内倒着解析。绝大多数文件退两三条记录就够，所以这比从头
+    读一遍便宜几个数量级。整个文件都没有时间时返回 None——那是数据本身没有，
+    NEVER 拿文件 mtime 顶替（备份的 mtime 是"什么时候备的"，不是会话时间）。
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size == 0:
+        return None
+
+    buf = b""
+    pos = size
+    try:
+        with open(path, "rb") as fh:
+            while pos > 0 and (size - pos) < TAIL_MAX_BYTES:
+                step = min(TAIL_BLOCK_BYTES, pos)
+                pos -= step
+                fh.seek(pos)
+                buf = fh.read(step) + buf
+                lines = buf.split(b"\n")
+                # 块的第一段可能是半条记录，除非已经读到文件头。
+                candidates = lines if pos == 0 else lines[1:]
+                for line in reversed(candidates):
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    moment = _record_epoch(record)
+                    if moment:
+                        return moment
+    except OSError as exc:
+        logger.debug("tail read failed for %s: %s", path, exc)
+    return None
+
+
+# ── 记录里的可读文本 ────────────────────────────────────────────────
+def _record_text(record: dict[str, Any]) -> str:
+    """把一条记录里的可读文本摊平成一串，三种格式都认。"""
+    parts: list[str] = []
+
+    # claude 转录：正文挂在 message.content 或 content 下。
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None:
+        content = record.get("content")
+    if isinstance(content, str):
+        parts.append(content)
+    elif isinstance(content, list):
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                for key in ("text", "thinking"):
+                    value = block.get(key)
+                    if isinstance(value, str):
+                        parts.append(value)
+                if block.get("type") == "tool_use":
+                    parts.append(f"[tool_use {block.get('name', '')}] {block.get('input')}")
+                if block.get("type") == "tool_result":
+                    parts.append(f"[tool_result] {block.get('content')}")
+
+    # opencode 片段：正文在顶层 text/output/error，工具调用在 state 下。
+    state = record.get("state")
+    if isinstance(state, dict):
+        for key in ("input", "output", "error"):
+            value = state.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+            elif isinstance(value, dict):
+                parts.append(json.dumps(value, ensure_ascii=False))
+
+    # 早期加工副本用 content_summary；其余是各格式的零散文本字段。
+    for key in ("content_summary", "summary", "text", "output", "error", "lastPrompt", "customTitle"):
+        value = record.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+
+    return "\n".join(parts)
+
+
+def _snippet_from_line(line: str, term: str) -> str | None:
+    """从一条记录里取命中词周边的一段可读文本。
+
+    先按 JSON 解析、拼出文本内容再取窗口；解析不了、或摊平后反而找不到这个词
+    （命中的是结构字段而非正文），就直接在原始行上开窗——读得懂的优先，读不懂
+    也 NEVER 什么都不给。
+    """
+    haystack = line
+    try:
+        record = json.loads(line)
+    except (ValueError, TypeError):
+        record = None
+    if isinstance(record, dict):
+        flattened = _record_text(record)
+        if term.lower() in flattened.lower():
+            haystack = flattened
+    idx = haystack.lower().find(term.lower())
+    if idx < 0:
+        return None
+    start = max(0, idx - SNIPPET_RADIUS)
+    end = min(len(haystack), idx + len(term) + SNIPPET_RADIUS)
+    text = haystack[start:end].replace("\n", " ").strip()
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if end < len(haystack) else ""
+    return f"{prefix}{text}{suffix}"
+
+
+def _collect_snippets(path: Path, term_lines: dict[str, set[int]]) -> list[Snippet]:
+    """打开命中的会话文件，按行号取几段上下文。每个关键词至多一段。"""
+    wanted: dict[int, str] = {}
+    for term, lines in term_lines.items():
+        for lineno in sorted(lines)[:1]:
+            wanted.setdefault(lineno, term)
+    if not wanted:
         return []
-    files: list[tuple[float, Path]] = []
-    for proj in root.iterdir():
-        if not proj.is_dir():
-            continue
-        for jsonl in proj.glob("*.jsonl"):
-            try:
-                mtime = jsonl.stat().st_mtime
-            except OSError:
-                continue
-            if since_ts is not None and mtime < since_ts:
-                continue
-            files.append((mtime, jsonl))
-    files.sort(key=lambda pair: pair[0], reverse=True)
-    return [path for _, path in files]
+    snippets: list[Snippet] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for lineno, line in enumerate(fh, start=1):
+                term = wanted.get(lineno)
+                if term is None:
+                    continue
+                text = _snippet_from_line(line, term)
+                if text:
+                    snippets.append(Snippet(term=term, text=text))
+                if len(snippets) >= MAX_SNIPPETS_PER_SESSION:
+                    break
+    except OSError as exc:
+        logger.debug("snippet read failed for %s: %s", path, exc)
+    return snippets
 
 
-def _rg_command(terms: list[str], paths: list[Path]) -> list[str]:
+# ── ripgrep ─────────────────────────────────────────────────────────
+def _rg_command(terms: list[str], root: Path) -> list[str]:
     cmd = [
         "rg",
         "--null",            # 文件名后跟 NUL，路径里有冒号也不会切错
@@ -295,20 +468,28 @@ def _rg_command(terms: list[str], paths: list[Path]) -> list[str]:
         "--no-ignore",
         "--max-count",
         str(RG_MAX_LINES_PER_FILE),
+        "--glob",
+        RAW_FILENAME,
+        "--glob",
+        STEPS_FILENAME,
     ]
     for term in terms:
         cmd += ["-e", term]
-    cmd += [str(p) for p in paths]
+    cmd.append(str(root))
     return cmd
 
 
-def _run_rg(terms: list[str], paths: list[Path]) -> tuple[dict[str, dict[str, set[int]]], bool]:
-    """跑一批文件，返回 ``{文件: {关键词: 命中行号集合}}`` 与"是否跑成了"。"""
+def _run_rg(terms: list[str], root: Path) -> tuple[dict[str, dict[str, set[int]]], bool]:
+    """一趟扫完整棵备份树，返回 ``{文件: {关键词: 命中行号集合}}`` 与"是否跑成了"。
+
+    整棵树 4.5 GB 量级，ripgrep 跑一遍两三秒——不必再像从前那样把路径列表分批
+    喂进去，让它自己走目录更快也更短。
+    """
     per_file: dict[str, dict[str, set[int]]] = {}
     lookup = {t.lower(): t for t in terms}
     try:
         proc = subprocess.run(  # noqa: S603 - 参数全部由本模块构造
-            _rg_command(terms, paths),
+            _rg_command(terms, root),
             capture_output=True,
             text=True,
             errors="replace",
@@ -336,275 +517,233 @@ def _run_rg(terms: list[str], paths: list[Path]) -> tuple[dict[str, dict[str, se
     return per_file, True
 
 
-def _snippet_from_line(line: str, term: str) -> str | None:
-    """从一条 JSONL 记录里取命中词周边的一段可读文本。
+# ── 语料 ────────────────────────────────────────────────────────────
+def backup_root() -> Path:
+    """检索语料的根：frago 的会话备份目录。"""
+    return get_session_base_dir()
 
-    先按 JSON 解析、拼出文本内容再取窗口；解析不了就直接在原始行上开窗——
-    读得懂的优先，读不懂也 NEVER 什么都不给。
-    """
-    haystack = line
+
+def _split_location(root: Path, path: Path) -> tuple[str, str] | None:
+    """把备份里的文件路径拆成 ``(核, 会话 id)``。不是备份布局就返回 None。"""
     try:
-        record = json.loads(line)
-    except (ValueError, TypeError):
-        record = None
-    if isinstance(record, dict):
-        flattened = _flatten_record(record)
-        if term.lower() in flattened.lower():
-            haystack = flattened
-    idx = haystack.lower().find(term.lower())
-    if idx < 0:
+        rel = path.relative_to(root)
+    except ValueError:
         return None
-    start = max(0, idx - SNIPPET_RADIUS)
-    end = min(len(haystack), idx + len(term) + SNIPPET_RADIUS)
-    text = haystack[start:end].replace("\n", " ").strip()
-    prefix = "…" if start > 0 else ""
-    suffix = "…" if end < len(haystack) else ""
-    return f"{prefix}{text}{suffix}"
+    if len(rel.parts) != 3:
+        return None
+    core = _CORE_DIRS.get(rel.parts[0])
+    if core is None:
+        return None
+    return core, rel.parts[1]
 
 
-def _flatten_record(record: dict[str, Any]) -> str:
-    """把一条会话记录里的可读文本摊平成一串。"""
-    message = record.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if content is None:
-        content = record.get("content")
-    parts: list[str] = []
-    if isinstance(content, str):
-        parts.append(content)
-    elif isinstance(content, list):
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict):
-                for key in ("text", "thinking"):
-                    value = block.get(key)
-                    if isinstance(value, str):
-                        parts.append(value)
-                if block.get("type") == "tool_use":
-                    parts.append(f"[tool_use {block.get('name', '')}] {block.get('input')}")
-                if block.get("type") == "tool_result":
-                    result = block.get("content")
-                    parts.append(f"[tool_result] {result}")
-    for key in ("summary", "content", "lastPrompt", "customTitle"):
-        value = record.get(key)
-        if isinstance(value, str):
-            parts.append(value)
-    return "\n".join(parts)
+def count_sessions(root: Path) -> int:
+    """语料里有多少场会话——报给用户看"这一趟翻了多大的堆"。"""
+    total = 0
+    for core_dir in _CORE_DIRS:
+        path = root / core_dir
+        if not path.is_dir():
+            continue
+        try:
+            with os.scandir(path) as entries:
+                total += sum(1 for e in entries if e.is_dir())
+        except OSError as exc:
+            logger.debug("session count failed for %s: %s", path, exc)
+    return total
 
 
-def _collect_claude_snippets(
-    path: Path, term_lines: dict[str, set[int]]
-) -> list[Snippet]:
-    """打开命中的会话文件，按行号取几段上下文。每个关键词至多一段。"""
-    wanted: dict[int, str] = {}
-    for term, lines in term_lines.items():
-        for lineno in sorted(lines)[:1]:
-            wanted.setdefault(lineno, term)
-    if not wanted:
-        return []
-    snippets: list[Snippet] = []
+# ── 命中会话的元数据 ────────────────────────────────────────────────
+def _opencode_titles(session_ids: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """命中的 opencode 会话叫什么、在哪个目录跑的。
+
+    片段本身不带这两样，只有会话库的 ``session`` 表有。这里只为命中的那几场查
+    一次，查不到（库不在、或这场已从库里滚掉）就留空，NEVER 因此让检索失败。
+    """
+    if not session_ids:
+        return {}
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            for lineno, line in enumerate(fh, start=1):
-                term = wanted.get(lineno)
-                if term is None:
-                    continue
-                text = _snippet_from_line(line, term)
-                if text:
-                    snippets.append(Snippet(term=term, text=text))
-                if len(snippets) >= MAX_SNIPPETS_PER_SESSION:
-                    break
-    except OSError as exc:
-        logger.debug("snippet read failed for %s: %s", path, exc)
-    return snippets
+        from frago.session.opencode_store import _connect
+
+        conn = _connect()
+    except Exception as exc:  # noqa: BLE001 - 元数据可有可无，不该拖垮检索
+        logger.debug("opencode metadata lookup failed: %s", exc)
+        return {}
+    if conn is None:
+        return {}
+    try:
+        placeholders = ",".join("?" * len(session_ids))
+        rows = conn.execute(
+            f"SELECT id, title, directory FROM session WHERE id IN ({placeholders})",  # noqa: S608
+            tuple(session_ids),
+        ).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("opencode metadata query failed: %s", exc)
+        return {}
+    finally:
+        conn.close()
+    return {
+        str(sid): (
+            title if isinstance(title, str) and title else None,
+            directory if isinstance(directory, str) and directory else None,
+        )
+        for sid, title, directory in rows
+    }
 
 
-def search_claude(
+def _resume_command(core: str, session_id: str) -> str:
+    return f"opencode -s {session_id}" if core == "opencode" else f"claude --resume {session_id}"
+
+
+# ── 搜索 ────────────────────────────────────────────────────────────
+@dataclass
+class _Candidate:
+    """一场会话在这轮检索里攒下的东西。两代文件的命中合并在这里。"""
+
+    core: str
+    session_id: str
+    files: dict[Path, dict[str, set[int]]] = field(default_factory=dict)
+
+    @property
+    def matched_terms(self) -> list[str]:
+        terms: set[str] = set()
+        for term_lines in self.files.values():
+            terms.update(term_lines)
+        return sorted(terms)
+
+    @property
+    def hit_lines(self) -> int:
+        return sum(len({ln for lines in tl.values() for ln in lines}) for tl in self.files.values())
+
+    @property
+    def capped(self) -> bool:
+        return any(
+            len({ln for lines in tl.values() for ln in lines}) >= RG_MAX_LINES_PER_FILE
+            for tl in self.files.values()
+        )
+
+    @property
+    def primary(self) -> Path:
+        """代表这场会话的文件：有原文副本就用原文，没有才退到加工副本。"""
+        for path in self.files:
+            if path.name == RAW_FILENAME:
+                return path
+        return next(iter(self.files))
+
+
+def search_backup(
     terms: list[str],
     *,
     since_ts: float | None = None,
     top: int = 10,
-    projects_root: Path | None = None,
+    root: Path | None = None,
 ) -> tuple[list[SessionHit], int, list[str]]:
-    """搜 claude 会话。返回 ``(命中, 扫过的文件数, 告警)``。"""
+    """在会话备份里搜这批关键词。返回 ``(命中, 语料里的会话数, 告警)``。
+
+    顺序是**先扫后筛**：ripgrep 一趟扫完整棵树，再只对命中的那几个文件去取时间、
+    标题、上下文。反过来（先按时间筛出文件再扫）要把上万个文件挨个打开读时间，
+    为了一个可能根本没人给的 ``--days`` 付全量代价。
+    """
     warnings: list[str] = []
     if shutil.which("rg") is None:
-        return [], 0, ["ripgrep (rg) 不在 PATH 上，claude 会话这一半没搜"]
+        return [], 0, ["ripgrep (rg) 不在 PATH 上，检索没跑"]
 
-    root = projects_root or CLAUDE_PROJECTS_DIR
-    files = _claude_files(root, since_ts)
-    if not files:
-        return [], 0, [f"{root} 下没有可搜的会话文件"]
+    corpus = root or backup_root()
+    if not corpus.is_dir():
+        return [], 0, [f"会话备份目录不在：{corpus}"]
 
-    merged: dict[str, dict[str, set[int]]] = {}
-    for start in range(0, len(files), RG_PATH_CHUNK):
-        chunk = files[start : start + RG_PATH_CHUNK]
-        per_file, ok = _run_rg(terms, chunk)
-        if not ok:
-            warnings.append(f"ripgrep 在第 {start // RG_PATH_CHUNK + 1} 批文件上失败，该批已跳过")
+    scanned = count_sessions(corpus)
+    per_file, ok = _run_rg(terms, corpus)
+    if not ok:
+        return [], scanned, ["ripgrep 跑失败了，这一趟没有结果"]
+
+    # 同一场会话的两代文件合并成一个候选。
+    candidates: dict[tuple[str, str], _Candidate] = {}
+    for path_text, term_lines in per_file.items():
+        path = Path(path_text)
+        split = _split_location(corpus, path)
+        if split is None:
             continue
-        for path, term_lines in per_file.items():
-            target = merged.setdefault(path, {})
-            for term, lines in term_lines.items():
-                target.setdefault(term, set()).update(lines)
+        core, session_id = split
+        candidate = candidates.setdefault(
+            (core, session_id), _Candidate(core=core, session_id=session_id)
+        )
+        candidate.files[path] = term_lines
 
     ranked = sorted(
-        merged.items(),
-        key=lambda item: (
-            len(item[1]),
-            sum(len(v) for v in item[1].values()),
-        ),
+        candidates.values(),
+        key=lambda c: (len(c.matched_terms), c.hit_lines),
         reverse=True,
     )
 
+    # 时间只对命中的会话取，且要在 top 截断之前算——它是排序的第三优先级，
+    # 也是 --days 的依据。
+    undated = 0
+    dated: list[tuple[_Candidate, float]] = []
+    for candidate in ranked:
+        moment = last_activity_of(candidate.primary)
+        if since_ts is not None:
+            if moment is None:
+                undated += 1
+                continue
+            if moment < since_ts:
+                continue
+        dated.append((candidate, moment or 0.0))
+
+    if undated:
+        warnings.append(
+            f"{undated} 场命中的会话文件里没有任何时间戳（多为只有元数据记录的空壳会话），"
+            f"给了 --days 就无从判断，已排除"
+        )
+
+    dated.sort(key=lambda pair: (len(pair[0].matched_terms), pair[0].hit_lines, pair[1]), reverse=True)
+    chosen = dated[:top]
+
+    opencode_meta = _opencode_titles(
+        [c.session_id for c, _ in chosen if c.core == "opencode"]
+    )
+
     hits: list[SessionHit] = []
-    for path_text, term_lines in ranked[:top]:
-        path = Path(path_text)
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = 0.0
-        data = _scan_file(path) or {}
-        distinct_lines = {ln for lines in term_lines.values() for ln in lines}
-        title = data.get("custom_title") or data.get("ai_title") or data.get("slug")
+    degraded_count = 0
+    for candidate, moment in chosen:
+        primary = candidate.primary
+        degraded = primary.name != RAW_FILENAME
+        if degraded:
+            degraded_count += 1
+
+        title: str | None = None
+        cwd: str | None = None
+        if candidate.core == "opencode":
+            title, cwd = opencode_meta.get(candidate.session_id, (None, None))
+        elif not degraded:
+            # 原文副本与 Claude 的转录逐字节相同，标题和工作目录就在记录里。
+            data = _scan_file(primary) or {}
+            title = data.get("custom_title") or data.get("ai_title") or data.get("slug")
+            cwd = data.get("cwd")
+
         hits.append(
             SessionHit(
-                source="claude",
-                session_id=path.stem,
+                source=candidate.core,
+                session_id=candidate.session_id,
                 title=title,
-                cwd=data.get("cwd"),
-                last_activity=mtime,
-                matched_terms=sorted(term_lines),
-                hit_lines=len(distinct_lines),
-                location=str(path),
-                resume_command=f"claude --resume {path.stem}",
-                capped=len(distinct_lines) >= RG_MAX_LINES_PER_FILE,
-                snippets=_collect_claude_snippets(path, term_lines),
+                cwd=cwd,
+                last_activity=moment,
+                matched_terms=candidate.matched_terms,
+                hit_lines=candidate.hit_lines,
+                location=str(primary),
+                resume_command=_resume_command(candidate.core, candidate.session_id),
+                capped=candidate.capped,
+                degraded=degraded,
+                snippets=_collect_snippets(primary, candidate.files[primary]),
             )
         )
-    return hits, len(files), warnings
 
-
-# ── opencode 侧：SQLite ─────────────────────────────────────────────
-_LIKE_ESCAPE = str.maketrans({"\\": r"\\", "%": r"\%", "_": r"\_"})
-
-
-def _like_pattern(term: str) -> str:
-    return f"%{term.translate(_LIKE_ESCAPE)}%"
-
-
-def _opencode_part_text(raw: str) -> str:
-    """片段 JSON 里的可读文本。解析不了就退回原始串。"""
-    try:
-        data = json.loads(raw)
-    except (ValueError, TypeError):
-        return raw
-    if not isinstance(data, dict):
-        return raw
-    pieces: list[str] = []
-    for key in ("text", "output", "error"):
-        value = data.get(key)
-        if isinstance(value, str):
-            pieces.append(value)
-    state = data.get("state")
-    if isinstance(state, dict):
-        for key in ("input", "output", "error"):
-            value = state.get(key)
-            if isinstance(value, str):
-                pieces.append(value)
-            elif isinstance(value, dict):
-                pieces.append(json.dumps(value, ensure_ascii=False))
-    return "\n".join(pieces) if pieces else raw
-
-
-def search_opencode(
-    terms: list[str],
-    *,
-    since_ts: float | None = None,
-    top: int = 10,
-) -> tuple[list[SessionHit], bool, list[str]]:
-    """搜 opencode 会话库。返回 ``(命中, 库是否可读, 告警)``。"""
-    conn = _connect()
-    if conn is None:
-        return [], False, [f"opencode 会话库读不到（{db_path()}），这一半没搜"]
-
-    since_ms = int(since_ts * 1000) if since_ts is not None else None
-    per_session: dict[str, dict[str, list[str]]] = {}
-    warnings: list[str] = []
-    try:
-        for term in terms:
-            sql = (
-                "SELECT p.session_id, p.data FROM part p "
-                r"WHERE p.data LIKE ? ESCAPE '\' LIMIT ?"
-            )
-            try:
-                rows = conn.execute(sql, (_like_pattern(term), OPENCODE_PART_LIMIT)).fetchall()
-            except Exception as exc:  # noqa: BLE001 - 单个词查失败不该毁掉整轮
-                logger.debug("opencode search failed for %r: %s", term, exc)
-                warnings.append(f"opencode 侧查询关键词 {term!r} 失败：{exc}")
-                continue
-            for session_id, raw in rows:
-                per_session.setdefault(str(session_id), {}).setdefault(term, []).append(
-                    raw if isinstance(raw, str) else ""
-                )
-
-        if not per_session:
-            return [], True, warnings
-
-        placeholders = ",".join("?" * len(per_session))
-        meta_rows = conn.execute(
-            f"SELECT id, title, directory, time_updated FROM session "  # noqa: S608
-            f"WHERE id IN ({placeholders})",
-            tuple(per_session),
-        ).fetchall()
-    finally:
-        conn.close()
-
-    meta = {
-        str(sid): (
-            title if isinstance(title, str) else "",
-            directory if isinstance(directory, str) else "",
-            updated if isinstance(updated, int) else 0,
+    if degraded_count:
+        warnings.append(
+            f"{degraded_count} 场只剩早期的加工副本（原文已随 Claude 的滚动删除消失），"
+            f"工具返回值等内容不在里面——在这几场里搜不到 NEVER 等于那件事没发生过"
         )
-        for sid, title, directory, updated in meta_rows
-    }
 
-    hits: list[SessionHit] = []
-    for session_id, term_parts in per_session.items():
-        title, directory, updated_ms = meta.get(session_id, ("", "", 0))
-        if since_ms is not None and updated_ms < since_ms:
-            continue
-        snippets: list[Snippet] = []
-        for term, raws in sorted(term_parts.items()):
-            if len(snippets) >= MAX_SNIPPETS_PER_SESSION:
-                break
-            text = _opencode_part_text(raws[0])
-            idx = text.lower().find(term.lower())
-            if idx < 0:
-                continue
-            start = max(0, idx - SNIPPET_RADIUS)
-            end = min(len(text), idx + len(term) + SNIPPET_RADIUS)
-            body = text[start:end].replace("\n", " ").strip()
-            prefix = "…" if start > 0 else ""
-            suffix = "…" if end < len(text) else ""
-            snippets.append(Snippet(term=term, text=f"{prefix}{body}{suffix}"))
-        hits.append(
-            SessionHit(
-                source="opencode",
-                session_id=session_id,
-                title=title or None,
-                cwd=directory or None,
-                last_activity=updated_ms / 1000 if updated_ms else 0.0,
-                matched_terms=sorted(term_parts),
-                hit_lines=sum(len(v) for v in term_parts.values()),
-                location=str(db_path()),
-                resume_command=f"opencode -s {session_id}",
-                capped=any(len(v) >= OPENCODE_PART_LIMIT for v in term_parts.values()),
-                snippets=snippets,
-            )
-        )
-    hits.sort(key=lambda h: h.rank, reverse=True)
-    return hits[:top], True, warnings
+    return hits, scanned, warnings
 
 
 # ── 编排 ────────────────────────────────────────────────────────────
@@ -618,13 +757,15 @@ def search_sessions(
     agent_type: str | None = None,
     model: str | None = None,
     expand_timeout_s: float = EXPAND_TIMEOUT_S,
-    projects_root: Path | None = None,
+    root: Path | None = None,
 ) -> SearchResult:
-    """一句话 → 关键词 → 两个库都搜 → 合并排序。
+    """一句话 → 关键词 → 扫遍会话备份 → 排序。
 
     ``terms`` 显式给出时跳过模型扩展；``expand=False`` 则直接用原句切词。
     """
     started = time.time()
+    corpus = root or backup_root()
+
     if terms:
         plan = KeywordPlan(_clean_terms(terms), "调用方直接给的关键词", "explicit")
     elif expand:
@@ -639,27 +780,21 @@ def search_sessions(
             query=query,
             plan=plan,
             hits=[],
-            scanned_claude_files=0,
-            opencode_available=False,
+            corpus_root=str(corpus),
+            scanned_sessions=0,
             duration_ms=int((time.time() - started) * 1000),
             warnings=["没有可用的关键词——原句里全是过短或过于通用的词"],
         )
 
     since_ts = time.time() - days * 86400 if days else None
-    claude_hits, scanned, warnings = search_claude(
-        plan.terms, since_ts=since_ts, top=top, projects_root=projects_root
-    )
-    opencode_hits, opencode_ok, oc_warnings = search_opencode(
-        plan.terms, since_ts=since_ts, top=top
-    )
+    hits, scanned, warnings = search_backup(plan.terms, since_ts=since_ts, top=top, root=corpus)
 
-    hits = sorted(claude_hits + opencode_hits, key=lambda h: h.rank, reverse=True)[:top]
     return SearchResult(
         query=query,
         plan=plan,
         hits=hits,
-        scanned_claude_files=scanned,
-        opencode_available=opencode_ok,
+        corpus_root=str(corpus),
+        scanned_sessions=scanned,
         duration_ms=int((time.time() - started) * 1000),
-        warnings=warnings + oc_warnings,
+        warnings=warnings,
     )

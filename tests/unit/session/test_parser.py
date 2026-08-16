@@ -3,10 +3,7 @@
 Tests JSONL incremental parsing and record conversion.
 """
 import json
-from datetime import datetime, timezone
-from pathlib import Path
-
-import pytest
+from datetime import UTC, datetime
 
 from frago.session.models import StepType, ToolCallRecord, ToolCallStatus
 from frago.session.parser import (
@@ -27,7 +24,7 @@ class TestParsedRecord:
         record = ParsedRecord(
             uuid="test-uuid",
             session_id="session-123",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             record_type="user",
         )
         assert record.uuid == "test-uuid"
@@ -39,7 +36,7 @@ class TestParsedRecord:
         record = ParsedRecord(
             uuid="uuid",
             session_id="session",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             record_type="assistant",
         )
         assert record.parent_uuid is None
@@ -351,7 +348,7 @@ class TestRecordToStep:
         record = ParsedRecord(
             uuid="user-uuid",
             session_id="session-1",
-            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             record_type="user",
             content_text="Hello, Claude!",
         )
@@ -369,7 +366,7 @@ class TestRecordToStep:
         record = ParsedRecord(
             uuid="assistant-uuid",
             session_id="session-1",
-            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             record_type="assistant",
             content_text="I can help with that!",
         )
@@ -387,7 +384,7 @@ class TestRecordToStep:
         record = ParsedRecord(
             uuid="tool-uuid",
             session_id="session-1",
-            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             record_type="assistant",
             tool_calls=[
                 {
@@ -413,7 +410,7 @@ class TestRecordToStep:
         record = ParsedRecord(
             uuid="result-uuid",
             session_id="session-1",
-            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             record_type="user",
             tool_results=[
                 {
@@ -434,7 +431,7 @@ class TestRecordToStep:
         record = ParsedRecord(
             uuid="system-uuid",
             session_id="session-1",
-            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             record_type="system",
             content_text="Session initialized",
         )
@@ -449,7 +446,7 @@ class TestRecordToStep:
         record = ParsedRecord(
             uuid="unknown-uuid",
             session_id="session-1",
-            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             record_type="file-history-snapshot",
         )
 
@@ -530,8 +527,8 @@ class TestUpdateToolCallStatus:
 
     def test_updates_pending_call(self):
         """Should update pending call when result arrives."""
-        call_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-        result_time = datetime(2025, 1, 15, 10, 0, 5, tzinfo=timezone.utc)
+        call_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC)
+        result_time = datetime(2025, 1, 15, 10, 0, 5, tzinfo=UTC)
 
         pending_call = ToolCallRecord(
             tool_call_id="call-1",
@@ -573,7 +570,7 @@ class TestUpdateToolCallStatus:
             step_id=1,
             tool_name="Bash",
             input_summary="command",
-            called_at=datetime.now(timezone.utc),
+            called_at=datetime.now(UTC),
             status=ToolCallStatus.PENDING,
         )
         pending_calls = {"call-1": pending_call}
@@ -581,7 +578,7 @@ class TestUpdateToolCallStatus:
         record = ParsedRecord(
             uuid="error-uuid",
             session_id="session-1",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             record_type="user",
             tool_results=[
                 {
@@ -604,7 +601,7 @@ class TestUpdateToolCallStatus:
         record = ParsedRecord(
             uuid="orphan-uuid",
             session_id="session-1",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             record_type="user",
             tool_results=[
                 {
@@ -626,7 +623,7 @@ class TestUpdateToolCallStatus:
             step_id=1,
             tool_name="Read",
             input_summary="file",
-            called_at=datetime.now(timezone.utc),
+            called_at=datetime.now(UTC),
             status=ToolCallStatus.PENDING,
         )
         pending_calls = {"call-1": pending_call}
@@ -634,7 +631,7 @@ class TestUpdateToolCallStatus:
         record = ParsedRecord(
             uuid="list-result-uuid",
             session_id="session-1",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             record_type="user",
             tool_results=[
                 {

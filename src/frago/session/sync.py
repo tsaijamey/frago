@@ -1,33 +1,33 @@
-"""
-Session Synchronization Module
+"""Session backup.
 
-Synchronizes session data from ~/.claude/projects/ to ~/.frago/sessions/claude/
-Supports idempotent operations, does not modify source files.
+Claude Code deletes old session transcripts. This module keeps a copy of them,
+and that is the whole job: every line of ``~/.claude/projects/**/<sid>.jsonl`` is
+copied byte for byte into ``~/.frago/sessions/claude/<sid>/raw.jsonl``. Nothing is
+parsed into a private shape, nothing is summarised, nothing is dropped — the copy
+is only useful if it is what the original was.
+
+The backup file is its own ledger. How far a session got is its size on disk; no
+offset or checksum is written down anywhere, so there is nothing that can drift
+out of step with the bytes. Each cycle compares the two files and picks one of:
+
+  nothing to do   backup already as long as the source, tail still matches
+  append          source grew, and the shared prefix still matches
+  full copy       no backup yet, or the source no longer matches what we hold
+                  (a rewritten transcript — compaction, or a reused session id)
+
+Source files are located by session id every cycle rather than by a remembered
+path: a session resumed from another directory moves to a different Claude Code
+project folder, and a remembered path would read as "the source is gone".
 """
 
-import json
 import logging
 import os
 import uuid as uuid_module
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
-from frago.session.models import (
-    AgentType,
-    MonitoredSession,
-    SessionStatus,
-)
-from frago.session.parser import IncrementalParser, record_to_step
-from frago.session.storage import (
-    append_step,
-    delete_session,
-    get_session_dir,
-    read_metadata,
-    write_metadata,
-    write_summary,
-)
+from frago.session.models import AgentType
+from frago.session.storage import get_session_base_dir
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,11 @@ CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # Inactivity timeout (used to determine if session has ended)
 INACTIVITY_TIMEOUT_MINUTES = 1
 
-# Legacy step type values that need migration
-_LEGACY_STEP_TYPES = {"user_message", "assistant_message", "system_event"}
+# How many trailing bytes of the backup are checked against the source before
+# appending. Enough to catch a rewritten transcript, small enough to be free.
+_TAIL_CHECK_BYTES = 4096
+
+RAW_FILENAME = "raw.jsonl"
 
 
 @dataclass
@@ -49,43 +52,6 @@ class SyncResult:
     updated: int = 0  # Number of updated sessions
     skipped: int = 0  # Number of skipped sessions (already exists with no changes)
     errors: list[str] = field(default_factory=list)  # Error messages
-
-
-def _has_legacy_step_types(session_id: str) -> bool:
-    """Check if session has legacy step type values that need migration.
-
-    Legacy values: user_message, assistant_message, system_event
-    New values: user, assistant, system
-
-    Args:
-        session_id: Session ID to check
-
-    Returns:
-        True if legacy types found, False otherwise
-    """
-    session_dir = get_session_dir(session_id, AgentType.CLAUDE)
-    steps_file = session_dir / "steps.jsonl"
-
-    if not steps_file.exists():
-        return False
-
-    try:
-        with open(steps_file, encoding="utf-8") as f:
-            # Only check first 10 lines for efficiency
-            for i, line in enumerate(f):
-                if i >= 10:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                data = json.loads(line)
-                step_type = data.get("type", "")
-                if step_type in _LEGACY_STEP_TYPES:
-                    return True
-    except Exception as e:
-        logger.debug(f"Error checking legacy types for {session_id}: {e}")
-
-    return False
 
 
 def encode_project_path(project_path: str) -> str:
@@ -109,27 +75,6 @@ def encode_project_path(project_path: str) -> str:
     # Replace both / and . with -
     # /home/yammi/.frago -> -home-yammi--frago
     return normalized.replace("/", "-").replace(".", "-")
-
-
-def decode_project_path(encoded: str) -> str:
-    """Decode Claude Code directory name to project path
-
-    Args:
-        encoded: Encoded directory name (e.g. C--Users-yammi)
-
-    Returns:
-        Absolute project path (e.g. C:/Users/yammi)
-    """
-    # Detect Windows path: starts with single letter followed by two hyphens
-    # C--Users-yammi -> C:/Users/yammi
-    if len(encoded) >= 3 and encoded[0].isalpha() and encoded[1:3] == "--":
-        # Windows path: C--Users -> C:/Users
-        drive = encoded[0]
-        rest = encoded[3:].replace("-", "/")
-        return f"{drive}:/{rest}"
-    else:
-        # Unix path: -home-user -> /home/user
-        return encoded.replace("-", "/")
 
 
 def is_main_session_file(filename: str) -> bool:
@@ -160,284 +105,88 @@ def is_main_session_file(filename: str) -> bool:
         return False
 
 
-def infer_session_status(
-    records: list[dict[str, Any]], last_activity: datetime
-) -> SessionStatus:
-    """Infer session status from records
+def raw_backup_path(session_id: str) -> Path:
+    """Where this session's copy lives.
 
-    Args:
-        records: Raw record list
-        last_activity: Last activity time
-
-    Returns:
-        Inferred session status
+    Always the plain ``~/.frago/sessions/claude/<sid>/`` path: a backup has one
+    home, so it can always be found without asking anything else first.
     """
-    if not records:
-        return SessionStatus.RUNNING
-
-    # Check last activity time
-    now = datetime.now()
-    if last_activity.tzinfo is not None:
-        last_activity = last_activity.replace(tzinfo=None)
-
-    delta = now - last_activity
-    if delta > timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES):
-        # No activity for more than 5 minutes, consider completed
-        return SessionStatus.COMPLETED
-
-    return SessionStatus.RUNNING
+    return get_session_base_dir() / AgentType.CLAUDE.value / session_id / RAW_FILENAME
 
 
-def parse_session_file(jsonl_path: Path) -> dict[str, Any]:
-    """Parse session JSONL file
+def _prefix_still_matches(source: Path, backup: Path, backed_up: int) -> bool:
+    """Is the source still the file we copied ``backed_up`` bytes of?
+
+    Compares the last stretch of the backup against the same stretch of the
+    source. A transcript that was appended to still matches there; one that was
+    rewritten does not, and must be copied again from the start.
+    """
+    window = min(_TAIL_CHECK_BYTES, backed_up)
+    start = backed_up - window
+    with open(source, "rb") as src, open(backup, "rb") as bak:
+        src.seek(start)
+        bak.seek(start)
+        return src.read(window) == bak.read(window)
+
+
+def _copy_raw(source: Path, backup: Path, force: bool = False) -> tuple[bool, str]:
+    """Bring the backup in line with the source.
+
+    Returns (changed, action) where action is one of ``created`` / ``appended``
+    / ``rewritten`` / ``unchanged``.
+    """
+    source_size = source.stat().st_size
+    backed_up = backup.stat().st_size if backup.exists() else 0
+
+    if force or backed_up == 0:
+        action = "created" if backed_up == 0 else "rewritten"
+    elif backed_up > source_size or not _prefix_still_matches(source, backup, backed_up):
+        # The source is shorter than what we hold, or no longer matches it:
+        # it was rewritten, so the copy we have is of a file that no longer exists.
+        action = "rewritten"
+    elif backed_up == source_size:
+        return False, "unchanged"
+    else:
+        action = "appended"
+
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    offset = backed_up if action == "appended" else 0
+    mode = "ab" if action == "appended" else "wb"
+    with open(source, "rb") as src, open(backup, mode) as bak:
+        src.seek(offset)
+        while chunk := src.read(1 << 20):
+            bak.write(chunk)
+    return True, action
+
+
+def sync_session(jsonl_path: Path, force: bool = False) -> str | None:
+    """Back up a single session transcript.
 
     Args:
         jsonl_path: JSONL file path
+        force: Copy the whole transcript again even if the backup looks current
 
     Returns:
-        Dictionary containing session_id, records, steps, metadata
-    """
-    result = {
-        "session_id": None,
-        "records": [],
-        "first_timestamp": None,
-        "last_timestamp": None,
-        "step_count": 0,
-        "tool_call_count": 0,
-        "is_sidechain": False,
-        "first_user_message": None,
-    }
-
-    try:
-        with open(jsonl_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    record = json.loads(line)
-                    result["records"].append(record)
-
-                    # Extract session_id
-                    if not result["session_id"]:
-                        result["session_id"] = record.get("sessionId")
-
-                    # Check if this is a sidechain
-                    if record.get("isSidechain"):
-                        result["is_sidechain"] = True
-
-                    # Record timestamp
-                    timestamp_str = record.get("timestamp")
-                    if timestamp_str:
-                        try:
-                            ts = datetime.fromisoformat(
-                                timestamp_str.replace("Z", "+00:00")
-                            )
-                            if not result["first_timestamp"]:
-                                result["first_timestamp"] = ts
-                            result["last_timestamp"] = ts
-                        except ValueError:
-                            pass
-
-                    # Count tool calls
-                    message = record.get("message", {})
-                    if isinstance(message, dict):
-                        content = message.get("content", [])
-                        if isinstance(content, list):
-                            for block in content:
-                                if isinstance(block, dict) and block.get("type") == "tool_use":
-                                    result["tool_call_count"] += 1
-
-                    # Extract first real user message for session name
-                    if (
-                        result["first_user_message"] is None
-                        and record.get("type") == "user"
-                        and not record.get("isMeta")
-                    ):
-                        msg_content = message.get("content", "") if isinstance(message, dict) else ""
-                        # Handle array content (e.g., with images)
-                        if isinstance(msg_content, list):
-                            for block in msg_content:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    msg_content = block.get("text", "")
-                                    break
-                            else:
-                                msg_content = ""
-                        # Skip command messages
-                        if isinstance(msg_content, str) and msg_content.strip() and not msg_content.strip().startswith("<"):
-                            result["first_user_message"] = msg_content.strip()
-
-                except json.JSONDecodeError:
-                    continue
-
-    except Exception as e:
-        logger.warning(f"Failed to parse file {jsonl_path}: {e}")
-
-    return result
-
-
-def sync_session(
-    jsonl_path: Path,
-    project_path: str,
-    force: bool = False,
-) -> str | None:
-    """Synchronize a single session file
-
-    Args:
-        jsonl_path: JSONL file path
-        project_path: Project path
-        force: Whether to force re-synchronization
-
-    Returns:
-        Synced session_id, None on failure
+        session_id when the backup changed, None when there was nothing to do
     """
     # Skip empty files (e.g., placeholder files created by Claude CLI resume)
     if jsonl_path.stat().st_size == 0:
         logger.debug(f"Skipping empty file: {jsonl_path}")
         return None
 
-    # Parse session file
-    parsed = parse_session_file(jsonl_path)
+    session_id = jsonl_path.stem
+    backup = raw_backup_path(session_id)
 
-    session_id = parsed["session_id"]
-    if not session_id:
-        logger.debug(f"File missing session_id: {jsonl_path}")
+    changed, action = _copy_raw(jsonl_path, backup, force=force)
+    if not changed:
+        logger.debug(f"No changes for session: {session_id}")
         return None
 
-    # Skip sessions with no valid records
-    if not parsed["records"]:
-        logger.debug(f"Skipping session with no records: {jsonl_path}")
-        return None
+    # Sidechain transcripts (agent-*.jsonl) are excluded by is_main_session_file
+    # before we get here; nothing else about the content needs inspecting.
 
-    # Skip sidechain sessions
-    if parsed["is_sidechain"]:
-        logger.debug(f"Skipping sidechain session: {session_id}")
-        return None
-
-    # Check if already exists
-    existing = read_metadata(session_id, AgentType.CLAUDE)
-
-    # Check for legacy step types and migrate by deleting old data
-    if existing and _has_legacy_step_types(session_id):
-        logger.info(f"Detected legacy step types in {session_id}, deleting for re-sync")
-        delete_session(session_id, AgentType.CLAUDE)
-        existing = None  # Force full re-sync
-
-    if existing and not force:
-        # Check if source file has updates (supports resumed conversation scenario)
-        file_mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime)
-        existing_last_activity = existing.last_activity
-        if existing_last_activity.tzinfo is not None:
-            existing_last_activity = existing_last_activity.replace(tzinfo=None)
-
-        # If file modification time is earlier than recorded last activity time, skip
-        if file_mtime <= existing_last_activity and existing.status != SessionStatus.RUNNING:
-                logger.debug(f"Session already exists and no updates: {session_id}")
-                return None
-
-    # Infer status
-    last_activity = parsed["last_timestamp"] or datetime.now()
-    status = infer_session_status(parsed["records"], last_activity)
-
-    # Extract session name from first user message (truncate to 100 chars)
-    session_name = None
-    first_msg = parsed.get("first_user_message")
-    if first_msg:
-        # Take first line and truncate
-        first_line = first_msg.split("\n")[0].strip()
-        session_name = first_line
-
-    # Check for AI-generated title (preserve if exists)
-    try:
-        from frago.session.title_manager import get_title_manager
-        title_manager = get_title_manager()
-        ai_title = title_manager.get_title(session_id)
-        if ai_title:
-            session_name = ai_title
-    except Exception as e:
-        logger.debug(f"Could not check AI title: {e}")
-
-    # Resolve domain for the session (Phase 1 — run-as-domain-knowledge-base).
-    # Lazy import to avoid a session -> run circular import at module load.
-    resolved_domain: str | None = None
-    try:
-        from frago.run.manager import RunManager
-        from frago.session.storage import get_projects_base_dir
-
-        run_manager = RunManager(get_projects_base_dir())
-        resolved_domain = run_manager.resolve_domain_for_session(session_id, project_path)
-    except Exception as e:
-        logger.debug(f"Failed to resolve domain for session {session_id}: {e}")
-        resolved_domain = None
-
-    # Create or update session metadata
-    session = MonitoredSession(
-        session_id=session_id,
-        agent_type=AgentType.CLAUDE,
-        project_path=project_path,
-        name=session_name,
-        source_file=str(jsonl_path),
-        started_at=parsed["first_timestamp"] or datetime.now(),
-        ended_at=last_activity if status != SessionStatus.RUNNING else None,
-        status=status,
-        step_count=0,  # Updated later
-        tool_call_count=parsed["tool_call_count"],
-        last_activity=last_activity,
-        domain=resolved_domain,
-        source_jsonl=str(jsonl_path.resolve()),
-    )
-
-    # Get existing step count (for incremental sync)
-    existing_step_count = existing.step_count if existing else 0
-
-    # If forcing sync, clear existing steps file
-    if force and existing_step_count > 0:
-        from frago.session.storage import get_session_dir
-        steps_file = get_session_dir(session_id, AgentType.CLAUDE) / "steps.jsonl"
-        if steps_file.exists():
-            steps_file.unlink()
-        existing_step_count = 0
-
-    # Use incremental parser to parse steps
-    parser = IncrementalParser(str(jsonl_path))
-    records = parser.parse_new_records()
-
-    # Convert to steps (skip already synced)
-    step_id = 0
-    new_steps = 0
-    for record in records:
-        step_id += 1
-        # Skip already synced steps
-        if step_id <= existing_step_count:
-            continue
-        step, _ = record_to_step(record, step_id)
-        if step:
-            step.session_id = session_id
-            append_step(step, AgentType.CLAUDE, domain=resolved_domain)
-            new_steps += 1
-
-    session.step_count = step_id
-
-    # Determine if there are actual changes
-    is_new_session = existing is None
-    has_new_steps = new_steps > 0
-    status_changed = existing and existing.status != status
-
-    # Only write metadata if there are changes
-    if is_new_session or has_new_steps or status_changed:
-        write_metadata(session)
-
-        # If completed, generate summary
-        if status == SessionStatus.COMPLETED:
-            write_summary(session_id, AgentType.CLAUDE, domain=resolved_domain)
-
-        logger.info(f"Synced session: {session_id} (steps={step_id}, new={new_steps}, status={status.value})")
-        return session_id
-
-    # No changes, skip
-    logger.debug(f"No changes for session: {session_id}")
-    return None
+    logger.info(f"Backed up session: {session_id} ({action})")
+    return session_id
 
 
 def sync_project_sessions(
@@ -445,28 +194,32 @@ def sync_project_sessions(
     force: bool = False,
     mtime_cache: dict[str, float] | None = None,
 ) -> SyncResult:
-    """Synchronize Claude sessions for a specified project
+    """Back up the Claude sessions belonging to one project
 
     Args:
         project_path: Project absolute path
-        force: Whether to force re-synchronization
+        force: Whether to copy transcripts again from the start
         mtime_cache: Optional dict mapping session_id to last-seen mtime (float).
             When provided, sessions whose mtime hasn't changed are skipped before
-            any disk read, eliminating per-session read_metadata() overhead.
+            any disk read.
 
     Returns:
         Synchronization result
     """
-    result = SyncResult()
-
-    # Encode project path
-    project_path = os.path.abspath(project_path)
-    encoded_path = encode_project_path(project_path)
-    claude_dir = CLAUDE_PROJECTS_DIR / encoded_path
-
+    claude_dir = CLAUDE_PROJECTS_DIR / encode_project_path(os.path.abspath(project_path))
     if not claude_dir.exists():
         logger.debug(f"Claude session directory does not exist: {claude_dir}")
-        return result
+        return SyncResult()
+    return _sync_dir(claude_dir, force, mtime_cache)
+
+
+def _sync_dir(
+    claude_dir: Path,
+    force: bool = False,
+    mtime_cache: dict[str, float] | None = None,
+) -> SyncResult:
+    """Back up every main session transcript sitting in one Claude Code folder."""
+    result = SyncResult()
 
     # Scan all JSONL files
     for jsonl_file in claude_dir.glob("*.jsonl"):
@@ -482,20 +235,18 @@ def sync_project_sessions(
                 result.skipped += 1
                 continue
 
-            existing = read_metadata(session_id, AgentType.CLAUDE)
+            # 备份文件在不在，就是"这场以前备过没有"的唯一依据。
+            existed = raw_backup_path(session_id).exists()
 
-            # Sync session (sync_session will check file modification time to decide if update is needed)
-            synced_id = sync_session(jsonl_file, project_path, force)
+            synced_id = sync_session(jsonl_file, force)
+            if mtime_cache is not None:
+                mtime_cache[session_id] = current_mtime
             if synced_id:
-                if mtime_cache is not None:
-                    mtime_cache[session_id] = current_mtime
-                if existing:
+                if existed:
                     result.updated += 1
                 else:
                     result.synced += 1
             else:
-                if mtime_cache is not None:
-                    mtime_cache[session_id] = current_mtime
                 result.skipped += 1
 
         except Exception as e:
@@ -516,10 +267,10 @@ def sync_all_projects(
     force: bool = False,
     mtime_cache: dict[str, float] | None = None,
 ) -> SyncResult:
-    """Synchronize Claude sessions for all projects
+    """Back up Claude sessions across all projects
 
     Args:
-        force: Whether to force re-synchronization
+        force: Whether to copy transcripts again from the start
         mtime_cache: Optional shared mtime cache passed through to sync_project_sessions.
 
     Returns:
@@ -528,7 +279,7 @@ def sync_all_projects(
     result = SyncResult()
 
     if not CLAUDE_PROJECTS_DIR.exists():
-        # When installing Claude Code for the first time, directory not existing is normal, use debug level
+        # When installing Claude Code for the first time, directory not existing is normal
         logger.debug(f"Claude project directory does not exist: {CLAUDE_PROJECTS_DIR}")
         return result
 
@@ -536,11 +287,7 @@ def sync_all_projects(
         if not project_dir.is_dir():
             continue
 
-        # Decode project path (supports Windows and Unix)
-        project_path = decode_project_path(project_dir.name)
-
-        # Sync this project
-        project_result = sync_project_sessions(project_path, force, mtime_cache)
+        project_result = _sync_dir(project_dir, force, mtime_cache)
 
         result.synced += project_result.synced
         result.updated += project_result.updated

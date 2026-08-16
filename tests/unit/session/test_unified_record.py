@@ -50,7 +50,7 @@ def make_record(**overrides: object) -> UnifiedRecord:
 # ── 十五种形态 ──────────────────────────────────────────────────────
 class TestRecordKind:
     def test_十五种形态一个不多一个不少(self) -> None:
-        assert RECORD_KINDS == {
+        assert {
             "user.say",
             "agent.say",
             "agent.think",
@@ -66,7 +66,7 @@ class TestRecordKind:
             "context.compact",
             "session.state",
             "call.envelope",
-        }
+        } == RECORD_KINDS
         assert len(RECORD_KINDS) == 15
 
     @pytest.mark.parametrize("kind", sorted(RECORD_KINDS))
@@ -102,7 +102,7 @@ class TestErrorDiscipline:
         assert set(ErrorPayload.__dataclass_fields__) == {"scope", "code", "message"}
 
     def test_报错来源限四层(self) -> None:
-        assert ERROR_SCOPES == {"api", "engine", "model", "tool"}
+        assert {"api", "engine", "model", "tool"} == ERROR_SCOPES
 
     def test_报错载荷不可变(self) -> None:
         payload = ErrorPayload(scope="api", code="429", message="rate limited")
@@ -125,7 +125,7 @@ class TestErrorDiscipline:
 # ── 纪律二：截断是三值枚举 ──────────────────────────────────────────
 class TestTruncationDiscipline:
     def test_三值不是布尔(self) -> None:
-        assert TRUNCATION_STATES == {"none", "clipped", "offloaded"}
+        assert {"none", "clipped", "offloaded"} == TRUNCATION_STATES
         assert len(TRUNCATION_STATES) == 3
 
     def test_溢出转存与完整是两回事(self) -> None:
@@ -138,7 +138,7 @@ class TestTruncationDiscipline:
 # ── 纪律三：工具按大类分支 ──────────────────────────────────────────
 class TestToolFamilyDiscipline:
     def test_十一个大类(self) -> None:
-        assert TOOL_FAMILIES == {
+        assert {
             "shell",
             "file-read",
             "file-write",
@@ -150,7 +150,7 @@ class TestToolFamilyDiscipline:
             "schedule",
             "mcp",
             "other",
-        }
+        } == TOOL_FAMILIES
 
     def test_留了兜底类(self) -> None:
         """工具名不是封闭集合，随用户配置变化。没有 other 就必然出现漏归的工具。"""
@@ -197,7 +197,7 @@ class TestUnifiedRecord:
 # ── 两家的判定 ──────────────────────────────────────────────────────
 class TestDetectFamily:
     def test_两家一共两家(self) -> None:
-        assert RECORD_FAMILIES == {"claude-code", "opencode"}
+        assert {"claude-code", "opencode"} == RECORD_FAMILIES
 
     @pytest.mark.parametrize(
         "session_id",
@@ -269,7 +269,6 @@ class TestReaderSkeleton:
         """左栏只有一份清单。两家谁新谁在上，与它属于哪一家无关。"""
         import frago.session.record_reader as reader
         from frago.session.opencode_store import OpencodeSessionRow
-
         from frago.session.session_index import SessionSummary
 
         monkeypatch.setattr(

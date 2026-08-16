@@ -4,11 +4,7 @@ Tests pure functions that handle path encoding/decoding and session file identif
 """
 import pytest
 
-from frago.session.sync import (
-    decode_project_path,
-    encode_project_path,
-    is_main_session_file,
-)
+from frago.session.sync import encode_project_path, is_main_session_file
 
 
 class TestEncodeProjectPath:
@@ -56,70 +52,23 @@ class TestEncodeProjectPath:
         assert encode_project_path("") == ""
 
 
-class TestDecodeProjectPath:
-    """Test decode_project_path() function."""
+class TestEncodingIsOneWay:
+    """Folder names cannot be decoded back into a path.
 
-    @pytest.mark.parametrize(
-        "encoded,expected",
-        [
-            # Unix paths
-            ("-home-alice-project", "/home/alice/project"),
-            ("-Users-alice-Documents", "/Users/alice/Documents"),
-            ("-", "/"),
-            # Windows paths (C-- prefix indicates Windows)
-            ("C--Users-alice", "C:/Users/alice"),
-            ("D--Projects-myproject", "D:/Projects/myproject"),
-        ],
-        ids=[
-            "unix-home",
-            "unix-users",
-            "unix-root",
-            "win-c-drive",
-            "win-d-drive",
-        ],
-    )
-    def test_decode_various_paths(self, encoded: str, expected: str):
-        """Test decoding of various encoded path formats."""
-        assert decode_project_path(encoded) == expected
+    Claude Code encodes both "/" and "." as "-", so two different working
+    directories can produce the same folder name. The working directory is read
+    from the transcript records instead of being guessed from the folder.
+    """
 
-    def test_decode_empty_string(self):
-        """Test decoding empty string."""
-        assert decode_project_path("") == ""
+    def test_hyphenated_and_nested_paths_collide(self):
+        assert encode_project_path("/repos/master-agent") == encode_project_path(
+            "/repos/master/agent"
+        )
 
-
-class TestPathEncodingRoundTrip:
-    """Test that encoding and decoding are reversible for common cases."""
-
-    @pytest.mark.parametrize(
-        "original",
-        [
-            "/home/alice/project",
-            "/Users/alice/Documents",
-            "C:/Users/alice",
-            "D:/Projects/myproject",
-        ],
-        ids=["unix-home", "unix-users", "win-c-drive", "win-d-drive"],
-    )
-    def test_roundtrip(self, original: str):
-        """Test that decode(encode(path)) returns original path."""
-        encoded = encode_project_path(original)
-        decoded = decode_project_path(encoded)
-        assert decoded == original
-
-    def test_dot_paths_not_reversible(self):
-        """Note: Paths with dots are not fully reversible.
-
-        /home/user/.config encodes to -home-user--config
-        which decodes to /home/user//config (double slash)
-
-        This is a known limitation documented here for awareness.
-        """
-        path = "/home/user/.config"
-        encoded = encode_project_path(path)
-        decoded = decode_project_path(encoded)
-        # The dot becomes a hyphen, and hyphen becomes slash
-        # So .config -> -config -> /config
-        assert decoded == "/home/user//config"
+    def test_dotted_directory_collides_too(self):
+        assert encode_project_path("/home/user/.config") == encode_project_path(
+            "/home/user//config"
+        )
 
 
 class TestIsMainSessionFile:

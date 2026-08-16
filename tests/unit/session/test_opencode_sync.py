@@ -3,6 +3,19 @@
 临时会话库（``FRAGO_OPENCODE_DB``）+ 临时会话存储目录（``FRAGO_SESSION_DIR`` /
 ``FRAGO_PROJECTS_DIR``）。NEVER 触碰用户真实的 ``~/.local/share/opencode/opencode.db``
 与 ``~/.frago/sessions/``。
+
+覆盖面止于 ``raw.jsonl``：同步现在是**纯备份**，一个会话目录下只写这一个文件，
+不再产出 ``metadata.json``。原先盯标题（``meta.name``）与会话状态
+（running/completed、``ended_at``、``step_count``）的四条用例已删除——
+备份不解读内容，这些概念在新契约里不再存在，换个断言也救不回来：
+
+- ``test_title_comes_from_the_session_database``
+- ``test_finished_and_idle_session_is_completed``
+- ``test_session_without_stop_is_running``
+- ``test_placeholder_title_is_refreshed_on_resync``
+
+留下的用例只问三件事：备份行数是否等于库里的片段数、每行是否是库里那个原始
+``part`` 字典、重复同步会不会把行数翻倍。
 """
 
 from __future__ import annotations
@@ -14,10 +27,7 @@ from typing import Any
 
 import pytest
 
-from frago.init.opencode_plugin import get_injection_markers
 from frago.session import opencode_sync
-from frago.session.models import AgentType, SessionStatus, StepType
-from frago.session.storage import read_metadata, read_steps
 
 _SCHEMA = """
 CREATE TABLE session (
@@ -44,7 +54,7 @@ CREATE TABLE part (
 );
 """
 
-# 足够久远的时刻：距今远超 IDLE_SECONDS，故"已 stop 的会话"判为完成。
+# 造数据用的时间基准（毫秒）。备份不看时刻，取个固定值即可。
 _T0 = 1_700_000_000_000
 
 
@@ -142,6 +152,18 @@ def _add_part(
         conn.close()
 
 
+def _raw(session_id: str = "ses_a") -> list[dict[str, Any]]:
+    """备份文件里的原始片段，一行一个。没备过就是空。"""
+    path = opencode_sync.raw_backup_path(session_id)
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 def _simple_turn(db: Path) -> None:
     """一问一答，助手已 stop。"""
     _add_session(db)
@@ -161,55 +183,21 @@ def test_first_sync_archives_session(env: Path) -> None:
     assert result.updated == 0
     assert result.errors == []
 
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.agent_type == AgentType.OPENCODE
-    assert meta.project_path == "/work/proj"
-    assert meta.step_count == 2
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.type for s in steps] == [
-        StepType.USER_MESSAGE,
-        StepType.ASSISTANT_MESSAGE,
+    # 备份是原始片段的逐行副本，NEVER 解读成步骤。
+    assert _raw() == [
+        {"type": "text", "text": "ping"},
+        {"type": "text", "text": "pong"},
     ]
-    assert steps[0].content_summary == "ping"
-    assert steps[1].content_summary == "pong"
 
 
-def test_title_comes_from_the_session_database(env: Path) -> None:
-    """标题用 opencode 自己生成的那条，NEVER 截提示词前 N 字。"""
+def test_backup_directory_holds_only_the_raw_file(env: Path) -> None:
+    """纯备份：会话目录下只有 raw.jsonl，NEVER 再产出 metadata.json。"""
     _simple_turn(env)
-    opencode_sync.sync_opencode_sessions()
-
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.name == "Ping pong test"
-
-
-def test_finished_and_idle_session_is_completed(env: Path) -> None:
-    _simple_turn(env)
-    opencode_sync.sync_opencode_sessions()
-
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.status == SessionStatus.COMPLETED
-    assert meta.ended_at is not None
-
-
-def test_session_without_stop_is_running(env: Path) -> None:
-    """最后一条助手消息还停在 tool-calls → 还在跑，NEVER 判完成。"""
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(env, "p_u", "m_u", _T0 + 11, {"type": "text", "text": "ping"})
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="tool-calls")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "working"})
 
     opencode_sync.sync_opencode_sessions()
 
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.status == SessionStatus.RUNNING
-    assert meta.ended_at is None
+    session_dir = opencode_sync.raw_backup_path("ses_a").parent
+    assert sorted(p.name for p in session_dir.iterdir()) == ["raw.jsonl"]
 
 
 # ── 幂等与增量 ──────────────────────────────────────────────────────
@@ -222,8 +210,8 @@ def test_second_sync_without_changes_is_skipped(env: Path) -> None:
     assert again.updated == 0
     assert again.skipped == 1
 
-    # 步骤没有被重复追加。
-    assert len(read_steps("ses_a", AgentType.OPENCODE)) == 2
+    # 片段没有被重复追加——行数不翻倍。
+    assert len(_raw()) == 2
 
 
 def test_new_messages_produce_an_incremental_update(env: Path) -> None:
@@ -240,8 +228,8 @@ def test_new_messages_produce_an_incremental_update(env: Path) -> None:
     assert second.synced == 0
     assert second.updated == 1
 
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.content_summary for s in steps] == [
+    # 只追加新片段，旧的原样留在前面。
+    assert [p["text"] for p in _raw()] == [
         "ping",
         "pong",
         "again?",
@@ -261,8 +249,8 @@ def test_since_updated_cache_skips_untouched_sessions(env: Path) -> None:
 
 
 # ── 工具轮次 ────────────────────────────────────────────────────────
-def test_tool_turn_produces_call_and_result_steps(env: Path) -> None:
-    """一次工具轮次：用户 → 工具调用 + 工具结果 → 终答，共 4 步。"""
+def test_tool_turn_is_backed_up_as_one_part(env: Path) -> None:
+    """一次工具轮次：备份不拆调用/结果，工具片段就是库里那一条原始记录。"""
     _add_session(env)
     _add_message(env, "m_u", _T0 + 10, "user")
     _add_part(env, "p_u", "m_u", _T0 + 11, {"type": "text", "text": "list files"})
@@ -285,190 +273,22 @@ def test_tool_turn_produces_call_and_result_steps(env: Path) -> None:
 
     opencode_sync.sync_opencode_sessions()
 
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.type for s in steps] == [
-        StepType.USER_MESSAGE,
-        StepType.TOOL_CALL,
-        StepType.TOOL_RESULT,
-        StepType.ASSISTANT_MESSAGE,
-    ]
-    assert steps[1].tool_name == "bash"
-    assert steps[1].tool_call_id == "call_1"
-
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.step_count == 4
-    assert meta.tool_call_count == 1
-    # 思考片段 NEVER 进归档。
-    assert all("think" not in s.content_summary for s in steps)
+    parts = _raw()
+    assert [p["type"] for p in parts] == ["text", "reasoning", "tool", "text"]
+    # 工具片段是一条，state 原封不动——NEVER 拆成 call + result 两条。
+    assert parts[2] == {
+        "type": "tool",
+        "tool": "bash",
+        "callID": "call_1",
+        "state": {"status": "completed", "input": {"command": "ls"}, "output": "a\nb"},
+    }
+    # 备份要库里本来的样子，reasoning 同样留着。
+    assert parts[1] == {"type": "reasoning", "text": "think"}
 
 
-def test_synthetic_parts_are_dropped(env: Path) -> None:
-    """注入回显不是对话内容，NEVER 归档。"""
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(
-        env,
-        "p_syn",
-        "m_u",
-        _T0 + 11,
-        {"type": "text", "text": "<editor context>", "synthetic": True},
-    )
-    _add_part(env, "p_u", "m_u", _T0 + 12, {"type": "text", "text": "ping"})
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
-
-    opencode_sync.sync_opencode_sessions()
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.content_summary for s in steps] == ["ping", "pong"]
-
-
-# ── frago-hook 注入的剥离 ───────────────────────────────────────────
-_BEGIN, _END = get_injection_markers()
-
-
-def _injected(*blocks: str) -> str:
-    return "".join(f"\n\n{_BEGIN}\n{b}\n{_END}" for b in blocks)
-
-
-def test_single_injection_is_stripped_from_user_step(env: Path) -> None:
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(
-        env,
-        "p_u",
-        "m_u",
-        _T0 + 11,
-        {"type": "text", "text": "ping" + _injected("行为守则全文")},
-    )
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
-
-    opencode_sync.sync_opencode_sessions()
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.content_summary for s in steps] == ["ping", "pong"]
-
-
-def test_multiple_injections_are_all_stripped(env: Path) -> None:
-    """首轮会同时带 SessionStart 与 UserPromptSubmit 两段注入，MUST 全部剥掉。"""
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(
-        env,
-        "p_u",
-        "m_u",
-        _T0 + 11,
-        {
-            "type": "text",
-            "text": _injected("守则一") + "\n真正的提问" + _injected("守则二", "守则三"),
-        },
-    )
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
-
-    opencode_sync.sync_opencode_sessions()
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.content_summary for s in steps] == ["真正的提问", "pong"]
-    assert all("守则" not in s.content_summary for s in steps)
-
-
-def test_user_message_that_is_only_injection_produces_no_step(env: Path) -> None:
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(env, "p_u", "m_u", _T0 + 11, {"type": "text", "text": _injected("守则全文")})
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
-
-    opencode_sync.sync_opencode_sessions()
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.content_summary for s in steps] == ["pong"]
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.step_count == 1
-
-
-def test_assistant_text_with_the_same_markers_is_kept(env: Path) -> None:
-    """注入只出现在用户侧；助手引用了同样的标记 NEVER 剥（防过度剥离）。"""
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(env, "p_u", "m_u", _T0 + 11, {"type": "text", "text": "ping"})
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(
-        env,
-        "p_a",
-        "m_a",
-        _T0 + 21,
-        {"type": "text", "text": f"标记长这样：{_BEGIN}示例{_END}"},
-    )
-
-    opencode_sync.sync_opencode_sessions()
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert steps[1].content_summary == f"标记长这样：{_BEGIN}示例{_END}"
-
-
-def test_image_description_markers_are_stripped_too(env: Path) -> None:
-    """视觉转述走独立标记，归档层 MUST 同样剥掉——它不是用户打的字。"""
-    from frago.init.opencode_plugin import get_all_injection_markers
-
-    pairs = dict(get_all_injection_markers())
-    img_begin, img_end = "<image-file-desc>", pairs["<image-file-desc>"]
-
-    _add_session(env)
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(
-        env,
-        "p_u",
-        "m_u",
-        _T0 + 11,
-        {
-            "type": "text",
-            "text": f"\n\n{img_begin}\n转述内容\n{img_end}\n\n真的提问",
-        },
-    )
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
-
-    opencode_sync.sync_opencode_sessions()
-
-    steps = read_steps("ses_a", AgentType.OPENCODE)
-    assert [s.content_summary for s in steps] == ["真的提问", "pong"]
-    assert all("转述内容" not in s.content_summary for s in steps)
-
-
-# ── 标题刷新 ────────────────────────────────────────────────────────
-def test_placeholder_title_is_refreshed_on_resync(env: Path) -> None:
-    """opencode 事后把占位标题改写成语义标题，归档 MUST 跟着变。"""
-    _add_session(env, title="New session - 2026-07-25T02:11:00")
-    _add_message(env, "m_u", _T0 + 10, "user")
-    _add_part(env, "p_u", "m_u", _T0 + 11, {"type": "text", "text": "ping"})
-    _add_message(env, "m_a", _T0 + 20, "assistant", parent="m_u", finish="stop")
-    _add_part(env, "p_a", "m_a", _T0 + 21, {"type": "text", "text": "pong"})
-
-    opencode_sync.sync_opencode_sessions()
-    first = read_metadata("ses_a", AgentType.OPENCODE)
-    assert first is not None
-    assert first.name == "New session - 2026-07-25T02:11:00"
-
-    conn = _connect(env)
-    try:
-        conn.execute("UPDATE session SET title = ? WHERE id = ?", ("Ping pong test", "ses_a"))
-        conn.commit()
-    finally:
-        conn.close()
-
-    second = opencode_sync.sync_opencode_sessions()
-    assert second.updated == 1
-
-    meta = read_metadata("ses_a", AgentType.OPENCODE)
-    assert meta is not None
-    assert meta.name == "Ping pong test"
-    # 标题刷新 NEVER 重复追加步骤。
-    assert len(read_steps("ses_a", AgentType.OPENCODE)) == 2
+# 注：synthetic 片段的丢弃与 frago-hook 注入的剥离是 ``opencode_store.part_payloads``
+# 的行为，备份不再经过那一层（备份要库里本来的样子）。那套覆盖搬到了
+# ``test_opencode_store.py``。
 
 
 # ── 库不存在 ────────────────────────────────────────────────────────
@@ -520,4 +340,38 @@ def test_all_sessions_are_archived(env: Path) -> None:
     result = opencode_sync.sync_opencode_sessions()
 
     assert result.synced == 2
-    assert read_metadata("ses_b", AgentType.OPENCODE) is not None
+    # 两场各自落一份副本，用户自己敲起来的那场同样备到。
+    assert _raw("ses_a") == [
+        {"type": "text", "text": "ping"},
+        {"type": "text", "text": "pong"},
+    ]
+    assert _raw("ses_b") == [
+        {"type": "text", "text": "hi"},
+        {"type": "text", "text": "hello"},
+    ]
+
+
+def test_resync_skips_every_session_and_keeps_line_counts(env: Path) -> None:
+    """新逻辑的核心：备份文件在不在就是账本，第二遍全员 skipped、行数不变。"""
+    _simple_turn(env)
+    _add_session(env, "ses_b", directory="/other", title="User's own session")
+    _add_message(env, "m_ub", _T0 + 10, "user", session_id="ses_b")
+    _add_part(
+        env, "p_ub", "m_ub", _T0 + 11, {"type": "text", "text": "hi"}, session_id="ses_b"
+    )
+    _add_message(
+        env, "m_ab", _T0 + 20, "assistant", session_id="ses_b", parent="m_ub", finish="stop"
+    )
+    _add_part(
+        env, "p_ab", "m_ab", _T0 + 21, {"type": "text", "text": "hello"}, session_id="ses_b"
+    )
+
+    first = opencode_sync.sync_opencode_sessions()
+    assert (first.synced, first.updated, first.skipped) == (2, 0, 0)
+    before = {sid: _raw(sid) for sid in ("ses_a", "ses_b")}
+
+    # 库里一个字都没动：第二遍不该有任何一场落进 synced/updated。
+    second = opencode_sync.sync_opencode_sessions()
+    assert (second.synced, second.updated, second.skipped) == (0, 0, 2)
+    assert second.errors == []
+    assert {sid: _raw(sid) for sid in ("ses_a", "ses_b")} == before
