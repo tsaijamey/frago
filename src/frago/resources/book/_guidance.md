@@ -2,7 +2,8 @@
 
 1. 思考你正在面对什么问题。它属于哪类场景？
    frago book scenes                          查看已知场景类型
-   frago run find <关键词>                     搜索历史类似任务
+   frago context data:<关键词>                 找历史落盘产出
+   frago session search "<一句话>"             按意思翻历史会话
 
 2. 如果找到匹配场景，按场景卡片中的推荐路径行动。
    frago book scene-<name>                    查看具体场景的决策路径

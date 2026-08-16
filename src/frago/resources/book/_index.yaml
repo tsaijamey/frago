@@ -108,11 +108,11 @@
 # 效率类 — 你可能不知道有这个
 - name: context-recall
   category: available
-  brief: "关键词召回落盘上下文：frago context data:<关键词>，模糊匹配 ~/.frago/data 只报命中落在哪儿，读哪个由你定"
+  brief: "【召回三入口·产物层】过去的产出落在哪：frago context data:<关键词>，模糊匹配 ~/.frago/data 只报位置不吐正文，读哪个由你定；判断要召回时这是唯一路径，NEVER ls 目录挨个猜（见宪法条目「召回优先」）"
 
 - name: session-search
   category: available
-  brief: "跨 claude/opencode 原始会话检索：frago session search \"<一句话>\"，模型扩关键词 + 双库全扫，答不上「上次怎么定的」时用它"
+  brief: "【召回三入口·过程层】当时怎么做的、怎么定的、用户怎么说的：frago session search \"<一句话>\"，模型扩关键词 + ripgrep 扫 ~/.frago/sessions 双库备份（含 Claude 已滚删的老会话）；NEVER 回答「我不记得了」，NEVER 手工 grep 原始会话库（见宪法条目「召回优先」）"
 
 - name: recipe-execution
   category: available
@@ -130,13 +130,9 @@
   category: available
   brief: "Recipe 元数据必填/可选字段、flow/env 规范、validate 检查项"
 
-- name: run-logging
-  category: available
-  brief: "execution.jsonl 自动/手动日志分工、action_type/execution_method、研究完成标准（不含 insight 沉淀）"
-
 - name: domain-insights
   category: available
-  brief: "【已退役】run insights 写入口已关闭，沉淀改用 frago <域名> save；本章只留迁移指引与历史数据位置"
+  brief: "【已退役】run insights 读写入口均已关闭，沉淀与查询一律走 frago <域名> save / find；本章只留迁移指引与历史数据位置"
 
 - name: recipe-spec-writing
   category: available
@@ -148,4 +144,4 @@
 
 - name: def-knowledge
   category: available
-  brief: "frago def 结构化知识系统：domain 注册、`<domain>` find 查询、`<domain>` save 沉淀"
+  brief: "【召回三入口·结论层】已沉淀的结论去哪查：frago def 结构化知识系统，domain 注册、`<domain>` find 查询、`<domain>` save 沉淀（见宪法条目「召回优先」）"

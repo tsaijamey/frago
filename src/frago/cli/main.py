@@ -44,7 +44,6 @@ from .init_command import init  # New environment init command
 from .profile_commands import profile_group
 from .recipe_commands import recipe_group
 from .reply_command import reply_cmd
-from .run_commands import run_group
 from .schedule_commands import schedule_group
 from .serve_command import serve
 from .server_command import server_group
@@ -58,7 +57,7 @@ from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
-    ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "run", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
+    ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
     ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
@@ -66,7 +65,7 @@ COMMAND_GROUPS = OrderedDict([
 ])
 
 # Command groups to expand subcommands
-EXPAND_SUBCOMMANDS = ["browser", "recipe", "run", "dev", "session"]
+EXPAND_SUBCOMMANDS = ["browser", "recipe", "dev", "session"]
 
 # Silent aliases: accepted on the command line, absent from --help. The session
 # group reads naturally in the plural ("search my sessions"), and an agent that
@@ -389,9 +388,6 @@ cli.add_command(skill_group)
 
 # Apps command group - built-in delivery capabilities
 cli.add_command(apps_group)
-
-# Run command system
-cli.add_command(run_group)
 
 # Agent commands
 cli.add_command(agent)

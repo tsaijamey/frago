@@ -79,9 +79,6 @@ Recipe 调用时必须显式指定 output_dir 到 `~/.frago/data/<主体>/<YYYYM
 
 Executor 启动 sub-agent 时通过环境变量 FRAGO_CURRENT_RUN 自动注入 run_id，它决定日志记到哪个 run 名下。NEVER 用它来决定文件写哪儿——文件永远在 data。
 
-NEVER 手动调用 frago run set-context 或 frago run release。
-这些命令仅供 CLI 手动调试使用，sub-agent 不需要也不应该调用。
-
 ## 路径一律写绝对路径
 
 每次 Bash 调用结束后工作目录都会重置回项目根，cd 只在当次调用内有效，靠它建立的相对路径下一条命令就失效。

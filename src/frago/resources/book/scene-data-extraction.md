@@ -13,16 +13,17 @@
 
 ## 推荐路径
 
-  1. frago run find <提取关键词>                # 搜索历史类似任务
-  2. frago recipe list | grep extract         # 检查已有提取 recipe
-  2. frago browser navigate <目标页面>
-  3. frago browser get-content                  # 初步了解页面结构
-  4. frago browser exec-js "探索 DOM 结构" --return-value
-  5. 确定选择器（按 selector-priority 排序）
-  6. frago browser highlight "选择器"           # 高亮验证
-  7. frago browser exec-js "批量提取" --return-value
-  8. 如需翻页：frago browser scroll / click 下一页
-  9. 结果存入 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
+   1. frago context data:<提取关键词>            # 找历史落盘产出
+   2. frago session search "<一句话说清要找什么>"  # 按意思翻历史会话
+   3. frago recipe list | grep extract         # 检查已有提取 recipe
+   4. frago browser navigate <目标页面>
+   5. frago browser get-content                  # 初步了解页面结构
+   6. frago browser exec-js "探索 DOM 结构" --return-value
+   7. 确定选择器（按 selector-priority 排序）
+   8. frago browser highlight "选择器"           # 高亮验证
+   9. frago browser exec-js "批量提取" --return-value
+  10. 如需翻页：frago browser scroll / click 下一页
+  11. 结果存入 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
 
 ## 关键约束
 - must-data-dir — 产出落 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/，NEVER 写 ~/.frago/projects/

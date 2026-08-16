@@ -15,14 +15,15 @@
 
 同一个 group 里最多摊得下 5 页，多页流程就是靠这 5 个格子来回倒。
 
-  1. frago run find <workflow 关键词>                        # 搜索历史类似任务
-  2. frago recipe list | grep workflow                     # 检查已有 workflow recipe
-  3. frago browser navigate <A 页面> --group <g>            # 第一页
-  4. frago browser navigate <B 页面> --group <g> --new      # 需要同时留着 A 才加 --new
-  5. frago browser list-tabs --group <g>                    # 本组标签，带 * 的是当前页
-  6. frago browser switch-tab --group <g> <tab_id>          # 把后续命令切到某一页
-  7. 每次切换后 get-content 确认页面状态
-  8. frago browser group-close <g>                          # 收尾
+  1. frago context data:<workflow 关键词>                    # 找历史落盘产出
+  2. frago session search "<一句话说清要找什么>"               # 按意思翻历史会话
+  3. frago recipe list | grep workflow                     # 检查已有 workflow recipe
+  4. frago browser navigate <A 页面> --group <g>            # 第一页
+  5. frago browser navigate <B 页面> --group <g> --new      # 需要同时留着 A 才加 --new
+  6. frago browser list-tabs --group <g>                    # 本组标签，带 * 的是当前页
+  7. frago browser switch-tab --group <g> <tab_id>          # 把后续命令切到某一页
+  8. 每次切换后 get-content 确认页面状态
+  9. frago browser group-close <g>                          # 收尾
 
 只是顺序读几个页面、不需要同时留着，就别加 `--new`：不带它的 navigate 会
 替换当前页，5 个格子一个都不占。

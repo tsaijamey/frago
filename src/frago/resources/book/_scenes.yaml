@@ -13,7 +13,6 @@
     - must-browser-fetch
     - browser-usage
     - must-data-dir
-    - run-logging
 
 - name: form-automation
   brief: "在网页上填写表单、提交数据、处理多步骤流程"
@@ -53,7 +52,6 @@
   topics:
     - must-data-dir
     - must-execution-principles
-    - run-logging
 
 - name: recipe-development
   brief: "创建或更新 Recipe 自动化脚本"
@@ -70,7 +68,6 @@
     - recipe-execution
     - browser-usage
     - interactive-recipe
-    - run-logging
     - must-tool-priority
 
 - name: multi-page-workflow

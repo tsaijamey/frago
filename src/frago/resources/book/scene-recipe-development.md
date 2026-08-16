@@ -8,17 +8,18 @@
 ## 典型触发
 - 重复操作超过 2 次
 - 用户明确要求创建 Recipe
-- Run 日志中积累了足够的 _insights（ready_for_recipe: true）
+- 同一套手动流程已经跑通过几次，坑和关键决策都摸清了
 
 ## 推荐路径
 
-  1. frago run find <recipe 关键词>             # 搜索历史类似任务
-  2. frago recipe list                         # 确认不存在类似 recipe
-  3. 回顾 Run 日志中的 _insights
-  4. frago recipe plan <name> --prompt "..."   # 生成 spec.md（需求定义）
-  5. 审阅 spec.md，必要时手动修改
-  6. frago recipe create <name>                # 根据 spec 生成代码 + 自动 validate
-  7. frago recipe run <name> --params '...'    # 测试
+  1. frago context data:<recipe 关键词>         # 找历史落盘产出
+  2. frago session search "<一句话说清要找什么>"  # 按意思翻历史会话
+  3. frago recipe list                         # 确认不存在类似 recipe
+  4. frago <域名> find                          # 回顾这套流程已沉淀的坑与决策
+  5. frago recipe plan <name> --prompt "..."   # 生成 spec.md（需求定义）
+  6. 审阅 spec.md，必要时手动修改
+  7. frago recipe create <name>                # 根据 spec 生成代码 + 自动 validate
+  8. frago recipe run <name> --params '...'    # 测试
 
 简单 recipe 可跳过 plan，直接一步创建：
   frago recipe create <name> --prompt "..."

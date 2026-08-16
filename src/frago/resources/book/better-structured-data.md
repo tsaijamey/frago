@@ -18,4 +18,3 @@ frago <domain> save --name=<doc> \
 ## 何时使用 def 而非直接写文件
 - 需要按领域组织、按字段筛选的知识 → frago def
 - 一次性任务产出 → ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/（见 must-data-dir）
-- 运行时日志 → frago run log

@@ -13,17 +13,15 @@
 
 ## 推荐路径
 
-  1. frago run find <创作关键词>                # 搜索历史类似任务
-  2. frago run init "内容创作主题"
-  2. 素材调研阶段（参考 scene-web-research）
-  3. frago run log --step "素材整理" --data '{"_insights": [...]}'
+  1. frago context data:<创作关键词>            # 找历史落盘产出
+  2. frago session search "<一句话说清要找什么>"  # 按意思翻历史会话
+  3. 素材调研阶段（参考 scene-web-research）
   4. 创作阶段：产出文件写入 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/
   5. frago view ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/result.md   # 预览产出
 
 ## 关键约束
 - must-data-dir — 所有产出文件在 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/ 内
 - must-execution-principles — 产出可用结果，不停在计划
-- run-logging — 记录创作过程中的关键发现和决策
 
 ## 常见陷阱
 - 不做调研直接写 → 内容空洞、数据不准

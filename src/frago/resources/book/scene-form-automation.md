@@ -13,13 +13,14 @@
 
 ## 推荐路径
 
-  1. frago run find <表单关键词>                # 搜索历史类似任务
-  2. frago recipe list | grep form            # 检查已有表单 recipe
-  2. frago browser navigate <目标页面>
-  3. frago browser get-content                  # 了解页面结构
-  4. frago browser exec-js "提取表单字段" --return-value
-  5. 逐字段填写，每步验证
-  6. frago browser screenshot ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/verify.png   # 提交前截图确认
+  1. frago context data:<表单关键词>            # 找历史落盘产出
+  2. frago session search "<一句话说清要找什么>"  # 按意思翻历史会话
+  3. frago recipe list | grep form            # 检查已有表单 recipe
+  4. frago browser navigate <目标页面>
+  5. frago browser get-content                  # 了解页面结构
+  6. frago browser exec-js "提取表单字段" --return-value
+  7. 逐字段填写，每步验证
+  8. frago browser screenshot ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/verify.png   # 提交前截图确认
 
 ## 关键约束
 - browser-usage — 选择器优先 aria-label/data-testid 避免脆弱 class；React 等框架要 JS 赋值 + 触发 input 事件；不猜提交后的跳转 URL
