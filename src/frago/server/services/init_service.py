@@ -30,11 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 def _get_claude_code_install_guide() -> str:
-    """Get Claude Code installation guide."""
+    """Get Claude Code installation guide.
+
+    The native installer leads, and npm is named as the fallback it now is.
+    Claude Code ships as a native binary; recommending npm first was telling
+    people to install Node.js for a route they did not have to take.
+    """
     return (
-        "Install Claude Code via npm:\n"
-        "  npm install -g @anthropic-ai/claude-code\n\n"
-        "Or visit: https://docs.anthropic.com/en/docs/claude-code"
+        "Recommended: the official installer — a native binary, no Node.js needed.\n"
+        "  https://docs.anthropic.com/en/docs/claude-code\n\n"
+        "Alternative, if you already run Node.js 20+:\n"
+        "  npm install -g @anthropic-ai/claude-code"
     )
 
 
@@ -55,6 +61,9 @@ def _dependency_to_dict(result: DependencyCheckResult) -> dict[str, Any]:
         "required_version": result.required_version,
         "error": result.error,
         "install_guide": install_guide,
+        # Carried through so the UI can show an absent optional dependency as a
+        # note rather than as a problem to fix.
+        "optional": result.optional,
     }
 
 
@@ -84,6 +93,7 @@ class InitService:
         node_status = _dependency_to_dict(dep_results.get("node", DependencyCheckResult(
             name="node",
             required_version=DEFAULT_NODE_MIN_VERSION,
+            optional=True,
         )))
         claude_code_status = _dependency_to_dict(dep_results.get("claude-code", DependencyCheckResult(
             name="claude-code",
@@ -142,6 +152,7 @@ class InitService:
             "required_version": DEFAULT_NODE_MIN_VERSION,
             "error": "Check failed",
             "install_guide": get_platform_node_install_guide(),
+            "optional": True,
         }
 
         claude_code_status = _dependency_to_dict(claude_code_result) if claude_code_result else {

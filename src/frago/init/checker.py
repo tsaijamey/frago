@@ -82,21 +82,32 @@ def check_node(min_version: str = DEFAULT_NODE_MIN_VERSION) -> DependencyCheckRe
     result = DependencyCheckResult(
         name="node",
         required_version=min_version,
+        # Optional: only the npm install route for the agent CLIs needs it, and
+        # that route is no longer how any of them is normally installed. See the
+        # note on DependencyCheckResult.optional.
+        optional=True,
     )
 
     # Check if node command exists
     node_path = shutil.which("node")
     if not node_path:
         result.installed = False
+        # Worded as what becomes unavailable, not as something missing. Absent
+        # Node blocks nothing frago does; it only closes the npm route for
+        # installing an agent CLI.
         if platform.system() == "Windows":
             result.error = (
-                "Node.js is not installed\n\n"
-                "Recommended installation:\n"
+                "Node.js not found — frago does not require it. "
+                "It is only needed to install an agent CLI through npm.\n\n"
+                "If you want that route:\n"
                 "  winget install OpenJS.NodeJS.LTS\n"
                 "  or visit: https://nodejs.org/"
             )
         else:
-            result.error = "Node.js is not installed"
+            result.error = (
+                "Node.js not found — frago does not require it. "
+                "It is only needed to install an agent CLI through npm."
+            )
         return result
 
     result.path = node_path

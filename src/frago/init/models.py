@@ -336,16 +336,39 @@ class DependencyCheckResult(BaseModel):
     version_sufficient: bool = False
     required_version: str
     error: str | None = None
+    optional: bool = False
+    """Nothing frago does is blocked by this being absent.
+
+    Node.js is the case this exists for. It used to be checked as a hard
+    requirement, on the assumption that the agent CLIs arrive through npm. They
+    no longer do: Claude Code ships a native installer (its binary lands in
+    ``~/.local/share/claude/versions/``), and opencode and codex are native
+    binaries from Homebrew. On a machine running all three, npm's global list
+    contains none of them. So a missing Node stopped meaning "frago cannot
+    work" and started meaning "one of several install routes is unavailable" —
+    and reporting that as a failed requirement sent people installing something
+    they did not need.
+    """
 
     def needs_install(self) -> bool:
-        """Whether installation is needed"""
+        """Whether installation is needed.
+
+        Always False for an optional dependency: callers use this to decide what
+        to install and what to block on, and an optional dependency is neither.
+        """
+        if self.optional:
+            return False
         return not self.installed or not self.version_sufficient
 
     def display_status(self) -> str:
         """Generate display status"""
         if not self.installed:
+            if self.optional:
+                return f"[--] {self.name}: Not installed (optional)"
             return f"[X] {self.name}: Not installed"
         elif not self.version_sufficient:
+            if self.optional:
+                return f"[--] {self.name}: {self.version} (optional, below {self.required_version})"
             return f"[!]  {self.name}: Insufficient version (current {self.version}, requires {self.required_version})"
         else:
             return f"[OK] {self.name}: {self.version}"

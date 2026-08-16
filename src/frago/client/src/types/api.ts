@@ -269,6 +269,10 @@ export interface DependencyStatus {
   required_version: string;
   error: string | null;
   install_guide: string;
+  /** Absent means nothing frago does is blocked by this being missing. Node.js
+   *  is the case: the agent CLIs ship as native binaries now, so npm — and
+   *  therefore Node — is one install route among several, not a prerequisite. */
+  optional?: boolean;
 }
 
 export interface InitStatus {

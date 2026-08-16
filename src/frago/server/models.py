@@ -374,6 +374,13 @@ class DependencyStatusResponse(BaseModel):
     required_version: str
     error: Optional[str] = None
     install_guide: str = ""
+    optional: bool = False
+    """Absent means nothing frago does is blocked by this dependency missing.
+
+    Node.js is the case. Without this field the response model silently dropped
+    it, so the interface kept treating an absent Node as a problem to fix even
+    after the checker had stopped calling it one.
+    """
 
 
 class InitStatusResponse(BaseModel):
