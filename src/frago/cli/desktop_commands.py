@@ -52,9 +52,9 @@ AOS = Path.home() / ".frago" / "recipes" / "workflows" / "agent_os" / "aos"
 def desktop_group(args: tuple[str, ...]) -> None:
     """Drive the virtual desktop stage (recording / demo).
 
-    A fake macOS desktop whose two windows show a real tmux session and a real
-    Chrome tab. Everything on it is scriptable, so a workflow can be replayed
-    as a video take.
+    A fake macOS desktop whose windows show a real tmux session, a real browser
+    tab, and a local image. Everything on it is scriptable, so a workflow can be
+    replayed as a video take.
 
     \b
     Always start here:

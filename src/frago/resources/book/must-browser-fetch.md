@@ -35,7 +35,7 @@
   frago browser -b cdp screenshot out.png --full-page
   frago browser -b cdp stop
 
-CDP 后端你用的端口永远是 9222（默认值，不用传 `--port`），profile 落在 `~/.frago/profiles/<浏览器>/9222/`（从系统 profile 初始化）。白名单里还有一个 9223，那是 agent_os 录制机位专用的，你没有理由碰它。选后端的判据见 `frago book browser-backend-choice`。
+CDP 后端你用的端口永远是 9222（默认值，不用传 `--port`），profile 落在 `~/.frago/profiles/<浏览器>/9222/`（从系统 profile 初始化）。白名单里还有一个 9223，那是 agent_os 录制机位专用的，你没有理由碰它。注意 agent_os 的舞台演员也常驻在 9222 上，`-b cdp start` 会把它顶掉——起之前先 `frago desktop status` 看舞台在不在跑。选后端的判据见 `frago book browser-backend-choice`。
 
 ## 不要做
 - 不要使用 WebFetch 工具

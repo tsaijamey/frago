@@ -54,7 +54,7 @@
 
 - name: browser-backend-choice
   category: must
-  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动 Edge 的真实 profile，anti-bot 天然过检）> -b cdp（真无头/独立实例/--void/--app，端口默认 9222，白名单另有 9223 供 agent_os 机位专用）> 自起进程（禁止）；group 规则两端一致"
+  brief: "浏览器三层优先级：默认 extension 后端（无 flag，驱动 Edge 的真实 profile，anti-bot 天然过检）> -b cdp（真无头/独立实例/--void/--app，端口默认 9222，白名单另有 9223 供 agent_os 机位专用；9222 上还住着 agent_os 演员，舞台跑着时别起别停）> 自起进程（禁止）；group 规则两端一致"
 
 - name: browser-anti-bot
   category: available

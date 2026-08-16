@@ -2282,9 +2282,10 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
     against another browser's profile. --browser chrome is the worst
     case: that is the user's everyday Chrome profile.
 
-    CDP port defaults to 9222; only 9222 and 9223 (the agent_os recorder)
-    are whitelisted, any other value is rejected. Regular browsing needs
-    no --port at all.
+    CDP port defaults to 9222. Only 9222 and 9223 (the agent_os recorder)
+    are whitelisted; any other value is rejected. Regular browsing needs no
+    --port at all. Note the agent_os stage actor also lives on 9222, so a
+    start there replaces it — check `frago desktop status` first.
     See: frago book browser-backend-choice
     """
     from pathlib import Path
