@@ -22,10 +22,21 @@ class TestUserConfig:
         config = UserConfig()
         assert config.theme == "dark"
         assert config.language == "en"
-        assert config.show_system_status is True
-        assert config.confirm_on_exit is True
-        assert config.auto_scroll_output is True
         assert config.max_history_items == 100
+
+    def test_desktop_era_switches_are_gone(self):
+        """The three switches that changed nothing must stay gone.
+
+        show_system_status / confirm_on_exit / auto_scroll_output came from the
+        desktop-app era. They persisted and read back correctly while every one
+        of their references was schema and request mapping — no consumer read
+        them to change any behaviour. A settings page offering levers wired to
+        nothing is worse than one offering fewer levers, so they were removed
+        along with their plumbing. This guards against them drifting back in.
+        """
+        config = UserConfig()
+        for gone in ("show_system_status", "confirm_on_exit", "auto_scroll_output"):
+            assert not hasattr(config, gone), f"{gone} came back"
 
     def test_default_shortcuts(self):
         """Should have default keyboard shortcuts."""

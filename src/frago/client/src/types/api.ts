@@ -104,9 +104,6 @@ export interface TaskStepsResponse {
 export interface UserConfig {
   theme: string;
   language: string;
-  show_system_status: boolean;
-  confirm_on_exit: boolean;
-  auto_scroll_output: boolean;
   max_history_items: number;
   shortcuts: Record<string, string>;
 }

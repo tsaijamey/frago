@@ -1,6 +1,13 @@
 /**
  * Appearance Settings Component
- * Language and behavior settings for the application
+ *
+ * Interface language. The "behavior" card that used to sit below it held three
+ * switches — show system status, confirm on exit, auto-scroll output — carried
+ * over from when frago ran as a desktop app. Every one of them saved and read
+ * back correctly and changed nothing: their twenty-seven references across the
+ * server were all schema and request mapping, with no consumer anywhere. There
+ * is no status bar to show CPU in and no window to confirm closing, so they were
+ * three levers wired to nothing, and the whole card is gone.
  */
 
 import { useTranslation } from 'react-i18next';
@@ -9,7 +16,7 @@ import type { Language } from '@/types/pywebview';
 
 export default function AppearanceSettings() {
   const { t } = useTranslation();
-  const { config, updateConfig, setLanguage } = useAppStore();
+  const { config, setLanguage } = useAppStore();
 
   if (!config) {
     return (
@@ -18,10 +25,6 @@ export default function AppearanceSettings() {
       </div>
     );
   }
-
-  const handleToggle = (key: keyof typeof config, value: boolean) => {
-    updateConfig({ [key]: value });
-  };
 
   const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setLanguage(e.target.value as Language);
@@ -55,76 +58,6 @@ export default function AppearanceSettings() {
         </div>
       </div>
 
-      {/* Behavior settings */}
-      <div className="card">
-        <h2 className="font-medium mb-4 text-[var(--accent-primary)]">
-          {t('settings.appearance.behavior')}
-        </h2>
-
-        {/* Show system status */}
-        <div className="flex items-center justify-between py-2">
-          <div>
-            <div className="text-[var(--text-primary)]">{t('settings.appearance.showSystemStatus')}</div>
-            <div className="text-sm text-[var(--text-muted)]">
-              {t('settings.appearance.showSystemStatusDesc')}
-            </div>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.show_system_status}
-              onChange={(e) =>
-                handleToggle('show_system_status', e.target.checked)
-              }
-              className="sr-only peer"
-              aria-label={t('settings.appearance.showSystemStatus')}
-            />
-            <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)]"></div>
-          </label>
-        </div>
-
-        {/* Exit confirmation */}
-        <div className="flex items-center justify-between py-2 border-t border-[var(--border-color)]">
-          <div>
-            <div className="text-[var(--text-primary)]">{t('settings.appearance.exitConfirmation')}</div>
-            <div className="text-sm text-[var(--text-muted)]">
-              {t('settings.appearance.exitConfirmationDesc')}
-            </div>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.confirm_on_exit}
-              onChange={(e) => handleToggle('confirm_on_exit', e.target.checked)}
-              className="sr-only peer"
-              aria-label={t('settings.appearance.exitConfirmation')}
-            />
-            <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)]"></div>
-          </label>
-        </div>
-
-        {/* Auto scroll */}
-        <div className="flex items-center justify-between py-2 border-t border-[var(--border-color)]">
-          <div>
-            <div className="text-[var(--text-primary)]">{t('settings.appearance.autoScrollOutput')}</div>
-            <div className="text-sm text-[var(--text-muted)]">
-              {t('settings.appearance.autoScrollOutputDesc')}
-            </div>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.auto_scroll_output}
-              onChange={(e) =>
-                handleToggle('auto_scroll_output', e.target.checked)
-              }
-              className="sr-only peer"
-              aria-label={t('settings.appearance.autoScrollOutput')}
-            />
-            <div className="w-11 h-6 bg-[var(--bg-subtle)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--accent-primary)]"></div>
-          </label>
-        </div>
-      </div>
     </div>
   );
 }

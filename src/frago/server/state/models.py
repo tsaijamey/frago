@@ -194,9 +194,6 @@ class UserConfig:
     theme: str = "dark"
     language: str = "en"
     font_size: int = 14
-    show_system_status: bool = True
-    confirm_on_exit: bool = True
-    auto_scroll_output: bool = True
     max_history_items: int = 100
     shortcuts: Dict[str, str] = field(default_factory=dict)
     ai_title_enabled: bool = False

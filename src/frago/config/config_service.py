@@ -22,9 +22,6 @@ class UserConfig:
 
     theme: str = "dark"
     language: str = "en"  # 'en' or 'zh'
-    show_system_status: bool = True
-    confirm_on_exit: bool = True
-    auto_scroll_output: bool = True
     max_history_items: int = 100
     shortcuts: Dict[str, str] = field(
         default_factory=lambda: {
@@ -92,9 +89,6 @@ class ConfigService:
             config = UserConfig(
                 theme=data.get("theme", "dark"),
                 language=data.get("language", "en"),
-                show_system_status=data.get("show_system_status", True),
-                confirm_on_exit=data.get("confirm_on_exit", True),
-                auto_scroll_output=data.get("auto_scroll_output", True),
                 max_history_items=data.get("max_history_items", 100),
                 shortcuts=data.get(
                     "shortcuts",
