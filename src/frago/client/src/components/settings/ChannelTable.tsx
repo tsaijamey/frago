@@ -6,6 +6,7 @@ import {
   Power,
   RotateCcw,
 } from 'lucide-react';
+import { Trans, useTranslation } from 'react-i18next';
 import type { TaskIngestionChannel, TaskIngestionGetResponse } from '../../api/client';
 
 interface ChannelTableProps {
@@ -31,6 +32,7 @@ export default function ChannelTable({
   openEditDialog,
   removeChannel,
 }: ChannelTableProps) {
+  const { t } = useTranslation();
   return (
     <>
       {/* Enable / restart strip */}
@@ -44,7 +46,9 @@ export default function ChannelTable({
             }
           />
           <span className="text-sm font-medium">
-            Task ingestion: {state.enabled ? 'enabled' : 'disabled'}
+            {state.enabled
+              ? t('settings.channels.stateEnabled')
+              : t('settings.channels.stateDisabled')}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -54,7 +58,9 @@ export default function ChannelTable({
             disabled={saving}
             className="btn btn-sm"
           >
-            {state.enabled ? 'Disable' : 'Enable'}
+            {state.enabled
+              ? t('settings.channels.disable')
+              : t('settings.channels.enable')}
           </button>
           {restartPending && (
             <button
@@ -64,8 +70,8 @@ export default function ChannelTable({
               className="btn btn-primary btn-sm flex items-center gap-2"
               title={
                 state.restart_supported
-                  ? 'Restart server so scheduler picks up changes'
-                  : 'Server is not in daemon mode — restart manually'
+                  ? t('settings.channels.restartHint')
+                  : t('settings.channels.restartManualHint')
               }
             >
               {restarting ? (
@@ -73,7 +79,7 @@ export default function ChannelTable({
               ) : (
                 <RotateCcw className="w-4 h-4" />
               )}
-              Restart Server
+              {t('settings.channels.restartServer')}
             </button>
           )}
         </div>
@@ -83,7 +89,7 @@ export default function ChannelTable({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">
-            Channels ({state.channels.length})
+            {t('settings.channels.count', { total: state.channels.length })}
           </span>
           <button
             type="button"
@@ -92,27 +98,27 @@ export default function ChannelTable({
             className="btn btn-primary btn-sm flex items-center gap-2"
             title={
               state.available_recipes.length === 0
-                ? 'Install at least one recipe to add channels'
-                : 'Add a new channel'
+                ? t('settings.channels.addBlockedHint')
+                : t('settings.channels.addHint')
             }
           >
             <Plus className="w-4 h-4" />
-            Add Channel
+            {t('settings.channels.add')}
           </button>
         </div>
 
         {state.channels.length === 0 ? (
           <div className="text-sm text-[var(--text-muted)] p-4 text-center border border-dashed border-[var(--border-color)] rounded-lg">
-            No channels configured.
+            {t('settings.channels.empty')}
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[var(--text-muted)]">
-                <th className="py-2">Name</th>
-                <th className="py-2">Poll Recipe</th>
-                <th className="py-2">Notify Recipe</th>
-                <th className="py-2">Interval</th>
+                <th className="py-2">{t('settings.channels.colName')}</th>
+                <th className="py-2">{t('settings.channels.colPoll')}</th>
+                <th className="py-2">{t('settings.channels.colNotify')}</th>
+                <th className="py-2">{t('settings.channels.colInterval')}</th>
                 <th className="py-2" />
               </tr>
             </thead>
@@ -137,7 +143,7 @@ export default function ChannelTable({
                       type="button"
                       onClick={() => openEditDialog(ch)}
                       className="p-1 text-[var(--text-muted)] hover:text-[var(--accent-primary)]"
-                      aria-label="Edit"
+                      aria-label={t('settings.channels.editChannel')}
                     >
                       <Pencil className="w-4 h-4" />
                     </button>
@@ -145,7 +151,7 @@ export default function ChannelTable({
                       type="button"
                       onClick={() => void removeChannel(ch.name)}
                       className="p-1 text-[var(--text-muted)] hover:text-red-500"
-                      aria-label="Remove"
+                      aria-label={t('settings.channels.removeChannel')}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -158,8 +164,7 @@ export default function ChannelTable({
 
         {state.available_recipes.length === 0 && (
           <p className="text-xs text-[var(--text-muted)]">
-            No recipes are installed yet. Put recipes under <code>~/.frago/recipes/</code>
-            {' '}(poll + notify pair per channel) before adding a channel.
+            <Trans i18nKey="settings.channels.noRecipes" components={{ c: <code /> }} />
           </p>
         )}
       </div>

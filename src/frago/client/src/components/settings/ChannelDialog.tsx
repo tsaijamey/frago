@@ -1,4 +1,5 @@
 import { Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { ChannelDraft } from './useTaskIngestion';
 
 export default function ChannelDialog({
@@ -18,8 +19,11 @@ export default function ChannelDialog({
   onCancel: () => void;
   onSubmit: () => void;
 }) {
+  const { t } = useTranslation();
   const isEdit = draft.originalName !== null;
-  const title = isEdit ? `Edit channel: ${draft.originalName}` : 'Add channel';
+  const title = isEdit
+    ? t('settings.channels.dialogEdit', { name: draft.originalName })
+    : t('settings.channels.dialogAdd');
 
   const nameCollides =
     existingNames.includes(draft.name.trim()) &&
@@ -40,24 +44,24 @@ export default function ChannelDialog({
 
         <div className="space-y-3">
           <div>
-            <label className="block text-sm mb-1">Name</label>
+            <label className="block text-sm mb-1">{t('settings.channels.colName')}</label>
             <input
               type="text"
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              placeholder="e.g. feishu, email"
+              placeholder={t('settings.channels.namePlaceholder')}
               className="input w-full"
               disabled={isEdit}
             />
             {nameCollides && (
               <p className="text-xs text-[var(--text-error)] mt-1">
-                A channel named "{draft.name.trim()}" already exists.
+                {t('settings.channels.nameTaken', { name: draft.name.trim() })}
               </p>
             )}
           </div>
 
           <div>
-            <label className="block text-sm mb-1">Poll recipe</label>
+            <label className="block text-sm mb-1">{t('settings.channels.colPoll')}</label>
             <select
               value={draft.poll_recipe}
               onChange={(e) => setDraft({ ...draft, poll_recipe: e.target.value })}
@@ -72,7 +76,7 @@ export default function ChannelDialog({
           </div>
 
           <div>
-            <label className="block text-sm mb-1">Notify recipe</label>
+            <label className="block text-sm mb-1">{t('settings.channels.colNotify')}</label>
             <select
               value={draft.notify_recipe}
               onChange={(e) =>
@@ -90,7 +94,7 @@ export default function ChannelDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm mb-1">Interval (s)</label>
+              <label className="block text-sm mb-1">{t('settings.channels.intervalSeconds')}</label>
               <input
                 type="number"
                 min={1}
@@ -105,7 +109,7 @@ export default function ChannelDialog({
               />
             </div>
             <div>
-              <label className="block text-sm mb-1">Timeout (s)</label>
+              <label className="block text-sm mb-1">{t('settings.channels.timeoutSeconds')}</label>
               <input
                 type="number"
                 min={1}
@@ -124,7 +128,7 @@ export default function ChannelDialog({
 
         <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border-color)]">
           <button type="button" onClick={onCancel} className="btn btn-sm">
-            Cancel
+            {t('settings.channels.cancel')}
           </button>
           <button
             type="button"
@@ -133,7 +137,7 @@ export default function ChannelDialog({
             className="btn btn-primary btn-sm flex items-center gap-2"
           >
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-            {isEdit ? 'Save' : 'Add'}
+            {isEdit ? t('settings.channels.save') : t('settings.channels.addShort')}
           </button>
         </div>
       </div>

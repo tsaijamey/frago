@@ -45,6 +45,14 @@ export default function OfficialResourceSettings() {
         return;
       }
 
+      // `settled` replaces what used to be a check of the syncing state inside
+      // the timeout. That check could never be true: the timeout closed over the
+      // value from the moment it was scheduled, which is always "not syncing".
+      // So a sync that really did hang past two minutes left the button
+      // spinning forever instead of reporting a timeout, which is the one case
+      // the timeout existed for.
+      let settled = false;
+
       const pollInterval = setInterval(async () => {
         const result = await getOfficialSyncResult();
 
@@ -52,6 +60,7 @@ export default function OfficialResourceSettings() {
           return;
         }
 
+        settled = true;
         clearInterval(pollInterval);
         setOfficialSyncing(false);
         setOfficialResult(result);
@@ -64,11 +73,10 @@ export default function OfficialResourceSettings() {
       }, 1000);
 
       setTimeout(() => {
+        if (settled) return;
         clearInterval(pollInterval);
-        if (officialSyncing) {
-          setOfficialSyncing(false);
-          setOfficialError(t('settings.officialSync.timeout'));
-        }
+        setOfficialSyncing(false);
+        setOfficialError(t('settings.officialSync.timeout'));
       }, 120000);
     } catch (err) {
       setOfficialError(err instanceof Error ? err.message : t('settings.officialSync.syncFailed'));
@@ -158,12 +166,16 @@ export default function OfficialResourceSettings() {
             )}
             {officialResult.commands && (
               <p className="text-xs text-[var(--text-secondary)]">
-                Commands: {officialResult.commands.files_synced} {t('settings.officialSync.filesSynced')}
+                {t('settings.officialSync.commandsSynced', {
+                  count: officialResult.commands.files_synced,
+                })}
               </p>
             )}
             {officialResult.skills && (
               <p className="text-xs text-[var(--text-secondary)]">
-                Skills: {officialResult.skills.files_synced} {t('settings.officialSync.filesSynced')}
+                {t('settings.officialSync.skillsSynced', {
+                  count: officialResult.skills.files_synced,
+                })}
               </p>
             )}
           </div>
