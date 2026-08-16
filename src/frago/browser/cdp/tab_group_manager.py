@@ -20,6 +20,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .landing import LANDING_PAGE_URL as _LANDING_URL
+from .landing import is_landing_page
 from .logger import get_logger
 from .tab_manager import TabManager
 from .transport import cdp_get, cdp_ws_connect
@@ -634,7 +636,7 @@ class TabGroupManager:
                     continue
                 url = t.get("url", "")
                 title = t.get("title", "")
-                if "/chrome/dashboard" in url or url.startswith("data:text/html") or title == "frago":
+                if is_landing_page(url, title) or url.startswith("data:text/html"):
                     landing_ws = t.get("webSocketDebuggerUrl")
                     break
 
@@ -655,7 +657,7 @@ class TabGroupManager:
         except Exception:
             pass  # Best-effort, don't break normal operations
 
-    LANDING_PAGE_URL = "http://127.0.0.1:8093/chrome/dashboard"
+    LANDING_PAGE_URL = _LANDING_URL
 
     def ensure_landing_page(self) -> bool:
         """Check if landing page exists; recreate if missing. Best-effort."""
@@ -677,7 +679,7 @@ class TabGroupManager:
                     continue
                 url = t.get("url", "")
                 title = t.get("title", "")
-                if "/chrome/dashboard" in url or title == "frago":
+                if is_landing_page(url, title):
                     return True
 
             # Missing — create it

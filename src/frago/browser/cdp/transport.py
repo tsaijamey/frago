@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 import requests
 import websocket
 
+from .landing import is_landing_page
+
 if TYPE_CHECKING:
     from .config import CDPConfig
 
@@ -179,7 +181,7 @@ class CDPTransport:
                 target_url = target.get('url', '')
                 target_title = target.get('title', '')
                 # Skip landing page — identified by dashboard URL, data: URI, or title "frago"
-                if '/chrome/dashboard' in target_url or target_url.startswith('data:text/html') or target_title == 'frago':
+                if is_landing_page(target_url, target_title) or target_url.startswith('data:text/html'):
                     if fallback_ws_url is None:
                         fallback_ws_url = target['webSocketDebuggerUrl']
                     continue

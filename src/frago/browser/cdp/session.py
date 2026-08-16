@@ -10,6 +10,8 @@ import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from .landing import is_landing_page
+
 if TYPE_CHECKING:
     from frago.browser.cdp.commands.dom import DOMCommands
     from frago.browser.cdp.commands.input import InputCommands
@@ -133,7 +135,7 @@ class CDPSession(CDPClient):
                     continue
                 url = target.get("url", "")
                 title = target.get("title", "")
-                if "/chrome/dashboard" in url or title == "frago":
+                if is_landing_page(url, title):
                     return target.get("id")
         except Exception:
             pass

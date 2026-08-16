@@ -19,6 +19,9 @@ from frago.browser.cdp.browser_detection import (
     find_browser,
     get_default_browser,
 )
+from frago.browser.cdp.landing import LANDING_PAGE_SERVER_PORT as _LANDING_PORT
+from frago.browser.cdp.landing import LANDING_PAGE_URL as _LANDING_URL
+from frago.browser.cdp.landing import is_landing_page
 from frago.browser.cdp.process import kill_existing_chrome
 from frago.browser.cdp.transport import cdp_get, cdp_ws_connect
 from frago.browser.profile_seed import seed_profile_from_system, system_profile_dir
@@ -684,9 +687,10 @@ class ChromeLauncher:
         except Exception:
             return False
 
-    # Server port for landing page URL (matches frago server default)
-    LANDING_PAGE_SERVER_PORT = 8093
-    LANDING_PAGE_URL = f"http://127.0.0.1:{LANDING_PAGE_SERVER_PORT}/chrome/dashboard"
+    # Address and predicate both live in .landing — see the module docstring
+    # for why they must not be re-spelled here.
+    LANDING_PAGE_SERVER_PORT = _LANDING_PORT
+    LANDING_PAGE_URL = _LANDING_URL
 
     def _initialize_tabs(self) -> None:
         """Close all existing tabs except one and navigate it to the landing page.
@@ -775,7 +779,7 @@ class ChromeLauncher:
                 url = t.get("url", "")
                 title = t.get("title", "")
                 # Keep: landing page, grouped tabs, managed tabs, data URLs
-                if "/chrome/dashboard" in url or title == "frago":
+                if is_landing_page(url, title):
                     continue
                 if url.startswith("data:text/html"):
                     continue
@@ -795,8 +799,8 @@ class ChromeLauncher:
     def _inject_landing_page(self) -> bool:
         """Create a dedicated landing page tab served by the frago server.
 
-        Opens ``http://127.0.0.1:8093/chrome/dashboard`` in a new tab.
-        The page polls ``/chrome/dashboard/state`` for live tab group updates.
+        Opens :data:`~frago.browser.cdp.landing.LANDING_PAGE_URL` in a new
+        tab. The page polls ``<that url>/state`` for live tab group updates.
         """
         try:
             import json as _json
@@ -816,7 +820,7 @@ class ChromeLauncher:
                 if t.get("type") == "page":
                     url = t.get("url", "")
                     title = t.get("title", "")
-                    if "/chrome/dashboard" in url or title == "frago":
+                    if is_landing_page(url, title):
                         return True  # Already have a landing page
 
             # Get a WS URL to issue Target.createTarget

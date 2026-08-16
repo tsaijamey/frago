@@ -78,6 +78,7 @@ class TabCleanupService:
 
     def _do_cleanup(self) -> None:
         """Reconcile groups and close orphan tabs (runs in thread pool)."""
+        from frago.browser.cdp.landing import is_landing_page
         from frago.browser.cdp.tab_group_manager import TabGroupManager
         from frago.browser.cdp.tab_manager import TabManager
 
@@ -128,7 +129,7 @@ class TabCleanupService:
             url = t.get("url", "")
             title = t.get("title", "")
             # Keep: landing page, grouped tabs, managed tabs, data URLs
-            if "/chrome/dashboard" in url or title == "frago":
+            if is_landing_page(url, title):
                 continue
             if url.startswith("data:text/html"):
                 continue

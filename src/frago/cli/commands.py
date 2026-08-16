@@ -17,6 +17,7 @@ from typing import Any
 import click
 
 from ..browser.cdp.exceptions import CDPError
+from ..browser.cdp.landing import is_landing_page
 from ..browser.cdp.logger import get_logger
 from ..browser.cdp.session import CDPSession
 from ..browser.cdp.tab_group_manager import (
@@ -2586,7 +2587,7 @@ def browser_reset(ctx):
                         continue
                     url = t.get("url", "")
                     title = t.get("title", "")
-                    if "/chrome/dashboard" in url or url.startswith("data:text/html") or title == "frago":
+                    if is_landing_page(url, title) or url.startswith("data:text/html"):
                         continue
                     try:
                         session.target.close_target(t["id"])
