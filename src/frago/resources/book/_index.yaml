@@ -126,6 +126,14 @@
   category: available
   brief: "Web UI 人机协作 Recipe 架构、launcher、API 交互、状态管理"
 
+- name: recipe-expose
+  category: available
+  brief: "frago recipe expose 把 recipe 页面开给外面只读看（注意与 recipe publish 发布页面状态不是一回事）；两种模式 public 人人同一份 / identity 登录后各看各的；四区分流 本机/公开/身份/私有，/api 永不外露；frago user 管账号与登录会话"
+
+- name: remote-frago
+  category: available
+  brief: "frago remote 给服务器上的另一个 frago 下发任务书，走它的 PA 队列；说要什么结果，别写命令序列"
+
 - name: recipe-authoring
   category: available
   brief: "Recipe 脚本编写规范：参数接收（sys.argv[1]/$1/__FRAGO_PARAMS__）、输出规范、代码模板"
