@@ -1,4 +1,4 @@
-"""会话工作台的三个只读接口（spec 20260729-session-workbench-webui Phase 2）。
+"""会话工作台的四个只读接口（spec 20260729-session-workbench-webui Phase 2）。
 
 这一层只做取用与序列化：把 :mod:`frago.session.record_reader` 给的数据类拍成 JSON，
 把它抛的异常翻成状态码。记录归类、字段推导、家族判定这些全在核心数据层做完了，
@@ -18,7 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from frago.session import record_reader
+from frago.session import record_reader, record_search
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
 
 router = APIRouter()
@@ -66,6 +66,35 @@ async def read_workbench_records(
     _ensure_watching(sid)
 
     return [asdict(record) for record in records]
+
+
+@router.get("/workbench/search")
+async def search_workbench_content(
+    q: str = Query(..., description="要在会话内容里找的一句话，空格分开的多个词是「并且」"),
+    limit: int = Query(60, ge=1, le=200, description="每一家最多报几场"),
+    per_session: int = Query(2, ge=1, le=10, description="每场最多附几条摘要"),
+) -> dict[str, Any]:
+    """在会话内容里找一句话，只认提示词与 agent 回复正文。
+
+    左栏原本只搜得到标题、目录、会话编号，可人记得住的往往是当时说过的那句话。搜的
+    范围**刻意只有对话**：工具参数、工具输出、hook 注入体量是对话的几十倍，掺进来的
+    结果人一条都认不出是自己要的。
+
+    ``warnings`` 里是这一趟没做全的地方（没装 ripgrep、命中太多只报了一部分）。
+    **NEVER 把它当可选字段丢掉**——做不全却不说，等于谎报覆盖面。
+
+    落盘检索是同步的，丢进工作线程跑，免得一次搜索把整个事件循环停住。
+    """
+    outcome = await asyncio.to_thread(
+        record_search.search_sessions, q, limit=limit, per_session=per_session
+    )
+    return {
+        "query": outcome.query,
+        "terms": record_search.split_terms(q),
+        "sessions": [asdict(match) for match in outcome.matches],
+        "scanned_files": outcome.scanned_files,
+        "warnings": outcome.warnings,
+    }
 
 
 @router.get("/workbench/records/{rid}/raw")

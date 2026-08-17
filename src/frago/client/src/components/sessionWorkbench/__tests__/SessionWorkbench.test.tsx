@@ -225,6 +225,48 @@ describe('RecordStream 中栏', () => {
     // 已有的记录还在，没有被装载态盖掉。
     expect(screen.getByText('做完了')).toBeTruthy();
   });
+
+  describe('镜头', () => {
+    const mixed = [
+      record({ id: 'u', seq: 0, kind: 'user.say', payload: { text: '开工' } }),
+      record({ id: 'a', seq: 1, kind: 'agent.say', payload: { text: '好的' } }),
+      record({
+        id: 'h',
+        seq: 2,
+        kind: 'context.inject',
+        payload: { source: 'hook', hook_event: 'PreToolUse', blocks: ['先查现成落点'] },
+      }),
+      record({
+        id: 't',
+        seq: 3,
+        kind: 'tool.call',
+        payload: { tool_name: 'Bash', tool_family: 'shell', args: {} },
+      }),
+      record({ id: 'e', seq: 4, kind: 'call.envelope', payload: { duration_ms: 100 } }),
+    ];
+
+    it('每一档带真实条数——筛掉的东西必须在条数上看得见', () => {
+      render(<RecordStream {...streamProps({ records: mixed })} />);
+      expect(screen.getByTestId('lens-all').textContent).toContain('5');
+      expect(screen.getByTestId('lens-talk').textContent).toContain('2');
+      expect(screen.getByTestId('lens-hook').textContent).toContain('1');
+      expect(screen.getByTestId('lens-tool').textContent).toContain('1');
+      expect(screen.getByTestId('lens-system').textContent).toContain('1');
+    });
+
+    it('挑一档就只剩那一档', () => {
+      render(<RecordStream {...streamProps({ records: mixed })} />);
+      fireEvent.click(screen.getByTestId('lens-hook'));
+      expect(screen.getByTestId('hook-inject')).toBeTruthy();
+      expect(screen.queryByText('开工')).toBeNull();
+      expect(screen.queryByText('好的')).toBeNull();
+    });
+
+    it('一条记录都没有时不摆镜头——没有可挑的', () => {
+      render(<RecordStream {...streamProps({ records: [] })} />);
+      expect(screen.queryByTestId('stream-lens')).toBeNull();
+    });
+  });
 });
 
 // ── 左栏 ──────────────────────────────────────────────────────────────
@@ -235,6 +277,7 @@ function session(over: Partial<WorkbenchSession> & Pick<WorkbenchSession, 'sessi
     directory: '/Users/frago/Repos/frago',
     created_at: 1_753_700_000_000,
     last_active_at: 1_753_800_000_000,
+    last_reply_at: null,
     agent_paths: [],
     status: 'done',
     digest_done: null,
@@ -265,6 +308,7 @@ function railState(over: Partial<WorkbenchSessionsState> = {}): WorkbenchSession
     days: 0,
     setDays: NOOP,
     counts: { all: 2, running: 0, error: 0, done: 1, idle: 1 },
+    content: { query: '', matches: new Map(), searching: false, warnings: [], error: null },
     reload: async () => {},
     ...over,
   };
@@ -367,6 +411,88 @@ describe('SessionRail 左栏', () => {
     expect(screen.getAllByTestId('session-item')[0].getAttribute('data-status')).toBe('error');
     expect(screen.getByTestId('digest-done').textContent).toContain('verdict.jsonl');
     expect(screen.getByTestId('digest-stuck').textContent).toContain('连接中断');
+  });
+
+  it('内容命中时把命中的原话摆到卡上，并顶掉「已完成」那一格', () => {
+    const one = session({ session_id: SID, digest_done: '把镜头判断追加进了 verdict.jsonl' });
+    render(
+      <SessionRail
+        state={railState({
+          sessions: [one],
+          visible: [one],
+          search: '飞书',
+          content: {
+            query: '飞书',
+            searching: false,
+            warnings: [],
+            error: null,
+            matches: new Map([
+              [
+                SID,
+                {
+                  session_id: SID,
+                  family: 'claude-code' as const,
+                  hit_count: 3,
+                  capped: false,
+                  hits: [
+                    {
+                      record_id: 'r1',
+                      kind: 'user.say' as const,
+                      ts: 1,
+                      snippet: '…把飞书那条推送修一下…',
+                    },
+                  ],
+                },
+              ],
+            ]),
+          },
+        })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
+    );
+    expect(screen.getByTestId('content-hits').textContent).toContain('把飞书那条推送修一下');
+    expect(screen.getByTestId('content-hits').textContent).toContain('这场还有 2 处');
+    expect(screen.queryByTestId('digest-done')).toBeNull();
+  });
+
+  it('内容检索慢一拍，所以它自己报进度，也报哪里没搜全', () => {
+    const { rerender } = render(
+      <SessionRail
+        state={railState({
+          search: '飞书',
+          content: {
+            query: '',
+            searching: true,
+            warnings: [],
+            error: null,
+            matches: new Map(),
+          },
+        })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
+    );
+    expect(screen.getByTestId('content-search-status').textContent).toContain('正在会话内容里找');
+
+    rerender(
+      <SessionRail
+        state={railState({
+          search: '飞书',
+          content: {
+            query: '飞书',
+            searching: false,
+            warnings: ['ripgrep 不在 PATH 上'],
+            error: null,
+            matches: new Map(),
+          },
+        })}
+        selectedId={null}
+        onSelect={NOOP}
+      />
+    );
+    expect(screen.getByTestId('content-search-status').textContent).toContain('命中 0 场');
+    expect(screen.getByText('ripgrep 不在 PATH 上')).toBeTruthy();
   });
 
   it('摘要取不到时整行不出现，不留一句占位的话', () => {

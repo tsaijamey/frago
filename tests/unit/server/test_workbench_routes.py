@@ -107,6 +107,7 @@ class TestSessionList:
             "directory",
             "created_at",
             "last_active_at",
+            "last_reply_at",
             "agent_paths",
             "status",
             "digest_done",
@@ -246,6 +247,60 @@ class TestRawIsWithheld:
     def test_unknown_session_shape_is_not_found(self, client, adapter):
         response = client.get("/api/workbench/records/rec-3/raw?session_id=不像任何一家")
         assert response.status_code == 404
+
+
+class TestContentSearch:
+    """内容检索这一层只做取用与序列化，怎么搜由 ``record_search`` 那份用例把关。"""
+
+    def _stub(self, monkeypatch, outcome):
+        from frago.session import record_search
+
+        monkeypatch.setattr(record_search, "search_sessions", lambda *_a, **_k: outcome)
+
+    def test_命中的会话与摘要原样交出来(self, client, monkeypatch):
+        from frago.session.record_search import ContentHit, SearchOutcome, SessionMatch
+
+        self._stub(
+            monkeypatch,
+            SearchOutcome(
+                query="飞书",
+                matches=[
+                    SessionMatch(
+                        session_id=CC_SID,
+                        family="claude-code",
+                        hit_count=3,
+                        hits=[
+                            ContentHit(
+                                record_id="rec-1",
+                                kind="user.say",
+                                ts=1_700_000_000_000,
+                                snippet="…把飞书那条推送修一下…",
+                            )
+                        ],
+                    )
+                ],
+                scanned_files=7,
+            ),
+        )
+        body = client.get("/api/workbench/search?q=飞书").json()
+        assert body["terms"] == ["飞书"]
+        assert body["scanned_files"] == 7
+        (row,) = body["sessions"]
+        assert row["session_id"] == CC_SID
+        assert row["hit_count"] == 3
+        assert row["hits"][0]["snippet"] == "…把飞书那条推送修一下…"
+
+    def test_没做全的地方必须报出来(self, client, monkeypatch):
+        """做不全却不说，等于谎报覆盖面。"""
+        from frago.session.record_search import SearchOutcome
+
+        self._stub(monkeypatch, SearchOutcome(query="x", warnings=["ripgrep 不在 PATH 上"]))
+        assert client.get("/api/workbench/search?q=x").json()["warnings"] == [
+            "ripgrep 不在 PATH 上"
+        ]
+
+    def test_不给要搜什么就不受理(self, client):
+        assert client.get("/api/workbench/search").status_code == 422
 
 
 class TestExistingRoutesUntouched:

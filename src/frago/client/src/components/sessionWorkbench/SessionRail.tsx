@@ -7,6 +7,10 @@
  * 两者并存、互不替代。按来源筛的那一维不在这里——一千多场 Claude Code 会话摆在一起，
  * 知道它们都来自 Claude Code 没有任何用；来源仍在每张卡上看得见，改由底部汇总报两家各几场。
  *
+ * **搜索有两条腿。** 标题、目录、编号在本地即时筛，敲一个字就有反应；会话内容（提示词
+ * 与 agent 回复正文）由服务端搜，慢一拍，所以它自己报进度、自己报哪里没搜全。两条的
+ * 结果取并集，命中的那几场把命中的原话摆到卡片上。
+ *
  * **状态与摘要一个字都不在这里推导。** 服务端已经判完四档、填好两格摘要，界面照着显示。
  * 摆两处判据迟早各走各的，那时中栏和左栏会对同一场会话说两种话。
  *
@@ -28,6 +32,7 @@ import SessionItem, { resumeCommand } from './SessionItem';
 import NewSessionModal from './NewSessionModal';
 import {
   DAY_OPTIONS,
+  MIN_CONTENT_QUERY,
   STATUS_LABEL,
   type DayRange,
   type StatusFilter,
@@ -76,6 +81,7 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
     setStatus,
     days,
     setDays,
+    content,
     reload,
   } = state;
   const showToast = useAppStore((s) => s.showToast);
@@ -122,10 +128,13 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜标题、目录、会话编号"
+              placeholder="搜标题、目录，或会话里说过的话"
               aria-label="搜会话"
               className="w-full min-w-0 bg-transparent text-[12px] text-text-primary outline-none placeholder:text-text-muted"
             />
+            {content.searching ? (
+              <Loader2 size={12} className="shrink-0 animate-spin text-text-muted" />
+            ) : null}
             {search ? (
               <button
                 type="button"
@@ -187,6 +196,23 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
             </button>
           ))}
         </div>
+
+        {/* 内容检索比敲字慢一拍，所以它自己报进度。没搜到就明说没搜到，NEVER 让人
+            对着一份只按标题筛出来的清单以为"内容里也没有"。 */}
+        {search.trim().length >= MIN_CONTENT_QUERY ? (
+          <p data-testid="content-search-status" className="text-[11px] text-text-muted">
+            {content.error
+              ? content.error
+              : content.searching
+                ? '正在会话内容里找…'
+                : `会话内容里命中 ${content.matches.size} 场`}
+          </p>
+        ) : null}
+        {content.warnings.map((warning) => (
+          <p key={warning} className="text-[11px] text-text-secondary">
+            {warning}
+          </p>
+        ))}
       </div>
 
       {/* 列表区：Virtuoso 只渲染视口内卡片。装载时给骨架屏占位，有数据才展示窗口化列表。 */}
@@ -220,6 +246,7 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
                   session={session}
                   selected={session.session_id === selectedId}
                   copied={copiedId === session.session_id}
+                  contentMatch={content.matches.get(session.session_id) ?? null}
                   onSelect={onSelect}
                   onCopy={handleCopy}
                 />

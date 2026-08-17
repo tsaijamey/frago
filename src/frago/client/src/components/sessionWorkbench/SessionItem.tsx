@@ -2,10 +2,12 @@
  * SessionItem — 左栏会话卡片，从 SessionRail 拆出，供窗口化渲染与骨架屏共用高度基线。
  */
 
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Quote } from 'lucide-react';
 import {
+  activityTs,
   FAMILY_LABEL,
   STATUS_LABEL,
+  type ContentMatch,
   type SessionStatus,
   type WorkbenchSession,
 } from '@/hooks/useWorkbenchSessions';
@@ -62,16 +64,46 @@ function StatusDot({ status }: { status: SessionStatus }) {
   );
 }
 
+/**
+ * 内容命中摘要。**有命中就顶掉「已完成」那一格**——这一刻人是在找那句话，
+ * 卡片上最该出现的就是它，而不是这场会话最后做完了什么。
+ */
+function ContentHits({ match }: { match: ContentMatch }) {
+  const more = match.hit_count - match.hits.length;
+  return (
+    <div data-testid="content-hits" className="mt-1.5 space-y-1">
+      {match.hits.map((hit) => (
+        <p
+          key={hit.record_id}
+          className="line-clamp-2 rounded-[5px] bg-bg-subtle px-1.5 py-1 text-[11px] leading-[1.55] text-text-secondary"
+        >
+          <Quote size={9} className="mr-1 inline align-baseline text-text-muted" />
+          <span className="text-text-muted">{hit.kind === 'user.say' ? '你说 ' : '回复 '}</span>
+          {hit.snippet}
+        </p>
+      ))}
+      {more > 0 ? (
+        <p className="text-[11px] text-text-muted">
+          这场还有 {more} 处{match.capped ? '（不止，太多了没数完）' : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export default function SessionItem({
   session,
   selected,
   copied,
+  contentMatch,
   onSelect,
   onCopy,
 }: {
   session: WorkbenchSession;
   selected: boolean;
   copied: boolean;
+  /** 这场会话在内容检索里命中了什么。没搜内容、或这场没命中时为 null。 */
+  contentMatch?: ContentMatch | null;
   onSelect: (id: string) => void;
   onCopy: (session: WorkbenchSession) => void;
 }) {
@@ -103,8 +135,11 @@ export default function SessionItem({
         >
           {session.title}
         </span>
-        <span className="shrink-0 font-mono text-[11px] text-text-muted">
-          {relativeTime(session.last_active_at)}
+        <span
+          className="shrink-0 font-mono text-[11px] text-text-muted"
+          title={session.last_reply_at ? '最后一句回复的时刻' : '会话文件最后被动过的时刻'}
+        >
+          {relativeTime(activityTs(session))}
         </span>
       </div>
 
@@ -133,7 +168,8 @@ export default function SessionItem({
         </button>
       </div>
 
-      {session.digest_done ? (
+      {contentMatch ? <ContentHits match={contentMatch} /> : null}
+      {!contentMatch && session.digest_done ? (
         <p
           data-testid="digest-done"
           className="mt-1.5 line-clamp-2 text-[11px] leading-[1.55] text-text-secondary"

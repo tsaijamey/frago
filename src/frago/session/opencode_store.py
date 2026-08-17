@@ -596,6 +596,41 @@ def list_sessions() -> list[OpencodeSessionRow]:
     return sessions
 
 
+def sessions_containing(terms: list[str]) -> set[str] | None:
+    """哪些会话的片段里同时出现了这几个字面量。库读不出来时返回 None。
+
+    这是**粗筛**，不是判定：片段的 ``data`` 是整块 JSON，工具输出里出现这个词也会命
+    中。粗筛之后还要把命中的会话翻成统一记录，确认那个词确实落在对话正文里——两步都
+    要有，只做粗筛会把工具输出当成人说的话。
+
+    返回空集合与返回 None 是两回事：空集合是"查过了，一场都没有"，None 是"没查成"。
+    调用方据此决定是退回全翻还是直接交白卷，NEVER 把两者混成同一个值。
+    """
+    if not terms:
+        return set()
+    conn = _connect()
+    if conn is None:
+        return None
+    where = " AND ".join(["data LIKE ? ESCAPE '\\'"] * len(terms))
+    params = [f"%{_like_escape(term)}%" for term in terms]
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT session_id FROM part WHERE {where}",  # noqa: S608 - 占位符只由词数决定
+            params,
+        ).fetchall()
+    except sqlite3.Error as exc:
+        logger.debug("opencode sessions_containing failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
+def _like_escape(term: str) -> str:
+    """LIKE 的三个元字符转义。用户搜 ``100%`` 时 ``%`` 是要找的字，不是通配符。"""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def session_parts(opencode_session_id: str) -> list[dict[str, Any]]:
     """该会话的全部片段，按创建时间升序，形状与 ``parts_since`` 的元素一致。
 
