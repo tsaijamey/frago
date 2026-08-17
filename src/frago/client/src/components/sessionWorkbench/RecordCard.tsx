@@ -6,6 +6,10 @@
  * | 组 | 外壳 | 形态 |
  * |---|---|---|
  * | 文本类 | `TextShell` | user.say / agent.say / agent.think / context.inject |
+ *
+ * 文本类里 `context.inject` 走两条路：**旁路注入**（轻量 ai 经 hook 塞进上下文的话，
+ * `payload.source === 'hook'`）自成一色、默认摊开；其余注入照旧折叠。判据取数据层给的
+ * `source`，NEVER 靠标签名反推——标签是给人看的，改一个字就会把归类改掉。
  * | 工具类 | `ToolShell` | tool.call / tool.result / subagent.dispatch / todo.snapshot / permission.outcome / media.attach |
  * | 系统类 | `SystemShell` | error / interrupt / session.state / context.compact / call.envelope |
  *
@@ -44,7 +48,9 @@ import {
   ShieldAlert,
   Terminal,
   User,
+  Zap,
 } from 'lucide-react';
+import MarkdownContent from '@/components/ui/MarkdownContent';
 import {
   fetchWorkbenchRaw,
   type RecordKind,
@@ -66,6 +72,11 @@ const WAIT_BG = 'bg-[#E3A857]/[0.12] [[data-theme=light]_&]:bg-[#9A6E1B]/[0.11]'
 const OK_TEXT = 'text-[#8FC29A] [[data-theme=light]_&]:text-[#4C7A56]';
 const DONE_TEXT = 'text-[#8DB5AC] [[data-theme=light]_&]:text-[#56736E]';
 const DONE_BG = 'bg-[#8DB5AC]/[0.12] [[data-theme=light]_&]:bg-[#56736E]/[0.11]';
+// 旁路注入自成一色。它既不是人说的、也不是 agent 说的，混在对话的纸色里就看不出
+// "这句话是被别人塞进来的"——而那恰恰是读这一格时唯一要知道的事。
+const HOOK_TEXT = 'text-[#A78BC8] [[data-theme=light]_&]:text-[#6D4E9C]';
+const HOOK_BG = 'bg-[#A78BC8]/[0.10] [[data-theme=light]_&]:bg-[#6D4E9C]/[0.08]';
+const HOOK_RING = 'ring-1 ring-[#A78BC8]/30 [[data-theme=light]_&]:ring-[#6D4E9C]/25';
 
 // ── 三组归属 ──────────────────────────────────────────────────────────
 export type KindGroup = 'text' | 'tool' | 'system';
@@ -471,6 +482,20 @@ function Prose({ text }: { text: string }) {
 }
 
 /**
+ * 排过版的正文。agent 的回复本来就是 Markdown 写的——标题、清单、表格、代码块，
+ * 照字面铺开等于把排版信息当噪音丢掉，一屏井号和星号读起来比什么都累。
+ */
+function Rich({ text }: { text: string }) {
+  if (!text) return <p className="text-[13px] italic text-text-muted">（正文为空）</p>;
+  return (
+    <MarkdownContent
+      content={text}
+      className="min-w-0 break-words text-[14px] leading-[1.72] text-text-primary"
+    />
+  );
+}
+
+/**
  * 等宽输出块。最高 230px，超出**在块内滚**，不撑页面。
  * 230px 约十二行，够看出这次调用干了什么，又不至于把一屏占满。
  */
@@ -484,6 +509,13 @@ function Mono({ text }: { text: string }) {
 }
 
 // ── 十五种形态的内容区 ────────────────────────────────────────────────
+/**
+ * 你说的那句话。
+ *
+ * **人的输入要一眼认得出来。** 一场会话里人真正开口的次数是个位数，其余全是 agent、
+ * 工具与旁路在说话；这几张卡要是跟周围一个颜色，人就得逐张读标签才能找到"我当时问的
+ * 是什么"。所以整卡换纸色加一圈环——不用单边竖条，那是肌肉记忆不是设计。
+ */
 function UserSay({ record }: { record: WorkbenchRecord }) {
   const p = record.payload;
   const images = list(p, 'images');
@@ -492,7 +524,7 @@ function UserSay({ record }: { record: WorkbenchRecord }) {
       record={record}
       icon={<User size={12} />}
       label="你说"
-      tone="bg-bg-card rounded-tl-[3px]"
+      tone={`${ACCENT_BG} ${ACCENT_RING}`}
       meta={str(p, 'input_mode') ? `输入方式 ${str(p, 'input_mode')}` : undefined}
     >
       <Prose text={str(p, 'text')} />
@@ -513,13 +545,31 @@ function AgentSay({ record }: { record: WorkbenchRecord }) {
       tone="bg-transparent"
       meta={str(p, 'model')}
     >
-      <Prose text={str(p, 'text')} />
+      <Rich text={str(p, 'text')} />
     </TextShell>
   );
 }
 
 function AgentThink({ record }: { record: WorkbenchRecord }) {
   const text = str(record.payload, 'text');
+  // 正文没落盘的思考（模型这一轮的推理是加密的，落盘时只剩一个空壳）照常出卡的话，
+  // 一屏能排下八九个「思考 0 字」的空盒子，把真正有内容的对话挤没了。它确实发生过，
+  // 所以 NEVER 丢掉——但它只值一行，不值一张卡。
+  if (!text) {
+    return (
+      <div
+        data-kind={record.kind}
+        data-group="text"
+        data-testid="think-empty"
+        className="flex min-w-0 items-center gap-2 px-1 text-[11px] text-text-muted"
+      >
+        <Circle size={7} />
+        <span>思考了一轮，正文没落盘</span>
+        <span className="h-px flex-1 border-t border-dashed border-border-color" />
+        <span className="font-mono">{formatClock(record.ts)}</span>
+      </div>
+    );
+  }
   return (
     <TextShell
       record={record}
@@ -534,6 +584,114 @@ function AgentThink({ record }: { record: WorkbenchRecord }) {
         {text}
       </p>
     </TextShell>
+  );
+}
+
+/**
+ * hook 是在什么当口把话塞进来的。取中文，NEVER 把 ``PreToolUse`` 这种机器名摆给人看
+ * ——认不出这几个词的人，看到它只知道"有东西"，看不出"有东西拦在我动手之前"。
+ */
+const HOOK_EVENT_LABEL: Record<string, string> = {
+  SessionStart: '开场时塞进来的',
+  UserPromptSubmit: '你发话时塞进来的',
+  PreToolUse: '动手之前塞进来的',
+  PostToolUse: '动完手塞进来的',
+  Stop: '收尾时塞进来的',
+  PreCompact: '压缩之前塞进来的',
+  Notification: '提醒时塞进来的',
+};
+
+/**
+ * 旁路注入卡：**不是人说的，也不是 agent 说的，是第三方塞进这场对话的话。**
+ *
+ * 这一格从前混在通用的「注入内容」里、默认折叠、标签是 `PreToolUse:Bash` 这种机器串，
+ * 结果是整条旁路在中栏上等于不存在。现在它自成一色、默认摊开、按事件说人话，并且**同
+ * 一次注入只出一张卡**（hook 进程的原始标准输出那一份在数据层就并掉了）。
+ *
+ * 一次事件上挂了几个 hook 就有几段，段界保留——两个 hook 各说一句，和一个 hook 说了
+ * 很长一句，读起来是两回事。
+ */
+function HookInject({ record }: { record: WorkbenchRecord }) {
+  const p = record.payload;
+  const event = str(p, 'hook_event');
+  const target = str(p, 'hook_target');
+  const blocks = list(p, 'blocks').filter((b): b is string => typeof b === 'string' && !!b);
+  const body = str(p, 'body');
+  const segments = blocks.length ? blocks : body ? [body] : [];
+  const exit = num(p, 'exit_code');
+  const failed = exit !== null && exit !== 0;
+  const stderr = str(p, 'stderr');
+  const prevented = p.prevented_continuation === true;
+  const [open, setOpen] = useState(true);
+
+  return (
+    <article
+      data-kind={record.kind}
+      data-group="text"
+      data-source="hook"
+      data-testid="hook-inject"
+      className={`min-w-0 rounded-[10px] px-3 py-2.5 ${HOOK_BG} ${HOOK_RING}`}
+    >
+      <header className="flex items-center gap-2 text-[11px]">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className={`inline-flex shrink-0 items-center gap-1 font-semibold ${HOOK_TEXT}`}
+        >
+          <ChevronRight
+            size={12}
+            className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+          />
+          <Zap size={12} />
+          <span>旁路注入</span>
+        </button>
+        <span className="min-w-0 flex-1 truncate text-text-secondary">
+          {HOOK_EVENT_LABEL[event] ?? event}
+          {target ? <span className="ml-1 font-mono text-text-muted">{target}</span> : null}
+        </span>
+        {segments.length > 1 ? (
+          <span className="shrink-0 rounded-full bg-bg-card px-2 py-[1px] font-mono text-text-muted">
+            {segments.length} 段
+          </span>
+        ) : null}
+        {prevented ? (
+          <span className={`shrink-0 rounded-full px-2 py-[1px] ${WAIT_BG} ${WAIT_TEXT}`}>
+            拦住了收尾
+          </span>
+        ) : null}
+        {failed ? (
+          <span className={`shrink-0 rounded-full px-2 py-[1px] ${ERR_BG} ${ERR_TEXT}`}>
+            退出码 {exit}
+          </span>
+        ) : null}
+        <AgentPath path={record.agent_path} />
+        <Timestamp ts={record.ts} />
+      </header>
+
+      {open ? (
+        <div className="mt-2 min-w-0 space-y-2">
+          {segments.length ? (
+            segments.map((text, i) => (
+              <div
+                key={i}
+                className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded-[6px] bg-bg-card px-2.5 py-2 text-[13px] leading-[1.7] text-text-secondary"
+              >
+                {text}
+              </div>
+            ))
+          ) : (
+            <p className="text-[12px] italic text-text-muted">这次 hook 一个字都没说</p>
+          )}
+          {stderr ? (
+            <div>
+              <p className={`mb-1 text-[11px] ${ERR_TEXT}`}>标准错误</p>
+              <Mono text={stderr} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -986,7 +1144,13 @@ export default function RecordCard({ record, sessionId }: RecordCardProps) {
     case 'agent.think':
       return <AgentThink record={record} />;
     case 'context.inject':
-      return <ContextInject record={record} />;
+      // 旁路注入自成一格。判据是数据层给的 `source`，界面 NEVER 靠标签名反推——
+      // 标签是给人看的，改一个字就会把归类改掉。
+      return record.payload.source === 'hook' ? (
+        <HookInject record={record} />
+      ) : (
+        <ContextInject record={record} />
+      );
     // 工具类
     case 'tool.call':
       return <ToolCall record={record} />;

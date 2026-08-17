@@ -339,8 +339,12 @@ def test_rule09_hook_success_with_output_survives() -> None:
     assert records[0].payload["stdout"] == '{"decision":"allow"}'
 
 
-def test_rule10_other_attachments_become_injection() -> None:
-    """``hook_additional_context`` 的 content 是字符串数组，不是字符串。"""
+def test_rule09_hook_injection_carries_event_and_target() -> None:
+    """旁路注入进来的话要能一眼看出是谁在什么时候塞的。
+
+    ``content`` 是字符串数组不是字符串：一次事件上挂了几个 hook 就有几段，段界保留
+    到界面，否则人分不出这是两个 hook 各说了一句还是一个 hook 说了很长一句。
+    """
     rows = [
         _row(
             "u1",
@@ -348,14 +352,117 @@ def test_rule10_other_attachments_become_injection() -> None:
             attachment={
                 "type": "hook_additional_context",
                 "content": ["第一条规则", "第二条规则"],
-                "hookName": "SessionStart",
+                "hookName": "PreToolUse:Bash",
             },
         )
     ]
     records = translate_records(rows, SESSION)
     assert _kinds(records) == ["context.inject"]
-    assert records[0].payload["channel"] == "hook_additional_context"
-    assert records[0].payload["body"] == "第一条规则\n第二条规则"
+    payload = records[0].payload
+    assert payload["source"] == "hook"
+    assert payload["channel"] == "hook"
+    assert payload["hook_event"] == "PreToolUse"
+    assert payload["hook_target"] == "Bash"
+    assert payload["blocks"] == ["第一条规则", "第二条规则"]
+    assert payload["body"] == "第一条规则\n\n第二条规则"
+
+
+def test_rule09_hook_result_echoing_the_injection_is_dropped() -> None:
+    """同一次注入落盘两条：hook 进程的原始标准输出，与引擎真的注进去的那份人话。
+
+    两条都出卡的话，中栏会把同一句话摆两遍，其中一张还是没解析过的 JSON，人只会
+    以为注了两次。
+    """
+    injected = "落盘前先查现成落点"
+    rows = [
+        _row(
+            "u1",
+            "attachment",
+            attachment={
+                "type": "hook_success",
+                "hookName": "PreToolUse:Write",
+                "toolUseID": "toolu_1",
+                "content": "",
+                "stdout": json.dumps(
+                    {"hookSpecificOutput": {"additionalContext": injected}},
+                    ensure_ascii=False,
+                ),
+                "exitCode": 0,
+            },
+        ),
+        _row(
+            "u2",
+            "attachment",
+            attachment={
+                "type": "hook_additional_context",
+                "content": [injected],
+                "hookName": "PreToolUse:Write",
+                "toolUseID": "toolu_1",
+            },
+        ),
+    ]
+    records, stats = translate_with_stats(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    assert records[0].payload["body"] == injected
+    assert stats.dropped_hook_echo == 1
+
+
+def test_rule09_failed_hook_is_shown_even_when_it_says_nothing() -> None:
+    """hook 挂了要看得见。退出码非零的那条，哪怕一个字没说也出卡。"""
+    rows = [
+        _row(
+            "u1",
+            "attachment",
+            attachment={
+                "type": "hook_success",
+                "hookName": "PreToolUse:Bash",
+                "content": "",
+                "stdout": "{}",
+                "stderr": "boom",
+                "exitCode": 2,
+            },
+        )
+    ]
+    records, stats = translate_with_stats(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    assert records[0].payload["exit_code"] == 2
+    assert records[0].payload["stderr"] == "boom"
+    assert stats.dropped_hook_noise == 0
+
+
+def test_rule05_stop_hook_context_lands_in_the_body() -> None:
+    """收尾被拦下来那次，追加的上下文在 ``hookAdditionalContext``，不在 ``content``。
+
+    照 ``content`` 取，正文永远是空的，人会以为拦是拦了但没说理由。
+    """
+    rows = [
+        _row(
+            "u1",
+            "system",
+            subtype="stop_hook_summary",
+            hookAdditionalContext=["目标还没达成，继续干"],
+            preventedContinuation=True,
+        )
+    ]
+    records = translate_records(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    assert records[0].payload["source"] == "hook"
+    assert records[0].payload["hook_event"] == "Stop"
+    assert records[0].payload["body"] == "目标还没达成，继续干"
+
+
+def test_rule10_queued_command_keeps_the_prompt_as_its_body() -> None:
+    """排队的输入正文在 ``prompt``：取错键，卡片正文全空，看起来像什么都没输入。"""
+    rows = [
+        _row(
+            "u1",
+            "attachment",
+            attachment={"type": "queued_command", "prompt": "顺便把版本号 bump 了"},
+        )
+    ]
+    records = translate_records(rows, SESSION)
+    assert _kinds(records) == ["context.inject"]
+    assert records[0].payload["body"] == "顺便把版本号 bump 了"
 
 
 # ── 序 11～16：模型回复 ─────────────────────────────────────────────

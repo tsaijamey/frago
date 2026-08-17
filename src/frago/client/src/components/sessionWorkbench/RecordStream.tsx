@@ -11,6 +11,9 @@
  *    锚定）不算手动，NEVER 因此解除。
  * 3. **同一次模型回复要视觉归组，分组编号不显示。** `group_id` 是三十几位的机器标识，
  *    对人零意义。归组只体现为一个包住多张卡的容器，容器头写模型名与本组条数。
+ * 4. **看哪一类由人挑，条数照实报。** 一场会话里对话只占几十分之一，其余是工具、旁路
+ *    注入和引擎记账。全都铺开是"什么都在"，也是"什么都找不着"。所以顶上给一排镜头，
+ *    每一档带真实条数——**筛掉的东西必须在条数上看得见**，否则筛完像是那些事没发生过。
  */
 
 import {
@@ -18,13 +21,38 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type UIEvent,
 } from 'react';
 import { Inbox, Loader2 } from 'lucide-react';
-import RecordCard from './RecordCard';
+import RecordCard, { KIND_GROUP } from './RecordCard';
 import type { WorkbenchRecord } from '@/hooks/useWorkbenchRecords';
+
+/** 中栏的镜头。一次只看一类，条数照实报。 */
+export type StreamLens = 'all' | 'talk' | 'hook' | 'tool' | 'system';
+
+export const LENS_LABEL: Record<StreamLens, string> = {
+  all: '全部',
+  talk: '对话',
+  hook: '旁路注入',
+  tool: '工具',
+  system: '系统',
+};
+
+export const LENS_ORDER: StreamLens[] = ['all', 'talk', 'hook', 'tool', 'system'];
+
+/** 这条记录归哪个镜头。一条只归一档，加起来正好是全部。 */
+export function lensOf(record: WorkbenchRecord): Exclude<StreamLens, 'all'> {
+  if (record.kind === 'user.say' || record.kind === 'agent.say' || record.kind === 'agent.think') {
+    return 'talk';
+  }
+  if (record.kind === 'context.inject') {
+    return record.payload.source === 'hook' ? 'hook' : 'system';
+  }
+  return KIND_GROUP[record.kind] === 'tool' ? 'tool' : 'system';
+}
 
 /** 一段连续的、属于同一次模型回复的记录。`groupId` 只用于分段，永不显示。 */
 export interface RecordGroup {
@@ -101,7 +129,27 @@ export default function RecordStream({
   error,
   onLoadOlder,
 }: RecordStreamProps) {
-  const groups = useMemo(() => groupRecords(records), [records]);
+  const [lens, setLens] = useState<StreamLens>('all');
+
+  /** 每一档各有几条。筛掉的也要报出真实条数，否则筛完像是那些事没发生过。 */
+  const counts = useMemo(() => {
+    const tally: Record<StreamLens, number> = {
+      all: records.length,
+      talk: 0,
+      hook: 0,
+      tool: 0,
+      system: 0,
+    };
+    for (const record of records) tally[lensOf(record)] += 1;
+    return tally;
+  }, [records]);
+
+  const visible = useMemo(
+    () => (lens === 'all' ? records : records.filter((r) => lensOf(r) === lens)),
+    [records, lens]
+  );
+
+  const groups = useMemo(() => groupRecords(visible), [visible]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /** 自动滚动是否武装。开一场新会话时武装，人手动离开底部解除。 */
@@ -176,6 +224,13 @@ export default function RecordStream({
     anchor.current = null;
   }, [records, scrollToBottom]);
 
+  // 换镜头后落在这一档的最新一条上。不这么做，视口会停在按旧内容算出来的高度上，
+  // 换完看到的是半空的一屏。
+  useLayoutEffect(() => {
+    scrollToBottom();
+    followArmed.current = true;
+  }, [lens, scrollToBottom]);
+
   /** 人的滚动输入留下一张短期通行证：随后的 onScroll 按手动处理。 */
   const noteManualIntent = useCallback(() => {
     manualIntentUntil.current = Date.now() + MANUAL_INTENT_MS;
@@ -236,6 +291,32 @@ export default function RecordStream({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
+      {records.length ? (
+        <div
+          data-testid="stream-lens"
+          className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border-color px-5 py-2"
+        >
+          {LENS_ORDER.map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setLens(id)}
+              aria-pressed={lens === id}
+              data-testid={`lens-${id}`}
+              disabled={counts[id] === 0}
+              className={`rounded-full px-2.5 py-[3px] text-[11px] transition-colors duration-200 disabled:opacity-40 ${
+                lens === id
+                  ? 'bg-accent-primary-10 text-accent-primary'
+                  : 'bg-bg-card text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              {LENS_LABEL[id]}
+              <span className="ml-1 font-mono opacity-70">{counts[id]}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -263,6 +344,12 @@ export default function RecordStream({
           {error ? (
             <p className="rounded-[6px] bg-bg-subtle px-3 py-2 text-[12px] text-text-secondary">
               {error}
+            </p>
+          ) : null}
+
+          {records.length && !visible.length ? (
+            <p className="py-10 text-center text-[12px] text-text-muted">
+              这一档在当前这一页里一条都没有
             </p>
           ) : null}
 

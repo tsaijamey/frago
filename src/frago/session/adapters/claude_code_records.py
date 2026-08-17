@@ -67,6 +67,14 @@ _STANDING_VALUE_KEY = {
     "permission-mode": "permissionMode",
 }
 
+# ── 引擎自己写的那几种旁白 ──────────────────────────────────────────
+# 机器标记名直接摆给人看等于没说。这几种在本机数据里真出现过，各给一句人话。
+_SYSTEM_SUBTYPE_LABEL = {
+    "away_summary": "你不在时的小结",
+    "local_command": "本地命令",
+    "informational": "引擎提示",
+}
+
 # ── 判据表序 4：引擎侧报错的三种 subtype ────────────────────────────
 _ENGINE_ERROR_SUBTYPES = frozenset({"model_refusal_fallback", "model_consent_fallback"})
 
@@ -74,6 +82,17 @@ _ENGINE_ERROR_SUBTYPES = frozenset({"model_refusal_fallback", "model_consent_fal
 _MEDIA_ATTACHMENT_TYPES = frozenset(
     {"file", "already_read_file", "nested_memory", "compact_file_reference"}
 )
+
+# ── hook 注入 ───────────────────────────────────────────────────────
+# 旁路的轻量 ai 把话塞进上下文，落盘时分两条走：hook 进程自己的执行记录
+# （``hook_success``，正文是那一坨原始标准输出），以及引擎最终真的注进上下文的那份
+# （``hook_additional_context``，正文已经解析成一段段人话）。同一句话记两遍，谁都不
+# 标记谁，中栏于是把同一次注入摆两张卡，其中一张还是 JSON。
+#
+# 两条的对应关系由 ``toolUseID`` 给出（同一次 PreToolUse 的两条编号一模一样），
+# SessionStart 那种多个 hook 合并成一条的情况则靠正文原样相等兜住。
+_HOOK_CONTEXT_TYPE = "hook_additional_context"
+_HOOK_RESULT_TYPE = "hook_success"
 
 # ── 判据表序 15：派发子 agent 的两个工具名 ──────────────────────────
 # 本机全部走 ``Agent``，``Task`` 一次都没出现，但两个名字都认——工具名不是封闭集合。
@@ -143,6 +162,10 @@ class TranslationStats:
     dropped_hook_noise: int = 0
     """序 9：``hook_success`` 里正文空、标准输出没话说（空串或空对象）、退出码为 0 的纯噪音。"""
 
+    dropped_hook_echo: int = 0
+    """序 9：``hook_success`` 说的话已经由 ``hook_additional_context`` 原样记过一遍，
+    去掉的那一份回声。同一次注入摆两张卡，其中一张还是 JSON，人只会以为注了两次。"""
+
     dropped_stop_hook: int = 0
     """序 5：``stop_hook_summary`` 里没追加上下文也没拦截的那些。"""
 
@@ -207,6 +230,56 @@ def _is_silent_stdout(value: Any) -> bool:
     except (ValueError, TypeError):
         return False
     return isinstance(parsed, dict) and not parsed
+
+
+def _hook_blocks(value: Any) -> list[str]:
+    """一次 hook 注入的正文，按段拆开。
+
+    ``content`` 一律是字符串数组：一次事件上挂了几个 hook，就有几段，各说各的
+    （SessionStart 那次实测两段）。合成一整块会让人分不出这是两个 hook 各说了一句
+    还是一个 hook 说了很长一句，所以段界保留到界面。
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    blocks: list[str] = []
+    for item in _as_list(value):
+        text = item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)
+        text = text.strip()
+        if text:
+            blocks.append(text)
+    return blocks
+
+
+def _hook_stdout_context(stdout: Any) -> str:
+    """hook 进程的标准输出里，真正被注进上下文的那一段。
+
+    约定的形状是 ``{"hookSpecificOutput": {"additionalContext": "..."}}``。解不开、
+    或者里面根本没有这一段时返回空串——那说明这次 hook 没往上下文里塞话，它的标准
+    输出只是自言自语。
+    """
+    if not isinstance(stdout, str) or not stdout.strip():
+        return ""
+    try:
+        parsed = json.loads(stdout)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    specific = _as_dict(parsed.get("hookSpecificOutput"))
+    context = specific.get("additionalContext")
+    return context.strip() if isinstance(context, str) else ""
+
+
+def _hook_event_of(hook_name: str, fallback: Any = None) -> tuple[str, str]:
+    """``PreToolUse:Bash`` → ``("PreToolUse", "Bash")``。
+
+    冒号后那半截是这次 hook 挂在哪个工具上（``SessionStart:clear`` 则是启动方式）。
+    界面靠它一眼分出「这是拦在 Bash 前面的那条」还是「开场就注进来的那条」。
+    """
+    name = hook_name or (fallback if isinstance(fallback, str) else "") or ""
+    event, _, target = name.partition(":")
+    return event, target
 
 
 def _tool_family(tool_name: str) -> ToolFamily:
@@ -274,9 +347,11 @@ def find_session_file(session_id: str, root: Path | None = None) -> Path | None:
 class _Translator:
     """一场会话翻一次。状态只在这一次翻译里活着，翻完即弃。
 
-    两趟：第一趟建索引（工具名、分页截断通知、压缩摘要、旁挂状态的末次位置），第二趟
-    按判据表逐行归类。第一趟是必须的——序 19 要知道某个工具结果对应的调用是不是
-    ``Agent``，而调用在结果之前；序 7 要把分页通知并进工具结果，而通知在结果之后。
+    两趟：第一趟建索引（工具名、分页截断通知、压缩摘要、旁挂状态的末次位置、引擎最终
+    注进上下文的那些话），第二趟按判据表逐行归类。第一趟是必须的——序 19 要知道某个
+    工具结果对应的调用是不是 ``Agent``，而调用在结果之前；序 7 要把分页通知并进工具
+    结果，而通知在结果之后；序 9 要判 hook 进程说的话是不是已经被原样记过一遍，而那
+    条记录可能在它前面也可能在它后面。
     """
 
     def __init__(
@@ -296,6 +371,10 @@ class _Translator:
         self._tool_name_by_call: dict[str, str] = {}
         self._truncation_banner: dict[str, str] = {}
         self._summary_for_boundary: dict[int, str] = {}
+        # 引擎最终注进上下文的那些话，按 toolUseID 与原文两个口径各存一份。hook 进程
+        # 自己那条执行记录靠它判「我说的话已经有人原样记过了」。
+        self._injected_by_call: dict[str, set[str]] = {}
+        self._injected_texts: set[str] = set()
         self._last_standing_index: dict[str, int] = {}
         self._last_title_index = -1
 
@@ -317,10 +396,17 @@ class _Translator:
                             self._tool_name_by_call[call_id] = str(block.get("name", ""))
             elif rtype == "attachment":
                 attachment = _as_dict(row.get("attachment"))
-                if attachment.get("type") == "read_truncation_notice":
+                atype = attachment.get("type")
+                if atype == "read_truncation_notice":
                     call_id = attachment.get("toolUseID")
                     if isinstance(call_id, str):
                         self._truncation_banner[call_id] = str(attachment.get("banner", ""))
+                elif atype == _HOOK_CONTEXT_TYPE:
+                    blocks = set(_hook_blocks(attachment.get("content")))
+                    self._injected_texts |= blocks
+                    call_id = attachment.get("toolUseID")
+                    if isinstance(call_id, str) and call_id:
+                        self._injected_by_call.setdefault(call_id, set()).update(blocks)
             elif rtype == "system" and row.get("subtype") == "compact_boundary":
                 pending_boundary = i
             # 摘要正文取紧随压缩边界之后的那一条；边界的 parentUuid 是 null，
@@ -382,6 +468,7 @@ class _Translator:
             "context.inject",
             {
                 "channel": "unrecognized",
+                "source": "unrecognized",
                 "unrecognized": True,
                 "label": label,
                 "body": json.dumps(row, ensure_ascii=False),
@@ -504,16 +591,37 @@ class _Translator:
 
         # 序 5：其余 subtype 归注入内容；Stop hook 汇总里没追加上下文也没拦截的丢弃
         if subtype == "stop_hook_summary":
-            has_context = bool(_as_list(row.get("hookAdditionalContext")))
-            if not has_context and row.get("preventedContinuation") is not True:
+            blocks = _hook_blocks(row.get("hookAdditionalContext"))
+            if not blocks and row.get("preventedContinuation") is not True:
                 self._stats.dropped_stop_hook += 1
                 return
+            # 收尾时被拦下来的那次，追加的上下文就在 ``hookAdditionalContext`` 里，
+            # 而 ``content`` 这个键在这类记录上压根不存在。照 ``content`` 取，正文永远
+            # 是空的，人会以为拦是拦了但没说理由。
+            self._emit(
+                row,
+                "context.inject",
+                {
+                    "channel": "hook",
+                    "source": "hook",
+                    "hook_event": "Stop",
+                    "hook_target": "",
+                    "label": "Stop",
+                    "blocks": blocks,
+                    "body": "\n\n".join(blocks),
+                    "level": row.get("level"),
+                    "prevented_continuation": row.get("preventedContinuation"),
+                    "stop_reason": row.get("stopReason"),
+                },
+            )
+            return
         self._emit(
             row,
             "context.inject",
             {
                 "channel": str(subtype or "system"),
-                "label": str(subtype or "system"),
+                "source": "system",
+                "label": _SYSTEM_SUBTYPE_LABEL.get(str(subtype or ""), str(subtype or "system")),
                 "body": _text_of(row.get("content")),
                 "level": row.get("level"),
                 "prevented_continuation": row.get("preventedContinuation"),
@@ -565,28 +673,107 @@ class _Translator:
             )
             return
 
-        # 序 9：hook 纯噪音（本机 52604 条 hook_success 里的 46531 条）
-        if (
-            atype == "hook_success"
-            and not attachment.get("content")
-            and _is_silent_stdout(attachment.get("stdout"))
-            and attachment.get("exitCode") == 0
-        ):
+        # 序 9a：引擎最终注进上下文的那份 hook 内容。旁路的轻量 ai 说的话就在这里，
+        # 它跟"附件"是两回事，所以自带 ``source="hook"``，界面据此单独立一格。
+        if atype == _HOOK_CONTEXT_TYPE:
+            self._emit_hook_inject(row, attachment, _hook_blocks(attachment.get("content")))
+            return
+
+        # 序 9b：hook 进程自己的执行记录
+        if atype == _HOOK_RESULT_TYPE:
+            self._rule_09_hook_result(row, attachment)
+            return
+
+        # 序 10：其余附件。**正文取哪个键随附件类型而变**，取错的下场是卡片正文全空，
+        # 看起来像"这次注入什么都没说"。排队的输入正文在 ``prompt``、目标状态在
+        # ``condition``，两者都是真有人写下的话，NEVER 让它们空着。
+        body = attachment.get("content")
+        payload: dict[str, Any] = {
+            "channel": str(atype or "attachment"),
+            "source": "attachment",
+            "label": str(attachment.get("hookName") or atype or "attachment"),
+            "body": "\n".join(str(x) for x in body) if isinstance(body, list) else _text_of(body),
+            "exit_code": attachment.get("exitCode"),
+            "stdout": attachment.get("stdout"),
+            "stderr": attachment.get("stderr"),
+        }
+        if atype == "queued_command" and attachment.get("prompt"):
+            payload["label"] = "排队的输入"
+            payload["body"] = str(attachment.get("prompt"))
+        elif atype == "goal_status":
+            payload["label"] = "迭代目标"
+            payload["body"] = str(attachment.get("condition") or "")
+            payload["goal_met"] = attachment.get("met")
+        self._emit(row, "context.inject", payload)
+
+    def _emit_hook_inject(
+        self,
+        row: dict[str, Any],
+        attachment: dict[str, Any],
+        blocks: list[str],
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """发一条 hook 注入卡。
+
+        ``hook_event`` 与 ``hook_target`` 拆开给：界面要能一眼分出「开场注进来的」、
+        「你按下回车时注进来的」和「拦在某个工具前面注进来的」，这三者对读的人意义
+        完全不同，混成一个 ``PreToolUse:Bash`` 的机器串等于没分。
+        """
+        hook_name = str(attachment.get("hookName") or "")
+        event, target = _hook_event_of(hook_name, attachment.get("hookEvent"))
+        payload: dict[str, Any] = {
+            "channel": "hook",
+            "source": "hook",
+            "hook_event": event or "hook",
+            "hook_target": target,
+            "label": hook_name or event or "hook",
+            "blocks": blocks,
+            "body": "\n\n".join(blocks),
+        }
+        if extra:
+            payload.update(extra)
+        self._emit(row, "context.inject", payload)
+
+    def _rule_09_hook_result(self, row: dict[str, Any], attachment: dict[str, Any]) -> None:
+        """序 9：hook 进程自己那条执行记录。
+
+        两种情况不出卡：**什么都没说**（本机 52604 条里 46531 条，正文空、标准输出是
+        空对象、退出码为 0），以及**说过的话引擎已经原样记过一遍**——那句话会由
+        ``hook_additional_context`` 再出一张卡，两张摆在一起人只会以为注了两次，而
+        这一张的正文还是没解析过的 JSON。
+
+        退出码非零或有标准错误时一律出卡，哪怕它一个字没说：hook 挂了要看得见。
+        """
+        stdout = attachment.get("stdout")
+        content = attachment.get("content")
+        exit_code = attachment.get("exitCode")
+        stderr = str(attachment.get("stderr") or "").strip()
+        healthy = exit_code == 0 and not stderr
+
+        if healthy and not content and _is_silent_stdout(stdout):
             self._stats.dropped_hook_noise += 1
             return
 
-        # 序 10：其余附件
-        body = attachment.get("content")
-        self._emit(
+        injected = _hook_stdout_context(stdout)
+        call_id = attachment.get("toolUseID")
+        echoed = self._injected_by_call.get(call_id, set()) if isinstance(call_id, str) else set()
+        if healthy and injected and (injected in echoed or injected in self._injected_texts):
+            self._stats.dropped_hook_echo += 1
+            return
+
+        blocks = _hook_blocks(injected) or _hook_blocks(content) or _hook_blocks(stdout)
+        self._emit_hook_inject(
             row,
-            "context.inject",
+            attachment,
+            blocks,
             {
-                "channel": str(atype or "attachment"),
-                "label": str(attachment.get("hookName") or atype or "attachment"),
-                "body": "\n".join(str(x) for x in body) if isinstance(body, list) else _text_of(body),
-                "exit_code": attachment.get("exitCode"),
-                "stdout": attachment.get("stdout"),
-                "stderr": attachment.get("stderr"),
+                "exit_code": exit_code,
+                "stderr": stderr,
+                # 标准输出原样留着：形状不合约定的 hook（比如只吐一句 ``decision``）
+                # 正文里看不出全貌，那时人要看的就是它原来吐了什么。
+                "stdout": stdout,
+                "command": str(attachment.get("command") or ""),
+                "duration_ms": attachment.get("durationMs"),
             },
         )
 
@@ -764,6 +951,7 @@ class _Translator:
                 "context.inject",
                 {
                     "channel": "engine",
+                    "source": "engine",
                     "label": "引擎注入",
                     "body": _text_of(content),
                     "images": _media_blocks(content),

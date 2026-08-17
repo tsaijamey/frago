@@ -161,6 +161,66 @@ describe('RecordCard 的十五种形态', () => {
   });
 });
 
+describe('旁路注入卡', () => {
+  function hookRecord(payload: Record<string, unknown> = {}): WorkbenchRecord {
+    return makeRecord('context.inject', {
+      payload: {
+        channel: 'hook',
+        source: 'hook',
+        hook_event: 'PreToolUse',
+        hook_target: 'Bash',
+        label: 'PreToolUse:Bash',
+        blocks: ['第一条规则', '第二条规则'],
+        body: '第一条规则\n\n第二条规则',
+        ...payload,
+      },
+    });
+  }
+
+  it('自成一格，且默认就摊开——旁路塞进来的话不该藏在折叠里', () => {
+    render(<RecordCard record={hookRecord()} sessionId={SID} />);
+    expect(screen.getByTestId('hook-inject')).toBeTruthy();
+    expect(screen.getByText('第一条规则')).toBeTruthy();
+    expect(screen.getByText('第二条规则')).toBeTruthy();
+  });
+
+  it('说人话，不把 PreToolUse 这种机器名摆给人看', () => {
+    render(<RecordCard record={hookRecord()} sessionId={SID} />);
+    expect(screen.getByText(/动手之前塞进来的/)).toBeTruthy();
+    expect(screen.getByText('Bash')).toBeTruthy();
+  });
+
+  it('段界保留：两个 hook 各说一句，跟一个 hook 说很长一句是两回事', () => {
+    const { container } = render(<RecordCard record={hookRecord()} sessionId={SID} />);
+    expect(screen.getByText('2 段')).toBeTruthy();
+    expect(container.querySelector('[data-source="hook"]')).not.toBeNull();
+  });
+
+  it('hook 挂了要看得见', () => {
+    render(
+      <RecordCard
+        record={hookRecord({ exit_code: 2, stderr: '起不来', blocks: [], body: '' })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.getByText('退出码 2')).toBeTruthy();
+    expect(screen.getByText('起不来')).toBeTruthy();
+    expect(screen.getByText('这次 hook 一个字都没说')).toBeTruthy();
+  });
+
+  it('不是 hook 来的注入照旧走通用那张卡', () => {
+    render(
+      <RecordCard
+        record={makeRecord('context.inject', {
+          payload: { channel: 'engine', source: 'engine', label: '引擎注入', body: '正文' },
+        })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.queryByTestId('hook-inject')).toBeNull();
+  });
+});
+
 describe('报错卡', () => {
   it('只显示范围、代码、消息三项', () => {
     render(<RecordCard record={makeRecord('error')} sessionId={SID} />);
@@ -236,5 +296,23 @@ describe('已发生的绝对数怎么写', () => {
     expect(formatBytes(512)).toBe('512 字节');
     expect(formatBytes(5120)).toBe('5.0 KB');
     expect(formatBytes(null)).toBe('');
+  });
+});
+
+describe('思考卡', () => {
+  it('正文没落盘的思考只占一行，不撑成一张空盒子', () => {
+    render(
+      <RecordCard
+        record={makeRecord('agent.think', { payload: { text: '' } })}
+        sessionId={SID}
+      />
+    );
+    expect(screen.getByTestId('think-empty')).toBeTruthy();
+    expect(screen.getByText('思考了一轮，正文没落盘')).toBeTruthy();
+  });
+
+  it('有正文的思考照旧可折叠', () => {
+    render(<RecordCard record={makeRecord('agent.think')} sessionId={SID} />);
+    expect(screen.queryByTestId('think-empty')).toBeNull();
   });
 });
