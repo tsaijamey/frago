@@ -215,6 +215,7 @@
     "ghNotInstalledDesc": "Install GitHub CLI to access community recipes without API rate limits.",
     "ghNotAuthenticated": "GitHub CLI Not Authenticated",
     "ghNotAuthenticatedDesc": "Log in to GitHub CLI to avoid API rate limits when browsing community recipes.",
+    "ghAnonQuota": "Talking to GitHub anonymously: {{remaining}}/{{limit}} requests left this hour (shared across this IP), resets in about {{minutes}} min. Logging in raises it to 5000/hour.",
     "installGhCli": "Install GitHub CLI",
     "loginToGitHub": "Log in to GitHub",
     "ghLoginStarted": "Login window opened, please complete authentication",

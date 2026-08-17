@@ -26,12 +26,24 @@ router = APIRouter()
 # ============================================================
 
 
+class GhRateLimitResponse(BaseModel):
+    """How much of GitHub's hourly request budget is left."""
+    limit: int
+    remaining: int
+    used: int
+    reset_in_seconds: int
+    authenticated: bool
+
+
 class GhCliStatusResponse(BaseModel):
     """GitHub CLI status response"""
     installed: bool
     authenticated: bool
     version: Optional[str] = None
     username: Optional[str] = None
+    # Filled in only when nobody is logged in — that is when the number
+    # matters, and it is the one case where 60 requests an hour runs out.
+    rate_limit: GhRateLimitResponse | None = None
 
 
 class APIEndpointResponse(BaseModel):
@@ -139,16 +151,29 @@ async def check_gh_cli() -> GhCliStatusResponse:
 
     Always refreshes the status to ensure accuracy.
     """
+    import asyncio
+
     state_manager = StateManager.get_instance()
     # Always refresh to get current status (user may have logged in/out externally)
     await state_manager.refresh_gh_status(broadcast=False)
     status = state_manager.get_gh_status()
+
+    # Nobody logged in means every GitHub call frago makes runs on the
+    # anonymous 60-per-hour budget, shared across this whole IP. Tell the
+    # caller how much of it is left instead of leaving them to guess why
+    # community recipes went quiet. Off the event loop: it is a network call.
+    rate_limit = None
+    if not status.get("authenticated", False):
+        rate_limit = await asyncio.get_running_loop().run_in_executor(
+            None, GitHubService.get_rate_limit
+        )
 
     return GhCliStatusResponse(
         installed=status.get("installed", False),
         authenticated=status.get("authenticated", False),
         version=status.get("version"),
         username=status.get("username"),
+        rate_limit=GhRateLimitResponse(**rate_limit) if rate_limit else None,
     )
 
 

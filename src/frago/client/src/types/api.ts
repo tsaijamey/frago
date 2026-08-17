@@ -140,11 +140,21 @@ export interface SkillItem {
   file_path: string | null;
 }
 
+export interface GhRateLimit {
+  limit: number;
+  remaining: number;
+  used: number;
+  reset_in_seconds: number;
+  authenticated: boolean;
+}
+
 export interface GhCliStatus {
   installed: boolean;
   authenticated: boolean;
   version?: string | null;
   username?: string | null;
+  /** Present only while nobody is logged in — the 60-per-hour anonymous budget. */
+  rate_limit?: GhRateLimit | null;
 }
 
 export interface APIEndpointConfig {

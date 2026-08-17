@@ -79,6 +79,49 @@ class GitHubService:
 
         return result
 
+    @classmethod
+    def get_rate_limit(cls) -> dict[str, Any] | None:
+        """Ask GitHub how much of this hour's request budget is left.
+
+        Worth showing whenever nobody is logged in: an anonymous caller gets 60
+        requests an hour shared across everything on the same IP, against 5000
+        for a logged-in one, and running out looks like "the community list is
+        empty" rather than like a quota problem.
+
+        The /rate_limit endpoint is free — asking does not itself cost a
+        request — so this can be called on demand. Returns None when GitHub
+        cannot be reached; the caller then simply shows no numbers rather than
+        inventing them.
+        """
+        import time
+
+        import requests
+
+        try:
+            response = requests.get(
+                "https://api.github.com/rate_limit",
+                headers=cls.get_auth_headers(),
+                timeout=5,
+            )
+            if response.status_code != 200:
+                logger.debug("rate_limit query returned %s", response.status_code)
+                return None
+            core = response.json().get("resources", {}).get("core", {})
+            limit = int(core.get("limit", 0))
+            reset_timestamp = float(core.get("reset", 0))
+            return {
+                "limit": limit,
+                "remaining": int(core.get("remaining", 0)),
+                "used": int(core.get("used", 0)),
+                "reset_in_seconds": max(0, int(reset_timestamp - time.time())),
+                # GitHub hands anonymous callers a 60/hour bucket; anything
+                # larger means a token was accepted.
+                "authenticated": limit > 60,
+            }
+        except Exception as e:
+            logger.debug("Failed to query GitHub rate limit: %s", e)
+            return None
+
     @staticmethod
     def auth_login() -> dict[str, Any]:
         """Execute gh auth login in external terminal.

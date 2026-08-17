@@ -263,11 +263,21 @@ export interface RecipeSecretsUpdateResponse {
   error?: string;
 }
 
+export interface GhRateLimit {
+  limit: number;
+  remaining: number;
+  used: number;
+  reset_in_seconds: number;
+  authenticated: boolean;
+}
+
 export interface GhCliStatus {
   installed: boolean;
   version?: string;
   authenticated: boolean;
   username?: string;
+  /** Present only while nobody is logged in — the 60-per-hour anonymous budget. */
+  rate_limit?: GhRateLimit | null;
 }
 
 export interface VersionInfo {

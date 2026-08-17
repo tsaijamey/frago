@@ -131,19 +131,13 @@ export default function CommunityRecipeList() {
     }
   };
 
-  // Empty state
-  if (communityRecipes.length === 0) {
-    return (
-      <EmptyState
-        Icon={Globe}
-        title={t('recipes.noCommunityRecipes')}
-        description={t('recipes.noCommunityRecipesDescription')}
-      />
-    );
-  }
-
   // Show warning if gh CLI is not authenticated
   const showGhWarning = ghStatus && (!ghStatus.installed || !ghStatus.authenticated);
+
+  // Only sent while nobody is logged in. An exhausted anonymous budget is the
+  // usual reason this list comes back empty, so the numbers stay on screen
+  // even when there is nothing to list.
+  const quota = ghStatus?.rate_limit;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -163,6 +157,15 @@ export default function CommunityRecipeList() {
                   ? t('recipes.ghNotInstalledDesc')
                   : t('recipes.ghNotAuthenticatedDesc')}
               </p>
+              {quota && (
+                <p className="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
+                  {t('recipes.ghAnonQuota', {
+                    remaining: quota.remaining,
+                    limit: quota.limit,
+                    minutes: Math.max(1, Math.ceil(quota.reset_in_seconds / 60)),
+                  })}
+                </p>
+              )}
               <div className="mt-2 flex items-center gap-2">
                 {!ghStatus.installed ? (
                   <a
@@ -199,50 +202,62 @@ export default function CommunityRecipeList() {
         </div>
       )}
 
-      {/* Search Box */}
-      <div className="search-box mb-4">
-        <Search size={16} className="search-icon" />
-        <input
-          type="text"
-          className="search-input"
-          placeholder={t('recipes.searchCommunity')}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label={t('recipes.searchCommunity')}
+      {communityRecipes.length === 0 ? (
+        // Nothing to list — but the warning above still explains why, so this
+        // renders under it rather than in place of the whole page.
+        <EmptyState
+          Icon={Globe}
+          title={t('recipes.noCommunityRecipes')}
+          description={t('recipes.noCommunityRecipesDescription')}
         />
-        {search && (
-          <button
-            type="button"
-            className="search-clear"
-            onClick={() => setSearch('')}
-            aria-label="Clear search"
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
+      ) : (
+        <>
+          {/* Search Box */}
+          <div className="search-box mb-4">
+            <Search size={16} className="search-icon" />
+            <input
+              type="text"
+              className="search-input"
+              placeholder={t('recipes.searchCommunity')}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label={t('recipes.searchCommunity')}
+            />
+            {search && (
+              <button
+                type="button"
+                className="search-clear"
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
 
-      {/* Recipe Grid */}
-      <div className="page-scroll flex-1">
-        {filteredRecipes.length === 0 ? (
-          <div className="text-center py-8 text-[var(--text-muted)]">
-            {t('recipes.noResults')}
+          {/* Recipe Grid */}
+          <div className="page-scroll flex-1">
+            {filteredRecipes.length === 0 ? (
+              <div className="text-center py-8 text-[var(--text-muted)]">
+                {t('recipes.noResults')}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {filteredRecipes.map((recipe) => (
+                  <CommunityRecipeCard
+                    key={recipe.name}
+                    recipe={recipe}
+                    onInstall={handleInstall}
+                    onUpdate={handleUpdate}
+                    onUninstall={handleUninstall}
+                    isInstalling={installingRecipe === recipe.name}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {filteredRecipes.map((recipe) => (
-              <CommunityRecipeCard
-                key={recipe.name}
-                recipe={recipe}
-                onInstall={handleInstall}
-                onUpdate={handleUpdate}
-                onUninstall={handleUninstall}
-                isInstalling={installingRecipe === recipe.name}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

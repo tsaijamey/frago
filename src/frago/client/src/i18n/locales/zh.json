@@ -215,6 +215,7 @@
     "ghNotInstalledDesc": "安装 GitHub CLI 以避免 API 请求限制。",
     "ghNotAuthenticated": "GitHub CLI 未登录",
     "ghNotAuthenticatedDesc": "登录 GitHub CLI 以避免浏览社区配方时的 API 请求限制。",
+    "ghAnonQuota": "当前按匿名身份访问 GitHub：本小时还剩 {{remaining}}/{{limit}} 次请求（同一 IP 共用），约 {{minutes}} 分钟后重置；登录后升到 5000 次/小时。",
     "installGhCli": "安装 GitHub CLI",
     "loginToGitHub": "登录 GitHub",
     "ghLoginStarted": "登录窗口已打开，请完成认证",
