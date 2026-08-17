@@ -413,6 +413,37 @@ def restart(force: bool) -> None:
         raise SystemExit(1)
 
 
+@server_group.command("token", cls=AgentFriendlyCommand)
+@click.option("--rotate", is_flag=True, help="Discard the current token and mint a new one")
+def token(rotate: bool) -> None:
+    """Print the token that admits non-local callers to this server.
+
+    Calls arriving from this machine never need it — the local CLI, the desktop
+    client and recipes are trusted by virtue of being here. Anything reaching
+    the server from elsewhere (another frago over a tunnel, a browser on another
+    host) must send it as `Authorization: Bearer <token>`.
+
+    \b
+    Examples:
+        frago server token                # print it (creates it on first run)
+        frago server token --rotate       # invalidate every remote that has it
+    """
+    from frago.server.security import ensure_token, rotate_token, token_path
+
+    value = rotate_token() if rotate else ensure_token()
+    click.echo(value)
+    if rotate:
+        click.echo("Rotated. Every remote holding the old token is now locked out.", err=True)
+    click.echo(f"Stored in {token_path()}", err=True)
+    # Said here because this is what people read. The same warning is in the
+    # deployment doc, but by then the token is already in a chat window.
+    click.echo(
+        "This token opens /api/file, /api/agent and /api/recipes/<n>/run — holding it "
+        "is equivalent to running commands as this user. Treat it like an SSH key.",
+        err=True,
+    )
+
+
 @server_group.command("status", cls=AgentFriendlyCommand)
 def status() -> None:
     """Check if the Frago web service is running."""
@@ -426,6 +457,13 @@ def status() -> None:
         click.echo(f"  URL:     {status_info['url']}")
         if status_info["uptime_formatted"]:
             click.echo(f"  Uptime:  {status_info['uptime_formatted']}")
+
+        from frago.server.security import deployment_warning
+
+        warning = deployment_warning()
+        if warning:
+            click.echo()
+            click.echo(click.style(warning, fg="yellow"), err=True)
     else:
         click.echo("Frago server is not running")
         raise SystemExit(1)
