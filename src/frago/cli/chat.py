@@ -36,6 +36,11 @@ def _get_base_url() -> str:
     return f"http://{get_server_host()}:{get_server_port()}"
 
 
+def auth_headers(token: str | None) -> dict[str, str]:
+    """Headers that admit a non-local caller. Empty when talking to this machine."""
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 class _DefaultDict(dict):
     """Dict that returns empty string for missing keys."""
     def __missing__(self, key: str) -> str:
@@ -85,37 +90,52 @@ def _render_event(event: dict) -> None:
     sys.stdout.flush()
 
 
-def _check_server(base_url: str) -> bool:
+def _check_server(base_url: str, headers: dict[str, str] | None = None) -> bool:
     try:
-        resp = requests.get(f"{base_url}/api/status", timeout=3)
+        resp = requests.get(f"{base_url}/api/status", headers=headers or {}, timeout=5)
         return resp.status_code == 200
     except Exception:
         return False
 
 
-def _check_pa(base_url: str) -> bool:
+def _check_pa(base_url: str, headers: dict[str, str] | None = None) -> bool:
     try:
-        resp = requests.get(f"{base_url}/api/status", timeout=3)
+        resp = requests.get(f"{base_url}/api/status", headers=headers or {}, timeout=5)
         return resp.status_code == 200
     except Exception:
         return False
 
 
-def _ws_listener(
+def stream_session_events(
     base_url: str,
     sent_msg_ids: set[str],
     stop_event: threading.Event,
-    reply_event: threading.Event,
+    on_event,
+    headers: dict[str, str] | None = None,
 ) -> None:
-    """Connect WebSocket in a background thread, filter and render CLI session events."""
+    """Feed this CLI session's own PA events to `on_event`, reconnecting as needed.
+
+    PA broadcasts everything it does to every listener, so the filtering here is
+    what makes one CLI session see only its own conversation: a message is ours
+    if we sent its msg_id, and any task PA spawns while handling one of our
+    messages is ours too (tracked through task_id, because later events in a run
+    carry the task rather than the message).
+
+    Split out from the renderer so a non-interactive caller — `frago remote
+    send`, which needs the reply as a value rather than as coloured output — can
+    reuse the same matching rather than re-deriving it.
+    """
     ws_url = base_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
+    # A browser cannot set headers on a WS handshake, but this is a CLI; the
+    # header form keeps the token out of the server's access log.
+    ws_headers = [f"{k}: {v}" for k, v in (headers or {}).items()]
     task_ids: set[str] = set()
 
     while not stop_event.is_set():
         try:
             ws = websocket.WebSocket()
             ws.settimeout(1.0)
-            ws.connect(ws_url)
+            ws.connect(ws_url, header=ws_headers)
 
             while not stop_event.is_set():
                 try:
@@ -153,13 +173,7 @@ def _ws_listener(
                 )
 
                 if related:
-                    _render_event(event)
-                    # Release prompt after: reply arrived, or run/resume dispatched
-                    if (
-                        event_type == "pa_reply"
-                        or (event_type == "pa_decision" and raw_data.get("action") in ("run", "resume", "schedule"))
-                    ):
-                        reply_event.set()
+                    on_event(event_type, raw_data, event)
 
             ws.close()
         except Exception:
@@ -168,14 +182,44 @@ def _ws_listener(
             stop_event.wait(2)
 
 
-def _send_message(base_url: str, prompt: str, session_id: str) -> str | None:
-    """Send a chat message via HTTP POST. Returns msg_id or None on error."""
+def _ws_listener(
+    base_url: str,
+    sent_msg_ids: set[str],
+    stop_event: threading.Event,
+    reply_event: threading.Event,
+    headers: dict[str, str] | None = None,
+) -> None:
+    """Render this session's PA events to the terminal until told to stop."""
+
+    def on_event(event_type: str, raw_data: dict, event: dict) -> None:
+        _render_event(event)
+        # Release prompt after: reply arrived, or run/resume dispatched
+        if (
+            event_type == "pa_reply"
+            or (event_type == "pa_decision" and raw_data.get("action") in ("run", "resume", "schedule"))
+        ):
+            reply_event.set()
+
+    stream_session_events(base_url, sent_msg_ids, stop_event, on_event, headers)
+
+
+def send_message(
+    base_url: str,
+    prompt: str,
+    session_id: str,
+    headers: dict[str, str] | None = None,
+) -> str | None:
+    """Hand PA a message. Returns its msg_id, or None if it could not be queued."""
     try:
         resp = requests.post(
             f"{base_url}/api/pa/chat",
             json={"prompt": prompt, "cli_session_id": session_id},
-            timeout=10,
+            headers=headers or {},
+            timeout=15,
         )
+        if resp.status_code == 401:
+            sys.stderr.write("被拒绝（401）：token 无效或缺失。\n")
+            return None
         if resp.status_code == 503:
             sys.stderr.write("PA 未运行，消息未发送。\n")
             return None
@@ -189,17 +233,27 @@ def _send_message(base_url: str, prompt: str, session_id: str) -> str | None:
         return None
 
 
-def start_chat() -> None:
-    """Entry point for CLI chat mode."""
-    base_url = _get_base_url()
+# Kept under the old private name: other call sites in this module use it.
+_send_message = send_message
 
-    if not _check_server(base_url):
+
+def start_chat(base_url: str | None = None, headers: dict[str, str] | None = None) -> None:
+    """Entry point for CLI chat mode.
+
+    `base_url`/`headers` default to this machine's own server. `frago remote
+    chat` passes another frago's address and its token, which is the only
+    difference between talking to your own PA and talking to one on a server.
+    """
+    base_url = base_url or _get_base_url()
+    headers = headers or {}
+
+    if not _check_server(base_url, headers):
         sys.stderr.write(
-            "frago server 未运行，请先执行 `frago server start`\n"
+            f"连不上 {base_url}（server 未运行、地址错、或 token 不对）\n"
         )
         return
 
-    if not _check_pa(base_url):
+    if not _check_pa(base_url, headers):
         sys.stderr.write("PA 未运行。\n")
         return
 
@@ -232,7 +286,7 @@ def start_chat() -> None:
 
     ws_thread = threading.Thread(
         target=_ws_listener,
-        args=(base_url, sent_msg_ids, stop_event, reply_event),
+        args=(base_url, sent_msg_ids, stop_event, reply_event, headers),
         daemon=True,
     )
     ws_thread.start()
@@ -267,7 +321,7 @@ def start_chat() -> None:
             sys.stdout.write(f"\033[A\r\033[Kyou> {line}{' ' * pad}\033[2m{ts}\033[0m\n")
             sys.stdout.flush()
 
-            msg_id = _send_message(base_url, line, session_id)
+            msg_id = send_message(base_url, line, session_id, headers)
             if msg_id:
                 sent_msg_ids.add(msg_id)
                 reply_event.clear()
