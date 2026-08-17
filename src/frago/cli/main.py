@@ -43,6 +43,7 @@ from .hook_rules_commands import hook_rules_group
 from .init_command import init  # New environment init command
 from .profile_commands import profile_group
 from .recipe_commands import recipe_group
+from .remote_commands import remote_group
 from .reply_command import reply_cmd
 from .schedule_commands import schedule_group
 from .serve_command import serve
@@ -52,13 +53,14 @@ from .skill_commands import skill_group
 from .start_command import start
 from .todo_commands import todo_group
 from .update_command import update
+from .user_commands import user_group
 from .view_command import view
 from .workspace_commands import workspace_group
 
 # Command group definitions (by user role)
 COMMAND_GROUPS = OrderedDict([
     ("Daily Use", ["start", "client", "browser", "desktop", "recipe", "skill", "book", "def", "todo", "context", "view", "server", "serve", "apps"]),
-    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon"]),
+    ("Session & Intelligence", ["session", "agent", "agent-status", "reply", "channel", "daemon", "remote"]),
     ("Cloud", ["login", "logout", "whoami", "config", "market", "install"]),
     ("Environment", ["init", "status", "workspace", "update", "autostart"]),
     ("Developer", ["dev", "init-dirs"]),
@@ -423,8 +425,17 @@ cli.add_command(reply_cmd, name="reply")
 # Channel command group - manage task ingestion channels
 cli.add_command(channel_group, name="channel")
 
+# Drive another frago (server deployment) through its PA intake
+cli.add_command(remote_group, name="remote")
+
 # Daemon command group - supervise long-lived recipe daemons
 cli.add_command(daemon_group, name="daemon")
+
+# User command group - accounts that sign in to this server's published pages.
+# Their login sessions live under `frago user session`, NEVER under the top-level
+# `frago session`: that group is the agent transcript store, and click replaces a
+# same-named command without warning, so adding one there deletes an existing one.
+cli.add_command(user_group, name="user")
 
 # Book command - built-in knowledge query
 cli.add_command(book_command)
