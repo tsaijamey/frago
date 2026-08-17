@@ -2,6 +2,7 @@
 
 Tests community recipe management with caching and periodic refresh.
 """
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -179,32 +180,81 @@ class TestCommunityRecipeServiceAsync:
     """Test CommunityRecipeService async methods."""
 
     @pytest.mark.asyncio
-    async def test_initialize_fetches_recipes(self, reset_community_service):
-        """initialize() should fetch recipes on first call."""
+    async def test_start_does_not_await_the_first_fetch(
+        self, reset_community_service
+    ):
+        """start() must return before GitHub answers.
+
+        Server startup calls this; if it waited, an unreachable or rate-limited
+        api.github.com would keep the server from serving anything at all.
+        """
         service = CommunityRecipeService.get_instance()
+        fetch_entered = asyncio.Event()
+        release = asyncio.Event()
 
-        mock_recipes = [{"name": "recipe1"}]
+        async def hanging_refresh():
+            fetch_entered.set()
+            await release.wait()
 
-        with patch.object(
-            service, "_do_refresh", new_callable=AsyncMock
-        ) as mock_refresh:
-            mock_refresh.return_value = None
-            service._cache = mock_recipes  # Simulate fetch populating cache
+        with patch.object(service, "_do_refresh", side_effect=hanging_refresh):
+            await service.start()
+            await asyncio.wait_for(fetch_entered.wait(), timeout=1)
 
-            await service.initialize()
+            # start() is long back while the fetch is still out there hanging.
+            assert service._cache is None
+            assert not service._first_refresh_done.is_set()
+
+            release.set()
+            await service.stop()
 
     @pytest.mark.asyncio
-    async def test_initialize_skips_if_cached(self, reset_community_service):
-        """initialize() should skip if already cached."""
+    async def test_reader_waits_for_the_in_flight_first_fetch(
+        self, reset_community_service
+    ):
+        """A reader arriving mid-bootstrap joins that fetch, never starts a second.
+
+        A duplicate fetch costs a request out of an hourly budget that is 60
+        when nobody is logged in.
+        """
         service = CommunityRecipeService.get_instance()
-        service._cache = [{"name": "cached"}]
+        release = asyncio.Event()
+
+        async def slow_refresh():
+            await release.wait()
+            service._cache = [{"name": "recipe1"}]
 
         with patch.object(
-            service, "_do_refresh", new_callable=AsyncMock
+            service, "_do_refresh", side_effect=slow_refresh
         ) as mock_refresh:
-            await service.initialize()
+            await service.start()
+            reader = asyncio.create_task(service.get_recipes())
+            await asyncio.sleep(0)  # let the loop and the reader both start
 
-        mock_refresh.assert_not_called()
+            release.set()
+            recipes = await asyncio.wait_for(reader, timeout=2)
+
+            assert recipes == [{"name": "recipe1"}]
+            assert mock_refresh.call_count == 1  # the loop's, not a second one
+
+            await service.stop()
+
+    @pytest.mark.asyncio
+    async def test_reader_fetches_when_no_loop_is_running(
+        self, reset_community_service
+    ):
+        """With no background loop, a reader still fetches for itself."""
+        service = CommunityRecipeService.get_instance()
+
+        async def fill_cache():
+            service._cache = [{"name": "recipe1"}]
+
+        with patch.object(
+            service, "_do_refresh", side_effect=fill_cache
+        ) as mock_refresh:
+            recipes = await service.get_recipes()
+
+        assert recipes == [{"name": "recipe1"}]
+        mock_refresh.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_start_creates_task(self, reset_community_service):

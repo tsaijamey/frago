@@ -60,34 +60,27 @@ class VersionCheckService:
         except ImportError:
             return "0.0.0"
 
-    async def initialize(self) -> None:
-        """Initialize by performing first version check.
+    def prime(self) -> None:
+        """Publish the installed version straight away, without asking PyPI.
 
-        This ensures version info is available before
-        the initial data push to clients.
+        Callers used to await the PyPI round trip before anything was served.
+        That put a third-party host on the path to the server's first request:
+        a slow or unreachable pypi.org held the whole server shut for its ten
+        second timeout, to answer a question — "is there a newer frago?" —
+        nobody is blocked on. The background loop fills in `latest_version` and
+        broadcasts it when the answer arrives.
         """
         if self._cache is not None:
             logger.debug("Version info already initialized")
             return
 
-        try:
-            await self._do_check()
-            logger.info(
-                f"Version check initialized: "
-                f"current={self._cache.get('current_version')}, "
-                f"latest={self._cache.get('latest_version')}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize version check: {e}")
-            self._last_check_error = str(e)
-            # Set cache with current version only
-            self._cache = {
-                "current_version": self._get_current_version(),
-                "latest_version": None,
-                "update_available": False,
-                "checked_at": datetime.now().isoformat(),
-                "error": str(e),
-            }
+        self._cache = {
+            "current_version": self._get_current_version(),
+            "latest_version": None,
+            "update_available": False,
+            "checked_at": None,
+            "error": None,
+        }
 
     async def start(self) -> None:
         """Start background check task."""
@@ -150,15 +143,17 @@ class VersionCheckService:
         except Exception as e:
             logger.warning(f"Failed to fetch PyPI version: {e}")
             self._last_check_error = str(e)
-            # Update cache with error but keep current version
+            # Keep whatever we already knew (a primed cache carries the local
+            # version, an older check may carry a latest one) and record why
+            # this attempt came back empty-handed.
             if self._cache is None:
                 self._cache = {
                     "current_version": current_version,
                     "latest_version": None,
                     "update_available": False,
-                    "checked_at": datetime.now().isoformat(),
-                    "error": str(e),
                 }
+            self._cache["checked_at"] = datetime.now().isoformat()
+            self._cache["error"] = str(e)
             return
 
         # Compare versions

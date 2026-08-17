@@ -187,14 +187,18 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     sync_service = SyncService.get_instance()
     await sync_service.start()
 
-    # Initialize and start community recipe service (60s refresh interval)
+    # Start community recipe service (60s refresh interval). Nothing here waits
+    # on GitHub: startup used to fetch the community list before serving its
+    # first request, so a slow — or rate-limited, which is the normal state for
+    # an unauthenticated gh — api.github.com held the whole server shut. The
+    # list arrives over the websocket a moment later instead.
     community_service = CommunityRecipeService.get_instance()
-    await community_service.initialize()  # Fetch first to populate initial data
     await community_service.start()
 
-    # Initialize and start version check service (1h refresh interval)
+    # Same for the PyPI update check: publish the installed version now, let
+    # the background loop discover whether a newer one exists.
     version_service = VersionCheckService.get_instance()
-    await version_service.initialize()
+    version_service.prime()
     await version_service.start()
 
     # Prepare recipe scheduler (started after PA wiring below)

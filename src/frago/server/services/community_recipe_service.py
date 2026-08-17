@@ -8,12 +8,21 @@ import asyncio
 import contextlib
 import logging
 import threading
+import time
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 # Refresh interval in seconds
 COMMUNITY_REFRESH_INTERVAL_SECONDS = 60
+
+# GitHub's hourly API budget for callers with no token, counted per IP.
+ANONYMOUS_HOURLY_QUOTA = 60
+
+# How long a reader waits for the background loop's first fetch before
+# settling for an empty list. Bounded so one stalled GitHub call cannot pin
+# an HTTP handler open indefinitely.
+FIRST_REFRESH_WAIT_SECONDS = 20
 
 
 class CommunityRecipeService:
@@ -28,6 +37,11 @@ class CommunityRecipeService:
         self._last_fetch_error: str | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        # Set once the background loop has finished its first attempt (success
+        # or failure). Readers that arrive before that wait on this instead of
+        # firing a second fetch and burning another request from the quota.
+        self._first_refresh_done = asyncio.Event()
+        self._anon_quota_logged = False
 
     @classmethod
     def get_instance(cls) -> "CommunityRecipeService":
@@ -42,37 +56,23 @@ class CommunityRecipeService:
                     cls._instance = cls()
         return cls._instance
 
-    async def initialize(self) -> None:
-        """Initialize by performing first fetch.
-
-        This ensures community recipes are available before
-        the initial data push to clients.
-        """
-        if self._cache is not None:
-            logger.debug("Community recipes already initialized")
-            return
-
-        # Skip if rate limited — never block server startup
-        rate_manager = self._get_rate_limit_manager()
-        if rate_manager and rate_manager.should_skip_refresh():
-            logger.info("Skipping community refresh due to rate limits")
-            self._cache = []
-            return
-
-        try:
-            await self._do_refresh()
-            logger.info(f"Community recipes initialized, count={len(self._cache or [])}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize community recipes: {e}")
-            self._last_fetch_error = str(e)
-
     async def start(self) -> None:
-        """Start background refresh task."""
+        """Start background refresh task.
+
+        The first fetch happens inside the loop, off the caller's critical path.
+        Server startup deliberately does not wait for it: a call to
+        api.github.com in front of the first served request means nobody can
+        reach the server until GitHub answers, and with the anonymous quota
+        spent the retry logic sleeps up to two minutes — long past the 30s
+        health check `frago server start` uses to decide the server never came
+        up. Recipes arrive over the websocket a second or two later instead.
+        """
         if self._task is not None and not self._task.done():
             logger.warning("Community recipe service already running")
             return
 
         self._stop_event.clear()
+        self._first_refresh_done.clear()
         self._task = asyncio.create_task(self._refresh_loop())
         logger.info(
             f"Community recipe refresh started "
@@ -115,6 +115,11 @@ class CommunityRecipeService:
                 except Exception as e:
                     logger.warning(f"Community recipe refresh failed: {e}")
                     self._last_fetch_error = str(e)
+
+            # Whatever the outcome, waiters must not hang on a fetch that is
+            # already over.
+            self._log_anonymous_quota()
+            self._first_refresh_done.set()
 
             # Calculate adaptive interval based on rate limit state
             interval = COMMUNITY_REFRESH_INTERVAL_SECONDS
@@ -226,6 +231,43 @@ class CommunityRecipeService:
         except Exception as e:
             logger.warning(f"Failed to broadcast community recipes: {e}")
 
+    def _log_anonymous_quota(self) -> None:
+        """Say out loud how much GitHub quota an unauthenticated frago has left.
+
+        Anonymous callers get 60 requests an hour, counted per IP, against the
+        5000 a logged-in one gets. The symptom of running out — community
+        recipes quietly stop refreshing, installs fail — looks nothing like its
+        cause, so the number goes in the log once per server run, and again
+        whenever the quota is actually spent.
+        """
+        import os
+
+        from frago.server.services.github_service import GitHubService
+
+        if os.environ.get("GITHUB_TOKEN") or GitHubService.get_auth_token():
+            return  # authenticated: 5000/hour, not the thing that bites
+
+        rate_manager = self._get_rate_limit_manager()
+        if rate_manager is None:
+            return
+
+        status = rate_manager.get_status()
+        remaining = int(status.get("remaining", 0))
+        exhausted = remaining <= 0
+        if self._anon_quota_logged and not exhausted:
+            return
+        self._anon_quota_logged = True
+
+        reset_in = max(0, int(status.get("reset_timestamp", 0) - time.time()))
+        logger.warning(
+            "GitHub not logged in — using the anonymous quota: %s/%s requests "
+            "per hour (shared by every caller on this IP), resets in %ss. "
+            "Run `gh auth login` to raise it to 5000/hour.",
+            remaining,
+            status.get("limit", ANONYMOUS_HOURLY_QUOTA),
+            reset_in,
+        )
+
     async def get_recipes(self) -> list[dict[str, Any]]:
         """Get cached community recipes.
 
@@ -233,9 +275,26 @@ class CommunityRecipeService:
             List of community recipe dictionaries
         """
         if self._cache is None:
-            # Initial fetch if not cached
-            await self._do_refresh()
+            if self._first_refresh_in_flight():
+                # The background loop is already asking GitHub the very same
+                # question. Wait for that answer rather than spending a second
+                # request out of an hourly quota that may be all of 60.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._first_refresh_done.wait(),
+                        timeout=FIRST_REFRESH_WAIT_SECONDS,
+                    )
+            else:
+                await self._do_refresh()
         return self._cache or []
+
+    def _first_refresh_in_flight(self) -> bool:
+        """True while the background loop's first fetch has yet to finish."""
+        return (
+            self._task is not None
+            and not self._task.done()
+            and not self._first_refresh_done.is_set()
+        )
 
     def install_recipe(self, name: str, force: bool = False) -> dict[str, Any]:
         """Install a community recipe.
