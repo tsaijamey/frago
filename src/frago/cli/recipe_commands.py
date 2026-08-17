@@ -2002,3 +2002,291 @@ def share_recipe(name: str, yes: bool, output_format: str):
 
 # --- Background schedule management (persistent, server-side) ---
 # Moved to top-level: frago schedule (registered in main.py)
+
+
+# --- Public exposure (deployed frago only) ---
+#
+# On a personal machine these are no-ops in spirit: /app/<name>/ is already
+# reachable, because everything on loopback is. They matter when this frago runs
+# on a server behind a reverse proxy, where the published list is the difference
+# between "one dashboard is visible" and "the whole API is".
+
+
+def _dangerous_data_dir(base: Path) -> str | None:
+    """Why this directory must not be published, or None if it is fine.
+
+    Publishing serves everything under `dataDir`, so a slot pointing at a
+    directory that also holds other things hands those over too. The audit of
+    20260817 pointed one at `~/.frago` and read the real `config.json` through
+    the published page. A recipe writing its own output directory is the normal
+    case and passes; the places worth refusing outright are few and nameable.
+    """
+    resolved = base.expanduser().resolve()
+    home = Path.home().resolve()
+
+    forbidden = {
+        home: "your home directory",
+        home / ".frago": "frago's own state directory",
+        home / ".claude": "Claude Code's configuration",
+        home / ".ssh": "your SSH keys",
+        Path("/"): "the filesystem root",
+    }
+    if resolved in forbidden:
+        return (
+            f"Refusing to publish: dataDir is {resolved} ({forbidden[resolved]}). "
+            f"Everything under it would become readable by anyone. Point the "
+            f"recipe's dataDir at its own output directory instead."
+        )
+    if resolved in home.parents or resolved == home.parent:
+        return (
+            f"Refusing to publish: dataDir is {resolved}, which contains your "
+            f"home directory. Point the recipe's dataDir at its own output "
+            f"directory instead."
+        )
+    return None
+
+
+def _borrowed_ui_owner(name: str) -> str | None:
+    """The other recipe whose assets this one serves, if it borrows them."""
+    from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.registry import get_registry
+
+    try:
+        recipe = get_registry().find(name)
+    except (RecipeNotFoundError, Exception):
+        return None
+    owner = getattr(recipe.metadata, "ui_from", None)
+    return owner if owner and owner != name else None
+
+
+def _publish_audit(name: str, slot: str, *, require_identity: bool = False) -> tuple[dict, list[str]]:
+    """What publishing this recipe would actually expose. Returns (state, notes)."""
+    from frago.recipes.app_state import list_slots
+    from frago.recipes.app_state import read as read_slot
+    from frago.recipes.publish import public_view
+
+    state = read_slot(name, slot)
+    notes: list[str] = []
+
+    if require_identity:
+        # Everything below describes slot `slot`, which in this mode is not what
+        # any visitor reads — it is only the shape the page is being checked
+        # against. Saying so first stops the rest of the audit being read as a
+        # list of what is about to become public.
+        notes.append(
+            "This page is being exposed per person, not to the public: only "
+            "someone signed in can open it, and each of them reads their own "
+            f"slot under ~/.frago/app-state-users/{name}/. The slot '{slot}' "
+            "audited below is what the page looks like, not what visitors get."
+        )
+
+    # A recipe may serve another's front end via `ui_from`. Publishing the
+    # borrower publishes the lender's whole assets/ directory — which is what
+    # sharing a front end means, but the lender was never published and its
+    # author never agreed to it. Nobody should learn this by finding their own
+    # .env on the internet.
+    lender = _borrowed_ui_owner(name)
+    if lender:
+        notes.append(
+            f"This page's files come from recipe '{lender}' (via ui_from), not from '{name}'. "
+            f"Everything in {lender}'s assets/ becomes publicly readable — check it for "
+            f".env files, notes and backups before continuing."
+        )
+
+    # Naming the other slots matters even though they stay private: slot names
+    # are commonly a client or project code, and the person publishing should
+    # see what else this recipe is holding before they point it at the internet.
+    others = [s for s in list_slots(name) if s != slot]
+    if others:
+        notes.append(
+            f"This recipe also holds {len(others)} other slot(s) — {', '.join(sorted(others))} "
+            f"— which stay private. Only '{slot}' is being published."
+        )
+
+    exposed = public_view(state)
+    if not exposed:
+        notes.append(
+            "This slot declares no `public` block, so visitors get no config beyond "
+            "the page's own name. If the page needs values, publish them under "
+            'state["public"] — everything else in the slot stays private.'
+        )
+
+    data_dir = state.get("dataDir")
+    if data_dir:
+        base = Path(str(data_dir)).expanduser()
+        refusal = _dangerous_data_dir(base)
+        if refusal:
+            raise click.ClickException(refusal)
+        resolved = base.resolve()
+        if base.is_symlink() or resolved != base:
+            notes.append(
+                f"dataDir {base} resolves to {resolved} — that is the directory "
+                f"that becomes public, not the path as written."
+            )
+        if base.is_dir():
+            files = [p for p in base.rglob("*") if p.is_file()]
+            notes.append(
+                f"Every file under {base} becomes readable at /app/{name}/data/… "
+                f"({len(files)} file(s) right now)."
+            )
+        else:
+            notes.append(f"dataDir {base} does not exist yet; nothing is served from it.")
+    else:
+        notes.append(f"This slot declares no dataDir, so /app/{name}/data/… serves nothing.")
+
+    return state, notes
+
+
+@recipe_group.command(name='expose', cls=AgentFriendlyCommand)
+@click.argument('name')
+@click.option('--slot', default='default', help='Which slot to expose (default: default)')
+@click.option('--require-identity', is_flag=True,
+              help='Serve each signed-in visitor their own data instead of one public slot')
+@click.option('--yes', '-y', is_flag=True, help='Skip the confirmation prompt')
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
+def expose_recipe(name: str, slot: str, require_identity: bool, yes: bool, output_format: str):
+    """Let visitors read this recipe's page.
+
+    Publishing exposes exactly three things and nothing else: the recipe's
+    assets/, the `public` block of the named slot, and the files under that
+    slot's dataDir. The API that page would normally call — which can run
+    recipes and read any path on this machine — stays closed, so a published
+    page is a read-only rendering of data that is already on disk.
+
+    With --require-identity the page is not public at all: an anonymous visitor
+    gets 401, and everyone who signs in reads a slot of their own, so two people
+    on the same address see different data. Only the address is shared; --slot
+    is then just which slot the audit below describes.
+
+    \b
+    Examples:
+        frago recipe expose weekly_report
+        frago recipe expose kline_blind_trainer --slot demo
+        frago recipe expose kline_blind_trainer --require-identity
+    """
+    from frago.recipes.publish import MODE_IDENTITY, MODE_PUBLIC
+    from frago.recipes.publish import publish as mark_published
+
+    mode = MODE_IDENTITY if require_identity else MODE_PUBLIC
+
+    recipe_dir = _find_recipe_dir_by_name(name)
+    if recipe_dir is None:
+        msg = f"Recipe not found: {name}"
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": msg, "code": "not_found"}))
+        else:
+            click.echo(f"Error: {msg}", err=True)
+        sys.exit(1)
+
+    if not (recipe_dir / 'assets').is_dir():
+        msg = f"Recipe '{name}' has no assets/ directory — there is no page to publish"
+        if output_format == 'json':
+            click.echo(json.dumps({"success": False, "error": msg, "code": "no_ui"}))
+        else:
+            click.echo(f"Error: {msg}", err=True)
+        sys.exit(1)
+
+    state, notes = _publish_audit(name, slot, require_identity=require_identity)
+
+    audience = "signed-in visitors" if require_identity else "anonymous visitors"
+
+    # The gate applies to both output formats. `--format json` is the path an
+    # agent takes, and an agent is precisely the caller that should have to read
+    # what it is about to expose and come back deliberately — leaving the
+    # confirmation on the human-only branch put the check where it was least
+    # needed and removed it where it was most.
+    if not yes:
+        if output_format == 'json':
+            click.echo(json.dumps({
+                "success": False,
+                "code": "confirm_required",
+                "error": (
+                    f"Publishing '{name}' (slot: {slot}) exposes it to {audience}. "
+                    "Read `notes`, then repeat with --yes."
+                ),
+                "recipe_name": name,
+                "slot": slot,
+                "mode": mode,
+                "notes": notes,
+            }, ensure_ascii=False, indent=2))
+            sys.exit(1)
+
+        click.echo(f"Publishing '{name}' (slot: {slot}) to {audience}:")
+        for note in notes:
+            click.echo(f"  - {note}")
+        click.echo()
+        if not click.confirm("Expose this page on every network this server listens on?"):
+            click.echo("Cancelled.")
+            sys.exit(1)
+
+    entry = mark_published(name, slot, mode)
+
+    if output_format == 'json':
+        click.echo(json.dumps({
+            "success": True,
+            "recipe_name": name,
+            "slot": slot,
+            "mode": mode,
+            "since": entry["since"],
+            "path": f"/app/{name}/",
+            "notes": notes,
+        }, ensure_ascii=False, indent=2))
+    else:
+        click.echo(f"✓ Published at /app/{name}/")
+        if require_identity:
+            click.echo("  Visitors must sign in; each one reads their own data.")
+        click.echo("  Reverse-proxy only this prefix; everything else needs the server token.")
+
+
+@recipe_group.command(name='unexpose', cls=AgentFriendlyCommand)
+@click.argument('name')
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
+def unexpose_recipe(name: str, output_format: str):
+    """Take this recipe's page back off the public internet."""
+    from frago.recipes.publish import unpublish
+
+    removed = unpublish(name)
+    if output_format == 'json':
+        click.echo(json.dumps({"success": removed, "recipe_name": name}, ensure_ascii=False))
+    elif removed:
+        click.echo(f"✓ /app/{name}/ now requires the server token")
+    else:
+        click.echo(f"'{name}' was not published; nothing to do")
+
+
+@recipe_group.command(name='exposed', cls=AgentFriendlyCommand)
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
+def list_exposed(output_format: str):
+    """List the recipe pages visitors can currently reach, and on what terms."""
+    from frago.recipes.publish import load, published_entry, published_path
+
+    entries = load()
+    # Read back through `published_entry` so this list shows the mode the gate
+    # will actually enforce, not the string in the file. An entry with a mode
+    # nobody recognises is enforced as identity-only; printing it verbatim would
+    # tell the owner their page is public when it is not, or the reverse.
+    resolved = {name: published_entry(name) or {} for name in sorted(entries)}
+
+    if output_format == 'json':
+        click.echo(json.dumps({
+            "published": [
+                {"recipe_name": n, "slot": e.get("slot", "default"),
+                 "mode": e.get("mode"), "since": e.get("since"), "path": f"/app/{n}/"}
+                for n, e in resolved.items()
+            ],
+            "source": str(published_path()),
+        }, ensure_ascii=False, indent=2))
+        return
+
+    if not entries:
+        click.echo("No recipe page is exposed. Everything requires the server token.")
+        click.echo("Publish one with: frago recipe expose <name>")
+        return
+
+    click.echo(f"{'Recipe':<40} {'Slot':<12} {'Who':<12} Since")
+    for name, entry in resolved.items():
+        who = "signed-in" if entry.get("mode") != "public" else "anyone"
+        click.echo(
+            f"{name:<40} {entry.get('slot', 'default'):<12} {who:<12} "
+            f"{entry.get('since') or '?'}"
+        )
