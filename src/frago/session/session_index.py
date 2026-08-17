@@ -64,6 +64,7 @@ from frago.session.unified_record import UnifiedRecord
 
 __all__ = [
     "CACHE_FILE",
+    "FRAGO_WAKE_MARKERS",
     "OPENCODE_CACHE_FILE",
     "RUNNING_WINDOW_SECONDS",
     "SessionStatus",
@@ -86,8 +87,14 @@ CACHE_FILE = CACHE_DIR / "claude-session-index.json"
 OPENCODE_CACHE_FILE = CACHE_DIR / "opencode-session-index.json"
 
 # 提取规则改了就得让旧条目全部失效，否则会拿着按老规则算出来的字段一直用下去。
-# 版本 2 起条目里多了状态与摘要三个字段。
-_CACHE_VERSION = 2
+# 版本 2 起条目里多了状态与摘要三个字段；版本 3 起多了"最后那句回复是什么时候说的"；
+# 版本 4 起"哪句算回复"的判据变了（frago 自己戳出来的心跳不算）；版本 5 修了版本 4 那次
+# 判漏的一半——窗口边界切在一轮中间时"没看清是谁戳的"被当成了"不是心跳"。
+#
+# **判据一改就得动这个数**，哪怕改的是同一条判据的第二版：条目里存的是判完的结果，
+# 失效判据只看文件有没有变，文件没变就永远拿老结果顶着。版本 4 那次少动了一次这个数，
+# 结果是判据改对了、界面上却还是错的，查了一轮才发现错在缓存。
+_CACHE_VERSION = 5
 
 # 标题类字段可能出现在文件任何位置，所以开头之后的每一行都要做这两个判定。
 #
@@ -122,12 +129,35 @@ _BOOKKEEPING_KINDS = frozenset(
     {"call.envelope", "session.state", "context.inject", "todo.snapshot"}
 )
 
-# 从文件尾往回读多少条。先取小的，两样都齐了就停；不齐再退到下一档。
+# ── frago 自己戳的那一下 ────────────────────────────────────────────
+# 常驻主控会话（PA）由 frago 的调度器按节拍唤醒：每隔几分钟把同一段角色定义当成
+# 一条「用户消息」再送一遍，agent 回一句「没有新消息」就结束。实测本机那场 PA 会话
+# 1549 行里，这段唤醒词出现 151 次，161 条回复里 150 条是「No response requested.」
+# 或「(无新消息，保持静默待命。)」，真的说了点什么的只有 11 条，最后一条在 7 月 1 日。
 #
-# 头一档取 3 是实测出来的：本机 1139 场会话上，3 / 6 / 12 三种起点算出来的状态与摘要
-# 一字不差（判不出末条的 7 场、取不到摘要的 64 场，三种起点完全相同），而冷启动 3 是
-# 2.54 秒、6 是 2.94 秒。既然结果一样，就该读得更少。
-_TAIL_WINDOWS = (3, 24, 60)
+# **落盘时这一下与人手打的一模一样**：唤醒词那条记录带着 ``origin: {"kind": "human"}``
+# 与 ``promptSource: "typed"``，因为 frago 就是从正常输入口把它塞进去的。所以判据不能
+# 靠记录自己的标记，只能靠「这段话是 frago 自己写的」这个事实。
+#
+# NEVER 改成按回复正文判（比如认「No response requested.」这句话）：那是在猜模型说了
+# 什么，换个模型、换种措辞就失效，而且会误伤真的只回了一句短话的人类对话。
+FRAGO_WAKE_MARKERS = ("你是 frago agent OS 的常驻主控会话（Primary Agent）。",)
+"""frago 自己发出的唤醒词开头。**出处是 ``server/services/pa_prompts.py`` 的
+``PA_SYSTEM_PROMPT``**，两处由单测钉在一起（改了那边这边的测试就红），本模块属核心
+数据层不能反向 import ``server/``。"""
+
+# 从文件尾往回读多少条。先取小的，凑齐了就停；不齐再退到下一档。
+#
+# 头一档从 3 提到 10：判「这条回复是不是 frago 自己戳出来的」要看得见戳它的那句话，
+# 而一次心跳落盘 6～7 行（唤醒词、用量提醒、文件快照、回复、收尾 hook、轮次耗时）。
+# 3 行只够看到回复本身，看不到是谁戳的。
+_TAIL_WINDOWS = (10, 24, 60)
+
+# 末路一档：整份文件。**只有确实看见心跳的会话才走到这里**——一场会话被 frago 按节拍
+# 戳了上百次时，真话可能在几百条之前，60 条的窗口无论如何够不着。没看见心跳却也凑不齐
+# 的会话（整场没有 agent 回复的那 80 场）NEVER 走这条路：那会让每次列会话都把它们整个
+# 文件翻一遍，而翻完的结果仍然是空。
+_FULL_SCAN_RECORDS = 100_000
 
 # 摘要在卡片上只占一行，超出这个长度截断。
 _DIGEST_MAX_CHARS = 100
@@ -146,6 +176,25 @@ class TailSignals:
 
     digest_done: str | None = None
     """末尾最近一条 agent 回复的头一行。窗口内一条都没有时为 None，NEVER 编一句。"""
+
+    last_reply_ts: float | None = None
+    """那条回复是什么时候说的（epoch 秒）。左栏按它排序。
+
+    **NEVER 拿文件修改时刻代替它。** 文件被追加的原因太多了：hook 每拦一次工具就写一
+    条、标题被模型改一次写一条、模式切一次写一条。照修改时刻排，一场只是被 hook 蹭过
+    的老会话会浮到最前面，而人找的是"最近谁真的答了话"。窗口内一条回复都没有时为
+    None，由调用方退回修改时刻——退回是明写的，不是悄悄用同一个数。"""
+
+    heartbeat_only: bool = False
+    """看得见的回复全是 frago 自己戳出来的心跳，真话还在更早的地方。
+
+    只在**这一次**读取里有意义，不进缓存——缓存里存的是最后找到的那句真话。"""
+
+    reply_unsettled: bool = False
+    """收下的这条回复，没看清是谁戳出来的——窗口边界切在了那一轮中间。
+
+    与上一格分开：一个是"看清了，是机器戳的"，一个是"没看清"。混成一个值的话，窗口
+    开多大都会 settle 在最老的那条心跳上。同样不进缓存。"""
 
 
 def derive_status(
@@ -195,11 +244,46 @@ def _one_line(text: Any) -> str | None:
     return None
 
 
+def _is_wake_prompt(record: UnifiedRecord) -> bool:
+    """这句话是不是 frago 自己写的唤醒词（见 :data:`FRAGO_WAKE_MARKERS`）。"""
+    text = record.payload.get("text")
+    if not isinstance(text, str):
+        return False
+    head = text.lstrip()
+    return any(head.startswith(marker) for marker in FRAGO_WAKE_MARKERS)
+
+
+def _is_heartbeat_reply(records: Sequence[UnifiedRecord], index: int) -> bool | None:
+    """第 ``index`` 条回复，是不是 frago 按节拍戳出来的一声"没事"。
+
+    从这条回复往回走，走到**戳它的那句话**为止：
+
+    * 半路遇到工具调用 → 这一轮真干了活，``False``（哪怕开场是唤醒词）。
+    * 遇到的是 frago 自己的唤醒词 → ``True``。
+    * 遇到的是别的话 → ``False``，那是有人真在问事。
+    * 走到窗口开头都没看见是谁戳的 → ``None``，**判不出**。
+
+    判不出与"不是心跳"是两回事，NEVER 混成同一个值：窗口边界常常正好切在一轮中间，
+    把"没看清"当成"不是心跳"，结果就是每次都settle在窗口最老的那条心跳上，窗口开多大
+    都一样错。调用方拿到 ``None`` 时按"这一档还不够宽"处理。
+    """
+    for j in range(index - 1, -1, -1):
+        kind = records[j].kind
+        if kind in ("tool.call", "tool.result", "subagent.dispatch"):
+            return False
+        if kind == "user.say":
+            return _is_wake_prompt(records[j])
+    return None
+
+
 def tail_signals_of(records: Sequence[UnifiedRecord]) -> TailSignals:
-    """一批**末尾**统一记录 → 状态与摘要要用的三个信号。
+    """一批**末尾**统一记录 → 状态与摘要要用的那几个信号。
 
     两家共用这一份，NEVER 各写各的：opencode 的末条是步骤结束、Claude Code 的末条是轮次
     耗时，形态名不同但都是引擎记账，跳过的规则必须一模一样。
+
+    找"最后一句回复"时会跳过 frago 自己戳出来的心跳（见 :func:`_is_heartbeat_reply`）。
+    跳完还没找到真话时 ``heartbeat_only`` 为真，调用方据此把窗口开到整份文件。
     """
     last_kind: str | None = None
     error_message: str | None = None
@@ -212,15 +296,38 @@ def tail_signals_of(records: Sequence[UnifiedRecord]) -> TailSignals:
         break
 
     digest_done: str | None = None
-    for record in reversed(records):
+    last_reply_ts: float | None = None
+    heartbeat_only = False
+    reply_unsettled = False
+    for index in range(len(records) - 1, -1, -1):
+        record = records[index]
         if record.kind != "agent.say":
             continue
-        digest_done = _one_line(record.payload.get("text"))
-        if digest_done:
-            break
+        line = _one_line(record.payload.get("text"))
+        if not line:
+            continue
+        verdict = _is_heartbeat_reply(records, index)
+        if verdict is True:
+            heartbeat_only = True
+            continue
+        digest_done = line
+        # 统一记录的时刻是毫秒，这里换回 epoch 秒——本模块对外只用秒，两种单位混着
+        # 走会让 opencode 那侧的时刻大出一千倍，排序整个乱掉。
+        last_reply_ts = record.ts / 1000 if record.ts else None
+        # 没看清是谁戳的就先收下、同时挂个牌子：调用方会把窗口开宽再问一次，问不出
+        # 更好的答案时这条照样作数。NEVER 因为"没看清"就把一条真回复扔掉。
+        reply_unsettled = verdict is None
+        if not reply_unsettled:
+            heartbeat_only = False
+        break
 
     return TailSignals(
-        last_kind=last_kind, error_message=error_message, digest_done=digest_done
+        last_kind=last_kind,
+        error_message=error_message,
+        digest_done=digest_done,
+        last_reply_ts=last_reply_ts,
+        heartbeat_only=heartbeat_only,
+        reply_unsettled=reply_unsettled,
     )
 
 
@@ -240,16 +347,25 @@ def _iter_lines_backwards(buf: bytes) -> Iterator[bytes]:
 def _tail_signals(buf: bytes, sid: str) -> TailSignals:
     """从文件尾往回读，凑够就停。
 
-    先读 6 条：末条记录长什么样、末尾最近那条 agent 回复说了什么，绝大多数会话这一档
-    就齐了。不齐再退到 24 条、60 条。读到文件开头仍不齐就照实交白卷，NEVER 为此把整个
-    文件翻一遍。
+    先读 10 条：末条记录长什么样、末尾最近那条 agent 回复说了什么、以及戳出那条回复的
+    是谁，绝大多数会话这一档就齐了。不齐再退到 24 条、60 条。读到文件开头仍不齐就照实
+    交白卷，NEVER 为此把整个文件翻一遍。
+
+    **只有一种情况例外**：看得见的回复全是 frago 自己戳出来的心跳。那种会话真话可能在
+    几百条之前（实测那场 PA 会话里隔了 900 多条），60 条的窗口无论如何够不着，这时才把
+    窗口开到整份文件。没看见心跳却也凑不齐的会话不走这条路——翻完仍然是空，白翻。
     """
     lines = _iter_lines_backwards(buf)
     newest_first: list[dict[str, Any]] = []
     exhausted = False
     signals = TailSignals()
 
-    for window in _TAIL_WINDOWS:
+    for window in (*_TAIL_WINDOWS, _FULL_SCAN_RECORDS):
+        # 整份文件那一档只为心跳会话开：**确实看见 frago 戳过**才值得把整个文件翻一遍。
+        # 只是"没看清是谁戳的"不算——那是长轮次的常态（一轮里几百条工具记录），为它全
+        # 翻一遍会把每次列会话都拖成分钟级，而翻完的答案跟窗口里那条一模一样。
+        if window == _FULL_SCAN_RECORDS and not signals.heartbeat_only:
+            break
         while len(newest_first) < window:
             line = next(lines, None)
             if line is None:
@@ -261,9 +377,12 @@ def _tail_signals(buf: bytes, sid: str) -> TailSignals:
         # 判据表按物理顺序命中（序 1 的标题去重、序 7 的通知并入都依赖前后关系），
         # 所以喂进去之前要把顺序转回来。
         signals = tail_signals_of(translate_records(list(reversed(newest_first)), sid))
-        if signals.last_kind is not None and signals.digest_done is not None:
-            return signals
-        if exhausted:
+        settled = (
+            signals.last_kind is not None
+            and signals.digest_done is not None
+            and not signals.reply_unsettled
+        )
+        if settled or exhausted:
             return signals
     return signals
 
@@ -425,6 +544,7 @@ def _as_entry(summary: SessionSummary, size: int, mtime_ns: int) -> dict[str, An
         "last_kind": summary.tail.last_kind,
         "error_message": summary.tail.error_message,
         "digest_done": summary.tail.digest_done,
+        "last_reply_ts": summary.tail.last_reply_ts,
     }
 
 
@@ -444,6 +564,7 @@ def _from_entry(entry: dict[str, Any]) -> SessionSummary | None:
                 last_kind=entry["last_kind"],
                 error_message=entry["error_message"],
                 digest_done=entry["digest_done"],
+                last_reply_ts=entry["last_reply_ts"],
             ),
         )
     except (KeyError, TypeError, ValueError):
@@ -611,6 +732,7 @@ def opencode_tail_signals(
                 last_kind=entry.get("last_kind"),
                 error_message=entry.get("error_message"),
                 digest_done=entry.get("digest_done"),
+                last_reply_ts=entry.get("last_reply_ts"),
             )
             fresh[sid] = entry
             continue
@@ -621,6 +743,7 @@ def opencode_tail_signals(
             "last_kind": tail.last_kind,
             "error_message": tail.error_message,
             "digest_done": tail.digest_done,
+            "last_reply_ts": tail.last_reply_ts,
         }
 
     # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。

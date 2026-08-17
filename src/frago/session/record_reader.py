@@ -30,6 +30,7 @@ __all__ = [
     "list_sessions",
     "read_raw",
     "read_records",
+    "sort_key",
 ]
 
 # 分页是硬要求，不是礼貌。单条工具结果见过 7.2 万字符、单条用户消息见过 22 万字符，
@@ -63,7 +64,13 @@ class SessionCard:
     """毫秒时间戳。"""
 
     last_active_at: int
-    """毫秒时间戳。清单按它倒序。"""
+    """毫秒时间戳。会话文件最后被动过的时刻，判"还在跑吗"用它。"""
+
+    last_reply_at: int | None = None
+    """最后一句 agent 回复是什么时候说的（毫秒时间戳）。**清单按它倒序。**
+
+    与上一格分开是因为两者会差很远：hook 每拦一次工具、模型每改一次标题都会推进"最后
+    动过"，但那些都不是任何人说了话。取不到时为 None，排序退回上一格。"""
 
     agent_paths: list[str] = field(default_factory=list)
     """这场会话下出现过的子 agent 轨迹。主会话一条也没有时是 ``[]``。"""
@@ -157,6 +164,7 @@ def _claude_cards() -> list[SessionCard]:
                 directory=str(row.cwd or ""),
                 created_at=created if created is not None else last_active,
                 last_active_at=last_active,
+                last_reply_at=_ms(row.tail.last_reply_ts),
                 # 子 agent 轨迹要翻完整场会话才数得出来，本机 1127 个文件全翻一遍是分钟
                 # 量级。清单这一层不给，展开某一场时由记录本身的 ``agent_path`` 表达。
                 agent_paths=[],
@@ -192,6 +200,7 @@ def _opencode_cards() -> list[SessionCard]:
                 directory=row.directory,
                 created_at=row.time_created,
                 last_active_at=row.time_updated,
+                last_reply_at=_ms(tail.last_reply_ts),
                 agent_paths=[],
                 status=status,
                 digest_done=digest_done,
@@ -201,15 +210,28 @@ def _opencode_cards() -> list[SessionCard]:
     return cards
 
 
+def sort_key(card: SessionCard) -> int:
+    """清单按哪个时刻排：**最后一句 agent 回复**，取不到才退回文件最后动过的时刻。
+
+    人在左栏找的是"最近哪场真的答了话"。而文件被动过的原因太多——hook 每拦一次工具写
+    一条、模型每改一次标题写一条、模式切一次写一条，全都推进修改时刻却一句话都没说。
+    照修改时刻排，一场只是被 hook 蹭过的老会话会压在真正刚答完话的会话上面。
+
+    退回是明写的：取不到回复时刻的会话（整场没有 agent 回复、或末尾窗口里没翻到）用
+    文件修改时刻，NEVER 把它们一律沉底——那等于宣布这些会话不存在。
+    """
+    return card.last_reply_at if card.last_reply_at is not None else card.last_active_at
+
+
 def list_sessions() -> list[SessionCard]:
-    """两家的会话合并成一份清单，按最后活动时刻倒序。
+    """两家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
 
     一家读不出来（库不存在、目录不存在）不影响另一家——两家的读取层各自把失败收敛成
     空列表，这里不做二次兜底，也 NEVER 因为一家没数据就整份返回空。
     """
     cards = _claude_cards() + _opencode_cards()
     # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
-    cards.sort(key=lambda card: (card.last_active_at, card.session_id), reverse=True)
+    cards.sort(key=lambda card: (sort_key(card), card.session_id), reverse=True)
     return cards
 
 

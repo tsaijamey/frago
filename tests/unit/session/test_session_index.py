@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -407,6 +408,232 @@ class Test末条记录与摘要:
 
         assert summary.tail.digest_done is None
         assert summary.tail.last_kind == "user.say"
+
+    def test_回复时刻取的是那句回复自己的时刻而不是文件修改时刻(self, tmp_path: Path) -> None:
+        """左栏排序看的是"谁最近真的答了话"。
+
+        文件被追加的原因太多——hook 每拦一次工具写一条、标题被改一次写一条，全都推进
+        修改时刻却一句话都没说。照修改时刻排，只被 hook 蹭过的老会话会压在刚答完话的
+        会话上面。
+        """
+        root = tmp_path / "projects"
+        _write_session(
+            root,
+            "proj",
+            "sid-reply-ts",
+            [
+                *_basic_records(),
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-07-29T11:22:33.000Z",
+                    "message": {"content": [{"type": "text", "text": "答完了"}]},
+                },
+                # 回复之后又被 hook 和标题各蹭了一下：文件动过，但没人说话。
+                {"type": "ai-title", "aiTitle": "新标题"},
+                {
+                    "type": "attachment",
+                    "timestamp": "2026-07-29T23:00:00.000Z",
+                    "attachment": {
+                        "type": "hook_additional_context",
+                        "content": ["记得先查现成落点"],
+                        "hookName": "PreToolUse:Write",
+                    },
+                },
+            ],
+        )
+
+        (summary,) = session_index.list_session_summaries(
+            projects_root=root, cache_file=tmp_path / "index.json"
+        )
+
+        assert summary.tail.digest_done == "答完了"
+        assert summary.tail.last_reply_ts is not None
+        stamped = datetime.fromisoformat("2026-07-29T11:22:33+00:00").timestamp()
+        assert summary.tail.last_reply_ts == stamped
+        assert summary.last_active_ts > summary.tail.last_reply_ts
+
+    def test_一条回复都没有时回复时刻是空而不是拿修改时刻顶上(self, tmp_path: Path) -> None:
+        """退回文件修改时刻是调用方明写的一步，NEVER 在这里悄悄用同一个数充数。"""
+        root = tmp_path / "projects"
+        _write_session(
+            root,
+            "proj",
+            "sid-reply-none",
+            [{"type": "user", "cwd": "/tmp/x", "message": {"content": "只有我说话"}}],
+        )
+
+        (summary,) = session_index.list_session_summaries(
+            projects_root=root, cache_file=tmp_path / "index.json"
+        )
+
+        assert summary.tail.last_reply_ts is None
+
+    def test_唤醒词与它的出处不许走散(self) -> None:
+        """判据认的是 frago 自己写的那句唤醒词，出处是 PA 的角色定义。
+
+        两处一旦走散，心跳就又会被当成"有人说话"，而这里是唯一拦得住的地方——核心数据层
+        不能反向 import ``server/``，所以只能由这条测试把两边钉在一起。
+        """
+        from frago.server.services.pa_prompts import PA_SYSTEM_PROMPT
+
+        assert any(
+            PA_SYSTEM_PROMPT.startswith(marker) for marker in session_index.FRAGO_WAKE_MARKERS
+        )
+
+    def test_frago自己戳出来的心跳不算最后一句回复(self, tmp_path: Path) -> None:
+        """常驻主控会话每隔几分钟被 frago 唤醒一次，agent 回一句"没事"就结束。
+
+        照字面收下，一场几个月没人碰的会话会一直挂在左栏最前面，说自己"刚刚还在说话"。
+        """
+        wake = session_index.FRAGO_WAKE_MARKERS[0] + "\n你叫 frago。"
+        root = tmp_path / "projects"
+        _write_session(
+            root,
+            "proj",
+            "sid-heartbeat",
+            [
+                *_basic_records(),
+                {
+                    "type": "user",
+                    "timestamp": "2026-07-01T08:00:00.000Z",
+                    "message": {"content": "把飞书那条推送修一下"},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-07-01T08:00:30.000Z",
+                    "message": {"content": [{"type": "text", "text": "修好了，chat id 换成新的了"}]},
+                },
+                # 此后全是 frago 按节拍戳出来的心跳。
+                *[
+                    row
+                    for i in range(6)
+                    for row in (
+                        {
+                            "type": "user",
+                            "timestamp": f"2026-08-17T0{i}:00:00.000Z",
+                            "message": {"content": wake},
+                        },
+                        {
+                            "type": "assistant",
+                            "timestamp": f"2026-08-17T0{i}:00:05.000Z",
+                            "message": {"content": [{"type": "text", "text": "No response requested."}]},
+                        },
+                    )
+                ],
+            ],
+        )
+
+        (summary,) = session_index.list_session_summaries(
+            projects_root=root, cache_file=tmp_path / "index.json"
+        )
+
+        assert summary.tail.digest_done == "修好了，chat id 换成新的了"
+        assert summary.tail.last_reply_ts is not None
+        assert summary.tail.last_reply_ts == datetime.fromisoformat(
+            "2026-07-01T08:00:30+00:00"
+        ).timestamp()
+
+    def test_心跳那一轮真动了手就算数(self, tmp_path: Path) -> None:
+        """唤醒之后 agent 自己干了活，那一轮是真发生过的事，NEVER 一并抹掉。"""
+        wake = session_index.FRAGO_WAKE_MARKERS[0] + "\n你叫 frago。"
+        root = tmp_path / "projects"
+        _write_session(
+            root,
+            "proj",
+            "sid-heartbeat-worked",
+            [
+                *_basic_records(),
+                {
+                    "type": "user",
+                    "timestamp": "2026-08-17T01:00:00.000Z",
+                    "message": {"content": wake},
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-17T01:00:03.000Z",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}
+                        ]
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": "2026-08-17T01:00:04.000Z",
+                    "message": {
+                        "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-17T01:00:08.000Z",
+                    "message": {"content": [{"type": "text", "text": "顺手把那个定时任务补上了"}]},
+                },
+            ],
+        )
+
+        (summary,) = session_index.list_session_summaries(
+            projects_root=root, cache_file=tmp_path / "index.json"
+        )
+
+        assert summary.tail.digest_done == "顺手把那个定时任务补上了"
+
+    def test_普通会话不因为看不清是谁问的就被判成心跳(self, tmp_path: Path) -> None:
+        """一轮里几百条工具记录时，窗口够不到那句提问——那是常态，不是心跳。"""
+        root = tmp_path / "projects"
+        _write_session(
+            root,
+            "proj",
+            "sid-long-turn",
+            [
+                *_basic_records(),
+                {
+                    "type": "user",
+                    "timestamp": "2026-08-17T01:00:00.000Z",
+                    "message": {"content": "帮我把整个仓库过一遍"},
+                },
+                *[
+                    row
+                    for i in range(40)
+                    for row in (
+                        {
+                            "type": "assistant",
+                            "timestamp": "2026-08-17T01:00:01.000Z",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "id": f"t{i}",
+                                        "name": "Read",
+                                        "input": {"file_path": f"/tmp/{i}"},
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "type": "user",
+                            "timestamp": "2026-08-17T01:00:02.000Z",
+                            "message": {
+                                "content": [
+                                    {"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok"}
+                                ]
+                            },
+                        },
+                    )
+                ],
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-08-17T01:05:00.000Z",
+                    "message": {"content": [{"type": "text", "text": "过完了，一共四十个文件"}]},
+                },
+            ],
+        )
+
+        (summary,) = session_index.list_session_summaries(
+            projects_root=root, cache_file=tmp_path / "index.json"
+        )
+
+        assert summary.tail.digest_done == "过完了，一共四十个文件"
 
     def test_末尾全是记账时照实交白卷(self, tmp_path: Path) -> None:
         """判不出来就是判不出来，NEVER 顺手挑一条记账充当末条记录。"""
