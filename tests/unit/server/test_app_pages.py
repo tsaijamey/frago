@@ -58,7 +58,11 @@ def state_dir(tmp_path, monkeypatch):
 def client(recipe_dir, state_dir):
     from frago.server.app import create_app
 
-    return TestClient(create_app(), follow_redirects=False)
+    # Pose as a process on this machine. The access-zone middleware trusts
+    # loopback and challenges everything else; these tests are about the owner
+    # reading their own page, so they take the local seat. The anonymous-visitor
+    # side is covered in test_security.py.
+    return TestClient(create_app(), follow_redirects=False, client=("127.0.0.1", 50000))
 
 
 class TestAddress:
@@ -318,3 +322,186 @@ class TestPublishing:
     def test_bad_slot_names_are_refused(self, state_dir, bad):
         with pytest.raises(app_state.InvalidSlotName):
             app_state.publish(RECIPE, {}, slot=bad)
+
+
+class TestAnonymousVisitor:
+    """The same page, seen by someone who is not the owner.
+
+    A recipe's slot state is written for a page running on the owner's machine:
+    it routinely carries absolute paths, and nothing stops a recipe from parking
+    a credential in it. When the page is published, that document must not be
+    the one a visitor receives.
+    """
+
+    @pytest.fixture
+    def visitor(self, recipe_dir, state_dir, tmp_path, monkeypatch):
+        from frago.recipes import publish as pub
+        from frago.server import security
+        from frago.server.app import create_app
+
+        monkeypatch.setattr(pub, "PUBLISHED_PATH", tmp_path / "published.json")
+        monkeypatch.setattr(pub, "_cache", None, raising=False)
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        security.ensure_token()
+        pub.publish(RECIPE)
+        return TestClient(create_app(), follow_redirects=False, client=("93.184.216.34", 41234))
+
+    def _publish_state(self, data_dir):
+        app_state.publish(
+            RECIPE,
+            {
+                "dataDir": str(data_dir),
+                "apiKey": "sk-live-do-not-leak",
+                "public": {"title": "Q3 numbers"},
+            },
+        )
+
+    def test_visitor_gets_only_the_declared_public_keys(self, visitor, tmp_path):
+        self._publish_state(tmp_path / "data")
+        config = visitor.get(f"/app/{RECIPE}/config.json").json()
+        assert config["title"] == "Q3 numbers"
+        assert "dataDir" not in config
+        assert "apiKey" not in config
+
+    def test_visitor_is_told_the_page_is_read_only(self, visitor, tmp_path):
+        """`apiBase: null` is the signal a front end checks before offering
+        anything that would have POSTed to /api/recipes/<name>/run."""
+        self._publish_state(tmp_path / "data")
+        config = visitor.get(f"/app/{RECIPE}/config.json").json()
+        assert config["apiBase"] is None
+        assert config["readOnly"] is True
+
+    def test_owner_still_gets_the_whole_config(self, client, tmp_path, visitor):
+        self._publish_state(tmp_path / "data")
+        config = client.get(f"/app/{RECIPE}/config.json").json()
+        assert config["dataDir"] == str(tmp_path / "data")
+        assert config["apiBase"] == "/api"
+        assert config["readOnly"] is False
+
+    def test_visitor_can_read_the_data_the_page_exists_to_show(self, visitor, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "rows.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+        self._publish_state(data_dir)
+        response = visitor.get(f"/app/{RECIPE}/data/rows.json")
+        assert response.status_code == 200
+        assert response.json() == [1, 2, 3]
+
+    def test_visitor_cannot_climb_out_of_the_data_directory(self, visitor, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (tmp_path / "secret.txt").write_text("private", encoding="utf-8")
+        self._publish_state(data_dir)
+        assert visitor.get(f"/app/{RECIPE}/data/../secret.txt").status_code in (403, 404)
+
+    def test_visitor_cannot_reach_the_api_through_the_published_recipe(self, visitor):
+        """Publishing a page must not publish the machine it runs on."""
+        assert visitor.get("/api/file?path=/etc/passwd").status_code == 401
+        assert visitor.post(f"/api/recipes/{RECIPE}/run").status_code == 401
+        assert visitor.get("/api/status").status_code == 401
+
+
+class TestSlotSmuggling:
+    """Two parsers must not disagree about which slot a URL names.
+
+    Found by audit 20260817: the gate read the *first* `key` parameter
+    (`urllib.parse.parse_qs`) while the route read the *last* (Starlette's
+    `QueryParams`), so `?key=<published>&key=<private>` was authorised against
+    one slot and served from another — every slot of a published recipe,
+    anonymous, one GET.
+    """
+
+    @pytest.fixture
+    def two_slots(self, recipe_dir, state_dir, tmp_path, monkeypatch):
+        from frago.recipes import publish as pub
+        from frago.server import security
+        from frago.server.app import create_app
+
+        monkeypatch.setattr(pub, "PUBLISHED_PATH", tmp_path / "published.json")
+        monkeypatch.setattr(pub, "_cache", None, raising=False)
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        security.ensure_token()
+
+        shown = tmp_path / "shown"
+        shown.mkdir()
+        (shown / "rows.json").write_text(json.dumps({"public": True}), encoding="utf-8")
+
+        hidden = tmp_path / "hidden"
+        hidden.mkdir()
+        (hidden / "rows.json").write_text(json.dumps({"fee": 999999}), encoding="utf-8")
+
+        app_state.publish(RECIPE, {"dataDir": str(shown), "public": {"title": "Q3"}})
+        app_state.publish(
+            RECIPE,
+            {"dataDir": str(hidden), "apiKey": "sk-live-do-not-leak", "public": {"client": "ACME"}},
+            slot="acme",
+        )
+        pub.publish(RECIPE)  # only the default slot is public
+
+        return TestClient(create_app(), follow_redirects=False, client=("93.184.216.34", 41234))
+
+    def test_the_honest_request_for_a_private_slot_is_refused(self, two_slots):
+        assert two_slots.get(f"/app/{RECIPE}/config.json?key=acme").status_code == 401
+
+    def test_duplicate_key_cannot_smuggle_a_private_slot_into_config(self, two_slots):
+        response = two_slots.get(f"/app/{RECIPE}/config.json?key=default&key=acme")
+        assert response.status_code == 401 or response.json().get("client") != "ACME"
+
+    def test_duplicate_key_cannot_smuggle_a_private_slot_into_data(self, two_slots):
+        response = two_slots.get(f"/app/{RECIPE}/data/rows.json?key=default&key=acme")
+        assert response.status_code == 401 or response.json() != {"fee": 999999}
+
+    def test_reversed_duplicate_key_is_no_better(self, two_slots):
+        response = two_slots.get(f"/app/{RECIPE}/data/rows.json?key=acme&key=default")
+        assert response.status_code == 401 or response.json() != {"fee": 999999}
+
+
+class TestVisitorErrorMessages:
+    """A refusal must not describe the machine it came from.
+
+    Found by audit 20260817: 404 bodies carried the server's absolute paths,
+    slot names, and the names of recipes that were never published.
+    """
+
+    @pytest.fixture
+    def visitor(self, recipe_dir, state_dir, tmp_path, monkeypatch):
+        from frago.recipes import publish as pub
+        from frago.server import security
+        from frago.server.app import create_app
+
+        monkeypatch.setattr(pub, "PUBLISHED_PATH", tmp_path / "published.json")
+        monkeypatch.setattr(pub, "_cache", None, raising=False)
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        security.ensure_token()
+        pub.publish(RECIPE)
+        return TestClient(create_app(), follow_redirects=False, client=("93.184.216.34", 41234))
+
+    def test_a_missing_data_directory_does_not_name_itself(self, visitor, tmp_path):
+        secret_path = tmp_path / "clients" / "acme" / "20260817-q3"
+        app_state.publish(RECIPE, {"dataDir": str(secret_path), "public": {}})
+        response = visitor.get(f"/app/{RECIPE}/data/rows.json")
+        assert response.status_code == 404
+        assert "acme" not in response.text
+        assert str(tmp_path) not in response.text
+
+    def test_a_slot_without_a_data_directory_does_not_name_the_slot(self, visitor):
+        app_state.publish(RECIPE, {"public": {}})
+        response = visitor.get(f"/app/{RECIPE}/data/rows.json")
+        assert response.status_code == 404
+        assert "dataDir" not in response.text
+
+    def test_a_missing_file_says_only_that(self, visitor, tmp_path):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        app_state.publish(RECIPE, {"dataDir": str(data_dir), "public": {}})
+        response = visitor.get(f"/app/{RECIPE}/data/nope.json")
+        assert response.status_code == 404
+        assert str(data_dir) not in response.text
+
+    def test_the_owner_still_gets_a_useful_diagnosis(self, client, tmp_path, visitor):
+        """Scrubbing is for visitors; debugging a page on your own machine needs the reason."""
+        missing = tmp_path / "gone"
+        app_state.publish(RECIPE, {"dataDir": str(missing)})
+        response = client.get(f"/app/{RECIPE}/data/rows.json")
+        assert response.status_code == 404
+        assert str(missing) in response.text

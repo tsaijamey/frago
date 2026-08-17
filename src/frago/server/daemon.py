@@ -56,12 +56,19 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess:
 def _wait_for_healthy(
     timeout: int = 30, proc: "subprocess.Popen[bytes] | None" = None
 ) -> tuple[bool, str]:
-    """Poll /api/status until server responds 200 or timeout.
+    """Poll /api/status until the server answers, or timeout.
 
     Pass ``proc`` when the caller spawned the daemon: a child that exits before
     answering ends the wait at once. There is nothing left that could become
     healthy, and spending the full timeout on a process already gone only delays
     a report the caller could have had immediately.
+
+    A 401 counts as healthy. The question here is "did the process come up and
+    start serving HTTP", and on a deployment that sets ``FRAGO_BEHIND_PROXY=1``
+    this poll — arriving from loopback with no token — is supposed to be turned
+    away. Insisting on 200 would report a perfectly good server as unhealthy on
+    exactly the configuration the deployment guide asks for, and `frago server
+    restart` would fail on a server that had in fact restarted fine.
 
     Returns (success, detail_message).
     """
@@ -79,6 +86,11 @@ def _wait_for_healthy(
             resp = conn.getresponse()
             if resp.status == 200:
                 return True, f"port={port}, attempts={attempt}"
+            if resp.status == 401:
+                # The access gate answered, which means the app is up and its
+                # middleware is installed — stronger evidence than a 200 from a
+                # server with no gate at all.
+                return True, f"port={port}, attempts={attempt}, gated"
             last_error = f"HTTP {resp.status}"
             conn.close()
         except (ConnectionRefusedError, OSError, http.client.HTTPException) as e:

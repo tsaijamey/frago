@@ -350,8 +350,36 @@ def run_daemon_server() -> None:
     log_file = Path.home() / ".frago" / "server.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    # Everything this process creates from here on is owner-only. Setting the
+    # umask is what makes that hold for files nobody remembered to chmod —
+    # including the ones a rotating log handler creates on every rotation,
+    # which go through a plain open() and would otherwise come back at 0644.
+    # Access logging is off unless the level is debug, but the day someone turns
+    # debug on to chase a problem, this file starts recording request lines —
+    # and a WebSocket handshake carries its token in the query string.
+    import contextlib as _contextlib
+    import os as _os
+
+    _os.umask(0o077)
+
+    if not log_file.exists():
+        with _contextlib.suppress(OSError):
+            _os.close(_os.open(str(log_file), _os.O_WRONLY | _os.O_CREAT, 0o600))
+    with _contextlib.suppress(OSError):
+        log_file.chmod(0o600)
+
     log_config = _build_daemon_log_config(str(log_file))
     logging.config.dictConfig(log_config)
+
+    # Tighten what earlier versions left world-readable, and say so loudly if
+    # this looks like a reverse-proxy deployment that has not disabled
+    # peer-address trust.
+    from frago.server.security import deployment_warning, harden_home
+
+    harden_home()
+    warning = deployment_warning()
+    if warning:
+        logging.getLogger("frago.server").warning(warning)
 
     # Gate 1: refuse a raw `python -m frago.server.runner --daemon`. Must run
     # after logging is configured so the rejection lands in server.log.

@@ -453,6 +453,39 @@ def create_app(
         allow_headers=["*"],
     )
 
+    # Sort callers into trusted-local / public / private. Added after CORS so it
+    # ends up outermost: a request that has no business here should be turned
+    # away before any route, handler or CORS negotiation sees it.
+    from frago.server.security import AccessZoneMiddleware
+
+    app.add_middleware(AccessZoneMiddleware)
+
+    # A refusal must not describe the machine it came from. Route handlers say
+    # useful things in their 4xx bodies — which absolute path was missing, which
+    # slot declared no data, which recipe another one borrows its UI from — and
+    # all of that is exactly right for the owner debugging their own page and
+    # exactly wrong for a stranger reading a published one. Scrubbed here rather
+    # than at each `raise` so a route added later cannot forget.
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        from fastapi.exception_handlers import (
+            http_exception_handler as default_handler,
+        )
+
+        from frago.server.security import is_public_request
+
+        if is_public_request(request) and 400 <= exc.status_code < 500:
+            # One shape for every client error: a visitor learns nothing from
+            # the difference between "no such file", "forbidden" and "wrong
+            # method". Server errors are deliberately left alone — dressing a
+            # 500 up as a 404 would hide a real fault from the person running
+            # the server, and it tells a visitor nothing they did not already
+            # learn from the request failing.
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        return await default_handler(request, exc)
+
     # Global error handler for consistent API error responses
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -502,6 +535,12 @@ def create_app(
 
     from frago.server.routes.workbench import router as workbench_router
     app.include_router(workbench_router, prefix="/api", tags=["workbench"])
+
+    # Signing in. The paths here are matched exactly by `security._ANON_POST`
+    # and `_IDENTITY_ENDPOINTS`, so the prefix is not a detail to tidy later:
+    # change it and the gate stops recognising these four endpoints.
+    from frago.server.routes.auth import router as auth_router
+    app.include_router(auth_router, prefix="/api", tags=["auth"])
 
     # WebSocket endpoint for real-time updates
     @app.websocket("/ws")

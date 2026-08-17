@@ -27,6 +27,11 @@ to distinguish projects or sessions passes a key in the query string
 (`/app/<name>?key=<id>`); without one, the default slot is served. State for
 each slot lives in ~/.frago/app-state/<name>/<key>.json, written by the recipe
 and read back here.
+
+`?key=` is the owner's control and only the owner's. A visitor — anonymous or
+signed in — is served the slot the access gate decided on, never one they named.
+For a signed-in visitor that slot is their own account id, read from the
+separate identity root; see `_slot_state`.
 """
 
 import mimetypes
@@ -73,8 +78,8 @@ def _assets_dir(name: str) -> Path:
 
     try:
         recipe = get_registry().find(name)
-    except RecipeNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found")
+    except RecipeNotFoundError as err:
+        raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found") from err
 
     owner = getattr(recipe.metadata, "ui_from", None) or name
     if owner != name:
@@ -82,11 +87,11 @@ def _assets_dir(name: str) -> Path:
             raise HTTPException(status_code=400, detail=f"Invalid ui_from: {owner}")
         try:
             recipe = get_registry().find(owner)
-        except RecipeNotFoundError:
+        except RecipeNotFoundError as err:
             raise HTTPException(
                 status_code=404,
                 detail=f"Recipe '{name}' borrows its UI from '{owner}', which is not installed",
-            )
+            ) from err
 
     base_dir = recipe.base_dir or Path(recipe.script_path).parent
     assets = base_dir / "assets"
@@ -104,18 +109,40 @@ def _resolve_within(base: Path, relative: str) -> Path:
     candidate = (base / relative).resolve()
     try:
         candidate.relative_to(base.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
+    except ValueError as err:
+        raise HTTPException(status_code=403, detail="Access denied") from err
     return candidate
 
 
 def _slot_state(name: str, request: Request) -> tuple[str, dict]:
-    """Resolve the requested slot and read its state."""
-    key = request.query_params.get("key") or DEFAULT_SLOT
+    """Resolve the requested slot and read its state.
+
+    A visitor does not get to name their own slot — neither anonymous nor
+    signed-in. The access gate already worked out which slot this request is
+    for and put it on the scope; reading `?key=` again here is what let
+    `?key=public&key=private` be authorised against one slot and served from
+    another.
+
+    `?key=` stays exactly as it was for the owner (the local and token zones).
+    It is how `app_state.page_url()` addresses a slot and what
+    `frago recipe publish --slot` is built on; removing it there would break the
+    owner switching between their own data, which was never the bug.
+
+    A signed-in visitor's slot is their account id, and it lives under the
+    separate identity root — the same string under `app-state/` would be one of
+    the recipe's own slots, which is not theirs to read.
+    """
+    from frago.server.security import slot_for, zone_of
+
+    zone = zone_of(request)
+    visitor = zone in ("public", "identity")
+    key = (slot_for(request) or DEFAULT_SLOT) if visitor else (
+        request.query_params.get("key") or DEFAULT_SLOT
+    )
     try:
-        return key, read_slot(name, key)
+        return key, read_slot(name, key, identity=zone == "identity")
     except InvalidSlotName as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/{name}")
@@ -137,12 +164,30 @@ async def serve_app_config(name: str, request: Request):
 
     `apiBase` is relative on purpose: a hard-coded 127.0.0.1 breaks the page for
     anyone opening it from another device on the network.
+
+    A visitor to a published page gets a different document: only the keys the
+    recipe declared public, and `apiBase: null`. The API this page would
+    otherwise call can run recipes and read any file on the machine, so a
+    published page is a read-only rendering of what is already in `data/`. Front
+    ends check `readOnly` and hide whatever would have posted.
+
+    The question asked here is "is this the owner", not "is this anonymous". A
+    signed-in visitor is neither: they are not anonymous, and they are not the
+    owner. Asking the anonymous question would drop them into the else branch
+    and hand them the unfiltered slot — the absolute paths of this server's
+    disk, and whatever key the recipe parked in its state. Signing in changes
+    *whose* data is served, never how much of it.
     """
     _assets_dir(name)
     key, state = _slot_state(name, request)
 
-    config = dict(state)
-    config["apiBase"] = "/api"
+    from frago.recipes.publish import public_view
+    from frago.server.security import is_owner_request
+
+    owner = is_owner_request(request)
+    config = dict(state) if owner else public_view(state)
+    config["apiBase"] = "/api" if owner else None
+    config["readOnly"] = not owner
     config["recipeName"] = name
     config["appBase"] = f"/app/{name}/"
     config["slot"] = key

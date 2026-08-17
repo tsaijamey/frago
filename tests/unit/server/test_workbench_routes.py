@@ -72,7 +72,9 @@ class _FakeAdapter:
 def client():
     from frago.server.app import create_app
 
-    return TestClient(create_app())
+    # Loopback seat: the workbench is the owner's own UI. Non-local callers hit
+    # the access-zone middleware first (see test_security.py).
+    return TestClient(create_app(), client=("127.0.0.1", 50000))
 
 
 @pytest.fixture
