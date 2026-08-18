@@ -92,6 +92,19 @@ class TurnResult:
     duration_ms: int
 
 
+def _pane_tail(pane: str, *, lines: int = 20) -> str:
+    """从一屏 pane 里取"有内容的末尾若干行"，供启动失败上报。
+
+    为什么不是直接 ``splitlines()[-lines:]``：claude 这类 TUI 把首启菜单（如
+    workspace-trust 确认框、认证墙）渲染在屏幕上半区，下半区全是空行。取最后 20 行
+    只会捞到一片空白——启动失败最需要看的那块屏反而被丢掉，用户/排查者只剩一句
+    "never reached ready signal"、无从下手（这正是 workspace-trust 卡死当初报错空白
+    的第二层原因）。故先滤掉纯空白行再取末尾 ``lines`` 行，让顶端锚定的菜单也露出来。
+    """
+    meaningful = [ln for ln in pane.splitlines() if ln.strip()]
+    return "\n".join(meaningful[-lines:])
+
+
 def _compute_delta(pre_snapshot: str, scrollback: str) -> str:
     """从完成后的全 scrollback 减去发送前快照，取本轮新增文本。
 
@@ -264,7 +277,7 @@ class TmuxAgentSession:
             # agent 在就绪前自己退了（崩溃 / 启动失败 / 撞 id），tmux 会话随之消失。
             # 这同样是启动失败，走与"等不到就绪"完全相同的处置，只是末屏取最后一份
             # 还抓得到的内容；一份都没有时在消息里写明会话已消失。
-            tail = "\n".join(vanished.last_pane.splitlines()[-20:])
+            tail = _pane_tail(vanished.last_pane)
             self._fail_startup(tail or "(会话在就绪前已消失，未留下任何屏幕内容)")
         if not reached:
             # 等不到就绪 = 启动失败。NEVER 盲标 ready 让死会话进池被当活会话复用。
@@ -272,7 +285,7 @@ class TmuxAgentSession:
             # 并 kill 掉这具半死的 tmux 壳，不留孤儿会话累积。
             tail = ""
             with contextlib.suppress(Exception):
-                tail = "\n".join(self.capture_pane().splitlines()[-20:])
+                tail = _pane_tail(self.capture_pane())
             self._fail_startup(tail)
         # 一次性异常处理（更新模态 → Esc 等），只在会话首启发生一次。逐个处理器各抓
         # 一次屏（前一个处理器的动作会改变屏幕），抓不到就当本处理器不触发——就绪已

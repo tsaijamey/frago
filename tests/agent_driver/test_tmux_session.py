@@ -19,6 +19,7 @@ from frago.agent_driver.driver import (
 from frago.agent_driver.tmux_session import (
     TmuxAgentSession,
     _compute_delta,
+    _pane_tail,
 )
 
 
@@ -64,6 +65,25 @@ def test_delta_uses_last_anchor_occurrence() -> None:
     pre = "MARK"
     scrollback = "MARK\nr1\nMARK\nr2"
     assert _compute_delta(pre, scrollback) == "r2"
+
+
+# ── _pane_tail（启动失败时的可读末屏）─────────────────────────────
+def test_pane_tail_surfaces_top_anchored_dialog() -> None:
+    # 首启菜单渲染在上半区、下半区全是空行：直接取最后 20 行会得到一片空白。
+    # _pane_tail 先滤空行，让菜单露出来。
+    pane = "Is this a project you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit\n" + "\n" * 40
+    tail = _pane_tail(pane)
+    assert "Yes, I trust this folder" in tail
+    assert tail.strip() != ""
+
+
+def test_pane_tail_keeps_only_last_n_meaningful() -> None:
+    pane = "\n".join(str(i) for i in range(30))
+    assert _pane_tail(pane, lines=5) == "25\n26\n27\n28\n29"
+
+
+def test_pane_tail_all_blank_is_empty() -> None:
+    assert _pane_tail("\n\n   \n") == ""
 
 
 # ── PaneMatcher ────────────────────────────────────────────────────

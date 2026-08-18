@@ -9,6 +9,9 @@ extract 擦掉 TUI 边框、侧栏、页脚等视觉 chrome，只留答案文本
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
 import time
 import uuid
@@ -28,6 +31,8 @@ from frago.session import transcript_completion as tc_mod
 
 if TYPE_CHECKING:
     from frago.init.profile_manager import APIProfile
+
+logger = logging.getLogger(__name__)
 
 # 把 frago 自己的 session_id 确定性映射成一个合法 claude session uuid。launch 用它
 # 传 ``--session-id``，探针用它定位 jsonl——两端同一派生，路径在起会话那刻就锁定。
@@ -145,7 +150,72 @@ class _ClaudeDone:
 _DONE = _ClaudeDone()
 
 
+def _claude_config_path() -> Path:
+    """claude 存 per-project 信任记录的文件（``~/.claude.json``）。
+
+    ``CLAUDE_CONFIG_DIR`` 若设置，claude 把整套配置（含这份 json）挪到那个目录下，
+    这里跟着走，免得往一个 claude 根本不读的路径写信任、菜单照旧弹。
+    """
+    override = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(override).expanduser() if override else Path.home()
+    return base / ".claude.json"
+
+
+def _ensure_workspace_trusted(cwd: str) -> None:
+    """起 TUI 前把 ``cwd`` 标记为已信任，好让 claude 不弹一次性"信任此文件夹"菜单。
+
+    哪个环节出事、当事人看到什么：交互式 TUI 下，claude 对任何还没被信任过的工作
+    目录都会先拦一道 workspace-trust 菜单（``❯ 1. Yes, I trust this folder`` /
+    ``2. No, exit``）。这道菜单只有在非交互 ``-p`` 模式下才自动跳过，
+    ``--dangerously-skip-permissions`` 也不含它。frago 恰恰用交互式 TUI 驱动 claude：
+    菜单必现，而就绪信号（空输入框 ``❯ ``）永不匹配这一屏，会话干等到 ``open()`` 的
+    超时、以 ``TmuxStartupError`` 收场——这正是"新用户第一次跑 ``frago agent`` 卡死、
+    且报错空白"的根因，谁都会中招（HOME 或任意没手动进过的项目目录都算未信任）。
+
+    用户主动在某目录跑 ``frago agent`` 本就等于信任它，故起会话前把这份信任幂等写进
+    claude 自己的登记——``~/.claude.json`` 的
+    ``projects[<abspath>].hasTrustDialogAccepted``，也就是用户手点 "Yes" 会落的同一
+    个字段，菜单于是不再出现。
+
+    写失败绝不阻断启动：读不到/写不了配置时最坏是菜单照常弹（与现状一致），而不是
+    让一次配置写错把 agent 启动整个打死。只在"值确实要从非 True 变成 True"时才写，
+    走临时文件 + 原子替换，把与 claude 自身写盘撞车的窗口收到最小。
+    """
+    try:
+        abspath = os.path.abspath(cwd)
+        path = _claude_config_path()
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, json.JSONDecodeError):
+                # 读不动就从空表起：只补 projects 这一枝，claude 下次启动会补齐其余。
+                data = {}
+        projects = data.get("projects")
+        if not isinstance(projects, dict):
+            projects = {}
+        entry = projects.get(abspath)
+        if not isinstance(entry, dict):
+            entry = {}
+        if entry.get("hasTrustDialogAccepted") is True:
+            return  # 已信任：幂等，不写、不与运行中的 claude 抢盘
+        entry["hasTrustDialogAccepted"] = True
+        projects[abspath] = entry
+        data["projects"] = projects
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.frago.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    except Exception:  # 信任写入尽力而为，NEVER 让它把 launch 打死
+        logger.warning("could not pre-trust workspace %r for claude", cwd, exc_info=True)
+
+
 def _launch(ctx: LaunchCtx) -> str:
+    # 起会话前先把 cwd 标记为已信任，否则交互式 TUI 会卡在一次性 workspace-trust
+    # 菜单、就绪信号永不出现、干等到超时（见 _ensure_workspace_trusted）。
+    _ensure_workspace_trusted(ctx.cwd)
     # tmux 后端下 claude 在非交互注入场景需要免去逐次权限确认，否则首条 prompt
     # 会卡在权限弹窗、就绪信号永不出现。LaunchCtx 目前没有可表达跳权限的字段，
     # 直接拼入该 flag。

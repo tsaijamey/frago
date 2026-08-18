@@ -211,9 +211,13 @@ def test_claude_probe_missing_file_returns_none(tmp_path, monkeypatch):
     assert claude_driver._completion_probe(session) is None
 
 
-def test_claude_launch_injects_session_id():
+def test_claude_launch_injects_session_id(tmp_path, monkeypatch):
     from frago.agent_driver.driver import LaunchCtx
     from frago.agent_driver.drivers import claude as claude_driver
+
+    # _launch 起会话前会把 cwd 写进 claude 的信任登记；把配置目录指到 tmp，
+    # 免得单测污染开发者真实的 ~/.claude.json。
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
 
     cmd = claude_driver._launch(LaunchCtx(cwd="/tmp", session_id="abc"))
     sid = claude_driver._claude_session_uuid("abc")
@@ -221,6 +225,96 @@ def test_claude_launch_injects_session_id():
     assert f"--session-id {sid}" in cmd
     # deterministic + valid uuid
     uuid.UUID(sid)
+
+
+def _read_trust(config_dir, cwd) -> object:
+    import json
+    import os
+
+    data = json.loads((config_dir / ".claude.json").read_text(encoding="utf-8"))
+    return data["projects"][os.path.abspath(cwd)]["hasTrustDialogAccepted"]
+
+
+def test_launch_pretrusts_cwd(tmp_path, monkeypatch):
+    """起会话前，cwd 被写进 claude 的 per-project 信任登记（免弹信任菜单）。"""
+    from frago.agent_driver.driver import LaunchCtx
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    claude_driver._launch(LaunchCtx(cwd="/work/project", session_id="s1"))
+    assert _read_trust(tmp_path, "/work/project") is True
+
+
+def test_ensure_trusted_preserves_existing_config(tmp_path, monkeypatch):
+    """写信任只补 projects 一枝，claude 已有的其他配置与其他项目原样保留。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "userID": "keep-me",
+                "projects": {"/other": {"hasTrustDialogAccepted": True, "note": "x"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    claude_driver._ensure_workspace_trusted("/new/dir")
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["userID"] == "keep-me"                       # 顶层其他键不丢
+    assert data["projects"]["/other"] == {"hasTrustDialogAccepted": True, "note": "x"}
+    assert data["projects"]["/new/dir"]["hasTrustDialogAccepted"] is True
+
+
+def test_ensure_trusted_idempotent_skips_write(tmp_path, monkeypatch):
+    """已信任的目录不再重写文件——不与运行中的 claude 抢盘。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text(
+        json.dumps({"projects": {"/abs/x": {"hasTrustDialogAccepted": True}}}),
+        encoding="utf-8",
+    )
+    before = cfg.stat().st_mtime_ns
+    claude_driver._ensure_workspace_trusted("/abs/x")
+    assert cfg.stat().st_mtime_ns == before                  # 没写
+
+
+def test_ensure_trusted_tolerates_corrupt_config(tmp_path, monkeypatch):
+    """配置文件损坏时不炸：从空表重建，仍把信任写进去。"""
+    import json
+
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cfg = tmp_path / ".claude.json"
+    cfg.write_text("{not json", encoding="utf-8")
+
+    claude_driver._ensure_workspace_trusted("/abs/y")
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["projects"]["/abs/y"]["hasTrustDialogAccepted"] is True
+
+
+def test_ensure_trusted_never_raises(tmp_path, monkeypatch):
+    """写不动配置时是尽力而为——只告警、不抛异常，NEVER 把 launch 打死。"""
+    from frago.agent_driver.drivers import claude as claude_driver
+
+    # 配置目录指向一个"已被文件占位"的路径，parent.mkdir 会失败。
+    blocker = tmp_path / "blocker"
+    blocker.write_text("i am a file, not a dir", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(blocker / "nested"))
+
+    # 不抛即通过。
+    claude_driver._ensure_workspace_trusted("/abs/z")
 
 
 def load_claude_driver() -> AgentDriver:
