@@ -65,7 +65,10 @@ _WRITE_CALL = re.compile(r"""(open\([^)]*["']w|write_text\(|write_bytes\(|mkdir\
 # A relative path that reaches into a subdirectory — `assets/x.json`,
 # `templates/page.html`. Those are almost always the recipe's own files, and the
 # recipe no longer stands in its own directory.
-_RELATIVE_SUBPATH = re.compile(r"""["']([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+)["']""")
+# The extension has to be letters. Digits after a dot are a version, not a file
+# type, and the first run of this rule over a real recipe proved it by reporting
+# `"Mozilla/5.0"` in a User-Agent header as a path the recipe would fail to find.
+_RELATIVE_SUBPATH = re.compile(r"""["']([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+\.[A-Za-z]{1,5})["']""")
 
 _SELF_ANCHORED = re.compile(r"""(__file__|dirname\s*\(\s*["']?\$0|\$\(dirname)""")
 

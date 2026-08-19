@@ -84,21 +84,39 @@ def test_everything_the_viewer_fetches_is_actually_staged():
     assert not missing, f"page fetches these but the run never staged them: {missing}"
 
 
-def test_the_ledger_entry_page_is_refused_rather_than_quietly_broken():
-    """The entry page cannot be served to visitors, and the gate says so.
+def test_the_entry_page_writes_through_the_only_channel_a_visitor_has():
+    """Saving is a run, not a file write.
 
-    Its whole purpose is writing — back to the ledger file, and by triggering
-    runs. Neither exists for a visitor. Exposing it read-only would put a page in
-    front of someone whose every control is dead, so the honest outcome is a
-    refusal at the door, and the narrow read-only recipe (the viewer above) is
-    what gets exposed instead.
+    A signed-in visitor is not a weaker owner: the interface that reads and
+    writes any path on the machine answers them with 401 exactly as it answers an
+    anonymous stranger. The one write they genuinely have is triggering a run of
+    the recipe, so the page hands the whole ledger over as a parameter and lets
+    the platform decide whose directory it lands in.
     """
     directory = recipe_dir(LEDGER)
 
-    blocking = checks.blocking(checks.audit(directory))
+    blocking = checks.blocking(checks.audit(directory, runnable=True))
+    assert blocking == [], "\n".join(f.render(directory) for f in blocking)
 
-    assert blocking, "expected the entry page to be refused; it now looks servable"
-    assert all(f.rule == "page-asks-platform-for-files" for f in blocking)
+    app_js = (directory / "assets" / "app.js").read_text(encoding="utf-8", errors="ignore")
+    assert "mode: 'save'" in app_js, "the page no longer saves through a run"
+
+
+@pytest.mark.parametrize("name", [VIEWER, LEDGER])
+def test_everything_the_page_displays_is_declared_public(name):
+    """Values a page shows must sit in the `public` block, or visitors get none.
+
+    This is the second half of "where does the data come from", and the half that
+    was missed the first time round: the ledger arrived through the page's own
+    directory, so the trade list filled in, while positions stayed empty because
+    they come from published state — and state outside `public` never leaves the
+    machine. Half a page works, which reads as a rendering bug rather than a
+    missing field.
+    """
+    directory = recipe_dir(name)
+    source = (directory / "recipe.py").read_text(encoding="utf-8", errors="ignore")
+
+    assert '"public"' in source, "recipe publishes nothing under public; visitors will see an empty page"
 
 
 def test_the_viewer_never_needs_an_absolute_path_from_its_state():

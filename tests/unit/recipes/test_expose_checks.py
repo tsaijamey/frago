@@ -81,6 +81,17 @@ def test_reaching_into_a_subdirectory_is_warned(tmp_path):
     assert checks.blocking(found) == []
 
 
+def test_a_version_number_is_not_a_file_path(tmp_path):
+    """Caught in the wild: a User-Agent header reported as a missing file.
+
+    `Mozilla/5.0` has a slash and a dot, which was enough for the first version
+    of this rule. A warning that fires on a browser string is a warning people
+    learn to scroll past."""
+    recipe = make_recipe(tmp_path, code='HEADERS = {"User-Agent": "Mozilla/5.0"}\n')
+
+    assert checks.audit(recipe) == []
+
+
 def test_anchoring_to_the_recipes_own_location_clears_it(tmp_path):
     recipe = make_recipe(
         tmp_path,
