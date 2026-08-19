@@ -132,7 +132,7 @@
 
 - name: remote-frago
   category: available
-  brief: "frago remote 给服务器上的另一个 frago 下发任务书，走它的 PA 队列；说要什么结果，别写命令序列"
+  brief: "frago remote 给服务器上的另一个 frago 下发任务书，走它的 PA 队列；说要什么结果，别写命令序列；status 打 up 只验管道，跑 frago 的那个用户还得有已认证的 claude 在 PATH，否则必然 300s 超时；运维类任务直连 SSH"
 
 - name: recipe-authoring
   category: available
