@@ -1307,6 +1307,17 @@ def validate_recipe(path: str, output_format: str):
                 f"`frago recipe unexpose {metadata.name}`."
             )
 
+    # 5c. Whatever would stop this recipe's page from working on another machine.
+    # Reported here as well as at `expose` so an author can find out while still
+    # writing, rather than at the moment they try to publish. Blocking findings
+    # are warnings *here* on purpose: validate describes a recipe, it does not
+    # decide anything, and a recipe that is never exposed is entitled to hard-code
+    # whatever it likes on the machine it was written for.
+    from frago.recipes import checks as recipe_checks
+
+    for finding in recipe_checks.audit(recipe_dir):
+        warnings.append(finding.render(recipe_dir).replace("\n", " "))
+
     # 6. Check flow field (if workflow)
     if metadata and metadata.type == 'workflow':
         if not metadata.flow:
@@ -2397,7 +2408,42 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
                 click.echo(f"Error: {gap}", err=True)
             sys.exit(1)
 
+    # Exposing is the moment to find out that this page cannot work anywhere but
+    # here. Before this gate a page reading through the owner-only file endpoint
+    # published cleanly and failed in front of the first visitor instead — the
+    # error surfaced at the worst possible time, to the person least able to do
+    # anything about it. The checks are text matches and say so in their own
+    # docstrings; they catch the recipe that never considered the question.
+    from frago.recipes import checks as recipe_checks
+
+    findings = recipe_checks.audit(recipe_dir)
+    fatal = recipe_checks.blocking(findings)
+    warnings_found = [f for f in findings if f.severity == "warn"]
+
+    if fatal:
+        detail = "\n".join(f.render(recipe_dir) for f in fatal)
+        headline = (
+            f"这张页面有 {len(fatal)} 处在别人打开时必然失效，先改掉再开放："
+        )
+        if output_format == 'json':
+            click.echo(json.dumps({
+                "success": False,
+                "error": headline,
+                "code": "cannot_be_served",
+                "findings": [
+                    {"rule": f.rule, "severity": f.severity, "file": str(f.file),
+                     "line": f.line, "excerpt": f.excerpt, "fix": f.fix}
+                    for f in findings
+                ],
+            }, ensure_ascii=False))
+        else:
+            click.echo(f"Error: {headline}\n{detail}", err=True)
+        sys.exit(1)
+
     state, notes = _publish_audit(name, slot, require_identity=mode == MODE_IDENTITY)
+
+    for finding in warnings_found:
+        notes.append(f"{finding.rule} — {finding.file.name}:{finding.line} {finding.fix}")
 
     if allow_ids is not None:
         notes.append(
