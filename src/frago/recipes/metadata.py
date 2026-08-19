@@ -1,4 +1,5 @@
 """Recipe metadata parsing and validation"""
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any
 import yaml
 
 from .exceptions import MetadataParseError, RecipeValidationError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +38,26 @@ class RecipeMetadata:
     # recipe's page belongs in its own assets/, where it ships and versions
     # together with the script that answers its requests.
     ui_from: str | None = None
+    # When the recipe first appeared and when it last changed, ISO-8601 strings.
+    # Backfilled from the ~/.frago git history (first / last commit touching the
+    # recipe directory); a recipe not yet committed falls back to file mtime.
+    # Optional so a hand-written recipe stays valid before the dates are stamped.
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+def _iso_or_none(value: Any) -> str | None:
+    """Normalize a frontmatter date to an ISO-8601 string.
+
+    YAML turns an unquoted `2026-02-12` into a date object, so accept both that
+    and a plain string rather than letting the type depend on how it was quoted.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else str(value)
 
 
 def parse_metadata_file(path: Path) -> RecipeMetadata:
@@ -96,6 +119,8 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             warnings=data.get('warnings', []),
             flow=data.get('flow', []),
             ui_from=data.get('ui_from'),
+            created_at=_iso_or_none(data.get('created_at')),
+            updated_at=_iso_or_none(data.get('updated_at')),
         )
     except KeyError as e:
         raise MetadataParseError(str(path), f"Missing required field: {e}") from e
@@ -180,13 +205,32 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
         raise RecipeValidationError(metadata.name, errors)
 
 
-def validate_params(metadata: RecipeMetadata, params: dict[str, Any]) -> None:
+def validate_params(
+    metadata: RecipeMetadata, params: dict[str, Any], *, strict: bool = False
+) -> None:
     """
     Validate if runtime-provided parameters conform to metadata definition
+
+    Two strictnesses, because the parameters have two very different origins.
+
+    On the owner's own machine they come from the owner, and the loose reading
+    has been in place long enough that 270-odd installed recipes were written
+    against it: undeclared keys pass through, and a declared `string` may be any
+    string at all. Tightening that for everybody would turn a security
+    improvement into a day of broken recipes, so ``strict=False`` keeps the old
+    behaviour exactly and merely logs what strict would have rejected — the
+    drift becomes visible without anything breaking.
+
+    ``strict=True`` is for parameters that arrived from a stranger over HTTP.
+    There, an undeclared key is not a harmless extra: a recipe reading
+    ``params.get('data_dir')`` — eleven installed ones do — turns an undeclared
+    key into a filesystem path chosen by the caller. So strict rejects anything
+    the recipe did not declare, and enforces the value constraints alongside.
 
     Args:
         metadata: Recipe metadata
         params: User-provided parameters
+        strict: Reject undeclared keys and enforce value constraints
 
     Raises:
         RecipeValidationError: Raised when parameter validation fails
@@ -202,17 +246,88 @@ def validate_params(metadata: RecipeMetadata, params: dict[str, Any]) -> None:
                 error_msg += f" ({param_desc})"
             errors.append(error_msg)
 
+    strict_only = []
+
     # Check provided parameter types
     for param_name, param_value in params.items():
-        if param_name in metadata.inputs:
-            param_def = metadata.inputs[param_name]
-            expected_type = param_def.get('type')
-            if expected_type:
-                type_errors = check_param_type(param_name, param_value, expected_type)
-                errors.extend(type_errors)
+        if param_name not in metadata.inputs:
+            # Undeclared. Loosely this is how it has always worked; strictly it
+            # is the whole point of the check, because the recipe may well read
+            # it and the caller is a stranger.
+            strict_only.append(
+                f"Parameter '{param_name}' is not declared by this recipe"
+            )
+            continue
+        param_def = metadata.inputs[param_name]
+        expected_type = param_def.get('type')
+        if expected_type:
+            type_errors = check_param_type(param_name, param_value, expected_type)
+            errors.extend(type_errors)
+            if type_errors:
+                continue
+        strict_only.extend(check_param_constraints(param_name, param_value, param_def))
+
+    if strict:
+        errors.extend(strict_only)
+    elif strict_only:
+        # Not an error here, but not silence either: this is how an owner finds
+        # out that a recipe they are about to expose would refuse its own
+        # parameters the moment a visitor sent them.
+        logger.debug(
+            "recipe %s: parameters a strict caller would have been refused: %s",
+            metadata.name, "; ".join(strict_only),
+        )
 
     if errors:
         raise RecipeValidationError(metadata.name, errors)
+
+
+def check_param_constraints(
+    param_name: str, value: Any, param_def: dict[str, Any]
+) -> list[str]:
+    """Value constraints, all optional. An absent constraint is not checked.
+
+    Optional so that every existing ``recipe.md`` stays valid unchanged: a
+    recipe declares a constraint when it wants one. They exist because a
+    declared type is a weak statement about a value from a stranger — `string`
+    admits a ten-megabyte string, and `number` admits one that will be used as
+    a count.
+    """
+    errors: list[str] = []
+
+    allowed = param_def.get('enum')
+    if isinstance(allowed, list) and allowed and value not in allowed:
+        errors.append(
+            f"Parameter '{param_name}' must be one of {allowed}, got {value!r}"
+        )
+
+    max_length = param_def.get('max_length')
+    if isinstance(max_length, int) and hasattr(value, '__len__') and len(value) > max_length:
+        errors.append(
+            f"Parameter '{param_name}' is longer than {max_length} ({len(value)})"
+        )
+
+    pattern = param_def.get('pattern')
+    if isinstance(pattern, str) and pattern and isinstance(value, str):
+        try:
+            if not re.fullmatch(pattern, value):
+                errors.append(f"Parameter '{param_name}' does not match {pattern!r}")
+        except re.error:
+            # A broken pattern is the recipe author's mistake, not the caller's.
+            # Refuse rather than skip: a constraint that silently stops applying
+            # is worse than one that never existed, because the page still says
+            # it is there.
+            errors.append(f"Parameter '{param_name}' has an unusable pattern {pattern!r}")
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        low = param_def.get('min')
+        high = param_def.get('max')
+        if isinstance(low, (int, float)) and value < low:
+            errors.append(f"Parameter '{param_name}' is below the minimum {low}")
+        if isinstance(high, (int, float)) and value > high:
+            errors.append(f"Parameter '{param_name}' is above the maximum {high}")
+
+    return errors
 
 
 def check_param_type(param_name: str, value: Any, expected_type: str) -> list[str]:

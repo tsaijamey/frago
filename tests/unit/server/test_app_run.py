@@ -1,0 +1,265 @@
+"""The one thing a signed-in visitor may make this server do.
+
+Everything else the identity zone reaches only reads files. This route starts a
+process, so the tests are mostly about the four ways it refuses to — and about
+the response saying as little as possible when it does.
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from frago.recipes import app_state
+from frago.recipes import publish as pub
+from frago.recipes.exceptions import RecipeNotFoundError
+from frago.server import identity as ident
+from frago.server import security
+from frago.server.routes import app_run
+
+PAGE = "ledger"
+PASSWORD = "correct-horse-battery"
+VISITOR = ("93.184.216.34", 41234)
+
+
+class _Meta:
+    name = PAGE
+    ui_from = None
+    inputs = {
+        "note": {"type": "string", "required": False, "max_length": 20},
+        "amount": {"type": "number", "required": False, "min": 0, "max": 100},
+    }
+
+
+@pytest.fixture
+def world(tmp_path, monkeypatch):
+    monkeypatch.setenv("FRAGO_BEHIND_PROXY", "1")
+    monkeypatch.setenv("FRAGO_TRUST_LAN", "0")
+    monkeypatch.setattr(pub, "PUBLISHED_PATH", tmp_path / "published.json")
+    monkeypatch.setattr(pub, "_cache", None, raising=False)
+    monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+    monkeypatch.setattr(app_state, "APP_STATE_DIR", tmp_path / "app-state")
+    monkeypatch.setattr(ident, "USERS_PATH", tmp_path / "users.json")
+    monkeypatch.setattr(ident, "SESSIONS_DIR", tmp_path / "login-sessions")
+    monkeypatch.setenv("FRAGO_USER_STATE_DIR", str(tmp_path / "users"))
+    for leak in ("FRAGO_USERS_FILE", "FRAGO_SESSIONS_DIR", "FRAGO_SIGNUP_GATE"):
+        monkeypatch.delenv(leak, raising=False)
+    security.ensure_token()
+    ident.reset_rate_limits()
+    app_run._running.clear()
+
+    assets = tmp_path / "recipes" / PAGE / "assets"
+    assets.mkdir(parents=True)
+    (assets / "index.html").write_text("<h1>ledger</h1>", encoding="utf-8")
+
+    class _Recipe:
+        base_dir = tmp_path / "recipes" / PAGE
+        script_path = tmp_path / "recipes" / PAGE / "recipe.py"
+        metadata = _Meta()
+
+    class _Registry:
+        def find(self, name, source=None):
+            if name != PAGE:
+                raise RecipeNotFoundError(name, [])
+            return _Recipe()
+
+    monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
+
+    people = {}
+    for who, email in (("zhang", "zhang@example.com"), ("li", "li@example.com")):
+        user = ident.create_user(email, PASSWORD)
+        people[who] = {"id": user.id, "cookie": ident.create_session(user.id)}
+
+    pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[people["zhang"]["id"]], runnable=True)
+
+    yield {"people": people, "root": tmp_path}
+    ident.reset_rate_limits()
+    app_run._running.clear()
+
+
+@pytest.fixture
+def ran(monkeypatch):
+    """Capture what the runner would have been asked to do, without doing it."""
+    seen = {}
+
+    class _Runner:
+        def run(self, name, params=None, **kwargs):
+            seen["name"] = name
+            seen["params"] = params
+            seen["ctx"] = kwargs.get("ctx")
+            return {"success": True}
+
+    monkeypatch.setattr("frago.recipes.runner.RecipeRunner", _Runner)
+    return seen
+
+
+def _client(cookie=None):
+    from frago.server.app import create_app
+
+    client = TestClient(create_app(), follow_redirects=False, client=VISITOR)
+    if cookie:
+        client.cookies.set(ident.COOKIE_NAME, cookie)
+    return client
+
+
+def _post(cookie, params=None):
+    return _client(cookie).post(f"/app/{PAGE}/run", json={"params": params or {}})
+
+
+class TestWhoMayStartOne:
+    def test_anonymous_may_not(self, world):
+        r = _client().post(f"/app/{PAGE}/run", json={"params": {}})
+        assert r.status_code == 401
+
+    def test_signed_in_but_off_the_list_may_not(self, world, ran):
+        r = _post(world["people"]["li"]["cookie"])
+        assert r.status_code == 401
+        assert ran == {}
+
+    def test_someone_on_the_list_may(self, world, ran):
+        r = _post(world["people"]["zhang"]["cookie"])
+        assert r.status_code == 202
+        assert r.json() == {"accepted": True}
+
+    def test_a_page_that_is_not_runnable_refuses(self, world, ran):
+        pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[world["people"]["zhang"]["id"]])
+        r = _post(world["people"]["zhang"]["cookie"])
+        assert r.status_code == 404
+        assert ran == {}
+
+    def test_an_unpublished_page_refuses_the_same_way(self, world, ran):
+        pub.unpublish(PAGE)
+        r = _post(world["people"]["zhang"]["cookie"])
+        assert r.status_code in (401, 404)
+        assert ran == {}
+
+
+class TestTheParametersAreNotTakenOnTrust:
+    def test_an_undeclared_parameter_is_refused(self, world, ran):
+        """Eleven installed recipes read `params["data_dir"]` and use it as a
+        path. An undeclared key from a stranger is not a harmless extra."""
+        r = _post(world["people"]["zhang"]["cookie"], {"data_dir": "/etc"})
+        assert r.status_code == 400
+        assert ran == {}
+
+    def test_a_value_past_its_declared_limit_is_refused(self, world, ran):
+        r = _post(world["people"]["zhang"]["cookie"], {"note": "x" * 100})
+        assert r.status_code == 400
+        assert ran == {}
+
+    def test_a_number_out_of_range_is_refused(self, world, ran):
+        assert _post(world["people"]["zhang"]["cookie"], {"amount": 999}).status_code == 400
+        assert _post(world["people"]["zhang"]["cookie"], {"amount": -1}).status_code == 400
+        assert ran == {}
+
+    def test_a_declared_parameter_within_its_limits_goes_through(self, world, ran):
+        r = _post(world["people"]["zhang"]["cookie"], {"note": "rent", "amount": 12})
+        assert r.status_code == 202
+        assert ran["params"] == {"note": "rent", "amount": 12}
+
+    def test_a_body_that_is_not_json_is_refused(self, world, ran):
+        r = _client(world["people"]["zhang"]["cookie"]).post(
+            f"/app/{PAGE}/run", content=b"not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert r.status_code == 400
+        assert ran == {}
+
+
+class TestTheRunIsForThatPersonOnly:
+    def test_the_context_names_the_caller(self, world, ran):
+        _post(world["people"]["zhang"]["cookie"])
+        ctx = ran["ctx"]
+        assert ctx.is_visitor
+        assert ctx.slot == world["people"]["zhang"]["id"]
+
+    def test_the_directory_is_inside_that_account_s_tree(self, world, ran):
+        _post(world["people"]["zhang"]["cookie"])
+        account = world["root"] / "users" / world["people"]["zhang"]["id"]
+        assert Path(ran["ctx"].data_dir).is_relative_to(account)
+
+    def test_the_slot_is_written_before_the_recipe_starts(self, world, ran):
+        """Otherwise the page polls a directory that does not exist yet: the
+        slot declares no dataDir, and `/app/<n>/data/…` answers 404."""
+        _post(world["people"]["zhang"]["cookie"])
+        account = world["root"] / "users" / world["people"]["zhang"]["id"]
+        assert (account / "state" / f"{PAGE}.json").is_file()
+
+
+class TestTheResponseSaysAlmostNothing:
+    def test_it_carries_no_recipe_return_value(self, world, ran):
+        assert _post(world["people"]["zhang"]["cookie"]).json() == {"accepted": True}
+
+    def test_no_refusal_quotes_a_server_path(self, world, ran):
+        """Everything that is not the owner goes through the scrubber now, so a
+        signed-in stranger cannot read this machine's layout off an error."""
+        for body in ({"data_dir": "/etc"}, {"note": "x" * 100}):
+            text = _post(world["people"]["zhang"]["cookie"], body).text
+            assert str(world["root"]) not in text
+            assert "/Users/" not in text
+
+
+class TestOneAtATimePerPerson:
+    def test_a_second_run_while_one_is_going_is_refused(self, world, ran):
+        key = (PAGE, world["people"]["zhang"]["id"])
+        assert app_run._claim(key, None) is True
+        r = _post(world["people"]["zhang"]["cookie"])
+        assert r.status_code == 409
+
+    def test_two_different_people_do_not_block_each_other(self, world, ran):
+        pub.publish(PAGE, mode=pub.MODE_IDENTITY, runnable=True)
+        assert app_run._claim((PAGE, world["people"]["zhang"]["id"]), None) is True
+        assert _post(world["people"]["li"]["cookie"]).status_code == 202
+
+    def test_a_claim_nobody_released_expires(self, world, ran, monkeypatch):
+        """A `finally` runs almost always, and "almost" here would mean an
+        account that can never run this page again."""
+        key = (PAGE, world["people"]["zhang"]["id"])
+        app_run._claim(key, None)
+        app_run._running[key] = 0.0  # a deadline already in the past
+        assert _post(world["people"]["zhang"]["cookie"]).status_code == 202
+
+    def test_the_claim_is_released_when_the_run_finishes(self, world, ran):
+        assert _post(world["people"]["zhang"]["cookie"]).status_code == 202
+        _wait_for_state(world, "zhang", "done")
+        assert _post(world["people"]["zhang"]["cookie"]).status_code == 202
+
+
+def _wait_for_state(world, who, wanted, tries=100):
+    import time
+
+    account = world["root"] / "users" / world["people"][who]["id"]
+    path = account / "data" / PAGE / app_run.RUN_STATE_FILE
+    for _ in range(tries):
+        if path.is_file():
+            state = json.loads(path.read_text("utf-8"))
+            if state.get("state") == wanted:
+                return state
+        time.sleep(0.02)
+    raise AssertionError(f"run.json never reached {wanted}")
+
+
+class TestTheTerminalStateIsAlwaysRecorded:
+    def test_a_finished_run_says_done(self, world, ran):
+        _post(world["people"]["zhang"]["cookie"])
+        assert _wait_for_state(world, "zhang", "done")["error"] is None
+
+    def test_a_crashed_run_says_failed(self, world, monkeypatch):
+        class _Boom:
+            def run(self, *a, **k):
+                raise RuntimeError("/Users/owner/secret/path blew up")
+
+        monkeypatch.setattr("frago.recipes.runner.RecipeRunner", _Boom)
+        _post(world["people"]["zhang"]["cookie"])
+        state = _wait_for_state(world, "zhang", "failed")
+        assert "/Users/" not in state["error"], "a failure must not quote server paths"
+
+    def test_the_page_can_read_its_own_run_state(self, world, ran):
+        _post(world["people"]["zhang"]["cookie"])
+        _wait_for_state(world, "zhang", "done")
+        r = _client(world["people"]["zhang"]["cookie"]).get(
+            f"/app/{PAGE}/data/{app_run.RUN_STATE_FILE}"
+        )
+        assert r.status_code == 200
+        assert r.json()["state"] == "done"

@@ -212,6 +212,37 @@ async def serve_app_data(name: str, file_path: str, request: Request):
         )
 
     base = Path(data_dir).expanduser()
+
+    # One account's tree is never served to another account.
+    #
+    # A visitor's own run has its `dataDir` forced into `users/<their id>/data/`,
+    # and that forcing rests on every publish path having been covered — the
+    # recipe calling directly, the recipe shelling out to `frago recipe publish`,
+    # a sub-recipe adding another layer. Missing one would raise nothing: the
+    # page would render, out of somebody else's directory.
+    #
+    # The rule is deliberately about the accounts' own root and not "must be
+    # under this account's directory". An identity page whose data the owner
+    # curated — computed ahead of time and published per person, which is what
+    # identity mode was built for — points at a directory under the owner's own
+    # `~/.frago/data/…`, and that is correct and must keep working. What can
+    # never be right is one account's page reading out of another account's
+    # subtree.
+    from frago.server.security import zone_of
+
+    if zone_of(request) == "identity":
+        from frago.recipes.app_state import user_root, user_state_dir
+
+        try:
+            resolved = base.resolve()
+            accounts_root = user_state_dir().resolve()
+            if resolved.is_relative_to(accounts_root) and not resolved.is_relative_to(
+                user_root(key).resolve()
+            ):
+                raise HTTPException(status_code=404, detail="File not found")
+        except (InvalidSlotName, OSError) as err:
+            raise HTTPException(status_code=404, detail="File not found") from err
+
     if not base.is_dir():
         raise HTTPException(status_code=404, detail=f"dataDir does not exist: {data_dir}")
 

@@ -265,3 +265,53 @@ async def whoami(request: Request) -> Response:
     if who is None:
         return _fail(401, "not_signed_in", "no session")
     return _ok(_identity_payload(who))
+
+
+@router.get("/auth/pages")
+async def reachable_pages(request: Request) -> Response:
+    """The pages this particular signed-in person can open.
+
+    A door page listing what is on offer used to be a snapshot taken when it was
+    generated, identical for everyone who loaded it. Once pages can be opened to
+    named accounts that stops working in both directions: someone sees a card
+    that gives them a 401, or the list quietly advertises which pages exist and
+    that somebody is allowed on them.
+
+    So the list is computed per caller. It carries the page's name, its title and
+    whether it can be run — never the allow list itself. Who else is permitted is
+    not this visitor's business, and an endpoint that answered it would hand every
+    signed-in stranger the roster.
+
+    Titles come from each recipe's own description, so a page describes itself
+    here the same way it does everywhere else.
+    """
+    who = identity_of(request)
+    if who is None:
+        return _fail(401, "not_signed_in", "no session")
+
+    from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.publish import allows, load, published_entry
+    from frago.recipes.registry import get_registry
+
+    registry = get_registry()
+    pages = []
+    for name in sorted(load()):
+        entry = published_entry(name)
+        if entry is None or not allows(entry, who):
+            continue
+        title = name
+        try:
+            metadata = registry.find(name).metadata
+            title = (getattr(metadata, "description", "") or name).strip() or name
+        except (RecipeNotFoundError, AttributeError):
+            # Published but no longer installed. Listing it by name is better
+            # than hiding it: the owner can see the stale entry in the same
+            # place the visitor sees a dead card.
+            pass
+        pages.append({
+            "recipe": name,
+            "title": title,
+            "runnable": bool(entry.get("runnable")),
+            "path": f"/app/{name}/",
+        })
+    return _ok({"pages": pages})

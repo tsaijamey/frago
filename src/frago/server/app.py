@@ -478,9 +478,17 @@ def create_app(
             http_exception_handler as default_handler,
         )
 
-        from frago.server.security import is_public_request
+        from frago.server.security import VisitorSafeHTTPException, is_owner_request
 
-        if is_public_request(request) and 400 <= exc.status_code < 500:
+        # The question is "is this the owner", not "is this anonymous". A
+        # signed-in visitor is neither, and asking the anonymous question let
+        # them straight past this scrubber — `/app/<n>/data/x` answered them
+        # with `dataDir does not exist: /Users/…`, a server path handed to a
+        # stranger who merely had to sign in. Everything that is not the owner
+        # gets the same shape, unless the route said in so many words that this
+        # particular refusal was written for a stranger to read.
+        safe = isinstance(exc, VisitorSafeHTTPException)
+        if not safe and not is_owner_request(request) and 400 <= exc.status_code < 500:
             # One shape for every client error: a visitor learns nothing from
             # the difference between "no such file", "forbidden" and "wrong
             # method". Server errors are deliberately left alone — dressing a
@@ -524,6 +532,11 @@ def create_app(
 
     # Viewer routes for content preview (not under /api)
     app.include_router(viewer_router, prefix="/viewer", tags=["viewer"])
+    from frago.server.routes.app_run import router as app_run_router
+
+    # Before the page router: that one owns `/{name}/{file_path:path}`, which
+    # would swallow `/{name}/run` if it were reached first.
+    app.include_router(app_run_router, prefix="/app", tags=["app_run"])
     app.include_router(app_pages_router, prefix="/app", tags=["app_pages"])
 
     # Chrome landing page dashboard (not under /api)

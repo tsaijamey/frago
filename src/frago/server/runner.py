@@ -374,7 +374,20 @@ def run_daemon_server() -> None:
     # Tighten what earlier versions left world-readable, and say so loudly if
     # this looks like a reverse-proxy deployment that has not disabled
     # peer-address trust.
+    from frago.server.identity import migrate_user_state
     from frago.server.security import deployment_warning, harden_home
+
+    # Before harden_home(), never after. This is the one place the daemon runs
+    # its one-off repairs, and a file moved into the identity root *after* the
+    # permission sweep keeps whatever mode it arrived with until the next
+    # restart — which on a server is however long the server stays up.
+    try:
+        migrate_user_state()
+    except Exception:
+        logging.getLogger("frago.server").exception(
+            "identity state migration failed; the server is starting anyway, but "
+            "signed-in visitors may read an empty page until this is resolved"
+        )
 
     harden_home()
     warning = deployment_warning()

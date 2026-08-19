@@ -27,6 +27,10 @@ IDENTITY_MAY_REACH = {
     ("POST", "/api/auth/logout"),
     ("POST", "/api/auth/password"),
     ("GET", "/api/auth/me"),
+    # 20260818-recipe-serving-runtime Phase 4：按名单开放之后，门口目录必须按人算，
+    # 否则要么列出这个人点不开的卡片，要么把「有哪些页面、谁在名单上」讲给每个登录用户听。
+    # 只读，且只回这位调用者自己进得去的那些。
+    ("GET", "/api/auth/pages"),
 }
 
 # 身份区绝不能碰的，每一条都等价于在这台机器上执行代码。

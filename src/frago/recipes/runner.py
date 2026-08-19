@@ -12,6 +12,7 @@ from typing import Any
 
 from frago.compat import get_windows_subprocess_kwargs
 
+from . import context
 from .env_loader import EnvLoader, WorkflowContext
 from .exceptions import RecipeExecutionError, RecipeValidationError
 from .execution import ExecutionStatus
@@ -70,6 +71,7 @@ class RecipeRunner:
         source: str | None = None,
         timeout: int | None = None,
         step_index: int | None = None,
+        ctx: context.InvocationContext | None = None,
     ) -> dict[str, Any]:
         """
         Execute the specified Recipe
@@ -82,6 +84,8 @@ class RecipeRunner:
             env_overrides: Environment variable overrides provided by CLI --env parameter
             workflow_context: Workflow execution context (for sharing environment variables across Recipes)
             source: Specify recipe source ('project' | 'user' | 'example'), selects by priority when None
+            ctx: Who this run is for. None is the owner, which is every run
+                started from this machine; the server passes a visitor context.
 
         Returns:
             Execution result dictionary in format:
@@ -140,6 +144,7 @@ class RecipeRunner:
             params=params,
             resolved_env=resolved_env,
             timeout=timeout,
+            ctx=ctx,
         )
 
     def run_async(
@@ -148,6 +153,7 @@ class RecipeRunner:
         params: dict[str, Any] | None = None,
         source: str | None = None,
         timeout: int | None = None,
+        ctx: context.InvocationContext | None = None,
     ) -> str:
         """Execute recipe asynchronously, return execution_id immediately.
 
@@ -159,6 +165,7 @@ class RecipeRunner:
             params: Input parameters.
             source: Recipe source filter.
             timeout: Timeout in seconds (default 300 for async).
+            ctx: Who this run is for. None is the owner.
 
         Returns:
             execution_id for status polling / cancellation.
@@ -198,6 +205,7 @@ class RecipeRunner:
                     params=params,
                     resolved_env=resolved_env,
                     timeout=timeout,
+                    ctx=ctx,
                 )
             except Exception:
                 logger.exception("Background recipe execution failed: %s", name)
@@ -215,12 +223,21 @@ class RecipeRunner:
         params: dict[str, Any],
         resolved_env: dict[str, str],
         timeout: int | None = None,
+        ctx: context.InvocationContext | None = None,
     ) -> dict[str, Any]:
         """Core execution logic after find/validate/resolve/create.
 
         Handles: transition(RUNNING) -> subprocess execution -> complete(terminal).
         Called by both run() (sync) and run_async() (background thread).
         """
+        # Both callers land here, so this is the one place the invocation
+        # context has to be stamped on — and it is stamped after `resolved_env`
+        # is fully assembled, so no `.env` file, `--env` flag or workflow
+        # context can outrank it. `apply_to_env` overwrites on a visitor run and
+        # deletes on an owner run; see its docstring for why "we do not write
+        # it" would not have been enough.
+        context.apply_to_env(resolved_env, ctx)
+
         # Transition to RUNNING
         self.store.transition(execution_id, ExecutionStatus.RUNNING)
 
@@ -277,7 +294,19 @@ class RecipeRunner:
             # Handle open_url directive from recipe output
             data = result_data.get("data")
             if isinstance(data, dict) and data.get("open_url"):
-                self._handle_open_url(data["open_url"])
+                # On the owner's machine this is a feature: the recipe finishes
+                # and the page it made opens. Started by a visitor it is a
+                # stranger making a window appear on somebody else's screen —
+                # the recipe is the same, the person who pressed the button is
+                # not. The instruction is dropped rather than obeyed quietly, so
+                # a recipe that relies on it can be found in the log.
+                if ctx is not None and ctx.is_visitor:
+                    logger.info(
+                        "recipe %s asked to open a browser; ignored because this run "
+                        "was started by a visitor", name,
+                    )
+                else:
+                    self._handle_open_url(data["open_url"])
 
             # Complete Execution
             self.store.complete(

@@ -440,6 +440,8 @@ def recipe_info(name: str, source: str | None, output_format: str):
                 "type": recipe.metadata.type,
                 "runtime": recipe.metadata.runtime,
                 "version": recipe.metadata.version,
+                "created_at": recipe.metadata.created_at,
+                "updated_at": recipe.metadata.updated_at,
                 "source": recipe.source,
                 "base_dir": str(recipe.base_dir) if recipe.base_dir else None,
                 "script_path": str(recipe.script_path),
@@ -467,6 +469,10 @@ def recipe_info(name: str, source: str | None, output_format: str):
             click.echo(f"Type:     {m.type}")
             click.echo(f"Runtime:  {m.runtime}")
             click.echo(f"Version:  {m.version}")
+            if m.created_at:
+                click.echo(f"Created:  {m.created_at}")
+            if m.updated_at:
+                click.echo(f"Updated:  {m.updated_at}")
             click.echo(f"Source:   {recipe.source}")
 
             # Check if there are recipes with the same name in other sources
@@ -995,7 +1001,10 @@ def cancel_execution(execution_id: str):
                    'or sessions open at once give each one its own slot.')
 @click.option('--state-file', type=click.Path(exists=True, dir_okay=False),
               help='Read the state JSON from this file instead of stdin.')
-def publish_state(name: str, slot: str, state_file: str | None):
+@click.option('--identity', is_flag=True,
+              help='Publish to a signed-in account\'s own slot; --slot is then '
+                   'that account id. Visitor runs do this by themselves.')
+def publish_state(name: str, slot: str, state_file: str | None, identity: bool):
     """Publish the state a recipe's page should show, then print the page URL.
 
     An interactive recipe calls this at the end of a run instead of copying its
@@ -1006,7 +1015,14 @@ def publish_state(name: str, slot: str, state_file: str | None):
     State arrives as JSON on stdin (or via --state-file, for recipes whose state
     is too large to pipe comfortably). Recipes run under their own interpreter
     and cannot import frago, so this command is how they reach the state layer.
+
+    That last sentence is why the visitor rules live in `app_state.publish()`
+    and not here: dozens of recipes publish by shelling out to this command, so
+    a rule written in this function only would hold for the ones that import.
+    Started inside a visitor run, this command writes that visitor's slot no
+    matter what --slot and --identity say.
     """
+    from frago.recipes import context
     from frago.recipes.app_state import InvalidSlotName, page_url, publish
 
     raw = Path(state_file).read_text(encoding='utf-8') if state_file else sys.stdin.read()
@@ -1021,12 +1037,16 @@ def publish_state(name: str, slot: str, state_file: str | None):
         sys.exit(1)
 
     try:
-        publish(name, state, slot)
-    except InvalidSlotName as e:
+        publish(name, state, slot, identity=identity)
+        visitor = context.current().is_visitor
+    except (InvalidSlotName, context.InvalidInvocationContext) as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-    click.echo(page_url(name, slot))
+    # An identity slot has no `?key=` form. The gate decides which one a visitor
+    # reads, so an address naming the slot would be both wrong and a copy of an
+    # account id in whatever the recipe logs next.
+    click.echo(page_url(name) if (identity or visitor) else page_url(name, slot))
 
 
 _OPENABLE_SCHEMES = {'http', 'https', 'file'}
@@ -1267,6 +1287,25 @@ def validate_recipe(path: str, output_format: str):
         for dep in metadata.dependencies:
             if dep not in registry.recipes:
                 errors.append(f"Dependent recipe does not exist: {dep}")
+
+    # 5b. A recipe already exposed as runnable must honour the data directory it
+    # is handed. Checked here as well as at `expose --runnable` because the two
+    # catch different moments: expose catches the mistake being made, this
+    # catches it being introduced afterwards — someone rewrites the recipe, drops
+    # the one line that reads the variable, and the page keeps its permission.
+    # From then on every visitor's run writes the owner's directory, silently and
+    # into one shared pile.
+    if metadata:
+        from frago.recipes.publish import published_entry
+
+        exposed = published_entry(metadata.name)
+        if exposed and exposed.get("runnable") and _runnable_readiness(recipe_dir):
+            errors.append(
+                "This recipe is exposed as runnable but no longer reads "
+                "FRAGO_RECIPE_DATA_DIR, so visitor runs would all write the "
+                "owner's directory. Restore that line, or "
+                f"`frago recipe unexpose {metadata.name}`."
+            )
 
     # 6. Check flow field (if workflow)
     if metadata and metadata.type == 'workflow':
@@ -2076,7 +2115,7 @@ def _publish_audit(name: str, slot: str, *, require_identity: bool = False) -> t
         notes.append(
             "This page is being exposed per person, not to the public: only "
             "someone signed in can open it, and each of them reads their own "
-            f"slot under ~/.frago/app-state-users/{name}/. The slot '{slot}' "
+            f"slot under ~/.frago/users/<account-id>/state/{name}.json. The slot '{slot}' "
             "audited below is what the page looks like, not what visitors get."
         )
 
@@ -2137,14 +2176,106 @@ def _publish_audit(name: str, slot: str, *, require_identity: bool = False) -> t
     return state, notes
 
 
+def _resolve_allow(named: tuple[str, ...]) -> tuple[list[str], str | None]:
+    """Turn what the operator typed into account ids. ``(ids, error)``.
+
+    An email is a convenience for looking up an id, NEVER a thing that can be
+    authorised on its own. Nothing in this system verifies an email address —
+    whoever signs in with one first owns it — so writing an unclaimed address
+    into an allow list would not authorise a colleague, it would hang a
+    first-come ticket on the public internet. An address nobody has signed in
+    with is therefore an error rather than a pre-authorisation.
+    """
+    from frago.server.identity import find_user_by_email, find_user_by_id
+
+    ids: list[str] = []
+    for raw in named:
+        who = raw.strip()
+        if not who:
+            continue
+        if "@" in who:
+            user = find_user_by_email(who)
+            if user is None:
+                return [], (
+                    f"No account has signed in with {who!r}, so there is no id to "
+                    f"authorise. An unclaimed address cannot be allowed in advance — "
+                    f"whoever registers it first would get in. Ask them to sign in "
+                    f"once, then `frago user list` for their id."
+                )
+            resolved = user.id
+        else:
+            resolved = who
+            if find_user_by_id(resolved) is None:
+                return [], (
+                    f"No account has the id {resolved!r}. Check `frago user list`."
+                )
+        if resolved not in ids:
+            ids.append(resolved)
+
+    if not ids:
+        return [], (
+            "--allow was given nothing to allow. To close a page to everyone, "
+            "use `frago recipe unexpose` — an empty list would leave a published "
+            "page nobody can open."
+        )
+    return ids, None
+
+
+def _runnable_readiness(recipe_dir: Path) -> str | None:
+    """Why this recipe must not be made runnable yet, or None if it may be.
+
+    The check is a string search for ``FRAGO_RECIPE_DATA_DIR`` across the
+    recipe's own files, and it is deliberately about the environment variable
+    rather than an import: a recipe carrying a PEP 723 block runs in an isolated
+    environment where ``import frago`` raises, so a check that accepted an import
+    would pass exactly the recipes that crash on their first run.
+
+    It is weak on purpose and worth saying so — a mention in a comment satisfies
+    it. It catches the recipe that never considered the question, which is every
+    recipe written before this existed and the ones most likely to be exposed by
+    accident. It cannot catch a recipe determined to write elsewhere, and it does
+    not try: a recipe's source is code the owner installed, and the untrusted
+    thing here is the parameters, not the program.
+
+    Refusing rather than warning, because exposing a page happens a handful of
+    times a year and a warning at that moment is a line of yellow text between an
+    operator and the thing they already decided to do. The cost of being wrong
+    does not appear until the second visitor arrives.
+    """
+    marker = "FRAGO_RECIPE_DATA_DIR"
+    for path in sorted(recipe_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".py", ".sh", ".js", ".mjs"}:
+            continue
+        try:
+            if marker in path.read_text(encoding="utf-8", errors="ignore"):
+                return None
+        except OSError:
+            continue
+    return (
+        f"This recipe never reads {marker}, so a visitor-triggered run would write "
+        f"wherever the recipe hard-codes — the owner's directory — and every "
+        f"visitor would share it. Have it read that variable and fall back to its "
+        f"own default:\n"
+        f"    data_dir = os.environ.get(\"{marker}\") or <its own default>\n"
+        f"then expose it again."
+    )
+
+
 @recipe_group.command(name='expose', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option('--slot', default='default', help='Which slot to expose (default: default)')
 @click.option('--require-identity', is_flag=True,
               help='Serve each signed-in visitor their own data instead of one public slot')
+@click.option('--allow', 'allow_who', multiple=True, metavar='ACCOUNT',
+              help='Only these accounts may open the page. Takes an account id, or an '
+                   'email that already has one. Repeatable. Implies --require-identity.')
+@click.option('--runnable', is_flag=True,
+              help='Let those visitors trigger a run of this recipe, writing into their '
+                   'own data directory. Implies --require-identity.')
 @click.option('--yes', '-y', is_flag=True, help='Skip the confirmation prompt')
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
-def expose_recipe(name: str, slot: str, require_identity: bool, yes: bool, output_format: str):
+def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple[str, ...],
+                  runnable: bool, yes: bool, output_format: str):
     """Let visitors read this recipe's page.
 
     Publishing exposes exactly three things and nothing else: the recipe's
@@ -2158,16 +2289,33 @@ def expose_recipe(name: str, slot: str, require_identity: bool, yes: bool, outpu
     on the same address see different data. Only the address is shared; --slot
     is then just which slot the audit below describes.
 
+    With --allow the page narrows further: only the accounts named may open it,
+    and everyone else — signed in or not — gets the same 401 as if the page had
+    never been published. Accounts are named by id; an email is accepted only as
+    a lookup convenience and only if somebody has already signed in with it,
+    because an unclaimed email would authorise whoever registers it first.
+
+    With --runnable those visitors may also trigger a run. The run happens under
+    this machine's account with this recipe's credentials, so the question to ask
+    is not whether the recipe has bugs but whether its source is one you would
+    hand a stranger a button for. NEVER make a recipe runnable if it spends money
+    or acts as you.
+
     \b
     Examples:
         frago recipe expose weekly_report
         frago recipe expose kline_blind_trainer --slot demo
         frago recipe expose kline_blind_trainer --require-identity
+        frago recipe expose venture_ledger --allow zhang@example.com --runnable
     """
     from frago.recipes.publish import MODE_IDENTITY, MODE_PUBLIC
     from frago.recipes.publish import publish as mark_published
 
-    mode = MODE_IDENTITY if require_identity else MODE_PUBLIC
+    # Both narrowing flags are meaningless without somebody to narrow to, so they
+    # imply identity mode rather than erroring on its absence: the alternative is
+    # an operator who typed `--allow` and got a public page because they forgot a
+    # second flag, which fails in the one direction that matters.
+    mode = MODE_IDENTITY if (require_identity or allow_who or runnable) else MODE_PUBLIC
 
     recipe_dir = _find_recipe_dir_by_name(name)
     if recipe_dir is None:
@@ -2186,9 +2334,50 @@ def expose_recipe(name: str, slot: str, require_identity: bool, yes: bool, outpu
             click.echo(f"Error: {msg}", err=True)
         sys.exit(1)
 
-    state, notes = _publish_audit(name, slot, require_identity=require_identity)
+    allow_ids: list[str] | None = None
+    if allow_who:
+        allow_ids, resolve_error = _resolve_allow(allow_who)
+        if resolve_error:
+            if output_format == 'json':
+                click.echo(json.dumps(
+                    {"success": False, "error": resolve_error, "code": "no_such_account"},
+                    ensure_ascii=False))
+            else:
+                click.echo(f"Error: {resolve_error}", err=True)
+            sys.exit(1)
 
-    audience = "signed-in visitors" if require_identity else "anonymous visitors"
+    if runnable:
+        gap = _runnable_readiness(recipe_dir)
+        if gap:
+            if output_format == 'json':
+                click.echo(json.dumps(
+                    {"success": False, "error": gap, "code": "ignores_context"},
+                    ensure_ascii=False))
+            else:
+                click.echo(f"Error: {gap}", err=True)
+            sys.exit(1)
+
+    state, notes = _publish_audit(name, slot, require_identity=mode == MODE_IDENTITY)
+
+    if allow_ids is not None:
+        notes.append(
+            f"Only {len(allow_ids)} named account(s) may open this page. Everyone "
+            "else gets the same 401 as an unpublished page."
+        )
+    if runnable:
+        notes.append(
+            "Those visitors may TRIGGER A RUN of this recipe. It runs as this "
+            "machine's user, with this recipe's credentials, and writes into each "
+            "visitor's own data directory. Do not make a recipe runnable if it "
+            "spends money or acts as you."
+        )
+
+    if allow_ids is not None:
+        audience = f"{len(allow_ids)} named account(s)"
+    elif mode == MODE_IDENTITY:
+        audience = "signed-in visitors"
+    else:
+        audience = "anonymous visitors"
 
     # The gate applies to both output formats. `--format json` is the path an
     # agent takes, and an agent is precisely the caller that should have to read
@@ -2219,7 +2408,7 @@ def expose_recipe(name: str, slot: str, require_identity: bool, yes: bool, outpu
             click.echo("Cancelled.")
             sys.exit(1)
 
-    entry = mark_published(name, slot, mode)
+    entry = mark_published(name, slot, mode, allow=allow_ids, runnable=runnable)
 
     if output_format == 'json':
         click.echo(json.dumps({
@@ -2227,14 +2416,20 @@ def expose_recipe(name: str, slot: str, require_identity: bool, yes: bool, outpu
             "recipe_name": name,
             "slot": slot,
             "mode": mode,
+            "allow": entry["allow"],
+            "runnable": entry["runnable"],
             "since": entry["since"],
             "path": f"/app/{name}/",
             "notes": notes,
         }, ensure_ascii=False, indent=2))
     else:
         click.echo(f"✓ Published at /app/{name}/")
-        if require_identity:
+        if mode == MODE_IDENTITY:
             click.echo("  Visitors must sign in; each one reads their own data.")
+        if allow_ids is not None:
+            click.echo(f"  Restricted to {len(allow_ids)} named account(s).")
+        if runnable:
+            click.echo("  Those visitors may trigger a run, writing into their own directory.")
         click.echo("  Reverse-proxy only this prefix; everything else needs the server token.")
 
 
@@ -2271,7 +2466,9 @@ def list_exposed(output_format: str):
         click.echo(json.dumps({
             "published": [
                 {"recipe_name": n, "slot": e.get("slot", "default"),
-                 "mode": e.get("mode"), "since": e.get("since"), "path": f"/app/{n}/"}
+                 "mode": e.get("mode"), "allow": e.get("allow"),
+                 "runnable": e.get("runnable", False),
+                 "since": e.get("since"), "path": f"/app/{n}/"}
                 for n, e in resolved.items()
             ],
             "source": str(published_path()),
@@ -2283,10 +2480,21 @@ def list_exposed(output_format: str):
         click.echo("Publish one with: frago recipe expose <name>")
         return
 
-    click.echo(f"{'Recipe':<40} {'Slot':<12} {'Who':<12} Since")
+    click.echo(f"{'Recipe':<34} {'Slot':<10} {'Who':<18} {'Run':<5} Since")
     for name, entry in resolved.items():
-        who = "signed-in" if entry.get("mode") != "public" else "anyone"
+        allow = entry.get("allow")
+        if entry.get("mode") == "public":
+            who = "anyone"
+        elif allow is None:
+            who = "signed-in"
+        elif allow:
+            who = f"{len(allow)} account(s)"
+        else:
+            # An empty list is unreachable through the CLI, so seeing one means
+            # the file was hand-edited or damaged. Say so plainly rather than
+            # printing "0 account(s)", which reads like a tidy configuration.
+            who = "NOBODY (broken)"
         click.echo(
-            f"{name:<40} {entry.get('slot', 'default'):<12} {who:<12} "
-            f"{entry.get('since') or '?'}"
+            f"{name:<34} {entry.get('slot', 'default'):<10} {who:<18} "
+            f"{'yes' if entry.get('runnable') else '-':<5} {entry.get('since') or '?'}"
         )

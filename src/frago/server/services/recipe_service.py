@@ -130,6 +130,8 @@ class RecipeService:
                 "type": m.type,
                 "runtime": m.runtime,
                 "version": m.version,
+                "created_at": m.created_at,
+                "updated_at": m.updated_at,
                 "source": recipe.source,
                 "base_dir": str(recipe.base_dir) if recipe.base_dir else None,
                 "script_path": str(recipe.script_path),

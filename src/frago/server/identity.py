@@ -50,6 +50,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import unicodedata
@@ -69,11 +70,22 @@ logger = logging.getLogger(__name__)
 
 USERS_PATH = Path.home() / ".frago" / "users.json"
 SESSIONS_DIR = Path.home() / ".frago" / "login-sessions"
-# Identity slots live under their own root, so a recipe writing a slot of its
-# own can never land on a file that belongs to a person. See the spec's
-# "身份数据与配方数据物理分开". Phase 1 only reads it, to tell an account that has
-# data from one that never used the site.
-USER_STATE_DIR = Path.home() / ".frago" / "app-state-users"
+# Identity data lives under its own root, so a recipe writing a slot of its own
+# can never land on a file that belongs to a person. See the spec's
+# "身份数据与配方数据物理分开".
+#
+# One directory per account — `users/<id>/state/<recipe>.json` for the slots,
+# `users/<id>/data/<recipe>/` for that account's output — because the questions
+# that get asked in anger are per-account: delete everything this person has,
+# and does this account have any data at all. `frago.recipes.app_state` resolves
+# the same root by the same rule and the two definitions must move together;
+# pointing them at different directories would leave the server reading a
+# directory nothing writes.
+USER_STATE_DIR = Path.home() / ".frago" / "users"
+
+# Where those slots lived before the per-account root: `<recipe>/<id>.json`.
+# Kept only so `migrate_user_state()` can find and empty it.
+LEGACY_USER_STATE_DIR = Path.home() / ".frago" / "app-state-users"
 
 COOKIE_NAME = "frago_sid"
 
@@ -116,6 +128,11 @@ _WEAK_PASSWORDS = frozenset({
 })
 
 _EMAIL_SHAPE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+# Same alphabet as ``app_state._SAFE_NAME``, restated rather than imported: the
+# migration walks names that came off the filesystem, and this module answers
+# questions about identity without pulling the recipe layer into the server.
+_SLOT_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class IdentityError(Exception):
@@ -171,9 +188,31 @@ def sessions_dir() -> Path:
 
 
 def user_state_dir() -> Path:
-    """Root of per-identity recipe state. ``FRAGO_USER_STATE_DIR`` overrides."""
+    """Root of the per-account subtrees. ``FRAGO_USER_STATE_DIR`` overrides.
+
+    Not to be confused with ``users.json`` next door, which is the account
+    table. One letter of difference and two entirely different things: this is
+    what each account *has*, that is who each account *is*.
+    """
     override = os.environ.get("FRAGO_USER_STATE_DIR")
     return Path(override).expanduser() if override else USER_STATE_DIR
+
+
+def legacy_user_state_dir() -> Path:
+    """The pre-migration root, `<recipe>/<account-id>.json`.
+
+    ``FRAGO_LEGACY_USER_STATE_DIR`` overrides it directly. Failing that it
+    follows ``FRAGO_USER_STATE_DIR`` as a sibling: a test or a staging instance
+    that redirected only the new root would otherwise have the migration reach
+    into the real home and move the live server's files into a temp directory.
+    """
+    override = os.environ.get("FRAGO_LEGACY_USER_STATE_DIR")
+    if override:
+        return Path(override).expanduser()
+    new_root = os.environ.get("FRAGO_USER_STATE_DIR")
+    if new_root:
+        return Path(new_root).expanduser().parent / LEGACY_USER_STATE_DIR.name
+    return LEGACY_USER_STATE_DIR
 
 
 def _int_env(name: str, default: int) -> int:
@@ -508,14 +547,99 @@ def has_data(user_id: str) -> bool:
     someone who actually used the site produced at least one slot write, a
     script that only ever hit ``/api/auth/login`` produced none. Reading it is
     free, which is why eviction can be selective instead of a flat refusal.
+
+    Free is now literal: one account is one directory, so this is a single
+    stat. Under the old by-recipe layout it had to open every recipe directory
+    on the server looking for one file name — and it runs once per account on
+    every signup.
     """
-    root = user_state_dir()
-    if not root.is_dir():
+    if not user_id:
         return False
     try:
-        return any((child / f"{user_id}.json").is_file() for child in root.iterdir())
+        return (user_state_dir() / user_id).is_dir()
     except OSError:
         return False
+
+
+def _account_state_dir(account_id: str) -> Path:
+    """Create ``users/<id>/state/`` with every level 0700, and return it.
+
+    Every level, not just the last: ``mkdir(parents=True)`` builds the levels it
+    invents under the umask, and a 0755 ``users/`` hands a second unix account
+    on this machine the id of everyone who ever signed in.
+    """
+    root = user_state_dir()
+    account = root / account_id
+    state = account / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    for level in (root, account, state):
+        with contextlib.suppress(OSError):
+            level.chmod(0o700)
+    return state
+
+
+def migrate_user_state() -> int:
+    """Move identity slots from the by-recipe layout to the per-account one.
+
+    ``app-state-users/<recipe>/<id>.json`` becomes ``users/<id>/state/<recipe>.json``.
+    Returns how many files moved, so a caller can log a real number instead of
+    "migration ran".
+
+    Idempotent, because it has to survive being interrupted: each file is moved
+    on its own by rename, which has no half-way state, and a file already at the
+    destination is left alone. That last rule also settles the mixed case — a
+    server that started writing the new layout before this ran keeps the newer
+    file and the older one stays behind with a warning, rather than a
+    migration quietly overwriting live data with a copy from before the restart.
+    """
+    legacy = legacy_user_state_dir()
+    if not legacy.is_dir():
+        return 0
+
+    root = user_state_dir()
+    moved = 0
+    for recipe_dir in sorted(legacy.iterdir()):
+        if recipe_dir.is_symlink() or not recipe_dir.is_dir():
+            continue
+        for slot_file in sorted(recipe_dir.glob("*.json")):
+            if slot_file.is_symlink() or not slot_file.is_file():
+                continue
+            account_id = slot_file.stem
+            # The account id becomes a directory name here, so it is checked
+            # rather than trusted: these names come off the filesystem, and
+            # `...json` would have a stem of `..`.
+            if not _SLOT_NAME.match(account_id) or account_id in {".", ".."}:
+                logger.warning(
+                    "identity state migration: skipping %s, whose name is not an "
+                    "account id", slot_file,
+                )
+                continue
+            target = root / account_id / "state" / f"{recipe_dir.name}.json"
+            if target.exists():
+                logger.warning(
+                    "identity state migration: %s already exists and is newer than "
+                    "%s; leaving the old copy in place rather than overwriting",
+                    target, slot_file,
+                )
+                continue
+            try:
+                _account_state_dir(account_id)
+                shutil.move(str(slot_file), str(target))
+                target.chmod(0o600)
+            except OSError:
+                logger.exception("identity state migration: could not move %s", slot_file)
+                continue
+            moved += 1
+        # An empty recipe directory left behind reads as "this recipe has
+        # users", which is exactly the thing that is no longer true.
+        with contextlib.suppress(OSError):
+            recipe_dir.rmdir()
+
+    with contextlib.suppress(OSError):
+        legacy.rmdir()
+    if moved:
+        logger.info("identity state migration: moved %d slot file(s) to %s", moved, root)
+    return moved
 
 
 def account_caps() -> tuple[int, int]:

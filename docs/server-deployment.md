@@ -365,8 +365,70 @@ dashboard in `default` and a client's working set in `acme` stays safe.
 
 An identity-mode page works the same way with one difference: which slot the
 visitor reads is decided by the server from their session, never by anything in
-the request. Those per-person slots live apart from the recipe's own, under
-`~/.frago/app-state-users/<recipe>/<account id>.json`, so a recipe writing a
-slot of its own can never land on a file that belongs to a visitor. A visitor
-whose recipe has not written anything for them yet sees an empty state, which
-the page must render rather than crash on.
+the request. Everything one account owns lives in one subtree —
+`~/.frago/users/<account id>/state/<recipe>.json` for their slots and
+`~/.frago/users/<account id>/data/<recipe>/` for anything a run produced for
+them — kept apart from the recipe's own root so a recipe writing a slot of its
+own can never land on a file belonging to a visitor. A visitor whose recipe has
+not written anything for them yet sees an empty state, which the page must
+render rather than crash on.
+
+## Opening a page to named people, and letting them run it
+
+`--allow` narrows an identity page from "anyone who signs in" to a list of
+accounts. Anyone not on it — signed in or not — gets the same 401 as if the page
+had never been published, so the refusal is not a way to discover that the page
+exists.
+
+```bash
+frago user list                                  # ids ↔ emails
+frago recipe expose venture_ledger --allow <account id> --yes
+```
+
+The list holds account ids. An email is accepted only as a lookup convenience
+and only if somebody has already signed in with it: nothing here verifies an
+address, so writing an unclaimed one would not authorise a colleague, it would
+hang a first-come ticket on the public internet.
+
+`--runnable` goes further and lets those visitors trigger a run. Three things to
+weigh before using it:
+
+**The recipe must take the directory it is handed.** One line, no import:
+
+```python
+data_dir = os.environ.get("FRAGO_RECIPE_DATA_DIR") or <its own old default>
+```
+
+Without it every visitor's run writes the owner's directory and they all share
+one pile. `expose --runnable` refuses a recipe whose source never mentions that
+variable, and `frago recipe validate` re-checks it afterwards, for the case where
+someone edits the line back out while the page keeps its permission.
+
+**The run uses your machine and your credentials.** `FRAGO_SECRETS` is keyed by
+recipe; there is no "whose" dimension. A visitor-triggered run holds whatever you
+configured for that recipe. So the question is not whether the recipe has bugs —
+it is whether its source is something you would hand a stranger a button for.
+Never make a recipe runnable if it spends money or acts as you: placing orders,
+posting, mailing, calling a metered API.
+
+**It is not a sandbox.** The recipe runs as the server's user with the server's
+permissions. The isolation here covers where output lands, nothing more.
+
+What the page sees: `POST /app/<name>/run` with `{"params": {…}}` answers 202
+`{"accepted": true}` and nothing else — never the recipe's return value, which
+routinely carries absolute paths. Progress and outcome are read back from the
+visitor's own directory, where the platform maintains `data/run.json`
+(`running` / `done` / `failed`; the name is reserved, recipes must not write it).
+Parameters are checked strictly for visitors: undeclared keys are refused, and
+`enum` / `max_length` / `pattern` / `min` / `max` are enforced. One run at a time
+per person per page; a second gets 409. Visitor runs also have their own, smaller
+concurrency limit, so a few visitors cannot take every worker and leave the
+owner's machine unresponsive.
+
+Rate-limit `/app/` at the proxy when using `--runnable`. The platform limits
+concurrency, not frequency, and a request under that prefix now starts a process
+rather than reading a file.
+
+A signed-in visitor can ask `GET /api/auth/pages` which pages are theirs to open.
+It answers with names, titles and whether each is runnable — never with the allow
+list, which is not the visitor's business.

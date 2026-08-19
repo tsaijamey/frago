@@ -62,6 +62,11 @@ import re
 import secrets
 from pathlib import Path
 
+# Starlette's, not FastAPI's: this module is imported by the ASGI gate, which
+# runs before anything FastAPI-shaped exists, and FastAPI's own subclasses this
+# one anyway.
+from starlette.exceptions import HTTPException as _HTTPException
+
 logger = logging.getLogger(__name__)
 
 TOKEN_PATH = Path.home() / ".frago" / "server-token"
@@ -128,6 +133,11 @@ _IDENTITY_ENDPOINTS = frozenset({
     ("POST", "/api/auth/password"),
     ("GET", "/api/auth/me"),
     ("HEAD", "/api/auth/me"),
+    # What this caller may open. Read-only, and scoped to the caller by the
+    # route itself — it answers "which pages are mine to see", never "who else
+    # may see them".
+    ("GET", "/api/auth/pages"),
+    ("HEAD", "/api/auth/pages"),
 })
 
 
@@ -508,10 +518,10 @@ def _resolve_identity(headers: dict[bytes, bytes]) -> str | None:
 def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
     """``(reachable, slot)`` for a signed-in visitor.
 
-    The listed endpoints are reachable with no slot. Published pages are
-    reachable with the visitor's own id as the slot — never a slot they asked
-    for. Everything else is out, including the whole of ``/api`` beyond the four
-    auth calls.
+    The listed endpoints are reachable with no slot. An identity-mode page this
+    visitor is allowed on is reachable with the visitor's own id as the slot —
+    never a slot they asked for. Everything else is out, including the whole of
+    ``/api`` beyond the four auth calls.
     """
     if scope.get("type") != "http":
         return False, None
@@ -523,12 +533,34 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
     if (method, path) in _IDENTITY_ENDPOINTS:
         return True, None
 
+    # The identity zone's one write entrance. It has to be judged before the
+    # read-only method check below, and the suffix is pinned to exactly "/run"
+    # rather than left to the `_APP_PATH` match: that regex admits any suffix,
+    # and a rule shaped "POST and the regex matched" would silently enrol every
+    # future `/app/<x>/<y>` POST route into the identity zone. Entrances are
+    # added one at a time, visibly.
+    if method == "POST":
+        match = _APP_PATH.match(path)
+        if match and (match.group("rest") or "") == "/run":
+            return _judge_app_path(scope, match, identity)
+        return False, None
+
     if method not in _PUBLIC_METHODS:
         return False, None
     match = _APP_PATH.match(path)
     if not match:
         return False, None
+    return _judge_app_path(scope, match, identity)
 
+
+def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None]:
+    """Whether this signed-in visitor may touch this page, and as which slot.
+
+    Shared by the read entrance and the run entrance on purpose. They admit
+    different methods, but "may this person touch this page at all" has to be
+    one answer in one place — two copies of a four-state comparison is two
+    chances for the write side to be more generous than the read side.
+    """
     # A signed-in visitor never names a slot. `?key=` is the owner's control for
     # switching data on their own machine; honouring it here would hand the
     # decision back to the visitor, which is the exact shape of the critical
@@ -536,13 +568,25 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
     if _query_values(scope, "key"):
         return False, None
 
-    from frago.recipes.publish import published_entry
+    from frago.recipes.publish import MODE_IDENTITY, allows, published_entry
 
-    # Any published page, in either mode — being published is what makes an
-    # address exist at all. `published_slot` would be the wrong question here:
-    # it answers "what may an anonymous visitor read", which is None for exactly
-    # the identity-mode pages this branch exists to serve.
-    if published_entry(match.group("name")) is None:
+    # Three questions, all required: published at all, published *this* way, and
+    # published to *this person*. Being published used to be the whole test here,
+    # which meant an allow list could be written and have no effect — the gate
+    # would never have looked at it.
+    #
+    # A public-mode page is not served from this branch: `classify_public` runs
+    # first in the middleware and admits it as anonymous traffic. Refusing it
+    # here is not a narrowing, it is saying which branch owns which mode.
+    entry = published_entry(match.group("name"))
+    if entry is None or entry["mode"] != MODE_IDENTITY:
+        return False, None
+
+    # Off the list is not a different answer from unpublished — it is the same
+    # answer. `_reject` sends the same 401 either way, and it must stay that
+    # way: a 403 here would confirm to an outsider that the page exists and that
+    # somebody, somewhere, is on its list.
+    if not allows(entry, identity):
         return False, None
     return True, identity
 
@@ -801,10 +845,17 @@ def harden_home() -> None:
             with contextlib.suppress(OSError):
                 path.chmod(0o600)
 
-    # "app-state-users" is the identity spec's separate root: a recipe writing
-    # its own slot can never land on a person's file, because the two roots do
-    # not intersect on disk. It gets the same treatment as the recipe's own.
-    for state_root in ("app-state", "app-state-users"):
+    # "users" is the identity root: one subtree per account, holding that
+    # account's slots and its own output. A recipe writing its own slot can
+    # never land on a person's file, because the two roots do not intersect on
+    # disk; both get the same treatment. It is listed by name, so a root added
+    # later and not added here would simply never be tightened.
+    #
+    # "app-state-users" is that root's previous layout. It stays on the list
+    # because the migration runs before this and may have left a file it could
+    # not move — and an unmovable file is exactly the one still sitting there
+    # world-readable.
+    for state_root in ("app-state", "users", "app-state-users"):
         _harden_state_dir(home / state_root)
 
 
@@ -868,6 +919,25 @@ def identity_of(request_or_scope) -> str | None:
     must not be used to decide which slot to open. Use ``slot_for``.
     """
     return _state_of(request_or_scope).get("frago_identity")
+
+
+class VisitorSafeHTTPException(_HTTPException):
+    """A refusal that was written to be read by a stranger.
+
+    By default every 4xx served to anyone but the owner is flattened to a bare
+    404, because route handlers say useful things — which absolute path was
+    missing, which slot declared no data — and those describe this machine.
+
+    A few refusals are the opposite: the visitor cannot proceed without them and
+    they mention nothing but the caller's own request. "This parameter is not one
+    I accept" and "you already have a run going" are the request's own shape
+    reflected back. Flattening those leaves a page whose button fails with no way
+    to find out why.
+
+    Raising this type is a claim, and the claim has to hold: the message must
+    name only parameters, limits and states — NEVER a path, a recipe the caller
+    did not name, or the existence of anything they could not already see.
+    """
 
 
 def is_owner_request(request_or_scope) -> bool:

@@ -6,11 +6,18 @@ Uses a lightweight index.json for fast list queries.
 
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .execution import Execution, ExecutionStatus
+
+# Module level, not per instance: the server builds a fresh `RecipeRunner` — and
+# with it a fresh store — for every request, so a lock held on the instance would
+# be a lock each writer holds alone. What needs serialising is the file, and the
+# file is shared by every store in this process.
+_INDEX_LOCK = threading.RLock()
 
 logger = logging.getLogger(__name__)
 
@@ -260,16 +267,40 @@ class ExecutionStore:
             return []
 
     def _save_index(self, index: list[dict]) -> None:
-        """Write the index file."""
+        """Write the index file, atomically.
+
+        Written to a temporary file and moved into place. A direct write leaves
+        the file truncated-then-refilled, and anything reading during that gap
+        gets an unparseable document — which ``_load_index`` reports as "no
+        history at all", after which the next write persists that emptiness.
+        """
         try:
             self.index_file.parent.mkdir(parents=True, exist_ok=True)
             content = json.dumps(index, indent=2, ensure_ascii=False)
-            self.index_file.write_text(content, encoding="utf-8")
+            tmp = self.index_file.with_suffix(".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            tmp.replace(self.index_file)
         except OSError as e:
             logger.warning("Failed to save execution index: %s", e)
 
     def _update_index(self, execution: Execution) -> None:
-        """Update or insert an entry in the index (sorted by created_at desc)."""
+        """Update or insert an entry in the index (sorted by created_at desc).
+
+        Under a lock, because this is a read-modify-write of one shared file and
+        recipes run concurrently: two executions starting together would each
+        load the index, each add their own entry to the copy they loaded, and
+        the second to finish would write a document missing the first. Visitor
+        runs make that concurrency ordinary rather than rare.
+
+        The lock is per process. Two frago processes writing this index at once
+        can still lose an entry — the file is a convenience log rather than a
+        record anything depends on, and a cross-process lock here would buy less
+        than it costs.
+        """
+        with _INDEX_LOCK:
+            self._update_index_locked(execution)
+
+    def _update_index_locked(self, execution: Execution) -> None:
         index = self._load_index()
 
         entry = {

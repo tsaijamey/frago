@@ -51,6 +51,22 @@ MODE_PUBLIC = "public"
 MODE_IDENTITY = "identity"
 MODES = (MODE_PUBLIC, MODE_IDENTITY)
 
+# ``allow`` narrows an identity-mode page from "anyone signed in" to "these
+# accounts". Three states, and telling them apart matters because their security
+# meanings are opposite:
+#
+#   key absent   an entry written before this field existed. Behaves as it did:
+#                everyone the mode already admits.
+#   None         someone said "all signed-in users" out loud. Same behaviour.
+#   [...]        only these accounts.
+#   []           nobody. The CLI never writes this — it is where a hand-edited
+#                or corrupted entry lands, and landing at "nobody" is the only
+#                safe reading of an instruction that can no longer be read.
+#
+# The list holds account ids, never email addresses. An email here would mean
+# "whoever claims this address first is authorised", because nothing in this
+# system verifies one — see ``frago book recipe-expose``.
+
 # The published list is consulted on every anonymous request. Re-reading a small
 # JSON file each time is wasteful but re-reading it *never* is a footgun: a
 # recipe unpublished at 2am has to stop serving at 2am. Cache on mtime+size.
@@ -131,6 +147,81 @@ def _mode_of(entry: dict[str, Any]) -> str:
     return MODE_IDENTITY
 
 
+def _allow_of(entry: dict[str, Any]) -> list[str] | None:
+    """Which accounts an entry opens to. None means "everyone in this mode".
+
+    Same asymmetry as ``_mode_of``, for the same reason — and here the two
+    failure directions are further apart, because this field decides *people*:
+
+    * **No ``allow`` key at all** is an entry written before this field existed.
+      Its operator asked for "everyone who can sign in" and never said otherwise,
+      so it keeps meaning that: None.
+    * **``null``** is that same answer, stated on purpose by a newer CLI.
+    * **A list of account ids** is the narrow case: only those accounts.
+    * **Anything else** — a string, a number, a list with a dict in it, a list
+      with an empty string in it — is an entry that has lost its operator's
+      intent. It reads as ``[]``: nobody. NEVER salvage the recognisable
+      elements of a broken list; a half-read list is a list whose remaining
+      half might have been the restriction that mattered.
+
+    ``[]`` written by hand means the same thing and is preserved as-is. It is
+    the safe landing point of a corrupt config, not a state the CLI can produce
+    — a page nobody may open is spelled ``frago recipe unexpose``.
+    """
+    if "allow" not in entry:
+        return None
+    raw = entry["allow"]
+    if raw is None:
+        return None
+    if isinstance(raw, list) and all(isinstance(x, str) and x for x in raw):
+        return list(raw)
+    return []
+
+
+def _runnable_of(entry: dict[str, Any], mode: str) -> bool:
+    """Whether visitors may trigger a run. Absent, unreadable, or contradicted
+    by the mode all read as False.
+
+    ``runnable`` implies ``mode == identity``: a run happens *for somebody*, and
+    a public page has nobody to run as. An entry claiming both — only reachable
+    by hand-editing — is the config contradicting itself, and the strict side of
+    that contradiction is False.
+
+    ``is True`` rather than truthiness on purpose: ``"false"``, ``1`` and
+    ``"no"`` are all truthy, and every one of them is a hand-edit that meant the
+    opposite.
+    """
+    return entry.get("runnable") is True and mode == MODE_IDENTITY
+
+
+def allows(entry: dict[str, Any] | None, identity: str | None) -> bool:
+    """Whether this signed-in account may open this page. The only comparison.
+
+    Every caller asks *here* rather than reading ``allow`` and comparing for
+    itself: the gate, the run endpoint and the page listing must agree to the
+    letter, and three hand-written comparisons of a four-state field is three
+    chances for one of them to read absent-and-empty the same way.
+
+    Mode is part of the judgement, not a separate step the caller may forget.
+    A ``public`` entry answers False here — not because such a page is closed,
+    but because it is not opened by *identity*; anonymous readability is
+    ``classify_public``'s question and is decided elsewhere entirely.
+
+    Accepts a raw or a normalised entry: both ``_mode_of`` and ``_allow_of`` are
+    idempotent, so re-reading a normalised copy gives the same answer.
+    """
+    if not isinstance(entry, dict):
+        return False
+    if _mode_of(entry) != MODE_IDENTITY:
+        return False
+    if not isinstance(identity, str) or not identity:
+        return False
+    allow = _allow_of(entry)
+    if allow is None:
+        return True
+    return identity in allow
+
+
 def published_entry(name: str) -> dict[str, Any] | None:
     """The whole exposure record for one recipe, or None if it has none.
 
@@ -150,10 +241,13 @@ def published_entry(name: str) -> dict[str, Any] | None:
     if not entry:
         return None
     slot = entry.get("slot")
+    mode = _mode_of(entry)
     return {
         "slot": slot if isinstance(slot, str) and slot else DEFAULT_SLOT,
-        "mode": _mode_of(entry),
+        "mode": mode,
         "since": entry.get("since"),
+        "allow": _allow_of(entry),
+        "runnable": _runnable_of(entry, mode),
     }
 
 
@@ -176,21 +270,51 @@ def is_published(name: str, slot: str = DEFAULT_SLOT) -> bool:
     return published_slot(name) == slot
 
 
-def publish(name: str, slot: str = DEFAULT_SLOT, mode: str = MODE_PUBLIC) -> dict[str, Any]:
+def publish(
+    name: str,
+    slot: str = DEFAULT_SLOT,
+    mode: str = MODE_PUBLIC,
+    *,
+    allow: list[str] | None = None,
+    runnable: bool = False,
+) -> dict[str, Any]:
     """Expose one recipe's page. Returns the entry.
 
     ``mode=MODE_IDENTITY`` publishes the *address* rather than the data: the
     page is reachable only to someone signed in, and each of them reads the slot
     named after their own account instead of ``slot``.
+
+    ``allow=None`` opens the page to everyone who can sign in; a list narrows it
+    to those account ids. An empty list is refused rather than written: it would
+    leave an entry no living account can open, and the way to close a page is to
+    take it off the list, not to leave a locked one behind for the next reader
+    to puzzle over.
     """
     _validate(name, slot)
     if mode not in MODES:
         raise ValueError(f"unknown publish mode {mode!r}; expected one of {MODES}")
+    if allow is not None:
+        if not isinstance(allow, list) or not all(isinstance(x, str) and x for x in allow):
+            raise ValueError("allow must be a list of non-empty account ids, or None")
+        if not allow:
+            raise ValueError(
+                "refusing to publish with an empty allow list: nobody could open the "
+                "page. Use `frago recipe unexpose` to close it instead."
+            )
+        if mode != MODE_IDENTITY:
+            raise ValueError("an allow list needs identity mode; there is nobody to compare in public mode")
+    if runnable and mode != MODE_IDENTITY:
+        raise ValueError("a runnable page needs identity mode; a run happens for somebody")
     entries = load()
     entry = {
         "slot": slot,
         "mode": mode,
         "since": datetime.now().astimezone().isoformat(timespec="seconds"),
+        # Written even when they carry the defaults: a reader of this file should
+        # see who the page is open to without having to know which frago version
+        # wrote the entry.
+        "allow": list(allow) if allow is not None else None,
+        "runnable": bool(runnable),
     }
     entries[name] = entry
     _save(entries)

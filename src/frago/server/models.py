@@ -112,12 +112,24 @@ class RecipeItemResponse(BaseModel):
 
 
 class RecipeInputSchema(BaseModel):
-    """Recipe input parameter schema"""
+    """Recipe input parameter schema
+
+    The constraint fields are all optional and are enforced only for a caller
+    who is not the owner. They are listed here as well as parsed, because
+    pydantic drops whatever this model does not name: a recipe could declare
+    `max_length` and the page building its form would never learn of it, which
+    is how a limit ends up enforced by the server and invisible in the UI.
+    """
 
     type: str
     required: bool = False
     default: Optional[Any] = None
     description: Optional[str] = None
+    enum: Optional[list] = None
+    max_length: Optional[int] = None
+    pattern: Optional[str] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
 
 
 class RecipeOutputSchema(BaseModel):

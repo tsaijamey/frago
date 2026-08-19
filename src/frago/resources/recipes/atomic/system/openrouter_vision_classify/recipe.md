@@ -3,6 +3,8 @@ name: openrouter_vision_classify
 type: atomic
 runtime: python
 version: "1.1.0"
+created_at: "2026-08-04T18:58:07+08:00"
+updated_at: "2026-08-04T18:58:07+08:00"
 description: "通过 OpenRouter 的 chat/completions 端点调用多模态模型对图像做文本理解/分类（默认 google/gemini-2.5-flash-lite，便宜款），可强制返回 JSON。"
 use_cases:
   - "对摄像头帧做视觉判断（如：有无人脸、是否儿童、情绪、性别）"
