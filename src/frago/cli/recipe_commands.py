@@ -2273,9 +2273,12 @@ def _runnable_readiness(recipe_dir: Path) -> str | None:
               help='Let those visitors trigger a run of this recipe, writing into their '
                    'own data directory. Implies --require-identity.')
 @click.option('--yes', '-y', is_flag=True, help='Skip the confirmation prompt')
+@click.option('--force', is_flag=True,
+              help='Required to drop an existing allow list, i.e. to reopen a page from '
+                   'named accounts to everyone signed in. Separate from --yes on purpose.')
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
 def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple[str, ...],
-                  runnable: bool, yes: bool, output_format: str):
+                  runnable: bool, yes: bool, force: bool, output_format: str):
     """Let visitors read this recipe's page.
 
     Publishing exposes exactly three things and nothing else: the recipe's
@@ -2300,6 +2303,13 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
     is not whether the recipe has bugs but whether its source is one you would
     hand a stranger a button for. NEVER make a recipe runnable if it spends money
     or acts as you.
+
+    Each run of this command states the page's exposure in full — a flag left
+    off is a flag turned off, not a flag left alone. So name every account again
+    each time: adding --runnable to a page that has an allow list, without
+    repeating --allow, would reopen it to everyone who can sign in. That one
+    widening is refused unless you pass --force, because forgetting a flag and
+    deciding to open a page up should not look the same to this command.
 
     \b
     Examples:
@@ -2344,6 +2354,36 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
                     ensure_ascii=False))
             else:
                 click.echo(f"Error: {resolve_error}", err=True)
+            sys.exit(1)
+
+    # Every expose writes the whole entry, so a flag left off is a flag turned
+    # off. That is right for most of them and dangerous for exactly one: leaving
+    # `--allow` off a page that has a list reopens it to everyone who can sign
+    # in, and the command that does it looks like the command that merely
+    # changed something else ("I only wanted to add --runnable"). Widening
+    # access must be something a person said, not something they forgot to say.
+    #
+    # Refused rather than prompted, and NEVER folded into `--yes`: `--yes` is
+    # the documented automation path, so a script that habitually carries it
+    # would sail straight through the hole this check exists to close. A refusal
+    # fails loudly in a script instead of silently opening the page.
+    if not allow_who and not force:
+        from frago.recipes.publish import published_entry as _entry
+        current = _entry(name)
+        if current and current.get("allow"):
+            who = ", ".join(current["allow"])
+            msg = (
+                f"'{name}' is currently open to {len(current['allow'])} named "
+                f"account(s) ({who}); publishing without --allow would reopen it to "
+                "everyone who can sign in. Name them again with --allow, or say "
+                "--force if opening it up is what you meant."
+            )
+            if output_format == 'json':
+                click.echo(json.dumps(
+                    {"success": False, "error": msg, "code": "would_widen"},
+                    ensure_ascii=False))
+            else:
+                click.echo(f"Error: {msg}", err=True)
             sys.exit(1)
 
     if runnable:
