@@ -58,6 +58,12 @@ CONTEXT_ENV_KEYS = (CALLER_ENV, SLOT_ENV, DATA_DIR_ENV)
 OWNER = "owner"
 VISITOR = "visitor"
 
+#: The owner's own slot name under ``~/.frago/users/``. A visitor slot is an
+#: account id (32 hex characters), so this word cannot collide with one, and
+#: using the same root for both keeps "where does this run write" a single rule
+#: instead of two that have to be remembered apart.
+OWNER_SLOT = OWNER
+
 
 class InvalidInvocationContext(ValueError):
     """The three variables do not describe a run anyone should start.
@@ -145,6 +151,46 @@ def data_dir(fallback: str | Path, env: Mapping[str, str] | None = None) -> Path
     """
     ctx = current(env)
     return ctx.data_dir if ctx.data_dir is not None else Path(fallback).expanduser()
+
+
+def working_dir(recipe_name: str, ctx: InvocationContext | None = None) -> Path:
+    """Where this run should stand while it works.
+
+    Every run gets one, owner runs included, and the platform creates it before
+    the process starts. That is the whole point: a recipe that writes
+    ``open("ledger.json", "w")`` lands somewhere correct on any machine without
+    reading a variable, knowing whose run this is, or asking whether it is on a
+    server. There is nothing to remember and therefore nothing to misspell —
+    which matters more than it sounds, because the previous shape (read this
+    variable, fall back to your own default) fails *silently* when the name is
+    typed wrong: the recipe keeps working on its author's machine and writes the
+    wrong place everywhere else.
+
+    A visitor stands in the directory the platform already computed for that
+    account. An owner stands in their own slot under the same root, so the two
+    are one rule rather than two.
+
+    **This is not the same as the data-directory variable.** An owner run still
+    carries no ``FRAGO_RECIPE_DATA_DIR``: recipes that read it have their own
+    default behind it, and setting it here would quietly relocate output that
+    has been landing in the same place for months. Changing where a process
+    stands moves only the recipes that never named a place at all.
+    """
+    if ctx is not None and ctx.data_dir is not None:
+        return ctx.data_dir
+    return Path.home() / ".frago" / "users" / OWNER_SLOT / "data" / recipe_name
+
+
+def prepare_working_dir(recipe_name: str, ctx: InvocationContext | None = None) -> Path:
+    """``working_dir`` with the directory made, ready to be a process's cwd.
+
+    Creating it here rather than leaving it to the recipe is deliberate: a
+    recipe that has to create its own directory before writing is a recipe with
+    one more chance to create a different one.
+    """
+    target = working_dir(recipe_name, ctx)
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def apply_to_env(env: dict[str, str], ctx: InvocationContext | None = None) -> None:

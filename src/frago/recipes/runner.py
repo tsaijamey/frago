@@ -238,6 +238,26 @@ class RecipeRunner:
         # it" would not have been enough.
         context.apply_to_env(resolved_env, ctx)
 
+        # And this is where the run gets somewhere to stand. Until now a recipe
+        # started in whatever directory its caller happened to be in — a shell,
+        # the server's working directory, an agent's project root — so a recipe
+        # that wanted to keep anything had no choice but to name an absolute
+        # path, and the only absolute path its author could know was one on
+        # their own machine. That path is exactly what breaks when the recipe is
+        # copied to a server: the page it serves ends up pointing at a file that
+        # does not exist there, and nobody finds out until a visitor opens it.
+        #
+        # Handing it a prepared directory removes the reason to name a path at
+        # all. `open("ledger.json", "w")` is now correct everywhere, and correct
+        # without the author having read anything.
+        try:
+            run_cwd: str | None = str(context.prepare_working_dir(name, ctx))
+        except OSError:
+            # Somewhere unwritable is not a reason to refuse the run: recipes
+            # that name absolute paths do not care where they stand, and that is
+            # most of them. Fall back to the old behaviour of inheriting.
+            run_cwd = None
+
         # Transition to RUNNING
         self.store.transition(execution_id, ExecutionStatus.RUNNING)
 
@@ -273,13 +293,17 @@ class RecipeRunner:
 
             # Execute Recipe based on runtime type
             if recipe.metadata.runtime == 'chrome-js':
+                # No cwd here on purpose: this runtime does not run the recipe as
+                # a local process at all — the script executes inside the browser
+                # and reaches the disk, if ever, through frago's own commands.
+                # A working directory would describe nothing.
                 result_data = self._run_chrome_js(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id)
             elif recipe.metadata.runtime == 'python':
                 # Check if system Python is needed (for scripts that depend on system packages like dbus)
                 use_system_python = getattr(recipe.metadata, 'system_packages', False)
-                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python, timeout=effective_timeout, execution_id=execution_id)
+                result_data = self._run_python(name, recipe.script_path, params, resolved_env, use_system_python, timeout=effective_timeout, execution_id=execution_id, cwd=run_cwd)
             elif recipe.metadata.runtime == 'shell':
-                result_data = self._run_shell(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id)
+                result_data = self._run_shell(name, recipe.script_path, params, resolved_env, timeout=effective_timeout, execution_id=execution_id, cwd=run_cwd)
             else:
                 raise RecipeExecutionError(
                     recipe_name=name,
@@ -413,6 +437,7 @@ class RecipeRunner:
         cmd: list[str],
         env: dict[str, str],
         timeout: int | None = None,
+        cwd: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run a command via Popen, tracking the process for cancellation.
 
@@ -421,6 +446,7 @@ class RecipeRunner:
             cmd: Command to run.
             env: Environment variables.
             timeout: Timeout in seconds (None = no limit).
+            cwd: Directory to start the process in (the run's own directory).
 
         Returns:
             CompletedProcess with stdout, stderr, returncode.
@@ -433,6 +459,7 @@ class RecipeRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            cwd=cwd,
             **get_windows_subprocess_kwargs(),
         )
         with _process_lock:
@@ -650,6 +677,7 @@ class RecipeRunner:
         use_system_python: bool = False,
         timeout: int | None = None,
         execution_id: str | None = None,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute Python Recipe
@@ -698,8 +726,9 @@ class RecipeRunner:
             cmd = ['uv', 'run', str(script_path), params_json]
 
         try:
-            result = self._run_subprocess(execution_id, cmd, env, timeout=timeout) if execution_id else subprocess.run(
+            result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(
                 cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env,
+                cwd=cwd,
                 **get_windows_subprocess_kwargs(),
             )
 
@@ -751,6 +780,7 @@ class RecipeRunner:
         env: dict[str, str],
         timeout: int | None = None,
         execution_id: str | None = None,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute Shell Recipe
@@ -783,8 +813,9 @@ class RecipeRunner:
         cmd = [str(script_path), params_json]
 
         try:
-            result = self._run_subprocess(execution_id, cmd, env, timeout=timeout) if execution_id else subprocess.run(
+            result = self._run_subprocess(execution_id, cmd, env, timeout=timeout, cwd=cwd) if execution_id else subprocess.run(
                 cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, check=False, env=env,
+                cwd=cwd,
                 **get_windows_subprocess_kwargs(),
             )
 
