@@ -141,6 +141,25 @@ _IDENTITY_ENDPOINTS = frozenset({
 })
 
 
+# The page that serves as this server's front door. A visitor who lands on an
+# identity-mode page without a session has nothing to act on — the JSON refusal
+# below is written for a machine — so the gate sends them here instead, with
+# ``?next=<recipe>`` so the portal can hand them back afterwards.
+#
+# Named rather than inferred: "the one page published in public mode" would be a
+# guess that silently picks a different door the day a second public page is
+# exposed. ``FRAGO_LOGIN_PORTAL=`` (empty) turns the redirect off entirely and
+# restores the plain 401.
+DEFAULT_LOGIN_PORTAL = "frago_login_portal"
+
+
+def login_portal() -> str | None:
+    """Which exposed page is the sign-in door, or None if there is not one."""
+    raw = os.environ.get("FRAGO_LOGIN_PORTAL")
+    name = DEFAULT_LOGIN_PORTAL if raw is None else raw.strip()
+    return name or None
+
+
 def token_path() -> Path:
     """Where the server token lives. ``FRAGO_TOKEN_FILE`` overrides, for tests."""
     override = os.environ.get("FRAGO_TOKEN_FILE")
@@ -607,6 +626,82 @@ def _anon_post_allowed(scope: dict) -> bool:
     return ((scope.get("method") or "").upper(), path) in _ANON_POST
 
 
+def sign_in_redirect(scope: dict, headers: dict[bytes, bytes]) -> str | None:
+    """Where to send a signed-out browser that asked for a page needing a sign-in.
+
+    Returns None — meaning "answer with the plain 401" — for everything that is
+    not a person looking at a page they could get into by signing in. Four
+    conditions, each closing a way this could go wrong:
+
+    * **Only a top-level HTML navigation.** The page's own ``fetch`` calls ask
+      for JSON; bouncing one of those to the portal would hand the front end a
+      login page where it expects data, and the failure would surface as a parse
+      error somewhere unrelated. ``Accept: text/html`` is what separates the two.
+    * **Only identity-mode pages.** A public page that refused for some other
+      reason, or a path that is not a page at all, has nothing to gain from
+      signing in — sending them to a login form would be a lie about why they
+      were refused.
+    * **Never the portal itself**, and never when the portal is not anonymously
+      readable: both are redirect loops, one immediate, one dressed up as a
+      second 401.
+    * **The target is always this site.** The recipe name has already been
+      through ``published_entry``'s validation (letters, digits, dot, dash,
+      underscore), so nothing here can be talked into pointing elsewhere.
+    """
+    if scope.get("type") != "http":
+        return None
+    if (scope.get("method") or "").upper() not in _PUBLIC_METHODS:
+        return None
+
+    accept = headers.get(b"accept", b"").decode("latin-1", "replace").lower()
+    if "text/html" not in accept:
+        return None
+
+    path = scope.get("path") or ""
+    if not _path_is_safe(path):
+        return None
+    match = _APP_PATH.match(path)
+    if not match:
+        return None
+    name = match.group("name")
+
+    portal = login_portal()
+    if not portal or name == portal:
+        return None
+
+    from frago.recipes.publish import MODE_IDENTITY, MODE_PUBLIC, published_entry
+
+    entry = published_entry(name)
+    if entry is None or entry["mode"] != MODE_IDENTITY:
+        return None
+    door = published_entry(portal)
+    if door is None or door["mode"] != MODE_PUBLIC:
+        return None
+    return f"/app/{portal}/?next={name}"
+
+
+async def _send_to_sign_in(scope: dict, send, target: str) -> None:
+    """Move a signed-out visitor to the sign-in page.
+
+    ``no-store`` because the answer depends on whether this particular caller
+    has a session: a cached redirect would keep bouncing them to the login page
+    after they had signed in.
+    """
+    logger.info("sending a signed-out visitor from %s to %s", scope.get("path"), target)
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 302,
+            "headers": [
+                (b"location", target.encode("latin-1")),
+                (b"content-length", b"0"),
+                (b"cache-control", b"no-store"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": b""})
+
+
 async def _reject(scope: dict, send, reason: str) -> None:
     # A 256-bit token is not going to be guessed, so this line is not about
     # stopping the attempt — it is so that an attempt leaves a mark. Without it,
@@ -712,6 +807,14 @@ class AccessZoneMiddleware:
         if _token_ok(_presented_token(scope, headers)):
             self._admit(scope, "token", None, identity)
             await self.app(scope, receive, send)
+            return
+
+        # Nobody may have this. If it is a person in a browser looking at a page
+        # a sign-in would open, move them to the door rather than showing them a
+        # refusal written for a machine.
+        target = sign_in_redirect(scope, headers)
+        if target is not None:
+            await _send_to_sign_in(scope, send, target)
             return
 
         await _reject(scope, send, "this endpoint is not public")
