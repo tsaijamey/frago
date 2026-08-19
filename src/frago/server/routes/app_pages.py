@@ -59,6 +59,13 @@ def _mime_type(path: Path) -> str:
 # everyone, and costs a 304 rather than a full transfer when nothing changed.
 _REVALIDATE = {"Cache-Control": "no-cache"}
 
+# Failures must never stick. A 404 is heuristically cacheable, so a page opened
+# once before its data existed can keep failing on that device long after the
+# data arrives — while the same account on a phone, fetching for the first time,
+# works. That is exactly what happened: same page, same account, one device
+# broken and the other fine, with nothing wrong on the server.
+_NO_STORE = {"Cache-Control": "no-store"}
+
 
 def _assets_dir(name: str) -> Path:
     """Locate a recipe's assets directory, or explain why the page can't load.
@@ -209,6 +216,7 @@ async def serve_app_data(name: str, file_path: str, request: Request):
         raise HTTPException(
             status_code=404,
             detail=f"Recipe '{name}' (slot '{key}') declares no dataDir",
+            headers=_NO_STORE,
         )
 
     base = Path(data_dir).expanduser()
@@ -239,16 +247,16 @@ async def serve_app_data(name: str, file_path: str, request: Request):
             if resolved.is_relative_to(accounts_root) and not resolved.is_relative_to(
                 user_root(key).resolve()
             ):
-                raise HTTPException(status_code=404, detail="File not found")
+                raise HTTPException(status_code=404, detail="File not found", headers=_NO_STORE)
         except (InvalidSlotName, OSError) as err:
-            raise HTTPException(status_code=404, detail="File not found") from err
+            raise HTTPException(status_code=404, detail="File not found", headers=_NO_STORE) from err
 
     if not base.is_dir():
-        raise HTTPException(status_code=404, detail=f"dataDir does not exist: {data_dir}")
+        raise HTTPException(status_code=404, detail=f"dataDir does not exist: {data_dir}", headers=_NO_STORE)
 
     full_path = _resolve_within(base, file_path)
     if not full_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail="File not found", headers=_NO_STORE)
 
     return FileResponse(path=full_path, media_type=_mime_type(full_path), headers=_REVALIDATE)
 
