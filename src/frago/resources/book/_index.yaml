@@ -128,7 +128,7 @@
 
 - name: recipe-expose
   category: available
-  brief: "frago recipe expose 把 recipe 页面开给外面只读看（注意与 recipe publish 发布页面状态不是一回事）；两种模式 public 人人同一份 / identity 登录后各看各的；四区分流 本机/公开/身份/私有，/api 永不外露；frago user 管账号与登录会话"
+  brief: "frago recipe expose 把 recipe 页面开给外面只读看（注意与 recipe publish 发布页面状态不是一回事）；两种模式 public 人人同一份 / identity 登录后各看各的；四区分流 本机/公开/身份/私有，/api 永不外露；每次 expose 整条重写、撤白名单要 --force；未登录开 identity 页面会 302 去 FRAGO_LOGIN_PORTAL 门口；frago user 管账号与登录会话"
 
 - name: remote-frago
   category: available

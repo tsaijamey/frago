@@ -38,7 +38,7 @@ Every request the server receives is sorted into one of four zones by
 |---|---|---|
 | **trusted local** | a process on this machine — the CLI, the desktop client, a recipe calling back in — and, by default, other devices on the private network | nothing; behaviour is unchanged from a personal install |
 | **public** | `GET /app/<recipe>/…` for a recipe published in `public` mode | nothing, but it is read-only and the page's config is filtered |
-| **identity** | the same pages for a recipe published in `identity` mode, plus the four `/api/auth/…` endpoints | a login cookie; still read-only, still filtered, and the visitor reads *their own* slot |
+| **identity** | the same pages for a recipe published in `identity` mode, plus five `/api/auth/…` endpoints (login, logout, password, me, pages) | a login cookie; still read-only, still filtered, and the visitor reads *their own* slot |
 | **private** | everything else: all of `/api`, `/ws`, `/viewer`, `/browser`, the SPA | `Authorization: Bearer <token>` |
 
 A signed-in visitor is **not** a reduced-privilege owner. They reach published
@@ -136,6 +136,32 @@ frago recipe expose kline_trainer --require-identity
 Anonymous requests to that page now get a 401. Someone who signs in gets the
 same page, filtered exactly as hard as the public one, reading the slot named
 after their own account.
+
+### The front door
+
+That 401 is written for a machine — it names a token the visitor neither has
+nor should have. So a person arriving in a browser is moved to the sign-in page
+instead: `302` to `/app/<portal>/?next=<recipe>`, and the portal hands them back
+to the page they wanted once they are in.
+
+Which page is the door is named, never inferred — `FRAGO_LOGIN_PORTAL`,
+defaulting to `frago_login_portal`. Set it to the empty string to switch the
+redirect off and restore the plain 401.
+
+```bash
+export FRAGO_LOGIN_PORTAL=frago_login_portal   # the default; name your own if it differs
+```
+
+The portal is a recipe you write, not something frago ships, and it has to be
+exposed in `public` mode itself — a door nobody can open is not a destination,
+just a second 401. Four conditions gate the redirect, and each closes a way it
+could mislead: only a top-level HTML navigation (`Accept: text/html`, GET or
+HEAD), so a page's own `fetch` still gets JSON rather than a login form; only
+identity-mode published pages, so a refusal for some other reason is not
+dressed up as "you should sign in"; never the portal itself and never a portal
+that is not anonymously readable, both of which would loop; and the target is
+always a path on this site. The response carries `no-store`, because what this
+address answers depends on who is asking.
 
 There is no registration step: the first time an address is used, that account
 is created with whatever password came with it. Deliberately, and with two
@@ -240,9 +266,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Only needed for identity-mode pages. The gate whitelists four exact paths
-    # under this prefix (login, logout, password, me) and 401s anything else, so
-    # forwarding the prefix adds no reachable endpoint.
+    # Only needed for identity-mode pages. The gate whitelists five exact paths
+    # under this prefix (login, logout, password, me, pages) and 401s anything
+    # else, so forwarding the prefix adds no reachable endpoint.
     location /api/auth/ {
         limit_req zone=frago_login burst=5 nodelay;
         proxy_pass http://127.0.0.1:8093;
@@ -389,6 +415,23 @@ The list holds account ids. An email is accepted only as a lookup convenience
 and only if somebody has already signed in with it: nothing here verifies an
 address, so writing an unclaimed one would not authorise a colleague, it would
 hang a first-come ticket on the public internet.
+
+Every run of `expose` states the page's exposure in full, so a flag left off is
+a flag turned off. That is right for every flag but this one: adding
+`--runnable` to a page that has an allow list, without repeating `--allow`,
+would reopen it to everyone who can sign in — and the command that does it
+looks exactly like the command that only meant to change something else. That
+one widening is refused, with the accounts it would drop named in the error.
+Say `--force` if opening the page up is what you meant. It is deliberately not
+folded into `--yes`: `--yes` is the automation path documented on this page, so
+a script that habitually carries it would sail straight through. Narrowing a
+list, naming the same people again, a first publish, and public-mode pages are
+all untouched.
+
+```bash
+frago recipe expose venture_ledger --allow <id-a> --allow <id-b> --runnable --yes   # keep the list
+frago recipe expose venture_ledger --require-identity --force --yes                 # drop it, on purpose
+```
 
 `--runnable` goes further and lets those visitors trigger a run. Three things to
 weigh before using it:

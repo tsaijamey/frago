@@ -27,6 +27,7 @@
     frago recipe expose <name> --require-identity   # identity：要登录，每个人看自己那一份
     frago recipe expose <name> --allow <账号id|邮箱> # 只开给点名的人，可重复；蕴含 identity
     frago recipe expose <name> --runnable           # 那些人还能点运行；蕴含 identity
+    frago recipe expose <name> --force              # 唯一用途：明说要撤掉已有白名单
     frago recipe expose <name> --yes --format json
     frago recipe unexpose <name>
     frago recipe exposed                            # 当前对外可见的清单，带模式、名单人数、能否运行
@@ -38,6 +39,13 @@
 落在 `~/.frago/users/<账号id>/state/<recipe>.json`，与配方自己的 `app-state/` 物理分开。
 读哪一份由服务端从会话算出来，URL 里写什么都不作数。适合按人分数据的页面（练习器、各填各的表单）。
 访客还没被写过数据时读到空 state，页面要能渲染空数据而不是 500。
+
+**每跑一次 `expose`，都是把这张页面的开放方式整条重写一遍**——少写一个开关等于关掉它。
+这对多数开关无所谓，对 `--allow` 不是：一张只给三个人看的页面，你想加个运行权限、
+敲 `expose x --require-identity --runnable`，白名单当场消失，从此谁注册都能看。
+所以「本来有名单、这次没带 `--allow`」会被直接**拒绝**并列出会被撤掉的账号；
+真要放开得写 `--force`。`--force` **NEVER 折进 `--yes`**：`--yes` 是文档里的自动化路径，
+脚本习惯带着它，折进去等于洞没堵。首次发布、再次点名、缩小名单、public 模式页面都不触发。
 
 **`--allow` 只收账号 id。** 写邮箱只是查表便利，且**必须是已经登录过的邮箱**，查不到直接报错。
 原因是邮箱没有验证环节：预授权一个还没人认领的地址，等于挂一张先到先得的门票，
@@ -61,6 +69,31 @@
 **不回配方的返回值**。结果自己去 `data/` 里读，运行状态读平台维护的 `data/run.json`
 （`running` / `done` / `failed`，这个文件名保留，配方 NEVER 自己写）。
 同一个人同一个页面同时只能跑一个，第二个得 409。
+
+## 登录门口
+
+访客直接打开一张 identity 页面而没有会话，收到的曾是写给机器看的拒绝
+（`{"error":"unauthorized",...,"hint":"send Authorization: Bearer <token>"}`）——
+它提的 token 访客既没有也不该有。现在服务器把他送去登录页：`302 → /app/<门口>/?next=<配方名>`。
+
+门口是**具名**的，不靠猜：`FRAGO_LOGIN_PORTAL`，默认 `frago_login_portal`；
+设成空字符串关掉跳转、恢复原来的 401。具名的原因是第二张公开页面一开，
+「猜哪张是门口」就会悄悄换一扇门。
+
+跳转只发生在人真会因此得救的那一种情形，四个条件缺一不可：
+
+- **浏览器的 HTML 导航**（`Accept` 里有 `text/html`）且 **GET/HEAD**。页面自己的 `fetch` 要的是 JSON，
+  把它跳到登录页会变成一句莫名其妙的解析错误，那条路照旧 401。
+- **目标是 identity 模式的已发布页面**。public 页面或根本不是页面的路径，登录了也没用，
+  跳过去等于骗人。
+- **门口自己不跳自己**，且**门口必须是 public 模式的已发布页面**——门口没开或没发布就不当目的地，
+  否则只是多绕一步的 401。
+- 目的地永远是本站路径，配方名早已过校验，构不成开放重定向。响应带 `no-store`：
+  这个地址答什么取决于来的人有没有会话，缓存下来会让人登录之后还被弹回登录页。
+
+**门口页面不随 frago 发布**，它是一张自己写的配方（本机与服务器上都是 User 配方 `frago_login_portal`）。
+它认 `?next=<配方>`，登录成功即把人送回原本要去的那张页面。要用这套跳转，
+门口配方得先自己 `frago recipe expose <门口>`（public 模式）。
 
 登录后想知道自己能进哪些页面：`GET /api/auth/pages`，只回自己进得去的那些，
 带标题和能不能运行，**不回名单本身**。门口页面靠它按人渲染目录。
@@ -106,6 +139,9 @@
 第三条是兜底：靠「有没有反代转发头」判断请求是不是本机来的，本质是在猜别人家反代的行为，
 猜错就是敞开。置位后公开区照常，其余一律要 token，转发头设不设都不影响。
 
+identity 模式还有一个门口开关：`FRAGO_LOGIN_PORTAL=<门口配方名>`（默认 `frago_login_portal`，
+空字符串=关掉跳转）。
+
 identity 模式再多两个（防灌账号）：`FRAGO_TRUSTED_PROXIES=127.0.0.1` 让按 IP 限速这层成立，
 `FRAGO_SIGNUP_GATE=<共享口令>` 建号要口令。前者不配时后者自动变成不可关——缺的那层要被顶上。
 口令只走请求体，NEVER 拼进 URL（会进 access log、浏览器历史和 Referer）。
@@ -124,6 +160,9 @@ identity 模式再多两个（防灌账号）：`FRAGO_TRUSTED_PROXIES=127.0.0.1
 - 不要指望 `--runnable` 是沙箱。它不是——配方以主人的身份、主人的权限跑，隔离只保证产出落点不串人。判据是「这份源码我信不信得过」。
 - 不要以为发布一个 slot 等于发布全部 slot。`--slot` 之外的 slot 仍然是私有的。
 - 不要把敏感数据放进已发布 slot 的 `dataDir`。那个目录整体可读。
+- 不要以为「只改一个开关」就能只带那个开关。`expose` 每次整条重写，改 `--runnable` 也得把 `--allow` 原样再写一遍。
+- 不要拿 `--force` 当消警告的开关。它只有一个用途：明说「这页从此对所有登录用户开放」。
+- 不要把门口配方发成 identity 模式。门口必须 public，否则跳转不生效，访客拿到的还是 401。
 
 ## 相关
 
