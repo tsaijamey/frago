@@ -507,6 +507,9 @@ export const checkGhCli = withMode(
       authenticated: status.authenticated,
       version: status.version ?? undefined,
       username: status.username ?? undefined,
+      // Only sent while nobody is logged in, and it is the whole reason the
+      // anonymous-quota warning can name a number instead of hand-waving.
+      rate_limit: status.rate_limit ?? undefined,
     };
   },
   (): Promise<GhCliStatus> => pywebviewApi.checkGhCli(),
