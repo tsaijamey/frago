@@ -157,6 +157,49 @@ export interface GhCliStatus {
   rate_limit?: GhRateLimit | null;
 }
 
+/** How this machine would install gh, decided before anything runs. */
+export interface GhInstallPlan {
+  /** "brew" | "winget" | "binary" — the last means frago downloads the release itself. */
+  method: string;
+  /** The equivalent command, for users who would rather run it themselves. Empty for "binary". */
+  command: string;
+  /** True when the result lands outside the shell PATH and the user needs a hint to fix that. */
+  needs_path_hint: boolean;
+  manual_url: string;
+}
+
+export interface GhInstallStartResult {
+  status: string;
+  already_running: boolean;
+  method?: string | null;
+}
+
+export interface GhInstallStatus {
+  status: 'idle' | 'running' | 'success' | 'error';
+  method?: string | null;
+  message: string;
+  error?: string | null;
+  log: string[];
+  /** Shell line that puts frago's own gh install on the user's PATH. */
+  path_hint?: string | null;
+}
+
+/** The one-time code GitHub wants typed into github.com/login/device. */
+export interface GhDeviceLogin {
+  status: string;
+  code?: string | null;
+  url?: string | null;
+  error?: string | null;
+}
+
+export interface GhDeviceLoginStatus {
+  status: string;
+  completed: boolean;
+  authenticated: boolean;
+  username?: string | null;
+  error?: string | null;
+}
+
 export interface APIEndpointConfig {
   type: string;
   url?: string | null;

@@ -515,6 +515,58 @@ export const checkGhCli = withMode(
   (): Promise<GhCliStatus> => pywebviewApi.checkGhCli(),
 );
 
+// ---- Installing and logging in to gh, driven from the web UI ----
+// These exist only against the HTTP server: the desktop shell has its own
+// terminal-based path and never reaches them.
+
+export type {
+  GhInstallPlan,
+  GhInstallStartResult,
+  GhInstallStatus,
+  GhDeviceLogin,
+  GhDeviceLoginStatus,
+} from './client';
+
+export const getGhInstallPlan = withMode(
+  (): Promise<httpApi.GhInstallPlan> => httpApi.getGhInstallPlan(),
+  (): Promise<httpApi.GhInstallPlan> =>
+    Promise.resolve({
+      method: 'binary',
+      command: '',
+      needs_path_hint: true,
+      manual_url: 'https://cli.github.com/',
+    }),
+);
+
+export const startGhInstall = withMode(
+  (): Promise<httpApi.GhInstallStartResult> => httpApi.startGhInstall(),
+  (): Promise<httpApi.GhInstallStartResult> =>
+    Promise.resolve({ status: 'error', already_running: false, method: null }),
+);
+
+export const getGhInstallStatus = withMode(
+  (): Promise<httpApi.GhInstallStatus> => httpApi.getGhInstallStatus(),
+  (): Promise<httpApi.GhInstallStatus> =>
+    Promise.resolve({ status: 'idle', message: '', log: [] }),
+);
+
+export const startGhDeviceLogin = withMode(
+  (): Promise<httpApi.GhDeviceLogin> => httpApi.startGhDeviceLogin(),
+  (): Promise<httpApi.GhDeviceLogin> =>
+    Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
+);
+
+export const getGhDeviceLoginStatus = withMode(
+  (): Promise<httpApi.GhDeviceLoginStatus> => httpApi.getGhDeviceLoginStatus(),
+  (): Promise<httpApi.GhDeviceLoginStatus> =>
+    Promise.resolve({ status: 'ok', completed: true, authenticated: false }),
+);
+
+export const cancelGhDeviceLogin = withMode(
+  (): Promise<ApiResponse> => httpApi.cancelGhDeviceLogin(),
+  (): Promise<ApiResponse> => Promise.resolve({ status: 'ok' }),
+);
+
 export const ghAuthLogin = withMode(
   async (): Promise<ApiResponse> => {
     // HTTP API

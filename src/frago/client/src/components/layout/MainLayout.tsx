@@ -10,6 +10,7 @@ import TopBar from './TopBar';
 import Sidebar from './Sidebar';
 import MobileTabBar from './MobileTabBar';
 import VersionBanner from './VersionBanner';
+import GitHubGuardBanner from '@/components/github/GitHubGuardBanner';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -20,6 +21,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
     <div className="main-layout-wrapper">
       {/* Version Update Banner */}
       <VersionBanner />
+
+      {/* GitHub CLI missing or logged out — no backup is running. Not dismissible. */}
+      <GitHubGuardBanner />
 
       {/* Top status bar */}
       <TopBar />

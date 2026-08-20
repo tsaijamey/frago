@@ -27,6 +27,11 @@ import type {
   AgentAttachedInfo,
   SkillItem,
   GhCliStatus,
+  GhInstallPlan,
+  GhInstallStartResult,
+  GhInstallStatus,
+  GhDeviceLogin,
+  GhDeviceLoginStatus,
   APIEndpointConfig,
   MainConfig,
   ApiResponse,
@@ -108,6 +113,11 @@ export type {
   AgentAttachedInfo,
   SkillItem,
   GhCliStatus,
+  GhInstallPlan,
+  GhInstallStartResult,
+  GhInstallStatus,
+  GhDeviceLogin,
+  GhDeviceLoginStatus,
   APIEndpointConfig,
   MainConfig,
   ApiResponse,
@@ -379,6 +389,30 @@ export async function checkGhCli(): Promise<GhCliStatus> {
 
 export async function ghAuthLogin(): Promise<ApiResponse> {
   return fetchApi<ApiResponse>('/settings/gh-cli/login', { method: 'POST' });
+}
+
+export async function getGhInstallPlan(): Promise<GhInstallPlan> {
+  return fetchApi<GhInstallPlan>('/settings/gh-cli/install-plan');
+}
+
+export async function startGhInstall(): Promise<GhInstallStartResult> {
+  return fetchApi<GhInstallStartResult>('/settings/gh-cli/install', { method: 'POST' });
+}
+
+export async function getGhInstallStatus(): Promise<GhInstallStatus> {
+  return fetchApi<GhInstallStatus>('/settings/gh-cli/install/status');
+}
+
+export async function startGhDeviceLogin(): Promise<GhDeviceLogin> {
+  return fetchApi<GhDeviceLogin>('/settings/gh-cli/login/web', { method: 'POST' });
+}
+
+export async function getGhDeviceLoginStatus(): Promise<GhDeviceLoginStatus> {
+  return fetchApi<GhDeviceLoginStatus>('/settings/gh-cli/login/web/status');
+}
+
+export async function cancelGhDeviceLogin(): Promise<ApiResponse> {
+  return fetchApi<ApiResponse>('/settings/gh-cli/login/web/cancel', { method: 'POST' });
 }
 
 export async function getMainConfig(): Promise<MainConfig> {
