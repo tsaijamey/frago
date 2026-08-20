@@ -27,7 +27,7 @@ frago desktop browser open https://...     # 然后才是干活
 | 生命周期 | `status` / `up` / `down` |
 | 浏览器窗口 | `browser open <url>` / `browser click --text\|--selector` / `browser scroll --to\|--pixels` / `browser read` |
 | 标签页 | `tab open <url>` / `tab switch <n>` / `tab close <n>` |
-| 终端窗口 | `term run "<命令>"` / `term read` |
+| 终端窗口 | `term run "<命令>"` / `term read` / `term scroll --lines <n>\|--to "<文字>"\|--to-end` |
 | 图片浏览器 | `image open <本地图片路径>` |
 | 鼠标 | `mouse to --ref <ref>` / `mouse drift` / `mouse click` |
 | 开关程序 | `window open\|close --target term\|browser\|image` |
@@ -62,6 +62,10 @@ frago desktop browser open https://...     # 然后才是干活
 **关掉不动载体。** tmux 会话照常在跑、演员标签照常在收画面、已经装进图片浏览器的那张图留着，所以 `window open` 叫回来的是原样，不是一个新开的空程序。看到窗口没了别去查会话被谁杀了——回执里的 `carrier_kept` 就是说这件事。
 
 **指向某个程序的动作会把它重新打开。** 终端关着时 `term run` 的正确结果是终端回来并执行，不是报一句"你得先打开它"；发生了就在回执的 `effect.launched` 里写着。要拍空桌面，别发这类指令就是了——三个程序全关掉是合法状态，那时 `focus` 是 `null`，键盘输入没有接收方，`type` / `key` 会明确报错。
+
+**终端窗口画的是一整块可回看的缓冲区，不是最后一屏。** 命令输出再长也全在里面（历史 + 当前屏），`term read --lines 200` 够得着已经滚出画面的部分，`term run` 的回执按整个缓冲区算新增行。想让**画面**回到前面那段，只有 `term scroll` 这一条路——桌面页对键鼠完全免疫，人手滚不动它，也别去 tmux 那边翻页，回看的视口在页面这一侧，两套滚动会打架。
+
+视口默认贴着底，新输出跟着走；一旦 `term scroll` 回看过，它就停在那儿不再跟——这时 `term run` 的回执会带 `view_detached`，意思是命令照跑、缓冲区照长，但画面停在历史里，录下来那一段是白录的，补救就一句 `term scroll --to-end`。取景同理：`term:rows` / `term:match` 的行号一律以**画面上看得见的那一段**为准，文字在缓冲区里却不在画面上时会明确报错并告诉你该滚哪条。
 
 **演员是一台无头浏览器，不是你屏幕上的窗口。** 右边那扇虚拟浏览器窗口里的画面，来自一台独立无头 **Edge**（CDP 端口 **9222**）的一个标签。它有过一段时间是驱动人日常浏览器里的一个真实标签，问题是那条路只给**前台**标签产帧——标签一被切走画面就停，于是它必须一直占着人的屏幕，而这块舞台本来就是为了不占屏幕才存在的。
 
