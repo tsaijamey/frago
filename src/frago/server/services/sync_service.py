@@ -35,6 +35,11 @@ class SyncService:
         # Same role as the mtime cache, keyed on the session database's own clock.
         self._opencode_updated: dict[str, int] = {}
 
+        # codex counterpart: session_id -> last-seen rollout mtime (float).
+        # codex records live in append-only files, so mtime is the right clock
+        # here, exactly as it is for Claude Code.
+        self._codex_mtimes: dict[str, float] = {}
+
     @classmethod
     def get_instance(cls) -> "SyncService":
         """Get singleton instance.
@@ -110,7 +115,7 @@ class SyncService:
     def _do_sync(self) -> dict[str, Any]:
         """Perform synchronization (runs in thread pool).
 
-        Covers both cores; one failing NEVER stops the other.
+        Covers every core; one failing NEVER stops the others.
 
         Returns:
             Sync result dictionary
@@ -122,6 +127,7 @@ class SyncService:
         for label, run in (
             ("claude", lambda: sync_all_projects(mtime_cache=self._session_mtimes)),
             ("opencode", self._sync_opencode),
+            ("codex", self._sync_codex),
         ):
             try:
                 result = run()
@@ -142,6 +148,12 @@ class SyncService:
 
         return sync_opencode_sessions(since_updated_cache=self._opencode_updated)
 
+    def _sync_codex(self) -> Any:
+        """Archive codex sessions from their rollout JSONL files."""
+        from frago.session.codex_sync import sync_codex_sessions
+
+        return sync_codex_sessions(since_mtime_cache=self._codex_mtimes)
+
     def get_last_result(self) -> dict[str, Any] | None:
         """Get the last sync result.
 
@@ -157,6 +169,7 @@ class SyncService:
         Returns:
             Sync result dictionary
         """
+        from frago.session.codex_sync import sync_codex_sessions
         from frago.session.opencode_sync import sync_opencode_sessions
         from frago.session.sync import sync_all_projects
 
@@ -169,8 +182,12 @@ class SyncService:
         }
         succeeded = False
 
-        # Both cores run; one failing NEVER stops the other.
-        for label, run in (("claude", sync_all_projects), ("opencode", sync_opencode_sessions)):
+        # Every core runs; one failing NEVER stops the others.
+        for label, run in (
+            ("claude", sync_all_projects),
+            ("opencode", sync_opencode_sessions),
+            ("codex", sync_codex_sessions),
+        ):
             try:
                 result = run()
             except Exception as e:
