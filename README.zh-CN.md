@@ -221,6 +221,7 @@ frago 不生产回执，**也不挑边**。它做的是把**每一家**的记录
 - [关键概念](docs/concepts.zh-CN.md) — Recipe、Run、Session 与提示注入如何协作
 - [Recipe 系统](docs/recipes.zh-CN.md) — 配方命令面，端到端
 - [示例参考](docs/examples.zh-CN.md) — 实际的 Run + Recipe + 浏览器工作流
+- [内核对比](docs/agent-cores.zh-CN.md) — Claude Code / codex / opencode 的等价能力、差异能力与用法差异
 - [浏览器支持](docs/browser-support.zh-CN.md) — 后端、端口、标签组、桌面舞台
 - [开发者文档](docs/developer.zh-CN.md) — CLI、架构、开发环境
 

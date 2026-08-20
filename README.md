@@ -226,6 +226,7 @@ Install, open, configure one model profile, and go. The desktop app checks and i
 - [Concepts](docs/concepts.md) — how Recipes, Runs, Sessions and prompting work together
 - [Recipe System](docs/recipes.md) — the recipe command surface, end to end
 - [Examples](docs/examples.md) — practical Run + Recipe + browser workflows
+- [Agent Cores](docs/agent-cores.md) — Claude Code / codex / opencode compared: equivalent, unique, and how usage differs
 - [Browser Support](docs/browser-support.md) — backends, ports, tab groups, the desktop stage
 - [Developer Docs](docs/developer.md) — CLI, architecture, development setup
 
