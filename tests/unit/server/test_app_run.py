@@ -23,13 +23,18 @@ PASSWORD = "correct-horse-battery"
 VISITOR = ("93.184.216.34", 41234)
 
 
+DECLARED = {
+    "note": {"type": "string", "required": False, "max_length": 20},
+    "amount": {"type": "number", "required": False, "min": 0, "max": 100},
+}
+
+
 class _Meta:
-    name = PAGE
     ui_from = None
-    inputs = {
-        "note": {"type": "string", "required": False, "max_length": 20},
-        "amount": {"type": "number", "required": False, "min": 0, "max": 100},
-    }
+
+    def __init__(self, inputs):
+        self.name = PAGE
+        self.inputs = inputs
 
 
 @pytest.fixture
@@ -53,18 +58,40 @@ def world(tmp_path, monkeypatch):
     assets.mkdir(parents=True)
     (assets / "index.html").write_text("<h1>ledger</h1>", encoding="utf-8")
 
+    # What the recipe declares on disk, and the singleton registry that only
+    # learns about it when something scans. The real one behaves exactly this
+    # way — scanned once per process, refreshed only where a caller asks
+    # whether it is still current — and the difference matters here because a
+    # visitor's parameters are checked strictly against whichever it is.
+    disk = {"inputs": dict(DECLARED)}
+    singleton = []
+
     class _Recipe:
         base_dir = tmp_path / "recipes" / PAGE
         script_path = tmp_path / "recipes" / PAGE / "recipe.py"
-        metadata = _Meta()
+
+        def __init__(self, inputs):
+            self.metadata = _Meta(inputs)
 
     class _Registry:
+        def __init__(self):
+            self.scanned = dict(disk["inputs"])
+
+        def needs_rescan(self):
+            return self.scanned != disk["inputs"]
+
         def find(self, name, source=None):
             if name != PAGE:
                 raise RecipeNotFoundError(name, [])
-            return _Recipe()
+            return _Recipe(self.scanned)
 
-    monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
+    def _get_registry():
+        if not singleton:
+            singleton.append(_Registry())
+        return singleton[0]
+
+    monkeypatch.setattr("frago.recipes.registry.get_registry", _get_registry)
+    monkeypatch.setattr("frago.recipes.registry.invalidate_registry", singleton.clear)
 
     people = {}
     for who, email in (("zhang", "zhang@example.com"), ("li", "li@example.com")):
@@ -73,7 +100,7 @@ def world(tmp_path, monkeypatch):
 
     pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[people["zhang"]["id"]], runnable=True)
 
-    yield {"people": people, "root": tmp_path}
+    yield {"people": people, "root": tmp_path, "disk": disk, "registry": _get_registry}
     ident.reset_rate_limits()
     app_run._running.clear()
 
@@ -165,6 +192,44 @@ class TestTheParametersAreNotTakenOnTrust:
         )
         assert r.status_code == 400
         assert ran == {}
+
+
+class TestAParameterAddedAfterTheServerStarted:
+    """A recipe edited while the server runs, and the page shipped with it.
+
+    Strict validation reads the registry's snapshot, and the registry is
+    scanned once per process. Left alone, the owner never sees this — loose
+    validation lets an undeclared key through — while every visitor is told
+    their new parameter "is not declared by this recipe" although the recipe
+    on disk declares it, until some unrelated route happens to rescan.
+    """
+
+    def test_it_is_accepted(self, world, ran):
+        world["disk"]["inputs"]["force"] = {"type": "boolean", "required": False}
+        r = _post(world["people"]["zhang"]["cookie"], {"note": "rent", "force": True})
+        assert r.status_code == 202
+        assert ran["params"] == {"note": "rent", "force": True}
+
+    def test_a_parameter_removed_after_the_scan_is_refused(self, world, ran):
+        """The same freshness in the other direction: what the recipe no longer
+        declares must stop being accepted, not linger until a restart."""
+        world["disk"]["inputs"].pop("note")
+        assert _post(world["people"]["zhang"]["cookie"], {"note": "rent"}).status_code == 400
+        assert ran == {}
+
+    def test_an_unchanged_recipe_is_not_rescanned(self, world, ran):
+        before = world["registry"]()
+        assert _post(world["people"]["zhang"]["cookie"], {"note": "rent"}).status_code == 202
+        assert world["registry"]() is before
+
+    def test_a_freshness_check_that_fails_does_not_fail_the_run(self, world, ran):
+        """The snapshot in hand is still a usable answer; refusing over a failed
+        stat would turn a transient filesystem error into a broken page."""
+        def _boom():
+            raise OSError("no")
+
+        world["registry"]().needs_rescan = _boom
+        assert _post(world["people"]["zhang"]["cookie"], {"note": "rent"}).status_code == 202
 
 
 class TestTheRunIsForThatPersonOnly:

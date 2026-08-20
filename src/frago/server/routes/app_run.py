@@ -123,7 +123,7 @@ async def run_for_visitor(name: str, request: Request):
     from frago.recipes.exceptions import RecipeNotFoundError, RecipeValidationError
     from frago.recipes.metadata import validate_params
     from frago.recipes.publish import allows, published_entry
-    from frago.recipes.registry import get_registry
+    from frago.recipes.registry import get_registry, invalidate_registry
     from frago.server.security import slot_for, zone_of
 
     if zone_of(request) != "identity":
@@ -140,8 +140,27 @@ async def run_for_visitor(name: str, request: Request):
         # which pages exist and who is on their lists.
         raise HTTPException(status_code=404, detail="not available")
 
+    # The registry is a process-wide singleton scanned once at startup, so a
+    # recipe edited after the server came up is still described here by the
+    # metadata it had then. Everywhere else that costs nothing: the owner's
+    # validation is loose, so an input declared after the scan passes anyway.
+    # Here it is the whole difference between working and refused — strict
+    # validation rejects exactly the keys the stale snapshot has not heard of,
+    # and the page sending them is the one shipped alongside the edit. The
+    # symptom is a visitor told a parameter "is not declared by this recipe"
+    # while the recipe on disk plainly declares it, and it lasts until some
+    # other route happens to rescan.
+    registry = get_registry()
     try:
-        recipe = get_registry().find(name)
+        if registry.needs_rescan():
+            invalidate_registry()
+            registry = get_registry()
+    except OSError:
+        # Only the freshness check failed; the snapshot in hand is still a
+        # usable answer, and refusing the run over it would be worse.
+        logger.warning("could not check the recipe registry for changes", exc_info=True)
+    try:
+        recipe = registry.find(name)
     except RecipeNotFoundError:
         raise HTTPException(status_code=404, detail="not available") from None
 
