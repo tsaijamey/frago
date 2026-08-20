@@ -7,7 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
+from frago.server.services import subprocess_utils
 from frago.server.services.subprocess_utils import (
+    find_gh_binary,
     get_claude_command,
     get_gh_command,
     get_utf8_env,
@@ -62,6 +64,46 @@ class TestGetGhCommand:
         ):
             result = get_gh_command()
         assert result == ["gh"]
+
+
+class TestFindGhBinary:
+    """gh can live on PATH or in the copy frago installed for the user."""
+
+    def test_prefers_whatever_is_on_path(self):
+        with patch("shutil.which", return_value="/usr/local/bin/gh"):
+            assert find_gh_binary() == "/usr/local/bin/gh"
+
+    def test_falls_back_to_the_copy_frago_installed(self, tmp_path):
+        """Nothing puts ~/.frago/tools/gh/bin on PATH, so it is checked by hand."""
+        managed = tmp_path / "gh"
+        managed.touch()
+
+        with (
+            patch("shutil.which", return_value=None),
+            patch("platform.system", return_value="Darwin"),
+            patch.object(subprocess_utils, "GH_MANAGED_BIN_DIR", tmp_path),
+        ):
+            assert find_gh_binary() == str(managed)
+
+    def test_returns_none_when_gh_is_genuinely_absent(self, tmp_path):
+        with (
+            patch("shutil.which", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch.object(subprocess_utils, "GH_MANAGED_BIN_DIR", tmp_path),
+        ):
+            assert find_gh_binary() is None
+
+    def test_get_gh_command_names_the_managed_copy_in_full(self, tmp_path):
+        """A bare "gh" would not resolve — nothing on PATH points at it."""
+        managed = tmp_path / "gh"
+        managed.touch()
+
+        with (
+            patch("shutil.which", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch.object(subprocess_utils, "GH_MANAGED_BIN_DIR", tmp_path),
+        ):
+            assert get_gh_command() == [str(managed)]
 
 
 class TestGetUtf8Env:

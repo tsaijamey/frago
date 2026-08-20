@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from frago.server.state import StateManager
+from frago.server.services.gh_install_service import GhInstallService, detect_install_plan
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
 from frago.server.services.recipe_secrets_service import RecipeSecretsService
@@ -44,6 +45,50 @@ class GhCliStatusResponse(BaseModel):
     # Filled in only when nobody is logged in — that is when the number
     # matters, and it is the one case where 60 requests an hour runs out.
     rate_limit: GhRateLimitResponse | None = None
+
+
+class GhInstallPlanResponse(BaseModel):
+    """How this machine would install gh, decided before anything runs."""
+    method: str  # brew | winget | binary
+    command: str
+    needs_path_hint: bool
+    manual_url: str
+
+
+class GhInstallStartResponse(BaseModel):
+    """Acknowledgement that a background install is under way."""
+    status: str
+    already_running: bool
+    method: Optional[str] = None
+
+
+class GhInstallStatusResponse(BaseModel):
+    """Progress of the running (or last) gh install."""
+    status: str  # idle | running | success | error
+    method: Optional[str] = None
+    message: str = ""
+    error: Optional[str] = None
+    log: List[str] = []
+    # Set only for the archive install, whose target sits outside the shell
+    # PATH; it is the line the user adds so their own terminal finds gh too.
+    path_hint: Optional[str] = None
+
+
+class GhDeviceLoginResponse(BaseModel):
+    """The one-time code GitHub wants typed into github.com/login/device."""
+    status: str
+    code: Optional[str] = None
+    url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class GhDeviceLoginStatusResponse(BaseModel):
+    """Whether the device login finished, and who it logged in as."""
+    status: str
+    completed: bool
+    authenticated: bool
+    username: Optional[str] = None
+    error: Optional[str] = None
 
 
 class APIEndpointResponse(BaseModel):
@@ -185,6 +230,90 @@ async def gh_auth_login() -> ApiResponse:
     if result.get("status") == "ok":
         return ApiResponse(status="ok", message=result.get("message", "Authentication initiated"))
     return ApiResponse(status="error", error=result.get("error", "Authentication failed"))
+
+
+@router.get("/settings/gh-cli/install-plan", response_model=GhInstallPlanResponse)
+async def gh_install_plan() -> GhInstallPlanResponse:
+    """Report how this machine would install gh, without installing anything.
+
+    The web UI shows the user what is about to happen — which package manager,
+    or that frago will download the official release itself — before they
+    commit to it.
+    """
+    import asyncio
+
+    plan = await asyncio.get_running_loop().run_in_executor(None, detect_install_plan)
+    return GhInstallPlanResponse(**plan)
+
+
+@router.post("/settings/gh-cli/install", response_model=GhInstallStartResponse)
+async def gh_install_start() -> GhInstallStartResponse:
+    """Start installing gh in the background.
+
+    Installs run for minutes; holding the request open that long would time
+    out in every browser. The caller polls /settings/gh-cli/install/status.
+    """
+    result = GhInstallService.start()
+    return GhInstallStartResponse(
+        status=result.get("status", "ok"),
+        already_running=result.get("already_running", False),
+        method=result.get("method"),
+    )
+
+
+@router.get("/settings/gh-cli/install/status", response_model=GhInstallStatusResponse)
+async def gh_install_status() -> GhInstallStatusResponse:
+    """How the running (or last) gh install is going."""
+    return GhInstallStatusResponse(**GhInstallService.get_status())
+
+
+@router.post("/settings/gh-cli/login/web", response_model=GhDeviceLoginResponse)
+async def gh_auth_login_web() -> GhDeviceLoginResponse:
+    """Start GitHub's device-code login and hand the code back to the browser.
+
+    Unlike the terminal flow, nothing about this requires the user to be
+    sitting at the machine running frago — they read an eight-character code
+    off the page and type it into github.com. That matters because the 8093
+    page is routinely open on a different device than the server.
+
+    Reading gh's first lines of output can take a few seconds, so it runs off
+    the event loop.
+    """
+    import asyncio
+
+    result = await asyncio.get_running_loop().run_in_executor(
+        None, GitHubService.auth_login_web
+    )
+    return GhDeviceLoginResponse(
+        status=result.get("status", "error"),
+        code=result.get("code"),
+        url=result.get("url"),
+        error=result.get("error"),
+    )
+
+
+@router.get("/settings/gh-cli/login/web/status", response_model=GhDeviceLoginStatusResponse)
+async def gh_auth_login_web_status() -> GhDeviceLoginStatusResponse:
+    """Has the user finished the device login yet?"""
+    result = GitHubService.check_auth_login_complete()
+    return GhDeviceLoginStatusResponse(
+        status=result.get("status", "ok"),
+        completed=result.get("completed", False),
+        authenticated=result.get("authenticated", False),
+        username=result.get("username"),
+        error=result.get("error"),
+    )
+
+
+@router.post("/settings/gh-cli/login/web/cancel", response_model=ApiResponse)
+async def gh_auth_login_web_cancel() -> ApiResponse:
+    """Abandon a device login the user walked away from.
+
+    Left alone, `gh auth login --web` polls GitHub until the code expires and
+    holds a subprocess the whole time.
+    """
+    GitHubService.cancel_auth_login()
+    return ApiResponse(status="ok", message="Login cancelled")
 
 
 # ============================================================

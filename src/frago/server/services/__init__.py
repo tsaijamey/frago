@@ -7,6 +7,7 @@ gui_deprecated/api.py to support the HTTP-based server architecture.
 from frago.config.config_service import ConfigService
 from frago.server.services.agent_service import AgentService
 from frago.server.services.env_service import EnvService
+from frago.server.services.gh_install_service import GhInstallService
 from frago.server.services.github_service import GitHubService
 from frago.server.services.main_config_service import MainConfigService
 from frago.server.services.recipe_service import RecipeService
@@ -23,6 +24,7 @@ __all__ = [
     "AgentService",
     "ConfigService",
     "EnvService",
+    "GhInstallService",
     "GitHubService",
     "MainConfigService",
     "RecipeService",

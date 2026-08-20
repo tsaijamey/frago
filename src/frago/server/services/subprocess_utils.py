@@ -18,6 +18,27 @@ from frago.compat import get_windows_subprocess_kwargs
 
 logger = logging.getLogger(__name__)
 
+# Where frago unpacks the GitHub CLI when the machine has no package manager to
+# do it. Nothing puts this on the shell PATH, so every lookup of `gh` has to
+# check here as well or a freshly installed binary looks missing.
+GH_MANAGED_BIN_DIR = Path.home() / ".frago" / "tools" / "gh" / "bin"
+
+
+def find_gh_binary() -> str | None:
+    """Locate the gh executable: PATH first, then frago's own install.
+
+    Returns the full path, or None when gh is genuinely absent.
+    """
+    found = shutil.which("gh")
+    if found:
+        return found
+
+    managed = GH_MANAGED_BIN_DIR / ("gh.exe" if platform.system() == "Windows" else "gh")
+    if managed.exists():
+        return str(managed)
+
+    return None
+
 
 def get_agent_command(agent_type: str = "claude") -> list[str]:
     """Get the command to run a cli-agent without console window flash on Windows.
@@ -79,10 +100,13 @@ def get_gh_command() -> list[str]:
     Returns:
         Command list to execute gh CLI
     """
-    if platform.system() != "Windows":
-        return ["gh"]
+    gh_path = find_gh_binary()
 
-    gh_path = shutil.which("gh")
+    if platform.system() != "Windows":
+        # Bare "gh" keeps error messages readable when it is on PATH anyway;
+        # the managed copy has to be named in full or nothing would find it.
+        return [gh_path] if gh_path and gh_path.startswith(str(GH_MANAGED_BIN_DIR)) else ["gh"]
+
     if not gh_path:
         return ["gh"]
 
