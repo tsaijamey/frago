@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from frago.session import adapters, opencode_store, session_index
+from frago.session import adapters, codex_store, opencode_store, session_index
 from frago.session.session_index import SessionStatus, TailSignals, derive_status
 from frago.session.unified_record import RecordFamily, UnifiedRecord
 
@@ -86,23 +86,41 @@ class SessionCard:
 
 
 def detect_family(session_id: str) -> RecordFamily:
-    """按会话编号的形状判出属于哪一家。
+    """判出这个会话编号属于哪一家。
 
-    判据是编号本身的形状，不落盘查一遍。两家的编号空间实测完全不相交：本机
-    1121 个 Claude Code 会话文件，编号全部是 UUID 形状；opencode 库里 33 场会话，
-    编号全部带 ``ses_`` 前缀；两边求交集为 0 条。UUID 的字符集不含下划线，
-    ``ses_`` 前缀的编号也永远凑不出 UUID 的分段形状，所以这不是"目前没撞上"，
-    是两套编号规则天生撞不上。
+    opencode 靠形状就能分出来：它的编号一律带 ``ses_`` 前缀，而 UUID 的字符集不含
+    下划线，两套编号规则天生撞不上。
+
+    **Claude Code 与 codex 分不开。** codex 的会话编号也是 UUID 形状
+    （``01a01a98-82e9-7013-b24e-e5e91b03995a`` 是 UUIDv7），与 Claude Code 的编号空间
+    重叠。所以从第三家起，判定不再是纯形状匹配：形状像 UUID 时先去 codex 的 rollout
+    目录看一眼有没有这场会话，有就是 codex，没有才当 Claude Code。
+
+    次序是"先查 codex、查不到才退回 Claude Code"，不是反过来：Claude Code 是历史默认，
+    把它放在退路上，codex 没装 / 没有这场会话时行为与从前一模一样。这一眼的代价是
+    一次目录 glob，而且 codex 的 ``sessions/`` 不存在时立刻返回，装了 codex 才有开销。
 
     形状都不像时抛 :class:`UnknownSessionFamily`，NEVER 默认当成 Claude Code——
-    默认一家会让 opencode 那侧的编号被拿去翻 JSONL，翻出空的，看起来像会话没记录。
+    默认一家会让别家的编号被拿去翻 JSONL，翻出空的，看起来像会话没记录。
     """
     sid = session_id.strip()
     if sid.startswith(_OPENCODE_SESSION_PREFIX):
         return "opencode"
     if _UUID_SHAPE.match(sid):
+        if _is_codex_session(sid):
+            return "codex"
         return "claude-code"
     raise UnknownSessionFamily(f"会话编号 {session_id!r} 不属于已知的任何一家")
+
+
+def _is_codex_session(session_id: str) -> bool:
+    """codex 那边有没有这场会话。查不动一律当"没有"，NEVER 因此让判定失败。"""
+    try:
+        if not codex_store.sessions_root().is_dir():
+            return False
+        return codex_store.find_rollout(session_id) is not None
+    except Exception:  # noqa: BLE001 — 判家族 NEVER 因为一次读盘失败而炸
+        return False
 
 
 def _ms(seconds: float | None) -> int | None:
@@ -210,6 +228,50 @@ def _opencode_cards() -> list[SessionCard]:
     return cards
 
 
+def _codex_cards() -> list[SessionCard]:
+    """codex 那一侧的会话卡片。
+
+    时刻的来源与另外两家不同：codex 不给会话存"最后更新时刻"这种字段，rollout 文件的
+    修改时刻就是它。起始时刻取 ``session_meta`` 里的那个，取不到时退回修改时刻，
+    NEVER 留 0——那会让这场会话在按时间排的清单里沉到最底下，等于宣布它不存在。
+
+    标题只能取开口第一句：codex 既不让人给会话起名（``codex archive`` 的会话名是另一
+    回事，绝大多数会话没有），也不让模型生成标题。第一句都取不到时用会话编号，NEVER
+    留空串——左栏一行没有字，人点不动它。
+    """
+    metas = codex_store.list_sessions()
+    entries = session_index.codex_tail_signals(metas)
+    now = time.time()
+    cards: list[SessionCard] = []
+    for meta in metas:
+        entry = entries.get(meta.session_id)
+        tail = entry.tail if entry is not None else TailSignals()
+        status = derive_status(tail.last_kind, meta.mtime, now)
+        digest_done, digest_stuck = _digests(status, tail)
+        last_active = int(meta.mtime * 1000)
+        created = (
+            int(meta.started_at.timestamp() * 1000)
+            if meta.started_at is not None
+            else last_active
+        )
+        cards.append(
+            SessionCard(
+                session_id=meta.session_id,
+                family="codex",
+                title=(entry.title if entry is not None else None) or meta.session_id,
+                directory=meta.cwd,
+                created_at=created,
+                last_active_at=last_active,
+                last_reply_at=_ms(tail.last_reply_ts),
+                agent_paths=[],
+                status=status,
+                digest_done=digest_done,
+                digest_stuck=digest_stuck,
+            )
+        )
+    return cards
+
+
 def sort_key(card: SessionCard) -> int:
     """清单按哪个时刻排：**最后一句 agent 回复**，取不到才退回文件最后动过的时刻。
 
@@ -224,12 +286,12 @@ def sort_key(card: SessionCard) -> int:
 
 
 def list_sessions() -> list[SessionCard]:
-    """两家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
+    """三家的会话合并成一份清单，按最后一句回复的时刻倒序（见 :func:`sort_key`）。
 
-    一家读不出来（库不存在、目录不存在）不影响另一家——两家的读取层各自把失败收敛成
+    一家读不出来（库不存在、目录不存在）不影响另外两家——各家的读取层各自把失败收敛成
     空列表，这里不做二次兜底，也 NEVER 因为一家没数据就整份返回空。
     """
-    cards = _claude_cards() + _opencode_cards()
+    cards = _claude_cards() + _opencode_cards() + _codex_cards()
     # 同刻时按会话编号定序，让同一份数据两次调用的结果一致。
     cards.sort(key=lambda card: (sort_key(card), card.session_id), reverse=True)
     return cards

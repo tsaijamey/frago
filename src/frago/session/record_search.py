@@ -42,8 +42,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from frago.session import opencode_store
+from frago.session import codex_store, opencode_store
 from frago.session.adapters.claude_code_records import translate_records
+from frago.session.adapters.codex_records import (
+    translate_session as codex_translate_session,
+)
 from frago.session.adapters.opencode_records import translate_session
 from frago.session.claude_sessions import CLAUDE_PROJECTS_DIR
 from frago.session.unified_record import RecordFamily, UnifiedRecord
@@ -447,6 +450,60 @@ def _opencode_matches(
     return matches, warnings
 
 
+# ── codex 那一侧 ────────────────────────────────────────────────────
+def _codex_matches(
+    terms: list[str], per_session: int, limit: int
+) -> tuple[list[SessionMatch], list[str]]:
+    """codex 那一家的命中。
+
+    记录是 rollout JSONL，与 Claude Code 一样是文件，所以粗筛复用同一趟 ripgrep
+    （``_rg_candidates``，它本来就只看 ``*.jsonl``）——只是圈出文件之后整场翻，不做
+    Claude Code 那种"只翻命中的那几行"的优化：codex 的会话数量与体量都小得多，而
+    整场翻能保住轮次分组，逐行翻会把它丢掉。
+
+    没装 codex（``sessions/`` 不存在）时交白卷且**不报告警**——那不是"这趟没搜成"，
+    是这台机器上根本没有这一家。ripgrep 不在时才报，因为那时确实漏搜了。
+    """
+    root = codex_store.sessions_root()
+    if not root.is_dir():
+        return [], []
+
+    warnings: list[str] = []
+    by_line = _rg_candidates(terms, root)
+    if by_line is None:
+        return [], ["ripgrep（rg）不在 PATH 上，这趟没搜 codex 的会话"]
+
+    paths = sorted(
+        (path for path, lines in by_line.items() if lines), key=_mtime, reverse=True
+    )
+    matches: list[SessionMatch] = []
+    for path in paths:
+        if len(matches) >= limit:
+            warnings.append(f"codex 那侧命中超过 {limit} 场，只报了最近动过的这些")
+            break
+        meta = codex_store._read_meta(path)
+        if meta is None:
+            continue
+        try:
+            records = codex_translate_session(meta.session_id)
+        except Exception:  # noqa: BLE001 - 逐场兜底，一场坏掉不拖垮整趟
+            logger.debug("codex session %s unreadable", meta.session_id, exc_info=True)
+            continue
+        hits = [hit for hit in (_hit_of(r, terms) for r in records) if hit is not None]
+        if not hits:
+            continue
+        hits.sort(key=lambda hit: hit.ts)
+        matches.append(
+            SessionMatch(
+                session_id=meta.session_id,
+                family="codex",
+                hit_count=len(hits),
+                hits=_distinct(hits, per_session),
+            )
+        )
+    return matches, warnings
+
+
 # ── 对外入口 ────────────────────────────────────────────────────────
 def search_sessions(
     query: str,
@@ -455,7 +512,7 @@ def search_sessions(
     per_session: int = 2,
     projects_root: Path | None = None,
 ) -> SearchOutcome:
-    """在两家的会话内容里找 ``query``，只认提示词与 agent 回复正文。
+    """在三家的会话内容里找 ``query``，只认提示词与 agent 回复正文。
 
     ``limit`` 是**最多报几场**，按最近动过的顺序取，取满就停并在告警里说明。
     ``per_session`` 是每场最多附几条摘要。
@@ -489,6 +546,10 @@ def search_sessions(
     opencode, opencode_warnings = _opencode_matches(terms, per_session, limit)
     matches.extend(opencode)
     warnings.extend(opencode_warnings)
+
+    codex, codex_warnings = _codex_matches(terms, per_session, limit)
+    matches.extend(codex)
+    warnings.extend(codex_warnings)
     return SearchOutcome(
         query=query, matches=matches, scanned_files=scanned, warnings=warnings
     )

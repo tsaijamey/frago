@@ -783,10 +783,54 @@ class OpencodeAdapter(TmuxDriverAdapter):
 
 
 class CodexAdapter(TmuxDriverAdapter):
-    """codex adapter (tmux-driven)."""
+    """codex adapter (tmux-driven, with a rollout-JSONL record stream).
+
+    Two shapes reach ``parse_record`` and both must work:
+
+    - a raw record straight off codex's rollout JSONL, which the streaming and
+      archive paths tail line by line. It is recognised by its ``type`` /
+      ``payload`` envelope and normalised through ``codex_store``;
+    - the plain text turn the tmux driver hands over, which is what the base
+      class already understands.
+
+    Recognising the raw shape here rather than making every caller normalise
+    first is what lets ``JsonlTranscriptSource`` be reused verbatim for codex:
+    the source only knows how to tail a JSONL file and call ``parse_record``.
+    """
 
     def __init__(self):
         super().__init__(AgentType.CODEX)
+
+    def parse_record(self, data: dict) -> "ParsedRecord | None":
+        if "payload" in data and "type" in data:
+            return self._parse_rollout_record(data)
+        return self._parse_normalized(data)
+
+    def _parse_rollout_record(self, data: dict) -> "ParsedRecord | None":
+        from frago.session import codex_store
+
+        session_id = str(data.get("session_id") or "")
+        payloads = codex_store.record_payloads(data, session_id, include_user=True)
+        if not payloads:
+            return None
+        # A rollout record never expands to more than one normalized record, so
+        # taking the first is exact rather than lossy.
+        _, payload = payloads[0]
+        return self._parse_normalized(payload)
+
+    def _parse_normalized(self, data: dict) -> "ParsedRecord | None":
+        record = super().parse_record(data)
+        if record is None:
+            return None
+        tool_calls = data.get("tool_calls")
+        tool_results = data.get("tool_results")
+        if isinstance(tool_calls, list):
+            record.tool_calls = tool_calls
+        if isinstance(tool_results, list):
+            record.tool_results = tool_results
+        if tool_calls or tool_results:
+            record.raw_data = {**record.raw_data, "parts": data}
+        return record
 
 
 # Adapter registry

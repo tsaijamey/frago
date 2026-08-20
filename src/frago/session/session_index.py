@@ -53,6 +53,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from frago.session.adapters.claude_code_records import translate_records
+from frago.session.adapters.codex_records import (
+    translate_session as translate_codex_session,
+)
 from frago.session.adapters.opencode_records import translate_session
 from frago.session.claude_sessions import (
     _COMMAND_ECHO,
@@ -64,13 +67,16 @@ from frago.session.unified_record import UnifiedRecord
 
 __all__ = [
     "CACHE_FILE",
+    "CODEX_CACHE_FILE",
     "FRAGO_WAKE_MARKERS",
     "OPENCODE_CACHE_FILE",
     "RUNNING_WINDOW_SECONDS",
+    "CodexIndexEntry",
     "SessionStatus",
     "SessionSummary",
     "TailSignals",
     "clear_cache",
+    "codex_tail_signals",
     "derive_status",
     "list_session_summaries",
     "opencode_tail_signals",
@@ -85,6 +91,11 @@ CACHE_FILE = CACHE_DIR / "claude-session-index.json"
 # opencode 的会话在 SQLite 里，没有"文件大小 + 修改时刻"可用，失效判据换成会话行自带的
 # ``time_updated``。库里 33 场会话，整场翻一遍是毫秒量级，故不做尾部读取那一套。
 OPENCODE_CACHE_FILE = CACHE_DIR / "opencode-session-index.json"
+
+# codex 的会话是一个 append-only 的 rollout 文件，所以失效判据回到"文件大小 + 修改
+# 时刻"这一对——与 Claude Code 同一个道理，只是不做尾部读取：整场翻一遍是毫秒量级，
+# 而且只在真变过的那几场上发生。
+CODEX_CACHE_FILE = CACHE_DIR / "codex-session-index.json"
 
 # 提取规则改了就得让旧条目全部失效，否则会拿着按老规则算出来的字段一直用下去。
 # 版本 2 起条目里多了状态与摘要三个字段；版本 3 起多了"最后那句回复是什么时候说的"；
@@ -609,7 +620,11 @@ def clear_cache(cache_file: Path | None = None) -> None:
 
     不指定路径时两家的索引一起删——只删一半会让下一次列会话半新半旧，比全删更难解释。
     """
-    targets = [cache_file] if cache_file is not None else [CACHE_FILE, OPENCODE_CACHE_FILE]
+    targets = (
+        [cache_file]
+        if cache_file is not None
+        else [CACHE_FILE, OPENCODE_CACHE_FILE, CODEX_CACHE_FILE]
+    )
     for target in targets:
         with contextlib.suppress(OSError):
             target.unlink()
@@ -750,3 +765,81 @@ def opencode_tail_signals(
     if fresh != cached:
         _save_cache(target_cache, fresh)
     return signals
+
+
+# ── codex 那一侧 ────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class CodexIndexEntry:
+    """codex 一场会话在索引里的一条。
+
+    比另外两家多带一个标题：codex 不给会话存标题（``codex archive`` 的会话名是另一
+    回事，绝大多数会话没有），只能从开口第一句里取。而取它要翻会话，正好与算状态
+    信号是同一趟，所以一起算、一起缓存，NEVER 为了一个标题再翻一遍文件。
+    """
+
+    tail: TailSignals
+    title: str | None
+
+
+def _codex_first_user_line(records: Sequence[UnifiedRecord]) -> str | None:
+    """整场会话里用户开口的第一句，截成卡片上那一行。一句都没有时 None。"""
+    for record in records:
+        if record.kind == "user.say":
+            return _one_line(record.payload.get("text"))
+    return None
+
+
+def codex_tail_signals(
+    metas: Iterable[Any],
+    cache_file: Path | None = None,
+) -> dict[str, CodexIndexEntry]:
+    """codex 那一侧每场会话的状态、摘要与标题，读过的会话走缓存。
+
+    ``metas`` 是 :func:`frago.session.codex_store.list_sessions` 给的会话门面。失效
+    判据是 rollout 文件的**修改时刻**——文件只会被追加，追加必然推进它。对得上就沿用，
+    对不上才重翻那一场。
+
+    这一侧不做尾部读取：rollout 一行一条、整场翻一遍是毫秒量级，而且只发生在真变过的
+    那几场上。读不出来的会话交白卷，NEVER 让列会话整个失败。
+    """
+    target_cache = cache_file or CODEX_CACHE_FILE
+    cached = _load_cache(target_cache)
+    fresh: dict[str, dict[str, Any]] = {}
+    entries: dict[str, CodexIndexEntry] = {}
+
+    for meta in metas:
+        sid = meta.session_id
+        entry = cached.get(sid)
+        if isinstance(entry, dict) and entry.get("mtime") == meta.mtime:
+            entries[sid] = CodexIndexEntry(
+                tail=TailSignals(
+                    last_kind=entry.get("last_kind"),
+                    error_message=entry.get("error_message"),
+                    digest_done=entry.get("digest_done"),
+                    last_reply_ts=entry.get("last_reply_ts"),
+                ),
+                title=entry.get("title"),
+            )
+            fresh[sid] = entry
+            continue
+        try:
+            records = translate_codex_session(sid)
+        except Exception:  # noqa: BLE001 — 一场翻不动 NEVER 拖垮整份清单
+            entries[sid] = CodexIndexEntry(tail=TailSignals(), title=None)
+            continue
+        tail = tail_signals_of(records)
+        title = _codex_first_user_line(records)
+        entries[sid] = CodexIndexEntry(tail=tail, title=title)
+        fresh[sid] = {
+            "mtime": meta.mtime,
+            "last_kind": tail.last_kind,
+            "error_message": tail.error_message,
+            "digest_done": tail.digest_done,
+            "last_reply_ts": tail.last_reply_ts,
+            "title": title,
+        }
+
+    # 删掉的会话不该继续留在索引里，所以整份覆盖而不是增量合并。
+    if fresh != cached:
+        _save_cache(target_cache, fresh)
+    return entries
