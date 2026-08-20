@@ -291,6 +291,47 @@ class TestOneAtATimePerPerson:
         assert _post(world["people"]["zhang"]["cookie"]).status_code == 202
 
 
+class TestOneRunPerAccountAcrossPages:
+    """The pool has a fixed number of slots shared by every visitor. If one
+    account could hold a slot on each distinct page it reaches, it would fill
+    the pool by itself and every other visitor's run would come back 503. So the
+    cap is per account, not per page."""
+
+    def test_one_account_cannot_hold_two_pages_at_once(self, world):
+        who = world["people"]["zhang"]["id"]
+        assert app_run._claim(("page_a", who), None) is True
+        # A different page, same account — refused, because the account is
+        # already using its one slot.
+        assert app_run._claim(("page_b", who), None) is False
+
+    def test_a_second_page_over_http_is_refused_409(self, world, ran):
+        # Their one slot is spent on some other page; the run they POST here is
+        # turned away rather than taking a second slot.
+        app_run._claim(("other_page", world["people"]["zhang"]["id"]), None)
+        assert _post(world["people"]["zhang"]["cookie"]).status_code == 409
+        assert ran == {}
+
+    def test_two_accounts_each_hold_one(self, world):
+        zhang, li = world["people"]["zhang"]["id"], world["people"]["li"]["id"]
+        assert app_run._claim(("page_a", zhang), None) is True
+        # A different account is exactly what the pool's slots are for.
+        assert app_run._claim(("page_a", li), None) is True
+
+    def test_releasing_one_page_frees_the_account_for_another(self, world):
+        who = world["people"]["zhang"]["id"]
+        assert app_run._claim(("page_a", who), None) is True
+        app_run._release(("page_a", who))
+        assert app_run._claim(("page_b", who), None) is True
+
+    def test_an_abandoned_claim_does_not_lock_the_account_out(self, world):
+        """An expired claim on one page must not bar the account from every
+        other page forever — the deadline is what makes a lost release recover."""
+        who = world["people"]["zhang"]["id"]
+        app_run._claim(("page_a", who), None)
+        app_run._running[("page_a", who)] = 0.0  # a deadline already in the past
+        assert app_run._claim(("page_b", who), None) is True
+
+
 def _wait_for_state(world, who, wanted, tries=100):
     import time
 

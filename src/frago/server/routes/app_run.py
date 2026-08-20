@@ -49,6 +49,22 @@ RUN_STATE_FILE = "run.json"
 _gate_lock = threading.Lock()
 _running: dict[tuple[str, str], float] = {}
 
+# At most this many concurrent runs per account, counted across every page.
+#
+# The per-(recipe, account) key above only stops one account starting the *same*
+# page twice. It says nothing about that account starting a run on each distinct
+# runnable page it can reach — and a fresh, zero-trust account reaches two here
+# (both allow-lists are empty). Two such runs fill the whole visitor pool
+# (`MAX_VISITOR_WORKERS`), and from then on every other visitor's run is refused
+# with 503. One signed-in account thus locks the run button for everyone.
+# Demonstrated end to end on the live server, 2026-08-20: account A holding a
+# slot, account B's runs coming back 503.
+#
+# So the cap is per account, not per page: the pool's slots go to distinct
+# people, and no single account can hold more than one at a time. Two different
+# accounts still run at once, which is the case the pool exists to serve.
+MAX_RUNS_PER_ACCOUNT = 1
+
 
 def _gate_ttl(timeout: int | None) -> float:
     """How long a claim stays valid before it is treated as abandoned.
@@ -63,11 +79,28 @@ def _gate_ttl(timeout: int | None) -> float:
     return float(timeout or 300) * 2 + 60
 
 
+def _account_at_limit(identity: str, now: float, besides: tuple[str, str]) -> bool:
+    """Whether this account already holds its share of live run slots.
+
+    Counts only claims that have not passed their deadline: an abandoned claim
+    (see `_gate_ttl`) must not lock the account out forever. `besides` is this
+    request's own key, excluded so a still-valid claim on the same page reads as
+    the "same page again" refusal above rather than the per-account one.
+    """
+    live = 0
+    for other, deadline in _running.items():
+        if other != besides and other[1] == identity and now < deadline:
+            live += 1
+    return live >= MAX_RUNS_PER_ACCOUNT
+
+
 def _claim(key: tuple[str, str], timeout: int | None) -> bool:
     now = time.time()
     with _gate_lock:
         held = _running.get(key)
         if held is not None and now < held:
+            return False
+        if _account_at_limit(key[1], now, besides=key):
             return False
         _running[key] = now + _gate_ttl(timeout)
         return True
@@ -188,8 +221,10 @@ async def run_for_visitor(name: str, request: Request):
     key = (name, identity)
     timeout = getattr(recipe.metadata, "timeout", None)
     if not _claim(key, timeout):
+        # Either this page is already running for them, or another one is: a
+        # visitor holds one run at a time, whichever page it is on.
         raise VisitorSafe(
-            status_code=409, detail="a run of this page is already going for you"
+            status_code=409, detail="you already have a run going; wait for it to finish"
         )
 
     # Written before the recipe starts, so the page has something to read on the
