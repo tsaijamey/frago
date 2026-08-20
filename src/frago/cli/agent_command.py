@@ -79,8 +79,13 @@ def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
     """把一个 profile 名（或 id）交给目标 agent 的 driver 翻成会话环境变量。
 
     翻译规则住在 driver 里（claude 产出 ``ANTHROPIC_*``，opencode 产出
-    ``OPENCODE_CONFIG_CONTENT``），这里只负责按名字找到 profile 并派活。driver 没有
-    实现 ``profile_env`` 时返回空字典——本轮就当没指定 profile 跑，NEVER 因此报错。
+    ``OPENCODE_CONFIG_CONTENT``），这里只负责按名字找到 profile 并派活。
+
+    driver 没有实现 ``profile_env`` 时返回空字典——本轮照跑，NEVER 因此报错，**但会
+    在 stderr 上说明这一句话没生效**。codex 就是这一档：frago 的 profile 是 Anthropic
+    协议端点，而 codex 0.147 的自定义 provider 走 OpenAI 的 responses 协议，两者不是
+    同一套线协议，没有诚实的翻译。人明确要求跑在某个模型上、结果跑在另一个模型上，
+    这件事必须当场看得见——静默吞掉会让他拿着一份不知道出自哪个模型的结果。
     """
     from frago.agent_driver.driver import load_driver
     from frago.init.profile_manager import load_profiles
@@ -100,6 +105,11 @@ def _resolve_profile_env(profile_name: str, agent_type: str) -> dict[str, str]:
 
     driver = load_driver(agent_type)
     if driver.profile_env is None:
+        click.echo(
+            f"[!] {agent_type} 不支持 frago profile：--use-profile {profile_name!r} "
+            f"这一轮不生效，会话跑在 {agent_type} 自己配置的模型上。",
+            err=True,
+        )
         return {}
     return driver.profile_env(profile)
 

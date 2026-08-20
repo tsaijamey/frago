@@ -113,6 +113,15 @@ class JsonlTranscriptSource:
             )
         return self._adapter
 
+    def _prepare(self, data: dict[str, Any]) -> dict[str, Any]:
+        """子类钩子：把一条原始记录交给 adapter 之前先过一手。
+
+        默认原样透传，claude 的行为一字未变。存在是因为不是每种记录都自带会话 id：
+        claude 的每行里就有 ``sessionId``，codex 的 rollout 行里没有（只在文件首行
+        的 ``session_meta`` 里出现一次），得由知道自己在读哪个文件的来源补上。
+        """
+        return data
+
     def seek_to_end(self) -> None:
         """把偏移锚到当前文件末尾（baseline）。
 
@@ -166,7 +175,7 @@ class JsonlTranscriptSource:
             if not isinstance(data, dict):
                 continue
             try:
-                record = adapter.parse_record(data)
+                record = adapter.parse_record(self._prepare(data))
             except Exception:
                 logger.debug(
                     "JsonlTranscriptSource: adapter.parse_record raised", exc_info=True
