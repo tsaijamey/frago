@@ -84,7 +84,9 @@ def list_adapters() -> dict[RecordFamily, RecordAdapter]:
 from frago.session.adapters.claude_code_records import (  # noqa: E402
     ClaudeCodeRecordAdapter,
 )
+from frago.session.adapters.codex_records import CodexRecordAdapter  # noqa: E402
 from frago.session.adapters.opencode_records import OpencodeRecordAdapter  # noqa: E402
 
 register_adapter("claude-code", ClaudeCodeRecordAdapter())
 register_adapter("opencode", OpencodeRecordAdapter())
+register_adapter("codex", CodexRecordAdapter())

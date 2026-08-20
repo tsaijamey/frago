@@ -56,8 +56,12 @@ RECORD_KINDS: frozenset[str] = frozenset(get_args(RecordKind))
 
 
 # ── 两家 ────────────────────────────────────────────────────────────
-RecordFamily = Literal["claude-code", "opencode"]
-"""会话属于哪一家。``record_reader.detect_family()`` 按会话编号的形状判定。"""
+RecordFamily = Literal["claude-code", "opencode", "codex"]
+"""会话属于哪一家。判定见 ``record_reader.detect_family()``。
+
+前两家靠会话编号的形状就能分开（UUID vs ``ses_`` 前缀），codex 分不开——它的会话
+编号也是 UUID 形状，与 Claude Code 的编号空间天生重叠。所以从三家起，判定不再是
+纯形状匹配，得落盘看一眼记录在谁那儿。"""
 
 RECORD_FAMILIES: frozenset[str] = frozenset(get_args(RecordFamily))
 

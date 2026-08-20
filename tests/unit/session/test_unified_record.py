@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from frago.session.adapters import (
@@ -194,10 +196,10 @@ class TestUnifiedRecord:
         assert isinstance(record.ts, int)
 
 
-# ── 两家的判定 ──────────────────────────────────────────────────────
+# ── 三家的判定 ──────────────────────────────────────────────────────
 class TestDetectFamily:
-    def test_两家一共两家(self) -> None:
-        assert {"claude-code", "opencode"} == RECORD_FAMILIES
+    def test_三家一共三家(self) -> None:
+        assert {"claude-code", "opencode", "codex"} == RECORD_FAMILIES
 
     @pytest.mark.parametrize(
         "session_id",
@@ -207,8 +209,38 @@ class TestDetectFamily:
             "01322AD7-0DC8-5E38-BD01-8CEFAEAAE90E",
         ],
     )
-    def test_uuid形状归claude_code(self, session_id: str) -> None:
+    def test_uuid形状且codex没有这场会话时归claude_code(
+        self, session_id: str, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """UUID 形状不再单独决定家族——codex 的编号也是 UUID。"""
+        import frago.session.record_reader as reader
+
+        monkeypatch.setattr(reader, "_is_codex_session", lambda _sid: False)
         assert detect_family(session_id) == "claude-code"
+
+    def test_codex那侧有这场会话时归codex(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """codex 的会话编号是 UUIDv7，与 Claude Code 的编号空间重叠。
+
+        所以形状像 UUID 时要落盘看一眼记录在谁那儿，NEVER 一律当 Claude Code——
+        那会把 codex 的编号拿去翻 JSONL，翻出空的，看起来像这场会话没记录。
+        """
+        import frago.session.record_reader as reader
+
+        monkeypatch.setattr(reader, "_is_codex_session", lambda _sid: True)
+        assert detect_family("01a01a98-82e9-7013-b24e-e5e91b03995a") == "codex"
+
+    def test_查不动codex时退回claude_code(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """判家族 NEVER 因为一次读盘失败而炸：Claude Code 是历史默认，留在退路上。"""
+        import frago.session.record_reader as reader
+
+        def boom(_sid: str) -> bool:
+            raise OSError("目录读不动")
+
+        monkeypatch.setattr(reader.codex_store, "find_rollout", boom)
+        monkeypatch.setattr(
+            reader.codex_store, "sessions_root", lambda: pathlib.Path("/")
+        )
+        assert detect_family("00a02979-7eb4-5c70-94ae-867c8281e3f6") == "claude-code"
 
     @pytest.mark.parametrize(
         "session_id",
@@ -249,9 +281,9 @@ class TestReaderSkeleton:
         assert DEFAULT_LIMIT == 200
         assert MAX_LIMIT == 500
 
-    def test_两家的翻译层都已登记(self) -> None:
+    def test_三家的翻译层都已登记(self) -> None:
         """入口不写 if/else，家族到翻译层的对应关系全在注册表里。"""
-        assert set(list_adapters()) == {"claude-code", "opencode"}
+        assert set(list_adapters()) == {"claude-code", "opencode", "codex"}
 
     def test_取不到不等于没接上(self) -> None:
         """接上翻译层之后，本机没有的那场会话取回空结果，NEVER 再抛未实现。
@@ -265,8 +297,8 @@ class TestReaderSkeleton:
         assert reader.read_records(absent) == []
         assert reader.read_raw(absent, "rec-1") is None
 
-    def test_两家的会话合并后按最后活动时刻倒序(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-        """左栏只有一份清单。两家谁新谁在上，与它属于哪一家无关。"""
+    def test_三家的会话合并后按最后活动时刻倒序(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """左栏只有一份清单。谁新谁在上，与它属于哪一家无关。"""
         import frago.session.record_reader as reader
         from frago.session.opencode_store import OpencodeSessionRow
         from frago.session.session_index import SessionSummary
@@ -300,6 +332,8 @@ class TestReaderSkeleton:
                 )
             ],
         )
+
+        monkeypatch.setattr(reader.codex_store, "list_sessions", list)
 
         cards = reader.list_sessions()
         assert [card.family for card in cards] == ["opencode", "claude-code"]
@@ -336,6 +370,7 @@ class TestSessionCardStatus:
             lambda **_: [self._summary(tail, last_active_ts)],
         )
         monkeypatch.setattr(reader.opencode_store, "list_sessions", list)
+        monkeypatch.setattr(reader.codex_store, "list_sessions", list)
         (card,) = reader.list_sessions()
         return card
 
@@ -428,6 +463,7 @@ class TestSessionCardStatus:
             "opencode_tail_signals",
             lambda _rows: {"ses_abc": TailSignals(last_kind="agent.say", digest_done="答完了")},
         )
+        monkeypatch.setattr(reader.codex_store, "list_sessions", list)
 
         (card,) = reader.list_sessions()
 
@@ -448,7 +484,7 @@ class TestAdapterRegistry:
     def test_没登记时抛不给None(self) -> None:
         """给 None 会让调用方拿着 None 往下走，错在别处才炸。"""
         with pytest.raises(AdapterNotRegistered):
-            get_adapter("codex")  # type: ignore[arg-type]
+            get_adapter("cursor")  # type: ignore[arg-type]
 
     def test_登记后取得回来(self) -> None:
         stub = _StubAdapter()
