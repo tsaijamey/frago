@@ -252,6 +252,21 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     except Exception as e:
         logger.warning("Failed to deploy opencode plugin: %s", e)
 
+    # Register the same hook binary with codex, when codex is installed. codex
+    # speaks the Claude Code hook protocol natively, so this is a registration
+    # file and no bridge process.
+    try:
+        from frago.init.codex_hooks import TRUST_HINT, sync_codex_hook_events
+        from frago.init.hook_binary import get_engine_argv, get_hook_binary_path
+
+        codex_hooks_path = sync_codex_hook_events(
+            " ".join([get_hook_binary_path(), *get_engine_argv()])
+        )
+        if codex_hooks_path:
+            logger.info("codex hooks registered: %s — %s", codex_hooks_path, TRUST_HINT)
+    except Exception as e:
+        logger.warning("Failed to register codex hooks: %s", e)
+
     # Cleanup old trace files
     from frago.telemetry.trace import cleanup_old_traces, register_broadcast_hook
     cleanup_old_traces()
