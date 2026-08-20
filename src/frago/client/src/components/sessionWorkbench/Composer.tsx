@@ -9,9 +9,9 @@
  *    刷新就没了。
  * 2. **失败不清空。** 文本与已挂的图片原样留着，错误原因照抄服务端的说法，旁边给重试。
  * 3. **图片走粘贴、拖入、选文件三条路**，发送前显示缩略图，逐个可移除。
- * 4. **不能发的会话在打字之前就摆明。** 那条通道背后是 tmux 里的 claude，opencode 的
- *    会话编号在 claude 的档案里根本不存在——发过去不报错，而是凭空开一场新会话。所以
- *    这类会话整个输入区禁用并写明原因，NEVER 让人打完字才发现发不出去。
+ * 4. **不能发的会话在打字之前就摆明。** 那条通道背后是 tmux 里的 claude，别家（opencode /
+ *    codex）的会话编号在 claude 的档案里根本不存在——发过去不报错，而是凭空开一场新会话。
+ *    所以这类会话整个输入区禁用并写明原因，NEVER 让人打完字才发现发不出去。
  */
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
@@ -36,7 +36,8 @@ export interface ComposerProps {
 export function blockReason(sessionId: string | null, family: SessionFamily | null): string | null {
   if (!sessionId) return '从左边挑一场会话，再在这里说话';
   if (family !== 'claude-code') {
-    return 'opencode 的会话发不出去：发送通道背后是 tmux 里的 claude，这个会话编号在它那儿不存在';
+    const label = family === 'codex' ? 'codex' : 'opencode';
+    return `${label} 的会话发不出去：发送通道背后是 tmux 里的 claude，这个会话编号在它那儿不存在`;
   }
   return null;
 }

@@ -1,7 +1,7 @@
 /**
  * SessionRail — 左栏：新建会话、搜索、时间范围、状态筛选、会话清单、底部汇总。
  *
- * 两家（Claude Code / opencode）的会话在核心数据层就合并排好了，这里不重排。
+ * 三家（Claude Code / opencode / codex）的会话在核心数据层就合并排好了，这里不重排。
  *
  * **筛选是两个维度，不是一个。** 状态答「现在什么情况」，时间范围答「哪一段时间的」，
  * 两者并存、互不替代。按来源筛的那一维不在这里——一千多场 Claude Code 会话摆在一起，
@@ -91,11 +91,13 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
   const familyCounts = useMemo(() => {
     let cc = 0;
     let oc = 0;
+    let cx = 0;
     for (const s of sessions) {
       if (s.family === 'claude-code') cc += 1;
       else if (s.family === 'opencode') oc += 1;
+      else if (s.family === 'codex') cx += 1;
     }
-    return { cc, oc };
+    return { cc, oc, cx };
   }, [sessions]);
 
   const handleCopy = async (session: WorkbenchSession) => {
@@ -259,7 +261,7 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
 
       <div className="shrink-0 border-t border-border-color px-3 py-2 font-mono text-[11px] text-text-muted">
         共 {sessions.length} 场 · Claude Code {familyCounts.cc} 场 · opencode{' '}
-        {familyCounts.oc} 场
+        {familyCounts.oc} 场 · codex {familyCounts.cx} 场
       </div>
 
       <NewSessionModal

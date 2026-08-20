@@ -31,9 +31,14 @@ const STATUS_TEXT: Record<SessionStatus, string> = {
 };
 
 export function resumeCommand(session: WorkbenchSession): string {
-  return session.family === 'opencode'
-    ? `opencode -s ${session.session_id}`
-    : `claude --resume ${session.session_id}`;
+  switch (session.family) {
+    case 'opencode':
+      return `opencode -s ${session.session_id}`;
+    case 'codex':
+      return `codex resume ${session.session_id}`;
+    default:
+      return `claude --resume ${session.session_id}`;
+  }
 }
 
 export function relativeTime(ts: number, now: number = Date.now()): string {

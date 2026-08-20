@@ -1,8 +1,8 @@
 /**
  * useWorkbenchSessions — 会话工作台左栏的数据源。
  *
- * 拉 `GET /api/workbench/sessions`：两家（Claude Code / opencode）的会话已经在核心
- * 数据层合并并按**最后一句回复的时刻**倒序，这里一个字不重排。
+ * 拉 `GET /api/workbench/sessions`：三家（Claude Code / opencode / codex）的会话已经
+ * 在核心数据层合并并按**最后一句回复的时刻**倒序，这里一个字不重排。
  *
  * 搜索是**两条腿**：本地那条按标题、目录、会话编号即时筛，敲一个字就有反应；另一条
  * 把同一句话发去 `GET /api/workbench/search`，在会话内容（提示词与 agent 回复正文）
@@ -16,8 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-/** 会话属于哪一家。服务端按会话编号的形状判定，界面只负责显示。 */
-export type SessionFamily = 'claude-code' | 'opencode';
+/** 会话属于哪一家。判定全在服务端做完，界面只负责显示。 */
+export type SessionFamily = 'claude-code' | 'opencode' | 'codex';
 
 /**
  * 会话现在什么情况。四档，没有第五档。
@@ -66,6 +66,7 @@ export function activityTs(session: WorkbenchSession): number {
 export const FAMILY_LABEL: Record<SessionFamily, string> = {
   'claude-code': 'Claude Code',
   opencode: 'opencode',
+  codex: 'codex',
 };
 
 export const STATUS_LABEL: Record<SessionStatus, string> = {
