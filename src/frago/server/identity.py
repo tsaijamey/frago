@@ -1162,11 +1162,53 @@ SIGNUP_LIMIT = RateLimiter(5, 3600)      # per client address: 5 new accounts / 
 LOGIN_BACKOFF = Backoff()                # per account
 
 
+def _visitor_rate_env(name: str, default: int) -> int:
+    """A positive integer from the environment, or the default. A malformed or
+    non-positive override falls back rather than turning the limiter off."""
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Every /app/ request a signed-in visitor makes, counted per account.
+#
+# This is the limit nginx cannot express. nginx keys on the client address; the
+# threat here is one signed-in account, and an account can change address
+# between requests. The key here is the account id instead — a value this server
+# derived from a valid session, not a header the caller controls — so it holds
+# even when `client_ip` has had to give up, and it counts an attacker rotating
+# IPs as the single account they are.
+#
+# Sized to be invisible to a person and a wall to a script: opening a page
+# fetches a handful of files and then polls about once a second, far below the
+# refill of capacity/window per second; a flood empties the burst and is then
+# held to that sustained rate. Both ends are overridable for an operator who
+# knows their own traffic.
+VISITOR_REQUEST_LIMIT = RateLimiter(
+    _visitor_rate_env("FRAGO_VISITOR_BURST", 240),
+    float(_visitor_rate_env("FRAGO_VISITOR_WINDOW", 60)),
+)
+
+
 def reset_rate_limits() -> None:
     """Forget every counter. For tests, and for a future ``frago user unblock``."""
     LOGIN_LIMIT.reset()
     SIGNUP_LIMIT.reset()
     LOGIN_BACKOFF.reset()
+    VISITOR_REQUEST_LIMIT.reset()
+
+
+def allow_visitor_request(identity: str | None) -> bool:
+    """Spend one token for this account's request stream.
+
+    Keyed on the account id, so it is the owner's own machine and the token
+    zone — neither of which has an account id here — that are never touched by
+    it; only a signed-in visitor is. ``None`` is let through rather than keyed
+    on, matching every other limiter in this module.
+    """
+    return VISITOR_REQUEST_LIMIT.allow(identity)
 
 
 def allow_login(ip: str | None) -> bool:

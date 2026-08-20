@@ -738,6 +738,41 @@ async def _reject(scope: dict, send, reason: str) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+async def _send_too_many(scope: dict, send) -> None:
+    """Refuse an identity-zone request that is over its account's request rate.
+
+    A 429, not a 401: the caller is exactly who they say they are and the page is
+    theirs — they are only asking too fast. ``no-store`` so the refusal is never
+    cached in place of the page the next, in-rate request would get.
+    """
+    client = scope.get("client")
+    logger.warning(
+        "rate limit: %s %s from %s over its account request rate",
+        scope.get("method") or scope.get("type"),
+        scope.get("path"),
+        f"{client[0]}:{client[1]}" if client else "unknown",
+    )
+    if scope.get("type") == "websocket":
+        await send({"type": "websocket.close", "code": 4429})
+        return
+    body = json.dumps(
+        {"error": "rate_limited", "detail": "too many requests; slow down"}
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 429,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+                (b"retry-after", b"1"),
+                (b"cache-control", b"no-store"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 class AccessZoneMiddleware:
     """Sort every request into local / public / identity / token.
 
@@ -792,6 +827,16 @@ class AccessZoneMiddleware:
         if identity is not None:
             reachable, identity_slot = classify_identity(scope, identity)
             if reachable:
+                # The one limit keyed on the account rather than the address.
+                # HTTP only: a websocket is one long-lived connection, not a
+                # request stream, so a per-request bucket is the wrong tool for
+                # it and `/ws` guards itself separately.
+                if scope["type"] == "http":
+                    from frago.server.identity import allow_visitor_request
+
+                    if not allow_visitor_request(identity):
+                        await _send_too_many(scope, send)
+                        return
                 self._admit(scope, "identity", identity_slot, identity)
                 await self.app(scope, receive, send)
                 return

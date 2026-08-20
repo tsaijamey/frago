@@ -121,3 +121,42 @@ class TestTheOwnerIsUnaffected:
     def test_loopback_still_reaches_everything(self, app):
         owner = TestClient(app, client=OWNER)
         assert owner.get("/api/status").status_code == 200
+
+
+class TestPerAccountRequestRate:
+    """The limit nginx cannot express: one signed-in account, however many
+    addresses it comes from, is held to a request rate of its own.
+
+    The bucket is sized for production (a burst of hundreds, refilling every
+    minute); here it is swapped for a tiny one so the wall is a few requests
+    away rather than a few hundred.
+    """
+
+    def test_a_flood_from_one_account_is_eventually_429(self, app, monkeypatch):
+        monkeypatch.setattr(ident, "VISITOR_REQUEST_LIMIT", ident.RateLimiter(5, 60))
+        client = TestClient(app, client=VISITOR)
+        client.post("/api/auth/login", json={"email": "a@x.com", "password": GOOD_PASSWORD})
+        codes = [client.get("/api/auth/me").status_code for _ in range(12)]
+        assert codes[0] == 200, "the burst must go through before the wall"
+        assert 429 in codes, codes
+
+    def test_the_owner_is_never_counted(self, app, monkeypatch):
+        # A bucket of one: a single visitor request would exhaust it. The owner
+        # (loopback, no proxy header) is the local zone, carries no account id,
+        # and never touches this bucket.
+        monkeypatch.setattr(ident, "VISITOR_REQUEST_LIMIT", ident.RateLimiter(1, 60))
+        owner = TestClient(app, client=OWNER)
+        codes = [owner.get("/api/status").status_code for _ in range(5)]
+        assert 429 not in codes, codes
+
+    def test_a_different_account_is_not_touched_by_the_flood(self, app, monkeypatch):
+        monkeypatch.setattr(ident, "VISITOR_REQUEST_LIMIT", ident.RateLimiter(3, 60))
+        a = TestClient(app, client=VISITOR)
+        a.post("/api/auth/login", json={"email": "a@x.com", "password": GOOD_PASSWORD})
+        for _ in range(6):
+            a.get("/api/auth/me")
+        assert a.get("/api/auth/me").status_code == 429, "account A should be walled off by now"
+
+        b = TestClient(app, client=("93.184.216.35", 55555))
+        b.post("/api/auth/login", json={"email": "b@x.com", "password": GOOD_PASSWORD})
+        assert b.get("/api/auth/me").status_code == 200, "B's stream is its own"
