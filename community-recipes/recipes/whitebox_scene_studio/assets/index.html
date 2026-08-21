@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>白膜场景生图工作台</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- three 一律走本地 vendor。NEVER 换成 unpkg / jsdelivr：
+       断网、被墙、CDN 改版都会让这个页面变成一块白板。 -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.js",
+      "three/addons/": "./vendor/three/addons/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-mark">⬜</span>
+      <div class="brand-meta">
+        <div class="brand-text">白膜场景生图工作台</div>
+        <div class="brand-sub">摆位，而不是抽卡</div>
+      </div>
+    </div>
+    <div class="project-bar">
+      <label class="seg-label" for="projectSelect">项目</label>
+      <select id="projectSelect" title="每个项目一份独立的场景与产物，互不串台"></select>
+      <div class="tool-group">
+        <button type="button" class="tool" id="projectNewBtn" title="新建一个空项目并切过去">新建</button>
+        <button type="button" class="tool" id="projectRenameBtn" title="改显示名，目录名不动">重命名</button>
+        <button type="button" class="tool" id="projectDeleteBtn" title="删除当前项目（产物移入 .trash 不物理删除）">删除</button>
+      </div>
+    </div>
+
+    <div class="status">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span id="statusText">读取中…</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- 左：白膜编辑器 -->
+    <section class="pane pane-editor">
+      <div class="pane-head">
+        <span class="pane-title">白膜编辑器</span>
+        <div class="tool-row">
+          <div class="tool-group" id="gizmoModes" role="group" aria-label="变换模式">
+            <button type="button" class="tool is-active" data-mode="translate">平移</button>
+            <button type="button" class="tool" data-mode="rotate">旋转</button>
+            <button type="button" class="tool" data-mode="scale">缩放</button>
+          </div>
+          <div class="tool-group">
+            <button type="button" class="tool" id="duplicateBtn" title="复制选中物体">复制</button>
+            <button type="button" class="tool" id="deleteBtn" title="删除选中物体（Delete）">删除</button>
+            <button type="button" class="tool" id="clearBtn" title="清空整个场景">清空</button>
+          </div>
+          <div class="tool-group">
+            <button type="button" class="tool is-active" id="snapGroundBtn" title="平移时始终贴住地面">贴地</button>
+            <button type="button" class="tool" id="snapGridBtn" title="按 0.5m / 15° 吸附">网格吸附</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="editor-body">
+        <aside class="palette">
+          <div class="palette-scroll">
+          <div class="palette-block">
+            <h4 class="palette-title">体块库</h4>
+            <p class="palette-hint">拖到地面，或点这里再点地面</p>
+            <div class="block-grid" id="shapeGrid"></div>
+          </div>
+
+          <div class="palette-block">
+            <h4 class="palette-title">语义色卡</h4>
+            <p class="palette-hint">决定分割图上这块是什么颜色</p>
+            <div class="swatch-grid" id="semanticGrid"></div>
+          </div>
+
+          <div class="palette-block">
+            <h4 class="palette-title">选中物体</h4>
+            <div id="inspector" class="inspector">
+              <p class="inspector-empty">还没选中任何东西。点画面里的体块可以选中。</p>
+            </div>
+          </div>
+
+          </div><!-- /palette-scroll -->
+
+          <!-- 指挥台钉在底部，不跟着上面一起滚。
+               它是本页最常用的入口之一，藏在一长条滚动区的最下面，
+               等于要求人先滚到底才能用——而只会点的调用方连滚都做不到。 -->
+          <div class="palette-pinned">
+            <h4 class="palette-title">指挥 agent</h4>
+            <p class="palette-hint">用一句话说要摆什么，它翻成动作去执行</p>
+            <textarea id="instructText" rows="3" placeholder="在车左边两米放个人&#10;把机位压到人眼高度，框住所有人"></textarea>
+            <!-- 例子做成可点的，不只是占位文字：人少打一遍字，
+                 用点击驱动这个页面的一方（agent）也才够得着这条路。 -->
+            <div class="instruct-examples" id="instructExamples"></div>
+            <button type="button" class="btn-primary btn-small" id="instructBtn">让 agent 去摆</button>
+            <div id="instructLog" class="agent-log"></div>
+          </div>
+        </aside>
+
+        <div class="stage">
+          <div id="viewport" class="viewport"></div>
+          <div id="safeFrame" class="safe-frame" aria-hidden="true">
+            <span class="safe-frame-tag" id="frameTag">16:9</span>
+          </div>
+          <div id="renderMode" class="render-mode hidden"></div>
+          <div id="armBanner" class="arm-banner hidden"></div>
+        </div>
+      </div>
+
+      <div class="camera-bar">
+        <div class="camera-seg">
+          <span class="seg-label">机位</span>
+          <div class="tool-group" id="cameraPresets" role="group" aria-label="机位预设"></div>
+          <button type="button" class="tool" id="frameAllBtn"
+                  title="退到刚好装下全部主体（地面不算）">框住全部</button>
+        </div>
+        <div class="camera-seg">
+          <label class="seg-label" for="fovRange">FOV</label>
+          <input type="range" id="fovRange" min="15" max="90" step="1" value="40">
+          <span class="seg-value" id="fovValue">40°</span>
+        </div>
+        <div class="camera-seg">
+          <span class="seg-label">画幅</span>
+          <div class="tool-group" id="aspectButtons" role="group" aria-label="画幅比"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右：生图台 -->
+    <section class="pane pane-gen" id="genPanel">
+      <div class="pane-head">
+        <span class="pane-title">生图台</span>
+        <button type="button" class="tool" id="refreshRefsBtn" title="按当前机位渲染白膜图与分割图">预览参考图</button>
+      </div>
+
+      <div class="pane-body">
+        <div class="gen-block">
+          <h4 class="gen-title">参考图</h4>
+          <div class="ref-slots" id="refSlots"></div>
+        </div>
+
+        <div class="gen-block">
+          <div class="gen-title-row">
+            <h4 class="gen-title">自动图例</h4>
+            <div class="gen-title-actions">
+              <button type="button" class="tool hidden" id="legendReset" title="丢弃手改，按场景重新生成">重新生成</button>
+              <button type="button" class="tool" id="legendToggle">收起</button>
+            </div>
+          </div>
+          <div id="legendBody">
+            <div id="legendStale" class="legend-stale hidden">
+              <span>场景已变，图例可能过时了</span>
+              <button type="button" class="tool" id="legendRefresh">按当前场景重新生成</button>
+            </div>
+            <textarea id="legendText" rows="5" spellcheck="false"
+              placeholder="按场景自动生成，会拼在提示词前面"></textarea>
+            <p class="gen-hint" id="legendMeta">这段会拼在下面的提示词前面发给模型，说清「哪块颜色是谁」。</p>
+          </div>
+        </div>
+
+        <div class="gen-block">
+          <div class="gen-title-row">
+            <h4 class="gen-title">提示词</h4>
+            <button type="button" class="tool" id="expandBtn"
+                    title="把题目扩写成一段完整的画面描述草稿，可以再改">扩写成一段</button>
+          </div>
+          <textarea id="promptText" rows="4"
+            placeholder="写材质、光线、氛围、风格——构图交给白膜"></textarea>
+          <!-- 预设是「拼进去」不是「替换掉」：人写的那部分一个字都不动。
+               再点一次取消，只撤自己拼进去的那一段。 -->
+          <div class="preset-groups" id="promptPresets"></div>
+          <button type="button" class="tool hidden" id="presetClear"
+                  title="撤掉所有标签拼进来的话，你自己写的字不动">清掉所有标签</button>
+          <p class="gen-hint" id="expandNote"></p>
+        </div>
+
+        <!-- 出图前体检。一条都不强制拦——浮空在超现实场景里可能正是他要的，
+             工具的位置是「说出来」，不是「替他决定」。 -->
+        <div class="gen-block hidden" id="preflightBox">
+          <h4 class="gen-title">出图前体检</h4>
+          <div id="preflightBody" class="preflight-body"></div>
+          <div class="preflight-actions">
+            <button type="button" class="tool" id="preflightCancel">我先去修</button>
+            <button type="button" class="btn-primary btn-small" id="preflightGo">照样生成</button>
+          </div>
+        </div>
+
+        <div class="gen-block">
+          <div class="gen-params">
+            <label class="gen-field">
+              <span>尺寸</span>
+              <select id="sizeSelect" title="默认按左边锁定的画幅出图">
+                <option value="" selected>跟随画幅</option>
+                <option value="2k">2k</option>
+                <option value="3k">3k</option>
+                <option value="4k">4k</option>
+              </select>
+            </label>
+            <label class="gen-field">
+              <span>张数</span>
+              <select id="countSelect">
+                <option value="1" selected>1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+              </select>
+            </label>
+            <button type="button" class="btn-primary" id="generateBtn">生成</button>
+          </div>
+          <p id="genStatus" class="gen-status hidden"></p>
+        </div>
+
+        <div class="gen-block">
+          <div class="gen-title-row">
+            <h4 class="gen-title">结果</h4>
+            <span class="gen-note">点图放进对比，点「下载」存原图</span>
+          </div>
+          <div class="result-grid" id="resultGrid"></div>
+        </div>
+
+        <div class="gen-block hidden" id="compareBox">
+          <h4 class="gen-title">跟白膜比一比</h4>
+          <div class="compare">
+            <img id="compareBase" alt="白膜图">
+            <div class="compare-top" id="compareTopWrap"><img id="compareTop" alt="生成结果"></div>
+          </div>
+          <div class="compare-ctl">
+            <input type="range" id="compareRange" min="0" max="100" step="1" value="50">
+            <span class="seg-value" id="compareValue">50%</span>
+          </div>
+          <!-- href / download 由 JS 按当前对比的那张图填。直指 data/ 下的静态文件，
+               不经后端——访客模式下 apiBase 是 null，走后端的下载在那边不成立。 -->
+          <a class="btn-download" id="compareDownload" href="#" download>⬇ 下载原图</a>
+          <p class="gen-hint">拉滑杆看构图有没有跟住白膜——这是这个工具的验收方式。</p>
+        </div>
+
+        <div class="gen-block">
+          <div class="gen-title-row">
+            <h4 class="gen-title">历史</h4>
+            <button type="button" class="tool" id="historyBtn">读取</button>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <dl class="wiring">
+      <div class="wiring-row"><dt>项目</dt><dd id="wProject">—</dd></div>
+      <div class="wiring-row"><dt>槽位</dt><dd id="wSlot">—</dd></div>
+      <div class="wiring-row"><dt>数据目录</dt><dd id="wDataDir">—</dd></div>
+      <div class="wiring-row"><dt>场景</dt><dd id="wScene">—</dd></div>
+      <div class="wiring-row"><dt>渲染</dt><dd id="wRender">—</dd></div>
+      <div class="wiring-row"><dt>回写</dt><dd id="wSave">—</dd></div>
+    </dl>
+    <button id="reloadBtn" class="btn-ghost" type="button">↻ 重新读取</button>
+  </footer>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
