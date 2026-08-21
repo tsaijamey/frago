@@ -11,6 +11,7 @@ import MainLayout from '@/components/layout/MainLayout';
 import SessionWorkbenchPage from '@/components/sessionWorkbench/SessionWorkbenchPage';
 import RecipeList from '@/components/recipes/RecipeList';
 import RecipeDetail from '@/components/recipes/RecipeDetail';
+import DataRepoPage from '@/components/dataRepo/DataRepoPage';
 import SkillList from '@/components/skills/SkillList';
 import SettingsPage from '@/components/settings/SettingsPage';
 import NewTaskPage from '@/components/newTask/NewTaskPage';
@@ -98,6 +99,8 @@ function App() {
         return <RecipeList />;
       case 'recipe_detail':
         return <RecipeDetail />;
+      case 'data_repo':
+        return <DataRepoPage />;
       case 'skills':
         return <SkillList />;
       case 'guide':

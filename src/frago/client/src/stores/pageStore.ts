@@ -16,6 +16,7 @@ export type PageType =
   | 'task_detail'
   | 'recipes'
   | 'recipe_detail'
+  | 'data_repo'
   | 'skills'
   | 'guide'
   | 'settings'

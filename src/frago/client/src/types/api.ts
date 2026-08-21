@@ -204,6 +204,86 @@ export interface GhDeviceLoginStatus {
   error?: string | null;
 }
 
+// ---- 数据仓库 (~/.frago backed up to the user's own private repo) ----
+
+export interface PendingFile {
+  path: string;
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'conflicted' | 'untracked';
+}
+
+/** Pending count for one top-level area. What makes five figures of files legible. */
+export interface AreaCount {
+  area: string;
+  count: number;
+}
+
+export interface LastCommit {
+  sha: string;
+  subject: string;
+  committed_at: string;
+}
+
+export interface DataRepoStatus {
+  /** False when ~/.frago is not a git repository yet — a setup state, not an error. */
+  configured: boolean;
+  repo_path: string;
+  remote_url?: string | null;
+  branch?: string | null;
+  /** Commits made locally but never pushed, and the reverse. */
+  ahead: number;
+  behind: number;
+  pending_total: number;
+  counts: Record<string, number>;
+  rollup: AreaCount[];
+  /** A capped sample of paths — see `truncated`. */
+  files: PendingFile[];
+  truncated: boolean;
+  last_commit?: LastCommit | null;
+  error?: string | null;
+}
+
+export interface ExcludedCategory {
+  key: string;
+  title: string;
+  examples: string[];
+  why: string;
+}
+
+export interface IncludedArea {
+  path: string;
+  note: string;
+}
+
+export interface DataRepoPolicy {
+  excluded: ExcludedCategory[];
+  included: IncludedArea[];
+}
+
+export interface SyncTask {
+  task_id?: string | null;
+  session_id?: string | null;
+  pid?: number | null;
+  mode?: string | null;
+  instruction?: string | null;
+  started_at?: string | null;
+}
+
+export interface SyncStartResult {
+  status: string;
+  already_running: boolean;
+  task?: SyncTask | null;
+  error?: string | null;
+}
+
+export interface SyncRunStatus {
+  running: boolean;
+  task?: SyncTask | null;
+}
+
+export interface SyncPrompt {
+  prompt: string;
+}
+
 export interface APIEndpointConfig {
   type: string;
   url?: string | null;

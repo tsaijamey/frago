@@ -32,6 +32,17 @@ import type {
   GhInstallStatus,
   GhDeviceLogin,
   GhDeviceLoginStatus,
+  PendingFile,
+  AreaCount,
+  LastCommit,
+  DataRepoStatus,
+  ExcludedCategory,
+  IncludedArea,
+  DataRepoPolicy,
+  SyncTask,
+  SyncStartResult,
+  SyncRunStatus,
+  SyncPrompt,
   APIEndpointConfig,
   MainConfig,
   ApiResponse,
@@ -118,6 +129,17 @@ export type {
   GhInstallStatus,
   GhDeviceLogin,
   GhDeviceLoginStatus,
+  PendingFile,
+  AreaCount,
+  LastCommit,
+  DataRepoStatus,
+  ExcludedCategory,
+  IncludedArea,
+  DataRepoPolicy,
+  SyncTask,
+  SyncStartResult,
+  SyncRunStatus,
+  SyncPrompt,
   APIEndpointConfig,
   MainConfig,
   ApiResponse,
@@ -389,6 +411,40 @@ export async function checkGhCli(): Promise<GhCliStatus> {
 
 export async function ghAuthLogin(): Promise<ApiResponse> {
   return fetchApi<ApiResponse>('/settings/gh-cli/login', { method: 'POST' });
+}
+
+// ---- 数据仓库 ----
+
+export async function getDataRepoStatus(limit?: number): Promise<DataRepoStatus> {
+  const query = limit === undefined ? '' : `?limit=${limit}`;
+  return fetchApi<DataRepoStatus>(`/data-repo/status${query}`);
+}
+
+export async function getDataRepoPolicy(): Promise<DataRepoPolicy> {
+  return fetchApi<DataRepoPolicy>('/data-repo/policy');
+}
+
+export async function getDataRepoSyncPrompt(
+  mode: string,
+  instruction?: string
+): Promise<SyncPrompt> {
+  const params = new URLSearchParams({ mode });
+  if (instruction) params.set('instruction', instruction);
+  return fetchApi<SyncPrompt>(`/data-repo/sync/prompt?${params.toString()}`);
+}
+
+export async function startDataRepoSync(
+  mode: string,
+  instruction?: string
+): Promise<SyncStartResult> {
+  return fetchApi<SyncStartResult>('/data-repo/sync', {
+    method: 'POST',
+    body: JSON.stringify({ mode, instruction: instruction ?? null }),
+  });
+}
+
+export async function getDataRepoSyncStatus(): Promise<SyncRunStatus> {
+  return fetchApi<SyncRunStatus>('/data-repo/sync/status');
 }
 
 export async function getGhInstallPlan(): Promise<GhInstallPlan> {

@@ -571,6 +571,52 @@ export const cancelGhDeviceLogin = withMode(
   (): Promise<ApiResponse> => Promise.resolve({ status: 'ok' }),
 );
 
+// ---- 数据仓库 ----
+// HTTP only, like the gh endpoints above: backing up the working directory is
+// a server-side operation on the owner's own machine.
+
+export type {
+  DataRepoStatus,
+  DataRepoPolicy,
+  PendingFile,
+  AreaCount,
+  SyncTask,
+  SyncStartResult,
+  SyncRunStatus,
+  SyncPrompt,
+} from './client';
+
+export const getDataRepoStatus = withMode(
+  (limit?: number): Promise<httpApi.DataRepoStatus> => httpApi.getDataRepoStatus(limit),
+  (_limit?: number): Promise<httpApi.DataRepoStatus> =>
+    Promise.reject(new Error('Not supported in pywebview mode')),
+);
+
+export const getDataRepoPolicy = withMode(
+  (): Promise<httpApi.DataRepoPolicy> => httpApi.getDataRepoPolicy(),
+  (): Promise<httpApi.DataRepoPolicy> =>
+    Promise.reject(new Error('Not supported in pywebview mode')),
+);
+
+export const getDataRepoSyncPrompt = withMode(
+  (mode: string, instruction?: string): Promise<httpApi.SyncPrompt> =>
+    httpApi.getDataRepoSyncPrompt(mode, instruction),
+  (_mode: string, _instruction?: string): Promise<httpApi.SyncPrompt> =>
+    Promise.reject(new Error('Not supported in pywebview mode')),
+);
+
+export const startDataRepoSync = withMode(
+  (mode: string, instruction?: string): Promise<httpApi.SyncStartResult> =>
+    httpApi.startDataRepoSync(mode, instruction),
+  (_mode: string, _instruction?: string): Promise<httpApi.SyncStartResult> =>
+    Promise.resolve({ status: 'error', already_running: false, error: 'Not supported in pywebview mode' }),
+);
+
+export const getDataRepoSyncStatus = withMode(
+  (): Promise<httpApi.SyncRunStatus> => httpApi.getDataRepoSyncStatus(),
+  (): Promise<httpApi.SyncRunStatus> => Promise.resolve({ running: false }),
+);
+
 export const ghAuthLogin = withMode(
   async (): Promise<ApiResponse> => {
     // HTTP API
