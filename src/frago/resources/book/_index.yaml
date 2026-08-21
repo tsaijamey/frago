@@ -84,6 +84,10 @@
   category: must
   brief: "解释问题用业务语言：环节→坏在哪个点→具体表现→影响分层→为何没发现→修了什么；禁止拿函数名/变量名/行号当解释"
 
+- name: schedule-tasks
+  category: must
+  brief: "定时任务三形态：命令/配方 frago 直接执行不过 PA，自然语言才交给 PA；通知回路 --notify-on change 默认只在有新鲜事时说话，失败必报且收敛，逾期未跑自动告警"
+
 - name: must-output-shape
   category: must
   brief: "回复形状十条：首行即动作、多步编号、每轮复述坐标、完成的事写成现在什么能用了、时间给具体单位、压住旁支、列表封顶五条、禁开场白与完工总结与客套结尾；含六条豁免与发送前自查"

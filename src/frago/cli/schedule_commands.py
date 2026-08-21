@@ -30,8 +30,26 @@ def schedule_group():
     help="Cron expression: e.g. '0 8 * * *' (mutually exclusive with --every)",
 )
 @click.option("--name", default=None, help="Human-readable schedule name")
-@click.option("--prompt", default=None, help="Task prompt for PA (what to do)")
+@click.option("--prompt", default=None, help="自然语言任务，交给 PA 理解并执行")
+@click.option("--command", default=None, help="一条 shell 命令，frago 直接执行（不经 PA）")
+@click.option("--cwd", default=None, help="--command 的工作目录，默认家目录")
 @click.option("--params", default=None, help="JSON params for the recipe")
+@click.option(
+    "--notify-on",
+    type=click.Choice(["change", "always", "failure", "never"]),
+    default="change",
+    help="什么时候通知：change（默认，有新鲜事才说）/ always / failure / never",
+)
+@click.option(
+    "--notify-to",
+    default=None,
+    help="通知推到哪：已配置的 channel 名（见 frago channel list）、desktop、或 pa",
+)
+@click.option(
+    "--notify-context",
+    default=None,
+    help="通知落点需要的定位信息 JSON，如飞书的 '{\"chat_id\":\"oc_xxx\"}'",
+)
 @click.option("--start", default=None, help="Start time (ISO 8601), default: now")
 @click.option("--end", default=None, help="End time (ISO 8601), default: never")
 @click.option(
@@ -47,7 +65,12 @@ def schedule_add(
     cron: str | None,
     name: str | None,
     prompt: str | None,
+    command: str | None,
+    cwd: str | None,
     params: str | None,
+    notify_on: str,
+    notify_to: str | None,
+    notify_context: str | None,
     start: str | None,
     end: str | None,
     overlap: str,
@@ -55,10 +78,21 @@ def schedule_add(
 ):
     """Add a scheduled task.
 
-    Examples:
-      frago schedule add my-recipe --every 10m
-      frago schedule add --prompt "汇总昨天飞书消息" --cron "0 8 * * *" --name "每日飞书汇总"
-      frago schedule add slow_recipe --every 30s --overlap skip
+    三种任务形态，选一种：
+
+      配方      frago schedule add my-recipe --every 10m
+      命令      frago schedule add --command "df -h /" --cron "0 9 * * *"
+      自然语言  frago schedule add --prompt "汇总昨天飞书消息" --cron "0 8 * * *"
+
+    配方和命令由 frago 自己执行，不经过 PA；自然语言任务交给 PA。
+
+    通知：默认 --notify-on change，也就是任务自己说有新鲜事才推送。
+    推到哪用 --notify-to，可以是已配置的 channel、desktop、或 pa：
+
+      frago schedule add github_star_watch --cron "0 9,21 * * *" \\
+        --params '{"action":"update","no_open":true}' \\
+        --notify-on change --notify-to feishu \\
+        --notify-context '{"chat_id":"oc_xxx"}'
     """
     # Validate: --every and --cron are mutually exclusive, one is required
     if every and cron:
@@ -68,10 +102,45 @@ def schedule_add(
         click.echo("Error: either --every or --cron is required.")
         raise SystemExit(1)
 
-    # Must have either recipe_name or --prompt
-    if not recipe_name and not prompt:
-        click.echo("Error: either RECIPE_NAME or --prompt is required.")
+    # 三选一：形态必须明确，否则「到底谁来执行」是猜出来的
+    given = [x for x in (recipe_name, command, prompt) if x]
+    if not given:
+        click.echo("Error: 三种任务形态选一种——RECIPE_NAME、--command、或 --prompt。")
         raise SystemExit(1)
+    if len(given) > 1:
+        click.echo(
+            "Error: RECIPE_NAME / --command / --prompt 只能给一个。\n"
+            "  配方和命令由 frago 直接执行，自然语言任务交给 PA，三者执行者不同，混着给无法判定。"
+        )
+        raise SystemExit(1)
+
+    parsed_notify_context = {}
+    if notify_context:
+        try:
+            parsed_notify_context = json.loads(notify_context)
+        except json.JSONDecodeError as e:
+            click.echo(f"Invalid --notify-context JSON: {e}")
+            raise SystemExit(1) from e
+
+    if notify_on != "never" and not notify_to:
+        click.echo(
+            "Error: --notify-on 不是 never 时必须给 --notify-to，否则通知无处可去。\n"
+            "  可选：已配置的 channel（frago channel list）、desktop（本机系统通知）、pa（投给常驻 agent）。\n"
+            "  确实不想要通知就写 --notify-on never。"
+        )
+        raise SystemExit(1)
+
+    if notify_to and notify_to not in ("desktop", "pa"):
+        from frago.server.services.schedule_executor import _resolve_channel_names
+
+        known = _resolve_channel_names()
+        if notify_to not in known:
+            click.echo(
+                f"Error: 通知落点 '{notify_to}' 不认识。\n"
+                f"  已配置的 channel：{', '.join(known) or '（一个都没有，用 frago channel add 加）'}\n"
+                f"  或者用 desktop / pa。"
+            )
+            raise SystemExit(1)
 
     interval = None
     if every:
@@ -121,14 +190,30 @@ def schedule_add(
         cron=cron,
         overlap=overlap,
         timeout=timeout,
+        command=command,
+        cwd=cwd,
+        notify={"on": notify_on, "to": notify_to, "context": parsed_notify_context},
     )
+
+    executor = {
+        "recipe": "frago 直接执行",
+        "command": "frago 直接执行",
+        "prompt": "交给 PA",
+    }[schedule["kind"]]
 
     click.echo(f"Schedule created: {schedule['id']}")
     click.echo(f"  Name: {schedule['name']}")
+    click.echo(f"  Kind: {schedule['kind']}（{executor}）")
     if recipe_name:
         click.echo(f"  Recipe: {recipe_name}")
+    if command:
+        click.echo(f"  Command: {command}")
     if prompt:
         click.echo(f"  Prompt: {prompt}")
+    if notify_on == "never":
+        click.echo("  Notify: 关闭")
+    else:
+        click.echo(f"  Notify: {notify_on} → {notify_to}")
     if every:
         click.echo(f"  Interval: {every} ({interval}s)")
     if cron:
@@ -153,10 +238,10 @@ def schedule_list():
 
     # Header
     click.echo(
-        f"{'ID':<16} {'Enabled':<9} {'Name':<25} {'Schedule':<16} "
-        f"{'Runs':<6} {'Last Status':<12} {'Next Run'}"
+        f"{'ID':<16} {'Enabled':<8} {'Kind':<9} {'Name':<22} {'Schedule':<15} "
+        f"{'Runs':<6} {'Last Status':<12} {'Notify':<16} {'Next Run'}"
     )
-    click.echo("-" * 120)
+    click.echo("-" * 140)
 
     for s in schedules:
         # Schedule expression
@@ -185,9 +270,13 @@ def schedule_list():
         if not s.get("enabled", True):
             next_run = "(disabled)"
 
+        kind = s.get("kind") or ("recipe" if s.get("recipe") else "prompt")
+        nf = s.get("notify") or {}
+        notify_str = "—" if nf.get("on") in (None, "never") else f"{nf.get('on')}→{nf.get('to')}"
+
         click.echo(
-            f"{s['id']:<16} {enabled:<9} {schedule_name:<25} {schedule_str:<16} "
-            f"{run_count:<6} {last_status:<12} {next_run}"
+            f"{s['id']:<16} {enabled:<8} {kind:<9} {schedule_name:<22} {schedule_str:<15} "
+            f"{run_count:<6} {last_status:<12} {notify_str:<16} {next_run}"
         )
 
 
@@ -270,15 +359,30 @@ def schedule_run(schedule_id: str):
         click.echo(f"Schedule {schedule_id} not found.")
         raise SystemExit(1)
 
-    if not service._pa_enqueue:
-        click.echo("Error: PA enqueue not available (server not running?).")
+    kind = target.get("kind") or ("recipe" if target.get("recipe") else "prompt")
+
+    # prompt 型必须有 PA 才跑得动，而 PA 的队列是服务端进程内的东西，
+    # CLI 这个独立进程拿不到——这是它一直报「PA enqueue not available」的真正原因。
+    if kind == "prompt":
+        click.echo(
+            "自然语言任务要由服务端的 PA 执行，命令行进程碰不到它的队列。\n"
+            "  手动触发这类任务请在服务端做；命令型和配方型可以在这里直接跑。"
+        )
         raise SystemExit(1)
 
-    click.echo(f"Triggering schedule {schedule_id} ({target.get('name', '')})...")
-    try:
-        asyncio.get_event_loop().run_until_complete(service._execute(target))
-        click.echo("Message enqueued to PA.")
-    except RuntimeError:
-        # No running event loop — create one
-        asyncio.run(service._execute(target))
-        click.echo("Message enqueued to PA.")
+    click.echo(f"Triggering schedule {schedule_id} ({target.get('name', '')}) — {kind}...")
+    asyncio.run(service._execute_native(target))
+
+    # 重新读盘拿这一轮的结果，别拿内存里那份旧的报给人看
+    for s in service.list_schedules():
+        if s["id"] != schedule_id:
+            continue
+        last = (s.get("history") or [])[-1] if s.get("history") else {}
+        click.echo(f"  Status: {last.get('status', '?')}  ({last.get('duration_ms', 0)}ms)")
+        if last.get("error"):
+            click.echo(f"  Error: {last['error']}")
+        if last.get("notified"):
+            click.echo(f"  Notified: {last.get('notify_status')}（{last.get('notify_reason')}）")
+        else:
+            click.echo(f"  未通知：{last.get('notify_reason', '—')}")
+        break

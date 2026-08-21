@@ -1,11 +1,20 @@
-"""Scheduler service — PA's alarm clock.
+"""Scheduler service — frago 的定时执行底座。
 
-Provides periodic scheduled task delivery to the Primary Agent.
-Schedules persist in ~/.frago/schedules.json.
+定时任务持久化在 ~/.frago/schedules.json，按性质分三种形态：
 
-Design: schedule is an alarm clock, not an executor.
-When a schedule is due, it enqueues a scheduled_task message to PA.
-PA decides whether/how to execute.
+  kind=command   一条 shell 命令      → frago 自己执行
+  kind=recipe    一个配方             → frago 自己执行
+  kind=prompt    一句自然语言任务      → 交给 PA（这一种本来就需要理解和判断）
+
+**前两种不经过 PA。** 2026-04 到 2026-08 之间它们是经过的，代价是：agent 会话起
+不来时，任务只在日志里留一行警告然后无声地不发生。机械任务的执行不该绑在一个
+agent 能不能启动上。
+
+方向也随之反过来——PA 不再是定时任务的必经之路，而是它的两个身份之一：
+执行 prompt 型任务的执行者，以及 ``frago schedule add`` 的调用方（agent 可以
+给自己或给系统安排定时任务）。
+
+执行完的通知回路见 schedule_executor 模块的模块文档。
 """
 
 import asyncio
@@ -13,6 +22,7 @@ import contextlib
 import json
 import logging
 import threading
+import time
 import uuid
 from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta
@@ -52,7 +62,7 @@ def _parse_interval(spec: str) -> int:
 
 
 class SchedulerService:
-    """Background service for scheduled task delivery to PA."""
+    """定时任务的调度与执行。机械任务自己跑，自然语言任务转给 PA。"""
 
     _instance: Optional["SchedulerService"] = None
     _lock = threading.Lock()
@@ -156,6 +166,23 @@ class SchedulerService:
             s["reply_channel"] = None
         if "reply_context" not in s:
             s["reply_context"] = {}
+        # kind 是后加的。老记录按「有 recipe 就是配方型，否则是自然语言型」推断，
+        # 推断结果落盘，之后不再重算——否则改了 recipe 字段会让形态跟着漂。
+        if "kind" not in s:
+            s["kind"] = "recipe" if s.get("recipe") or s.get("recipe_name") else "prompt"
+        if "command" not in s:
+            s["command"] = None
+        if "cwd" not in s:
+            s["cwd"] = None
+        if "notify" not in s:
+            # 老任务一律不通知：它们此前从没推送过，升级不该让人突然被刷屏。
+            s["notify"] = {"on": "never", "to": None, "context": {}}
+        for k, v in (
+            ("last_success_at", None), ("last_digest", None),
+            ("consecutive_failures", 0), ("staleness_notified_at", None),
+        ):
+            if k not in s:
+                s[k] = v
         return s
 
     # --- CRUD ---
@@ -174,16 +201,29 @@ class SchedulerService:
         timeout: int = 300,
         reply_channel: str | None = None,
         reply_context: dict[str, Any] | None = None,
+        command: str | None = None,
+        cwd: str | None = None,
+        notify: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self._load()
-        schedule_name = name or recipe_name or "unnamed"
+        if command:
+            kind = "command"
+        elif recipe_name:
+            kind = "recipe"
+        else:
+            kind = "prompt"
+        schedule_name = name or recipe_name or (command or "")[:40] or "unnamed"
         schedule_prompt = prompt or (f"执行 recipe {recipe_name}" if recipe_name else "")
         schedule = {
             "id": f"sch_{uuid.uuid4().hex[:8]}",
             "name": schedule_name,
+            "kind": kind,
             "prompt": schedule_prompt,
             "recipe": recipe_name,
             "recipe_name": recipe_name,  # backward compat
+            "command": command,
+            "cwd": cwd,
+            "notify": notify or {"on": "change", "to": None, "context": {}},
             "params": params or {},
             "interval_seconds": interval_seconds,
             "cron": cron,
@@ -197,6 +237,10 @@ class SchedulerService:
             "created_at": _now_utc().isoformat(),
             "last_run_at": None,
             "last_status": None,
+            "last_success_at": None,
+            "last_digest": None,
+            "consecutive_failures": 0,
+            "staleness_notified_at": None,
             "run_count": 0,
             "history": [],
         }
@@ -293,12 +337,69 @@ class SchedulerService:
             return now
         return None
 
+    def _period_seconds(self, schedule: dict[str, Any]) -> int | None:
+        """这条任务多久跑一次。cron 型取相邻两次触发的间隔。"""
+        interval = schedule.get("interval_seconds")
+        if interval:
+            return int(interval)
+        cron_expr = schedule.get("cron")
+        if not cron_expr:
+            return None
+        try:
+            from croniter import croniter
+
+            base = _now_utc()
+            it = croniter(cron_expr, base)
+            first = it.get_next(datetime)
+            second = it.get_next(datetime)
+            return int((second - first).total_seconds())
+        except (ValueError, KeyError):
+            return None
+
+    async def _check_staleness(self) -> None:
+        """该跑而没跑，本身就是要通报的事。
+
+        定时任务最难发现的故障不是报错——报错至少有一行日志——而是它压根没触发：
+        服务停过、机器睡过、任务被禁用了没人记得。这种情况下人以为它在跑，
+        数据却停在几天前。所以这里主动喊一声，而且这条通知能发出去本身就证明
+        调度器是活的，缩小了排查范围。
+        """
+        from frago.server.services import schedule_executor as ex
+
+        now = _now_utc()
+        for schedule in self._schedules:
+            if not schedule.get("enabled", True):
+                continue
+            if (schedule.get("notify") or {}).get("on") in (None, "never"):
+                continue
+            if schedule.get("staleness_notified_at"):
+                continue
+            overdue = ex.is_stale(schedule, now, self._period_seconds(schedule))
+            if overdue is None:
+                continue
+            result = ex.deliver(schedule, ex.staleness_text(schedule, overdue), self._pa_enqueue)
+            if result.get("status") == "queued":
+                await self._enqueue_notice(schedule, ex.staleness_text(schedule, overdue))
+            schedule["staleness_notified_at"] = now.isoformat()
+            self._save()
+            logger.warning(
+                "[scheduler] %s 已逾期 %s 未成功运行，已通知（%s）",
+                schedule["id"], overdue, result.get("status"),
+            )
+
     async def _loop(self) -> None:
         await asyncio.sleep(5)  # initial delay
+        last_staleness_check = 0.0
         while not self._stop_event.is_set():
             # Reload schedules each tick (CLI may have added new ones)
             self._load()
             now = _now_utc()
+
+            # 逾期巡检半小时一次就够——它盯的是「几个周期都没跑」这种慢故障
+            if time.monotonic() - last_staleness_check > 1800:
+                last_staleness_check = time.monotonic()
+                with contextlib.suppress(Exception):
+                    await self._check_staleness()
             for schedule in self._schedules:
                 if not schedule.get("enabled", True):
                     continue
@@ -324,12 +425,8 @@ class SchedulerService:
                 continue
 
     async def _execute(self, schedule: dict[str, Any]) -> None:
-        """Enqueue a scheduled_task message to PA (instead of direct execution)."""
+        """到期分流：命令和配方 frago 自己跑，自然语言任务交给 PA。"""
         schedule_id = schedule["id"]
-        schedule_name = schedule.get("name", schedule.get("recipe_name", "unnamed"))
-        prompt = schedule.get("prompt", "")
-        recipe = schedule.get("recipe", schedule.get("recipe_name"))
-        params = schedule.get("params", {}) or {}
 
         # Overlap check: skip if previous trigger is still active
         overlap = schedule.get("overlap", "skip")
@@ -344,6 +441,99 @@ class SchedulerService:
         schedule["last_run_at"] = _now_utc().isoformat()
         schedule["run_count"] = schedule.get("run_count", 0) + 1
         self._save()
+
+        kind = schedule.get("kind") or ("recipe" if schedule.get("recipe") else "prompt")
+        if kind in ("command", "recipe"):
+            self._active_schedule_ids.add(schedule_id)
+            try:
+                await self._execute_native(schedule)
+            finally:
+                self._active_schedule_ids.discard(schedule_id)
+            return
+
+        await self._execute_via_pa(schedule)
+
+    async def _execute_native(self, schedule: dict[str, Any]) -> None:
+        """frago 自己执行，跑完按通知回路决定要不要说话。"""
+        from frago.server.services import schedule_executor as ex
+
+        schedule_id = schedule["id"]
+        prev = {
+            "last_digest": schedule.get("last_digest"),
+            "consecutive_failures": schedule.get("consecutive_failures", 0),
+        }
+
+        try:
+            outcome = await ex.run_scheduled(schedule)
+        except Exception as e:  # noqa: BLE001 — 一个任务炸掉不该带走调度循环
+            logger.exception("[scheduler] %s native execution crashed", schedule_id)
+            outcome = ex.RunOutcome(ok=False, kind=schedule.get("kind", "?"), error=str(e))
+
+        decision = ex.decide_notification(schedule, outcome, prev)
+        notify_result: dict[str, Any] = {"status": "skipped", "reason": decision.reason}
+        if decision.should:
+            notify_result = ex.deliver(schedule, decision.text, self._pa_enqueue)
+            if notify_result.get("status") == "queued":
+                await self._enqueue_notice(schedule, decision.text)
+                notify_result = {"status": "ok", "target": "pa"}
+
+        # 状态写回：成功清零失败计数并推进指纹，失败只累加计数、指纹不动
+        # （指纹代表「上一次成功的样子」，失败没有样子可言）。
+        self._load()
+        for s in self._schedules:
+            if s["id"] != schedule_id:
+                continue
+            s["last_status"] = "success" if outcome.ok else "failed"
+            if outcome.ok:
+                s["last_success_at"] = _now_utc().isoformat()
+                s["last_digest"] = outcome.digest
+                s["consecutive_failures"] = 0
+                s["staleness_notified_at"] = None
+            else:
+                s["consecutive_failures"] = int(s.get("consecutive_failures", 0)) + 1
+            history = s.setdefault("history", [])
+            history.append({
+                "triggered_at": s.get("last_run_at", _now_utc().isoformat()),
+                "status": s["last_status"],
+                "kind": s.get("kind"),
+                "exit_code": outcome.exit_code,
+                "duration_ms": outcome.duration_ms,
+                "error": outcome.error[:300] if outcome.error else "",
+                "notified": decision.should,
+                "notify_status": notify_result.get("status"),
+                "notify_reason": decision.reason,
+                "task_id": None,
+            })
+            if len(history) > 50:
+                s["history"] = history[-50:]
+            self._save()
+            break
+
+        logger.info(
+            "[scheduler] %s (%s) → %s in %dms; notify=%s (%s)",
+            schedule_id, schedule.get("kind"), "ok" if outcome.ok else "FAILED",
+            outcome.duration_ms, notify_result.get("status"), decision.reason,
+        )
+
+    async def _enqueue_notice(self, schedule: dict[str, Any], text: str) -> None:
+        """把一条通知投给 PA 读。agent 在这里是消费者，不是执行链路的一环。"""
+        if not self._pa_enqueue:
+            return
+        await self._pa_enqueue({
+            "type": "message",
+            "msg_id": f"schnotice_{uuid.uuid4().hex[:8]}",
+            "channel": schedule.get("reply_channel") or "schedule",
+            "prompt": text,
+            "reply_context": schedule.get("reply_context", {}),
+        })
+
+    async def _execute_via_pa(self, schedule: dict[str, Any]) -> None:
+        """自然语言任务：仍然交给 PA，它需要的是理解而不是执行。"""
+        schedule_id = schedule["id"]
+        schedule_name = schedule.get("name", schedule.get("recipe_name", "unnamed"))
+        prompt = schedule.get("prompt", "")
+        recipe = schedule.get("recipe", schedule.get("recipe_name"))
+        params = schedule.get("params", {}) or {}
 
         # Phase 3 (去账本): 不再 Ingestor.ingest_scheduled 写 board——scheduled 消息
         # 直接走下面的 PA enqueue 路径（带 reply_context），由常驻会话消费。
