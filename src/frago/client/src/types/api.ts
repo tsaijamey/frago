@@ -150,9 +150,13 @@ export interface GhRateLimit {
 
 export interface GhCliStatus {
   installed: boolean;
+  /** A usable credential exists. Stays true offline — see `verified`. */
   authenticated: boolean;
   version?: string | null;
   username?: string | null;
+  /** GitHub confirmed the credential just now. False + authenticated = could not reach GitHub. */
+  verified?: boolean;
+  verify_error?: string | null;
   /** Present only while nobody is logged in — the 60-per-hour anonymous budget. */
   rate_limit?: GhRateLimit | null;
 }

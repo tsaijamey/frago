@@ -42,6 +42,11 @@ class GhCliStatusResponse(BaseModel):
     authenticated: bool
     version: Optional[str] = None
     username: Optional[str] = None
+    # Whether GitHub confirmed the credential just now. False with
+    # authenticated=True means a token is stored but github.com could not be
+    # reached to check it — a network problem, not a logged-out user.
+    verified: bool = False
+    verify_error: Optional[str] = None
     # Filled in only when nobody is logged in — that is when the number
     # matters, and it is the one case where 60 requests an hour runs out.
     rate_limit: GhRateLimitResponse | None = None
@@ -218,6 +223,8 @@ async def check_gh_cli() -> GhCliStatusResponse:
         authenticated=status.get("authenticated", False),
         version=status.get("version"),
         username=status.get("username"),
+        verified=status.get("verified", False),
+        verify_error=status.get("verify_error"),
         rate_limit=GhRateLimitResponse(**rate_limit) if rate_limit else None,
     )
 

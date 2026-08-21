@@ -25,18 +25,38 @@ class GitHubService:
     def check_gh_cli() -> dict[str, Any]:
         """Check gh CLI installation and login status.
 
+        ``gh auth status`` does not read local state — it calls GitHub to
+        validate the stored token. With no network it fails, and its message
+        ("the token is invalid") is indistinguishable from a genuinely revoked
+        credential. Taking that at face value means a user who is perfectly
+        logged in gets told they are not, every time their connection drops.
+        That warning is not dismissible, so a false one is expensive.
+
+        So a failure is read against whether a credential exists at all:
+
+        - status succeeds → logged in, and verified just now.
+        - status fails but a token is stored → still treated as logged in, with
+          ``verified: False``. If the token really was revoked, the next push
+          says so precisely; that late, accurate discovery beats nagging every
+          logged-in user through every network blip.
+        - status fails and no token is stored → genuinely logged out.
+
         Returns:
             Dictionary with:
             - installed: Whether gh CLI is installed
             - version: Version string or None
-            - authenticated: Whether user is logged in
+            - authenticated: Whether a usable credential exists
             - username: GitHub username or None
+            - verified: Whether GitHub confirmed the credential just now
+            - verify_error: Why it could not be confirmed, when it could not
         """
         result = {
             "installed": False,
             "version": None,
             "authenticated": False,
             "username": None,
+            "verified": False,
+            "verify_error": None,
         }
 
         # Check if gh is installed
@@ -59,25 +79,65 @@ class GitHubService:
         if result["installed"]:
             try:
                 auth_result = run_subprocess(get_gh_command() + ["auth", "status"], timeout=5)
-                # gh auth status returns 0 if logged in
+                output = auth_result.stderr + auth_result.stdout
+
                 if auth_result.returncode == 0:
                     result["authenticated"] = True
+                    result["verified"] = True
                     # Parse username from output
                     # Format: "Logged in to github.com account USERNAME (keyring)"
                     # Or: "Logged in to github.com as USERNAME"
-                    output = auth_result.stderr + auth_result.stdout
                     match = re.search(
                         r"Logged in to github\.com (?:as|account) ([^\s(]+)",
                         output,
                     )
                     if match:
                         result["username"] = match.group(1)
+                else:
+                    result.update(GitHubService._unverified_login(output))
             except subprocess.TimeoutExpired:
+                # A hung status call is the same situation as a failed one: no
+                # answer from GitHub, which says nothing about the credential.
                 logger.debug("gh auth status timed out")
+                result.update(GitHubService._unverified_login(""))
             except Exception as e:
                 logger.warning("Failed to check gh auth status: %s", e)
 
         return result
+
+    @staticmethod
+    def _unverified_login(output: str) -> dict[str, Any]:
+        """Decide what a failed `gh auth status` actually means.
+
+        A stored token is the evidence that someone logged in here; GitHub
+        being unreachable is not evidence that they did not.
+        """
+        verdict: dict[str, Any] = {
+            "authenticated": False,
+            "verified": False,
+            "verify_error": None,
+        }
+
+        try:
+            token_result = run_subprocess(get_gh_command() + ["auth", "token"], timeout=5)
+            has_token = token_result.returncode == 0 and bool(token_result.stdout.strip())
+        except Exception:  # noqa: BLE001 - no token is the safe reading
+            has_token = False
+
+        if not has_token:
+            return verdict
+
+        verdict["authenticated"] = True
+        # gh names the account even while failing to validate it:
+        # "Failed to log in to github.com account USERNAME (keyring)"
+        match = re.search(r"github\.com account ([^\s(]+)", output)
+        if match:
+            verdict["username"] = match.group(1)
+        verdict["verify_error"] = (
+            "本机存着 GitHub 凭据，但这次没能连上 github.com 核验它。"
+            "网络恢复后会自动重新确认；如果凭据真的失效了，下一次推送会明确报出来。"
+        )
+        return verdict
 
     @classmethod
     def get_rate_limit(cls) -> dict[str, Any] | None:

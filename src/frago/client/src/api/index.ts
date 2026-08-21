@@ -507,6 +507,10 @@ export const checkGhCli = withMode(
       authenticated: status.authenticated,
       version: status.version ?? undefined,
       username: status.username ?? undefined,
+      // Distinguishes "logged out" from "could not reach GitHub to check" —
+      // without it a network blip reads as a lost login.
+      verified: status.verified ?? false,
+      verify_error: status.verify_error ?? undefined,
       // Only sent while nobody is logged in, and it is the whole reason the
       // anonymous-quota warning can name a number instead of hand-waving.
       rate_limit: status.rate_limit ?? undefined,

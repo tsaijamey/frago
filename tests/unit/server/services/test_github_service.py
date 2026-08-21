@@ -211,3 +211,93 @@ class TestGitHubServiceAuthLogin:
             result = GitHubService.auth_login()
 
         assert result["status"] == "error"
+
+
+class TestOfflineAuthIsNotLogout:
+    """网络不通时，`gh auth status` 会把一个登录着的账号报成 token 无效。
+
+    照单全收的后果是：那条关不掉的横幅会在每次网络抖动时告诉用户「你的数据没有
+    备份，去重新登录」。凭据明明还在本机躺着。所以这里按「有没有存着凭据」来判，
+    而不是按「GitHub 这一秒答没答应」。
+    """
+
+    def _versions(self):
+        version = MagicMock()
+        version.returncode = 0
+        version.stdout = "gh version 2.86.0 (2026-07-31)"
+        return version
+
+    def test_offline_with_a_stored_token_still_counts_as_logged_in(self):
+        failed = MagicMock()
+        failed.returncode = 1
+        failed.stdout = ""
+        failed.stderr = (
+            "github.com\n  X Failed to log in to github.com account tsaijamey (keyring)\n"
+            "  - The token in keyring is invalid.\n"
+        )
+        token = MagicMock()
+        token.returncode = 0
+        token.stdout = "gho_sometoken\n"
+
+        with patch(
+            "frago.server.services.github_service.run_subprocess",
+            side_effect=[self._versions(), failed, token],
+        ):
+            result = GitHubService.check_gh_cli()
+
+        assert result["authenticated"] is True
+        # 但要说清楚：这次没核验过。
+        assert result["verified"] is False
+        assert result["verify_error"]
+        # 名字 gh 在失败信息里照样给了，别丢。
+        assert result["username"] == "tsaijamey"
+
+    def test_no_stored_token_is_a_real_logout(self):
+        failed = MagicMock()
+        failed.returncode = 1
+        failed.stdout = ""
+        failed.stderr = "You are not logged into any GitHub hosts.\n"
+        no_token = MagicMock()
+        no_token.returncode = 1
+        no_token.stdout = ""
+
+        with patch(
+            "frago.server.services.github_service.run_subprocess",
+            side_effect=[self._versions(), failed, no_token],
+        ):
+            result = GitHubService.check_gh_cli()
+
+        assert result["authenticated"] is False
+        assert result["verified"] is False
+
+    def test_a_timeout_is_treated_like_any_other_no_answer(self):
+        """卡住和失败是同一种情况：GitHub 没回话，这不说明凭据没了。"""
+        token = MagicMock()
+        token.returncode = 0
+        token.stdout = "gho_sometoken\n"
+
+        with patch(
+            "frago.server.services.github_service.run_subprocess",
+            side_effect=[self._versions(), subprocess.TimeoutExpired("gh", 5), token],
+        ):
+            result = GitHubService.check_gh_cli()
+
+        assert result["authenticated"] is True
+        assert result["verified"] is False
+
+    def test_a_successful_check_is_marked_verified(self):
+        ok = MagicMock()
+        ok.returncode = 0
+        ok.stdout = ""
+        ok.stderr = "Logged in to github.com account tsaijamey (keyring)"
+
+        with patch(
+            "frago.server.services.github_service.run_subprocess",
+            side_effect=[self._versions(), ok],
+        ):
+            result = GitHubService.check_gh_cli()
+
+        assert result["authenticated"] is True
+        assert result["verified"] is True
+        assert result["verify_error"] is None
+        assert result["username"] == "tsaijamey"
