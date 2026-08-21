@@ -2,9 +2,9 @@
 name: whitebox_scene_studio
 type: workflow
 runtime: python
-version: "0.6.1"
+version: "0.6.2"
 created_at: "2026-08-21T02:10:00+08:00"
-updated_at: "2026-08-21T13:35:00+08:00"
+updated_at: "2026-08-21T15:20:00+08:00"
 description: "白膜场景生图工作台：左边用基础体块搭 3D 白膜场景，右边把白膜图 + 语义分割图当参考图喂给生图模型，让相机角度、构图、物体位置稳定可控"
 use_cases:
   - "文生图构图老抽卡：想要「人在左、车在右、镜头压到膝盖高度」，每次出来都不一样"
@@ -78,6 +78,34 @@ flow:
 配上一段系统生成的色卡图例，一起喂给火山方舟 Seedream。出图就按你摆的来。
 
 完整产品说明见同目录 `spec.md`。
+
+## 第一次用之前：配一把生图密钥
+
+摆场景、出白膜图和分割图全在本机跑，不需要任何密钥。**只有按下「生成」那一步要钱**——
+它把参考图交给火山方舟 Seedream，用的是你自己的账号。
+
+本配方 NEVER 自己碰密钥：生图是 subprocess 调 `doubao_seedream_image`（本仓库同目录一起提供，
+是本配方的依赖），由 frago runner 按**那个子配方的名字**从 `~/.frago/recipes.local.json`
+注入。所以你要配的是 `doubao_seedream_image`，不是 `whitebox_scene_studio`：
+
+```json
+{
+  "doubao_seedream_image": {
+    "api_key": "你的火山方舟 API Key",
+    "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3"
+  }
+}
+```
+
+或者 `frago server start` 之后在 Web UI 的 Recipe Secrets 面板里选 `doubao_seedream_image` 填。
+
+**`base_url` 必须跟你的 key 属于同一个通道**：Agent Plan 的订阅 key 填上面那个 `/api/plan/v3`，
+标准方舟的按量 key 则**留空**走默认 `/api/v3`。配错了不是出图变难看，是直接报
+`UnsupportedModel` 或 401。字段含义与申请入口见 `doubao_seedream_image/recipe.md`。
+
+另外两个 action 要另一把 key：`critique`（让多模态模型看构图）和 `expand_prompt`（一句话扩写成
+提示词草稿）走 frago 自带的 `openrouter_vision_classify`，需要 `openrouter_vision_classify.api_key`。
+不配这把也不影响摆场景与出图，只是这两个按钮用不了。
 
 ## 现在能用到哪一步
 
@@ -413,4 +441,4 @@ node test_prompt_draft.mjs              # 标签的拼/撤/换，人写的字一
 ## 两条纪律
 
 - **NEVER `expose --runnable`**：这个配方会调生图模型，花的是主人的钱。
-- **凭证不自己读**：生图 subprocess 调 `doubao_seedream_image`，runner 按子配方名从 `~/.frago/recipes.local.json` 注入。
+- **凭证不自己读**：生图 subprocess 调 `doubao_seedream_image`，runner 按子配方名从 `~/.frago/recipes.local.json` 注入。配方代码里 NEVER 出现 key、NEVER 读 `ARK_API_KEY` 之类的环境变量——多一条读法就多一个别人会把密钥写进配方里的地方。使用者怎么配见开头那节。
