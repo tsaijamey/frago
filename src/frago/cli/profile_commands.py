@@ -32,8 +32,12 @@ frago agent 恒起一个 tmux 会话、在里面跑指定的 cli-agent（默认 
   frago agent <prompt> --use-ccr              # 跑在 CCR 当前配置的模型上（见下方 CCR 状态）
   frago agent attach --files '[...]' --dirs '[...]'  # 交付产出文件
 
+一轮任务不设时间上限：缺省 --timeout 0，worker 跑到答完 / 撞上认证墙 / 会话死掉才停，
+NEVER 因墙钟到点被腰斩。真要卡表（探活之类）才显式 --timeout N。
+
 --json 输出：{"status","exit_code","session_id","tmux_name","text","duration_ms"}
-退出码契约：0=ok / 1=timeout（会话仍活可 send 续）/ 2=needs_input（MUST 交真人）/ 3=error
+退出码契约：0=ok / 1=timeout（只有显式 --timeout N 才可能出现，会话仍活可 send 续）/
+            2=needs_input（MUST 交真人）/ 3=error
 
 已退场，NEVER 再用：--driver、--ask、--passthrough（传了报错）；--yes/-y 已废弃降为
 no-op，收到即忽略（历史调用方不会因此炸掉），新代码 NEVER 写它。

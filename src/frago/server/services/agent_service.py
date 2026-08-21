@@ -99,7 +99,7 @@ class AgentSession:
         prefix_provider: Callable[[], str] | None = None,
         agent_type: str | None = None,
         pool: Any | None = None,
-        turn_timeout_s: float = 600.0,
+        turn_timeout_s: float | None = None,
     ):
         self.internal_id = internal_id
         self.project_path = project_path
@@ -229,7 +229,11 @@ class AgentSession:
 
         The turn's end is decided by the driver's own completion probe inside
         ``TmuxAgentSession.send`` (authoritative: it reads the transcript's
-        stop_reason), with ``turn_timeout_s`` as the backstop. The streamer
+        stop_reason). ``turn_timeout_s`` defaults to None — no wall-clock cap:
+        a turn that legitimately runs for an hour must not be declared finished
+        at some fixed mark while the agent is still working (the UI would show
+        "completed" over a session that keeps producing). Callers that need a
+        cap pass a positive number. The streamer
         runs alongside and is drained once more after the turn returns so the
         final records aren't lost to the poll interval.
         """

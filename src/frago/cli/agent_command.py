@@ -172,6 +172,10 @@ def _run_tmux_driver(
 
     tmux 是唯一后端（spec 20260607 Phase 5，旧 headless 后端已整体退场）。无 warm pool：
     开新会话、投一轮、关闭。停机时按 ``_EXIT_CODES`` 退出。
+
+    ``timeout<=0`` = 这一轮不设墙钟上限（缺省）。长任务不该被一个拍脑袋的秒数腰斩：
+    到点判死时 worker 往往还在干活，主控却拿到一个 timeout 就散了，那一轮的产出既
+    没交付也没人回收。停机仍由 agent 自己说了算——答完 / 需要真人 / 会话死掉。
     """
     from frago.agent_driver import SessionLauncher
     from frago.agent_driver.tmux_session import tmux_name_for
@@ -194,7 +198,7 @@ def _run_tmux_driver(
             cwd=cwd,
             env=env,
             native_session_id=native_session_id,
-            timeout_s=float(timeout),
+            timeout_s=float(timeout) if timeout > 0 else None,
         )
     except KeyError:
         _emit_and_exit(
@@ -389,8 +393,10 @@ def agent() -> None:
 @click.option(
     "--timeout",
     type=int,
-    default=600,
-    help="Execution timeout in seconds, default 600"
+    default=0,
+    help="Wall-clock cap for this turn, in seconds. Default 0 = no cap: wait until "
+         "the turn actually finishes (or the agent needs a human, or the session dies). "
+         "Pass a positive number only if you want the turn cut off at that mark."
 )
 @click.option(
     "--use-ccr",
@@ -496,12 +502,18 @@ def agent_run(
     Examples:
       frago agent Help me find Python jobs on Upwork
       frago agent "fix the login bug" --model sonnet
-      frago agent "summarize this" --json --timeout 300
+      frago agent "summarize this" --json
+      frago agent "quick check" --timeout 300   # opt into a wall-clock cap
+
+    \b
+    A turn has no time cap by default — it runs until the agent is done, needs a
+    human, or its session dies. `--timeout N` opts into cutting it off at N seconds.
 
     \b
     Exit codes (also reported as "status" under --json):
       0 ok           answered; the answer is on stdout
-      1 timeout      turn timed out; session still alive, continue with `frago agent send`
+      1 timeout      only with an explicit --timeout: the cap fired; session still
+                     alive, continue with `frago agent send`
       2 needs_input  auth wall / permission gate / clarification — needs a human
       3 error        driver or tmux layer failed
 

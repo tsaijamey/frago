@@ -107,11 +107,15 @@ class WarmSessionPool:
         cwd: str,
         native_session_id: bool = False,
         conv_key: str | None = None,
-        timeout_s: float = 120.0,
+        timeout_s: float | None = None,
         resume_hook: ResumeHook | None = None,
         env: dict[str, str] | None = None,
     ) -> TurnResult:
-        """取活会话 → 投喂一轮；会话保活留待复用。"""
+        """取活会话 → 投喂一轮；会话保活留待复用。
+
+        ``timeout_s`` 缺省 None = 这一轮不设时间上限（见 ``TmuxAgentSession.send``）；
+        调用方要墙钟上限就自己传一个正数。
+        """
         session = self.acquire(
             agent_type,
             session_id,

@@ -673,7 +673,7 @@ COMMAND_EXAMPLES = {
     ],
     "agent/send": [
         "frago agent send <name> '<prompt>'",
-        "frago agent send my-session 'continue the task' --timeout 600",
+        "frago agent send my-session 'continue the task'",
     ],
     "agent/peek": [
         "frago agent peek <name>",

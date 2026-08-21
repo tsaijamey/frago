@@ -266,10 +266,18 @@ def _try_clear_residual_input(session, driver, pane: str) -> tuple[str, bool]:
 @click.argument("name")
 @click.argument("prompt")
 @click.option(
-    "--timeout", type=float, default=120.0, help="Seconds to wait for the turn to finish."
+    "--timeout",
+    type=float,
+    default=0.0,
+    help="Wall-clock cap for this turn, in seconds. Default 0 = no cap: wait until the "
+         "turn finishes (or the agent needs a human, or the session dies).",
 )
 def drive_send(name: str, prompt: str, timeout: float) -> None:
-    """Feed one turn to a live session and print the extracted answer (kept alive)."""
+    """Feed one turn to a live session and print the extracted answer (kept alive).
+
+    缺省不设时间上限：一轮该跑多久由任务决定。墙钟到点就判死的老行为会把还在干活的
+    会话报成 timeout，人以为它停了、实际还在跑。要上限就显式 ``--timeout N``。
+    """
     entry = _resolve_or_die(name)
     runner = make_runner()
 
@@ -295,7 +303,7 @@ def drive_send(name: str, prompt: str, timeout: float) -> None:
         click.echo(pane, err=True)
         sys.exit(1)
 
-    result = session.send(prompt, timeout_s=timeout)
+    result = session.send(prompt, timeout_s=timeout if timeout > 0 else None)
 
     # 等不到 done_signal 超时 → 报 timeout + 末屏 + 提示接管（负反馈）。
     if result.status == "timeout":

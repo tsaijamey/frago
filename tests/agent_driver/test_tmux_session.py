@@ -141,6 +141,49 @@ def test_send_times_out_when_done_never_hits() -> None:
     assert result.status == "timeout"
 
 
+# ── 不设时间上限（长任务不该被墙钟腰斩）────────────────────────────
+def _long_running_session(timeout_kwargs: dict) -> object:
+    """一轮跑很久才答完：每一拍时钟跳一小时，done 到第 4 拍才出现。
+
+    时钟跳得比任何历史缺省（120 / 180 / 600 秒）都远，只要还有上限就必然判 timeout。
+    """
+    ticks = iter([i * 3600.0 for i in range(50)])
+    panes = [
+        "> ",  # pre-snapshot
+        "still working",
+        "still working",
+        "still working",
+        "answer here\nDONE",  # 第 4 拍才答完
+        "answer here\nDONE",  # full scrollback
+    ]
+    sess = TmuxAgentSession(
+        "long",
+        _echo_driver(),
+        cwd="/tmp",
+        runner=FakeTmux(panes),
+        sleep=_no_sleep,
+        clock=lambda: next(ticks),
+    )
+    return sess.send("hi", **timeout_kwargs)
+
+
+def test_send_without_timeout_never_gives_up_on_a_long_turn() -> None:
+    # 缺省不传 timeout_s = 不设上限：跑几个小时也要等到本轮真正答完。
+    result = _long_running_session({})
+    assert result.status == "ok"
+    assert result.text == "answer here"
+
+
+def test_send_timeout_zero_means_no_cap() -> None:
+    # 调用方显式传 0（CLI 的 `--timeout 0` 就是这条路）同样等于不设上限。
+    assert _long_running_session({"timeout_s": 0}).status == "ok"
+
+
+def test_send_positive_timeout_still_caps_the_turn() -> None:
+    # 显式给正数仍然按上限判 timeout——opt-in 的卡表没有被一起拿掉。
+    assert _long_running_session({"timeout_s": 60}).status == "timeout"
+
+
 # ── driver 注册表 ──────────────────────────────────────────────────
 def test_load_driver_known_agents() -> None:
     assert load_driver("claude").agent_type == "claude"

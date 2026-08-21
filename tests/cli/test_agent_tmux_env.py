@@ -89,6 +89,70 @@ def test_resume_and_session_id_are_mutually_exclusive(invoke_tmux) -> None:
     assert "mutually exclusive" in result.output
 
 
+# ── 单轮时间上限：缺省不设，显式才卡表 ─────────────────────────────
+def test_default_run_has_no_wall_clock_cap(invoke_tmux) -> None:
+    """不传 --timeout = 这一轮不设上限（0）。
+
+    实战里被 600 秒缺省腰斩过：worker 还在干活，主控却拿到一个 timeout 就散了，
+    那一轮的产出既没交付也没人回收。缺省 MUST 是「等到它自己停」。
+    """
+    result, seen = invoke_tmux("go")
+    assert result.exit_code == 0, result.output
+    assert seen["timeout"] == 0
+
+
+def test_explicit_timeout_is_passed_through(invoke_tmux) -> None:
+    result, seen = invoke_tmux("--timeout", "300", "go")
+    assert result.exit_code == 0, result.output
+    assert seen["timeout"] == 300
+
+
+def test_zero_timeout_reaches_driver_as_no_deadline(monkeypatch) -> None:
+    """CLI 的 0 在驱动层翻成 timeout_s=None（无 deadline），不是 0 秒立刻超时。"""
+    import frago.agent_driver as agent_driver
+
+    seen: dict = {}
+
+    class _FakeLauncher:
+        def run(self, _prompt, **kwargs):
+            seen.update(kwargs)
+            from frago.agent_driver.tmux_session import TurnResult
+
+            return TurnResult(text="done", raw_delta="done", status="ok", duration_ms=1)
+
+    monkeypatch.setattr(agent_driver, "SessionLauncher", _FakeLauncher)
+
+    with pytest.raises(SystemExit) as exc:
+        agent_command._run_tmux_driver(
+            "hi", agent_type="claude", session_id="s", cwd="/tmp",
+            timeout=0, quiet=True, dry_run=False, no_persist=True,
+        )
+    assert exc.value.code == 0
+    assert seen["timeout_s"] is None
+
+
+def test_positive_timeout_reaches_driver_as_seconds(monkeypatch) -> None:
+    import frago.agent_driver as agent_driver
+
+    seen: dict = {}
+
+    class _FakeLauncher:
+        def run(self, _prompt, **kwargs):
+            seen.update(kwargs)
+            from frago.agent_driver.tmux_session import TurnResult
+
+            return TurnResult(text="done", raw_delta="done", status="ok", duration_ms=1)
+
+    monkeypatch.setattr(agent_driver, "SessionLauncher", _FakeLauncher)
+
+    with pytest.raises(SystemExit):
+        agent_command._run_tmux_driver(
+            "hi", agent_type="claude", session_id="s", cwd="/tmp",
+            timeout=300, quiet=True, dry_run=False, no_persist=True,
+        )
+    assert seen["timeout_s"] == 300.0
+
+
 def test_endpoint_injected_as_base_url(captured_env) -> None:
     env = captured_env("--endpoint", "https://llm.example/v1", "hi")["env"]
     assert env["ANTHROPIC_BASE_URL"] == "https://llm.example/v1"

@@ -36,8 +36,10 @@ frago agent "<prompt>" --resume <uuid>        # 续接既有会话
 
 ```bash
 # 主控：Bash 工具带 run_in_background: true
-frago agent --prompt-file <任务书.md> --timeout 1800
+frago agent --prompt-file <任务书.md>
 ```
+
+**一轮任务不设时间上限**（缺省 `--timeout 0`）：worker 跑到答完 / 撞上认证墙 / 会话死掉才停，NEVER 因为墙钟到点被腰斩。长任务本来就该跑几十分钟甚至几小时，按秒数判死只会让还在干活的 worker 被报成 timeout，产出既没交付也没人回收。真需要卡表的场合（如探活）才显式 `--timeout N`。
 
 NEVER 用 `nohup` / `&` 手动脱离。那样起的进程被摘出 harness 的进程树，harness 不知道它存在，**退出时永远不会唤醒你**——这条路必然停摆，只能靠定时器猜时间回来看一眼。这不是没做好，是原理上就通知不了。
 
@@ -48,7 +50,7 @@ NEVER 用 `nohup` / `&` 手动脱离。那样起的进程被摘出 harness 的�
 | exit code | 状态 | 含义 |
 |---|---|---|
 | 0 | ok | 本轮答完，答案在 stdout |
-| 1 | timeout | 超时未答完，会话仍活，可 `send` 续 |
+| 1 | timeout | 只有显式传了 `--timeout N` 才可能出现：到点未答完，会话仍活，可 `send` 续 |
 | 2 | needs_input | 撞上认证墙 / 权限门 / 澄清菜单，**MUST 交真人** |
 | 3 | error | driver 或 tmux 层失败 |
 

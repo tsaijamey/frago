@@ -318,7 +318,14 @@ class TmuxAgentSession:
             return False
 
     # ── 通用原语：发送前快照 → 提交 → 轮询完成 → 取 delta ──────────────
-    def send(self, prompt: str, *, timeout_s: float = 120.0) -> TurnResult:
+    def send(self, prompt: str, *, timeout_s: float | None = None) -> TurnResult:
+        """投喂一轮并等到它停下来。
+
+        ``timeout_s=None``（缺省）或 ``<=0`` = **本轮不设时间上限**：一直等到答完 /
+        撞上 needs_input 门 / 会话消失。一轮任务该跑多久由任务决定，不由一个拍脑袋
+        的秒数决定——墙钟到点就把还在干活的 worker 判死，产出丢失且无人知道它其实
+        还在跑。要上限的调用方自己传一个正数。
+        """
         start = self._clock()
         self.status = "busy"
         try:
@@ -343,7 +350,7 @@ class TmuxAgentSession:
                 duration_ms=int((self._clock() - start) * 1000),
             )
 
-    def _send_turn(self, prompt: str, *, start: float, timeout_s: float) -> TurnResult:
+    def _send_turn(self, prompt: str, *, start: float, timeout_s: float | None) -> TurnResult:
         pre_snapshot = self._capture_resilient()
 
         # 权威完成探针（如 claude 的 transcript JSONL）。在提交前先读一次取 baseline
@@ -426,24 +433,28 @@ class TmuxAgentSession:
         )
 
     # ── 轮询辅助 ───────────────────────────────────────────────────
-    def _wait_for(self, predicate: Callable[[str], bool], timeout_s: float) -> bool:
+    def _wait_for(self, predicate: Callable[[str], bool], timeout_s: float | None) -> bool:
         """轮询 pane 直到 predicate 命中或超时；命中返回 True，超时 False。"""
         return self._wait_for_any({"hit": predicate}, timeout_s) == "hit"
 
     def _wait_for_any(
-        self, predicates: dict[str, Callable[[str], bool]], timeout_s: float
+        self, predicates: dict[str, Callable[[str], bool]], timeout_s: float | None
     ) -> str | None:
         """轮询 pane，命中任一 predicate 返回其 key；超时返回 None。
 
         同屏多个命中时按 predicates 的插入顺序取第一个（done 优先于 needs_input）。
+
+        ``timeout_s`` 为 None 或 <=0 → **不设墙钟上限**，一直轮询到某个 predicate
+        命中，或会话消失（``_capture_resilient`` 抛 _SessionVanished）为止。等待不是
+        空转：每拍都在读屏，会话真死了当拍就会被发现，NEVER 变成静默挂起。
         """
-        deadline = self._clock() + timeout_s
+        deadline = None if timeout_s is None or timeout_s <= 0 else self._clock() + timeout_s
         while True:
             pane = self._capture_resilient()
             for key, predicate in predicates.items():
                 if predicate(pane):
                     return key
-            if self._clock() >= deadline:
+            if deadline is not None and self._clock() >= deadline:
                 return None
             self._sleep(self._poll_interval_s)
 
@@ -488,12 +499,14 @@ class SessionLauncher:
         conv_key: str | None = None,
         env: dict[str, str] | None = None,
         keep_alive: bool = False,
-        timeout_s: float = 120.0,
+        timeout_s: float | None = None,
     ) -> TurnResult:
         """开会话（或复用）→ 投喂一轮 → 取归一化结果。
 
         Phase 1 无 warm pool，默认每次开新会话并在结束后 kill；keep_alive=True
         时保活会话供后续复用（Phase 3 warm pool 的雏形）。
+
+        ``timeout_s`` 缺省 None = 本轮不设时间上限（见 ``TmuxAgentSession.send``）。
         """
         session = self.open_session(
             agent_type,
