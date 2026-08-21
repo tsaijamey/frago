@@ -20,9 +20,12 @@ def test_codex_driver_registered_with_auth_wall() -> None:
 
 def test_driver_run_codex_returns_needs_input_when_not_logged_in() -> None:
     # open() 等就绪 → send() 投喂 → 轮询撞认证墙 → needs_input。
+    # 就绪屏用 codex 真实的启动横幅：driver 的 ready_signal 认的是横幅/页脚，
+    # 一个自造的 "codex >" 提示符它不认，会话会被判成启动失败而不是跑进这一轮。
+    ready_pane = "  │ >_ OpenAI Codex (v0.47.0)"
     panes = [
-        "codex >",  # open: ready poll
-        "codex >",  # send: pre-snapshot
+        ready_pane,  # open: ready poll
+        ready_pane,  # send: pre-snapshot
         "401 Unauthorized\nplease login",  # send: done/needs poll → auth wall
         "401 Unauthorized\nplease login",  # send: full scrollback
     ]
