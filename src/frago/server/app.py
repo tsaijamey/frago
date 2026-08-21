@@ -21,6 +21,7 @@ from frago.server.routes import (
     app_pages_router,
     browser_dashboard_router,
     config_router,
+    data_repo_router,
     files_router,
     github_star_router,
     guide_router,
@@ -539,6 +540,7 @@ def create_app(
     app.include_router(recipes_router, prefix="/api", tags=["recipes"])
     app.include_router(agent_router, prefix="/api", tags=["agent"])
     app.include_router(config_router, prefix="/api", tags=["config"])
+    app.include_router(data_repo_router, prefix="/api", tags=["data_repo"])
     app.include_router(skills_router, prefix="/api", tags=["skills"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])
     app.include_router(github_star_router, prefix="/api", tags=["github_star"])

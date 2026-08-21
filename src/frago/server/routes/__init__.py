@@ -6,6 +6,7 @@ This package contains FastAPI routers for different API domains:
 - recipes: Recipe listing and execution
 - tasks: Task/session management
 - config: User configuration
+- data_repo: ~/.frago backup status and agent-driven sync
 - agent: Agent task execution
 - skills: Claude Code skills
 - settings: Main config, env vars, GitHub integration
@@ -21,6 +22,7 @@ from frago.server.routes.app_pages import router as app_pages_router
 from frago.server.routes.browser_dashboard import router as browser_dashboard_router
 from frago.server.routes.claude_sessions import router as claude_sessions_router
 from frago.server.routes.config import router as config_router
+from frago.server.routes.data_repo import router as data_repo_router
 from frago.server.routes.files import router as files_router
 from frago.server.routes.github_star import router as github_star_router
 from frago.server.routes.guide import router as guide_router
@@ -39,6 +41,7 @@ __all__ = [
     "recipes_router",
     "agent_router",
     "config_router",
+    "data_repo_router",
     "skills_router",
     "settings_router",
     "github_star_router",
