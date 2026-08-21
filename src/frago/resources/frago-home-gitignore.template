@@ -63,6 +63,30 @@ gui_config.json
 profiles.json
 recipes.local.json
 
+# Credentials. These are the same files frago.server.security chmods to 0600 at
+# startup because possessing one is possessing the thing it names — keep the two
+# lists together, or a file gets locked down on disk and published to git in the
+# same release.
+#   server-token   本机 API 的 bearer，拿到它等于拿到这台机器上的 /api
+#   remotes.json   其他机器的 url + token
+#   config.yaml    frago cloud 的 access / refresh token
+#   users.json     账号口令散列
+#   login-sessions 会话文件，持有即等于持有它指向的账号
+server-token
+remotes.json
+config.yaml
+users.json
+users.json.lock
+login-sessions/
+
+# Which pages this server has exposed, and to whom. Device-local: another
+# machine publishes its own set.
+published.json
+
+# frago 会话标识 → codex 原生会话 id 的映射。同 opencode-sessions.json 的道理：
+# 指向本机的 codex 状态，换台设备毫无意义。
+codex-sessions.json
+
 # Environment variable files (sensitive information)
 .env
 .env.*
@@ -106,6 +130,9 @@ gui_history.jsonl
 # Log files
 logs/
 *.log
+# Rotated logs. `*.log` does not match `hook-rules-hits.log.1`, so without this
+# every rotation leaves another multi-megabyte file offered up for commit.
+*.log.[0-9]*
 
 # Archives and other large files
 *.zip
