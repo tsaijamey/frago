@@ -98,7 +98,6 @@ import type {
   ClaudeSessionBlock,
   ClaudeSessionMessage,
   ClaudeSessionDetail,
-  ClaudeSessionSendResponse,
   PaSessionItem,
   PaSessionsResponse,
   PaSessionSendResponse,
@@ -195,7 +194,6 @@ export type {
   ClaudeSessionBlock,
   ClaudeSessionMessage,
   ClaudeSessionDetail,
-  ClaudeSessionSendResponse,
   PaSessionItem,
   PaSessionsResponse,
   PaSessionSendResponse,
@@ -990,20 +988,6 @@ export async function getClaudeSessionDetail(
   const params = new URLSearchParams({ limit: String(limit) });
   return fetchApi<ClaudeSessionDetail>(
     `/claude-sessions/${encodeURIComponent(sid)}?${params.toString()}`
-  );
-}
-
-export async function sendClaudeSessionMessage(
-  sid: string,
-  text: string,
-  images: string[] = []
-): Promise<ClaudeSessionSendResponse> {
-  return fetchApi<ClaudeSessionSendResponse>(
-    `/claude-sessions/${encodeURIComponent(sid)}/send`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ text, images }),
-    }
   );
 }
 

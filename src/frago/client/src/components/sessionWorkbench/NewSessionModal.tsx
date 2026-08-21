@@ -4,7 +4,7 @@
  * Creating a session is exactly what the existing list already tracks, so this
  * deliberately produces a *normal* session rather than a special web-only one:
  * the page mints a fresh session uuid and posts the first turn to the same
- * `/claude-sessions/{sid}/send` endpoint every existing row uses. Claude starts
+ * `/workbench/sessions/{sid}/send` endpoint every existing row uses. Claude starts
  * with `--session-id <uuid>` in the chosen directory, writes its transcript to
  * the usual place, and the next scan picks it up as an ordinary row — same
  * detail panel, same send path, same data.
@@ -89,7 +89,7 @@ export default function NewSessionModal({ isOpen, onClose, onCreated }: NewSessi
     // The detail panel already knows how to poll for a reply that has not
     // landed yet — the same path every existing session uses — so hand off to
     // it immediately and let it show the "activating" state.
-    fetch(`/api/claude-sessions/${sid}/send`, {
+    fetch(`/api/workbench/sessions/${sid}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text.trim(), cwd: dir.trim() }),

@@ -786,14 +786,6 @@ export interface ClaudeSessionDetail {
   last_uuid?: string | null;
 }
 
-export interface ClaudeSessionSendResponse {
-  sid: string;
-  // "ready" → warm session hit, forwarded immediately;
-  // "activating" → cold start, tmux claude is being resumed/rebuilt.
-  status: 'ready' | 'activating' | string;
-  text: string;
-}
-
 // PA (Primary Agent) resident sessions — the conversations PA itself is
 // holding open (one per conv_key, e.g. a Feishu chat), distinct from the
 // general ~/.claude/projects scan above. `sid` is the same uuid5-derived

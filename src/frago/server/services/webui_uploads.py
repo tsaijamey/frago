@@ -101,14 +101,18 @@ def save_uploaded_images(images: list[str], sid: str) -> list[Path]:
 
 
 def build_prompt_with_images(text: str, image_paths: list[Path]) -> str:
-    """把用户文本与已落盘图像路径拼成注入 claude 的最终 prompt。
+    """把用户文本与已落盘图像路径拼成投给 agent 的最终 prompt。
 
     无图时原样返回文本。有图时在文本后附一段明确的中文指引 + 每行一个绝对路径，
-    让 claude 主动用 Read 打开这些图（Read 对图像按视觉解析），而不是把路径当普通
-    文字忽略。文本为空（纯发图）时给一句默认指令，避免 prompt 只有裸路径。
+    让 agent 主动打开这些图（各家的读文件工具对 PNG/JPG 都按图像解析），而不是把
+    路径当普通文字忽略。文本为空（纯发图）时给一句默认指令，避免 prompt 只有裸路径。
+
+    指引里 NEVER 点名某个工具（从前写的是 claude 的 ``Read``）：同一条通道现在还驱动
+    opencode 与 codex，它们的读文件工具各叫各的名字，点名一个别家没有的工具只会让
+    那一家先愣一下再自己找替代。说清"打开看图"这件事即可，用哪个工具是 agent 的事。
     """
     if not image_paths:
         return text
     lines = "\n".join(str(p) for p in image_paths)
     header = text.strip() if text.strip() else "请查看以下图片。"
-    return f"{header}\n\n[附带图片，请用 Read 逐一查看]:\n{lines}"
+    return f"{header}\n\n[附带图片，请用读文件的工具逐一打开查看]:\n{lines}"

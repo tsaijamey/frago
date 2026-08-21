@@ -179,6 +179,34 @@ def session_exists(opencode_session_id: str) -> bool:
     return row is not None
 
 
+def session_directory(opencode_session_id: str) -> str | None:
+    """该会话当初跑在哪个目录。会话不在库里 / 库读不出来 / 没记目录时返回 None。
+
+    续接一场已有会话时要用它起 tmux：``opencode -s <id>`` 本身不带目录，进程的工作
+    目录就是 tmux 起会话时给的那个。给错了续接照样成功，但 agent 看到的是另一个
+    仓库——比起不了还难发现，所以调用方 MUST 拿这个目录去起会话。
+
+    与 ``session_exists`` 分工：那个回答"还在不在"（库读不出来时保守答"在"），这个
+    回答"在哪儿"（读不出来就是不知道）。两者 NEVER 合并成一个返回值。
+    """
+    conn = _connect()
+    if conn is None:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT directory FROM session WHERE id = ? LIMIT 1",
+            (opencode_session_id,),
+        ).fetchone()
+    except sqlite3.Error as exc:
+        logger.debug("opencode session_directory failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return str(row[0]) if isinstance(row[0], str) and row[0] else None
+
+
 # ── 本轮完成判定 ────────────────────────────────────────────────────
 def latest_turn(opencode_session_id: str) -> OpencodeTurn | None:
     """读该会话最新一轮。轮次范围以 ``parentID`` 圈定，NEVER 靠时间猜。

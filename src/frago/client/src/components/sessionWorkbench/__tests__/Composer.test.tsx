@@ -2,7 +2,7 @@
  * 输入区的组件测试。
  *
  * 覆盖四条硬要求各自最容易破的那一面：发完要重拉真记录、失败一个字都不许丢、图片粘进来
- * 要能看见也要能逐个撤、发不出去的会话在打字之前就闸死。
+ * 要能看见也要能逐个撤、三家的会话都发得出去而一场都没选时闸死。
  *
  * 不连真服务端——`fetch` 全程被替身接管，只核对出门的那一份请求长什么样。
  */
@@ -13,6 +13,7 @@ import Composer, { blockReason } from '../Composer';
 
 const SID = '00a02979-7eb4-5c70-94ae-867c8281e3f6';
 const OPENCODE_SID = 'ses_058288655ffeYMxYC1AZKCcv56';
+const CODEX_SID = '01a01a98-82e9-7013-b24e-e5e91b03995a';
 
 const NOOP = () => {};
 
@@ -79,10 +80,11 @@ afterEach(() => {
 });
 
 describe('blockReason 可发判定', () => {
-  it('没选会话、或选的是 opencode，都给得出理由', () => {
-    expect(blockReason(null, null)).toContain('挑一场会话');
-    expect(blockReason(OPENCODE_SID, 'opencode')).toContain('opencode');
-    expect(blockReason(SID, 'claude-code')).toBeNull();
+  it('只有一场都没选才闸死，三家的会话都发得出去', () => {
+    expect(blockReason(null)).toContain('挑一场会话');
+    expect(blockReason(SID)).toBeNull();
+    expect(blockReason(OPENCODE_SID)).toBeNull();
+    expect(blockReason(CODEX_SID)).toBeNull();
   });
 });
 
@@ -95,7 +97,7 @@ describe('Composer 输入区', () => {
     fireEvent.click(screen.getByTestId('composer-send'));
 
     await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
-    expect(fetchMock.mock.calls[0][0]).toContain(`/api/claude-sessions/${SID}/send`);
+    expect(fetchMock.mock.calls[0][0]).toContain(`/api/workbench/sessions/${SID}/send`);
     expect(sentBody(fetchMock)).toEqual({ text: '开工', images: [] });
     // 成功才清空。
     expect((screen.getByTestId('composer-input') as HTMLTextAreaElement).value).toBe('');
@@ -142,13 +144,40 @@ describe('Composer 输入区', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).text).toBe('这段话不许丢');
   });
 
-  it('opencode 的会话在打字之前就闸死，并写明为什么', () => {
-    render(<Composer sessionId={OPENCODE_SID} family="opencode" onSent={NOOP} />);
+  it('opencode 的会话照样发得出去，走的是同一条通道', async () => {
+    const onSent = vi.fn();
+    render(<Composer sessionId={OPENCODE_SID} family="opencode" onSent={onSent} />);
 
-    expect(screen.getByTestId('composer-blocked').textContent).toContain('opencode');
-    expect(isDisabled('composer-input')).toBe(true);
-    expect(isDisabled('composer-send')).toBe(true);
-    expect(isDisabled('composer-pick')).toBe(true);
+    expect(screen.queryByTestId('composer-blocked')).toBeNull();
+    expect(isDisabled('composer-input')).toBe(false);
+
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '接着干' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    // 编号原样进 URL：该续接哪一家由服务端按编号判，前端一个字都不猜。
+    expect(fetchMock.mock.calls[0][0]).toContain(
+      `/api/workbench/sessions/${encodeURIComponent(OPENCODE_SID)}/send`
+    );
+  });
+
+  it('codex 的会话一样，来源不再是闸门', async () => {
+    const onSent = vi.fn();
+    render(<Composer sessionId={CODEX_SID} family="codex" onSent={onSent} />);
+
+    fireEvent.change(screen.getByTestId('composer-input'), { target: { value: '继续' } });
+    fireEvent.click(screen.getByTestId('composer-send'));
+
+    await waitFor(() => expect(onSent).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0][0]).toContain(`/api/workbench/sessions/${CODEX_SID}/send`);
+  });
+
+  it('输入框的占位话写明这一场是哪一家', () => {
+    render(<Composer sessionId={CODEX_SID} family="codex" onSent={NOOP} />);
+
+    expect(
+      (screen.getByTestId('composer-input') as HTMLTextAreaElement).placeholder
+    ).toContain('codex');
   });
 
   it('一场会话都没选时同样闸死，理由是让人先挑一场', () => {

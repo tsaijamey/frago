@@ -183,6 +183,19 @@ def find_rollout(session_id: str) -> Path | None:
     return None
 
 
+def session_meta(session_id: str) -> RolloutMeta | None:
+    """某个 codex 会话的门面信息（会话 id / 工作目录 / 起始时刻）。找不到时 None。
+
+    续接一场已有会话时要知道它当初跑在哪个目录：``codex resume <id>`` 本身不带目录，
+    tmux 在哪儿起会话，codex 的工作目录就是哪儿。目录给错了续接照样成功，但 agent
+    看到的是另一个仓库——比起不了还难发现，所以调用方 MUST 拿这个目录去起会话。
+    """
+    path = find_rollout(session_id)
+    if path is None:
+        return None
+    return _read_meta(path)
+
+
 def session_exists(session_id: str) -> bool:
     """该 codex 会话的记录还在不在。
 

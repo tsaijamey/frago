@@ -1,8 +1,10 @@
 """Phase 2 单测：UI 会话空闲回收的判定与巡检。
 
 spec 20260625-webui-session-lifecycle-mediator / Phase 2。验证：
-- UiSessionRunner.evict_idle 以 jsonl 终结时间戳算空闲：done 且超阈值 → 回收；
-  探针 not done（干活中）→ 跳过。
+- UiSessionRunner.evict_idle 按会话所属的那一家算空闲：claude 看 jsonl 的终结时间戳，
+  codex 看 rollout 已 task_complete + 文件修改时刻，opencode 看会话库里终结那条消息的
+  完成时刻；最新一轮还没终结的一律不回收。
+- 判不出是哪一家（会话对象没带 driver）时不回收，NEVER 拿别家的档案去断它。
 - UiSessionLifecycleService 巡检从 config 取阈值并交给 runner 回收。
 """
 
@@ -11,16 +13,26 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-from frago.session import transcript_completion as tc
-from frago.session.transcript_completion import TurnCompletion
 from frago.server.services.ui_session_runner import UiSessionRunner
+from frago.session import codex_store, opencode_store
+from frago.session import transcript_completion as tc
+from frago.session.opencode_store import OpencodeTurn
+from frago.session.transcript_completion import TurnCompletion
+
+
+class FakeDriver:
+    """driver 替身。会话是拿哪个 driver 起来的，它就属于哪一家。"""
+
+    def __init__(self, agent_type: str) -> None:
+        self.agent_type = agent_type
 
 
 class FakeSession:
-    def __init__(self, session_id: str) -> None:
+    def __init__(self, session_id: str, agent_type: str = "claude") -> None:
         self.session_id = session_id
         self.cwd = "/tmp"
         self.closed = False
+        self.driver = FakeDriver(agent_type)
 
     def close(self) -> None:
         self.closed = True
@@ -92,6 +104,95 @@ def test_evict_idle_skips_when_no_transcript(monkeypatch):
     assert pool.has("x")
 
 
+def test_codex_session_is_reclaimed_by_its_own_rollout(monkeypatch, tmp_path):
+    """codex 的常驻会话也要参与回收——从前它的编号在 claude 档案里定位不到文件，
+    一律判不出空闲，于是 tmux 白占着直到被数量 LRU 挤掉。"""
+    rollout = tmp_path / "rollout-codex.jsonl"
+    rollout.write_text("{}", encoding="utf-8")
+    import os
+
+    old = datetime.now(UTC).timestamp() - 7200
+    os.utime(rollout, (old, old))
+
+    pool = FakePool([FakeSession("codex-sid", agent_type="codex")])
+    monkeypatch.setattr(
+        codex_store,
+        "latest_turn",
+        lambda _sid: codex_store.CodexTurn(turn_id="t1", done=True, text="ok", error=None),
+    )
+    monkeypatch.setattr(codex_store, "find_rollout", lambda _sid: rollout)
+
+    runner = UiSessionRunner(pool=pool, cwd="/tmp")
+    assert runner.evict_idle(timeout_s=1800.0) == ["codex-sid"]
+
+
+def test_codex_session_still_working_is_never_reclaimed(monkeypatch):
+    pool = FakePool([FakeSession("codex-sid", agent_type="codex")])
+    monkeypatch.setattr(
+        codex_store,
+        "latest_turn",
+        lambda _sid: codex_store.CodexTurn(turn_id="t1", done=False, text="", error=None),
+    )
+
+    runner = UiSessionRunner(pool=pool, cwd="/tmp")
+    assert runner.evict_idle(timeout_s=0.0) == []
+    assert pool.has("codex-sid")
+
+
+def test_opencode_session_is_reclaimed_by_its_finish_stamp(monkeypatch):
+    two_hours_ago_ms = int((datetime.now(UTC).timestamp() - 7200) * 1000)
+    pool = FakePool([FakeSession("ses_abc", agent_type="opencode")])
+    monkeypatch.setattr(
+        opencode_store,
+        "latest_turn",
+        lambda _sid: OpencodeTurn(
+            parent_id="msg_u",
+            final_message_id="msg_a",
+            done=True,
+            text="ok",
+            completed_at=two_hours_ago_ms,
+        ),
+    )
+
+    runner = UiSessionRunner(pool=pool, cwd="/tmp")
+    assert runner.evict_idle(timeout_s=1800.0) == ["ses_abc"]
+
+
+def test_opencode_session_without_finish_stamp_is_kept(monkeypatch):
+    """没有完成时刻就没有锚点，算不出静默多久——算不出就不回收。"""
+    pool = FakePool([FakeSession("ses_abc", agent_type="opencode")])
+    monkeypatch.setattr(
+        opencode_store,
+        "latest_turn",
+        lambda _sid: OpencodeTurn(
+            parent_id="msg_u",
+            final_message_id=None,
+            done=False,
+            text="",
+            completed_at=None,
+        ),
+    )
+
+    runner = UiSessionRunner(pool=pool, cwd="/tmp")
+    assert runner.evict_idle(timeout_s=0.0) == []
+    assert pool.has("ses_abc")
+
+
+def test_session_without_a_driver_is_never_reclaimed():
+    """判不出是哪一家时不回收：不知道该翻谁的档案，就不能断它的生死。"""
+
+    class Anonymous(FakeSession):
+        def __init__(self) -> None:
+            super().__init__("mystery")
+            del self.driver
+
+    pool = FakePool([Anonymous()])
+    runner = UiSessionRunner(pool=pool, cwd="/tmp")
+
+    assert runner.evict_idle(timeout_s=0.0) == []
+    assert pool.has("mystery")
+
+
 def test_lifecycle_scan_uses_config_threshold(monkeypatch):
     from frago.server.services import ui_session_lifecycle as life
 
@@ -108,7 +209,7 @@ def test_lifecycle_scan_uses_config_threshold(monkeypatch):
 
     monkeypatch.setattr("frago.init.config_manager.load_config", lambda: StubCfg)
     monkeypatch.setattr(
-        "frago.server.routes.claude_sessions._get_runner", lambda: StubRunner()
+        "frago.server.services.ui_session_runner.get_runner", lambda: StubRunner()
     )
 
     svc = life.UiSessionLifecycleService(scan_interval_s=0.01)

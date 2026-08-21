@@ -5,11 +5,12 @@ spec 20260625-webui-session-lifecycle-mediator / Phase 2：server lifespan 内�
 stop_reason 起静默超过 idle_timeout_secs」的会话关掉（kill tmux），释放内存。
 
 设计要点：
-- **激活看 last_activity、回收看 jsonl 静默**：空闲判定锚定 claude 写的 jsonl，
-  不看页面有没有输入——手动 attach 敲入也落同一 jsonl，双驾驶来源天然统一。
-- **干活中绝不误杀**：探针 not done（末条 tool_use / 流式中）的会话不计时。
-  具体逻辑在 UiSessionRunner.evict_idle，本服务只管周期触发。
-- **复用同一 runner 单例**：操作的就是路由层 _get_runner() 持有的那个 pool。
+- **激活看 last_activity、回收看记录静默**：空闲判定锚定会话自己的记录（claude 的
+  jsonl / codex 的 rollout / opencode 的会话库），不看页面有没有输入——手动 attach
+  敲入也落同一份记录，双驾驶来源天然统一。
+- **干活中绝不误杀**：最新一轮还没终结的会话不计时。具体逻辑在
+  UiSessionRunner.evict_idle，本服务只管周期触发。
+- **复用同一 runner 单例**：操作的就是 ui_session_runner.get_runner() 持有的那个 pool。
 - **阈值实时取 config**：每轮读 ~/.frago/config.json -> webui_sessions.idle_timeout_secs，
   改配置无需重启即生效。
 """
@@ -68,10 +69,10 @@ class UiSessionLifecycleService:
 
     async def _scan_once(self) -> None:
         from frago.init.config_manager import load_config
-        from frago.server.routes.claude_sessions import _get_runner
+        from frago.server.services.ui_session_runner import get_runner
 
         timeout_s = load_config().webui_sessions.idle_timeout_secs
-        runner = _get_runner()
+        runner = get_runner()
         # 探针读 jsonl + tmux kill 都是阻塞 IO，挪到线程里跑。
         evicted = await asyncio.to_thread(runner.evict_idle, float(timeout_s))
         if evicted:

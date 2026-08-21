@@ -1,11 +1,14 @@
-"""会话工作台的四个只读接口（spec 20260729-session-workbench-webui Phase 2）。
+"""会话工作台的接口：四个只读 + 一个发送（spec 20260729-session-workbench-webui）。
 
-这一层只做取用与序列化：把 :mod:`frago.session.record_reader` 给的数据类拍成 JSON，
-把它抛的异常翻成状态码。记录归类、字段推导、家族判定这些全在核心数据层做完了，
+只读那四个只做取用与序列化：把 :mod:`frago.session.record_reader` 给的数据类拍成
+JSON，把它抛的异常翻成状态码。记录归类、字段推导、家族判定这些全在核心数据层做完了，
 本模块 NEVER 重做一遍——重做两份判据迟早会各走各的。
 
-与 ``/api/claude-sessions`` 系列井水不犯河水：那条路背后有正在跑的 React 页面，
-本模块另起 ``/api/workbench`` 前缀，两边各读各的。
+发送那一个（``POST /workbench/sessions/{sid}/send``）从 ``/api/claude-sessions`` 那边
+搬了过来，同时补上了另外两家。搬家的理由是名字得说真话：那条路的名字写着 claude，
+而工作台的清单里躺着三家的会话，人对着 codex 的一行说话，请求却发去一个叫
+claude-sessions 的地方，谁读都会以为发错了。判家族、查工作目录、挑 driver 都在
+``services.session_send`` 里做完，本模块只做解码图片与翻状态码。
 
 分层：服务层。可以 import ``session/``，NEVER import ``cli/``。
 """
@@ -17,7 +20,14 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
+from frago.server.services import session_send
+from frago.server.services.webui_uploads import (
+    ImageUploadError,
+    build_prompt_with_images,
+    save_uploaded_images,
+)
 from frago.session import record_reader, record_search
 from frago.session.record_reader import DEFAULT_LIMIT, UnknownSessionFamily
 
@@ -94,6 +104,64 @@ async def search_workbench_content(
         "sessions": [asdict(match) for match in outcome.matches],
         "scanned_files": outcome.scanned_files,
         "warnings": outcome.warnings,
+    }
+
+
+class SendRequest(BaseModel):
+    """``POST /workbench/sessions/{sid}/send`` 的请求体。
+
+    ``images`` 是可选的 base64 图像（data URL 或裸 base64），落盘后其绝对路径被拼进
+    投给 agent 的提示词。允许 text 为空但带图（纯发图）。
+
+    ``cwd`` 只在页面**新建**一场会话时给：那个编号是页面自己 mint 的，还没有任何
+    记录，所以读不出目录。已经有记录的会话一律以档案里记着的目录为准。
+    """
+
+    text: str = ""
+    images: list[str] = []
+    cwd: str | None = None
+
+
+@router.post("/workbench/sessions/{sid}/send")
+async def send_to_session(sid: str, request: SendRequest) -> dict:
+    """把这段话投进那场会话所属的 CLI（Claude Code / opencode / codex 都走这里）。
+
+    会话已经常驻就直接投喂（上下文原样保留），冷的那些由会话池按各家自己的续接命令
+    重建之后再投。返回激活态，页面据此在冷启动那一轮显示进度条。
+
+    四类拒绝各有各的意思，NEVER 合并成一个 500：
+
+    - 编号三家的形状都不像 → 404，这不是一场会话；
+    - 记录已经不在了（用户删了那场会话）→ 409。**这一档最要紧**：驱动层遇到续不上的
+      目标会自愈成裸起一场新的，那正是页面上最不该发生的事——人以为在跟原来那场说话；
+    - 问不出这场会话当初跑在哪个目录 → 409，替它猜一个目录等于把 agent 挪进另一个仓库；
+    - 一个字没有也没有图 → 400，空轮次投进去只会白占一次冷启动。
+    """
+    if not request.text.strip() and not request.images:
+        raise HTTPException(status_code=400, detail="要发的话和图片不能都是空的")
+
+    try:
+        image_paths = save_uploaded_images(request.images, sid)
+    except ImageUploadError as e:
+        raise HTTPException(status_code=400, detail=f"图片没收下：{e}") from e
+    prompt = build_prompt_with_images(request.text, image_paths)
+
+    try:
+        # tmux + 轮询是阻塞的，丢进工作线程，免得一轮投喂把整个事件循环停住。
+        activation = await asyncio.to_thread(
+            session_send.send, sid, prompt, cwd_hint=request.cwd
+        )
+    except UnknownSessionFamily as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (session_send.SessionGone, session_send.SessionDirectoryUnknown) as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001 — 驱动失败照实交代，NEVER 吞成"发出去了"
+        raise HTTPException(status_code=500, detail=f"没发出去：{e}") from e
+
+    return {
+        "sid": activation.session_id,
+        "status": activation.status,
+        "text": activation.text,
     }
 
 

@@ -1,20 +1,18 @@
 /**
  * useSendToSession — 把工作台中栏输入区的内容送进当前会话。
  *
- * 走的是已经在跑的现成通道 `POST /api/claude-sessions/{sid}/send`，不另起接口。它同时
- * 收文本与图片：图片以 base64（data URL 或裸 base64）传入，服务端落盘后把绝对路径拼进
- * 注入 claude 的 prompt。**允许纯发图**（文本空、图片非空）；两者都空时服务端回 400，
- * 所以这一侧直接把发送按钮闸死，不让请求出门。
+ * 走 `POST /api/workbench/sessions/{sid}/send`，三家（Claude Code / opencode / codex）
+ * 共用这一条：该驱动哪一家、在哪个目录续接，全由服务端按会话编号判定，这一侧一个字
+ * 都不猜。它同时收文本与图片：图片以 base64（data URL 或裸 base64）传入，服务端落盘后
+ * 把绝对路径拼进投给 agent 的提示词。**允许纯发图**（文本空、图片非空）；两者都空时
+ * 服务端回 400，所以这一侧直接把发送按钮闸死，不让请求出门。
  *
- * 三条纪律：
+ * 两条纪律：
  *
  * 1. **失败不清空。** 文本与图片原样留在界面上，错误原因照抄服务端的说法，重试就是再调
  *    一次 `send`。NEVER 静默清空输入框——人打了几百字，一次网络抖动不该让它蒸发。
  * 2. **发完重拉真记录，不在本地插假的。** 成功后调 `onSent`（页面把它接到记录流的
  *    `reload` 上）。本地插一条假的既没有真实序号也没有出处，刷新就没了。
- * 3. **只有 Claude Code 的会话能发。** 那条通道背后是 tmux 里的 claude，opencode 的会话
- *    编号在 claude 的档案里根本不存在——发过去不会报错，而是凭空开一场新的 claude 会话。
- *    可发判定因此交给调用方在**打字之前**就摆明（见 `Composer`），这里只做兜底。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -27,7 +25,7 @@ export const MAX_ATTACHMENTS = 8;
 /**
  * 发完之后隔多久再拉一次记录。
  *
- * 立刻那一次多半还看不到自己刚说的话——claude 要先把这一轮写进档案。补一次延迟重拉，
+ * 立刻那一次多半还看不到自己刚说的话——agent 要先把这一轮写进档案。补一次延迟重拉，
  * 人就不用自己去点刷新。这是「看得到」的兜底，不是轮询，只补这一次。
  */
 const RELOAD_AGAIN_MS = 1500;
@@ -87,7 +85,7 @@ export async function sendToSession(
   images: string[]
 ): Promise<SendResult> {
   const res = await fetch(
-    `${API_BASE_URL}/api/claude-sessions/${encodeURIComponent(sessionId)}/send`,
+    `${API_BASE_URL}/api/workbench/sessions/${encodeURIComponent(sessionId)}/send`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
