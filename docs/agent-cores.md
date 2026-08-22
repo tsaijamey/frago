@@ -285,7 +285,8 @@ structured.
 | Session workbench: list / records / search | ✅ | ✅ | ✅ |
 | Session archival | ✅ | ✅ | ✅ |
 | Sending from the workbench composer | ✅ | ❌ the channel is always claude | ❌ same |
-| `--use-profile` model selection | ✅ | ❌ see below | ✅ |
+| `--use-profile` model selection (that one session only) | ✅ | ❌ see below | ✅ |
+| Activating a profile (written into the CLI's own config, so hand-started sessions follow it too) | ✅ | ❌ same reason | ✅ |
 
 Two known gaps, both recorded as todos:
 
@@ -299,6 +300,14 @@ Two known gaps, both recorded as todos:
    `--api-key` and `--use-ccr` write `ANTHROPIC_*` unconditionally, none of which codex
    reads. `--use-profile` says out loud that it had no effect on codex; the other three
    switches are still silently ignored.
+
+One thing about activation itself is worth spelling out: **activation has a scope, and
+you pick it.** It used to write Claude Code and nothing else, without saying so, which
+left the other two cores running whatever they were configured with while the person
+believed they had switched models. Activating now asks which CLIs to write to; the ones
+that cannot take a frago profile (codex) are still listed, disabled, with the reason
+next to them. Unchecking a CLI hands it back to what it looked like before frago took it
+over — opencode's model selection is copied back rather than left blank.
 
 One further limit is a property of codex rather than a frago defect: **frago
 `PreToolUse` rules keyed on `Edit` / `Write` or on a file path do not fire under codex.**
