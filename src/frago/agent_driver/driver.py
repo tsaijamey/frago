@@ -140,6 +140,23 @@ class AgentDriver:
     # profile 语义只有一份（见 configurator.resolve_auth_style），翻译落在 driver。
     # 不设置时上层保持原有行为，NEVER 因缺这个字段报错。
     profile_env: Callable[[APIProfile], dict[str, str]] | None = None
+    # 可选：把一条 profile 写进该 agent **自己的常驻配置**——也就是"激活"。
+    #
+    # 与 ``profile_env`` 的区别是作用域，不是内容：``profile_env`` 只影响 frago 起的
+    # 那一个 tmux 会话，人手敲命令起的会话完全不受影响；``profile_apply`` 改的是这个
+    # agent 下次启动就会读到的那份配置，人自己起的会话同样生效。同一条 profile 事实，
+    # 两处翻译 MUST 一致，否则"激活了"和"worker 跑的"是两个模型。
+    #
+    # 权限放行这类**只对无人值守成立**的设置 NEVER 进这里：那是 frago 替 worker 做的
+    # 取舍，写进用户全局配置等于替他把权限确认永久关掉。
+    profile_apply: Callable[[APIProfile], None] | None = None
+    # 可选：撤销 ``profile_apply``——把该 agent 的常驻配置还原成 frago 接管前的样子。
+    # 与 apply 成对出现：只实现一半，用户就只能激活不能取消，或取消后留下半份配置。
+    profile_revert: Callable[[], None] | None = None
+    # 可选：说明这个 agent 为什么接不了 frago 的 profile（没有 ``profile_apply`` 时）。
+    # 给人看的一句话，UI 与 CLI 原样转述。空着的话用户只会看到一个禁用的复选框而不知
+    # 道为什么——那比不列出它更让人困惑。
+    profile_unsupported_reason: str | None = None
 
 
 _REGISTRY: dict[str, AgentDriver] = {}

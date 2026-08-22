@@ -477,9 +477,15 @@ register_driver(
         completion_probe=_completion_probe,
         transcript_source=_transcript_source,
         exception_handlers=[],
-        # profile_env 刻意不提供：frago 的 profile 是 Anthropic 协议端点，而 codex
-        # 0.147 的自定义 provider 走 OpenAI 的 responses 协议，两者不是同一套线协议，
-        # 没有诚实的翻译。`--use-profile` 因此对 codex 不生效，会话跑在 codex 自己
-        # 配置的模型上——这一点由 CLI 明说，NEVER 假装翻译过了。
+        # profile_env / profile_apply 刻意都不提供：frago 的 profile 是 Anthropic 协议
+        # 端点，而 codex 0.147 的自定义 provider 走 OpenAI 的 responses 协议，两者不是
+        # 同一套线协议，没有诚实的翻译。`--use-profile` 因此对 codex 不生效，会话跑在
+        # codex 自己配置的模型上；激活时 codex 也不在可选目标里——这两处都由 UI/CLI
+        # 明说，NEVER 假装翻译过了。
+        profile_unsupported_reason=(
+            "frago 的 profile 存的是 Anthropic 协议端点，codex 的自定义 provider 只认 "
+            "OpenAI responses 协议，两者不是同一套线协议，没有诚实的翻译。"
+            "要让 codex 用同一个模型，得直接改 ~/.codex/config.toml。"
+        ),
     )
 )

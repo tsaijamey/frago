@@ -459,6 +459,44 @@ def _profile_env(profile: APIProfile) -> dict[str, str]:
     return {k: str(v) for k, v in env.items()}
 
 
+def _profile_apply(profile: APIProfile) -> None:
+    """激活到 claude：把这条 profile 写进 ``~/.claude/settings.json`` 的 env 区。
+
+    与 ``_profile_env`` 同源同字段，区别只是落点——那边注进一个 tmux 会话，这边写进
+    claude 下次启动就会读的配置。写的是**合并**（``save_claude_settings`` 只更新 env
+    里的同名键），用户自己加的其它设置一个不动。
+
+    ``ensure_claude_json_for_custom_auth`` 是配套动作：不补 ``~/.claude.json`` 的最小
+    字段，claude 会当成没登录过、把人拦在官方登录流程里，配好的端点一次都用不上。
+    """
+    from frago.init.configurator import (
+        build_claude_env_config,
+        ensure_claude_json_for_custom_auth,
+        save_claude_settings,
+    )
+
+    env_config = build_claude_env_config(
+        endpoint_type=profile.endpoint_type,
+        api_key=profile.api_key,
+        custom_url=profile.url if profile.endpoint_type == "custom" else None,
+        default_model=profile.default_model,
+        sonnet_model=profile.sonnet_model,
+        haiku_model=profile.haiku_model,
+    )
+    ensure_claude_json_for_custom_auth()
+    save_claude_settings({"env": env_config})
+
+
+def _profile_revert() -> None:
+    """取消激活：把 ``ANTHROPIC_*`` 那组键从 settings.json 里摘掉，退回官方登录。
+
+    只摘 frago 认识的那几个键，用户自己写在 env 里的其它变量保留。
+    """
+    from frago.init.configurator import clear_api_env_from_settings
+
+    clear_api_env_from_settings()
+
+
 register_driver(
     AgentDriver(
         agent_type="claude",
@@ -483,5 +521,8 @@ register_driver(
         # profile → ANTHROPIC_*（spec 20260725 Phase 4）。claude 起会话不需要基线
         # 环境变量（权限确认靠 --dangerously-skip-permissions），故不设 session_env。
         profile_env=_profile_env,
+        # 激活 → 写进 ~/.claude/settings.json，人自己起的 claude 也跟着走。
+        profile_apply=_profile_apply,
+        profile_revert=_profile_revert,
     )
 )

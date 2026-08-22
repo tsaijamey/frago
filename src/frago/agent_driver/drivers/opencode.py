@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
@@ -618,22 +619,15 @@ def _session_env(_ctx: LaunchCtx) -> dict[str, str]:
     return {"OPENCODE_CONFIG_CONTENT": json.dumps(_base_config())}
 
 
-def _profile_env(profile: APIProfile) -> dict[str, str]:
-    """把一条 profile 翻成 opencode 的注入配置。
+def _provider_definition(profile: APIProfile) -> dict[str, Any]:
+    """一条 profile 对应的 opencode provider 定义。
 
     provider 用 Anthropic 兼容的 SDK（profile 的端点本就是 Anthropic 协议端点），
     ``baseURL`` / ``apiKey`` 进 ``options``；地址先过 ``_with_version_segment`` 补出
     版本段，因为这个 SDK 只补 ``/messages``，不像 claude 那样自带 ``/v1``——同一份
-    profile 事实，两个内核各按自己的约定补全，差异在这一层消化；认证头的选择走 ``resolve_auth_style``
-    这个公共出口——判定为授权头时额外在 ``options.headers`` 里放
-    ``Authorization: Bearer <key>``，密钥头端点则不放（SDK 自己发 ``x-api-key``）。
-
-    模型只映射两档：主模型 → 顶层 ``model``，快模型 → ``small_model``。profile 的
-    中档（sonnet）模型 **不映射**——那是 claude 的三档分层策略，opencode 没有这个
-    概念（spec 已定）。profile 没有主模型时不设 ``model``，只提供 provider，模型仍
-    听 opencode 自己的配置。
-
-    权限放行必须自带：本函数的产出会覆盖 ``session_env`` 的同名变量。
+    profile 事实，两个内核各按自己的约定补全，差异在这一层消化；认证头的选择走
+    ``resolve_auth_style`` 这个公共出口——判定为授权头时额外在 ``options.headers``
+    里放 ``Authorization: Bearer <key>``，密钥头端点则不放（SDK 自己发 ``x-api-key``）。
     """
     from frago.init.configurator import (
         AUTH_STYLE_AUTH_TOKEN,
@@ -672,14 +666,144 @@ def _profile_env(profile: APIProfile) -> dict[str, str]:
     }
     if models:
         provider["models"] = models
+    return provider
 
-    config = _base_config()
-    config["provider"] = {_FRAGO_PROVIDER: provider}
+
+def _model_selection(profile: APIProfile) -> dict[str, str]:
+    """profile 的模型档位 → opencode 的模型选择键。
+
+    只映射两档：主模型 → 顶层 ``model``，快模型 → ``small_model``。profile 的中档
+    （sonnet）模型 **不映射**——那是 claude 的三档分层策略，opencode 没有这个概念
+    （spec 已定）。profile 没有主模型时不产出 ``model``，只提供 provider，模型仍听
+    opencode 自己的配置。
+    """
+    selection: dict[str, str] = {}
     if profile.default_model:
-        config["model"] = f"{_FRAGO_PROVIDER}/{profile.default_model}"
+        selection["model"] = f"{_FRAGO_PROVIDER}/{profile.default_model}"
     if profile.haiku_model:
-        config["small_model"] = f"{_FRAGO_PROVIDER}/{profile.haiku_model}"
+        selection["small_model"] = f"{_FRAGO_PROVIDER}/{profile.haiku_model}"
+    return selection
+
+
+def _profile_env(profile: APIProfile) -> dict[str, str]:
+    """把一条 profile 翻成 opencode 的**会话级**注入配置。
+
+    只影响 frago 起的这一个 tmux 会话，用户的 ``~/.config/opencode/opencode.json``
+    一个字不改；要改那份常驻配置是"激活"，走 ``_profile_apply``。
+
+    权限放行必须自带：本函数的产出会覆盖 ``session_env`` 的同名变量。
+    """
+    config = _base_config()
+    config["provider"] = {_FRAGO_PROVIDER: _provider_definition(profile)}
+    config.update(_model_selection(profile))
     return {"OPENCODE_CONFIG_CONTENT": json.dumps(config)}
+
+
+def _config_path() -> Path:
+    """opencode 的全局配置文件。"""
+    from frago.init.opencode_plugin import get_opencode_config_dir
+
+    return get_opencode_config_dir() / "opencode.json"
+
+
+def _read_config() -> dict[str, Any]:
+    """读全局配置；文件不存在或读不动都当空配置。
+
+    读不动就报错的话，一个手写坏了的 opencode.json 会让人连 profile 都激活不了；
+    当空配置处理最多是覆盖掉一份本来就无效的文件，而那份文件此刻也没在生效。
+    """
+    try:
+        data = json.loads(_config_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_config(config: dict[str, Any]) -> None:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
+def _user_owned(value: Any) -> Any:
+    """把 frago 自己写进去的模型选择判为"没有原值"。
+
+    重复激活时，配置里的"原值"很可能已经是上一次激活留下的 ``frago-profile/...``。
+    把它当原值备份下来，取消激活就会把用户还原到一个指向已被删除的 provider 的模型
+    上——opencode 启动即报模型不存在。
+    """
+    if isinstance(value, str) and value.startswith(f"{_FRAGO_PROVIDER}/"):
+        return None
+    return value
+
+
+def _profile_apply(profile: APIProfile) -> None:
+    """激活到 opencode：把这条 profile 写进它的全局 ``opencode.json``。
+
+    与会话注入同一套翻译（provider 定义 + 模型选择），区别只是落点——这份配置人自己
+    敲 ``opencode`` 起的会话也会读到。
+
+    写的是**合并**：只动 ``provider`` 里 frago 自己那一格和两个模型选择键，用户配的
+    其它 provider、MCP、LSP 设置一个不碰。被盖掉的模型选择先备份，取消激活时还原。
+
+    权限放行 NEVER 写进来：那是 frago 替无人值守的 worker 做的取舍，写进用户的全局
+    配置等于替他把 opencode 的权限确认永久关掉——他下次自己敲 opencode 改文件、跑
+    命令都不会再被问一句。
+    """
+    from frago.init import profile_target_backup
+
+    config = _read_config()
+    profile_target_backup.remember(
+        "opencode",
+        {
+            "model": _user_owned(config.get("model")),
+            "small_model": _user_owned(config.get("small_model")),
+        },
+    )
+
+    providers = config.get("provider")
+    if not isinstance(providers, dict):
+        providers = {}
+    providers[_FRAGO_PROVIDER] = _provider_definition(profile)
+    config["provider"] = providers
+    config.update(_model_selection(profile))
+    _write_config(config)
+
+
+def _profile_revert() -> None:
+    """取消激活：摘掉 frago 那格 provider，把模型选择还原成接管前的样子。
+
+    只摘 ``frago-profile``，用户自己的 provider 原样留下。模型选择有备份就抄回去，
+    没有备份（备份文件被删了之类）就只在它确实指着 frago 的 provider 时删掉——留着
+    一个指向已删除 provider 的模型名，opencode 下次启动就报错。
+    """
+    from frago.init import profile_target_backup
+
+    if not _config_path().exists():
+        profile_target_backup.take("opencode")
+        return
+
+    config = _read_config()
+    providers = config.get("provider")
+    if isinstance(providers, dict):
+        providers.pop(_FRAGO_PROVIDER, None)
+        if providers:
+            config["provider"] = providers
+        else:
+            config.pop("provider", None)
+
+    restored = profile_target_backup.take("opencode") or {}
+    for key in ("model", "small_model"):
+        previous = restored.get(key)
+        if previous:
+            config[key] = previous
+        elif _user_owned(config.get(key)) is None:
+            config.pop(key, None)
+    _write_config(config)
 
 
 def _extract(delta: str) -> str:
@@ -703,6 +827,9 @@ register_driver(
         session_env=_session_env,
         # profile → provider 定义 + 模型选择（同上）。
         profile_env=_profile_env,
+        # 激活 → 写进 ~/.config/opencode/opencode.json，人自己起的 opencode 也跟着走。
+        profile_apply=_profile_apply,
+        profile_revert=_profile_revert,
         exception_handlers=[
             ExceptionHandler(
                 name="dismiss-update-modal",
