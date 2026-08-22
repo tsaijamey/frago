@@ -71,8 +71,41 @@ def save_profiles(store: ProfileStore) -> None:
         os.chmod(PROFILES_PATH, 0o600)
 
 
+def _validate_profile(name: str, endpoint_type: str, url: Optional[str]) -> None:
+    """Reject the profile shapes that break something later and quietly.
+
+    A nameless profile is unreachable in any list and, worse, is written to
+    disk as a null the store cannot parse back — one blank field would take
+    every other saved profile down with it. An unknown endpoint type falls
+    through to the "custom" branch when settings are built, and a custom
+    endpoint with no URL writes a null base URL; neither fails at save time,
+    they fail at the first request with a connection error that says nothing
+    about which profile caused it. Catching all three here means the person
+    editing the profile hears about it while still looking at the form.
+
+    Raises:
+        ValueError: With a message meant to be shown to the user as-is.
+    """
+    from frago.init.configurator import PRESET_ENDPOINTS, validate_endpoint_url
+
+    if not (name or "").strip():
+        raise ValueError("Profile name cannot be empty")
+
+    if endpoint_type != "custom" and endpoint_type not in PRESET_ENDPOINTS:
+        known = ", ".join([*PRESET_ENDPOINTS, "custom"])
+        raise ValueError(f"Unknown endpoint type '{endpoint_type}' (expected one of: {known})")
+
+    if endpoint_type == "custom" and not validate_endpoint_url(url or ""):
+        raise ValueError("A custom endpoint needs an API URL starting with http:// or https://")
+
+
 def add_profile(profile: APIProfile) -> ProfileStore:
-    """Add a new profile and save."""
+    """Add a new profile and save.
+
+    Raises:
+        ValueError: If the endpoint type / URL combination is unusable.
+    """
+    _validate_profile(profile.name, profile.endpoint_type, profile.url)
     store = load_profiles()
     store.profiles.append(profile)
     save_profiles(store)
@@ -82,18 +115,29 @@ def add_profile(profile: APIProfile) -> ProfileStore:
 def update_profile(profile_id: str, updates: dict) -> ProfileStore:
     """Update an existing profile's fields.
 
+    If the edited profile is the active one, the change is re-applied to
+    ~/.claude/settings.json as well. Without that, editing the profile that is
+    currently in force saved the new model to disk and left the old one
+    running: the UI said "saved", and the next session still talked to the
+    endpoint the user thought they had just replaced.
+
     Args:
         profile_id: Profile ID to update.
         updates: Dict of fields to update. Keys that don't exist are ignored.
                  api_key=None or api_key="" means keep existing key.
 
     Raises:
-        ValueError: If profile not found.
+        ValueError: If profile not found, or the result would be unusable.
     """
     store = load_profiles()
 
     for profile in store.profiles:
         if profile.id == profile_id:
+            _validate_profile(
+                updates.get("name", profile.name),
+                updates.get("endpoint_type") or profile.endpoint_type,
+                updates.get("url", profile.url),
+            )
             for key, value in updates.items():
                 if key == "api_key" and not value:
                     continue  # Preserve existing key
@@ -101,6 +145,9 @@ def update_profile(profile_id: str, updates: dict) -> ProfileStore:
                     setattr(profile, key, value)
             profile.updated_at = datetime.now()
             save_profiles(store)
+
+            if store.active_profile_id == profile_id:
+                activate_profile(profile_id)
             return store
 
     raise ValueError(f"Profile not found: {profile_id}")
@@ -217,7 +264,11 @@ def create_profile_from_current(name: str) -> Optional[APIProfile]:
 
     settings = load_claude_settings()
     env = settings.get("env", {})
-    api_key = env.get("ANTHROPIC_API_KEY", "")
+    # Bearer-style endpoints (Tencent, OpenRouter) keep the credential in
+    # ANTHROPIC_AUTH_TOKEN and blank out ANTHROPIC_API_KEY. Reading only the
+    # latter reported "no custom configuration found" to users who were, at
+    # that very moment, running on one.
+    api_key = env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN") or ""
 
     if not api_key:
         return None

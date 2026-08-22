@@ -833,6 +833,34 @@ async def get_update_status() -> UpdateStatusResponse:
 # ============================================================
 
 
+class EndpointPresetResponse(BaseModel):
+    """One built-in endpoint the UI can offer, with the models it defaults to."""
+    id: str
+    display_name: str
+    base_url: str
+    default_model: str
+    sonnet_model: str
+    haiku_model: str
+
+
+class EndpointPresetListResponse(BaseModel):
+    """All built-in endpoints. 'custom' is not in here — it is not a preset."""
+    presets: List[EndpointPresetResponse]
+
+
+@router.get("/settings/endpoint-presets", response_model=EndpointPresetListResponse)
+async def get_endpoint_presets() -> EndpointPresetListResponse:
+    """The built-in endpoint table that profile forms are built from.
+
+    Read-only, and the reason the UI no longer carries its own copy.
+    """
+    from frago.init.configurator import list_endpoint_presets
+
+    return EndpointPresetListResponse(
+        presets=[EndpointPresetResponse(**preset) for preset in list_endpoint_presets()]
+    )
+
+
 class ProfileResponse(BaseModel):
     """Single profile response (API key is always masked)"""
     id: str
@@ -879,6 +907,19 @@ class UpdateProfileRequest(BaseModel):
 class SaveCurrentAsProfileRequest(BaseModel):
     """Save current config as profile request"""
     name: str
+
+
+def _blank_to_none(value: Optional[str]) -> Optional[str]:
+    """Treat a whitespace-only field as absent.
+
+    Optional profile fields are either a real value or nothing; a form that
+    submits "" for an untouched input should not create a model override named
+    the empty string.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _profile_to_response(
@@ -929,10 +970,10 @@ async def create_profile(request: CreateProfileRequest) -> ApiResponse:
             name=request.name,
             endpoint_type=request.endpoint_type,
             api_key=request.api_key,
-            url=request.url,
-            default_model=request.default_model,
-            sonnet_model=request.sonnet_model,
-            haiku_model=request.haiku_model,
+            url=_blank_to_none(request.url),
+            default_model=_blank_to_none(request.default_model),
+            sonnet_model=_blank_to_none(request.sonnet_model),
+            haiku_model=_blank_to_none(request.haiku_model),
         )
         add_profile(profile)
         return ApiResponse(status="ok", message=f"Profile '{request.name}' created")
@@ -942,15 +983,29 @@ async def create_profile(request: CreateProfileRequest) -> ApiResponse:
 
 @router.put("/settings/profiles/{profile_id}", response_model=ApiResponse)
 async def update_profile_endpoint(profile_id: str, request: UpdateProfileRequest) -> ApiResponse:
-    """Update an existing API profile."""
+    """Update an existing API profile.
+
+    Only the fields the caller actually sent are touched, and an empty string
+    means "clear this one". The previous rule — drop everything that is None —
+    made emptying a field impossible: a user who deleted the model override in
+    the form saw it saved and reappear, because the blank never reached here
+    and the stale value was never overwritten. The one field that keeps its
+    "empty means unchanged" meaning is api_key, which the form never prefills.
+    """
     from frago.init.profile_manager import update_profile
 
     try:
-        updates = {k: v for k, v in request.model_dump().items() if v is not None}
+        sent = request.model_dump(exclude_unset=True)
+        updates = {
+            key: value if key == "api_key" else _blank_to_none(value)
+            for key, value in sent.items()
+        }
         update_profile(profile_id, updates)
         return ApiResponse(status="ok", message="Profile updated")
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        return ApiResponse(status="error", error=str(e))
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
 

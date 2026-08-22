@@ -106,6 +106,29 @@ CLAUDE_JSON_MINIMAL = {
 # =============================================================================
 
 
+def list_endpoint_presets() -> list[dict]:
+    """The preset endpoint table, in the shape a UI can render directly.
+
+    The WebUI used to keep its own transcription of PRESET_ENDPOINTS — two of
+    them, in fact — and both drifted: the Tencent endpoints were missing from
+    the pickers entirely, so a user holding a Tencent key had no way to build
+    that profile, and the model names shown next to each provider had gone
+    stale enough to be simply wrong. The table now has one home, and anything
+    that needs to show it asks here.
+    """
+    return [
+        {
+            "id": key,
+            "display_name": preset["display_name"],
+            "base_url": preset["ANTHROPIC_BASE_URL"],
+            "default_model": preset["ANTHROPIC_MODEL"],
+            "sonnet_model": preset["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+            "haiku_model": preset["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+        }
+        for key, preset in PRESET_ENDPOINTS.items()
+    ]
+
+
 def validate_endpoint_url(url: str) -> bool:
     """
     Validate API endpoint URL format

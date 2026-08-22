@@ -307,3 +307,122 @@ class TestCreateProfileFromCurrent:
         with patch("frago.init.configurator.load_claude_settings", return_value={}):
             profile = create_profile_from_current("Empty")
         assert profile is None
+
+
+class TestProfileValidation:
+    """A profile that cannot work should be refused while the user is still
+    looking at the form, not at the first request days later."""
+
+    def test_add_rejects_unknown_endpoint(self, tmp_profiles_path):
+        """A typo'd endpoint type used to be saved and silently treated as custom."""
+        with pytest.raises(ValueError, match="Unknown endpoint type"):
+            add_profile(
+                APIProfile(name="Typo", endpoint_type="deepsek", api_key="sk-x")
+            )
+
+    def test_add_rejects_custom_without_url(self, tmp_profiles_path):
+        """Custom endpoints have nowhere to send requests without a URL."""
+        with pytest.raises(ValueError, match="custom endpoint needs an API URL"):
+            add_profile(
+                APIProfile(name="Nowhere", endpoint_type="custom", api_key="sk-x")
+            )
+
+    def test_add_rejects_blank_name(self, tmp_profiles_path):
+        """A blank name is unpickable in any list."""
+        with pytest.raises(ValueError, match="name cannot be empty"):
+            add_profile(APIProfile(name="   ", endpoint_type="deepseek", api_key="sk-x"))
+
+    def test_update_to_blank_name_leaves_store_readable(
+        self, tmp_profiles_path, sample_profile
+    ):
+        """Blanking a name would write a null the store cannot parse back,
+        taking every other saved profile down with it."""
+        add_profile(sample_profile)
+        with pytest.raises(ValueError, match="name cannot be empty"):
+            update_profile("test1234", {"name": ""})
+        assert load_profiles().profiles[0].name == "Test DeepSeek"
+
+    def test_update_rejects_switch_to_custom_without_url(
+        self, tmp_profiles_path, sample_profile
+    ):
+        add_profile(sample_profile)
+        with pytest.raises(ValueError, match="custom endpoint needs an API URL"):
+            update_profile("test1234", {"endpoint_type": "custom"})
+
+
+class TestUpdateReachesTheLiveConfig:
+    """Editing the profile that is currently in force has to change what runs."""
+
+    @staticmethod
+    def _patched_activation():
+        return (
+            patch("frago.init.configurator.build_claude_env_config", return_value={}),
+            patch("frago.init.configurator.save_claude_settings"),
+            patch("frago.init.configurator.ensure_claude_json_for_custom_auth"),
+            patch("frago.init.config_manager.load_config", return_value=MagicMock()),
+            patch("frago.init.config_manager.save_config"),
+        )
+
+    def test_editing_the_active_profile_rewrites_claude_settings(
+        self, tmp_profiles_path, sample_profile
+    ):
+        add_profile(sample_profile)
+        store = load_profiles()
+        store.active_profile_id = "test1234"
+        save_profiles(store)
+
+        build, save_settings, ensure, load_cfg, save_cfg = self._patched_activation()
+        with build as mock_build, save_settings as mock_save, ensure, load_cfg, save_cfg:
+            update_profile("test1234", {"default_model": "deepseek-v4-flash-vision-exp"})
+
+            mock_save.assert_called_once()
+            assert mock_build.call_args.kwargs["default_model"] == (
+                "deepseek-v4-flash-vision-exp"
+            )
+
+    def test_editing_an_inactive_profile_leaves_the_live_config_alone(
+        self, tmp_profiles_path, sample_profile
+    ):
+        add_profile(sample_profile)  # nothing is active
+
+        build, save_settings, ensure, load_cfg, save_cfg = self._patched_activation()
+        with build, save_settings as mock_save, ensure, load_cfg, save_cfg:
+            update_profile("test1234", {"default_model": "some-other-model"})
+            mock_save.assert_not_called()
+
+
+class TestClearingOptionalFields:
+    """Emptying a model override has to stick, or the form lies about saving."""
+
+    def test_none_clears_a_model_override(self, tmp_profiles_path):
+        add_profile(
+            APIProfile(
+                id="clear001",
+                name="Has override",
+                endpoint_type="deepseek",
+                api_key="sk-x",
+                default_model="deepseek-v4-flash",
+            )
+        )
+        store = update_profile("clear001", {"default_model": None})
+        assert store.profiles[0].default_model is None
+
+
+class TestCreateFromCurrentWithBearerAuth:
+    """Bearer-style endpoints keep the credential in a different variable."""
+
+    def test_picks_up_an_auth_token_endpoint(self, tmp_profiles_path):
+        mock_settings = {
+            "env": {
+                "ANTHROPIC_API_KEY": "",
+                "ANTHROPIC_AUTH_TOKEN": "sk-bearer-token",
+                "ANTHROPIC_BASE_URL": "https://tokenhub.tencentmaas.com",
+                "ANTHROPIC_MODEL": "Hy3-dev0630",
+            }
+        }
+        with patch("frago.init.configurator.load_claude_settings", return_value=mock_settings):
+            profile = create_profile_from_current("Tencent")
+
+        assert profile is not None
+        assert profile.api_key == "sk-bearer-token"
+        assert profile.endpoint_type == "tencent_maas"
