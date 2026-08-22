@@ -246,11 +246,15 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
         </p>
       </Modal>
 
-      {/* Profile Manager Modal */}
+      {/* Profile Manager Modal.
+          hasCustomConfig unlocks "save the running configuration as a
+          profile" — the button existed all along but nothing ever told the
+          dialog a custom endpoint was in use, so it never appeared. */}
       <ProfileManager
         isOpen={showProfileManager}
         onClose={() => setShowProfileManager(false)}
-        onProfileActivated={() => loadData()}
+        onProfilesChanged={() => loadData()}
+        hasCustomConfig={config.auth_method === 'custom'}
       />
     </div>
   );

@@ -516,7 +516,8 @@
       "activeProfileTitle": "Active API Profile",
       "switchProfile": "Switch Profile",
       "confirmDeactivate": "Deactivate Custom API?",
-      "confirmDeactivateDesc": "This will switch back to Claude Code official API. Your profile will be saved and can be reactivated later."
+      "confirmDeactivateDesc": "This will switch back to Claude Code official API. Your profile will be saved and can be reactivated later.",
+      "customEndpoint": "Custom URL"
     },
     "appearance": {
       "title": "Appearance",
@@ -674,7 +675,8 @@
       "enterApiUrl": "https://api.example.com/v1",
       "defaultModel": "Default Model",
       "enterDefaultModel": "e.g., gpt-4",
-      "configLater": "Configure later in Settings"
+      "configLater": "Configure later in Settings",
+      "customEndpointHint": "your own URL"
     },
     "manualGuide": "Manual installation guide",
     "checking": "Checking...",

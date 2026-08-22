@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   getProfiles,
+  getEndpointPresets,
   createProfile,
   updateProfile,
   deleteProfile,
@@ -9,7 +10,12 @@ import {
   deactivateProfile,
   saveCurrentAsProfile,
 } from '@/api';
-import type { ProfileItem, CreateProfileRequest, UpdateProfileRequest } from '@/api';
+import type {
+  EndpointPreset,
+  ProfileItem,
+  CreateProfileRequest,
+  UpdateProfileRequest,
+} from '@/api';
 import { useAppStore } from '@/stores/appStore';
 
 export type ViewMode = 'list' | 'add' | 'edit';
@@ -17,7 +23,10 @@ export type ViewMode = 'list' | 'add' | 'edit';
 interface UseProfilesArgs {
   isOpen: boolean;
   onClose: () => void;
-  onProfileActivated?: () => void;
+  /** Fires after anything is created, edited, deleted, activated or
+   *  deactivated — the surrounding page shows profile data too, and used to
+   *  keep showing the old version until it was navigated away from. */
+  onProfilesChanged?: () => void;
 }
 
 /**
@@ -25,7 +34,7 @@ interface UseProfilesArgs {
  * list loading, the add/edit form, activate/deactivate/delete actions,
  * and the "save current config" inline flow. The modal just renders.
  */
-export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfilesArgs) {
+export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesArgs) {
   const { t } = useTranslation();
   const showToast = useAppStore((s) => s.showToast);
 
@@ -33,6 +42,10 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // The endpoints this build of frago knows how to talk to, straight from the
+  // backend. The form used to hard-code this list and it fell behind.
+  const [presets, setPresets] = useState<EndpointPreset[]>([]);
 
   // View mode
   const [viewMode, setViewMode] = useState<ViewMode>('list');
@@ -61,6 +74,7 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
   useEffect(() => {
     if (isOpen) {
       loadProfiles();
+      loadPresets();
       setViewMode('list');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,9 +109,26 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
     }
   };
 
+  const loadPresets = async () => {
+    try {
+      const data = await getEndpointPresets();
+      setPresets(data.presets);
+    } catch {
+      // A missing preset list still leaves "Custom URL" workable, which is
+      // more useful than blocking the whole dialog on it.
+      setPresets([]);
+    }
+  };
+
+  /** Reload the list here and tell the surrounding page to reload too. */
+  const refreshAll = async () => {
+    await loadProfiles();
+    onProfilesChanged?.();
+  };
+
   const resetForm = () => {
     setFormName('');
-    setFormEndpointType('deepseek');
+    setFormEndpointType(presets[0]?.id ?? 'custom');
     setFormApiKey('');
     setFormUrl('');
     setFormDefaultModel('');
@@ -125,6 +156,24 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
     setViewMode('edit');
   };
 
+  /**
+   * What the form is currently describing, in the shape the API takes.
+   *
+   * Every optional field is sent on every save, empty ones included — that is
+   * what makes clearing a model override possible. The old version dropped
+   * blanks, so deleting an override looked like it saved and then came back.
+   * A preset endpoint carries no URL of its own, so switching away from
+   * "Custom URL" clears the stale one rather than leaving it on the card.
+   */
+  const formFields = () => ({
+    name: formName.trim(),
+    endpoint_type: formEndpointType,
+    url: formEndpointType === 'custom' ? formUrl.trim() : null,
+    default_model: formDefaultModel.trim() || null,
+    sonnet_model: formSonnetModel.trim() || null,
+    haiku_model: formHaikuModel.trim() || null,
+  });
+
   const handleFormSubmit = async () => {
     if (!formName.trim()) return;
 
@@ -137,18 +186,13 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
           return;
         }
         const data: CreateProfileRequest = {
-          name: formName.trim(),
-          endpoint_type: formEndpointType,
+          ...formFields(),
           api_key: formApiKey.trim(),
-          ...(formEndpointType === 'custom' && formUrl.trim() && { url: formUrl.trim() }),
-          ...(formDefaultModel.trim() && { default_model: formDefaultModel.trim() }),
-          ...(formSonnetModel.trim() && { sonnet_model: formSonnetModel.trim() }),
-          ...(formHaikuModel.trim() && { haiku_model: formHaikuModel.trim() }),
         };
         const result = await createProfile(data);
         if (result.status === 'ok') {
           showToast(t('settings.profiles.savedProfile'), 'success');
-          await loadProfiles();
+          await refreshAll();
           setViewMode('list');
           resetForm();
         } else {
@@ -156,18 +200,14 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
         }
       } else if (viewMode === 'edit' && editingProfileId) {
         const data: UpdateProfileRequest = {
-          name: formName.trim(),
-          endpoint_type: formEndpointType,
+          ...formFields(),
+          // Never prefilled, so a blank key means "keep the saved one".
           ...(formApiKey.trim() && { api_key: formApiKey.trim() }),
-          ...(formEndpointType === 'custom' && { url: formUrl.trim() }),
-          ...(formDefaultModel.trim() && { default_model: formDefaultModel.trim() }),
-          ...(formSonnetModel.trim() && { sonnet_model: formSonnetModel.trim() }),
-          ...(formHaikuModel.trim() && { haiku_model: formHaikuModel.trim() }),
         };
         const result = await updateProfile(editingProfileId, data);
         if (result.status === 'ok') {
           showToast(t('settings.profiles.savedProfile'), 'success');
-          await loadProfiles();
+          await refreshAll();
           setViewMode('list');
           resetForm();
         } else {
@@ -188,8 +228,7 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
       if (result.status === 'ok') {
         const profile = profiles.find((p) => p.id === profileId);
         showToast(`${t('settings.profiles.switchedTo')} ${profile?.name || ''}`, 'success');
-        await loadProfiles();
-        onProfileActivated?.();
+        await refreshAll();
       } else {
         showToast(result.error || 'Failed to activate profile', 'error');
       }
@@ -206,8 +245,7 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
       const result = await deactivateProfile();
       if (result.status === 'ok') {
         showToast(t('settings.profiles.deactivate'), 'success');
-        await loadProfiles();
-        onProfileActivated?.();
+        await refreshAll();
       } else {
         showToast(result.error || 'Failed to deactivate', 'error');
       }
@@ -226,7 +264,7 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
       const result = await deleteProfile(profileId);
       if (result.status === 'ok') {
         showToast(t('settings.profiles.deletedProfile'), 'success');
-        await loadProfiles();
+        await refreshAll();
       } else {
         showToast(result.error || 'Failed to delete profile', 'error');
       }
@@ -244,7 +282,7 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
       const result = await saveCurrentAsProfile(saveCurrentName.trim());
       if (result.status === 'ok') {
         showToast(t('settings.profiles.currentConfigSaved'), 'success');
-        await loadProfiles();
+        await refreshAll();
         setShowSaveCurrentInput(false);
         setSaveCurrentName('');
       } else {
@@ -261,6 +299,7 @@ export function useProfiles({ isOpen, onClose, onProfileActivated }: UseProfiles
     t,
     profiles,
     activeProfileId,
+    presets,
     loading,
     viewMode,
     setViewMode,

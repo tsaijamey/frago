@@ -77,6 +77,8 @@ import type {
   UpdateStatus,
   StarredStatus,
   StarResult,
+  EndpointPreset,
+  EndpointPresetListResponse,
   ProfileItem,
   ProfileListResponse,
   CreateProfileRequest,
@@ -173,6 +175,8 @@ export type {
   UpdateStatus,
   StarredStatus,
   StarResult,
+  EndpointPreset,
+  EndpointPresetListResponse,
   ProfileItem,
   ProfileListResponse,
   CreateProfileRequest,
@@ -869,6 +873,11 @@ export async function toggleGitHubStar(star: boolean): Promise<StarResult> {
 // ============================================================
 // API Profile Management
 // ============================================================
+
+/** The built-in endpoint table. Single source of truth lives in the backend. */
+export async function getEndpointPresets(): Promise<EndpointPresetListResponse> {
+  return fetchApi<EndpointPresetListResponse>('/settings/endpoint-presets');
+}
 
 export async function getProfiles(): Promise<ProfileListResponse> {
   return fetchApi<ProfileListResponse>('/settings/profiles');

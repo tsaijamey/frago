@@ -1,14 +1,6 @@
 import { X, Plus, Check, Pencil, Trash2, Save, Zap } from 'lucide-react';
 import type { ProfilesController } from './useProfiles';
 
-const ENDPOINT_LABELS: Record<string, string> = {
-  deepseek: 'DeepSeek',
-  aliyun: 'Aliyun',
-  kimi: 'Kimi',
-  minimax: 'MiniMax',
-  custom: 'Custom URL',
-};
-
 interface ProfileListProps {
   pm: ProfilesController;
   hasCustomConfig?: boolean;
@@ -18,6 +10,7 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
   const {
     t,
     profiles,
+    presets,
     activeProfileId,
     activatingId,
     deletingId,
@@ -33,6 +26,18 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
     handleDelete,
     handleSaveCurrent,
   } = pm;
+
+  /** Provider name and the model this profile will actually run — the two
+   *  things you need to tell one saved profile from another. The model is the
+   *  profile's own override when it has one, otherwise the preset's default;
+   *  the row used to show neither, only the provider id and a masked key. */
+  const describe = (endpointType: string, override?: string | null) => {
+    const preset = presets.find((p) => p.id === endpointType);
+    return {
+      provider: preset?.display_name ?? (endpointType === 'custom' ? t('settings.profiles.customEndpoint') : endpointType),
+      model: override || preset?.default_model || null,
+    };
+  };
 
   return (
     <div className="space-y-3">
@@ -108,7 +113,9 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
         </div>
       ) : (
         <div className="space-y-2">
-          {profiles.map((profile) => (
+          {profiles.map((profile) => {
+            const { provider, model } = describe(profile.endpoint_type, profile.default_model);
+            return (
             <div
               key={profile.id}
               className={`border rounded-lg p-3 transition-colors ${
@@ -160,13 +167,20 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                   </button>
                 </div>
               </div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                <span>{ENDPOINT_LABELS[profile.endpoint_type] || profile.endpoint_type}</span>
+              <div className="mt-1 flex items-center gap-2 text-xs text-[var(--text-muted)] flex-wrap">
+                <span>{provider}</span>
+                {model && (
+                  <>
+                    <span>·</span>
+                    <span className="font-mono">{model}</span>
+                  </>
+                )}
                 <span>·</span>
                 <span className="font-mono">{profile.api_key_masked}</span>
               </div>
             </div>
-          ))}
+            );
+          })}
 
           {/* Deactivate button (switch to official) */}
           {activeProfileId && (

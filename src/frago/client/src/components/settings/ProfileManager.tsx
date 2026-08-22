@@ -15,17 +15,18 @@ import ProfileForm from './ProfileForm';
 interface ProfileManagerProps {
   isOpen: boolean;
   onClose: () => void;
-  onProfileActivated?: () => void;
+  /** Called after any change here, so the page behind the dialog reloads too. */
+  onProfilesChanged?: () => void;
   hasCustomConfig?: boolean; // Whether a custom API config is currently active
 }
 
 export default function ProfileManager({
   isOpen,
   onClose,
-  onProfileActivated,
+  onProfilesChanged,
   hasCustomConfig,
 }: ProfileManagerProps) {
-  const pm = useProfiles({ isOpen, onClose, onProfileActivated });
+  const pm = useProfiles({ isOpen, onClose, onProfilesChanged });
   const { t, loading, viewMode } = pm;
 
   if (!isOpen) return null;

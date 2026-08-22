@@ -4,6 +4,7 @@ import type { ProfilesController } from './useProfiles';
 export default function ProfileForm({ pm }: { pm: ProfilesController }) {
   const {
     t,
+    presets,
     viewMode,
     formName,
     setFormName,
@@ -26,6 +27,11 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
     resetForm,
     handleFormSubmit,
   } = pm;
+
+  // A preset already knows its URL and its models. Showing them as the field's
+  // placeholder is what turns "Default Model" from a field you have to look up
+  // elsewhere into one you can leave alone unless you mean to override it.
+  const preset = presets.find((p) => p.id === formEndpointType);
 
   return (
     <div className="space-y-3">
@@ -56,16 +62,18 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
           onChange={(e) => setFormEndpointType(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
         >
-          <option value="deepseek">DeepSeek API</option>
-          <option value="aliyun">Aliyun API</option>
-          <option value="kimi">Kimi API</option>
-          <option value="minimax">MiniMax API</option>
-          <option value="custom">Custom URL</option>
+          {presets.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.display_name}
+            </option>
+          ))}
+          <option value="custom">{t('settings.profiles.customEndpoint')}</option>
         </select>
       </div>
 
-      {/* Custom URL */}
-      {formEndpointType === 'custom' && (
+      {/* Where requests will actually go. A custom endpoint has to be told;
+          a preset already knows, and says so instead of staying silent. */}
+      {formEndpointType === 'custom' ? (
         <div>
           <label htmlFor="profile-url" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
             {t('settings.profiles.apiUrl')}
@@ -79,6 +87,12 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
           />
         </div>
+      ) : (
+        preset && (
+          <p className="text-xs text-[var(--text-muted)] font-mono break-all">
+            {preset.base_url}
+          </p>
+        )
       )}
 
       {/* API Key */}
@@ -109,18 +123,19 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
         </div>
       </div>
 
-      {/* Model overrides */}
+      {/* Model overrides. Left empty, a preset uses the model in its
+          placeholder; a custom endpoint has nothing to fall back on. */}
       <div>
         <label htmlFor="profile-default-model" className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
           {t('settings.profiles.defaultModel')}
-          {formEndpointType !== 'custom' && <span className="ml-1 text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>}
+          {preset && <span className="ml-1 text-[var(--text-muted)]">- {t('settings.general.optionalOverride')}</span>}
         </label>
         <input
           id="profile-default-model"
           type="text"
           value={formDefaultModel}
           onChange={(e) => setFormDefaultModel(e.target.value)}
-          placeholder={formEndpointType === 'custom' ? 'e.g., gpt-4' : t('settings.general.leaveEmptyDefault')}
+          placeholder={preset ? preset.default_model : 'e.g., gpt-4'}
           className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
         />
       </div>
@@ -135,7 +150,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             type="text"
             value={formSonnetModel}
             onChange={(e) => setFormSonnetModel(e.target.value)}
-            placeholder={t('settings.general.optionalOverride')}
+            placeholder={preset ? preset.sonnet_model : t('settings.general.optionalOverride')}
             className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
           />
         </div>
@@ -148,7 +163,7 @@ export default function ProfileForm({ pm }: { pm: ProfilesController }) {
             type="text"
             value={formHaikuModel}
             onChange={(e) => setFormHaikuModel(e.target.value)}
-            placeholder={t('settings.general.optionalOverride')}
+            placeholder={preset ? preset.haiku_model : t('settings.general.optionalOverride')}
             className="w-full px-3 py-2 text-sm bg-[var(--bg-base)] border border-[var(--border-color)] rounded-md text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)] font-mono"
           />
         </div>

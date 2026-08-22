@@ -6,7 +6,7 @@
  * - Custom API Endpoint (use third-party API providers)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
@@ -18,40 +18,31 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react';
+import { getEndpointPresets } from '@/api';
 
-// Preset API endpoints matching backend configurator.py PRESET_ENDPOINTS
-const PRESET_ENDPOINTS = [
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    model: 'deepseek-reasoner',
-    color: '#4B7BF5',
-  },
-  {
-    id: 'aliyun',
-    name: 'Aliyun Bailian',
-    model: 'qwen3-235b-a22b',
-    color: '#FF6A00',
-  },
-  {
-    id: 'kimi',
-    name: 'Kimi K2',
-    model: 'kimi-k2-0711-preview',
-    color: '#00D4AA',
-  },
-  {
-    id: 'minimax',
-    name: 'MiniMax M1',
-    model: 'MiniMax-M1-80k',
-    color: '#9B59B6',
-  },
-  {
-    id: 'custom',
-    name: 'Custom',
-    model: 'custom_endpoint',
-    color: '#6B7280',
-  },
-];
+/**
+ * This grid used to be a hand-written copy of the backend's endpoint table,
+ * and it had gone wrong in both directions: the Tencent endpoints were absent,
+ * and every model name under a provider tile named a model that had since been
+ * replaced. The names now come from the backend, which is the same place the
+ * settings file is built from, so the tile can no longer promise one model and
+ * configure another. Only the tile colours stay local — they are decoration.
+ */
+const PRESET_COLORS: Record<string, string> = {
+  deepseek: '#4B7BF5',
+  aliyun: '#FF6A00',
+  kimi: '#00D4AA',
+  minimax: '#9B59B6',
+  tencent_maas: '#00A4FF',
+  tencent_tokenplan: '#0052D9',
+  custom: '#6B7280',
+};
+
+interface EndpointChoice {
+  id: string;
+  name: string;
+  model: string;
+}
 
 type AuthMethod = 'official' | 'custom' | null;
 type EndpointType = string | null;
@@ -80,6 +71,28 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
   const [customUrl, setCustomUrl] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
   const [configLater, setConfigLater] = useState(false);
+  const [endpoints, setEndpoints] = useState<EndpointChoice[]>([]);
+
+  useEffect(() => {
+    getEndpointPresets()
+      .then((data) =>
+        setEndpoints([
+          ...data.presets.map((p) => ({
+            id: p.id,
+            name: p.display_name,
+            model: p.default_model,
+          })),
+          { id: 'custom', name: 'Custom', model: t('init.authMethod.customEndpointHint') },
+        ]),
+      )
+      // Custom is always available and needs no table to describe it, so a
+      // failed fetch still leaves the wizard completable.
+      .catch(() =>
+        setEndpoints([
+          { id: 'custom', name: 'Custom', model: t('init.authMethod.customEndpointHint') },
+        ]),
+      );
+  }, [t]);
 
   // For OpenCode, only custom API is available
   const showOfficialOption = coreType === 'claude-code';
@@ -212,7 +225,9 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
             {t('init.authMethod.selectProvider')}
           </p>
           <div className="grid grid-cols-3 gap-3">
-            {PRESET_ENDPOINTS.map((endpoint) => (
+            {endpoints.map((endpoint) => {
+              const color = PRESET_COLORS[endpoint.id] ?? PRESET_COLORS.custom;
+              return (
               <button
                 key={endpoint.id}
                 type="button"
@@ -226,12 +241,12 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
                 <div className="flex items-center gap-2 mb-2">
                   <div
                     className="w-8 h-8 rounded flex items-center justify-center"
-                    style={{ backgroundColor: `${endpoint.color}20` }}
+                    style={{ backgroundColor: `${color}20` }}
                   >
                     {endpoint.id === 'custom' ? (
-                      <Key className="w-4 h-4" style={{ color: endpoint.color }} />
+                      <Key className="w-4 h-4" style={{ color }} />
                     ) : (
-                      <Server className="w-4 h-4" style={{ color: endpoint.color }} />
+                      <Server className="w-4 h-4" style={{ color }} />
                     )}
                   </div>
                   {endpointType === endpoint.id && (
@@ -241,7 +256,8 @@ export function AuthMethodStep({ coreType, onComplete, onBack, onSkip }: AuthMet
                 <h5 className="text-white font-medium font-mono text-sm">{endpoint.name}</h5>
                 <p className="text-gray-500 text-xs font-mono truncate">{endpoint.model}</p>
               </button>
-            ))}
+              );
+            })}
           </div>
 
           {/* API Key Configuration Form */}

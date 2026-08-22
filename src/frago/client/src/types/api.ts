@@ -578,6 +578,25 @@ export interface StarResult {
   error?: string;
 }
 
+/**
+ * A built-in endpoint, served by the backend so this file never has to
+ * transcribe the provider table again. Earlier copies drifted: the Tencent
+ * endpoints were missing from every picker, and the model names shown next to
+ * each provider had gone stale.
+ */
+export interface EndpointPreset {
+  id: string;
+  display_name: string;
+  base_url: string;
+  default_model: string;
+  sonnet_model: string;
+  haiku_model: string;
+}
+
+export interface EndpointPresetListResponse {
+  presets: EndpointPreset[];
+}
+
 export interface ProfileItem {
   id: string;
   name: string;
@@ -601,20 +620,25 @@ export interface CreateProfileRequest {
   name: string;
   endpoint_type: string;
   api_key: string;
-  url?: string;
-  default_model?: string;
-  sonnet_model?: string;
-  haiku_model?: string;
+  url?: string | null;
+  default_model?: string | null;
+  sonnet_model?: string | null;
+  haiku_model?: string | null;
 }
 
+/**
+ * Only the keys present are touched, and an empty string clears that field —
+ * that is how a model override gets removed. `api_key` is the exception: it is
+ * never prefilled in the form, so blank there means "keep the saved key".
+ */
 export interface UpdateProfileRequest {
   name?: string;
   endpoint_type?: string;
   api_key?: string;
-  url?: string;
-  default_model?: string;
-  sonnet_model?: string;
-  haiku_model?: string;
+  url?: string | null;
+  default_model?: string | null;
+  sonnet_model?: string | null;
+  haiku_model?: string | null;
 }
 
 export interface GuideCategory {

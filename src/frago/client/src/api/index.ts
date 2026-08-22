@@ -1045,11 +1045,20 @@ export const searchGuide = withMode(
 // ============================================================
 
 export type {
+  EndpointPreset,
+  EndpointPresetListResponse,
   ProfileItem,
   ProfileListResponse,
   CreateProfileRequest,
   UpdateProfileRequest,
 } from './client';
+
+// In pywebview mode the profile screens are unreachable anyway; an empty table
+// is the honest answer, and the form falls back to "custom only".
+export const getEndpointPresets = withMode(
+  (): Promise<httpApi.EndpointPresetListResponse> => httpApi.getEndpointPresets(),
+  (): Promise<httpApi.EndpointPresetListResponse> => Promise.resolve({ presets: [] }),
+);
 
 export const getProfiles = withMode(
   (): Promise<httpApi.ProfileListResponse> => httpApi.getProfiles(),
