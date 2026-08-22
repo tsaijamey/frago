@@ -99,14 +99,9 @@ def run_server(
             logger.error("Port %d is already in use, exiting immediately", port)
             sys.exit(1)
 
-    # Ensure Claude Code hooks are installed
-    try:
-        from frago.init.resources import ensure_hooks
-        installed = ensure_hooks()
-        if installed:
-            logger.info("Installed Claude Code hooks: %s", ", ".join(installed))
-    except Exception as e:
-        logger.warning("Failed to ensure hooks: %s", e)
+    # Claude Code integration — hook registration, binary deploy and the
+    # retirement sweep — all happen in the app's lifespan (server/app.py).
+    # Nothing to materialise before uvicorn starts.
 
     # Update global server state
     started_at = datetime.now().isoformat()

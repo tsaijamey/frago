@@ -238,7 +238,21 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Deploy frago-core binary if missing or outdated, then sync event registration
     try:
         from frago.init.hook_binary import deploy_hook_binary, sync_hook_events
+        from frago.init.retired_artifacts import retire_superseded_install_artifacts
+
         hook_path = deploy_hook_binary()
+
+        # Collect what older frago versions left inside ~/.claude/ — hook
+        # scripts, slash commands, skills. Nothing else ever will: a machine
+        # installed in March keeps running March's copies until something on
+        # that machine removes them, and the server is the only part of frago
+        # that runs everywhere without being asked. After the deploy, not
+        # before: deploy is what clears the stale frago-hook binary out of the
+        # same legacy directory, and the sweep can only retire the empty
+        # directory once that is gone.
+        retired = retire_superseded_install_artifacts()
+        if retired:
+            logger.info("Retired superseded install artifacts: %s", ", ".join(retired))
         logger.info("Hook binary ready: %s", hook_path)
         sync_hook_events(str(hook_path))
     except Exception as e:

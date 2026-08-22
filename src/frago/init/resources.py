@@ -1,9 +1,13 @@
 """Resource Installation Module.
 
-After spec 20260422-init-flow-modernization, init no longer copies Claude
-Code commands, skills, or example recipes from the package into the user's
-home directory. Only hook scripts (consumed by frago-core) still need to be
-materialised — that's what `ensure_hooks()` does.
+After spec 20260422-init-flow-modernization, init no longer copies anything
+from the package into the user's home directory — not commands, skills or
+example recipes, and since 2026-08-22 not hook scripts either. `ensure_hooks()`
+outlived the last script it had to install: its manifest had been empty since
+April, so all it still did was recreate an empty ~/.claude/hooks/frago/ on
+every server start, one moment before the retirement sweep removed it again.
+What frago left in ~/.claude/ on machines installed back then is collected by
+`frago.init.retired_artifacts`.
 
 The `install_*` and `install_all_resources` functions remain as stubs so
 existing callers (e.g. `server/services/init_service.py` → Web InitWizard)
@@ -16,9 +20,9 @@ search path when present. After the bundled recipes are deleted the path
 simply won't exist and the try/except caller handles it.
 """
 
-import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from frago.init.models import InstallResult, ResourceStatus, ResourceType
 
@@ -29,7 +33,7 @@ def get_package_resources_path(resource_type: str) -> Path:
     Raises FileNotFoundError if the directory no longer exists (which is the
     normal case after spec 20260422 for commands/skills/recipes).
     """
-    valid_types = ("commands", "skills", "recipes", "hooks")
+    valid_types = ("commands", "skills", "recipes")
     if resource_type not in valid_types:
         raise ValueError(
             f"Invalid resource type: {resource_type}, valid values: {valid_types}"
@@ -70,97 +74,15 @@ def install_recipes() -> InstallResult:
     return InstallResult(resource_type=ResourceType.RECIPE)
 
 
-def ensure_hooks() -> list[str]:
-    """Copy frago-core scripts into ~/.claude/hooks/frago/ and register them
-    in ~/.claude/settings.json.
-
-    Returns the list of newly installed hook descriptions. Safe to call
-    repeatedly — already-registered hooks are skipped.
-    """
-    import json
-    from importlib.resources import files as pkg_files
-
-    CLAUDE_DIR = Path.home() / ".claude"
-    CLAUDE_SETTINGS_PATH = CLAUDE_DIR / "settings.json"
-    TARGET_HOOKS_DIR = CLAUDE_DIR / "hooks" / "frago"
-    SOURCE_HOOKS_DIR = Path(str(pkg_files("frago.resources") / "hooks"))
-
-    if not SOURCE_HOOKS_DIR.exists():
-        return []
-
-    manifest_path = SOURCE_HOOKS_DIR / "_manifest.json"
-    if not manifest_path.exists():
-        return []
-
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-
-    TARGET_HOOKS_DIR.mkdir(parents=True, exist_ok=True)
-    CLAUDE_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if CLAUDE_SETTINGS_PATH.exists():
-        try:
-            settings = json.loads(CLAUDE_SETTINGS_PATH.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            settings = {}
-    else:
-        settings = {}
-
-    hooks = settings.setdefault("hooks", {})
-    installed = []
-
-    for hook_def in manifest.get("hooks", []):
-        event = hook_def["event"]
-        script = hook_def["script"]
-        description = hook_def.get("description", script)
-
-        src_script = SOURCE_HOOKS_DIR / script
-        if not src_script.exists():
-            continue
-        dst_script = TARGET_HOOKS_DIR / script
-        shutil.copy2(src_script, dst_script)
-        dst_script.chmod(0o755)
-
-        existing_entries = hooks.get(event, [])
-        already_registered = any(
-            any(script in h.get("command", "") for h in entry.get("hooks", []))
-            for entry in existing_entries
-        )
-        if already_registered:
-            continue
-
-        new_entry = {
-            "matcher": hook_def.get("matcher", ""),
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": f'bash "{dst_script}"',
-                    "timeout": hook_def.get("timeout", 10),
-                }
-            ],
-        }
-        existing_entries.append(new_entry)
-        hooks[event] = existing_entries
-        installed.append(description)
-
-    if installed:
-        with open(CLAUDE_SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2, ensure_ascii=False)
-
-    return installed
-
-
 def install_all_resources(
     skip_recipes: bool = False,  # noqa: ARG001
     force_update: bool = False,  # noqa: ARG001
 ) -> ResourceStatus:
-    """Install resources.
+    """Install resources — nothing is materialised any more.
 
-    Post-modernization: only hooks are materialised. Commands/skills/recipes
-    are left untouched; the corresponding fields in `ResourceStatus` are
-    populated with empty `InstallResult`s so downstream UI code renders a
-    clean "nothing was installed" state.
+    Commands/skills/recipes are left untouched; the corresponding fields in
+    `ResourceStatus` are populated with empty `InstallResult`s so downstream UI
+    code renders a clean "nothing was installed" state.
 
     The `skip_recipes` / `force_update` parameters are preserved for callers
     that still pass them by keyword (e.g. server/services/init_service.py);
@@ -175,23 +97,22 @@ def install_all_resources(
     status.commands = install_commands()
     status.skills = install_skills()
     status.recipes = install_recipes()
-    status.hooks_installed = ensure_hooks()
     return status
 
 
 def format_install_summary(status: ResourceStatus) -> str:
-    """Format installation summary output."""
-    lines = []
-    if status.hooks_installed:
-        lines.append("\n[*] Installed hooks:")
-        for name in status.hooks_installed:
-            lines.append(f"  [OK] {name}")
-    elif not any([status.commands, status.skills, status.recipes]):
-        lines.append("No resources to install")
-    return "\n".join(lines)
+    """Format installation summary output.
+
+    Nothing is installed any more, so there is nothing to report. The function
+    stays because callers still print its result; `ResourceStatus.hooks_installed`
+    stays on the model because the init API's response shape is public.
+    """
+    if any([status.commands, status.skills, status.recipes]):
+        return ""
+    return "No resources to install"
 
 
-def get_resources_status() -> dict:
+def get_resources_status() -> dict[str, Any]:
     """Return a minimal resource status snapshot for API consumers.
 
     The `available` counts for commands/skills/recipes are always 0 because

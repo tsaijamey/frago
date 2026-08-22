@@ -63,7 +63,12 @@ class TestCleanupLegacyHookCopy:
     def test_leaves_the_current_binary_and_scripts_alone(
         self, dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Only the superseded name goes; the integration script is not ours."""
+        """Only the superseded binary name goes.
+
+        A script is registered in settings.json, so deleting it here — before
+        anything unregisters it — would leave Claude Code invoking a file that
+        is gone. Scripts are retired by ``retired_artifacts``.
+        """
         as_platform(monkeypatch, "Windows")
         legacy, deploy = dirs
         script = legacy / "session-start-book.sh"

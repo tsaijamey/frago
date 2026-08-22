@@ -157,8 +157,15 @@ def get_hook_binary_path() -> str:
 
 
 def get_legacy_hook_dir() -> Path:
-    """Return the historical ~/.claude/hooks/frago/ directory, if present."""
-    return Path.home() / ".claude" / "hooks" / "frago"
+    """Return the historical ~/.claude/hooks/frago/ directory, if present.
+
+    Same directory ``retired_artifacts`` sweeps the leftover *scripts* out of;
+    here it is only about binaries. Imported inside the function so the two
+    modules can name one directory without importing each other at module load.
+    """
+    from frago.init.retired_artifacts import get_claude_dir
+
+    return get_claude_dir() / "hooks" / "frago"
 
 
 def cleanup_legacy_hook_copy() -> None:
@@ -180,9 +187,10 @@ def cleanup_legacy_hook_copy() -> None:
     pre-rename binary indefinitely, which is exactly the drift this is meant to
     prevent.
 
-    Best-effort: missing copies are normal (fresh install); the
-    session-start-book.sh script in ~/.claude/hooks/frago/ is left untouched
-    — it is a Claude Code integration layer, not the binary.
+    Best-effort: missing copies are normal (fresh install). Scripts in that
+    directory are a different kind of leftover — they are registered in
+    settings.json and have to be unregistered before they are deleted, which is
+    ``retired_artifacts``'s job, not this one's.
     """
     suffix = ".exe" if platform.system().lower() == "windows" else ""
     legacy_name = f"frago-hook{suffix}"
