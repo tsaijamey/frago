@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getMainConfig, getProfiles, deactivateProfile, openWorkingDirectory, checkVSCode, openConfigInVSCode } from '@/api';
+import { getMainConfig, getProfiles, getActivationTargets, deactivateProfile, openWorkingDirectory, checkVSCode, openConfigInVSCode } from '@/api';
 import type { ProfileItem } from '@/api';
 import type { MainConfig } from '@/types/pywebview';
 import { FolderOpen, Code } from 'lucide-react';
@@ -29,6 +29,9 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const [config, setConfig] = useState<MainConfig | null>(null);
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  // Which agent CLIs the active profile was written into, already resolved to
+  // display names. "Active" used to say nothing about who it affected.
+  const [activeTargetNames, setActiveTargetNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [vscodeInstalled, setVscodeInstalled] = useState(false);
@@ -50,14 +53,19 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
   const loadData = async () => {
     try {
       setLoading(true);
-      const [configData, profileData] = await Promise.all([
+      const [configData, profileData, targetData] = await Promise.all([
         getMainConfig(),
-        getProfiles()
+        getProfiles(),
+        // Names come from the backend roster so the card cannot drift from what
+        // the picker offered.
+        getActivationTargets().catch(() => ({ targets: [], default_targets: [] }))
       ]);
 
       setConfig(configData);
       setProfiles(profileData.profiles);
       setActiveProfileId(profileData.active_profile_id);
+      const displayNames = new Map(targetData.targets.map((target) => [target.agent_type, target.display_name]));
+      setActiveTargetNames((profileData.active_targets ?? []).map((agentType) => displayNames.get(agentType) ?? agentType));
 
       // Check VSCode availability
       try {
@@ -152,6 +160,7 @@ export default function GeneralSettings({ openProfilesSignal = 0 }: GeneralSetti
       {activeProfile && (
         <ActiveProfileCard
           profile={activeProfile}
+          activeTargets={activeTargetNames}
           onSwitch={() => setShowProfileManager(true)}
           onDeactivate={handleDeactivate}
         />

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   getProfiles,
   getEndpointPresets,
+  getActivationTargets,
   createProfile,
   updateProfile,
   deleteProfile,
@@ -11,6 +12,7 @@ import {
   saveCurrentAsProfile,
 } from '@/api';
 import type {
+  ActivationTarget,
   EndpointPreset,
   ProfileItem,
   CreateProfileRequest,
@@ -41,7 +43,16 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
   // Profile list state
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [activeTargets, setActiveTargets] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // The agent CLIs a profile can be activated on. Activation used to mean
+  // Claude Code and nothing else, silently — the picker exists so that the
+  // person choosing can see who they are actually changing.
+  const [targets, setTargets] = useState<ActivationTarget[]>([]);
+  // Which profile's activate button was pressed; its picker is open.
+  const [pickingTargetsFor, setPickingTargetsFor] = useState<string | null>(null);
+  const [pickedTargets, setPickedTargets] = useState<string[]>([]);
 
   // The endpoints this build of frago knows how to talk to, straight from the
   // backend. The form used to hard-code this list and it fell behind.
@@ -75,7 +86,9 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     if (isOpen) {
       loadProfiles();
       loadPresets();
+      loadTargets();
       setViewMode('list');
+      setPickingTargetsFor(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -85,7 +98,11 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     if (!isOpen) return;
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (viewMode !== 'list') {
+        // Escape backs out one layer at a time; closing the whole dialog while
+        // a target picker is open would read as the activation having happened.
+        if (pickingTargetsFor) {
+          setPickingTargetsFor(null);
+        } else if (viewMode !== 'list') {
           setViewMode('list');
         } else {
           onClose();
@@ -94,7 +111,7 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     };
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, viewMode, onClose]);
+  }, [isOpen, viewMode, pickingTargetsFor, onClose]);
 
   const loadProfiles = async () => {
     try {
@@ -102,10 +119,22 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
       const data = await getProfiles();
       setProfiles(data.profiles);
       setActiveProfileId(data.active_profile_id);
+      setActiveTargets(data.active_targets ?? []);
     } catch {
       showToast('Failed to load profiles', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTargets = async () => {
+    try {
+      const data = await getActivationTargets();
+      setTargets(data.targets);
+    } catch {
+      // Without the roster there is nothing to pick from, so activation falls
+      // back to what it has always done: Claude Code alone.
+      setTargets([]);
     }
   };
 
@@ -221,13 +250,53 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     }
   };
 
-  const handleActivate = async (profileId: string) => {
+  /** The agent CLIs that can actually be written to right now. */
+  const selectableTargets = targets.filter((target) => target.selectable);
+
+  /**
+   * Open the target picker for a profile.
+   *
+   * The boxes start on whatever is already in force, so re-activating the
+   * active profile does not silently narrow it, and a first activation
+   * pre-picks every usable CLI rather than making the person hunt for them.
+   */
+  const handleActivateClick = (profileId: string) => {
+    const alreadyActive = profileId === activeProfileId ? activeTargets : [];
+    const preselected = alreadyActive.length
+      ? alreadyActive
+      : selectableTargets.map((target) => target.agent_type);
+    setPickedTargets(preselected);
+    setPickingTargetsFor(profileId);
+  };
+
+  const handleCancelTargetPick = () => setPickingTargetsFor(null);
+
+  const toggleTarget = (agentType: string) => {
+    setPickedTargets((current) =>
+      current.includes(agentType)
+        ? current.filter((t) => t !== agentType)
+        : [...current, agentType],
+    );
+  };
+
+  /**
+   * Activate on the picked CLIs.
+   *
+   * `targets` is only left off when the backend never told us the roster —
+   * then the request means "whatever activation has always meant", which the
+   * backend resolves to Claude Code.
+   */
+  const handleActivate = async (profileId: string, chosen?: string[]) => {
     setActivatingId(profileId);
     try {
-      const result = await activateProfile(profileId);
+      const result = await activateProfile(
+        profileId,
+        chosen ?? (selectableTargets.length ? pickedTargets : undefined),
+      );
       if (result.status === 'ok') {
         const profile = profiles.find((p) => p.id === profileId);
         showToast(`${t('settings.profiles.switchedTo')} ${profile?.name || ''}`, 'success');
+        setPickingTargetsFor(null);
         await refreshAll();
       } else {
         showToast(result.error || 'Failed to activate profile', 'error');
@@ -299,6 +368,11 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     t,
     profiles,
     activeProfileId,
+    activeTargets,
+    targets,
+    selectableTargets,
+    pickingTargetsFor,
+    pickedTargets,
     presets,
     loading,
     viewMode,
@@ -331,6 +405,9 @@ export function useProfiles({ isOpen, onClose, onProfilesChanged }: UseProfilesA
     handleAddClick,
     handleEditClick,
     handleFormSubmit,
+    handleActivateClick,
+    handleCancelTargetPick,
+    toggleTarget,
     handleActivate,
     handleDeactivate,
     handleDelete,

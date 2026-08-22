@@ -81,6 +81,8 @@ import type {
   EndpointPresetListResponse,
   ProfileItem,
   ProfileListResponse,
+  ActivationTarget,
+  ActivationTargetListResponse,
   CreateProfileRequest,
   UpdateProfileRequest,
   GuideCategory,
@@ -179,6 +181,8 @@ export type {
   EndpointPresetListResponse,
   ProfileItem,
   ProfileListResponse,
+  ActivationTarget,
+  ActivationTargetListResponse,
   CreateProfileRequest,
   UpdateProfileRequest,
   GuideCategory,
@@ -903,9 +907,20 @@ export async function deleteProfile(id: string): Promise<ApiResponse> {
   });
 }
 
-export async function activateProfile(id: string): Promise<ApiResponse> {
+/** The agent CLIs a profile can be activated on, and why the others can't. */
+export async function getActivationTargets(): Promise<ActivationTargetListResponse> {
+  return fetchApi<ActivationTargetListResponse>('/settings/profiles/targets');
+}
+
+/**
+ * Activate a profile on the given agent CLIs.
+ *
+ * Omitting `targets` keeps the historical behavior — Claude Code only.
+ */
+export async function activateProfile(id: string, targets?: string[]): Promise<ApiResponse> {
   return fetchApi<ApiResponse>(`/settings/profiles/${encodeURIComponent(id)}/activate`, {
     method: 'POST',
+    body: JSON.stringify({ targets: targets ?? null }),
   });
 }
 

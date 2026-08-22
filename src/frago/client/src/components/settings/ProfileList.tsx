@@ -1,4 +1,4 @@
-import { X, Plus, Check, Pencil, Trash2, Save, Zap } from 'lucide-react';
+import { X, Plus, Check, Pencil, Trash2, Save, Zap, Ban } from 'lucide-react';
 import type { ProfilesController } from './useProfiles';
 
 interface ProfileListProps {
@@ -12,6 +12,11 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
     profiles,
     presets,
     activeProfileId,
+    activeTargets,
+    targets,
+    selectableTargets,
+    pickingTargetsFor,
+    pickedTargets,
     activatingId,
     deletingId,
     savingCurrent,
@@ -21,11 +26,17 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
     setSaveCurrentName,
     handleAddClick,
     handleEditClick,
+    handleActivateClick,
+    handleCancelTargetPick,
+    toggleTarget,
     handleActivate,
     handleDeactivate,
     handleDelete,
     handleSaveCurrent,
   } = pm;
+
+  const targetName = (agentType: string) =>
+    targets.find((target) => target.agent_type === agentType)?.display_name ?? agentType;
 
   /** Provider name and the model this profile will actually run — the two
    *  things you need to tell one saved profile from another. The model is the
@@ -137,17 +148,19 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {!profile.is_active && (
-                    <button
-                      type="button"
-                      onClick={() => handleActivate(profile.id)}
-                      disabled={activatingId === profile.id}
-                      className="btn btn-ghost btn-sm text-xs flex items-center gap-1 text-[var(--accent-primary)] disabled:opacity-50"
-                    >
-                      <Zap size={14} />
-                      {activatingId === profile.id ? t('settings.profiles.activating') : t('settings.profiles.activate')}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleActivateClick(profile.id)}
+                    disabled={activatingId === profile.id}
+                    className="btn btn-ghost btn-sm text-xs flex items-center gap-1 text-[var(--accent-primary)] disabled:opacity-50"
+                  >
+                    <Zap size={14} />
+                    {activatingId === profile.id
+                      ? t('settings.profiles.activating')
+                      : profile.is_active
+                        ? t('settings.profiles.changeTargets')
+                        : t('settings.profiles.activate')}
+                  </button>
                   <button
                     type="button"
                     onClick={() => handleEditClick(profile)}
@@ -178,6 +191,96 @@ export default function ProfileList({ pm, hasCustomConfig }: ProfileListProps) {
                 <span>·</span>
                 <span className="font-mono">{profile.api_key_masked}</span>
               </div>
+
+              {/* Where this profile is actually in force. "Active" on its own
+                  never said who it affected, which was the whole problem. */}
+              {profile.is_active && activeTargets.length > 0 && (
+                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-[var(--text-muted)]">
+                    {t('settings.profiles.activeOn')}
+                  </span>
+                  {activeTargets.map((agentType) => (
+                    <span
+                      key={agentType}
+                      className="inline-flex items-center px-2 py-0.5 text-xs rounded-md bg-[var(--accent-primary)]/10 text-[var(--accent-primary)]"
+                    >
+                      {targetName(agentType)}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {pickingTargetsFor === profile.id && (
+                <div className="mt-3 pt-3 border-t border-[var(--border-color)] space-y-2">
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    {t('settings.profiles.targetsTitle')}
+                  </p>
+                  {targets.length === 0 ? (
+                    <p className="text-xs text-[var(--text-muted)]">
+                      {t('settings.profiles.targetsUnavailable')}
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {targets.map((target) => (
+                        <label
+                          key={target.agent_type}
+                          className={`flex items-start gap-2 text-xs ${
+                            target.selectable
+                              ? 'text-[var(--text-primary)] cursor-pointer'
+                              : 'text-[var(--text-muted)] cursor-not-allowed'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-0.5"
+                            checked={pickedTargets.includes(target.agent_type)}
+                            disabled={!target.selectable}
+                            onChange={() => toggleTarget(target.agent_type)}
+                          />
+                          <span className="min-w-0">
+                            <span className="font-medium">{target.display_name}</span>
+                            {/* An option that is merely greyed out reads as a
+                                bug; the reason is what makes it a decision. */}
+                            {!target.supported && (
+                              <span className="flex items-start gap-1 mt-0.5 text-[var(--text-muted)]">
+                                <Ban size={11} className="mt-0.5 shrink-0" />
+                                <span>{target.unsupported_reason}</span>
+                              </span>
+                            )}
+                            {target.supported && !target.installed && (
+                              <span className="block mt-0.5 text-[var(--text-muted)]">
+                                {t('settings.profiles.targetNotInstalled')}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleActivate(profile.id)}
+                      disabled={
+                        activatingId === profile.id ||
+                        (selectableTargets.length > 0 && pickedTargets.length === 0)
+                      }
+                      className="btn btn-primary btn-sm text-xs disabled:opacity-50"
+                    >
+                      {activatingId === profile.id
+                        ? t('settings.profiles.activating')
+                        : t('settings.profiles.activate')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCancelTargetPick}
+                      className="btn btn-ghost btn-sm text-xs"
+                    >
+                      {t('settings.profiles.cancel')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             );
           })}

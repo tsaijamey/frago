@@ -614,6 +614,31 @@ export interface ProfileItem {
 export interface ProfileListResponse {
   profiles: ProfileItem[];
   active_profile_id: string | null;
+  /** Which agent CLIs the active profile was written into. */
+  active_targets: string[];
+}
+
+/**
+ * One agent CLI's standing as a place to activate a profile.
+ *
+ * Unofferable ones are listed too, disabled and with their reason — a checkbox
+ * that is simply absent reads as an oversight rather than a decision.
+ */
+export interface ActivationTarget {
+  agent_type: string;
+  display_name: string;
+  /** Whether frago can translate a profile into this CLI's config at all. */
+  supported: boolean;
+  installed: boolean;
+  selectable: boolean;
+  path?: string | null;
+  unsupported_reason?: string | null;
+}
+
+export interface ActivationTargetListResponse {
+  targets: ActivationTarget[];
+  /** Used when the caller names none — Claude Code, as activation always meant. */
+  default_targets: string[];
 }
 
 export interface CreateProfileRequest {

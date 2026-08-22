@@ -24,16 +24,19 @@ vi.mock('@/stores/appStore', () => ({
 
 const getProfiles = vi.fn();
 const getEndpointPresets = vi.fn();
+const getActivationTargets = vi.fn();
 const updateProfile = vi.fn();
 const createProfile = vi.fn();
+const activateProfile = vi.fn();
 
 vi.mock('@/api', () => ({
   getProfiles: () => getProfiles(),
   getEndpointPresets: () => getEndpointPresets(),
+  getActivationTargets: () => getActivationTargets(),
   createProfile: (data: unknown) => createProfile(data),
   updateProfile: (id: string, data: unknown) => updateProfile(id, data),
   deleteProfile: vi.fn(),
-  activateProfile: vi.fn(),
+  activateProfile: (id: string, targets?: string[]) => activateProfile(id, targets),
   deactivateProfile: vi.fn(),
   saveCurrentAsProfile: vi.fn(),
 }));
@@ -56,6 +59,36 @@ const PRESETS = [
     default_model: 'Hy3-dev0630',
     sonnet_model: 'Hy3-dev0630',
     haiku_model: 'Hy3-dev0630',
+  },
+];
+
+const TARGETS = [
+  {
+    agent_type: 'claude',
+    display_name: 'Claude Code',
+    supported: true,
+    installed: true,
+    selectable: true,
+    path: '/usr/local/bin/claude',
+    unsupported_reason: null,
+  },
+  {
+    agent_type: 'opencode',
+    display_name: 'opencode',
+    supported: true,
+    installed: true,
+    selectable: true,
+    path: '/opt/homebrew/bin/opencode',
+    unsupported_reason: null,
+  },
+  {
+    agent_type: 'codex',
+    display_name: 'Codex CLI',
+    supported: false,
+    installed: true,
+    selectable: false,
+    path: '/opt/homebrew/bin/codex',
+    unsupported_reason: '协议对不上，没有诚实的翻译',
   },
 ];
 
@@ -90,9 +123,88 @@ async function openEditForm() {
 beforeEach(() => {
   vi.clearAllMocks();
   getEndpointPresets.mockResolvedValue({ presets: PRESETS });
-  getProfiles.mockResolvedValue({ profiles: [CUSTOM_PROFILE], active_profile_id: null });
+  getProfiles.mockResolvedValue({
+    profiles: [CUSTOM_PROFILE],
+    active_profile_id: null,
+    active_targets: [],
+  });
+  getActivationTargets.mockResolvedValue({ targets: TARGETS, default_targets: ['claude'] });
   updateProfile.mockResolvedValue({ status: 'ok' });
   createProfile.mockResolvedValue({ status: 'ok' });
+  activateProfile.mockResolvedValue({ status: 'ok' });
+});
+
+/** Press "activate" on the one saved profile and wait for the target picker. */
+async function openTargetPicker() {
+  await screen.findByText('OpenRouter');
+  fireEvent.click(screen.getByText('settings.profiles.activate'));
+  await screen.findByText('settings.profiles.targetsTitle');
+}
+
+/** The checkbox inside the picker row labelled with this agent's display name.
+ *  Scoped to <label> because the same name also appears as an "active on" chip. */
+function targetBox(displayName: string): HTMLInputElement {
+  const row = screen
+    .getAllByText(displayName)
+    .map((node) => node.closest('label'))
+    .find(Boolean);
+  return row!.querySelector('input') as HTMLInputElement;
+}
+
+describe('选激活目标', () => {
+  it('点激活先问去哪，而不是直接改了 Claude Code 就完事', async () => {
+    open();
+    await openTargetPicker();
+
+    expect(activateProfile).not.toHaveBeenCalled();
+    expect(targetBox('Claude Code')).toBeTruthy();
+    expect(targetBox('opencode')).toBeTruthy();
+  });
+
+  it('接不了 profile 的那个也列出来，禁用并附上原因', async () => {
+    open();
+    await openTargetPicker();
+
+    expect(targetBox('Codex CLI').disabled).toBe(true);
+    expect(screen.getByText('协议对不上，没有诚实的翻译')).toBeTruthy();
+  });
+
+  it('勾掉一个之后，只把剩下的那个发过去', async () => {
+    open();
+    await openTargetPicker();
+
+    fireEvent.click(targetBox('opencode'));
+    fireEvent.click(screen.getAllByText('settings.profiles.activate').slice(-1)[0]);
+
+    await waitFor(() => expect(activateProfile).toHaveBeenCalled());
+    expect(activateProfile.mock.calls[0][1]).toEqual(['claude']);
+  });
+
+  it('一个都不勾时不让提交——激活到"哪儿都不去"没有意义', async () => {
+    open();
+    await openTargetPicker();
+
+    fireEvent.click(targetBox('Claude Code'));
+    fireEvent.click(targetBox('opencode'));
+
+    const submit = screen.getAllByText('settings.profiles.activate').slice(-1)[0];
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('改激活中的那条时，勾选停在它当前生效的范围上', async () => {
+    getProfiles.mockResolvedValue({
+      profiles: [{ ...CUSTOM_PROFILE, is_active: true }],
+      active_profile_id: 'p1',
+      active_targets: ['opencode'],
+    });
+    open();
+    await screen.findByText('OpenRouter');
+    fireEvent.click(screen.getByText('settings.profiles.changeTargets'));
+    await screen.findByText('settings.profiles.targetsTitle');
+
+    expect(targetBox('Claude Code').checked).toBe(false);
+    expect(targetBox('opencode').checked).toBe(true);
+  });
 });
 
 describe('端点清单', () => {

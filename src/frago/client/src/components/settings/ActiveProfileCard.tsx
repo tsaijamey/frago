@@ -9,11 +9,13 @@ import type { ProfileItem } from '@/api';
 
 interface ActiveProfileCardProps {
   profile: ProfileItem;
+  /** Display names of the agent CLIs this profile was written into. */
+  activeTargets?: string[];
   onSwitch: () => void;
   onDeactivate: () => void;
 }
 
-export default function ActiveProfileCard({ profile, onSwitch, onDeactivate }: ActiveProfileCardProps) {
+export default function ActiveProfileCard({ profile, activeTargets = [], onSwitch, onDeactivate }: ActiveProfileCardProps) {
   const { t } = useTranslation();
 
   // Get endpoint type display name
@@ -58,6 +60,15 @@ export default function ActiveProfileCard({ profile, onSwitch, onDeactivate }: A
             <p>
               <span className="font-medium">{t('settings.general.model')}:</span>{' '}
               {profile.sonnet_model}
+            </p>
+          )}
+          {/* Which agent CLIs this is actually in force on. Without it, "active"
+              is a claim with no subject — the other CLIs on the machine are
+              still running whatever they were running before. */}
+          {activeTargets.length > 0 && (
+            <p>
+              <span className="font-medium">{t('settings.profiles.activeOn')}:</span>{' '}
+              {activeTargets.join(', ')}
             </p>
           )}
         </div>

@@ -517,7 +517,12 @@
       "switchProfile": "切换配置",
       "confirmDeactivate": "停用自定义 API？",
       "confirmDeactivateDesc": "这将切换回 Claude Code 官方 API。您的配置将被保存，可以稍后重新激活。",
-      "customEndpoint": "自定义地址"
+      "customEndpoint": "自定义地址",
+      "changeTargets": "改激活范围",
+      "activeOn": "已激活到",
+      "targetsTitle": "激活到哪些 agent CLI？",
+      "targetsUnavailable": "读不到本机的 agent CLI 名单，激活将只作用于 Claude Code。",
+      "targetNotInstalled": "本机未安装"
     },
     "appearance": {
       "title": "外观",

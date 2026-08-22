@@ -1049,6 +1049,8 @@ export type {
   EndpointPresetListResponse,
   ProfileItem,
   ProfileListResponse,
+  ActivationTarget,
+  ActivationTargetListResponse,
   CreateProfileRequest,
   UpdateProfileRequest,
 } from './client';
@@ -1062,7 +1064,12 @@ export const getEndpointPresets = withMode(
 
 export const getProfiles = withMode(
   (): Promise<httpApi.ProfileListResponse> => httpApi.getProfiles(),
-  (): Promise<httpApi.ProfileListResponse> => Promise.resolve({ profiles: [], active_profile_id: null }),
+  (): Promise<httpApi.ProfileListResponse> => Promise.resolve({ profiles: [], active_profile_id: null, active_targets: [] }),
+);
+
+export const getActivationTargets = withMode(
+  (): Promise<httpApi.ActivationTargetListResponse> => httpApi.getActivationTargets(),
+  (): Promise<httpApi.ActivationTargetListResponse> => Promise.resolve({ targets: [], default_targets: [] }),
 );
 
 export const createProfile = withMode(
@@ -1081,8 +1088,8 @@ export const deleteProfile = withMode(
 );
 
 export const activateProfile = withMode(
-  (id: string): Promise<ApiResponse> => httpApi.activateProfile(id),
-  (_id: string): Promise<ApiResponse> => Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
+  (id: string, targets?: string[]): Promise<ApiResponse> => httpApi.activateProfile(id, targets),
+  (_id: string, _targets?: string[]): Promise<ApiResponse> => Promise.resolve({ status: 'error', error: 'Not supported in pywebview mode' }),
 );
 
 export const deactivateProfile = withMode(

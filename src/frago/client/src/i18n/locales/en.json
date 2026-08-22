@@ -517,7 +517,12 @@
       "switchProfile": "Switch Profile",
       "confirmDeactivate": "Deactivate Custom API?",
       "confirmDeactivateDesc": "This will switch back to Claude Code official API. Your profile will be saved and can be reactivated later.",
-      "customEndpoint": "Custom URL"
+      "customEndpoint": "Custom URL",
+      "changeTargets": "Change targets",
+      "activeOn": "Active on",
+      "targetsTitle": "Activate on which agent CLIs?",
+      "targetsUnavailable": "Could not read this machine's agent CLI roster; activation will apply to Claude Code only.",
+      "targetNotInstalled": "Not installed on this machine"
     },
     "appearance": {
       "title": "Appearance",
