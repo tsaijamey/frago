@@ -880,6 +880,38 @@ class ProfileListResponse(BaseModel):
     """Profile list response"""
     profiles: List[ProfileResponse]
     active_profile_id: Optional[str] = None
+    # The agent CLIs the active profile was written into. Empty when nothing is
+    # active — the card that shows "active" needs to be able to say where.
+    active_targets: List[str] = []
+
+
+class ActivationTargetResponse(BaseModel):
+    """One agent CLI's standing as a place to activate a profile."""
+    agent_type: str
+    display_name: str
+    supported: bool
+    installed: bool
+    selectable: bool
+    path: Optional[str] = None
+    # Why this CLI can never take a frago profile. Shown next to the disabled
+    # checkbox: a missing option reads as a bug, an explained one does not.
+    unsupported_reason: Optional[str] = None
+
+
+class ActivationTargetListResponse(BaseModel):
+    """Every known agent CLI, offerable or not, in display order."""
+    targets: List[ActivationTargetResponse]
+    # What gets used when the caller names no targets.
+    default_targets: List[str] = []
+
+
+class ActivateProfileRequest(BaseModel):
+    """Which agent CLIs to activate this profile on.
+
+    Omitted entirely means the historical behavior — Claude Code only — so an
+    older client that posts no body keeps working unchanged.
+    """
+    targets: Optional[List[str]] = None
 
 
 class CreateProfileRequest(BaseModel):
@@ -957,6 +989,7 @@ async def get_profiles() -> ProfileListResponse:
     return ProfileListResponse(
         profiles=profiles,
         active_profile_id=store.active_profile_id,
+        active_targets=list(store.active_targets),
     )
 
 
@@ -1024,21 +1057,54 @@ async def delete_profile_endpoint(profile_id: str) -> ApiResponse:
         return ApiResponse(status="error", error=str(e))
 
 
+@router.get(
+    "/settings/profiles/targets", response_model=ActivationTargetListResponse
+)
+async def get_activation_targets() -> ActivationTargetListResponse:
+    """The agent CLIs a profile can be activated on, and why the others can't."""
+    from frago.init.profile_targets import DEFAULT_TARGETS, list_targets
+
+    return ActivationTargetListResponse(
+        targets=[
+            ActivationTargetResponse(
+                agent_type=status.agent_type,
+                display_name=status.display_name,
+                supported=status.supported,
+                installed=status.installed,
+                selectable=status.selectable,
+                path=status.path,
+                unsupported_reason=status.unsupported_reason,
+            )
+            for status in list_targets()
+        ],
+        default_targets=list(DEFAULT_TARGETS),
+    )
+
+
 @router.post("/settings/profiles/{profile_id}/activate", response_model=ApiResponse)
-async def activate_profile_endpoint(profile_id: str) -> ApiResponse:
-    """Activate a profile: apply its credentials as the current auth config."""
+async def activate_profile_endpoint(
+    profile_id: str, request: Optional[ActivateProfileRequest] = None
+) -> ApiResponse:
+    """Activate a profile on the chosen agent CLIs (Claude Code if none named)."""
     from frago.init.profile_manager import activate_profile
 
     try:
-        activate_profile(profile_id)
+        activated = activate_profile(profile_id, request.targets if request else None)
 
         # Refresh cache after activation
         state_manager = StateManager.get_instance()
         await state_manager.refresh_config(broadcast=True)
 
-        return ApiResponse(status="ok", message="Profile activated")
+        return ApiResponse(
+            status="ok", message=f"Profile activated on: {', '.join(activated)}"
+        )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # "Profile not found" is the only 404 here; a refused target is the
+        # request being wrong about this machine, not a missing resource, and
+        # its message is written to be shown to the person as-is.
+        if "not found" in str(e).lower():
+            raise HTTPException(status_code=404, detail=str(e))
+        return ApiResponse(status="error", error=str(e))
     except Exception as e:
         return ApiResponse(status="error", error=str(e))
 

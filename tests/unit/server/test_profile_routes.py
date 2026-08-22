@@ -13,8 +13,12 @@ import pytest
 from frago.init.configurator import PRESET_ENDPOINTS
 from frago.init.profile_manager import APIProfile, add_profile, load_profiles
 from frago.server.routes.settings import (
+    ActivateProfileRequest,
     UpdateProfileRequest,
+    activate_profile_endpoint,
+    get_activation_targets,
     get_endpoint_presets,
+    get_profiles,
     update_profile_endpoint,
 )
 
@@ -131,3 +135,95 @@ class TestUpdatingAProfile:
         assert mock_build.call_args.kwargs["default_model"] == (
             "deepseek-v4-flash-vision-exp"
         )
+
+
+class TestActivationTargets:
+    """激活时选目标这件事，WebUI 是唯一的入口，所以这几个端点就是全部的可达面。"""
+
+    @pytest.mark.asyncio
+    async def test_targets_endpoint_lists_every_agent_with_its_standing(self):
+        response = await get_activation_targets()
+
+        by_type = {t.agent_type: t for t in response.targets}
+        assert set(by_type) == {"claude", "opencode", "codex"}
+        # 接不了的那个也要出现，并带着能读懂的原因。
+        assert by_type["codex"].supported is False
+        assert by_type["codex"].selectable is False
+        assert by_type["codex"].unsupported_reason
+        assert response.default_targets == ["claude"]
+
+    @pytest.mark.asyncio
+    async def test_activating_without_a_body_keeps_the_old_behavior(
+        self, saved_profile
+    ):
+        """旧客户端不带 body 发过来，仍然只写 Claude Code。"""
+        with (
+            patch("frago.init.configurator.build_claude_env_config", return_value={}),
+            patch("frago.init.configurator.save_claude_settings") as mock_save,
+            patch("frago.init.configurator.ensure_claude_json_for_custom_auth"),
+            patch("frago.init.config_manager.load_config", return_value=MagicMock()),
+            patch("frago.init.config_manager.save_config"),
+            patch("frago.server.routes.settings.StateManager") as mock_state,
+        ):
+            mock_state.get_instance.return_value.refresh_config = _async_noop()
+            result = await activate_profile_endpoint(saved_profile)
+
+        assert result.status == "ok"
+        mock_save.assert_called_once()
+        assert load_profiles().active_targets == ["claude"]
+
+    @pytest.mark.asyncio
+    async def test_activating_on_a_named_target_records_it(self, saved_profile):
+        applied = MagicMock()
+        with (
+            patch("frago.init.profile_targets._driver") as mock_driver,
+            patch(
+                "frago.init.profile_targets._installed_path",
+                side_effect=lambda agent: f"/bin/{agent}",
+            ),
+            patch("frago.init.config_manager.load_config", return_value=MagicMock()),
+            patch("frago.init.config_manager.save_config"),
+            patch("frago.server.routes.settings.StateManager") as mock_state,
+        ):
+            mock_driver.return_value.profile_apply = applied
+            mock_state.get_instance.return_value.refresh_config = _async_noop()
+            result = await activate_profile_endpoint(
+                saved_profile, ActivateProfileRequest(targets=["opencode"])
+            )
+
+        assert result.status == "ok"
+        assert "opencode" in result.message
+        assert load_profiles().active_targets == ["opencode"]
+
+    @pytest.mark.asyncio
+    async def test_a_refused_target_is_an_error_not_a_404(self, saved_profile):
+        """目标不可用是"这台机器上不行"，不是"资源不存在"——404 会让 UI 报错报成
+        profile 丢了。"""
+        result = await activate_profile_endpoint(
+            saved_profile, ActivateProfileRequest(targets=["codex"])
+        )
+        assert result.status == "error"
+        assert "codex" in result.error.lower() or "Codex" in result.error
+
+    @pytest.mark.asyncio
+    async def test_the_list_says_where_the_active_profile_is_active(
+        self, saved_profile
+    ):
+        store = load_profiles()
+        store.active_profile_id = saved_profile
+        store.active_targets = ["claude", "opencode"]
+        from frago.init.profile_manager import save_profiles
+
+        save_profiles(store)
+
+        response = await get_profiles()
+        assert response.active_targets == ["claude", "opencode"]
+
+
+def _async_noop():
+    """一个可 await 的空动作，替掉激活后广播配置那一步。"""
+
+    async def _noop(*args, **kwargs):
+        return None
+
+    return _noop
