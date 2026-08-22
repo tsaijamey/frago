@@ -275,6 +275,186 @@ class TestDeactivateProfile:
         assert store.active_profile_id is None
 
 
+class TestActivationTargets:
+    """激活时点了哪几个 cli-agent，就只影响那几个——且改主意时旧的那个要清干净。
+
+    这一层守的是编排：谁被写、谁被还原、frago 自己的 auth_method 什么时候跟着动。
+    每个 agent 各自"怎么写"由 driver 的测试守。
+    """
+
+    @staticmethod
+    @pytest.fixture
+    def drivers():
+        """把三个 driver 换成 mock，并当作本机全都装了。
+
+        codex 保持"没有 profile_apply"，因为不支持这件事是它的真实属性，测试里假装它
+        支持就等于测了一个不存在的世界。
+        """
+        fakes = {}
+        for agent_type in ("claude", "opencode"):
+            fake = MagicMock()
+            fake.profile_apply = MagicMock()
+            fake.profile_revert = MagicMock()
+            fakes[agent_type] = fake
+        codex = MagicMock()
+        codex.profile_apply = None
+        codex.profile_revert = None
+        codex.profile_unsupported_reason = "wire protocol mismatch"
+        fakes["codex"] = codex
+
+        with (
+            patch("frago.init.profile_targets._driver", side_effect=fakes.__getitem__),
+            patch(
+                "frago.init.profile_targets._installed_path",
+                side_effect=lambda agent: f"/bin/{agent}",
+            ),
+            patch("frago.init.config_manager.load_config", return_value=MagicMock()),
+            patch("frago.init.config_manager.save_config"),
+        ):
+            yield fakes
+
+    def test_activating_on_two_agents_writes_both(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        add_profile(sample_profile)
+
+        activated = activate_profile("test1234", ["claude", "opencode"])
+
+        assert activated == ["claude", "opencode"]
+        drivers["claude"].profile_apply.assert_called_once()
+        drivers["opencode"].profile_apply.assert_called_once()
+        assert load_profiles().active_targets == ["claude", "opencode"]
+
+    def test_activating_on_opencode_alone_leaves_claude_untouched(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        add_profile(sample_profile)
+
+        activate_profile("test1234", ["opencode"])
+
+        drivers["claude"].profile_apply.assert_not_called()
+        drivers["opencode"].profile_apply.assert_called_once()
+
+    def test_dropping_a_target_hands_it_back(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """取消勾选 opencode 后它必须被还原，否则界面说关了、它还在跑旧 profile。"""
+        add_profile(sample_profile)
+        activate_profile("test1234", ["claude", "opencode"])
+
+        activate_profile("test1234", ["claude"])
+
+        drivers["opencode"].profile_revert.assert_called_once()
+        drivers["claude"].profile_revert.assert_not_called()
+        assert load_profiles().active_targets == ["claude"]
+
+    def test_switching_profiles_keeps_shared_targets_applied(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        add_profile(sample_profile)
+        add_profile(
+            APIProfile(id="test5678", name="Other", endpoint_type="kimi", api_key="sk-k")
+        )
+        activate_profile("test1234", ["claude", "opencode"])
+
+        activate_profile("test5678", ["claude", "opencode"])
+
+        assert drivers["opencode"].profile_apply.call_count == 2
+        drivers["opencode"].profile_revert.assert_not_called()
+
+    def test_unsupported_target_is_refused_before_anything_is_written(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """半个激活比一次拒绝糟：界面上没有任何地方会说哪半个成了。"""
+        add_profile(sample_profile)
+
+        with pytest.raises(ValueError, match="cannot use frago profiles"):
+            activate_profile("test1234", ["claude", "codex"])
+
+        drivers["claude"].profile_apply.assert_not_called()
+
+    def test_auth_method_follows_claude_only(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """auth_method 描述的是 Claude Code；只激活到 opencode 时它不该动。"""
+        add_profile(sample_profile)
+
+        with patch("frago.init.config_manager.save_config") as mock_save_config:
+            activate_profile("test1234", ["opencode"])
+            mock_save_config.assert_not_called()
+
+    def test_deactivating_hands_back_every_active_target(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        add_profile(sample_profile)
+        activate_profile("test1234", ["claude", "opencode"])
+
+        deactivate_profile()
+
+        drivers["claude"].profile_revert.assert_called_once()
+        drivers["opencode"].profile_revert.assert_called_once()
+        store = load_profiles()
+        assert store.active_profile_id is None
+        assert store.active_targets == []
+
+    def test_editing_the_active_profile_reaches_all_its_targets(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        """编辑激活中的 profile 不该把一次多目标激活悄悄收窄成只剩 claude。"""
+        add_profile(sample_profile)
+        activate_profile("test1234", ["claude", "opencode"])
+
+        update_profile("test1234", {"default_model": "deepseek-v4-flash-vision-exp"})
+
+        assert drivers["opencode"].profile_apply.call_count == 2
+        assert load_profiles().active_targets == ["claude", "opencode"]
+
+    def test_deleting_the_active_profile_clears_its_targets(
+        self, tmp_profiles_path, sample_profile, drivers
+    ):
+        add_profile(sample_profile)
+        activate_profile("test1234", ["claude"])
+
+        store = delete_profile("test1234")
+
+        assert store.active_targets == []
+
+
+class TestLegacyStoreWithoutTargets:
+    """升级前存下的 profiles.json 没有 active_targets 这个键。"""
+
+    def test_an_active_profile_is_read_as_active_on_claude(self, tmp_profiles_path):
+        """读成"哪里都没激活"的话，升级后第一次取消激活会认定无事可做，
+        端点就永远留在 settings.json 里了。"""
+        tmp_profiles_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "active_profile_id": "old1234",
+                    "profiles": [
+                        {
+                            "id": "old1234",
+                            "name": "Legacy",
+                            "endpoint_type": "deepseek",
+                            "api_key": "sk-legacy",
+                            "created_at": "2026-01-01T00:00:00",
+                            "updated_at": "2026-01-01T00:00:00",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert load_profiles().active_targets == ["claude"]
+
+    def test_nothing_active_stays_nothing_active(self, tmp_profiles_path):
+        tmp_profiles_path.write_text(
+            json.dumps({"schema_version": "1.0", "profiles": []}), encoding="utf-8"
+        )
+        assert load_profiles().active_targets == []
+
+
 class TestCreateProfileFromCurrent:
     """Test create_profile_from_current."""
 
