@@ -114,4 +114,36 @@ def profile_list(for_hook: bool):
         click.echo(f"  endpoint:  {p.endpoint_type}  {p.url or ''}".rstrip())
         click.echo(f"  model:     {p.default_model or '-'}")
         click.echo(f"  api_key:   {_mask_api_key(p.api_key)}")
+        # 激活到哪几个 cli-agent 上——"激活中"三个字本身不说明它影响了谁。
+        if p.id == store.active_profile_id:
+            click.echo(f"  active on: {', '.join(store.active_targets) or '-'}")
+    click.echo()
+
+
+@profile_group.command("targets", cls=AgentFriendlyCommand)
+def profile_targets():
+    """列出激活 profile 时可选的 cli-agent，及不可选的原因。"""
+    from frago.init.profile_manager import load_profiles
+    from frago.init.profile_targets import list_targets
+
+    store = load_profiles()
+    active_targets = set(store.active_targets)
+
+    click.echo()
+    for status in list_targets():
+        if not status.supported:
+            mark = "x"
+            note = status.unsupported_reason or "不支持 frago profile"
+        elif not status.installed:
+            mark = "-"
+            note = "本机未安装"
+        else:
+            mark = "*" if status.agent_type in active_targets else "o"
+            note = status.path or ""
+        click.echo(f"[{mark}] {status.display_name}  ({status.agent_type})")
+        if note:
+            click.echo(f"      {note}")
+    click.echo()
+    click.echo("[o] 可选  [*] 当前激活中  [-] 未安装  [x] 接不了 frago profile")
+    click.echo("激活与取消激活走 WebUI 设置。")
     click.echo()
