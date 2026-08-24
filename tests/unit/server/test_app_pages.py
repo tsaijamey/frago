@@ -291,10 +291,13 @@ class TestBoundaries:
         assert client.get(f"/app/{RECIPE}/config.json?key=../evil").status_code == 400
 
     def test_recipe_name_with_a_slash_is_rejected(self, client):
+        from fastapi import HTTPException
+
         response = client.get(f"/app/{RECIPE}/config.json")
         assert response.status_code == 200  # sanity: the good name still works
-        with pytest.raises(Exception):
+        with pytest.raises(HTTPException) as caught:
             app_pages._assets_dir("../etc")
+        assert caught.value.status_code == 400
 
 
 class TestPublishing:
@@ -505,3 +508,119 @@ class TestVisitorErrorMessages:
         response = client.get(f"/app/{RECIPE}/data/rows.json")
         assert response.status_code == 404
         assert str(missing) in response.text
+
+
+class TestRunnableExposure:
+    """A runnable page tells a signed-in visitor they may run, an anonymous
+    visitor never learns the recipe is runnable, and a non-runnable identity
+    page still reads read-only.
+
+    `readOnly` alone said nothing about whether the server would accept a run —
+    only whether the requester is the owner. A runnable page shown to the wrong
+    visitor already happened (2026-08-23): the page drew a refresh button,
+    the run was refused, and the page wiped its own data. The fix is to expose
+    `runnable` in config.json using exactly the three questions the run gate
+    asks (published, runnable, on the allow list), so a page and its run can
+    never disagree.
+    """
+
+    @pytest.fixture
+    def identity_visitor(self, recipe_dir, state_dir, tmp_path, monkeypatch):
+        from frago.server import identity as ident
+        from frago.server import security
+        from frago.server.app import create_app
+
+        monkeypatch.setattr(ident, "USERS_PATH", tmp_path / "users.json")
+        monkeypatch.setattr(ident, "SESSIONS_DIR", tmp_path / "login-sessions")
+        monkeypatch.setattr(ident, "USER_STATE_DIR", tmp_path / "app-state-users")
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        monkeypatch.delenv("FRAGO_SIGNUP_GATE", raising=False)
+        monkeypatch.delenv("FRAGO_BEHIND_PROXY", raising=False)
+        security.ensure_token()
+        ident.reset_rate_limits()
+
+        # One sign-in-able account, id of which is looked up to publish by allow list.
+        user = ident.create_user("caijia@frago.ai", "correct-horse-battery-staple")
+        app = create_app()
+        client = TestClient(app, client=("93.184.216.34", 41234))
+        signed_in = client.post(
+            "/api/auth/login",
+            json={"email": "caijia@frago.ai", "password": "correct-horse-battery-staple"},
+        )
+        # Asserted rather than assumed: an anonymous client is refused an identity
+        # page with the same 401 an off-list visitor gets, so a fixture that
+        # silently failed to sign in would leave those tests passing for the
+        # wrong reason.
+        assert signed_in.status_code == 200, signed_in.text
+        yield client, user.id
+        ident.reset_rate_limits()
+
+    def test_runnable_identity_page_tells_the_visitor(self, identity_visitor):
+        from frago.recipes import publish as pub
+
+        client, account_id = identity_visitor
+        pub.publish(RECIPE, mode="identity", allow=[account_id], runnable=True)
+        config = client.get(f"/app/{RECIPE}/config.json").json()
+        assert config["readOnly"] is True
+        assert config["runnable"] is True
+        assert config["apiBase"] is None
+
+    def test_runnable_page_off_this_step_visitor_is_read_only(self, identity_visitor):
+        from frago.recipes import publish as pub
+
+        client, account_id = identity_visitor
+        pub.publish(RECIPE, mode="identity", allow=[account_id], runnable=False)
+        config = client.get(f"/app/{RECIPE}/config.json").json()
+        assert config["readOnly"] is True
+        assert config["runnable"] is False
+
+    def test_being_signed_in_is_not_enough_the_list_decides(self, identity_visitor):
+        """Signing in gets a visitor as far as the gate and no further: an
+        off-list account is refused before config.json is ever built, and the
+        same session is served once the list names it.
+
+        Both halves are needed. An anonymous client is refused with the same
+        401, so a one-sided test would pass for a client that never signed in
+        and would prove nothing about the allow list.
+        """
+        from frago.recipes import publish as pub
+
+        client, account_id = identity_visitor
+
+        pub.publish(RECIPE, mode="identity", allow=["someone-else"], runnable=True)
+        assert client.get(f"/app/{RECIPE}/config.json").status_code == 401
+
+        pub.publish(RECIPE, mode="identity", allow=[account_id], runnable=True)
+        served = client.get(f"/app/{RECIPE}/config.json")
+        assert served.status_code == 200
+        assert served.json()["runnable"] is True
+
+    def test_anonymous_visitor_never_sees_runnable(self, recipe_dir, state_dir, tmp_path, monkeypatch):
+        from frago.recipes import publish as pub
+        from frago.server import security
+        from frago.server.app import create_app
+
+        monkeypatch.setattr(pub, "PUBLISHED_PATH", tmp_path / "published.json")
+        monkeypatch.setattr(pub, "_cache", None, raising=False)
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        security.ensure_token()
+        pub.publish(RECIPE, mode="public")
+        visitor = TestClient(create_app(), follow_redirects=False, client=("93.184.216.34", 41234))
+        config = visitor.get(f"/app/{RECIPE}/config.json").json()
+        assert config["readOnly"] is True
+        assert "runnable" not in config
+
+    def test_owner_can_run_whatever_they_open(self, client, tmp_path, monkeypatch):
+        """The owner's answer does not consult the allow list — the list names
+        somebody else here on purpose, and the owner still reads `runnable`.
+        """
+        from frago.recipes import publish as pub
+        from frago.server import security
+
+        monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
+        security.ensure_token()
+        app_state.publish(RECIPE, {"dataDir": "/x", "public": {"title": "Q3"}})
+        pub.publish(RECIPE, mode="identity", allow=["somebody-else"], runnable=True)
+        config = client.get(f"/app/{RECIPE}/config.json").json()
+        assert config["dataDir"] == "/x"
+        assert config["runnable"] is True

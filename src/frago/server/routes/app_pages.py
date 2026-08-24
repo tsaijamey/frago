@@ -188,8 +188,8 @@ async def serve_app_config(name: str, request: Request):
     _assets_dir(name)
     key, state = _slot_state(name, request)
 
-    from frago.recipes.publish import public_view
-    from frago.server.security import is_owner_request
+    from frago.recipes.publish import allows, public_view, published_entry
+    from frago.server.security import is_owner_request, slot_for, zone_of
 
     owner = is_owner_request(request)
     config = dict(state) if owner else public_view(state)
@@ -198,6 +198,27 @@ async def serve_app_config(name: str, request: Request):
     config["recipeName"] = name
     config["appBase"] = f"/app/{name}/"
     config["slot"] = key
+
+    # A signed-in visitor may be allowed not just to read but to run. That is
+    # the run-button's answer, and it has to come from here rather than be
+    # guessed by the front end: `readOnly` says nothing about whether the server
+    # would accept a run, only whether this requester is the owner. The gate
+    # decides "may this person run", and this is the same three questions it
+    # asks — published, runnable, on their allow list — so a page and its run
+    # never disagree. Anonymous visitors keep `readOnly: true` with no runnable
+    # key, exactly as before.
+    if zone_of(request) == "identity":
+        entry = published_entry(name)
+        identity = slot_for(request)
+        config["runnable"] = bool(entry and entry.get("runnable") and allows(entry, identity))
+    elif owner:
+        # The owner may run anything they can open, published or not. This key
+        # is redundant to the front end (readOnly is already false for them) but
+        # truthful: it reads "a run would be accepted".
+        config["runnable"] = True
+    # Anonymous visitors (public zone) get no `runnable` key at all: the value
+    # would say whether a page is runnable, and that is not theirs to know
+    # — readOnly:true plus apiBase:null is the whole of what they may infer.
     return JSONResponse(content=config, headers=_REVALIDATE)
 
 
