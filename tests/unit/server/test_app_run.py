@@ -252,6 +252,56 @@ class TestTheRunIsForThatPersonOnly:
         assert (account / "state" / f"{PAGE}.json").is_file()
 
 
+class TestTheRunDoesNotEmptyThePageOnItsWayIn:
+    """Starting a run must not cost the visitor what they were already reading.
+
+    The write that happens before the recipe starts exists only to guarantee a
+    data directory. Publishing just that directory replaced the slot wholesale,
+    so the page went blank the moment a run began — and a run that fails never
+    writes anything back, leaving the visitor with nothing and no explanation.
+    Seen on the live server 2026-08-23: a visitor's run failed at 21:23 and the
+    page stayed empty until the state was restored by hand a minute later.
+    """
+
+    def _already_showing(self, world):
+        app_state.publish(
+            PAGE,
+            {
+                "dataDir": "/somewhere/stale",
+                "public": {"tradeCount": 45, "generatedAt": "2026-08-23T21:24:43"},
+            },
+            slot=world["people"]["zhang"]["id"],
+            identity=True,
+        )
+
+    def _slot_now(self, world):
+        return app_state.read(
+            PAGE, world["people"]["zhang"]["id"], identity=True
+        )
+
+    def test_what_the_page_was_showing_survives_the_start(self, world, ran):
+        self._already_showing(world)
+        _post(world["people"]["zhang"]["cookie"])
+        assert self._slot_now(world)["public"] == {
+            "tradeCount": 45,
+            "generatedAt": "2026-08-23T21:24:43",
+        }
+
+    def test_the_data_directory_is_still_forced_to_this_account(self, world, ran):
+        """Carrying the old values forward must not carry the old directory:
+        that is the one key the platform decides and the recipe may not."""
+        self._already_showing(world)
+        _post(world["people"]["zhang"]["cookie"])
+        account = world["root"] / "users" / world["people"]["zhang"]["id"]
+        assert Path(self._slot_now(world)["dataDir"]).is_relative_to(account)
+
+    def test_a_first_ever_run_still_gets_a_directory(self, world, ran):
+        """Nothing to carry forward is the ordinary case on someone's first run,
+        and it must still leave a usable slot behind."""
+        _post(world["people"]["zhang"]["cookie"])
+        assert self._slot_now(world)["dataDir"]
+
+
 class TestTheResponseSaysAlmostNothing:
     def test_it_carries_no_recipe_return_value(self, world, ran):
         assert _post(world["people"]["zhang"]["cookie"]).json() == {"accepted": True}

@@ -231,10 +231,22 @@ async def run_for_visitor(name: str, request: Request):
     # very first run. Without it `/app/<name>/data/…` answers 404 — the slot
     # declares no dataDir until something publishes one — and the page would poll
     # a directory that does not exist yet.
+    #
+    # Everything already in the slot is carried forward. Publishing only the
+    # directory would replace the slot wholesale, and that is what turned a
+    # failed run into a blank page: the run emptied the page on its way in, and
+    # a run that fails never writes anything back, so the visitor was left
+    # looking at nothing with no indication that anything had been lost.
+    # Observed on the live server 2026-08-23: a visitor's run failed at 21:23
+    # and the page they had been reading went empty until the state was restored
+    # by hand a minute later. A run that succeeds replaces this state anyway, so
+    # carrying the old values forward costs the successful case nothing.
     try:
+        carried = dict(app_state.read(name, identity, identity=True))
+        carried["dataDir"] = str(data_dir)
         app_state.publish(
             name,
-            {"dataDir": str(data_dir)},
+            carried,
             slot=identity,
             identity=True,
         )
