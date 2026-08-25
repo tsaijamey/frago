@@ -110,6 +110,10 @@ _APP_PATH = re.compile(r"^/app/(?P<name>[^/?#]+)(?P<rest>/.*)?$")
 # there is no cross-origin access to negotiate.
 _PUBLIC_METHODS = frozenset({"GET", "HEAD"})
 
+#: `/api/<mode>` under a recipe page: the page asking its own back end for data.
+#: One path segment, no dots — a mode name, never a path.
+_APP_API_PATH = re.compile(r"^/api/[A-Za-z0-9_-]+$")
+
 # The four zones. A value outside this set is a bug, and the readers below raise
 # on one rather than falling back to the most permissive reading.
 ZONES = ("local", "public", "identity", "token")
@@ -560,7 +564,15 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
     # added one at a time, visibly.
     if method == "POST":
         match = _APP_PATH.match(path)
-        if match and (match.group("rest") or "") == "/run":
+        rest = (match.group("rest") or "") if match else ""
+        # `/run` starts the recipe; `/api/<mode>` asks it one of the read-only
+        # modes it exported. Both go through the same judgement — "may this
+        # person touch this page at all" is one question and must have one
+        # answer. The mode-level check (only exported modes, and exported means
+        # read-only) lives in the route; this decides whether the caller gets
+        # that far. Without this line the page's own fetch came back 401 and
+        # the page reported «读取失败» with nothing saying why.
+        if match and (rest == "/run" or _APP_API_PATH.match(rest)):
             return _judge_app_path(scope, match, identity)
         return False, None
 
