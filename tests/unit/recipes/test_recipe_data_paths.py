@@ -254,3 +254,48 @@ class TestTheGateOnlyCoversWhatTheContractCovers:
         script = tmp_path / "recipe.py"
         script.write_text("#!/usr/bin/env python3\n# frago-recipe/1\n", encoding="utf-8")
         _refuse_unconverted("x", self._Recipe("python", script))  # must not raise
+
+
+class TestAPageMayAskItsOwnBackEnd:
+    """`POST /app/<recipe>/api/<mode>` is judged like `/run`, not refused.
+
+    A recipe's page asks its own back end for data through this path. The
+    security layer knew two things under `/app/`: GET is a page, and POST is
+    allowed only for `/run`. So every signed-in visitor's fetch came back 401,
+    the page showed «读取失败», and nothing on the page pointed at the layer
+    where the refusal actually happened.
+
+    Whether the caller may touch this page at all is one question with one
+    answer, shared with `/run`. Which mode they may ask for is a different
+    question, answered in the route by the exported surface — and exported
+    means read-only.
+    """
+
+    @pytest.mark.parametrize("path,allowed", [
+        ("/api/status", True),
+        ("/api/read", True),
+        ("/run", True),
+        ("/api/../../etc/passwd", False),
+        ("/api/a/b", False),
+        ("/data/ledger.json", False),
+        ("/api/", False),
+    ])
+    def test_only_a_mode_name_is_admitted(self, path, allowed):
+        from frago.server.security import _APP_API_PATH
+
+        assert bool(_APP_API_PATH.match(path)) == (allowed and path != "/run")
+
+    def test_the_run_entrance_is_unchanged(self):
+        """It was reachable before this and must stay reachable."""
+        from frago.server.security import _APP_API_PATH
+
+        assert not _APP_API_PATH.match("/run")  # handled by its own branch
+
+    def test_a_mode_name_cannot_carry_a_path(self):
+        """Anything with a separator or a dot is not a mode name. A mode is
+        looked up as an attribute on the recipe class; a path there would be a
+        way to address something that is not a mode at all."""
+        from frago.server.security import _APP_API_PATH
+
+        for bad in ("/api/../x", "/api/a/b", "/api/a.b", "/api/a%2Fb"):
+            assert not _APP_API_PATH.match(bad), bad
