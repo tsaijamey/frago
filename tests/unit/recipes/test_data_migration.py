@@ -443,3 +443,46 @@ class TestItRefusesToClaimThePlatformsOwnTrees:
         source = _data(home, ".frago", "data", "etf", "recipe-caches", "x")
         _slot(home, RECIPE, "default", {"dataDir": str(source)})
         assert len(data_migration.plan(WHO, home).moves) == 1
+
+
+class TestTheDeliverableGateTakesAWrittenException:
+    """Some ledgers really were filed as one-off deliverables, and the fix is to
+    move them — the location was wrong, not the rule.
+
+    The exception is written per entry with a reason, not switched on globally:
+    a flag that waives a gate for a whole run gets set once and then set out of
+    habit, and the reason nobody wrote down is the reason nobody can check.
+    """
+
+    def _entry(self, home, **extra):
+        source = _data(home, ".frago", "data", "lenovo", "20260716-board")
+        return [{"recipe": RECIPE, "source": str(source), **extra}]
+
+    def test_without_the_exception_it_is_still_refused(self, home):
+        result = data_migration.plan_from_entries(WHO, self._entry(home), home)
+        assert not result.moves
+        assert "deliverable_ok" in result.blocked[0][2]
+
+    def test_with_the_exception_it_moves(self, home):
+        result = data_migration.plan_from_entries(
+            WHO, self._entry(home, deliverable_ok=True, why="内容是账本，当初归档位置就错了"), home)
+        assert len(result.moves) == 1
+
+    def test_the_reason_is_written_into_the_manifest(self, home):
+        result = data_migration.plan_from_entries(
+            WHO, self._entry(home, deliverable_ok=True, why="内容是账本"), home)
+        entry = data_migration.apply(result.moves[0], home)
+        assert entry["exception"] == "内容是账本"
+
+    def test_the_exception_waives_only_this_gate(self, home):
+        """It says "this is not a deliverable", not "skip the checks"."""
+        source = _data(home, ".frago", "recipes", "workflows", RECIPE, "data")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(source), "deliverable_ok": True}], home)
+        assert not result.moves and "代码包" in result.blocked[0][2]
+
+    def test_an_ordinary_move_records_no_exception(self, home):
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "x")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(source)}], home)
+        assert data_migration.apply(result.moves[0], home)["exception"] == ""

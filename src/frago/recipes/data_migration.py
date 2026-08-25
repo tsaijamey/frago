@@ -71,6 +71,11 @@ class Move:
     slot: str
     source: Path
     target: Path
+    #: Why a gate was waived for this one, when one was. Empty for the ordinary
+    #: case. Carried into the manifest so the reason outlives the decision —
+    #: "why is a deliverable filed under a recipe" gets asked long after the
+    #: person who answered it has forgotten.
+    exception: str = ""
 
     @property
     def is_project(self) -> bool:
@@ -399,10 +404,12 @@ def plan_from_entries(
                 f"配方往那儿写这件事本身该修，但复制不是修法",
             ))
             continue
-        if _is_deliverable(source, home):
+        if _is_deliverable(source, home) and not entry.get("deliverable_ok"):
             result.blocked.append((
                 recipe, slot,
-                f"这是带日期的交付物目录、不是配方工作数据，按分界它留在原地：{source}",
+                f"这是带日期的交付物目录、不是配方工作数据，按分界它留在原地：{source}。"
+                f"确实要搬的，在这一条上写 deliverable_ok 与 why——"
+                f"例外要逐条写在它适用的那一项旁边，NEVER 做成一个一开就全放行的开关",
             ))
             continue
         if _is_recipe_code(source, home):
@@ -414,7 +421,8 @@ def plan_from_entries(
         if target.is_dir() and _weigh(target) == _weigh(source):
             result.skipped.append((recipe, slot, f"已经搬过，两边一致：{target}"))
             continue
-        result.moves.append(Move(recipe, slot, source, target))
+        result.moves.append(Move(recipe, slot, source, target,
+                                 exception=str(entry.get("why") or "")))
 
     shared = _shared_sources(result.moves)
     if shared:
@@ -552,6 +560,7 @@ def _record(one: Move, weight: tuple[int, int], home: Path, note: str = "") -> d
         # which is a separate, deliberate act, never a side effect of this one.
         "source_kept": True,
         "note": note,
+        "exception": one.exception,
     }
     path = manifest_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
