@@ -118,6 +118,90 @@ def user_data_dir(account_id: str, recipe_name: str) -> Path:
     return user_root(account_id) / "data" / recipe_name
 
 
+#: The one directory name a recipe may not use for its own files. The platform
+#: writes the page's note here, inside the directory it describes, so that "which
+#: body of work is this note about" is answered by the structure rather than by
+#: two indexes agreeing. See ``frago book must-recipe-data``.
+STATE_FILE = "state.json"
+
+#: Where a multi-project recipe keeps its projects. Spelled out rather than
+#: hung straight off the recipe directory so that a project called ``cache`` or
+#: ``share`` cannot collide with the recipe's own cross-project files.
+PROJECTS_DIR = "projects"
+
+#: Cross-user data, machine-level, under nobody's tree.
+SHARE_DIR = "share"
+SEED_DIR = "seed"
+COMMON_DIR = "common"
+
+#: The name of the tree under each root. Not "caches": a person's ledger lives
+#: here and losing it loses it for good, while anything called a cache reads as
+#: safe to delete — to a recipe author and to whoever writes the disk-cleanup job.
+RECIPE_DATA = "recipe-data"
+
+
+def recipe_data_root(identity: str) -> Path:
+    """Everything one account's recipes have written, in one directory.
+
+    The same shape on a laptop and on a server, differing only in which id it
+    is. A personal install has one of these and its owner never has to know.
+    """
+    _validate(DEFAULT_SLOT, identity)
+    return user_root(identity) / RECIPE_DATA
+
+
+def recipe_data_dir(identity: str, recipe_name: str, project: str | None = None) -> Path:
+    """Where one run's data belongs. The platform decides this, never the recipe.
+
+    ``project`` is for a recipe whose every run is a separate body of work — ten
+    videos, ten directories. Leave it out for a recipe that maintains one thing
+    forever; running it again updates that thing rather than starting a second.
+
+    Which of the two a recipe is must be declared by the recipe rather than
+    inferred: a backtest recipe on this machine has two named bodies of work
+    whose directories are the same path, so the platform believes there are two
+    and the disk holds one, each overwriting the other without a word.
+    """
+    _validate(recipe_name, identity)
+    base = recipe_data_root(identity) / recipe_name
+    if project is None:
+        return base
+    _validate(recipe_name, project)
+    return base / PROJECTS_DIR / project
+
+
+def recipe_state_path(identity: str, recipe_name: str, project: str | None = None) -> Path:
+    """The page's note for one body of work, inside the directory it describes."""
+    return recipe_data_dir(identity, recipe_name, project) / STATE_FILE
+
+
+def share_root(recipe_name: str) -> Path:
+    """One recipe's cross-user data. Machine-level, under nobody's account."""
+    _validate(recipe_name, DEFAULT_SLOT)
+    return Path.home() / ".frago" / RECIPE_DATA / recipe_name / SHARE_DIR
+
+
+def seed_dir(recipe_name: str) -> Path:
+    """Starting data, copied to a person on their first run and theirs from then on.
+
+    Copying is only ever right when the original stops mattering to the copy.
+    Anything the original keeps updating must be read in place instead — see
+    ``common_dir`` — because a copy of a moving thing is a copy that goes stale
+    silently, in as many directions as there are people.
+    """
+    return share_root(recipe_name) / SEED_DIR
+
+
+def common_dir(recipe_name: str) -> Path:
+    """Data everyone reads and one recipe writes. NEVER copied per person.
+
+    Handed to a recipe as a directory it may read, rather than linked into each
+    person's tree: a link says where something is and cannot say who may write
+    it, which is the whole of what this directory needs to express.
+    """
+    return share_root(recipe_name) / COMMON_DIR
+
+
 def slot_path(recipe_name: str, slot: str = DEFAULT_SLOT, *, identity: bool = False) -> Path:
     """Where one slot's state lives on disk.
 
