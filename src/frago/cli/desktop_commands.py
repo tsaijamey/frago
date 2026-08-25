@@ -25,6 +25,7 @@ book 里有常驻章节；而 ``aos`` 埋在配方目录里，agent 只有先知
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +36,8 @@ from .agent_friendly import AgentFriendlyCommand
 
 # 舞台脚本的位置。跟 virtual_os_lifecycle 用的是同一条路径约定：
 # 配方装在用户目录下，不随 frago 包分发。
-AOS = Path.home() / ".frago" / "recipes" / "workflows" / "agent_os" / "aos"
+RECIPE_NAME = "agent_os"
+AOS = Path.home() / ".frago" / "recipes" / "workflows" / RECIPE_NAME / "aos"
 
 
 @click.command(
@@ -95,10 +97,28 @@ def desktop_group(args: tuple[str, ...]) -> None:
         }, ensure_ascii=False))
         sys.exit(2)
 
+    # 舞台把它的运行状态（实例台账、录屏片段、broker 日志）写在平台交代的落点里，
+    # 而这条命令不走 `frago recipe run`——它直接起舞台脚本，所以那份交代得由这里补上。
+    # 不补的话舞台起不来，报的是「平台没有交代落点」：一条对着人喊的错误，而人根本
+    # 没做错什么，他只是敲了 frago desktop。
+    env = dict(os.environ)
+    try:
+        from frago.recipes.context import for_owner
+
+        ctx = for_owner(RECIPE_NAME)
+        if ctx.data_dir is not None:
+            env["FRAGO_RECIPE_DATA_DIR"] = str(ctx.data_dir)
+            env["FRAGO_RECIPE_CALLER"] = "owner"
+            if ctx.slot:
+                env["FRAGO_RECIPE_SLOT"] = ctx.slot
+    except Exception:  # noqa: BLE001 — 交代不出就让舞台自己报，别把这里变成第二个报错点
+        pass
+
     # 直接把子进程的输出接到自己的 stdout/stderr 上，不做缓冲、不做转写：
     # 舞台的回执恒为单行 JSON，调用方（多半是 agent）要拿它原样解析。
     proc = subprocess.run(  # noqa: S603
         [sys.executable, str(AOS), *args],
         check=False,
+        env=env,
     )
     sys.exit(proc.returncode)
