@@ -1190,6 +1190,185 @@ def _scan_secrets_usage(content: str, metadata) -> list[str]:
     return errors
 
 
+#: The variable that answers "where does this run write". A recipe that reads it
+#: and then falls back to something of its own has re-opened the entrance.
+_DATA_DIR_ENV = 'FRAGO_RECIPE_DATA_DIR'
+
+#: A path literal pointing into the old per-subject data tree. A recipe naming
+#: one of these is deciding its own location, which is what put one ledger in
+#: four places on one machine.
+_OWN_DATA_PATH = re.compile(r"""['"][^'"]*\.frago[/\\]+data[/\\]+[^'"]*['"]""")
+
+#: Trees frago maintains for itself. A recipe writing into one of these keeps its
+#: records inside somebody else's.
+_PLATFORM_TREE_PATH = re.compile(
+    r"""['"][^'"]*\.frago[/\\]+(?:sessions|app-state|executions|traces|projects|users|books)\b[^'"]*['"]"""
+)
+
+#: Another recipe's directory. See book recipe-authoring: a recipe reading
+#: another's files depends on a structure nobody knows they are maintaining.
+_OTHER_RECIPE_PATH = re.compile(r"""['"][^'"]*\.frago[/\\]+recipes[/\\]+[^'"]*['"]""")
+
+#: The platform writes this file inside every data directory. A recipe writing it
+#: would overwrite the page's own note.
+_RESERVED_STATE_FILE = re.compile(r"""['"]state\.json['"]""")
+
+
+def _home_anchored_paths(content: str) -> list[str]:
+    """Path expressions the recipe builds under the user's frago home.
+
+    Parsed rather than pattern-matched, because the common shape is not a
+    string at all — it is ``Path.home() / ".frago" / "data" / ...``, assembled
+    a segment at a time, and a literal-scanning check walks straight past it.
+    That is how the recipe at the centre of this whole exercise passed a first
+    version of this check while holding four copies of one ledger.
+
+    Only chains that name ``.frago`` count. Recipes legitimately locate the
+    frago binary through ``Path.home() / ".local" / "bin"``, and flagging that
+    would train people to ignore the checker.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+
+    def segments_of(node: ast.AST) -> list[str]:
+        return [
+            sub.value for sub in ast.walk(node)
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+        ]
+
+    # Which names stand for the frago home. Almost nobody writes the whole path
+    # in one expression — they bind `FRAGO_HOME = Path.home() / ".frago"` once
+    # and divide off it everywhere after, so a check that only looks at single
+    # expressions sees `/ "data" / "etf"` with no `.frago` in sight and passes.
+    # That is exactly how the recipe holding four copies of one ledger passed a
+    # first version of this check.
+    home_names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and ".frago" in segments_of(node.value):
+            home_names.add(target.id)
+
+    def rooted_at_home(node: ast.AST) -> bool:
+        return any(
+            isinstance(sub, ast.Name) and sub.id in home_names
+            for sub in ast.walk(node)
+        )
+
+    def in_order(node: ast.AST) -> list[str]:
+        """Segments left to right, so the message reads like a path.
+
+        ``ast.walk`` is breadth-first, which turns ``a / "b" / "c"`` into
+        ``c, b`` — a message that names the segments in an order the reader has
+        to un-shuffle before they can look for them on disk.
+        """
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            return in_order(node.left) + in_order(node.right)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        return []
+
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+            continue
+        if ".frago" not in segments_of(node) and not rooted_at_home(node):
+            continue
+        rest = [x for x in in_order(node) if x != ".frago"]
+        if rest:
+            found.append(".frago/" + "/".join(rest[:4]))
+    return sorted(set(found))
+
+
+def _module_level_env_reads(content: str) -> list[int]:
+    """Line numbers where the data directory is resolved at import time.
+
+    Parsed rather than pattern-matched, because what matters is *where* the read
+    sits, not how it is spelled. A module-level read makes the file impossible to
+    import — no checker, no test, no future metadata probe can touch it — and it
+    raises a bare KeyError that tells the reader nothing about what to do.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []  # reported separately; nothing useful to add here
+    hits = []
+    for node in tree.body:  # module level only, by construction
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and sub.value == _DATA_DIR_ENV:
+                hits.append(node.lineno)
+                break
+    return hits
+
+
+def _scan_data_location(content: str, recipe_dir: Path) -> tuple[list[str], list[str]]:
+    """Scan a recipe for the ways of deciding its own data location.
+
+    Every rule here exists because of something that happened, and every one of
+    them fails silently: none of these mistakes raises. The only symptom is that
+    somebody eventually reads days-old numbers off a page that reports every
+    refresh as a success. A check that runs is the whole difference between a
+    rule and a document.
+
+    See ``frago book must-recipe-data``.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    own = {m.group(0) for m in _OWN_DATA_PATH.finditer(content)}
+    own |= set(_home_anchored_paths(content))
+    if own:
+        errors.append(
+            f"配方自己拼了数据路径：{', '.join(sorted(own)[:3])}。"
+            f"落点由平台交代（{_DATA_DIR_ENV}），配方不再自己决定——"
+            f"「平台没给就用我自己的」那句是同一份数据散成好几份的入口，而且它不报错。"
+            f"见：frago book must-recipe-data"
+        )
+
+    for line in _module_level_env_reads(content):
+        errors.append(
+            f"第 {line} 行在模块顶层读 {_DATA_DIR_ENV}。这样一 import 这个文件就死，"
+            f"任何检查工具、测试、元信息探测都碰不了它，而且抛的是一句 KeyError，"
+            f"看的人不知道该做什么。改成运行时求值。见：frago book must-recipe-data"
+        )
+
+    platform = {m.group(0) for m in _PLATFORM_TREE_PATH.finditer(content)}
+    if platform:
+        errors.append(
+            f"配方在往 frago 自己维护的目录里写：{', '.join(sorted(platform)[:3])}。"
+            f"那里面是平台的记录，不是这个配方的数据。见：frago book must-recipe-data"
+        )
+
+    others = {
+        m.group(0)
+        for m in _OTHER_RECIPE_PATH.finditer(content)
+        if recipe_dir.name not in m.group(0)
+    }
+    if others:
+        warnings.append(
+            f"配方引用了别的配方的目录：{', '.join(sorted(others)[:3])}。"
+            f"对方不知道自己正在被读，它改自己的代码时看不到任何提示，"
+            f"断裂会发生在跟改动毫无关系的地方。改成跑对方的命令读返回值。"
+            f"见：frago book recipe-authoring"
+        )
+
+    if _RESERVED_STATE_FILE.search(content):
+        warnings.append(
+            "配方写了 state.json 这个文件名。它是平台留给页面的那张便条，由平台写；"
+            "配方要发布状态走 frago recipe publish。见：frago book must-recipe-data"
+        )
+
+    return errors, warnings
+
 @recipe_group.command('validate', cls=AgentFriendlyCommand)
 @click.argument('path', type=click.Path(exists=True))
 @click.option(
@@ -1272,6 +1451,14 @@ def validate_recipe(path: str, output_format: str):
             if metadata.runtime in ('python', 'shell'):
                 secrets_errors = _scan_secrets_usage(content, metadata)
                 errors.extend(secrets_errors)
+
+            # 3.6 Scan where this recipe writes. Same shape as the secrets scan
+            # above and for the same reason: a rule nobody can check is a
+            # document, and every mistake it looks for fails silently.
+            if metadata.runtime in ('python', 'shell'):
+                data_errors, data_warnings = _scan_data_location(content, recipe_dir)
+                errors.extend(data_errors)
+                warnings.extend(data_warnings)
 
     # 4. Check examples directory (optional)
     examples_dir = recipe_dir / 'examples'
