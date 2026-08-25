@@ -34,6 +34,7 @@ For a signed-in visitor that slot is their own account id, read from the
 separate identity root; see `_slot_state`.
 """
 
+import logging
 import mimetypes
 from pathlib import Path
 
@@ -42,6 +43,8 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from frago.recipes.app_state import DEFAULT_SLOT, InvalidSlotName
 from frago.recipes.app_state import read as read_slot
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -81,12 +84,23 @@ def _assets_dir(name: str) -> Path:
         raise HTTPException(status_code=400, detail="Invalid recipe name")
 
     from frago.recipes.exceptions import RecipeNotFoundError
-    from frago.recipes.registry import get_registry
+    from frago.recipes.registry import get_registry, invalidate_registry
 
     try:
         recipe = get_registry().find(name)
-    except RecipeNotFoundError as err:
-        raise HTTPException(status_code=404, detail=f"Recipe '{name}' not found") from err
+    except RecipeNotFoundError:
+        # Not in the list the server took when it started. Every recipe created
+        # after that is in this position, so its page 404s the first time
+        # anybody opens it — and says the recipe does not exist, which sends
+        # the reader looking for a recipe that is sitting right there on disk.
+        # Look again before answering.
+        try:
+            invalidate_registry()
+            recipe = get_registry().find(name)
+        except RecipeNotFoundError as err:
+            raise HTTPException(
+                status_code=404, detail=f"Recipe '{name}' not found"
+            ) from err
 
     owner = getattr(recipe.metadata, "ui_from", None) or name
     if owner != name:
@@ -220,6 +234,64 @@ async def serve_app_config(name: str, request: Request):
     # would say whether a page is runnable, and that is not theirs to know
     # — readOnly:true plus apiBase:null is the whole of what they may infer.
     return JSONResponse(content=config, headers=_REVALIDATE)
+
+
+@router.post("/{name}/api/{mode}")
+async def serve_app_api(name: str, mode: str, request: Request):
+    """A page asking its own recipe for data.
+
+    This is the other half of front-end/back-end separation. The page renders;
+    when it needs numbers it calls a mode, the same way another module would —
+    it never receives a path and never reads a file. A page handed an absolute
+    path is the front end reaching into the back end's filesystem: the visitor
+    has no such file, an endpoint able to serve it could serve any file on the
+    machine, and the day the recipe's landing spot moves the page keeps reading
+    the old one while every refresh reports success.
+
+    Only exported modes are reachable, and exported modes are read-only by
+    contract. So a page — which is the least trusted thing in the system, since
+    anyone who can open it can call this — can never reach a mode that fetches,
+    recomputes, or changes state.
+    """
+    from frago.server.routes.bus import _exports_of
+
+    exports = _exports_of(name) or ()
+    if mode not in exports:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{name} 没有把 {mode} 导出给页面调。"
+                    f"它导出的是 {'、'.join(exports) or '（空）'}。"
+                    f"页面只能调导出的只读 mode——没导出的那些里面有活干，"
+                    f"不是给页面顺手调的。"),
+        )
+
+    try:
+        params = await request.json()
+    except Exception:
+        params = {}
+    if not isinstance(params, dict):
+        params = {}
+
+    from frago.server.services.recipe_service import RecipeService
+
+    try:
+        result = RecipeService.run_recipe(name, params | {"mode": mode})
+    except Exception as err:
+        logger.warning("app api: %s/%s failed: %s", name, mode, err)
+        return {"ok": False, "error": {"code": "recipe-failed", "message": str(err)}}
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        # The recipe ran and said no. Passing that through as a success with an
+        # empty payload is how a page ends up rendering nothing while every
+        # refresh reports fine — the exact silence this contract exists to
+        # remove, reintroduced one layer up.
+        err = result.get("error")
+        message = err.get("message") if isinstance(err, dict) else err
+        return {"ok": False, "error": {"code": "recipe-failed",
+                                       "message": str(message or "配方没有给出结果")}}
+
+    data = result.get("data") if isinstance(result, dict) else result
+    return {"ok": True, "data": data if isinstance(data, dict) else {"result": data}}
 
 
 @router.get("/{name}/data/{file_path:path}")

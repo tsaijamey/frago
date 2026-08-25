@@ -88,6 +88,63 @@ def _run_frago_agent(
         Path(prompt_file).unlink(missing_ok=True)
 
 
+def _plan_into(name: str, prompt_text: str, spec_path: Path,
+               *, type_: str | None, runtime: str | None) -> None:
+    """Decide the module's shape and write it down. Shared by plan and create.
+
+    One implementation on purpose: the two commands used to be two paths to a
+    recipe, and only one of them went through planning. Whichever door a person
+    walks in, the same four decisions get made and written down before any code
+    exists — what modes there are, which of them other modules may call, whose
+    surface this one depends on, whether it has a page.
+    """
+    from frago.recipes.template import render_spec
+
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(render_spec(name, kind=type_ or "atomic"), encoding="utf-8")
+
+    type_hint = f"\n预设 type: {type_}" if type_ else ""
+    runtime_hint = f"\n预设 runtime: {runtime}" if runtime else ""
+    agent_prompt = f"""你是 frago recipe spec 撰写专家。
+
+任务：为 recipe '{name}' 撰写需求 spec。
+
+先运行以下命令获取规范：
+  frago book recipe-spec-writing
+
+用户需求：
+{prompt_text}
+{type_hint}{runtime_hint}
+
+规格模板已经生成在 {spec_path}，**在它上面填**，NEVER 另起炉灶重写。
+
+那份模板分两半：
+
+  ```yaml 代码块里的字段是给机器读的。frago recipe create 会读它，
+  写什么就长出什么——modes 变成方法，exports 变成内核在总线上放行的依据，
+  imports 变成对方能看见的依赖。这几个字段 MUST 想清楚再写：
+    modes    这个模块能做哪几件事，一个 mode 一件
+    exports  别的模块能调哪几个。MUST 只读——不触网、不重算、不改状态、不开浏览器。
+             不确定就先留空：开出去容易，收回来难。
+    imports  用了谁的哪个口
+    page     要不要一张页面
+
+  下半部分是给人读的：它解决什么问题、每个 mode 干什么、**它不做什么**、
+  数据存什么、出错怎么办、怎么验。
+  边界写清楚比能力写清楚更省事——下一个人照着扩展时知道哪儿不该伸手。
+
+「怎么验」那一节 MUST 逐条写清依据的是上面哪条规则，而且 **MUST 自己先从头跑一遍**。
+已经连着两个 agent 撞上同一件事：验收单的期望值跟规格正文算不出同一个结果，
+照着验会得出「配方错了」的结论，而真正错的是规格。期望值是拍脑袋写的，
+规则是想清楚的——对不上时先怀疑期望值。
+
+填完不要自己写代码。
+"""
+    if _run_frago_agent(agent_prompt) != 0:
+        click.echo("Error: Agent failed to generate spec", err=True)
+        sys.exit(1)
+
+
 @recipe_group.command(name='plan', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option(
@@ -152,35 +209,9 @@ def plan_recipe(name: str, prompt: str | None, prompt_file: str | None, type_: s
         click.echo("[Fix] Use --force to overwrite, or review the existing spec", err=True)
         sys.exit(1)
 
-    # Create directory
-    recipe_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build agent prompt
-    type_hint = f"\n预设 type: {type_}" if type_ else ""
-    runtime_hint = f"\n预设 runtime: {runtime}" if runtime else ""
-
-    agent_prompt = f"""你是 frago recipe spec 撰写专家。
-
-任务：为 recipe '{name}' 撰写需求 spec。
-
-先运行以下命令获取规范：
-  frago book recipe-spec-writing
-
-用户需求：
-{prompt_text}
-{type_hint}{runtime_hint}
-
-将 spec 写入：{spec_path}
-"""
-
     click.echo(f"[Plan] Generating spec for recipe '{name}'...")
     click.echo(f"  Directory: {recipe_dir}")
-
-    exit_code = _run_frago_agent(agent_prompt)
-
-    if exit_code != 0:
-        click.echo("Error: Agent failed to generate spec", err=True)
-        sys.exit(1)
+    _plan_into(name, prompt_text, spec_path, type_=type_, runtime=runtime)
 
     if spec_path.exists():
         click.echo(f"[OK] Spec written: {spec_path}")
@@ -263,6 +294,86 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
     # Ensure directory exists
     recipe_dir.mkdir(parents=True, exist_ok=True)
 
+    # One-step creation still goes through planning; it just does not make the
+    # person run two commands. The step being skipped, not the second command,
+    # was the problem: a probe run showed a fresh agent finding
+    # `create --prompt`, writing no spec at all, and letting the agent typing
+    # the implementation decide the module's exported surface as it went. An
+    # exported mode is a promise other modules build on, and this is how such a
+    # promise gets made by accident.
+    if user_prompt is not None:
+        spec_file = recipe_dir / "spec.md"
+        if not spec_file.exists() or force:
+            click.echo(f"[Plan] 先定规格：{spec_file}")
+            _plan_into(name, user_prompt, spec_file, type_=None, runtime=None)
+        spec_content = spec_file.read_text(encoding="utf-8")
+
+    # Lay the template down before the agent is asked for anything. Creation
+    # used to write no files at all: it handed an agent a prompt and whatever
+    # came back was a recipe. That is where three hundred divergent answers to
+    # the same four questions came from — where do I write, how do I report,
+    # how do I reach another module, what shape do I return — each worked out
+    # again, each reasonable alone, no two alike.
+    from frago.recipes.template import read_spec, render
+
+    # What planning decided is what this builds. Reading the spec's
+    # machine-readable half is the join between the two halves of the pipeline;
+    # without it they agree only by luck, and a spec that describes modes the
+    # code never declares looks exactly like one that got built correctly.
+    spec_fields = read_spec(spec_content) if spec_content else {}
+    if not spec_fields:
+        # One-step creation used to skip planning entirely, and a probe run
+        # showed a fresh agent doing exactly that: it found `create --prompt`,
+        # never wrote a spec, and let the agent writing the code decide the
+        # module's exported surface as it went. An exported mode is a promise
+        # other modules build on; deciding it while typing the implementation
+        # is how a promise gets made by accident.
+        click.echo("Error: 没有规格，不生成配方。", err=True)
+        click.echo(f"[Fix] 先跑 frago recipe plan {name} --prompt \"<需求>\"，"
+                   f"在规格里定下 modes / exports / imports / page 四项，再回来 create。",
+                   err=True)
+        click.echo("      exports 是这个模块对外的承诺——写代码时顺手定下来的承诺，"
+                   "别的模块依赖上就收不回来了。", err=True)
+        sys.exit(1)
+    click.echo(f"[Template] 按规格生成：modes={spec_fields.get('modes')} "
+               f"exports={spec_fields.get('exports')}")
+    try:
+        generated = render(name, spec=spec_fields)
+    except ValueError as err:
+        click.echo(f"Error: 规格自相矛盾——{err}", err=True)
+        sys.exit(1)
+
+    for rel, content in generated.items():
+        target = recipe_dir / rel
+        if target.exists() and not force:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    click.echo("[Template] 模板已生成（含基类与空页面）")
+
+    template_rules = f"""
+模板已经生成在 {recipe_dir}/，**在它上面改**，NEVER 另起炉灶重写文件：
+
+  recipe.py          配方本体。类继承 Recipe，头部的 frago-recipe 描述头 MUST 原样保留——
+                     那是契约描述头，说明这个文件照哪一版规范写，NEVER 删掉。
+  recipe.md          元信息。exports / imports 两个字段 MUST 照实填。
+  assets/            空页面。用不上就删掉整个目录，用得上就在它上面长。
+
+必须守的：
+
+  1. 能力建在基类上。落点用 self.store / self.data_dir，
+     NEVER 自己拼路径，NEVER 留「平台没给就用我自己的」那种兜底。
+  2. 一个 mode 一个 mode_<名字> 方法，名字写进类里的 modes。
+  3. 要别的模块的数据：先在 imports 里声明，再 self.ask(模块, mode)。
+     NEVER 去读对方的文件，NEVER import 对方的代码。
+  4. 导出给别人的 mode MUST 只读：不触网、不重算、不改状态、不开浏览器。
+  5. 页面是前端、配方是后端。publish 只发渲染状态，NEVER 发路径。
+  6. 说话用 self.progress() / self.warn() / self.log()，
+     NEVER 直接 print 到 stdout——stdout 是消息流，混一句进去整段就解不动。
+
+写完跑 frago recipe validate {recipe_dir}。
+"""
+
     # Build agent prompt
     if spec_content:
         agent_prompt = f"""你是 frago recipe 开发专家。
@@ -275,7 +386,7 @@ def create_recipe(name: str, prompt: str | None, prompt_file: str | None, spec_p
 Spec 内容（位于 {resolved_spec}）：
 {spec_content}
 
-创建 recipe.md 和对应脚本文件到 {recipe_dir}/。
+{template_rules}
 创建完成后，运行 frago recipe validate {recipe_dir}。
 如果 validate 失败，根据错误信息修复后重试，最多 3 轮。
 """
@@ -291,7 +402,8 @@ Spec 内容（位于 {resolved_spec}）：
 用户需求：
 {user_prompt}
 
-先在 {recipe_dir}/ 写 spec.md，再创建 recipe.md 和脚本文件。
+先在 {recipe_dir}/ 写 spec.md。
+{template_rules}
 创建完成后，运行 frago recipe validate {recipe_dir}。
 如果 validate 失败，根据错误信息修复后重试，最多 3 轮。
 """
@@ -1202,7 +1314,16 @@ _OWN_DATA_PATH = re.compile(r"""['"][^'"\n]*\.frago[/\\]+data[/\\]+[^'"]*['"]"""
 #: Trees frago maintains for itself. A recipe writing into one of these keeps its
 #: records inside somebody else's.
 _PLATFORM_TREE_PATH = re.compile(
-    r"""['"][^'"\n]*\.frago[/\\]+(?:sessions|app-state|executions|traces|projects|users|books)\b[^'"\n]*['"]"""
+    r"""['"][^'"\n]*\.frago[/\\]+(?:sessions|app-state|executions|traces|projects|users|books|state)\b[^'"\n]*['"]"""
+)
+
+#: The one thing under ``users/`` that is *not* the platform's own: a recipe's
+#: own data, which is exactly where the layout puts it. Without this the check
+#: reports the correct answer as a violation — and a check that condemns the
+#: thing it is asking for is worse than none, because the person reading it
+#: fixes a document that was right into one that is wrong.
+_RECIPE_DATA_UNDER_USERS = re.compile(
+    r"""\.frago[/\\]+users[/\\]+[^'"\n/\\]+[/\\]+recipe-data[/\\]"""
 )
 
 #: Another recipe's directory. See book recipe-authoring: a recipe reading
@@ -1390,7 +1511,11 @@ def _scan_data_location(content: str, recipe_dir: Path) -> tuple[list[str], list
             f"看的人不知道该做什么。改成运行时求值。见：frago book must-recipe-data"
         )
 
-    platform = {m.group(0) for m in _PLATFORM_TREE_PATH.finditer(content)}
+    platform = {
+        m.group(0)
+        for m in _PLATFORM_TREE_PATH.finditer(content)
+        if not _RECIPE_DATA_UNDER_USERS.search(m.group(0))
+    }
     if platform:
         errors.append(
             f"配方在往 frago 自己维护的目录里写：{', '.join(sorted(platform)[:3])}。"
@@ -1506,6 +1631,15 @@ def validate_recipe(path: str, output_format: str):
             # document, and every mistake it looks for fails silently.
             if metadata.runtime in ('python', 'shell'):
                 data_errors, data_warnings = _scan_data_location(content, recipe_dir)
+                # Is this a module at all — born here, built on the base class.
+                # Checked only for the recipe's own entry script: a helper file
+                # beside it is not a module and has no contract to keep.
+                if script_path.stem == 'recipe':
+                    born_errors, born_warnings = _scan_module_contract(
+                        content, metadata.name
+                    )
+                    data_errors = born_errors + data_errors
+                    data_warnings = born_warnings + data_warnings
                 errors.extend(data_errors)
                 warnings.extend(data_warnings)
 
@@ -2771,6 +2905,90 @@ def unexpose_recipe(name: str, output_format: str):
         click.echo(f"'{name}' was not published; nothing to do")
 
 
+def _audited_json(one) -> dict:
+    return {
+        "recipe": one.recipe, "slot": one.slot,
+        "source": str(one.source), "target": str(one.target),
+        "migrated_at": one.when, "stage": one.stage,
+        "reasons": list(one.reasons),
+        "last_write": one.last_write, "quiet_days": one.quiet_days,
+        "files": one.files, "bytes": one.size,
+    }
+
+
+def _report_audit(report, output_format: str, only_problems: bool, dm) -> None:
+    """Print the three stages.
+
+    `only_problems` says nothing at all when nothing is wrong, because the
+    scheduled copy of this runs every day and a check that reports "fine" every
+    day is a check nobody reads by the end of the week. The evidence that it
+    ran is in `frago schedule history`, which is where an unattended run's
+    record belongs — not in a line of output nobody was going to look at.
+    """
+    quiet = only_problems and report.needs_attention == 0 and report.ledger_exists
+
+    if output_format == 'json':
+        if quiet:
+            return
+        click.echo(json.dumps({
+            "identity": report.identity,
+            "ledger": str(report.ledger),
+            "ledger_exists": report.ledger_exists,
+            "ledger_lines": report.lines,
+            "checked": len(report.checked),
+            "needs_attention": report.needs_attention,
+            "still_live": [_audited_json(x) for x in report.still_live],
+            "ready_to_expire": [_audited_json(x) for x in report.ready],
+            "sealed": [_audited_json(x) for x in report.sealed],
+        }, ensure_ascii=False, indent=2))
+        return
+
+    if not report.ledger_exists:
+        # Not the same as clean, and it must never be allowed to read as clean:
+        # an empty result here means nothing was ever migrated, or the ledger
+        # was moved — and the second one is the emergency.
+        click.echo(f"账本不存在：{report.ledger}")
+        click.echo("这不是「干净」——是从来没搬过，或者账本被挪走了。两种都不该沉默过去。")
+        return
+    if not report.checked:
+        click.echo(f"账本在，{report.lines} 行，但一笔搬迁都读不出来：{report.ledger}")
+        click.echo("扫过了，没有可查的对象。这和「查过、都干净」不是一回事。")
+        return
+    if quiet:
+        return
+
+    click.echo(f"账本 {report.lines} 行，{len(report.checked)} 笔搬迁。逐笔看现在什么状态：")
+
+    if report.still_live:
+        click.echo(f"\n【还没切干净】{len(report.still_live)} 笔——老的还在被读或被写，删不得")
+        for one in report.still_live:
+            click.echo(f"  {one.recipe}/{one.slot}")
+            click.echo(f"    {one.source}")
+            for why in one.reasons:
+                click.echo(f"    · {why}")
+
+    if report.ready:
+        ripe = [x for x in report.ready if x.quiet_enough]
+        click.echo(f"\n【可以定到期日】{len(report.ready)} 笔——没人碰老的了，等一个日期"
+                   f"（其中静默满 {dm.QUIET_ENOUGH_DAYS} 天的 {len(ripe)} 笔）")
+        for one in report.ready:
+            days = f"静默 {one.quiet_days} 天" if one.quiet_days >= 0 else "空目录"
+            click.echo(f"  {one.recipe}/{one.slot}  {days}  最后写入 {one.last_write or '—'}")
+            click.echo(f"    {one.source}")
+
+    if report.sealed:
+        click.echo(f"\n【已封存】{len(report.sealed)} 笔——此路已封")
+        for one in report.sealed:
+            click.echo(f"  {one.recipe}/{one.slot}")
+            click.echo(f"    {one.source}")
+            for why in one.reasons:
+                click.echo(f"    · {why}")
+
+    click.echo(f"\n{len(report.checked)} 笔全扫过了，{report.needs_attention} 笔要人处理。"
+               f"--audit 只读，一个字节都没动。")
+    click.echo(f"账本：{report.ledger}")
+
+
 @recipe_group.command(name='data-migrate', cls=AgentFriendlyCommand)
 @click.option('--apply', 'do_apply', is_flag=True,
               help='Actually copy. Without it this only says what it would do.')
@@ -2778,8 +2996,16 @@ def unexpose_recipe(name: str, output_format: str):
               help='A JSON list of {recipe, slot?, source} for recipes that never '
                    'recorded their directory anywhere a machine can read. Goes '
                    'through the same three refusals as a derived plan.')
+@click.option('--audit', 'do_audit', is_flag=True,
+              help='看已经搬过的那些现在什么状态：老地方还在被写的、页面地址还指着老地方的、'
+                   '源头根本不只属于一个配方的。只读，一个字节都不动。')
+@click.option('--only-problems', 'only_problems', is_flag=True,
+              help='配合 --audit：干净时一个字都不输出，给定时任务用。'
+                   '「扫过了没事」和「根本没扫」的区别记在 frago schedule history 里，'
+                   '不在这条命令的输出里。')
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
-def data_migrate(do_apply: bool, plan_file: str | None, output_format: str):
+def data_migrate(do_apply: bool, plan_file: str | None, do_audit: bool,
+                 only_problems: bool, output_format: str):
     """Move recipe data onto the layout in `frago book must-recipe-data`.
 
     Copies; never deletes. Every move is verified by file count and byte total
@@ -2792,6 +3018,12 @@ def data_migrate(do_apply: bool, plan_file: str | None, output_format: str):
     places problem it exists to fix), a dated deliverable directory that belongs
     to the other tree, and a directory inside a recipe's own package. Those are
     listed for a person to decide.
+
+    `--audit` is the third face: not what would move, not moving it, but what
+    has already moved and where it stands now. Copying without deleting leaves
+    two copies of everything, and that is a state with no end unless somebody
+    asks whether the old one is still being read. That question used to be
+    answered by hand, by comparing timestamps.
     """
     from frago.recipes import context, data_migration
 
@@ -2799,6 +3031,16 @@ def data_migrate(do_apply: bool, plan_file: str | None, output_format: str):
         who = context.default_identity()
     except context.NoIdentity as err:
         raise click.ClickException(str(err)) from err
+
+    if do_audit:
+        if do_apply:
+            raise click.ClickException(
+                '--audit 只读，--apply 要动手，一次只能是其中一件事')
+        _report_audit(data_migration.audit(who), output_format, only_problems,
+                      data_migration)
+        return
+    if only_problems:
+        raise click.ClickException('--only-problems 是给 --audit 用的')
 
     if plan_file:
         entries = json.loads(Path(plan_file).read_text(encoding='utf-8'))
@@ -2910,3 +3152,121 @@ def list_exposed(output_format: str):
             f"{name:<34} {entry.get('slot', 'default'):<10} {who:<18} "
             f"{'yes' if entry.get('runnable') else '-':<5} {entry.get('since') or '?'}"
         )
+
+
+def _scan_module_contract(content: str, recipe_name: str) -> tuple[list[str], list[str]]:
+    """Check a recipe against the module contract: born here, built on the base.
+
+    Separate from the data-location scan because these two answer different
+    questions. That one asks "does this file do the wrong thing"; this one asks
+    "is this file a module at all". A file that never inherited the contract
+    cannot violate it — it simply is not part of the system, and reporting it
+    as a set of individual infractions would bury the one fact that matters.
+    """
+    import ast
+
+    from frago.recipes.birth import Birth, check
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    state, why = check(recipe_name, content)
+    if state == Birth.UNMARKED:
+        # Reported, not refused: three hundred recipes were written before the
+        # contract and the machine does not stop for it. But the word matters —
+        # calling these "legacy" would hand not-converting a permanent licence,
+        # and there is no such category. They are unconverted, which is a state
+        # with an end. "Never checked" must never read as "checked and fine".
+        warnings.append(f"尚未改造（还没建在基类上）：{why}")
+        return errors, warnings
+    if state == Birth.NEWER:
+        errors.append(why)
+        return errors, warnings
+
+    try:
+        tree = ast.parse(content)
+    except SyntaxError as err:
+        errors.append(f"这个文件解析不了：{err}")
+        return errors, warnings
+
+    subclass = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and any(
+            isinstance(b, ast.Name) and b.id == "Recipe" for b in node.bases
+        ):
+            subclass = node
+            break
+    if subclass is None:
+        errors.append(
+            "带着出生号，却没有继承 Recipe。配方能力 MUST 建在基类上——"
+            "落点、消息、跨模块调用、页面发布都在那里，绕过它就是把这四件事"
+            "再各自实现一遍，而三百份各自的实现正是这轮要收拾的东西。"
+        )
+        return errors, warnings
+
+    declared: dict[str, ast.expr] = {}
+    methods: set[str] = set()
+    for stmt in subclass.body:
+        if isinstance(stmt, ast.FunctionDef):
+            methods.add(stmt.name)
+        targets = (
+            [stmt.target] if isinstance(stmt, ast.AnnAssign)
+            else getattr(stmt, "targets", [])
+        )
+        for t in targets:
+            if isinstance(t, ast.Name):
+                declared[t.id] = getattr(stmt, "value", None)
+
+    def _strings(node) -> list[str]:
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return [e.value for e in node.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        return []
+
+    for required in ("name", "modes"):
+        if required not in declared:
+            errors.append(
+                f"类上没有声明 {required}。基类靠这几个属性决定这个模块是谁、能做什么，"
+                f"没声明平台就只能猜。"
+            )
+
+    name_node = declared.get("name")
+    if isinstance(name_node, ast.Constant) and name_node.value != recipe_name:
+        errors.append(
+            f"类里的 name 是 {name_node.value!r}，目录叫 {recipe_name!r}。"
+            f"两者 MUST 一致——页面、落点、总线都按这个名字找它。"
+        )
+
+    modes = _strings(declared.get("modes"))
+    for mode in modes:
+        if f"mode_{mode}" not in methods:
+            errors.append(
+                f"声明了 mode={mode}，但没有 mode_{mode} 方法。"
+                f"NEVER 让不认识的 mode 落到默认那条路上——一次只读的探问就是这样"
+                f"掉进状态机、真的去调了外部接口。"
+            )
+    for m in methods:
+        if m.startswith("mode_") and m[5:] not in modes and modes:
+            warnings.append(
+                f"有 {m} 方法，但 modes 里没写 {m[5:]}，外面调不到它。"
+            )
+
+    exports = _strings(declared.get("exports"))
+    for e in exports:
+        if e not in modes:
+            errors.append(f"导出了 {e}，但 modes 里没有它。")
+
+    if "main" in methods:
+        warnings.append("覆盖了 main：那是基类的入口，改了消息形状和退出码就不再统一。")
+
+    if not any(
+        isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+        and isinstance(n.value.func, ast.Attribute) and n.value.func.attr == "main"
+        for n in tree.body
+    ):
+        errors.append(
+            "文件底部没有 <类名>.main()。没有它这个文件跑起来什么都不做，"
+            "而它会安安静静地退出码 0——看起来像成功。"
+        )
+
+    return errors, warnings

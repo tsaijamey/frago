@@ -1,0 +1,273 @@
+"""The hub every recipe talks through.
+
+A recipe is a module. What makes a set of modules a system rather than a pile
+of scripts is that there is one place where their interactions happen, and that
+place knows what happened.
+
+Before this, a recipe that needed another recipe's data read its files. That
+worked and was invisible: the module being read had nothing telling it anybody
+depended on its layout, so its author edited their own files and a page they
+had never heard of started showing stale numbers. The break landed somewhere
+unrelated to the change, and only when a person happened to open that page. One
+ledger ended up in four places on one machine this way, holding 48, 45, 45 and
+37 trades, with the page showing the three-day-old copy and reporting every
+refresh as a success.
+
+So every crossing goes through here, and three things follow that could not
+follow from recipes calling each other directly:
+
+**The edge is recorded.** Who asked whom, for what. The dependency graph is
+something the system holds, not something somebody would have to reconstruct.
+
+**The rule is enforceable.** A module may only be asked for a mode it exported,
+and exported modes are read-only by contract. A child process cannot be told
+no; a request through a hub can.
+
+**The dependency is declared on both sides.** The caller declares what it
+imports; the hub checks the callee exports it. Neither side can acquire a
+dependency the other has not agreed to.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/bus", tags=["bus"])
+
+#: Where the hub writes down who asked whom. Append-only: the question it
+#: answers — "did anything depend on this module before I changed it" — gets
+#: asked months later, and a file that gets rewritten can lose exactly the
+#: entry somebody is looking for.
+EDGES_NAME = "bus-edges.jsonl"
+
+
+def edges_path() -> Path:
+    return Path.home() / ".frago" / EDGES_NAME
+
+
+class AskRequest(BaseModel):
+    recipe: str = Field(..., description="被问的模块")
+    mode: str = Field(..., description="要它的哪个导出接口")
+    params: dict[str, Any] = Field(default_factory=dict)
+    #: What the caller declared it imports. Sent by the caller and checked here
+    #: rather than there: a module reaching for something it never declared is
+    #: the one event worth seeing, and a check that runs inside the caller is
+    #: invisible to everyone else and skippable by anything not built on the
+    #: base class.
+    caller_imports: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class PublishRequest(BaseModel):
+    recipe: str
+    slot: str = "default"
+    state: dict[str, Any]
+
+
+class OpenRequest(BaseModel):
+    url: str
+
+
+def _record_edge(caller: str, callee: str, mode: str, ok: bool, why: str = "") -> None:
+    """Write down that this crossing happened, whether or not it was allowed.
+
+    Refusals are recorded too, and are the more useful half: a module reaching
+    for something it never declared is a dependency somebody is about to add by
+    accident, and this is the only moment anyone can see it.
+    """
+    from datetime import datetime
+
+    entry = {
+        "when": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "caller": caller or "(unknown)",
+        "callee": callee,
+        "mode": mode,
+        "allowed": ok,
+        "why": why,
+    }
+    try:
+        p = edges_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as err:  # recording must never be why a call fails
+        logger.warning("bus: could not record edge: %s", err)
+
+
+def _exports_of(recipe_name: str) -> tuple[str, ...] | None:
+    """Which modes this module offers other modules, read off its own source.
+
+    None when the module never declared an exported surface — which is not the
+    same as declaring an empty one. A module that has said nothing has not
+    agreed to anything, and the hub says so rather than assuming either way.
+    """
+    from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.registry import get_registry, invalidate_registry
+
+    try:
+        recipe = get_registry().find(recipe_name)
+    except (RecipeNotFoundError, OSError):
+        # Not in the snapshot the server took when it started. A recipe created
+        # after that is always in this position, so its page is refused the
+        # first time anybody opens it — and refused with "this module exports
+        # nothing", which points at the recipe rather than at the stale list
+        # that is actually the problem. Look again before answering.
+        try:
+            invalidate_registry()
+            recipe = get_registry().find(recipe_name)
+        except (RecipeNotFoundError, OSError):
+            return None
+
+    declared = getattr(recipe.metadata, "exports", None)
+    if declared:
+        return tuple(declared)
+
+    script = getattr(recipe, "script_path", None)
+    if not script or not Path(script).exists():
+        return None
+    return _exports_from_source(Path(script).read_text(encoding="utf-8", errors="ignore"))
+
+
+def _exports_from_source(source: str) -> tuple[str, ...] | None:
+    """Read the `exports` declaration without executing the module.
+
+    Parsed rather than imported: importing a recipe to find out what it offers
+    would run whatever sits at its module level, on a machine where no run is
+    in progress, every time anybody asked it a question.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for stmt in node.body:
+            targets = (
+                [stmt.target] if isinstance(stmt, ast.AnnAssign)
+                else getattr(stmt, "targets", [])
+            )
+            for t in targets:
+                if isinstance(t, ast.Name) and t.id == "exports":
+                    value = getattr(stmt, "value", None)
+                    if isinstance(value, (ast.Tuple, ast.List)):
+                        names = [
+                            e.value for e in value.elts
+                            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                        ]
+                        return tuple(names)
+    return None
+
+
+@router.post("/ask")
+async def bus_ask(req: AskRequest, request: Request):
+    """One module asking another for data.
+
+    Refused unless the target exported that mode. The refusal is the point:
+    exported modes are read-only by contract, so a caller can never reach past
+    the surface into a mode that fetches, recomputes or changes state. A status
+    check that fell through to a default once landed inside a state machine and
+    went and called a live API.
+    """
+    caller = request.headers.get("X-Frago-Recipe", "")
+
+    # Did the caller declare this dependency? Refused here rather than in the
+    # caller, so the reach shows up in the ledger either way — an undeclared
+    # attempt is somebody about to acquire a dependency by accident, and this
+    # is the only moment it is visible to anyone but the module doing it.
+    wanted = req.caller_imports.get(req.recipe)
+    if wanted is None:
+        _record_edge(caller, req.recipe, req.mode, False, "caller-did-not-declare")
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{caller or '调用方'} 没有声明依赖 {req.recipe}，不能问它要数据。"
+                    f"在类上写 imports = {{'{req.recipe}': ('{req.mode}',)}}——"
+                    f"依赖写下来，对方才知道自己正在被谁读。"),
+        )
+    if req.mode not in wanted:
+        _record_edge(caller, req.recipe, req.mode, False, "caller-declared-other-modes")
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{caller or '调用方'} 声明依赖 {req.recipe} 时没有写 {req.mode}，"
+                    f"只写了 {'、'.join(wanted) or '（空）'}"),
+        )
+
+    exports = _exports_of(req.recipe)
+
+    if exports is None:
+        _record_edge(caller, req.recipe, req.mode, False, "callee-has-no-exports")
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{req.recipe} 没有声明任何导出接口，别的模块调不了它。"
+                    f"要把它变成可被调用的，在它的类上写 exports = ('status', ...)，"
+                    f"并且导出的 mode 必须是只读的：不触网、不重算、不改状态、不开浏览器。"),
+        )
+    if req.mode not in exports:
+        _record_edge(caller, req.recipe, req.mode, False, "mode-not-exported")
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{req.recipe} 没有把 {req.mode} 导出，它只导出了 "
+                    f"{'、'.join(exports) or '（空）'}。"
+                    f"没导出的 mode 一律不对外——那里面的活不是给别人顺手调的。"),
+        )
+
+    from frago.server.services.recipe_service import RecipeService
+
+    try:
+        result = RecipeService.run_recipe(req.recipe, req.params | {"mode": req.mode})
+    except Exception as err:
+        _record_edge(caller, req.recipe, req.mode, True, f"failed: {err}")
+        return {"ok": False, "error": {"code": "callee-failed", "message": str(err)}}
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        _record_edge(caller, req.recipe, req.mode, True, "callee-said-no")
+        err = result.get("error")
+        message = err.get("message") if isinstance(err, dict) else err
+        return {"ok": False, "error": {"code": "callee-failed",
+                                       "message": str(message or f"{req.recipe} 没有给出结果")}}
+
+    _record_edge(caller, req.recipe, req.mode, True)
+    data = result.get("data") if isinstance(result, dict) else result
+    return {"ok": True, "data": data if isinstance(data, dict) else {"result": data}}
+
+
+@router.post("/publish")
+async def bus_publish(req: PublishRequest):
+    """A module telling its page what to render. Render state only, no paths.
+
+    Goes through the same state layer the ``frago recipe publish`` command uses.
+    The first version of this called a function that did not exist, and every
+    publish came back as a 500 — the page skeleton the template generates was
+    dead on arrival and nothing said why, because ``frago recipe validate``
+    reads files and cannot know that an endpoint answers with an error.
+    """
+    from frago.recipes.app_state import InvalidSlotName, page_url, publish
+
+    try:
+        publish(req.recipe, req.state, req.slot)
+        url = page_url(req.recipe, req.slot)
+    except InvalidSlotName as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
+        logger.exception("bus: publish failed for %s", req.recipe)
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    return {"ok": True, "url": url}
+
+
+@router.post("/open")
+async def bus_open(req: OpenRequest):
+    from frago.viewer.browser import open_url
+
+    try:
+        return {"ok": bool(open_url(req.url))}
+    except Exception as err:
+        logger.warning("bus: open failed: %s", err)
+        return {"ok": False}

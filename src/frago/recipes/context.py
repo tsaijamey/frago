@@ -59,6 +59,14 @@ DATA_DIR_ENV = "FRAGO_RECIPE_DATA_DIR"
 #: somewhere — a link says where a thing is and never who may write it.
 COMMON_DIR_ENV = "FRAGO_RECIPE_COMMON_DIR"
 
+#: Where the hub is listening. Everything a recipe does that leaves its own
+#: boundary goes there, so this is not one convenience among several — a recipe
+#: that cannot reach it cannot ask another module for data, cannot publish a
+#: page, and cannot say how far along it is. Kept here beside the other three
+#: because they are one contract: what this run is, where it writes, and how it
+#: talks to the rest of the system.
+BUS_ENV = "FRAGO_BUS_URL"
+
 #: The keys, as one thing — but note that writing and clearing are not
 #: symmetric. **Clearing is total**: every key here goes, because a half-cleared
 #: context is a visitor slot paired with an owner's directory, which is exactly
@@ -303,32 +311,33 @@ def common_dirs_for(recipe_name: str) -> Path | None:
 def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext:
     """The context an owner run gets: whose it is, and where it writes.
 
-    The directory is only handed over once this recipe's data has actually been
-    copied to the new layout. Handing it over sooner would point the recipe at
-    an empty directory while everything it has ever written sits under the old
-    one — a recipe that starts fresh without saying so, which is the same
-    silence this work exists to remove. The manifest is what answers "has it
-    moved"; when it covers everything, this test stops distinguishing anything
-    and comes out.
+    The directory is withheld in exactly one case: this recipe's records are
+    still sitting under an old path that nothing has copied. Handing it over
+    then would point the recipe at an empty directory while everything it has
+    ever written is elsewhere — a recipe that starts fresh without saying so,
+    which is the same silence this work exists to remove.
+
+    Every other recipe gets its directory, **including one that has never had
+    any data at all**. That distinction is the whole correction here: the test
+    used to be "has anything of this recipe's ever been copied", answered from
+    the migration manifest, and a recipe with nothing to migrate can never
+    appear in a manifest. It was therefore told forever that the platform had
+    not said where to write — which was fine while every recipe still carried a
+    default of its own, and became a recipe that cannot start the moment they
+    stopped. See ``data_left_behind``.
 
     A machine that cannot say who it is raises rather than guessing. See
     ``default_identity``.
     """
-    from frago.recipes.app_state import recipe_data_dir
-    from frago.recipes.data_migration import already_migrated
+    from frago.recipes.app_state import DEFAULT_SLOT, recipe_data_dir
+    from frago.recipes.data_migration import data_left_behind
 
     who = default_identity()
-    # Any slot counts, not this exact one. A multi-project recipe has its
-    # projects migrated one at a time and never has a `default` — it is handed
-    # the base directory and appends `projects/<name>` itself. Matching the
-    # exact slot withheld the directory from every such recipe and left them
-    # refusing to start, with a message about the platform not having said where
-    # to write while the platform had in fact already moved their data there.
-    moved = any(name == recipe_name for name, _ in already_migrated())
+    behind = data_left_behind(recipe_name, who, project or DEFAULT_SLOT)
     return InvocationContext(
         caller=OWNER,
         slot=who,
-        data_dir=recipe_data_dir(who, recipe_name, project) if moved else None,
+        data_dir=recipe_data_dir(who, recipe_name, project) if behind is None else None,
         common_dir=common_dirs_for(recipe_name),
     )
 

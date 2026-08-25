@@ -552,6 +552,11 @@ def create_app(
     # Include API routers
     app.include_router(system_router, prefix="/api", tags=["system"])
     app.include_router(recipes_router, prefix="/api", tags=["recipes"])
+    # The hub recipes talk through. Its own prefix is already /api/bus, so it is
+    # mounted bare — a second /api here would bury it one level deeper than
+    # every recipe on this machine is built to reach.
+    from frago.server.routes.bus import router as bus_router
+    app.include_router(bus_router)
     app.include_router(agent_router, prefix="/api", tags=["agent"])
     app.include_router(config_router, prefix="/api", tags=["config"])
     app.include_router(data_repo_router, prefix="/api", tags=["data_repo"])

@@ -45,6 +45,18 @@ class RecipeMetadata:
     # dependency somewhere both sides can see it — and it is what lets the
     # platform hand over the directory instead of the recipe naming a path.
     reads_common: list[str] = field(default_factory=list)
+
+    #: The modes other modules may call — this module's exported surface.
+    #: Exported modes are read-only by contract: no network, no recomputation,
+    #: no state change, no browser. The hub refuses anything not listed here,
+    #: so a caller can never reach past the surface into a mode that does work.
+    exports: list[str] = field(default_factory=list)
+
+    #: Whose surface this module depends on, as ``{recipe: [mode, ...]}``.
+    #: Written down so the dependency exists on both sides. Until now the
+    #: module being read had no way of knowing anyone depended on it, which is
+    #: why editing its own files broke pages it had never heard of.
+    imports: dict[str, list[str]] = field(default_factory=dict)
     # When the recipe first appeared and when it last changed, ISO-8601 strings.
     # Backfilled from the ~/.frago git history (first / last commit touching the
     # recipe directory); a recipe not yet committed falls back to file mtime.
@@ -127,6 +139,8 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             flow=data.get('flow', []),
             ui_from=data.get('ui_from'),
             reads_common=data.get('reads_common') or [],
+            exports=data.get('exports') or [],
+            imports=data.get('imports') or {},
             created_at=_iso_or_none(data.get('created_at')),
             updated_at=_iso_or_none(data.get('updated_at')),
         )
@@ -360,6 +374,26 @@ def check_param_type(param_name: str, value: Any, expected_type: str) -> list[st
         'array': lambda v: isinstance(v, list),
         'object': lambda v: isinstance(v, dict),
     }
+
+    # `array|string` — a parameter that genuinely accepts either shape. Real
+    # recipes want this: a list of tags, or the same tags as one comma-separated
+    # string. Without it an author has two choices and both are wrong. Declare
+    # one type and the other shape is rejected out here, before the recipe runs,
+    # with a message from the platform — the recipe never gets to explain what
+    # it would have accepted. Declare something the platform does not recognise
+    # and the check is skipped entirely, which reads like "either is fine" and
+    # actually means "nothing is checked at all". One recipe was already relying
+    # on that second accident.
+    if '|' in expected_type:
+        options = [t.strip() for t in expected_type.split('|') if t.strip()]
+        unknown = [t for t in options if t not in type_checks]
+        if unknown:
+            return [f"Parameter '{param_name}' declares unknown type(s): "
+                    f"{', '.join(unknown)}"]
+        if any(type_checks[t](value) for t in options):
+            return []
+        return [f"Parameter '{param_name}' type mismatch: expected one of "
+                f"{' or '.join(options)}, got {type(value).__name__}"]
 
     if expected_type not in type_checks:
         # Unknown type, skip check

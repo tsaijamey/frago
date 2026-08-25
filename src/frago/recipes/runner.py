@@ -1,6 +1,7 @@
 """Recipe executor"""
 import json
 import logging
+import os
 import platform
 import shutil
 import subprocess
@@ -36,6 +37,137 @@ def _frago_argv() -> list[str]:
 # Enables cancel() from any runner instance (e.g., a different request handler).
 _active_processes: dict[str, subprocess.Popen[bytes]] = {}
 _process_lock = threading.Lock()
+
+
+class UnconvertedRecipe(RecipeExecutionError):
+    """This file was not built on the contract, so nothing will start it."""
+
+
+def _refuse_unconverted(name: str, recipe) -> None:
+    """Refuse a recipe that never came from the template.
+
+    The header is the only thing checked here, and it is checked at the moment
+    of starting rather than at some earlier point somebody may have skipped.
+    Everything else the contract asks for — the base class, the declared modes,
+    the exported surface — is checked by `frago recipe validate`, which can
+    afford to read the whole file. This one question has to be answered on
+    every single run, so it is the cheapest possible one: are the first few
+    lines of this file the ones the template writes.
+    """
+    from frago.recipes.birth import Birth, check
+
+    script = getattr(recipe, "script_path", None)
+    if not script:
+        return
+    try:
+        head = "\n".join(
+            Path(script).read_text(encoding="utf-8", errors="ignore").splitlines()[:12]
+        )
+    except OSError:
+        return
+    state, why = check(name, head)
+    if state == Birth.MARKED:
+        return
+    raise UnconvertedRecipe(
+        recipe_name=name,
+        runtime=getattr(recipe.metadata, "runtime", "") or "",
+        exit_code=-1,
+        stderr=(f"{why}\n"
+                f"这个配方还没建在基类上，平台不会启动它。"
+                f"改造它：frago recipe create {name} --force 生成模板，"
+                f"把现有逻辑搬进 mode_* 方法。"),
+    )
+
+
+def _bus_url() -> str:
+    """Where the hub is listening for this machine.
+
+    Read from the same config the server starts from rather than hardcoded, so
+    a machine that moved its port does not silently hand every recipe an
+    address nothing answers on.
+    """
+    port = os.environ.get("FRAGO_SERVER_PORT")
+    if not port:
+        try:
+            from frago.config import get_config
+            port = str(get_config().get("server", {}).get("port", 8093))
+        except Exception:
+            port = "8093"
+    return f"http://127.0.0.1:{port}"
+
+
+#: The message kinds a recipe puts on stdout. A recipe built on the base class
+#: writes one JSON object per line and its last line is the result; anything
+#: older writes a single JSON object and nothing else. Both are read here,
+#: because three hundred recipes cannot change on the same afternoon.
+_MSG_RESULT = "result"
+_MSG_PROGRESS = "progress"
+_MSG_WARN = "warn"
+
+
+def _read_messages(stdout: str) -> tuple[dict | None, list[dict]]:
+    """Split a recipe's stdout into (result, everything said along the way).
+
+    Returns ``(None, [])`` when this is not a message stream, so the caller can
+    fall back to parsing the whole of stdout as one object.
+
+    A stream is recognised by its messages, not by a flag: a recipe that emits
+    progress and then dies leaves a stream with no result, and that has to be
+    distinguishable from a recipe that printed nothing at all. The first tells
+    you how far it got; the second tells you it never started.
+    """
+    result: dict | None = None
+    trail: list[dict] = []
+    saw_message = False
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        kind = msg.get("t")
+        if kind in (_MSG_PROGRESS, _MSG_WARN):
+            saw_message = True
+            trail.append(msg)
+        elif kind == _MSG_RESULT:
+            saw_message = True
+            result = msg
+    return (result, trail) if saw_message else (None, [])
+
+
+def _unwrap(stdout: str) -> dict:
+    """What this run returned, whichever shape the recipe speaks.
+
+    A recipe on the module contract returns an envelope: the payload sits under
+    ``data`` with ``ok``/``warnings``/``error`` around it, one shape across
+    every module so a caller can handle any of them without knowing which it
+    called. Older recipes return the payload bare. Both end up as one dict
+    here; what is lost in the old shape — how far it got, what it warned about
+    — was never there to begin with.
+    """
+    result, trail = _read_messages(stdout)
+    if result is None and not trail:
+        return json.loads(stdout)
+    if result is None:
+        raise RecipeExecutionError(
+            recipe_name="", runtime="python", exit_code=-1,
+            stdout=stdout,
+            stderr=("配方开始说话了却没给出结果：收到 "
+                    f"{len(trail)} 条过程消息，没有 result。"
+                    "多半是跑到一半退出了，最后一条过程消息就是它走到的地方。"),
+        )
+    data = result.get("data")
+    out = dict(data) if isinstance(data, dict) else {"result": data}
+    out.setdefault("success", bool(result.get("ok")))
+    if result.get("warnings"):
+        out.setdefault("warnings", result["warnings"])
+    if result.get("error"):
+        out.setdefault("error", result["error"])
+    return out
 
 
 class RecipeRunner:
@@ -259,6 +391,22 @@ class RecipeRunner:
                 )
         context.apply_to_env(resolved_env, ctx)
 
+        # What a recipe is built on, and how it reaches the hub. Both are handed
+        # over the same way the landing spot is, and for the same reason: a
+        # recipe cannot import frago (most carry a PEP 723 block, so `uv run`
+        # builds an isolated environment holding only what that recipe
+        # declared). Putting the base class on PYTHONPATH means a recipe uses
+        # it without declaring a dependency — and means fixing the contract is
+        # one edit here rather than one edit in each of three hundred copies.
+        runtime_dir = str(Path(__file__).parent / "runtime")
+        existing = resolved_env.get("PYTHONPATH") or ""
+        resolved_env["PYTHONPATH"] = (
+            f"{runtime_dir}{os.pathsep}{existing}" if existing else runtime_dir
+        )
+        resolved_env[context.BUS_ENV] = _bus_url()
+        if execution_id:
+            resolved_env["FRAGO_EXECUTION_ID"] = execution_id
+
         # And this is where the run gets somewhere to stand. Until now a recipe
         # started in whatever directory its caller happened to be in — a shell,
         # the server's working directory, an agent's project root — so a recipe
@@ -309,6 +457,13 @@ class RecipeRunner:
             resolved_env["FRAGO_CURRENT_RUN"] = run_id or execution_id
 
         try:
+            # Nothing starts without the contract header. This is the choke
+            # point on purpose: `frago recipe validate` is a command a person
+            # chooses to run, and a rule that only holds when somebody
+            # remembers to check is not a rule. Proved on this machine —
+            # validate refused cookbook_dashboard and it ran anyway.
+            _refuse_unconverted(name, recipe)
+
             # Resolve effective timeout (explicit > None = no limit for backward compat)
             effective_timeout = timeout
 
@@ -650,7 +805,7 @@ class RecipeRunner:
             try:
                 # exec-js output can be plain text or JSON
                 # Try parsing as JSON, return as text if it fails
-                data = json.loads(result.stdout)
+                data = _unwrap(result.stdout)
             except json.JSONDecodeError:
                 # Return text result
                 data = {"result": result.stdout.strip()}
@@ -674,6 +829,22 @@ class RecipeRunner:
         string; otherwise fall back to the last non-empty stderr line. Returns
         "" when nothing useful is found, leaving just the exit-code message.
         """
+        # A recipe on the module contract puts its reason in the last message's
+        # envelope. Read that first: without it the runner reports a bare
+        # "exit code: 1" and swallows whatever the recipe took the trouble to
+        # say — so the more carefully a recipe explains itself, the less anyone
+        # sees. Every recipe written against the new contract was affected.
+        result, trail = _read_messages(stdout)
+        if result is not None:
+            err = result.get("error") or {}
+            if isinstance(err, dict) and err.get("message"):
+                return str(err["message"])
+        elif trail:
+            last = trail[-1]
+            note = last.get("note")
+            if note:
+                return f"跑到「{note}」就没下文了（收到 {len(trail)} 条过程消息，没有结果）"
+
         if stdout:
             try:
                 data = json.loads(stdout)
@@ -774,7 +945,7 @@ class RecipeRunner:
 
             # Parse JSON output
             try:
-                data = json.loads(result.stdout)
+                data = _unwrap(result.stdout)
             except json.JSONDecodeError as e:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
@@ -860,7 +1031,7 @@ class RecipeRunner:
 
             # Parse JSON output
             try:
-                data = json.loads(result.stdout)
+                data = _unwrap(result.stdout)
             except json.JSONDecodeError as e:
                 raise RecipeExecutionError(
                     recipe_name=recipe_name,
