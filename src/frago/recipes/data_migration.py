@@ -178,6 +178,12 @@ def plan(identity: str, home: Path | None = None) -> Plan:
                 f"这个目录在配方自己的代码包里，搬走会拆掉配方本体：{source}",
             ))
             continue
+        if target.is_dir() and _weigh(target) == _weigh(source):
+            # Already copied. Saying "would copy" here would make a dry run
+            # describe work that is finished, and a dry run people cannot take
+            # at face value is worse than no dry run at all.
+            result.skipped.append((recipe, slot, f"已经搬过，两边一致：{target}"))
+            continue
         result.moves.append(Move(recipe, slot, source, target))
         if keys:
             # It recorded the platform's key *and* invented some of its own. The
@@ -277,11 +283,37 @@ def apply(one: Move, home: Path | None = None) -> dict[str, Any]:
     before = _weigh(one.source)
 
     if one.target.exists():
-        if _weigh(one.target) == before:
+        now = _weigh(one.target)
+        if now == before:
             return _record(one, before, home, note="已经搬过，内容一致，跳过")
+
+        # The two differ. Which of them moved decides whether this is safe.
+        #
+        # A machine does not stop while it is being migrated: a scheduled task
+        # or a running server writes to the source minutes after it was copied,
+        # and the copy is then simply out of date. That is ordinary and worth
+        # refreshing. What is not ordinary is somebody having written to the
+        # *target* — then there is real work under the new path, and copying
+        # over it destroys the only copy of it.
+        #
+        # The manifest tells them apart: it recorded what the copy weighed the
+        # moment it was made. A target that still weighs that has not been
+        # touched since.
+        recorded = _recorded_weight(one, home)
+        if recorded is not None and now == recorded:
+            shutil.rmtree(one.target)
+            shutil.copytree(one.source, one.target, symlinks=True)
+            after = _weigh(one.target)
+            if after != before:
+                raise MigrationFailed(
+                    f"{one.recipe}/{one.slot} 刷新后对不上：源 {before}，新落点 {after}。"
+                )
+            return _record(one, before, home, note="源在上次复制之后又变了，已按源刷新")
+
         raise MigrationFailed(
             f"{one.recipe}/{one.slot} 的新落点已存在且内容不同：{one.target}。"
-            f"没有动任何东西——先弄清那份是什么再来。"
+            f"账本记的是 {recorded}，它现在是 {now}——有人往新落点写过东西，"
+            f"覆盖它就是毁掉那份工作。没有动任何东西，先弄清那是什么再来。"
         )
 
     one.target.parent.mkdir(parents=True, exist_ok=True)
@@ -293,6 +325,33 @@ def apply(one: Move, home: Path | None = None) -> dict[str, Any]:
             f"新落点 {after[0]}/{after[1]}。原目录一个字节都没动。"
         )
     return _record(one, before, home)
+
+
+def _recorded_weight(one: Move, home: Path) -> tuple[int, int] | None:
+    """What the manifest says this copy weighed when it was made.
+
+    The last entry wins: the file is append-only, so a directory copied more
+    than once has more than one line, and the current copy is the newest.
+    """
+    try:
+        raw = manifest_path(home).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    found = None
+    for line in raw.splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (isinstance(entry, dict)
+                and entry.get("recipe") == one.recipe
+                and entry.get("slot") == one.slot
+                and entry.get("target") == str(one.target)):
+            try:
+                found = (int(entry["files"]), int(entry["bytes"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return found
 
 
 def _record(one: Move, weight: tuple[int, int], home: Path, note: str = "") -> dict[str, Any]:

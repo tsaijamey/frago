@@ -2535,6 +2535,86 @@ def unexpose_recipe(name: str, output_format: str):
         click.echo(f"'{name}' was not published; nothing to do")
 
 
+@recipe_group.command(name='data-migrate', cls=AgentFriendlyCommand)
+@click.option('--apply', 'do_apply', is_flag=True,
+              help='Actually copy. Without it this only says what it would do.')
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
+def data_migrate(do_apply: bool, output_format: str):
+    """Move recipe data onto the layout in `frago book must-recipe-data`.
+
+    Copies; never deletes. Every move is verified by file count and byte total
+    afterwards and written to ~/.frago/migration-manifest.jsonl, and the original
+    directory stays exactly where it was. Run it again after an interruption —
+    anything already copied is recognised and skipped.
+
+    Three things it refuses to move, each of which would look like a success:
+    a directory two recipes both claim (copying it makes the one-thing-in-two-
+    places problem it exists to fix), a dated deliverable directory that belongs
+    to the other tree, and a directory inside a recipe's own package. Those are
+    listed for a person to decide.
+    """
+    from frago.recipes import context, data_migration
+
+    try:
+        who = context.default_identity()
+    except context.NoIdentity as err:
+        raise click.ClickException(str(err)) from err
+
+    plan = data_migration.plan(who)
+    applied, failed = [], []
+    if do_apply:
+        for one in plan.moves:
+            try:
+                applied.append(data_migration.apply(one))
+            except data_migration.MigrationFailed as err:
+                failed.append({"recipe": one.recipe, "slot": one.slot, "error": str(err)})
+
+    if output_format == 'json':
+        click.echo(json.dumps({
+            "identity": who,
+            "applied": applied,
+            "failed": failed,
+            "would_move": [
+                {"recipe": m.recipe, "slot": m.slot,
+                 "source": str(m.source), "target": str(m.target)}
+                for m in plan.moves
+            ] if not do_apply else [],
+            "blocked": [{"recipe": r, "slot": s, "why": w} for r, s, w in plan.blocked],
+            "needs_a_person": [
+                {"recipe": u.recipe, "slot": u.slot, "keys": list(u.keys)}
+                for u in plan.unresolved
+            ],
+            "skipped": [{"recipe": r, "slot": s, "why": w} for r, s, w in plan.skipped],
+            "manifest": str(data_migration.manifest_path()),
+        }, ensure_ascii=False, indent=2))
+        return
+
+    if do_apply:
+        for entry in applied:
+            note = f"  {entry['note']}" if entry['note'] else ""
+            click.echo(f"✓ {entry['recipe']}/{entry['slot']}  "
+                       f"{entry['files']} files / {entry['bytes']} bytes{note}")
+        for bad in failed:
+            click.echo(f"✗ {bad['recipe']}/{bad['slot']}: {bad['error']}")
+        click.echo(f"\n{len(applied)} copied, {len(failed)} failed. "
+                   f"Originals untouched. Record: {data_migration.manifest_path()}")
+    else:
+        for m in plan.moves:
+            click.echo(f"would copy  {m.recipe}/{m.slot}\n  {m.source}\n→ {m.target}")
+        click.echo(f"\n{len(plan.moves)} would be copied. Nothing has happened; "
+                   f"add --apply to do it.")
+
+    if plan.blocked:
+        click.echo(f"\n{len(plan.blocked)} need a decision before they can move:")
+        for recipe, slot, why in plan.blocked:
+            click.echo(f"  {recipe}/{slot}\n    {why}")
+    if plan.unresolved:
+        click.echo(f"\n{len(plan.unresolved)} record their directory under a name only "
+                   f"the recipe knows; confirm these by hand:")
+        for u in plan.unresolved:
+            click.echo(f"  {u.recipe}/{u.slot}: {', '.join(u.keys)}")
+
+
 @recipe_group.command(name='exposed', cls=AgentFriendlyCommand)
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
 def list_exposed(output_format: str):

@@ -220,3 +220,74 @@ class TestTheThingsItRefusesToMove:
         source = _data(home, ".frago", "data", "etf", "20260807-composite", "out")
         _slot(home, RECIPE, "default", {"dataDir": str(source)})
         assert not data_migration.plan(WHO, home).moves
+
+
+class TestADryRunTellsTheTruth:
+    def test_something_already_copied_is_not_reported_as_pending(self, home):
+        """A dry run that describes finished work as pending is a dry run nobody
+        can act on, and the whole reason for having one is that it can be."""
+        source = _data(home, ".frago", "data", "etf", "board")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        one = data_migration.plan(WHO, home).moves[0]
+        data_migration.apply(one, home)
+
+        again = data_migration.plan(WHO, home)
+        assert not again.moves
+        assert any("已经搬过" in why for _, _, why in again.skipped)
+
+    def test_a_half_copied_target_is_still_reported_as_pending(self, home):
+        """Interrupted, not finished. It has to come back as work to do."""
+        source = _data(home, ".frago", "data", "etf", "board",
+                       files=(("a.json", "{}"), ("b.json", "{}")))
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        one = data_migration.plan(WHO, home).moves[0]
+        one.target.mkdir(parents=True)
+        (one.target / "a.json").write_text("{}", encoding="utf-8")
+        assert data_migration.plan(WHO, home).moves
+
+
+class TestTheMachineDoesNotStopWhileItIsMigrated:
+    """A scheduled task or a running server writes to a source minutes after it
+    was copied. That is ordinary. Somebody writing to the *target* is not — and
+    the two look identical unless something recorded what the copy weighed.
+    """
+
+    def _setup(self, home):
+        source = _data(home, ".frago", "data", "etf", "board",
+                       files=(("rows.json", '{"n": 1}'),))
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        one = data_migration.plan(WHO, home).moves[0]
+        data_migration.apply(one, home)
+        return one
+
+    def test_a_source_that_kept_growing_is_refreshed(self, home):
+        one = self._setup(home)
+        (one.source / "rows.json").write_text('{"n": 22}', encoding="utf-8")
+        entry = data_migration.apply(one, home)
+        assert "刷新" in entry["note"]
+        assert (one.target / "rows.json").read_text(encoding="utf-8") == '{"n": 22}'
+
+    def test_work_written_under_the_new_path_is_never_overwritten(self, home):
+        """There is real work there and this copy is not it. Stopping costs a
+        person one question; copying over it costs them the work."""
+        one = self._setup(home)
+        (one.source / "rows.json").write_text('{"n": 22}', encoding="utf-8")
+        (one.target / "somebody-worked-here.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(data_migration.MigrationFailed) as caught:
+            data_migration.apply(one, home)
+        assert "有人往新落点写过" in str(caught.value)
+        assert (one.target / "somebody-worked-here.json").is_file()
+
+    def test_a_refresh_is_written_down_like_any_other_move(self, home):
+        one = self._setup(home)
+        (one.source / "rows.json").write_text('{"n": 22}', encoding="utf-8")
+        data_migration.apply(one, home)
+        lines = data_migration.manifest_path(home).read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        assert json.loads(lines[-1])["source_kept"] is True
+
+    def test_the_original_survives_a_refresh(self, home):
+        one = self._setup(home)
+        (one.source / "rows.json").write_text('{"n": 22}', encoding="utf-8")
+        data_migration.apply(one, home)
+        assert (one.source / "rows.json").read_text(encoding="utf-8") == '{"n": 22}'
