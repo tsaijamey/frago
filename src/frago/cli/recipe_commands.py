@@ -1197,17 +1197,17 @@ _DATA_DIR_ENV = 'FRAGO_RECIPE_DATA_DIR'
 #: A path literal pointing into the old per-subject data tree. A recipe naming
 #: one of these is deciding its own location, which is what put one ledger in
 #: four places on one machine.
-_OWN_DATA_PATH = re.compile(r"""['"][^'"]*\.frago[/\\]+data[/\\]+[^'"]*['"]""")
+_OWN_DATA_PATH = re.compile(r"""['"][^'"\n]*\.frago[/\\]+data[/\\]+[^'"]*['"]""")
 
 #: Trees frago maintains for itself. A recipe writing into one of these keeps its
 #: records inside somebody else's.
 _PLATFORM_TREE_PATH = re.compile(
-    r"""['"][^'"]*\.frago[/\\]+(?:sessions|app-state|executions|traces|projects|users|books)\b[^'"]*['"]"""
+    r"""['"][^'"\n]*\.frago[/\\]+(?:sessions|app-state|executions|traces|projects|users|books)\b[^'"\n]*['"]"""
 )
 
 #: Another recipe's directory. See book recipe-authoring: a recipe reading
 #: another's files depends on a structure nobody knows they are maintaining.
-_OTHER_RECIPE_PATH = re.compile(r"""['"][^'"]*\.frago[/\\]+recipes[/\\]+[^'"]*['"]""")
+_OTHER_RECIPE_PATH = re.compile(r"""['"][^'"\n]*\.frago[/\\]+recipes[/\\]+[^'"]*['"]""")
 
 #: The platform writes this file inside every data directory. A recipe writing it
 #: would overwrite the page's own note.
@@ -1280,7 +1280,11 @@ def _home_anchored_paths(content: str) -> list[str]:
         if ".frago" not in segments_of(node) and not rooted_at_home(node):
             continue
         rest = [x for x in in_order(node) if x != ".frago"]
-        if rest:
+        # Only the old data tree counts. A recipe legitimately locates the hook
+        # engine under `.frago/bin` and writes a log under `.frago/logs`, and a
+        # checker that flags those teaches people to skim past it — which costs
+        # more than the two paths it would have caught.
+        if rest and "data" in rest:
             found.append(".frago/" + "/".join(rest[:4]))
     return sorted(set(found))
 
