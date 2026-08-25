@@ -43,6 +43,9 @@ from frago.recipes.app_state import (
     _validate,
     recipe_data_dir,
 )
+from frago.recipes.app_state import (
+    DEFAULT_SLOT as DEFAULT_SLOT_NAME,
+)
 
 #: Where the record of what moved lives. Beside the data rather than in a
 #: temporary directory: it has to outlive the run that wrote it, because the
@@ -250,6 +253,80 @@ def _shared_sources(moves: list[Move]) -> dict[Path, list[Move]]:
     for one in moves:
         seen.setdefault(one.source.resolve(), []).append(one)
     return {src: claims for src, claims in seen.items() if len(claims) > 1}
+
+
+def plan_from_entries(
+    identity: str,
+    entries: list[dict[str, Any]],
+    home: Path | None = None,
+) -> Plan:
+    """Turn hand-supplied source directories into a plan, gates and all.
+
+    Most recipes never recorded their directory anywhere a machine can read, so
+    the only way to learn it is for someone to read the code. That answer comes
+    in here — and it goes through **exactly the same three refusals** as one the
+    tool worked out itself.
+
+    That symmetry is the point. A hand-supplied path feels more authoritative
+    than a derived one and is in fact less: it was typed by whoever read the
+    code last, and the failures the gates catch (two recipes claiming one
+    directory, a dated deliverable, a directory inside a recipe's package) are
+    exactly the ones a reader is most likely to miss. Letting an explicit plan
+    skip them would put the gates where they are never needed and remove them
+    where they are.
+    """
+    home = home or Path.home()
+    result = Plan()
+    for entry in entries:
+        recipe = str(entry.get("recipe") or "")
+        slot = str(entry.get("slot") or DEFAULT_SLOT_NAME)
+        raw = str(entry.get("source") or "")
+        if not recipe or not raw:
+            result.skipped.append((recipe or "?", slot, "这条没写清 recipe 或 source"))
+            continue
+        try:
+            _validate(recipe, slot)
+        except InvalidSlotName as err:
+            result.skipped.append((recipe, slot, f"名字不合法：{err}"))
+            continue
+
+        source = Path(raw).expanduser()
+        target = recipe_data_dir(identity, recipe, slot if slot != DEFAULT_SLOT_NAME else None)
+        if source == target:
+            result.skipped.append((recipe, slot, "已经在新落点上了"))
+            continue
+        if not source.is_dir():
+            result.skipped.append((recipe, slot, f"给的目录不存在：{source}"))
+            continue
+        if _is_deliverable(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这是带日期的交付物目录、不是配方工作数据，按分界它留在原地：{source}",
+            ))
+            continue
+        if _is_recipe_code(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这个目录在配方自己的代码包里，搬走会拆掉配方本体：{source}",
+            ))
+            continue
+        if target.is_dir() and _weigh(target) == _weigh(source):
+            result.skipped.append((recipe, slot, f"已经搬过，两边一致：{target}"))
+            continue
+        result.moves.append(Move(recipe, slot, source, target))
+
+    shared = _shared_sources(result.moves)
+    if shared:
+        result.moves = [m for m in result.moves if m.source.resolve() not in shared]
+        for src, claims in shared.items():
+            who = "、".join(f"{m.recipe}/{m.slot}" for m in claims)
+            for one in claims:
+                result.blocked.append((
+                    one.recipe, one.slot,
+                    f"这个目录同时被 {who} 认领。复制它就是把一份数据变成几份——"
+                    f"正是这次要修的毛病。先定下它归谁：{src}",
+                ))
+    return result
 
 
 def _weigh(directory: Path) -> tuple[int, int]:

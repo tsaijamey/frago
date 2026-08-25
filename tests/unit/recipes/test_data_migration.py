@@ -291,3 +291,56 @@ class TestTheMachineDoesNotStopWhileItIsMigrated:
         (one.source / "rows.json").write_text('{"n": 22}', encoding="utf-8")
         data_migration.apply(one, home)
         assert (one.source / "rows.json").read_text(encoding="utf-8") == '{"n": 22}'
+
+
+class TestAHandSuppliedPlanGetsTheSameRefusals:
+    """Most recipes never recorded their directory anywhere a machine can read,
+    so someone has to read the code and say where it is. That answer is *less*
+    authoritative than a derived one, not more — it was typed by whoever read
+    last, and the three failures the gates catch are exactly the ones a reader
+    misses. So an explicit plan goes through every one of them.
+    """
+
+    def test_a_hand_supplied_directory_is_moved(self, home):
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "feed")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(source)}], home)
+        assert len(result.moves) == 1
+        assert result.moves[0].target == app_state.recipe_data_dir(WHO, RECIPE)
+
+    def test_a_named_slot_still_becomes_a_project(self, home):
+        source = _data(home, ".frago", "data", "x")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "slot": "run-a", "source": str(source)}], home)
+        assert result.moves[0].target == app_state.recipe_data_dir(WHO, RECIPE, "run-a")
+
+    def test_two_entries_claiming_one_directory_are_still_stopped(self, home):
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "shared")
+        result = data_migration.plan_from_entries(WHO, [
+            {"recipe": "reader", "source": str(source)},
+            {"recipe": "writer", "source": str(source)},
+        ], home)
+        assert not result.moves
+        assert {b[0] for b in result.blocked} == {"reader", "writer"}
+
+    def test_a_dated_deliverable_is_still_refused(self, home):
+        source = _data(home, ".frago", "data", "one-off", "20260527-deep-dive")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(source)}], home)
+        assert not result.moves and "交付物" in result.blocked[0][2]
+
+    def test_a_directory_inside_a_package_is_still_refused(self, home):
+        source = _data(home, ".frago", "recipes", "workflows", RECIPE, "data")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(source)}], home)
+        assert not result.moves and "代码包" in result.blocked[0][2]
+
+    def test_a_path_that_is_not_there_is_reported_not_created(self, home):
+        gone = home / ".frago" / "data" / "typo"
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(gone)}], home)
+        assert not result.moves and not gone.exists()
+
+    def test_an_entry_missing_its_fields_is_reported_not_guessed(self, home):
+        result = data_migration.plan_from_entries(WHO, [{"recipe": RECIPE}], home)
+        assert not result.moves and result.skipped

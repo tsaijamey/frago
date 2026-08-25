@@ -2538,8 +2538,12 @@ def unexpose_recipe(name: str, output_format: str):
 @recipe_group.command(name='data-migrate', cls=AgentFriendlyCommand)
 @click.option('--apply', 'do_apply', is_flag=True,
               help='Actually copy. Without it this only says what it would do.')
+@click.option('--plan', 'plan_file', type=click.Path(exists=True, dir_okay=False),
+              help='A JSON list of {recipe, slot?, source} for recipes that never '
+                   'recorded their directory anywhere a machine can read. Goes '
+                   'through the same three refusals as a derived plan.')
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
-def data_migrate(do_apply: bool, output_format: str):
+def data_migrate(do_apply: bool, plan_file: str | None, output_format: str):
     """Move recipe data onto the layout in `frago book must-recipe-data`.
 
     Copies; never deletes. Every move is verified by file count and byte total
@@ -2560,7 +2564,13 @@ def data_migrate(do_apply: bool, output_format: str):
     except context.NoIdentity as err:
         raise click.ClickException(str(err)) from err
 
-    plan = data_migration.plan(who)
+    if plan_file:
+        entries = json.loads(Path(plan_file).read_text(encoding='utf-8'))
+        if not isinstance(entries, list):
+            raise click.ClickException(f'{plan_file} 里应当是一个数组')
+        plan = data_migration.plan_from_entries(who, entries)
+    else:
+        plan = data_migration.plan(who)
     applied, failed = [], []
     if do_apply:
         for one in plan.moves:
