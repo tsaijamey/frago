@@ -38,6 +38,13 @@ class RecipeMetadata:
     # recipe's page belongs in its own assets/, where it ships and versions
     # together with the script that answers its requests.
     ui_from: str | None = None
+    # Which other recipes' shared data this one reads. Declared rather than
+    # reached for: the recipe holding the data has no way of knowing somebody
+    # depends on its directory layout, so it changes its own files and breaks a
+    # page it has never heard of. A declaration is the only thing that puts the
+    # dependency somewhere both sides can see it — and it is what lets the
+    # platform hand over the directory instead of the recipe naming a path.
+    reads_common: list[str] = field(default_factory=list)
     # When the recipe first appeared and when it last changed, ISO-8601 strings.
     # Backfilled from the ~/.frago git history (first / last commit touching the
     # recipe directory); a recipe not yet committed falls back to file mtime.
@@ -119,6 +126,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             warnings=data.get('warnings', []),
             flow=data.get('flow', []),
             ui_from=data.get('ui_from'),
+            reads_common=data.get('reads_common') or [],
             created_at=_iso_or_none(data.get('created_at')),
             updated_at=_iso_or_none(data.get('updated_at')),
         )

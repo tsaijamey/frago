@@ -257,7 +257,13 @@ async def run_for_visitor(name: str, request: Request):
         raise HTTPException(status_code=500, detail="could not start the run") from None
 
     ctx = context.InvocationContext(
-        caller=context.VISITOR, slot=identity, data_dir=data_dir
+        caller=context.VISITOR,
+        slot=identity,
+        data_dir=data_dir,
+        # Shared data is machine-level and read-only, so a visitor's run gets the
+        # same door the owner's does — it is the one thing here that is not per
+        # person. Which producers this recipe may read is its own declaration.
+        common_dir=context.common_dirs_for(name),
     )
     _submit(name, params, ctx, key, data_dir, timeout)
     return JSONResponse(status_code=202, content={"accepted": True})

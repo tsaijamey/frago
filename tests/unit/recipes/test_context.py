@@ -341,3 +341,64 @@ class TestAnOwnerRunKnowsWhoseItIs:
         context.apply_to_env(env, context.OWNER_CONTEXT)
         assert env == {}
         assert context.current({}).slot is None
+
+
+class TestSharedDataOnlyReachesWhoAskedForIt:
+    """The directory is handed over only to a recipe that declared it reads
+    somebody's shared data. Almost none do, and a recipe with nothing to share
+    should not be handed a door it has no business opening.
+
+    The declaration is the point: the recipe holding the data has no way of
+    knowing somebody depends on its layout, so it edits its own files and breaks
+    a page it has never heard of. Writing the dependency down is the only thing
+    that puts it where both sides can see it.
+    """
+
+    @pytest.fixture
+    def machine(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FRAGO_IDENTITY_FILE", str(tmp_path / "identity.json"))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        monkeypatch.setenv("FRAGO_USER_STATE_DIR", str(tmp_path / ".frago" / "users"))
+        return tmp_path
+
+    def _registry(self, monkeypatch, declares):
+        class _Meta:
+            reads_common = declares
+
+        class _Recipe:
+            metadata = _Meta()
+
+        class _Registry:
+            def find(self, name, source=None):
+                return _Recipe()
+
+        monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
+
+    def test_a_recipe_that_declared_nothing_is_handed_nothing(self, machine, monkeypatch):
+        self._registry(monkeypatch, [])
+        assert context.common_dirs_for("demo_board") is None
+        assert context.for_owner("demo_board").common_dir is None
+
+    def test_a_recipe_that_declared_something_gets_the_root(self, machine, monkeypatch):
+        self._registry(monkeypatch, ["cn_stock_data_feed"])
+        root = context.common_dirs_for("demo_board")
+        assert root == machine / ".frago" / "recipe-data"
+        assert context.for_owner("demo_board").common_dir == root
+
+    def test_it_reaches_the_recipe_as_a_variable(self, machine, monkeypatch):
+        self._registry(monkeypatch, ["cn_stock_data_feed"])
+        env = {}
+        context.apply_to_env(env, context.for_owner("demo_board"))
+        assert env[context.COMMON_DIR_ENV] == str(machine / ".frago" / "recipe-data")
+
+    def test_a_recipe_nobody_can_find_is_handed_nothing(self, machine, monkeypatch):
+        """A registry that cannot answer must not become a reason to open the
+        door anyway."""
+        from frago.recipes.exceptions import RecipeNotFoundError
+
+        class _Registry:
+            def find(self, name, source=None):
+                raise RecipeNotFoundError(name, [])
+
+        monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
+        assert context.common_dirs_for("nope") is None

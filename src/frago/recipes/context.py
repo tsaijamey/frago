@@ -274,6 +274,32 @@ def current(env: Mapping[str, str] | None = None) -> InvocationContext:
     )
 
 
+def common_dirs_for(recipe_name: str) -> Path | None:
+    """The directory a run may read other recipes' shared data from.
+
+    Handed over as one root rather than one path per producer: the recipe joins
+    the producer's name onto it, and which producers it may join is the list it
+    declared in its own metadata — so the dependency is written down on both
+    sides instead of living as a path buried in somebody's source.
+
+    None when the recipe declared nothing, which is almost all of them. An
+    empty variable and an absent one are different claims, and a recipe with
+    nothing to share should not be handed a door it has no business opening.
+    """
+    from frago.recipes.app_state import RECIPE_DATA
+    from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.registry import get_registry
+
+    try:
+        recipe = get_registry().find(recipe_name)
+    except (RecipeNotFoundError, OSError):
+        return None
+    declared = getattr(recipe.metadata, "reads_common", None) or []
+    if not declared:
+        return None
+    return Path.home() / ".frago" / RECIPE_DATA
+
+
 def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext:
     """The context an owner run gets: whose it is, and where it writes.
 
@@ -297,6 +323,7 @@ def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext
         caller=OWNER,
         slot=who,
         data_dir=recipe_data_dir(who, recipe_name, project) if moved else None,
+        common_dir=common_dirs_for(recipe_name),
     )
 
 
