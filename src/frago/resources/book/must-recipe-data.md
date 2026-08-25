@@ -135,6 +135,28 @@ def data_dir() -> Path:
 或者在 `main()` 开头一次性填好。NEVER 在模块顶层写 `LEDGER = DATA_DIR / "x"`——
 那等于把顶层求值又请回来一次。
 
+### 落点由调用方参数给的那一类
+
+有的配方把落点做成必填参数，自己不拼任何路径。它没有违反上面这条，但仍然要改一处：
+**参数没给时，用平台交代的落点，NEVER 直接报错退出。**
+
+```python
+# ❌ 没传就失败——平台明明给了落点，它用不上
+raw = params.get("dir")
+if not raw:
+    fail("Missing required parameter: dir")
+
+# ✅ 调用方说了算；没说就用平台的答案
+raw = (params.get("dir") or "").strip() or (os.environ.get("FRAGO_RECIPE_DATA_DIR") or "").strip()
+if not raw:
+    raise RuntimeError("既没有传 dir，平台也没有交代落点")
+```
+
+这不是「自己拼路径」——平台的答案不是配方发明的。
+
+为什么必须改：这类配方的数据也会被迁走，而调用方还在传老路径，于是新落点那份
+**没有任何人读**。一份没人读的副本比没有更糟——它看着像迁移完成了。
+
 NEVER 改成 `import frago`：带 PEP 723 块的配方跑在隔离环境里，import 不到。
 
 ## 与 must-data-dir 的分界
