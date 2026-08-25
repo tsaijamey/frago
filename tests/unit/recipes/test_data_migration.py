@@ -170,3 +170,53 @@ class TestTheManifestIsWhatMakesTheCopiesSafe:
     def test_it_can_be_asked_what_has_already_moved(self, home):
         self._migrated(home)
         assert (RECIPE, "default") in data_migration.already_migrated(home)
+
+
+class TestTheThingsItRefusesToMove:
+    """Three shapes it must recognise and stop on. Each was found by running the
+    plan against a real machine before running it for effect — every one of them
+    would have looked like a successful migration.
+    """
+
+    def test_two_slots_claiming_one_directory_stops_it(self, home):
+        """The defect itself: the platform thinks there are two bodies of work
+        and the disk holds one. Copying it makes two that then drift apart —
+        this tool committing, by hand, the failure it exists to end."""
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "ledger")
+        _slot(home, "trade_history", "default", {"dataDir": str(source)})
+        _slot(home, "trade_ledger", "default", {"dataDir": str(source)})
+        result = data_migration.plan(WHO, home)
+        assert not result.moves
+        assert {b[0] for b in result.blocked} == {"trade_history", "trade_ledger"}
+        assert "变成几份" in result.blocked[0][2]
+
+    def test_a_dated_deliverable_directory_stays_where_it_is(self, home):
+        """`data/<subject>/<date>-<slug>/` is somebody's filed work. Pulling it
+        into the recipe tree files it where nobody looks and leaves the original
+        as the copy people actually open."""
+        source = _data(home, ".frago", "data", "one-off", "20260527-tau-deepdive")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        result = data_migration.plan(WHO, home)
+        assert not result.moves
+        assert "交付物" in result.blocked[0][2]
+
+    def test_a_directory_inside_a_recipes_own_package_stays(self, home):
+        source = _data(home, ".frago", "recipes", "workflows", RECIPE, "model")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        result = data_migration.plan(WHO, home)
+        assert not result.moves
+        assert "代码包" in result.blocked[0][2]
+
+    def test_an_ordinary_directory_is_still_moved(self, home):
+        """The gates must not swallow the normal case."""
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "board")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        result = data_migration.plan(WHO, home)
+        assert len(result.moves) == 1 and not result.blocked
+
+    def test_a_dated_directory_deeper_down_is_still_caught(self, home):
+        """The date can sit at either level; `must-data-dir` puts it at the
+        second, but a recipe pointing one level further in is the same claim."""
+        source = _data(home, ".frago", "data", "etf", "20260807-composite", "out")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        assert not data_migration.plan(WHO, home).moves

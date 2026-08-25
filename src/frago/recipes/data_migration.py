@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,11 +94,12 @@ class Unresolved:
 class Plan:
     moves: list[Move] = field(default_factory=list)
     unresolved: list[Unresolved] = field(default_factory=list)
+    blocked: list[tuple[str, str, str]] = field(default_factory=list)
     skipped: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return len(self.moves) + len(self.unresolved)
+        return len(self.moves) + len(self.unresolved) + len(self.blocked)
 
 
 def _slot_states(home: Path) -> list[tuple[str, str, dict[str, Any]]]:
@@ -164,6 +166,18 @@ def plan(identity: str, home: Path | None = None) -> Plan:
         if not source.is_dir():
             result.skipped.append((recipe, slot, f"记着的目录不存在：{source}"))
             continue
+        if _is_deliverable(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这是带日期的交付物目录、不是配方工作数据，按分界它留在原地：{source}",
+            ))
+            continue
+        if _is_recipe_code(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这个目录在配方自己的代码包里，搬走会拆掉配方本体：{source}",
+            ))
+            continue
         result.moves.append(Move(recipe, slot, source, target))
         if keys:
             # It recorded the platform's key *and* invented some of its own. The
@@ -171,7 +185,65 @@ def plan(identity: str, home: Path | None = None) -> Plan:
             # that names two directories may well be reading the second from
             # somewhere this tool has no business relocating.
             result.unresolved.append(Unresolved(recipe, slot, keys, values))
+
+    shared = _shared_sources(result.moves)
+    if shared:
+        result.moves = [m for m in result.moves if m.source.resolve() not in shared]
+        for src, claims in shared.items():
+            who = "、".join(f"{m.recipe}/{m.slot}" for m in claims)
+            for one in claims:
+                result.blocked.append((
+                    one.recipe, one.slot,
+                    f"这个目录同时被 {who} 认领。复制它就是把一份数据变成几份——"
+                    f"正是这次要修的毛病。先定下它归谁：{src}",
+                ))
     return result
+
+
+#: A transaction directory under ``must-data-dir``: a subject, then a date and a
+#: slug. What lives there is a deliverable a person filed, not a recipe's working
+#: data, and the two trees are kept apart on purpose — see ``must-recipe-data``.
+_DATED = re.compile(r"^\d{8}-")
+
+
+def _is_deliverable(source: Path, home: Path) -> bool:
+    """Whether this directory is somebody's filed work rather than a recipe's.
+
+    A recipe that published a dated transaction directory as its data directory
+    was reaching into the other tree. Copying it into the recipe's own area
+    would put a deliverable somewhere nobody looks for one, and leave the
+    original as the copy people actually open.
+    """
+    data_root = home / ".frago" / "data"
+    if not source.is_relative_to(data_root):
+        return False
+    return any(_DATED.match(part) for part in source.relative_to(data_root).parts)
+
+
+def _is_recipe_code(source: Path, home: Path) -> bool:
+    """Whether this directory is part of a recipe's own package.
+
+    Some recipes ship data beside their code. That is its own problem, but it is
+    not this one: moving it takes a file the recipe imports or reads by relative
+    path and leaves the recipe broken, which is a worse outcome than the
+    duplication being fixed here.
+    """
+    return source.is_relative_to(home / ".frago" / "recipes")
+
+
+def _shared_sources(moves: list[Move]) -> dict[Path, list[Move]]:
+    """Sources that more than one slot claims.
+
+    Two slots pointing at one directory is the defect this whole layout exists
+    to remove: the platform believes there are two bodies of work and the disk
+    holds one, each overwriting the other in silence. Copying it would turn one
+    directory into two that then drift apart — this tool reproducing, by hand,
+    exactly the failure it was written to end. So it stops and says whose.
+    """
+    seen: dict[Path, list[Move]] = {}
+    for one in moves:
+        seen.setdefault(one.source.resolve(), []).append(one)
+    return {src: claims for src, claims in seen.items() if len(claims) > 1}
 
 
 def _weigh(directory: Path) -> tuple[int, int]:
