@@ -234,3 +234,39 @@ class TestThisMachineKnowsWhoItIs:
         with pytest.raises(context.NoIdentity):
             context.default_identity(create=False)
         assert not here.exists()
+
+
+class TestDataEverybodyReadsAndOneRecipeWrites:
+    """Cross-user data reaches a recipe as a directory the platform names, not
+    as something linked into that person's own tree.
+
+    A link states where a thing is. What this directory needs stated is who may
+    write it — everyone reads the same copy and exactly one recipe updates it —
+    and no arrangement of directories can say that. Handing it over as its own
+    variable keeps position and permission as two separate claims.
+    """
+
+    def test_it_reaches_a_visitor_run(self, tmp_path):
+        env = {}
+        context.apply_to_env(env, context.InvocationContext(
+            caller=context.VISITOR, slot="a" * 32,
+            data_dir=tmp_path / "mine", common_dir=tmp_path / "everyones",
+        ))
+        assert env[context.COMMON_DIR_ENV] == str(tmp_path / "everyones")
+        assert context.current(env).common_dir == tmp_path / "everyones"
+
+    def test_a_recipe_with_nothing_to_share_is_told_nothing(self, tmp_path):
+        env = {}
+        context.apply_to_env(env, context.InvocationContext(
+            caller=context.VISITOR, slot="a" * 32, data_dir=tmp_path / "mine",
+        ))
+        assert context.COMMON_DIR_ENV not in env
+        assert context.current(env).common_dir is None
+
+    def test_an_owner_run_clears_it_like_the_rest(self, tmp_path):
+        """Inherited from the server process or set in a .env, it would reach
+        every recipe that process starts. Not writing it is not the same as it
+        not being there."""
+        env = {context.COMMON_DIR_ENV: str(tmp_path / "stale")}
+        context.apply_to_env(env, context.OWNER_CONTEXT)
+        assert context.COMMON_DIR_ENV not in env

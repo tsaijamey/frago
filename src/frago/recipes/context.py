@@ -53,11 +53,17 @@ CALLER_ENV = "FRAGO_RECIPE_CALLER"
 SLOT_ENV = "FRAGO_RECIPE_SLOT"
 DATA_DIR_ENV = "FRAGO_RECIPE_DATA_DIR"
 
+#: Where this recipe's cross-user data may be read from. Read-only by contract:
+#: everyone reads the same copy and exactly one recipe updates it, which is a
+#: rule about permission and cannot be expressed by putting the directory
+#: somewhere — a link says where a thing is and never who may write it.
+COMMON_DIR_ENV = "FRAGO_RECIPE_COMMON_DIR"
+
 #: The three keys, as one thing. Anything that writes the context writes all of
 #: them and anything that clears it clears all of them: a half-applied context
 #: is a visitor slot with an owner's directory, which is exactly the mix-up this
 #: module exists to prevent.
-CONTEXT_ENV_KEYS = (CALLER_ENV, SLOT_ENV, DATA_DIR_ENV)
+CONTEXT_ENV_KEYS = (CALLER_ENV, SLOT_ENV, DATA_DIR_ENV, COMMON_DIR_ENV)
 
 OWNER = "owner"
 VISITOR = "visitor"
@@ -194,6 +200,7 @@ class InvocationContext:
     caller: str
     slot: str | None = None
     data_dir: Path | None = None
+    common_dir: Path | None = None
 
     @property
     def is_visitor(self) -> bool:
@@ -241,7 +248,13 @@ def current(env: Mapping[str, str] | None = None) -> InvocationContext:
             f"{CALLER_ENV}={VISITOR} but {DATA_DIR_ENV} is empty: a visitor run with "
             f"nowhere of its own to write would write wherever the recipe pleases"
         )
-    return InvocationContext(caller=VISITOR, slot=slot, data_dir=Path(raw_dir).expanduser())
+    raw_common = _read(env, COMMON_DIR_ENV)
+    return InvocationContext(
+        caller=VISITOR,
+        slot=slot,
+        data_dir=Path(raw_dir).expanduser(),
+        common_dir=Path(raw_common).expanduser() if raw_common else None,
+    )
 
 
 def is_visitor(env: Mapping[str, str] | None = None) -> bool:
@@ -332,3 +345,5 @@ def apply_to_env(env: dict[str, str], ctx: InvocationContext | None = None) -> N
     env[CALLER_ENV] = VISITOR
     env[SLOT_ENV] = ctx.slot
     env[DATA_DIR_ENV] = str(ctx.data_dir)
+    if ctx.common_dir is not None:
+        env[COMMON_DIR_ENV] = str(ctx.common_dir)
