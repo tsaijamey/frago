@@ -332,10 +332,15 @@ def schedule_history(schedule_id: str):
     click.echo("-" * 70)
 
     for i, entry in enumerate(reversed(history), 1):
-        triggered = entry.get("triggered_at", "—")
-        if triggered and triggered != "—":
+        # `or`, not a `get` default: a manually triggered run records the key
+        # with a null value rather than leaving it out, and a default only fires
+        # on a missing key. The whole listing died formatting that None — so the
+        # one place that answers "did this check actually run" was unreadable
+        # exactly for the runs somebody had gone and triggered by hand.
+        triggered = entry.get("triggered_at") or "—"
+        if triggered != "—":
             triggered = triggered[:19]
-        status = entry.get("status", "—")
+        status = entry.get("status") or "—"
         task_id = entry.get("task_id") or "—"
         click.echo(f"{i:<4} {triggered:<22} {status:<14} {task_id}")
 

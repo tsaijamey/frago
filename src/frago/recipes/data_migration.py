@@ -307,7 +307,13 @@ def _is_a_root(source: Path, home: Path) -> bool:
 #: Trees frago itself owns and writes. A recipe that keeps things in one of
 #: these is not keeping its own data — it is writing into the platform's, which
 #: is a separate problem and not one a copy can fix.
-_PLATFORM_TREES = ("sessions", "app-state", "executions", "traces", "books", "bin", "viewer")
+#: ``state`` earned its place the hard way: the whole of ``~/.frago/state`` was
+#: filed as one recipe's data directory and copied under its name, carrying
+#: another recipe's cursor, a team watcher, and a credentials file into a second
+#: location — the duplication this tool exists to end, performed by the tool
+#: itself. The gate was there and this name simply was not on the list.
+_PLATFORM_TREES = ("sessions", "app-state", "executions", "traces", "books",
+                   "bin", "viewer", "state")
 
 
 def _is_platform_owned(source: Path, home: Path) -> bool:
@@ -468,7 +474,7 @@ def apply(one: Move, home: Path | None = None) -> dict[str, Any]:
     home = home or Path.home()
     before = _weigh(one.source)
 
-    if one.target.exists():
+    if one.target.exists() and _weigh(one.target) != (0, 0):
         now = _weigh(one.target)
         if now == before:
             return _record(one, before, home, note="已经搬过，内容一致，跳过")
@@ -502,7 +508,16 @@ def apply(one: Move, home: Path | None = None) -> dict[str, Any]:
             f"覆盖它就是毁掉那份工作。没有动任何东西，先弄清那是什么再来。"
         )
 
+    # An empty target counts as no target. Every recipe now creates its data
+    # directory before writing anything, so merely *running* one leaves an empty
+    # directory behind — and the guard above then refused the migration with
+    # "somebody has written here, overwriting it destroys their work" while
+    # reporting, in the same sentence, that it holds zero files and zero bytes.
+    # A refusal whose stated reason contradicts its own evidence teaches people
+    # to force past it, which is the last habit this tool should be building.
     one.target.parent.mkdir(parents=True, exist_ok=True)
+    if one.target.exists():
+        one.target.rmdir()  # empty by the check above; fails loudly if not
     shutil.copytree(one.source, one.target, symlinks=True)
     after = _weigh(one.target)
     if after != before:
@@ -549,6 +564,10 @@ def _record(one: Move, weight: tuple[int, int], home: Path, note: str = "") -> d
     """
     entry = {
         "when": datetime.now().astimezone().isoformat(timespec="seconds"),
+        # Which kind of line this is. Written from here on so the ledger says so
+        # itself; the lines already in the file predate the lifecycle and are
+        # read as copies, because that is what every one of them is.
+        "lifecycle": LIFECYCLE_COPIED,
         "recipe": one.recipe,
         "slot": one.slot,
         "source": str(one.source),
@@ -587,3 +606,467 @@ def already_migrated(home: Path | None = None) -> set[tuple[str, str]]:
         if isinstance(entry, dict) and entry.get("recipe"):
             done.add((entry["recipe"], entry.get("slot", "default")))
     return done
+
+
+def data_left_behind(
+    recipe_name: str,
+    identity: str,
+    slot: str = DEFAULT_SLOT_NAME,
+    home: Path | None = None,
+) -> Path | None:
+    """The old directory this slot's records are still sitting in, if any.
+
+    The platform withholds a recipe's new directory while its records are
+    elsewhere, because pointing it at an empty one is a fresh start nobody asked
+    for. The question that gate has to ask is **"is anything of this recipe's
+    still under an old path"** — and it used to ask "has anything of this
+    recipe's ever been copied", which is not the same question and is wrong in
+    exactly one direction: a recipe that never had data cannot appear in the
+    manifest, so it was told forever that the platform had not said where to
+    write. ``etf_dma_signal_push`` kept its state inside its own package, which
+    the migration refuses to move on purpose; once it stopped inventing a
+    default of its own it could not start at all.
+
+    So the answer comes from what is on disk rather than from what has been
+    copied: a slot that recorded a directory, still has it, and has not had it
+    copied is left behind. A slot that recorded nothing has nothing to lose.
+
+    Scoped to one slot rather than the whole recipe. A multi-project recipe
+    migrates its projects one at a time, and one project still waiting is not a
+    reason to refuse the other six.
+    """
+    home = home or Path.home()
+    slot_file = home / ".frago" / APP_STATE_DIR.name / recipe_name / f"{slot}.json"
+    try:
+        state = json.loads(slot_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    raw = state.get(PLATFORM_KEY)
+    if not isinstance(raw, str) or not raw:
+        return None
+    if (recipe_name, slot) in already_migrated(home):
+        return None
+    try:
+        target = recipe_data_dir(
+            identity, recipe_name, None if slot == DEFAULT_SLOT_NAME else slot
+        )
+    except InvalidSlotName:
+        return None
+    source = Path(raw).expanduser()
+    if source == target or not source.is_dir():
+        return None
+    return source
+
+
+#: What a ledger line records. A line with no ``lifecycle`` key is a copy: every
+#: line written before this existed is one, and reading them as anything else
+#: would rewrite history by interpretation — which is exactly what an
+#: append-only file is supposed to make impossible.
+LIFECYCLE_COPIED = "copied"
+LIFECYCLE_SEALED = "sealed"
+
+#: The three stages a copied directory can be in. There is no fourth: either
+#: something still touches the old copy, or nothing does and it is waiting for a
+#: date, or it is gone and the ledger says so.
+STILL_LIVE = "still_live"
+READY_TO_EXPIRE = "ready_to_expire"
+SEALED = "sealed"
+
+#: How long an old copy has to sit untouched before "nobody reads this" is worth
+#: believing. A month covers a monthly job, which is the longest cadence anything
+#: on this machine runs at; below that the quiet may just be the gap between two
+#: runs of the very thing that would have written to it.
+QUIET_ENOUGH_DAYS = 30
+
+
+@dataclass(frozen=True)
+class Audited:
+    """One migrated body of data, and which of the three stages it is in.
+
+    ``reasons`` is what put it there, in the words a person can act on. A stage
+    without a reason is a verdict nobody can check — and the whole reason this
+    exists is that the last three rounds of "which copy is real" were settled by
+    hand, by comparing timestamps.
+    """
+
+    recipe: str
+    slot: str
+    source: Path
+    target: Path
+    when: str
+    stage: str
+    reasons: tuple[str, ...] = ()
+    #: Newest file in the old copy, ISO. Empty when the old copy is gone.
+    last_write: str = ""
+    #: Days since that write. -1 when there is nothing left to measure.
+    quiet_days: int = -1
+    files: int = 0
+    size: int = 0
+
+    @property
+    def quiet_enough(self) -> bool:
+        return self.quiet_days >= QUIET_ENOUGH_DAYS
+
+
+@dataclass
+class Audit:
+    """What the ledger's entries look like right now.
+
+    ``ledger_exists`` is carried separately from an empty list on purpose. "I
+    scanned and everything is fine" and "there is nothing here to scan" produce
+    the same empty result and mean opposite things, and the second one silently
+    passing for the first is how a check stops being a check.
+    """
+
+    identity: str
+    ledger: Path
+    ledger_exists: bool
+    lines: int = 0
+    checked: list[Audited] = field(default_factory=list)
+
+    def at(self, stage: str) -> list[Audited]:
+        return [one for one in self.checked if one.stage == stage]
+
+    @property
+    def still_live(self) -> list[Audited]:
+        return self.at(STILL_LIVE)
+
+    @property
+    def ready(self) -> list[Audited]:
+        return self.at(READY_TO_EXPIRE)
+
+    @property
+    def sealed(self) -> list[Audited]:
+        return self.at(SEALED)
+
+    @property
+    def needs_attention(self) -> int:
+        """How many a person has to do something about. Zero is a real answer
+        and is not the same as having checked nothing — see ``ledger_exists``."""
+        return len(self.still_live)
+
+
+def _ledger_lines(home: Path) -> list[dict[str, Any]]:
+    """Every well-formed line, oldest first. Damaged lines are stepped over.
+
+    A single unparseable line must not take the rest of the ledger with it: the
+    whole point of one JSON document per line is that the file survives partial
+    damage, and a reader that gives up on the first bad byte throws that away.
+    """
+    try:
+        raw = manifest_path(home).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict) and entry.get("recipe"):
+            out.append(entry)
+    return out
+
+
+def _unit_key(entry: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(entry["recipe"]),
+        str(entry.get("slot") or DEFAULT_SLOT_NAME),
+        str(entry.get("source") or ""),
+    )
+
+
+def _moment(stamp: str) -> datetime | None:
+    """A ledger timestamp as a moment, or ``None`` if it cannot be read as one.
+
+    A line whose ``when`` is damaged must not silently become "the beginning of
+    time", which would report every file under it as written after the copy and
+    bury the real findings under fifty false ones.
+    """
+    try:
+        return datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+
+
+def _newest_write(directory: Path) -> tuple[float, Path] | None:
+    """The most recently written file anywhere under here, and which one.
+
+    Naming the file matters as much as the time. "Something still writes here"
+    sends a person hunting; "``progress.json`` was written at 09:43" tells them
+    which process to go and stop.
+    """
+    newest: tuple[float, Path] | None = None
+    try:
+        for path in directory.rglob("*"):
+            try:
+                if path.is_file() and not path.is_symlink():
+                    stamp = path.stat().st_mtime
+                    if newest is None or stamp > newest[0]:
+                        newest = (stamp, path)
+            except OSError:
+                continue
+    except OSError:
+        return newest
+    return newest
+
+
+def _path_claims(home: Path, sources: list[tuple[str, str, str]]) -> list[tuple[str, Path]]:
+    """Every directory anything on this machine claims, and which recipe claims it.
+
+    Both halves are needed. A slot's *own* invented keys count — ``ledgerPath``
+    and friends are how a recipe says "I read this", and a recipe reading inside
+    someone else's migrated source is the thing being looked for. And a ledger
+    source counts, because a directory two migrations both copied is two copies
+    of one thing, which is the original disease.
+    """
+    claims: list[tuple[str, Path]] = []
+    root = home / ".frago" / APP_STATE_DIR.name
+    if root.is_dir():
+        for recipe_dir in sorted(root.iterdir()):
+            if not recipe_dir.is_dir():
+                continue
+            for slot_file in sorted(recipe_dir.glob("*.json")):
+                try:
+                    state = json.loads(slot_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(state, dict):
+                    continue
+                for value in state.values():
+                    if isinstance(value, str) and value.startswith("/"):
+                        claims.append((recipe_dir.name, Path(value)))
+    for recipe, _slot, source in sources:
+        if source:
+            claims.append((recipe, Path(source)))
+    return claims
+
+
+def _other_claimants(source: Path, recipe: str, claims: list[tuple[str, Path]],
+                     home: Path) -> list[str]:
+    """Other recipes whose data lives in, or around, this source directory.
+
+    The question is not "is this directory's name on a blocklist" — that is the
+    gate's job, before the fact, and a list is only as good as the day somebody
+    last added to it. The question here is whether the contents ever served one
+    recipe, and the machine can answer that from who else points into the tree.
+
+    ``~/.frago/state`` was filed as one poller's data directory and copied whole,
+    carrying a team watcher, another recipe's cursor and a credentials file under
+    that poller's name. Nothing about the *name* said so. What said so was that
+    another recipe recorded ``~/.frago/state/upwork`` as its own — a claim
+    sitting inside the source, which no blocklist would ever have to be updated
+    to notice.
+
+    Both directions count. A source with someone else's directory inside it was
+    never one recipe's; a source sitting inside a directory someone else copied
+    wholesale has had its bytes duplicated a second time, one level up. An
+    ancestor that is a whole tree is ignored: "everything is inside
+    ``~/.frago/data``" is true and says nothing.
+    """
+    found = set()
+    for other, claimed in claims:
+        if other == recipe:
+            continue
+        try:
+            if claimed == source or claimed.is_relative_to(source):
+                found.add(f"{other} 认领了源目录里的 {claimed}")
+            elif source.is_relative_to(claimed) and not _is_a_root(claimed, home):
+                found.add(f"{other} 把包着源目录的 {claimed} 整个认领了")
+        except (OSError, ValueError):
+            continue
+    return sorted(found)
+
+
+def _page_address(recipe: str, slot: str, home: Path) -> str | None:
+    """The directory this recipe's page reads, as its slot records it.
+
+    ``None`` covers two different situations that are both fine here: the slot
+    was never published, or it holds no directory at all. Neither one points a
+    reader at the old copy, which is the only failure this check is about.
+    """
+    slot_file = home / ".frago" / APP_STATE_DIR.name / recipe / f"{slot}.json"
+    try:
+        state = json.loads(slot_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    recorded = state.get(PLATFORM_KEY)
+    return recorded if isinstance(recorded, str) and recorded else None
+
+
+def audit(identity: str, home: Path | None = None, *, now: datetime | None = None) -> Audit:
+    """Sort every copy the ledger records into the three stages.
+
+    Reads only, like ``plan``. Copying without deleting was the right call — a
+    wrong guess about somebody's own records has to be recoverable — but "both
+    copies exist" is a state that has to end, and until this existed the ledger
+    could only say a copy was *made*. It had no way to say the old one had
+    stopped mattering, so nothing ever did, and three months of copies sat there
+    with no way to tell the finished ones from the ones still being written to.
+
+    The three questions, each one a round of hand-comparing timestamps that
+    should not have to happen again:
+
+    * Is anything still **writing** to the old copy? Then something never
+      switched over, and deleting it loses whatever it wrote.
+    * Is anything still **reading** it? The page's slot is the readable form of
+      that: a slot recording the old directory means people are looking at the
+      old copy while the recipe fills the new one.
+    * Did the source ever belong to this recipe at all? See ``_other_claimants``.
+
+    Anything that answers yes to one of those is not finished. Everything else
+    has been quiet since a date this prints, and that date is what somebody can
+    put an expiry on.
+    """
+    home = home or Path.home()
+    now = now or datetime.now().astimezone()
+    ledger = manifest_path(home)
+    lines = _ledger_lines(home)
+    report = Audit(identity=identity, ledger=ledger,
+                   ledger_exists=ledger.is_file(), lines=len(lines))
+
+    copies: dict[tuple[str, str, str], dict[str, Any]] = {}
+    seals: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for entry in lines:
+        kind = str(entry.get("lifecycle") or LIFECYCLE_COPIED)
+        # Last line wins. The file is append-only, so a directory copied twice
+        # has two lines and the newer one describes what is on disk.
+        (seals if kind == LIFECYCLE_SEALED else copies)[_unit_key(entry)] = entry
+
+    claims = _path_claims(home, list(copies))
+    for key, entry in copies.items():
+        recipe, slot, raw_source = key
+        source = Path(raw_source)
+        target = Path(str(entry.get("target") or ""))
+        when = str(entry.get("when") or "")
+        files = int(entry.get("files") or 0)
+        size = int(entry.get("bytes") or 0)
+        sealed_line = seals.get(key)
+        alive = source.is_dir()
+
+        if sealed_line is not None:
+            reasons = [f"账本已记封存：{sealed_line.get('when', '?')}"
+                       f"{'，' + str(sealed_line.get('how')) if sealed_line.get('how') else ''}"]
+            if alive:
+                # Both statements cannot be true. Saying so is the only useful
+                # thing to do with them — silently trusting either one is how a
+                # ledger stops matching the disk without anybody finding out.
+                reasons.append(f"但源目录还在：{source}。账本和磁盘对不上，以磁盘为准去看一眼")
+            report.checked.append(Audited(recipe, slot, source, target, when, SEALED,
+                                          tuple(reasons), files=files, size=size))
+            continue
+
+        if not alive:
+            report.checked.append(Audited(
+                recipe, slot, source, target, when, SEALED,
+                (f"源目录已经不在了：{source}。"
+                 f"但账本上没有这一笔封存记录——谁删的、删去哪了，现在没人答得上来，"
+                 f"补记一条封存行",),
+                files=files, size=size))
+            continue
+
+        reasons = []
+        newest = _newest_write(source)
+        last_write, quiet_days = "", -1
+        if newest is not None:
+            stamp = datetime.fromtimestamp(newest[0]).astimezone()
+            last_write = stamp.isoformat(timespec="seconds")
+            quiet_days = max(0, (now - stamp).days)
+            # Compared as moments, not as strings: two correct timestamps sort
+            # the wrong way as text the moment their offsets differ, and this
+            # decides whether a directory is safe to delete.
+            #
+            # Both sides are cut to whole seconds first, because the ledger
+            # records whole seconds. Comparing a file's microseconds against a
+            # truncated ledger stamp made every directory look like it had been
+            # written to *after* its own migration — the copy is recorded at
+            # 09:33:25 and the file it just read is stamped 09:33:25.847 — so a
+            # freshly migrated machine reported every single copy as "not cut
+            # over yet". A check that fires on everything points at nothing.
+            copied_at = _moment(when)
+            if copied_at is not None and stamp.replace(microsecond=0) > copied_at:
+                reasons.append(
+                    f"搬完之后老地方还在被写：{last_write} 写了 {newest[1]}（搬于 {when}）。"
+                    f"有东西没切过来，这会儿删掉老的就是删掉它写的那些")
+
+        recorded = _page_address(recipe, slot, home)
+        if recorded is not None:
+            try:
+                proper = recipe_data_dir(
+                    identity, recipe, None if slot == DEFAULT_SLOT_NAME else slot)
+            except InvalidSlotName:
+                proper = None
+            if proper is not None and Path(recorded).expanduser() != proper:
+                where = "就是这次搬走的那个老地方" if Path(recorded).expanduser() == source \
+                    else "既不是新落点也不是老源头"
+                reasons.append(
+                    f"页面的地址还记着 {recorded}（{where}），平台算出来的是 {proper}。"
+                    f"页面读一个、配方写另一个，刷新永远成功，数字永远是旧的")
+
+        shared = _other_claimants(source, recipe, claims, home)
+        if shared:
+            reasons.append(
+                "这个源头不是只服务这一个配方：" + "；".join(shared)
+                + "。当初搬的时候把别人的东西一起认领了，删它会删掉别人的")
+
+        report.checked.append(Audited(
+            recipe, slot, source, target, when,
+            STILL_LIVE if reasons else READY_TO_EXPIRE,
+            tuple(reasons), last_write=last_write, quiet_days=quiet_days,
+            files=files, size=size))
+
+    report.checked.sort(key=lambda one: (one.recipe, one.slot))
+    return report
+
+
+def seal(
+    recipe: str,
+    slot: str,
+    source: Path,
+    target: Path,
+    how: str,
+    where: str = "",
+    note: str = "",
+    home: Path | None = None,
+) -> dict[str, Any]:
+    """Write down that an old copy is out of service. Appends; never rewrites.
+
+    This is the end the copies never had. ``apply`` records that a copy was
+    made, and that line stays true forever — so the fact that the original later
+    stopped being read cannot be expressed by editing it, only by adding a line
+    that says so. Anyone reading the ledger months from now gets both: the move
+    happened on this date, and this path was closed on that one.
+
+    ``how`` is ``deleted`` or ``archived``, ``where`` is where it went when it
+    was archived. Recording the destination is the difference between "it is
+    gone" and "it is somewhere, and here is where" — the second is the only one
+    a person can act on when it turns out something was still needed.
+
+    Writing this line is not deleting anything. The removal is a separate,
+    deliberate act; this only records that it was decided.
+    """
+    entry = {
+        "when": (datetime.now().astimezone()).isoformat(timespec="seconds"),
+        "lifecycle": LIFECYCLE_SEALED,
+        "recipe": recipe,
+        "slot": slot,
+        "source": str(source),
+        "target": str(target),
+        "how": how,
+        "where": where,
+        "source_kept": False,
+        "note": note,
+    }
+    path = manifest_path(home or Path.home())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    return entry

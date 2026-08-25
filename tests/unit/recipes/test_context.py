@@ -277,11 +277,11 @@ class TestAnOwnerRunKnowsWhoseItIs:
     recipe to invent a directory of its own — the entrance every one of these
     accidents came through.
 
-    It now carries the same answers a visitor's run does, with one condition:
-    the directory is handed over only once this recipe's data has actually been
-    copied there. Pointing a recipe at an empty directory while its records sit
-    under the old path would be a fresh start nobody asked for and nobody is told
-    about.
+    It now carries the same answers a visitor's run does. The directory is
+    withheld in one case and one only: this recipe's records are still under an
+    old path that nothing has copied, where pointing it at an empty directory
+    would be a fresh start nobody asked for and nobody is told about. A recipe
+    that never had data anywhere is not that case and gets its directory.
     """
 
     @pytest.fixture
@@ -304,15 +304,75 @@ class TestAnOwnerRunKnowsWhoseItIs:
         assert ctx.slot == context.default_identity()
         assert ctx.is_visitor is False
 
-    def test_no_directory_until_the_data_is_actually_there(self, machine):
+    def _say_it_has_records_elsewhere(self, machine, recipe, where, slot="default"):
+        import json
+
+        where.mkdir(parents=True, exist_ok=True)
+        (where / "ledger.json").write_text("[]", encoding="utf-8")
+        note = machine / ".frago" / "app-state" / recipe / f"{slot}.json"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(json.dumps({"dataDir": str(where)}), encoding="utf-8")
+
+    def test_no_directory_while_its_records_are_somewhere_else(self, machine):
+        """The one case that withholds it: there is real data under an old path
+        and nothing has copied it. Pointing the recipe at an empty directory
+        here is a fresh start nobody asked for."""
+        self._say_it_has_records_elsewhere(
+            machine, "demo_board", machine / ".frago" / "data" / "board"
+        )
         assert context.for_owner("demo_board").data_dir is None
 
-    def test_the_directory_arrives_once_the_move_is_recorded(self, machine):
+    def test_a_recipe_that_never_had_any_data_still_gets_its_directory(self, machine):
+        """It can never appear in the migration manifest, having nothing to
+        migrate. Reading the manifest as the test meant such a recipe was told
+        forever that the platform had not said where to write — harmless while
+        every recipe carried a default of its own, fatal once they stopped.
+
+        Found by running `etf_dma_signal_push`, whose state lives inside its own
+        package: the migration refuses to move that on purpose, so it could not
+        start at all."""
         from frago.recipes import app_state
 
+        ctx = context.for_owner("demo_board")
+        assert ctx.data_dir == app_state.recipe_data_dir(ctx.slot, "demo_board")
+
+    def test_a_slot_that_recorded_no_directory_has_nothing_to_lose(self, machine):
+        import json
+
+        note = machine / ".frago" / "app-state" / "demo_board" / "default.json"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(json.dumps({"defaults": {"top_n": 5}}), encoding="utf-8")
+        assert context.for_owner("demo_board").data_dir is not None
+
+    def test_an_old_directory_that_no_longer_exists_holds_nothing_back(self, machine):
+        """Nothing is under it, so there is nothing to start fresh away from."""
+        self._say_it_has_records_elsewhere(
+            machine, "demo_board", machine / ".frago" / "data" / "board"
+        )
+        import shutil
+
+        shutil.rmtree(machine / ".frago" / "data" / "board")
+        assert context.for_owner("demo_board").data_dir is not None
+
+    def test_the_directory_arrives_once_that_data_is_copied(self, machine):
+        from frago.recipes import app_state
+
+        self._say_it_has_records_elsewhere(
+            machine, "demo_board", machine / ".frago" / "data" / "board"
+        )
         self._say_it_moved(machine, "demo_board")
         ctx = context.for_owner("demo_board")
         assert ctx.data_dir == app_state.recipe_data_dir(ctx.slot, "demo_board")
+
+    def test_one_project_waiting_does_not_hold_back_the_others(self, machine):
+        """A multi-project recipe migrates a project at a time. Judging the
+        recipe as a whole would refuse six projects because a seventh has not
+        moved yet."""
+        self._say_it_has_records_elsewhere(
+            machine, "video_studio", machine / ".frago" / "data" / "old-demo", "20260727-demo"
+        )
+        assert context.for_owner("video_studio", "20260727-demo").data_dir is None
+        assert context.for_owner("video_studio", "20260820-other").data_dir is not None
 
     def test_a_project_gets_its_own_directory(self, machine):
         from frago.recipes import app_state
@@ -407,10 +467,10 @@ class TestSharedDataOnlyReachesWhoAskedForIt:
 class TestAMultiProjectRecipeIsRecognisedAsMigrated:
     """Its projects move one at a time and it never has a `default` slot.
 
-    Matching the exact slot withheld the directory from every such recipe: the
-    platform had already moved their data and then told them it had not said
-    where to write. Found by running one — the manifest held seven of its
-    projects and it still refused to start.
+    Reading the manifest for this exact slot withheld the directory from every
+    such recipe: the platform had already moved their data and then told them it
+    had not said where to write. Found by running one — the manifest held seven
+    of its projects and it still refused to start.
     """
 
     @pytest.fixture
@@ -433,5 +493,7 @@ class TestAMultiProjectRecipeIsRecognisedAsMigrated:
         ctx = context.for_owner("video_studio")
         assert ctx.data_dir == app_state.recipe_data_dir(ctx.slot, "video_studio")
 
-    def test_a_recipe_with_nothing_migrated_still_gets_nothing(self, machine):
-        assert context.for_owner("never_moved").data_dir is None
+    def test_a_recipe_with_nothing_migrated_is_not_thereby_refused(self, machine):
+        """Nothing of its own is left behind anywhere, so there is nothing for
+        the platform to be quiet about."""
+        assert context.for_owner("never_moved").data_dir is not None

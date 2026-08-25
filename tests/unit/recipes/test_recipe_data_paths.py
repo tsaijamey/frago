@@ -154,3 +154,52 @@ class TestReadingSomebodyElsesDataIsItsOwnOffence:
                '    if not d:\n        raise RuntimeError("x")\n    return d')
         errors, _ = self._scan(src, recipes_on_disk)
         assert not errors
+
+
+class TestTheCheckDoesNotCondemnTheAnswerItAsksFor:
+    """``users/<id>/recipe-data/`` is where the layout puts a recipe's data.
+
+    The platform-tree rule refuses ``~/.frago/users/...`` because that tree is
+    frago's own — and swept up the one thing inside it that is not. Two recipes
+    documenting their real location, correctly, were reported as writing into
+    somebody else's records. A check that condemns the thing it is asking for is
+    worse than no check: the person reading it edits a document that was right
+    into one that is wrong, and the check goes quiet, which reads as agreement.
+    """
+
+    @pytest.fixture
+    def recipe_dir(self, tmp_path, monkeypatch):
+        d = tmp_path / ".frago" / "recipes" / "workflows" / "demo_board"
+        d.mkdir(parents=True)
+        (d / "recipe.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        return d
+
+    def _scan(self, src, me):
+        import sys
+
+        sys.path.insert(0, "src")
+        from frago.cli.recipe_commands import _scan_data_location
+
+        return _scan_data_location(src, me)
+
+    def _platform_complaints(self, src, me):
+        errors, _ = self._scan(src, me)
+        return [e for e in errors if "自己维护的目录" in e]
+
+    @pytest.mark.parametrize("shape", [
+        '"/Users/frago/.frago/users/74e083c8/recipe-data/demo_board/state.json"',
+        '"~/.frago/users/<用户 id>/recipe-data/demo_board/projects/one/ledger.json"',
+    ])
+    def test_the_right_place_is_not_a_violation(self, shape, recipe_dir):
+        assert not self._platform_complaints(f"D = {shape}", recipe_dir)
+
+    @pytest.mark.parametrize("shape", [
+        '"~/.frago/sessions/claude/abc123"',
+        '"~/.frago/projects/<run>/outputs/test.mp4"',
+        '"~/.frago/users/74e083c8/something-else/x.json"',
+    ])
+    def test_the_rest_of_the_platforms_trees_still_are(self, shape, recipe_dir):
+        """Including ``users/`` used for anything other than recipe data — the
+        exception is one directory, not the whole tree."""
+        assert self._platform_complaints(f"D = {shape}", recipe_dir)
