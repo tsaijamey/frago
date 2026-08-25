@@ -270,3 +270,74 @@ class TestDataEverybodyReadsAndOneRecipeWrites:
         env = {context.COMMON_DIR_ENV: str(tmp_path / "stale")}
         context.apply_to_env(env, context.OWNER_CONTEXT)
         assert context.COMMON_DIR_ENV not in env
+
+
+class TestAnOwnerRunKnowsWhoseItIs:
+    """The owner used to carry nothing, and that emptiness is what forced every
+    recipe to invent a directory of its own — the entrance every one of these
+    accidents came through.
+
+    It now carries the same answers a visitor's run does, with one condition:
+    the directory is handed over only once this recipe's data has actually been
+    copied there. Pointing a recipe at an empty directory while its records sit
+    under the old path would be a fresh start nobody asked for and nobody is told
+    about.
+    """
+
+    @pytest.fixture
+    def machine(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FRAGO_IDENTITY_FILE", str(tmp_path / "identity.json"))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        monkeypatch.setenv("FRAGO_USER_STATE_DIR", str(tmp_path / ".frago" / "users"))
+        return tmp_path
+
+    def _say_it_moved(self, machine, recipe, slot="default"):
+        import json
+
+        manifest = machine / ".frago" / "migration-manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"recipe": recipe, "slot": slot}) + "\n")
+
+    def test_it_names_the_person_even_before_anything_moved(self, machine):
+        ctx = context.for_owner("demo_board")
+        assert ctx.slot == context.default_identity()
+        assert ctx.is_visitor is False
+
+    def test_no_directory_until_the_data_is_actually_there(self, machine):
+        assert context.for_owner("demo_board").data_dir is None
+
+    def test_the_directory_arrives_once_the_move_is_recorded(self, machine):
+        from frago.recipes import app_state
+
+        self._say_it_moved(machine, "demo_board")
+        ctx = context.for_owner("demo_board")
+        assert ctx.data_dir == app_state.recipe_data_dir(ctx.slot, "demo_board")
+
+    def test_a_project_gets_its_own_directory(self, machine):
+        from frago.recipes import app_state
+
+        self._say_it_moved(machine, "video_studio", "20260727-demo")
+        ctx = context.for_owner("video_studio", "20260727-demo")
+        assert ctx.data_dir == app_state.recipe_data_dir(
+            ctx.slot, "video_studio", "20260727-demo"
+        )
+
+    def test_it_reaches_the_recipe_and_comes_back_unchanged(self, machine):
+        self._say_it_moved(machine, "demo_board")
+        given = context.for_owner("demo_board")
+        env = {}
+        context.apply_to_env(env, given)
+        read_back = context.current(env)
+        assert read_back.caller == context.OWNER
+        assert read_back.slot == given.slot
+        assert read_back.data_dir == given.data_dir
+
+    def test_a_bare_owner_context_still_clears_everything(self, machine):
+        """A run started by hand, with nobody having said whose it is, behaves
+        exactly as frago always has. That path must not change underneath the
+        recipes that still rely on it."""
+        env = {context.CALLER_ENV: "visitor", context.SLOT_ENV: "x", context.DATA_DIR_ENV: "/y"}
+        context.apply_to_env(env, context.OWNER_CONTEXT)
+        assert env == {}
+        assert context.current({}).slot is None

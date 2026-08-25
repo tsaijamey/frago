@@ -233,9 +233,30 @@ class RecipeRunner:
         # Both callers land here, so this is the one place the invocation
         # context has to be stamped on — and it is stamped after `resolved_env`
         # is fully assembled, so no `.env` file, `--env` flag or workflow
-        # context can outrank it. `apply_to_env` overwrites on a visitor run and
-        # deletes on an owner run; see its docstring for why "we do not write
-        # it" would not have been enough.
+        # context can outrank it. `apply_to_env` overwrites rather than filling
+        # in; see its docstring for why "we do not write it" would not have been
+        # enough.
+        #
+        # No caller means the owner, and until now that meant a run that could
+        # not say whose it was. It can now: the machine records one identity and
+        # every run carries it, so the recipe no longer has to invent a place to
+        # write. Where its data has not been copied to the new layout yet, the
+        # directory is deliberately withheld and the recipe keeps its old
+        # behaviour — see `context.for_owner`.
+        if ctx is None:
+            try:
+                ctx = context.for_owner(name)
+            except context.NoIdentity:
+                # This machine cannot say whose run this is. Refusing here would
+                # stop every recipe on a machine with one damaged file, which is
+                # worse than the thing being prevented — so the run proceeds the
+                # way it always did, and the damage is reported where it can be
+                # acted on rather than raised into a person's recipe.
+                logger.warning(
+                    "此机器的身份记录读不出，本次运行按旧行为进行（数据落点由配方自己决定）。"
+                    "修好 ~/.frago/identity.json 之后新落点才会生效。",
+                    exc_info=True,
+                )
         context.apply_to_env(resolved_env, ctx)
 
         # And this is where the run gets somewhere to stand. Until now a recipe

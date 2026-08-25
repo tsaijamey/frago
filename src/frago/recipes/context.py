@@ -232,7 +232,21 @@ def current(env: Mapping[str, str] | None = None) -> InvocationContext:
     caller = _read(env, CALLER_ENV).casefold()
 
     if not caller or caller == OWNER:
-        return OWNER_CONTEXT
+        # An owner run used to carry nothing at all, and that emptiness is what
+        # forced every recipe to invent a directory of its own. It may now carry
+        # the same three answers a visitor's does; nothing set still reads as the
+        # bare owner, so a recipe started by hand behaves as it always has.
+        slot = _read(env, SLOT_ENV)
+        raw_dir = _read(env, DATA_DIR_ENV)
+        raw_common = _read(env, COMMON_DIR_ENV)
+        if not slot and not raw_dir and not raw_common:
+            return OWNER_CONTEXT
+        return InvocationContext(
+            caller=OWNER,
+            slot=slot or None,
+            data_dir=Path(raw_dir).expanduser() if raw_dir else None,
+            common_dir=Path(raw_common).expanduser() if raw_common else None,
+        )
     if caller != VISITOR:
         raise InvalidInvocationContext(
             f"{CALLER_ENV}={caller!r} is not a caller this frago knows "
@@ -257,6 +271,32 @@ def current(env: Mapping[str, str] | None = None) -> InvocationContext:
         slot=slot,
         data_dir=Path(raw_dir).expanduser(),
         common_dir=Path(raw_common).expanduser() if raw_common else None,
+    )
+
+
+def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext:
+    """The context an owner run gets: whose it is, and where it writes.
+
+    The directory is only handed over once this recipe's data has actually been
+    copied to the new layout. Handing it over sooner would point the recipe at
+    an empty directory while everything it has ever written sits under the old
+    one — a recipe that starts fresh without saying so, which is the same
+    silence this work exists to remove. The manifest is what answers "has it
+    moved"; when it covers everything, this test stops distinguishing anything
+    and comes out.
+
+    A machine that cannot say who it is raises rather than guessing. See
+    ``default_identity``.
+    """
+    from frago.recipes.app_state import recipe_data_dir
+    from frago.recipes.data_migration import already_migrated
+
+    who = default_identity()
+    moved = (recipe_name, project or "default") in already_migrated()
+    return InvocationContext(
+        caller=OWNER,
+        slot=who,
+        data_dir=recipe_data_dir(who, recipe_name, project) if moved else None,
     )
 
 
@@ -333,9 +373,23 @@ def apply_to_env(env: dict[str, str], ctx: InvocationContext | None = None) -> N
     them — passes them straight through to every recipe it starts. "We did not
     write it" is not the same as "it is not there".
     """
-    if ctx is None or not ctx.is_visitor:
+    if ctx is None or (not ctx.is_visitor and not ctx.slot):
         for key in CONTEXT_ENV_KEYS:
             env.pop(key, None)
+        return
+
+    if not ctx.is_visitor:
+        # An owner run that knows whose it is. Written rather than left blank so
+        # that the recipe has nowhere left to fall back to — the fallback is the
+        # entrance every one of these accidents came through.
+        for key in CONTEXT_ENV_KEYS:
+            env.pop(key, None)
+        env[CALLER_ENV] = OWNER
+        env[SLOT_ENV] = ctx.slot
+        if ctx.data_dir is not None:
+            env[DATA_DIR_ENV] = str(ctx.data_dir)
+        if ctx.common_dir is not None:
+            env[COMMON_DIR_ENV] = str(ctx.common_dir)
         return
 
     # A visitor context that reached here without a slot or a directory would
