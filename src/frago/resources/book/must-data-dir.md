@@ -22,9 +22,9 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；目录起名各�
   → 日期在最前面当排序键；NEVER 放末尾，NEVER 用月份（202605）或自创粒度；取任务开始当天
   → 主体容器只允许一层，NEVER 再往下嵌第二层主体
   → 事务目录 NEVER 直接建在 data 根下。`~/.frago/data/20260729-xxx/` 是非法的，无论这件事看起来多一次性
-  → 主体容器下除了事务目录，还可以放跨事务共用的常驻数据——多个配方共享的输入、状态、账本。
-    MUST 收进固定的 `recipe-caches/`，NEVER 散着放文件，NEVER 另起别的名字。
-    判据是日期：带日期的是一次事务，不带日期的 recipe-caches/ 是这个主体的常驻数据
+  → 主体容器下只放事务目录。配方的工作数据（账本、缓存、中间态）NEVER 放这儿，
+    它有自己的落点，见 must-recipe-data。老的 `data/<主体>/recipe-caches/` 正在迁走，
+    NEVER 再往里加新东西
 
 **动手前先查现成落点**，别自己拍脑袋造主体：
 
@@ -38,8 +38,14 @@ agent 把产出文件散落在 /tmp、Desktop 等随机位置；目录起名各�
   ❌ ~/.frago/data/20260716-apexp-progress-board/     # 事务落在主体那一层
   ❌ ~/.frago/data/lenovo/apexp-progress-board/       # 事务那一层没有日期
   ❌ ~/.frago/data/lenovo/apexp/20260716-board/       # 主体嵌了两层
-  ❌ ~/.frago/data/etf/selection.json                 # 常驻数据散在主体层，没收进 recipe-caches/
-  ✅ ~/.frago/data/etf/recipe-caches/selection.json   # 多个 etf 配方共用的常驻数据
+  ❌ ~/.frago/data/etf/recipe-caches/ledger.json      # 配方的工作数据不属于这棵树，见 must-recipe-data
+
+## 配方的工作数据不在这里
+
+这一条管的是**给人翻的东西**：报告、看板、笔记本、交付物，按主体归档、带日期。
+
+配方自己的工作数据（账本、行情缓存、每个项目的中间态）是另一套，按配方归档、不带日期，
+落 `<根>/recipe-data/<配方名>/`。判据是**谁会去翻它**。完整规则见 must-recipe-data。
 
 ## 内容怎么组织
 

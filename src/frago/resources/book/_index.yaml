@@ -44,6 +44,10 @@
   category: must
   brief: "产出一律落 ~/.frago/data/<主体>/<YYYYMMDD>-<slug>/，两层缺一不可，事务 NEVER 直接建在 data 根下；建目录前先 frago context data:<关键词> 查现成落点；projects 是 frago 的会话账本 agent 不写；路径一律绝对路径"
 
+- name: must-recipe-data
+  category: must
+  brief: "配方的工作数据落 <根>/recipe-data/<配方名>/[projects/<项目>/]，根是这次运行绑定的身份；单例还是多份由配方显式声明；跨用户数据分起步(复制后脱钩)与共读(绝不复制)，判据=复制后原件还会不会更新；运行必须绑定用户，绑不上就拒跑；配方 NEVER 自己拼数据路径"
+
 - name: desktop-usage
   category: must
   brief: "虚拟桌面（录屏/演示）：frago desktop，标准路径 status → up → 驱动；停了就是停了，守护不自动拉起"
