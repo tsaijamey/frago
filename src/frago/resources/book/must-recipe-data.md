@@ -111,9 +111,29 @@
 DEFAULT_DIR = Path.home() / ".frago" / "data" / "etf" / "recipe-caches" / "my-recipe"
 data_dir = Path(os.environ.get("FRAGO_RECIPE_DATA_DIR") or DEFAULT_DIR)
 
-# ✅ 对：只认平台交代的落点，没有就是异常
-data_dir = Path(os.environ["FRAGO_RECIPE_DATA_DIR"])
+# ❌ 也错：没兜底了，但写在模块顶层——一 import 这个文件就死，
+#          而且报出来的是一句 KeyError，看的人不知道该做什么
+DATA_DIR = Path(os.environ["FRAGO_RECIPE_DATA_DIR"])
+
+# ✅ 对：运行时才求值，说不出落点就说清楚为什么
+def data_dir() -> Path:
+    env = (os.environ.get("FRAGO_RECIPE_DATA_DIR") or "").strip()
+    if not env:
+        raise RuntimeError(
+            "平台没有交代落点（FRAGO_RECIPE_DATA_DIR 未设置）。"
+            "本配方只写平台指定的目录，请通过 frago recipe run 启动。"
+        )
+    return Path(env).expanduser()
 ```
+
+**落点在运行时求值，NEVER 在模块顶层。** 顶层求值的模块 import 一下就死，任何
+检查工具、测试、将来的元信息探测都碰不了它；而且它抛的是 KeyError，看的人只知道
+少了个变量，不知道该怎么办。这条是实测撞出来的：照着本文档早先那版例子改的九个
+配方里，有三个就是这么写的。
+
+派生路径（台账、缓存、锁文件）跟着一起延后：写成 `data_dir() / "ledger.json"`，
+或者在 `main()` 开头一次性填好。NEVER 在模块顶层写 `LEDGER = DATA_DIR / "x"`——
+那等于把顶层求值又请回来一次。
 
 NEVER 改成 `import frago`：带 PEP 723 块的配方跑在隔离环境里，import 不到。
 
