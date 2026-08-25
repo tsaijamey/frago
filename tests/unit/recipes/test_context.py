@@ -402,3 +402,36 @@ class TestSharedDataOnlyReachesWhoAskedForIt:
 
         monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
         assert context.common_dirs_for("nope") is None
+
+
+class TestAMultiProjectRecipeIsRecognisedAsMigrated:
+    """Its projects move one at a time and it never has a `default` slot.
+
+    Matching the exact slot withheld the directory from every such recipe: the
+    platform had already moved their data and then told them it had not said
+    where to write. Found by running one — the manifest held seven of its
+    projects and it still refused to start.
+    """
+
+    @pytest.fixture
+    def machine(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FRAGO_IDENTITY_FILE", str(tmp_path / "identity.json"))
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        monkeypatch.setenv("FRAGO_USER_STATE_DIR", str(tmp_path / ".frago" / "users"))
+        manifest = tmp_path / ".frago" / "migration-manifest.jsonl"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        import json
+
+        with open(manifest, "w", encoding="utf-8") as fh:
+            for slot in ("20260727-demo", "20260820-other"):
+                fh.write(json.dumps({"recipe": "video_studio", "slot": slot}) + "\n")
+        return tmp_path
+
+    def test_the_base_directory_is_handed_over(self, machine):
+        from frago.recipes import app_state
+
+        ctx = context.for_owner("video_studio")
+        assert ctx.data_dir == app_state.recipe_data_dir(ctx.slot, "video_studio")
+
+    def test_a_recipe_with_nothing_migrated_still_gets_nothing(self, machine):
+        assert context.for_owner("never_moved").data_dir is None

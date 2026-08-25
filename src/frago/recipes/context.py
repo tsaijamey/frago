@@ -318,7 +318,13 @@ def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext
     from frago.recipes.data_migration import already_migrated
 
     who = default_identity()
-    moved = (recipe_name, project or "default") in already_migrated()
+    # Any slot counts, not this exact one. A multi-project recipe has its
+    # projects migrated one at a time and never has a `default` — it is handed
+    # the base directory and appends `projects/<name>` itself. Matching the
+    # exact slot withheld the directory from every such recipe and left them
+    # refusing to start, with a message about the platform not having said where
+    # to write while the platform had in fact already moved their data there.
+    moved = any(name == recipe_name for name, _ in already_migrated())
     return InvocationContext(
         caller=OWNER,
         slot=who,
