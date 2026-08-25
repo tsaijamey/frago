@@ -100,3 +100,57 @@ class TestNothingEscapes:
     def test_a_project_cannot_climb_into_another_account(self):
         one = app_state.recipe_data_dir(WHO, RECIPE, "ok")
         assert one.resolve().is_relative_to(app_state.user_root(WHO).resolve())
+
+
+class TestReadingSomebodyElsesDataIsItsOwnOffence:
+    """Reading your own data is fine; reading another recipe's is not.
+
+    They used to be reported as one thing, and they are not: a recipe naming a
+    path inside its own subject tree has picked a bad location, while a recipe
+    naming a path inside somebody else's has taken a dependency that the other
+    side cannot see. The second one breaks when a person edits files they own,
+    with no warning, in a place unrelated to what they changed.
+    """
+
+    @pytest.fixture
+    def recipes_on_disk(self, tmp_path, monkeypatch):
+        root = tmp_path / ".frago" / "recipes"
+        for kind, name in (("workflows", "demo_board"), ("workflows", "cn_stock_data_feed")):
+            d = root / kind / name
+            d.mkdir(parents=True)
+            (d / "recipe.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        return root / "workflows" / "demo_board"
+
+    def _scan(self, src, me):
+        import sys
+
+        sys.path.insert(0, "src")
+        from frago.cli.recipe_commands import _scan_data_location
+
+        return _scan_data_location(src, me)
+
+    def test_reading_another_recipes_cache_is_called_that(self, recipes_on_disk):
+        src = ('HIST = Path.home() / ".frago" / "data" / "stock" / "recipe-caches"'
+               ' / "cn_stock_data_feed" / "hist"')
+        errors, _ = self._scan(src, recipes_on_disk)
+        assert any("直接读了别的配方" in e for e in errors)
+
+    def test_a_bad_location_of_ones_own_is_still_the_other_message(self, recipes_on_disk):
+        src = 'D = Path.home() / ".frago" / "data" / "etf" / "recipe-caches" / "mine"'
+        errors, _ = self._scan(src, recipes_on_disk)
+        assert any("自己拼了数据路径" in e for e in errors)
+        assert not any("直接读了别的配方" in e for e in errors)
+
+    def test_a_recipe_naming_itself_is_not_naming_somebody_else(self, recipes_on_disk):
+        """Its own name appearing in its own path is not a cross-recipe read."""
+        src = 'D = Path.home() / ".frago" / "data" / "x" / "recipe-caches" / "demo_board"'
+        errors, _ = self._scan(src, recipes_on_disk)
+        assert not any("直接读了别的配方" in e for e in errors)
+
+    def test_only_asking_the_platform_reports_nothing(self, recipes_on_disk):
+        src = ('def data_dir():\n'
+               '    d = os.environ.get("FRAGO_RECIPE_DATA_DIR")\n'
+               '    if not d:\n        raise RuntimeError("x")\n    return d')
+        errors, _ = self._scan(src, recipes_on_disk)
+        assert not errors

@@ -1314,6 +1314,33 @@ def _module_level_env_reads(content: str) -> list[int]:
     return hits
 
 
+def _other_recipe_names(recipe_dir: Path) -> set[str]:
+    """This machine's other recipes, by directory name.
+
+    Read off disk rather than guessed from the path, because the thing that
+    makes a path somebody else's is that a recipe by that name exists — not
+    that it looks like a recipe directory.
+    """
+    root = Path.home() / ".frago" / "recipes"
+    if not root.is_dir():
+        return set()
+    names = set()
+    for kind in root.iterdir():
+        if not kind.is_dir():
+            continue
+        for entry in kind.iterdir():
+            if not entry.is_dir():
+                continue
+            if (entry / "recipe.md").is_file():
+                names.add(entry.name)
+                continue
+            for sub in entry.iterdir():          # atomic/<group>/<recipe>
+                if sub.is_dir() and (sub / "recipe.md").is_file():
+                    names.add(sub.name)
+    names.discard(recipe_dir.name)
+    return names
+
+
 def _scan_data_location(content: str, recipe_dir: Path) -> tuple[list[str], list[str]]:
     """Scan a recipe for the ways of deciding its own data location.
 
@@ -1330,6 +1357,24 @@ def _scan_data_location(content: str, recipe_dir: Path) -> tuple[list[str], list
 
     own = {m.group(0) for m in _OWN_DATA_PATH.finditer(content)}
     own |= set(_home_anchored_paths(content))
+
+    # 自己读自己允许，跨配方禁止——两件事性质不同，报错也该分开。
+    # 一条路径提到了别的配方的名字，就是在翻别人的柜子：那个配方不知道自己
+    # 正在被读，它改自己的文件时看不到任何提示。
+    others_data = {
+        one for one in own
+        if any(f"/{name}" in one or f"{name}/" in one
+               for name in _other_recipe_names(recipe_dir))
+    }
+    own -= others_data
+    if others_data:
+        errors.append(
+            f"配方直接读了别的配方的数据目录：{', '.join(sorted(others_data)[:3])}。"
+            f"要它的数据就跑它的命令、读返回值——按路径去翻，对方改自己的文件时"
+            f"看不到任何提示，断裂只在有人点开页面时才暴露。"
+            f"见：frago book must-recipe-data"
+        )
+
     if own:
         errors.append(
             f"配方自己拼了数据路径：{', '.join(sorted(own)[:3])}。"
