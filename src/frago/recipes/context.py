@@ -40,9 +40,13 @@ pretend it has one. Only a visitor run gives it both the right and the duty to
 decide.
 """
 
+import json
 import os
+import re
+import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 CALLER_ENV = "FRAGO_RECIPE_CALLER"
@@ -63,6 +67,109 @@ VISITOR = "visitor"
 #: using the same root for both keeps "where does this run write" a single rule
 #: instead of two that have to be remembered apart.
 OWNER_SLOT = OWNER
+
+
+#: Where this machine records whose runs these are. One line of JSON, written
+#: once, never again.
+IDENTITY_PATH = Path.home() / ".frago" / "identity.json"
+
+#: An account id is 32 lowercase hex characters, whether it was derived from an
+#: email on a server or minted here. One shape everywhere is the point: code
+#: that assumes "an id looks like this" must not be right on one machine and
+#: wrong on another.
+_ID_SHAPE = re.compile(r"^[0-9a-f]{32}$")
+
+
+class NoIdentity(RuntimeError):
+    """This machine cannot say whose run this is.
+
+    Raised rather than resolved. The tempting default — mint a fresh id and
+    carry on — is the same mistake in a new costume: the run would succeed, its
+    output would land under an id nobody has seen before, and the data the
+    person expected to find would still be sitting under the old one. A run
+    that cannot name its owner is a run that must not start.
+    """
+
+
+def identity_path() -> Path:
+    """Where the record lives. ``FRAGO_IDENTITY_FILE`` overrides, for tests."""
+    override = os.environ.get("FRAGO_IDENTITY_FILE")
+    return Path(override).expanduser() if override else IDENTITY_PATH
+
+
+def default_identity(*, create: bool = True) -> str:
+    """Whose runs this machine's own runs are.
+
+    A personal install has exactly one person and should never be asked to
+    think about accounts, so the record is written silently the first time
+    anything needs it. From then on it is read, never rewritten.
+
+    **Absent and unreadable are told apart on purpose.** Absent is a fresh
+    install and mints an id. Unreadable — truncated, hand-edited, an id that is
+    not an id — raises. Minting a replacement there would orphan everything
+    written under the previous one while looking like a clean start.
+
+    The id is minted at random rather than derived from the OS login name.
+    Login names get renamed, collide across machines, and carry characters the
+    slot validator refuses; an id that changes is an id that loses its data.
+    The login name is recorded beside it as a label for a human reading the
+    file, and nothing reads it back.
+    """
+    path = identity_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if not create:
+            raise NoIdentity(
+                f"this machine has no identity yet ({path}) and this caller asked "
+                f"not to create one"
+            ) from None
+        return _mint(path)
+    except OSError as err:
+        raise NoIdentity(f"cannot read this machine's identity ({path}): {err}") from err
+
+    try:
+        record = json.loads(raw)
+        who = record["id"]
+    except (json.JSONDecodeError, TypeError, KeyError) as err:
+        raise NoIdentity(
+            f"this machine's identity file is unreadable ({path}): {err}. "
+            f"Repair it rather than deleting it — everything written under the "
+            f"id it held is filed by that id."
+        ) from err
+
+    if not isinstance(who, str) or not _ID_SHAPE.match(who):
+        raise NoIdentity(
+            f"this machine's identity file holds {who!r}, which is not an account "
+            f"id ({path}). Repair it rather than deleting it."
+        )
+    return who
+
+
+def _mint(path: Path) -> str:
+    """Write a first identity for this machine and return it.
+
+    Written with O_EXCL so two processes racing on a fresh install cannot each
+    believe they created it: the loser reads the winner's file instead of
+    overwriting it with a second id.
+    """
+    who = secrets.token_hex(16)
+    record = {
+        "id": who,
+        # For a person opening this file, not for code. Nothing reads it back.
+        "label": os.environ.get("USER") or os.environ.get("USERNAME") or "",
+        "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return default_identity(create=False)
+    except OSError as err:
+        raise NoIdentity(f"cannot write this machine's identity ({path}): {err}") from err
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(record, fh, ensure_ascii=False, indent=2)
+    return who
 
 
 class InvalidInvocationContext(ValueError):

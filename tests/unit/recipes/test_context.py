@@ -165,3 +165,72 @@ class TestDataDirHelper:
             },
         )
         assert got == tmp_path / "theirs"
+
+
+class TestThisMachineKnowsWhoItIs:
+    """A run has to be able to name whose it is, on a personal laptop as much as
+    on a server. The laptop has nobody to ask, so the machine records one
+    identity the first time anything needs it and reads it forever after.
+
+    The tests below are mostly about the ways of *not* answering, because the
+    tempting failure — mint a fresh id and carry on — succeeds loudly while
+    orphaning everything filed under the previous one.
+    """
+
+    @pytest.fixture
+    def here(self, tmp_path, monkeypatch):
+        target = tmp_path / "identity.json"
+        monkeypatch.setenv("FRAGO_IDENTITY_FILE", str(target))
+        return target
+
+    def test_a_fresh_machine_mints_one_without_being_asked(self, here):
+        """A person installing frago on their laptop must never meet the word
+        "account". The record is written silently and they never see it."""
+        who = context.default_identity()
+        assert len(who) == 32 and all(c in "0123456789abcdef" for c in who)
+        assert here.is_file()
+
+    def test_the_same_machine_answers_the_same_thing_forever(self, here):
+        assert context.default_identity() == context.default_identity()
+
+    def test_the_file_is_not_world_readable(self, here):
+        context.default_identity()
+        assert here.stat().st_mode & 0o077 == 0
+
+    def test_the_login_name_is_recorded_but_never_read_back(self, here, monkeypatch):
+        """Recorded as a label for whoever opens the file. Deriving the id from
+        it instead would mean a renamed login loses its data."""
+        import json
+
+        monkeypatch.setenv("USER", "someone")
+        minted = context.default_identity()
+        record = json.loads(here.read_text(encoding="utf-8"))
+        assert record["label"] == "someone"
+        monkeypatch.setenv("USER", "renamed")
+        assert context.default_identity() == minted
+
+    def test_an_unreadable_record_raises_rather_than_starting_over(self, here):
+        here.write_text("{ this is not json", encoding="utf-8")
+        with pytest.raises(context.NoIdentity) as caught:
+            context.default_identity()
+        assert str(here) in str(caught.value)
+
+    def test_an_id_that_is_not_an_id_raises(self, here):
+        import json
+
+        here.write_text(json.dumps({"id": "me"}), encoding="utf-8")
+        with pytest.raises(context.NoIdentity):
+            context.default_identity()
+
+    def test_a_broken_record_is_never_overwritten(self, here):
+        """Repairing it is the operator's job. Replacing it here would look like
+        a clean start and would quietly orphan the data filed under the old id."""
+        here.write_text("{ broken", encoding="utf-8")
+        with pytest.raises(context.NoIdentity):
+            context.default_identity()
+        assert here.read_text(encoding="utf-8") == "{ broken"
+
+    def test_a_caller_that_refuses_to_create_gets_told_so(self, here):
+        with pytest.raises(context.NoIdentity):
+            context.default_identity(create=False)
+        assert not here.exists()
