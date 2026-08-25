@@ -59,10 +59,13 @@ DATA_DIR_ENV = "FRAGO_RECIPE_DATA_DIR"
 #: somewhere — a link says where a thing is and never who may write it.
 COMMON_DIR_ENV = "FRAGO_RECIPE_COMMON_DIR"
 
-#: The three keys, as one thing. Anything that writes the context writes all of
-#: them and anything that clears it clears all of them: a half-applied context
-#: is a visitor slot with an owner's directory, which is exactly the mix-up this
-#: module exists to prevent.
+#: The keys, as one thing — but note that writing and clearing are not
+#: symmetric. **Clearing is total**: every key here goes, because a half-cleared
+#: context is a visitor slot paired with an owner's directory, which is exactly
+#: the mix-up this module exists to prevent. **Writing is not**: the first three
+#: are always written together (a run without all three has no isolation), while
+#: the shared directory is written only for a recipe that has one — most do not,
+#: and an empty variable is a different claim from an absent one.
 CONTEXT_ENV_KEYS = (CALLER_ENV, SLOT_ENV, DATA_DIR_ENV, COMMON_DIR_ENV)
 
 OWNER = "owner"

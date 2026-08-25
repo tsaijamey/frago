@@ -75,9 +75,8 @@ def deployment(tmp_path, monkeypatch):
 def _run_as(account_id: str, recipe: str, write) -> None:
     """Do what a recipe process does, in the environment `runner` gives it.
 
-    The context arrives as three environment variables and nothing else,
-    because that is all a recipe ever gets — most of them cannot import frago
-    at all.
+    The context arrives as environment variables and nothing else, because that
+    is all a recipe ever gets — most of them cannot import frago at all.
     """
     data_dir = app_state.user_data_dir(account_id, recipe)
     env = dict(os.environ)
@@ -88,7 +87,15 @@ def _run_as(account_id: str, recipe: str, write) -> None:
         ),
     )
     previous = {k: os.environ.get(k) for k in context.CONTEXT_ENV_KEYS}
-    os.environ.update({k: env[k] for k in context.CONTEXT_ENV_KEYS})
+    # Mirror `apply_to_env` exactly: a key it did not write must not be left
+    # standing from whatever this process inherited. Copying only the keys it
+    # set would let a stale one through, which is the shape of bug this whole
+    # module exists to prevent.
+    for key in context.CONTEXT_ENV_KEYS:
+        if key in env:
+            os.environ[key] = env[key]
+        else:
+            os.environ.pop(key, None)
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         write(data_dir)
