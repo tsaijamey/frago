@@ -144,7 +144,7 @@
 
 - name: recipe-authoring
   category: available
-  brief: "Recipe 脚本编写规范：参数接收（sys.argv[1]/$1/__FRAGO_PARAMS__）、输出规范、代码模板"
+  brief: "Recipe 脚本编写规范：参数接收（sys.argv[1]/$1/__FRAGO_PARAMS__）、输出规范、代码模板；配方之间只能跑命令读返回值，NEVER 读对方源码或数据目录——对方不知道自己正在被读，断裂只在有人点开页面时才暴露"
 
 - name: recipe-fields
   category: available
