@@ -378,3 +378,68 @@ class TestTheDeliverableGateMatchesTheActualShape:
     def test_a_subject_level_directory_with_no_date_is_moved(self, home):
         result = self._plan_for(home, "etf", "recipe-caches", "ledger")
         assert len(result.moves) == 1 and not result.blocked
+
+
+class TestItRefusesToMoveAWholeTree:
+    """A recipe that keeps one file directly under `~/.frago/data` reports its
+    directory as `~/.frago/data`. Copying that files everything on the machine
+    under one recipe's name — the largest possible version of this tool's own
+    failure mode, and the one that looks like success until the disk fills.
+
+    Found while planning 48 hand-located recipes: one of them really did report
+    the data root.
+    """
+
+    @pytest.mark.parametrize("parts", [
+        (),                 # ~/.frago
+        ("data",),          # ~/.frago/data
+        ("recipes",),
+        ("users",),
+        ("projects",),
+    ])
+    def test_a_root_is_refused_by_the_derived_plan(self, home, parts):
+        root = home.joinpath(".frago", *parts)
+        root.mkdir(parents=True, exist_ok=True)
+        _slot(home, RECIPE, "default", {"dataDir": str(root)})
+        result = data_migration.plan(WHO, home)
+        assert not result.moves
+        assert "一整棵树的根" in result.blocked[0][2]
+
+    def test_a_root_is_refused_by_a_hand_supplied_plan_too(self, home):
+        root = home / ".frago" / "data"
+        root.mkdir(parents=True, exist_ok=True)
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(root)}], home)
+        assert not result.moves and "一整棵树的根" in result.blocked[0][2]
+
+    def test_a_real_directory_under_a_root_is_still_moved(self, home):
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "ledger")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        assert len(data_migration.plan(WHO, home).moves) == 1
+
+
+class TestItRefusesToClaimThePlatformsOwnTrees:
+    """One recipe reads and writes `~/.frago/sessions` — 5 GB that frago's own
+    session sync also owns. Filing that under the recipe's name would claim
+    somebody else's records and duplicate every byte. The recipe writing there
+    is worth fixing; copying it is not the fix.
+    """
+
+    @pytest.mark.parametrize("tree", ["sessions", "app-state", "executions", "traces"])
+    def test_a_platform_tree_is_refused(self, home, tree):
+        source = _data(home, ".frago", tree, "something")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        result = data_migration.plan(WHO, home)
+        assert not result.moves
+        assert "frago 自己维护的目录" in result.blocked[0][2]
+
+    def test_a_hand_supplied_plan_is_refused_the_same_way(self, home):
+        source = _data(home, ".frago", "sessions", "claude")
+        result = data_migration.plan_from_entries(
+            WHO, [{"recipe": RECIPE, "source": str(source)}], home)
+        assert not result.moves and "frago 自己维护的目录" in result.blocked[0][2]
+
+    def test_the_ordinary_data_tree_is_untouched_by_this(self, home):
+        source = _data(home, ".frago", "data", "etf", "recipe-caches", "x")
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        assert len(data_migration.plan(WHO, home).moves) == 1

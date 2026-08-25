@@ -169,6 +169,22 @@ def plan(identity: str, home: Path | None = None) -> Plan:
         if not source.is_dir():
             result.skipped.append((recipe, slot, f"记着的目录不存在：{source}"))
             continue
+        if _is_a_root(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这是一整棵树的根，不是某个配方的目录：{source}。"
+                f"搬它等于把整台机器的东西挂到一个配方名下。"
+                f"这个配方多半是把单个文件直接丢在根上了，先给它一个自己的目录",
+            ))
+            continue
+        if _is_platform_owned(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这在 frago 自己维护的目录里，不是这个配方的数据：{source}。"
+                f"把它挂到配方名下等于把别人的记录认领成自己的，还要把每个字节复制一遍。"
+                f"配方往那儿写这件事本身该修，但复制不是修法",
+            ))
+            continue
         if _is_deliverable(source, home):
             result.blocked.append((
                 recipe, slot,
@@ -254,6 +270,61 @@ def _is_recipe_code(source: Path, home: Path) -> bool:
     return source.is_relative_to(home / ".frago" / "recipes")
 
 
+def _is_a_root(source: Path, home: Path) -> bool:
+    """Whether this is a whole tree rather than one recipe's directory.
+
+    A recipe that keeps a single file directly under ``~/.frago/data`` reports
+    its directory as ``~/.frago/data`` — and copying that would take everything
+    on the machine and file it under one recipe's name. It is the largest
+    possible version of this tool's own failure mode, and unlike the others it
+    would look like a success right up until the disk filled.
+
+    Named explicitly rather than by depth: a rule like "at least three levels
+    down" is one refactor away from being wrong, while these five are what they
+    are.
+    """
+    try:
+        resolved = source.resolve()
+    except OSError:
+        return True
+    roots = {
+        Path("/"),
+        home.resolve(),
+        (home / ".frago").resolve(),
+        (home / ".frago" / "data").resolve(),
+        (home / ".frago" / "recipes").resolve(),
+        (home / ".frago" / "users").resolve(),
+        (home / ".frago" / "projects").resolve(),
+    }
+    return resolved in roots
+
+
+#: Trees frago itself owns and writes. A recipe that keeps things in one of
+#: these is not keeping its own data — it is writing into the platform's, which
+#: is a separate problem and not one a copy can fix.
+_PLATFORM_TREES = ("sessions", "app-state", "executions", "traces", "books", "bin", "viewer")
+
+
+def _is_platform_owned(source: Path, home: Path) -> bool:
+    """Whether this lives inside something frago maintains for itself.
+
+    One recipe reads and writes the session store at ``~/.frago/sessions`` —
+    5 GB that frago's own session sync also owns. Filing that under the recipe's
+    name would claim 5 GB of somebody else's records as this recipe's data and
+    duplicate every byte of it. The recipe writing there at all is worth fixing;
+    copying it is not the fix.
+    """
+    root = (home / ".frago").resolve()
+    try:
+        resolved = source.resolve()
+    except OSError:
+        return True
+    if not resolved.is_relative_to(root):
+        return False
+    parts = resolved.relative_to(root).parts
+    return bool(parts) and parts[0] in _PLATFORM_TREES
+
+
 def _shared_sources(moves: list[Move]) -> dict[Path, list[Move]]:
     """Sources that more than one slot claims.
 
@@ -311,6 +382,22 @@ def plan_from_entries(
             continue
         if not source.is_dir():
             result.skipped.append((recipe, slot, f"给的目录不存在：{source}"))
+            continue
+        if _is_a_root(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这是一整棵树的根，不是某个配方的目录：{source}。"
+                f"搬它等于把整台机器的东西挂到一个配方名下。"
+                f"这个配方多半是把单个文件直接丢在根上了，先给它一个自己的目录",
+            ))
+            continue
+        if _is_platform_owned(source, home):
+            result.blocked.append((
+                recipe, slot,
+                f"这在 frago 自己维护的目录里，不是这个配方的数据：{source}。"
+                f"把它挂到配方名下等于把别人的记录认领成自己的，还要把每个字节复制一遍。"
+                f"配方往那儿写这件事本身该修，但复制不是修法",
+            ))
             continue
         if _is_deliverable(source, home):
             result.blocked.append((
