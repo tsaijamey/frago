@@ -222,11 +222,25 @@ def _is_deliverable(source: Path, home: Path) -> bool:
     was reaching into the other tree. Copying it into the recipe's own area
     would put a deliverable somewhere nobody looks for one, and leave the
     original as the copy people actually open.
+
+    The shape is exact, and has to be. ``must-data-dir`` puts a transaction at
+    ``data/<subject>/<date>-<slug>/`` — the date sits at the second level and
+    nowhere else. A first pass here matched a dated component at *any* depth
+    and swept up ten video projects filed as
+    ``data/agent-os/videos/<date>-<slug>/``: those are one recipe's projects,
+    which are exactly what this migration is for, and naming a project after a
+    date does not make it somebody's filed report. A gate that blocks the case
+    it exists to serve is worse than no gate, because the person reading its
+    refusal has no way to tell it apart from a real one.
     """
     data_root = home / ".frago" / "data"
     if not source.is_relative_to(data_root):
         return False
-    return any(_DATED.match(part) for part in source.relative_to(data_root).parts)
+    parts = source.relative_to(data_root).parts
+    # parts[0] is the subject; a transaction directory is parts[1]. Anything at
+    # or below it belongs to that transaction; anything else merely has a date
+    # in its name.
+    return len(parts) >= 2 and bool(_DATED.match(parts[1]))
 
 
 def _is_recipe_code(source: Path, home: Path) -> bool:

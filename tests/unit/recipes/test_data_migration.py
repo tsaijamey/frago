@@ -344,3 +344,37 @@ class TestAHandSuppliedPlanGetsTheSameRefusals:
     def test_an_entry_missing_its_fields_is_reported_not_guessed(self, home):
         result = data_migration.plan_from_entries(WHO, [{"recipe": RECIPE}], home)
         assert not result.moves and result.skipped
+
+
+class TestTheDeliverableGateMatchesTheActualShape:
+    """`must-data-dir` puts a transaction at `data/<subject>/<date>-<slug>/` —
+    the date sits at the second level and nowhere else.
+
+    A first pass matched a dated component at any depth and swept up ten video
+    projects filed as `data/agent-os/videos/<date>-<slug>/`. Those are one
+    recipe's projects, which is exactly what this migration is for. A gate that
+    blocks the case it exists to serve is worse than no gate: the person reading
+    its refusal cannot tell it from a real one.
+    """
+
+    def _plan_for(self, home, *parts):
+        source = _data(home, ".frago", "data", *parts)
+        _slot(home, RECIPE, "default", {"dataDir": str(source)})
+        return data_migration.plan(WHO, home)
+
+    def test_a_transaction_directory_is_refused(self, home):
+        result = self._plan_for(home, "one-off", "20260527-tau-deepdive")
+        assert not result.moves and "交付物" in result.blocked[0][2]
+
+    def test_something_inside_a_transaction_directory_is_refused(self, home):
+        result = self._plan_for(home, "one-off", "20260728-migration", "annotate-demo")
+        assert not result.moves and "交付物" in result.blocked[0][2]
+
+    def test_a_project_named_after_a_date_deeper_down_is_moved(self, home):
+        """Naming a project after a date does not make it somebody's report."""
+        result = self._plan_for(home, "agent-os", "videos", "20260727-lenovo-demo")
+        assert len(result.moves) == 1 and not result.blocked
+
+    def test_a_subject_level_directory_with_no_date_is_moved(self, home):
+        result = self._plan_for(home, "etf", "recipe-caches", "ledger")
+        assert len(result.moves) == 1 and not result.blocked
