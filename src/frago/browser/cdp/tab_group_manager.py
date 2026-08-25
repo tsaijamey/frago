@@ -20,6 +20,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from .targets import is_real_tab
 from .landing import LANDING_PAGE_URL as _LANDING_URL
 from .landing import is_landing_page
 from .logger import get_logger
@@ -508,7 +509,7 @@ class TabGroupManager:
                 f"http://{self.host}:{self.port}/json/list", timeout=5
             )
             resp.raise_for_status()
-            return {t["id"] for t in resp.json() if t.get("type") == "page"}
+            return {t["id"] for t in resp.json() if is_real_tab(t)}
         except Exception:
             return set()
 
@@ -632,7 +633,7 @@ class TabGroupManager:
             # Find landing page target
             landing_ws = None
             for t in targets:
-                if t.get("type") != "page":
+                if not is_real_tab(t):
                     continue
                 url = t.get("url", "")
                 title = t.get("title", "")
@@ -675,7 +676,7 @@ class TabGroupManager:
 
             # Already exists?
             for t in targets:
-                if t.get("type") != "page":
+                if not is_real_tab(t):
                     continue
                 url = t.get("url", "")
                 title = t.get("title", "")

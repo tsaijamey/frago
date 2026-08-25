@@ -121,7 +121,7 @@ def detect_browsers(group):
          "'extension' (browser extension + native messaging, drives the "
          "browser's own profile) — the standard path. Fall back to 'cdp' "
          "explicitly when the default cannot do the job: true headless, a "
-         "separate instance, or --void/--app/--profile-dir. Never launch a "
+         "separate instance, or --app/--profile-dir. Never launch a "
          "browser process yourself.",
 )
 @click.pass_context
@@ -132,7 +132,7 @@ def browser_group(ctx, backend):
     Control the browser through the frago extension bridge (default
     backend), using the browser's own real profile. When the default
     backend cannot do the job (true headless, a separate instance,
-    --void/--app), fall back to an explicit -b cdp. Launching a browser
+    --app), fall back to an explicit -b cdp. Launching a browser
     process yourself is never an option.
 
     \b
@@ -221,7 +221,7 @@ def _dispatch_extension(name: str, kwargs: dict) -> None:
 
         # CDP's --browser option uses "auto" to mean "let frago pick";
         # extension picker uses None for the same intent. Translate.
-        # Also: CDP-only options (headless, port, void, profile_dir, ...)
+        # Also: CDP-only options (headless, port, profile_dir, ...)
         # are silently ignored — extension backend manages its own profile
         # and doesn't need a debugging port.
         brand = kwargs.get("browser")

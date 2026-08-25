@@ -119,7 +119,7 @@ COMMAND_EXAMPLES = {
     "start": [
         "frago browser start",
         "frago browser start --headless",
-        "frago browser start --void --keep-alive",
+        "frago browser start --keep-alive",
         "frago browser start --width 1920 --height 1080",
     ],
     "stop": [
@@ -2184,7 +2184,8 @@ def init(force: bool):
 @click.option(
     '--void',
     is_flag=True,
-    help='Void mode: window moved off-screen (does not affect current desktop)'
+    hidden=True,
+    help='Removed 2026-08-23. Kept only so old callers get a real reason.'
 )
 @click.option(
     '--app',
@@ -2270,7 +2271,7 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
     \b
     Options below are CDP-backend options. Under the default extension
     backend they are silently dropped and do nothing:
-      --headless --void --app --app-url --port --profile-dir
+      --headless --app --app-url --port --profile-dir
       --width --height --window-x --window-y --no-kill --keep-alive
     They take effect only when you explicitly select CDP:
       frago browser -b cdp start --headless
@@ -2296,10 +2297,26 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
         click.echo("Warning: --reseed-profile is obsolete — the extension "
                    "backend drives the browser's own profile; ignored", err=True)
 
+    # --void was removed on 2026-08-23. Fail loudly with the reason: a bare
+    # "no such option" would send the caller looking for a typo, when the real
+    # answer is that the mode is gone and there is a decision to make.
+    if void:
+        click.echo(
+            "Error: --void was removed on 2026-08-23 and is no longer supported.\n"
+            "  Why: it only parked the window at -32000,-32000. macOS honours that\n"
+            "  for the first window a process opens and nothing after it, so the\n"
+            "  window came back on screen — the flag promised an invisible browser\n"
+            "  and did not deliver one. There was never a separate rendering path.\n"
+            "  Replace it with one of:\n"
+            "    (drop the flag)  ordinary window — real GPU/WebGL, visible\n"
+            "    --headless       no window — but --disable-gpu, so no WebGL",
+            err=True,
+        )
+        raise SystemExit(2)
+
     # Mode exclusivity check
-    mode_count = sum([headless, void, app_mode])
-    if mode_count > 1:
-        click.echo("Error: --headless, --void, and --app are mutually exclusive", err=True)
+    if headless and app_mode:
+        click.echo("Error: --headless and --app are mutually exclusive", err=True)
         return
 
     # App mode requires URL
@@ -2316,7 +2333,6 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
 
     launcher = ChromeLauncher(
         headless=headless,
-        void=void,
         app_mode=app_mode,
         app_url=app_url,
         port=port,
@@ -2341,7 +2357,7 @@ def browser_start(browser: str, headless: bool, void: bool, app_mode: bool, app_
     click.echo(f"Profile directory: {launcher.profile_dir}")
     click.echo(f"CDP port: {port}")
 
-    mode_str = 'app' if app_mode else 'headless' if headless else 'void' if void else 'normal window'
+    mode_str = 'app' if app_mode else 'headless' if headless else 'normal window'
     click.echo(f"Mode: {mode_str}")
 
     if app_mode:

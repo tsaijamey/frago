@@ -3,7 +3,16 @@
 Chrome CDP Launcher - Chromium-based browser launch management
 
 Provides browser launch, stop, and management functionality for Chrome, Edge, and Chromium.
-Supports headless and void modes.
+Supports headless, app and kiosk modes.
+
+Void mode (window parked at -32000,-32000) was removed on 2026-08-23. macOS only
+honours that position for the *first* window a process opens: any window created
+afterwards lands on screen, and the window server is free to pull a fully
+off-screen window back into view. So the flag promised "runs without touching
+your screen" and did not keep that promise, while silently costing nothing —
+there is no separate rendering path, a void window is an ordinary window. Callers
+that wanted a real GPU without a visible window have no such option; pick between
+an ordinary window (GPU, visible) and headless (no GPU, invisible).
 """
 
 import os
@@ -23,6 +32,7 @@ from frago.browser.cdp.landing import LANDING_PAGE_SERVER_PORT as _LANDING_PORT
 from frago.browser.cdp.landing import LANDING_PAGE_URL as _LANDING_URL
 from frago.browser.cdp.landing import is_landing_page
 from frago.browser.cdp.process import kill_existing_chrome
+from frago.browser.cdp.targets import is_real_tab
 from frago.browser.cdp.transport import cdp_get, cdp_ws_connect
 from frago.browser.profile_seed import seed_profile_from_system, system_profile_dir
 
@@ -51,7 +61,6 @@ class ChromeLauncher:
     def __init__(
         self,
         headless: bool = False,
-        void: bool = False,
         app_mode: bool = False,
         kiosk_mode: bool = False,
         app_url: str | None = None,
@@ -74,7 +83,6 @@ class ChromeLauncher:
         self.window_x = window_x
         self.window_y = window_y
         self.headless = headless
-        self.void = void
         self.app_mode = app_mode
         self.kiosk_mode = kiosk_mode
         self.app_url = app_url
@@ -88,8 +96,8 @@ class ChromeLauncher:
         if self.app_mode and self.kiosk_mode:
             raise ValueError("app_mode and kiosk_mode cannot be used together")
 
-        if (self.app_mode or self.kiosk_mode) and (self.headless or self.void):
-            raise ValueError("app_mode/kiosk_mode cannot be used with headless or void mode")
+        if (self.app_mode or self.kiosk_mode) and self.headless:
+            raise ValueError("app_mode/kiosk_mode cannot be used with headless mode")
 
         # Profile directory: use specified one first, otherwise use default location
         if profile_dir:
@@ -557,7 +565,9 @@ class ChromeLauncher:
             if self.window_x is not None and self.window_y is not None:
                 cmd.append(f"--window-position={self.window_x},{self.window_y}")
 
-        # Headless mode
+        # Headless mode.  Note --disable-gpu: headless here has no WebGL at all,
+        # so anything that needs a real GPU (a 3D scene, a WebGL canvas) must run
+        # in an ordinary window instead.
         elif self.headless:
             cmd.extend(
                 [
@@ -566,9 +576,6 @@ class ChromeLauncher:
                     f"--window-size={self.width},{self.height}",
                 ]
             )
-        # Void mode: move window off screen
-        elif self.void:
-            cmd.append("--window-position=-32000,-32000")
 
         # Launch Chrome
         # stdin=DEVNULL prevents subprocess from waiting for input, which causes blocking on Windows
@@ -589,9 +596,12 @@ class ChromeLauncher:
 
             # Initialize tabs: clean slate for new session (not in app/kiosk mode)
             if not self.app_mode and not self.kiosk_mode:
-                self._initialize_tabs()
-                # Reconcile stale tab groups after cleanup
-                self._reconcile_tab_groups()
+                kept = self._initialize_tabs()
+                # Reconcile stale tab groups after cleanup. The tab we just
+                # kept is protected: its navigation may still be in flight.
+                self._reconcile_tab_groups(
+                    protect_ids={kept} if kept else set()
+                )
 
             # Force window size for app mode (Chrome ignores --window-size for remembered windows)
             if self.app_mode:
@@ -692,12 +702,22 @@ class ChromeLauncher:
     LANDING_PAGE_SERVER_PORT = _LANDING_PORT
     LANDING_PAGE_URL = _LANDING_URL
 
-    def _initialize_tabs(self) -> None:
+    def _initialize_tabs(self) -> str | None:
         """Close all existing tabs except one and navigate it to the landing page.
 
         Assumes a new task session is starting — gives a clean browser state.
         After this method, only 1 tab remains with the landing page loaded.
+
+        Returns the id of the tab it kept, so the caller can protect it from
+        the orphan sweep that runs next. Without that, the two steps race: the
+        sweep judges "is this the landing page?" by the tab's URL, and the
+        navigation issued here has often not committed yet, so the tab still
+        reads ``about:blank`` and gets swept as an orphan. The browser is then
+        left with zero tabs — and a headful browser with no window exits.
+        Measured 2026-08-23 on a headful Edge: stop, start, and the landing tab
+        is gone one second after it appears, every time.
         """
+        kept_id: str | None = None
         try:
             import json as _json
 
@@ -705,10 +725,10 @@ class ChromeLauncher:
                 f"http://localhost:{self.debugging_port}/json/list", timeout=5
             )
             all_targets = resp.json()
-            page_tabs = [t for t in all_targets if t.get("type") == "page"]
+            page_tabs = [t for t in all_targets if is_real_tab(t)]
 
             if not page_tabs:
-                return
+                return None
 
             # Close all tabs except the first one
             for tab in page_tabs[1:]:
@@ -720,15 +740,16 @@ class ChromeLauncher:
 
             # Navigate the remaining tab to the landing page
             kept_tab = page_tabs[0]
+            kept_id = kept_tab.get("id")
             ws_url = kept_tab.get("webSocketDebuggerUrl")
             if not ws_url:
-                return
+                return kept_id
 
             # Check if frago server is running before navigating to dashboard
             try:
                 cdp_get(self.LANDING_PAGE_URL, timeout=1)
             except Exception:
-                return  # Server not running, leave tab as-is
+                return kept_id  # Server not running, leave tab as-is
 
             ws = cdp_ws_connect(ws_url, timeout=5)
             ws.send(_json.dumps({
@@ -741,14 +762,19 @@ class ChromeLauncher:
 
         except Exception:
             pass  # Best-effort — don't block startup
+        return kept_id
 
-    def _reconcile_tab_groups(self) -> None:
+    def _reconcile_tab_groups(self, protect_ids: set[str] | None = None) -> None:
         """Reconcile tab group state and close orphan tabs at startup.
 
         1. Remove stale group entries whose tabs no longer exist.
         2. Close orphan tabs — tabs that are not the landing page, not
            tracked by any group, and not managed by TabManager.
+
+        ``protect_ids`` are tabs the caller has just set up and whose URL may
+        not have committed yet; they are never swept. See _initialize_tabs.
         """
+        protect_ids = protect_ids or set()
         try:
             from .tab_group_manager import TabGroupManager
             from .tab_manager import TabManager
@@ -773,7 +799,7 @@ class ChromeLauncher:
                 f"http://localhost:{self.debugging_port}/json/list", timeout=5
             )
             for t in resp.json():
-                if t.get("type") != "page":
+                if not is_real_tab(t):
                     continue
                 tid = t.get("id", "")
                 url = t.get("url", "")
@@ -786,6 +812,8 @@ class ChromeLauncher:
                 if tid in grouped_ids:
                     continue
                 if tid in managed_ids:
+                    continue
+                if tid in protect_ids:
                     continue
                 # Orphan — close it
                 with suppress(Exception):
