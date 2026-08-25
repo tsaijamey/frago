@@ -54,6 +54,16 @@ COMMON_DIR_ENV = "FRAGO_RECIPE_COMMON_DIR"
 BUS_ENV = "FRAGO_BUS_URL"
 EXECUTION_ENV = "FRAGO_EXECUTION_ID"
 
+#: What proves this call came from a recipe the platform started, rather than
+#: from the internet. A deployed server sets ``FRAGO_BEHIND_PROXY=1`` and then
+#: — correctly — grants nothing on the basis of the peer address: a reverse
+#: proxy connects from loopback too, and a proxy that sets none of the headers
+#: anybody thought to list would hand every visitor the owner's seat. So the
+#: hub is reachable only with the token, and the platform hands it over the
+#: same way it hands over the landing spot. Empty on a personal machine, where
+#: loopback is trusted and no token exists.
+BUS_TOKEN_ENV = "FRAGO_BUS_TOKEN"
+
 
 class NoLandingSpot(RuntimeError):
     """The platform did not say where this run writes.
@@ -145,6 +155,8 @@ class Bus:
                 # the dependency shows up on the other module's side too.
                 "X-Frago-Recipe": self.recipe.name or "",
                 "X-Frago-Execution": (os.environ.get(EXECUTION_ENV) or "").strip(),
+                **({"Authorization": f"Bearer {_token}"}
+                   if (_token := (os.environ.get(BUS_TOKEN_ENV) or "").strip()) else {}),
             },
             method="POST",
         )

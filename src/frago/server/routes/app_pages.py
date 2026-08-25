@@ -34,6 +34,7 @@ For a signed-in visitor that slot is their own account id, read from the
 separate identity root; see `_slot_state`.
 """
 
+import asyncio
 import logging
 import mimetypes
 from pathlib import Path
@@ -275,7 +276,14 @@ async def serve_app_api(name: str, mode: str, request: Request):
     from frago.server.services.recipe_service import RecipeService
 
     try:
-        result = RecipeService.run_recipe(name, params | {"mode": mode})
+        # Off the event loop. `run_recipe` blocks for as long as the recipe runs,
+        # and an exported mode is allowed to ask another module for data — which
+        # comes back to this same server on `/api/bus/ask`. Called inline, the
+        # loop is blocked waiting for a recipe that is waiting for the loop, and
+        # the whole server stops answering anything, health checks included.
+        result = await asyncio.to_thread(
+            RecipeService.run_recipe, name, params | {"mode": mode}
+        )
     except Exception as err:
         logger.warning("app api: %s/%s failed: %s", name, mode, err)
         return {"ok": False, "error": {"code": "recipe-failed", "message": str(err)}}
@@ -291,7 +299,23 @@ async def serve_app_api(name: str, mode: str, request: Request):
                                        "message": str(message or "配方没有给出结果")}}
 
     data = result.get("data") if isinstance(result, dict) else result
-    return {"ok": True, "data": data if isinstance(data, dict) else {"result": data}}
+    out = data if isinstance(data, dict) else {"result": data}
+
+    # The same rule the base class applies to published render state, applied
+    # to the other door. A page is a front end; a path in what it receives is
+    # the front end reaching into the back end's filesystem — useless there,
+    # and a description of the server's directory layout handed to whoever
+    # opened the page.
+    from frago.server.routes.bus import strip_paths
+
+    leaked = strip_paths(out)
+    if leaked:
+        logger.warning("app api: %s/%s returned paths: %s", name, mode, leaked[:3])
+        return {"ok": False, "error": {"code": "paths-in-export", "message":
+            f"{name}/{mode} 的返回值里带了本机路径：{'；'.join(leaked[:3])}。"
+            f"页面是前端，那边没有这台机器的文件系统。改成返回内容本身，"
+            f"或者一个不含路径的标识。"}}
+    return {"ok": True, "data": out}
 
 
 @router.get("/{name}/data/{file_path:path}")

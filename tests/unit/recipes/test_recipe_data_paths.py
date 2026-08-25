@@ -203,3 +203,54 @@ class TestTheCheckDoesNotCondemnTheAnswerItAsksFor:
         """Including ``users/`` used for anything other than recipe data — the
         exception is one directory, not the whole tree."""
         assert self._platform_complaints(f"D = {shape}", recipe_dir)
+
+
+class TestTheGateOnlyCoversWhatTheContractCovers:
+    """A chrome-js recipe has no base class to inherit from, so it is not asked to.
+
+    The contract is Python: the base class is a Python module handed over on
+    PYTHONPATH, and a recipe that executes inside a browser can no more inherit
+    from it than it can import pandas. The gate that refuses unconverted
+    recipes did not know that, and refused one — while telling its author to
+    regenerate it from a template that produces Python, which would have
+    destroyed the recipe.
+
+    Three things disagreed at once: `frago recipe validate` said the file was
+    fine, the runner refused to start it, and the refusal's suggested fix was
+    wrong. A gate whose instructions break the thing it is guarding is worse
+    than no gate, because a careful person follows them.
+    """
+
+    class _Meta:
+        def __init__(self, runtime):
+            self.runtime = runtime
+
+    class _Recipe:
+        def __init__(self, runtime, script):
+            self.metadata = TestTheGateOnlyCoversWhatTheContractCovers._Meta(runtime)
+            self.script_path = str(script)
+
+    @pytest.fixture
+    def unmarked(self, tmp_path):
+        script = tmp_path / "recipe.js"
+        script.write_text("// no contract header here\n", encoding="utf-8")
+        return script
+
+    @pytest.mark.parametrize("runtime", ["chrome-js", "shell", ""])
+    def test_a_runtime_the_contract_does_not_cover_is_left_alone(self, runtime, unmarked):
+        from frago.recipes.runner import _refuse_unconverted
+
+        _refuse_unconverted("x", self._Recipe(runtime, unmarked))  # must not raise
+
+    def test_python_is_still_refused(self, unmarked):
+        from frago.recipes.runner import UnconvertedRecipe, _refuse_unconverted
+
+        with pytest.raises(UnconvertedRecipe):
+            _refuse_unconverted("x", self._Recipe("python", unmarked))
+
+    def test_a_marked_python_recipe_starts(self, tmp_path):
+        from frago.recipes.runner import _refuse_unconverted
+
+        script = tmp_path / "recipe.py"
+        script.write_text("#!/usr/bin/env python3\n# frago-recipe/1\n", encoding="utf-8")
+        _refuse_unconverted("x", self._Recipe("python", script))  # must not raise

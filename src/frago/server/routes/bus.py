@@ -30,8 +30,10 @@ dependency the other has not agreed to.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,42 @@ EDGES_NAME = "bus-edges.jsonl"
 
 def edges_path() -> Path:
     return Path.home() / ".frago" / EDGES_NAME
+
+
+#: Anything that reads as a place on this machine. Deliberately broad: a false
+#: positive costs an author one reworded field, a miss hands the front end a
+#: path into the back end's filesystem.
+#: A single line that is entirely a path. Anchored at both ends and limited to
+#: one line, because the first version matched anything beginning with a slash
+#: and flagged a module returning the *contents* of a JavaScript file — the text
+#: opened with `/**`. A rule that cannot tell a path from a comment will be
+#: switched off by the first person it inconveniences.
+_LOOKS_LIKE_A_PATH = re.compile(r"^(/|~/|[A-Za-z]:[\\/])[^\n\r]{0,4096}$")
+
+
+def strip_paths(value, _where: str = "") -> list[str]:
+    """Find filesystem paths in what a module is about to hand out.
+
+    The base class already refuses paths in the render state a module
+    publishes. That covered one of the two ways a path reaches a page and not
+    the other: an exported mode's **return value** goes to the same front end,
+    through a different door, and was unchecked. An audit found two modes
+    handing the owner's absolute paths to the page that way.
+
+    Reported rather than stripped. Removing the field silently would leave a
+    page rendering a blank where something used to be, with nothing anywhere
+    saying why — the same quiet wrongness this whole contract exists to remove.
+    """
+    found = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            found += strip_paths(v, f"{_where}.{k}" if _where else str(k))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            found += strip_paths(v, f"{_where}[{i}]")
+    elif isinstance(value, str) and _LOOKS_LIKE_A_PATH.match(value.strip()):
+        found.append(f"{_where} = {value!r}")
+    return found
 
 
 class AskRequest(BaseModel):
@@ -222,7 +260,13 @@ async def bus_ask(req: AskRequest, request: Request):
     from frago.server.services.recipe_service import RecipeService
 
     try:
-        result = RecipeService.run_recipe(req.recipe, req.params | {"mode": req.mode})
+        # Off the event loop. The callee is a whole recipe run, and modules
+        # chain: A asks B, B asks C, and every hop lands back on this server.
+        # Called inline, the loop is blocked waiting for a recipe that is
+        # waiting for the loop — the server stops answering anything at all.
+        result = await asyncio.to_thread(
+            RecipeService.run_recipe, req.recipe, req.params | {"mode": req.mode}
+        )
     except Exception as err:
         _record_edge(caller, req.recipe, req.mode, True, f"failed: {err}")
         return {"ok": False, "error": {"code": "callee-failed", "message": str(err)}}
@@ -236,7 +280,24 @@ async def bus_ask(req: AskRequest, request: Request):
 
     _record_edge(caller, req.recipe, req.mode, True)
     data = result.get("data") if isinstance(result, dict) else result
-    return {"ok": True, "data": data if isinstance(data, dict) else {"result": data}}
+    out = data if isinstance(data, dict) else {"result": data}
+    # Two callers, two rules, because the risk is not the same.
+    #
+    # A page runs in a browser: it has no filesystem to open a path with, and
+    # whoever opened the page gets a description of the server's directory
+    # layout for free. That is refused outright, next door in `app_pages`.
+    #
+    # A module runs on this machine and may legitimately be told where
+    # something is — a data feed reporting its cache location is diagnostic,
+    # not a leak. Refusing it here broke six recipes at once the moment it was
+    # tried. So it is recorded and left alone: visible in the ledger for
+    # anybody auditing what crosses the hub, and not a rule that fires on the
+    # case it was never aimed at.
+    leaked = strip_paths(out)
+    if leaked:
+        _record_edge(caller, req.recipe, req.mode, True,
+                     f"paths-in-return: {'; '.join(leaked[:2])}")
+    return {"ok": True, "data": out}
 
 
 @router.post("/publish")

@@ -56,6 +56,16 @@ def _refuse_unconverted(name: str, recipe) -> None:
     """
     from frago.recipes.birth import Birth, check
 
+    # Only runtimes the contract actually covers. The base class is Python; a
+    # chrome-js recipe runs inside a browser and has nothing to inherit from,
+    # so refusing it would leave it unrunnable with no way forward — and the
+    # refusal even told the author to regenerate from a template that only
+    # produces Python, which would have destroyed the recipe. A gate whose
+    # instructions break the thing it is protecting is worse than no gate.
+    runtime = getattr(recipe.metadata, "runtime", "") or ""
+    if runtime not in ("python",):
+        return
+
     script = getattr(recipe, "script_path", None)
     if not script:
         return
@@ -77,6 +87,15 @@ def _refuse_unconverted(name: str, recipe) -> None:
                 f"改造它：frago recipe create {name} --force 生成模板，"
                 f"把现有逻辑搬进 mode_* 方法。"),
     )
+
+
+def _bus_token() -> str:
+    """This machine's server token, or empty when it has none."""
+    try:
+        from frago.server.security import read_token
+        return read_token() or ""
+    except Exception:
+        return ""
 
 
 def _bus_url() -> str:
@@ -404,6 +423,13 @@ class RecipeRunner:
             f"{runtime_dir}{os.pathsep}{existing}" if existing else runtime_dir
         )
         resolved_env[context.BUS_ENV] = _bus_url()
+        # On a deployed server nothing is trusted by address, so the recipe
+        # needs the token to reach the hub at all. Read here rather than left
+        # to the recipe: the file is 0600 and a recipe that had to find it
+        # would be a recipe that knows where the server's secrets live.
+        token = _bus_token()
+        if token:
+            resolved_env["FRAGO_BUS_TOKEN"] = token
         if execution_id:
             resolved_env["FRAGO_EXECUTION_ID"] = execution_id
 
