@@ -530,7 +530,34 @@ class Recipe:
 
     @classmethod
     def main(cls, argv: list[str] | None = None) -> None:
-        """Entry point. ``MyRecipe.main()`` at the bottom of the file."""
+        """Entry point. ``MyRecipe.main()`` at the bottom of the file.
+
+        Written bare, without ``if __name__ == "__main__"``, because importing
+        a recipe **is** running it: the way to use another module is the hub,
+        and a guard there would leave a quiet side door where somebody imports
+        a recipe to call one of its functions directly.
+
+        Which is right until the recipe starts subprocesses of its own. Python
+        re-imports the main script in every child it spawns — that is what the
+        guard normally stops. Without one, a recipe that scans the market
+        across eight workers has each worker begin the whole scan again on
+        startup; eight copies then trample the same progress file and results,
+        and the run dies with a process pool error that says nothing about any
+        of this. Seen on 2026-08-26: the stock phase counted to 2100, dropped
+        back to 0, climbed again, and collapsed.
+
+        So the two cases are told apart rather than one being sacrificed. A
+        child process re-importing its parent leaves a mark: the multiprocessing
+        machinery names the process something other than ``MainProcess``.
+        Anyone else importing this file leaves no such mark, and still runs it.
+        """
+        import multiprocessing
+
+        if multiprocessing.current_process().name != "MainProcess":
+            # A worker this recipe started, loading its parent. It is here to
+            # run one task, not to start the whole run over.
+            return
+
         argv = sys.argv[1:] if argv is None else argv
         me = cls()
         params: dict = {}
