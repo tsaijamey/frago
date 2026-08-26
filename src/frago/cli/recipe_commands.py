@@ -2624,14 +2624,32 @@ def _runnable_readiness(recipe_dir: Path) -> str | None:
     does not appear until the second visitor arrives.
     """
     marker = "FRAGO_RECIPE_DATA_DIR"
+    # Building on the base class satisfies this too, and more strongly than the
+    # string search does. ``Recipe.data_dir`` *is* the read of that variable, and
+    # it raises when the platform did not set one — there is no fallback to fall
+    # back to. A recipe on the base class cannot quietly write somewhere else
+    # without going out of its way to bypass ``self.data_dir``.
+    #
+    # This was found the hard way: six recipes converted onto the base class
+    # passed validate on the machine they were written on and failed it on the
+    # server, because this check only runs for recipes that are exposed and
+    # exposure only exists there. The message told the author to "restore that
+    # line" — a line whose absence was the point of the conversion.
+    #
+    # The env-var search stays for everything not built on the base class. The
+    # docstring's reason for preferring it over an import check still holds for
+    # those: a PEP 723 recipe cannot ``import frago``. It can import
+    # ``frago_recipe``, which the platform hands over on PYTHONPATH.
+    base_class = ("from frago_recipe import", "import frago_recipe")
     for path in sorted(recipe_dir.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in {".py", ".sh", ".js", ".mjs"}:
             continue
         try:
-            if marker in path.read_text(encoding="utf-8", errors="ignore"):
-                return None
+            text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        if marker in text or any(sig in text for sig in base_class):
+            return None
     return (
         f"This recipe never reads {marker}, so a visitor-triggered run would write "
         f"wherever the recipe hard-codes — the owner's directory — and every "
