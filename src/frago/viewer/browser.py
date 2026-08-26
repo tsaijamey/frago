@@ -119,6 +119,28 @@ class BrowserViewer:
             session.disconnect()
 
 
+def open_url(url: str) -> bool:
+    """Open a page for a person to read. Returns whether a browser took it.
+
+    The OS default browser, not the CDP-controlled Chrome that ``frago
+    browser`` drives: the page is for a person, and opening it here keeps the
+    agent's browser free and drops any dependency on that browser being up.
+    Same seam ``frago recipe open`` uses, so a recipe calling
+    ``self.open_page()`` and a person typing the command get the same
+    behaviour.
+
+    Returns False rather than raising when no browser is available. The caller
+    is a recipe that has already done its work and published its page; failing
+    to open a window is worth a warning, not a failed run.
+    """
+    import webbrowser
+
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
+
+
 def show_content(
     content: str | Path,
     mode: Literal["auto", "present", "doc"] = "auto",
