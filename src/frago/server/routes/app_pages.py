@@ -256,7 +256,10 @@ async def serve_app_api(name: str, mode: str, request: Request):
     """
     from frago.server.routes.bus import _exports_of
 
-    exports = _exports_of(name) or ()
+    # Pass the mode: a snapshot can be stale in two ways, and being refused for
+    # an export that was added after the server started is indistinguishable
+    # from never having added it. See ``_exports_of``.
+    exports = _exports_of(name, mode) or ()
     if mode not in exports:
         raise HTTPException(
             status_code=403,

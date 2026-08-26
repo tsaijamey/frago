@@ -138,38 +138,51 @@ def _record_edge(caller: str, callee: str, mode: str, ok: bool, why: str = "") -
         logger.warning("bus: could not record edge: %s", err)
 
 
-def _exports_of(recipe_name: str) -> tuple[str, ...] | None:
+def _exports_of(recipe_name: str, wanted: str | None = None) -> tuple[str, ...] | None:
     """Which modes this module offers other modules, read off its own source.
 
     None when the module never declared an exported surface — which is not the
     same as declaring an empty one. A module that has said nothing has not
     agreed to anything, and the hub says so rather than assuming either way.
+
+    ``wanted`` is the mode about to be checked. It is passed in for one reason:
+    a snapshot can be stale in two ways, and until now only one of them was
+    handled. A recipe missing from the snapshot got a second look; a recipe
+    **present in the snapshot with an older export list** did not, and was
+    refused with "this module does not export that" — a sentence that blames
+    the recipe when the stale list is the actual problem. That is the same
+    failure the paragraph below was written about, one step further along:
+    adding an export and being told it does not exist is indistinguishable
+    from never having added it.
     """
     from frago.recipes.exceptions import RecipeNotFoundError
     from frago.recipes.registry import get_registry, invalidate_registry
 
-    try:
-        recipe = get_registry().find(recipe_name)
-    except (RecipeNotFoundError, OSError):
-        # Not in the snapshot the server took when it started. A recipe created
-        # after that is always in this position, so its page is refused the
-        # first time anybody opens it — and refused with "this module exports
-        # nothing", which points at the recipe rather than at the stale list
-        # that is actually the problem. Look again before answering.
+    def _look() -> tuple[str, ...] | None:
         try:
-            invalidate_registry()
             recipe = get_registry().find(recipe_name)
         except (RecipeNotFoundError, OSError):
             return None
+        declared = getattr(recipe.metadata, "exports", None)
+        if declared:
+            return tuple(declared)
+        script = getattr(recipe, "script_path", None)
+        if not script or not Path(script).exists():
+            return None
+        return _exports_from_source(
+            Path(script).read_text(encoding="utf-8", errors="ignore"))
 
-    declared = getattr(recipe.metadata, "exports", None)
-    if declared:
-        return tuple(declared)
+    found = _look()
 
-    script = getattr(recipe, "script_path", None)
-    if not script or not Path(script).exists():
-        return None
-    return _exports_from_source(Path(script).read_text(encoding="utf-8", errors="ignore"))
+    # Look again before refusing — but only when the answer would be a refusal.
+    # Re-scanning on every call would make the hub walk the recipe tree for each
+    # question anybody asks, and the overwhelmingly common answer (yes, it is
+    # exported) is already correct from the snapshot.
+    if found is None or (wanted is not None and wanted not in found):
+        invalidate_registry()
+        found = _look()
+
+    return found
 
 
 def _exports_from_source(source: str) -> tuple[str, ...] | None:
@@ -238,7 +251,7 @@ async def bus_ask(req: AskRequest, request: Request):
                     f"只写了 {'、'.join(wanted) or '（空）'}"),
         )
 
-    exports = _exports_of(req.recipe)
+    exports = _exports_of(req.recipe, req.mode)
 
     if exports is None:
         _record_edge(caller, req.recipe, req.mode, False, "callee-has-no-exports")
