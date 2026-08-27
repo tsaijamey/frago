@@ -3,6 +3,7 @@ import { useAppStore } from '@/stores/appStore';
 import { isApiReady, getApiMode, waitForApi } from '@/api';
 import { getInitStatus } from '@/api/client';
 import { useDataSync } from '@/hooks/useDataSync';
+import { useHashRoute } from '@/hooks/useHashRoute';
 
 // Layout - New admin panel layout with sidebar
 import MainLayout from '@/components/layout/MainLayout';
@@ -31,6 +32,9 @@ function App() {
 
   // Subscribe to WebSocket data push for real-time updates
   useDataSync();
+
+  // 地址栏 ↔ 当前页面双向对齐：刷新停在原处，后退键退得回去，链接发得出去。
+  useHashRoute();
 
   useEffect(() => {
     const initApi = async () => {
