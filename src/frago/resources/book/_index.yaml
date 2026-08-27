@@ -19,6 +19,10 @@
   category: must
   brief: "抽丝剥茧不跳步、禁止截断数据、改完代码必须验证再汇报——刻意对抗训练缺陷"
 
+- name: frago-principle-recall
+  category: must
+  brief: "召回优先——不知道就先查历史再推理；代码告诉你机制，历史告诉你选择；三入口 def find(结论层)/context data:(产物层)/session search(过程层)互不替代"
+
 - name: frago-principle-extend
   category: better
   brief: "重复路由→frago hook-rules add；重复知识→frago <domain> save；重复工作流→recipe；不要硬编码进 Rust"
