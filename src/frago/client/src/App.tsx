@@ -17,6 +17,7 @@ import SkillList from '@/components/skills/SkillList';
 import SettingsPage from '@/components/settings/SettingsPage';
 import NewTaskPage from '@/components/newTask/NewTaskPage';
 import { WorkspacePage } from '@/components/workspace';
+import { TodoPage } from '@/components/todos';
 import { GuidePage } from '@/components/guide';
 
 // UI
@@ -105,6 +106,9 @@ function App() {
         return <RecipeDetail />;
       case 'data_repo':
         return <DataRepoPage />;
+      case 'todos':
+      case 'todo_detail':
+        return <TodoPage />;
       case 'skills':
         return <SkillList />;
       case 'guide':

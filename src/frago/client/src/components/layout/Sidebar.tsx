@@ -4,10 +4,10 @@
  * Left icon-rail navigation. Collapsed to a 52px rail showing only icons;
  * expands into a labeled panel on hover (overlay — content does not reflow).
  * Replaces the bottom dock with a desktop-conventional left navigation.
- * Items: sessions | recipes | data || config, with live status pinned to the bottom.
+ * Items: sessions | recipes | todos | data || config, with live status pinned to the bottom.
  */
 
-import { MessageSquare, LayoutGrid, Database, Settings } from 'lucide-react';
+import { MessageSquare, LayoutGrid, Database, ListChecks, Settings } from 'lucide-react';
 import { useAppStore, type PageType } from '@/stores/appStore';
 
 export interface RailItem {
@@ -20,6 +20,8 @@ export const NAV_ITEMS: RailItem[] = [
   // 会话只有一个入口。`session_workbench` 是内部页面代号，导航上一律叫 sessions。
   { id: 'session_workbench', label: 'sessions', icon: <MessageSquare size={20} /> },
   { id: 'recipes', label: 'recipes', icon: <LayoutGrid size={20} /> },
+  // 事务清单：`frago todo` 的待办不走配方，只能自己开一页，所以它在导航上自成一项。
+  { id: 'todos', label: 'todos', icon: <ListChecks size={20} /> },
   // 数据仓库：~/.frago 备份到用户自己的私有仓库，紧跟在 recipes 后面。
   { id: 'data_repo', label: 'data', icon: <Database size={20} /> },
 ];
@@ -33,6 +35,7 @@ export const CONFIG_ITEM: RailItem = {
 export function isNavItemActive(id: PageType, currentPage: PageType): boolean {
   if (id === 'session_workbench') return currentPage === 'session_workbench';
   if (id === 'recipes') return currentPage === 'recipes' || currentPage === 'recipe_detail';
+  if (id === 'todos') return currentPage === 'todos' || currentPage === 'todo_detail';
   if (id === 'data_repo') return currentPage === 'data_repo';
   if (id === 'settings') return currentPage === 'settings';
   return false;

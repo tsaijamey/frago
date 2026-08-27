@@ -408,6 +408,55 @@ export async function getSkills(): Promise<SkillItem[]> {
 }
 
 // ============================================================
+// Todos API — `frago todo` 的事务
+// ============================================================
+
+/** 一件事务。字段与 `frago todo show` 输出的 JSON 逐字对齐。 */
+export interface TodoItem {
+  id: string;
+  title: string;
+  summary: string | null;
+  status: TodoStatus;
+  priority: TodoPriority;
+  tags: string[];
+  created: string;
+  updated: string;
+  done_at: string | null;
+  context: string | null;
+  steps: string[];
+  done_when: string[];
+  links: string[];
+}
+
+export type TodoStatus = 'todo' | 'doing' | 'done' | 'dropped';
+export type TodoPriority = 'low' | 'normal' | 'high';
+
+export interface TodoListResponse {
+  todos: TodoItem[];
+  /** 每一档各有几件，外加 `all`。按状态筛选之前算，所以筛来筛去这组数不变。 */
+  counts: Record<string, number>;
+}
+
+export interface TodoQuery {
+  status?: TodoStatus;
+  priority?: TodoPriority;
+  tag?: string;
+}
+
+export async function getTodos(query: TodoQuery = {}): Promise<TodoListResponse> {
+  const params = new URLSearchParams();
+  if (query.status) params.set('status', query.status);
+  if (query.priority) params.set('priority', query.priority);
+  if (query.tag) params.set('tag', query.tag);
+  const qs = params.toString();
+  return fetchApi<TodoListResponse>(`/todos${qs ? `?${qs}` : ''}`);
+}
+
+export async function getTodo(todoId: string): Promise<TodoItem> {
+  return fetchApi<TodoItem>(`/todos/${encodeURIComponent(todoId)}`);
+}
+
+// ============================================================
 // Settings API
 // ============================================================
 

@@ -274,6 +274,47 @@
     "noSkillsDescription": "No skills found",
     "createSkillHint": "Create skill files in .claude/skills/ directory"
   },
+  "todos": {
+    "title": "Todos",
+    "pageDesc": "Todos from frago todo, in the same order as frago todo list: highest priority first, oldest first within a priority.",
+    "searchPlaceholder": "Search title, context, tags or id",
+    "empty": "Nothing in this bucket",
+    "emptyDesc": "Try another bucket, or add one with frago todo add.",
+    "loadFailed": "Could not load todos: {{message}}",
+    "notFound": "The todo in this link is not in the list: {{id}}",
+    "stepCount": "{{n}} steps",
+    "status": {
+      "todo": "Todo",
+      "doing": "Doing",
+      "done": "Done",
+      "dropped": "Dropped"
+    },
+    "priority": {
+      "low": "Low",
+      "normal": "Normal",
+      "high": "High"
+    },
+    "filter": {
+      "active": "Open",
+      "todo": "Todo",
+      "doing": "Doing",
+      "done": "Done",
+      "dropped": "Dropped",
+      "all": "All"
+    },
+    "detail": {
+      "dates": "Dates",
+      "created": "Created",
+      "updated": "Updated",
+      "doneAt": "Completed",
+      "tags": "Tags",
+      "summary": "Summary",
+      "context": "Context",
+      "steps": "Steps",
+      "doneWhen": "Done when",
+      "links": "Links"
+    }
+  },
   "guide": {
     "title": "Guide",
     "pageDesc": "Tutorials and FAQs for using frago",
@@ -758,7 +799,8 @@
     "retry": "Retry",
     "refresh": "Refresh",
     "note": "Note",
-    "checking": "Checking..."
+    "checking": "Checking...",
+    "clear": "Clear"
   },
   "errors": {
     "loadFailed": "Failed to load",

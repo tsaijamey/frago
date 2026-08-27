@@ -274,6 +274,47 @@
     "noSkillsDescription": "未找到技能",
     "createSkillHint": "在 .claude/skills/ 目录下创建技能文件"
   },
+  "todos": {
+    "title": "事务",
+    "pageDesc": "frago todo 里的事务。顺序与 frago todo list 一致：优先级高的在前，同级早建的在前。",
+    "searchPlaceholder": "按标题、背景、标签或编号找",
+    "empty": "这一档一件都没有",
+    "emptyDesc": "换一档看看，或者在命令行用 frago todo add 添一件。",
+    "loadFailed": "事务清单取不到：{{message}}",
+    "notFound": "地址里的这件事务不在清单里：{{id}}",
+    "stepCount": "{{n}} 步",
+    "status": {
+      "todo": "待办",
+      "doing": "在做",
+      "done": "已完成",
+      "dropped": "已放弃"
+    },
+    "priority": {
+      "low": "低",
+      "normal": "中",
+      "high": "高"
+    },
+    "filter": {
+      "active": "还没了结",
+      "todo": "待办",
+      "doing": "在做",
+      "done": "已完成",
+      "dropped": "已放弃",
+      "all": "全部"
+    },
+    "detail": {
+      "dates": "时间",
+      "created": "建于",
+      "updated": "改于",
+      "doneAt": "完成于",
+      "tags": "标签",
+      "summary": "摘要",
+      "context": "背景",
+      "steps": "步骤",
+      "doneWhen": "做到什么算完",
+      "links": "相关链接"
+    }
+  },
   "guide": {
     "title": "使用指南",
     "pageDesc": "frago 使用教程和常见问题",
@@ -758,7 +799,8 @@
     "retry": "重试",
     "refresh": "刷新",
     "note": "注意",
-    "checking": "检查中..."
+    "checking": "检查中...",
+    "clear": "清空"
   },
   "errors": {
     "loadFailed": "加载失败",

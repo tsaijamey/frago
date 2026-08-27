@@ -226,6 +226,33 @@ export const refreshSkills = withMode(
 );
 
 // ============================================================
+// Todos API — `frago todo` 的事务
+// ============================================================
+
+export type {
+  TodoItem,
+  TodoListResponse,
+  TodoQuery,
+  TodoStatus,
+  TodoPriority,
+} from './client';
+
+// 事务是本机 `~/.frago/todo/` 下的文件，只有服务端读得到。桌面壳那一路没有对应
+// 的桥，与其编一份空清单让人以为"一件都没有"，不如把取不到这件事说出来。
+const TODOS_UNAVAILABLE = 'Todos API not available in pywebview mode';
+
+export const getTodos = withMode(
+  (query?: httpApi.TodoQuery): Promise<httpApi.TodoListResponse> => httpApi.getTodos(query),
+  (_query?: httpApi.TodoQuery): Promise<httpApi.TodoListResponse> =>
+    Promise.reject(new Error(TODOS_UNAVAILABLE)),
+);
+
+export const getTodo = withMode(
+  (todoId: string): Promise<httpApi.TodoItem> => httpApi.getTodo(todoId),
+  (_todoId: string): Promise<httpApi.TodoItem> => Promise.reject(new Error(TODOS_UNAVAILABLE)),
+);
+
+// ============================================================
 // Config API
 // ============================================================
 
