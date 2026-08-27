@@ -2,10 +2,11 @@
  * Workspace Page - Browse run instance directories and files
  */
 
-import { useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FolderOpen, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import * as api from '@/api';
 import type { ProjectInfo } from '@/api';
 import { ProjectList } from './ProjectList';
@@ -19,21 +20,24 @@ export function WorkspacePage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Load projects on mount
-  useEffect(() => {
-    loadProjects();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // 项目目录在本机随时会多出一份。挂载时取一次就不动的话，人跑完一个配方回到这
+  // 页，新产出的那份不在清单里，而界面看起来一切正常。
+  const firstLoad = useRef(true);
+  useAutoRefresh(loadProjects, { intervalMs: 30_000 });
 
   async function loadProjects() {
+    // 只有开局那一趟举「装载中」：定时那几趟一举起来，左栏每 30 秒空一次。
+    const silent = !firstLoad.current;
+    firstLoad.current = false;
+    if (!silent) setLoading(true);
     try {
-      setLoading(true);
       const data = await api.getProjects();
       setProjects(data);
     } catch (error) {
-      showToast('Failed to load projects', 'error');
+      // 定时那几趟失手不弹提示——人什么都没做却蹦出一条报错，只会当界面坏了。
+      if (!silent) showToast('Failed to load projects', 'error');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 

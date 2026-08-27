@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
 import { Target, BookOpen } from 'lucide-react';
 
@@ -8,9 +8,9 @@ export default function SkillList() {
   const { t } = useTranslation();
   const { skills, loadSkills } = useAppStore();
 
-  useEffect(() => {
-    loadSkills();
-  }, [loadSkills]);
+  // 技能目录在本机随时会被加减。挂载时取一次就不动的话，人装完一个技能回到这页
+  // 会以为没装上。
+  useAutoRefresh(loadSkills, { intervalMs: 30_000 });
 
   if (skills.length === 0) {
     return (

@@ -14,6 +14,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useAutoRefresh } from './useAutoRefresh';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 /** 会话属于哪一家。判定全在服务端做完，界面只负责显示。 */
@@ -135,6 +137,14 @@ export const SEARCH_DEBOUNCE_MS = 450;
 /** 少于这么多字不去搜内容：一个字能命中几乎所有会话，搜了也没用。 */
 export const MIN_CONTENT_QUERY = 2;
 
+/**
+ * 左栏隔多久自己去取一次清单。
+ *
+ * 一趟是把本机全部会话档案的元信息扫一遍，秒级；15 秒一趟在"看得出在跑"和"别把
+ * 机器扫忙"之间。页面被藏起来时这个定时器不发请求（见 `useAutoRefresh`）。
+ */
+export const SESSION_REFRESH_MS = 15_000;
+
 export async function fetchContentMatches(
   query: string,
   signal?: AbortSignal
@@ -206,23 +216,53 @@ export function useWorkbenchSessions(): WorkbenchSessionsState {
     return false;
   }, []);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  /**
+   * 取清单。`silent` 决定这一趟要不要把「装载中」举起来。
+   *
+   * 定时那几趟必须是安静的：`loading` 一举起来，左栏整片会换成骨架屏，每 15 秒闪一
+   * 次白，比清单旧还难用。人自己按刷新、或者开局第一趟才该看得见在装。
+   */
+  const load = useCallback(async (silent: boolean) => {
+    if (!silent) setLoading(true);
     try {
       setSessions(await fetchWorkbenchSessions());
+      setError(null);
     } catch (e) {
+      // 取不到就说取不到，但**手上那份清单留着**——定时重取偶尔失手时把整片清单
+      // 换成一句错误，代价远大于让人多看一句提示。
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (!tryReadPrefetch()) {
-      void reload();
-    }
-  }, [reload, tryReadPrefetch]);
+  const reload = useCallback(() => load(false), [load]);
+
+  /**
+   * 清单会自己变新。
+   *
+   * 左栏这份清单的价值全在「现在什么情况」——哪场在跑、哪场刚报错。挂载时取一次
+   * 就不动的话，人在旁边跑着 agent，界面上那场永远停在"在跑"或者根本没出现，而
+   * 它看起来跟刚取回的一模一样，没有任何迹象说明这是旧的。
+   *
+   * 预取那一份只免掉开局第一趟，此后照常按时重取。
+   */
+  const firstRun = useRef(true);
+
+  useAutoRefresh(
+    async () => {
+      if (firstRun.current) {
+        firstRun.current = false;
+        // 预取那一份已经到了就直接用，省掉一次串在程序包之后的往返。
+        if (tryReadPrefetch()) return;
+        // 开局手上什么都没有，这一趟该看得见在装。
+        await load(false);
+        return;
+      }
+      await load(true);
+    },
+    { intervalMs: SESSION_REFRESH_MS }
+  );
 
   /**
    * 内容检索：敲字停下来才发，且**只发最后那一句**。

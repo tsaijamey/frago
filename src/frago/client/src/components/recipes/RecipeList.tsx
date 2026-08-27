@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import { useAutoRefresh } from '@/hooks/useAutoRefresh';
 import EmptyState from '@/components/ui/EmptyState';
 import RecipeTabs from './RecipeTabs';
 import CommunityRecipeList from './CommunityRecipeList';
@@ -179,10 +180,12 @@ export default function RecipeList() {
     ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3'
     : 'flex flex-col gap-2';
 
-  useEffect(() => {
-    loadRecipes();
-  }, [loadRecipes]);
+  // 配方是在本机文件系统上加加减减的，界面开着的时候它随时会变。服务端有一条
+  // `data_recipes` 的推送通道，但至今没有任何地方真的推过——所以这里自己去取。
+  useAutoRefresh(loadRecipes, { intervalMs: 30_000 });
 
+  // 社区配方走的是 GitHub 接口，没登录时一小时只有 60 次配额。定时重取会在人什么
+  // 都没做的情况下把配额烧光，所以它只在进页面时取这一次。
   useEffect(() => {
     loadCommunityRecipes();
   }, [loadCommunityRecipes]);

@@ -219,11 +219,14 @@ export default function SessionRail({ state, selectedId, onSelect }: SessionRail
 
       {/* 列表区：Virtuoso 只渲染视口内卡片。装载时给骨架屏占位，有数据才展示窗口化列表。 */}
       <div className="min-h-0 flex-1">
-        {error ? (
+        {/* 报错摆在清单**上面**而不是替掉清单：定时重取偶尔失手时，手上那份清单仍
+            比一句错误有用得多。 */}
+        {error && (
           <p className="m-3 rounded-[6px] bg-bg-subtle px-2.5 py-2 text-[12px] text-text-secondary">
             {error}
           </p>
-        ) : loading ? (
+        )}
+        {loading && !visible.length ? (
           <div className="px-3 py-3 animate-pulse">
             {Array.from({ length: 6 }).map((_, i) => (
               <div
