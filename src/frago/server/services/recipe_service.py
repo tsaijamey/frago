@@ -172,6 +172,7 @@ class RecipeService:
         name: str,
         params: dict[str, Any] | None = None,
         timeout: int = 300,  # noqa: ARG004 — kept for API compatibility
+        ctx: Any = None,
     ) -> dict[str, Any]:
         """Execute a recipe synchronously.
 
@@ -182,6 +183,10 @@ class RecipeService:
             name: Recipe name.
             params: Optional parameters.
             timeout: Timeout in seconds (default 300).
+            ctx: Whose run this is. ``None`` means the owner — which is right
+                for a run nobody signed in for, and wrong for every other kind.
+                Leaving it out was how a signed-in person's page read came back
+                out of the machine's directory instead of their own.
 
         Returns:
             Result dictionary with status, data, and optionally error.
@@ -194,7 +199,7 @@ class RecipeService:
             from frago.recipes.runner import RecipeRunner
 
             runner = RecipeRunner()
-            result = runner.run(name, params or {})
+            result = runner.run(name, params or {}, ctx=ctx)
 
             duration_ms = int((time.time() - start_time) * 1000)
 

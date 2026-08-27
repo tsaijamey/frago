@@ -342,6 +342,63 @@ def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext
     )
 
 
+def for_visitor(recipe_name: str, identity: str) -> InvocationContext:
+    """The context a signed-in visitor's run gets — whichever door they came in.
+
+    **One function, because reads and writes have to land on the same
+    directory.** They did not. A page's write went through the run route, which
+    built a visitor context here; a page's read went through the exported
+    read-only mode, which built no context at all and therefore ran as the
+    machine. On the server 2026-08-26 that meant the trade ledger was written
+    into the signed-in account's directory and read out of the machine's: the
+    account's own book stopped at 46 entries while every page on the site
+    rendered a different book of 48, and nothing anywhere reported a problem.
+    Two call sites deciding "where does this person's data live" is the shape
+    that produced it, so there is now one.
+
+    The spot is whatever this account's slot already records, and otherwise the
+    same directory a visitor's run has always been given. Deliberately not the
+    newer per-account layout the owner's runs moved to: this function exists to
+    make two doors agree, and moving everybody's files while doing it would be
+    a migration nobody asked for, riding along inside a bug fix. Visitor data
+    still living under the older path is a real thing to settle, and it is a
+    separate piece of work with its own before-and-after.
+
+    A recorded path outside this account's own root is refused rather than
+    honoured: the landing spot decides what the run may write, so a value that
+    walked out of the account's tree is the one thing it must never be.
+    """
+    from frago.recipes.app_state import read as read_slot
+    from frago.recipes.app_state import user_data_dir, user_root
+
+    fallback = user_data_dir(identity, recipe_name)
+    recorded = ""
+    try:
+        state = read_slot(recipe_name, identity, identity=True) or {}
+        recorded = str(state.get("dataDir") or "").strip()
+    except Exception:
+        recorded = ""
+
+    spot = fallback
+    if recorded:
+        try:
+            candidate = Path(recorded).expanduser().resolve()
+            if candidate.is_relative_to(user_root(identity).resolve()):
+                spot = candidate
+        except (OSError, ValueError):
+            spot = fallback
+
+    return InvocationContext(
+        caller=VISITOR,
+        slot=identity,
+        data_dir=spot,
+        # Shared data is machine-level and read-only, so a visitor's run gets
+        # the same door the owner's does — it is the one thing here that is not
+        # per person. Which producers this recipe may read is its own declaration.
+        common_dir=common_dirs_for(recipe_name),
+    )
+
+
 def is_visitor(env: Mapping[str, str] | None = None) -> bool:
     """Whether this process is running on someone else's behalf."""
     return current(env).is_visitor

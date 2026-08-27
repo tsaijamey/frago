@@ -217,7 +217,11 @@ async def run_for_visitor(name: str, request: Request):
         # thing that lets the visitor fix their request.
         raise VisitorSafe(status_code=400, detail=str(exc)) from None
 
-    data_dir = app_state.user_data_dir(identity, name)
+    # Where this run stands, decided in one place for both doors — the run
+    # route here and the exported read-only mode a page calls. See
+    # `context.for_visitor` for what having two of these cost.
+    ctx = context.for_visitor(name, identity)
+    data_dir = ctx.data_dir
     key = (name, identity)
     timeout = getattr(recipe.metadata, "timeout", None)
     if not _claim(key, timeout):
@@ -256,15 +260,6 @@ async def run_for_visitor(name: str, request: Request):
         logger.exception("could not prepare a visitor run of %s", name)
         raise HTTPException(status_code=500, detail="could not start the run") from None
 
-    ctx = context.InvocationContext(
-        caller=context.VISITOR,
-        slot=identity,
-        data_dir=data_dir,
-        # Shared data is machine-level and read-only, so a visitor's run gets the
-        # same door the owner's does — it is the one thing here that is not per
-        # person. Which producers this recipe may read is its own declaration.
-        common_dir=context.common_dirs_for(name),
-    )
     _submit(name, params, ctx, key, data_dir, timeout)
     return JSONResponse(status_code=202, content={"accepted": True})
 

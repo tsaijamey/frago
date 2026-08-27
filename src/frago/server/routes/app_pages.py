@@ -278,6 +278,28 @@ async def serve_app_api(name: str, mode: str, request: Request):
 
     from frago.server.services.recipe_service import RecipeService
 
+    # Whose data this read is about.
+    #
+    # A signed-in visitor's page must be answered out of their own directory,
+    # the same one their runs write. Until this was passed, it was not: the run
+    # route built a visitor context and this one built none, so a page wrote to
+    # the account's book and read back the machine's. Both said fine. Observed
+    # on the server 2026-08-26 — the account's ledger sat at 46 entries while
+    # every page rendered a different one of 48.
+    #
+    # The owner keeps `None` (their own run, their own directory), and so does
+    # an anonymous visitor to a published page: they have no directory of their
+    # own, and what they are meant to see is exactly what the publisher put up.
+    ctx = None
+    from frago.server.security import slot_for, zone_of
+
+    if zone_of(request) == "identity":
+        from frago.recipes import context as run_context
+
+        identity = slot_for(request)
+        if identity:
+            ctx = run_context.for_visitor(name, identity)
+
     try:
         # Off the event loop. `run_recipe` blocks for as long as the recipe runs,
         # and an exported mode is allowed to ask another module for data — which
@@ -285,7 +307,7 @@ async def serve_app_api(name: str, mode: str, request: Request):
         # loop is blocked waiting for a recipe that is waiting for the loop, and
         # the whole server stops answering anything, health checks included.
         result = await asyncio.to_thread(
-            RecipeService.run_recipe, name, params | {"mode": mode}
+            RecipeService.run_recipe, name, params | {"mode": mode}, 300, ctx
         )
     except Exception as err:
         logger.warning("app api: %s/%s failed: %s", name, mode, err)

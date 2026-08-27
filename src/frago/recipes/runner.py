@@ -38,6 +38,49 @@ def _frago_argv() -> list[str]:
 _active_processes: dict[str, subprocess.Popen[bytes]] = {}
 _process_lock = threading.Lock()
 
+#: Whose run each live execution belongs to.
+#
+# A recipe is allowed to ask another module for data, and that question comes
+# back to this machine's hub over HTTP. The hub then starts the second module —
+# and had no way to know whose run had asked, so it started it as the machine.
+# One person's page therefore read its own account's data through the front
+# door and the machine's through the side door, with both reporting success.
+#
+# The execution id is the link. It is minted here, handed to the recipe in its
+# environment, and sent back on every hub call, so the hub can look up the
+# context this run was started with and hand the same one to whatever that run
+# asks for. Kept in memory rather than on disk because it is only meaningful
+# while the run is alive, and only inside the process that started it — a run
+# started by the CLI has no entry here, and the hub falls back to the owner
+# exactly as it always did.
+_run_contexts: dict[str, context.InvocationContext] = {}
+_run_context_lock = threading.Lock()
+
+
+def context_of_execution(execution_id: str) -> context.InvocationContext | None:
+    """Whose run this execution is, or ``None`` if this process did not start it."""
+    key = (execution_id or "").strip()
+    if not key:
+        return None
+    with _run_context_lock:
+        return _run_contexts.get(key)
+
+
+def _remember_run_context(execution_id: str, ctx: context.InvocationContext | None) -> None:
+    key = (execution_id or "").strip()
+    if not key or ctx is None:
+        return
+    with _run_context_lock:
+        _run_contexts[key] = ctx
+
+
+def _forget_run_context(execution_id: str) -> None:
+    key = (execution_id or "").strip()
+    if not key:
+        return
+    with _run_context_lock:
+        _run_contexts.pop(key, None)
+
 
 class UnconvertedRecipe(RecipeExecutionError):
     """This file was not built on the contract, so nothing will start it."""
@@ -376,6 +419,30 @@ class RecipeRunner:
         timeout: int | None = None,
         ctx: context.InvocationContext | None = None,
     ) -> dict[str, Any]:
+        """Run it, and drop the note about whose run it was when it ends.
+
+        The note has to go whether the recipe returned, raised, or timed out —
+        an entry left behind would hand the next run to reuse this id somebody
+        else's directory, which is the failure this whole mechanism exists to
+        prevent, reintroduced by its own bookkeeping.
+        """
+        try:
+            return self._run_with_execution_inner(
+                execution_id, name, recipe, params, resolved_env, timeout, ctx
+            )
+        finally:
+            _forget_run_context(execution_id)
+
+    def _run_with_execution_inner(
+        self,
+        execution_id: str,
+        name: str,
+        recipe: Any,
+        params: dict[str, Any],
+        resolved_env: dict[str, str],
+        timeout: int | None = None,
+        ctx: context.InvocationContext | None = None,
+    ) -> dict[str, Any]:
         """Core execution logic after find/validate/resolve/create.
 
         Handles: transition(RUNNING) -> subprocess execution -> complete(terminal).
@@ -432,6 +499,9 @@ class RecipeRunner:
             resolved_env["FRAGO_BUS_TOKEN"] = token
         if execution_id:
             resolved_env["FRAGO_EXECUTION_ID"] = execution_id
+            # And the hub's half of it: whatever this run asks another module
+            # for gets started with this same context, instead of as the machine.
+            _remember_run_context(execution_id, ctx)
 
         # And this is where the run gets somewhere to stand. Until now a recipe
         # started in whatever directory its caller happened to be in — a shell,

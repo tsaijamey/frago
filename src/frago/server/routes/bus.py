@@ -270,7 +270,45 @@ async def bus_ask(req: AskRequest, request: Request):
                     f"没导出的 mode 一律不对外——那里面的活不是给别人顺手调的。"),
         )
 
+    # The callee runs as whoever the caller was running as.
+    #
+    # Without this the chain loses the person at the first hop: a signed-in
+    # visitor's page asks its own recipe for data, that recipe asks the module
+    # that holds the book, and the hub started that second module as the
+    # machine. The page then showed the machine's book while the person's own
+    # writes went to their own — two books, one page, no error anywhere.
+    # Observed on the server 2026-08-26.
+    #
+    # The identity comes from the execution id the caller carries, looked up in
+    # the runs this process started, never from a header the caller could
+    # choose. A run this process did not start (the CLI, another machine) has no
+    # entry and falls back to the owner, exactly as before.
+    # **The identity travels; the directory is recomputed.** Handing the
+    # caller's context straight over would point the callee at the *caller's*
+    # directory — the ledger opening the history page's folder, finding no book,
+    # and reporting an empty one. What carries is who this is for; where that
+    # person's data for *this* module lives is this module's own answer.
+    from frago.recipes import context as run_context
+    from frago.recipes.runner import context_of_execution
     from frago.server.services.recipe_service import RecipeService
+
+    ctx = None
+    asked_by = context_of_execution(request.headers.get("X-Frago-Execution", ""))
+    if asked_by is not None and asked_by.slot:
+        try:
+            ctx = (run_context.for_visitor(req.recipe, asked_by.slot)
+                   if asked_by.is_visitor else run_context.for_owner(req.recipe))
+        except Exception:
+            # Could not work out where this module keeps that person's data.
+            # Running it as the machine instead would answer out of the wrong
+            # directory without saying so — the exact failure this passes
+            # identity to prevent — so refuse the hop and name it.
+            logger.warning("bus: cannot place %s for slot %s", req.recipe, asked_by.slot,
+                           exc_info=True)
+            _record_edge(caller, req.recipe, req.mode, True, "no-landing-spot-for-caller")
+            return {"ok": False, "error": {"code": "callee-failed", "message":
+                    f"定不出 {req.recipe} 给这个人的数据落在哪，这次不问了——"
+                    f"换成按本机身份去问，会答出别人的数据而且不报错。"}}
 
     try:
         # Off the event loop. The callee is a whole recipe run, and modules
@@ -278,7 +316,7 @@ async def bus_ask(req: AskRequest, request: Request):
         # Called inline, the loop is blocked waiting for a recipe that is
         # waiting for the loop — the server stops answering anything at all.
         result = await asyncio.to_thread(
-            RecipeService.run_recipe, req.recipe, req.params | {"mode": req.mode}
+            RecipeService.run_recipe, req.recipe, req.params | {"mode": req.mode}, 300, ctx
         )
     except Exception as err:
         _record_edge(caller, req.recipe, req.mode, True, f"failed: {err}")

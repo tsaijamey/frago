@@ -253,4 +253,7 @@ class TestRecipeServiceRunRecipe:
         ):
             RecipeService.run_recipe("param-recipe", params={"key": "value"})
 
-        mock_runner.run.assert_called_once_with("param-recipe", {"key": "value"})
+        # ctx says whose run this is. None is the owner — the caller not
+        # passing one is what made a signed-in person's page read out of the
+        # machine's directory instead of their own.
+        mock_runner.run.assert_called_once_with("param-recipe", {"key": "value"}, ctx=None)
