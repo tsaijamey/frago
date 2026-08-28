@@ -31,9 +31,12 @@ dependency the other has not agreed to.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import re
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -112,23 +115,18 @@ class OpenRequest(BaseModel):
     url: str
 
 
-def _record_edge(caller: str, callee: str, mode: str, ok: bool, why: str = "") -> None:
-    """Write down that this crossing happened, whether or not it was allowed.
+#: How long an unremarkable repeat is folded into a count before it is written
+#: down again. A page polling a module for progress crosses the hub every two
+#: seconds; two days of that produced 49366 records saying the same 56 things,
+#: and buried the 52 records that had something to say under 99.89% noise.
+_ROLLUP_WINDOW_SECONDS = 3600
 
-    Refusals are recorded too, and are the more useful half: a module reaching
-    for something it never declared is a dependency somebody is about to add by
-    accident, and this is the only moment anyone can see it.
-    """
-    from datetime import datetime
+#: (caller, callee, mode) -> what has happened since it was last written down.
+_rollup: dict[tuple[str, str, str], dict[str, Any]] = {}
+_rollup_lock = threading.Lock()
 
-    entry = {
-        "when": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "caller": caller or "(unknown)",
-        "callee": callee,
-        "mode": mode,
-        "allowed": ok,
-        "why": why,
-    }
+
+def _append_edge(entry: dict[str, Any]) -> None:
     try:
         p = edges_path()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -136,6 +134,82 @@ def _record_edge(caller: str, callee: str, mode: str, ok: bool, why: str = "") -
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError as err:  # recording must never be why a call fails
         logger.warning("bus: could not record edge: %s", err)
+
+
+def _record_edge(caller: str, callee: str, mode: str, ok: bool, why: str = "") -> None:
+    """Write down that this crossing happened, whether or not it was allowed.
+
+    Refusals are recorded too, and are the more useful half: a module reaching
+    for something it never declared is a dependency somebody is about to add by
+    accident, and this is the only moment anyone can see it.
+
+    **What gets a line of its own and what gets counted.** The question this
+    ledger answers — did anything depend on this module before I changed it — is
+    about which crossings exist, not how many times each one happened. A page
+    polling for progress asks the same question every two seconds and every
+    answer was written down in full, so the file grew 3.75 MB a day to say 56
+    things, and a reader looking for the handful of refusals had to find them in
+    it. So: anything carrying a ``why`` — a refusal, a failure, a path handed
+    out in a return value — is written in full every time, because none of those
+    is a repeat of anything. A crossing that simply worked is written the first
+    time it is seen, and after that folded into a count that lands once a window.
+
+    First sighting is written immediately rather than waiting for the window to
+    close: a dependency that just appeared is the event worth seeing, and a
+    record that only exists in memory is lost if the server stops first.
+    """
+    from datetime import datetime
+
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    caller = caller or "(unknown)"
+    entry = {"when": now, "caller": caller, "callee": callee,
+             "mode": mode, "allowed": ok, "why": why}
+
+    if not ok or why:
+        _append_edge(entry)
+        return
+
+    key = (caller, callee, mode)
+    pending: dict[str, Any] | None = None
+    with _rollup_lock:
+        state = _rollup.get(key)
+        if state is None:
+            _rollup[key] = {"opened": time.monotonic(), "opened_at": now,
+                            "repeats": 0, "last": now}
+            pending = entry | {"times": 1}
+        else:
+            state["repeats"] += 1
+            state["last"] = now
+            if time.monotonic() - state["opened"] >= _ROLLUP_WINDOW_SECONDS:
+                pending = _close_window(key, state)
+    if pending is not None:
+        _append_edge(pending)
+
+
+def _close_window(key: tuple[str, str, str], state: dict[str, Any]) -> dict[str, Any]:
+    """Turn what has piled up for one crossing into a single line. Lock held."""
+    caller, callee, mode = key
+    line = {"when": state["last"], "caller": caller, "callee": callee,
+            "mode": mode, "allowed": True, "why": "",
+            "times": state["repeats"], "since": state["opened_at"]}
+    state["opened"] = time.monotonic()
+    state["opened_at"] = state["last"]
+    state["repeats"] = 0
+    return line
+
+
+@atexit.register
+def _flush_rollups() -> None:
+    """Write down what was still being counted when the process went away.
+
+    Without this the last window of every crossing is lost on every restart —
+    small, but it is the most recent evidence that a dependency is still live,
+    which is exactly what somebody about to change a module wants to know.
+    """
+    with _rollup_lock:
+        lines = [_close_window(k, s) for k, s in _rollup.items() if s["repeats"]]
+    for line in lines:
+        _append_edge(line)
 
 
 def _exports_of(recipe_name: str, wanted: str | None = None) -> tuple[str, ...] | None:
