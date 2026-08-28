@@ -121,6 +121,10 @@
   category: better
   brief: "观察到重复路由模式时用 frago hook-rules add 沉淀为数据化规则，不改 Rust"
 
+- name: session-handoff
+  category: better
+  brief: "会话尾声把没做完的事交给下一场（全文 frago todo --how-to）：一条待办要答四问（是什么/到哪一步/下一步先动哪/怎么算完），frago todo add 自动把当前会话 id 记进去；同一件事第二次接手用 frago todo log 追加不覆盖；接手侧 todo next/show 拿到 sessions 里的 id 再回原话"
+
 # 效率类 — 你可能不知道有这个
 - name: context-recall
   category: available
