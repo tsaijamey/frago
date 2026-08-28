@@ -59,6 +59,7 @@ class TestList:
             "steps",
             "done_when",
             "links",
+            "sessions",
         }
 
     def test_计数不随状态筛选变(self, client):

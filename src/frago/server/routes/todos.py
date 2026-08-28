@@ -17,7 +17,8 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from frago.todo.store import PRIORITIES, STATUSES, get as get_todo, list_todos
+from frago.todo.store import PRIORITIES, STATUSES, list_todos
+from frago.todo.store import get as get_todo
 
 router = APIRouter()
 
@@ -38,6 +39,9 @@ class TodoItem(BaseModel):
     steps: list[str] = []
     done_when: list[str] = []
     links: list[str] = []
+    # 这件事在哪几场会话里被谈过——顺着它能回到当时的原话。旧的事务文件里没有这个
+    # 字段，读出来就是空的，不影响显示。
+    sessions: list[str] = []
 
 
 class TodoListResponse(BaseModel):

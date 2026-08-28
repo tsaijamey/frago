@@ -53,6 +53,10 @@ TODO_SCHEMA = {
         {"name": "steps", "type": "list[str]", "default": [], "description": "implementation steps"},
         {"name": "done_when", "type": "list[str]", "default": [], "description": "completion conditions"},
         {"name": "links", "type": "list[str]", "default": [], "description": "related urls"},
+        {"name": "sessions", "type": "list[str]", "default": [],
+         "description": "session ids this todo was worked in, oldest first; `add` records the "
+                        "current one, `log` appends the next — the trail back to the raw "
+                        "conversations (see `frago todo --how-to`)"},
     ],
 }
 
@@ -74,6 +78,7 @@ class Todo:
     steps: list[str] = field(default_factory=list)
     done_when: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
+    sessions: list[str] = field(default_factory=list)
 
 
 # ── Paths & ids ─────────────────────────────────────────────────────────
@@ -184,6 +189,7 @@ def add(
     steps: list[str] | None = None,
     done_when: list[str] | None = None,
     links: list[str] | None = None,
+    sessions: list[str] | None = None,
 ) -> Todo:
     """Create a new todo file and return the :class:`Todo`."""
     if not title or not title.strip():
@@ -208,9 +214,20 @@ def add(
         steps=list(steps or []),
         done_when=list(done_when or []),
         links=list(links or []),
+        sessions=_dedupe(sessions),
     )
     _write(todo)
     return todo
+
+
+def _dedupe(values: list[str] | None) -> list[str]:
+    """去重但保序——会话 id 的先后就是这件事的时间线，排序会把它抹平。"""
+    out: list[str] = []
+    for v in values or []:
+        v = v.strip()
+        if v and v not in out:
+            out.append(v)
+    return out
 
 
 def list_todos(
@@ -244,7 +261,10 @@ def get(ref: str) -> Todo:
     return _load_file(_path_for(resolve_id(ref)))
 
 
-_EDITABLE = {"title", "summary", "status", "priority", "tags", "context", "steps", "done_when", "links"}
+_EDITABLE = {
+    "title", "summary", "status", "priority", "tags",
+    "context", "steps", "done_when", "links", "sessions",
+}
 
 
 def update(ref: str, **changes) -> Todo:
@@ -267,6 +287,46 @@ def update(ref: str, **changes) -> Todo:
     todo.updated = _today()
     if changes.get("status") == "done" and not todo.done_at:
         todo.done_at = _today()
+    _write(todo)
+    return todo
+
+
+def log(
+    ref: str,
+    entry: str,
+    *,
+    session_id: str | None = None,
+    status: str | None = None,
+) -> Todo:
+    """把这一场会话的进展追加到 ``context`` 末尾，并把会话 id 记进 ``sessions``。
+
+    长周期的事情不是一场会话做得完的：这次推进一半，下次换个 agent 接着推。若每次
+    接手都重写 ``context``，上一手的判断就被抹掉了，接手的人只看得到最后的结论，看
+    不到为什么走到这一步——而「为什么」恰恰是代码和 git 历史里查不到的那部分。所以
+    这里只追加，NEVER 覆盖。
+
+    每段前面压一行日期与会话 id，日后顺着这个 id 就能回到当时的原始对话。
+    """
+    if not entry or not entry.strip():
+        raise ValueError("log entry is required")
+
+    todo = get(ref)
+    stamp = f"--- {_today()}"
+    if session_id:
+        stamp += f" · session {session_id}"
+    stamp += " ---"
+    block = f"{stamp}\n{entry.strip()}"
+
+    todo.context = f"{todo.context.rstrip()}\n\n{block}" if todo.context else block
+    if session_id:
+        todo.sessions = _dedupe([*todo.sessions, session_id])
+    if status is not None:
+        if status not in STATUSES:
+            raise ValueError(f"invalid status {status!r}; must be one of {STATUSES}")
+        todo.status = status
+        if status == "done" and not todo.done_at:
+            todo.done_at = _today()
+    todo.updated = _today()
     _write(todo)
     return todo
 

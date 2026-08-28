@@ -329,6 +329,11 @@ COMMAND_EXAMPLES = {
         "frago session list",
         "frago session show <id>",
     ],
+    "session/self": [
+        "frago session self",
+        "frago session self --json",
+        'frago todo add "..." --session "$(frago session self)"',
+    ],
     "session/list": [
         "frago session list",
         "frago session list --status running --limit 10",
@@ -708,10 +713,19 @@ COMMAND_EXAMPLES = {
         "frago todo <command>",
         "frago todo list",
         "frago todo add '<title>'",
+        "frago todo --how-to",
     ],
     "todo/add": [
         "frago todo add '<title>'",
         "frago todo add 'fix bug' --priority high --tag work",
+        "frago todo add '<title>' --context '<背景/停在哪>' --done-when '<可判定的完成条件>'",
+    ],
+    "todo/log": [
+        "frago todo log <ref> '<这次做了什么、卡在哪、下一步>'",
+        "frago todo log <ref> '<进展>' --status doing",
+    ],
+    "todo/how-to": [
+        "frago todo --how-to",
     ],
     "todo/done": [
         "frago todo done <ref>",

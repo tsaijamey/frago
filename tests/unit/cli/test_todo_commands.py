@@ -11,6 +11,13 @@ from frago.cli.todo_commands import todo_group
 @pytest.fixture
 def runner(tmp_path, monkeypatch):
     monkeypatch.setenv("FRAGO_TODO_DIR", str(tmp_path))
+    # 会话来源逐条掐断：默认没有任何声明，也不去真实的 ~/.claude/projects 里
+    # 猜——用例要什么会话，自己 setenv。
+    monkeypatch.delenv("FRAGO_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setattr(
+        "frago.session.self_id.CLAUDE_PROJECTS_DIR", tmp_path / "no-such-projects"
+    )
     return CliRunner()
 
 
@@ -124,3 +131,91 @@ def test_edit_without_options_errors(runner):
     res = runner.invoke(todo_group, ["edit", todo_id])
     assert res.exit_code != 0
     assert "nothing to edit" in res.output.lower()
+
+
+# ── 交接：会话尾声把剩下的事写成下一场会话接得住的待办 ──────────────────
+
+
+def test_how_to_flag_and_subcommand_print_the_same_playbook(runner):
+    flagged = runner.invoke(todo_group, ["--how-to"])
+    assert flagged.exit_code == 0
+    # 交接必须讲清的三件事：会话 id 怎么拿、长周期怎么续、下一场怎么接住
+    assert "frago session self" in flagged.output
+    assert "frago todo log" in flagged.output
+    assert "frago todo next" in flagged.output
+
+    sub = runner.invoke(todo_group, ["how-to"])
+    assert sub.exit_code == 0
+    assert sub.output == flagged.output
+
+
+def test_add_records_the_declared_session(runner, monkeypatch):
+    monkeypatch.setenv("FRAGO_SESSION_ID", "sess-declared")
+    res = _add(runner, "--title", "handover with session")
+    assert res.exit_code == 0, res.output
+    assert "sess-declared" in res.output
+    todo_id = res.output.split("Created todo ")[1].splitlines()[0].strip()
+    data = json.loads(runner.invoke(todo_group, ["show", todo_id]).output)
+    assert data["sessions"] == ["sess-declared"]
+
+
+def test_add_without_a_resolvable_session_says_so_and_how_to_fix(runner):
+    res = _add(runner, "--title", "no session around")
+    assert res.exit_code == 0
+    assert "session id not resolved" in res.output
+    assert "--session" in res.output  # 给出可直接执行的补救命令
+    todo_id = res.output.split("Created todo ")[1].splitlines()[0].strip()
+    data = json.loads(runner.invoke(todo_group, ["show", todo_id]).output)
+    assert data["sessions"] == []
+
+
+def test_add_no_session_opts_out(runner, monkeypatch):
+    monkeypatch.setenv("FRAGO_SESSION_ID", "sess-declared")
+    res = _add(runner, "--title", "opted out", "--no-session")
+    assert res.exit_code == 0
+    todo_id = res.output.split("Created todo ")[1].splitlines()[0].strip()
+    data = json.loads(runner.invoke(todo_group, ["show", todo_id]).output)
+    assert data["sessions"] == []
+    assert "session id not resolved" not in res.output
+
+
+def test_log_appends_across_sessions_without_losing_the_earlier_one(runner, monkeypatch):
+    monkeypatch.setenv("FRAGO_SESSION_ID", "sess-one")
+    res = _add(runner, "--title", "long running task", "--context", "起因：上游改了口径")
+    todo_id = res.output.split("Created todo ")[1].splitlines()[0].strip()
+
+    monkeypatch.setenv("FRAGO_SESSION_ID", "sess-two")
+    res = runner.invoke(todo_group, ["log", todo_id, "抓到三篇年报，卡在取数口径", "--status", "doing"])
+    assert res.exit_code == 0, res.output
+    assert "sess-two" in res.output
+
+    data = json.loads(runner.invoke(todo_group, ["show", todo_id]).output)
+    assert data["status"] == "doing"
+    assert data["sessions"] == ["sess-one", "sess-two"]
+    # 追加，不是覆盖：最初的背景还在
+    assert "起因：上游改了口径" in data["context"]
+    assert "抓到三篇年报" in data["context"]
+    assert "session sess-two" in data["context"]
+
+
+def test_log_twice_in_one_session_does_not_duplicate_the_id(runner, monkeypatch):
+    monkeypatch.setenv("FRAGO_SESSION_ID", "sess-one")
+    res = _add(runner, "--title", "same session twice")
+    todo_id = res.output.split("Created todo ")[1].splitlines()[0].strip()
+    runner.invoke(todo_group, ["log", todo_id, "第一段"])
+    runner.invoke(todo_group, ["log", todo_id, "第二段"])
+    data = json.loads(runner.invoke(todo_group, ["show", todo_id]).output)
+    assert data["sessions"] == ["sess-one"]
+    assert "第一段" in data["context"] and "第二段" in data["context"]
+
+
+def test_log_on_unknown_ref_errors(runner):
+    res = runner.invoke(todo_group, ["log", "nope", "内容"])
+    assert res.exit_code != 0
+    assert "no todo matching" in res.output.lower()
+
+
+def test_schema_documents_the_session_trail(runner):
+    schema = json.loads(runner.invoke(todo_group, ["schema"]).output)
+    names = {f["name"] for f in schema["fields"]}
+    assert "sessions" in names
