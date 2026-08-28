@@ -1,4 +1,4 @@
-"""The one thing a signed-in visitor may make this server do.
+"""The door a page pushes on when it wants its recipe to actually do something.
 
 Until now the identity zone could only make the server read files off disk. This
 route changes that: it starts a process. That is a change of kind rather than of
@@ -20,8 +20,29 @@ internal identifiers, and filtering it would mean inventing a second disclosure
 rule beside the one that already exists — the ``public`` block of the slot. A
 recipe with something to say to the page says it there, and the page reads the
 result out of the visitor's own data directory.
+
+**The owner comes through here too, and that is the whole point of the route.**
+It was identity-only at first, which read as a reasonable narrowing and was in
+fact the opposite: a page whose write worked for a signed-in stranger and 401'd
+on the machine that authored it. The front end's only way out was to keep the
+old ``/api/recipes/<name>/run`` call beside the new one and branch — two write
+paths through one button, drifting apart from the day they were written, and the
+owner's path pointing at the control plane a page must never learn to call. One
+door with two answers is cheaper to keep honest than two doors with one answer
+each.
+
+The two answers differ only in disclosure, and along the line that already
+exists everywhere else here: ``config.json`` hands the owner the unfiltered slot
+and a visitor ``public_view`` of it. So the owner's run is synchronous and comes
+back as ``{"ok": true, "data": …}`` — the same envelope the read door next door
+uses — while a visitor's stays ``202 {"accepted": true}``. Withholding the
+return value from the owner would protect nothing (their ``apiBase`` is ``/api``;
+they can already read any file on this machine) and would cost the page the one
+thing a synchronous answer buys: knowing what it just wrote without going back
+to ask.
 """
 
+import asyncio
 import json
 import logging
 import threading
@@ -142,47 +163,23 @@ def _visitor_error(exc: BaseException) -> str:
     }.get(type(exc).__name__, "the run failed")
 
 
-@router.post("/{name}/run")
-async def run_for_visitor(name: str, request: Request):
-    """Start a run on behalf of the signed-in visitor who asked for it.
+def _fresh_recipe(name: str):
+    """The recipe as it is on disk right now, not as it was at startup.
 
-    The order of the checks is the contract, and it is cheapest-and-most-final
-    first: whether this page may be run at all, then whether this person may run
-    it, then whether the parameters are acceptable, and only then whether they
-    already have one going. Nothing here starts a process until all four have
-    passed.
+    The registry is a process-wide singleton scanned once at startup, so a
+    recipe edited after the server came up is still described here by the
+    metadata it had then. Everywhere else that costs nothing: the owner's
+    validation elsewhere is loose, so an input declared after the scan passes
+    anyway. Here it is the whole difference between working and refused —
+    strict validation rejects exactly the keys the stale snapshot has not heard
+    of, and the page sending them is the one shipped alongside the edit. The
+    symptom is a caller told a parameter "is not declared by this recipe" while
+    the recipe on disk plainly declares it, and it lasts until some other route
+    happens to rescan.
     """
-    from frago.recipes import app_state, context
-    from frago.recipes.exceptions import RecipeNotFoundError, RecipeValidationError
-    from frago.recipes.metadata import validate_params
-    from frago.recipes.publish import allows, published_entry
+    from frago.recipes.exceptions import RecipeNotFoundError
     from frago.recipes.registry import get_registry, invalidate_registry
-    from frago.server.security import slot_for, zone_of
 
-    if zone_of(request) != "identity":
-        # The gate should already have refused, so reaching here means the gate
-        # and this route disagree about who may be here. Refuse rather than
-        # trust the one that admitted them.
-        raise HTTPException(status_code=401, detail="not available")
-
-    identity = slot_for(request)
-    entry = published_entry(name)
-    if entry is None or not entry.get("runnable") or not allows(entry, identity):
-        # One answer for three different failures: not published, published but
-        # not runnable, runnable but not for you. Telling them apart would say
-        # which pages exist and who is on their lists.
-        raise HTTPException(status_code=404, detail="not available")
-
-    # The registry is a process-wide singleton scanned once at startup, so a
-    # recipe edited after the server came up is still described here by the
-    # metadata it had then. Everywhere else that costs nothing: the owner's
-    # validation is loose, so an input declared after the scan passes anyway.
-    # Here it is the whole difference between working and refused — strict
-    # validation rejects exactly the keys the stale snapshot has not heard of,
-    # and the page sending them is the one shipped alongside the edit. The
-    # symptom is a visitor told a parameter "is not declared by this recipe"
-    # while the recipe on disk plainly declares it, and it lasts until some
-    # other route happens to rescan.
     registry = get_registry()
     try:
         if registry.needs_rescan():
@@ -193,9 +190,24 @@ async def run_for_visitor(name: str, request: Request):
         # usable answer, and refusing the run over it would be worse.
         logger.warning("could not check the recipe registry for changes", exc_info=True)
     try:
-        recipe = registry.find(name)
+        return registry.find(name)
     except RecipeNotFoundError:
         raise HTTPException(status_code=404, detail="not available") from None
+
+
+async def _checked_params(recipe, request: Request) -> dict:
+    """The body's ``params``, read and held to what the recipe declared.
+
+    Strict for the owner as well as for a visitor, deliberately. This door
+    belongs to a page, and a page is the least trusted thing in the system
+    whoever happens to be looking at it — an undeclared key reaching a recipe
+    that does ``params.get("data_dir")`` is a path chosen by whatever ran in
+    that browser. Keeping one rule also keeps the two answers testable against
+    the same recipe: a page that works for the owner and is refused for a
+    visitor over a typo'd parameter is the drift this route exists to avoid.
+    """
+    from frago.recipes.exceptions import RecipeValidationError
+    from frago.recipes.metadata import validate_params
 
     body = {}
     if await request.body():
@@ -214,8 +226,96 @@ async def run_for_visitor(name: str, request: Request):
     except RecipeValidationError as exc:
         # The recipe's own complaint about its own declared inputs. It names
         # parameters, not paths, so it is safe to repeat and it is the only
-        # thing that lets the visitor fix their request.
+        # thing that lets the caller fix their request.
         raise VisitorSafe(status_code=400, detail=str(exc)) from None
+    return params
+
+
+async def _run_for_owner(name: str, request: Request):
+    """The same door, from the machine's own side of it.
+
+    Synchronous, and answering with what the recipe actually returned. See the
+    module docstring for why the owner is let through here at all rather than
+    being left on ``/api/recipes/<name>/run``.
+
+    None of the visitor apparatus applies and none of it is reached: no
+    published/runnable/allow-list check (the owner may run anything they can
+    open, which is what ``config.json`` already tells their page), no run gate
+    (the answer *is* the completion signal, and the recipes that write from a
+    page hold their own file locks), and no slot write — the owner's slot is
+    the one the recipe itself publishes, per project, and stamping a data
+    directory over it here would replace the page's own state with a directory.
+
+    Paths in the return value are not scrubbed the way the read door scrubs
+    them. That door serves modes a stranger may call; this one answers only the
+    owner, who has ``/api`` anyway — and the scrubber's own rule ("a line that
+    is entirely a path") matches the page addresses recipes hand back from a
+    ``ui`` mode, so applying it here would refuse the most ordinary answer this
+    door has.
+    """
+    from frago.server.services.recipe_service import RecipeService
+
+    recipe = _fresh_recipe(name)
+    params = await _checked_params(recipe, request)
+    timeout = getattr(recipe.metadata, "timeout", None) or 300
+
+    try:
+        # Off the event loop. The recipe blocks for as long as it runs, and a
+        # recipe is allowed to come back to this same server — to publish, to
+        # ask another module. Called inline, the loop waits on a recipe that is
+        # waiting on the loop and the server stops answering anything at all.
+        result = await asyncio.to_thread(RecipeService.run_recipe, name, params, timeout, None)
+    except Exception as err:
+        logger.warning("app run: %s failed: %s", name, err)
+        return {"ok": False, "error": {"code": "recipe-failed", "message": str(err)}}
+
+    if isinstance(result, dict) and result.get("status") == "error":
+        # The recipe ran and said no. Passing that through as a success with an
+        # empty payload is how a page ends up reporting every write as fine
+        # while nothing was written.
+        err = result.get("error")
+        message = err.get("message") if isinstance(err, dict) else err
+        return {"ok": False, "error": {"code": "recipe-failed",
+                                       "message": str(message or "配方没有给出结果")}}
+
+    data = result.get("data") if isinstance(result, dict) else result
+    return {"ok": True, "data": data if isinstance(data, dict) else {"result": data}}
+
+
+@router.post("/{name}/run")
+async def run_for_visitor(name: str, request: Request):
+    """Start a run on behalf of whoever's page asked for it.
+
+    The owner is handed straight to ``_run_for_owner``; everything below is the
+    visitor's path. The order of the checks there is the contract, and it is
+    cheapest-and-most-final first: whether this page may be run at all, then
+    whether this person may run it, then whether the parameters are acceptable,
+    and only then whether they already have one going. Nothing starts a process
+    until all four have passed.
+    """
+    from frago.recipes import app_state, context
+    from frago.recipes.publish import allows, published_entry
+    from frago.server.security import is_owner_request, slot_for, zone_of
+
+    if is_owner_request(request):
+        return await _run_for_owner(name, request)
+
+    if zone_of(request) != "identity":
+        # The gate should already have refused, so reaching here means the gate
+        # and this route disagree about who may be here. Refuse rather than
+        # trust the one that admitted them.
+        raise HTTPException(status_code=401, detail="not available")
+
+    identity = slot_for(request)
+    entry = published_entry(name)
+    if entry is None or not entry.get("runnable") or not allows(entry, identity):
+        # One answer for three different failures: not published, published but
+        # not runnable, runnable but not for you. Telling them apart would say
+        # which pages exist and who is on their lists.
+        raise HTTPException(status_code=404, detail="not available")
+
+    recipe = _fresh_recipe(name)
+    params = await _checked_params(recipe, request)
 
     # Where this run stands, decided in one place for both doors — the run
     # route here and the exported read-only mode a page calls. See

@@ -382,6 +382,96 @@ class TestOneRunPerAccountAcrossPages:
         assert app_run._claim(("page_b", who), None) is True
 
 
+class TestTheOwnerComesThroughTheSameDoor:
+    """A page must have one write path, not two.
+
+    The route was identity-only at first, which meant a button that worked for a
+    signed-in stranger and 401'd on the machine that authored the page. The
+    front end's only way out was to keep calling ``/api/recipes/<name>/run``
+    beside this one and branch — two paths through one button, and the owner's
+    pointing at the control plane a page must never learn to call.
+    """
+
+    @pytest.fixture
+    def local(self, world, monkeypatch):
+        """The same world, reached from this machine instead of the internet."""
+        monkeypatch.delenv("FRAGO_BEHIND_PROXY", raising=False)
+        from frago.server.app import create_app
+
+        return TestClient(create_app(), follow_redirects=False, client=("127.0.0.1", 5555))
+
+    @pytest.fixture
+    def answered(self, monkeypatch):
+        """A recipe that returns something, so the answer can be looked at."""
+        seen = {}
+
+        class _Runner:
+            def run(self, name, params=None, **kwargs):
+                seen["name"] = name
+                seen["params"] = params
+                seen["ctx"] = kwargs.get("ctx")
+                return {"success": True, "data": {"ok": True, "shot": "m01", "remaining": 3}}
+
+        monkeypatch.setattr("frago.recipes.runner.RecipeRunner", _Runner)
+        return seen
+
+    def test_the_owner_may_run_it(self, local, answered):
+        r = local.post(f"/app/{PAGE}/run", json={"params": {"note": "rent"}})
+        assert r.status_code == 200
+        assert answered["params"] == {"note": "rent"}
+
+    def test_the_owner_gets_the_recipe_s_answer(self, local, answered):
+        """The whole reason the owner is let through here rather than left on
+        the old door: a synchronous answer is what lets a page know what it just
+        wrote without going back to ask."""
+        body = local.post(f"/app/{PAGE}/run", json={"params": {}}).json()
+        assert body == {"ok": True, "data": {"ok": True, "shot": "m01", "remaining": 3}}
+
+    def test_a_page_the_owner_never_published_still_runs(self, local, answered):
+        """`config.json` tells the owner `runnable: true` for anything they can
+        open. This must agree with it, or the button lies."""
+        pub.unpublish(PAGE)
+        assert local.post(f"/app/{PAGE}/run", json={"params": {}}).status_code == 200
+
+    def test_a_refusal_by_the_recipe_is_reported_as_one(self, local, monkeypatch):
+        """Not as a success with an empty payload — that is how a page ends up
+        reporting every write as fine while nothing was written."""
+
+        class _Says_no:
+            def run(self, *a, **k):
+                from frago.recipes.exceptions import RecipeExecutionError
+
+                raise RecipeExecutionError(
+                    recipe_name=PAGE, runtime="python", exit_code=1,
+                    stderr="review_shot 需要 payload.by",
+                )
+
+        monkeypatch.setattr("frago.recipes.runner.RecipeRunner", _Says_no)
+        body = local.post(f"/app/{PAGE}/run", json={"params": {}}).json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "recipe-failed"
+
+    def test_the_parameters_are_held_to_the_same_declaration(self, local, answered):
+        """Strict for the owner too: this door belongs to a page, and a page is
+        the least trusted thing in the system whoever is looking at it."""
+        r = local.post(f"/app/{PAGE}/run", json={"params": {"data_dir": "/etc"}})
+        assert r.status_code == 400
+        assert answered == {}
+
+    def test_the_owner_does_not_spend_a_visitor_s_run_slot(self, local, answered, world):
+        """The visitor gate is one run per account. Applying it to the owner
+        would make a second studio tab refuse to save."""
+        local.post(f"/app/{PAGE}/run", json={"params": {}})
+        assert app_run._running == {}
+
+    def test_the_owner_s_slot_is_not_stamped_with_a_data_directory(self, local, answered, world):
+        """The owner's slot is the one the recipe itself publishes, per project.
+        Writing a `dataDir` over it here would replace the page's own state."""
+        app_state.publish(PAGE, {"project": "20260827-a", "dataDir": "/somewhere"})
+        local.post(f"/app/{PAGE}/run", json={"params": {}})
+        assert app_state.read(PAGE) == {"project": "20260827-a", "dataDir": "/somewhere"}
+
+
 def _wait_for_state(world, who, wanted, tries=100):
     import time
 
