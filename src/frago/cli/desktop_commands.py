@@ -69,8 +69,16 @@ def desktop_group(args: tuple[str, ...]) -> None:
       frago desktop browser open <url>
       frago desktop browser click --text "Sign in"
       frago desktop term run "ls -la"
-      frago desktop camera focus --ref page:"Explore" --zoom 1.8
+      frago desktop camera focus --ref page:text:Explore --zoom 1.8
       frago desktop say "旁白一句"
+
+    \b
+    Addressing a page element (`page:` refs) — four spellings, one meaning each:
+      page:text:某段文字   by visible text; safe on the command line
+      page:css:.selector   by CSS selector; no fallback, a typo says so
+      page:"某段文字"      by visible text; quote it as 'page:"..."' or the
+                           shell eats the quotes and it reads as a selector
+      page:裸串            selector first, visible text if that finds nothing
 
     \b
     Every verb, flag and receipt is the stage's own — this command forwards
