@@ -426,6 +426,8 @@ export interface TodoItem {
   steps: string[];
   done_when: string[];
   links: string[];
+  /** 这件事在哪几场会话里被谈过，早的在前——顺着 id 能回到当时的原话。 */
+  sessions: string[];
 }
 
 export type TodoStatus = 'todo' | 'doing' | 'done' | 'dropped';

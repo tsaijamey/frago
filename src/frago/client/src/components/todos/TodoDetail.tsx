@@ -117,6 +117,19 @@ export default function TodoDetail({ todo, onClose }: TodoDetailProps) {
           </Section>
         )}
 
+        {todo.sessions.length > 0 && (
+          <Section title={t('todos.detail.sessions')}>
+            {/* 会话 id 是回到原话的钥匙：细节都在那场对话里，事务正文不复述。 */}
+            <ul className="td-list td-list--plain">
+              {todo.sessions.map((sid) => (
+                <li key={sid} className="td-id">
+                  {sid}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
         {todo.links.length > 0 && (
           <Section title={t('todos.detail.links')}>
             <ul className="td-list td-list--plain">

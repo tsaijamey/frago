@@ -312,7 +312,8 @@
       "context": "Context",
       "steps": "Steps",
       "doneWhen": "Done when",
-      "links": "Links"
+      "links": "Links",
+      "sessions": "Sessions"
     }
   },
   "guide": {

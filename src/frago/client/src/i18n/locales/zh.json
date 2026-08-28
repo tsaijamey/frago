@@ -312,7 +312,8 @@
       "context": "背景",
       "steps": "步骤",
       "doneWhen": "做到什么算完",
-      "links": "相关链接"
+      "links": "相关链接",
+      "sessions": "谈过这件事的会话"
     }
   },
   "guide": {
