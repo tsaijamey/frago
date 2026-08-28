@@ -352,7 +352,7 @@ async def bus_ask(req: AskRequest, request: Request):
 
 
 @router.post("/publish")
-async def bus_publish(req: PublishRequest):
+async def bus_publish(req: PublishRequest, request: Request):
     """A module telling its page what to render. Render state only, no paths.
 
     Goes through the same state layer the ``frago recipe publish`` command uses.
@@ -360,12 +360,41 @@ async def bus_publish(req: PublishRequest):
     publish came back as a 500 — the page skeleton the template generates was
     dead on arrival and nothing said why, because ``frago recipe validate``
     reads files and cannot know that an endpoint answers with an error.
+
+    **Whose page is being written is decided here, not by the caller.**
+    ``app_state.publish`` answers that question by reading the environment of
+    the process it is running in — which works perfectly inside a recipe and is
+    exactly wrong here, because the process it is running in is the server. A
+    recipe started for a signed-in visitor therefore published into the
+    *recipe's own* slot: the visitor's page stayed empty however many times they
+    pressed the button, and the owner's page was overwritten by a stranger's
+    render state without anybody being told. ``bus_ask`` had the same hole on
+    the reading side and was closed on 2026-08-26 with the same key — the
+    execution id the caller carries, looked up in the runs this process started,
+    never a header the caller could choose. This is that fix for the other verb.
+
+    A visitor's slot is their account id and is never named in a URL: the access
+    gate decides it, and ``?key=`` is the owner's control alone. So the address
+    handed back for a visitor's publish carries no key.
     """
-    from frago.recipes.app_state import InvalidSlotName, page_url, publish
+    from frago.recipes.app_state import DEFAULT_SLOT, InvalidSlotName, page_url, publish
+    from frago.recipes.runner import context_of_execution
+
+    slot, identity, state = req.slot, False, req.state
+    ran_for = context_of_execution(request.headers.get("X-Frago-Execution", ""))
+    if ran_for is not None and ran_for.is_visitor and ran_for.slot:
+        # The same three substitutions `app_state.publish` makes for a recipe
+        # that can see its own environment. `dataDir` in particular is replaced
+        # rather than defaulted: a recipe that hard-codes the owner's directory
+        # would otherwise publish that path into a visitor's slot, and
+        # `/app/<name>/data/…` would serve the owner's files to that visitor,
+        # rendering perfectly and silently.
+        slot, identity = ran_for.slot, True
+        state = {**req.state, "dataDir": str(ran_for.data_dir)}
 
     try:
-        publish(req.recipe, req.state, req.slot)
-        url = page_url(req.recipe, req.slot)
+        publish(req.recipe, state, slot, identity=identity)
+        url = page_url(req.recipe, DEFAULT_SLOT if identity else slot)
     except InvalidSlotName as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
