@@ -43,6 +43,50 @@ def session_group():
     pass
 
 
+@session_group.command("self", cls=AgentFriendlyCommand)
+@click.option("--json", "json_output", is_flag=True, help="Output in JSON format")
+def self_cmd(json_output: bool):
+    """Print THIS session's id — the handle a later session comes back by.
+
+    An agent cannot see its own session id: it lives in the environment that
+    started it, not in the prompt. This resolves it, so a handover note can say
+    which conversation it came out of.
+
+    \b
+    Prints the bare id on stdout (safe to capture), notes on stderr:
+      frago session self
+      frago todo add "..." --session "$(frago session self)"
+      frago session self --json      # id + where it came from + record path
+
+    \b
+    Sources, in order: $FRAGO_SESSION_ID, $CLAUDE_CODE_SESSION_ID, then the
+    freshest transcript of the current directory. That last one is a guess —
+    it is marked as such and never presented as fact.
+    """
+    import json as json_module
+
+    from frago.session.self_id import resolve_self
+
+    found = resolve_self()
+    if found is None:
+        from .agent_friendly import BusinessError
+
+        raise BusinessError(
+            "cannot resolve this session's id — no $FRAGO_SESSION_ID / "
+            "$CLAUDE_CODE_SESSION_ID, and no recent transcript for this directory",
+            'export FRAGO_SESSION_ID="<id>"  # declare it, then retry',
+            "frago session list --limit 5    # pick the id by hand",
+        )
+
+    if json_output:
+        click.echo(json_module.dumps(found.to_dict(), ensure_ascii=False, indent=2))
+        return
+
+    click.echo(found.session_id)
+    if found.note:
+        click.echo(f"[!] {found.note}", err=True)
+
+
 @session_group.command("list", cls=AgentFriendlyCommand)
 @click.option(
     "--agent-type", "-a",
