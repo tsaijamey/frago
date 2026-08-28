@@ -351,7 +351,7 @@ export default function DataRepoPage() {
                     <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-500" />
                     <div className="min-w-0">
                       <p className="font-medium text-[var(--text-primary)]">
-                        {t('dataRepo.massDeletionTitle', { count: deletions.toLocaleString() })}
+                        {t('dataRepo.massDeletionTitle', { total: deletions.toLocaleString() })}
                       </p>
                       <p className="mt-1 text-[var(--text-secondary)]">
                         {t('dataRepo.massDeletionBody')}
