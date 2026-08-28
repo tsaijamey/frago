@@ -178,6 +178,15 @@ class RecipeSupervisor:
         if recipe.metadata.secrets:
             secrets = runner._resolve_secrets(self._spec.recipe, recipe.metadata.secrets)
             env["FRAGO_SECRETS"] = json.dumps(secrets)
+        # Whose run this is, where it writes, what it is built on, how it
+        # reaches the hub — the same answers a hand-started run gets, from the
+        # same place. This door used to hand over only the two lines above, so
+        # a recipe built on the base class died at ``import frago_recipe`` when
+        # the server started it while working perfectly when run by hand; and a
+        # daemon that did get that far had no landing spot, so it would have
+        # written wherever its author once guessed.
+        from frago.recipes.runner import prepare_platform_env
+        _, run_cwd = prepare_platform_env(self._spec.recipe, env)
         if getattr(recipe.metadata, "no_proxy", False):
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                       "http_proxy", "https_proxy", "all_proxy"):
@@ -198,6 +207,7 @@ class RecipeSupervisor:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            cwd=run_cwd,
             **kwargs,
         )
 

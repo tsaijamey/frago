@@ -132,6 +132,90 @@ def _refuse_unconverted(name: str, recipe) -> None:
     )
 
 
+def prepare_platform_env(
+    name: str,
+    env: dict[str, str],
+    *,
+    ctx: "context.InvocationContext | None" = None,
+    execution_id: str = "",
+) -> tuple["context.InvocationContext | None", str | None]:
+    """Everything the platform tells a recipe before it starts, in one place.
+
+    Whose run this is, where it writes, what it is built on, and how it reaches
+    the hub. Returns the context and the directory the process should stand in.
+
+    **There is more than one door into starting a recipe** — a normal run, and
+    the supervisor that keeps a long-connection recipe alive — and each used to
+    assemble this for itself. They did not assemble the same thing: the
+    supervisor set the encoding and the secrets and nothing else, so a recipe
+    built on the base class died at ``import frago_recipe`` the moment the
+    server started it, while the identical recipe run by hand worked. A door
+    that prepares less than the other is not a smaller door; it is a second
+    answer to "what does a recipe get", and the recipe cannot tell which one it
+    came through.
+    """
+    if ctx is None:
+        try:
+            ctx = context.for_owner(name)
+        except context.NoIdentity:
+            # This machine cannot say whose run this is. Refusing here would
+            # stop every recipe on a machine with one damaged file, which is
+            # worse than the thing being prevented — so the run proceeds the
+            # way it always did, and the damage is reported where it can be
+            # acted on rather than raised into a person's recipe.
+            logger.warning(
+                "此机器的身份记录读不出，本次运行按旧行为进行（数据落点由配方自己决定）。"
+                "修好 ~/.frago/identity.json 之后新落点才会生效。",
+                exc_info=True,
+            )
+    context.apply_to_env(env, ctx)
+
+    # What a recipe is built on, and how it reaches the hub. Both are handed
+    # over the same way the landing spot is, and for the same reason: a recipe
+    # cannot import frago (most carry a PEP 723 block, so `uv run` builds an
+    # isolated environment holding only what that recipe declared). Putting the
+    # base class on PYTHONPATH means a recipe uses it without declaring a
+    # dependency — and means fixing the contract is one edit here rather than
+    # one edit in each of three hundred copies.
+    runtime_dir = str(Path(__file__).parent / "runtime")
+    existing = env.get("PYTHONPATH") or ""
+    env["PYTHONPATH"] = (
+        f"{runtime_dir}{os.pathsep}{existing}" if existing else runtime_dir
+    )
+    env[context.BUS_ENV] = _bus_url()
+    # On a deployed server nothing is trusted by address, so the recipe needs
+    # the token to reach the hub at all. Read here rather than left to the
+    # recipe: the file is 0600 and a recipe that had to find it would be a
+    # recipe that knows where the server's secrets live.
+    token = _bus_token()
+    if token:
+        env["FRAGO_BUS_TOKEN"] = token
+    if execution_id:
+        env["FRAGO_EXECUTION_ID"] = execution_id
+
+    # And this is where the run gets somewhere to stand. Until now a recipe
+    # started in whatever directory its caller happened to be in — a shell, the
+    # server's working directory, an agent's project root — so a recipe that
+    # wanted to keep anything had no choice but to name an absolute path, and
+    # the only absolute path its author could know was one on their own machine.
+    # That path is exactly what breaks when the recipe is copied to a server:
+    # the page it serves ends up pointing at a file that does not exist there,
+    # and nobody finds out until a visitor opens it.
+    #
+    # Handing it a prepared directory removes the reason to name a path at all.
+    # `open("ledger.json", "w")` is now correct everywhere, and correct without
+    # the author having read anything.
+    try:
+        run_cwd: str | None = str(context.prepare_working_dir(name, ctx))
+    except OSError:
+        # Somewhere unwritable is not a reason to refuse the run: recipes that
+        # name absolute paths do not care where they stand, and that is most of
+        # them. Fall back to the old behaviour of inheriting.
+        run_cwd = None
+
+    return ctx, run_cwd
+
+
 def _bus_token() -> str:
     """This machine's server token, or empty when it has none."""
     try:
@@ -461,67 +545,13 @@ class RecipeRunner:
         # write. Where its data has not been copied to the new layout yet, the
         # directory is deliberately withheld and the recipe keeps its old
         # behaviour — see `context.for_owner`.
-        if ctx is None:
-            try:
-                ctx = context.for_owner(name)
-            except context.NoIdentity:
-                # This machine cannot say whose run this is. Refusing here would
-                # stop every recipe on a machine with one damaged file, which is
-                # worse than the thing being prevented — so the run proceeds the
-                # way it always did, and the damage is reported where it can be
-                # acted on rather than raised into a person's recipe.
-                logger.warning(
-                    "此机器的身份记录读不出，本次运行按旧行为进行（数据落点由配方自己决定）。"
-                    "修好 ~/.frago/identity.json 之后新落点才会生效。",
-                    exc_info=True,
-                )
-        context.apply_to_env(resolved_env, ctx)
-
-        # What a recipe is built on, and how it reaches the hub. Both are handed
-        # over the same way the landing spot is, and for the same reason: a
-        # recipe cannot import frago (most carry a PEP 723 block, so `uv run`
-        # builds an isolated environment holding only what that recipe
-        # declared). Putting the base class on PYTHONPATH means a recipe uses
-        # it without declaring a dependency — and means fixing the contract is
-        # one edit here rather than one edit in each of three hundred copies.
-        runtime_dir = str(Path(__file__).parent / "runtime")
-        existing = resolved_env.get("PYTHONPATH") or ""
-        resolved_env["PYTHONPATH"] = (
-            f"{runtime_dir}{os.pathsep}{existing}" if existing else runtime_dir
+        ctx, run_cwd = prepare_platform_env(
+            name, resolved_env, ctx=ctx, execution_id=execution_id
         )
-        resolved_env[context.BUS_ENV] = _bus_url()
-        # On a deployed server nothing is trusted by address, so the recipe
-        # needs the token to reach the hub at all. Read here rather than left
-        # to the recipe: the file is 0600 and a recipe that had to find it
-        # would be a recipe that knows where the server's secrets live.
-        token = _bus_token()
-        if token:
-            resolved_env["FRAGO_BUS_TOKEN"] = token
         if execution_id:
-            resolved_env["FRAGO_EXECUTION_ID"] = execution_id
             # And the hub's half of it: whatever this run asks another module
             # for gets started with this same context, instead of as the machine.
             _remember_run_context(execution_id, ctx)
-
-        # And this is where the run gets somewhere to stand. Until now a recipe
-        # started in whatever directory its caller happened to be in — a shell,
-        # the server's working directory, an agent's project root — so a recipe
-        # that wanted to keep anything had no choice but to name an absolute
-        # path, and the only absolute path its author could know was one on
-        # their own machine. That path is exactly what breaks when the recipe is
-        # copied to a server: the page it serves ends up pointing at a file that
-        # does not exist there, and nobody finds out until a visitor opens it.
-        #
-        # Handing it a prepared directory removes the reason to name a path at
-        # all. `open("ledger.json", "w")` is now correct everywhere, and correct
-        # without the author having read anything.
-        try:
-            run_cwd: str | None = str(context.prepare_working_dir(name, ctx))
-        except OSError:
-            # Somewhere unwritable is not a reason to refuse the run: recipes
-            # that name absolute paths do not care where they stand, and that is
-            # most of them. Fall back to the old behaviour of inheriting.
-            run_cwd = None
 
         # Transition to RUNNING
         self.store.transition(execution_id, ExecutionStatus.RUNNING)
