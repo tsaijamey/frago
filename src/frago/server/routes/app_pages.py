@@ -153,16 +153,22 @@ def _slot_state(name: str, request: Request) -> tuple[str, dict]:
     A signed-in visitor's slot is their account id, and it lives under the
     separate identity root — the same string under `app-state/` would be one of
     the recipe's own slots, which is not theirs to read.
+
+    Unless the page was exposed as one shared reading, in which case the gate
+    authorised a slot of the *owner's* and it lives under the recipe's own root
+    like any other. Which root to look in is the gate's answer too
+    (`reads_owner_data`), never something worked out here from the slot's name.
     """
-    from frago.server.security import slot_for, zone_of
+    from frago.server.security import reads_owner_data, slot_for, zone_of
 
     zone = zone_of(request)
     visitor = zone in ("public", "identity")
     key = (slot_for(request) or DEFAULT_SLOT) if visitor else (
         request.query_params.get("key") or DEFAULT_SLOT
     )
+    own_root = zone == "identity" and not reads_owner_data(request)
     try:
-        return key, read_slot(name, key, identity=zone == "identity")
+        return key, read_slot(name, key, identity=own_root)
     except InvalidSlotName as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -203,8 +209,9 @@ async def serve_app_config(name: str, request: Request):
     _assets_dir(name)
     key, state = _slot_state(name, request)
 
-    from frago.recipes.publish import allows, public_view, published_entry
-    from frago.server.security import is_owner_request, slot_for, zone_of
+    from frago.recipes.contract import page_actions_of
+    from frago.recipes.publish import public_view
+    from frago.server.security import is_owner_request, reads_owner_data, zone_of
 
     owner = is_owner_request(request)
     config = dict(state) if owner else public_view(state)
@@ -214,26 +221,33 @@ async def serve_app_config(name: str, request: Request):
     config["appBase"] = f"/app/{name}/"
     config["slot"] = key
 
-    # A signed-in visitor may be allowed not just to read but to run. That is
-    # the run-button's answer, and it has to come from here rather than be
+    # Which buttons this page may show. It has to come from here rather than be
     # guessed by the front end: `readOnly` says nothing about whether the server
-    # would accept a run, only whether this requester is the owner. The gate
-    # decides "may this person run", and this is the same three questions it
-    # asks — published, runnable, on their allow list — so a page and its run
-    # never disagree. Anonymous visitors keep `readOnly: true` with no runnable
-    # key, exactly as before.
+    # would accept a run, only whether this requester is the owner.
+    #
+    # The answer is now the recipe's own declaration rather than a flag on the
+    # exposure entry, so a page and its run route agree by construction — both
+    # read `page_actions`. What the exposure still decides is *who is looking*,
+    # and that only subtracts: a shared reading has no per-person directory for
+    # a run to write, so its readers get no actions at all.
     if zone_of(request) == "identity":
-        entry = published_entry(name)
-        identity = slot_for(request)
-        config["runnable"] = bool(entry and entry.get("runnable") and allows(entry, identity))
+        actions = () if reads_owner_data(request) else page_actions_of(name)
     elif owner:
-        # The owner may run anything they can open, published or not. This key
-        # is redundant to the front end (readOnly is already false for them) but
-        # truthful: it reads "a run would be accepted".
+        # The owner may run anything they can open, declared or not: this is
+        # their machine and `/api` is already theirs. The declaration narrows a
+        # page for everyone else, never for them.
+        actions = page_actions_of(name)
         config["runnable"] = True
-    # Anonymous visitors (public zone) get no `runnable` key at all: the value
-    # would say whether a page is runnable, and that is not theirs to know
-    # — readOnly:true plus apiBase:null is the whole of what they may infer.
+    else:
+        # Anonymous visitors get neither key. What a page can be made to do is
+        # not theirs to know — readOnly:true plus apiBase:null is the whole of
+        # what they may infer.
+        return JSONResponse(content=config, headers=_REVALIDATE)
+
+    config["actions"] = list(actions)
+    # Kept beside `actions` for the front ends written against it. It says the
+    # same thing the list does, one bit shorter.
+    config.setdefault("runnable", bool(actions))
     return JSONResponse(content=config, headers=_REVALIDATE)
 
 
@@ -290,10 +304,15 @@ async def serve_app_api(name: str, mode: str, request: Request):
     # The owner keeps `None` (their own run, their own directory), and so does
     # an anonymous visitor to a published page: they have no directory of their
     # own, and what they are meant to see is exactly what the publisher put up.
+    #
+    # A page exposed as one shared reading keeps `None` as well, and for the
+    # same reason an anonymous reader does: everybody on its list is looking at
+    # one body of the owner's work, so the read has to be answered out of the
+    # owner's directory or it answers out of an empty one.
     ctx = None
-    from frago.server.security import slot_for, zone_of
+    from frago.server.security import reads_owner_data, slot_for, zone_of
 
-    if zone_of(request) == "identity":
+    if zone_of(request) == "identity" and not reads_owner_data(request):
         from frago.recipes import context as run_context
 
         identity = slot_for(request)
@@ -378,9 +397,17 @@ async def serve_app_data(name: str, file_path: str, request: Request):
     # `~/.frago/data/…`, and that is correct and must keep working. What can
     # never be right is one account's page reading out of another account's
     # subtree.
-    from frago.server.security import zone_of
+    #
+    # A shared reading is the one deliberate exception, and it has to be spelled
+    # out here rather than fall out of the rule: the owner's own runs file under
+    # `users/<the machine's id>/recipe-data/…`, which is inside the accounts root
+    # and outside this reader's subtree, so the check below would refuse exactly
+    # the case that exposure exists to serve. Everything else is unchanged —
+    # one account's page still never reads another account's tree, and the
+    # entry saying `reads: owner` is the only thing that opens this door.
+    from frago.server.security import reads_owner_data, zone_of
 
-    if zone_of(request) == "identity":
+    if zone_of(request) == "identity" and not reads_owner_data(request):
         from frago.recipes.app_state import user_root, user_state_dir
 
         try:

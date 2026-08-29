@@ -138,6 +138,44 @@ class TestNoLoop:
         assert r.status_code == 401
 
 
+class TestWhichPageIsTheDoor:
+    """The door is a registered decision, not a name compiled into the gate.
+
+    It used to be `DEFAULT_LOGIN_PORTAL` in security.py with an environment
+    override. Three things were wrong with that and all three were silent:
+    `frago recipe exposed` could not show it, renaming the page broke every
+    redirect with no error anywhere, and the access layer — which is supposed to
+    know about zones — knew a recipe's name by heart.
+    """
+
+    def test_a_page_registered_as_the_portal_becomes_the_destination(self, site):
+        pub.publish(OPEN, mode=pub.MODE_PUBLIC, portal=True)
+        r = site.get(f"/app/{MINE}/", headers=HTML)
+        assert r.headers["location"] == f"/app/{OPEN}/?next={MINE}"
+
+    def test_the_registry_is_visible_where_every_other_decision_is(self, site):
+        pub.publish(OPEN, mode=pub.MODE_PUBLIC, portal=True)
+        assert pub.portal_name() == OPEN
+        assert pub.published_entry(OPEN)["portal"] is True
+
+    def test_two_doors_are_refused_rather_than_resolved(self, site):
+        """A coin flip the gate would have to make on every refused request, and
+        the wrong side of it is a redirect loop for everyone signed out."""
+        pub.publish(OPEN, mode=pub.MODE_PUBLIC, portal=True)
+        with pytest.raises(ValueError, match=OPEN):
+            pub.publish(PORTAL, mode=pub.MODE_PUBLIC, portal=True)
+
+    def test_an_operator_variable_still_outranks_the_registry(self, site, monkeypatch):
+        pub.publish(OPEN, mode=pub.MODE_PUBLIC, portal=True)
+        monkeypatch.setenv("FRAGO_LOGIN_PORTAL", PORTAL)
+        r = site.get(f"/app/{MINE}/", headers=HTML)
+        assert r.headers["location"] == f"/app/{PORTAL}/?next={MINE}"
+
+    def test_registering_nothing_keeps_the_historical_name(self, site):
+        """Deployments that never registered a portal keep what they have."""
+        assert security.login_portal() == PORTAL
+
+
 class TestTheRedirectCannotLeaveThisSite:
     def test_the_destination_is_always_a_local_path(self, site):
         r = site.get(f"/app/{MINE}/", headers=HTML)

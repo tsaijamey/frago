@@ -29,9 +29,10 @@ what keeps this from being mistaken for a guarantee.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 Severity = Literal["block", "warn"]
 
@@ -141,7 +142,7 @@ def _check_page_asks_for_arbitrary_files(recipe_dir: Path) -> list[Finding]:
                     rule="page-asks-platform-for-files",
                     severity="block",
                     file=path, line=line, excerpt=text[:120],
-                    fix=("这条路对访客一律关死（那个接口能读机器上任意文件）。"
+                    fix=("这条路对主人以外一律关死，登录了也不行（那个接口能读机器上任意文件）。"
                          "改成读这张页面自己的目录：fetch('data/<文件名>')，"
                          "配方发布时把该文件放进它的数据目录。"),
                 ))
@@ -220,12 +221,40 @@ def _check_bare_relative_self_reads(recipe_dir: Path) -> list[Finding]:
     return findings
 
 
-def _check_runnable_reads_data_dir(recipe_dir: Path) -> list[Finding]:
-    """The pre-existing gate for ``--runnable``, moved here unchanged.
+def declares_page_actions(recipe_dir: Path) -> bool:
+    """Whether this recipe opened any of its modes to its own page.
+
+    Read straight off ``recipe.md`` rather than through the registry, because
+    every caller here has a directory in hand and may well be looking at a
+    recipe that is not installed — one being written, one on a checkout, one in
+    a test fixture.
+    """
+    metadata_path = recipe_dir / "recipe.md"
+    if not metadata_path.is_file():
+        return False
+    try:
+        from frago.recipes.metadata import parse_metadata_file
+
+        return bool(parse_metadata_file(metadata_path).page_actions)
+    except Exception:
+        # Unparseable metadata is reported by `validate`, loudly and by itself.
+        # Answering "no actions" here is the closed direction and keeps one
+        # broken file from turning into two unrelated complaints.
+        return False
+
+
+def _check_actions_read_data_dir(recipe_dir: Path) -> list[Finding]:
+    """The pre-existing gate for ``--runnable``, now keyed on the declaration.
 
     Weak by design and known to be: mentioning the name in a comment satisfies
     it. It catches the recipe that never considered the question, which is every
     recipe written before the variable existed.
+
+    What changed is *when* it runs. It used to fire when a page was exposed with
+    ``--runnable``, i.e. at the moment somebody who may not have written the
+    recipe decided to open it. It now fires whenever the recipe itself says a
+    page may trigger one of its modes — which is the moment the author is still
+    holding the file, and is the same answer on every machine the recipe reaches.
     """
     for path in _files(recipe_dir, CODE_SUFFIXES) + _files(recipe_dir, CODE_SUFFIXES, assets_only=True):
         try:
@@ -234,24 +263,32 @@ def _check_runnable_reads_data_dir(recipe_dir: Path) -> list[Finding]:
         except OSError:
             continue
     return [Finding(
-        rule="runnable-ignores-data-dir",
+        rule="actions-ignore-data-dir",
         severity="block",
         file=recipe_dir, line=0, excerpt="(recipe as a whole)",
-        fix=(f"访客触发的运行会写到配方自己写死的地方，所有访客共用一份。"
+        fix=(f"这个配方在 page_actions 里开了页面能触发的 mode，而它写死了自己的落点——"
+             f"于是每个人从页面按下去，写的都是主人那一份。"
              f"读一下 {_DATA_DIR_ENV}：\n"
-             f'    data_dir = os.environ.get("{_DATA_DIR_ENV}") or <自己的老默认值>'),
+             f'    data_dir = os.environ.get("{_DATA_DIR_ENV}") or <自己的老默认值>\n'
+             f"不打算开给页面按，就把 page_actions 清空。"),
     )]
 
 
-def audit(recipe_dir: Path, *, runnable: bool = False) -> list[Finding]:
-    """Everything this recipe did that cannot be taken over, worst first."""
+def audit(recipe_dir: Path, *, actions: bool | None = None) -> list[Finding]:
+    """Everything this recipe did that cannot be taken over, worst first.
+
+    ``actions`` overrides the recipe's own declaration, for a caller asking the
+    hypothetical question ("what would break if this page could be pressed?").
+    Left alone it reads ``page_actions`` off the recipe, which is where the
+    answer belongs.
+    """
     findings: list[Finding] = []
     findings += _check_page_asks_for_arbitrary_files(recipe_dir)
     findings += _check_absolute_path_literals(recipe_dir)
     findings += _check_home_derived_writes(recipe_dir)
     findings += _check_bare_relative_self_reads(recipe_dir)
-    if runnable:
-        findings += _check_runnable_reads_data_dir(recipe_dir)
+    if declares_page_actions(recipe_dir) if actions is None else actions:
+        findings += _check_actions_read_data_dir(recipe_dir)
     return sorted(findings, key=lambda f: (f.severity != "block", str(f.file), f.line))
 
 

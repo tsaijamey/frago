@@ -1,29 +1,44 @@
-"""Which recipe pages are allowed to face the public internet.
+"""Which recipe pages are reachable by someone other than the owner, and on what terms.
 
 ``/app/<recipe>/`` has always been a real address, but on a personal machine it
 is an address only the owner can reach. On a deployed frago the same route is
 the one thing worth exposing — a recipe's page is the finished product, and the
 whole point of putting frago on a server is to let other people look at it.
 
-Exposure is per recipe and opt-in. Nothing is public until someone runs
+Exposure is per recipe and opt-in. Nothing is reachable until someone runs
 
-    frago recipe expose <name> [--slot <slot>]
+    frago recipe expose <name> --public | --signed-in | --allow <id>
 
-which appends an entry here. The server's access middleware reads this list to
-decide whether an anonymous GET may pass; nothing else about a recipe changes.
+which writes an entry here. The server's access middleware reads this list to
+decide who may pass; nothing else about a recipe changes.
+
+**Two independent questions, and keeping them apart is the point of this file.**
+
+    who may open it        mode + allow    the audience
+    whose data they read   reads           the source
+
+They used to be one. ``identity`` meant both "sign in first" and "you read a
+slot named after yourself", so the most ordinary request there is — *a few named
+people looking at the same numbers I computed* — had no spelling at all. People
+reached for machine-level shared data (which is a data-layer mechanism, for a
+different problem) or gave up and made the page public. ``reads`` is that missing
+third rung: ``own`` is the old per-person behaviour, ``owner`` serves everyone on
+the list the same slot of the owner's, read-only.
+
+**What a page may do is not stored here at all.** There used to be a ``runnable``
+flag beside the allow list, which said that whoever could see the page could also
+push its buttons — and those buttons run on the owner's machine with the owner's
+credentials. Visibility and capability are two different facts about two
+different things: who is looking, and what the recipe agreed a page may ask for.
+So capability moved into the recipe's own contract (``page_actions`` in
+``recipe.md``) and this file no longer has an opinion. A legacy entry's
+``runnable`` key is read only to be reported, never to grant anything.
 
 Publishing one slot does not publish the others. A recipe that keeps a public
 dashboard in ``default`` and a client's working set in ``acme`` stays safe.
 
-There are two ways to be exposed, and the entry says which. ``public`` is the
-original one: anyone may read the named slot. ``identity`` publishes the address
-without publishing any data — the page is reachable only after signing in, and
-each visitor reads the slot named after their own account. An entry whose mode
-cannot be read is treated as ``identity``, i.e. anonymous visitors are refused;
-see ``_mode_of``.
-
 No server imports: recipes and the CLI both read this, and neither should have
-to pull in FastAPI to answer "is this page public?".
+to pull in FastAPI to answer "who may open this page?".
 """
 
 from __future__ import annotations
@@ -38,18 +53,32 @@ from frago.recipes.app_state import DEFAULT_SLOT, InvalidSlotName, _validate
 
 PUBLISHED_PATH = Path.home() / ".frago" / "published.json"
 
-# How a page is exposed. Two ways, and the difference is who may read it:
+# Who may open the page. Two answers, and the difference is whether signing in
+# is required at all:
 #
-#   public     anyone, with no sign-in, from the one slot named in the entry.
-#   identity   only a signed-in visitor, each from the slot named after their
-#              own account. The whole reason this mode exists is that the page
-#              must NOT be readable anonymously.
+#   public     anyone, with no sign-in.
+#   identity   only a signed-in account, narrowed further by ``allow``.
 #
 # Which one a request is judged by is the gate's business (`security.py`);
 # this module only says what the operator asked for.
 MODE_PUBLIC = "public"
 MODE_IDENTITY = "identity"
 MODES = (MODE_PUBLIC, MODE_IDENTITY)
+
+# Whose data the page serves. Orthogonal to the mode — that says who is let in,
+# this says what they find:
+#
+#   own      each signed-in reader reads the slot named after their own account,
+#            and their runs write their own directory. The original identity
+#            behaviour, and still the default for it.
+#   owner    everybody who is let in reads one slot of the owner's, the one named
+#            in the entry. Read-only by construction: there is no per-person
+#            directory to write, so a page exposed this way accepts no actions.
+#
+# A public page is always ``owner`` — there is nobody to have data of their own.
+READS_OWN = "own"
+READS_OWNER = "owner"
+READS = (READS_OWN, READS_OWNER)
 
 # ``allow`` narrows an identity-mode page from "anyone signed in" to "these
 # accounts". Three states, and telling them apart matters because their security
@@ -178,20 +207,47 @@ def _allow_of(entry: dict[str, Any]) -> list[str] | None:
     return []
 
 
-def _runnable_of(entry: dict[str, Any], mode: str) -> bool:
-    """Whether visitors may trigger a run. Absent, unreadable, or contradicted
-    by the mode all read as False.
+def _reads_of(entry: dict[str, Any], mode: str) -> str:
+    """Whose data this page serves.
 
-    ``runnable`` implies ``mode == identity``: a run happens *for somebody*, and
-    a public page has nobody to run as. An entry claiming both — only reachable
-    by hand-editing — is the config contradicting itself, and the strict side of
-    that contradiction is False.
+    A public page is always the owner's: there is no signed-in account to have
+    data of its own, so the question does not arise and the answer cannot be
+    anything else.
 
-    ``is True`` rather than truthiness on purpose: ``"false"``, ``1`` and
-    ``"no"`` are all truthy, and every one of them is a hand-edit that meant the
-    opposite.
+    For an identity page, an absent key is an entry written before this field
+    existed, and every one of those served each account its own slot — so absent
+    reads as ``own``. An unreadable value reads as ``own`` too, and here the
+    closed direction and the compatible direction happen to be the same one:
+    ``own`` shows a reader nothing but their own, while a misread ``owner``
+    would hand a stranger the owner's slot.
     """
-    return entry.get("runnable") is True and mode == MODE_IDENTITY
+    if mode != MODE_IDENTITY:
+        return READS_OWNER
+    raw = entry.get("reads")
+    if isinstance(raw, str) and raw in READS:
+        return raw
+    return READS_OWN
+
+
+def _portal_of(entry: dict[str, Any]) -> bool:
+    """Whether this page is the sign-in door.
+
+    ``is True`` rather than truthiness, like every other switch here: the values
+    that are merely truthy (``"false"``, ``1``, ``"no"``) are all hand-edits that
+    meant the opposite.
+    """
+    return entry.get("portal") is True
+
+
+def legacy_runnable(entry: dict[str, Any] | None) -> bool:
+    """Whether a stored entry still carries the retired ``runnable`` flag.
+
+    Read for one purpose only: telling the owner that an entry written by an
+    older frago is claiming something this one no longer honours. It grants
+    nothing. What a page may trigger now comes from the recipe's own
+    ``page_actions`` declaration — see ``frago book recipe-expose``.
+    """
+    return isinstance(entry, dict) and entry.get("runnable") is True
 
 
 def allows(entry: dict[str, Any] | None, identity: str | None) -> bool:
@@ -229,9 +285,9 @@ def published_entry(name: str) -> dict[str, Any] | None:
     reached straight from a URL path, so a name like ``../../etc`` must be a
     plain "not published" rather than an exception in the middleware.
 
-    Returns a normalised copy — ``slot`` and ``mode`` are always present and
-    always sane — so that no caller has to repeat the defaulting rules and get
-    one of them subtly different.
+    Returns a normalised copy — every field is present and sane — so that no
+    caller has to repeat the defaulting rules and get one of them subtly
+    different.
     """
     try:
         _validate(name, DEFAULT_SLOT)
@@ -247,8 +303,35 @@ def published_entry(name: str) -> dict[str, Any] | None:
         "mode": mode,
         "since": entry.get("since"),
         "allow": _allow_of(entry),
-        "runnable": _runnable_of(entry, mode),
+        "reads": _reads_of(entry, mode),
+        "portal": _portal_of(entry),
     }
+
+
+def shares_owner_data(entry: dict[str, Any] | None) -> bool:
+    """Whether readers of this page see the owner's slot rather than their own.
+
+    Asked by the gate and by three routes, so it lives here for the same reason
+    ``allows`` does: one comparison, one answer. A page nobody has exposed is
+    not shared — it is not anything.
+    """
+    if not isinstance(entry, dict):
+        return False
+    return _reads_of(entry, _mode_of(entry)) == READS_OWNER
+
+
+def portal_name() -> str | None:
+    """The exposed page registered as this server's sign-in door, if any.
+
+    Read from the registry rather than a constant in the gate so that "which
+    page is the door" is visible in ``frago recipe exposed`` alongside every
+    other decision about who may open what. The gate keeps a fallback for
+    deployments that never registered one; see ``security.login_portal``.
+    """
+    for name, entry in load().items():
+        if _portal_of(entry) and isinstance(name, str):
+            return name
+    return None
 
 
 def published_slot(name: str) -> str | None:
@@ -276,13 +359,18 @@ def publish(
     mode: str = MODE_PUBLIC,
     *,
     allow: list[str] | None = None,
-    runnable: bool = False,
+    reads: str | None = None,
+    portal: bool = False,
 ) -> dict[str, Any]:
-    """Expose one recipe's page. Returns the entry.
+    """Write one recipe's whole exposure record. Returns the entry.
 
-    ``mode=MODE_IDENTITY`` publishes the *address* rather than the data: the
-    page is reachable only to someone signed in, and each of them reads the slot
-    named after their own account instead of ``slot``.
+    Callers changing an existing exposure should go through ``amend`` instead:
+    this function states the entry in full, so anything it is not told is set to
+    that field's default rather than left as it was.
+
+    ``mode=MODE_IDENTITY`` requires a sign-in. ``reads`` then decides what those
+    signed-in readers find: ``own`` gives each of them the slot named after
+    their own account, ``owner`` gives all of them the one named in ``slot``.
 
     ``allow=None`` opens the page to everyone who can sign in; a list narrows it
     to those account ids. An empty list is refused rather than written: it would
@@ -303,8 +391,33 @@ def publish(
             )
         if mode != MODE_IDENTITY:
             raise ValueError("an allow list needs identity mode; there is nobody to compare in public mode")
-    if runnable and mode != MODE_IDENTITY:
-        raise ValueError("a runnable page needs identity mode; a run happens for somebody")
+
+    if reads is None:
+        reads = READS_OWNER if mode == MODE_PUBLIC else READS_OWN
+    if reads not in READS:
+        raise ValueError(f"unknown reads {reads!r}; expected one of {READS}")
+    if mode == MODE_PUBLIC and reads != READS_OWNER:
+        raise ValueError(
+            "a public page always serves the owner's slot: an anonymous reader has "
+            "no account and therefore no data of their own"
+        )
+
+    if portal:
+        # One door. Two pages both claiming to be it is a coin flip the gate
+        # would have to make on every refused request, and the wrong side of it
+        # is a redirect loop for everybody who is not signed in.
+        holder = portal_name()
+        if holder is not None and holder != name:
+            raise ValueError(
+                f"'{holder}' is already registered as this server's sign-in door. "
+                f"Take that one off first: frago recipe expose {holder} --no-portal"
+            )
+        if mode != MODE_PUBLIC:
+            raise ValueError(
+                "the sign-in door has to be readable by someone who is not signed in; "
+                "expose it with --public"
+            )
+
     entries = load()
     entry = {
         "slot": slot,
@@ -314,11 +427,101 @@ def publish(
         # see who the page is open to without having to know which frago version
         # wrote the entry.
         "allow": list(allow) if allow is not None else None,
-        "runnable": bool(runnable),
+        "reads": reads,
+        "portal": bool(portal),
     }
     entries[name] = entry
     _save(entries)
     return entry
+
+
+def amend(
+    name: str,
+    *,
+    slot: str | None = None,
+    mode: str | None = None,
+    allow_add: list[str] | None = None,
+    allow_remove: list[str] | None = None,
+    allow_set: list[str] | None = None,
+    open_to_all_signed_in: bool = False,
+    reads: str | None = None,
+    portal: bool | None = None,
+) -> dict[str, Any]:
+    """Change parts of an existing exposure, leaving the rest alone.
+
+    This is the shape the command has because of what the previous one cost.
+    Every ``expose`` used to write the whole entry, so a flag left off was a flag
+    turned off — and exactly one field made that dangerous: a page open to four
+    named accounts, re-exposed to change something else, silently reopened to
+    every account on the server. The guard was a ``--force`` flag that had to be
+    remembered in the one case nobody remembers, and on 2026-08-28 the accident
+    it exists to stop happened anyway, in the other direction: a five-person list
+    copied onto a page that should have had one.
+
+    A widening now has to be *said*: ``allow_remove`` names who goes,
+    ``open_to_all_signed_in`` is the whole-list drop spelled out loud, and
+    ``mode`` only changes when it is passed. Nothing widens by omission, so there
+    is no longer anything for a force flag to guard.
+
+    Raises ``KeyError`` if the page is not exposed at all — amending something
+    that does not exist is a different act from exposing it, and quietly turning
+    one into the other is how a page gets published with defaults nobody chose.
+    """
+    entries = load()
+    if name not in entries:
+        raise KeyError(name)
+    current = published_entry(name) or {}
+
+    next_mode = mode or current.get("mode") or MODE_PUBLIC
+    next_slot = slot or current.get("slot") or DEFAULT_SLOT
+    next_reads = reads or current.get("reads") or (
+        READS_OWNER if next_mode == MODE_PUBLIC else READS_OWN
+    )
+    if next_mode == MODE_PUBLIC:
+        next_reads = READS_OWNER
+
+    if allow_set is not None:
+        next_allow: list[str] | None = list(allow_set)
+    elif open_to_all_signed_in:
+        next_allow = None
+    else:
+        held = current.get("allow")
+        next_allow = list(held) if isinstance(held, list) else None
+        if allow_add:
+            if next_allow is None:
+                # Naming somebody on a page that was open to everyone signed in
+                # is a narrowing, and it is the reading the operator meant: they
+                # said who, so the answer stops being "anyone".
+                next_allow = []
+            for who in allow_add:
+                if who not in next_allow:
+                    next_allow.append(who)
+        if allow_remove and next_allow is not None:
+            next_allow = [who for who in next_allow if who not in allow_remove]
+
+    if next_allow is not None and not next_allow:
+        raise ValueError(
+            "that would leave nobody on the list, and a page nobody may open is "
+            "not a configuration — close it with `frago recipe unexpose` instead."
+        )
+    if next_allow is not None and next_mode != MODE_IDENTITY:
+        # A named list only means anything against an account, so keeping both
+        # would store a restriction the gate can never apply.
+        raise ValueError(
+            "a public page cannot have an allow list: there is no account to "
+            "compare. Drop the names, or keep the page signed-in."
+        )
+
+    next_portal = current.get("portal", False) if portal is None else portal
+
+    return publish(
+        name,
+        next_slot,
+        next_mode,
+        allow=next_allow,
+        reads=next_reads,
+        portal=bool(next_portal),
+    )
 
 
 def unpublish(name: str) -> bool:

@@ -52,6 +52,13 @@ imports: {{}}
 
 # 要不要一张页面。要的话 create 会生成空页面骨架。
 page: false
+
+# 这张页面能触发哪几个 mode。默认一个都没有，而且默认是对的：
+# 页面是这套东西里最不可信的一层——谁打得开谁就能按——而按下去是在主人的
+# 机器上、用主人的凭证跑。跟 exports 不许有交集（导出的按契约只读，页面直接
+# 调 api/<mode> 就能读，不需要按钮）。
+# NEVER 把会花钱、会以主人身份对外做事的 mode 写进来。
+page_actions: []
 ```
 
 ## 人读的部分
@@ -128,6 +135,9 @@ use_cases:
   - "TODO：一句话说清什么时候该用它"
 output_targets:
   - stdout
+# 这张页面能触发哪几个 mode。空着就是页面上没有按钮，这是默认也是常态。
+page_actions: {page_actions}
+
 # 别的模块可以调本模块的哪些 mode。导出的 mode MUST 只读：
 # 不触网、不重算、不改状态、不开浏览器——那是别人每 5 分钟问一次也不会出事的口。
 exports: {exports}
@@ -252,7 +262,8 @@ PAGE_HTML = """<!doctype html>
 PAGE_JS = """// 这张页面是前端，配方是后端，两者只通过接口说话。
 //
 // NEVER 在这里读文件路径。页面拿到绝对路径就是前端伸手进后端的文件系统：
-// 访客机器上没有那个文件；能读任意路径的接口对访客一律关死；而且配方的落点
+// 打开页面的人机器上没有那个文件；能读任意路径的接口对主人以外一律关死（登录
+// 了也不行）；而且配方的落点
 // 一挪，页面还在读老地方，每次刷新都显示成功。
 //
 // 要数据就调本配方导出的只读 mode，跟别的模块调它走的是同一个口。
@@ -373,6 +384,7 @@ def render(name: str, *, description: str = "TODO：一句话说清它做什么"
     kind = spec.get("type") or kind
     modes = [str(m) for m in (spec.get("modes") or ["status"]) if m]
     exports = [str(e) for e in (spec.get("exports") or []) if e]
+    actions = [str(a) for a in (spec.get("page_actions") or []) if a]
     imports = spec.get("imports") or {}
     if with_page is None:
         with_page = bool(spec.get("page", True))
@@ -383,11 +395,28 @@ def render(name: str, *, description: str = "TODO：一句话说清它做什么"
             f"规格里导出了 {'、'.join(bad)}，但 modes 里没有它们。"
             f"导出的必须是这个模块真有的 mode。"
         )
+    bad = [a for a in actions if a not in modes]
+    if bad:
+        raise ValueError(
+            f"规格里让页面能按 {'、'.join(bad)}，但 modes 里没有它们。"
+        )
+    both = [a for a in actions if a in exports]
+    if both:
+        raise ValueError(
+            f"{'、'.join(both)} 既导出又开给页面按。导出的 mode 按契约是只读的，"
+            f"页面直接 POST /app/<name>/api/<mode> 就能读，不需要按钮——"
+            f"两边都写等于规格自己前后矛盾。"
+        )
+    if actions and not with_page:
+        raise ValueError(
+            f"规格说没有页面（page: false），却让页面能按 {'、'.join(actions)}。"
+        )
 
     files = {
         "recipe.md": RECIPE_MD.format(
             name=name, type=kind, description=description,
-            exports=_yaml_list(exports), imports=_yaml_map(imports),
+            exports=_yaml_list(exports), page_actions=_yaml_list(actions),
+            imports=_yaml_map(imports),
             modes_doc=" | ".join(modes),
         ),
         "recipe.py": RECIPE_PY.format(

@@ -52,6 +52,22 @@ class RecipeMetadata:
     #: so a caller can never reach past the surface into a mode that does work.
     exports: list[str] = field(default_factory=list)
 
+    #: The modes this recipe's own page is allowed to trigger. Empty for almost
+    #: every recipe, and empty is the right default: a page is the least trusted
+    #: thing in the system — anyone who can open it can push its buttons — while
+    #: the run happens on the owner's machine with the owner's credentials.
+    #:
+    #: This is where "may a visitor run it" lives now. It used to be a flag on
+    #: the exposure entry (``--runnable``), which meant the answer depended on
+    #: who was looking rather than on what the recipe agreed to; the same recipe
+    #: was runnable on one page and not on another, and nothing in the recipe
+    #: said either. Declared here it is one answer, written by the person who
+    #: knows what the mode does, and it survives the page being re-exposed.
+    #:
+    #: Distinct from ``exports``, which is read-only by contract and is what
+    #: *other modules* may ask for. A page action is allowed to do work.
+    page_actions: list[str] = field(default_factory=list)
+
     #: Whose surface this module depends on, as ``{recipe: [mode, ...]}``.
     #: Written down so the dependency exists on both sides. Until now the
     #: module being read had no way of knowing anyone depended on it, which is
@@ -140,6 +156,7 @@ def parse_metadata_file(path: Path) -> RecipeMetadata:
             ui_from=data.get('ui_from'),
             reads_common=data.get('reads_common') or [],
             exports=data.get('exports') or [],
+            page_actions=data.get('page_actions') or [],
             imports=data.get('imports') or {},
             created_at=_iso_or_none(data.get('created_at')),
             updated_at=_iso_or_none(data.get('updated_at')),
@@ -199,6 +216,22 @@ def validate_metadata(metadata: RecipeMetadata) -> None:
         errors.append(
             f"restart_policy must be 'always', 'on-failure' or 'never', current value: '{metadata.restart_policy}'"
         )
+
+    # Validate page_actions. Checked against `exports` rather than against the
+    # mode list, which lives in the class rather than here: an exported mode is
+    # read-only by contract, so naming one as a page action is a contradiction
+    # in the recipe's own declaration — the page would be given a button for
+    # something the recipe promised does nothing.
+    for action in metadata.page_actions:
+        if not isinstance(action, str) or not action:
+            errors.append("page_actions must be a list of mode names")
+            break
+        if action in metadata.exports:
+            errors.append(
+                f"page_actions lists '{action}', which is also exported. An exported "
+                f"mode is read-only by contract — a page reads it with "
+                f"POST /app/<name>/api/{action} and needs no action for it."
+            )
 
     # Validate inputs
     for param_name, param_def in metadata.inputs.items():

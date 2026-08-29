@@ -24,17 +24,23 @@ VISITOR = ("93.184.216.34", 41234)
 
 
 DECLARED = {
+    "mode": {"type": "string", "required": False},
     "note": {"type": "string", "required": False, "max_length": 20},
     "amount": {"type": "number", "required": False, "min": 0, "max": 100},
 }
+
+#: What this recipe opened to its own page. The exposure entry no longer has an
+#: opinion about it — see `frago.recipes.contract`.
+ACTION = "save"
 
 
 class _Meta:
     ui_from = None
 
-    def __init__(self, inputs):
+    def __init__(self, inputs, page_actions):
         self.name = PAGE
         self.inputs = inputs
+        self.page_actions = list(page_actions)
 
 
 @pytest.fixture
@@ -63,19 +69,20 @@ def world(tmp_path, monkeypatch):
     # way — scanned once per process, refreshed only where a caller asks
     # whether it is still current — and the difference matters here because a
     # visitor's parameters are checked strictly against whichever it is.
-    disk = {"inputs": dict(DECLARED)}
+    disk = {"inputs": dict(DECLARED), "page_actions": [ACTION]}
     singleton = []
 
     class _Recipe:
         base_dir = tmp_path / "recipes" / PAGE
         script_path = tmp_path / "recipes" / PAGE / "recipe.py"
 
-        def __init__(self, inputs):
-            self.metadata = _Meta(inputs)
+        def __init__(self, inputs, actions):
+            self.metadata = _Meta(inputs, actions)
 
     class _Registry:
         def __init__(self):
             self.scanned = dict(disk["inputs"])
+            self.actions = list(disk["page_actions"])
 
         def needs_rescan(self):
             return self.scanned != disk["inputs"]
@@ -83,7 +90,7 @@ def world(tmp_path, monkeypatch):
         def find(self, name, source=None):
             if name != PAGE:
                 raise RecipeNotFoundError(name, [])
-            return _Recipe(self.scanned)
+            return _Recipe(self.scanned, self.actions)
 
     def _get_registry():
         if not singleton:
@@ -98,7 +105,7 @@ def world(tmp_path, monkeypatch):
         user = ident.create_user(email, PASSWORD)
         people[who] = {"id": user.id, "cookie": ident.create_session(user.id)}
 
-    pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[people["zhang"]["id"]], runnable=True)
+    pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[people["zhang"]["id"]])
 
     yield {"people": people, "root": tmp_path, "disk": disk, "registry": _get_registry}
     ident.reset_rate_limits()
@@ -131,7 +138,15 @@ def _client(cookie=None):
 
 
 def _post(cookie, params=None):
-    return _client(cookie).post(f"/app/{PAGE}/run", json={"params": params or {}})
+    """A page pressing one of the buttons the recipe opened to it.
+
+    The mode is filled in when a test does not care which one: naming the action
+    is how a page-triggered run says what it wants, and every path through this
+    route now asks for it.
+    """
+    body = dict(params or {})
+    body.setdefault("mode", ACTION)
+    return _client(cookie).post(f"/app/{PAGE}/run", json={"params": body})
 
 
 class TestWhoMayStartOne:
@@ -149,8 +164,30 @@ class TestWhoMayStartOne:
         assert r.status_code == 202
         assert r.json() == {"accepted": True}
 
-    def test_a_page_that_is_not_runnable_refuses(self, world, ran):
-        pub.publish(PAGE, mode=pub.MODE_IDENTITY, allow=[world["people"]["zhang"]["id"]])
+    def test_a_recipe_that_opened_nothing_to_its_page_refuses(self, world, ran):
+        """Capability comes from the recipe, not from the exposure entry. The
+        same person, on the same page they are allowed to open, gets nothing to
+        press once the declaration goes away."""
+        world["disk"]["page_actions"] = []
+        world["registry"]().actions = []
+        r = _post(world["people"]["zhang"]["cookie"])
+        assert r.status_code == 404
+        assert ran == {}
+
+    def test_a_mode_the_recipe_did_not_open_is_refused(self, world, ran):
+        """And the refusal names what was on offer: this caller may certainly be
+        here, they asked for something the recipe never opened, and a page author
+        cannot fix a bare 404."""
+        r = _post(world["people"]["zhang"]["cookie"], {"mode": "wipe"})
+        assert r.status_code == 403
+        assert ACTION in r.text
+        assert ran == {}
+
+    def test_a_shared_reading_accepts_no_runs(self, world, ran):
+        """Everyone on the list reads one slot of the owner's, so there is no
+        directory of this person's for a run to write into."""
+        pub.publish(PAGE, mode=pub.MODE_IDENTITY,
+                    allow=[world["people"]["zhang"]["id"]], reads=pub.READS_OWNER)
         r = _post(world["people"]["zhang"]["cookie"])
         assert r.status_code == 404
         assert ran == {}
@@ -183,7 +220,7 @@ class TestTheParametersAreNotTakenOnTrust:
     def test_a_declared_parameter_within_its_limits_goes_through(self, world, ran):
         r = _post(world["people"]["zhang"]["cookie"], {"note": "rent", "amount": 12})
         assert r.status_code == 202
-        assert ran["params"] == {"note": "rent", "amount": 12}
+        assert ran["params"] == {"mode": ACTION, "note": "rent", "amount": 12}
 
     def test_a_body_that_is_not_json_is_refused(self, world, ran):
         r = _client(world["people"]["zhang"]["cookie"]).post(
@@ -208,7 +245,7 @@ class TestAParameterAddedAfterTheServerStarted:
         world["disk"]["inputs"]["force"] = {"type": "boolean", "required": False}
         r = _post(world["people"]["zhang"]["cookie"], {"note": "rent", "force": True})
         assert r.status_code == 202
-        assert ran["params"] == {"note": "rent", "force": True}
+        assert ran["params"] == {"mode": ACTION, "note": "rent", "force": True}
 
     def test_a_parameter_removed_after_the_scan_is_refused(self, world, ran):
         """The same freshness in the other direction: what the recipe no longer
@@ -323,7 +360,7 @@ class TestOneAtATimePerPerson:
         assert r.status_code == 409
 
     def test_two_different_people_do_not_block_each_other(self, world, ran):
-        pub.publish(PAGE, mode=pub.MODE_IDENTITY, runnable=True)
+        pub.publish(PAGE, mode=pub.MODE_IDENTITY)
         assert app_run._claim((PAGE, world["people"]["zhang"]["id"]), None) is True
         assert _post(world["people"]["li"]["cookie"]).status_code == 202
 

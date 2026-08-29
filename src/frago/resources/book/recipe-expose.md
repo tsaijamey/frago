@@ -19,6 +19,24 @@
 主人只有两条来路：请求从本机发出（`local`），或带着 `~/.frago/server-token`（`token`）。
 那个文件 0600、首次需要时自生成，`frago server token` 是读它不是设它。**谁读得到那串谁就是主人。**
 
+## 两个独立的问题
+
+一张已开放的页面由两个**互不相干**的答案描述，混成一个是这套东西以前最大的毛病：
+
+| 问题 | 存在哪 | 谁决定 |
+|---|---|---|
+| **谁能打开** | `published.json` 的 `mode` + `allow` | 开放它的人 |
+| **他们读谁的数据** | `published.json` 的 `reads` | 开放它的人 |
+| **页面能触发什么** | 配方 `recipe.md` 的 `page_actions` | 写配方的人 |
+
+第三行以前也在 `published.json` 里，叫 `--runnable`：**看得见就等于全部能按**，
+而按下去是在主人的机器上、用主人的凭证跑。同一个配方在这张页面上能跑、在那张不能，
+配方自己一个字都没说。现在能力来自契约、可见性来自名单，两件事只能各自收窄，谁都放宽不了谁。
+
+第二行以前根本不存在。`identity` 一个词同时表示「要登录」和「各人读各人那份」，
+于是最常见的需求——**点名这几个人，看我算出来的同一份东西**——没有任何写法，
+逼着人去借机器级共读（那是给数据层设计的）或者干脆开成 public。
+
 ## 四个区
 
 `/app/<recipe>/` 是页面的固定地址，默认全关，逐个显式打开。
@@ -52,40 +70,49 @@
   （反过来不会：identity 判不过会继续往下走到 token 检查，cookie 不会让你损失什么。）
 - 这道闸在 CORS 外面，**OPTIONS 一律 401**，跨域预检到不了 CORS。
 
-## `/app/<name>/api/<mode>`：页面能不能是 public 由它决定
+## 匿名区只收 GET/HEAD，所以前后端分离的页面开不成 public
 
-identity 区的第二条 POST，是「页面向自己的后端要数据」的唯一入口。路径写死成一段、不许带点。
+`/app/<name>/api/<mode>` 是「页面向自己的后端要数据」的唯一入口，走 POST。
+匿名区只收 GET/HEAD，**于是一张会调 `api/<mode>` 的页面，开成 public 之后每一次都被拒，
+页面白着，三层没有一处报错**。
 
-**网关根本不看 `runnable`**：`/run` 和 `/api/<mode>` 共用同一句判断（发布了、是 identity、在名单上），
-`runnable` 是 `/run` 那条路由自己再查，不满足回 404。**所以页面调只读 mode 不需要 `--runnable`。**
+以前这只能在开放之后被人撞见。现在 `expose --public` 会先读一遍 `assets/`，
+发现页面在调后端就当场拒绝并给出两条路：
 
-**推论**：匿名区只收 GET/HEAD，所以 **public 页面调不了 `api/<mode>`**。
-一张「页面发请求问后端要数据」的页面**只能是 identity 模式**。
-要做成 public，必须把结果预先算成文件放进 `dataDir`，前端只渲染。
+- 把结果预先算成文件放进 `dataDir`，页面只渲染 → 可以 public；
+- 或者 `--signed-in` / `--allow …`，要一份共同的数据就再加 `--shared`。
+
+**推论**：`public` 与 `identity` 这个二选一，实际上常常是「老架构 / 前后端分离」的二选一，
+名字却让人以为在选给谁看。真正在选给谁看的是 `--public / --signed-in / --allow` 这三个开关。
 
 ## 怎么用
 
-模式不是参数，是推导出来的：`--require-identity` / `--allow` / `--runnable` 任一出现即 identity，否则 public。
-所以写了 `--allow` 忘了 `--require-identity`，页面依然是登录可见，不会掉回 public。
-
-    frago recipe expose <name> [--slot <slot>]      # public：所有人看同一份
-    frago recipe expose <name> --require-identity   # 要登录，每个人看自己那一份
-    frago recipe expose <name> --allow <账号id|邮箱> # 只开给点名的人，可重复
-    frago recipe expose <name> --runnable           # 那些人还能点运行
-    frago recipe expose <name> --force              # 唯一用途：明说要撤掉已有白名单
+    frago recipe expose <name> --public              # 谁都能看，不用登录
+    frago recipe expose <name> --signed-in           # 任何登录用户
+    frago recipe expose <name> --allow <id|邮箱>     # 只开给点名的人，可重复
+    frago recipe expose <name> --deny  <id|邮箱>     # 把某个人移出名单
+    frago recipe expose <name> --only  <id|邮箱>     # 整份名单换成这几个
+    frago recipe expose <name> --shared              # 名单上的人读你的同一份（只读）
+    frago recipe expose <name> --each-their-own      # 各人读各人那份（identity 的默认）
+    frago recipe expose <name> --portal              # 这张页面是登录门口
     frago recipe unexpose <name>
-    frago recipe exposed                            # 现状：模式、名单人数、能否运行
+    frago recipe exposed                             # 现状：谁能看、读谁的、能按什么
+
+**第一次开放 MUST 明说谁能看。没有默认值。**
+以前不带开关等于 public，而「还没想清楚」的人恰恰就是敲光杆命令的那个人，
+拿到的是最宽的那个答案。现在不带三选一直接拒绝，并把三个选项列出来。
+
+**再次 expose 只改你点到的字段。** 没写 `--allow` 不会把名单清掉，改 `--slot` 不会顺手放开页面。
+放宽必须说出口：`--deny` / `--only` / `--signed-in` / `--public`。
+`--force` 因此不再存在——它唯一的用途就是抵消「每次整条重写」的副作用。
 
 **`--slot <名>`（默认 `default`）**
 
-- public 下：唯一被发布的那一份。`?key=` 必须等于它；给两个值直接拒；空值算默认槽。
-- identity 下几乎不起作用：读的槽位是**他自己的账号 id**，由服务端从会话算出。
-  而且他只要带**任何** `?key=`，网关当场拒——不是忽略，是拒。这时 `--slot` 只决定审计报告描述哪一份。
-
-**`--require-identity`**
-
-未登录一律拒（浏览器导航会被 302 送去门口）。登录用户读 `~/.frago/users/<账号id>/state/<recipe>.json`，
-与配方自己的 `app-state/` 物理分开。**页面要能渲染空 state 而不是 500**——第一次打开时那份还没被写过。
+- `--public`：唯一被发布的那一份。`?key=` 必须等于它；给两个值直接拒；空值算默认槽。
+- `--shared`：名单上所有人读的**就是你这个槽**。`--slot` 在这里第一次真正起作用。
+- `--each-their-own`：**带了直接报错**。读的槽位是他自己的账号 id，由服务端从会话算出，
+  他只要带**任何** `?key=` 网关就当场拒（不是忽略，是拒）——这里写一个槽名会被记下来却什么也不管，
+  只改审计报告里的一行字。以前它是默默收下的，于是有人花一下午想不通自己的 `--slot` 为什么没生效。
 
 **`--allow <账号id|邮箱>`（可重复）**
 
@@ -95,57 +122,91 @@ identity 区的第二条 POST，是「页面向自己的后端要数据」的唯
 - 不在名单上的人拿到的响应与「这页根本没发布」**一模一样**（401 而非 403——403 等于确认这页存在且有人在名单上）。
 - 存进 `published.json` 后是四态（`_allow_of`）：无 `allow` 键 = 老记录、所有登录用户；`null` = 同上；
   `["id",…]` = 只这些人；**别的任何东西 = 谁都不行**（NEVER 抢救能认出来的那几项，缺的那半可能正是关键限制）。
-- 空名单写不进去，`publish()` 直接抛错。关页面用 `unexpose`。
+- 空名单写不进去。把最后一个人 `--deny` 掉会被拒绝，关页面用 `unexpose`。
 
-**`--runnable`**
+**`--shared`：一群指定的人看同一份主人的数据**
 
-让名单上的人触发这个配方在服务器上跑一趟，产出落各自的 `~/.frago/users/<账号id>/data/<recipe>/`。四件事：
+名单上的每个人读的都是你的 `--slot` 那一份，`/app/<name>/data/…` 给的是你的 `dataDir`，
+页面调 `api/<mode>` 也以主人的落点作答。**只读，且是构造上的只读**：
+这种页面下没有任何人有自己的目录，所以 `/run` 一律 404，`config.json` 里 `actions` 恒为空——
+配方在 `page_actions` 里开了什么都不算数。
 
-- **配方要读 `FRAGO_RECIPE_DATA_DIR`**（或建在 `frago_recipe` 基类上），否则直接拒——
-  它会把每个人的产出都写进主人那一个目录。检查是字符串搜索，弱是故意的，抓的是「从没考虑过这问题」的配方。
-  NEVER 改成 `import frago`：带 PEP 723 块的配方跑在隔离环境里 import 不到。
-- **跑的是主人的机器、主人的凭证。** `FRAGO_SECRETS` 按配方名取，没有「谁的凭证」这一维。
-  判据不是「这配方有没有 bug」，是「这份源码我信到愿意让陌生人按」。
-  **NEVER 把会花钱、会以主人身份对外做事的配方开成可运行。**
-- **整份名单一起开**，做不到「这三个能看、那两个能跑」。
-- 参数按 `inputs` 严格校验（`enum` / `max_length` / `pattern` / `min` / `max` 逐条查）。主人自己跑不受此约束。
+这和「机器级共读」（`share/common` + `reads_common`）不是一回事：
+那一套解决的是**多个配方之间**怎么读同一份数据，这一条解决的是**多个人**怎么看同一张页面上的同一份数据。
 
-页面这边：`POST /app/<name>/run`，体 `{"params":{…}}`，立刻回 202，**不回配方的返回值**。
-结果去 `data/` 读，状态读平台维护的 `data/run.json`（配方 NEVER 自己写这个文件）。同一人同一页串行，第二个 409。
+**`--each-their-own`（identity 的默认）**
 
-**`--force`**
+登录用户读 `~/.frago/users/<账号id>/state/<recipe>.json`，与配方自己的 `app-state/` 物理分开。
+**页面要能渲染空 state 而不是 500**——第一次打开时那份还没被写过。
 
-只有一个用途：**本来有名单、这次没写 `--allow`**——那等于放宽到所有登录用户，默认直接拒绝执行并列出会被撤掉的账号。
-首次发布、再次点名、缩小名单、public 页面都不触发。
-**NEVER 折进 `--yes`**：`--yes` 是脚本习惯带着的自动化开关，折进去这道锁就白设了。
+**`--portal`**
+
+把这张页面登记成登录门口，写进 `published.json`，`frago recipe exposed` 里看得见。
+门口 MUST 是 `--public`（否则 302 过去只是换个地方 401），且**一台机器只能有一个**，
+第二次登记会指名现任并拒绝。`FRAGO_LOGIN_PORTAL` 仍然优先于登记表（空字符串=关掉跳转），
+两者都没有时兜底用历史默认名 `frago_login_portal`。
 
 **`--yes` / `--format json`**
 
 `--format json` **不豁免确认**：不带 `--yes` 时回 `{"code":"confirm_required","notes":[…]}` 并以 1 退出。
 那份 `notes` 就是「这次会暴露什么」——**读完再带 `--yes` 回来，NEVER 见非零退出就直接补 `--yes` 重跑**。
 
-**跑之前就会被拒的**：配方不存在；没有 `assets/` 目录；`--allow` 的账号查不到；
-该带 `--force` 没带；`--runnable` 但配方不读 `FRAGO_RECIPE_DATA_DIR`；`recipe_checks.audit` 报出致命项。
+**跑之前就会被拒的**：配方不存在；没有 `assets/` 目录；第一次开放却没说谁能看；
+`--allow` 的账号查不到；名单会被清空；`--public` 但页面在调 `api/<mode>`；
+门口不是 public 或者已经有一个；`recipe_checks.audit` 报出致命项。
 
-**贯穿全部的一条**：每跑一次 expose 都是整条写回，**少写一个开关等于关掉它**。
-改 `--runnable` 也得把 `--allow` 原样再敲一遍。
+读回来时几处刻意的不对称，都往关的方向倒：`mode` 缺键读成 public（老记录当年就是发给匿名读者的）、
+认不出来读成 identity；`reads` 缺键或认不出来读成 `own`（各看各的）；
+`portal` 必须严格 `True`（`"true"`、`1` 全读成 False——都是手改文件时想反了的产物）。
 
-读回来时两处刻意的不对称，都往关的方向倒：`mode` 缺键读成 public（老记录当年就是发给匿名读者的）、
-认不出来读成 identity；`runnable` 必须严格 `True`（`"true"`、`1` 全读成 False——都是手改文件时想反了的产物）。
+## 页面能按什么：配方说了算
+
+    # recipe.md
+    exports:      [status]        # 别的模块能调的，MUST 只读
+    page_actions: [save, refresh] # 页面能触发的，可以干活
+
+`page_actions` 与 `exports` **不许有交集**——导出的 mode 按契约是只读的，
+页面直接 `POST /app/<name>/api/<mode>` 就能读，不需要按钮；两边都列等于配方自己前后矛盾，
+`validate` 直接报错。
+
+页面发 `POST /app/<name>/run`，体 `{"params":{"mode":"save", …}}`：
+
+- 配方一个 `page_actions` 都没开 → 404（与「这页没发布」同一个答案）
+- 开了，但要的这个 mode 不在里面 → 403，并把开了哪几个列出来（这是页面作者能改的错）
+- `--shared` 的页面 → 404，无论配方开了什么
+- 参数按 `inputs` 严格校验（`enum` / `max_length` / `pattern` / `min` / `max` 逐条查）
+
+回 202，**不回配方的返回值**。结果去 `data/` 读，状态读平台维护的 `data/run.json`
+（配方 NEVER 自己写这个文件）。同一人同一页串行，第二个 409。
+
+**开了 `page_actions` 的配方 MUST 读 `FRAGO_RECIPE_DATA_DIR`**（或建在 `frago_recipe` 基类上），
+否则 `frago recipe validate` 直接报错——它会把每个人的产出都写进主人那一个目录。
+这条以前挂在 `expose --runnable` 上，即挂在「一个可能没写过这个配方的人做决定」的那一刻；
+现在挂在声明上，作者手还按在文件上的时候就报，而且在每台机器上答案一样。
+
+跑的是**主人的机器、主人的凭证**。`FRAGO_SECRETS` 按配方名取，没有「谁的凭证」这一维。
+判据不是「这配方有没有 bug」，是「这份源码我信到愿意让别人按」。
+**NEVER 把会花钱、会以主人身份对外做事的 mode 写进 `page_actions`。**
 
 ## 名单加对了人，页面照样可能是空的
 
-**expose 只回答「谁能打开」。「他看得到什么」是另一个问题，由数据落在谁名下决定。**
+**expose 只回答「谁能打开」和「读谁的」。「那份数据里有没有东西」是第三个问题。**
 
-登录用户的每一次读都被路由到**他自己名下的目录**，而且这个身份**沿着配方之间的调用继续往下传**：
+`--each-their-own` 下，登录用户的每一次读都被路由到**他自己名下的目录**，
+而且这个身份**沿着配方之间的调用继续往下传**：
 A 的页面问 plan 要数据，plan 转身问引擎，引擎也是以 A 的身份跑的。
 而配方跑出的公共结果落在**算它的那个人**名下（通常是调度或主人）。
 于是名单加对了、页面打开了，读的却是空目录，**三层没有一处报错**。
 2026-08-26 实测：引擎刚算完 7245 只标的，看板上写着「引擎还没算过任何一天」。
 
-判据：**复制之后原件还会继续更新的东西，必须只有一份。**
-解法是把公共结果写进 `~/.frago/recipe-data/<配方>/share/common/`，
-并在 `recipe.md` 的 `reads_common` 里列上生产者——声明了才拿得到共读根。**不是改 expose 参数。**
+两条路，先判性质——**复制之后原件还会继续更新的东西，必须只有一份**：
+
+- 这些人本来就该看主人算的那一份 → `--shared`。一条命令，不动数据。
+- 数据要给**别的配方**读 → 写进 `~/.frago/recipe-data/<配方>/share/common/`，
+  读的那个配方在 `recipe.md` 的 `reads_common` 里列上生产者，
+  **再由主人 `frago recipe grant <读的人> --read <被读的人>` 授权**。
+  声明是请求，授权才是许可：声明由得利的一方写，光有它等于配方给自己授权。
+  两半缺一不可，`frago recipe validate` 会说缺的是哪一半。
 
 **验收只有一条可信的路**：拿名单上一个真实账号登录进去看。
 以主人身份跑出数据**不构成**登录用户看得到数据的证据。
@@ -159,7 +220,9 @@ A 的页面问 plan 要数据，plan 转身问引擎，引擎也是以 A 的身�
         "public": {"title": "Q3 numbers"},        # 只有这个出去
     })
 
-`dataDir` 底下的文件仍从 `/app/<name>/data/…` 可读。非主人侧 `config.json` 带 `apiBase: null`、`readOnly: true`。
+`dataDir` 底下的文件仍从 `/app/<name>/data/…` 可读。非主人侧 `config.json` 带 `apiBase: null`、`readOnly: true`，
+外加 `actions`（这张页面能按哪几个 mode，匿名侧连这个键都没有）。
+`--shared` 不改变**过滤多少**，只改变**读谁的**：那份也只出 `public` 块。
 路径两道锁（每个匿名和 identity 入口共用）：不许 `..` / `.` 段，不许任何以点开头的段——后者是被读走过 `.env` 之后加的。
 
 登录后能进哪些页面由 `GET /api/auth/pages` 回答，只回自己进得去的那些，**不回名单本身**。
@@ -170,25 +233,26 @@ A 的页面问 plan 要数据，plan 转身问引擎，引擎也是以 A 的身�
 那个账号在换掉临时口令之前只剩三条路（`/api/auth/me`、`/api/auth/password`、`/api/auth/logout`），
 页面和页面清单一律拒。详见 `frago book recipe-deploy` 的账号管理一节。
 
-## 什么时候用
+## 什么时候用哪个
 
-- 结果给不特定的人看，且页面不需要向后端要数据 → public
-- 页面要调 `api/<mode>` → **只能 identity**
-- 按人分数据，或不想让路过的人看见 → identity
-- 只给点名的几个人 → `--allow`；他们还要能跑 → 再加 `--runnable`
+- 结果给不特定的人看，且页面不向后端要数据 → `--public`
+- 页面要调 `api/<mode>` → 只能 identity（`--signed-in` 或 `--allow`）
+- 点名几个人看**我算的同一份** → `--allow … --shared`
+- 每人一份自己的数据 → `--allow … `（默认就是 `--each-their-own`）
+- 他们还要能按按钮 → 在**配方**的 `page_actions` 里点名，不在 expose 里
 
 ## 不要做
 
-- **不要在没问清「谁能看、谁能运行」之前就敲 expose。** 默认值是「所有登录用户」，且整条重写，
-  猜错的代价是页面对全体注册用户敞开，**没有任何一层会提醒你猜错了**。
+- **不要在没问清「谁能看」之前就敲 expose。** 第一次会被拒，但改动已有页面不会——
+  想清楚再敲，现状先看 `frago recipe exposed`，不要凭上一次会话的记忆报名单。
 - 不要拿主人视角的运行结果当成登录用户看得到数据的证据。那是两个目录，中间没有通道。
 - 不要以为「本机能开、图能画出来」说明服务器上也行。本机每个请求都落 `local` 区，测不出任何权限问题。
-- 不要拿 identity 当权限系统。`--allow` 决定「谁看得见」，不是「谁能干什么」——名单上的人能力完全相同。
+- 不要拿 identity 当权限系统。名单决定「谁看得见」，`page_actions` 决定「能按什么」——
+  名单上的人之间能力完全相同，做不到「这三个能看、那两个能跑」。
 - 不要拿这里的邮箱当真身份，它没验过；更不要用 `--allow` 写一个还没人登录过的邮箱。
-- 不要指望公开页面能调 `${apiBase}/recipes/<name>/run` 或 `${apiBase}/file?path=`。登录用户同样拿不到。
-- 不要指望 `--runnable` 是沙箱。配方以主人的身份、主人的权限跑，隔离只保证产出落点不串人。
+- 不要指望页面能调 `${apiBase}/recipes/<name>/run` 或 `${apiBase}/file?path=`。登录用户同样拿不到。
+- 不要指望 `page_actions` 是沙箱。配方以主人的身份、主人的权限跑，隔离只保证产出落点不串人。
 - 不要以为发布一个 slot 等于发布全部；不要把敏感数据放进已发布 slot 的 `dataDir`，那目录整体可读。
-- 不要拿 `--force` 当消警告的开关。
 
 ## 相关
 

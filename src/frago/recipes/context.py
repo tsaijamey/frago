@@ -285,17 +285,24 @@ def current(env: Mapping[str, str] | None = None) -> InvocationContext:
 def common_dirs_for(recipe_name: str) -> Path | None:
     """The directory a run may read other recipes' shared data from.
 
-    Handed over as one root rather than one path per producer: the recipe joins
-    the producer's name onto it, and which producers it may join is the list it
-    declared in its own metadata — so the dependency is written down on both
-    sides instead of living as a path buried in somebody's source.
+    Handed over as one root that the recipe joins a producer's name onto — the
+    shape recipes already use — but the root is **built for this recipe** rather
+    than being the tree itself. It holds one entry per producer the owner
+    granted, and nothing else, so a recipe joining a name it was not granted
+    finds no directory there.
 
-    None when the recipe declared nothing, which is almost all of them. An
-    empty variable and an absent one are different claims, and a recipe with
-    nothing to share should not be handed a door it has no business opening.
+    That indirection is the correction. The root used to be
+    ``~/.frago/recipe-data/`` outright, handed over whenever the recipe declared
+    *any* producer — so the declaration bought the whole tree, and a recipe that
+    named one producer could read every one of them. A declaration is a request;
+    the grant is the owner's, and it lives in ``frago.recipes.grants``.
+
+    None when nothing is both declared and granted, which is almost every
+    recipe. An empty variable and an absent one are different claims, and a
+    recipe with nothing to read should not be handed a door at all.
     """
-    from frago.recipes.app_state import RECIPE_DATA
     from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.grants import readable_producers
     from frago.recipes.registry import get_registry
 
     try:
@@ -305,7 +312,63 @@ def common_dirs_for(recipe_name: str) -> Path | None:
     declared = getattr(recipe.metadata, "reads_common", None) or []
     if not declared:
         return None
-    return Path.home() / ".frago" / RECIPE_DATA
+    allowed = readable_producers(recipe_name, list(declared))
+    staged = _stage_common_dirs(recipe_name, allowed)
+    # Built even when the answer is "nothing", because that is what a revocation
+    # looks like: the grant is gone, and the link left behind from the last run
+    # would otherwise keep the door open for as long as the directory survives.
+    # Rebuilding first and refusing second is the difference between a revocation
+    # and a note about one.
+    return staged if allowed else None
+
+
+def _stage_common_dirs(recipe_name: str, producers: list[str]) -> Path | None:
+    """Build this recipe's view of the shared tree: one link per granted producer.
+
+    Rebuilt from scratch each time rather than patched, because the interesting
+    change is a *revocation* — and a patch that only adds is a revocation that
+    never takes effect. Anything in here that is not on the current list goes,
+    including a name that is no longer a recipe.
+
+    Links rather than copies, for the reason ``app_state.common_dir`` gives:
+    everyone reads the same copy and exactly one recipe updates it, so a copy
+    would go stale silently in as many directions as there are readers.
+
+    Returns None if the directory cannot be built. A run that would otherwise
+    start with a half-built view is a run that reads some of its dependencies
+    and silently skips the rest.
+    """
+    from frago.recipes.app_state import RECIPE_DATA, _validate
+
+    root = Path.home() / ".frago" / RECIPE_DATA
+    staged = root / recipe_name / "granted"
+    try:
+        staged.mkdir(parents=True, exist_ok=True)
+        wanted = set()
+        for producer in producers:
+            try:
+                _validate(producer, "default")
+            except Exception:
+                continue
+            wanted.add(producer)
+            link = staged / producer
+            target = root / producer
+            if link.is_symlink():
+                if link.readlink() == target:
+                    continue
+                link.unlink()
+            elif link.exists():
+                # Something that is not a link of ours. Never removed: it may be
+                # a real directory somebody put there, and deleting data is not
+                # this function's business.
+                continue
+            link.symlink_to(target, target_is_directory=True)
+        for existing in staged.iterdir():
+            if existing.name not in wanted and existing.is_symlink():
+                existing.unlink()
+    except OSError:
+        return None
+    return staged
 
 
 def for_owner(recipe_name: str, project: str | None = None) -> InvocationContext:

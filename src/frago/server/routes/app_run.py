@@ -292,10 +292,19 @@ async def run_for_visitor(name: str, request: Request):
     whether this person may run it, then whether the parameters are acceptable,
     and only then whether they already have one going. Nothing starts a process
     until all four have passed.
+
+    "Whether this page may be run at all" is now the recipe's own answer. It
+    used to be a flag on the exposure entry, which put the decision in the hands
+    of whoever exposed the page and expressed it as "everyone who can see this
+    can press every button on it". Capability comes from the contract
+    (``page_actions`` in ``recipe.md``, named one mode at a time by the person
+    who wrote them); the exposure decides only who is looking. The two now
+    narrow independently, and neither can widen the other.
     """
     from frago.recipes import app_state, context
+    from frago.recipes.contract import page_actions_of
     from frago.recipes.publish import allows, published_entry
-    from frago.server.security import is_owner_request, slot_for, zone_of
+    from frago.server.security import is_owner_request, reads_owner_data, slot_for, zone_of
 
     if is_owner_request(request):
         return await _run_for_owner(name, request)
@@ -308,14 +317,33 @@ async def run_for_visitor(name: str, request: Request):
 
     identity = slot_for(request)
     entry = published_entry(name)
-    if entry is None or not entry.get("runnable") or not allows(entry, identity):
-        # One answer for three different failures: not published, published but
-        # not runnable, runnable but not for you. Telling them apart would say
-        # which pages exist and who is on their lists.
+    if entry is None or not allows(entry, identity) or reads_owner_data(request):
+        # One answer for three different failures: not published, not for you,
+        # and published as one shared reading of the owner's data — which has no
+        # directory of this person's for a run to write, so there is nothing a
+        # run here could mean. Telling them apart would say which pages exist and
+        # who is on their lists.
         raise HTTPException(status_code=404, detail="not available")
 
     recipe = _fresh_recipe(name)
     params = await _checked_params(recipe, request)
+
+    # Which mode was asked for, held against what the recipe opened to its page.
+    # Read after `_checked_params` so it is the validated body being judged, and
+    # answered separately from the 404 above: this caller may certainly be here,
+    # they asked for something the recipe never offered, and saying so is what
+    # lets a page author fix it. It names only what they sent and what the recipe
+    # declared — nothing about this machine, and nothing about anyone else.
+    allowed_actions = page_actions_of(name, str(params.get("mode") or ""))
+    if not allowed_actions:
+        raise HTTPException(status_code=404, detail="not available")
+    if params.get("mode") not in allowed_actions:
+        raise VisitorSafe(
+            status_code=403,
+            detail=(f"这张页面能触发的是 {'、'.join(allowed_actions)}，"
+                    f"不是 {params.get('mode')!r}。"
+                    f"页面能按的按钮由配方在 recipe.md 的 page_actions 里逐个点名。"),
+        )
 
     # Where this run stands, decided in one place for both doors — the run
     # route here and the exported read-only mode a page calls. See

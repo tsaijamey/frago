@@ -142,9 +142,13 @@
   category: available
   brief: "Web UI 人机协作 Recipe 架构、launcher、API 交互、状态管理"
 
+- name: recipe-deploy
+  category: available
+  brief: "把配方送上服务器并让指定的人能用：四段链路 ①问清谁能看（首次开放没有默认值，会被拒）②rsync 送代码（base_dir 别猜、--delete、属主归位）③服务端 validate+假 mode 冒烟 ④expose --public/--signed-in/--allow[+--shared]；部署≠开放≠看得到数据；调度/凭证/channel/published.json 都不跟着走；部署机重启走 systemd 否则丢安全环境变量"
+
 - name: recipe-expose
   category: available
-  brief: "frago recipe expose 把 recipe 页面开给外面只读看（注意与 recipe publish 发布页面状态不是一回事）；两种模式 public 人人同一份 / identity 登录后各看各的；四区分流 本机/公开/身份/私有，/api 永不外露；每次 expose 整条重写、撤白名单要 --force；未登录开 identity 页面会 302 去 FRAGO_LOGIN_PORTAL 门口；frago user 管账号与登录会话"
+  brief: "frago recipe expose 决定谁能看这张 recipe 页面（与 recipe publish 写页面状态不是一回事）。三种人严禁混称：未登录的人 / 登录用户 / 主人——主人不是账号是请求来源（local 或带 server-token）。三个独立问题：谁能打开（--public/--signed-in/--allow）、读谁的数据（--each-their-own 默认 / --shared 一群人看主人同一份）、页面能按什么（配方 recipe.md 的 page_actions，--runnable 已取消）。首次开放必须明说谁能看，没有默认值；改动是增量的，放宽必须说出口（--deny/--only/--signed-in），--force 已取消；页面调 api/<mode> 就开不成 public（匿名区只收 GET/HEAD），expose --public 会当场拒；--portal 把登录门口写进登记表；跨配方读数据要 reads_common 声明 + frago recipe grant 授权"
 
 - name: remote-frago
   category: available

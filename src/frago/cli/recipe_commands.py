@@ -128,6 +128,10 @@ def _plan_into(name: str, prompt_text: str, spec_path: Path,
              不确定就先留空：开出去容易，收回来难。
     imports  用了谁的哪个口
     page     要不要一张页面
+    page_actions  这张页面能触发哪几个 mode。默认空，而且默认是对的——
+             页面是最不可信的一层（谁打得开谁就能按），按下去却是在主人的机器上
+             用主人的凭证跑。与 exports 不许有交集。
+             会花钱、会以主人身份对外做事的 mode NEVER 写进来。
 
   下半部分是给人读的：它解决什么问题、每个 mode 干什么、**它不做什么**、
   数据存什么、出错怎么办、怎么验。
@@ -1658,23 +1662,34 @@ def validate_recipe(path: str, output_format: str):
             if dep not in registry.recipes:
                 errors.append(f"Dependent recipe does not exist: {dep}")
 
-    # 5b. A recipe already exposed as runnable must honour the data directory it
-    # is handed. Checked here as well as at `expose --runnable` because the two
-    # catch different moments: expose catches the mistake being made, this
-    # catches it being introduced afterwards — someone rewrites the recipe, drops
-    # the one line that reads the variable, and the page keeps its permission.
-    # From then on every visitor's run writes the owner's directory, silently and
-    # into one shared pile.
-    if metadata:
-        from frago.recipes.publish import published_entry
-
-        exposed = published_entry(metadata.name)
-        if exposed and exposed.get("runnable") and _runnable_readiness(recipe_dir):
+    # 5b. A recipe that opened modes to its own page must honour the data
+    # directory it is handed, or every reader's run writes the owner's one pile.
+    # Checked here rather than at expose time because that is where the answer
+    # now lives: the declaration travels with the recipe, so this is the same
+    # verdict on every machine it reaches, and the author finds out while still
+    # holding the file.
+    if metadata and metadata.page_actions:
+        gap = _actions_readiness(recipe_dir)
+        if gap:
             errors.append(
-                "This recipe is exposed as runnable but no longer reads "
-                "FRAGO_RECIPE_DATA_DIR, so visitor runs would all write the "
-                "owner's directory. Restore that line, or "
-                f"`frago recipe unexpose {metadata.name}`."
+                f"recipe.md 的 page_actions 开了 {'、'.join(metadata.page_actions)}，"
+                f"但这个配方不读落点变量。{gap}"
+            )
+
+    # 5b-2. Cross-recipe reads are requested here and granted by the owner. A
+    # request nobody granted is not an error — the recipe is perfectly valid, it
+    # simply will not be handed that directory — but it is the exact shape that
+    # ends as an empty page nobody can explain, so it is said here where the
+    # author is looking.
+    if metadata and metadata.reads_common:
+        from frago.recipes.grants import readable_producers
+
+        allowed = set(readable_producers(metadata.name, list(metadata.reads_common)))
+        ungranted = [one for one in metadata.reads_common if one not in allowed]
+        if ungranted:
+            warnings.append(
+                f"reads_common 声明了 {', '.join(ungranted)}，但主人还没授权，运行时拿不到它们。"
+                f"授权：frago recipe grant {metadata.name} --read <生产者>"
             )
 
     # 5c. Whatever would stop this recipe's page from working on another machine.
@@ -2602,8 +2617,47 @@ def _resolve_allow(named: tuple[str, ...]) -> tuple[list[str], str | None]:
     return ids, None
 
 
-def _runnable_readiness(recipe_dir: Path) -> str | None:
-    """Why this recipe must not be made runnable yet, or None if it may be.
+#: A page fetching from its own back end — the shape of the front-end/back-end
+#: split. Matched loosely: what matters is that the page asks a mode for data at
+#: run time rather than rendering files staged ahead of it.
+_PAGE_CALLS_BACKEND = re.compile(r"""["'`]\s*api/|/app/[^"'`]*/api/""")
+
+
+def _page_calls_backend(recipe_dir: Path) -> str | None:
+    """Where this page asks its own recipe for data, or None if it never does.
+
+    Asked when a page is about to be exposed to anonymous readers, because those
+    two things cannot both be true. The anonymous zone admits GET and HEAD and
+    nothing else — by design, and it is the reason a published page can be a
+    read-only rendering of files already on disk. A page that asks a mode for
+    its numbers asks by POST, so every one of those requests is refused, and the
+    page renders its empty state with nothing anywhere reporting a fault.
+
+    Found by reading the page rather than by waiting: the alternative is an
+    operator who exposes the page, opens it, sees nothing, and has no reason to
+    suspect the mode they chose an hour ago.
+    """
+    assets = recipe_dir / "assets"
+    if not assets.is_dir():
+        return None
+    for path in sorted(assets.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".js", ".mjs", ".html", ".htm"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for number, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if line.startswith(("#", "//", "/*", "*", "<!--")):
+                continue
+            if _PAGE_CALLS_BACKEND.search(line):
+                return f"{path.relative_to(recipe_dir)}:{number}  {line[:100]}"
+    return None
+
+
+def _actions_readiness(recipe_dir: Path) -> str | None:
+    """Why this recipe's page actions cannot be honoured yet, or None if they can.
 
     The check is a string search for ``FRAGO_RECIPE_DATA_DIR`` across the
     recipe's own files, and it is deliberately about the environment variable
@@ -2618,10 +2672,10 @@ def _runnable_readiness(recipe_dir: Path) -> str | None:
     not try: a recipe's source is code the owner installed, and the untrusted
     thing here is the parameters, not the program.
 
-    Refusing rather than warning, because exposing a page happens a handful of
-    times a year and a warning at that moment is a line of yellow text between an
-    operator and the thing they already decided to do. The cost of being wrong
-    does not appear until the second visitor arrives.
+    Refusing rather than warning, because declaring a page action happens a
+    handful of times a year and a warning at that moment is a line of yellow text
+    between an author and the thing they already decided to do. The cost of being
+    wrong does not appear until the second reader arrives.
     """
     marker = "FRAGO_RECIPE_DATA_DIR"
     # Building on the base class satisfies this too, and more strongly than the
@@ -2660,141 +2714,242 @@ def _runnable_readiness(recipe_dir: Path) -> str | None:
     )
 
 
+def _fail(output_format: str, message: str, code: str, **extra) -> None:
+    """One refusal, spelled the same way in both output formats."""
+    if output_format == 'json':
+        click.echo(json.dumps(
+            {"success": False, "error": message, "code": code, **extra},
+            ensure_ascii=False))
+    else:
+        click.echo(f"Error: {message}", err=True)
+    sys.exit(1)
+
+
 @recipe_group.command(name='expose', cls=AgentFriendlyCommand)
 @click.argument('name')
-@click.option('--slot', default='default', help='Which slot to expose (default: default)')
-@click.option('--require-identity', is_flag=True,
-              help='Serve each signed-in visitor their own data instead of one public slot')
+@click.option('--slot', default=None,
+              help="Which of the owner's slots this page serves. Meaningful for a "
+                   "public page and for --shared; ignored when each reader has their own.")
+@click.option('--public', 'want_public', is_flag=True,
+              help='Anyone may open it, with no sign-in.')
+@click.option('--signed-in', 'want_signed_in', is_flag=True,
+              help='Any signed-in account may open it. Drops an existing allow list, '
+                   'which is why it has to be said rather than implied.')
+@click.option('--require-identity', is_flag=True, help='Old spelling of --signed-in.')
 @click.option('--allow', 'allow_who', multiple=True, metavar='ACCOUNT',
-              help='Only these accounts may open the page. Takes an account id, or an '
-                   'email that already has one. Repeatable. Implies --require-identity.')
-@click.option('--runnable', is_flag=True,
-              help='Let those visitors trigger a run of this recipe, writing into their '
-                   'own data directory. Implies --require-identity.')
+              help='Add an account to the list of who may open the page. Takes an '
+                   'account id, or an email that already has one. Repeatable.')
+@click.option('--deny', 'deny_who', multiple=True, metavar='ACCOUNT',
+              help='Take an account back off the list. Repeatable.')
+@click.option('--only', 'only_who', multiple=True, metavar='ACCOUNT',
+              help='Replace the whole list with exactly these accounts. Repeatable.')
+@click.option('--shared', 'want_shared', is_flag=True,
+              help="Everyone on the list reads the same slot of yours, read-only. "
+                   "This is how a few named people see one body of your data.")
+@click.option('--each-their-own', 'want_own', is_flag=True,
+              help='Each signed-in reader gets their own slot and their own directory.')
+@click.option('--portal/--no-portal', 'want_portal', default=None,
+              help='Register this page as the sign-in door people are sent to.')
+@click.option('--runnable', is_flag=True, help='Retired; see the error it prints.')
+@click.option('--force', is_flag=True, help='Retired; see the error it prints.')
 @click.option('--yes', '-y', is_flag=True, help='Skip the confirmation prompt')
-@click.option('--force', is_flag=True,
-              help='Required to drop an existing allow list, i.e. to reopen a page from '
-                   'named accounts to everyone signed in. Separate from --yes on purpose.')
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
-def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple[str, ...],
-                  runnable: bool, yes: bool, force: bool, output_format: str):
-    """Let visitors read this recipe's page.
+def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in: bool,
+                  require_identity: bool, allow_who: tuple[str, ...],
+                  deny_who: tuple[str, ...], only_who: tuple[str, ...],
+                  want_shared: bool, want_own: bool, want_portal: bool | None,
+                  runnable: bool, force: bool, yes: bool, output_format: str):
+    """Decide who may open this recipe's page, and whose data they see.
 
-    Publishing exposes exactly three things and nothing else: the recipe's
-    assets/, the `public` block of the named slot, and the files under that
-    slot's dataDir. The API that page would normally call — which can run
-    recipes and read any path on this machine — stays closed, so a published
-    page is a read-only rendering of data that is already on disk.
+    Exposing shows exactly three things and nothing else: the recipe's assets/,
+    the `public` block of the slot being served, and the files under that slot's
+    dataDir. The API that page would otherwise call — which can run recipes and
+    read any path on this machine — stays closed.
 
-    With --require-identity the page is not public at all: an anonymous visitor
-    gets 401, and everyone who signs in reads a slot of their own, so two people
-    on the same address see different data. Only the address is shared; --slot
-    is then just which slot the audit below describes.
+    \b
+    WHO MAY OPEN IT — one of these, and the first exposure must say which:
+      --public          anyone, no sign-in
+      --signed-in       any account that can sign in
+      --allow <id>      only the accounts named (repeatable)
 
-    With --allow the page narrows further: only the accounts named may open it,
-    and everyone else — signed in or not — gets the same 401 as if the page had
-    never been published. Accounts are named by id; an email is accepted only as
-    a lookup convenience and only if somebody has already signed in with it,
-    because an unclaimed email would authorise whoever registers it first.
+    \b
+    WHOSE DATA THEY SEE — only meaningful once a sign-in is required:
+      --each-their-own  each reader has their own slot and directory (default)
+      --shared          they all read one slot of yours, read-only
 
-    With --runnable those visitors may also trigger a run. The run happens under
-    this machine's account with this recipe's credentials, so the question to ask
-    is not whether the recipe has bugs but whether its source is one you would
-    hand a stranger a button for. NEVER make a recipe runnable if it spends money
-    or acts as you.
+    --shared is the answer to "these four people should see the numbers I
+    computed". It is not machine-level shared data, which is a data-layer
+    mechanism for a different problem, and it is not --public with a password.
+    It is read-only by construction: nobody has a directory of their own on such
+    a page, so there is nothing a run could write.
 
-    Each run of this command states the page's exposure in full — a flag left
-    off is a flag turned off, not a flag left alone. So name every account again
-    each time: adding --runnable to a page that has an allow list, without
-    repeating --allow, would reopen it to everyone who can sign in. That one
-    widening is refused unless you pass --force, because forgetting a flag and
-    deciding to open a page up should not look the same to this command.
+    Whether a page has buttons at all is no longer decided here. The recipe names
+    the modes its page may trigger, in `page_actions` in its recipe.md, and that
+    answer is the same wherever the page is exposed. Exposure decides who is
+    looking; the recipe decides what may be asked of it.
+
+    \b
+    Changing an existing exposure changes only what you name:
+      frago recipe expose ledger --allow bob@example.com   # add Bob, keep the rest
+      frago recipe expose ledger --deny bob@example.com    # take Bob off
+      frago recipe expose ledger --only alice@example.com  # exactly Alice
+      frago recipe expose ledger --signed-in               # drop the list entirely
 
     \b
     Examples:
-        frago recipe expose weekly_report
-        frago recipe expose kline_blind_trainer --slot demo
-        frago recipe expose kline_blind_trainer --require-identity
-        frago recipe expose venture_ledger --allow zhang@example.com --runnable
+        frago recipe expose weekly_report --public
+        frago recipe expose kline_blind_trainer --signed-in
+        frago recipe expose dma_plan --allow a@x.com --allow b@x.com --shared
+        frago recipe expose frago_login_portal --public --portal
     """
-    from frago.recipes.publish import MODE_IDENTITY, MODE_PUBLIC
+    from frago.recipes.publish import (
+        MODE_IDENTITY,
+        MODE_PUBLIC,
+        READS_OWN,
+        READS_OWNER,
+        amend,
+        legacy_runnable,
+    )
+    from frago.recipes.publish import (
+        load as load_exposed,
+    )
     from frago.recipes.publish import publish as mark_published
+    from frago.recipes.publish import published_entry as _entry
 
-    # Both narrowing flags are meaningless without somebody to narrow to, so they
-    # imply identity mode rather than erroring on its absence: the alternative is
-    # an operator who typed `--allow` and got a public page because they forgot a
-    # second flag, which fails in the one direction that matters.
-    mode = MODE_IDENTITY if (require_identity or allow_who or runnable) else MODE_PUBLIC
+    if runnable:
+        _fail(output_format,
+              "--runnable 已经取消。它是页面级开关：谁看得见就谁能按，而按下去是在主人的机器上、"
+              "用主人的凭证跑。现在由配方在 recipe.md 里写 `page_actions: [<mode>, ...]` 逐个点名，"
+              "同一个配方在哪张页面上答案都一样。改完 recipe.md 再 expose，不用带任何开关。",
+              "runnable_retired")
+    if force:
+        _fail(output_format,
+              "--force 已经取消。它存在的唯一理由是抵消「每次 expose 整条重写」的副作用——"
+              "少写一个 --allow 就把页面放开给全体登录用户。现在改动是增量的：没点名就不动，"
+              "放宽必须说出口（--deny / --only / --signed-in）。",
+              "force_retired")
+
+    signed_in = want_signed_in or require_identity
+    if want_public and (signed_in or allow_who or only_who):
+        _fail(output_format,
+              "--public 和「要登录」是同一个问题的两个答案，一次只能给一个。",
+              "conflicting_audience")
+    if want_shared and want_own:
+        _fail(output_format, "--shared 和 --each-their-own 只能选一个。", "conflicting_reads")
 
     recipe_dir = _find_recipe_dir_by_name(name)
     if recipe_dir is None:
-        msg = f"Recipe not found: {name}"
-        if output_format == 'json':
-            click.echo(json.dumps({"success": False, "error": msg, "code": "not_found"}))
-        else:
-            click.echo(f"Error: {msg}", err=True)
-        sys.exit(1)
+        _fail(output_format, f"Recipe not found: {name}", "not_found")
 
     if not (recipe_dir / 'assets').is_dir():
-        msg = f"Recipe '{name}' has no assets/ directory — there is no page to publish"
-        if output_format == 'json':
-            click.echo(json.dumps({"success": False, "error": msg, "code": "no_ui"}))
-        else:
-            click.echo(f"Error: {msg}", err=True)
-        sys.exit(1)
+        _fail(output_format,
+              f"Recipe '{name}' has no assets/ directory — there is no page to publish",
+              "no_ui")
 
-    allow_ids: list[str] | None = None
-    if allow_who:
-        allow_ids, resolve_error = _resolve_allow(allow_who)
-        if resolve_error:
-            if output_format == 'json':
-                click.echo(json.dumps(
-                    {"success": False, "error": resolve_error, "code": "no_such_account"},
-                    ensure_ascii=False))
-            else:
-                click.echo(f"Error: {resolve_error}", err=True)
-            sys.exit(1)
+    existing = _entry(name) if name in load_exposed() else None
 
-    # Every expose writes the whole entry, so a flag left off is a flag turned
-    # off. That is right for most of them and dangerous for exactly one: leaving
-    # `--allow` off a page that has a list reopens it to everyone who can sign
-    # in, and the command that does it looks like the command that merely
-    # changed something else ("I only wanted to add --runnable"). Widening
-    # access must be something a person said, not something they forgot to say.
-    #
-    # Refused rather than prompted, and NEVER folded into `--yes`: `--yes` is
-    # the documented automation path, so a script that habitually carries it
-    # would sail straight through the hole this check exists to close. A refusal
-    # fails loudly in a script instead of silently opening the page.
-    if not allow_who and not force:
-        from frago.recipes.publish import published_entry as _entry
-        current = _entry(name)
-        if current and current.get("allow"):
-            who = ", ".join(current["allow"])
-            msg = (
-                f"'{name}' is currently open to {len(current['allow'])} named "
-                f"account(s) ({who}); publishing without --allow would reopen it to "
-                "everyone who can sign in. Name them again with --allow, or say "
-                "--force if opening it up is what you meant."
-            )
-            if output_format == 'json':
-                click.echo(json.dumps(
-                    {"success": False, "error": msg, "code": "would_widen"},
-                    ensure_ascii=False))
-            else:
-                click.echo(f"Error: {msg}", err=True)
-            sys.exit(1)
+    # A first exposure has to state its audience out loud. There used to be a
+    # default — no flags meant public — and it is the single most expensive
+    # default in this command: the operator who has not decided yet is exactly
+    # the operator who types the bare form, and what they get is the widest
+    # answer available. There is no safe default here, only an unasked question.
+    if existing is None and not (want_public or signed_in or allow_who or only_who):
+        _fail(output_format,
+              f"'{name}' 还没开放过，这一次必须说清楚谁能看：\n"
+              f"  --public                    谁都能看，不用登录\n"
+              f"  --signed-in                 任何登录用户\n"
+              f"  --allow <账号id|邮箱>       只有点名的这几个（可重复）\n"
+              f"没有默认值——这一问的答案只有你知道，猜错的代价是页面对全体注册用户敞开。",
+              "audience_required")
 
-    if runnable:
-        gap = _runnable_readiness(recipe_dir)
-        if gap:
-            if output_format == 'json':
-                click.echo(json.dumps(
-                    {"success": False, "error": gap, "code": "ignores_context"},
-                    ensure_ascii=False))
-            else:
-                click.echo(f"Error: {gap}", err=True)
-            sys.exit(1)
+    added, resolve_error = _resolve_allow(allow_who) if allow_who else ([], None)
+    if resolve_error:
+        _fail(output_format, resolve_error, "no_such_account")
+    removed, resolve_error = _resolve_allow(deny_who) if deny_who else ([], None)
+    if resolve_error:
+        _fail(output_format, resolve_error, "no_such_account")
+    exactly, resolve_error = _resolve_allow(only_who) if only_who else ([], None)
+    if resolve_error:
+        _fail(output_format, resolve_error, "no_such_account")
+
+    # What the entry will say once this command has run. Worked out before
+    # anything is written so the audit below describes the outcome rather than
+    # the starting point.
+    if want_public:
+        mode = MODE_PUBLIC
+    elif signed_in or allow_who or only_who:
+        mode = MODE_IDENTITY
+    else:
+        mode = (existing or {}).get("mode") or MODE_PUBLIC
+
+    if want_shared:
+        reads = READS_OWNER
+    elif want_own:
+        reads = READS_OWN
+    elif mode == MODE_PUBLIC:
+        reads = READS_OWNER
+    else:
+        reads = (existing or {}).get("reads") or READS_OWN
+
+    # `--slot` names one of the owner's slots, so it only means anything where
+    # one of them is what gets served. Under `--each-their-own` the slot is the
+    # reader's own account id, worked out by the server from their session, and
+    # a reader carrying *any* `?key=` is refused outright — so a slot named here
+    # would be written into the entry, enforce nothing, and change only a line of
+    # the audit. It used to be accepted silently, which is how somebody spends an
+    # afternoon wondering why their `--slot` had no effect.
+    if slot and mode == MODE_IDENTITY and reads == READS_OWN:
+        _fail(output_format,
+              "--slot 在「各人读各人那份」下不起作用：读的槽位是他自己的账号 id，"
+              "由服务端从会话算出，他自己带 ?key= 反而会被当场拒。\n"
+              "要让点名的这几个人读你的某一个槽，加上 --shared。",
+              "slot_has_no_effect")
+
+    next_slot = slot or (existing or {}).get("slot") or DEFAULT_SLOT_NAME
+
+    if exactly:
+        allow_ids: list[str] | None = list(exactly)
+    elif signed_in and not allow_who:
+        allow_ids = None
+    else:
+        held = (existing or {}).get("allow")
+        allow_ids = list(held) if isinstance(held, list) else None
+        if added:
+            allow_ids = list(allow_ids or [])
+            for who in added:
+                if who not in allow_ids:
+                    allow_ids.append(who)
+        if removed and allow_ids is not None:
+            allow_ids = [who for who in allow_ids if who not in removed]
+    if mode == MODE_PUBLIC:
+        allow_ids = None
+    if allow_ids is not None and not allow_ids:
+        _fail(output_format,
+              "这样一来名单上就没人了，而「谁都打不开的已开放页面」不是一种配置。"
+              "要关掉它用 frago recipe unexpose。",
+              "would_empty_list")
+
+    portal = (existing or {}).get("portal", False) if want_portal is None else want_portal
+    if portal and mode != MODE_PUBLIC:
+        _fail(output_format,
+              "登录门口得让还没登录的人打得开，否则 302 过去只是换个地方 401。"
+              "门口页面用 --public 开放。",
+              "portal_needs_public")
+
+    # A page that asks its own back end for data cannot be anonymous. The
+    # anonymous zone admits GET and HEAD; that fetch is a POST, so every one of
+    # them is refused and the page renders empty with nothing reporting a fault.
+    # Told here rather than discovered later, because "which mode did I choose"
+    # is the last thing anyone suspects when a page comes up blank.
+    if mode == MODE_PUBLIC:
+        where = _page_calls_backend(recipe_dir)
+        if where:
+            _fail(output_format,
+                  f"这张页面会向自己的后端要数据（{where}），而匿名区只收 GET/HEAD——"
+                  f"那个请求是 POST，开成 public 之后每一次都会被拒，页面白着但没有任何一层报错。\n"
+                  f"两条路：把结果预先算成文件放进 dataDir，页面只渲染；"
+                  f"或者用 --signed-in / --allow …（要一份共同的数据就再加 --shared）。",
+                  "public_page_calls_backend")
 
     # Exposing is the moment to find out that this page cannot work anywhere but
     # here. Before this gate a page reading through the owner-only file endpoint
@@ -2828,23 +2983,14 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
             click.echo(f"Error: {headline}\n{detail}", err=True)
         sys.exit(1)
 
-    state, notes = _publish_audit(name, slot, require_identity=mode == MODE_IDENTITY)
+    state, notes = _publish_audit(
+        name, next_slot, require_identity=mode == MODE_IDENTITY and reads == READS_OWN)
 
     for finding in warnings_found:
         notes.append(f"{finding.rule} — {finding.file.name}:{finding.line} {finding.fix}")
 
-    if allow_ids is not None:
-        notes.append(
-            f"Only {len(allow_ids)} named account(s) may open this page. Everyone "
-            "else gets the same 401 as an unpublished page."
-        )
-    if runnable:
-        notes.append(
-            "Those visitors may TRIGGER A RUN of this recipe. It runs as this "
-            "machine's user, with this recipe's credentials, and writes into each "
-            "visitor's own data directory. Do not make a recipe runnable if it "
-            "spends money or acts as you."
-        )
+    notes.extend(_exposure_notes(
+        name, recipe_dir, existing, mode, reads, allow_ids, next_slot, portal))
 
     if allow_ids is not None:
         audience = f"{len(allow_ids)} named account(s)"
@@ -2852,6 +2998,12 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
         audience = "signed-in visitors"
     else:
         audience = "anonymous visitors"
+
+    if legacy_runnable(load_exposed().get(name)):
+        notes.append(
+            "这条记录还带着老的 runnable=yes。它已经不授予任何东西了——"
+            "页面能触发什么由配方的 page_actions 决定。这次改写会把它抹掉。"
+        )
 
     # The gate applies to both output formats. `--format json` is the path an
     # agent takes, and an agent is precisely the caller that should have to read
@@ -2864,17 +3016,18 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
                 "success": False,
                 "code": "confirm_required",
                 "error": (
-                    f"Publishing '{name}' (slot: {slot}) exposes it to {audience}. "
+                    f"Exposing '{name}' (slot: {next_slot}) to {audience}. "
                     "Read `notes`, then repeat with --yes."
                 ),
                 "recipe_name": name,
-                "slot": slot,
+                "slot": next_slot,
                 "mode": mode,
+                "reads": reads,
                 "notes": notes,
             }, ensure_ascii=False, indent=2))
             sys.exit(1)
 
-        click.echo(f"Publishing '{name}' (slot: {slot}) to {audience}:")
+        click.echo(f"Exposing '{name}' (slot: {next_slot}) to {audience}:")
         for note in notes:
             click.echo(f"  - {note}")
         click.echo()
@@ -2882,29 +3035,111 @@ def expose_recipe(name: str, slot: str, require_identity: bool, allow_who: tuple
             click.echo("Cancelled.")
             sys.exit(1)
 
-    entry = mark_published(name, slot, mode, allow=allow_ids, runnable=runnable)
+    try:
+        if existing is None:
+            entry = mark_published(name, next_slot, mode, allow=allow_ids,
+                                   reads=reads, portal=portal)
+        else:
+            entry = amend(name, slot=next_slot, mode=mode, allow_set=allow_ids,
+                          open_to_all_signed_in=allow_ids is None,
+                          reads=reads, portal=portal)
+    except (ValueError, KeyError) as err:
+        _fail(output_format, str(err), "refused")
 
     if output_format == 'json':
         click.echo(json.dumps({
             "success": True,
             "recipe_name": name,
-            "slot": slot,
-            "mode": mode,
+            "slot": entry["slot"],
+            "mode": entry["mode"],
             "allow": entry["allow"],
-            "runnable": entry["runnable"],
+            "reads": entry["reads"],
+            "portal": entry["portal"],
             "since": entry["since"],
             "path": f"/app/{name}/",
             "notes": notes,
         }, ensure_ascii=False, indent=2))
     else:
-        click.echo(f"✓ Published at /app/{name}/")
+        click.echo(f"✓ Exposed at /app/{name}/")
         if mode == MODE_IDENTITY:
-            click.echo("  Visitors must sign in; each one reads their own data.")
+            click.echo("  Readers must sign in.")
         if allow_ids is not None:
             click.echo(f"  Restricted to {len(allow_ids)} named account(s).")
-        if runnable:
-            click.echo("  Those visitors may trigger a run, writing into their own directory.")
+        if reads == READS_OWNER and mode == MODE_IDENTITY:
+            click.echo(f"  They all read your slot '{entry['slot']}', read-only.")
+        elif mode == MODE_IDENTITY:
+            click.echo("  Each of them reads their own data.")
+        if portal:
+            click.echo("  This page is now the sign-in door.")
         click.echo("  Reverse-proxy only this prefix; everything else needs the server token.")
+
+
+#: The slot name a recipe gets when nobody names one. Imported lazily elsewhere;
+#: bound here so the expose command does not reach into app_state for a constant.
+DEFAULT_SLOT_NAME = "default"
+
+
+def _exposure_notes(name: str, recipe_dir: Path, existing: dict | None, mode: str,
+                    reads: str, allow_ids: list[str] | None, slot: str,
+                    portal: bool) -> list[str]:
+    """What this exposure means, in the words of the decision rather than the flags."""
+    from frago.recipes.checks import declares_page_actions
+    from frago.recipes.publish import MODE_IDENTITY, READS_OWNER
+
+    notes: list[str] = []
+
+    if allow_ids is not None:
+        notes.append(
+            f"只有点名的 {len(allow_ids)} 个账号能打开。其他人——登录了也一样——"
+            f"拿到的响应与「这页根本没发布」完全一致。"
+        )
+        held = (existing or {}).get("allow")
+        if isinstance(held, list):
+            going = [who for who in held if who not in allow_ids]
+            coming = [who for who in allow_ids if who not in held]
+            if going:
+                notes.append(f"这次会移出 {len(going)} 个：{', '.join(going)}")
+            if coming:
+                notes.append(f"这次会加入 {len(coming)} 个：{', '.join(coming)}")
+        elif existing is not None:
+            notes.append("这张页面此前对所有登录用户开放，这次收窄到名单内。")
+    elif mode == MODE_IDENTITY and isinstance((existing or {}).get("allow"), list):
+        notes.append(
+            f"注意这是放宽：原本只有 {len((existing or {})['allow'])} 个账号能开，"
+            f"改完之后所有能登录的人都能开。"
+        )
+
+    if mode == MODE_IDENTITY and reads == READS_OWNER:
+        notes.append(
+            f"这些人读的是你自己的 '{slot}' 槽，同一份，只读——他们没有自己的目录，"
+            f"所以这张页面不接受任何运行请求。"
+        )
+    elif mode == MODE_IDENTITY:
+        notes.append(
+            f"每个人读自己名下那一份（~/.frago/users/<账号id>/state/{name}.json）。"
+            f"第一次打开时那份还没被写过，页面要能渲染空 state。"
+        )
+
+    if declares_page_actions(recipe_dir):
+        from frago.recipes.metadata import parse_metadata_file
+
+        actions = parse_metadata_file(recipe_dir / "recipe.md").page_actions
+        if mode == MODE_IDENTITY and reads != READS_OWNER:
+            notes.append(
+                f"配方在 page_actions 里开了 {'、'.join(actions)}：名单上的人能从页面触发它们。"
+                f"跑的是这台机器、这个配方的凭证，产出落各人自己的目录。"
+                f"会花钱、会以主人身份对外做事的 mode NEVER 放进 page_actions。"
+            )
+        else:
+            notes.append(
+                f"配方声明了 page_actions（{'、'.join(actions)}），但这次的开放方式不给运行权，"
+                f"所以页面上按不动。"
+            )
+
+    if portal:
+        notes.append("这张页面会成为登录门口：没登录的人打开别的页面时会被送到这里。")
+
+    return notes
 
 
 @recipe_group.command(name='unexpose', cls=AgentFriendlyCommand)
@@ -3125,7 +3360,8 @@ def data_migrate(do_apply: bool, plan_file: str | None, do_audit: bool,
 @click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
 def list_exposed(output_format: str):
     """List the recipe pages visitors can currently reach, and on what terms."""
-    from frago.recipes.publish import load, published_entry, published_path
+    from frago.recipes.contract import page_actions_of
+    from frago.recipes.publish import legacy_runnable, load, published_entry, published_path
 
     entries = load()
     # Read back through `published_entry` so this list shows the mode the gate
@@ -3134,12 +3370,21 @@ def list_exposed(output_format: str):
     # tell the owner their page is public when it is not, or the reverse.
     resolved = {name: published_entry(name) or {} for name in sorted(entries)}
 
+    def _actions(name: str, entry: dict) -> list[str]:
+        # A shared reading has no per-person directory, so it accepts nothing
+        # however the recipe declared itself. Shown the way the gate answers it.
+        if entry.get("mode") == "identity" and entry.get("reads") == "owner":
+            return []
+        return list(page_actions_of(name))
+
     if output_format == 'json':
         click.echo(json.dumps({
             "published": [
                 {"recipe_name": n, "slot": e.get("slot", "default"),
                  "mode": e.get("mode"), "allow": e.get("allow"),
-                 "runnable": e.get("runnable", False),
+                 "reads": e.get("reads"), "portal": e.get("portal", False),
+                 "actions": _actions(n, e),
+                 "stale_runnable_flag": legacy_runnable(entries.get(n)),
                  "since": e.get("since"), "path": f"/app/{n}/"}
                 for n, e in resolved.items()
             ],
@@ -3149,10 +3394,11 @@ def list_exposed(output_format: str):
 
     if not entries:
         click.echo("No recipe page is exposed. Everything requires the server token.")
-        click.echo("Publish one with: frago recipe expose <name>")
+        click.echo("Expose one with: frago recipe expose <name> --public|--signed-in|--allow <id>")
         return
 
-    click.echo(f"{'Recipe':<34} {'Slot':<10} {'Who':<18} {'Run':<5} Since")
+    click.echo(f"{'Recipe':<30} {'Who':<16} {'Reads':<18} {'Actions':<16} Since")
+    stale = []
     for name, entry in resolved.items():
         allow = entry.get("allow")
         if entry.get("mode") == "public":
@@ -3166,10 +3412,141 @@ def list_exposed(output_format: str):
             # the file was hand-edited or damaged. Say so plainly rather than
             # printing "0 account(s)", which reads like a tidy configuration.
             who = "NOBODY (broken)"
+
+        slot = entry.get("slot", "default")
+        if entry.get("mode") == "identity" and entry.get("reads") == "own":
+            reads = "each their own"
+        else:
+            reads = f"your '{slot}'"
+
+        actions = _actions(name, entry)
         click.echo(
-            f"{name:<34} {entry.get('slot', 'default'):<10} {who:<18} "
-            f"{'yes' if entry.get('runnable') else '-':<5} {entry.get('since') or '?'}"
+            f"{name:<30} {who:<16} {reads:<18} "
+            f"{('、'.join(actions) or '-'):<16} {entry.get('since') or '?'}"
+            + ("   ← 门口" if entry.get("portal") else "")
         )
+        if legacy_runnable(entries.get(name)):
+            stale.append(name)
+
+    if stale:
+        click.echo()
+        click.echo(f"这 {len(stale)} 条还带着老的 runnable 标记，它已经不授予任何东西："
+                   f"{', '.join(stale)}")
+        click.echo("页面能触发什么现在写在配方的 recipe.md `page_actions` 里。"
+                   "重新 expose 一次即可把这个标记抹掉。")
+
+
+@recipe_group.command(name='grant', cls=AgentFriendlyCommand)
+@click.argument('consumer')
+@click.option('--read', 'producers', multiple=True, metavar='RECIPE',
+              help="Let CONSUMER read this recipe's shared data. Repeatable.")
+@click.option('--revoke', 'revoked', multiple=True, metavar='RECIPE',
+              help='Take one of those back. Repeatable.')
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
+def grant_recipe_read(consumer: str, producers: tuple[str, ...],
+                      revoked: tuple[str, ...], output_format: str):
+    """Allow one recipe to read another's shared data.
+
+    A recipe says which producers it depends on, in `reads_common` in its
+    recipe.md — that is what makes the dependency visible to the recipe being
+    read, which otherwise has no idea anyone is relying on its file layout. But
+    a declaration is made by the side that benefits from it, so it is a request,
+    not a permission. This command is the permission.
+
+    A run is handed only what it both declared and was granted. Either half
+    missing means the directory is not there, and `frago recipe validate` says
+    which half it was.
+
+    \b
+    Examples:
+      frago recipe grant astock_trade_history --read astock_trade_ledger
+      frago recipe grant astock_trade_history --revoke astock_trade_ledger
+      frago recipe grants
+    """
+    from frago.recipes import grants
+
+    if not producers and not revoked:
+        _fail(output_format,
+              "说清楚授权还是收回：--read <生产者> 或 --revoke <生产者>。",
+              "nothing_to_do")
+
+    try:
+        for one in producers:
+            grants.grant(consumer, one)
+        for one in revoked:
+            grants.revoke(consumer, one)
+    except ValueError as err:
+        _fail(output_format, str(err), "refused")
+
+    current = grants.granted_to(consumer)
+    if output_format == 'json':
+        click.echo(json.dumps(
+            {"success": True, "recipe_name": consumer, "read": current},
+            ensure_ascii=False, indent=2))
+        return
+
+    if current:
+        click.echo(f"✓ {consumer} 现在可以读：{', '.join(current)}")
+    else:
+        click.echo(f"✓ {consumer} 现在读不到任何别的配方的共享数据")
+
+    declared = _declared_reads_common(consumer)
+    if declared is not None:
+        missing = [one for one in current if one not in declared]
+        if missing:
+            click.echo(f"  注意 {consumer} 的 recipe.md 里没有声明 {', '.join(missing)}，"
+                       f"没声明就还是拿不到——把它们加进 reads_common。")
+
+
+def _declared_reads_common(name: str) -> list[str] | None:
+    """What this recipe says it reads, or None if it cannot be found."""
+    from frago.recipes.exceptions import RecipeNotFoundError
+    from frago.recipes.registry import get_registry
+
+    try:
+        return list(getattr(get_registry().find(name).metadata, "reads_common", None) or [])
+    except (RecipeNotFoundError, OSError):
+        return None
+
+
+@recipe_group.command(name='grants', cls=AgentFriendlyCommand)
+@click.option('--format', 'output_format', type=click.Choice(['text', 'json']), default='text')
+def list_grants(output_format: str):
+    """Which recipes may read which other recipes' shared data."""
+    from frago.recipes import grants
+
+    entries = grants.load()
+    rows = []
+    for consumer in sorted(entries):
+        granted = grants.granted_to(consumer)
+        declared = _declared_reads_common(consumer)
+        rows.append({
+            "recipe_name": consumer,
+            "granted": granted,
+            "declared": declared,
+            # Granted but never asked for: harmless, and worth seeing — it is
+            # usually a grant written against a recipe that has since been
+            # rewritten, and it will quietly do nothing forever.
+            "unused": [] if declared is None else [g for g in granted if g not in declared],
+        })
+
+    if output_format == 'json':
+        click.echo(json.dumps(
+            {"grants": rows, "source": str(grants.grants_path())},
+            ensure_ascii=False, indent=2))
+        return
+
+    if not rows:
+        click.echo("没有任何跨配方读取授权。配方只能读自己的数据。")
+        click.echo("授权：frago recipe grant <读的人> --read <被读的人>")
+        return
+
+    for row in rows:
+        click.echo(f"{row['recipe_name']}  →  {', '.join(row['granted'])}")
+        if row["declared"] is None:
+            click.echo("    （这个配方在本机找不到）")
+        elif row["unused"]:
+            click.echo(f"    授权了但 recipe.md 没声明，拿不到：{', '.join(row['unused'])}")
 
 
 def _scan_module_contract(content: str, recipe_name: str) -> tuple[list[str], list[str]]:

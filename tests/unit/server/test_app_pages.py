@@ -31,6 +31,9 @@ def recipe_dir(tmp_path, monkeypatch):
 
     class _Meta:
         ui_from = None
+        # What this recipe opened to its own page. Tests that care set it; the
+        # default is the honest one — almost no recipe declares any.
+        page_actions: list[str] = []
 
     class _Recipe:
         base_dir = base
@@ -510,18 +513,16 @@ class TestVisitorErrorMessages:
         assert str(missing) in response.text
 
 
-class TestRunnableExposure:
-    """A runnable page tells a signed-in visitor they may run, an anonymous
-    visitor never learns the recipe is runnable, and a non-runnable identity
-    page still reads read-only.
+class TestWhatThePageMayDo:
+    """A page's buttons come from the recipe, its audience from the exposure.
 
     `readOnly` alone said nothing about whether the server would accept a run —
-    only whether the requester is the owner. A runnable page shown to the wrong
-    visitor already happened (2026-08-23): the page drew a refresh button,
-    the run was refused, and the page wiped its own data. The fix is to expose
-    `runnable` in config.json using exactly the three questions the run gate
-    asks (published, runnable, on the allow list), so a page and its run can
-    never disagree.
+    only whether the requester is the owner. A page drawing a button the run
+    gate then refuses already happened (2026-08-23): the refresh was rejected
+    and the page wiped its own data.
+
+    So `config.json` answers with the same source the run route reads —
+    `page_actions` in the recipe — and the exposure can only subtract from it.
     """
 
     @pytest.fixture
@@ -555,26 +556,53 @@ class TestRunnableExposure:
         yield client, user.id
         ident.reset_rate_limits()
 
-    def test_runnable_identity_page_tells_the_visitor(self, identity_visitor):
+    @pytest.fixture
+    def opens(self, monkeypatch):
+        """Let a test say what the recipe opened to its page."""
+        def _set(actions):
+            monkeypatch.setattr(
+                "frago.recipes.contract.page_actions_of",
+                lambda name, wanted=None: tuple(actions),
+            )
+        return _set
+
+    def test_a_declared_action_reaches_the_page(self, identity_visitor, opens):
         from frago.recipes import publish as pub
 
         client, account_id = identity_visitor
-        pub.publish(RECIPE, mode="identity", allow=[account_id], runnable=True)
+        opens(["save"])
+        pub.publish(RECIPE, mode="identity", allow=[account_id])
         config = client.get(f"/app/{RECIPE}/config.json").json()
         assert config["readOnly"] is True
+        assert config["actions"] == ["save"]
         assert config["runnable"] is True
         assert config["apiBase"] is None
 
-    def test_runnable_page_off_this_step_visitor_is_read_only(self, identity_visitor):
+    def test_a_recipe_that_opened_nothing_leaves_the_page_read_only(self, identity_visitor, opens):
         from frago.recipes import publish as pub
 
         client, account_id = identity_visitor
-        pub.publish(RECIPE, mode="identity", allow=[account_id], runnable=False)
+        opens([])
+        pub.publish(RECIPE, mode="identity", allow=[account_id])
         config = client.get(f"/app/{RECIPE}/config.json").json()
         assert config["readOnly"] is True
+        assert config["actions"] == []
         assert config["runnable"] is False
 
-    def test_being_signed_in_is_not_enough_the_list_decides(self, identity_visitor):
+    def test_a_shared_reading_has_no_buttons_however_the_recipe_declared_itself(
+            self, identity_visitor, opens):
+        """The exposure subtracts: everyone reads one slot of the owner's, so
+        nobody has a directory of their own for a run to land in."""
+        from frago.recipes import publish as pub
+
+        client, account_id = identity_visitor
+        opens(["save"])
+        pub.publish(RECIPE, mode="identity", allow=[account_id], reads=pub.READS_OWNER)
+        config = client.get(f"/app/{RECIPE}/config.json").json()
+        assert config["actions"] == []
+        assert config["runnable"] is False
+
+    def test_being_signed_in_is_not_enough_the_list_decides(self, identity_visitor, opens):
         """Signing in gets a visitor as far as the gate and no further: an
         off-list account is refused before config.json is ever built, and the
         same session is served once the list names it.
@@ -586,11 +614,12 @@ class TestRunnableExposure:
         from frago.recipes import publish as pub
 
         client, account_id = identity_visitor
+        opens(["save"])
 
-        pub.publish(RECIPE, mode="identity", allow=["someone-else"], runnable=True)
+        pub.publish(RECIPE, mode="identity", allow=["someone-else"])
         assert client.get(f"/app/{RECIPE}/config.json").status_code == 401
 
-        pub.publish(RECIPE, mode="identity", allow=[account_id], runnable=True)
+        pub.publish(RECIPE, mode="identity", allow=[account_id])
         served = client.get(f"/app/{RECIPE}/config.json")
         assert served.status_code == 200
         assert served.json()["runnable"] is True
@@ -609,6 +638,7 @@ class TestRunnableExposure:
         config = visitor.get(f"/app/{RECIPE}/config.json").json()
         assert config["readOnly"] is True
         assert "runnable" not in config
+        assert "actions" not in config
 
     def test_owner_can_run_whatever_they_open(self, client, tmp_path, monkeypatch):
         """The owner's answer does not consult the allow list — the list names
@@ -620,7 +650,7 @@ class TestRunnableExposure:
         monkeypatch.setattr(security, "TOKEN_PATH", tmp_path / "server-token")
         security.ensure_token()
         app_state.publish(RECIPE, {"dataDir": "/x", "public": {"title": "Q3"}})
-        pub.publish(RECIPE, mode="identity", allow=["somebody-else"], runnable=True)
+        pub.publish(RECIPE, mode="identity", allow=["somebody-else"])
         config = client.get(f"/app/{RECIPE}/config.json").json()
         assert config["dataDir"] == "/x"
         assert config["runnable"] is True

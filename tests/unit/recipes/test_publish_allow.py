@@ -73,27 +73,64 @@ class TestDamagedEntriesLandOnTheStrictSide:
         assert pub.allows(entry, ZHANG) is False
 
 
-class TestRunnable:
-    def test_absent_is_false(self):
+class TestWhoseDataTheyRead:
+    """The axis that used to be welded onto the mode.
+
+    `identity` meant both "sign in first" and "you read a slot named after
+    yourself", so the most ordinary request there is — a few named people looking
+    at the same numbers the owner computed — had no spelling at all.
+    """
+
+    def test_a_public_page_always_serves_the_owner(self):
+        pub.publish("page", mode=pub.MODE_PUBLIC)
+        assert pub.published_entry("page")["reads"] == pub.READS_OWNER
+
+    def test_an_identity_page_serves_each_reader_their_own_by_default(self):
+        pub.publish("page", mode=pub.MODE_IDENTITY)
+        assert pub.published_entry("page")["reads"] == pub.READS_OWN
+
+    def test_it_can_be_turned_into_one_shared_reading(self):
+        pub.publish("page", mode=pub.MODE_IDENTITY, allow=[ZHANG],
+                    reads=pub.READS_OWNER)
+        assert pub.shares_owner_data(pub.published_entry("page")) is True
+
+    def test_an_entry_written_before_the_field_reads_as_per_person(self):
+        """Every entry that predates this field served each account its own
+        slot, and must keep doing so."""
         _write_raw({"slot": "default", "mode": "identity"})
-        assert pub.published_entry("page")["runnable"] is False
+        assert pub.published_entry("page")["reads"] == pub.READS_OWN
 
-    def test_it_can_be_turned_on_with_identity(self):
-        pub.publish("page", mode=pub.MODE_IDENTITY, runnable=True)
-        assert pub.published_entry("page")["runnable"] is True
+    @pytest.mark.parametrize("junk", ["shared", "", 1, None, ["owner"]])
+    def test_an_unreadable_value_falls_back_to_per_person(self, junk):
+        """The closed direction: `own` shows a reader nothing but their own,
+        while a misread `owner` would hand a stranger the owner's slot."""
+        _write_raw({"slot": "default", "mode": "identity", "reads": junk})
+        assert pub.shares_owner_data(pub.published_entry("page")) is False
 
-    def test_public_mode_contradicts_it_and_loses(self):
-        """Only reachable by hand-editing. A run happens for somebody, and a
-        public page has nobody to run as."""
-        _write_raw({"slot": "default", "mode": "public", "runnable": True})
-        assert pub.published_entry("page")["runnable"] is False
+    def test_a_public_page_cannot_be_asked_to_do_anything_else(self):
+        with pytest.raises(ValueError, match="anonymous"):
+            pub.publish("page", mode=pub.MODE_PUBLIC, reads=pub.READS_OWN)
+
+
+class TestTheRetiredRunnableFlag:
+    """It grants nothing now. Capability comes from the recipe's `page_actions`.
+
+    Still read, for one purpose: telling the owner that an entry written by an
+    older frago is claiming something this one does not honour.
+    """
+
+    def test_it_is_not_part_of_the_entry_any_more(self):
+        _write_raw({"slot": "default", "mode": "identity", "runnable": True})
+        assert "runnable" not in pub.published_entry("page")
+
+    def test_a_stale_flag_is_visible_to_the_owner(self):
+        _write_raw({"slot": "default", "mode": "identity", "runnable": True})
+        assert pub.legacy_runnable(pub.load()["page"]) is True
 
     @pytest.mark.parametrize("truthy", ["true", "false", 1, "no", [1], {"a": 1}])
-    def test_only_a_real_boolean_true_counts(self, truthy):
-        """`"false"`, `1` and `"no"` are all truthy, and every one of them is a
-        hand-edit that meant the opposite."""
+    def test_only_a_real_boolean_true_reads_as_stale(self, truthy):
         _write_raw({"slot": "default", "mode": "identity", "runnable": truthy})
-        assert pub.published_entry("page")["runnable"] is False
+        assert pub.legacy_runnable(pub.load()["page"]) is False
 
 
 class TestAllowsIsTheOnlyComparison:
@@ -129,9 +166,9 @@ class TestWhatPublishRefusesToWrite:
         with pytest.raises(ValueError, match="identity"):
             pub.publish("page", mode=pub.MODE_PUBLIC, allow=[ZHANG])
 
-    def test_runnable_needs_identity_mode(self):
-        with pytest.raises(ValueError, match="identity"):
-            pub.publish("page", mode=pub.MODE_PUBLIC, runnable=True)
+    def test_a_portal_has_to_be_readable_without_signing_in(self):
+        with pytest.raises(ValueError, match="--public"):
+            pub.publish("page", mode=pub.MODE_IDENTITY, portal=True)
 
     @pytest.mark.parametrize("bad", ["zhang", [ZHANG, 7], [""], {"a": 1}])
     def test_a_malformed_allow_list_is_refused_at_the_door(self, bad):
@@ -146,4 +183,4 @@ class TestOldEntriesKeepWorking:
         assert entry["mode"] == pub.MODE_PUBLIC
         assert pub.published_slot("page") == "default"
         assert entry["allow"] is None
-        assert entry["runnable"] is False
+        assert entry["reads"] == pub.READS_OWNER

@@ -13,12 +13,21 @@ import pytest
 from frago.recipes import checks
 
 
-def make_recipe(tmp_path: Path, *, code: str = "", page: str = "") -> Path:
+def make_recipe(tmp_path: Path, *, code: str = "", page: str = "",
+                page_actions: list[str] | None = None) -> Path:
     recipe = tmp_path / "some_recipe"
     (recipe / "assets").mkdir(parents=True)
     (recipe / "recipe.py").write_text(code or "print('ok')\n", encoding="utf-8")
     if page:
         (recipe / "assets" / "app.js").write_text(page, encoding="utf-8")
+    (recipe / "recipe.md").write_text(
+        "---\n"
+        "name: some_recipe\ntype: atomic\nruntime: python\nversion: '1.0'\n"
+        "description: a recipe\nuse_cases: [testing]\noutput_targets: [stdout]\n"
+        f"page_actions: {page_actions or []}\n"
+        "---\n# some_recipe\n",
+        encoding="utf-8",
+    )
     return recipe
 
 
@@ -120,20 +129,26 @@ def test_a_jsdoc_block_describing_the_old_endpoint_is_not_a_finding(tmp_path):
     assert checks.audit(recipe) == []
 
 
-def test_runnable_gate_only_applies_when_runnable_is_asked_for(tmp_path):
-    recipe = make_recipe(tmp_path, code='print("ok")\n')
+def test_the_data_dir_gate_follows_the_recipe_s_own_declaration(tmp_path):
+    """It used to fire when somebody exposed the page with --runnable, i.e. at
+    the moment a person who may not have written the recipe made a decision. It
+    now fires on the recipe's own `page_actions`, which is the author's decision
+    and the same answer on every machine."""
+    quiet = make_recipe(tmp_path / "quiet", code='print("ok")\n')
+    assert checks.audit(quiet) == []
 
-    assert checks.audit(recipe) == []
-    assert "runnable-ignores-data-dir" in rules(checks.audit(recipe, runnable=True))
+    loud = make_recipe(tmp_path / "loud", code='print("ok")\n', page_actions=["save"])
+    assert "actions-ignore-data-dir" in rules(checks.audit(loud))
 
 
-def test_runnable_gate_is_satisfied_by_reading_the_variable(tmp_path):
+def test_the_data_dir_gate_is_satisfied_by_reading_the_variable(tmp_path):
     recipe = make_recipe(
         tmp_path,
         code='import os\nd = os.environ.get("FRAGO_RECIPE_DATA_DIR") or "/tmp/x"\n',
+        page_actions=["save"],
     )
 
-    assert "runnable-ignores-data-dir" not in rules(checks.audit(recipe, runnable=True))
+    assert "actions-ignore-data-dir" not in rules(checks.audit(recipe))
 
 
 def test_findings_render_with_file_line_and_a_fix(tmp_path):

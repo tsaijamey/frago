@@ -403,15 +403,19 @@ class TestAnOwnerRunKnowsWhoseItIs:
         assert context.current({}).slot is None
 
 
-class TestSharedDataOnlyReachesWhoAskedForIt:
-    """The directory is handed over only to a recipe that declared it reads
-    somebody's shared data. Almost none do, and a recipe with nothing to share
-    should not be handed a door it has no business opening.
+class TestSharedDataOnlyReachesWhoAskedForItAndWasGranted:
+    """Two halves, and they fail in opposite directions.
 
-    The declaration is the point: the recipe holding the data has no way of
-    knowing somebody depends on its layout, so it edits its own files and breaks
-    a page it has never heard of. Writing the dependency down is the only thing
-    that puts it where both sides can see it.
+    The recipe **declares** what it reads, because the recipe holding the data
+    has no way of knowing somebody depends on its layout — it edits its own
+    files and breaks a page it has never heard of. The owner **grants** it,
+    because a declaration is made by the side that benefits from it: a recipe
+    that could declare its way into another's directory is a recipe authorising
+    itself, which is the whole of what "cross-recipe reads must be granted"
+    means.
+
+    And the door is built per recipe rather than being the tree itself. Handing
+    over `~/.frago/recipe-data/` meant one declared producer bought the lot.
     """
 
     @pytest.fixture
@@ -419,6 +423,7 @@ class TestSharedDataOnlyReachesWhoAskedForIt:
         monkeypatch.setenv("FRAGO_IDENTITY_FILE", str(tmp_path / "identity.json"))
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         monkeypatch.setenv("FRAGO_USER_STATE_DIR", str(tmp_path / ".frago" / "users"))
+        monkeypatch.setenv("FRAGO_RECIPE_GRANTS_FILE", str(tmp_path / "grants.json"))
         return tmp_path
 
     def _registry(self, monkeypatch, declares):
@@ -439,17 +444,59 @@ class TestSharedDataOnlyReachesWhoAskedForIt:
         assert context.common_dirs_for("demo_board") is None
         assert context.for_owner("demo_board").common_dir is None
 
-    def test_a_recipe_that_declared_something_gets_the_root(self, machine, monkeypatch):
+    def test_declaring_without_a_grant_is_handed_nothing(self, machine, monkeypatch):
+        """The correction. This used to be the whole test, and it passed."""
         self._registry(monkeypatch, ["cn_stock_data_feed"])
+        assert context.common_dirs_for("demo_board") is None
+
+    def test_a_granted_producer_becomes_one_entry_in_this_recipe_s_own_door(
+            self, machine, monkeypatch):
+        from frago.recipes import grants
+
+        self._registry(monkeypatch, ["cn_stock_data_feed"])
+        grants.grant("demo_board", "cn_stock_data_feed")
+
         root = context.common_dirs_for("demo_board")
-        assert root == machine / ".frago" / "recipe-data"
-        assert context.for_owner("demo_board").common_dir == root
+        assert root == machine / ".frago" / "recipe-data" / "demo_board" / "granted"
+        # The shape recipes already join onto: <root>/<producer>/share/common
+        assert (root / "cn_stock_data_feed").resolve() == (
+            machine / ".frago" / "recipe-data" / "cn_stock_data_feed"
+        )
+
+    def test_an_ungranted_producer_is_simply_not_there(self, machine, monkeypatch):
+        from frago.recipes import grants
+
+        self._registry(monkeypatch, ["cn_stock_data_feed", "someone_else"])
+        grants.grant("demo_board", "cn_stock_data_feed")
+
+        root = context.common_dirs_for("demo_board")
+        # A link, not a copy — and a link whose target may not exist yet, because
+        # the producer is entitled not to have run.
+        assert (root / "cn_stock_data_feed").is_symlink()
+        assert not (root / "someone_else").is_symlink()
+
+    def test_revoking_takes_the_entry_away_again(self, machine, monkeypatch):
+        """A door rebuilt by adding only is a revocation that never happens."""
+        from frago.recipes import grants
+
+        self._registry(monkeypatch, ["cn_stock_data_feed"])
+        grants.grant("demo_board", "cn_stock_data_feed")
+        root = context.common_dirs_for("demo_board")
+        assert (root / "cn_stock_data_feed").is_symlink()
+
+        grants.revoke("demo_board", "cn_stock_data_feed")
+        assert context.common_dirs_for("demo_board") is None
+        assert not (root / "cn_stock_data_feed").is_symlink()
 
     def test_it_reaches_the_recipe_as_a_variable(self, machine, monkeypatch):
+        from frago.recipes import grants
+
         self._registry(monkeypatch, ["cn_stock_data_feed"])
+        grants.grant("demo_board", "cn_stock_data_feed")
         env = {}
         context.apply_to_env(env, context.for_owner("demo_board"))
-        assert env[context.COMMON_DIR_ENV] == str(machine / ".frago" / "recipe-data")
+        assert env[context.COMMON_DIR_ENV] == str(
+            machine / ".frago" / "recipe-data" / "demo_board" / "granted")
 
     def test_a_recipe_nobody_can_find_is_handed_nothing(self, machine, monkeypatch):
         """A registry that cannot answer must not become a reason to open the

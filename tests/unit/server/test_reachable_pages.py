@@ -48,6 +48,10 @@ def world(tmp_path, monkeypatch):
             class _Meta:
                 description = titles[name]
                 ui_from = None
+                # What the recipe opened to its own page. The card's `runnable`
+                # is this, narrowed by how the page was exposed — never the
+                # exposure entry on its own.
+                page_actions = ["save"]
 
             class _Recipe:
                 base_dir = tmp_path / "recipes" / name
@@ -119,11 +123,17 @@ class TestWhatItRefusesToSay:
         assert world["li"]["id"] not in body
 
     def test_the_fields_are_exactly_what_a_card_needs(self, world):
-        pub.publish("ledger", mode=pub.MODE_IDENTITY, runnable=True)
+        pub.publish("ledger", mode=pub.MODE_IDENTITY)
         page = _pages(world["zhang"]["cookie"])[0]
         assert set(page) == {"recipe", "title", "runnable", "path"}
         assert page["title"] == "A running account book"
         assert page["runnable"] is True
+
+    def test_a_shared_reading_is_listed_as_read_only(self, world):
+        """The recipe opened an action, but nobody on this page has a directory
+        of their own for it to write into."""
+        pub.publish("ledger", mode=pub.MODE_IDENTITY, reads=pub.READS_OWNER)
+        assert _pages(world["zhang"]["cookie"])[0]["runnable"] is False
 
     def test_anonymous_is_told_nothing_at_all(self, world):
         pub.publish("ledger", mode=pub.MODE_IDENTITY)

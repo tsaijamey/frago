@@ -173,10 +173,34 @@ DEFAULT_LOGIN_PORTAL = "frago_login_portal"
 
 
 def login_portal() -> str | None:
-    """Which exposed page is the sign-in door, or None if there is not one."""
+    """Which exposed page is the sign-in door, or None if there is not one.
+
+    Three sources, in this order, and the middle one is the new part:
+
+    * ``FRAGO_LOGIN_PORTAL`` — an operator overriding everything, including with
+      an empty value, which turns the redirect off and restores the plain 401.
+    * the exposure registry — ``frago recipe expose <name> --portal``. This is
+      where the answer belongs: ``published.json`` already records mode, slot and
+      allow list for every page, and the door was the one decision of the same
+      kind kept somewhere else. Being a constant in this file meant ``frago
+      recipe exposed`` could not show it, renaming the page broke the redirect
+      with no error anywhere, and this layer — which is supposed to know about
+      zones, not about recipes — knew a recipe's name by heart.
+    * the historical default name, so that deployments which never registered a
+      portal keep the behaviour they have.
+    """
     raw = os.environ.get("FRAGO_LOGIN_PORTAL")
-    name = DEFAULT_LOGIN_PORTAL if raw is None else raw.strip()
-    return name or None
+    if raw is not None:
+        return raw.strip() or None
+
+    from frago.recipes.publish import portal_name
+
+    try:
+        registered = portal_name()
+    except Exception:  # a damaged registry must not 500 every refused request
+        logger.exception("could not read the exposure registry for a sign-in door")
+        registered = None
+    return registered or DEFAULT_LOGIN_PORTAL
 
 
 def token_path() -> Path:
@@ -553,20 +577,28 @@ def _resolve_identity(headers: dict[bytes, bytes]) -> str | None:
     return session.identity if session else None
 
 
-def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
-    """``(reachable, slot)`` for a signed-in visitor.
+def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None, bool]:
+    """``(reachable, slot, shared)`` for a signed-in visitor.
 
     The listed endpoints are reachable with no slot. An identity-mode page this
-    visitor is allowed on is reachable with the visitor's own id as the slot —
-    never a slot they asked for. Everything else is out, including the whole of
-    ``/api`` beyond the four auth calls.
+    visitor is allowed on is reachable with a slot the *gate* decided — never a
+    slot they asked for. Everything else is out, including the whole of ``/api``
+    beyond the four auth calls.
+
+    ``shared`` is the third value because the slot alone stopped being enough to
+    describe the decision. A page exposed per person is served the caller's own
+    account id out of the accounts root; a page exposed as one shared reading is
+    served a slot of the *owner's*, out of the recipe's own root. Those are two
+    different files with two different owners, and a route handed only a string
+    would have to work out which root it came from — which is exactly the second
+    reader this gate exists to avoid.
     """
     if scope.get("type") != "http":
-        return False, None
+        return False, None, False
     method = (scope.get("method") or "").upper()
     path = scope.get("path") or ""
     if not _path_is_safe(path):
-        return False, None
+        return False, None, False
 
     from frago.server.identity import must_change_password
 
@@ -576,10 +608,10 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
         # would otherwise tell someone holding a reset password what is on offer
         # here. Refused the same way an outsider is, so a page they are allowed
         # on bounces them to the door, where the portal says what is owed.
-        return ((method, path) in _MUST_CHANGE_ENDPOINTS), None
+        return ((method, path) in _MUST_CHANGE_ENDPOINTS), None, False
 
     if (method, path) in _IDENTITY_ENDPOINTS:
-        return True, None
+        return True, None, False
 
     # The identity zone's one write entrance. It has to be judged before the
     # read-only method check below, and the suffix is pinned to exactly "/run"
@@ -599,17 +631,17 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
         # the page reported «读取失败» with nothing saying why.
         if match and (rest == "/run" or _APP_API_PATH.match(rest)):
             return _judge_app_path(scope, match, identity)
-        return False, None
+        return False, None, False
 
     if method not in _PUBLIC_METHODS:
-        return False, None
+        return False, None, False
     match = _APP_PATH.match(path)
     if not match:
-        return False, None
+        return False, None, False
     return _judge_app_path(scope, match, identity)
 
 
-def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None]:
+def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None, bool]:
     """Whether this signed-in visitor may touch this page, and as which slot.
 
     Shared by the read entrance and the run entrance on purpose. They admit
@@ -622,9 +654,9 @@ def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None
     # decision back to the visitor, which is the exact shape of the critical
     # bug this design exists to prevent.
     if _query_values(scope, "key"):
-        return False, None
+        return False, None, False
 
-    from frago.recipes.publish import MODE_IDENTITY, allows, published_entry
+    from frago.recipes.publish import MODE_IDENTITY, allows, published_entry, shares_owner_data
 
     # Three questions, all required: published at all, published *this* way, and
     # published to *this person*. Being published used to be the whole test here,
@@ -636,15 +668,22 @@ def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None
     # here is not a narrowing, it is saying which branch owns which mode.
     entry = published_entry(match.group("name"))
     if entry is None or entry["mode"] != MODE_IDENTITY:
-        return False, None
+        return False, None, False
 
     # Off the list is not a different answer from unpublished — it is the same
     # answer. `_reject` sends the same 401 either way, and it must stay that
     # way: a 403 here would confirm to an outsider that the page exists and that
     # somebody, somewhere, is on its list.
     if not allows(entry, identity):
-        return False, None
-    return True, identity
+        return False, None, False
+
+    if shares_owner_data(entry):
+        # Everyone on the list reads one slot of the owner's. The slot comes from
+        # the entry rather than from the caller for the same reason it does in
+        # `classify_public`: the route is handed what was authorised instead of
+        # deriving it a second time from the URL.
+        return True, str(entry["slot"]), True
+    return True, identity, False
 
 
 def _anon_post_allowed(scope: dict) -> bool:
@@ -821,7 +860,8 @@ class AccessZoneMiddleware:
     def __init__(self, app):
         self.app = app
 
-    def _admit(self, scope: dict, zone: str, slot: str | None, identity: str | None) -> None:
+    def _admit(self, scope: dict, zone: str, slot: str | None, identity: str | None,
+               shared: bool = False) -> None:
         """Record the decision. This is the only place these keys are written.
 
         ``frago_slot`` is the whole answer to "which slot is this request for"
@@ -829,11 +869,18 @@ class AccessZoneMiddleware:
         re-deriving it from the URL, because the two derivations drifting apart
         is precisely how ``?key=public&key=private`` read one slot at the gate
         and served another at the route.
+
+        ``frago_shared`` says which *root* that slot lives under: the accounts
+        root, where a signed-in reader's own state is, or the recipe's own,
+        where the owner's is. A slot name alone cannot say — an account id and
+        a slot name are both just strings — and a route left to work it out
+        would be the second reader this gate exists to avoid.
         """
         state = scope.setdefault("state", {})
         state["frago_zone"] = zone
         state["frago_slot"] = slot
         state["frago_identity"] = identity
+        state["frago_shared"] = bool(shared)
         # Kept for the routes that still ask the old question. Phase 2 removes
         # the last readers; see `is_public_request`.
         state["frago_public"] = zone == "public"
@@ -862,7 +909,7 @@ class AccessZoneMiddleware:
             return
 
         if identity is not None:
-            reachable, identity_slot = classify_identity(scope, identity)
+            reachable, identity_slot, shared = classify_identity(scope, identity)
             if reachable:
                 # The one limit keyed on the account rather than the address.
                 # HTTP only: a websocket is one long-lived connection, not a
@@ -874,7 +921,7 @@ class AccessZoneMiddleware:
                     if not allow_visitor_request(identity):
                         await _send_too_many(scope, send)
                         return
-                self._admit(scope, "identity", identity_slot, identity)
+                self._admit(scope, "identity", identity_slot, identity, shared)
                 await self.app(scope, receive, send)
                 return
             # Not reachable as an identity — but a cookie must not *cost* the
@@ -1095,6 +1142,23 @@ def slot_for(request_or_scope) -> str | None:
     if zone in ("public", "identity"):
         return _state_of(request_or_scope).get("frago_slot")
     return None
+
+
+def reads_owner_data(request_or_scope) -> bool:
+    """Whether this request reads the owner's slot rather than the caller's own.
+
+    True only in the identity zone, and only for a page the owner exposed as one
+    shared reading. Every route that resolves a slot has to ask, because the two
+    answers live under different roots and in different trees — and a route that
+    guessed from the slot name alone would be reading an account id as a slot
+    name, or the reverse.
+
+    False everywhere else, including for the owner: their own requests never go
+    through this branch at all, and ``?key=`` remains theirs.
+    """
+    if zone_of(request_or_scope) != "identity":
+        return False
+    return bool(_state_of(request_or_scope).get("frago_shared"))
 
 
 def identity_of(request_or_scope) -> str | None:
