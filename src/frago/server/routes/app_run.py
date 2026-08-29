@@ -334,14 +334,38 @@ async def run_for_visitor(name: str, request: Request):
     # they asked for something the recipe never offered, and saying so is what
     # lets a page author fix it. It names only what they sent and what the recipe
     # declared — nothing about this machine, and nothing about anyone else.
-    allowed_actions = page_actions_of(name, str(params.get("mode") or ""))
+    wanted = params.get("mode")
+    allowed_actions = page_actions_of(name, str(wanted or ""))
     if not allowed_actions:
         raise HTTPException(status_code=404, detail="not available")
-    if params.get("mode") not in allowed_actions:
+
+    # A body with no ``mode`` at all is its own refusal, and a deliberately
+    # separate one.
+    #
+    # The tempting shortcut is to resolve it: the recipe has a default mode, so
+    # let the platform fill that in. It cannot. The default lives in the class
+    # (``modes[0]``), not in the metadata this route can see, so "resolve it"
+    # really means "guess it" — and the guess has to be right for the
+    # authorisation to mean anything. Authorising ``view`` and running ``data``
+    # is the same silent divergence between what was allowed and what happened
+    # that this whole contract exists to remove, arrived at from the other side.
+    #
+    # So the page names it. That costs one line in a page being converted, and
+    # it is the line that makes the two ends agree. Said plainly here because
+    # the failure is otherwise invisible from the author's own machine: the
+    # owner's path never consults this declaration, so a page missing its
+    # ``mode`` works perfectly for whoever wrote it and 403s for everybody else.
+    if wanted is None:
         raise VisitorSafe(
             status_code=403,
-            detail=(f"这张页面能触发的是 {'、'.join(allowed_actions)}，"
-                    f"不是 {params.get('mode')!r}。"
+            detail=(f"这次请求没写 mode，平台无从判断你要触发哪一个。"
+                    f"页面 MUST 在 params 里点名：{{\"params\": {{\"mode\": \"…\", …}}}}。"
+                    f"这个配方开给页面的是 {'、'.join(allowed_actions)}。"),
+        )
+    if wanted not in allowed_actions:
+        raise VisitorSafe(
+            status_code=403,
+            detail=(f"这张页面能触发的是 {'、'.join(allowed_actions)}，不是 {wanted!r}。"
                     f"页面能按的按钮由配方在 recipe.md 的 page_actions 里逐个点名。"),
         )
 

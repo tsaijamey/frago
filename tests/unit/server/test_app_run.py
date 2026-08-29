@@ -174,6 +174,22 @@ class TestWhoMayStartOne:
         assert r.status_code == 404
         assert ran == {}
 
+    def test_a_body_with_no_mode_is_refused_and_says_what_to_write(self, world, ran):
+        """The platform cannot resolve the recipe's default — that lives in the
+        class, not the metadata this route can see — so "resolve it" would mean
+        "guess it", and a wrong guess authorises one mode and runs another.
+
+        Kept separate from the wrong-mode refusal because it is the failure the
+        author never sees: the owner's path skips this check entirely, so a page
+        missing its `mode` works on the machine it was written on and 403s
+        everywhere else."""
+        r = _client(world["people"]["zhang"]["cookie"]).post(
+            f"/app/{PAGE}/run", json={"params": {"note": "rent"}})
+        assert r.status_code == 403
+        assert "没写 mode" in r.text
+        assert ACTION in r.text, "the refusal must name what the recipe did open"
+        assert ran == {}
+
     def test_a_mode_the_recipe_did_not_open_is_refused(self, world, ran):
         """And the refusal names what was on offer: this caller may certainly be
         here, they asked for something the recipe never opened, and a page author
