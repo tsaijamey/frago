@@ -69,7 +69,7 @@ class TestNothingWidensByOmission:
         # The realistic accident under the old command: one field changed, one
         # restriction lost.
         pub.publish(NAME, mode=pub.MODE_IDENTITY, allow=[ALICE, BOB],
-                    reads=pub.READS_OWNER)
+                    reads=pub.READS_RECIPE)
         assert _named(page, "--slot", "demo", "--yes").exit_code == 0
         entry = pub.published_entry(NAME)
         assert entry["slot"] == "demo"

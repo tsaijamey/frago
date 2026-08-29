@@ -1,4 +1,4 @@
-"""A few named people, one body of the owner's data, no run permission at all.
+"""A few named people, one body of work, no run permission at all.
 
 This is the rung of visibility that did not exist. `identity` meant two things
 at once — sign in first, and read a slot named after yourself — so the most
@@ -9,8 +9,8 @@ and make the page public.
 
 The tests here are the whole of what that rung has to be true for:
 
-* the page is served, and out of the **owner's** slot rather than the reader's
-  own empty one — including its files and its exported modes;
+* the page is served, and out of the **recipe's own** slot rather than the
+  reader's own empty one — including its files and its exported modes;
 * it is still not another **account's** anything;
 * and it opens nothing else. A shared reading has no directory of this person's,
   so it accepts no runs however the recipe declared itself.
@@ -76,12 +76,13 @@ def site(tmp_path, monkeypatch):
     monkeypatch.setattr("frago.recipes.registry.get_registry", lambda: _Registry())
     monkeypatch.setattr("frago.recipes.registry.invalidate_registry", lambda: None)
 
-    # What the owner computed, published to their own slot in the ordinary way.
-    owner_data = tmp_path / "owner-data"
-    owner_data.mkdir()
-    (owner_data / "plan.json").write_text('{"picks": 7245}', encoding="utf-8")
+    # What this machine's own run computed, published to the recipe's own slot
+    # in the ordinary way.
+    staged = tmp_path / "staged-output"
+    staged.mkdir()
+    (staged / "plan.json").write_text('{"picks": 7245}', encoding="utf-8")
     app_state.publish(PAGE, {
-        "dataDir": str(owner_data),
+        "dataDir": str(staged),
         "secretKey": "never-leaves-the-machine",
         "public": {"asOf": "2026-08-29", "picks": 7245},
     })
@@ -91,7 +92,7 @@ def site(tmp_path, monkeypatch):
         user = ident.create_user(email, PASSWORD)
         people[who] = {"id": user.id, "cookie": ident.create_session(user.id)}
 
-    yield {"people": people, "root": tmp_path, "owner_data": owner_data}
+    yield {"people": people, "root": tmp_path, "staged": staged}
     ident.reset_rate_limits()
 
 
@@ -105,12 +106,12 @@ def _client(cookie=None):
 
 
 def _share_with(site, *who):
-    pub.publish(PAGE, mode=pub.MODE_IDENTITY, reads=pub.READS_OWNER,
+    pub.publish(PAGE, mode=pub.MODE_IDENTITY, reads=pub.READS_RECIPE,
                 allow=[site["people"][one]["id"] for one in who])
 
 
-class TestTheyReadTheOwnersCopy:
-    def test_the_page_config_comes_from_the_owners_slot(self, site):
+class TestTheyReadTheRecipesOwnCopy:
+    def test_the_page_config_comes_from_the_recipes_own_slot(self, site):
         _share_with(site, "zhang")
         body = _client(site["people"]["zhang"]["cookie"]).get(
             f"/app/{PAGE}/config.json").json()
@@ -128,7 +129,7 @@ class TestTheyReadTheOwnersCopy:
         assert body["apiBase"] is None
         assert body["readOnly"] is True
 
-    def test_the_owners_files_are_served_through_the_pages_own_door(self, site):
+    def test_the_staged_files_are_served_through_the_pages_own_door(self, site):
         _share_with(site, "zhang")
         r = _client(site["people"]["zhang"]["cookie"]).get(f"/app/{PAGE}/data/plan.json")
         assert r.status_code == 200
@@ -182,7 +183,7 @@ class TestPerPersonPagesAreUnchanged:
                     allow=[site["people"]["zhang"]["id"]])
         body = _client(site["people"]["zhang"]["cookie"]).get(
             f"/app/{PAGE}/config.json").json()
-        assert "picks" not in body, "the owner's numbers must not leak into a per-person page"
+        assert "picks" not in body, "the shared copy must not leak into a per-person page"
 
     def test_and_their_slot_is_their_account_id(self, site):
         pub.publish(PAGE, mode=pub.MODE_IDENTITY,

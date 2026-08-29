@@ -591,13 +591,13 @@ class TestWhatThePageMayDo:
 
     def test_a_shared_reading_has_no_buttons_however_the_recipe_declared_itself(
             self, identity_visitor, opens):
-        """The exposure subtracts: everyone reads one slot of the owner's, so
+        """The exposure subtracts: everyone reads the recipe's own slot, so
         nobody has a directory of their own for a run to land in."""
         from frago.recipes import publish as pub
 
         client, account_id = identity_visitor
         opens(["save"])
-        pub.publish(RECIPE, mode="identity", allow=[account_id], reads=pub.READS_OWNER)
+        pub.publish(RECIPE, mode="identity", allow=[account_id], reads=pub.READS_RECIPE)
         config = client.get(f"/app/{RECIPE}/config.json").json()
         assert config["actions"] == []
         assert config["runnable"] is False

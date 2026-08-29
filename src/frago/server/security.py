@@ -588,10 +588,11 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None, boo
     ``shared`` is the third value because the slot alone stopped being enough to
     describe the decision. A page exposed per person is served the caller's own
     account id out of the accounts root; a page exposed as one shared reading is
-    served a slot of the *owner's*, out of the recipe's own root. Those are two
-    different files with two different owners, and a route handed only a string
-    would have to work out which root it came from — which is exactly the second
-    reader this gate exists to avoid.
+    served the recipe's own slot, out of the recipe's own root, which has no
+    account anywhere in its path. Those are two different files under two
+    different roots, and a route handed only a string would have to work out
+    which root it came from — which is exactly the second reader this gate
+    exists to avoid.
     """
     if scope.get("type") != "http":
         return False, None, False
@@ -656,7 +657,7 @@ def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None
     if _query_values(scope, "key"):
         return False, None, False
 
-    from frago.recipes.publish import MODE_IDENTITY, allows, published_entry, shares_owner_data
+    from frago.recipes.publish import MODE_IDENTITY, allows, published_entry, serves_recipe_slot
 
     # Three questions, all required: published at all, published *this* way, and
     # published to *this person*. Being published used to be the whole test here,
@@ -677,9 +678,9 @@ def _judge_app_path(scope: dict, match, identity: str) -> tuple[bool, str | None
     if not allows(entry, identity):
         return False, None, False
 
-    if shares_owner_data(entry):
-        # Everyone on the list reads one slot of the owner's. The slot comes from
-        # the entry rather than from the caller for the same reason it does in
+    if serves_recipe_slot(entry):
+        # Everyone on the list reads the recipe's own slot. It comes from the
+        # entry rather than from the caller for the same reason it does in
         # `classify_public`: the route is handed what was authorised instead of
         # deriving it a second time from the URL.
         return True, str(entry["slot"]), True
@@ -870,17 +871,17 @@ class AccessZoneMiddleware:
         is precisely how ``?key=public&key=private`` read one slot at the gate
         and served another at the route.
 
-        ``frago_shared`` says which *root* that slot lives under: the accounts
-        root, where a signed-in reader's own state is, or the recipe's own,
-        where the owner's is. A slot name alone cannot say — an account id and
-        a slot name are both just strings — and a route left to work it out
-        would be the second reader this gate exists to avoid.
+        ``frago_recipe_slot`` says which *root* that slot lives under: the
+        accounts root, where a signed-in reader's own state is, or the recipe's
+        own, which is filed under no account at all. A slot name alone cannot
+        say — an account id and a slot name are both just strings — and a route
+        left to work it out would be the second reader this gate exists to avoid.
         """
         state = scope.setdefault("state", {})
         state["frago_zone"] = zone
         state["frago_slot"] = slot
         state["frago_identity"] = identity
-        state["frago_shared"] = bool(shared)
+        state["frago_recipe_slot"] = bool(shared)
         # Kept for the routes that still ask the old question. Phase 2 removes
         # the last readers; see `is_public_request`.
         state["frago_public"] = zone == "public"
@@ -1144,21 +1145,20 @@ def slot_for(request_or_scope) -> str | None:
     return None
 
 
-def reads_owner_data(request_or_scope) -> bool:
-    """Whether this request reads the owner's slot rather than the caller's own.
+def serves_recipe_slot(request_or_scope) -> bool:
+    """Whether this request reads the recipe's own slot rather than the caller's.
 
-    True only in the identity zone, and only for a page the owner exposed as one
-    shared reading. Every route that resolves a slot has to ask, because the two
-    answers live under different roots and in different trees — and a route that
-    guessed from the slot name alone would be reading an account id as a slot
-    name, or the reverse.
+    True only in the identity zone, and only for a page exposed as one shared
+    reading. Every route that resolves a slot has to ask, because the two answers
+    live under different roots — and a route that guessed from the slot name
+    alone would be reading an account id as a slot name, or the reverse.
 
-    False everywhere else, including for the owner: their own requests never go
-    through this branch at all, and ``?key=`` remains theirs.
+    False everywhere else, including for a request from this machine: those never
+    go through this branch at all, and ``?key=`` remains theirs.
     """
     if zone_of(request_or_scope) != "identity":
         return False
-    return bool(_state_of(request_or_scope).get("frago_shared"))
+    return bool(_state_of(request_or_scope).get("frago_recipe_slot"))
 
 
 def identity_of(request_or_scope) -> str | None:

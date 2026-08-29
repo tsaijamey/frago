@@ -65,20 +65,30 @@ MODE_PUBLIC = "public"
 MODE_IDENTITY = "identity"
 MODES = (MODE_PUBLIC, MODE_IDENTITY)
 
-# Whose data the page serves. Orthogonal to the mode — that says who is let in,
-# this says what they find:
+# Which of the two state roots the page is served from. Orthogonal to the mode —
+# that says who is let in, this says where what they read comes from. The roots
+# are the ones ``app_state`` has always had, and they are physically separate:
 #
-#   own      each signed-in reader reads the slot named after their own account,
-#            and their runs write their own directory. The original identity
-#            behaviour, and still the default for it.
-#   owner    everybody who is let in reads one slot of the owner's, the one named
-#            in the entry. Read-only by construction: there is no per-person
-#            directory to write, so a page exposed this way accepts no actions.
+#   own      ~/.frago/users/<account-id>/state/<recipe>.json — the reader's own,
+#            one per account, and their runs write their own directory. The
+#            original identity behaviour and still its default.
+#   recipe   ~/.frago/app-state/<recipe>/<slot>.json — the recipe's own, with no
+#            account anywhere in the path. Everybody let in reads that one copy.
+#            Read-only by construction: nobody has a directory of their own here,
+#            so a page exposed this way accepts no actions.
 #
-# A public page is always ``owner`` — there is nobody to have data of their own.
+# Named after the root rather than after a person on purpose. The first version
+# of this called the second one ``owner``, which was wrong three times over: the
+# word already means something else in this system (a request origin — ``local``
+# or a token, never an account), the slot it names is filed under no account at
+# all, and it invites the next reader to go looking for who the owner is when the
+# answer is that there isn't one.
+#
+# A public page is always ``recipe`` — an anonymous reader has no account and so
+# no copy of their own.
 READS_OWN = "own"
-READS_OWNER = "owner"
-READS = (READS_OWN, READS_OWNER)
+READS_RECIPE = "recipe"
+READS = (READS_OWN, READS_RECIPE)
 
 # ``allow`` narrows an identity-mode page from "anyone signed in" to "these
 # accounts". Three states, and telling them apart matters because their security
@@ -210,19 +220,19 @@ def _allow_of(entry: dict[str, Any]) -> list[str] | None:
 def _reads_of(entry: dict[str, Any], mode: str) -> str:
     """Whose data this page serves.
 
-    A public page is always the owner's: there is no signed-in account to have
-    data of its own, so the question does not arise and the answer cannot be
+    A public page always comes from the recipe's own root: an anonymous reader
+    has no account, so the question does not arise and the answer cannot be
     anything else.
 
     For an identity page, an absent key is an entry written before this field
     existed, and every one of those served each account its own slot — so absent
     reads as ``own``. An unreadable value reads as ``own`` too, and here the
     closed direction and the compatible direction happen to be the same one:
-    ``own`` shows a reader nothing but their own, while a misread ``owner``
-    would hand a stranger the owner's slot.
+    ``own`` shows a reader nothing but their own, while a misread ``recipe``
+    would hand a stranger a copy that was never filed under them.
     """
     if mode != MODE_IDENTITY:
-        return READS_OWNER
+        return READS_RECIPE
     raw = entry.get("reads")
     if isinstance(raw, str) and raw in READS:
         return raw
@@ -308,16 +318,16 @@ def published_entry(name: str) -> dict[str, Any] | None:
     }
 
 
-def shares_owner_data(entry: dict[str, Any] | None) -> bool:
-    """Whether readers of this page see the owner's slot rather than their own.
+def serves_recipe_slot(entry: dict[str, Any] | None) -> bool:
+    """Whether this page is served from the recipe's own root rather than the reader's.
 
     Asked by the gate and by three routes, so it lives here for the same reason
     ``allows`` does: one comparison, one answer. A page nobody has exposed is
-    not shared — it is not anything.
+    neither — it is not anything.
     """
     if not isinstance(entry, dict):
         return False
-    return _reads_of(entry, _mode_of(entry)) == READS_OWNER
+    return _reads_of(entry, _mode_of(entry)) == READS_RECIPE
 
 
 def portal_name() -> str | None:
@@ -368,9 +378,10 @@ def publish(
     this function states the entry in full, so anything it is not told is set to
     that field's default rather than left as it was.
 
-    ``mode=MODE_IDENTITY`` requires a sign-in. ``reads`` then decides what those
-    signed-in readers find: ``own`` gives each of them the slot named after
-    their own account, ``owner`` gives all of them the one named in ``slot``.
+    ``mode=MODE_IDENTITY`` requires a sign-in. ``reads`` then decides which root
+    those signed-in readers are served from: ``own`` gives each of them the slot
+    named after their own account, ``recipe`` gives all of them the recipe's own
+    slot named in ``slot``.
 
     ``allow=None`` opens the page to everyone who can sign in; a list narrows it
     to those account ids. An empty list is refused rather than written: it would
@@ -393,13 +404,13 @@ def publish(
             raise ValueError("an allow list needs identity mode; there is nobody to compare in public mode")
 
     if reads is None:
-        reads = READS_OWNER if mode == MODE_PUBLIC else READS_OWN
+        reads = READS_RECIPE if mode == MODE_PUBLIC else READS_OWN
     if reads not in READS:
         raise ValueError(f"unknown reads {reads!r}; expected one of {READS}")
-    if mode == MODE_PUBLIC and reads != READS_OWNER:
+    if mode == MODE_PUBLIC and reads != READS_RECIPE:
         raise ValueError(
-            "a public page always serves the owner's slot: an anonymous reader has "
-            "no account and therefore no data of their own"
+            "a public page is always served from the recipe's own slot: an anonymous "
+            "reader has no account and therefore no copy of their own"
         )
 
     if portal:
@@ -475,10 +486,10 @@ def amend(
     next_mode = mode or current.get("mode") or MODE_PUBLIC
     next_slot = slot or current.get("slot") or DEFAULT_SLOT
     next_reads = reads or current.get("reads") or (
-        READS_OWNER if next_mode == MODE_PUBLIC else READS_OWN
+        READS_RECIPE if next_mode == MODE_PUBLIC else READS_OWN
     )
     if next_mode == MODE_PUBLIC:
-        next_reads = READS_OWNER
+        next_reads = READS_RECIPE
 
     if allow_set is not None:
         next_allow: list[str] | None = list(allow_set)

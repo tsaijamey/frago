@@ -184,10 +184,10 @@ class TestWhoMayStartOne:
         assert ran == {}
 
     def test_a_shared_reading_accepts_no_runs(self, world, ran):
-        """Everyone on the list reads one slot of the owner's, so there is no
+        """Everyone on the list reads the recipe's own slot, so there is no
         directory of this person's for a run to write into."""
         pub.publish(PAGE, mode=pub.MODE_IDENTITY,
-                    allow=[world["people"]["zhang"]["id"]], reads=pub.READS_OWNER)
+                    allow=[world["people"]["zhang"]["id"]], reads=pub.READS_RECIPE)
         r = _post(world["people"]["zhang"]["cookie"])
         assert r.status_code == 404
         assert ran == {}

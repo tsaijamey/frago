@@ -312,7 +312,7 @@ async def reachable_pages(request: Request) -> Response:
                      "this account must set a new password before it can open anything")
 
     from frago.recipes.exceptions import RecipeNotFoundError
-    from frago.recipes.publish import allows, load, published_entry, shares_owner_data
+    from frago.recipes.publish import allows, load, published_entry, serves_recipe_slot
     from frago.recipes.registry import get_registry
 
     registry = get_registry()
@@ -326,7 +326,7 @@ async def reachable_pages(request: Request) -> Response:
         try:
             metadata = registry.find(name).metadata
             title = (getattr(metadata, "description", "") or name).strip() or name
-            if not shares_owner_data(entry):
+            if not serves_recipe_slot(entry):
                 # A shared reading has no directory of this person's, so nothing
                 # they pressed could land anywhere. The card says read-only.
                 actions = list(getattr(metadata, "page_actions", None) or [])

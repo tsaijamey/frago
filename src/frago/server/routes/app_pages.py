@@ -155,18 +155,18 @@ def _slot_state(name: str, request: Request) -> tuple[str, dict]:
     the recipe's own slots, which is not theirs to read.
 
     Unless the page was exposed as one shared reading, in which case the gate
-    authorised a slot of the *owner's* and it lives under the recipe's own root
-    like any other. Which root to look in is the gate's answer too
-    (`reads_owner_data`), never something worked out here from the slot's name.
+    authorised the recipe's own slot, which lives under the recipe's own root
+    with no account in its path. Which root to look in is the gate's answer too
+    (`serves_recipe_slot`), never something worked out here from the slot's name.
     """
-    from frago.server.security import reads_owner_data, slot_for, zone_of
+    from frago.server.security import serves_recipe_slot, slot_for, zone_of
 
     zone = zone_of(request)
     visitor = zone in ("public", "identity")
     key = (slot_for(request) or DEFAULT_SLOT) if visitor else (
         request.query_params.get("key") or DEFAULT_SLOT
     )
-    own_root = zone == "identity" and not reads_owner_data(request)
+    own_root = zone == "identity" and not serves_recipe_slot(request)
     try:
         return key, read_slot(name, key, identity=own_root)
     except InvalidSlotName as e:
@@ -211,7 +211,7 @@ async def serve_app_config(name: str, request: Request):
 
     from frago.recipes.contract import page_actions_of
     from frago.recipes.publish import public_view
-    from frago.server.security import is_owner_request, reads_owner_data, zone_of
+    from frago.server.security import is_owner_request, serves_recipe_slot, zone_of
 
     owner = is_owner_request(request)
     config = dict(state) if owner else public_view(state)
@@ -231,7 +231,7 @@ async def serve_app_config(name: str, request: Request):
     # and that only subtracts: a shared reading has no per-person directory for
     # a run to write, so its readers get no actions at all.
     if zone_of(request) == "identity":
-        actions = () if reads_owner_data(request) else page_actions_of(name)
+        actions = () if serves_recipe_slot(request) else page_actions_of(name)
     elif owner:
         # The owner may run anything they can open, declared or not: this is
         # their machine and `/api` is already theirs. The declaration narrows a
@@ -307,12 +307,12 @@ async def serve_app_api(name: str, mode: str, request: Request):
     #
     # A page exposed as one shared reading keeps `None` as well, and for the
     # same reason an anonymous reader does: everybody on its list is looking at
-    # one body of the owner's work, so the read has to be answered out of the
-    # owner's directory or it answers out of an empty one.
+    # the one copy the recipe itself maintains, so the read has to be answered
+    # out of that directory or it answers out of an empty one.
     ctx = None
-    from frago.server.security import reads_owner_data, slot_for, zone_of
+    from frago.server.security import serves_recipe_slot, slot_for, zone_of
 
-    if zone_of(request) == "identity" and not reads_owner_data(request):
+    if zone_of(request) == "identity" and not serves_recipe_slot(request):
         from frago.recipes import context as run_context
 
         identity = slot_for(request)
@@ -399,15 +399,16 @@ async def serve_app_data(name: str, file_path: str, request: Request):
     # subtree.
     #
     # A shared reading is the one deliberate exception, and it has to be spelled
-    # out here rather than fall out of the rule: the owner's own runs file under
-    # `users/<the machine's id>/recipe-data/…`, which is inside the accounts root
-    # and outside this reader's subtree, so the check below would refuse exactly
-    # the case that exposure exists to serve. Everything else is unchanged —
-    # one account's page still never reads another account's tree, and the
-    # entry saying `reads: owner` is the only thing that opens this door.
-    from frago.server.security import reads_owner_data, zone_of
+    # out here rather than fall out of the rule: the recipe's own slot points at
+    # a directory this machine's own runs wrote, filed under `users/<this
+    # machine's id>/recipe-data/…` — inside the accounts root and outside this
+    # reader's subtree, so the check below would refuse exactly the case that
+    # exposure exists to serve. Everything else is unchanged: one account's page
+    # still never reads another account's tree, and the entry saying
+    # `reads: recipe` is the only thing that opens this door.
+    from frago.server.security import serves_recipe_slot, zone_of
 
-    if zone_of(request) == "identity" and not reads_owner_data(request):
+    if zone_of(request) == "identity" and not serves_recipe_slot(request):
         from frago.recipes.app_state import user_root, user_state_dir
 
         try:

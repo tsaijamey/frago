@@ -83,7 +83,7 @@ class TestWhoseDataTheyRead:
 
     def test_a_public_page_always_serves_the_owner(self):
         pub.publish("page", mode=pub.MODE_PUBLIC)
-        assert pub.published_entry("page")["reads"] == pub.READS_OWNER
+        assert pub.published_entry("page")["reads"] == pub.READS_RECIPE
 
     def test_an_identity_page_serves_each_reader_their_own_by_default(self):
         pub.publish("page", mode=pub.MODE_IDENTITY)
@@ -91,8 +91,8 @@ class TestWhoseDataTheyRead:
 
     def test_it_can_be_turned_into_one_shared_reading(self):
         pub.publish("page", mode=pub.MODE_IDENTITY, allow=[ZHANG],
-                    reads=pub.READS_OWNER)
-        assert pub.shares_owner_data(pub.published_entry("page")) is True
+                    reads=pub.READS_RECIPE)
+        assert pub.serves_recipe_slot(pub.published_entry("page")) is True
 
     def test_an_entry_written_before_the_field_reads_as_per_person(self):
         """Every entry that predates this field served each account its own
@@ -105,7 +105,7 @@ class TestWhoseDataTheyRead:
         """The closed direction: `own` shows a reader nothing but their own,
         while a misread `owner` would hand a stranger the owner's slot."""
         _write_raw({"slot": "default", "mode": "identity", "reads": junk})
-        assert pub.shares_owner_data(pub.published_entry("page")) is False
+        assert pub.serves_recipe_slot(pub.published_entry("page")) is False
 
     def test_a_public_page_cannot_be_asked_to_do_anything_else(self):
         with pytest.raises(ValueError, match="anonymous"):
@@ -183,4 +183,4 @@ class TestOldEntriesKeepWorking:
         assert entry["mode"] == pub.MODE_PUBLIC
         assert pub.published_slot("page") == "default"
         assert entry["allow"] is None
-        assert entry["reads"] == pub.READS_OWNER
+        assert entry["reads"] == pub.READS_RECIPE

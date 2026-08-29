@@ -2728,8 +2728,9 @@ def _fail(output_format: str, message: str, code: str, **extra) -> None:
 @recipe_group.command(name='expose', cls=AgentFriendlyCommand)
 @click.argument('name')
 @click.option('--slot', default=None,
-              help="Which of the owner's slots this page serves. Meaningful for a "
-                   "public page and for --shared; ignored when each reader has their own.")
+              help="Which of the recipe's own slots this page serves. Meaningful "
+                   "for a public page and for --shared; refused when each reader "
+                   "has their own, where the slot is their account id.")
 @click.option('--public', 'want_public', is_flag=True,
               help='Anyone may open it, with no sign-in.')
 @click.option('--signed-in', 'want_signed_in', is_flag=True,
@@ -2744,8 +2745,9 @@ def _fail(output_format: str, message: str, code: str, **extra) -> None:
 @click.option('--only', 'only_who', multiple=True, metavar='ACCOUNT',
               help='Replace the whole list with exactly these accounts. Repeatable.')
 @click.option('--shared', 'want_shared', is_flag=True,
-              help="Everyone on the list reads the same slot of yours, read-only. "
-                   "This is how a few named people see one body of your data.")
+              help="Everyone on the list reads the recipe's own slot, read-only. "
+                   "This is how a few named people see one body of work rather "
+                   "than a copy each.")
 @click.option('--each-their-own', 'want_own', is_flag=True,
               help='Each signed-in reader gets their own slot and their own directory.')
 @click.option('--portal/--no-portal', 'want_portal', default=None,
@@ -2775,13 +2777,15 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
     \b
     WHOSE DATA THEY SEE — only meaningful once a sign-in is required:
       --each-their-own  each reader has their own slot and directory (default)
-      --shared          they all read one slot of yours, read-only
+      --shared          they all read the recipe's own slot, read-only
 
-    --shared is the answer to "these four people should see the numbers I
-    computed". It is not machine-level shared data, which is a data-layer
-    mechanism for a different problem, and it is not --public with a password.
-    It is read-only by construction: nobody has a directory of their own on such
-    a page, so there is nothing a run could write.
+    --shared is the answer to "these four people should see the numbers this
+    recipe computed". The slot it serves is the recipe's own — the one under
+    ~/.frago/app-state/, with no account anywhere in its path — so there is no
+    copy per person and nothing to keep in step. It is not machine-level shared
+    data, which is a data-layer mechanism for a different problem, and it is not
+    --public with a password. Read-only by construction: nobody has a directory
+    of their own on such a page, so there is nothing a run could write.
 
     Whether a page has buttons at all is no longer decided here. The recipe names
     the modes its page may trigger, in `page_actions` in its recipe.md, and that
@@ -2806,7 +2810,7 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
         MODE_IDENTITY,
         MODE_PUBLIC,
         READS_OWN,
-        READS_OWNER,
+        READS_RECIPE,
         amend,
         legacy_runnable,
     )
@@ -2883,11 +2887,11 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
         mode = (existing or {}).get("mode") or MODE_PUBLIC
 
     if want_shared:
-        reads = READS_OWNER
+        reads = READS_RECIPE
     elif want_own:
         reads = READS_OWN
     elif mode == MODE_PUBLIC:
-        reads = READS_OWNER
+        reads = READS_RECIPE
     else:
         reads = (existing or {}).get("reads") or READS_OWN
 
@@ -2902,7 +2906,7 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
         _fail(output_format,
               "--slot 在「各人读各人那份」下不起作用：读的槽位是他自己的账号 id，"
               "由服务端从会话算出，他自己带 ?key= 反而会被当场拒。\n"
-              "要让点名的这几个人读你的某一个槽，加上 --shared。",
+              "要让点名的这几个人读配方自己的某一个槽，加上 --shared。",
               "slot_has_no_effect")
 
     next_slot = slot or (existing or {}).get("slot") or DEFAULT_SLOT_NAME
@@ -3065,8 +3069,8 @@ def expose_recipe(name: str, slot: str | None, want_public: bool, want_signed_in
             click.echo("  Readers must sign in.")
         if allow_ids is not None:
             click.echo(f"  Restricted to {len(allow_ids)} named account(s).")
-        if reads == READS_OWNER and mode == MODE_IDENTITY:
-            click.echo(f"  They all read your slot '{entry['slot']}', read-only.")
+        if reads == READS_RECIPE and mode == MODE_IDENTITY:
+            click.echo(f"  They all read the recipe's own slot '{entry['slot']}', read-only.")
         elif mode == MODE_IDENTITY:
             click.echo("  Each of them reads their own data.")
         if portal:
@@ -3084,7 +3088,7 @@ def _exposure_notes(name: str, recipe_dir: Path, existing: dict | None, mode: st
                     portal: bool) -> list[str]:
     """What this exposure means, in the words of the decision rather than the flags."""
     from frago.recipes.checks import declares_page_actions
-    from frago.recipes.publish import MODE_IDENTITY, READS_OWNER
+    from frago.recipes.publish import MODE_IDENTITY, READS_RECIPE
 
     notes: list[str] = []
 
@@ -3109,10 +3113,10 @@ def _exposure_notes(name: str, recipe_dir: Path, existing: dict | None, mode: st
             f"改完之后所有能登录的人都能开。"
         )
 
-    if mode == MODE_IDENTITY and reads == READS_OWNER:
+    if mode == MODE_IDENTITY and reads == READS_RECIPE:
         notes.append(
-            f"这些人读的是你自己的 '{slot}' 槽，同一份，只读——他们没有自己的目录，"
-            f"所以这张页面不接受任何运行请求。"
+            f"这些人读的是配方自己那一份（app-state/<配方>/{slot}.json，路径里没有任何账号），"
+            f"同一份，只读——没有人有自己的目录，所以这张页面不接受任何运行请求。"
         )
     elif mode == MODE_IDENTITY:
         notes.append(
@@ -3124,7 +3128,7 @@ def _exposure_notes(name: str, recipe_dir: Path, existing: dict | None, mode: st
         from frago.recipes.metadata import parse_metadata_file
 
         actions = parse_metadata_file(recipe_dir / "recipe.md").page_actions
-        if mode == MODE_IDENTITY and reads != READS_OWNER:
+        if mode == MODE_IDENTITY and reads != READS_RECIPE:
             notes.append(
                 f"配方在 page_actions 里开了 {'、'.join(actions)}：名单上的人能从页面触发它们。"
                 f"跑的是这台机器、这个配方的凭证，产出落各人自己的目录。"

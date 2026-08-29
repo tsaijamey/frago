@@ -304,7 +304,7 @@ async def run_for_visitor(name: str, request: Request):
     from frago.recipes import app_state, context
     from frago.recipes.contract import page_actions_of
     from frago.recipes.publish import allows, published_entry
-    from frago.server.security import is_owner_request, reads_owner_data, slot_for, zone_of
+    from frago.server.security import is_owner_request, serves_recipe_slot, slot_for, zone_of
 
     if is_owner_request(request):
         return await _run_for_owner(name, request)
@@ -317,12 +317,12 @@ async def run_for_visitor(name: str, request: Request):
 
     identity = slot_for(request)
     entry = published_entry(name)
-    if entry is None or not allows(entry, identity) or reads_owner_data(request):
+    if entry is None or not allows(entry, identity) or serves_recipe_slot(request):
         # One answer for three different failures: not published, not for you,
-        # and published as one shared reading of the owner's data — which has no
-        # directory of this person's for a run to write, so there is nothing a
-        # run here could mean. Telling them apart would say which pages exist and
-        # who is on their lists.
+        # and published as one shared reading of the recipe's own copy — which
+        # has no directory of this person's for a run to write into, so there is
+        # nothing a run here could mean. Telling them apart would say which pages
+        # exist and who is on their lists.
         raise HTTPException(status_code=404, detail="not available")
 
     recipe = _fresh_recipe(name)

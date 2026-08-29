@@ -132,7 +132,7 @@ class TestWhatItRefusesToSay:
     def test_a_shared_reading_is_listed_as_read_only(self, world):
         """The recipe opened an action, but nobody on this page has a directory
         of their own for it to write into."""
-        pub.publish("ledger", mode=pub.MODE_IDENTITY, reads=pub.READS_OWNER)
+        pub.publish("ledger", mode=pub.MODE_IDENTITY, reads=pub.READS_RECIPE)
         assert _pages(world["zhang"]["cookie"])[0]["runnable"] is False
 
     def test_anonymous_is_told_nothing_at_all(self, world):

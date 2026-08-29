@@ -27,9 +27,9 @@
    - 任何人，不用登录 → `--public`（但页面若调 `api/<mode>` 就开不成 public，见 recipe-expose）
    - 任何登录用户 → `--signed-in`
    - 只有点名的这几个 → `--allow <id>`（可重复）
-2. **他们读谁的数据？** 各人读各人那份 → 不写（默认）；
-   **点名的这几个看你算的同一份** → `--shared`（只读，构造上不接受任何运行）。
-   这一问以前无解，见 ⑤。
+2. **从哪个根读？** 各人读各人那份 → 不写（默认，读 `users/<账号id>/state/`）；
+   **点名的这几个看配方自己那一份** → `--shared`（读 `app-state/<配方>/`，
+   路径里没有任何账号；只读，构造上不接受任何运行）。这一问以前无解，见 ⑤。
 3. **页面上要不要有按钮？** 这一问 expose 回答不了：能按什么写在**配方**的 `recipe.md` 的
    `page_actions` 里，由写配方的人逐个点名。`--runnable` 已经取消。
 
@@ -113,8 +113,8 @@
 
 先判性质，判据一句话：**复制之后原件还会继续更新的东西，必须只有一份。**
 
-- **这几个人本来就该看主人算的那一份** → `frago recipe expose <name> --allow … --shared`。
-  一条命令，不动数据，页面直接读主人的槽和主人的 `dataDir`。
+- **这几个人本来就该看配方自己算的那一份** → `frago recipe expose <name> --allow … --shared`。
+  一条命令，不动数据，页面直接读配方自己的槽和那个槽声明的 `dataDir`。
 - **数据要给别的配方读** → 写机器级共读目录 `~/.frago/recipe-data/<配方>/share/common/`，
   读的那个配方在 `recipe.md` 的 `reads_common` 里列上生产者，
   **再由主人 `frago recipe grant <读的人> --read <被读的人>` 授权**。
@@ -131,7 +131,7 @@
     frago recipe expose <name> --public                    # 谁都能看，不用登录
     frago recipe expose <name> --signed-in                 # 任何登录用户
     frago recipe expose <name> --allow <id> --allow <id>   # 只有这几个，各看各的
-    frago recipe expose <name> --allow <id> --shared       # 这几个看你算的同一份（只读）
+    frago recipe expose <name> --allow <id> --shared       # 这几个看配方自己那一份（只读）
 
 `--format json` **不豁免确认**：不带 `--yes` 时它回 `{"code":"confirm_required","notes":[…]}` 并以 1 退出。
 那份 `notes` 就是「这次会暴露什么」的清单，**读完再带 `--yes` 回来**，不要看到非零退出就直接补 `--yes` 重跑。
