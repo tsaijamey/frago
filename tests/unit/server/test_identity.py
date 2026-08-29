@@ -348,3 +348,65 @@ class TestPurgeIsNotTriggerHappy:
         ident.purge_expired_sessions()
 
         assert ident.resolve_session(token) is None
+
+
+class TestTemporaryPasswords:
+    """主人重置一个人的密码：给一段临时口令，那个人用完必须自己换掉。
+
+    这一组守的是三件事——重置要把旧会话一起断掉、临时口令必须真的只是临时的、
+    以及「换过一次」这件事只有本人自己改密码才算数。
+    """
+
+    def test_a_fresh_account_owes_nobody_a_password_change(self):
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        assert not user.must_change_password
+        assert not ident.must_change_password(user.id)
+
+    def test_issuing_one_marks_the_account_and_returns_the_password_once(self):
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        temporary = ident.issue_temporary_password(user.id)
+        assert temporary
+        assert ident.verify_user_password(user.id, temporary)
+        assert ident.must_change_password(user.id)
+
+    def test_the_generated_password_is_never_written_down(self):
+        """磁盘上留的是 scrypt 结果。临时口令的明文只在返回值里活一次。"""
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        temporary = ident.issue_temporary_password(user.id)
+        assert temporary not in ident.users_path().read_text(encoding="utf-8")
+
+    def test_a_generated_password_passes_the_rules_it_will_be_checked_against(self):
+        """自己生成却过不了自己的口令规则，会变成「重置完谁也登不进去」。"""
+        for _ in range(20):
+            assert ident.password_problem(ident.generate_temporary_password()) is None
+
+    def test_two_resets_never_hand_out_the_same_string(self):
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        issued = {ident.issue_temporary_password(user.id) for _ in range(8)}
+        assert len(issued) == 8
+
+    def test_the_old_password_and_its_cookies_die_with_the_reset(self):
+        """重置的用途就是「原来那把钥匙该失效了」。留着旧会话等于没重置。"""
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        stale = ident.create_session(user.id)
+        ident.issue_temporary_password(user.id)
+        assert ident.resolve_session(stale) is None
+        assert not ident.verify_user_password(user.id, GOOD_PASSWORD)
+
+    def test_signing_in_with_the_temporary_password_does_not_clear_the_mark(self):
+        """authenticate 里有一段顺手 rehash。它写的是同一段口令，
+        绝不能因此把「还欠一次改密」抹掉——那正好是这把锁要拦的那次登录。"""
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        temporary = ident.issue_temporary_password(user.id)
+        ident.authenticate("a@x.com", temporary)
+        assert ident.must_change_password(user.id)
+
+    def test_setting_a_password_of_your_own_clears_the_mark(self):
+        user, _ = ident.authenticate("a@x.com", GOOD_PASSWORD)
+        ident.issue_temporary_password(user.id)
+        ident.set_password(user.id, "a-password-of-my-own", temporary=False)
+        assert not ident.must_change_password(user.id)
+
+    def test_resetting_somebody_who_does_not_exist_is_an_error(self):
+        with pytest.raises(ident.IdentityError):
+            ident.issue_temporary_password("0" * 32)

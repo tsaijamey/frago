@@ -83,7 +83,10 @@ class TestList:
 
         for args in (["list"], ["list", "--format", "json"], ["list", "--recent"]):
             output = _run(runner, args).output
-            for field in ("pwd", "scrypt$", "password", GOOD_PASSWORD):
+            # `"password"` 带引号是有意的：要挡的是 JSON 里出现一个叫 password
+            # 的字段，而 `must_change_password` 这种「有没有欠一次改密」的布尔
+            # 值是这张表该说的话，它里面的 password 三个字不是口令材料。
+            for field in ("pwd", "scrypt$", '"password"', GOOD_PASSWORD):
                 assert field not in output, f"{args} 漏出了 {field}"
             for encoded in hashes:
                 assert encoded not in output
@@ -112,10 +115,18 @@ class TestList:
 class TestPasswd:
     def test_the_password_is_never_a_command_line_argument(self):
         """`ps -ww` 对同机其他账号是敞开的，shell history 还会留几个月。
-        所以这个命令连一个能接收密码的形参都不该有。"""
+        所以这个命令没有任何一个形参能装下一段口令。
+
+        它现在有两个选项（`--temporary` 发一段机器生成的临时口令、`--format`
+        选输出形状），两个都装不下值：一个是开关，一个只收 text/json。口令进这个
+        命令只有一条路——隐藏提示符；临时口令那条路则根本不进来，是机器在里面
+        生成、打印出去的。"""
         params = user_commands.user_passwd.params
-        assert [p.name for p in params] == ["who"]
-        assert all(not isinstance(p, click.Option) for p in params)
+        assert [p.name for p in params] == ["who", "temporary", "output_format"]
+        options = {p.name: p for p in params if isinstance(p, click.Option)}
+        assert options["temporary"].is_flag, "--temporary 必须是开关，不能接值"
+        assert isinstance(options["output_format"].type, click.Choice)
+        assert set(options["output_format"].type.choices) == {"text", "json"}
         assert "--password" not in (user_commands.user_passwd.get_help(
             click.Context(user_commands.user_passwd)))
 
@@ -319,3 +330,54 @@ class TestTheNamespaceItLandedIn:
         assert set(user.list_commands(click.Context(user))) == {
             "list", "passwd", "disable", "enable", "session",
         }
+
+
+class TestTemporaryPassword:
+    """`frago user passwd --temporary`：主人替别人重置，给一段用完就得换的口令。
+
+    这条路存在的理由是「访问控制台是一张网页」：网页上填的东西会变成配方参数，
+    而配方参数是 argv 的一个元素——同机任何一个账号 `ps -ww` 都看得见。所以
+    临时口令由这台机器生成、只往外走，一个字都不往里传。
+    """
+
+    def test_it_prints_a_password_that_actually_signs_in(self, runner, visitor):
+        user = visitor[0]
+        result = _run(runner, ["passwd", "zhang@example.com", "--temporary",
+                               "--format", "json"])
+        assert result.exit_code == 0, result.output
+        issued = json.loads(result.output)["temporary_password"]
+        assert ident.verify_user_password(user.id, issued)
+
+    def test_it_marks_the_account_as_owing_a_change(self, runner, visitor):
+        user = visitor[0]
+        _run(runner, ["passwd", "zhang@example.com", "--temporary"])
+        assert ident.must_change_password(user.id)
+
+    def test_it_never_asks_for_a_password(self, runner, visitor, monkeypatch):
+        """提示符会把这条路变成交互式的，而调用它的是一个网页后面的子进程。"""
+        def refuse(*args, **kwargs):
+            raise AssertionError("--temporary 不该向任何人要口令")
+
+        monkeypatch.setattr(user_commands.click, "prompt", refuse)
+        assert _run(runner, ["passwd", "zhang@example.com", "--temporary"]).exit_code == 0
+
+    def test_it_cuts_the_sessions_that_were_open(self, runner, visitor):
+        _user, first, second = visitor
+        _run(runner, ["passwd", "zhang@example.com", "--temporary"])
+        assert ident.resolve_session(first) is None
+        assert ident.resolve_session(second) is None
+
+    def test_a_plain_reset_leaves_nothing_owed(self, runner, visitor, monkeypatch):
+        """主人在提示符里敲的是一个真密码，不是临时口令——敲完不该还欠一次改密。"""
+        user = visitor[0]
+        _run(runner, ["passwd", "zhang@example.com", "--temporary"])
+        monkeypatch.setattr(user_commands.click, "prompt", lambda *a, **k: NEW_PASSWORD)
+        _run(runner, ["passwd", "zhang@example.com"])
+        assert not ident.must_change_password(user.id)
+
+    def test_the_listing_shows_who_still_owes_a_change(self, runner, visitor):
+        """主人得能一眼看出「这个人我重置过，他还没来换」。"""
+        _run(runner, ["passwd", "zhang@example.com", "--temporary"])
+        assert "must-change-password" in _run(runner, ["list"]).output
+        payload = json.loads(_run(runner, ["list", "--format", "json"]).output)
+        assert payload["users"][0]["must_change_password"] is True

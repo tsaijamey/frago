@@ -144,6 +144,21 @@ _IDENTITY_ENDPOINTS = frozenset({
     ("HEAD", "/api/auth/pages"),
 })
 
+# What is left of the identity zone for an account holding a stand-in password
+# the owner issued: say who you are, replace it, or leave. Nothing else — not a
+# page, not even the list of pages.
+#
+# The lock lives here rather than in the front end because a front end is a
+# suggestion: the visitor has a valid session cookie, and `curl` with it would
+# walk straight past a screen that only refused to render. "Must change it
+# before using anything" is only true if the gate is the one saying it.
+_MUST_CHANGE_ENDPOINTS = frozenset({
+    ("POST", "/api/auth/logout"),
+    ("POST", "/api/auth/password"),
+    ("GET", "/api/auth/me"),
+    ("HEAD", "/api/auth/me"),
+})
+
 
 # The page that serves as this server's front door. A visitor who lands on an
 # identity-mode page without a session has nothing to act on — the JSON refusal
@@ -552,6 +567,16 @@ def classify_identity(scope: dict, identity: str) -> tuple[bool, str | None]:
     path = scope.get("path") or ""
     if not _path_is_safe(path):
         return False, None
+
+    from frago.server.identity import must_change_password
+
+    if must_change_password(identity):
+        # The owner reset this account and the stand-in has not been replaced.
+        # Everything below this line stays shut — including the page list, which
+        # would otherwise tell someone holding a reset password what is on offer
+        # here. Refused the same way an outsider is, so a page they are allowed
+        # on bounces them to the door, where the portal says what is owed.
+        return ((method, path) in _MUST_CHANGE_ENDPOINTS), None
 
     if (method, path) in _IDENTITY_ENDPOINTS:
         return True, None

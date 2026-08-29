@@ -83,6 +83,12 @@ class TestTheClosedList:
         }
         assert not extra, f"身份区白名单多了没在 spec 里的条目：{extra}"
 
+    def test_the_reset_list_is_a_narrowing_of_the_identity_list(self):
+        """重置过的账号能到的地方，必须是身份区的子集。它是一次收窄，
+        不是第二张各写各的名单——多出一条就是在身份区之外开了个口。"""
+        assert security._MUST_CHANGE_ENDPOINTS < security._IDENTITY_ENDPOINTS
+        assert not any(path.endswith("/pages") for _, path in security._MUST_CHANGE_ENDPOINTS)
+
     def test_the_anonymous_list_holds_exactly_one_door(self):
         """攻击面按「匿名能触发的动作」数。多一个就要重新论证一次。"""
         assert set(security._ANON_POST) == {("POST", "/api/auth/login")}

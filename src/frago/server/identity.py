@@ -152,6 +152,9 @@ class User:
     email: str       # an unverified handle, not an identity document
     disabled: bool
     created: str
+    # The owner reset this password and the holder has not replaced it yet. The
+    # account still signs in — it just cannot reach anything until it does.
+    must_change_password: bool = False
 
 
 @dataclass(frozen=True)
@@ -483,6 +486,7 @@ def _as_user(record: dict[str, Any]) -> User:
         email=str(record.get("email") or ""),
         disabled=bool(record.get("disabled")),
         created=str(record.get("created") or ""),
+        must_change_password=bool(record.get("must_change")),
     )
 
 
@@ -732,8 +736,23 @@ def verify_user_password(user_id: str, password: str) -> bool:
     return verify_password(password, str(record.get("pwd") or ""))
 
 
-def set_password(user_id: str, password: str, *, revoke_sessions: bool = True) -> None:
-    """Replace an account's password and, by default, log every device out."""
+def set_password(user_id: str, password: str, *, revoke_sessions: bool = True,
+                 temporary: bool | None = None) -> None:
+    """Replace an account's password and, by default, log every device out.
+
+    ``temporary`` says what this new password *is*, and the three values are
+    three different events rather than a boolean with a default:
+
+        True    the owner issued a stand-in. The holder may sign in with it and
+                do exactly one thing: replace it. See ``issue_temporary_password``.
+        False   the holder chose it themselves, so whatever stand-in was in force
+                is now spent.
+        None    the password is not changing hands at all — the rehash inside
+                ``authenticate`` re-encodes the *same* secret at today's scrypt
+                parameters. It must leave the flag exactly as it found it: a
+                default of False there would clear the lock on the very login the
+                lock exists to catch.
+    """
     problem = password_problem(password)
     if problem:
         raise IdentityError("weak_password", problem)
@@ -743,8 +762,67 @@ def set_password(user_id: str, password: str, *, revoke_sessions: bool = True) -
         if record is None:
             raise IdentityError("no_such_user", "no such account")
         record["pwd"] = encoded
+        if temporary is not None:
+            record["must_change"] = bool(temporary)
     if revoke_sessions:
         revoke_identity_sessions(user_id)
+
+
+# Neither the letters nor the digits that get misread when a password is spoken
+# down a phone or copied off a screen: no O/0, no I/l/1. A stand-in password is
+# read by a human exactly once, and "it says my password is wrong" costing the
+# owner a second reset is the failure this alphabet is chosen against.
+_TEMP_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+_TEMP_GROUPS = 3
+_TEMP_GROUP_SIZE = 4
+
+
+def generate_temporary_password() -> str:
+    """A stand-in password: ``k7fm-2xqp-r4tv``.
+
+    Twelve characters from a 31-character alphabet is ~59 bits, which is more
+    than anything a person would type by hand, and the grouping is what makes it
+    readable aloud. It is generated *here*, on the machine, and never travels
+    inbound: a password the owner types into a web console arrives as a recipe
+    parameter, and recipe parameters are an argv element — visible to every other
+    unix account on this machine through ``ps -ww``. Outbound-only removes that.
+    """
+    groups = [
+        "".join(secrets.choice(_TEMP_ALPHABET) for _ in range(_TEMP_GROUP_SIZE))
+        for _ in range(_TEMP_GROUPS)
+    ]
+    return "-".join(groups)
+
+
+def issue_temporary_password(user_id: str) -> str:
+    """Reset an account to a fresh stand-in password and return it once.
+
+    Three things at once, and all three are the point: the old password stops
+    working, every session made with it dies, and the account is marked as owing
+    a password change. A reset that did only the first would leave a stolen
+    cookie alive; one that did only the first two would leave the owner's
+    stand-in in place as a real password for as long as the holder ignored it.
+
+    The returned string is the only copy. Nothing here writes it down.
+    """
+    if find_user_by_id(user_id) is None:
+        raise IdentityError("no_such_user", "no such account")
+    password = generate_temporary_password()
+    set_password(user_id, password, revoke_sessions=True, temporary=True)
+    logger.info("temporary password issued for %s; it must be changed on first use", user_id)
+    return password
+
+
+def must_change_password(user_id: str) -> bool:
+    """Whether this account is holding a stand-in password it has not replaced.
+
+    Asked by the gate on every identity-zone request, so it reads the cached
+    table rather than the file: `frago user passwd` runs in another process and
+    the cache is keyed on the file's mtime, so a reset takes effect on the next
+    request either way.
+    """
+    record = load_users().get(user_id)
+    return bool(record and record.get("must_change"))
 
 
 def authenticate(email: str, password: str, *, gate: str | None = None) -> tuple[User, str]:
@@ -793,6 +871,9 @@ def authenticate(email: str, password: str, *, gate: str | None = None) -> tuple
     if needs_rehash(str(record.get("pwd") or "")):
         # A free upgrade on the way past: the plaintext is in hand exactly here
         # and nowhere else. Sessions stay valid — the password did not change.
+        # `temporary` is left unset for the same reason: this is the same secret
+        # re-encoded, so a stand-in issued by the owner is still a stand-in after
+        # it, and signing in with one must not be what clears the lock.
         with contextlib.suppress(IdentityError):
             set_password(user_id, password, revoke_sessions=False)
     return _as_user(record), "ok"

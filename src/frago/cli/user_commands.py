@@ -149,6 +149,7 @@ def user_list(recent: bool, output_format: str) -> None:
         "email": user.email,
         "email_verified": False,
         "disabled": user.disabled,
+        "must_change_password": user.must_change_password,
         "created": user.created,
         "has_data": ident.has_data(user.id),
         "sessions": sum(1 for s in sessions if s.identity == user.id),
@@ -170,6 +171,8 @@ def user_list(recent: bool, output_format: str) -> None:
         marks = ["unverified"]
         if row["disabled"]:
             marks.append("disabled")
+        if row["must_change_password"]:
+            marks.append("must-change-password")
         marks.append("has-data" if row["has_data"] else "no-data")
         if row["sessions"]:
             marks.append(f"{row['sessions']} session(s)")
@@ -186,7 +189,11 @@ def user_list(recent: bool, output_format: str) -> None:
 
 @user_group.command(name="passwd", cls=AgentFriendlyCommand)
 @click.argument("who")
-def user_passwd(who: str) -> None:
+@click.option("--temporary", is_flag=True,
+              help="Issue a machine-generated stand-in and print it. The holder "
+                   "can sign in with it and do nothing but replace it.")
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+def user_passwd(who: str, temporary: bool, output_format: str) -> None:
     """Set someone's password. Every device they were signed in on is logged out.
 
     WHO is an account id (or a unique leading part of one) or the email address.
@@ -196,18 +203,58 @@ def user_passwd(who: str) -> None:
     a password when the previous one — or a cookie made with it — should stop
     working, and a reset that left live sessions alone would not do that.
 
+    `--temporary` is the reset-for-somebody-else path: this machine invents the
+    password, prints it once, and marks the account as owing a change. Until the
+    holder sets their own, that account can sign in and reach exactly two things
+    — who it is, and the form that replaces the password. No page, and not even
+    the list of pages. There is no way to type your own stand-in: this is called
+    from a web console whose parameters land in argv, where `ps -ww` would show
+    every other account on this machine the password you chose.
+
     \b
     Examples:
         frago user passwd a@example.com
         frago user passwd 3f9c
+        frago user passwd a@example.com --temporary
+        frago user passwd a@example.com --temporary --format json
     """
     ident = _identity()
     user = _resolve_user(who)
+
+    if temporary:
+        try:
+            password = ident.issue_temporary_password(user.id)
+        except ident.IdentityError as exc:
+            raise click.ClickException(exc.detail) from exc
+        if output_format == "json":
+            click.echo(json.dumps({
+                "id": user.id,
+                "email": user.email,
+                "temporary_password": password,
+                "must_change_password": True,
+            }, ensure_ascii=False, indent=2))
+            return
+        click.echo(f"✓ temporary password for {user.email} ({user.id}): {password}")
+        click.echo(
+            "  Hand it over out of band. Their sessions are cut, and it opens "
+            "nothing but the change-password form.",
+            err=True,
+        )
+        return
+
     password = _ask_for_password()
     try:
-        ident.set_password(user.id, password)
+        # An owner typing a password at the prompt is setting a real one, not a
+        # stand-in — and it clears any stand-in that was outstanding, because the
+        # person on the other end of this reset is being told this password.
+        ident.set_password(user.id, password, temporary=False)
     except ident.IdentityError as exc:
         raise click.ClickException(exc.detail) from exc
+    if output_format == "json":
+        click.echo(json.dumps({
+            "id": user.id, "email": user.email, "must_change_password": False,
+        }, ensure_ascii=False, indent=2))
+        return
     click.echo(f"✓ password set for {user.email} ({user.id}); all their sessions are now invalid")
 
 

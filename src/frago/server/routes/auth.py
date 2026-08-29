@@ -149,6 +149,10 @@ def _identity_payload(user_id: str) -> dict:
         # of this API is entitled to know that nobody ever checked this address.
         "email": user.email if user else "",
         "emailVerified": False,
+        # Carried on login *and* on /me, so the door knows on a plain page load
+        # what it knows on a fresh sign-in: this session may do one thing, and
+        # the screen should say so instead of showing an empty page list.
+        "mustChangePassword": bool(user.must_change_password) if user else False,
     }
 
 
@@ -247,8 +251,18 @@ async def change_password(request: Request) -> Response:
     if not ident.verify_user_password(who, current):
         return _fail(401, "bad_credentials", "your current password is wrong")
 
+    if current == new_password:
+        # Only reachable in earnest by someone working off a stand-in the owner
+        # issued, which is why it is refused rather than accepted as a no-op:
+        # "change it" would otherwise be satisfiable by retyping the password the
+        # owner has already handed to someone else.
+        return _fail(400, "same_password", "the new password must differ from the current one")
+
     try:
-        ident.set_password(who, new_password)
+        # Whatever this account was holding, it is holding a password of its own
+        # choosing now — so the reset lock is spent, and this is the only place
+        # that says so.
+        ident.set_password(who, new_password, temporary=False)
         token = ident.create_session(who)
     except ident.IdentityError as error:
         return _fail(_STATUS_FOR.get(error.reason, 400), error.reason, error.detail)
@@ -288,6 +302,14 @@ async def reachable_pages(request: Request) -> Response:
     who = identity_of(request)
     if who is None:
         return _fail(401, "not_signed_in", "no session")
+
+    if ident.must_change_password(who):
+        # The gate already refuses this for a visitor. Said again here because
+        # the local zone does not go through that branch at all: the owner's own
+        # browser, holding a reset account's cookie, would otherwise read the
+        # catalogue this lock exists to withhold.
+        return _fail(403, "password_reset_required",
+                     "this account must set a new password before it can open anything")
 
     from frago.recipes.exceptions import RecipeNotFoundError
     from frago.recipes.publish import allows, load, published_entry
