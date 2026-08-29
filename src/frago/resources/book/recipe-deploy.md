@@ -218,11 +218,21 @@ rsync 搬的只有代码。这些是每台机器自己的登记，**必须在服
 
 配方引用了新版 frago 才有的能力时才需要。顺序（2026-08-26 实测走通）：
 
-    ① 本机 git push
+    ① 本机 git push（推 main——服务器拉的就是它）
     ② 服务器上以那个用户身份 cd <仓库> && git pull --ff-only
     ③ uv build --wheel
-    ④ uv tool install --force dist/*.whl
+    ④ uv tool install --force "$(ls -t dist/frago_cli-*-py3-none-any.whl | head -1)"
     ⑤ systemctl --user restart frago-server
+
+**第四步 NEVER 写成 `dist/*.whl`。** dist/ 里躺着历次构建的所有 wheel，通配一次展开出好几个，
+`uv tool install` 只收一个包名，当场报 Usage 退出——而前面 build 是成功的，
+于是**版本号纹丝不动，看起来像升级完了**。2026-08-29 实测踩到：build 报
+`Successfully built frago_cli-1.2.192`，紧接着 `frago --version` 还是 1.2.190。
+
+**仓库在哪不要猜。** 它未必在跑 frago 那个用户的家目录下（demo 这台在 `/www/wwwroot/frago`）。
+反查装的是哪个 wheel、从哪个仓库来：
+
+    cat ~/.local/share/uv/tools/frago-cli/uv-receipt.toml
 
 **第五步必须走 systemd，不是 `frago server restart`**：环境变量来自 unit 里的
 `EnvironmentFile=…/server.env`，绕过 systemd 重启会丢掉那几个安全变量（`FRAGO_BEHIND_PROXY` 就在里面），
