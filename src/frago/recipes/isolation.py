@@ -625,7 +625,7 @@ def _is_a_test(path: Path) -> bool:
         name.startswith("test_")
         or name.endswith(("_test.py", "_test.sh"))
         or "tests" in path.parts
-        or "conftest.py" == name
+        or name == "conftest.py"
     )
 
 #: A shell line that runs frago, rather than a line that mentions it. Anchored
@@ -719,6 +719,12 @@ def _python_findings(
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)
     }
 
+    #: Names bound to a plain string. The command a recipe starts is often one
+    #: of these rather than a literal at the call site.
+    strings = _string_names(tree)
+    #: Names bound to a whole command line, mapped to the command they start.
+    argvs = _argv_names(tree, strings)
+
     #: Names bound to a place, and the place. Nobody writes a whole path in one
     #: expression — they bind ``FRAGO_HOME = Path.home() / ".frago"`` once and
     #: divide off it everywhere after. Without following the name, the only
@@ -777,7 +783,8 @@ def _python_findings(
                     fix=_fix_for(target, cli_view),
                 ))
         # The platform's own command, actually being run.
-        elif isinstance(node, ast.Call) and not uses_frago_cli and _runs_frago(node):
+        elif (isinstance(node, ast.Call) and not uses_frago_cli
+                and _runs_frago(node, strings, argvs)):
             found.append(Blocked(
                 file=path, line=node.lineno, excerpt=excerpt(node),
                 why="这里起了一个 frago 命令，但 recipe.md 没写 uses_frago_cli",
@@ -867,16 +874,96 @@ def _rooted_at_home(node) -> bool:
     )
 
 
-def _runs_frago(call) -> bool:
-    """Whether this call starts frago's own CLI.
+def _string_names(tree) -> dict[str, str]:
+    """Every name bound to a plain string, wherever in the file it is bound.
 
-    Looks at what is being started, not at what the line says: the first element
-    of an argv list, or the string handed to a shell. A recipe that assembles
-    the command name out of variables is invisible here, and the module
-    docstring says as much rather than leaving it to be discovered.
+    Module level and class body alike, because the shape this exists for appears
+    in both: a recipe writes ``FRAGO = "frago"`` once and uses that name at
+    every call site. Keyed by the bare name, so ``self.FRAGO`` resolves through
+    the same table as ``FRAGO`` — a check that had to know which object an
+    attribute hangs off would be a type checker, and would still be wrong about
+    a name reassigned halfway down. Being generous here is safe: the answer is
+    only ever used to ask "is this string 'frago'".
     """
     import ast
 
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        value = getattr(node, "value", None)
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    found[target.id] = value.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            found[node.target.id] = value.value
+    return found
+
+
+def _as_string(node, names: dict[str, str]) -> str | None:
+    """The string this expression is, if it plainly is one."""
+    import ast
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return names.get(node.id)
+    if isinstance(node, ast.Attribute):
+        return names.get(node.attr)
+    return None
+
+
+def _argv_names(tree, strings: dict[str, str]) -> dict[str, str]:
+    """Names bound to a command line, mapped to the command they start.
+
+    The second way of spelling the same thing, and the one that survived the
+    first fix: build the whole command into a variable on one line, hand that
+    variable to the subprocess call on the next. Following the command name
+    through a constant but not through the list it sits in leaves exactly the
+    recipes that write their calls most carefully still invisible.
+    """
+    import ast
+
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        value = node.value
+        if not isinstance(target, ast.Name):
+            continue
+        if not isinstance(value, (ast.List, ast.Tuple)) or not value.elts:
+            continue
+        first = _as_string(value.elts[0], strings)
+        if first is not None:
+            found[target.id] = first
+    return found
+
+
+def _runs_frago(call, names: dict[str, str] | None = None,
+                argvs: dict[str, str] | None = None) -> bool:
+    """Whether this call starts frago's own CLI.
+
+    Looks at what is being started, not at what the line says: the first element
+    of an argv list, or the string handed to a shell.
+
+    **The command name is followed through a name.** It did not used to be, and
+    the cost was exact: a family of nine recipes had all hoisted the word into a
+    constant — a deliberate tidy-up, with the reason written in their source —
+    and every one of them called frago's CLI without declaring it while this
+    check reported nothing. Nine passed the gate; three were broken at run time.
+    A check that only recognises the most artless spelling of a thing is a check
+    that rewards artlessness.
+
+    Still shallow, and still said out loud: a command name assembled at run time
+    — read from a config file, joined from pieces, picked out of a list — is
+    invisible here.
+    """
+    import ast
+
+    names = names or {}
+    argvs = argvs or {}
     func = call.func
     name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
     if name not in {"run", "Popen", "call", "check_call", "check_output", "system",
@@ -884,15 +971,22 @@ def _runs_frago(call) -> bool:
         return False
     for arg in call.args[:1]:
         if isinstance(arg, (ast.List, ast.Tuple)) and arg.elts:
-            first = arg.elts[0]
-            if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                return Path(first.value).name == "frago"
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value.strip().startswith("frago ")
+            first = _as_string(arg.elts[0], names)
+            return first is not None and Path(first).name == "frago"
+        # The command was assembled on an earlier line and handed over by name.
+        if isinstance(arg, ast.Name) and arg.id in argvs:
+            return Path(argvs[arg.id]).name == "frago"
+        spelled = _as_string(arg, names)
+        if spelled is not None:
+            return spelled.strip().startswith("frago ")
         if isinstance(arg, ast.JoinedStr) and arg.values:
             head = arg.values[0]
-            return (isinstance(head, ast.Constant)
-                    and str(head.value).strip().startswith("frago "))
+            if isinstance(head, ast.Constant):
+                return str(head.value).strip().startswith("frago ")
+            # `f"{FRAGO} recipe run …"` — the command name is the first hole.
+            if isinstance(head, ast.FormattedValue):
+                first = _as_string(head.value, names)
+                return first is not None and Path(first).name == "frago"
     return False
 
 

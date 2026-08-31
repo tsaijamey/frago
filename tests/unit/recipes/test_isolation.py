@@ -508,3 +508,89 @@ class TestPathsBuiltOffAName:
         )
         found = isolation.foresee(recipe, "demo")
         assert found and "viewer" in found[0].why
+
+
+class TestTheCommandNameCanBeAName:
+    """A check that only recognises the most artless spelling rewards artlessness.
+
+    Nine real recipes had hoisted the word `frago` into a constant — a
+    deliberate tidy-up with the reason written in their source — and every one
+    of them called the platform's CLI without declaring it while this check
+    reported nothing. Nine passed the gate; three were broken at run time.
+    """
+
+    @pytest.fixture
+    def recipe(self, machine):
+        d = machine / ".frago" / "recipes" / "workflows" / "demo"
+        d.mkdir(parents=True)
+        return d
+
+    def test_a_module_level_constant_is_followed(self, machine, recipe):
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'FRAGO = "frago"\n'
+            'subprocess.run([FRAGO, "recipe", "run", "other"])\n'
+        )
+        found = isolation.foresee(recipe, "demo")
+        assert len(found) == 1
+        assert "uses_frago_cli" in found[0].why
+
+    def test_a_class_attribute_is_followed_too(self, machine, recipe):
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'class R:\n'
+            '    FRAGO = "frago"\n'
+            '    def go(self):\n'
+            '        subprocess.run([self.FRAGO, "browser", "status"])\n'
+        )
+        assert len(isolation.foresee(recipe, "demo")) == 1
+
+    def test_a_name_bound_to_something_else_is_not_frago(self, machine, recipe):
+        """Following names must not turn into reporting every subprocess."""
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'TOOL = "git"\n'
+            'subprocess.run([TOOL, "status"])\n'
+        )
+        assert isolation.foresee(recipe, "demo") == []
+
+    def test_the_shell_string_form_through_a_name(self, machine, recipe):
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'FRAGO = "frago"\n'
+            'subprocess.run(f"{FRAGO} browser status", shell=True)\n'
+        )
+        assert len(isolation.foresee(recipe, "demo")) == 1
+
+    def test_declaring_it_still_settles_the_matter(self, machine, recipe):
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'FRAGO = "frago"\n'
+            'subprocess.run([FRAGO, "recipe", "run", "other"])\n'
+        )
+        assert isolation.foresee(recipe, "demo", uses_frago_cli=True) == []
+
+    def test_the_command_assembled_on_an_earlier_line(self, machine, recipe):
+        """The second spelling, and the one that survived the first fix: build
+        the whole command into a variable, hand the variable over next line.
+        Following the name but not the list it sits in leaves exactly the
+        recipes that write their calls most carefully still invisible."""
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'FRAGO = "frago"\n'
+            'def go(name):\n'
+            '    argv = [FRAGO, "recipe", "run", name]\n'
+            '    subprocess.run(argv, capture_output=True)\n'
+        )
+        found = isolation.foresee(recipe, "demo")
+        assert len(found) == 1
+        assert "uses_frago_cli" in found[0].why
+
+    def test_a_variable_holding_someone_elses_command_is_not_frago(self, machine, recipe):
+        (recipe / "recipe.py").write_text(
+            'import subprocess\n'
+            'def go():\n'
+            '    argv = ["git", "status"]\n'
+            '    subprocess.run(argv)\n'
+        )
+        assert isolation.foresee(recipe, "demo") == []
