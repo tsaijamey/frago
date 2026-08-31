@@ -32,6 +32,10 @@ agent 写 Recipe 时字段格式错误、缺少必填字段、flow/env 等高级
 | tags | list | 标签（AI 可理解的分类） |
 | env | dict | 环境变量定义 |
 | system_packages | bool | 是否使用系统 Python |
+| secrets | dict | 凭证 schema（含 type/required/description）；runner 按它过滤后经 `FRAGO_SECRETS` 注入 |
+| shares | string | 我把自己数据里的哪一块交出去给别的配方读，写子路径（如 `share/common`）；交出去的那块在对方眼里只读 |
+| reads_common | list | 我要读哪些配方的数据，写生产者的配方名；对方也写了 `shares` 才拿得到 |
+| uses_frago_cli | bool | 脚本会 shell 调 frago 命令（`frago browser` / `frago recipe publish` / `frago <domain>` 等）；不写就拿不到 frago 命令的工作目录 |
 
 ## flow 字段（workflow 必填）
 
@@ -106,6 +110,8 @@ uv run 自动解析依赖并创建临时虚拟环境，首次运行后使用缓�
 5. Python 脚本语法检查
 6. 依赖检查（workflow 类型检查依赖 recipe 是否已注册）
 7. flow 结构检查（workflow 类型）
+8. 隔离预检（runtime 为 python/shell 时）：脚本里写下的路径落在本次视野之外，或起了 frago 命令却没写 `uses_frago_cli`——都是 error，不是警告；配方自带的测试文件不扫
+9. 共读声明配对：`reads_common` 点名的生产者在这台机器上要存在，且对方 recipe.md 写了 `shares`。缺一句 **直接拒绝**（从前只是警告）
 
 ## 完整 recipe.md 模板
 

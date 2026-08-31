@@ -234,6 +234,13 @@ document.addEventListener('keydown', (e) => {
     - interactive
     - workflow
 
+**还 MUST 写这一行**——本篇通篇让脚本 shell 出去调 `frago recipe publish` / `frago recipe open`，
+配方跑在一个只看得见指定目录的视图里，不声明就拿不到 frago 命令自己的工作目录：
+
+  uses_frago_cli: true
+
+不写的后果：`frago recipe validate` 直接拒，隔离下那两条命令也跑不动。
+
 inputs 里通常有工作目录之类的入参。outputs 里给 `url`，需要区分多份时再给 `slot`。
 
 `content_id` 已经废弃——它描述的那个哈希目录不存在了，出参里还留着它就是在指向一个空地址。
@@ -248,6 +255,7 @@ inputs 里通常有工作目录之类的入参。outputs 里给 `url`，需要�
 ## 创建检查清单
 
 - recipe.md 含 interactive 标签
+- recipe.md 写了 `uses_frago_cli: true`（脚本要调 `frago recipe publish` / `open`）
 - 前端文件留在配方 `assets/` 里，不复制到任何地方
 - 脚本用 `frago recipe publish` 发布状态，取回地址
 - 运行期数据在状态里声明 `dataDir`，前端走 `data/` 读
